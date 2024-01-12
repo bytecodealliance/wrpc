@@ -1,0 +1,5 @@
+package wrpc:example-run@0.1.0;
+
+world example-run {
+    include wrpc:examples/example-run@0.1.0;
+}

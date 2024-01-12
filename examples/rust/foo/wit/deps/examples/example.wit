@@ -1,0 +1,52 @@
+package wrpc:examples@0.1.0;
+
+interface types {
+    use wasi:io/poll@0.2.0-rc-2023-11-10.{pollable};
+
+    resource future-string {
+        subscribe: func() -> pollable;
+        get: func() -> option<string>;
+
+        // TODO: Remove this once options can be constructed at runtime
+        get-unwrap: func() -> string;
+    }
+}
+
+interface foo {
+    use types.{future-string};
+
+    foo: func() -> future-string;
+}
+
+interface foobar {
+    use types.{future-string};
+
+    foobar: func(%s: future-string) -> string;
+}
+
+interface run {
+    run: func() -> string;
+}
+
+//interface example-rpc {
+//    foo: func(%stream: stream<u8>) -> future<string>;
+//}
+
+world example-foo {
+    import wasi:clocks/monotonic-clock@0.2.0-rc-2023-11-10;
+
+    export foo;
+    export types;
+}
+
+world example-foobar {
+    import types;
+    export foobar;
+}
+
+world example-run {
+    import foo;
+    import foobar;
+
+    export run;
+}
