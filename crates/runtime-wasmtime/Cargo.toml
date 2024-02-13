@@ -1,0 +1,16 @@
+[package]
+name = "wrpc-runtime-wasmtime"
+version = "0.1.0"
+edition = "2021"
+description = "wRPC wasmtime integration"
+authors = ["Roman Volosatovs <rvolosatovs@riseup.net>"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/rvolosatovs/wrpc"
+
+[dependencies]
+anyhow = { workspace = true, features = ["std"] }
+futures = { workspace = true }
+tracing = { workspace = true, features = ["attributes"] }
+wasmtime = { workspace = true }
+wasmtime-wasi = { workspace = true, features = ["preview2"] }
+wrpc-transport = { workspace = true }

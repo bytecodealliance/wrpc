@@ -8,28 +8,35 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/rvolosatovs/wrpc"
 
 [features]
+wasmtime = [
+    "dep:wasmtime",
+    "dep:wasmtime-environ",
+    "dep:wasmtime-wasi",
+    "dep:wrpc-runtime-wasmtime",
+]
+nats = ["dep:wrpc-transport-nats"]
 bin = [
-    "clap",
-    "indexmap",
-    "reqwest",
+    "dep:clap",
+    "dep:indexmap",
+    "dep:reqwest",
+    "dep:tracing-subscriber",
+    "dep:url",
+    "dep:wasmcloud-component-adapters",
+    "dep:wasmparser",
+    "dep:wasmtime-wasi-http",
+    "dep:wit-component",
+
     "tokio/io-std",
     "tokio/macros",
     "tokio/rt-multi-thread",
-    "tracing",
-    "tracing-subscriber",
-    "url",
-    "wasmcloud-component-adapters",
-    "wasmparser",
+    "wasmtime/cranelift",
+
     "wasmtime",
-    "wasmtime-environ",
-    "wasmtime-wasi",
-    "wasmtime-wasi-http",
-    "wit-component",
 ]
-default = ["bin"]
+default = ["nats", "bin"]
 
 [workspace]
-members = ["examples/rust/*"]
+members = ["crates/*", "examples/rust/*"]
 
 [dependencies]
 anyhow = { workspace = true, features = ["std"] }
@@ -37,7 +44,15 @@ async-nats = { workspace = true }
 async-recursion = { workspace = true }
 async-trait = { workspace = true }
 bytes = { workspace = true }
-clap = { workspace = true, features = ["color", "derive", "error-context", "help", "std", "suggestions", "usage"], optional = true }
+clap = { workspace = true, features = [
+    "color",
+    "derive",
+    "error-context",
+    "help",
+    "std",
+    "suggestions",
+    "usage",
+], optional = true }
 futures = { workspace = true }
 h2 = { workspace = true }
 http = { workspace = true }
@@ -45,18 +60,31 @@ indexmap = { workspace = true, optional = true }
 nats-connect = { workspace = true }
 reqwest = { workspace = true, features = ["rustls"], optional = true }
 tokio = { workspace = true, features = ["sync"] }
+tokio-stream = { workspace = true, features = ["sync"] }
 tower-service = { workspace = true }
-tracing = { workspace = true, optional = true }
-tracing-subscriber = { workspace = true, features = ["ansi", "env-filter", "fmt"], optional = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = [
+    "ansi",
+    "env-filter",
+    "fmt",
+], optional = true }
 url = { workspace = true, optional = true }
 wasmcloud-component-adapters = { workspace = true, optional = true }
 wasmparser = { workspace = true, optional = true }
-wasmtime = { workspace = true, features = ["cranelift"], optional = true }
+wasmtime = { workspace = true, features = ["component-model"], optional = true }
 wasmtime-environ = { workspace = true, optional = true } # TODO: Remove
-wasmtime-wasi = { workspace = true, optional = true }
+wasmtime-wasi = { workspace = true, features = ["preview2"], optional = true }
 wasmtime-wasi-http = { workspace = true, optional = true }
 wit-component = { workspace = true, optional = true }
 wit-parser = { workspace = true }
+wrpc-runtime-wasmtime = { workspace = true, optional = true }
+wrpc-transport = { workspace = true }
+wrpc-transport-nats = { workspace = true, optional = true }
+wrpc-types = { workspace = true }
+
+[dev-dependencies]
+futures = { workspace = true, features = ["async-await"] }
+tokio = { workspace = true, features = ["process"] }
 
 [workspace.dependencies]
 anyhow = { version = "1", default-features = false }
@@ -69,23 +97,25 @@ futures = { version = "0.3", default-features = false }
 h2 = { version = "0.4", default-features = false }
 http = { version = "1", default-features = false }
 indexmap = { version = "2", default-features = false }
+leb128 = { version = "0.2", default-features = false }
 nats-connect = { version = "0.1", default-features = false }
 reqwest = { version = "0.11", default-features = false }
 tokio = { version = "1", default-features = false }
+tokio-stream = { version = "0.1", default-features = false }
 tower-service = { version = "0.3", default-features = false }
 tracing = { version = "0.1", default-features = false }
 tracing-subscriber = { version = "0.3", default-features = false }
 url = { version = "2", default-features = false }
-wasmcloud-component-adapters = { version = "0.5", default-features = false }
+wasmcloud-component-adapters = { version = "0.7", default-features = false }
 wasmparser = { version = "0.118", default-features = false }
-#wasmtime = { path = "../../bytecodealliance/wasmtime/crates/wasmtime", default-features = false }
-#wasmtime-environ = { path = "../../bytecodealliance/wasmtime/crates/wasi", default-features = false }
-#wasmtime-wasi = { path = "../../bytecodealliance/wasmtime/crates/wasi", default-features = false }
-#wasmtime-wasi-http = { path = "../../bytecodealliance/wasmtime/crates/wasi-http", default-features = false }
-wasmtime = { git = "https://github.com/rvolosatovs/wasmtime", branch = "wip", default-features = false }
-wasmtime-environ = { git = "https://github.com/rvolosatovs/wasmtime", branch = "wip", default-features = false }
-wasmtime-wasi = { git = "https://github.com/rvolosatovs/wasmtime", branch = "wip", default-features = false }
-wasmtime-wasi-http = { git = "https://github.com/rvolosatovs/wasmtime", branch = "wip", default-features = false }
+wasmtime = { version = "18", default-features = false }
+wasmtime-environ = { version = "18", default-features = false }
+wasmtime-wasi = { version = "18", default-features = false }
+wasmtime-wasi-http = { version = "18", default-features = false }
 wit-bindgen = { version = "0.16", default-features = false }
 wit-component = { version = "0.19", default-features = false }
 wit-parser = { version = "0.13", default-features = false }
+wrpc-runtime-wasmtime = { version = "0.1", path = "./crates/runtime-wasmtime", default-features = false }
+wrpc-transport = { version = "0.4", path = "./crates/transport", default-features = false }
+wrpc-transport-nats = { version = "0.3", path = "./crates/transport-nats", default-features = false }
+wrpc-types = { version = "0.2", path = "./crates/types", default-features = false }

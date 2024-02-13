@@ -18,15 +18,15 @@ $ cargo build -p example-run --target wasm32-wasi
 Then, in separate terminals:
 
 ```
-$ cargo run --bin wrpc-server ./target/wasm32-wasi/debug/example_foobar.wasm
+$ cargo run --bin wrpc-serve-nats ./target/wasm32-wasi/debug/example_foobar.wasm
 ```
 
 ```
-$ cargo run --bin wrpc-server ./target/wasm32-wasi/debug/example_foo.wasm
+$ cargo run --bin wrpc-serve-nats ./target/wasm32-wasi/debug/example_foo.wasm
 ```
 
 ```
-$ cargo run --bin wrpc-server ./target/wasm32-wasi/debug/example_run.wasm
+$ cargo run --bin wrpc-serve-nats ./target/wasm32-wasi/debug/example_run.wasm
 ```
 
 ```

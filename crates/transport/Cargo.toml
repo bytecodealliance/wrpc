@@ -1,0 +1,20 @@
+[package]
+name = "wrpc-transport"
+version = "0.4.0"
+edition = "2021"
+description = "wRPC core transport functionality"
+authors = ["Roman Volosatovs <rvolosatovs@riseup.net>"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/rvolosatovs/wrpc"
+
+[dependencies]
+anyhow = { workspace = true, features = ["std"] }
+async-nats = { workspace = true }
+async-trait = { workspace = true }
+bytes = { workspace = true }
+futures = { workspace = true }
+leb128 = { workspace = true }
+tokio = { workspace = true }
+tokio-stream = { workspace = true }
+tracing = { workspace = true, features = ["attributes"] }
+wrpc-types = { workspace = true }

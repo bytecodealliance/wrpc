@@ -13,17 +13,14 @@ impl exports::wrpc::examples::foobar::Guest for Example {
         // TODO(2): Use pollable
         //s.subscribe().block();
 
-        // TODO(1): Use an option
-        //loop {
-        //    match s.get() {
-        //        None => {
-        //            eprintln!("sleep for 1ms");
-        //            sleep(Duration::from_millis(1));
-        //        }
-        //        Some(s) => return format!("{s}bar"),
-        //    }
-        //}
-
-        format!("{}bar", s.get_unwrap())
+        loop {
+            match s.get() {
+                None => {
+                    eprintln!("sleep for 1ms");
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                }
+                Some(s) => return format!("{s}bar"),
+            }
+        }
     }
 }

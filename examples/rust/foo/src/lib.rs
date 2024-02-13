@@ -18,11 +18,6 @@ impl exports::wrpc::examples::types::GuestFutureString for Foo {
     fn get(&self) -> Option<String> {
         Some(String::from("foo"))
     }
-
-    // TODO: Remove
-    fn get_unwrap(&self) -> String {
-        String::from("foo")
-    }
 }
 
 pub struct Example;

@@ -1,10 +1,9 @@
-pub mod client;
-pub mod nats;
-pub mod server;
-pub mod transmit;
+pub mod transport;
 
-pub use client::Client;
-pub use server::Server;
-pub use transmit::{Error as TransmitError, Result as TransmitResult, Transmit};
+pub use wrpc_types as types;
 
-mod oneshot_topic;
+pub use transport::{Client, Transmitter, Value, PROTOCOL};
+pub use types::{
+    function_exports, DynamicFunction as DynamicFunctionType,
+    DynamicResource as DynamicResourceType, Resource as ResourceType, Type,
+};
