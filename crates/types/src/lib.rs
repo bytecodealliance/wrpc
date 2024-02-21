@@ -6,7 +6,7 @@ use tracing::{error, instrument, trace, warn};
 
 /// Dynamic resource type
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
-#[cfg_attr(serde, derive(serde::Deserialize, serde::Serialize))]
+#[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 pub struct DynamicResource {
     pub instance: String,
     pub name: String,
@@ -14,6 +14,7 @@ pub struct DynamicResource {
 
 /// Resource type
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 pub enum Resource {
     Pollable,
     InputStream,
@@ -23,7 +24,7 @@ pub enum Resource {
 
 /// Value type
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
-#[cfg_attr(serde, derive(serde::Deserialize, serde::Serialize))]
+#[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 pub enum Type {
     Bool,
     U8,
@@ -249,7 +250,7 @@ impl Type {
 
 /// Dynamic function
 #[derive(Debug)]
-#[cfg_attr(serde, derive(serde::Deserialize, serde::Serialize))]
+#[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 pub enum DynamicFunction {
     Method {
         receiver: Arc<DynamicResource>,
@@ -362,4 +363,17 @@ pub fn function_exports<'a>(
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    #[cfg(feature = "serde")]
+    #[test]
+    fn serde() {
+        use super::*;
+
+        let buf = serde_json::to_vec(&Type::U8).unwrap();
+        let ty: Type = serde_json::from_slice(&buf).unwrap();
+        assert_eq!(ty, Type::U8)
+    }
 }
