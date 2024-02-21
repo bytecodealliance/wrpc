@@ -6,6 +6,7 @@ use tracing::{error, instrument, trace, warn};
 
 /// Dynamic resource type
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
+#[cfg_attr(serde, derive(serde::Deserialize, serde::Serialize))]
 pub struct DynamicResource {
     pub instance: String,
     pub name: String,
@@ -248,6 +249,7 @@ impl Type {
 
 /// Dynamic function
 #[derive(Debug)]
+#[cfg_attr(serde, derive(serde::Deserialize, serde::Serialize))]
 pub enum DynamicFunction {
     Method {
         receiver: Arc<DynamicResource>,

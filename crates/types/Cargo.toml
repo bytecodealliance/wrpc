@@ -1,6 +1,6 @@
 [package]
 name = "wrpc-types"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
 description = "wRPC type system"
 authors = ["Roman Volosatovs <rvolosatovs@riseup.net>"]
