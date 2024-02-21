@@ -3166,7 +3166,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc-transport"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "anyhow",
  "async-nats",
@@ -3196,9 +3196,10 @@ dependencies = [
 
 [[package]]
 name = "wrpc-types"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
+ "serde",
  "tracing",
  "wit-parser",
 ]

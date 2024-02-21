@@ -1,6 +1,6 @@
 [package]
 name = "wrpc-types"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 description = "wRPC type system"
 authors = ["Roman Volosatovs <rvolosatovs@riseup.net>"]
@@ -9,5 +9,6 @@ repository = "https://github.com/rvolosatovs/wrpc"
 
 [dependencies]
 anyhow = { workspace = true, features = ["std"] }
+serde = { workspace = true, optional = true }
 tracing = { workspace = true, features = ["attributes"] }
 wit-parser = { workspace = true }

@@ -22,6 +22,7 @@ pub enum Resource {
 
 /// Value type
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
+#[cfg_attr(serde, derive(serde::Deserialize, serde::Serialize))]
 pub enum Type {
     Bool,
     U8,
