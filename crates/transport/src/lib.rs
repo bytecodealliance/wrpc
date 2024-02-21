@@ -404,7 +404,7 @@ impl<T> AsyncSubscription<T> {
     }
 }
 
-pub trait Subject: PartialEq {
+pub trait Subject {
     fn child(&self, i: Option<u32>) -> Self;
 }
 
