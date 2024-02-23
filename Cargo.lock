@@ -148,17 +148,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "async-recursion"
-version = "1.0.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5fd55a5ba1179988837d24ab4c7cc8ed6efdeff578ede0416b4225a5fca35bd0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
-]
-
-[[package]]
 name = "async-trait"
 version = "0.1.77"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1263,19 +1252,6 @@ dependencies = [
  "libc",
  "wasi",
  "windows-sys 0.48.0",
-]
-
-[[package]]
-name = "nats-connect"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2273a1509ccf05baaf05f1520ff3e69940684d2487415df53b7767dd34e183a1"
-dependencies = [
- "anyhow",
- "async-nats",
- "bytes",
- "futures",
- "tokio",
 ]
 
 [[package]]
@@ -3122,19 +3098,13 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-nats",
- "async-recursion",
  "async-trait",
  "bytes",
  "clap",
  "futures",
- "h2 0.4.2",
- "http 1.0.0",
- "indexmap",
- "nats-connect",
  "reqwest",
  "tokio",
  "tokio-stream",
- "tower-service",
  "tracing",
  "tracing-subscriber",
  "url",
@@ -3146,10 +3116,24 @@ dependencies = [
  "wasmtime-wasi-http",
  "wit-component 0.19.1",
  "wit-parser",
+ "wrpc-interface-http",
  "wrpc-runtime-wasmtime",
  "wrpc-transport",
  "wrpc-transport-nats",
  "wrpc-types",
+]
+
+[[package]]
+name = "wrpc-interface-http"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bytes",
+ "futures",
+ "tokio",
+ "tracing",
+ "wrpc-transport",
 ]
 
 [[package]]
@@ -3166,7 +3150,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc-transport"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "async-nats",
@@ -3182,7 +3166,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc-transport-nats"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "async-nats",

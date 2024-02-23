@@ -1,5 +1,4 @@
 use core::future::Future;
-use core::iter::zip;
 use core::pin::Pin;
 use core::str;
 use core::task::{Context, Poll};
@@ -11,14 +10,13 @@ use async_nats::subject::ToSubject;
 use async_nats::{HeaderMap, ServerInfo, StatusCode};
 use async_trait::async_trait;
 use bytes::{Bytes, BytesMut};
-use futures::future::{try_join_all, FutureExt as _};
-use futures::stream::FuturesUnordered;
+use futures::future::FutureExt as _;
 use futures::{Stream, StreamExt};
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 use tokio::{spawn, try_join};
 use tracing::{instrument, trace};
-use wrpc_transport::{AsyncTransmission, Encode, Subject as _, Transmitter as _, PROTOCOL};
+use wrpc_transport::{AsyncValue, Encode, Transmitter as _, PROTOCOL};
 
 #[derive(Debug)]
 struct Message {
@@ -264,12 +262,24 @@ impl wrpc_transport::Transmitter for Transmitter {
     async fn transmit(
         &self,
         subject: Self::Subject,
-        payload: Bytes,
+        mut payload: Bytes,
     ) -> Result<(), Self::PublishError> {
-        let mut tail = payload;
+        let ServerInfo { max_payload, .. } = self.nats.server_info();
+        let mut tail = if payload.len() > max_payload {
+            assert!(max_payload > 0);
+            payload.split_off(max_payload)
+        } else {
+            Bytes::default()
+        };
+        trace!(
+            ?tail,
+            ?payload,
+            max_payload,
+            "publish initial payload chunk"
+        );
         let Subject(subject) = subject;
+        self.nats.publish(subject.clone(), payload).await?;
         while !tail.is_empty() {
-            let ServerInfo { max_payload, .. } = self.nats.server_info();
             let mut payload = tail;
             tail = if payload.len() > max_payload {
                 assert!(max_payload > 0);
@@ -302,25 +312,15 @@ impl Invocation {
         &self.rx
     }
 
-    pub async fn begin<T, U>(self, params: T) -> anyhow::Result<InvocationPre<U>>
-    where
-        T: IntoIterator<Item = U>,
-        T::IntoIter: ExactSizeIterator<Item = U>,
-        U: Encode<U>,
-    {
-        let ((payload, txs), handshake) = try_join!(
+    pub async fn begin(self, params: impl Encode) -> anyhow::Result<InvocationPre> {
+        let ((payload, tx), handshake) = try_join!(
             async {
-                let params = params.into_iter();
                 let mut payload = BytesMut::new();
-                let mut txs = Vec::with_capacity(params.len());
-                for p in params {
-                    let tx = p
-                        .encode(&mut payload)
-                        .await
-                        .context("failed to encode value")?;
-                    txs.push(tx)
-                }
-                Ok((payload.freeze(), txs))
+                let tx = params
+                    .encode(&mut payload)
+                    .await
+                    .context("failed to encode value")?;
+                Ok((payload.freeze(), tx))
             },
             async {
                 self.client
@@ -332,7 +332,7 @@ impl Invocation {
         )?;
         Ok(InvocationPre {
             client: self.client,
-            txs,
+            tx,
             payload,
             handshake,
             rx: self.rx,
@@ -345,17 +345,12 @@ impl wrpc_transport::Invocation for Invocation {
     type Transmission = Transmission;
     type TransmissionFailed = Box<dyn Future<Output = ()> + Send + Unpin>;
 
-    async fn invoke<T, U>(
+    async fn invoke(
         self,
         instance: &str,
         name: &str,
-        params: T,
-    ) -> anyhow::Result<(Self::Transmission, Self::TransmissionFailed)>
-    where
-        T: IntoIterator<Item = U> + Send,
-        T::IntoIter: ExactSizeIterator<Item = U> + Send,
-        U: Encode<U> + Send + 'static,
-    {
+        params: impl Encode,
+    ) -> anyhow::Result<(Self::Transmission, Self::TransmissionFailed)> {
         let subject = self.client.static_subject(instance, name);
         let inv = self.begin(params).await?;
         let (tx, tx_failed) = inv.invoke(subject).await?;
@@ -363,15 +358,15 @@ impl wrpc_transport::Invocation for Invocation {
     }
 }
 
-pub struct InvocationPre<T> {
+pub struct InvocationPre {
     client: Client,
-    txs: Vec<Option<AsyncTransmission<T>>>,
+    tx: Option<AsyncValue>,
     rx: async_nats::Subject,
     payload: Bytes,
     handshake: async_nats::Subscriber,
 }
 
-impl<T> InvocationPre<T> {
+impl InvocationPre {
     pub fn payload(&self) -> &Bytes {
         &self.payload
     }
@@ -381,10 +376,7 @@ impl<T> InvocationPre<T> {
     }
 }
 
-impl<T> InvocationPre<T>
-where
-    T: Encode<T> + Send + 'static,
-{
+impl InvocationPre {
     #[instrument(level = "trace", skip_all)]
     pub async fn invoke(
         mut self,
@@ -453,35 +445,26 @@ where
                 let tx = Transmitter {
                     nats: self.client.nats,
                 };
-                let txs: FuturesUnordered<_> = zip(0.., self.txs)
-                    .filter_map(|(i, v)| {
-                        let v = v?;
-                        Some((i, v))
-                    })
-                    .map(|(i, v)| {
-                        let reply = reply
-                            .as_ref()
-                            .context("peer did not specify a reply inbox")?;
-                        let reply = reply.child(Some(i));
-                        let tx = tx.clone();
-                        let fut: Pin<Box<dyn Future<Output = _> + Send>> = Box::pin(async move {
-                            tx.transmit_async(reply, v).await.with_context(|| {
-                                format!("failed to transmit asynchronous parameter {i}")
-                            })
-                        });
-                        Ok(fut)
-                    })
-                    .collect::<anyhow::Result<_>>()?;
                 try_join!(
                     async {
-                        try_join_all(txs).await?;
-                        Ok(())
+                        if let Some(v) = self.tx {
+                            let reply = reply
+                                .as_ref()
+                                .context("peer did not specify a reply inbox")?;
+                            tx.transmit_async(reply.clone(), v)
+                                .await
+                                .context("failed to transmit async parameters")
+                        } else {
+                            Ok(())
+                        }
                     },
                     async {
                         if !self.payload.is_empty() {
                             trace!(payload = ?self.payload, "transmit payload tail");
-                            let reply = reply.context("peer did not specify a reply inbox")?;
-                            tx.transmit(reply, self.payload)
+                            let reply = reply
+                                .as_ref()
+                                .context("peer did not specify a reply inbox")?;
+                            tx.transmit(reply.clone(), self.payload)
                                 .await
                                 .context("failed to send parameter payload to peer")
                         } else {

@@ -6,6 +6,7 @@ use core::iter::zip;
 use core::pin::{pin, Pin};
 use core::task::{self, Poll};
 
+use core::time::Duration;
 use std::error::Error;
 use std::sync::Arc;
 
@@ -34,6 +35,35 @@ pub trait Transmitter {
         subject: Self::Subject,
         payload: Bytes,
     ) -> Result<(), Self::PublishError>;
+
+    async fn transmit_static(
+        &self,
+        subject: Self::Subject,
+        payload: impl Encode,
+    ) -> anyhow::Result<()> {
+        let mut buf = BytesMut::default();
+        let tx = payload
+            .encode(&mut buf)
+            .await
+            .context("failed to encode value")?;
+        try_join!(
+            async {
+                if let Some(tx) = tx {
+                    self.transmit_async(subject.clone(), tx)
+                        .await
+                        .context("failed to transmit asynchronous value")?;
+                }
+                Ok(())
+            },
+            async {
+                trace!("encode tuple value");
+                self.transmit(subject.clone(), buf.freeze())
+                    .await
+                    .context("failed to transmit value")
+            },
+        )?;
+        Ok(())
+    }
 
     #[instrument(level = "trace", ret, skip_all)]
     async fn transmit_tuple_dynamic<T>(
@@ -82,18 +112,13 @@ pub trait Transmitter {
     }
 
     #[instrument(level = "trace", ret, skip_all)]
-    async fn transmit_async<V>(
+    async fn transmit_async(
         &self,
         subject: Self::Subject,
-        value: AsyncTransmission<V>,
-    ) -> anyhow::Result<()>
-    where
-        V: Encode<V> + Send,
-    {
+        value: AsyncValue,
+    ) -> anyhow::Result<()> {
         match value {
-            AsyncTransmission::List(nested)
-            | AsyncTransmission::Record(nested)
-            | AsyncTransmission::Tuple(nested) => {
+            AsyncValue::List(nested) | AsyncValue::Record(nested) | AsyncValue::Tuple(nested) => {
                 let nested: FuturesUnordered<_> = zip(0.., nested)
                     .filter_map(|(i, v)| {
                         let v = v?;
@@ -110,7 +135,7 @@ pub trait Transmitter {
                 try_join_all(nested).await?;
                 Ok(())
             }
-            AsyncTransmission::Variant {
+            AsyncValue::Variant {
                 discriminant,
                 nested,
             } => {
@@ -118,25 +143,25 @@ pub trait Transmitter {
                 self.transmit_async(subject.child(Some(discriminant)), *nested)
                     .await
             }
-            AsyncTransmission::Option(nested) => {
+            AsyncValue::Option(nested) => {
                 trace!("transmit asynchronous option value");
                 self.transmit_async(subject.child(Some(1)), *nested)
                     .await
                     .context("failed to transmit asynchronous `option::some` value")
             }
-            AsyncTransmission::ResultOk(nested) => {
+            AsyncValue::ResultOk(nested) => {
                 trace!("transmit asynchronous result::ok value");
                 self.transmit_async(subject.child(Some(0)), *nested)
                     .await
                     .context("failed to transmit asynchronous `result::ok` value")
             }
-            AsyncTransmission::ResultErr(nested) => {
+            AsyncValue::ResultErr(nested) => {
                 trace!("transmit asynchronous result::err value");
                 self.transmit_async(subject.child(Some(1)), *nested)
                     .await
                     .context("failed to transmit asynchronous `result::err` value")
             }
-            AsyncTransmission::Future(v) => {
+            AsyncValue::Future(v) => {
                 if let Some(v) = v.await.context("failed to acquire future value")? {
                     let mut payload = BytesMut::new();
                     trace!("encode nested future value");
@@ -171,7 +196,7 @@ pub trait Transmitter {
                         .context("failed to transmit value to peer")
                 }
             }
-            AsyncTransmission::Stream(mut v) => {
+            AsyncValue::Stream(mut v) => {
                 // TODO: Batch items
                 let mut i = 0;
                 loop {
@@ -408,6 +433,135 @@ pub trait Subject {
     fn child(&self, i: Option<u32>) -> Self;
 }
 
+/// Defines how nested async value subscriptions are top be established.
+/// [`EncodeSync`] implementations receive an implementation of this trait.
+#[async_trait]
+pub trait Subscribe: Sized {
+    async fn subscribe<T: Subscriber + Send + Sync>(
+        _subscriber: &T,
+        _subject: T::Subject,
+    ) -> Result<Option<AsyncSubscription<T::Stream>>, T::SubscribeError>;
+}
+
+#[async_trait]
+impl<A> Subscribe for Option<A>
+where
+    A: Subscribe,
+{
+    #[instrument(level = "trace", skip_all)]
+    async fn subscribe<T: Subscriber + Send + Sync>(
+        subscriber: &T,
+        subject: T::Subject,
+    ) -> Result<Option<AsyncSubscription<T::Stream>>, T::SubscribeError> {
+        let a = A::subscribe(subscriber, subject.child(Some(0))).await?;
+        Ok(a.map(Box::new).map(AsyncSubscription::Option))
+    }
+}
+
+#[async_trait]
+impl<O, E> Subscribe for Result<O, E>
+where
+    O: Subscribe,
+    E: Subscribe,
+{
+    #[instrument(level = "trace", skip_all)]
+    async fn subscribe<T: Subscriber + Send + Sync>(
+        subscriber: &T,
+        subject: T::Subject,
+    ) -> Result<Option<AsyncSubscription<T::Stream>>, T::SubscribeError> {
+        let (ok, err) = try_join!(
+            O::subscribe(subscriber, subject.child(Some(0))),
+            E::subscribe(subscriber, subject.child(Some(1))),
+        )?;
+        Ok(
+            (ok.is_some() || err.is_some()).then_some(AsyncSubscription::Result {
+                ok: ok.map(Box::new),
+                err: err.map(Box::new),
+            }),
+        )
+    }
+}
+
+#[async_trait]
+impl<A> Subscribe for (A,)
+where
+    A: Subscribe,
+{
+    #[instrument(level = "trace", skip_all)]
+    async fn subscribe<T: Subscriber + Send + Sync>(
+        subscriber: &T,
+        subject: T::Subject,
+    ) -> Result<Option<AsyncSubscription<T::Stream>>, T::SubscribeError> {
+        let a = A::subscribe(subscriber, subject.child(Some(0))).await?;
+        Ok(a.is_some().then(|| AsyncSubscription::Tuple(vec![a])))
+    }
+}
+
+#[async_trait]
+impl<A, B> Subscribe for (A, B)
+where
+    A: Subscribe,
+    B: Subscribe,
+{
+    #[instrument(level = "trace", skip_all)]
+    async fn subscribe<T: Subscriber + Send + Sync>(
+        subscriber: &T,
+        subject: T::Subject,
+    ) -> Result<Option<AsyncSubscription<T::Stream>>, T::SubscribeError> {
+        let (a, b) = try_join!(
+            A::subscribe(subscriber, subject.child(Some(0))),
+            B::subscribe(subscriber, subject.child(Some(1))),
+        )?;
+        Ok((a.is_some() || b.is_some()).then(|| AsyncSubscription::Tuple(vec![a, b])))
+    }
+}
+
+#[async_trait]
+impl<A, B, C> Subscribe for (A, B, C)
+where
+    A: Subscribe,
+    B: Subscribe,
+    C: Subscribe,
+{
+    #[instrument(level = "trace", skip_all)]
+    async fn subscribe<T: Subscriber + Send + Sync>(
+        subscriber: &T,
+        subject: T::Subject,
+    ) -> Result<Option<AsyncSubscription<T::Stream>>, T::SubscribeError> {
+        let (a, b, c) = try_join!(
+            A::subscribe(subscriber, subject.child(Some(0))),
+            B::subscribe(subscriber, subject.child(Some(1))),
+            C::subscribe(subscriber, subject.child(Some(2))),
+        )?;
+        Ok((a.is_some() || b.is_some() || c.is_some())
+            .then(|| AsyncSubscription::Tuple(vec![a, b, c])))
+    }
+}
+
+#[async_trait]
+impl<A, B, C, D> Subscribe for (A, B, C, D)
+where
+    A: Subscribe,
+    B: Subscribe,
+    C: Subscribe,
+    D: Subscribe,
+{
+    #[instrument(level = "trace", skip_all)]
+    async fn subscribe<T: Subscriber + Send + Sync>(
+        subscriber: &T,
+        subject: T::Subject,
+    ) -> Result<Option<AsyncSubscription<T::Stream>>, T::SubscribeError> {
+        let (a, b, c, d) = try_join!(
+            A::subscribe(subscriber, subject.child(Some(0))),
+            B::subscribe(subscriber, subject.child(Some(1))),
+            C::subscribe(subscriber, subject.child(Some(2))),
+            D::subscribe(subscriber, subject.child(Some(3))),
+        )?;
+        Ok((a.is_some() || b.is_some() || c.is_some() || d.is_some())
+            .then(|| AsyncSubscription::Tuple(vec![a, b, c, d])))
+    }
+}
+
 #[async_trait]
 pub trait Subscriber {
     type Subject: Subject + Send + Sync + Clone;
@@ -468,7 +622,7 @@ pub trait Subscriber {
             }
             Type::Result { ok, err } => {
                 let nested = self
-                    .subscribe_async_array_optional(
+                    .subscribe_async_sized_optional(
                         &subject,
                         [
                             ok.as_ref().map(AsRef::as_ref),
@@ -503,7 +657,7 @@ pub trait Subscriber {
                 let nested = subject.child(None);
                 let (subscriber, nested) = try_join!(
                     self.subscribe(subject),
-                    self.subscribe_async_array_optional(
+                    self.subscribe_async_sized_optional(
                         &nested,
                         [
                             element.as_ref().map(AsRef::as_ref),
@@ -574,17 +728,17 @@ pub trait Subscriber {
     }
 
     #[instrument(level = "trace", skip_all)]
-    async fn subscribe_async_array<'a, const N: usize>(
+    async fn subscribe_async_sized<'a, const N: usize>(
         &self,
         subject: impl Borrow<Self::Subject> + Send,
         types: [impl Borrow<Type> + Send + Sync; N],
     ) -> Result<Option<[Option<AsyncSubscription<Self::Stream>>; N]>, Self::SubscribeError> {
-        self.subscribe_async_array_optional(subject, types.map(Some))
+        self.subscribe_async_sized_optional(subject, types.map(Some))
             .await
     }
 
     #[instrument(level = "trace", skip_all)]
-    async fn subscribe_async_array_optional<'a, const N: usize>(
+    async fn subscribe_async_sized_optional<'a, const N: usize>(
         &self,
         subject: impl Borrow<Self::Subject> + Send,
         types: [Option<impl Borrow<Type> + Send + Sync>; N],
@@ -701,45 +855,37 @@ pub trait Subscriber {
     }
 
     #[instrument(level = "trace", skip_all)]
-    async fn subscribe_tuple<'a, const N: usize>(
+    async fn subscribe_tuple(
         &self,
         subject: Self::Subject,
-        types: [&'a Type; N],
-        payload: Bytes,
-    ) -> Result<TupleReceiver<'a, N, Self::Stream>, Self::SubscribeError> {
-        let nested = self.subscribe_async_array(subject.clone(), types);
-        let rx = self.subscribe(subject);
-        let (rx, nested) = try_join!(rx, nested)?;
-        Ok(TupleReceiver {
-            rx,
-            nested,
-            types,
-            payload,
-        })
-    }
-
-    #[instrument(level = "trace", skip_all)]
-    async fn subscribe_tuple_dynamic<'a>(
-        &self,
-        subject: Self::Subject,
-        types: &'a [Type],
-        payload: Bytes,
-    ) -> Result<TupleDynamicReceiver<'a, Self::Stream>, Self::SubscribeError> {
-        let nested = self.subscribe_async_iter(subject.clone(), types);
-        let rx = self.subscribe(subject);
-        let (rx, nested) = try_join!(rx, nested)?;
-        Ok(TupleDynamicReceiver {
-            rx,
-            nested: nested.unwrap_or_default(),
-            types,
-            payload,
-        })
+        types: impl IntoIterator<Item = impl Borrow<Type> + Send> + Send,
+    ) -> Result<Option<AsyncSubscription<Self::Stream>>, Self::SubscribeError> {
+        let sub = self.subscribe_async_iter(subject, types).await?;
+        Ok(sub.map(AsyncSubscription::Tuple))
     }
 }
 
-pub enum StreamItem<T> {
-    Element(Option<T>),
-    End(Option<T>),
+pub enum StreamItem<T, U> {
+    Element(T),
+    End(U),
+}
+
+/// A tuple of a dynamic size
+pub struct DynamicTuple<T>(pub Vec<T>);
+
+#[async_trait]
+impl<T> Encode for DynamicTuple<T>
+where
+    T: Encode + Send,
+{
+    async fn encode(
+        self,
+        payload: &mut (impl BufMut + Send),
+    ) -> anyhow::Result<Option<AsyncValue>> {
+        trace!("encode tuple");
+        let txs = encode_sized_iter(payload, self.0).await?;
+        Ok(txs.map(AsyncValue::Tuple))
+    }
 }
 
 pub enum Value {
@@ -768,16 +914,128 @@ pub enum Value {
     Result(Result<Option<Box<Value>>, Option<Box<Value>>>),
     Flags(u64),
     Future(Pin<Box<dyn Future<Output = anyhow::Result<Option<Value>>> + Send>>),
-    Stream(Pin<Box<dyn Stream<Item = anyhow::Result<StreamItem<Value>>> + Send>>),
+    Stream(
+        Pin<
+            Box<dyn Stream<Item = anyhow::Result<StreamItem<Option<Value>, Option<Value>>>> + Send>,
+        >,
+    ),
 }
 
-struct StreamValue<T> {
-    items: ReceiverStream<anyhow::Result<StreamItem<T>>>,
+impl From<bool> for Value {
+    fn from(v: bool) -> Self {
+        Self::Bool(v)
+    }
+}
+
+impl From<u8> for Value {
+    fn from(v: u8) -> Self {
+        Self::U8(v)
+    }
+}
+
+impl From<u16> for Value {
+    fn from(v: u16) -> Self {
+        Self::U16(v)
+    }
+}
+
+impl From<u32> for Value {
+    fn from(v: u32) -> Self {
+        Self::U32(v)
+    }
+}
+
+impl From<u64> for Value {
+    fn from(v: u64) -> Self {
+        Self::U64(v)
+    }
+}
+
+impl From<i8> for Value {
+    fn from(v: i8) -> Self {
+        Self::S8(v)
+    }
+}
+
+impl From<i16> for Value {
+    fn from(v: i16) -> Self {
+        Self::S16(v)
+    }
+}
+
+impl From<i32> for Value {
+    fn from(v: i32) -> Self {
+        Self::S32(v)
+    }
+}
+
+impl From<i64> for Value {
+    fn from(v: i64) -> Self {
+        Self::S64(v)
+    }
+}
+
+impl From<f32> for Value {
+    fn from(v: f32) -> Self {
+        Self::Float32(v)
+    }
+}
+
+impl From<f64> for Value {
+    fn from(v: f64) -> Self {
+        Self::Float64(v)
+    }
+}
+
+impl From<char> for Value {
+    fn from(v: char) -> Self {
+        Self::Char(v)
+    }
+}
+
+impl From<String> for Value {
+    fn from(v: String) -> Self {
+        Self::String(v)
+    }
+}
+
+impl From<Vec<Value>> for Value {
+    fn from(v: Vec<Value>) -> Self {
+        Self::List(v)
+    }
+}
+
+impl From<Option<Value>> for Value {
+    fn from(v: Option<Value>) -> Self {
+        Self::Option(v.map(Box::new))
+    }
+}
+
+impl From<Bytes> for Value {
+    fn from(v: Bytes) -> Self {
+        Self::List(v.into_iter().map(Value::U8).collect())
+    }
+}
+
+impl From<(Value,)> for Value {
+    fn from((a,): (Value,)) -> Self {
+        Self::Tuple(vec![a])
+    }
+}
+
+impl From<(Value, Value)> for Value {
+    fn from((a, b): (Value, Value)) -> Self {
+        Self::Tuple(vec![a, b])
+    }
+}
+
+struct StreamValue<T, U> {
+    items: ReceiverStream<anyhow::Result<StreamItem<T, U>>>,
     producer: JoinHandle<()>,
 }
 
-impl<T> Stream for StreamValue<T> {
-    type Item = anyhow::Result<StreamItem<T>>;
+impl<T, U> Stream for StreamValue<T, U> {
+    type Item = anyhow::Result<StreamItem<T, U>>;
 
     #[instrument(level = "trace", skip_all)]
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Option<Self::Item>> {
@@ -785,25 +1043,29 @@ impl<T> Stream for StreamValue<T> {
     }
 }
 
-impl<T> Drop for StreamValue<T> {
+impl<T, U> Drop for StreamValue<T, U> {
     fn drop(&mut self) {
         self.producer.abort()
     }
 }
 
-pub enum AsyncTransmission<T> {
-    List(Vec<Option<AsyncTransmission<T>>>),
-    Record(Vec<Option<AsyncTransmission<T>>>),
-    Tuple(Vec<Option<AsyncTransmission<T>>>),
+pub enum AsyncValue {
+    List(Vec<Option<AsyncValue>>),
+    Record(Vec<Option<AsyncValue>>),
+    Tuple(Vec<Option<AsyncValue>>),
     Variant {
         discriminant: u32,
-        nested: Box<AsyncTransmission<T>>,
+        nested: Box<AsyncValue>,
     },
-    Option(Box<AsyncTransmission<T>>),
-    ResultOk(Box<AsyncTransmission<T>>),
-    ResultErr(Box<AsyncTransmission<T>>),
-    Future(Pin<Box<dyn Future<Output = anyhow::Result<Option<T>>> + Send>>),
-    Stream(Pin<Box<dyn Stream<Item = anyhow::Result<StreamItem<T>>> + Send>>),
+    Option(Box<AsyncValue>),
+    ResultOk(Box<AsyncValue>),
+    ResultErr(Box<AsyncValue>),
+    Future(Pin<Box<dyn Future<Output = anyhow::Result<Option<Value>>> + Send>>),
+    Stream(
+        Pin<
+            Box<dyn Stream<Item = anyhow::Result<StreamItem<Option<Value>, Option<Value>>>> + Send>,
+        >,
+    ),
 }
 
 fn map_tuple_subscription<T>(
@@ -953,7 +1215,7 @@ pub trait Receive: Sized {
 #[async_trait]
 pub trait ReceiveContext<Ctx>: Sized
 where
-    Ctx: Send + Sync + 'static,
+    Ctx: ?Sized + Send + Sync + 'static,
 {
     async fn receive_context<T>(
         cx: &Ctx,
@@ -984,7 +1246,7 @@ where
 
     /// Receive a list
     #[instrument(level = "trace", skip_all)]
-    async fn receive_list<T>(
+    async fn receive_list_context<T>(
         cx: &Ctx,
         payload: impl Buf + Send + 'static,
         rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
@@ -1012,14 +1274,46 @@ where
         Ok((els, payload))
     }
 
-    async fn receive_stream_item<T>(
+    /// Receive a tuple
+    #[instrument(level = "trace", skip_all)]
+    async fn receive_tuple_context<'a, T, I>(
+        cx: I,
+        payload: impl Buf + Send + 'static,
+        rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
+        sub: Option<AsyncSubscription<T>>,
+    ) -> anyhow::Result<(Vec<Self>, Box<dyn Buf + Send>)>
+    where
+        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin + 'static,
+        I: IntoIterator<Item = &'a Ctx> + Send,
+        I::IntoIter: ExactSizeIterator + Send,
+    {
+        let mut sub = sub.map(AsyncSubscription::try_unwrap_tuple).transpose()?;
+        let cx = cx.into_iter();
+        trace!(len = cx.len(), "decode tuple");
+        let mut els = Vec::with_capacity(cx.len());
+        let mut payload: Box<dyn Buf + Send> = Box::new(payload);
+        for (i, cx) in cx.enumerate() {
+            trace!(i, "decode tuple element");
+            let sub = sub
+                .as_mut()
+                .and_then(|sub| sub.get_mut(i).and_then(Option::take));
+            let el;
+            (el, payload) = Self::receive_context(cx, payload, rx, sub)
+                .await
+                .with_context(|| format!("failed to decode value of tuple element {i}"))?;
+            els.push(el);
+        }
+        Ok((els, payload))
+    }
+
+    async fn receive_stream_item_context<T>(
         element_cx: Option<&Ctx>,
         end_cx: Option<&Ctx>,
         payload: impl Buf + Send + 'static,
         rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
         nested_element: Option<AsyncSubscription<DemuxStream>>,
         nested_end: &mut Option<AsyncSubscription<T>>,
-    ) -> anyhow::Result<(StreamItem<Self>, Box<dyn Buf + Send>)>
+    ) -> anyhow::Result<(StreamItem<Option<Self>, Option<Self>>, Box<dyn Buf + Send>)>
     where
         T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin + 'static,
     {
@@ -1038,6 +1332,31 @@ where
             }
             _ => bail!("invalid `stream` variant"),
         }
+    }
+}
+
+pub async fn receive_stream_item<A, B, T>(
+    payload: impl Buf + Send + 'static,
+    rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
+    nested_element: Option<AsyncSubscription<DemuxStream>>,
+    nested_end: &mut Option<AsyncSubscription<T>>,
+) -> anyhow::Result<(StreamItem<A, B>, Box<dyn Buf + Send>)>
+where
+    A: Receive,
+    B: Receive,
+    T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin + 'static,
+{
+    let mut payload = receive_at_least(payload, rx, 1).await?;
+    match payload.get_u8() {
+        0 => {
+            let (v, payload) = B::receive(payload, rx, nested_end.take()).await?;
+            Ok((StreamItem::End(v), payload))
+        }
+        1 => {
+            let (v, payload) = A::receive(payload, rx, nested_element).await?;
+            Ok((StreamItem::Element(v), payload))
+        }
+        _ => bail!("invalid `stream` variant"),
     }
 }
 
@@ -1322,6 +1641,23 @@ impl Receive for String {
 }
 
 #[async_trait]
+impl Receive for Duration {
+    #[instrument(level = "trace", skip_all)]
+    async fn receive<T>(
+        payload: impl Buf + Send + 'static,
+        rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
+        _sub: Option<AsyncSubscription<T>>,
+    ) -> anyhow::Result<(Self, Box<dyn Buf + Send>)>
+    where
+        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin + 'static,
+    {
+        trace!("decode duration");
+        let (v, payload) = u64::receive_sync(payload, rx).await?;
+        Ok((Duration::from_nanos(v), payload))
+    }
+}
+
+#[async_trait]
 impl<E> Receive for Vec<E>
 where
     E: Receive + Send,
@@ -1477,6 +1813,130 @@ where
                 Ok((Box::new(ready(Ok(v))), payload))
             }
             _ => bail!("invalid `future` variant"),
+        }
+    }
+}
+
+#[async_trait]
+impl<A, B> Receive for Box<dyn Stream<Item = anyhow::Result<StreamItem<A, B>>> + Send + Unpin>
+where
+    A: Receive + Send + 'static,
+    B: Receive + Send + 'static,
+{
+    #[instrument(level = "trace", skip_all)]
+    async fn receive<T>(
+        payload: impl Buf + Send + 'static,
+        rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
+        sub: Option<AsyncSubscription<T>>,
+    ) -> anyhow::Result<(Self, Box<dyn Buf + Send>)>
+    where
+        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin + 'static,
+    {
+        let Some((mut subscriber, mut nested_element, mut nested_end)) =
+            sub.map(AsyncSubscription::try_unwrap_stream).transpose()?
+        else {
+            bail!("stream subscription type mismatch")
+        };
+        trace!("decode stream");
+        let mut payload = receive_at_least(payload, rx, 1).await?;
+        trace!(i = 0, "decode stream item variant");
+        let byte = payload.copy_to_bytes(1);
+        match byte.first().unwrap() {
+            0 => {
+                let (items_tx, items_rx) = mpsc::channel(1);
+                let producer = spawn(async move {
+                    let mut payload: Box<dyn Buf + Send> = Box::new(Bytes::new());
+                    for i in 0.. {
+                        match receive_stream_item(
+                            payload,
+                            &mut subscriber,
+                            nested_element.as_mut().map(|sub| sub.select(i)),
+                            &mut nested_end,
+                        )
+                        .await
+                        {
+                            Ok((StreamItem::Element(element), buf)) => {
+                                payload = buf;
+
+                                if let Err(err) =
+                                    items_tx.send(Ok(StreamItem::Element(element))).await
+                                {
+                                    trace!(?err, "item receiver closed");
+                                    return;
+                                }
+                            }
+                            Ok((StreamItem::End(end), _)) => {
+                                if let Err(err) = items_tx.send(Ok(StreamItem::End(end))).await {
+                                    trace!(?err, "item receiver closed");
+                                    return;
+                                }
+                                return;
+                            }
+                            Err(err) => {
+                                trace!(?err, "stream producer encountered error");
+                                if let Err(err) = items_tx.send(Err(err)).await {
+                                    trace!(?err, "item receiver closed");
+                                }
+                                return;
+                            }
+                        }
+                    }
+                });
+                Ok((
+                    Box::new(StreamValue {
+                        producer,
+                        items: ReceiverStream::new(items_rx),
+                    }),
+                    payload,
+                ))
+            }
+            1 => {
+                trace!(i = 0, "decode stream element");
+                let sub = nested_element.as_mut().map(|sub| sub.select(0));
+                let (element, payload) = A::receive(payload, rx, sub)
+                    .await
+                    .context("failed to decode value of stream element 0")?;
+                let mut payload = receive_at_least(payload, rx, 1).await?;
+                trace!(i = 1, "decode stream item variant");
+                ensure!(payload.get_u8() == 0);
+                trace!("decode stream end");
+                let (end, payload) = B::receive(payload, rx, nested_end).await?;
+                Ok((
+                    Box::new(stream::iter([
+                        Ok(StreamItem::Element(element)),
+                        Ok(StreamItem::End(end)),
+                    ])),
+                    payload,
+                ))
+            }
+            _ => {
+                trace!("decode stream length");
+                let (len, mut payload) = receive_leb128_unsigned(byte.chain(payload), rx)
+                    .await
+                    .context("failed to decode stream length")?;
+                trace!(len, "decode stream elements");
+                let cap = len
+                    .try_into()
+                    .context("stream element length does not fit in usize")?;
+                let mut els = Vec::with_capacity(cap);
+                for i in 0..len {
+                    trace!(i, "decode stream element");
+                    let sub = nested_element.as_mut().map(|sub| sub.select(i));
+                    let el;
+                    (el, payload) = A::receive(payload, rx, sub)
+                        .await
+                        .with_context(|| format!("failed to decode value of list element {i}"))?;
+                    els.push(Ok(StreamItem::Element(el)));
+                }
+                ensure!(payload.get_u8() == 0);
+                let (end, payload) = B::receive(payload, rx, nested_end).await?;
+                Ok((
+                    Box::new(stream::iter(
+                        els.into_iter().chain([Ok(StreamItem::End(end))]),
+                    )),
+                    payload,
+                ))
+            }
         }
     }
 }
@@ -1727,7 +2187,7 @@ impl ReceiveContext<Type> for Value {
                 Ok((Self::String(v.into()), payload))
             }
             Type::List(ty) => {
-                let (els, payload) = Self::receive_list(ty, payload, rx, sub).await?;
+                let (els, payload) = Self::receive_list_context(ty, payload, rx, sub).await?;
                 Ok((Self::List(els), payload))
             }
             Type::Record(tys) => {
@@ -1934,7 +2394,7 @@ impl ReceiveContext<Type> for Value {
                         let producer = spawn(async move {
                             let mut payload: Box<dyn Buf + Send> = Box::new(Bytes::new());
                             for i in 0.. {
-                                match Self::receive_stream_item(
+                                match Self::receive_stream_item_context(
                                     element.as_deref(),
                                     end.as_deref(),
                                     payload,
@@ -2079,123 +2539,493 @@ impl ReceiveContext<Type> for Value {
 }
 
 #[async_trait]
-pub trait Encode<T> {
-    async fn encode(
-        self,
-        payload: &mut (impl BufMut + Send),
-    ) -> anyhow::Result<Option<AsyncTransmission<T>>>;
+pub trait Encode: Send {
+    async fn encode(self, payload: &mut (impl BufMut + Send))
+        -> anyhow::Result<Option<AsyncValue>>;
 }
 
 #[async_trait]
-impl Encode<Value> for Value {
+impl<T> Encode for T
+where
+    T: EncodeSync + Send,
+{
+    async fn encode(
+        self,
+        payload: &mut (impl BufMut + Send),
+    ) -> anyhow::Result<Option<AsyncValue>> {
+        self.encode_sync(payload)?;
+        Ok(None)
+    }
+}
+
+pub trait EncodeSync: Sized {
+    fn encode_sync(self, payload: impl BufMut) -> anyhow::Result<()>;
+
+    fn encode_sync_option(v: Option<Self>, mut payload: impl BufMut) -> anyhow::Result<()> {
+        if let Some(v) = v {
+            payload.put_u8(1);
+            v.encode_sync(payload)
+        } else {
+            payload.put_u8(0);
+            Ok(())
+        }
+    }
+
+    fn encode_sync_list(vs: Vec<Self>, mut payload: impl BufMut) -> anyhow::Result<()> {
+        trace!(len = vs.len(), "encode list length");
+        let len = vs
+            .len()
+            .try_into()
+            .context("list length does not fit in u64")?;
+        leb128::write::unsigned(&mut (&mut payload).writer(), len)
+            .context("failed to encode list length")?;
+        for v in vs {
+            trace!("encode list element");
+            v.encode_sync(&mut payload)?;
+        }
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl<V: EncodeSync> Subscribe for V {
+    async fn subscribe<T: Subscriber + Send + Sync>(
+        _subscriber: &T,
+        _subject: T::Subject,
+    ) -> Result<Option<AsyncSubscription<T::Stream>>, T::SubscribeError> {
+        Ok(None)
+    }
+}
+
+impl EncodeSync for () {
+    #[instrument(level = "trace", skip_all)]
+    fn encode_sync(self, _payload: impl BufMut) -> anyhow::Result<()> {
+        Ok(())
+    }
+}
+
+impl EncodeSync for bool {
+    #[instrument(level = "trace", skip_all)]
+    fn encode_sync(self, mut payload: impl BufMut) -> anyhow::Result<()> {
+        trace!(v = self, "encode bool");
+        payload.put_u8(if self { 1 } else { 0 });
+        Ok(())
+    }
+}
+
+impl EncodeSync for u8 {
+    #[instrument(level = "trace", skip_all)]
+    fn encode_sync(self, mut payload: impl BufMut) -> anyhow::Result<()> {
+        trace!(v = self, "encode u8");
+        payload.put_u8(self);
+        Ok(())
+    }
+}
+
+impl EncodeSync for u16 {
+    #[instrument(level = "trace", skip_all)]
+    fn encode_sync(self, payload: impl BufMut) -> anyhow::Result<()> {
+        trace!(v = self, "encode u16");
+        leb128::write::unsigned(&mut payload.writer(), self.into())
+            .context("failed to encode u16")?;
+        Ok(())
+    }
+}
+
+impl EncodeSync for u32 {
+    #[instrument(level = "trace", skip_all)]
+    fn encode_sync(self, payload: impl BufMut) -> anyhow::Result<()> {
+        trace!(v = self, "encode u32");
+        leb128::write::unsigned(&mut payload.writer(), self.into())
+            .context("failed to encode u32")?;
+        Ok(())
+    }
+}
+
+impl EncodeSync for u64 {
+    #[instrument(level = "trace", skip_all)]
+    fn encode_sync(self, payload: impl BufMut) -> anyhow::Result<()> {
+        trace!(v = self, "encode u64");
+        leb128::write::unsigned(&mut payload.writer(), self).context("failed to encode u64")?;
+        Ok(())
+    }
+}
+
+impl EncodeSync for i8 {
+    #[instrument(level = "trace", skip_all)]
+    fn encode_sync(self, mut payload: impl BufMut) -> anyhow::Result<()> {
+        trace!(v = self, "encode s8");
+        payload.put_i8(self);
+        Ok(())
+    }
+}
+
+impl EncodeSync for i16 {
+    #[instrument(level = "trace", skip_all)]
+    fn encode_sync(self, payload: impl BufMut) -> anyhow::Result<()> {
+        trace!(v = self, "encode s16");
+        leb128::write::signed(&mut payload.writer(), self.into())
+            .context("failed to encode s16")?;
+        Ok(())
+    }
+}
+
+impl EncodeSync for i32 {
+    #[instrument(level = "trace", skip_all)]
+    fn encode_sync(self, payload: impl BufMut) -> anyhow::Result<()> {
+        trace!(v = self, "encode s32");
+        leb128::write::signed(&mut payload.writer(), self.into())
+            .context("failed to encode s32")?;
+        Ok(())
+    }
+}
+
+impl EncodeSync for i64 {
+    #[instrument(level = "trace", skip_all)]
+    fn encode_sync(self, payload: impl BufMut) -> anyhow::Result<()> {
+        trace!(v = self, "encode s64");
+        leb128::write::signed(&mut payload.writer(), self).context("failed to encode s64")?;
+        Ok(())
+    }
+}
+
+impl EncodeSync for f32 {
+    #[instrument(level = "trace", skip_all)]
+    fn encode_sync(self, mut payload: impl BufMut) -> anyhow::Result<()> {
+        trace!(v = self, "encode float32");
+        payload.put_f32_le(self);
+        Ok(())
+    }
+}
+
+impl EncodeSync for f64 {
+    #[instrument(level = "trace", skip_all)]
+    fn encode_sync(self, mut payload: impl BufMut) -> anyhow::Result<()> {
+        trace!(v = self, "encode float64");
+        payload.put_f64_le(self);
+        Ok(())
+    }
+}
+
+impl EncodeSync for char {
+    #[instrument(level = "trace", skip_all)]
+    fn encode_sync(self, payload: impl BufMut) -> anyhow::Result<()> {
+        trace!(v = ?self, "encode char");
+        leb128::write::unsigned(&mut payload.writer(), self.into())
+            .context("failed to encode char")?;
+        Ok(())
+    }
+}
+
+impl EncodeSync for String {
+    #[instrument(level = "trace", skip_all)]
+    fn encode_sync(self, mut payload: impl BufMut) -> anyhow::Result<()> {
+        trace!(len = self.len(), "encode string length");
+        let len = self
+            .len()
+            .try_into()
+            .context("string length does not fit in u64")?;
+        leb128::write::unsigned(&mut (&mut payload).writer(), len)
+            .context("failed to encode string length")?;
+        trace!(self, "encode string value");
+        payload.put_slice(self.as_bytes());
+        Ok(())
+    }
+}
+
+impl EncodeSync for Duration {
+    #[instrument(level = "trace", skip_all)]
+    fn encode_sync(self, payload: impl BufMut) -> anyhow::Result<()> {
+        trace!(v = ?self, "encode duration");
+        let v: u64 = self
+            .as_nanos()
+            .try_into()
+            .context("duration nanosecond count does not fit in u64")?;
+        v.encode_sync(payload)
+    }
+}
+
+impl EncodeSync for Bytes {
+    #[instrument(level = "trace", skip_all)]
+    fn encode_sync(self, mut payload: impl BufMut) -> anyhow::Result<()> {
+        trace!(len = self.len(), "encode byte list length");
+        let len = self
+            .len()
+            .try_into()
+            .context("byte list length does not fit in u64")?;
+        leb128::write::unsigned(&mut (&mut payload).writer(), len)
+            .context("failed to encode byte list length")?;
+        payload.put(self);
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl<T> Encode for Arc<T>
+where
+    T: Encode + Send + Sync,
+{
     #[instrument(level = "trace", skip_all)]
     async fn encode(
         self,
         payload: &mut (impl BufMut + Send),
-    ) -> anyhow::Result<Option<AsyncTransmission<Value>>> {
+    ) -> anyhow::Result<Option<AsyncValue>> {
+        let v = Arc::into_inner(self).context("failed to unwrap Arc")?;
+        v.encode(payload).await
+    }
+}
+
+#[async_trait]
+impl<T> Encode for Option<T>
+where
+    T: Encode + Send,
+{
+    #[instrument(level = "trace", skip_all)]
+    async fn encode(
+        self,
+        payload: &mut (impl BufMut + Send),
+    ) -> anyhow::Result<Option<AsyncValue>> {
         match self {
-            Self::Bool(false) => {
-                trace!(v = false, "encode bool");
+            None => {
+                trace!("encode option::none");
                 payload.put_u8(0);
                 Ok(None)
             }
-            Self::Bool(true) => {
-                trace!(v = true, "encode bool");
+            Some(v) => {
+                trace!("encode option::some");
                 payload.put_u8(1);
-                Ok(None)
+                let tx = v.encode(payload).await?;
+                Ok(tx.map(Box::new).map(AsyncValue::Option))
             }
-            Self::U8(v) => {
-                trace!(v, "encode u8");
-                payload.put_u8(v);
-                Ok(None)
+        }
+    }
+}
+
+#[async_trait]
+impl<T, U> Encode for Result<T, U>
+where
+    T: Encode + Send,
+    U: Encode + Send,
+{
+    #[instrument(level = "trace", skip_all)]
+    async fn encode(
+        self,
+        payload: &mut (impl BufMut + Send),
+    ) -> anyhow::Result<Option<AsyncValue>> {
+        match self {
+            Ok(v) => {
+                trace!("encode nested result::ok");
+                payload.put_u8(0);
+                let tx = v.encode(payload).await?;
+                Ok(tx.map(Box::new).map(AsyncValue::ResultOk))
             }
-            Self::U16(v) => {
-                trace!(v, "encode u16");
-                leb128::write::unsigned(&mut payload.writer(), v.into())
-                    .context("failed to encode u16")?;
-                Ok(None)
+            Err(v) => {
+                trace!("encode nested result::err");
+                payload.put_u8(1);
+                let tx = v.encode(payload).await?;
+                Ok(tx.map(Box::new).map(AsyncValue::ResultErr))
             }
-            Self::U32(v) => {
-                trace!(v, "encode u32");
-                leb128::write::unsigned(&mut payload.writer(), v.into())
-                    .context("failed to encode u32")?;
-                Ok(None)
-            }
-            Self::U64(v) => {
-                trace!(v, "encode u64");
-                leb128::write::unsigned(&mut payload.writer(), v)
-                    .context("failed to encode u64")?;
-                Ok(None)
-            }
-            Self::S8(v) => {
-                trace!(v, "encode s8");
-                payload.put_i8(v);
-                Ok(None)
-            }
-            Self::S16(v) => {
-                trace!(v, "encode s16");
-                leb128::write::signed(&mut payload.writer(), v.into())
-                    .context("failed to encode s16")?;
-                Ok(None)
-            }
-            Self::S32(v) => {
-                trace!(v, "encode s32");
-                leb128::write::signed(&mut payload.writer(), v.into())
-                    .context("failed to encode s32")?;
-                Ok(None)
-            }
-            Self::S64(v) => {
-                trace!(v, "encode s64");
-                leb128::write::signed(&mut payload.writer(), v).context("failed to encode s64")?;
-                Ok(None)
-            }
-            Self::Float32(v) => {
-                trace!(v, "encode float32");
-                payload.put_f32_le(v);
-                Ok(None)
-            }
-            Self::Float64(v) => {
-                trace!(v, "encode float64");
-                payload.put_f64_le(v);
-                Ok(None)
-            }
-            Self::Char(v) => {
-                trace!(?v, "encode char");
-                leb128::write::unsigned(&mut payload.writer(), v.into())
-                    .context("failed to encode char")?;
-                Ok(None)
-            }
-            Self::String(v) => {
-                trace!(len = v.len(), "encode string length");
-                let len = v
-                    .len()
-                    .try_into()
-                    .context("string length does not fit in u64")?;
-                leb128::write::unsigned(&mut payload.writer(), len)
-                    .context("failed to encode string length")?;
-                trace!(v, "encode string value");
-                payload.put_slice(v.as_bytes());
-                Ok(None)
-            }
-            Self::List(vs) => {
-                trace!("encode list length");
-                let len = vs
-                    .len()
-                    .try_into()
-                    .context("list length does not fit in u64")?;
-                leb128::write::unsigned(&mut payload.writer(), len)
-                    .context("failed to encode list length")?;
-                let mut txs = Vec::with_capacity(vs.len());
-                for v in vs {
-                    trace!("encode list element");
-                    let v = v.encode(payload).await?;
-                    txs.push(v)
-                }
-                Ok(txs
-                    .iter()
-                    .any(Option::is_some)
-                    .then_some(AsyncTransmission::List(txs)))
-            }
+        }
+    }
+}
+
+#[async_trait]
+impl<T> Encode for Vec<T>
+where
+    T: Encode + Send,
+{
+    #[instrument(level = "trace", skip_all)]
+    async fn encode(
+        self,
+        payload: &mut (impl BufMut + Send),
+    ) -> anyhow::Result<Option<AsyncValue>> {
+        trace!(len = self.len(), "encode list length");
+        let len = self
+            .len()
+            .try_into()
+            .context("list length does not fit in u64")?;
+        leb128::write::unsigned(&mut payload.writer(), len)
+            .context("failed to encode list length")?;
+        let mut txs = Vec::with_capacity(self.len());
+        for v in self {
+            trace!("encode list element");
+            let v = v.encode(payload).await?;
+            txs.push(v)
+        }
+        Ok(txs
+            .iter()
+            .any(Option::is_some)
+            .then_some(AsyncValue::List(txs)))
+    }
+}
+
+//#[async_trait]
+//impl<T, U> Encode for Pin<Box<dyn Future<Output = anyhow::Result<U>>>>
+//where
+//    U: Encode + Send,
+//{
+//    #[instrument(level = "trace", skip_all)]
+//    async fn encode(
+//        self,
+//        payload: &mut (impl BufMut + Send),
+//    ) -> anyhow::Result<Option<AsyncTransmission>> {
+//        trace!("encode future");
+//        if let Some(v) = poll_immediate(&mut self).await {
+//            trace!("encode ready future value");
+//            payload.put_u8(1);
+//            let v = v.context("failed to acquire value of the future")?;
+//            v.encode(payload).await
+//        } else {
+//            trace!("encode pending future value");
+//            payload.put_u8(0);
+//            Ok(Some(AsyncTransmission::Future(self)))
+//        }
+//    }
+//}
+
+#[async_trait]
+impl<A> Encode for (A,)
+where
+    A: Encode + Send,
+{
+    #[instrument(level = "trace", skip_all)]
+    async fn encode(
+        self,
+        payload: &mut (impl BufMut + Send),
+    ) -> anyhow::Result<Option<AsyncValue>> {
+        trace!("encode 1 element tuple");
+        let (a,) = self;
+        let a = a.encode(payload).await?;
+        Ok(a.is_some().then(|| AsyncValue::Tuple(vec![a])))
+    }
+}
+
+#[async_trait]
+impl<A, B> Encode for (A, B)
+where
+    A: Encode + Send,
+    B: Encode + Send,
+{
+    #[instrument(level = "trace", skip_all)]
+    async fn encode(
+        self,
+        payload: &mut (impl BufMut + Send),
+    ) -> anyhow::Result<Option<AsyncValue>> {
+        trace!("encode 2 element tuple");
+        let (a, b) = self;
+        let a = a.encode(payload).await?;
+        let b = b.encode(payload).await?;
+        let txs = [a, b];
+        Ok(txs
+            .iter()
+            .any(Option::is_some)
+            .then(|| AsyncValue::Tuple(txs.into())))
+    }
+}
+
+#[async_trait]
+impl<A, B, C> Encode for (A, B, C)
+where
+    A: Encode + Send,
+    B: Encode + Send,
+    C: Encode + Send,
+{
+    #[instrument(level = "trace", skip_all)]
+    async fn encode(
+        self,
+        payload: &mut (impl BufMut + Send),
+    ) -> anyhow::Result<Option<AsyncValue>> {
+        trace!("encode 3 element tuple");
+        let (a, b, c) = self;
+        let a = a.encode(payload).await?;
+        let b = b.encode(payload).await?;
+        let c = c.encode(payload).await?;
+        let txs = [a, b, c];
+        Ok(txs
+            .iter()
+            .any(Option::is_some)
+            .then(|| AsyncValue::Tuple(txs.into())))
+    }
+}
+
+#[async_trait]
+impl<A, B, C, D> Encode for (A, B, C, D)
+where
+    A: Encode + Send,
+    B: Encode + Send,
+    C: Encode + Send,
+    D: Encode + Send,
+{
+    #[instrument(level = "trace", skip_all)]
+    async fn encode(
+        self,
+        payload: &mut (impl BufMut + Send),
+    ) -> anyhow::Result<Option<AsyncValue>> {
+        trace!("encode 4 element tuple");
+        let (a, b, c, d) = self;
+        let a = a.encode(payload).await?;
+        let b = b.encode(payload).await?;
+        let c = c.encode(payload).await?;
+        let d = d.encode(payload).await?;
+        let txs = [a, b, c, d];
+        Ok(txs
+            .iter()
+            .any(Option::is_some)
+            .then(|| AsyncValue::Tuple(txs.into())))
+    }
+}
+
+#[instrument(level = "trace", skip(payload))]
+pub fn encode_discriminant(payload: impl BufMut, discriminant: u32) -> anyhow::Result<()> {
+    trace!("encode discriminant");
+    leb128::write::unsigned(&mut payload.writer(), discriminant.into())
+        .context("failed to encode discriminant")?;
+    Ok(())
+}
+
+#[instrument(level = "trace", skip_all)]
+pub async fn encode_sized_iter<T, U>(
+    mut payload: impl BufMut + Send,
+    it: T,
+) -> anyhow::Result<Option<Vec<Option<AsyncValue>>>>
+where
+    T: IntoIterator<Item = U>,
+    T::IntoIter: ExactSizeIterator<Item = U>,
+    U: Encode,
+{
+    trace!("encode statically-sized iterator");
+    let it = it.into_iter();
+    let mut txs = Vec::with_capacity(it.len());
+    for v in it {
+        trace!("encode iterator element");
+        let v = v.encode(&mut payload).await?;
+        txs.push(v)
+    }
+    Ok(txs.iter().any(Option::is_some).then_some(txs))
+}
+
+#[async_trait]
+impl Encode for Value {
+    #[instrument(level = "trace", skip_all)]
+    async fn encode(
+        self,
+        mut payload: &mut (impl BufMut + Send),
+    ) -> anyhow::Result<Option<AsyncValue>> {
+        match self {
+            Self::Bool(v) => v.encode(payload).await,
+            Self::U8(v) => v.encode(payload).await,
+            Self::U16(v) => v.encode(payload).await,
+            Self::U32(v) => v.encode(payload).await,
+            Self::U64(v) => v.encode(payload).await,
+            Self::S8(v) => v.encode(payload).await,
+            Self::S16(v) => v.encode(payload).await,
+            Self::S32(v) => v.encode(payload).await,
+            Self::S64(v) => v.encode(payload).await,
+            Self::Float32(v) => v.encode(payload).await,
+            Self::Float64(v) => v.encode(payload).await,
+            Self::Char(v) => v.encode(payload).await,
+            Self::String(v) => v.encode(payload).await,
+            Self::List(v) => v.encode(payload).await,
             Self::Record(vs) => {
                 trace!("encode record");
                 let mut txs = Vec::with_capacity(vs.len());
@@ -2207,7 +3037,7 @@ impl Encode<Value> for Value {
                 Ok(txs
                     .iter()
                     .any(Option::is_some)
-                    .then_some(AsyncTransmission::Record(txs)))
+                    .then_some(AsyncValue::Record(txs)))
             }
             Self::Tuple(vs) => {
                 trace!("encode tuple");
@@ -2220,70 +3050,38 @@ impl Encode<Value> for Value {
                 Ok(txs
                     .iter()
                     .any(Option::is_some)
-                    .then_some(AsyncTransmission::Tuple(txs)))
+                    .then_some(AsyncValue::Tuple(txs)))
             }
             Self::Variant {
                 discriminant,
                 nested: None,
             } => {
-                trace!("encode variant discriminant");
-                leb128::write::unsigned(&mut payload.writer(), discriminant.into())
-                    .context("failed to encode variant discriminant")?;
+                encode_discriminant(payload, discriminant)?;
                 Ok(None)
             }
             Self::Variant {
                 discriminant,
                 nested: Some(v),
             } => {
-                trace!("encode variant discriminant");
-                leb128::write::unsigned(&mut payload.writer(), discriminant.into())
-                    .context("failed to encode variant discriminant")?;
+                encode_discriminant(&mut payload, discriminant)?;
                 trace!("encode variant value");
                 let tx = v.encode(payload).await?;
-                Ok(tx.map(Box::new).map(|nested| AsyncTransmission::Variant {
+                Ok(tx.map(Box::new).map(|nested| AsyncValue::Variant {
                     discriminant,
                     nested,
                 }))
             }
             Self::Enum(v) => {
-                trace!(v, "encode enum");
-                leb128::write::unsigned(&mut payload.writer(), v.into())
-                    .context("failed to encode enum")?;
+                trace!("encode enum");
+                encode_discriminant(payload, v)?;
                 Ok(None)
             }
-            Self::Option(None) => {
-                trace!("encode option::none");
-                payload.put_u8(0);
-                Ok(None)
-            }
-            Self::Option(Some(v)) => {
-                trace!("encode option::some");
-                payload.put_u8(1);
-                let tx = v.encode(payload).await?;
-                Ok(tx.map(Box::new).map(AsyncTransmission::Option))
-            }
-            Self::Result(Ok(None)) => {
-                trace!("encode empty result::ok");
-                payload.put_u8(0);
-                Ok(None)
-            }
-            Self::Result(Ok(Some(v))) => {
-                trace!("encode nested result::ok");
-                payload.put_u8(0);
-                let tx = v.encode(payload).await?;
-                Ok(tx.map(Box::new).map(AsyncTransmission::ResultOk))
-            }
-            Self::Result(Err(None)) => {
-                trace!("encode empty result::err");
-                payload.put_u8(1);
-                Ok(None)
-            }
-            Self::Result(Err(Some(v))) => {
-                trace!("encode nested result::err");
-                payload.put_u8(1);
-                let tx = v.encode(payload).await?;
-                Ok(tx.map(Box::new).map(AsyncTransmission::ResultErr))
-            }
+            Self::Option(None) => None::<()>.encode(payload).await,
+            Self::Option(Some(v)) => Some(*v).encode(payload).await,
+            Self::Result(Ok(None)) => Ok::<(), ()>(()).encode(payload).await,
+            Self::Result(Ok(Some(v))) => Ok::<Value, ()>(*v).encode(payload).await,
+            Self::Result(Err(None)) => Err::<(), ()>(()).encode(payload).await,
+            Self::Result(Err(Some(v))) => Err::<(), Value>(*v).encode(payload).await,
             Self::Flags(v) => {
                 trace!(v, "encode flags");
                 leb128::write::unsigned(&mut payload.writer(), v)
@@ -2303,7 +3101,7 @@ impl Encode<Value> for Value {
                 } else {
                     trace!("encode pending future value");
                     payload.put_u8(0);
-                    Ok(Some(AsyncTransmission::Future(v)))
+                    Ok(Some(AsyncValue::Future(v)))
                 }
             }
             Self::Stream(v) => {
@@ -2312,28 +3110,30 @@ impl Encode<Value> for Value {
                 // TODO: Use `poll_immediate` to check if the stream has finished and encode if it
                 // has - buffer otherwise
                 payload.put_u8(0);
-                Ok(Some(AsyncTransmission::Stream(v)))
+                Ok(Some(AsyncValue::Stream(v)))
             }
         }
     }
 }
 
-pub struct TupleReceiver<'a, const N: usize, T> {
+pub struct TupleReceiverSized<'a, const N: usize, T> {
     rx: T,
     nested: Option<[Option<AsyncSubscription<T>>; N]>,
     types: [&'a Type; N],
-    payload: Bytes,
 }
 
-impl<const N: usize, S> TupleReceiver<'_, N, S>
+impl<const N: usize, S> TupleReceiverSized<'_, N, S>
 where
     S: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin + 'static,
 {
     #[instrument(level = "trace", skip_all)]
-    pub async fn receive(mut self) -> anyhow::Result<([Value; N], Box<dyn Buf + Send>, S)> {
+    pub async fn receive(
+        mut self,
+        payload: impl Buf + Send + 'static,
+    ) -> anyhow::Result<([Value; N], Box<dyn Buf + Send>, S)> {
         trace!("receive tuple");
         let mut vals = Vec::with_capacity(N);
-        let mut payload: Box<dyn Buf + Send> = Box::new(self.payload);
+        let mut payload: Box<dyn Buf + Send> = Box::new(payload);
         for (i, ty) in self.types.iter().enumerate() {
             trace!(i, "receive tuple element");
             let v;
@@ -2359,39 +3159,6 @@ where
     }
 }
 
-pub struct TupleDynamicReceiver<'a, S> {
-    rx: S,
-    nested: Vec<Option<AsyncSubscription<S>>>,
-    types: &'a [Type],
-    payload: Bytes,
-}
-
-impl<S> TupleDynamicReceiver<'_, S>
-where
-    S: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin + 'static,
-{
-    #[instrument(level = "trace", skip_all)]
-    pub async fn receive(mut self) -> anyhow::Result<(Vec<Value>, Box<dyn Buf + Send>, S)> {
-        trace!("receive tuple");
-        let mut vals = Vec::with_capacity(self.types.len());
-        let mut payload: Box<dyn Buf + Send> = Box::new(self.payload);
-        for (i, ty) in self.types.iter().enumerate() {
-            trace!(i, "receive tuple element");
-            let v;
-            (v, payload) = Value::receive_context(
-                ty,
-                payload,
-                &mut self.rx,
-                self.nested.get_mut(i).map(Option::take).flatten(),
-            )
-            .await
-            .context("failed to receive tuple value")?;
-            vals.push(v);
-        }
-        Ok((vals, payload, self.rx))
-    }
-}
-
 #[async_trait]
 pub trait Acceptor {
     type Subject;
@@ -2408,21 +3175,17 @@ pub trait Invocation {
     type Transmission: Future<Output = anyhow::Result<()>> + Send + 'static;
     type TransmissionFailed: Future<Output = ()> + Send + 'static;
 
-    async fn invoke<T, U>(
+    async fn invoke(
         self,
         instance: &str,
         name: &str,
-        params: T,
-    ) -> anyhow::Result<(Self::Transmission, Self::TransmissionFailed)>
-    where
-        T: IntoIterator<Item = U> + Send,
-        T::IntoIter: ExactSizeIterator<Item = U> + Send,
-        U: Encode<U> + Send + 'static;
+        params: impl Encode,
+    ) -> anyhow::Result<(Self::Transmission, Self::TransmissionFailed)>;
 }
 
 #[async_trait]
 pub trait Client: Sync {
-    type Subject: Subject + Clone + Send + 'static;
+    type Subject: Subject + Clone + Send + Sync + 'static;
     type Transmission: Future<Output = anyhow::Result<()>> + Send + 'static;
     type Subscriber: Subscriber<
             Subject = Self::Subject,
@@ -2439,6 +3202,44 @@ pub trait Client: Sync {
     type Invocation: Invocation<Transmission = Self::Transmission> + Send;
 
     async fn serve(&self, instance: &str, name: &str) -> anyhow::Result<Self::InvocationStream>;
+
+    #[instrument(level = "trace", skip(self))]
+    async fn serve_static<T: Receive + Subscribe + 'static>(
+        &self,
+        instance: &str,
+        name: &str,
+    ) -> anyhow::Result<
+        Pin<
+            Box<
+                dyn Stream<
+                        Item = anyhow::Result<(
+                            T,
+                            Self::Subject,
+                            <Self::Acceptor as Acceptor>::Transmitter,
+                        )>,
+                    > + Send,
+            >,
+        >,
+    > {
+        let invocations = self.serve(instance, name).await?;
+        Ok(Box::pin(invocations.and_then({
+            move |(payload, rx_subject, sub, accept)| async move {
+                let (mut rx, nested) = try_join!(
+                    sub.subscribe(rx_subject.clone()),
+                    T::subscribe(&sub, rx_subject.clone())
+                )
+                .context("failed to subscribe for parameters")?;
+                let (tx_subject, tx) = accept
+                    .accept(rx_subject)
+                    .await
+                    .context("failed to accept invocation")?;
+                let (params, _) = T::receive(payload, &mut rx, nested)
+                    .await
+                    .context("failed to receive parameters")?;
+                Ok((params, tx_subject, tx))
+            }
+        })))
+    }
 
     #[instrument(level = "trace", skip(self, params))]
     async fn serve_dynamic(
@@ -2461,21 +3262,26 @@ pub trait Client: Sync {
     > {
         let invocations = self.serve(instance, name).await?;
         Ok(Box::pin(invocations.and_then({
-            move |(payload, rx, sub, accept)| {
+            move |(payload, rx_subject, sub, accept)| {
                 let params = Arc::clone(&params);
                 async move {
-                    let sub = sub
-                        .subscribe_tuple_dynamic(rx.clone(), &params, payload)
-                        .await
-                        .context("failed to subscribe for parameters")?;
+                    let (mut rx, nested) = try_join!(
+                        sub.subscribe(rx_subject.clone()),
+                        sub.subscribe_tuple(rx_subject.clone(), params.as_ref()),
+                    )
+                    .context("failed to subscribe for parameters")?;
                     let (tx_subject, tx) = accept
-                        .accept(rx)
+                        .accept(rx_subject)
                         .await
                         .context("failed to accept invocation")?;
-                    let (params, _, _) = sub
-                        .receive()
-                        .await
-                        .context("failed to receive parameters")?;
+                    let (params, _) = ReceiveContext::receive_tuple_context(
+                        params.as_ref(),
+                        payload,
+                        &mut rx,
+                        nested,
+                    )
+                    .await
+                    .context("failed to receive parameters")?;
                     Ok((params, tx_subject, tx))
                 }
             }
@@ -2491,33 +3297,35 @@ pub trait Client: Sync {
         Self::Subject,
     );
 
-    #[instrument(level = "trace", skip(self, params, results))]
-    async fn invoke_dynamic<T>(
+    #[instrument(level = "trace", skip(self, params))]
+    async fn invoke_static<T>(
         &self,
         instance: &str,
         name: &str,
-        params: T,
-        results: &[Type],
-    ) -> anyhow::Result<(Vec<Value>, Self::Transmission)>
+        params: impl Encode,
+    ) -> anyhow::Result<(T, Self::Transmission)>
     where
-        T: IntoIterator<Item = Value> + Send,
-        T::IntoIter: ExactSizeIterator<Item = Value> + Send,
+        T: Receive + Subscribe + Send,
     {
-        let (inv, sub, result_rx, error_rx) = self.new_invocation();
+        let (inv, sub, result_subject, error_subject) = self.new_invocation();
 
-        let (results, mut error) = try_join!(
+        let (mut results_rx, results_nested, mut error_rx) = try_join!(
             async {
-                sub.subscribe_tuple_dynamic(result_rx, results, Bytes::default())
+                sub.subscribe(result_subject.clone())
                     .await
-                    .context("failed to subscribe on result subjects")
+                    .context("failed to subscribe for result values")
             },
             async {
-                sub.subscribe(error_rx)
+                T::subscribe(&sub, result_subject.clone())
                     .await
-                    .context("failed to subscribe on error subject")
+                    .context("failed to subscribe for asynchronous result values")
+            },
+            async {
+                sub.subscribe(error_subject)
+                    .await
+                    .context("failed to subscribe for error value")
             },
         )?;
-
         let (tx, tx_fail) = inv
             .invoke(instance, name, params)
             .await
@@ -2532,15 +3340,98 @@ pub trait Client: Sync {
                     Ok(_) => bail!("transmission task desynchronisation occured"),
                 }
             }
-            vals = results.receive() => {
+            results = async {
+                let payload = results_rx
+                    .try_next()
+                    .await
+                    .context("failed to receive initial result chunk")?
+                    .context("unexpected end of result stream")?;
+                T::receive(payload, &mut results_rx, results_nested).await
+            } => {
                 trace!("received results");
-                let (vals, _, _) = vals?;
-                return Ok((vals, tx))
+                let (results, _) = results?;
+                return Ok((results, tx))
             }
-            err = error.next() => {
-                let err = err.context("error stream unexpectedly finished")?.context("failed to receive error")?;
+            payload = error_rx.try_next() => {
+                let payload = payload
+                    .context("failed to receive initial error chunk")?
+                    .context("unexpected end of error stream")?;
                 trace!("received error");
-                let (err, _) = String::receive_sync(err, &mut error).await.context("failed to receive error string")?;
+                let (err, _) = String::receive_sync(payload, &mut error_rx)
+                    .await
+                    .context("failed to receive error string")?;
+                bail!(err)
+            }
+        }
+    }
+
+    #[instrument(level = "trace", skip(self, params, results))]
+    async fn invoke_dynamic(
+        &self,
+        instance: &str,
+        name: &str,
+        params: impl Encode,
+        results: &[Type],
+    ) -> anyhow::Result<(Vec<Value>, Self::Transmission)> {
+        let (inv, sub, result_subject, error_subject) = self.new_invocation();
+
+        let (mut results_rx, results_nested, mut error_rx) = try_join!(
+            async {
+                sub.subscribe(result_subject.clone())
+                    .await
+                    .context("failed to subscribe for result values")
+            },
+            async {
+                sub.subscribe_tuple(result_subject.clone(), results)
+                    .await
+                    .context("failed to subscribe for asynchronous result values")
+            },
+            async {
+                sub.subscribe(error_subject)
+                    .await
+                    .context("failed to subscribe for error value")
+            },
+        )?;
+        let (tx, tx_fail) = inv
+            .invoke(instance, name, params)
+            .await
+            .context("failed to invoke function")?;
+
+        select! {
+            _ = tx_fail => {
+                trace!("transmission task failed");
+                match tx.await {
+
+                    Err(err) => bail!(anyhow!(err).context("transmission failed")),
+                    Ok(_) => bail!("transmission task desynchronisation occured"),
+                }
+            }
+            results = async {
+                let payload = results_rx
+                    .try_next()
+                    .await
+                    .context("failed to receive initial result chunk")?
+                    .context("unexpected end of result stream")?;
+                ReceiveContext::receive_tuple_context(
+                    results,
+                    payload,
+                    &mut results_rx,
+                    results_nested,
+                )
+                .await
+            } => {
+                trace!("received results");
+                let (results, _) = results?;
+                return Ok((results, tx))
+            }
+            payload = error_rx.next() => {
+                let payload = payload
+                    .context("failed to receive initial error chunk")?
+                    .context("unexpected end of error stream")?;
+                trace!("received error");
+                let (err, _) = String::receive_sync(payload, &mut error_rx)
+                    .await
+                    .context("failed to receive error string")?;
                 bail!(err)
             }
         }

@@ -17,7 +17,6 @@ wasmtime = [
 nats = ["dep:wrpc-transport-nats"]
 bin = [
     "dep:clap",
-    "dep:indexmap",
     "dep:reqwest",
     "dep:tracing-subscriber",
     "dep:url",
@@ -41,7 +40,6 @@ members = ["crates/*", "examples/rust/*"]
 [dependencies]
 anyhow = { workspace = true, features = ["std"] }
 async-nats = { workspace = true }
-async-recursion = { workspace = true }
 async-trait = { workspace = true }
 bytes = { workspace = true }
 clap = { workspace = true, features = [
@@ -54,14 +52,9 @@ clap = { workspace = true, features = [
     "usage",
 ], optional = true }
 futures = { workspace = true }
-h2 = { workspace = true }
-http = { workspace = true }
-indexmap = { workspace = true, optional = true }
-nats-connect = { workspace = true }
 reqwest = { workspace = true, features = ["rustls"], optional = true }
 tokio = { workspace = true, features = ["sync"] }
 tokio-stream = { workspace = true, features = ["sync"] }
-tower-service = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = [
     "ansi",
@@ -77,6 +70,7 @@ wasmtime-wasi = { workspace = true, features = ["preview2"], optional = true }
 wasmtime-wasi-http = { workspace = true, optional = true }
 wit-component = { workspace = true, optional = true }
 wit-parser = { workspace = true }
+wrpc-interface-http = { workspace = true }
 wrpc-runtime-wasmtime = { workspace = true, optional = true }
 wrpc-transport = { workspace = true }
 wrpc-transport-nats = { workspace = true, optional = true }
@@ -89,22 +83,16 @@ tokio = { workspace = true, features = ["process"] }
 [workspace.dependencies]
 anyhow = { version = "1", default-features = false }
 async-nats = { version = "0.33", default-features = false }
-async-recursion = { version = "1", default-features = false }
 async-trait = { version = "0.1", default-features = false }
 bytes = { version = "1", default-features = false }
 clap = { version = "4", default-features = false }
 futures = { version = "0.3", default-features = false }
-h2 = { version = "0.4", default-features = false }
-http = { version = "1", default-features = false }
-indexmap = { version = "2", default-features = false }
 leb128 = { version = "0.2", default-features = false }
-nats-connect = { version = "0.1", default-features = false }
 reqwest = { version = "0.11", default-features = false }
 serde = { version = "1", default-features = false }
 serde_json = { version = "1", default-features = false }
 tokio = { version = "1", default-features = false }
 tokio-stream = { version = "0.1", default-features = false }
-tower-service = { version = "0.3", default-features = false }
 tracing = { version = "0.1", default-features = false }
 tracing-subscriber = { version = "0.3", default-features = false }
 url = { version = "2", default-features = false }
@@ -117,7 +105,8 @@ wasmtime-wasi-http = { version = "18", default-features = false }
 wit-bindgen = { version = "0.16", default-features = false }
 wit-component = { version = "0.19", default-features = false }
 wit-parser = { version = "0.13", default-features = false }
+wrpc-interface-http = { version = "0.1", path = "./crates/interface-http", default-features = false }
 wrpc-runtime-wasmtime = { version = "0.1", path = "./crates/runtime-wasmtime", default-features = false }
-wrpc-transport = { version = "0.4", path = "./crates/transport", default-features = false }
-wrpc-transport-nats = { version = "0.3", path = "./crates/transport-nats", default-features = false }
+wrpc-transport = { version = "0.5", path = "./crates/transport", default-features = false }
+wrpc-transport-nats = { version = "0.4", path = "./crates/transport-nats", default-features = false }
 wrpc-types = { version = "0.2", path = "./crates/types", default-features = false }

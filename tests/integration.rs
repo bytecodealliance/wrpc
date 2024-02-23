@@ -1,6 +1,6 @@
 use core::iter::zip;
-
 use core::time::Duration;
+
 use std::net::Ipv6Addr;
 use std::process::ExitStatus;
 use std::sync::Arc;
@@ -14,11 +14,16 @@ use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tokio::time::sleep;
 use tokio::{select, spawn, try_join};
+use tracing::{info, instrument};
 use tracing_subscriber::layer::SubscriberExt as _;
 use tracing_subscriber::util::SubscriberInitExt as _;
 use url::Url;
 use wrpc::{DynamicFunctionType, ResourceType, Transmitter as _, Type, Value};
-use wrpc_transport::StreamItem;
+use wrpc_interface_http::{
+    ErrorCode, Fields, IncomingResponse, Method, OutgoingHandler, OutgoingRequest, RequestOptions,
+    Scheme,
+};
+use wrpc_transport::{Client as _, DynamicTuple, StreamItem};
 
 async fn free_port() -> Result<u16> {
     TcpListener::bind((Ipv6Addr::LOCALHOST, 0))
@@ -53,7 +58,8 @@ async fn spawn_server(
     Ok((child, stop_tx))
 }
 
-async fn loopback(
+#[instrument(skip(client, params, results))]
+async fn loopback_dynamic(
     client: &impl wrpc::Client,
     name: &str,
     ty: DynamicFunctionType,
@@ -70,31 +76,43 @@ async fn loopback(
             params: params_ty,
             results: results_ty,
         } => {
+            info!("serve function");
             let mut invocations = client
-                .serve_dynamic("wrpc:wrpc/test", name, params_ty)
+                .serve_dynamic("wrpc:wrpc/test-dynamic", name, params_ty)
                 .await
                 .context("failed to serve static function")?;
             let (params, results) = try_join!(
                 async {
+                    info!("await invocation");
                     let (params, results_subject, results_tx) = invocations
                         .try_next()
                         .await
-                        .with_context(|| format!("unexpected end of invocation stream"))?
-                        .with_context(|| format!("failed to decode parameters"))?;
+                        .with_context(|| "unexpected end of invocation stream".to_string())?
+                        .with_context(|| "failed to decode parameters".to_string())?;
+                    info!("transmit response to invocation");
                     results_tx
                         .transmit_tuple_dynamic(results_subject, results)
                         .await
                         .context("failed to transmit result tuple")?;
+                    info!("finished serving invocation");
                     anyhow::Ok(params)
                 },
                 async {
+                    info!("invoke function");
                     let (results, params_tx) = client
-                        .invoke_dynamic("wrpc:wrpc/test", name, params, &results_ty)
+                        .invoke_dynamic(
+                            "wrpc:wrpc/test-dynamic",
+                            name,
+                            DynamicTuple(params),
+                            &results_ty,
+                        )
                         .await
-                        .with_context(|| format!("failed to invoke static function"))?;
+                        .with_context(|| "failed to invoke static function".to_string())?;
+                    info!("transmit async parameters");
                     params_tx
                         .await
                         .context("failed to transmit parameter tuple")?;
+                    info!("finished invocation");
                     Ok(results)
                 },
             )?;
@@ -147,7 +165,7 @@ async fn nats() -> anyhow::Result<()> {
 
     let client = wrpc::transport::nats::Client::new(nats_client, "test-prefix".to_string());
 
-    let (params, results) = loopback(
+    let (params, results) = loopback_dynamic(
         &client,
         "unit_unit",
         DynamicFunctionType::Static {
@@ -213,7 +231,7 @@ async fn nats() -> anyhow::Result<()> {
     ]
     .into();
 
-    let (params, results) = loopback(
+    let (params, results) = loopback_dynamic(
         &client,
         "sync",
         DynamicFunctionType::Static {
@@ -675,7 +693,7 @@ async fn nats() -> anyhow::Result<()> {
     ]
     .into();
 
-    let (params, results) = loopback(
+    let (params, results) = loopback_dynamic(
         &client,
         "async",
         DynamicFunctionType::Static {
@@ -1156,6 +1174,175 @@ async fn nats() -> anyhow::Result<()> {
             )
         ));
     }
+
+    let mut unit_invocations = client
+        .serve_static::<()>("wrpc:wrpc/test-static", "unit_unit")
+        .await
+        .context("failed to serve")?;
+    try_join!(
+        async {
+            let ((), subject, tx) = unit_invocations
+                .try_next()
+                .await
+                .context("failed to receive invocation")?
+                .context("unexpected end of stream")?;
+            tx.transmit_static(subject, ())
+                .await
+                .context("failed to transmit response")?;
+            anyhow::Ok(())
+        },
+        async {
+            let ((), tx) = client
+                .invoke_static("wrpc:wrpc/test-static", "unit_unit", ())
+                .await
+                .context("failed to invoke")?;
+            tx.await.context("failed to transmit parameters")?;
+            Ok(())
+        }
+    )?;
+
+    let mut http_out_invocations = client.serve_handle().await.context("failed to serve")?;
+    try_join!(
+        async {
+            let (
+                (
+                    OutgoingRequest {
+                        mut body,
+                        method,
+                        path_with_query,
+                        scheme,
+                        authority,
+                        headers,
+                    },
+                    opts,
+                ),
+                subject,
+                tx,
+            ) = http_out_invocations
+                .try_next()
+                .await
+                .context("failed to receive invocation")?
+                .context("unexpected end of stream")?;
+            assert_eq!(method, Method::Get);
+            assert_eq!(path_with_query.as_deref(), Some("path_with_query"));
+            assert_eq!(scheme, Some(Scheme::HTTPS));
+            assert_eq!(authority.as_deref(), Some("authority"));
+            assert_eq!(
+                headers,
+                Fields(vec![("user-agent".into(), vec!["wrpc/0.1.0".into()])])
+            );
+            assert_eq!(
+                opts,
+                Some(RequestOptions {
+                    connect_timeout: None,
+                    first_byte_timeout: Some(Duration::from_nanos(42)),
+                    between_bytes_timeout: None,
+                })
+            );
+            try_join!(
+                async {
+                    info!("transmit response");
+                    tx.transmit_static(
+                        subject,
+                        Ok::<_, ErrorCode>(IncomingResponse {
+                            body: stream::iter([StreamItem::End(None)]),
+                            status: 400,
+                            headers: Fields::default(),
+                        }),
+                    )
+                    .await
+                    .context("failed to transmit response")?;
+                    info!("response transmitted");
+                    Ok(())
+                },
+                async {
+                    info!("await request body element");
+                    let StreamItem::Element(element) = body
+                        .try_next()
+                        .await
+                        .context("failed to receive body item")?
+                        .context("unexpected end of body stream")?
+                    else {
+                        bail!("stream element item type mismatch")
+                    };
+                    assert_eq!(element, "element");
+                    info!("await request body trailers");
+                    let StreamItem::End(trailers) = body
+                        .try_next()
+                        .await
+                        .context("failed to receive trailer item")?
+                        .context("unexpected end of body stream")?
+                    else {
+                        bail!("stream end item type mismatch")
+                    };
+                    assert_eq!(
+                        trailers,
+                        Some(Fields(vec![("trailer".into(), vec!["test".into()])]))
+                    );
+                    info!("request body verified");
+                    Ok(())
+                }
+            )?;
+            anyhow::Ok(())
+        },
+        async {
+            info!("invoke function");
+            let (res, tx) = client
+                .invoke_handle(
+                    OutgoingRequest {
+                        body: stream::iter([
+                            StreamItem::Element("element".into()),
+                            StreamItem::End(Some(Fields(vec![(
+                                "trailer".into(),
+                                vec!["test".into()],
+                            )]))),
+                        ]),
+                        method: Method::Get,
+                        path_with_query: Some("path_with_query".to_string()),
+                        scheme: Some(Scheme::HTTPS),
+                        authority: Some("authority".to_string()),
+                        headers: Fields(vec![("user-agent".into(), vec!["wrpc/0.1.0".into()])]),
+                    },
+                    Some(RequestOptions {
+                        connect_timeout: None,
+                        first_byte_timeout: Some(Duration::from_nanos(42)),
+                        between_bytes_timeout: None,
+                    }),
+                )
+                .await
+                .context("failed to invoke")?;
+            let IncomingResponse {
+                mut body,
+                status,
+                headers,
+            } = res.expect("invocation failed");
+            assert_eq!(status, 400);
+            assert_eq!(headers, Fields::default());
+            try_join!(
+                async {
+                    info!("transmit async parameters");
+                    tx.await.context("failed to transmit parameters")?;
+                    info!("async parameters transmitted");
+                    Ok(())
+                },
+                async {
+                    info!("await response body trailers");
+                    let StreamItem::End(trailers) = body
+                        .try_next()
+                        .await
+                        .context("failed to receive trailer item")?
+                        .context("unexpected end of body stream")?
+                    else {
+                        bail!("stream element item type mismatch")
+                    };
+                    assert_eq!(trailers, None);
+                    info!("response body verified");
+                    Ok(())
+                }
+            )?;
+            Ok(())
+        }
+    )?;
 
     stop_tx.send(()).expect("failed to stop NATS");
     nats_server
