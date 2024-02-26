@@ -8,52 +8,23 @@ use futures::{Stream, StreamExt as _};
 use tracing::instrument;
 use wrpc_transport::{
     encode_discriminant, receive_discriminant, Acceptor, AsyncSubscription, AsyncValue, Encode,
-    EncodeSync, Receive, StreamItem, Subject as _, Subscribe, Subscriber, Value,
+    EncodeSync, Receive, StreamItem, Subject as _, Subscribe, Subscriber,
 };
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct Fields(pub Vec<(String, Vec<Bytes>)>);
+pub type Fields = Vec<(String, Vec<Bytes>)>;
 
-impl Into<Value> for Fields {
-    fn into(self) -> Value {
-        self.0
-            .into_iter()
-            .map(|(k, v)| {
-                (
-                    k.into(),
-                    v.into_iter().map(Into::into).collect::<Vec<_>>().into(),
-                )
-                    .into()
-            })
-            .collect::<Vec<_>>()
-            .into()
-    }
-}
-
-#[async_trait]
-impl Encode for Fields {
-    #[instrument(level = "trace", skip_all)]
-    async fn encode(
-        self,
-        payload: &mut (impl BufMut + Send),
-    ) -> anyhow::Result<Option<AsyncValue>> {
-        self.0.encode(payload).await
-    }
-}
-
-#[async_trait]
-impl Receive for Fields {
-    async fn receive<T>(
-        payload: impl Buf + Send + 'static,
-        rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
-        _sub: Option<AsyncSubscription<T>>,
-    ) -> anyhow::Result<(Self, Box<dyn Buf + Send>)>
-    where
-        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin + 'static,
-    {
-        let (v, payload) = Receive::receive_sync(payload, rx).await?;
-        Ok((Self(v), payload))
-    }
+fn fields_to_wrpc(fields: Vec<(String, Vec<Bytes>)>) -> wrpc_transport::Value {
+    fields
+        .into_iter()
+        .map(|(k, v)| {
+            (
+                k.into(),
+                v.into_iter().map(Into::into).collect::<Vec<_>>().into(),
+            )
+                .into()
+        })
+        .collect::<Vec<_>>()
+        .into()
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -587,7 +558,11 @@ impl Receive for RequestOptions {
     }
 }
 
-pub struct OutgoingRequest<T> {
+pub type IncomingRequest = Request<
+    Box<dyn Stream<Item = anyhow::Result<StreamItem<Bytes, Option<Fields>>>> + Send + Unpin>,
+>;
+
+pub struct Request<T> {
     pub body: T,
     pub method: Method,
     pub path_with_query: Option<String>,
@@ -597,7 +572,7 @@ pub struct OutgoingRequest<T> {
 }
 
 #[async_trait]
-impl<T> Encode for OutgoingRequest<T>
+impl<T> Encode for Request<T>
 where
     T: Stream<Item = StreamItem<Bytes, Option<Fields>>> + Send + 'static,
 {
@@ -625,7 +600,7 @@ where
             Box::pin(body.map(|item| match item {
                 StreamItem::Element(buf) => Ok(StreamItem::Element(Some(buf.into()))),
                 StreamItem::End(trailers) => {
-                    Ok(StreamItem::End(Some(trailers.map(Into::into).into())))
+                    Ok(StreamItem::End(Some(trailers.map(fields_to_wrpc).into())))
                 }
             })),
         ))])))
@@ -633,11 +608,7 @@ where
 }
 
 #[async_trait]
-impl Subscribe
-    for OutgoingRequest<
-        Box<dyn Stream<Item = anyhow::Result<StreamItem<Bytes, Option<Fields>>>> + Send + Unpin>,
-    >
-{
+impl Subscribe for IncomingRequest {
     #[instrument(level = "trace", skip_all)]
     async fn subscribe<T: Subscriber + Send + Sync>(
         subscriber: &T,
@@ -655,11 +626,7 @@ impl Subscribe
 }
 
 #[async_trait]
-impl Receive
-    for OutgoingRequest<
-        Box<dyn Stream<Item = anyhow::Result<StreamItem<Bytes, Option<Fields>>>> + Send + Unpin>,
-    >
-{
+impl Receive for IncomingRequest {
     async fn receive<T>(
         payload: impl Buf + Send + 'static,
         rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
@@ -710,14 +677,18 @@ impl Receive
     }
 }
 
-pub struct IncomingResponse<T> {
+pub type IncomingResponse = Response<
+    Box<dyn Stream<Item = anyhow::Result<StreamItem<Bytes, Option<Fields>>>> + Send + Unpin>,
+>;
+
+pub struct Response<T> {
     pub body: T,
     pub status: u16,
     pub headers: Fields,
 }
 
 #[async_trait]
-impl<T> Encode for IncomingResponse<T>
+impl<T> Encode for Response<T>
 where
     T: Stream<Item = StreamItem<Bytes, Option<Fields>>> + Send + 'static,
 {
@@ -739,7 +710,7 @@ where
             Box::pin(body.map(|item| match item {
                 StreamItem::Element(buf) => Ok(StreamItem::Element(Some(buf.into()))),
                 StreamItem::End(trailers) => {
-                    Ok(StreamItem::End(Some(trailers.map(Into::into).into())))
+                    Ok(StreamItem::End(Some(trailers.map(fields_to_wrpc).into())))
                 }
             })),
         ))])))
@@ -747,11 +718,7 @@ where
 }
 
 #[async_trait]
-impl Subscribe
-    for IncomingResponse<
-        Box<dyn Stream<Item = anyhow::Result<StreamItem<Bytes, Option<Fields>>>> + Send + Unpin>,
-    >
-{
+impl Subscribe for IncomingResponse {
     #[instrument(level = "trace", skip_all)]
     async fn subscribe<T: Subscriber + Send + Sync>(
         subscriber: &T,
@@ -769,11 +736,7 @@ impl Subscribe
 }
 
 #[async_trait]
-impl Receive
-    for IncomingResponse<
-        Box<dyn Stream<Item = anyhow::Result<StreamItem<Bytes, Option<Fields>>>> + Send + Unpin>,
-    >
-{
+impl Receive for IncomingResponse {
     async fn receive<T>(
         payload: impl Buf + Send + 'static,
         rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
@@ -813,28 +776,61 @@ impl Receive
 }
 
 #[async_trait]
-pub trait OutgoingHandler: wrpc_transport::Client {
+pub trait IncomingHandler: wrpc_transport::Client {
     type HandleInvocationStream;
 
     async fn invoke_handle<B>(
         &self,
-        req: OutgoingRequest<B>,
-        opts: Option<RequestOptions>,
-    ) -> anyhow::Result<(
-        Result<
-            IncomingResponse<
-                Box<
-                    dyn Stream<Item = anyhow::Result<StreamItem<Bytes, Option<Fields>>>>
-                        + Send
-                        + Unpin,
-                >,
-            >,
-            ErrorCode,
-        >,
-        Self::Transmission,
-    )>
+        request: Request<B>,
+    ) -> anyhow::Result<(Result<IncomingResponse, ErrorCode>, Self::Transmission)>
     where
         B: Stream<Item = StreamItem<Bytes, Option<Fields>>> + Send + 'static;
+
+    async fn serve_handle(&self) -> anyhow::Result<Self::HandleInvocationStream>;
+}
+
+#[async_trait]
+impl<T: wrpc_transport::Client> IncomingHandler for T {
+    type HandleInvocationStream = Pin<
+        Box<
+            dyn Stream<
+                    Item = anyhow::Result<(
+                        IncomingRequest,
+                        T::Subject,
+                        <T::Acceptor as Acceptor>::Transmitter,
+                    )>,
+                > + Send,
+        >,
+    >;
+
+    async fn invoke_handle<B>(
+        &self,
+        request: Request<B>,
+    ) -> anyhow::Result<(Result<IncomingResponse, ErrorCode>, T::Transmission)>
+    where
+        B: Stream<Item = StreamItem<Bytes, Option<Fields>>> + Send + 'static,
+    {
+        let (res, tx) = self
+            .invoke_static("wrpc:http/incoming-handler@0.1.0", "handle", request)
+            .await?;
+        Ok((res, tx))
+    }
+
+    async fn serve_handle(&self) -> anyhow::Result<Self::HandleInvocationStream> {
+        self.serve_static("wrpc:http/incoming-handler@0.1.0", "handle")
+            .await
+    }
+}
+
+#[async_trait]
+pub trait OutgoingHandler: wrpc_transport::Client {
+    type HandleInvocationStream;
+
+    async fn invoke_handle(
+        &self,
+        request: Request<impl Stream<Item = StreamItem<Bytes, Option<Fields>>> + Send + 'static>,
+        options: Option<RequestOptions>,
+    ) -> anyhow::Result<(Result<IncomingResponse, ErrorCode>, Self::Transmission)>;
 
     async fn serve_handle(&self) -> anyhow::Result<Self::HandleInvocationStream>;
 }
@@ -845,19 +841,7 @@ impl<T: wrpc_transport::Client> OutgoingHandler for T {
         Box<
             dyn Stream<
                     Item = anyhow::Result<(
-                        (
-                            OutgoingRequest<
-                                Box<
-                                    dyn Stream<
-                                            Item = anyhow::Result<
-                                                StreamItem<Bytes, Option<Fields>>,
-                                            >,
-                                        > + Send
-                                        + Unpin,
-                                >,
-                            >,
-                            Option<RequestOptions>,
-                        ),
+                        (IncomingRequest, Option<RequestOptions>),
                         T::Subject,
                         <T::Acceptor as Acceptor>::Transmitter,
                     )>,
@@ -865,28 +849,17 @@ impl<T: wrpc_transport::Client> OutgoingHandler for T {
         >,
     >;
 
-    async fn invoke_handle<B>(
+    async fn invoke_handle(
         &self,
-        req: OutgoingRequest<B>,
-        opts: Option<RequestOptions>,
-    ) -> anyhow::Result<(
-        Result<
-            IncomingResponse<
-                Box<
-                    dyn Stream<Item = anyhow::Result<StreamItem<Bytes, Option<Fields>>>>
-                        + Send
-                        + Unpin,
-                >,
-            >,
-            ErrorCode,
-        >,
-        T::Transmission,
-    )>
-    where
-        B: Stream<Item = StreamItem<Bytes, Option<Fields>>> + Send + 'static,
-    {
+        request: Request<impl Stream<Item = StreamItem<Bytes, Option<Fields>>> + Send + 'static>,
+        options: Option<RequestOptions>,
+    ) -> anyhow::Result<(Result<IncomingResponse, ErrorCode>, T::Transmission)> {
         let (res, tx) = self
-            .invoke_static("wrpc:http/outgoing-handler@0.1.0", "handle", (req, opts))
+            .invoke_static(
+                "wrpc:http/outgoing-handler@0.1.0",
+                "handle",
+                (request, options),
+            )
             .await?;
         Ok((res, tx))
     }

@@ -19,10 +19,7 @@ use tracing_subscriber::layer::SubscriberExt as _;
 use tracing_subscriber::util::SubscriberInitExt as _;
 use url::Url;
 use wrpc::{DynamicFunctionType, ResourceType, Transmitter as _, Type, Value};
-use wrpc_interface_http::{
-    ErrorCode, Fields, IncomingResponse, Method, OutgoingHandler, OutgoingRequest, RequestOptions,
-    Scheme,
-};
+use wrpc_interface_http::{ErrorCode, Method, Request, RequestOptions, Response, Scheme};
 use wrpc_transport::{Client as _, DynamicTuple, StreamItem};
 
 async fn free_port() -> Result<u16> {
@@ -1201,12 +1198,14 @@ async fn nats() -> anyhow::Result<()> {
         }
     )?;
 
-    let mut http_out_invocations = client.serve_handle().await.context("failed to serve")?;
-    try_join!(
-        async {
-            let (
-                (
-                    OutgoingRequest {
+    {
+        use wrpc_interface_http::IncomingHandler;
+
+        let mut invocations = client.serve_handle().await.context("failed to serve")?;
+        try_join!(
+            async {
+                let (
+                    Request {
                         mut body,
                         method,
                         path_with_query,
@@ -1214,135 +1213,263 @@ async fn nats() -> anyhow::Result<()> {
                         authority,
                         headers,
                     },
-                    opts,
-                ),
-                subject,
-                tx,
-            ) = http_out_invocations
-                .try_next()
-                .await
-                .context("failed to receive invocation")?
-                .context("unexpected end of stream")?;
-            assert_eq!(method, Method::Get);
-            assert_eq!(path_with_query.as_deref(), Some("path_with_query"));
-            assert_eq!(scheme, Some(Scheme::HTTPS));
-            assert_eq!(authority.as_deref(), Some("authority"));
-            assert_eq!(
-                headers,
-                Fields(vec![("user-agent".into(), vec!["wrpc/0.1.0".into()])])
-            );
-            assert_eq!(
-                opts,
-                Some(RequestOptions {
-                    connect_timeout: None,
-                    first_byte_timeout: Some(Duration::from_nanos(42)),
-                    between_bytes_timeout: None,
-                })
-            );
-            try_join!(
-                async {
-                    info!("transmit response");
-                    tx.transmit_static(
-                        subject,
-                        Ok::<_, ErrorCode>(IncomingResponse {
-                            body: stream::iter([StreamItem::End(None)]),
-                            status: 400,
-                            headers: Fields::default(),
-                        }),
-                    )
+                    subject,
+                    tx,
+                ) = invocations
+                    .try_next()
                     .await
-                    .context("failed to transmit response")?;
-                    info!("response transmitted");
-                    Ok(())
-                },
-                async {
-                    info!("await request body element");
-                    let StreamItem::Element(element) = body
-                        .try_next()
+                    .context("failed to receive invocation")?
+                    .context("unexpected end of stream")?;
+                assert_eq!(method, Method::Get);
+                assert_eq!(path_with_query.as_deref(), Some("path_with_query"));
+                assert_eq!(scheme, Some(Scheme::HTTPS));
+                assert_eq!(authority.as_deref(), Some("authority"));
+                assert_eq!(
+                    headers,
+                    vec![("user-agent".into(), vec!["wrpc/0.1.0".into()])],
+                );
+                try_join!(
+                    async {
+                        info!("transmit response");
+                        tx.transmit_static(
+                            subject,
+                            Ok::<_, ErrorCode>(Response {
+                                body: stream::iter([StreamItem::End(None)]),
+                                status: 400,
+                                headers: Vec::default(),
+                            }),
+                        )
                         .await
-                        .context("failed to receive body item")?
-                        .context("unexpected end of body stream")?
-                    else {
-                        bail!("stream element item type mismatch")
-                    };
-                    assert_eq!(element, "element");
-                    info!("await request body trailers");
-                    let StreamItem::End(trailers) = body
-                        .try_next()
-                        .await
-                        .context("failed to receive trailer item")?
-                        .context("unexpected end of body stream")?
-                    else {
-                        bail!("stream end item type mismatch")
-                    };
-                    assert_eq!(
-                        trailers,
-                        Some(Fields(vec![("trailer".into(), vec!["test".into()])]))
-                    );
-                    info!("request body verified");
-                    Ok(())
-                }
-            )?;
-            anyhow::Ok(())
-        },
-        async {
-            info!("invoke function");
-            let (res, tx) = client
-                .invoke_handle(
-                    OutgoingRequest {
+                        .context("failed to transmit response")?;
+                        info!("response transmitted");
+                        Ok(())
+                    },
+                    async {
+                        info!("await request body element");
+                        let StreamItem::Element(element) = body
+                            .try_next()
+                            .await
+                            .context("failed to receive body item")?
+                            .context("unexpected end of body stream")?
+                        else {
+                            bail!("stream element item type mismatch")
+                        };
+                        assert_eq!(element, "element");
+                        info!("await request body trailers");
+                        let StreamItem::End(trailers) = body
+                            .try_next()
+                            .await
+                            .context("failed to receive trailer item")?
+                            .context("unexpected end of body stream")?
+                        else {
+                            bail!("stream end item type mismatch")
+                        };
+                        assert_eq!(
+                            trailers,
+                            Some(vec![("trailer".into(), vec!["test".into()])])
+                        );
+                        info!("request body verified");
+                        Ok(())
+                    }
+                )?;
+                anyhow::Ok(())
+            },
+            async {
+                info!("invoke function");
+                let (res, tx) = client
+                    .invoke_handle(Request {
                         body: stream::iter([
                             StreamItem::Element("element".into()),
-                            StreamItem::End(Some(Fields(vec![(
-                                "trailer".into(),
-                                vec!["test".into()],
-                            )]))),
+                            StreamItem::End(Some(vec![("trailer".into(), vec!["test".into()])])),
                         ]),
                         method: Method::Get,
                         path_with_query: Some("path_with_query".to_string()),
                         scheme: Some(Scheme::HTTPS),
                         authority: Some("authority".to_string()),
-                        headers: Fields(vec![("user-agent".into(), vec!["wrpc/0.1.0".into()])]),
+                        headers: vec![("user-agent".into(), vec!["wrpc/0.1.0".into()])],
+                    })
+                    .await
+                    .context("failed to invoke")?;
+                let Response {
+                    mut body,
+                    status,
+                    headers,
+                } = res.expect("invocation failed");
+                assert_eq!(status, 400);
+                assert_eq!(headers, Vec::default());
+                try_join!(
+                    async {
+                        info!("transmit async parameters");
+                        tx.await.context("failed to transmit parameters")?;
+                        info!("async parameters transmitted");
+                        Ok(())
                     },
+                    async {
+                        info!("await response body trailers");
+                        let StreamItem::End(trailers) = body
+                            .try_next()
+                            .await
+                            .context("failed to receive trailer item")?
+                            .context("unexpected end of body stream")?
+                        else {
+                            bail!("stream element item type mismatch")
+                        };
+                        assert_eq!(trailers, None);
+                        info!("response body verified");
+                        Ok(())
+                    }
+                )?;
+                Ok(())
+            }
+        )?;
+    }
+
+    {
+        use wrpc_interface_http::OutgoingHandler;
+
+        let mut invocations = client.serve_handle().await.context("failed to serve")?;
+        try_join!(
+            async {
+                let (
+                    (
+                        Request {
+                            mut body,
+                            method,
+                            path_with_query,
+                            scheme,
+                            authority,
+                            headers,
+                        },
+                        opts,
+                    ),
+                    subject,
+                    tx,
+                ) = invocations
+                    .try_next()
+                    .await
+                    .context("failed to receive invocation")?
+                    .context("unexpected end of stream")?;
+                assert_eq!(method, Method::Get);
+                assert_eq!(path_with_query.as_deref(), Some("path_with_query"));
+                assert_eq!(scheme, Some(Scheme::HTTPS));
+                assert_eq!(authority.as_deref(), Some("authority"));
+                assert_eq!(
+                    headers,
+                    vec![("user-agent".into(), vec!["wrpc/0.1.0".into()])],
+                );
+                assert_eq!(
+                    opts,
                     Some(RequestOptions {
                         connect_timeout: None,
                         first_byte_timeout: Some(Duration::from_nanos(42)),
                         between_bytes_timeout: None,
-                    }),
-                )
-                .await
-                .context("failed to invoke")?;
-            let IncomingResponse {
-                mut body,
-                status,
-                headers,
-            } = res.expect("invocation failed");
-            assert_eq!(status, 400);
-            assert_eq!(headers, Fields::default());
-            try_join!(
-                async {
-                    info!("transmit async parameters");
-                    tx.await.context("failed to transmit parameters")?;
-                    info!("async parameters transmitted");
-                    Ok(())
-                },
-                async {
-                    info!("await response body trailers");
-                    let StreamItem::End(trailers) = body
-                        .try_next()
+                    })
+                );
+                try_join!(
+                    async {
+                        info!("transmit response");
+                        tx.transmit_static(
+                            subject,
+                            Ok::<_, ErrorCode>(Response {
+                                body: stream::iter([StreamItem::End(None)]),
+                                status: 400,
+                                headers: Vec::default(),
+                            }),
+                        )
                         .await
-                        .context("failed to receive trailer item")?
-                        .context("unexpected end of body stream")?
-                    else {
-                        bail!("stream element item type mismatch")
-                    };
-                    assert_eq!(trailers, None);
-                    info!("response body verified");
-                    Ok(())
-                }
-            )?;
-            Ok(())
-        }
-    )?;
+                        .context("failed to transmit response")?;
+                        info!("response transmitted");
+                        Ok(())
+                    },
+                    async {
+                        info!("await request body element");
+                        let StreamItem::Element(element) = body
+                            .try_next()
+                            .await
+                            .context("failed to receive body item")?
+                            .context("unexpected end of body stream")?
+                        else {
+                            bail!("stream element item type mismatch")
+                        };
+                        assert_eq!(element, "element");
+                        info!("await request body trailers");
+                        let StreamItem::End(trailers) = body
+                            .try_next()
+                            .await
+                            .context("failed to receive trailer item")?
+                            .context("unexpected end of body stream")?
+                        else {
+                            bail!("stream end item type mismatch")
+                        };
+                        assert_eq!(
+                            trailers,
+                            Some(vec![("trailer".into(), vec!["test".into()])])
+                        );
+                        info!("request body verified");
+                        Ok(())
+                    }
+                )?;
+                anyhow::Ok(())
+            },
+            async {
+                info!("invoke function");
+                let (res, tx) = client
+                    .invoke_handle(
+                        Request {
+                            body: stream::iter([
+                                StreamItem::Element("element".into()),
+                                StreamItem::End(Some(vec![(
+                                    "trailer".into(),
+                                    vec!["test".into()],
+                                )])),
+                            ]),
+                            method: Method::Get,
+                            path_with_query: Some("path_with_query".to_string()),
+                            scheme: Some(Scheme::HTTPS),
+                            authority: Some("authority".to_string()),
+                            headers: vec![("user-agent".into(), vec!["wrpc/0.1.0".into()])],
+                        },
+                        Some(RequestOptions {
+                            connect_timeout: None,
+                            first_byte_timeout: Some(Duration::from_nanos(42)),
+                            between_bytes_timeout: None,
+                        }),
+                    )
+                    .await
+                    .context("failed to invoke")?;
+                let Response {
+                    mut body,
+                    status,
+                    headers,
+                } = res.expect("invocation failed");
+                assert_eq!(status, 400);
+                assert_eq!(headers, Vec::default());
+                try_join!(
+                    async {
+                        info!("transmit async parameters");
+                        tx.await.context("failed to transmit parameters")?;
+                        info!("async parameters transmitted");
+                        Ok(())
+                    },
+                    async {
+                        info!("await response body trailers");
+                        let StreamItem::End(trailers) = body
+                            .try_next()
+                            .await
+                            .context("failed to receive trailer item")?
+                            .context("unexpected end of body stream")?
+                        else {
+                            bail!("stream element item type mismatch")
+                        };
+                        assert_eq!(trailers, None);
+                        info!("response body verified");
+                        Ok(())
+                    }
+                )?;
+                Ok(())
+            }
+        )?;
+    }
 
     stop_tx.send(()).expect("failed to stop NATS");
     nats_server
