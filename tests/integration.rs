@@ -80,14 +80,13 @@ async fn loopback_dynamic(
             let (params, results) = try_join!(
                 async {
                     info!("await invocation");
-                    let (params, results_subject, results_tx) = invocations
+                    let (params, result_subject, _, tx) = invocations
                         .try_next()
                         .await
                         .with_context(|| "unexpected end of invocation stream".to_string())?
                         .with_context(|| "failed to decode parameters".to_string())?;
                     info!("transmit response to invocation");
-                    results_tx
-                        .transmit_tuple_dynamic(results_subject, results)
+                    tx.transmit_tuple_dynamic(result_subject, results)
                         .await
                         .context("failed to transmit result tuple")?;
                     info!("finished serving invocation");
@@ -1022,12 +1021,12 @@ async fn nats() -> anyhow::Result<()> {
         .context("failed to serve")?;
     try_join!(
         async {
-            let ((), subject, tx) = unit_invocations
+            let ((), result_subject, _, tx) = unit_invocations
                 .try_next()
                 .await
                 .context("failed to receive invocation")?
                 .context("unexpected end of stream")?;
-            tx.transmit_static(subject, ())
+            tx.transmit_static(result_subject, ())
                 .await
                 .context("failed to transmit response")?;
             anyhow::Ok(())
@@ -1058,7 +1057,8 @@ async fn nats() -> anyhow::Result<()> {
                         authority,
                         headers,
                     },
-                    subject,
+                    result_subject,
+                    _,
                     tx,
                 ) = invocations
                     .try_next()
@@ -1077,7 +1077,7 @@ async fn nats() -> anyhow::Result<()> {
                     async {
                         info!("transmit response");
                         tx.transmit_static(
-                            subject,
+                            result_subject,
                             Ok::<_, ErrorCode>(Response {
                                 body: stream::empty(),
                                 trailers: async { None },
@@ -1190,7 +1190,8 @@ async fn nats() -> anyhow::Result<()> {
                         },
                         opts,
                     ),
-                    subject,
+                    result_subject,
+                    _,
                     tx,
                 ) = invocations
                     .try_next()
@@ -1217,7 +1218,7 @@ async fn nats() -> anyhow::Result<()> {
                     async {
                         info!("transmit response");
                         tx.transmit_static(
-                            subject,
+                            result_subject,
                             Ok::<_, ErrorCode>(Response {
                                 body: stream::empty(),
                                 trailers: async { None },

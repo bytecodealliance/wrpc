@@ -3058,7 +3058,7 @@ pub trait Acceptor {
     async fn accept(
         self,
         subject: Self::Subject,
-    ) -> anyhow::Result<(Self::Subject, Self::Transmitter)>;
+    ) -> anyhow::Result<(Self::Subject, Self::Subject, Self::Transmitter)>;
 }
 
 #[async_trait]
@@ -3128,6 +3128,7 @@ pub trait Client: Sync {
                         Item = anyhow::Result<(
                             T,
                             Self::Subject,
+                            Self::Subject,
                             <Self::Acceptor as Acceptor>::Transmitter,
                         )>,
                     > + Send,
@@ -3147,14 +3148,14 @@ pub trait Client: Sync {
                     T::subscribe(&subscriber, reply_subject.clone())
                 )
                 .context("failed to subscribe for parameters")?;
-                let (tx_subject, tx) = acceptor
+                let (results_subject, error_subject, tx) = acceptor
                     .accept(reply_subject)
                     .await
                     .context("failed to accept invocation")?;
                 let (params, _) = T::receive(payload, &mut rx, nested)
                     .await
                     .context("failed to receive parameters")?;
-                Ok((params, tx_subject, tx))
+                Ok((params, results_subject, error_subject, tx))
             }
         })))
     }
@@ -3173,6 +3174,7 @@ pub trait Client: Sync {
                 dyn Stream<
                         Item = anyhow::Result<(
                             Vec<Value>,
+                            Self::Subject,
                             Self::Subject,
                             <Self::Acceptor as Acceptor>::Transmitter,
                         )>,
@@ -3195,7 +3197,7 @@ pub trait Client: Sync {
                         subscriber.subscribe_tuple(reply_subject.clone(), params.as_ref()),
                     )
                     .context("failed to subscribe for parameters")?;
-                    let (tx_subject, tx) = acceptor
+                    let (results_subject, error_subject, tx) = acceptor
                         .accept(reply_subject)
                         .await
                         .context("failed to accept invocation")?;
@@ -3207,7 +3209,7 @@ pub trait Client: Sync {
                     )
                     .await
                     .context("failed to receive parameters")?;
-                    Ok((params, tx_subject, tx))
+                    Ok((params, results_subject, error_subject, tx))
                 }
             }
         })))

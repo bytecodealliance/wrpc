@@ -846,6 +846,7 @@ impl<T: wrpc_transport::Client> IncomingHandler for T {
                     Item = anyhow::Result<(
                         IncomingRequest,
                         T::Subject,
+                        T::Subject,
                         <T::Acceptor as Acceptor>::Transmitter,
                     )>,
                 > + Send,
@@ -895,6 +896,7 @@ impl<T: wrpc_transport::Client> OutgoingHandler for T {
             dyn Stream<
                     Item = anyhow::Result<(
                         (IncomingRequest, Option<RequestOptions>),
+                        T::Subject,
                         T::Subject,
                         <T::Acceptor as Acceptor>::Transmitter,
                     )>,

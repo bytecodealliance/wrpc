@@ -499,13 +499,17 @@ impl wrpc_transport::Acceptor for Acceptor {
     type Subject = Subject;
     type Transmitter = Transmitter;
 
-    async fn accept(self, rx: Self::Subject) -> anyhow::Result<(Self::Subject, Self::Transmitter)> {
+    async fn accept(
+        self,
+        rx: Self::Subject,
+    ) -> anyhow::Result<(Self::Subject, Self::Subject, Self::Transmitter)> {
         self.nats
             .publish_with_reply(self.tx.clone(), rx, Bytes::default())
             .await
             .context("failed to connect to peer")?;
         Ok((
             Subject(format!("{}.results", self.tx).into()),
+            Subject(format!("{}.error", self.tx).into()),
             Transmitter { nats: self.nats },
         ))
     }
