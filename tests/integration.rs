@@ -16,7 +16,6 @@ use tokio::{select, spawn, try_join};
 use tracing::{info, instrument};
 use tracing_subscriber::layer::SubscriberExt as _;
 use tracing_subscriber::util::SubscriberInitExt as _;
-use url::Url;
 use wrpc::{DynamicFunctionType, ResourceType, Transmitter as _, Type, Value};
 use wrpc_interface_http::{ErrorCode, Method, Request, RequestOptions, Response, Scheme};
 use wrpc_transport::{AcceptedInvocation, Client as _, DynamicTuple};
@@ -133,8 +132,6 @@ async fn nats() -> anyhow::Result<()> {
         .init();
 
     let port = free_port().await?;
-    let url =
-        Url::parse(&format!("nats://localhost:{port}")).context("failed to parse NATS URL")?;
     let (nats_server, stop_tx) =
         spawn_server(Command::new("nats-server").args(["-V", "-T=false", "-p", &port.to_string()]))
             .await
@@ -142,7 +139,7 @@ async fn nats() -> anyhow::Result<()> {
 
     let (nats_conn_tx, mut nats_conn_rx) = mpsc::channel(1);
     let nats_client = async_nats::connect_with_options(
-        url.as_str(),
+        format!("nats://localhost:{port}"),
         async_nats::ConnectOptions::new()
             .retry_on_initial_connect()
             .event_callback(move |event| {

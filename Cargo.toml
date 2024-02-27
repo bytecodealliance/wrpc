@@ -8,68 +8,15 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/rvolosatovs/wrpc"
 
 [features]
-wasmtime = [
-    "dep:wasmtime",
-    "dep:wasmtime-environ",
-    "dep:wasmtime-wasi",
-    "dep:wrpc-runtime-wasmtime",
-]
+default = ["nats", "wasmtime"]
+
 nats = ["dep:wrpc-transport-nats"]
-bin = [
-    "dep:clap",
-    "dep:reqwest",
-    "dep:tracing-subscriber",
-    "dep:url",
-    "dep:wasmcloud-component-adapters",
-    "dep:wasmparser",
-    "dep:wasmtime-wasi-http",
-    "dep:wit-component",
-
-    "tokio/io-std",
-    "tokio/macros",
-    "tokio/rt-multi-thread",
-    "wasmtime/cranelift",
-
-    "wasmtime",
-]
-default = ["nats", "bin"]
+wasmtime = ["dep:wrpc-runtime-wasmtime"]
 
 [workspace]
-members = ["crates/*", "examples/rust/*"]
+members = ["crates/*"]
 
 [dependencies]
-anyhow = { workspace = true, features = ["std"] }
-async-nats = { workspace = true }
-async-trait = { workspace = true }
-bytes = { workspace = true }
-clap = { workspace = true, features = [
-    "color",
-    "derive",
-    "error-context",
-    "help",
-    "std",
-    "suggestions",
-    "usage",
-], optional = true }
-futures = { workspace = true }
-reqwest = { workspace = true, features = ["rustls"], optional = true }
-tokio = { workspace = true, features = ["sync"] }
-tokio-stream = { workspace = true, features = ["sync"] }
-tracing = { workspace = true }
-tracing-subscriber = { workspace = true, features = [
-    "ansi",
-    "env-filter",
-    "fmt",
-], optional = true }
-url = { workspace = true, optional = true }
-wasmcloud-component-adapters = { workspace = true, optional = true }
-wasmparser = { workspace = true, optional = true }
-wasmtime = { workspace = true, features = ["component-model"], optional = true }
-wasmtime-environ = { workspace = true, optional = true } # TODO: Remove
-wasmtime-wasi = { workspace = true, features = ["preview2"], optional = true }
-wasmtime-wasi-http = { workspace = true, optional = true }
-wit-component = { workspace = true, optional = true }
-wit-parser = { workspace = true }
 wrpc-interface-http = { workspace = true }
 wrpc-runtime-wasmtime = { workspace = true, optional = true }
 wrpc-transport = { workspace = true }
@@ -77,33 +24,32 @@ wrpc-transport-nats = { workspace = true, optional = true }
 wrpc-types = { workspace = true }
 
 [dev-dependencies]
+anyhow = { workspace = true }
+async-nats = { workspace = true }
 futures = { workspace = true, features = ["async-await"] }
 tokio = { workspace = true, features = ["process"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = [
+    "ansi",
+    "env-filter",
+    "fmt",
+] }
 
 [workspace.dependencies]
 anyhow = { version = "1", default-features = false }
 async-nats = { version = "0.33", default-features = false }
 async-trait = { version = "0.1", default-features = false }
 bytes = { version = "1", default-features = false }
-clap = { version = "4", default-features = false }
 futures = { version = "0.3", default-features = false }
 leb128 = { version = "0.2", default-features = false }
-reqwest = { version = "0.11", default-features = false }
 serde = { version = "1", default-features = false }
 serde_json = { version = "1", default-features = false }
 tokio = { version = "1", default-features = false }
 tokio-stream = { version = "0.1", default-features = false }
 tracing = { version = "0.1", default-features = false }
 tracing-subscriber = { version = "0.3", default-features = false }
-url = { version = "2", default-features = false }
-wasmcloud-component-adapters = { version = "0.7", default-features = false }
-wasmparser = { version = "0.118", default-features = false }
 wasmtime = { version = "18", default-features = false }
-wasmtime-environ = { version = "18", default-features = false }
 wasmtime-wasi = { version = "18", default-features = false }
-wasmtime-wasi-http = { version = "18", default-features = false }
-wit-bindgen = { version = "0.16", default-features = false }
-wit-component = { version = "0.19", default-features = false }
 wit-parser = { version = "0.13", default-features = false }
 wrpc-interface-http = { version = "0.6", path = "./crates/interface-http", default-features = false }
 wrpc-runtime-wasmtime = { version = "0.1", path = "./crates/runtime-wasmtime", default-features = false }

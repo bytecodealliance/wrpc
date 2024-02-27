@@ -1,4 +1,17 @@
-pub mod transport;
+pub mod transport {
+    pub use wrpc_transport::*;
+    #[cfg(feature = "nats")]
+    pub use wrpc_transport_nats as nats;
+}
+
+pub mod runtime {
+    #[cfg(feature = "wasmtime")]
+    pub use wrpc_runtime_wasmtime as wasmtime;
+}
+
+pub mod interfaces {
+    pub use wrpc_interface_http as http;
+}
 
 pub use wrpc_types as types;
 
