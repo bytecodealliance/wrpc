@@ -1,5 +1,0 @@
-package wrpc:example-foobar@0.1.0;
-
-world example-foobar {
-    include wrpc:examples/example-foobar@0.1.0;
-}

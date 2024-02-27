@@ -1,5 +1,0 @@
-package wrpc:example-foo@0.1.0;
-
-world example-foo {
-    include wrpc:examples/example-foo@0.1.0;
-}

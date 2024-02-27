@@ -1,5 +1,0 @@
-package wrpc:examples@0.1.0;
-
-world echo {
-    export wasi:http/incoming-handler@0.2.0;
-}
