@@ -206,35 +206,8 @@ pub trait Transmitter {
                         .context("stream unexpectedly finished")?
                         .context("failed to receive item")?;
                     match item {
-                        StreamItem::End(None) => {
+                        StreamItem::End => {
                             self.transmit(subject, Bytes::from_static(&[0])).await?;
-                            return Ok(());
-                        }
-                        StreamItem::End(Some(v)) => {
-                            let mut payload = BytesMut::from([0].as_slice());
-                            let tx = v
-                                .encode(&mut payload)
-                                .await
-                                .context("failed to encode stream end value")?;
-                            let payload = payload.freeze();
-                            let nested = subject.child(Some(i)).child(Some(0));
-                            try_join!(
-                                async {
-                                    if let Some(tx) = tx {
-                                        trace!("transmit nested asynchronous stream end value");
-                                        self.transmit_async(nested, tx)
-                                            .await
-                                            .context("failed to transmit nested stream end value")
-                                    } else {
-                                        Ok(())
-                                    }
-                                },
-                                async {
-                                    self.transmit(subject, payload)
-                                        .await
-                                        .context("failed to transmit stream end value")
-                                },
-                            )?;
                             return Ok(());
                         }
                         StreamItem::Element(None) => {
@@ -293,8 +266,7 @@ pub enum AsyncSubscription<T> {
     },
     Stream {
         subscriber: T,
-        nested_element: Option<Box<AsyncSubscription<T>>>,
-        nested_end: Option<Box<AsyncSubscription<T>>>,
+        nested: Option<Box<AsyncSubscription<T>>>,
     },
 }
 
@@ -360,21 +332,11 @@ impl<T> AsyncSubscription<T> {
     }
 
     #[instrument(level = "trace", skip_all)]
-    pub fn try_unwrap_stream(
-        self,
-    ) -> anyhow::Result<(
-        T,
-        Option<AsyncSubscriptionDemux<T>>,
-        Option<AsyncSubscription<T>>,
-    )> {
+    pub fn try_unwrap_stream(self) -> anyhow::Result<(T, Option<AsyncSubscriptionDemux<T>>)> {
         match self {
-            AsyncSubscription::Stream {
-                subscriber,
-                nested_element,
-                nested_end,
-            } => {
-                let nested_element = nested_element.map(|sub| sub.demux()).transpose()?;
-                Ok((subscriber, nested_element, nested_end.map(|sub| *sub)))
+            AsyncSubscription::Stream { subscriber, nested } => {
+                let nested = nested.map(|sub| sub.demux()).transpose()?;
+                Ok((subscriber, nested))
             }
             _ => bail!("stream subscription type mismatch"),
         }
@@ -389,7 +351,7 @@ impl Stream for DemuxStream {
     #[instrument(level = "trace", skip_all)]
     fn poll_next(
         self: Pin<&mut Self>,
-        cx: &mut task::Context<'_>,
+        _cx: &mut task::Context<'_>,
     ) -> task::Poll<Option<Self::Item>> {
         unreachable!()
     }
@@ -405,7 +367,7 @@ pub enum AsyncSubscriptionDemux<T> {
 
 impl<T> AsyncSubscriptionDemux<T> {
     #[instrument(level = "trace", skip_all)]
-    pub fn select(&mut self, i: u64) -> AsyncSubscription<DemuxStream> {
+    pub fn select(&mut self, _i: u64) -> AsyncSubscription<DemuxStream> {
         unreachable!()
     }
 }
@@ -653,41 +615,28 @@ pub trait Subscriber {
                     nested: nested.map(Box::new),
                 }))
             }
-            Type::Stream { element, end } => {
+            Type::Stream(None) => {
+                let subscriber = self.subscribe(subject).await?;
+                Ok(Some(AsyncSubscription::Stream {
+                    subscriber,
+                    nested: None,
+                }))
+            }
+            Type::Stream(Some(ty)) => {
                 let nested = subject.child(None);
                 let (subscriber, nested) = try_join!(
                     self.subscribe(subject),
-                    self.subscribe_async_sized_optional(
-                        &nested,
-                        [
-                            element.as_ref().map(AsRef::as_ref),
-                            end.as_ref().map(AsRef::as_ref)
-                        ]
-                    )
+                    self.subscribe_async(nested, ty.as_ref())
                 )?;
-                let (nested_element, nested_end) = nested
-                    .map(|[nested_element, nested_end]| {
-                        (nested_element.map(Box::new), nested_end.map(Box::new))
-                    })
-                    .unwrap_or_default();
-                Ok(Some(AsyncSubscription::Stream {
-                    subscriber,
-                    nested_element,
-                    nested_end,
-                }))
+                let nested = nested.map(Box::new);
+                Ok(Some(AsyncSubscription::Stream { subscriber, nested }))
             }
             Type::Resource(Resource::Pollable) => {
                 self.subscribe_async(subject, &Type::Future(None)).await
             }
             Type::Resource(Resource::InputStream) => {
-                self.subscribe_async(
-                    subject,
-                    &Type::Stream {
-                        element: Some(Arc::new(Type::U8)),
-                        end: None,
-                    },
-                )
-                .await
+                self.subscribe_async(subject, &Type::Stream(Some(Arc::new(Type::U8))))
+                    .await
             }
             Type::Resource(Resource::OutputStream | Resource::Dynamic(..)) => Ok(None),
         }
@@ -865,9 +814,9 @@ pub trait Subscriber {
     }
 }
 
-pub enum StreamItem<T, U> {
+pub enum StreamItem<T> {
     Element(T),
-    End(U),
+    End,
 }
 
 /// A tuple of a dynamic size
@@ -914,11 +863,7 @@ pub enum Value {
     Result(Result<Option<Box<Value>>, Option<Box<Value>>>),
     Flags(u64),
     Future(Pin<Box<dyn Future<Output = anyhow::Result<Option<Value>>> + Send>>),
-    Stream(
-        Pin<
-            Box<dyn Stream<Item = anyhow::Result<StreamItem<Option<Value>, Option<Value>>>> + Send>,
-        >,
-    ),
+    Stream(Pin<Box<dyn Stream<Item = anyhow::Result<StreamItem<Option<Value>>>> + Send>>),
 }
 
 impl From<bool> for Value {
@@ -1029,13 +974,13 @@ impl From<(Value, Value)> for Value {
     }
 }
 
-struct StreamValue<T, U> {
-    items: ReceiverStream<anyhow::Result<StreamItem<T, U>>>,
+struct StreamValue<T> {
+    items: ReceiverStream<anyhow::Result<StreamItem<T>>>,
     producer: JoinHandle<()>,
 }
 
-impl<T, U> Stream for StreamValue<T, U> {
-    type Item = anyhow::Result<StreamItem<T, U>>;
+impl<T> Stream for StreamValue<T> {
+    type Item = anyhow::Result<StreamItem<T>>;
 
     #[instrument(level = "trace", skip_all)]
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Option<Self::Item>> {
@@ -1043,7 +988,7 @@ impl<T, U> Stream for StreamValue<T, U> {
     }
 }
 
-impl<T, U> Drop for StreamValue<T, U> {
+impl<T> Drop for StreamValue<T> {
     fn drop(&mut self) {
         self.producer.abort()
     }
@@ -1061,11 +1006,7 @@ pub enum AsyncValue {
     ResultOk(Box<AsyncValue>),
     ResultErr(Box<AsyncValue>),
     Future(Pin<Box<dyn Future<Output = anyhow::Result<Option<Value>>> + Send>>),
-    Stream(
-        Pin<
-            Box<dyn Stream<Item = anyhow::Result<StreamItem<Option<Value>, Option<Value>>>> + Send>,
-        >,
-    ),
+    Stream(Pin<Box<dyn Stream<Item = anyhow::Result<StreamItem<Option<Value>>>> + Send>>),
 }
 
 fn map_tuple_subscription<T>(
@@ -1307,27 +1248,20 @@ where
     }
 
     async fn receive_stream_item_context<T>(
-        element_cx: Option<&Ctx>,
-        end_cx: Option<&Ctx>,
+        cx: Option<&Ctx>,
         payload: impl Buf + Send + 'static,
         rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
-        nested_element: Option<AsyncSubscription<DemuxStream>>,
-        nested_end: &mut Option<AsyncSubscription<T>>,
-    ) -> anyhow::Result<(StreamItem<Option<Self>, Option<Self>>, Box<dyn Buf + Send>)>
+        sub: Option<AsyncSubscription<DemuxStream>>,
+    ) -> anyhow::Result<(StreamItem<Option<Self>>, Box<dyn Buf + Send>)>
     where
         T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin + 'static,
     {
         let mut payload = receive_at_least(payload, rx, 1).await?;
-        match (payload.get_u8(), element_cx, end_cx) {
-            (0, _, None) => Ok((StreamItem::End(None), payload)),
-            (0, _, Some(cx)) => {
-                let (v, payload) =
-                    Self::receive_context(cx, payload, rx, nested_end.take()).await?;
-                Ok((StreamItem::End(Some(v)), payload))
-            }
-            (1, None, _) => Ok((StreamItem::Element(None), payload)),
-            (1, Some(cx), _) => {
-                let (v, payload) = Self::receive_context(cx, payload, rx, nested_element).await?;
+        match (payload.get_u8(), cx) {
+            (0, _) => Ok((StreamItem::End, payload)),
+            (1, None) => Ok((StreamItem::Element(None), payload)),
+            (1, Some(cx)) => {
+                let (v, payload) = Self::receive_context(cx, payload, rx, sub).await?;
                 Ok((StreamItem::Element(Some(v)), payload))
             }
             _ => bail!("invalid `stream` variant"),
@@ -1335,25 +1269,20 @@ where
     }
 }
 
-pub async fn receive_stream_item<A, B, T>(
+pub async fn receive_stream_item<E, T>(
     payload: impl Buf + Send + 'static,
     rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
-    nested_element: Option<AsyncSubscription<DemuxStream>>,
-    nested_end: &mut Option<AsyncSubscription<T>>,
-) -> anyhow::Result<(StreamItem<A, B>, Box<dyn Buf + Send>)>
+    sub: Option<AsyncSubscription<DemuxStream>>,
+) -> anyhow::Result<(StreamItem<E>, Box<dyn Buf + Send>)>
 where
-    A: Receive,
-    B: Receive,
+    E: Receive,
     T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin + 'static,
 {
     let mut payload = receive_at_least(payload, rx, 1).await?;
     match payload.get_u8() {
-        0 => {
-            let (v, payload) = B::receive(payload, rx, nested_end.take()).await?;
-            Ok((StreamItem::End(v), payload))
-        }
+        0 => Ok((StreamItem::End, payload)),
         1 => {
-            let (v, payload) = A::receive(payload, rx, nested_element).await?;
+            let (v, payload) = E::receive(payload, rx, sub).await?;
             Ok((StreamItem::Element(v), payload))
         }
         _ => bail!("invalid `stream` variant"),
@@ -1818,10 +1747,9 @@ where
 }
 
 #[async_trait]
-impl<A, B> Receive for Box<dyn Stream<Item = anyhow::Result<StreamItem<A, B>>> + Send + Unpin>
+impl<E> Receive for Pin<Box<dyn Future<Output = anyhow::Result<E>> + Send>>
 where
-    A: Receive + Send + 'static,
-    B: Receive + Send + 'static,
+    E: Receive + Send + 'static,
 {
     #[instrument(level = "trace", skip_all)]
     async fn receive<T>(
@@ -1832,7 +1760,51 @@ where
     where
         T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin + 'static,
     {
-        let Some((mut subscriber, mut nested_element, mut nested_end)) =
+        let Some((mut subscriber, sub)) =
+            sub.map(AsyncSubscription::try_unwrap_future).transpose()?
+        else {
+            bail!("future subscription type mismatch")
+        };
+        trace!("decode future");
+        let mut payload = receive_at_least(payload, rx, 1).await?;
+        trace!("decode future variant");
+        match payload.get_u8() {
+            0 => {
+                trace!("decoded pending future");
+                Ok((
+                    Box::pin(async move {
+                        trace!("decode future nested value");
+                        let (v, _) = E::receive(Bytes::default(), &mut subscriber, sub).await?;
+                        Ok(v)
+                    }),
+                    payload,
+                ))
+            }
+            1 => {
+                trace!("decode ready future nested value");
+                let (v, payload) = E::receive(payload, rx, sub).await?;
+                Ok((Box::pin(ready(Ok(v))), payload))
+            }
+            _ => bail!("invalid `future` variant"),
+        }
+    }
+}
+
+#[async_trait]
+impl<E> Receive for Box<dyn Stream<Item = anyhow::Result<StreamItem<E>>> + Send + Unpin>
+where
+    E: Receive + Send + 'static,
+{
+    #[instrument(level = "trace", skip_all)]
+    async fn receive<T>(
+        payload: impl Buf + Send + 'static,
+        rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
+        sub: Option<AsyncSubscription<T>>,
+    ) -> anyhow::Result<(Self, Box<dyn Buf + Send>)>
+    where
+        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin + 'static,
+    {
+        let Some((mut subscriber, mut sub)) =
             sub.map(AsyncSubscription::try_unwrap_stream).transpose()?
         else {
             bail!("stream subscription type mismatch")
@@ -1847,11 +1819,10 @@ where
                 let producer = spawn(async move {
                     let mut payload: Box<dyn Buf + Send> = Box::new(Bytes::new());
                     for i in 0.. {
-                        match receive_stream_item(
+                        match receive_stream_item::<E, T>(
                             payload,
                             &mut subscriber,
-                            nested_element.as_mut().map(|sub| sub.select(i)),
-                            &mut nested_end,
+                            sub.as_mut().map(|sub| sub.select(i)),
                         )
                         .await
                         {
@@ -1865,8 +1836,8 @@ where
                                     return;
                                 }
                             }
-                            Ok((StreamItem::End(end), _)) => {
-                                if let Err(err) = items_tx.send(Ok(StreamItem::End(end))).await {
+                            Ok((StreamItem::End, _)) => {
+                                if let Err(err) = items_tx.send(Ok(StreamItem::End)).await {
                                     trace!(?err, "item receiver closed");
                                     return;
                                 }
@@ -1892,19 +1863,15 @@ where
             }
             1 => {
                 trace!(i = 0, "decode stream element");
-                let sub = nested_element.as_mut().map(|sub| sub.select(0));
-                let (element, payload) = A::receive(payload, rx, sub)
+                let sub = sub.as_mut().map(|sub| sub.select(0));
+                let (element, payload) = E::receive(payload, rx, sub)
                     .await
                     .context("failed to decode value of stream element 0")?;
-                let mut payload = receive_at_least(payload, rx, 1).await?;
-                trace!(i = 1, "decode stream item variant");
-                ensure!(payload.get_u8() == 0);
-                trace!("decode stream end");
-                let (end, payload) = B::receive(payload, rx, nested_end).await?;
+                let payload = receive_at_least(payload, rx, 1).await?;
                 Ok((
                     Box::new(stream::iter([
                         Ok(StreamItem::Element(element)),
-                        Ok(StreamItem::End(end)),
+                        Ok(StreamItem::End),
                     ])),
                     payload,
                 ))
@@ -1921,19 +1888,16 @@ where
                 let mut els = Vec::with_capacity(cap);
                 for i in 0..len {
                     trace!(i, "decode stream element");
-                    let sub = nested_element.as_mut().map(|sub| sub.select(i));
+                    let sub = sub.as_mut().map(|sub| sub.select(i));
                     let el;
-                    (el, payload) = A::receive(payload, rx, sub)
+                    (el, payload) = E::receive(payload, rx, sub)
                         .await
                         .with_context(|| format!("failed to decode value of list element {i}"))?;
                     els.push(Ok(StreamItem::Element(el)));
                 }
                 ensure!(payload.get_u8() == 0);
-                let (end, payload) = B::receive(payload, rx, nested_end).await?;
                 Ok((
-                    Box::new(stream::iter(
-                        els.into_iter().chain([Ok(StreamItem::End(end))]),
-                    )),
+                    Box::new(stream::iter(els.into_iter().chain([Ok(StreamItem::End)]))),
                     payload,
                 ))
             }
@@ -2184,7 +2148,7 @@ impl ReceiveContext<Type> for Value {
             }
             Type::String => {
                 let (v, payload) = String::receive(payload, rx, sub).await?;
-                Ok((Self::String(v.into()), payload))
+                Ok((Self::String(v), payload))
             }
             Type::List(ty) => {
                 let (els, payload) = Self::receive_list_context(ty, payload, rx, sub).await?;
@@ -2376,8 +2340,8 @@ impl ReceiveContext<Type> for Value {
                     _ => bail!("invalid `future` variant"),
                 }
             }
-            Type::Stream { element, end } => {
-                let Some((mut subscriber, mut nested_element, mut nested_end)) =
+            Type::Stream(ty) => {
+                let Some((mut subscriber, mut sub)) =
                     sub.map(AsyncSubscription::try_unwrap_stream).transpose()?
                 else {
                     bail!("stream subscription type mismatch")
@@ -2389,18 +2353,15 @@ impl ReceiveContext<Type> for Value {
                 match byte.first().unwrap() {
                     0 => {
                         let (items_tx, items_rx) = mpsc::channel(1);
-                        let element = element.as_ref().map(Arc::clone);
-                        let end = end.as_ref().map(Arc::clone);
+                        let ty = ty.as_ref().map(Arc::clone);
                         let producer = spawn(async move {
                             let mut payload: Box<dyn Buf + Send> = Box::new(Bytes::new());
                             for i in 0.. {
-                                match Self::receive_stream_item_context(
-                                    element.as_deref(),
-                                    end.as_deref(),
+                                match Self::receive_stream_item_context::<T>(
+                                    ty.as_deref(),
                                     payload,
                                     &mut subscriber,
-                                    nested_element.as_mut().map(|sub| sub.select(i)),
-                                    &mut nested_end,
+                                    sub.as_mut().map(|sub| sub.select(i)),
                                 )
                                 .await
                                 {
@@ -2414,10 +2375,8 @@ impl ReceiveContext<Type> for Value {
                                             return;
                                         }
                                     }
-                                    Ok((StreamItem::End(end), _)) => {
-                                        if let Err(err) =
-                                            items_tx.send(Ok(StreamItem::End(end))).await
-                                        {
+                                    Ok((StreamItem::End, _)) => {
+                                        if let Err(err) = items_tx.send(Ok(StreamItem::End)).await {
                                             trace!(?err, "item receiver closed");
                                             return;
                                         }
@@ -2442,23 +2401,12 @@ impl ReceiveContext<Type> for Value {
                         ))
                     }
                     1 => {
-                        let (element, payload) = if let Some(element) = element {
+                        let (element, payload) = if let Some(ty) = ty {
                             trace!(i = 0, "decode stream element");
-                            let sub = nested_element.as_mut().map(|sub| sub.select(0));
-                            let (v, payload) = Self::receive_context(element, payload, rx, sub)
+                            let sub = sub.as_mut().map(|sub| sub.select(0));
+                            let (v, payload) = Self::receive_context(ty, payload, rx, sub)
                                 .await
                                 .context("failed to decode value of stream element 0")?;
-                            (Some(v), payload)
-                        } else {
-                            (None, payload)
-                        };
-                        let mut payload = receive_at_least(payload, rx, 1).await?;
-                        trace!(i = 1, "decode stream item variant");
-                        ensure!(payload.get_u8() == 0);
-                        let (end, payload) = if let Some(end) = end {
-                            trace!("decode stream end");
-                            let (v, payload) =
-                                Self::receive_context(end, payload, rx, nested_end).await?;
                             (Some(v), payload)
                         } else {
                             (None, payload)
@@ -2466,7 +2414,7 @@ impl ReceiveContext<Type> for Value {
                         Ok((
                             Value::Stream(Box::pin(stream::iter([
                                 Ok(StreamItem::Element(element)),
-                                Ok(StreamItem::End(end)),
+                                Ok(StreamItem::End),
                             ]))),
                             payload,
                         ))
@@ -2477,37 +2425,29 @@ impl ReceiveContext<Type> for Value {
                             .await
                             .context("failed to decode stream length")?;
                         trace!(len, "decode stream elements");
-                        let els = if let Some(element) = element {
+                        let els = if let Some(ty) = ty {
                             let cap = len
                                 .try_into()
                                 .context("stream element length does not fit in usize")?;
                             let mut els = Vec::with_capacity(cap);
                             for i in 0..len {
                                 trace!(i, "decode stream element");
-                                let sub = nested_element.as_mut().map(|sub| sub.select(i));
+                                let sub = sub.as_mut().map(|sub| sub.select(i));
                                 let el;
-                                (el, payload) = Self::receive_context(element, payload, rx, sub)
+                                (el, payload) = Self::receive_context(ty, payload, rx, sub)
                                     .await
                                     .with_context(|| {
-                                        format!("failed to decode value of list element {i}")
-                                    })?;
+                                    format!("failed to decode value of list element {i}")
+                                })?;
                                 els.push(Ok(StreamItem::Element(Some(el))));
                             }
                             els
                         } else {
                             Vec::default()
                         };
-                        ensure!(payload.get_u8() == 0);
-                        let (end, payload) = if let Some(end) = end {
-                            let (v, payload) =
-                                Self::receive_context(end, payload, rx, nested_end).await?;
-                            (Some(v), payload)
-                        } else {
-                            (None, payload)
-                        };
                         Ok((
                             Value::Stream(Box::pin(stream::iter(
-                                els.into_iter().chain([Ok(StreamItem::End(end))]),
+                                els.into_iter().chain([Ok(StreamItem::End)]),
                             ))),
                             payload,
                         ))
@@ -2518,16 +2458,8 @@ impl ReceiveContext<Type> for Value {
                 Self::receive_context(&Type::Future(None), payload, rx, sub).await
             }
             Type::Resource(Resource::InputStream) => {
-                Self::receive_context(
-                    &Type::Stream {
-                        element: Some(Arc::new(Type::U8)),
-                        end: None,
-                    },
-                    payload,
-                    rx,
-                    sub,
-                )
-                .await
+                Self::receive_context(&Type::Stream(Some(Arc::new(Type::U8))), payload, rx, sub)
+                    .await
             }
             Type::Resource(Resource::OutputStream | Resource::Dynamic(..)) => {
                 Self::receive_context(&Type::String, payload, rx, sub)
@@ -2542,6 +2474,26 @@ impl ReceiveContext<Type> for Value {
 pub trait Encode: Send {
     async fn encode(self, payload: &mut (impl BufMut + Send))
         -> anyhow::Result<Option<AsyncValue>>;
+
+    async fn encode_dynamic_future(
+        mut fut: impl Future<Output = anyhow::Result<Option<Value>>> + Send + Unpin + 'static,
+        mut payload: impl BufMut + Send,
+    ) -> anyhow::Result<Option<AsyncValue>>
+    where
+        Self: Sized,
+    {
+        trace!("encode future");
+        if let Some(v) = poll_immediate(&mut fut).await {
+            trace!("encode ready future value");
+            payload.put_u8(1);
+            let v = v.context("failed to acquire future value")?;
+            v.encode(&mut payload).await
+        } else {
+            trace!("encode pending future value");
+            payload.put_u8(0);
+            Ok(Some(AsyncValue::Future(Box::pin(fut))))
+        }
+    }
 }
 
 #[async_trait]
@@ -2859,30 +2811,6 @@ where
     }
 }
 
-//#[async_trait]
-//impl<T, U> Encode for Pin<Box<dyn Future<Output = anyhow::Result<U>>>>
-//where
-//    U: Encode + Send,
-//{
-//    #[instrument(level = "trace", skip_all)]
-//    async fn encode(
-//        self,
-//        payload: &mut (impl BufMut + Send),
-//    ) -> anyhow::Result<Option<AsyncTransmission>> {
-//        trace!("encode future");
-//        if let Some(v) = poll_immediate(&mut self).await {
-//            trace!("encode ready future value");
-//            payload.put_u8(1);
-//            let v = v.context("failed to acquire value of the future")?;
-//            v.encode(payload).await
-//        } else {
-//            trace!("encode pending future value");
-//            payload.put_u8(0);
-//            Ok(Some(AsyncTransmission::Future(self)))
-//        }
-//    }
-//}
-
 #[async_trait]
 impl<A> Encode for (A,)
 where
@@ -3143,8 +3071,7 @@ where
                 &mut self.rx,
                 self.nested
                     .as_mut()
-                    .map(|nested| nested.get_mut(i).map(Option::take).flatten())
-                    .flatten(),
+                    .and_then(|nested| nested.get_mut(i).and_then(Option::take)),
             )
             .await
             .context("failed to receive tuple value")?;

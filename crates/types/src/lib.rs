@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use anyhow::{bail, Context as _};
+use anyhow::{bail, ensure, Context as _};
 use tracing::{error, instrument, trace, warn};
 
 /// Dynamic resource type
@@ -51,10 +51,7 @@ pub enum Type {
     },
     Flags,
     Future(Option<Arc<Type>>),
-    Stream {
-        element: Option<Arc<Type>>,
-        end: Option<Arc<Type>>,
-    },
+    Stream(Option<Arc<Type>>),
     Resource(Resource),
 }
 
@@ -203,13 +200,14 @@ impl Type {
                 kind: TypeDefKind::Stream(Stream { element, end }),
                 ..
             } => {
+                ensure!(
+                    end.is_none(),
+                    "stream end elements are deprecated and will be removed in preview 3"
+                );
                 let element = resolve_optional(resolve, element)
                     .context("failed to resolve inner stream `element` type")?
                     .map(Arc::new);
-                let end = resolve_optional(resolve, end)
-                    .context("failed to resolve inner stream `end` type")?
-                    .map(Arc::new);
-                Ok(Type::Stream { element, end })
+                Ok(Type::Stream(element))
             }
             TypeDef {
                 kind: TypeDefKind::Type(ty),

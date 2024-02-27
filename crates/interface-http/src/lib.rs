@@ -1,3 +1,4 @@
+use core::future::Future;
 use core::pin::Pin;
 use core::time::Duration;
 
@@ -5,6 +6,7 @@ use anyhow::{bail, Context as _};
 use async_trait::async_trait;
 use bytes::{Buf, BufMut, Bytes};
 use futures::{Stream, StreamExt as _};
+use tokio::try_join;
 use tracing::instrument;
 use wrpc_transport::{
     encode_discriminant, receive_discriminant, Acceptor, AsyncSubscription, AsyncValue, Encode,
@@ -559,11 +561,13 @@ impl Receive for RequestOptions {
 }
 
 pub type IncomingRequest = Request<
-    Box<dyn Stream<Item = anyhow::Result<StreamItem<Bytes, Option<Fields>>>> + Send + Unpin>,
+    Box<dyn Stream<Item = anyhow::Result<StreamItem<Bytes>>> + Send + Unpin>,
+    Pin<Box<dyn Future<Output = anyhow::Result<Option<Fields>>> + Send>>,
 >;
 
-pub struct Request<T> {
-    pub body: T,
+pub struct Request<Body, Trailers> {
+    pub body: Body,
+    pub trailers: Trailers,
     pub method: Method,
     pub path_with_query: Option<String>,
     pub scheme: Option<Scheme>,
@@ -572,9 +576,10 @@ pub struct Request<T> {
 }
 
 #[async_trait]
-impl<T> Encode for Request<T>
+impl<Body, Trailers> Encode for Request<Body, Trailers>
 where
-    T: Stream<Item = StreamItem<Bytes, Option<Fields>>> + Send + 'static,
+    Body: Stream<Item = StreamItem<Bytes>> + Send + 'static,
+    Trailers: Future<Output = Option<Fields>> + Send + 'static,
 {
     async fn encode(
         self,
@@ -582,6 +587,7 @@ where
     ) -> anyhow::Result<Option<AsyncValue>> {
         let Self {
             body,
+            trailers,
             method,
             path_with_query,
             scheme,
@@ -590,20 +596,24 @@ where
         } = self;
         // mark body as pending
         payload.put_u8(0);
+        // mark trailers as pending
+        payload.put_u8(0);
         method.encode_sync(&mut payload)?;
         EncodeSync::encode_sync_option(path_with_query, &mut payload)?;
         EncodeSync::encode_sync_option(scheme, &mut payload)?;
         EncodeSync::encode_sync_option(authority, &mut payload)?;
         headers.encode(&mut payload).await?;
         // TODO: Optimize, this wrapping should not be necessary
-        Ok(Some(AsyncValue::Record(vec![Some(AsyncValue::Stream(
-            Box::pin(body.map(|item| match item {
+        Ok(Some(AsyncValue::Record(vec![
+            Some(AsyncValue::Stream(Box::pin(body.map(|item| match item {
                 StreamItem::Element(buf) => Ok(StreamItem::Element(Some(buf.into()))),
-                StreamItem::End(trailers) => {
-                    Ok(StreamItem::End(Some(trailers.map(fields_to_wrpc).into())))
-                }
-            })),
-        ))])))
+                StreamItem::End => Ok(StreamItem::End),
+            })))),
+            Some(AsyncValue::Future(Box::pin(async {
+                let trailers = trailers.await;
+                Ok(Some(trailers.map(fields_to_wrpc).into()))
+            }))),
+        ])))
     }
 }
 
@@ -614,14 +624,20 @@ impl Subscribe for IncomingRequest {
         subscriber: &T,
         subject: T::Subject,
     ) -> Result<Option<AsyncSubscription<T::Stream>>, T::SubscribeError> {
-        let subscriber = subscriber.subscribe(subject.child(Some(0))).await?;
-        Ok(Some(AsyncSubscription::Record(vec![Some(
-            AsyncSubscription::Stream {
-                subscriber,
-                nested_element: None,
-                nested_end: None,
-            },
-        )])))
+        let (body_subscriber, trailers_subscriber) = try_join!(
+            subscriber.subscribe(subject.child(Some(0))),
+            subscriber.subscribe(subject.child(Some(1)))
+        )?;
+        Ok(Some(AsyncSubscription::Record(vec![
+            Some(AsyncSubscription::Stream {
+                subscriber: body_subscriber,
+                nested: None,
+            }),
+            Some(AsyncSubscription::Future {
+                subscriber: trailers_subscriber,
+                nested: None,
+            }),
+        ])))
     }
 }
 
@@ -648,6 +664,15 @@ impl Receive for IncomingRequest {
         )
         .await
         .context("failed to receive `body`")?;
+        let (trailers, payload) = Receive::receive(
+            payload,
+            rx,
+            sub.as_mut()
+                .and_then(|sub| sub.get_mut(1))
+                .and_then(Option::take),
+        )
+        .await
+        .context("failed to receive `trailers`")?;
         let (method, payload) = Receive::receive_sync(payload, rx)
             .await
             .context("failed to receive `method`")?;
@@ -666,6 +691,7 @@ impl Receive for IncomingRequest {
         Ok((
             Self {
                 body,
+                trailers,
                 method,
                 path_with_query,
                 scheme,
@@ -678,19 +704,22 @@ impl Receive for IncomingRequest {
 }
 
 pub type IncomingResponse = Response<
-    Box<dyn Stream<Item = anyhow::Result<StreamItem<Bytes, Option<Fields>>>> + Send + Unpin>,
+    Box<dyn Stream<Item = anyhow::Result<StreamItem<Bytes>>> + Send + Unpin>,
+    Pin<Box<dyn Future<Output = anyhow::Result<Option<Fields>>> + Send>>,
 >;
 
-pub struct Response<T> {
-    pub body: T,
+pub struct Response<Body, Trailers> {
+    pub body: Body,
+    pub trailers: Trailers,
     pub status: u16,
     pub headers: Fields,
 }
 
 #[async_trait]
-impl<T> Encode for Response<T>
+impl<Body, Trailers> Encode for Response<Body, Trailers>
 where
-    T: Stream<Item = StreamItem<Bytes, Option<Fields>>> + Send + 'static,
+    Body: Stream<Item = StreamItem<Bytes>> + Send + 'static,
+    Trailers: Future<Output = Option<Fields>> + Send + 'static,
 {
     async fn encode(
         self,
@@ -698,22 +727,27 @@ where
     ) -> anyhow::Result<Option<AsyncValue>> {
         let Self {
             body,
+            trailers,
             status,
             headers,
         } = self;
         // mark body as pending
         payload.put_u8(0);
+        // mark trailers as pending
+        payload.put_u8(0);
         status.encode_sync(&mut payload)?;
         headers.encode(&mut payload).await?;
         // TODO: Optimize, this wrapping should not be necessary
-        Ok(Some(AsyncValue::Record(vec![Some(AsyncValue::Stream(
-            Box::pin(body.map(|item| match item {
+        Ok(Some(AsyncValue::Record(vec![
+            Some(AsyncValue::Stream(Box::pin(body.map(|item| match item {
                 StreamItem::Element(buf) => Ok(StreamItem::Element(Some(buf.into()))),
-                StreamItem::End(trailers) => {
-                    Ok(StreamItem::End(Some(trailers.map(fields_to_wrpc).into())))
-                }
-            })),
-        ))])))
+                StreamItem::End => Ok(StreamItem::End),
+            })))),
+            Some(AsyncValue::Future(Box::pin(async {
+                let trailers = trailers.await;
+                Ok(Some(trailers.map(fields_to_wrpc).into()))
+            }))),
+        ])))
     }
 }
 
@@ -724,14 +758,20 @@ impl Subscribe for IncomingResponse {
         subscriber: &T,
         subject: T::Subject,
     ) -> Result<Option<AsyncSubscription<T::Stream>>, T::SubscribeError> {
-        let subscriber = subscriber.subscribe(subject.child(Some(0))).await?;
-        Ok(Some(AsyncSubscription::Record(vec![Some(
-            AsyncSubscription::Stream {
-                subscriber,
-                nested_element: None,
-                nested_end: None,
-            },
-        )])))
+        let (body_subscriber, trailers_subscriber) = try_join!(
+            subscriber.subscribe(subject.child(Some(0))),
+            subscriber.subscribe(subject.child(Some(1)))
+        )?;
+        Ok(Some(AsyncSubscription::Record(vec![
+            Some(AsyncSubscription::Stream {
+                subscriber: body_subscriber,
+                nested: None,
+            }),
+            Some(AsyncSubscription::Future {
+                subscriber: trailers_subscriber,
+                nested: None,
+            }),
+        ])))
     }
 }
 
@@ -758,6 +798,15 @@ impl Receive for IncomingResponse {
         )
         .await
         .context("failed to receive `body`")?;
+        let (trailers, payload) = Receive::receive(
+            payload,
+            rx,
+            sub.as_mut()
+                .and_then(|sub| sub.get_mut(1))
+                .and_then(Option::take),
+        )
+        .await
+        .context("failed to receive `trailers`")?;
         let (status, payload) = Receive::receive_sync(payload, rx)
             .await
             .context("failed to receive `status`")?;
@@ -767,6 +816,7 @@ impl Receive for IncomingResponse {
         Ok((
             Self {
                 body,
+                trailers,
                 status,
                 headers,
             },
@@ -779,12 +829,13 @@ impl Receive for IncomingResponse {
 pub trait IncomingHandler: wrpc_transport::Client {
     type HandleInvocationStream;
 
-    async fn invoke_handle<B>(
+    async fn invoke_handle<Body, Trailers>(
         &self,
-        request: Request<B>,
+        request: Request<Body, Trailers>,
     ) -> anyhow::Result<(Result<IncomingResponse, ErrorCode>, Self::Transmission)>
     where
-        B: Stream<Item = StreamItem<Bytes, Option<Fields>>> + Send + 'static;
+        Body: Stream<Item = StreamItem<Bytes>> + Send + 'static,
+        Trailers: Future<Output = Option<Fields>> + Send + 'static;
 
     async fn serve_handle(&self) -> anyhow::Result<Self::HandleInvocationStream>;
 }
@@ -803,12 +854,13 @@ impl<T: wrpc_transport::Client> IncomingHandler for T {
         >,
     >;
 
-    async fn invoke_handle<B>(
+    async fn invoke_handle<Body, Trailers>(
         &self,
-        request: Request<B>,
+        request: Request<Body, Trailers>,
     ) -> anyhow::Result<(Result<IncomingResponse, ErrorCode>, T::Transmission)>
     where
-        B: Stream<Item = StreamItem<Bytes, Option<Fields>>> + Send + 'static,
+        Body: Stream<Item = StreamItem<Bytes>> + Send + 'static,
+        Trailers: Future<Output = Option<Fields>> + Send + 'static,
     {
         let (res, tx) = self
             .invoke_static("wrpc:http/incoming-handler@0.1.0", "handle", request)
@@ -828,7 +880,10 @@ pub trait OutgoingHandler: wrpc_transport::Client {
 
     async fn invoke_handle(
         &self,
-        request: Request<impl Stream<Item = StreamItem<Bytes, Option<Fields>>> + Send + 'static>,
+        request: Request<
+            impl Stream<Item = StreamItem<Bytes>> + Send + 'static,
+            impl Future<Output = Option<Fields>> + Send + 'static,
+        >,
         options: Option<RequestOptions>,
     ) -> anyhow::Result<(Result<IncomingResponse, ErrorCode>, Self::Transmission)>;
 
@@ -851,7 +906,10 @@ impl<T: wrpc_transport::Client> OutgoingHandler for T {
 
     async fn invoke_handle(
         &self,
-        request: Request<impl Stream<Item = StreamItem<Bytes, Option<Fields>>> + Send + 'static>,
+        request: Request<
+            impl Stream<Item = StreamItem<Bytes>> + Send + 'static,
+            impl Future<Output = Option<Fields>> + Send + 'static,
+        >,
         options: Option<RequestOptions>,
     ) -> anyhow::Result<(Result<IncomingResponse, ErrorCode>, T::Transmission)> {
         let (res, tx) = self

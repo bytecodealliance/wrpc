@@ -17,7 +17,8 @@ interface types {
     type fields = list<tuple<string, list<list<u8>>>>;
     
     record request {
-        body: stream<list<u8>, option<fields>>,
+        body: stream<list<u8>>,
+        trailers: future<option<fields>>,
         method: method,
         path-with-query: option<string>,
         scheme: option<scheme>,
@@ -26,7 +27,8 @@ interface types {
     }
     
     record response {
-        body: stream<list<u8>, option<fields>>,
+        body: stream<list<u8>>,
+        trailers: future<option<fields>>,
         status: u16,
         headers: fields,
     }
