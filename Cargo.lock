@@ -2409,8 +2409,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "wrpc-interface-blobstore"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bytes",
+ "futures",
+ "tokio",
+ "tracing",
+ "wrpc-transport",
+]
+
+[[package]]
 name = "wrpc-interface-http"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2435,7 +2448,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc-transport"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "anyhow",
  "async-nats",
@@ -2446,12 +2459,13 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tracing",
+ "tracing-subscriber",
  "wrpc-types",
 ]
 
 [[package]]
 name = "wrpc-transport-nats"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "async-nats",

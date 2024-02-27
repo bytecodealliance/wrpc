@@ -212,7 +212,7 @@ impl ToSubject for &Subject {
 }
 
 impl wrpc_transport::Subject for Subject {
-    fn child(&self, i: Option<u32>) -> Self {
+    fn child(&self, i: Option<u64>) -> Self {
         if let Some(i) = i {
             Self(format!("{}.{i}", self.0).to_subject())
         } else {

@@ -10,7 +10,7 @@ use tokio::try_join;
 use tracing::instrument;
 use wrpc_transport::{
     encode_discriminant, receive_discriminant, AcceptedInvocation, Acceptor, AsyncSubscription,
-    AsyncValue, Encode, EncodeSync, Receive, Subject as _, Subscribe, Subscriber,
+    AsyncValue, Encode, EncodeSync, Receive, Subject as _, Subscribe, Subscriber, Value,
 };
 
 pub type Fields = Vec<(String, Vec<Bytes>)>;
@@ -561,7 +561,7 @@ impl Receive for RequestOptions {
 }
 
 pub type IncomingRequest = Request<
-    Box<dyn Stream<Item = anyhow::Result<Bytes>> + Send + Unpin>,
+    Box<dyn Stream<Item = anyhow::Result<Vec<u8>>> + Send + Unpin>,
     Pin<Box<dyn Future<Output = anyhow::Result<Option<Fields>>> + Send>>,
 >;
 
@@ -605,9 +605,9 @@ where
         headers.encode(&mut payload).await?;
         // TODO: Optimize, this wrapping should not be necessary
         Ok(Some(AsyncValue::Record(vec![
-            Some(AsyncValue::Stream(Box::pin(
-                body.map(Into::into).map(Some).map(Ok),
-            ))),
+            Some(AsyncValue::Stream(Box::pin(body.map(|buf| {
+                Ok(buf.into_iter().map(Value::U8).map(Some).collect())
+            })))),
             Some(AsyncValue::Future(Box::pin(async {
                 let trailers = trailers.await;
                 Ok(Some(trailers.map(fields_to_wrpc).into()))
@@ -703,7 +703,7 @@ impl Receive for IncomingRequest {
 }
 
 pub type IncomingResponse = Response<
-    Box<dyn Stream<Item = anyhow::Result<Bytes>> + Send + Unpin>,
+    Box<dyn Stream<Item = anyhow::Result<Vec<u8>>> + Send + Unpin>,
     Pin<Box<dyn Future<Output = anyhow::Result<Option<Fields>>> + Send>>,
 >;
 
@@ -738,9 +738,9 @@ where
         headers.encode(&mut payload).await?;
         // TODO: Optimize, this wrapping should not be necessary
         Ok(Some(AsyncValue::Record(vec![
-            Some(AsyncValue::Stream(Box::pin(
-                body.map(Into::into).map(Some).map(Ok),
-            ))),
+            Some(AsyncValue::Stream(Box::pin(body.map(|buf| {
+                Ok(buf.into_iter().map(Value::U8).map(Some).collect())
+            })))),
             Some(AsyncValue::Future(Box::pin(async {
                 let trailers = trailers.await;
                 Ok(Some(trailers.map(fields_to_wrpc).into()))

@@ -53,7 +53,7 @@ async fn spawn_server(
     Ok((child, stop_tx))
 }
 
-#[instrument(skip(client, params, results))]
+#[instrument(skip(client, ty, params, results))]
 async fn loopback_dynamic(
     client: &impl wrpc::Client,
     name: &str,
@@ -703,23 +703,25 @@ async fn nats() -> anyhow::Result<()> {
             Value::Future(Box::pin(async {
                 sleep(Duration::from_nanos(42)).await;
                 Ok(Some(Value::Stream(Box::pin(stream::iter([
-                    Ok(Some(Value::U8(0x42))),
-                    Ok(Some(Value::U8(0xff))),
+                    Ok(vec![Some(Value::U8(0x42))]),
+                    Ok(vec![Some(Value::U8(0xff))]),
                 ])))))
             })),
-            Value::Stream(Box::pin(stream::iter([Ok(None)]))),
-            Value::Stream(Box::pin(stream::iter([
-                Ok(Some(Value::U8(0x42))),
-                Ok(Some(Value::U8(0xff))),
-            ]))),
+            Value::Stream(Box::pin(stream::iter([Ok(vec![None, None, None, None])]))),
+            Value::Stream(Box::pin(stream::iter([Ok(vec![
+                Some(Value::U8(0x42)),
+                Some(Value::U8(0xff)),
+            ])]))),
             Value::Future(Box::pin(async { Ok(None) })),
             Value::Stream(Box::pin(
-                stream::iter([Ok(Some(Value::U8(0x42))), Ok(Some(Value::U8(0xff)))]).then(
-                    |item| async {
-                        sleep(Duration::from_nanos(42)).await;
-                        item
-                    },
-                ),
+                stream::iter([
+                    Ok(vec![Some(Value::U8(0x42))]),
+                    Ok(vec![Some(Value::U8(0xff))]),
+                ])
+                .then(|item| async {
+                    sleep(Duration::from_nanos(42)).await;
+                    item
+                }),
             )),
             Value::Tuple(vec![
                 Value::Future(Box::pin(async { Ok(None) })),
@@ -731,12 +733,14 @@ async fn nats() -> anyhow::Result<()> {
                     Ok(Some(Value::Future(Box::pin(async { Ok(None) }))))
                 })),
                 Value::Stream(Box::pin(
-                    stream::iter([Ok(Some(Value::U8(0x42))), Ok(Some(Value::U8(0xff)))]).then(
-                        |item| async {
-                            sleep(Duration::from_nanos(42)).await;
-                            item
-                        },
-                    ),
+                    stream::iter([
+                        Ok(vec![Some(Value::U8(0x42))]),
+                        Ok(vec![Some(Value::U8(0xff))]),
+                    ])
+                    .then(|item| async {
+                        sleep(Duration::from_nanos(42)).await;
+                        item
+                    }),
                 )),
             ]),
             Value::Record(vec![
@@ -749,12 +753,14 @@ async fn nats() -> anyhow::Result<()> {
                     Ok(Some(Value::Future(Box::pin(async { Ok(None) }))))
                 })),
                 Value::Stream(Box::pin(
-                    stream::iter([Ok(Some(Value::U8(0x42))), Ok(Some(Value::U8(0xff)))]).then(
-                        |item| async {
-                            sleep(Duration::from_nanos(42)).await;
-                            item
-                        },
-                    ),
+                    stream::iter([
+                        Ok(vec![Some(Value::U8(0x42))]),
+                        Ok(vec![Some(Value::U8(0xff))]),
+                    ])
+                    .then(|item| async {
+                        sleep(Duration::from_nanos(42)).await;
+                        item
+                    }),
                 )),
             ]),
         ],
@@ -780,23 +786,25 @@ async fn nats() -> anyhow::Result<()> {
             Value::Future(Box::pin(async {
                 sleep(Duration::from_nanos(42)).await;
                 Ok(Some(Value::Stream(Box::pin(stream::iter([
-                    Ok(Some(Value::U8(0x42))),
-                    Ok(Some(Value::U8(0xff))),
+                    Ok(vec![Some(Value::U8(0x42))]),
+                    Ok(vec![Some(Value::U8(0xff))]),
                 ])))))
             })),
-            Value::Stream(Box::pin(stream::iter([Ok(None)]))),
-            Value::Stream(Box::pin(stream::iter([
-                Ok(Some(Value::U8(0x42))),
-                Ok(Some(Value::U8(0xff))),
-            ]))),
+            Value::Stream(Box::pin(stream::iter([Ok(vec![None, None, None, None])]))),
+            Value::Stream(Box::pin(stream::iter([Ok(vec![
+                Some(Value::U8(0x42)),
+                Some(Value::U8(0xff)),
+            ])]))),
             Value::Future(Box::pin(async { Ok(None) })),
             Value::Stream(Box::pin(
-                stream::iter([Ok(Some(Value::U8(0x42))), Ok(Some(Value::U8(0xff)))]).then(
-                    |item| async {
-                        sleep(Duration::from_nanos(42)).await;
-                        item
-                    },
-                ),
+                stream::iter([
+                    Ok(vec![Some(Value::U8(0x42))]),
+                    Ok(vec![Some(Value::U8(0xff))]),
+                ])
+                .then(|item| async {
+                    sleep(Duration::from_nanos(42)).await;
+                    item
+                }),
             )),
             Value::Tuple(vec![
                 Value::Future(Box::pin(async { Ok(None) })),
@@ -808,12 +816,14 @@ async fn nats() -> anyhow::Result<()> {
                     Ok(Some(Value::Future(Box::pin(async { Ok(None) }))))
                 })),
                 Value::Stream(Box::pin(
-                    stream::iter([Ok(Some(Value::U8(0x42))), Ok(Some(Value::U8(0xff)))]).then(
-                        |item| async {
-                            sleep(Duration::from_nanos(42)).await;
-                            item
-                        },
-                    ),
+                    stream::iter([
+                        Ok(vec![Some(Value::U8(0x42))]),
+                        Ok(vec![Some(Value::U8(0xff))]),
+                    ])
+                    .then(|item| async {
+                        sleep(Duration::from_nanos(42)).await;
+                        item
+                    }),
                 )),
             ]),
             Value::Record(vec![
@@ -826,12 +836,14 @@ async fn nats() -> anyhow::Result<()> {
                     Ok(Some(Value::Future(Box::pin(async { Ok(None) }))))
                 })),
                 Value::Stream(Box::pin(
-                    stream::iter([Ok(Some(Value::U8(0x42))), Ok(Some(Value::U8(0xff)))]).then(
-                        |item| async {
-                            sleep(Duration::from_nanos(42)).await;
-                            item
-                        },
-                    ),
+                    stream::iter([
+                        Ok(vec![Some(Value::U8(0x42))]),
+                        Ok(vec![Some(Value::U8(0xff))]),
+                    ])
+                    .then(|item| async {
+                        sleep(Duration::from_nanos(42)).await;
+                        item
+                    }),
                 )),
             ]),
         ],
@@ -878,43 +890,60 @@ async fn nats() -> anyhow::Result<()> {
     let (Value::Future(p), Value::Future(r)) = values.next().unwrap() else {
         bail!("future type mismatch")
     };
-    let (Ok(Some(Value::Stream(p))), Ok(Some(Value::Stream(r)))) = (p.await, r.await) else {
+    let (Ok(Some(Value::Stream(mut p))), Ok(Some(Value::Stream(mut r)))) = (p.await, r.await)
+    else {
         bail!("stream type mismatch")
     };
     assert!(matches!(
         (
-            p.try_collect::<Vec<_>>().await.as_deref(),
-            r.try_collect::<Vec<_>>().await.as_deref()
+            p.try_next().await.unwrap().as_deref().unwrap(),
+            r.try_next().await.unwrap().as_deref().unwrap(),
         ),
+        ([Some(Value::U8(0x42))], [Some(Value::U8(0x42))])
+    ));
+    assert!(matches!(
         (
-            Ok([Some(Value::U8(0x42)), Some(Value::U8(0xff))]),
-            Ok([Some(Value::U8(0x42)), Some(Value::U8(0xff))]),
-        )
+            p.try_next().await.unwrap().as_deref().unwrap(),
+            r.try_next().await.unwrap().as_deref().unwrap(),
+        ),
+        ([Some(Value::U8(0xff))], [Some(Value::U8(0xff))])
+    ));
+    assert!(matches!(
+        (p.try_next().await.unwrap(), r.try_next().await.unwrap()),
+        (None, None)
     ));
 
-    let (Value::Stream(p), Value::Stream(r)) = values.next().unwrap() else {
+    let (Value::Stream(mut p), Value::Stream(mut r)) = values.next().unwrap() else {
         bail!("stream type mismatch")
     };
     assert!(matches!(
         (
-            p.try_collect::<Vec<_>>().await.as_deref(),
-            r.try_collect::<Vec<_>>().await.as_deref()
+            p.try_next().await.unwrap().as_deref().unwrap(),
+            r.try_next().await.unwrap().as_deref().unwrap(),
         ),
-        (Ok([None]), Ok([None]))
+        ([None, None, None, None], [None, None, None, None])
+    ));
+    assert!(matches!(
+        (p.try_next().await.unwrap(), r.try_next().await.unwrap()),
+        (None, None)
     ));
 
-    let (Value::Stream(p), Value::Stream(r)) = values.next().unwrap() else {
+    let (Value::Stream(mut p), Value::Stream(mut r)) = values.next().unwrap() else {
         bail!("stream type mismatch")
     };
     assert!(matches!(
         (
-            p.try_collect::<Vec<_>>().await.as_deref(),
-            r.try_collect::<Vec<_>>().await.as_deref()
+            p.try_next().await.unwrap().as_deref().unwrap(),
+            r.try_next().await.unwrap().as_deref().unwrap(),
         ),
         (
-            Ok([Some(Value::U8(0x42)), Some(Value::U8(0xff))]),
-            Ok([Some(Value::U8(0x42)), Some(Value::U8(0xff))]),
+            [Some(Value::U8(0x42)), Some(Value::U8(0xff))],
+            [Some(Value::U8(0x42)), Some(Value::U8(0xff))]
         )
+    ));
+    assert!(matches!(
+        (p.try_next().await.unwrap(), r.try_next().await.unwrap()),
+        (None, None)
     ));
 
     let (Value::Future(p), Value::Future(r)) = values.next().unwrap() else {
@@ -922,18 +951,26 @@ async fn nats() -> anyhow::Result<()> {
     };
     assert!(matches!((p.await, r.await), (Ok(None), Ok(None))));
 
-    let (Value::Stream(p), Value::Stream(r)) = values.next().unwrap() else {
+    let (Value::Stream(mut p), Value::Stream(mut r)) = values.next().unwrap() else {
         bail!("stream type mismatch")
     };
     assert!(matches!(
         (
-            p.try_collect::<Vec<_>>().await.as_deref(),
-            r.try_collect::<Vec<_>>().await.as_deref()
+            p.try_next().await.unwrap().as_deref().unwrap(),
+            r.try_next().await.unwrap().as_deref().unwrap(),
         ),
+        ([Some(Value::U8(0x42))], [Some(Value::U8(0x42))])
+    ));
+    assert!(matches!(
         (
-            Ok([Some(Value::U8(0x42)), Some(Value::U8(0xff))]),
-            Ok([Some(Value::U8(0x42)), Some(Value::U8(0xff))]),
-        )
+            p.try_next().await.unwrap().as_deref().unwrap(),
+            r.try_next().await.unwrap().as_deref().unwrap(),
+        ),
+        ([Some(Value::U8(0xff))], [Some(Value::U8(0xff))])
+    ));
+    assert!(matches!(
+        (p.try_next().await.unwrap(), r.try_next().await.unwrap()),
+        (None, None)
     ));
 
     let (Value::Tuple(p), Value::Tuple(r)) = values.next().unwrap() else {
@@ -962,18 +999,26 @@ async fn nats() -> anyhow::Result<()> {
         };
         assert!(matches!((p.await, r.await), (Ok(None), Ok(None))));
 
-        let (Value::Stream(p), Value::Stream(r)) = values.next().unwrap() else {
+        let (Value::Stream(mut p), Value::Stream(mut r)) = values.next().unwrap() else {
             bail!("stream type mismatch")
         };
         assert!(matches!(
             (
-                p.try_collect::<Vec<_>>().await.as_deref(),
-                r.try_collect::<Vec<_>>().await.as_deref()
+                p.try_next().await.unwrap().as_deref().unwrap(),
+                r.try_next().await.unwrap().as_deref().unwrap(),
             ),
+            ([Some(Value::U8(0x42))], [Some(Value::U8(0x42))])
+        ));
+        assert!(matches!(
             (
-                Ok([Some(Value::U8(0x42)), Some(Value::U8(0xff))]),
-                Ok([Some(Value::U8(0x42)), Some(Value::U8(0xff))]),
-            )
+                p.try_next().await.unwrap().as_deref().unwrap(),
+                r.try_next().await.unwrap().as_deref().unwrap(),
+            ),
+            ([Some(Value::U8(0xff))], [Some(Value::U8(0xff))])
+        ));
+        assert!(matches!(
+            (p.try_next().await.unwrap(), r.try_next().await.unwrap()),
+            (None, None)
         ));
     }
 
@@ -1003,18 +1048,26 @@ async fn nats() -> anyhow::Result<()> {
         };
         assert!(matches!((p.await, r.await), (Ok(None), Ok(None))));
 
-        let (Value::Stream(p), Value::Stream(r)) = values.next().unwrap() else {
+        let (Value::Stream(mut p), Value::Stream(mut r)) = values.next().unwrap() else {
             bail!("stream type mismatch")
         };
         assert!(matches!(
             (
-                p.try_collect::<Vec<_>>().await.as_deref(),
-                r.try_collect::<Vec<_>>().await.as_deref()
+                p.try_next().await.unwrap().as_deref().unwrap(),
+                r.try_next().await.unwrap().as_deref().unwrap(),
             ),
+            ([Some(Value::U8(0x42))], [Some(Value::U8(0x42))])
+        ));
+        assert!(matches!(
             (
-                Ok([Some(Value::U8(0x42)), Some(Value::U8(0xff)),]),
-                Ok([Some(Value::U8(0x42)), Some(Value::U8(0xff)),]),
-            )
+                p.try_next().await.unwrap().as_deref().unwrap(),
+                r.try_next().await.unwrap().as_deref().unwrap(),
+            ),
+            ([Some(Value::U8(0xff))], [Some(Value::U8(0xff))])
+        ));
+        assert!(matches!(
+            (p.try_next().await.unwrap(), r.try_next().await.unwrap()),
+            (None, None)
         ));
     }
 
@@ -1107,7 +1160,7 @@ async fn nats() -> anyhow::Result<()> {
                             .await
                             .context("failed to receive body item")?
                             .context("unexpected end of body stream")?;
-                        assert_eq!(item, "element");
+                        assert_eq!(String::from_utf8(item).unwrap(), "element");
                         info!("await request body end");
                         let item = body
                             .try_next()
@@ -1251,7 +1304,7 @@ async fn nats() -> anyhow::Result<()> {
                             .await
                             .context("failed to receive body item")?
                             .context("unexpected end of body stream")?;
-                        assert_eq!(item, "element");
+                        assert_eq!(String::from_utf8(item).unwrap(), "element");
                         info!("await request body end");
                         let item = body
                             .try_next()
