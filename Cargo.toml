@@ -1,20 +1,29 @@
 [package]
 name = "wrpc"
 version = "0.1.0"
-edition = "2021"
-description = "WebAssembly RPC framework"
+description = "WIT-based RPC framework"
+
+authors.workspace = true
+categories.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[workspace.package]
 authors = ["Roman Volosatovs <rvolosatovs@riseup.net>"]
-license = "MIT OR Apache-2.0"
+categories = ["wasm"]
+edition = "2021"
+license = "Apache-2.0 WITH LLVM-exception"
 repository = "https://github.com/rvolosatovs/wrpc"
+
+[workspace]
+members = ["crates/*"]
 
 [features]
 default = ["nats", "wasmtime"]
 
 nats = ["dep:wrpc-transport-nats"]
 wasmtime = ["dep:wrpc-runtime-wasmtime"]
-
-[workspace]
-members = ["crates/*"]
 
 [dependencies]
 wrpc-interface-http = { workspace = true }
@@ -51,8 +60,8 @@ tracing-subscriber = { version = "0.3", default-features = false }
 wasmtime = { version = "18", default-features = false }
 wasmtime-wasi = { version = "18", default-features = false }
 wit-parser = { version = "0.13", default-features = false }
-wrpc-interface-http = { version = "0.6", path = "./crates/interface-http", default-features = false }
-wrpc-runtime-wasmtime = { version = "0.1", path = "./crates/runtime-wasmtime", default-features = false }
-wrpc-transport = { version = "0.10", path = "./crates/transport", default-features = false }
-wrpc-transport-nats = { version = "0.7", path = "./crates/transport-nats", default-features = false }
-wrpc-types = { version = "0.3", path = "./crates/types", default-features = false }
+wrpc-interface-http = { version = "0.7", path = "./crates/interface-http", default-features = false }
+wrpc-runtime-wasmtime = { version = "0.2", path = "./crates/runtime-wasmtime", default-features = false }
+wrpc-transport = { version = "0.11", path = "./crates/transport", default-features = false }
+wrpc-transport-nats = { version = "0.8", path = "./crates/transport-nats", default-features = false }
+wrpc-types = { version = "0.4", path = "./crates/types", default-features = false }

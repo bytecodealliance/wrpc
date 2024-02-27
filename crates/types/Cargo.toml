@@ -1,11 +1,13 @@
 [package]
 name = "wrpc-types"
-version = "0.3.0"
-edition = "2021"
+version = "0.4.0"
 description = "wRPC type system"
-authors = ["Roman Volosatovs <rvolosatovs@riseup.net>"]
-license = "MIT OR Apache-2.0"
-repository = "https://github.com/rvolosatovs/wrpc"
+
+authors.workspace = true
+categories.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
 
 [dependencies]
 anyhow = { workspace = true, features = ["std"] }

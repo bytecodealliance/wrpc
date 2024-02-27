@@ -1,11 +1,13 @@
 [package]
 name = "wrpc-transport-nats"
-version = "0.7.0"
-edition = "2021"
+version = "0.8.0"
 description = "wRPC NATS transport"
-authors = ["Roman Volosatovs <rvolosatovs@riseup.net>"]
-license = "MIT OR Apache-2.0"
-repository = "https://github.com/rvolosatovs/wrpc"
+
+authors.workspace = true
+categories.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
 
 [dependencies]
 anyhow = { workspace = true, features = ["std"] }

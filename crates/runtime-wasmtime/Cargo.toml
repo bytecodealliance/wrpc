@@ -1,11 +1,13 @@
 [package]
 name = "wrpc-runtime-wasmtime"
-version = "0.1.0"
-edition = "2021"
+version = "0.2.0"
 description = "wRPC wasmtime integration"
-authors = ["Roman Volosatovs <rvolosatovs@riseup.net>"]
-license = "MIT OR Apache-2.0"
-repository = "https://github.com/rvolosatovs/wrpc"
+
+authors.workspace = true
+categories.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
 
 [dependencies]
 anyhow = { workspace = true, features = ["std"] }
