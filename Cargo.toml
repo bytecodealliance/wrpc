@@ -105,8 +105,8 @@ wasmtime-wasi-http = { version = "18", default-features = false }
 wit-bindgen = { version = "0.16", default-features = false }
 wit-component = { version = "0.19", default-features = false }
 wit-parser = { version = "0.13", default-features = false }
-wrpc-interface-http = { version = "0.3", path = "./crates/interface-http", default-features = false }
+wrpc-interface-http = { version = "0.4", path = "./crates/interface-http", default-features = false }
 wrpc-runtime-wasmtime = { version = "0.1", path = "./crates/runtime-wasmtime", default-features = false }
-wrpc-transport = { version = "0.6", path = "./crates/transport", default-features = false }
+wrpc-transport = { version = "0.7", path = "./crates/transport", default-features = false }
 wrpc-transport-nats = { version = "0.4", path = "./crates/transport-nats", default-features = false }
 wrpc-types = { version = "0.3", path = "./crates/types", default-features = false }

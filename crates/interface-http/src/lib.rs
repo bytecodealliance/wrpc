@@ -10,7 +10,7 @@ use tokio::try_join;
 use tracing::instrument;
 use wrpc_transport::{
     encode_discriminant, receive_discriminant, Acceptor, AsyncSubscription, AsyncValue, Encode,
-    EncodeSync, Receive, StreamItem, Subject as _, Subscribe, Subscriber,
+    EncodeSync, Receive, Subject as _, Subscribe, Subscriber,
 };
 
 pub type Fields = Vec<(String, Vec<Bytes>)>;
@@ -561,7 +561,7 @@ impl Receive for RequestOptions {
 }
 
 pub type IncomingRequest = Request<
-    Box<dyn Stream<Item = anyhow::Result<StreamItem<Bytes>>> + Send + Unpin>,
+    Box<dyn Stream<Item = anyhow::Result<Bytes>> + Send + Unpin>,
     Pin<Box<dyn Future<Output = anyhow::Result<Option<Fields>>> + Send>>,
 >;
 
@@ -578,7 +578,7 @@ pub struct Request<Body, Trailers> {
 #[async_trait]
 impl<Body, Trailers> Encode for Request<Body, Trailers>
 where
-    Body: Stream<Item = StreamItem<Bytes>> + Send + 'static,
+    Body: Stream<Item = Bytes> + Send + 'static,
     Trailers: Future<Output = Option<Fields>> + Send + 'static,
 {
     async fn encode(
@@ -605,10 +605,9 @@ where
         headers.encode(&mut payload).await?;
         // TODO: Optimize, this wrapping should not be necessary
         Ok(Some(AsyncValue::Record(vec![
-            Some(AsyncValue::Stream(Box::pin(body.map(|item| match item {
-                StreamItem::Element(buf) => Ok(StreamItem::Element(Some(buf.into()))),
-                StreamItem::End => Ok(StreamItem::End),
-            })))),
+            Some(AsyncValue::Stream(Box::pin(
+                body.map(Into::into).map(Some).map(Ok),
+            ))),
             Some(AsyncValue::Future(Box::pin(async {
                 let trailers = trailers.await;
                 Ok(Some(trailers.map(fields_to_wrpc).into()))
@@ -704,7 +703,7 @@ impl Receive for IncomingRequest {
 }
 
 pub type IncomingResponse = Response<
-    Box<dyn Stream<Item = anyhow::Result<StreamItem<Bytes>>> + Send + Unpin>,
+    Box<dyn Stream<Item = anyhow::Result<Bytes>> + Send + Unpin>,
     Pin<Box<dyn Future<Output = anyhow::Result<Option<Fields>>> + Send>>,
 >;
 
@@ -718,7 +717,7 @@ pub struct Response<Body, Trailers> {
 #[async_trait]
 impl<Body, Trailers> Encode for Response<Body, Trailers>
 where
-    Body: Stream<Item = StreamItem<Bytes>> + Send + 'static,
+    Body: Stream<Item = Bytes> + Send + 'static,
     Trailers: Future<Output = Option<Fields>> + Send + 'static,
 {
     async fn encode(
@@ -739,10 +738,9 @@ where
         headers.encode(&mut payload).await?;
         // TODO: Optimize, this wrapping should not be necessary
         Ok(Some(AsyncValue::Record(vec![
-            Some(AsyncValue::Stream(Box::pin(body.map(|item| match item {
-                StreamItem::Element(buf) => Ok(StreamItem::Element(Some(buf.into()))),
-                StreamItem::End => Ok(StreamItem::End),
-            })))),
+            Some(AsyncValue::Stream(Box::pin(
+                body.map(Into::into).map(Some).map(Ok),
+            ))),
             Some(AsyncValue::Future(Box::pin(async {
                 let trailers = trailers.await;
                 Ok(Some(trailers.map(fields_to_wrpc).into()))
@@ -834,7 +832,7 @@ pub trait IncomingHandler: wrpc_transport::Client {
         request: Request<Body, Trailers>,
     ) -> anyhow::Result<(Result<IncomingResponse, ErrorCode>, Self::Transmission)>
     where
-        Body: Stream<Item = StreamItem<Bytes>> + Send + 'static,
+        Body: Stream<Item = Bytes> + Send + 'static,
         Trailers: Future<Output = Option<Fields>> + Send + 'static;
 
     async fn serve_handle(&self) -> anyhow::Result<Self::HandleInvocationStream>;
@@ -859,7 +857,7 @@ impl<T: wrpc_transport::Client> IncomingHandler for T {
         request: Request<Body, Trailers>,
     ) -> anyhow::Result<(Result<IncomingResponse, ErrorCode>, T::Transmission)>
     where
-        Body: Stream<Item = StreamItem<Bytes>> + Send + 'static,
+        Body: Stream<Item = Bytes> + Send + 'static,
         Trailers: Future<Output = Option<Fields>> + Send + 'static,
     {
         let (res, tx) = self
@@ -881,7 +879,7 @@ pub trait OutgoingHandler: wrpc_transport::Client {
     async fn invoke_handle(
         &self,
         request: Request<
-            impl Stream<Item = StreamItem<Bytes>> + Send + 'static,
+            impl Stream<Item = Bytes> + Send + 'static,
             impl Future<Output = Option<Fields>> + Send + 'static,
         >,
         options: Option<RequestOptions>,
@@ -907,7 +905,7 @@ impl<T: wrpc_transport::Client> OutgoingHandler for T {
     async fn invoke_handle(
         &self,
         request: Request<
-            impl Stream<Item = StreamItem<Bytes>> + Send + 'static,
+            impl Stream<Item = Bytes> + Send + 'static,
             impl Future<Output = Option<Fields>> + Send + 'static,
         >,
         options: Option<RequestOptions>,

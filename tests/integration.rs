@@ -6,8 +6,7 @@ use std::process::ExitStatus;
 use std::sync::Arc;
 
 use anyhow::{bail, Context, Result};
-use futures::prelude::stream::StreamExt as _;
-use futures::{stream, TryStreamExt as _};
+use futures::{stream, StreamExt as _, TryStreamExt as _};
 use tokio::net::TcpListener;
 use tokio::process::Command;
 use tokio::sync::{mpsc, oneshot};
@@ -20,7 +19,7 @@ use tracing_subscriber::util::SubscriberInitExt as _;
 use url::Url;
 use wrpc::{DynamicFunctionType, ResourceType, Transmitter as _, Type, Value};
 use wrpc_interface_http::{ErrorCode, Method, Request, RequestOptions, Response, Scheme};
-use wrpc_transport::{Client as _, DynamicTuple, StreamItem};
+use wrpc_transport::{Client as _, DynamicTuple};
 
 async fn free_port() -> Result<u16> {
     TcpListener::bind((Ipv6Addr::LOCALHOST, 0))
@@ -702,28 +701,23 @@ async fn nats() -> anyhow::Result<()> {
             Value::Future(Box::pin(async {
                 sleep(Duration::from_nanos(42)).await;
                 Ok(Some(Value::Stream(Box::pin(stream::iter([
-                    Ok(StreamItem::Element(Some(Value::U8(0x42)))),
-                    Ok(StreamItem::Element(Some(Value::U8(0xff)))),
-                    Ok(StreamItem::End),
+                    Ok(Some(Value::U8(0x42))),
+                    Ok(Some(Value::U8(0xff))),
                 ])))))
             })),
-            Value::Stream(Box::pin(stream::iter([Ok(StreamItem::End)]))),
+            Value::Stream(Box::pin(stream::iter([Ok(None)]))),
             Value::Stream(Box::pin(stream::iter([
-                Ok(StreamItem::Element(Some(Value::U8(0x42)))),
-                Ok(StreamItem::Element(Some(Value::U8(0xff)))),
-                Ok(StreamItem::End),
+                Ok(Some(Value::U8(0x42))),
+                Ok(Some(Value::U8(0xff))),
             ]))),
             Value::Future(Box::pin(async { Ok(None) })),
             Value::Stream(Box::pin(
-                stream::iter([
-                    Ok(StreamItem::Element(Some(Value::U8(0x42)))),
-                    Ok(StreamItem::Element(Some(Value::U8(0xff)))),
-                    Ok(StreamItem::End),
-                ])
-                .then(|item| async {
-                    sleep(Duration::from_nanos(42)).await;
-                    item
-                }),
+                stream::iter([Ok(Some(Value::U8(0x42))), Ok(Some(Value::U8(0xff)))]).then(
+                    |item| async {
+                        sleep(Duration::from_nanos(42)).await;
+                        item
+                    },
+                ),
             )),
             Value::Tuple(vec![
                 Value::Future(Box::pin(async { Ok(None) })),
@@ -735,15 +729,12 @@ async fn nats() -> anyhow::Result<()> {
                     Ok(Some(Value::Future(Box::pin(async { Ok(None) }))))
                 })),
                 Value::Stream(Box::pin(
-                    stream::iter([
-                        Ok(StreamItem::Element(Some(Value::U8(0x42)))),
-                        Ok(StreamItem::Element(Some(Value::U8(0xff)))),
-                        Ok(StreamItem::End),
-                    ])
-                    .then(|item| async {
-                        sleep(Duration::from_nanos(42)).await;
-                        item
-                    }),
+                    stream::iter([Ok(Some(Value::U8(0x42))), Ok(Some(Value::U8(0xff)))]).then(
+                        |item| async {
+                            sleep(Duration::from_nanos(42)).await;
+                            item
+                        },
+                    ),
                 )),
             ]),
             Value::Record(vec![
@@ -756,15 +747,12 @@ async fn nats() -> anyhow::Result<()> {
                     Ok(Some(Value::Future(Box::pin(async { Ok(None) }))))
                 })),
                 Value::Stream(Box::pin(
-                    stream::iter([
-                        Ok(StreamItem::Element(Some(Value::U8(0x42)))),
-                        Ok(StreamItem::Element(Some(Value::U8(0xff)))),
-                        Ok(StreamItem::End),
-                    ])
-                    .then(|item| async {
-                        sleep(Duration::from_nanos(42)).await;
-                        item
-                    }),
+                    stream::iter([Ok(Some(Value::U8(0x42))), Ok(Some(Value::U8(0xff)))]).then(
+                        |item| async {
+                            sleep(Duration::from_nanos(42)).await;
+                            item
+                        },
+                    ),
                 )),
             ]),
         ],
@@ -790,28 +778,23 @@ async fn nats() -> anyhow::Result<()> {
             Value::Future(Box::pin(async {
                 sleep(Duration::from_nanos(42)).await;
                 Ok(Some(Value::Stream(Box::pin(stream::iter([
-                    Ok(StreamItem::Element(Some(Value::U8(0x42)))),
-                    Ok(StreamItem::Element(Some(Value::U8(0xff)))),
-                    Ok(StreamItem::End),
+                    Ok(Some(Value::U8(0x42))),
+                    Ok(Some(Value::U8(0xff))),
                 ])))))
             })),
-            Value::Stream(Box::pin(stream::iter([Ok(StreamItem::End)]))),
+            Value::Stream(Box::pin(stream::iter([Ok(None)]))),
             Value::Stream(Box::pin(stream::iter([
-                Ok(StreamItem::Element(Some(Value::U8(0x42)))),
-                Ok(StreamItem::Element(Some(Value::U8(0xff)))),
-                Ok(StreamItem::End),
+                Ok(Some(Value::U8(0x42))),
+                Ok(Some(Value::U8(0xff))),
             ]))),
             Value::Future(Box::pin(async { Ok(None) })),
             Value::Stream(Box::pin(
-                stream::iter([
-                    Ok(StreamItem::Element(Some(Value::U8(0x42)))),
-                    Ok(StreamItem::Element(Some(Value::U8(0xff)))),
-                    Ok(StreamItem::End),
-                ])
-                .then(|item| async {
-                    sleep(Duration::from_nanos(42)).await;
-                    item
-                }),
+                stream::iter([Ok(Some(Value::U8(0x42))), Ok(Some(Value::U8(0xff)))]).then(
+                    |item| async {
+                        sleep(Duration::from_nanos(42)).await;
+                        item
+                    },
+                ),
             )),
             Value::Tuple(vec![
                 Value::Future(Box::pin(async { Ok(None) })),
@@ -823,15 +806,12 @@ async fn nats() -> anyhow::Result<()> {
                     Ok(Some(Value::Future(Box::pin(async { Ok(None) }))))
                 })),
                 Value::Stream(Box::pin(
-                    stream::iter([
-                        Ok(StreamItem::Element(Some(Value::U8(0x42)))),
-                        Ok(StreamItem::Element(Some(Value::U8(0xff)))),
-                        Ok(StreamItem::End),
-                    ])
-                    .then(|item| async {
-                        sleep(Duration::from_nanos(42)).await;
-                        item
-                    }),
+                    stream::iter([Ok(Some(Value::U8(0x42))), Ok(Some(Value::U8(0xff)))]).then(
+                        |item| async {
+                            sleep(Duration::from_nanos(42)).await;
+                            item
+                        },
+                    ),
                 )),
             ]),
             Value::Record(vec![
@@ -844,15 +824,12 @@ async fn nats() -> anyhow::Result<()> {
                     Ok(Some(Value::Future(Box::pin(async { Ok(None) }))))
                 })),
                 Value::Stream(Box::pin(
-                    stream::iter([
-                        Ok(StreamItem::Element(Some(Value::U8(0x42)))),
-                        Ok(StreamItem::Element(Some(Value::U8(0xff)))),
-                        Ok(StreamItem::End),
-                    ])
-                    .then(|item| async {
-                        sleep(Duration::from_nanos(42)).await;
-                        item
-                    }),
+                    stream::iter([Ok(Some(Value::U8(0x42))), Ok(Some(Value::U8(0xff)))]).then(
+                        |item| async {
+                            sleep(Duration::from_nanos(42)).await;
+                            item
+                        },
+                    ),
                 )),
             ]),
         ],
@@ -908,16 +885,8 @@ async fn nats() -> anyhow::Result<()> {
             r.try_collect::<Vec<_>>().await.as_deref()
         ),
         (
-            Ok([
-                StreamItem::Element(Some(Value::U8(0x42))),
-                StreamItem::Element(Some(Value::U8(0xff))),
-                StreamItem::End,
-            ]),
-            Ok([
-                StreamItem::Element(Some(Value::U8(0x42))),
-                StreamItem::Element(Some(Value::U8(0xff))),
-                StreamItem::End,
-            ]),
+            Ok([Some(Value::U8(0x42)), Some(Value::U8(0xff))]),
+            Ok([Some(Value::U8(0x42)), Some(Value::U8(0xff))]),
         )
     ));
 
@@ -929,7 +898,7 @@ async fn nats() -> anyhow::Result<()> {
             p.try_collect::<Vec<_>>().await.as_deref(),
             r.try_collect::<Vec<_>>().await.as_deref()
         ),
-        (Ok([StreamItem::End]), Ok([StreamItem::End]),)
+        (Ok([None]), Ok([None]))
     ));
 
     let (Value::Stream(p), Value::Stream(r)) = values.next().unwrap() else {
@@ -941,16 +910,8 @@ async fn nats() -> anyhow::Result<()> {
             r.try_collect::<Vec<_>>().await.as_deref()
         ),
         (
-            Ok([
-                StreamItem::Element(Some(Value::U8(0x42))),
-                StreamItem::Element(Some(Value::U8(0xff))),
-                StreamItem::End,
-            ]),
-            Ok([
-                StreamItem::Element(Some(Value::U8(0x42))),
-                StreamItem::Element(Some(Value::U8(0xff))),
-                StreamItem::End,
-            ]),
+            Ok([Some(Value::U8(0x42)), Some(Value::U8(0xff))]),
+            Ok([Some(Value::U8(0x42)), Some(Value::U8(0xff))]),
         )
     ));
 
@@ -968,16 +929,8 @@ async fn nats() -> anyhow::Result<()> {
             r.try_collect::<Vec<_>>().await.as_deref()
         ),
         (
-            Ok([
-                StreamItem::Element(Some(Value::U8(0x42))),
-                StreamItem::Element(Some(Value::U8(0xff))),
-                StreamItem::End,
-            ]),
-            Ok([
-                StreamItem::Element(Some(Value::U8(0x42))),
-                StreamItem::Element(Some(Value::U8(0xff))),
-                StreamItem::End,
-            ]),
+            Ok([Some(Value::U8(0x42)), Some(Value::U8(0xff))]),
+            Ok([Some(Value::U8(0x42)), Some(Value::U8(0xff))]),
         )
     ));
 
@@ -1016,16 +969,8 @@ async fn nats() -> anyhow::Result<()> {
                 r.try_collect::<Vec<_>>().await.as_deref()
             ),
             (
-                Ok([
-                    StreamItem::Element(Some(Value::U8(0x42))),
-                    StreamItem::Element(Some(Value::U8(0xff))),
-                    StreamItem::End,
-                ]),
-                Ok([
-                    StreamItem::Element(Some(Value::U8(0x42))),
-                    StreamItem::Element(Some(Value::U8(0xff))),
-                    StreamItem::End,
-                ]),
+                Ok([Some(Value::U8(0x42)), Some(Value::U8(0xff))]),
+                Ok([Some(Value::U8(0x42)), Some(Value::U8(0xff))]),
             )
         ));
     }
@@ -1065,16 +1010,8 @@ async fn nats() -> anyhow::Result<()> {
                 r.try_collect::<Vec<_>>().await.as_deref()
             ),
             (
-                Ok([
-                    StreamItem::Element(Some(Value::U8(0x42))),
-                    StreamItem::Element(Some(Value::U8(0xff))),
-                    StreamItem::End,
-                ]),
-                Ok([
-                    StreamItem::Element(Some(Value::U8(0x42))),
-                    StreamItem::Element(Some(Value::U8(0xff))),
-                    StreamItem::End,
-                ]),
+                Ok([Some(Value::U8(0x42)), Some(Value::U8(0xff)),]),
+                Ok([Some(Value::U8(0x42)), Some(Value::U8(0xff)),]),
             )
         ));
     }
@@ -1142,7 +1079,7 @@ async fn nats() -> anyhow::Result<()> {
                         tx.transmit_static(
                             subject,
                             Ok::<_, ErrorCode>(Response {
-                                body: stream::iter([StreamItem::End]),
+                                body: stream::empty(),
                                 trailers: async { None },
                                 status: 400,
                                 headers: Vec::default(),
@@ -1151,28 +1088,21 @@ async fn nats() -> anyhow::Result<()> {
                         .await
                         .context("failed to transmit response")?;
                         info!("response transmitted");
-                        Ok(())
+                        anyhow::Ok(())
                     },
                     async {
-                        info!("await request body element");
-                        let StreamItem::Element(element) = body
+                        let item = body
                             .try_next()
                             .await
                             .context("failed to receive body item")?
-                            .context("unexpected end of body stream")?
-                        else {
-                            bail!("stream element item type mismatch")
-                        };
-                        assert_eq!(element, "element");
+                            .context("unexpected end of body stream")?;
+                        assert_eq!(item, "element");
                         info!("await request body end");
-                        let StreamItem::End = body
+                        let item = body
                             .try_next()
                             .await
-                            .context("failed to receive end item")?
-                            .context("unexpected end of body stream")?
-                        else {
-                            bail!("stream end item type mismatch")
-                        };
+                            .context("failed to receive end item")?;
+                        assert_eq!(item, None);
                         info!("request body verified");
                         Ok(())
                     },
@@ -1193,10 +1123,7 @@ async fn nats() -> anyhow::Result<()> {
                 info!("invoke function");
                 let (res, tx) = client
                     .invoke_handle(Request {
-                        body: stream::iter([
-                            StreamItem::Element("element".into()),
-                            StreamItem::End,
-                        ]),
+                        body: stream::iter([("element".into())]),
                         trailers: async { Some(vec![("trailer".into(), vec!["test".into()])]) },
                         method: Method::Get,
                         path_with_query: Some("path_with_query".to_string()),
@@ -1219,18 +1146,15 @@ async fn nats() -> anyhow::Result<()> {
                         info!("transmit async parameters");
                         tx.await.context("failed to transmit parameters")?;
                         info!("async parameters transmitted");
-                        Ok(())
+                        anyhow::Ok(())
                     },
                     async {
                         info!("await response body end");
-                        let StreamItem::End = body
+                        let item = body
                             .try_next()
                             .await
-                            .context("failed to receive stream end item")?
-                            .context("unexpected end of body stream")?
-                        else {
-                            bail!("stream end item type mismatch")
-                        };
+                            .context("failed to receive end item")?;
+                        assert_eq!(item, None);
                         info!("response body verified");
                         Ok(())
                     },
@@ -1295,7 +1219,7 @@ async fn nats() -> anyhow::Result<()> {
                         tx.transmit_static(
                             subject,
                             Ok::<_, ErrorCode>(Response {
-                                body: stream::iter([StreamItem::End]),
+                                body: stream::empty(),
                                 trailers: async { None },
                                 status: 400,
                                 headers: Vec::default(),
@@ -1304,28 +1228,22 @@ async fn nats() -> anyhow::Result<()> {
                         .await
                         .context("failed to transmit response")?;
                         info!("response transmitted");
-                        Ok(())
+                        anyhow::Ok(())
                     },
                     async {
                         info!("await request body element");
-                        let StreamItem::Element(element) = body
+                        let item = body
                             .try_next()
                             .await
                             .context("failed to receive body item")?
-                            .context("unexpected end of body stream")?
-                        else {
-                            bail!("stream element item type mismatch")
-                        };
-                        assert_eq!(element, "element");
+                            .context("unexpected end of body stream")?;
+                        assert_eq!(item, "element");
                         info!("await request body end");
-                        let StreamItem::End = body
+                        let item = body
                             .try_next()
                             .await
-                            .context("failed to receive end item")?
-                            .context("unexpected end of body stream")?
-                        else {
-                            bail!("stream end item type mismatch")
-                        };
+                            .context("failed to receive end item")?;
+                        assert_eq!(item, None);
                         info!("request body verified");
                         Ok(())
                     },
@@ -1347,10 +1265,7 @@ async fn nats() -> anyhow::Result<()> {
                 let (res, tx) = client
                     .invoke_handle(
                         Request {
-                            body: stream::iter([
-                                StreamItem::Element("element".into()),
-                                StreamItem::End,
-                            ]),
+                            body: stream::iter([("element".into())]),
                             trailers: async { Some(vec![("trailer".into(), vec!["test".into()])]) },
                             method: Method::Get,
                             path_with_query: Some("path_with_query".to_string()),
@@ -1379,18 +1294,15 @@ async fn nats() -> anyhow::Result<()> {
                         info!("transmit async parameters");
                         tx.await.context("failed to transmit parameters")?;
                         info!("async parameters transmitted");
-                        Ok(())
+                        anyhow::Ok(())
                     },
                     async {
                         info!("await response body end");
-                        let StreamItem::End = body
+                        let item = body
                             .try_next()
                             .await
-                            .context("failed to receive stream end item")?
-                            .context("unexpected end of body stream")?
-                        else {
-                            bail!("stream end item type mismatch")
-                        };
+                            .context("failed to receive end item")?;
+                        assert_eq!(item, None);
                         info!("response body verified");
                         Ok(())
                     },

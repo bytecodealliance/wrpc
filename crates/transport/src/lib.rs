@@ -200,22 +200,18 @@ pub trait Transmitter {
                 // TODO: Batch items
                 let mut i = 0;
                 loop {
-                    let item = v
-                        .next()
-                        .await
-                        .context("stream unexpectedly finished")?
-                        .context("failed to receive item")?;
+                    let item = v.try_next().await.context("failed to receive item")?;
                     match item {
-                        StreamItem::End => {
+                        None => {
                             self.transmit(subject, Bytes::from_static(&[0])).await?;
                             return Ok(());
                         }
-                        StreamItem::Element(None) => {
+                        Some(None) => {
                             self.transmit(subject.clone(), Bytes::from_static(&[1]))
                                 .await?;
                             i += 1;
                         }
-                        StreamItem::Element(Some(v)) => {
+                        Some(Some(v)) => {
                             let mut payload = BytesMut::from([1].as_slice());
                             let tx = v
                                 .encode(&mut payload)
@@ -814,11 +810,6 @@ pub trait Subscriber {
     }
 }
 
-pub enum StreamItem<T> {
-    Element(T),
-    End,
-}
-
 /// A tuple of a dynamic size
 pub struct DynamicTuple<T>(pub Vec<T>);
 
@@ -863,7 +854,7 @@ pub enum Value {
     Result(Result<Option<Box<Value>>, Option<Box<Value>>>),
     Flags(u64),
     Future(Pin<Box<dyn Future<Output = anyhow::Result<Option<Value>>> + Send>>),
-    Stream(Pin<Box<dyn Stream<Item = anyhow::Result<StreamItem<Option<Value>>>> + Send>>),
+    Stream(Pin<Box<dyn Stream<Item = anyhow::Result<Option<Value>>> + Send>>),
 }
 
 impl From<bool> for Value {
@@ -975,12 +966,12 @@ impl From<(Value, Value)> for Value {
 }
 
 struct StreamValue<T> {
-    items: ReceiverStream<anyhow::Result<StreamItem<T>>>,
+    items: ReceiverStream<anyhow::Result<T>>,
     producer: JoinHandle<()>,
 }
 
 impl<T> Stream for StreamValue<T> {
-    type Item = anyhow::Result<StreamItem<T>>;
+    type Item = anyhow::Result<T>;
 
     #[instrument(level = "trace", skip_all)]
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Option<Self::Item>> {
@@ -1006,7 +997,7 @@ pub enum AsyncValue {
     ResultOk(Box<AsyncValue>),
     ResultErr(Box<AsyncValue>),
     Future(Pin<Box<dyn Future<Output = anyhow::Result<Option<Value>>> + Send>>),
-    Stream(Pin<Box<dyn Stream<Item = anyhow::Result<StreamItem<Option<Value>>>> + Send>>),
+    Stream(Pin<Box<dyn Stream<Item = anyhow::Result<Option<Value>>> + Send>>),
 }
 
 fn map_tuple_subscription<T>(
@@ -1252,17 +1243,17 @@ where
         payload: impl Buf + Send + 'static,
         rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
         sub: Option<AsyncSubscription<DemuxStream>>,
-    ) -> anyhow::Result<(StreamItem<Option<Self>>, Box<dyn Buf + Send>)>
+    ) -> anyhow::Result<(Option<Option<Self>>, Box<dyn Buf + Send>)>
     where
         T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin + 'static,
     {
         let mut payload = receive_at_least(payload, rx, 1).await?;
         match (payload.get_u8(), cx) {
-            (0, _) => Ok((StreamItem::End, payload)),
-            (1, None) => Ok((StreamItem::Element(None), payload)),
+            (0, _) => Ok((None, payload)),
+            (1, None) => Ok((Some(None), payload)),
             (1, Some(cx)) => {
                 let (v, payload) = Self::receive_context(cx, payload, rx, sub).await?;
-                Ok((StreamItem::Element(Some(v)), payload))
+                Ok((Some(Some(v)), payload))
             }
             _ => bail!("invalid `stream` variant"),
         }
@@ -1273,17 +1264,17 @@ pub async fn receive_stream_item<E, T>(
     payload: impl Buf + Send + 'static,
     rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
     sub: Option<AsyncSubscription<DemuxStream>>,
-) -> anyhow::Result<(StreamItem<E>, Box<dyn Buf + Send>)>
+) -> anyhow::Result<(Option<E>, Box<dyn Buf + Send>)>
 where
     E: Receive,
     T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin + 'static,
 {
     let mut payload = receive_at_least(payload, rx, 1).await?;
     match payload.get_u8() {
-        0 => Ok((StreamItem::End, payload)),
+        0 => Ok((None, payload)),
         1 => {
             let (v, payload) = E::receive(payload, rx, sub).await?;
-            Ok((StreamItem::Element(v), payload))
+            Ok((Some(v), payload))
         }
         _ => bail!("invalid `stream` variant"),
     }
@@ -1791,7 +1782,7 @@ where
 }
 
 #[async_trait]
-impl<E> Receive for Box<dyn Stream<Item = anyhow::Result<StreamItem<E>>> + Send + Unpin>
+impl<E> Receive for Box<dyn Stream<Item = anyhow::Result<E>> + Send + Unpin>
 where
     E: Receive + Send + 'static,
 {
@@ -1826,21 +1817,16 @@ where
                         )
                         .await
                         {
-                            Ok((StreamItem::Element(element), buf)) => {
+                            Ok((Some(element), buf)) => {
                                 payload = buf;
 
-                                if let Err(err) =
-                                    items_tx.send(Ok(StreamItem::Element(element))).await
-                                {
+                                if let Err(err) = items_tx.send(Ok(element)).await {
                                     trace!(?err, "item receiver closed");
                                     return;
                                 }
                             }
-                            Ok((StreamItem::End, _)) => {
-                                if let Err(err) = items_tx.send(Ok(StreamItem::End)).await {
-                                    trace!(?err, "item receiver closed");
-                                    return;
-                                }
+                            Ok((None, _)) => {
+                                trace!("stream end received, close stream");
                                 return;
                             }
                             Err(err) => {
@@ -1868,13 +1854,7 @@ where
                     .await
                     .context("failed to decode value of stream element 0")?;
                 let payload = receive_at_least(payload, rx, 1).await?;
-                Ok((
-                    Box::new(stream::iter([
-                        Ok(StreamItem::Element(element)),
-                        Ok(StreamItem::End),
-                    ])),
-                    payload,
-                ))
+                Ok((Box::new(stream::iter([Ok(element)])), payload))
             }
             _ => {
                 trace!("decode stream length");
@@ -1893,13 +1873,10 @@ where
                     (el, payload) = E::receive(payload, rx, sub)
                         .await
                         .with_context(|| format!("failed to decode value of list element {i}"))?;
-                    els.push(Ok(StreamItem::Element(el)));
+                    els.push(Ok(el));
                 }
                 ensure!(payload.get_u8() == 0);
-                Ok((
-                    Box::new(stream::iter(els.into_iter().chain([Ok(StreamItem::End)]))),
-                    payload,
-                ))
+                Ok((Box::new(stream::iter(els)), payload))
             }
         }
     }
@@ -2365,21 +2342,16 @@ impl ReceiveContext<Type> for Value {
                                 )
                                 .await
                                 {
-                                    Ok((StreamItem::Element(element), buf)) => {
+                                    Ok((Some(element), buf)) => {
                                         payload = buf;
 
-                                        if let Err(err) =
-                                            items_tx.send(Ok(StreamItem::Element(element))).await
-                                        {
+                                        if let Err(err) = items_tx.send(Ok(element)).await {
                                             trace!(?err, "item receiver closed");
                                             return;
                                         }
                                     }
-                                    Ok((StreamItem::End, _)) => {
-                                        if let Err(err) = items_tx.send(Ok(StreamItem::End)).await {
-                                            trace!(?err, "item receiver closed");
-                                            return;
-                                        }
+                                    Ok((None, _)) => {
+                                        trace!("stream end received, close stream");
                                         return;
                                     }
                                     Err(err) => {
@@ -2412,10 +2384,7 @@ impl ReceiveContext<Type> for Value {
                             (None, payload)
                         };
                         Ok((
-                            Value::Stream(Box::pin(stream::iter([
-                                Ok(StreamItem::Element(element)),
-                                Ok(StreamItem::End),
-                            ]))),
+                            Value::Stream(Box::pin(stream::iter([Ok(element)]))),
                             payload,
                         ))
                     }
@@ -2439,18 +2408,13 @@ impl ReceiveContext<Type> for Value {
                                     .with_context(|| {
                                     format!("failed to decode value of list element {i}")
                                 })?;
-                                els.push(Ok(StreamItem::Element(Some(el))));
+                                els.push(Ok(Some(el)));
                             }
                             els
                         } else {
                             Vec::default()
                         };
-                        Ok((
-                            Value::Stream(Box::pin(stream::iter(
-                                els.into_iter().chain([Ok(StreamItem::End)]),
-                            ))),
-                            payload,
-                        ))
+                        Ok((Value::Stream(Box::pin(stream::iter(els))), payload))
                     }
                 }
             }

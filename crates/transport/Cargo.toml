@@ -1,6 +1,6 @@
 [package]
 name = "wrpc-transport"
-version = "0.6.0"
+version = "0.7.0"
 edition = "2021"
 description = "wRPC core transport functionality"
 authors = ["Roman Volosatovs <rvolosatovs@riseup.net>"]
