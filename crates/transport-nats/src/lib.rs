@@ -16,7 +16,9 @@ use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 use tokio::{spawn, try_join};
 use tracing::{instrument, trace};
-use wrpc_transport::{AsyncValue, Encode, Transmitter as _, PROTOCOL};
+use wrpc_transport::{
+    AsyncValue, Encode, IncomingInvocation, OutgoingInvocation, Transmitter as _, PROTOCOL,
+};
 
 #[derive(Debug)]
 struct Message {
@@ -518,7 +520,9 @@ impl wrpc_transport::Client for Client {
     type InvocationStream = Pin<
         Box<
             dyn Stream<
-                    Item = anyhow::Result<(Bytes, Self::Subject, Self::Subscriber, Self::Acceptor)>,
+                    Item = anyhow::Result<
+                        IncomingInvocation<Self::Subject, Self::Subscriber, Self::Acceptor>,
+                    >,
                 > + Send,
         >,
     >;
@@ -537,12 +541,12 @@ impl wrpc_transport::Client for Client {
                 async move {
                     let Request { payload, tx, .. } = Request::try_from(msg)?;
                     let rx = nats.new_inbox().to_subject();
-                    Ok((
+                    Ok(IncomingInvocation {
                         payload,
-                        Subject(rx.clone()),
-                        Subscriber::new(Arc::clone(&nats)),
-                        Acceptor { nats, tx },
-                    ))
+                        reply_subject: Subject(rx.clone()),
+                        subscriber: Subscriber::new(Arc::clone(&nats)),
+                        acceptor: Acceptor { nats, tx },
+                    })
                 }
             }
         })))
@@ -550,16 +554,15 @@ impl wrpc_transport::Client for Client {
 
     fn new_invocation(
         &self,
-    ) -> (
-        Self::Invocation,
-        Self::Subscriber,
-        Self::Subject,
-        Self::Subject,
-    ) {
+    ) -> OutgoingInvocation<Self::Invocation, Self::Subscriber, Self::Subject> {
         let rx = self.nats.new_inbox().to_subject();
-        let sub = Subscriber::new(Arc::clone(&self.nats));
-        let results = Subject(format!("{rx}.results").into());
-        let error = Subject(format!("{rx}.error").into());
-        (Invocation::new(self.clone(), rx), sub, results, error)
+        let result_subject = Subject(format!("{rx}.results").into());
+        let error_subject = Subject(format!("{rx}.error").into());
+        OutgoingInvocation {
+            invocation: Invocation::new(self.clone(), rx),
+            subscriber: Subscriber::new(Arc::clone(&self.nats)),
+            result_subject,
+            error_subject,
+        }
     }
 }

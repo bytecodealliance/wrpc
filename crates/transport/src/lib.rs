@@ -3074,6 +3074,23 @@ pub trait Invocation {
     ) -> anyhow::Result<(Self::Transmission, Self::TransmissionFailed)>;
 }
 
+/// Invocation received from a peer
+pub struct IncomingInvocation<Subject, Subscriber, Acceptor> {
+    pub payload: Bytes,
+    pub reply_subject: Subject,
+    pub subscriber: Subscriber,
+    pub acceptor: Acceptor,
+}
+
+/// Invocation ready to be transmitted to peer
+pub struct OutgoingInvocation<Invocation, Subscriber, Subject> {
+    pub invocation: Invocation,
+    pub subscriber: Subscriber,
+    pub result_subject: Subject,
+    pub error_subject: Subject,
+}
+
+/// wRPC transmission client used to invoke and serve functions
 #[async_trait]
 pub trait Client: Sync {
     type Subject: Subject + Clone + Send + Sync + 'static;
@@ -3086,14 +3103,19 @@ pub trait Client: Sync {
         + Sync
         + 'static;
     type Acceptor: Acceptor<Subject = Self::Subject> + Send + 'static;
-    type InvocationStream: Stream<Item = anyhow::Result<(Bytes, Self::Subject, Self::Subscriber, Self::Acceptor)>>
-        + Unpin
+    type InvocationStream: Stream<
+            Item = anyhow::Result<
+                IncomingInvocation<Self::Subject, Self::Subscriber, Self::Acceptor>,
+            >,
+        > + Unpin
         + Send
         + 'static;
     type Invocation: Invocation<Transmission = Self::Transmission> + Send;
 
+    /// Serve function `name` from instance `instance`
     async fn serve(&self, instance: &str, name: &str) -> anyhow::Result<Self::InvocationStream>;
 
+    /// Serve function `name` from instance `instance` with statically-typed parameter type `T`
     #[instrument(level = "trace", skip(self))]
     async fn serve_static<T: Receive + Subscribe + 'static>(
         &self,
@@ -3114,14 +3136,19 @@ pub trait Client: Sync {
     > {
         let invocations = self.serve(instance, name).await?;
         Ok(Box::pin(invocations.and_then({
-            move |(payload, rx_subject, sub, accept)| async move {
+            move |IncomingInvocation {
+                      payload,
+                      reply_subject,
+                      subscriber,
+                      acceptor,
+                  }| async move {
                 let (mut rx, nested) = try_join!(
-                    sub.subscribe(rx_subject.clone()),
-                    T::subscribe(&sub, rx_subject.clone())
+                    subscriber.subscribe(reply_subject.clone()),
+                    T::subscribe(&subscriber, reply_subject.clone())
                 )
                 .context("failed to subscribe for parameters")?;
-                let (tx_subject, tx) = accept
-                    .accept(rx_subject)
+                let (tx_subject, tx) = acceptor
+                    .accept(reply_subject)
                     .await
                     .context("failed to accept invocation")?;
                 let (params, _) = T::receive(payload, &mut rx, nested)
@@ -3132,6 +3159,8 @@ pub trait Client: Sync {
         })))
     }
 
+    /// Serve function `name` from instance `instance` with dynamically-typed parameter type
+    /// `params`
     #[instrument(level = "trace", skip(self, params))]
     async fn serve_dynamic(
         &self,
@@ -3153,16 +3182,21 @@ pub trait Client: Sync {
     > {
         let invocations = self.serve(instance, name).await?;
         Ok(Box::pin(invocations.and_then({
-            move |(payload, rx_subject, sub, accept)| {
+            move |IncomingInvocation {
+                      payload,
+                      reply_subject,
+                      subscriber,
+                      acceptor,
+                  }| {
                 let params = Arc::clone(&params);
                 async move {
                     let (mut rx, nested) = try_join!(
-                        sub.subscribe(rx_subject.clone()),
-                        sub.subscribe_tuple(rx_subject.clone(), params.as_ref()),
+                        subscriber.subscribe(reply_subject.clone()),
+                        subscriber.subscribe_tuple(reply_subject.clone(), params.as_ref()),
                     )
                     .context("failed to subscribe for parameters")?;
-                    let (tx_subject, tx) = accept
-                        .accept(rx_subject)
+                    let (tx_subject, tx) = acceptor
+                        .accept(reply_subject)
                         .await
                         .context("failed to accept invocation")?;
                     let (params, _) = ReceiveContext::receive_tuple_context(
@@ -3179,15 +3213,13 @@ pub trait Client: Sync {
         })))
     }
 
+    /// Constructs a new invocation to be sent to peer
     fn new_invocation(
         &self,
-    ) -> (
-        Self::Invocation,
-        Self::Subscriber,
-        Self::Subject,
-        Self::Subject,
-    );
+    ) -> OutgoingInvocation<Self::Invocation, Self::Subscriber, Self::Subject>;
 
+    /// Invokes function `name` from instance `instance` with parameters `params` and
+    /// statically-typed results of type `T`
     #[instrument(level = "trace", skip(self, params))]
     async fn invoke_static<T>(
         &self,
@@ -3198,26 +3230,33 @@ pub trait Client: Sync {
     where
         T: Receive + Subscribe + Send,
     {
-        let (inv, sub, result_subject, error_subject) = self.new_invocation();
+        let OutgoingInvocation {
+            invocation,
+            subscriber,
+            result_subject,
+            error_subject,
+        } = self.new_invocation();
 
         let (mut results_rx, results_nested, mut error_rx) = try_join!(
             async {
-                sub.subscribe(result_subject.clone())
+                subscriber
+                    .subscribe(result_subject.clone())
                     .await
                     .context("failed to subscribe for result values")
             },
             async {
-                T::subscribe(&sub, result_subject.clone())
+                T::subscribe(&subscriber, result_subject.clone())
                     .await
                     .context("failed to subscribe for asynchronous result values")
             },
             async {
-                sub.subscribe(error_subject)
+                subscriber
+                    .subscribe(error_subject)
                     .await
                     .context("failed to subscribe for error value")
             },
         )?;
-        let (tx, tx_fail) = inv
+        let (tx, tx_fail) = invocation
             .invoke(instance, name, params)
             .await
             .context("failed to invoke function")?;
@@ -3256,6 +3295,8 @@ pub trait Client: Sync {
         }
     }
 
+    /// Invokes function `name` from instance `instance` with parameters `params` and
+    /// dynamically-typed results of type `results`
     #[instrument(level = "trace", skip(self, params, results))]
     async fn invoke_dynamic(
         &self,
@@ -3264,26 +3305,34 @@ pub trait Client: Sync {
         params: impl Encode,
         results: &[Type],
     ) -> anyhow::Result<(Vec<Value>, Self::Transmission)> {
-        let (inv, sub, result_subject, error_subject) = self.new_invocation();
+        let OutgoingInvocation {
+            invocation,
+            subscriber,
+            result_subject,
+            error_subject,
+        } = self.new_invocation();
 
         let (mut results_rx, results_nested, mut error_rx) = try_join!(
             async {
-                sub.subscribe(result_subject.clone())
+                subscriber
+                    .subscribe(result_subject.clone())
                     .await
                     .context("failed to subscribe for result values")
             },
             async {
-                sub.subscribe_tuple(result_subject.clone(), results)
+                subscriber
+                    .subscribe_tuple(result_subject.clone(), results)
                     .await
                     .context("failed to subscribe for asynchronous result values")
             },
             async {
-                sub.subscribe(error_subject)
+                subscriber
+                    .subscribe(error_subject)
                     .await
                     .context("failed to subscribe for error value")
             },
         )?;
-        let (tx, tx_fail) = inv
+        let (tx, tx_fail) = invocation
             .invoke(instance, name, params)
             .await
             .context("failed to invoke function")?;
