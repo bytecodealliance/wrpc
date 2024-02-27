@@ -19,7 +19,7 @@ use tracing_subscriber::util::SubscriberInitExt as _;
 use url::Url;
 use wrpc::{DynamicFunctionType, ResourceType, Transmitter as _, Type, Value};
 use wrpc_interface_http::{ErrorCode, Method, Request, RequestOptions, Response, Scheme};
-use wrpc_transport::{Client as _, DynamicTuple};
+use wrpc_transport::{AcceptedInvocation, Client as _, DynamicTuple};
 
 async fn free_port() -> Result<u16> {
     TcpListener::bind((Ipv6Addr::LOCALHOST, 0))
@@ -80,13 +80,19 @@ async fn loopback_dynamic(
             let (params, results) = try_join!(
                 async {
                     info!("await invocation");
-                    let (params, result_subject, _, tx) = invocations
+                    let AcceptedInvocation {
+                        params,
+                        result_subject,
+                        transmitter,
+                        ..
+                    } = invocations
                         .try_next()
                         .await
                         .with_context(|| "unexpected end of invocation stream".to_string())?
                         .with_context(|| "failed to decode parameters".to_string())?;
                     info!("transmit response to invocation");
-                    tx.transmit_tuple_dynamic(result_subject, results)
+                    transmitter
+                        .transmit_tuple_dynamic(result_subject, results)
                         .await
                         .context("failed to transmit result tuple")?;
                     info!("finished serving invocation");
@@ -1021,12 +1027,18 @@ async fn nats() -> anyhow::Result<()> {
         .context("failed to serve")?;
     try_join!(
         async {
-            let ((), result_subject, _, tx) = unit_invocations
+            let AcceptedInvocation {
+                params: (),
+                result_subject,
+                transmitter,
+                ..
+            } = unit_invocations
                 .try_next()
                 .await
                 .context("failed to receive invocation")?
                 .context("unexpected end of stream")?;
-            tx.transmit_static(result_subject, ())
+            transmitter
+                .transmit_static(result_subject, ())
                 .await
                 .context("failed to transmit response")?;
             anyhow::Ok(())
@@ -1047,20 +1059,21 @@ async fn nats() -> anyhow::Result<()> {
         let mut invocations = client.serve_handle().await.context("failed to serve")?;
         try_join!(
             async {
-                let (
-                    Request {
-                        mut body,
-                        trailers,
-                        method,
-                        path_with_query,
-                        scheme,
-                        authority,
-                        headers,
-                    },
+                let AcceptedInvocation {
+                    params:
+                        Request {
+                            mut body,
+                            trailers,
+                            method,
+                            path_with_query,
+                            scheme,
+                            authority,
+                            headers,
+                        },
                     result_subject,
-                    _,
-                    tx,
-                ) = invocations
+                    transmitter,
+                    ..
+                } = invocations
                     .try_next()
                     .await
                     .context("failed to receive invocation")?
@@ -1076,17 +1089,18 @@ async fn nats() -> anyhow::Result<()> {
                 try_join!(
                     async {
                         info!("transmit response");
-                        tx.transmit_static(
-                            result_subject,
-                            Ok::<_, ErrorCode>(Response {
-                                body: stream::empty(),
-                                trailers: async { None },
-                                status: 400,
-                                headers: Vec::default(),
-                            }),
-                        )
-                        .await
-                        .context("failed to transmit response")?;
+                        transmitter
+                            .transmit_static(
+                                result_subject,
+                                Ok::<_, ErrorCode>(Response {
+                                    body: stream::empty(),
+                                    trailers: async { None },
+                                    status: 400,
+                                    headers: Vec::default(),
+                                }),
+                            )
+                            .await
+                            .context("failed to transmit response")?;
                         info!("response transmitted");
                         anyhow::Ok(())
                     },
@@ -1177,23 +1191,24 @@ async fn nats() -> anyhow::Result<()> {
         let mut invocations = client.serve_handle().await.context("failed to serve")?;
         try_join!(
             async {
-                let (
-                    (
-                        Request {
-                            mut body,
-                            trailers,
-                            method,
-                            path_with_query,
-                            scheme,
-                            authority,
-                            headers,
-                        },
-                        opts,
-                    ),
+                let AcceptedInvocation {
+                    params:
+                        (
+                            Request {
+                                mut body,
+                                trailers,
+                                method,
+                                path_with_query,
+                                scheme,
+                                authority,
+                                headers,
+                            },
+                            opts,
+                        ),
                     result_subject,
-                    _,
-                    tx,
-                ) = invocations
+                    transmitter,
+                    ..
+                } = invocations
                     .try_next()
                     .await
                     .context("failed to receive invocation")?
@@ -1217,17 +1232,18 @@ async fn nats() -> anyhow::Result<()> {
                 try_join!(
                     async {
                         info!("transmit response");
-                        tx.transmit_static(
-                            result_subject,
-                            Ok::<_, ErrorCode>(Response {
-                                body: stream::empty(),
-                                trailers: async { None },
-                                status: 400,
-                                headers: Vec::default(),
-                            }),
-                        )
-                        .await
-                        .context("failed to transmit response")?;
+                        transmitter
+                            .transmit_static(
+                                result_subject,
+                                Ok::<_, ErrorCode>(Response {
+                                    body: stream::empty(),
+                                    trailers: async { None },
+                                    status: 400,
+                                    headers: Vec::default(),
+                                }),
+                            )
+                            .await
+                            .context("failed to transmit response")?;
                         info!("response transmitted");
                         anyhow::Ok(())
                     },

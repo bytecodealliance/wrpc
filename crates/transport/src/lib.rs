@@ -3075,14 +3075,24 @@ pub trait Invocation {
 }
 
 /// Invocation received from a peer
-pub struct IncomingInvocation<Subject, Subscriber, Acceptor> {
+pub struct IncomingInvocation<Ctx, Subject, Subscriber, Acceptor> {
+    pub context: Ctx,
     pub payload: Bytes,
     pub reply_subject: Subject,
     pub subscriber: Subscriber,
     pub acceptor: Acceptor,
 }
 
-/// Invocation ready to be transmitted to peer
+/// An accepted invocation received from a peer
+pub struct AcceptedInvocation<Ctx, T, Subject, Transmitter> {
+    pub context: Ctx,
+    pub params: T,
+    pub result_subject: Subject,
+    pub error_subject: Subject,
+    pub transmitter: Transmitter,
+}
+
+/// Invocation ready to be transmitted to a peer
 pub struct OutgoingInvocation<Invocation, Subscriber, Subject> {
     pub invocation: Invocation,
     pub subscriber: Subscriber,
@@ -3093,6 +3103,7 @@ pub struct OutgoingInvocation<Invocation, Subscriber, Subject> {
 /// wRPC transmission client used to invoke and serve functions
 #[async_trait]
 pub trait Client: Sync {
+    type Context: Send + 'static;
     type Subject: Subject + Clone + Send + Sync + 'static;
     type Transmission: Future<Output = anyhow::Result<()>> + Send + 'static;
     type Subscriber: Subscriber<
@@ -3105,7 +3116,7 @@ pub trait Client: Sync {
     type Acceptor: Acceptor<Subject = Self::Subject> + Send + 'static;
     type InvocationStream: Stream<
             Item = anyhow::Result<
-                IncomingInvocation<Self::Subject, Self::Subscriber, Self::Acceptor>,
+                IncomingInvocation<Self::Context, Self::Subject, Self::Subscriber, Self::Acceptor>,
             >,
         > + Unpin
         + Send
@@ -3125,12 +3136,14 @@ pub trait Client: Sync {
         Pin<
             Box<
                 dyn Stream<
-                        Item = anyhow::Result<(
-                            T,
-                            Self::Subject,
-                            Self::Subject,
-                            <Self::Acceptor as Acceptor>::Transmitter,
-                        )>,
+                        Item = anyhow::Result<
+                            AcceptedInvocation<
+                                Self::Context,
+                                T,
+                                Self::Subject,
+                                <Self::Acceptor as Acceptor>::Transmitter,
+                            >,
+                        >,
                     > + Send,
             >,
         >,
@@ -3138,6 +3151,7 @@ pub trait Client: Sync {
         let invocations = self.serve(instance, name).await?;
         Ok(Box::pin(invocations.and_then({
             move |IncomingInvocation {
+                      context,
                       payload,
                       reply_subject,
                       subscriber,
@@ -3148,14 +3162,20 @@ pub trait Client: Sync {
                     T::subscribe(&subscriber, reply_subject.clone())
                 )
                 .context("failed to subscribe for parameters")?;
-                let (results_subject, error_subject, tx) = acceptor
+                let (result_subject, error_subject, transmitter) = acceptor
                     .accept(reply_subject)
                     .await
                     .context("failed to accept invocation")?;
                 let (params, _) = T::receive(payload, &mut rx, nested)
                     .await
                     .context("failed to receive parameters")?;
-                Ok((params, results_subject, error_subject, tx))
+                Ok(AcceptedInvocation {
+                    context,
+                    params,
+                    result_subject,
+                    error_subject,
+                    transmitter,
+                })
             }
         })))
     }
@@ -3172,12 +3192,14 @@ pub trait Client: Sync {
         Pin<
             Box<
                 dyn Stream<
-                        Item = anyhow::Result<(
-                            Vec<Value>,
-                            Self::Subject,
-                            Self::Subject,
-                            <Self::Acceptor as Acceptor>::Transmitter,
-                        )>,
+                        Item = anyhow::Result<
+                            AcceptedInvocation<
+                                Self::Context,
+                                Vec<Value>,
+                                Self::Subject,
+                                <Self::Acceptor as Acceptor>::Transmitter,
+                            >,
+                        >,
                     > + Send,
             >,
         >,
@@ -3185,6 +3207,7 @@ pub trait Client: Sync {
         let invocations = self.serve(instance, name).await?;
         Ok(Box::pin(invocations.and_then({
             move |IncomingInvocation {
+                      context,
                       payload,
                       reply_subject,
                       subscriber,
@@ -3197,7 +3220,7 @@ pub trait Client: Sync {
                         subscriber.subscribe_tuple(reply_subject.clone(), params.as_ref()),
                     )
                     .context("failed to subscribe for parameters")?;
-                    let (results_subject, error_subject, tx) = acceptor
+                    let (result_subject, error_subject, transmitter) = acceptor
                         .accept(reply_subject)
                         .await
                         .context("failed to accept invocation")?;
@@ -3209,7 +3232,13 @@ pub trait Client: Sync {
                     )
                     .await
                     .context("failed to receive parameters")?;
-                    Ok((params, results_subject, error_subject, tx))
+                    Ok(AcceptedInvocation {
+                        context,
+                        params,
+                        result_subject,
+                        error_subject,
+                        transmitter,
+                    })
                 }
             }
         })))

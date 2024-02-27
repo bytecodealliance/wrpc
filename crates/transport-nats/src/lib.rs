@@ -517,6 +517,7 @@ impl wrpc_transport::Acceptor for Acceptor {
 
 #[async_trait]
 impl wrpc_transport::Client for Client {
+    type Context = Option<HeaderMap>;
     type Subject = Subject;
     type Subscriber = Subscriber;
     type Transmission = Transmission;
@@ -525,7 +526,12 @@ impl wrpc_transport::Client for Client {
         Box<
             dyn Stream<
                     Item = anyhow::Result<
-                        IncomingInvocation<Self::Subject, Self::Subscriber, Self::Acceptor>,
+                        IncomingInvocation<
+                            Self::Context,
+                            Self::Subject,
+                            Self::Subscriber,
+                            Self::Acceptor,
+                        >,
                     >,
                 > + Send,
         >,
@@ -543,9 +549,15 @@ impl wrpc_transport::Client for Client {
             move |msg| {
                 let nats = Arc::clone(&nats);
                 async move {
-                    let Request { payload, tx, .. } = Request::try_from(msg)?;
+                    let Request {
+                        payload,
+                        tx,
+                        headers,
+                        ..
+                    } = Request::try_from(msg)?;
                     let rx = nats.new_inbox().to_subject();
                     Ok(IncomingInvocation {
+                        context: headers,
                         payload,
                         reply_subject: Subject(rx.clone()),
                         subscriber: Subscriber::new(Arc::clone(&nats)),

@@ -9,8 +9,8 @@ use futures::{Stream, StreamExt as _};
 use tokio::try_join;
 use tracing::instrument;
 use wrpc_transport::{
-    encode_discriminant, receive_discriminant, Acceptor, AsyncSubscription, AsyncValue, Encode,
-    EncodeSync, Receive, Subject as _, Subscribe, Subscriber,
+    encode_discriminant, receive_discriminant, AcceptedInvocation, Acceptor, AsyncSubscription,
+    AsyncValue, Encode, EncodeSync, Receive, Subject as _, Subscribe, Subscriber,
 };
 
 pub type Fields = Vec<(String, Vec<Bytes>)>;
@@ -843,12 +843,14 @@ impl<T: wrpc_transport::Client> IncomingHandler for T {
     type HandleInvocationStream = Pin<
         Box<
             dyn Stream<
-                    Item = anyhow::Result<(
-                        IncomingRequest,
-                        T::Subject,
-                        T::Subject,
-                        <T::Acceptor as Acceptor>::Transmitter,
-                    )>,
+                    Item = anyhow::Result<
+                        AcceptedInvocation<
+                            T::Context,
+                            IncomingRequest,
+                            T::Subject,
+                            <T::Acceptor as Acceptor>::Transmitter,
+                        >,
+                    >,
                 > + Send,
         >,
     >;
@@ -894,12 +896,14 @@ impl<T: wrpc_transport::Client> OutgoingHandler for T {
     type HandleInvocationStream = Pin<
         Box<
             dyn Stream<
-                    Item = anyhow::Result<(
-                        (IncomingRequest, Option<RequestOptions>),
-                        T::Subject,
-                        T::Subject,
-                        <T::Acceptor as Acceptor>::Transmitter,
-                    )>,
+                    Item = anyhow::Result<
+                        AcceptedInvocation<
+                            T::Context,
+                            (IncomingRequest, Option<RequestOptions>),
+                            T::Subject,
+                            <T::Acceptor as Acceptor>::Transmitter,
+                        >,
+                    >,
                 > + Send,
         >,
     >;
