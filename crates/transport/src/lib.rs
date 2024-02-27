@@ -436,6 +436,21 @@ where
 }
 
 #[async_trait]
+impl<A> Subscribe for Vec<A>
+where
+    A: Subscribe,
+{
+    #[instrument(level = "trace", skip_all)]
+    async fn subscribe<T: Subscriber + Send + Sync>(
+        subscriber: &T,
+        subject: T::Subject,
+    ) -> Result<Option<AsyncSubscription<T::Stream>>, T::SubscribeError> {
+        let a = A::subscribe(subscriber, subject.child(None)).await?;
+        Ok(a.map(Box::new).map(AsyncSubscription::List))
+    }
+}
+
+#[async_trait]
 impl<O, E> Subscribe for Result<O, E>
 where
     O: Subscribe,
@@ -536,6 +551,26 @@ where
         )?;
         Ok((a.is_some() || b.is_some() || c.is_some() || d.is_some())
             .then(|| AsyncSubscription::Tuple(vec![a, b, c, d])))
+    }
+}
+
+#[async_trait]
+impl<E> Subscribe for Box<dyn Stream<Item = anyhow::Result<Vec<E>>> + Send + Unpin>
+where
+    E: Subscribe,
+{
+    #[instrument(level = "trace", skip_all)]
+    async fn subscribe<T: Subscriber + Send + Sync>(
+        subscriber: &T,
+        subject: T::Subject,
+    ) -> Result<Option<AsyncSubscription<T::Stream>>, T::SubscribeError> {
+        let nested = subject.child(None);
+        let (subscriber, nested) = try_join!(
+            subscriber.subscribe(subject),
+            E::subscribe(subscriber, nested),
+        )?;
+        let nested = nested.map(Box::new);
+        Ok(Some(AsyncSubscription::Stream { subscriber, nested }))
     }
 }
 

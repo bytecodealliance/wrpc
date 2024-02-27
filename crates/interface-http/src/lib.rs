@@ -863,10 +863,8 @@ impl<T: wrpc_transport::Client> IncomingHandler for T {
         Body: Stream<Item = Bytes> + Send + 'static,
         Trailers: Future<Output = Option<Fields>> + Send + 'static,
     {
-        let (res, tx) = self
-            .invoke_static("wrpc:http/incoming-handler@0.1.0", "handle", request)
-            .await?;
-        Ok((res, tx))
+        self.invoke_static("wrpc:http/incoming-handler@0.1.0", "handle", request)
+            .await
     }
 
     async fn serve_handle(&self) -> anyhow::Result<Self::HandleInvocationStream> {
@@ -916,14 +914,12 @@ impl<T: wrpc_transport::Client> OutgoingHandler for T {
         >,
         options: Option<RequestOptions>,
     ) -> anyhow::Result<(Result<IncomingResponse, ErrorCode>, T::Transmission)> {
-        let (res, tx) = self
-            .invoke_static(
-                "wrpc:http/outgoing-handler@0.1.0",
-                "handle",
-                (request, options),
-            )
-            .await?;
-        Ok((res, tx))
+        self.invoke_static(
+            "wrpc:http/outgoing-handler@0.1.0",
+            "handle",
+            (request, options),
+        )
+        .await
     }
 
     async fn serve_handle(&self) -> anyhow::Result<Self::HandleInvocationStream> {

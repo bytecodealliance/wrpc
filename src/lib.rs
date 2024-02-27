@@ -10,6 +10,7 @@ pub mod runtime {
 }
 
 pub mod interfaces {
+    pub use wrpc_interface_blobstore as blobstore;
     pub use wrpc_interface_http as http;
 }
 
