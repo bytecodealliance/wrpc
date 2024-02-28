@@ -464,7 +464,7 @@ impl<T: wrpc_transport::Client> Blobstore for T {
     }
     async fn serve_get_container_info(
         &self,
-    ) -> anyhow::Result<Self::DeleteContainerInvocationStream> {
+    ) -> anyhow::Result<Self::GetContainerInfoInvocationStream> {
         self.serve_static("wrpc:blobstore/blobstore@0.1.0", "get-container-info")
             .await
     }
