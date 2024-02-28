@@ -238,10 +238,12 @@ impl wrpc_transport::Subscriber for Subscriber {
     type SubscribeError = anyhow::Error;
     type StreamError = anyhow::Error;
 
+    #[instrument(level = "trace", skip(self))]
     async fn subscribe(
         &self,
         subject: Self::Subject,
     ) -> Result<Self::Stream, Self::SubscribeError> {
+        trace!("subscribe");
         self.nats
             .subscribe(subject.0)
             .await
@@ -314,6 +316,7 @@ impl Invocation {
         &self.rx
     }
 
+    #[instrument(level = "trace", skip(self, params))]
     pub async fn begin(self, params: impl Encode) -> anyhow::Result<InvocationPre> {
         let ((payload, tx), handshake) = try_join!(
             async {
@@ -347,6 +350,7 @@ impl wrpc_transport::Invocation for Invocation {
     type Transmission = Transmission;
     type TransmissionFailed = Box<dyn Future<Output = ()> + Send + Unpin>;
 
+    #[instrument(level = "trace", skip(self, params))]
     async fn invoke(
         self,
         instance: &str,
@@ -432,6 +436,7 @@ impl InvocationPre {
         self.finish().await
     }
 
+    #[instrument(level = "trace", skip(self))]
     async fn finish(mut self) -> anyhow::Result<(Transmission, impl Future<Output = ()>)> {
         let (err_tx, err_rx) = oneshot::channel();
         let tx = spawn(async move {
@@ -499,6 +504,7 @@ impl wrpc_transport::Acceptor for Acceptor {
     type Subject = Subject;
     type Transmitter = Transmitter;
 
+    #[instrument(level = "trace", skip(self))]
     async fn accept(
         self,
         rx: Self::Subject,
@@ -568,6 +574,7 @@ impl wrpc_transport::Client for Client {
         })))
     }
 
+    #[instrument(level = "trace", skip(self))]
     fn new_invocation(
         &self,
     ) -> OutgoingInvocation<Self::Invocation, Self::Subscriber, Self::Subject> {
