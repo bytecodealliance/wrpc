@@ -1,0 +1,18 @@
+[package]
+name = "wrpc-interface-keyvalue"
+version = "0.1.0"
+description = "wRPC keyvalue interface"
+
+authors.workspace = true
+categories.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow = { workspace = true, features = ["std"] }
+async-trait = { workspace = true }
+bytes = { workspace = true }
+futures = { workspace = true }
+tracing = { workspace = true, features = ["attributes"] }
+wrpc-transport = { workspace = true }

@@ -1936,17 +1936,17 @@ async fn nats() -> anyhow::Result<()> {
                         let data = data
                             .try_collect::<Vec<_>>()
                             .await
-                            .context("failed to collect names")?;
+                            .context("failed to collect data")?;
                         assert_eq!(data, [[0x42, 0xff]]);
                         Ok(())
                     },
                     async {
                         info!("transmit async parameters");
-                        tx.await.context("failed to transmit parameters")
+                        tx.await.context("failed to transmit parameters")?;
+                        info!("async parameters transmitted");
+                        Ok(())
                     }
-                )?;
-                info!("async parameters transmitted");
-                Ok(())
+                )
             }
         )?;
     }
@@ -2187,6 +2187,295 @@ async fn nats() -> anyhow::Result<()> {
                     .await
                     .context("failed to invoke")?;
                 let () = res.expect("invocation failed");
+                info!("transmit async parameters");
+                tx.await.context("failed to transmit parameters")?;
+                info!("async parameters transmitted");
+                Ok(())
+            }
+        )?;
+    }
+    {
+        use wrpc_interface_keyvalue::Eventual;
+
+        let mut invocations = client
+            .serve_delete()
+            .await
+            .context("failed to serve `delete`")?;
+        try_join!(
+            async {
+                let AcceptedInvocation {
+                    params: (bucket, key),
+                    result_subject,
+                    transmitter,
+                    ..
+                } = invocations
+                    .try_next()
+                    .await
+                    .context("failed to receive invocation")?
+                    .context("unexpected end of stream")?;
+                assert_eq!(bucket, "bucket");
+                assert_eq!(key, "key");
+                info!("transmit response");
+                transmitter
+                    .transmit_static(result_subject, Ok::<_, String>(()))
+                    .await
+                    .context("failed to transmit response")?;
+                info!("response transmitted");
+                anyhow::Ok(())
+            },
+            async {
+                info!("invoke function");
+                let (res, tx) = client
+                    .invoke_delete("bucket".to_string(), "key".to_string())
+                    .await
+                    .context("failed to invoke")?;
+                let () = res.expect("invocation failed");
+                info!("transmit async parameters");
+                tx.await.context("failed to transmit parameters")?;
+                info!("async parameters transmitted");
+                Ok(())
+            }
+        )?;
+    }
+    {
+        use wrpc_interface_keyvalue::Eventual;
+
+        let mut invocations = client
+            .serve_exists()
+            .await
+            .context("failed to serve `exists`")?;
+        try_join!(
+            async {
+                let AcceptedInvocation {
+                    params: (bucket, key),
+                    result_subject,
+                    transmitter,
+                    ..
+                } = invocations
+                    .try_next()
+                    .await
+                    .context("failed to receive invocation")?
+                    .context("unexpected end of stream")?;
+                assert_eq!(bucket, "bucket");
+                assert_eq!(key, "key");
+                info!("transmit response");
+                transmitter
+                    .transmit_static(result_subject, Ok::<_, String>(true))
+                    .await
+                    .context("failed to transmit response")?;
+                info!("response transmitted");
+                anyhow::Ok(())
+            },
+            async {
+                info!("invoke function");
+                let (res, tx) = client
+                    .invoke_exists("bucket".to_string(), "key".to_string())
+                    .await
+                    .context("failed to invoke")?;
+                let exists = res.expect("invocation failed");
+                assert!(exists);
+                info!("transmit async parameters");
+                tx.await.context("failed to transmit parameters")?;
+                info!("async parameters transmitted");
+                Ok(())
+            }
+        )?;
+    }
+    {
+        use wrpc_interface_keyvalue::Eventual;
+
+        let mut invocations = client.serve_get().await.context("failed to serve `get`")?;
+        try_join!(
+            async {
+                let AcceptedInvocation {
+                    params: (bucket, key),
+                    result_subject,
+                    transmitter,
+                    ..
+                } = invocations
+                    .try_next()
+                    .await
+                    .context("failed to receive invocation")?
+                    .context("unexpected end of stream")?;
+                assert_eq!(bucket, "bucket");
+                assert_eq!(key, "key");
+                info!("transmit response");
+                transmitter
+                    .transmit_static(
+                        result_subject,
+                        Ok::<_, String>(Some(Value::Stream(Box::pin(stream::iter([Ok(vec![
+                            Some(0x42u8.into()),
+                            Some(0xffu8.into()),
+                        ])]))))),
+                    )
+                    .await
+                    .context("failed to transmit response")?;
+                info!("response transmitted");
+                anyhow::Ok(())
+            },
+            async {
+                info!("invoke function");
+                let (res, tx) = client
+                    .invoke_get("bucket".to_string(), "key".to_string())
+                    .await
+                    .context("failed to invoke")?;
+                let data = res.expect("invocation failed");
+                let data = data.expect("data missing");
+                try_join!(
+                    async {
+                        info!("await data stream");
+                        let data = data
+                            .try_collect::<Vec<_>>()
+                            .await
+                            .context("failed to collect data")?;
+                        assert_eq!(data, [[0x42, 0xff]]);
+                        info!("data stream verified");
+                        Ok(())
+                    },
+                    async {
+                        info!("transmit async parameters");
+                        tx.await.context("failed to transmit parameters")?;
+                        info!("async parameters transmitted");
+                        Ok(())
+                    }
+                )
+            }
+        )?;
+    }
+    {
+        use wrpc_interface_keyvalue::Eventual;
+
+        let mut invocations = client.serve_set().await.context("failed to serve `set`")?;
+        try_join!(
+            async {
+                let AcceptedInvocation {
+                    params: (bucket, key, value),
+                    result_subject,
+                    transmitter,
+                    ..
+                } = invocations
+                    .try_next()
+                    .await
+                    .context("failed to receive invocation")?
+                    .context("unexpected end of stream")?;
+                assert_eq!(bucket, "bucket");
+                assert_eq!(key, "key");
+                let value = value
+                    .map_ok(|buf| String::from_utf8(buf).unwrap())
+                    .try_collect::<Vec<_>>()
+                    .await
+                    .context("failed to collect data")?;
+                assert_eq!(value, ["test"]);
+                info!("transmit response");
+                transmitter
+                    .transmit_static(result_subject, Ok::<_, String>(()))
+                    .await
+                    .context("failed to transmit response")?;
+                info!("response transmitted");
+                anyhow::Ok(())
+            },
+            async {
+                info!("invoke function");
+                let (res, tx) = client
+                    .invoke_set(
+                        "bucket".to_string(),
+                        "key".to_string(),
+                        Box::pin(stream::iter(["test".into()])),
+                    )
+                    .await
+                    .context("failed to invoke")?;
+                let () = res.expect("invocation failed");
+                info!("transmit async parameters");
+                tx.await.context("failed to transmit parameters")?;
+                info!("async parameters transmitted");
+                Ok(())
+            }
+        )?;
+    }
+    {
+        use wrpc_interface_keyvalue::Atomic;
+
+        let mut invocations = client
+            .serve_compare_and_swap()
+            .await
+            .context("failed to serve `compare-and-swap`")?;
+        try_join!(
+            async {
+                let AcceptedInvocation {
+                    params: (bucket, key, old, new),
+                    result_subject,
+                    transmitter,
+                    ..
+                } = invocations
+                    .try_next()
+                    .await
+                    .context("failed to receive invocation")?
+                    .context("unexpected end of stream")?;
+                assert_eq!(bucket, "bucket");
+                assert_eq!(key, "key");
+                assert_eq!(old, 42);
+                assert_eq!(new, 4242);
+                info!("transmit response");
+                transmitter
+                    .transmit_static(result_subject, Ok::<_, String>(false))
+                    .await
+                    .context("failed to transmit response")?;
+                info!("response transmitted");
+                anyhow::Ok(())
+            },
+            async {
+                info!("invoke function");
+                let (res, tx) = client
+                    .invoke_compare_and_swap("bucket".to_string(), "key".to_string(), 42, 4242)
+                    .await
+                    .context("failed to invoke")?;
+                let res = res.expect("invocation failed");
+                assert!(!res);
+                info!("transmit async parameters");
+                tx.await.context("failed to transmit parameters")?;
+                info!("async parameters transmitted");
+                Ok(())
+            }
+        )?;
+    }
+    {
+        use wrpc_interface_keyvalue::Atomic;
+
+        let mut invocations = client
+            .serve_increment()
+            .await
+            .context("failed to serve `increment`")?;
+        try_join!(
+            async {
+                let AcceptedInvocation {
+                    params: (bucket, key, delta),
+                    result_subject,
+                    transmitter,
+                    ..
+                } = invocations
+                    .try_next()
+                    .await
+                    .context("failed to receive invocation")?
+                    .context("unexpected end of stream")?;
+                assert_eq!(bucket, "bucket");
+                assert_eq!(key, "key");
+                assert_eq!(delta, 42);
+                info!("transmit response");
+                transmitter
+                    .transmit_static(result_subject, Ok::<_, String>(4242))
+                    .await
+                    .context("failed to transmit response")?;
+                info!("response transmitted");
+                anyhow::Ok(())
+            },
+            async {
+                info!("invoke function");
+                let (res, tx) = client
+                    .invoke_increment("bucket".to_string(), "key".to_string(), 42)
+                    .await
+                    .context("failed to invoke")?;
+                let res = res.expect("invocation failed");
+                assert_eq!(res, 4242);
                 info!("transmit async parameters");
                 tx.await.context("failed to transmit parameters")?;
                 info!("async parameters transmitted");

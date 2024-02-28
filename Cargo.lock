@@ -2403,6 +2403,7 @@ dependencies = [
  "tracing-subscriber",
  "wrpc-interface-blobstore",
  "wrpc-interface-http",
+ "wrpc-interface-keyvalue",
  "wrpc-runtime-wasmtime",
  "wrpc-transport",
  "wrpc-transport-nats",
@@ -2417,7 +2418,6 @@ dependencies = [
  "async-trait",
  "bytes",
  "futures",
- "tokio",
  "tracing",
  "wrpc-transport",
 ]
@@ -2431,6 +2431,18 @@ dependencies = [
  "bytes",
  "futures",
  "tokio",
+ "tracing",
+ "wrpc-transport",
+]
+
+[[package]]
+name = "wrpc-interface-keyvalue"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bytes",
+ "futures",
  "tracing",
  "wrpc-transport",
 ]
