@@ -345,7 +345,6 @@ impl Invocation {
     }
 }
 
-#[async_trait]
 impl wrpc_transport::Invocation for Invocation {
     type Transmission = Transmission;
     type TransmissionFailed = Box<dyn Future<Output = ()> + Send + Unpin>;
@@ -499,7 +498,6 @@ pub struct Acceptor {
     tx: async_nats::Subject,
 }
 
-#[async_trait]
 impl wrpc_transport::Acceptor for Acceptor {
     type Subject = Subject;
     type Transmitter = Transmitter;

@@ -415,15 +415,13 @@ pub trait Subject {
 
 /// Defines how nested async value subscriptions are top be established.
 /// [`EncodeSync`] implementations receive an implementation of this trait.
-#[async_trait]
 pub trait Subscribe: Sized {
-    async fn subscribe<T: Subscriber + Send + Sync>(
+    fn subscribe<T: Subscriber + Send + Sync>(
         _subscriber: &T,
         _subject: T::Subject,
-    ) -> Result<Option<AsyncSubscription<T::Stream>>, T::SubscribeError>;
+    ) -> impl Future<Output = Result<Option<AsyncSubscription<T::Stream>>, T::SubscribeError>> + Send;
 }
 
-#[async_trait]
 impl<A> Subscribe for Option<A>
 where
     A: Subscribe,
@@ -438,7 +436,6 @@ where
     }
 }
 
-#[async_trait]
 impl<A> Subscribe for Vec<A>
 where
     A: Subscribe,
@@ -453,7 +450,6 @@ where
     }
 }
 
-#[async_trait]
 impl<O, E> Subscribe for Result<O, E>
 where
     O: Subscribe,
@@ -477,7 +473,6 @@ where
     }
 }
 
-#[async_trait]
 impl<A> Subscribe for (A,)
 where
     A: Subscribe,
@@ -492,7 +487,6 @@ where
     }
 }
 
-#[async_trait]
 impl<A, B> Subscribe for (A, B)
 where
     A: Subscribe,
@@ -511,7 +505,6 @@ where
     }
 }
 
-#[async_trait]
 impl<A, B, C> Subscribe for (A, B, C)
 where
     A: Subscribe,
@@ -533,7 +526,6 @@ where
     }
 }
 
-#[async_trait]
 impl<A, B, C, D> Subscribe for (A, B, C, D)
 where
     A: Subscribe,
@@ -557,7 +549,6 @@ where
     }
 }
 
-#[async_trait]
 impl<E> Subscribe for Box<dyn Stream<Item = anyhow::Result<Vec<E>>> + Send + Sync + Unpin>
 where
     E: Subscribe,
@@ -2524,7 +2515,6 @@ pub trait EncodeSync: Sized {
     }
 }
 
-#[async_trait]
 impl<V: EncodeSync> Subscribe for V {
     async fn subscribe<T: Subscriber + Send + Sync>(
         _subscriber: &T,
@@ -3071,28 +3061,26 @@ where
     }
 }
 
-#[async_trait]
 pub trait Acceptor {
     type Subject;
     type Transmitter: Transmitter<Subject = Self::Subject> + Send + Sync + 'static;
 
-    async fn accept(
+    fn accept(
         self,
         subject: Self::Subject,
-    ) -> anyhow::Result<(Self::Subject, Self::Subject, Self::Transmitter)>;
+    ) -> impl Future<Output = anyhow::Result<(Self::Subject, Self::Subject, Self::Transmitter)>> + Send;
 }
 
-#[async_trait]
 pub trait Invocation {
     type Transmission: Future<Output = anyhow::Result<()>> + Send + 'static;
     type TransmissionFailed: Future<Output = ()> + Send + 'static;
 
-    async fn invoke(
+    fn invoke(
         self,
         instance: &str,
         name: &str,
         params: impl Encode,
-    ) -> anyhow::Result<(Self::Transmission, Self::TransmissionFailed)>;
+    ) -> impl Future<Output = anyhow::Result<(Self::Transmission, Self::TransmissionFailed)>> + Send;
 }
 
 /// Invocation received from a peer
