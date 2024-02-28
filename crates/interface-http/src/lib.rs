@@ -979,7 +979,6 @@ where
     }
 }
 
-#[async_trait]
 impl Subscribe for IncomingRequest {
     #[instrument(level = "trace", skip_all)]
     async fn subscribe<T: Subscriber + Send + Sync>(
@@ -1145,7 +1144,6 @@ where
     }
 }
 
-#[async_trait]
 impl Subscribe for IncomingResponse {
     #[instrument(level = "trace", skip_all)]
     async fn subscribe<T: Subscriber + Send + Sync>(
@@ -1219,22 +1217,24 @@ impl Receive for IncomingResponse {
     }
 }
 
-#[async_trait]
 pub trait IncomingHandler: wrpc_transport::Client {
     type HandleInvocationStream;
 
-    async fn invoke_handle<Body, Trailers>(
+    fn invoke_handle<Body, Trailers>(
         &self,
         request: Request<Body, Trailers>,
-    ) -> anyhow::Result<(Result<IncomingResponse, ErrorCode>, Self::Transmission)>
+    ) -> impl Future<
+        Output = anyhow::Result<(Result<IncomingResponse, ErrorCode>, Self::Transmission)>,
+    > + Send
     where
         Body: Stream<Item = Bytes> + Send + 'static,
         Trailers: Future<Output = Option<Fields>> + Send + 'static;
 
-    async fn serve_handle(&self) -> anyhow::Result<Self::HandleInvocationStream>;
+    fn serve_handle(
+        &self,
+    ) -> impl Future<Output = anyhow::Result<Self::HandleInvocationStream>> + Send;
 }
 
-#[async_trait]
 impl<T: wrpc_transport::Client> IncomingHandler for T {
     type HandleInvocationStream = Pin<
         Box<
@@ -1251,10 +1251,11 @@ impl<T: wrpc_transport::Client> IncomingHandler for T {
         >,
     >;
 
+    #[instrument(level = "trace", skip_all)]
     async fn invoke_handle<Body, Trailers>(
         &self,
         request: Request<Body, Trailers>,
-    ) -> anyhow::Result<(Result<IncomingResponse, ErrorCode>, T::Transmission)>
+    ) -> anyhow::Result<(Result<IncomingResponse, ErrorCode>, Self::Transmission)>
     where
         Body: Stream<Item = Bytes> + Send + 'static,
         Trailers: Future<Output = Option<Fields>> + Send + 'static,
@@ -1263,24 +1264,26 @@ impl<T: wrpc_transport::Client> IncomingHandler for T {
             .await
     }
 
+    #[instrument(level = "trace", skip_all)]
     async fn serve_handle(&self) -> anyhow::Result<Self::HandleInvocationStream> {
         self.serve_static("wrpc:http/incoming-handler@0.1.0", "handle")
             .await
     }
 }
 
-#[async_trait]
 pub trait OutgoingHandler: wrpc_transport::Client {
     type HandleInvocationStream;
 
-    async fn invoke_handle(
+    fn invoke_handle(
         &self,
         request: Request<
             impl Stream<Item = Bytes> + Send + 'static,
             impl Future<Output = Option<Fields>> + Send + 'static,
         >,
         options: Option<RequestOptions>,
-    ) -> anyhow::Result<(Result<IncomingResponse, ErrorCode>, Self::Transmission)>;
+    ) -> impl Future<
+        Output = anyhow::Result<(Result<IncomingResponse, ErrorCode>, Self::Transmission)>,
+    > + Send;
 
     #[cfg(feature = "wasmtime-wasi-http")]
     fn invoke_handle_wasmtime(
@@ -1300,11 +1303,8 @@ pub trait OutgoingHandler: wrpc_transport::Client {
     fn serve_handle(
         &self,
     ) -> impl Future<Output = anyhow::Result<Self::HandleInvocationStream>> + Send;
-
-    async fn serve_handle(&self) -> anyhow::Result<Self::HandleInvocationStream>;
 }
 
-#[async_trait]
 impl<T: wrpc_transport::Client> OutgoingHandler for T {
     type HandleInvocationStream = Pin<
         Box<
@@ -1321,6 +1321,7 @@ impl<T: wrpc_transport::Client> OutgoingHandler for T {
         >,
     >;
 
+    #[instrument(level = "trace", skip_all)]
     async fn invoke_handle(
         &self,
         request: Request<
@@ -1440,6 +1441,7 @@ impl<T: wrpc_transport::Client> OutgoingHandler for T {
         }
     }
 
+    #[instrument(level = "trace", skip_all)]
     async fn serve_handle(&self) -> anyhow::Result<Self::HandleInvocationStream> {
         self.serve_static("wrpc:http/outgoing-handler@0.1.0", "handle")
             .await

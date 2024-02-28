@@ -2556,7 +2556,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc-interface-blobstore"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2568,7 +2568,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc-interface-http"
-version = "0.10.1"
+version = "0.11.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2578,6 +2578,7 @@ dependencies = [
  "http-body",
  "http-body-util",
  "tokio",
+ "tokio-stream",
  "tracing",
  "wasmtime-wasi-http",
  "wrpc-transport",
@@ -2585,10 +2586,9 @@ dependencies = [
 
 [[package]]
 name = "wrpc-interface-keyvalue"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
- "async-trait",
  "bytes",
  "futures",
  "tracing",
@@ -2597,7 +2597,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc-runtime-wasmtime"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "futures",
@@ -2609,7 +2609,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc-transport"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "anyhow",
  "async-nats",
@@ -2626,7 +2626,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc-transport-nats"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "anyhow",
  "async-nats",

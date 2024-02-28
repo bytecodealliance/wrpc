@@ -1,3 +1,4 @@
+use core::future::Future;
 use core::pin::Pin;
 
 use anyhow::Context as _;
@@ -184,7 +185,6 @@ type ObjectIdInvocationStream<T> = Pin<
     >,
 >;
 
-#[async_trait]
 pub trait Blobstore: wrpc_transport::Client {
     type ClearContainerInvocationStream;
     type ContainerExistsInvocationStream;
@@ -201,113 +201,137 @@ pub trait Blobstore: wrpc_transport::Client {
     type MoveObjectInvocationStream;
     type WriteContainerDataInvocationStream;
 
-    async fn invoke_clear_container(
+    fn invoke_clear_container(
         &self,
         name: String,
-    ) -> anyhow::Result<(Result<(), String>, Self::Transmission)>;
-    async fn serve_clear_container(&self) -> anyhow::Result<Self::ClearContainerInvocationStream>;
+    ) -> impl Future<Output = anyhow::Result<(Result<(), String>, Self::Transmission)>> + Send;
+    fn serve_clear_container(
+        &self,
+    ) -> impl Future<Output = anyhow::Result<Self::ClearContainerInvocationStream>> + Send;
 
-    async fn invoke_container_exists(
+    fn invoke_container_exists(
         &self,
         name: String,
-    ) -> anyhow::Result<(Result<bool, String>, Self::Transmission)>;
-    async fn serve_container_exists(&self)
-        -> anyhow::Result<Self::ContainerExistsInvocationStream>;
+    ) -> impl Future<Output = anyhow::Result<(Result<bool, String>, Self::Transmission)>> + Send;
+    fn serve_container_exists(
+        &self,
+    ) -> impl Future<Output = anyhow::Result<Self::ContainerExistsInvocationStream>> + Send;
 
-    async fn invoke_create_container(
+    fn invoke_create_container(
         &self,
         name: String,
-    ) -> anyhow::Result<(Result<(), String>, Self::Transmission)>;
-    async fn serve_create_container(&self)
-        -> anyhow::Result<Self::CreateContainerInvocationStream>;
+    ) -> impl Future<Output = anyhow::Result<(Result<(), String>, Self::Transmission)>> + Send;
+    fn serve_create_container(
+        &self,
+    ) -> impl Future<Output = anyhow::Result<Self::CreateContainerInvocationStream>> + Send;
 
-    async fn invoke_delete_container(
+    fn invoke_delete_container(
         &self,
         name: String,
-    ) -> anyhow::Result<(Result<(), String>, Self::Transmission)>;
-    async fn serve_delete_container(&self)
-        -> anyhow::Result<Self::DeleteContainerInvocationStream>;
+    ) -> impl Future<Output = anyhow::Result<(Result<(), String>, Self::Transmission)>> + Send;
+    fn serve_delete_container(
+        &self,
+    ) -> impl Future<Output = anyhow::Result<Self::DeleteContainerInvocationStream>> + Send;
 
-    async fn invoke_get_container_info(
+    fn invoke_get_container_info(
         &self,
         name: String,
-    ) -> anyhow::Result<(Result<ContainerMetadata, String>, Self::Transmission)>;
-    async fn serve_get_container_info(
+    ) -> impl Future<Output = anyhow::Result<(Result<ContainerMetadata, String>, Self::Transmission)>>
+           + Send;
+    fn serve_get_container_info(
         &self,
-    ) -> anyhow::Result<Self::GetContainerInfoInvocationStream>;
+    ) -> impl Future<Output = anyhow::Result<Self::GetContainerInfoInvocationStream>> + Send;
 
-    async fn invoke_list_container_objects(
+    fn invoke_list_container_objects(
         &self,
         name: String,
         limit: Option<u64>,
         offset: Option<u64>,
-    ) -> anyhow::Result<(
-        Result<Box<dyn Stream<Item = anyhow::Result<Vec<String>>> + Send + Sync + Unpin>, String>,
-        Self::Transmission,
-    )>;
-    async fn serve_list_container_objects(
+    ) -> impl Future<
+        Output = anyhow::Result<(
+            Result<
+                Box<dyn Stream<Item = anyhow::Result<Vec<String>>> + Send + Sync + Unpin>,
+                String,
+            >,
+            Self::Transmission,
+        )>,
+    > + Send;
+    fn serve_list_container_objects(
         &self,
-    ) -> anyhow::Result<Self::ListContainerObjectsInvocationStream>;
+    ) -> impl Future<Output = anyhow::Result<Self::ListContainerObjectsInvocationStream>> + Send;
 
-    async fn invoke_copy_object(
+    fn invoke_copy_object(
         &self,
         src: ObjectId,
         dest: ObjectId,
-    ) -> anyhow::Result<(Result<(), String>, Self::Transmission)>;
-    async fn serve_copy_object(&self) -> anyhow::Result<Self::CopyObjectInvocationStream>;
+    ) -> impl Future<Output = anyhow::Result<(Result<(), String>, Self::Transmission)>> + Send;
+    fn serve_copy_object(
+        &self,
+    ) -> impl Future<Output = anyhow::Result<Self::CopyObjectInvocationStream>> + Send;
 
-    async fn invoke_delete_object(
+    fn invoke_delete_object(
         &self,
         id: ObjectId,
-    ) -> anyhow::Result<(Result<(), String>, Self::Transmission)>;
-    async fn serve_delete_object(&self) -> anyhow::Result<Self::DeleteObjectInvocationStream>;
+    ) -> impl Future<Output = anyhow::Result<(Result<(), String>, Self::Transmission)>> + Send;
+    fn serve_delete_object(
+        &self,
+    ) -> impl Future<Output = anyhow::Result<Self::DeleteObjectInvocationStream>> + Send;
 
-    async fn invoke_delete_objects(
+    fn invoke_delete_objects(
         &self,
         ids: Vec<ObjectId>,
-    ) -> anyhow::Result<(Result<(), String>, Self::Transmission)>;
-    async fn serve_delete_objects(&self) -> anyhow::Result<Self::DeleteObjectsInvocationStream>;
+    ) -> impl Future<Output = anyhow::Result<(Result<(), String>, Self::Transmission)>> + Send;
+    fn serve_delete_objects(
+        &self,
+    ) -> impl Future<Output = anyhow::Result<Self::DeleteObjectsInvocationStream>> + Send;
 
-    async fn invoke_get_container_data(
+    fn invoke_get_container_data(
         &self,
         id: ObjectId,
         start: u64,
         end: u64,
-    ) -> anyhow::Result<(Result<IncomingInputStream, String>, Self::Transmission)>;
-    async fn serve_get_container_data(
+    ) -> impl Future<
+        Output = anyhow::Result<(Result<IncomingInputStream, String>, Self::Transmission)>,
+    > + Send;
+    fn serve_get_container_data(
         &self,
-    ) -> anyhow::Result<Self::GetContainerDataInvocationStream>;
+    ) -> impl Future<Output = anyhow::Result<Self::GetContainerDataInvocationStream>> + Send;
 
-    async fn invoke_get_object_info(
-        &self,
-        id: ObjectId,
-    ) -> anyhow::Result<(Result<ObjectMetadata, String>, Self::Transmission)>;
-    async fn serve_get_object_info(&self) -> anyhow::Result<Self::GetObjectInfoInvocationStream>;
-
-    async fn invoke_has_object(
+    fn invoke_get_object_info(
         &self,
         id: ObjectId,
-    ) -> anyhow::Result<(Result<bool, String>, Self::Transmission)>;
-    async fn serve_has_object(&self) -> anyhow::Result<Self::HasObjectInvocationStream>;
+    ) -> impl Future<Output = anyhow::Result<(Result<ObjectMetadata, String>, Self::Transmission)>> + Send;
+    fn serve_get_object_info(
+        &self,
+    ) -> impl Future<Output = anyhow::Result<Self::GetObjectInfoInvocationStream>> + Send;
 
-    async fn invoke_move_object(
+    fn invoke_has_object(
+        &self,
+        id: ObjectId,
+    ) -> impl Future<Output = anyhow::Result<(Result<bool, String>, Self::Transmission)>> + Send;
+    fn serve_has_object(
+        &self,
+    ) -> impl Future<Output = anyhow::Result<Self::HasObjectInvocationStream>> + Send;
+
+    fn invoke_move_object(
         &self,
         src: ObjectId,
         dest: ObjectId,
-    ) -> anyhow::Result<(Result<(), String>, Self::Transmission)>;
-    async fn serve_move_object(&self) -> anyhow::Result<Self::MoveObjectInvocationStream>;
+    ) -> impl Future<Output = anyhow::Result<(Result<(), String>, Self::Transmission)>> + Send;
+    fn serve_move_object(
+        &self,
+    ) -> impl Future<Output = anyhow::Result<Self::MoveObjectInvocationStream>> + Send;
 
-    async fn invoke_write_container_data(
+    fn invoke_write_container_data(
         &self,
         id: ObjectId,
         data: impl Stream<Item = Bytes> + Send + 'static,
-    ) -> anyhow::Result<(Result<(), String>, Self::Transmission)>;
-    async fn serve_write_container_data(
+    ) -> impl Future<Output = anyhow::Result<(Result<(), String>, Self::Transmission)>> + Send;
+    fn serve_write_container_data(
         &self,
-    ) -> anyhow::Result<Self::WriteContainerDataInvocationStream>;
+    ) -> impl Future<Output = anyhow::Result<Self::WriteContainerDataInvocationStream>> + Send;
 }
 
-#[async_trait]
 impl<T: wrpc_transport::Client> Blobstore for T {
     type ClearContainerInvocationStream = StringInvocationStream<T>;
     type ContainerExistsInvocationStream = StringInvocationStream<T>;

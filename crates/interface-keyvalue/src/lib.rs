@@ -1,6 +1,6 @@
+use core::future::Future;
 use core::pin::Pin;
 
-use async_trait::async_trait;
 use bytes::Bytes;
 use futures::{Stream, StreamExt as _};
 use tracing::instrument;
@@ -21,47 +21,51 @@ type StringStringInvocationStream<T> = Pin<
     >,
 >;
 
-#[async_trait]
 pub trait Eventual: wrpc_transport::Client {
     type DeleteInvocationStream;
     type ExistsInvocationStream;
     type GetInvocationStream;
     type SetInvocationStream;
 
-    async fn invoke_delete(
+    fn invoke_delete(
         &self,
         bucket: String,
         key: String,
-    ) -> anyhow::Result<(Result<(), String>, Self::Transmission)>;
-    async fn serve_delete(&self) -> anyhow::Result<Self::DeleteInvocationStream>;
+    ) -> impl Future<Output = anyhow::Result<(Result<(), String>, Self::Transmission)>> + Send;
+    fn serve_delete(
+        &self,
+    ) -> impl Future<Output = anyhow::Result<Self::DeleteInvocationStream>> + Send;
 
-    async fn invoke_exists(
+    fn invoke_exists(
         &self,
         bucket: String,
         key: String,
-    ) -> anyhow::Result<(Result<bool, String>, Self::Transmission)>;
-    async fn serve_exists(&self) -> anyhow::Result<Self::ExistsInvocationStream>;
+    ) -> impl Future<Output = anyhow::Result<(Result<bool, String>, Self::Transmission)>> + Send;
+    fn serve_exists(
+        &self,
+    ) -> impl Future<Output = anyhow::Result<Self::ExistsInvocationStream>> + Send;
 
-    async fn invoke_get(
+    fn invoke_get(
         &self,
         bucket: String,
         key: String,
-    ) -> anyhow::Result<(
-        Result<Option<IncomingInputStream>, String>,
-        Self::Transmission,
-    )>;
-    async fn serve_get(&self) -> anyhow::Result<Self::GetInvocationStream>;
+    ) -> impl Future<
+        Output = anyhow::Result<(
+            Result<Option<IncomingInputStream>, String>,
+            Self::Transmission,
+        )>,
+    > + Send;
+    fn serve_get(&self) -> impl Future<Output = anyhow::Result<Self::GetInvocationStream>> + Send;
 
-    async fn invoke_set(
+    fn invoke_set(
         &self,
         bucket: String,
         key: String,
         value: impl Stream<Item = Bytes> + Send + 'static,
-    ) -> anyhow::Result<(Result<(), String>, Self::Transmission)>;
-    async fn serve_set(&self) -> anyhow::Result<Self::SetInvocationStream>;
+    ) -> impl Future<Output = anyhow::Result<(Result<(), String>, Self::Transmission)>> + Send;
+    fn serve_set(&self) -> impl Future<Output = anyhow::Result<Self::SetInvocationStream>> + Send;
 }
 
-#[async_trait]
 impl<T: wrpc_transport::Client> Eventual for T {
     type DeleteInvocationStream = StringStringInvocationStream<T>;
     type ExistsInvocationStream = StringStringInvocationStream<T>;
@@ -156,30 +160,32 @@ impl<T: wrpc_transport::Client> Eventual for T {
     }
 }
 
-#[async_trait]
 pub trait Atomic: wrpc_transport::Client {
     type CompareAndSwapInvocationStream;
     type IncrementInvocationStream;
 
-    async fn invoke_compare_and_swap(
+    fn invoke_compare_and_swap(
         &self,
         bucket: String,
         key: String,
         old: u64,
         new: u64,
-    ) -> anyhow::Result<(Result<bool, String>, Self::Transmission)>;
-    async fn serve_compare_and_swap(&self) -> anyhow::Result<Self::CompareAndSwapInvocationStream>;
+    ) -> impl Future<Output = anyhow::Result<(Result<bool, String>, Self::Transmission)>> + Send;
+    fn serve_compare_and_swap(
+        &self,
+    ) -> impl Future<Output = anyhow::Result<Self::CompareAndSwapInvocationStream>> + Send;
 
-    async fn invoke_increment(
+    fn invoke_increment(
         &self,
         bucket: String,
         key: String,
         delta: u64,
-    ) -> anyhow::Result<(Result<u64, String>, Self::Transmission)>;
-    async fn serve_increment(&self) -> anyhow::Result<Self::IncrementInvocationStream>;
+    ) -> impl Future<Output = anyhow::Result<(Result<u64, String>, Self::Transmission)>> + Send;
+    fn serve_increment(
+        &self,
+    ) -> impl Future<Output = anyhow::Result<Self::IncrementInvocationStream>> + Send;
 }
 
-#[async_trait]
 impl<T: wrpc_transport::Client> Atomic for T {
     type CompareAndSwapInvocationStream = Pin<
         Box<

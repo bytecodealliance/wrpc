@@ -1,6 +1,6 @@
 [package]
 name = "wrpc-interface-keyvalue"
-version = "0.2.0"
+version = "0.3.0"
 description = "wRPC keyvalue interface"
 
 authors.workspace = true
@@ -11,7 +11,6 @@ repository.workspace = true
 
 [dependencies]
 anyhow = { workspace = true, features = ["std"] }
-async-trait = { workspace = true }
 bytes = { workspace = true }
 futures = { workspace = true }
 tracing = { workspace = true, features = ["attributes"] }
