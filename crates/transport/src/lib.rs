@@ -1796,43 +1796,6 @@ where
 }
 
 #[async_trait]
-impl<E> Receive for Box<dyn Future<Output = anyhow::Result<E>>>
-where
-    E: Receive + 'static,
-{
-    #[instrument(level = "trace", skip_all)]
-    async fn receive<T>(
-        payload: impl Buf + Send + 'static,
-        rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
-        sub: Option<AsyncSubscription<T>>,
-    ) -> anyhow::Result<(Self, Box<dyn Buf + Send>)>
-    where
-        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin + 'static,
-    {
-        let Some((mut subscriber, nested)) =
-            sub.map(AsyncSubscription::try_unwrap_future).transpose()?
-        else {
-            bail!("future subscription type mismatch")
-        };
-        let mut payload = receive_at_least(payload, rx, 1).await?;
-        match payload.get_u8() {
-            0 => Ok((
-                Box::new(async move {
-                    let (v, _) = E::receive(Bytes::default(), &mut subscriber, nested).await?;
-                    Ok(v)
-                }),
-                payload,
-            )),
-            1 => {
-                let (v, payload) = E::receive(payload, rx, nested).await?;
-                Ok((Box::new(ready(Ok(v))), payload))
-            }
-            _ => bail!("invalid `future` variant"),
-        }
-    }
-}
-
-#[async_trait]
 impl<E> Receive for Pin<Box<dyn Future<Output = anyhow::Result<E>> + Send>>
 where
     E: Receive + Send + 'static,
@@ -1856,7 +1819,7 @@ where
         trace!("decode future variant");
         match payload.get_u8() {
             0 => {
-                trace!("decoded pending future");
+                trace!("decode pending future");
                 Ok((
                     Box::pin(async move {
                         trace!("decode future nested value");
