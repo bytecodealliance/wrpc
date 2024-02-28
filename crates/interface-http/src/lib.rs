@@ -2,11 +2,11 @@ use core::future::Future;
 use core::pin::Pin;
 use core::time::Duration;
 
-use anyhow::{bail, Context as _};
+use anyhow::{anyhow, bail, Context as _};
 use async_trait::async_trait;
 use bytes::{Buf, BufMut, Bytes};
 use futures::{Stream, StreamExt as _};
-use tokio::{spawn, try_join};
+use tokio::try_join;
 use tracing::instrument;
 use wrpc_transport::{
     encode_discriminant, receive_discriminant, AcceptedInvocation, Acceptor, AsyncSubscription,
@@ -533,7 +533,7 @@ impl From<wasmtime_wasi_http::bindings::http::types::ErrorCode> for ErrorCode {
             types::ErrorCode::HttpRequestUriInvalid => Self::HttpRequestUriInvalid,
             types::ErrorCode::HttpRequestUriTooLong => Self::HttpRequestUriTooLong,
             types::ErrorCode::HttpRequestHeaderSectionSize(err) => {
-                Self::HttpRequestHeaderSectionSize(err.into())
+                Self::HttpRequestHeaderSectionSize(err)
             }
             types::ErrorCode::HttpRequestHeaderSize(err) => {
                 Self::HttpRequestHeaderSize(err.map(Into::into))
@@ -551,7 +551,7 @@ impl From<wasmtime_wasi_http::bindings::http::types::ErrorCode> for ErrorCode {
             types::ErrorCode::HttpResponseHeaderSize(err) => {
                 Self::HttpResponseHeaderSize(err.into())
             }
-            types::ErrorCode::HttpResponseBodySize(err) => Self::HttpResponseBodySize(err.into()),
+            types::ErrorCode::HttpResponseBodySize(err) => Self::HttpResponseBodySize(err),
             types::ErrorCode::HttpResponseTrailerSectionSize(err) => {
                 Self::HttpResponseTrailerSectionSize(err)
             }
@@ -569,7 +569,7 @@ impl From<wasmtime_wasi_http::bindings::http::types::ErrorCode> for ErrorCode {
             types::ErrorCode::HttpProtocolError => Self::HttpProtocolError,
             types::ErrorCode::LoopDetected => Self::LoopDetected,
             types::ErrorCode::ConfigurationError => Self::ConfigurationError,
-            types::ErrorCode::InternalError(err) => Self::InternalError(err.into()),
+            types::ErrorCode::InternalError(err) => Self::InternalError(err),
         }
     }
 }
@@ -600,7 +600,7 @@ impl From<ErrorCode> for wasmtime_wasi_http::bindings::http::types::ErrorCode {
             ErrorCode::HttpRequestUriInvalid => Self::HttpRequestUriInvalid,
             ErrorCode::HttpRequestUriTooLong => Self::HttpRequestUriTooLong,
             ErrorCode::HttpRequestHeaderSectionSize(err) => {
-                Self::HttpRequestHeaderSectionSize(err.into())
+                Self::HttpRequestHeaderSectionSize(err)
             }
             ErrorCode::HttpRequestHeaderSize(err) => {
                 Self::HttpRequestHeaderSize(err.map(Into::into))
@@ -614,7 +614,7 @@ impl From<ErrorCode> for wasmtime_wasi_http::bindings::http::types::ErrorCode {
                 Self::HttpResponseHeaderSectionSize(err)
             }
             ErrorCode::HttpResponseHeaderSize(err) => Self::HttpResponseHeaderSize(err.into()),
-            ErrorCode::HttpResponseBodySize(err) => Self::HttpResponseBodySize(err.into()),
+            ErrorCode::HttpResponseBodySize(err) => Self::HttpResponseBodySize(err),
             ErrorCode::HttpResponseTrailerSectionSize(err) => {
                 Self::HttpResponseTrailerSectionSize(err)
             }
@@ -626,7 +626,7 @@ impl From<ErrorCode> for wasmtime_wasi_http::bindings::http::types::ErrorCode {
             ErrorCode::HttpProtocolError => Self::HttpProtocolError,
             ErrorCode::LoopDetected => Self::LoopDetected,
             ErrorCode::ConfigurationError => Self::ConfigurationError,
-            ErrorCode::InternalError(err) => Self::InternalError(err.into()),
+            ErrorCode::InternalError(err) => Self::InternalError(err),
         }
     }
 }
@@ -879,6 +879,53 @@ impl Receive for RequestOptions {
     }
 }
 
+#[cfg(feature = "http-body")]
+pub struct IncomingBody<Body, Trailers> {
+    pub body: Body,
+    pub trailers: Trailers,
+}
+
+#[cfg(feature = "http-body")]
+impl<Body, Trailers> http_body::Body for IncomingBody<Body, Trailers>
+where
+    Body: Stream<Item = anyhow::Result<Vec<u8>>> + Unpin,
+    Trailers: Future<Output = anyhow::Result<Option<Fields>>> + Unpin,
+{
+    type Data = Bytes;
+    type Error = ErrorCode;
+
+    fn poll_frame(
+        mut self: Pin<&mut Self>,
+        cx: &mut core::task::Context<'_>,
+    ) -> core::task::Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>> {
+        use core::task::Poll;
+        use futures::FutureExt as _;
+
+        match self.body.poll_next_unpin(cx) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(Some(Err(err))) => {
+                Poll::Ready(Some(Err(ErrorCode::InternalError(Some(err.to_string())))))
+            }
+            Poll::Ready(Some(Ok(buf))) => Poll::Ready(Some(Ok(http_body::Frame::data(buf.into())))),
+            Poll::Ready(None) => match self.trailers.poll_unpin(cx) {
+                Poll::Pending => Poll::Pending,
+                Poll::Ready(Err(err)) => {
+                    Poll::Ready(Some(Err(ErrorCode::InternalError(Some(err.to_string())))))
+                }
+                Poll::Ready(Ok(None)) => Poll::Ready(None),
+                Poll::Ready(Ok(Some(trailers))) => {
+                    let trailers = try_fields_to_header_map(trailers)
+                        .context("failed to convert trailer fields to header map")
+                        .map_err(|err| format!("{err:#}"))
+                        .map_err(Some)
+                        .map_err(ErrorCode::InternalError)?;
+                    Poll::Ready(Some(Ok(http_body::Frame::trailers(trailers))))
+                }
+            },
+        }
+    }
+}
+
 pub type IncomingRequest = Request<IncomingInputStream, IncomingFields>;
 
 pub struct Request<Body, Trailers> {
@@ -1027,53 +1074,6 @@ pub struct Response<Body, Trailers> {
     pub headers: Fields,
 }
 
-#[cfg(feature = "http-body")]
-pub struct IncomingBody<Body, Trailers> {
-    body: Body,
-    trailers: Trailers,
-}
-
-#[cfg(feature = "http-body")]
-impl<Body, Trailers> http_body::Body for IncomingBody<Body, Trailers>
-where
-    Body: Stream<Item = anyhow::Result<Vec<u8>>> + Unpin,
-    Trailers: Future<Output = anyhow::Result<Option<Fields>>> + Unpin,
-{
-    type Data = Bytes;
-    type Error = ErrorCode;
-
-    fn poll_frame(
-        mut self: Pin<&mut Self>,
-        cx: &mut core::task::Context<'_>,
-    ) -> core::task::Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>> {
-        use core::task::Poll;
-        use futures::FutureExt as _;
-
-        match self.body.poll_next_unpin(cx) {
-            Poll::Pending => Poll::Pending,
-            Poll::Ready(Some(Err(err))) => {
-                Poll::Ready(Some(Err(ErrorCode::InternalError(Some(err.to_string())))))
-            }
-            Poll::Ready(Some(Ok(buf))) => Poll::Ready(Some(Ok(http_body::Frame::data(buf.into())))),
-            Poll::Ready(None) => match self.trailers.poll_unpin(cx) {
-                Poll::Pending => Poll::Pending,
-                Poll::Ready(Err(err)) => {
-                    Poll::Ready(Some(Err(ErrorCode::InternalError(Some(err.to_string())))))
-                }
-                Poll::Ready(Ok(None)) => Poll::Ready(None),
-                Poll::Ready(Ok(Some(trailers))) => {
-                    let trailers = try_fields_to_header_map(trailers)
-                        .context("failed to convert trailer fields to header map")
-                        .map_err(|err| format!("{err:#}"))
-                        .map_err(Some)
-                        .map_err(ErrorCode::InternalError)?;
-                    Poll::Ready(Some(Ok(http_body::Frame::trailers(trailers))))
-                }
-            },
-        }
-    }
-}
-
 #[cfg(feature = "wasmtime-wasi-http")]
 impl TryFrom<IncomingResponse> for http::Response<wasmtime_wasi_http::body::HyperIncomingBody> {
     type Error = anyhow::Error;
@@ -1097,7 +1097,7 @@ impl TryFrom<IncomingResponse> for http::Response<wasmtime_wasi_http::body::Hype
             .context("failed to convert header fields to header map")?;
         let resp = resp.body(body).context("failed to construct response")?;
         // TODO: Make trailers Sync and remove this
-        let trailers = spawn(trailers);
+        let trailers = tokio::spawn(trailers);
         Ok(resp.map(|body| {
             HyperIncomingBody::new(
                 IncomingBody {
@@ -1282,6 +1282,25 @@ pub trait OutgoingHandler: wrpc_transport::Client {
         options: Option<RequestOptions>,
     ) -> anyhow::Result<(Result<IncomingResponse, ErrorCode>, Self::Transmission)>;
 
+    #[cfg(feature = "wasmtime-wasi-http")]
+    fn invoke_handle_wasmtime(
+        &self,
+        request: wasmtime_wasi_http::types::OutgoingRequest,
+    ) -> impl Future<
+        Output = anyhow::Result<(
+            Result<
+                http::Response<wasmtime_wasi_http::body::HyperIncomingBody>,
+                wasmtime_wasi_http::bindings::http::types::ErrorCode,
+            >,
+            impl Stream<Item = anyhow::Error>,
+            Self::Transmission,
+        )>,
+    > + Send;
+
+    fn serve_handle(
+        &self,
+    ) -> impl Future<Output = anyhow::Result<Self::HandleInvocationStream>> + Send;
+
     async fn serve_handle(&self) -> anyhow::Result<Self::HandleInvocationStream>;
 }
 
@@ -1316,6 +1335,109 @@ impl<T: wrpc_transport::Client> OutgoingHandler for T {
             (request, options),
         )
         .await
+    }
+
+    #[cfg(feature = "wasmtime-wasi-http")]
+    #[instrument(level = "trace", skip_all)]
+    async fn invoke_handle_wasmtime(
+        &self,
+        wasmtime_wasi_http::types::OutgoingRequest {
+            use_tls: _,
+            authority,
+            request,
+            connect_timeout,
+            first_byte_timeout,
+            between_bytes_timeout,
+        }: wasmtime_wasi_http::types::OutgoingRequest,
+    ) -> anyhow::Result<(
+        Result<
+            http::Response<wasmtime_wasi_http::body::HyperIncomingBody>,
+            wasmtime_wasi_http::bindings::http::types::ErrorCode,
+        >,
+        impl Stream<Item = anyhow::Error>,
+        Self::Transmission,
+    )> {
+        let (
+            http::request::Parts {
+                ref method,
+                uri,
+                headers,
+                ..
+            },
+            body,
+        ) = request.into_parts();
+        let headers = try_header_map_to_fields(headers)?;
+        let (errors_tx, errors_rx) = tokio::sync::mpsc::channel(1);
+        let (trailers_tx, mut trailers_rx) = tokio::sync::mpsc::channel(1);
+        let (resp, tx) = OutgoingHandler::invoke_handle(
+            self,
+            Request {
+                body: http_body_util::BodyStream::new(body).filter_map(move |frame| {
+                    let errors_tx = errors_tx.clone();
+                    let trailers_tx = trailers_tx.clone();
+                    async move {
+                        match frame {
+                            Ok(frame) => match frame.into_data() {
+                                Ok(buf) => Some(buf),
+                                Err(trailers) => match trailers.into_trailers() {
+                                    Ok(trailers) => match try_header_map_to_fields(trailers) {
+                                        Ok(trailers) => {
+                                            if trailers_tx.send(trailers).await.is_err() {
+                                                let _ = errors_tx
+                                                    .send(anyhow!(
+                                                        "frame is neither data, nor trailers"
+                                                    ))
+                                                    .await;
+                                            }
+                                            None
+                                        }
+                                        Err(err) => {
+                                            let _ = errors_tx.send(err).await;
+                                            None
+                                        }
+                                    },
+                                    Err(_) => {
+                                        let _ = errors_tx
+                                            .send(anyhow!("frame is neither data, nor trailers"))
+                                            .await;
+                                        None
+                                    }
+                                },
+                            },
+                            Err(err) => {
+                                let _ = errors_tx
+                                    .send(anyhow!("body stream failed with error {err:?}"))
+                                    .await;
+                                None
+                            }
+                        }
+                    }
+                }),
+                trailers: async move { trailers_rx.recv().await },
+                method: method.into(),
+                path_with_query: uri.path_and_query().map(ToString::to_string),
+                scheme: uri.scheme().map(Into::into),
+                authority: Some(authority),
+                headers,
+            },
+            Some(RequestOptions {
+                connect_timeout: Some(connect_timeout),
+                first_byte_timeout: Some(first_byte_timeout),
+                between_bytes_timeout: Some(between_bytes_timeout),
+            }),
+        )
+        .await
+        .context("failed to invoke `wrpc:http/outgoing-handler.handle`")?;
+        let errors_rx = tokio_stream::wrappers::ReceiverStream::new(errors_rx);
+        match resp {
+            Ok(resp) => {
+                let resp = resp
+                    .try_into()
+                    .context("failed to convert `wrpc:http` response to Wasmtime `wasi:http`")?;
+                Ok((Ok(resp), errors_rx, tx))
+            }
+            Err(code) => Ok((Err(code.into()), errors_rx, tx)),
+        }
     }
 
     async fn serve_handle(&self) -> anyhow::Result<Self::HandleInvocationStream> {
