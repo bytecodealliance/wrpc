@@ -2595,7 +2595,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc-runtime-wasmtime"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "futures",
