@@ -2,7 +2,7 @@ use core::future::Future;
 use core::pin::Pin;
 use core::time::Duration;
 
-use anyhow::{anyhow, bail, Context as _};
+use anyhow::{bail, Context as _};
 use async_trait::async_trait;
 use bytes::{Buf, BufMut, Bytes};
 use futures::{Stream, StreamExt as _};
@@ -599,9 +599,7 @@ impl From<ErrorCode> for wasmtime_wasi_http::bindings::http::types::ErrorCode {
             ErrorCode::HttpRequestMethodInvalid => Self::HttpRequestMethodInvalid,
             ErrorCode::HttpRequestUriInvalid => Self::HttpRequestUriInvalid,
             ErrorCode::HttpRequestUriTooLong => Self::HttpRequestUriTooLong,
-            ErrorCode::HttpRequestHeaderSectionSize(err) => {
-                Self::HttpRequestHeaderSectionSize(err)
-            }
+            ErrorCode::HttpRequestHeaderSectionSize(err) => Self::HttpRequestHeaderSectionSize(err),
             ErrorCode::HttpRequestHeaderSize(err) => {
                 Self::HttpRequestHeaderSize(err.map(Into::into))
             }
