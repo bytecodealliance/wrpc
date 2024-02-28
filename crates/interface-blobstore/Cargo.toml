@@ -14,6 +14,5 @@ anyhow = { workspace = true, features = ["std"] }
 async-trait = { workspace = true }
 bytes = { workspace = true }
 futures = { workspace = true }
-tokio = { workspace = true, features = ["io-util"] }
 tracing = { workspace = true, features = ["attributes"] }
 wrpc-transport = { workspace = true }
