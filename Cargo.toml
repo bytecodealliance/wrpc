@@ -45,6 +45,7 @@ tracing-subscriber = { workspace = true, features = [
     "env-filter",
     "fmt",
 ] }
+wrpc-interface-http = { workspace = true, features = ["http", "wasmtime-wasi-http"] }
 
 [workspace.dependencies]
 anyhow = { version = "1", default-features = false }
@@ -52,6 +53,7 @@ async-nats = { version = "0.33", default-features = false }
 async-trait = { version = "0.1", default-features = false }
 bytes = { version = "1", default-features = false }
 futures = { version = "0.3", default-features = false }
+http = { version = "1", default-features = false }
 leb128 = { version = "0.2", default-features = false }
 serde = { version = "1", default-features = false }
 serde_json = { version = "1", default-features = false }
@@ -61,9 +63,10 @@ tracing = { version = "0.1", default-features = false }
 tracing-subscriber = { version = "0.3", default-features = false }
 wasmtime = { version = "18", default-features = false }
 wasmtime-wasi = { version = "18", default-features = false }
+wasmtime-wasi-http = { version = "18", default-features = false }
 wit-parser = { version = "0.13", default-features = false }
 wrpc-interface-blobstore = { version = "0.1", path = "./crates/interface-blobstore", default-features = false }
-wrpc-interface-http = { version = "0.8", path = "./crates/interface-http", default-features = false }
+wrpc-interface-http = { version = "0.9", path = "./crates/interface-http", default-features = false }
 wrpc-interface-keyvalue = { version = "0.1", path = "./crates/interface-keyvalue", default-features = false }
 wrpc-runtime-wasmtime = { version = "0.3", path = "./crates/runtime-wasmtime", default-features = false }
 wrpc-transport = { version = "0.12.2", path = "./crates/transport", default-features = false }

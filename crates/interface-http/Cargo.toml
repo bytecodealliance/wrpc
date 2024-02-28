@@ -1,6 +1,6 @@
 [package]
 name = "wrpc-interface-http"
-version = "0.8.0"
+version = "0.9.0"
 description = "wRPC HTTP interface"
 
 authors.workspace = true
@@ -14,6 +14,8 @@ anyhow = { workspace = true, features = ["std"] }
 async-trait = { workspace = true }
 bytes = { workspace = true }
 futures = { workspace = true }
+http = { workspace = true, optional = true }
 tokio = { workspace = true }
 tracing = { workspace = true, features = ["attributes"] }
+wasmtime-wasi-http = { workspace = true, optional = true }
 wrpc-transport = { workspace = true }

@@ -43,6 +43,44 @@ pub enum Method {
     Other(String),
 }
 
+#[cfg(feature = "http")]
+impl From<http::Method> for Method {
+    fn from(method: http::Method) -> Self {
+        match method.as_str() {
+            "GET" => Self::Get,
+            "HEAD" => Self::Head,
+            "POST" => Self::Post,
+            "PUT" => Self::Put,
+            "DELETE" => Self::Delete,
+            "CONNECT" => Self::Connect,
+            "OPTIONS" => Self::Options,
+            "TRACE" => Self::Trace,
+            "PATCH" => Self::Patch,
+            _ => Self::Other(method.to_string()),
+        }
+    }
+}
+
+#[cfg(feature = "http")]
+impl TryFrom<Method> for http::method::Method {
+    type Error = http::method::InvalidMethod;
+
+    fn try_from(method: Method) -> Result<Self, Self::Error> {
+        match method {
+            Method::Get => Ok(Self::GET),
+            Method::Head => Ok(Self::HEAD),
+            Method::Post => Ok(Self::POST),
+            Method::Put => Ok(Self::PUT),
+            Method::Delete => Ok(Self::DELETE),
+            Method::Connect => Ok(Self::CONNECT),
+            Method::Options => Ok(Self::OPTIONS),
+            Method::Trace => Ok(Self::TRACE),
+            Method::Patch => Ok(Self::PATCH),
+            Method::Other(method) => method.parse(),
+        }
+    }
+}
+
 impl EncodeSync for Method {
     #[instrument(level = "trace", skip_all)]
     fn encode_sync(self, mut payload: impl BufMut) -> anyhow::Result<()> {
@@ -101,6 +139,30 @@ pub enum Scheme {
     Other(String),
 }
 
+#[cfg(feature = "http")]
+impl From<http::uri::Scheme> for Scheme {
+    fn from(scheme: http::uri::Scheme) -> Self {
+        match scheme.as_str() {
+            "HTTP" => Self::HTTP,
+            "HTTPS" => Self::HTTPS,
+            _ => Self::Other(scheme.to_string()),
+        }
+    }
+}
+
+#[cfg(feature = "http")]
+impl TryFrom<Scheme> for http::uri::Scheme {
+    type Error = http::uri::InvalidUri;
+
+    fn try_from(scheme: Scheme) -> Result<Self, Self::Error> {
+        match scheme {
+            Scheme::HTTP => Ok(Self::HTTP),
+            Scheme::HTTPS => Ok(Self::HTTPS),
+            Scheme::Other(scheme) => scheme.parse(),
+        }
+    }
+}
+
 impl EncodeSync for Scheme {
     #[instrument(level = "trace", skip_all)]
     fn encode_sync(self, mut payload: impl BufMut) -> anyhow::Result<()> {
@@ -139,12 +201,28 @@ impl Receive for Scheme {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct DNSErrorPayload {
+pub struct DnsErrorPayload {
     pub rcode: Option<String>,
     pub info_code: Option<u16>,
 }
 
-impl EncodeSync for DNSErrorPayload {
+#[cfg(feature = "wasmtime-wasi-http")]
+impl From<wasmtime_wasi_http::bindings::http::types::DnsErrorPayload> for DnsErrorPayload {
+    fn from(
+        wasmtime_wasi_http::bindings::http::types::DnsErrorPayload { rcode, info_code }: wasmtime_wasi_http::bindings::http::types::DnsErrorPayload,
+    ) -> Self {
+        Self { rcode, info_code }
+    }
+}
+
+#[cfg(feature = "wasmtime-wasi-http")]
+impl From<DnsErrorPayload> for wasmtime_wasi_http::bindings::http::types::DnsErrorPayload {
+    fn from(DnsErrorPayload { rcode, info_code }: DnsErrorPayload) -> Self {
+        Self { rcode, info_code }
+    }
+}
+
+impl EncodeSync for DnsErrorPayload {
     #[instrument(level = "trace", skip_all)]
     fn encode_sync(self, mut payload: impl BufMut) -> anyhow::Result<()> {
         let Self { rcode, info_code } = self;
@@ -156,7 +234,7 @@ impl EncodeSync for DNSErrorPayload {
 }
 
 #[async_trait]
-impl Receive for DNSErrorPayload {
+impl Receive for DnsErrorPayload {
     async fn receive<T>(
         payload: impl Buf + Send + 'static,
         rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
@@ -176,12 +254,46 @@ impl Receive for DNSErrorPayload {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct TLSAlertReceivedPayload {
+pub struct TlsAlertReceivedPayload {
     pub alert_id: Option<u8>,
     pub alert_message: Option<String>,
 }
 
-impl EncodeSync for TLSAlertReceivedPayload {
+#[cfg(feature = "wasmtime-wasi-http")]
+impl From<wasmtime_wasi_http::bindings::http::types::TlsAlertReceivedPayload>
+    for TlsAlertReceivedPayload
+{
+    fn from(
+        wasmtime_wasi_http::bindings::http::types::TlsAlertReceivedPayload {
+            alert_id,
+            alert_message,
+        }: wasmtime_wasi_http::bindings::http::types::TlsAlertReceivedPayload,
+    ) -> Self {
+        Self {
+            alert_id,
+            alert_message,
+        }
+    }
+}
+
+#[cfg(feature = "wasmtime-wasi-http")]
+impl From<TlsAlertReceivedPayload>
+    for wasmtime_wasi_http::bindings::http::types::TlsAlertReceivedPayload
+{
+    fn from(
+        TlsAlertReceivedPayload {
+            alert_id,
+            alert_message,
+        }: TlsAlertReceivedPayload,
+    ) -> Self {
+        Self {
+            alert_id,
+            alert_message,
+        }
+    }
+}
+
+impl EncodeSync for TlsAlertReceivedPayload {
     #[instrument(level = "trace", skip_all)]
     fn encode_sync(self, mut payload: impl BufMut) -> anyhow::Result<()> {
         let Self {
@@ -197,7 +309,7 @@ impl EncodeSync for TLSAlertReceivedPayload {
 }
 
 #[async_trait]
-impl Receive for TLSAlertReceivedPayload {
+impl Receive for TlsAlertReceivedPayload {
     async fn receive<T>(
         payload: impl Buf + Send + 'static,
         rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
@@ -226,6 +338,36 @@ impl Receive for TLSAlertReceivedPayload {
 pub struct FieldSizePayload {
     pub field_name: Option<String>,
     pub field_size: Option<u32>,
+}
+
+#[cfg(feature = "wasmtime-wasi-http")]
+impl From<wasmtime_wasi_http::bindings::http::types::FieldSizePayload> for FieldSizePayload {
+    fn from(
+        wasmtime_wasi_http::bindings::http::types::FieldSizePayload {
+            field_name,
+            field_size,
+        }: wasmtime_wasi_http::bindings::http::types::FieldSizePayload,
+    ) -> Self {
+        Self {
+            field_name,
+            field_size,
+        }
+    }
+}
+
+#[cfg(feature = "wasmtime-wasi-http")]
+impl From<FieldSizePayload> for wasmtime_wasi_http::bindings::http::types::FieldSizePayload {
+    fn from(
+        FieldSizePayload {
+            field_name,
+            field_size,
+        }: FieldSizePayload,
+    ) -> Self {
+        Self {
+            field_name,
+            field_size,
+        }
+    }
 }
 
 impl EncodeSync for FieldSizePayload {
@@ -272,7 +414,7 @@ impl Receive for FieldSizePayload {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ErrorCode {
     DnsTimeout,
-    DnsError(DNSErrorPayload),
+    DnsError(DnsErrorPayload),
     DestinationNotFound,
     DestinationUnavailable,
     DestinationIpProhibited,
@@ -285,7 +427,7 @@ pub enum ErrorCode {
     ConnectionLimitReached,
     TlsProtocolError,
     TlsCertificateError,
-    TlsAlertReceived(TLSAlertReceivedPayload),
+    TlsAlertReceived(TlsAlertReceivedPayload),
     HttpRequestDenied,
     HttpRequestLengthRequired,
     HttpRequestBodySize(Option<u64>),
@@ -301,7 +443,7 @@ pub enum ErrorCode {
     HttpResponseHeaderSize(FieldSizePayload),
     HttpResponseBodySize(Option<u64>),
     HttpResponseTrailerSectionSize(Option<u32>),
-    HttpResponseTrailerSize(Option<u32>),
+    HttpResponseTrailerSize(FieldSizePayload),
     HttpResponseTransferCoding(Option<String>),
     HttpResponseContentCoding(Option<String>),
     HttpResponseTimeout,
@@ -310,6 +452,131 @@ pub enum ErrorCode {
     LoopDetected,
     ConfigurationError,
     InternalError(Option<String>),
+}
+
+#[cfg(feature = "wasmtime-wasi-http")]
+impl From<wasmtime_wasi_http::bindings::http::types::ErrorCode> for ErrorCode {
+    fn from(code: wasmtime_wasi_http::bindings::http::types::ErrorCode) -> Self {
+        use wasmtime_wasi_http::bindings::http::types;
+        match code {
+            types::ErrorCode::DnsTimeout => Self::DnsTimeout,
+            types::ErrorCode::DnsError(err) => Self::DnsError(err.into()),
+            types::ErrorCode::DestinationNotFound => Self::DestinationNotFound,
+            types::ErrorCode::DestinationUnavailable => Self::DestinationUnavailable,
+            types::ErrorCode::DestinationIpProhibited => Self::DestinationIpProhibited,
+            types::ErrorCode::DestinationIpUnroutable => Self::DestinationIpUnroutable,
+            types::ErrorCode::ConnectionRefused => Self::ConnectionRefused,
+            types::ErrorCode::ConnectionTerminated => Self::ConnectionTerminated,
+            types::ErrorCode::ConnectionTimeout => Self::ConnectionTimeout,
+            types::ErrorCode::ConnectionReadTimeout => Self::ConnectionReadTimeout,
+            types::ErrorCode::ConnectionWriteTimeout => Self::ConnectionWriteTimeout,
+            types::ErrorCode::ConnectionLimitReached => Self::ConnectionLimitReached,
+            types::ErrorCode::TlsProtocolError => Self::TlsProtocolError,
+            types::ErrorCode::TlsCertificateError => Self::TlsCertificateError,
+            types::ErrorCode::TlsAlertReceived(err) => Self::TlsAlertReceived(err.into()),
+            types::ErrorCode::HttpRequestDenied => Self::HttpRequestDenied,
+            types::ErrorCode::HttpRequestLengthRequired => Self::HttpRequestLengthRequired,
+            types::ErrorCode::HttpRequestBodySize(size) => Self::HttpRequestBodySize(size),
+            types::ErrorCode::HttpRequestMethodInvalid => Self::HttpRequestMethodInvalid,
+            types::ErrorCode::HttpRequestUriInvalid => Self::HttpRequestUriInvalid,
+            types::ErrorCode::HttpRequestUriTooLong => Self::HttpRequestUriTooLong,
+            types::ErrorCode::HttpRequestHeaderSectionSize(err) => {
+                Self::HttpRequestHeaderSectionSize(err.into())
+            }
+            types::ErrorCode::HttpRequestHeaderSize(err) => {
+                Self::HttpRequestHeaderSize(err.map(Into::into))
+            }
+            types::ErrorCode::HttpRequestTrailerSectionSize(err) => {
+                Self::HttpRequestTrailerSectionSize(err)
+            }
+            types::ErrorCode::HttpRequestTrailerSize(err) => {
+                Self::HttpRequestTrailerSize(err.into())
+            }
+            types::ErrorCode::HttpResponseIncomplete => Self::HttpResponseIncomplete,
+            types::ErrorCode::HttpResponseHeaderSectionSize(err) => {
+                Self::HttpResponseHeaderSectionSize(err)
+            }
+            types::ErrorCode::HttpResponseHeaderSize(err) => {
+                Self::HttpResponseHeaderSize(err.into())
+            }
+            types::ErrorCode::HttpResponseBodySize(err) => Self::HttpResponseBodySize(err.into()),
+            types::ErrorCode::HttpResponseTrailerSectionSize(err) => {
+                Self::HttpResponseTrailerSectionSize(err)
+            }
+            types::ErrorCode::HttpResponseTrailerSize(err) => {
+                Self::HttpResponseTrailerSize(err.into())
+            }
+            types::ErrorCode::HttpResponseTransferCoding(err) => {
+                Self::HttpResponseTransferCoding(err)
+            }
+            types::ErrorCode::HttpResponseContentCoding(err) => {
+                Self::HttpResponseContentCoding(err)
+            }
+            types::ErrorCode::HttpResponseTimeout => Self::HttpResponseTimeout,
+            types::ErrorCode::HttpUpgradeFailed => Self::HttpUpgradeFailed,
+            types::ErrorCode::HttpProtocolError => Self::HttpProtocolError,
+            types::ErrorCode::LoopDetected => Self::LoopDetected,
+            types::ErrorCode::ConfigurationError => Self::ConfigurationError,
+            types::ErrorCode::InternalError(err) => Self::InternalError(err.into()),
+        }
+    }
+}
+
+#[cfg(feature = "wasmtime-wasi-http")]
+impl From<ErrorCode> for wasmtime_wasi_http::bindings::http::types::ErrorCode {
+    fn from(code: ErrorCode) -> Self {
+        match code {
+            ErrorCode::DnsTimeout => Self::DnsTimeout,
+            ErrorCode::DnsError(err) => Self::DnsError(err.into()),
+            ErrorCode::DestinationNotFound => Self::DestinationNotFound,
+            ErrorCode::DestinationUnavailable => Self::DestinationUnavailable,
+            ErrorCode::DestinationIpProhibited => Self::DestinationIpProhibited,
+            ErrorCode::DestinationIpUnroutable => Self::DestinationIpUnroutable,
+            ErrorCode::ConnectionRefused => Self::ConnectionRefused,
+            ErrorCode::ConnectionTerminated => Self::ConnectionTerminated,
+            ErrorCode::ConnectionTimeout => Self::ConnectionTimeout,
+            ErrorCode::ConnectionReadTimeout => Self::ConnectionReadTimeout,
+            ErrorCode::ConnectionWriteTimeout => Self::ConnectionWriteTimeout,
+            ErrorCode::ConnectionLimitReached => Self::ConnectionLimitReached,
+            ErrorCode::TlsProtocolError => Self::TlsProtocolError,
+            ErrorCode::TlsCertificateError => Self::TlsCertificateError,
+            ErrorCode::TlsAlertReceived(err) => Self::TlsAlertReceived(err.into()),
+            ErrorCode::HttpRequestDenied => Self::HttpRequestDenied,
+            ErrorCode::HttpRequestLengthRequired => Self::HttpRequestLengthRequired,
+            ErrorCode::HttpRequestBodySize(size) => Self::HttpRequestBodySize(size),
+            ErrorCode::HttpRequestMethodInvalid => Self::HttpRequestMethodInvalid,
+            ErrorCode::HttpRequestUriInvalid => Self::HttpRequestUriInvalid,
+            ErrorCode::HttpRequestUriTooLong => Self::HttpRequestUriTooLong,
+            ErrorCode::HttpRequestHeaderSectionSize(err) => {
+                Self::HttpRequestHeaderSectionSize(err.into())
+            }
+            ErrorCode::HttpRequestHeaderSize(err) => {
+                Self::HttpRequestHeaderSize(err.map(Into::into))
+            }
+            ErrorCode::HttpRequestTrailerSectionSize(err) => {
+                Self::HttpRequestTrailerSectionSize(err)
+            }
+            ErrorCode::HttpRequestTrailerSize(err) => Self::HttpRequestTrailerSize(err.into()),
+            ErrorCode::HttpResponseIncomplete => Self::HttpResponseIncomplete,
+            ErrorCode::HttpResponseHeaderSectionSize(err) => {
+                Self::HttpResponseHeaderSectionSize(err)
+            }
+            ErrorCode::HttpResponseHeaderSize(err) => Self::HttpResponseHeaderSize(err.into()),
+            ErrorCode::HttpResponseBodySize(err) => Self::HttpResponseBodySize(err.into()),
+            ErrorCode::HttpResponseTrailerSectionSize(err) => {
+                Self::HttpResponseTrailerSectionSize(err)
+            }
+            ErrorCode::HttpResponseTrailerSize(err) => Self::HttpResponseTrailerSize(err.into()),
+            ErrorCode::HttpResponseTransferCoding(err) => Self::HttpResponseTransferCoding(err),
+            ErrorCode::HttpResponseContentCoding(err) => Self::HttpResponseContentCoding(err),
+            ErrorCode::HttpResponseTimeout => Self::HttpResponseTimeout,
+            ErrorCode::HttpUpgradeFailed => Self::HttpUpgradeFailed,
+            ErrorCode::HttpProtocolError => Self::HttpProtocolError,
+            ErrorCode::LoopDetected => Self::LoopDetected,
+            ErrorCode::ConfigurationError => Self::ConfigurationError,
+            ErrorCode::InternalError(err) => Self::InternalError(err.into()),
+        }
+    }
 }
 
 impl EncodeSync for ErrorCode {
@@ -381,7 +648,7 @@ impl EncodeSync for ErrorCode {
             }
             Self::HttpResponseTrailerSize(v) => {
                 encode_discriminant(&mut payload, 30)?;
-                EncodeSync::encode_sync_option(v, payload)
+                v.encode_sync(payload)
             }
             Self::HttpResponseTransferCoding(v) => {
                 encode_discriminant(&mut payload, 31)?;
