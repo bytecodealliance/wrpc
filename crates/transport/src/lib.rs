@@ -430,7 +430,7 @@ where
         subscriber: &T,
         subject: T::Subject,
     ) -> Result<Option<AsyncSubscription<T::Stream>>, T::SubscribeError> {
-        let a = A::subscribe(subscriber, subject.child(Some(0))).await?;
+        let a = A::subscribe(subscriber, subject.child(Some(1))).await?;
         Ok(a.map(Box::new).map(AsyncSubscription::Option))
     }
 }
