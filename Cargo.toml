@@ -65,7 +65,7 @@ wit-parser = { version = "0.13", default-features = false }
 wrpc-interface-blobstore = { version = "0.1", path = "./crates/interface-blobstore", default-features = false }
 wrpc-interface-http = { version = "0.8", path = "./crates/interface-http", default-features = false }
 wrpc-interface-keyvalue = { version = "0.1", path = "./crates/interface-keyvalue", default-features = false }
-wrpc-runtime-wasmtime = { version = "0.2", path = "./crates/runtime-wasmtime", default-features = false }
+wrpc-runtime-wasmtime = { version = "0.3", path = "./crates/runtime-wasmtime", default-features = false }
 wrpc-transport = { version = "0.12.2", path = "./crates/transport", default-features = false }
 wrpc-transport-nats = { version = "0.9", path = "./crates/transport-nats", default-features = false }
 wrpc-types = { version = "0.4", path = "./crates/types", default-features = false }
