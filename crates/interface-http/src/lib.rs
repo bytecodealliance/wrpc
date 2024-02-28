@@ -1383,7 +1383,7 @@ impl<T: wrpc_transport::Client> OutgoingHandler for T {
                                         Ok(trailers) => {
                                             if trailers_tx.send(trailers).await.is_err() {
                                                 let _ = errors_tx
-                                                    .send(anyhow!(
+                                                    .send(anyhow::anyhow!(
                                                         "frame is neither data, nor trailers"
                                                     ))
                                                     .await;
@@ -1397,7 +1397,7 @@ impl<T: wrpc_transport::Client> OutgoingHandler for T {
                                     },
                                     Err(_) => {
                                         let _ = errors_tx
-                                            .send(anyhow!("frame is neither data, nor trailers"))
+                                            .send(anyhow::anyhow!("frame is neither data, nor trailers"))
                                             .await;
                                         None
                                     }
@@ -1405,7 +1405,7 @@ impl<T: wrpc_transport::Client> OutgoingHandler for T {
                             },
                             Err(err) => {
                                 let _ = errors_tx
-                                    .send(anyhow!("body stream failed with error {err:?}"))
+                                    .send(anyhow::anyhow!("body stream failed with error {err:?}"))
                                     .await;
                                 None
                             }
