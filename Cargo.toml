@@ -45,7 +45,11 @@ tracing-subscriber = { workspace = true, features = [
     "env-filter",
     "fmt",
 ] }
-wrpc-interface-http = { workspace = true, features = ["http", "wasmtime-wasi-http"] }
+wrpc-interface-http = { workspace = true, features = [
+    "http",
+    "http-body",
+    "wasmtime-wasi-http",
+] }
 
 [workspace.dependencies]
 anyhow = { version = "1", default-features = false }
@@ -54,6 +58,8 @@ async-trait = { version = "0.1", default-features = false }
 bytes = { version = "1", default-features = false }
 futures = { version = "0.3", default-features = false }
 http = { version = "1", default-features = false }
+http-body = { version = "1", default-features = false }
+http-body-util = { version = "0.1", default-features = false }
 leb128 = { version = "0.2", default-features = false }
 serde = { version = "1", default-features = false }
 serde_json = { version = "1", default-features = false }

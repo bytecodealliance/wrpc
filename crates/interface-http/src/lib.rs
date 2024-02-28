@@ -6,7 +6,7 @@ use anyhow::{bail, Context as _};
 use async_trait::async_trait;
 use bytes::{Buf, BufMut, Bytes};
 use futures::{Stream, StreamExt as _};
-use tokio::try_join;
+use tokio::{spawn, try_join};
 use tracing::instrument;
 use wrpc_transport::{
     encode_discriminant, receive_discriminant, AcceptedInvocation, Acceptor, AsyncSubscription,
@@ -30,6 +30,55 @@ fn fields_to_wrpc(fields: Vec<(String, Vec<Bytes>)>) -> wrpc_transport::Value {
         })
         .collect::<Vec<_>>()
         .into()
+}
+
+#[cfg(feature = "http")]
+pub fn try_fields_to_header_map(fields: Fields) -> anyhow::Result<http::HeaderMap> {
+    let mut headers = http::HeaderMap::new();
+    for (name, values) in fields {
+        let name: http::HeaderName = name.parse().context("failed to parse header name")?;
+        let http::header::Entry::Vacant(entry) = headers.entry(name) else {
+            bail!("duplicate header entry");
+        };
+        let Some((first, values)) = values.split_first() else {
+            continue;
+        };
+        let first = first
+            .as_ref()
+            .try_into()
+            .context("failed to construct header value")?;
+        let mut entry = entry.insert_entry(first);
+        for value in values {
+            let value = value
+                .as_ref()
+                .try_into()
+                .context("failed to construct header value")?;
+            entry.append(value);
+        }
+    }
+    Ok(headers)
+}
+
+#[cfg(feature = "http")]
+pub fn try_header_map_to_fields(headers: http::HeaderMap) -> anyhow::Result<Fields> {
+    let headers_len = headers.keys_len();
+    headers
+        .into_iter()
+        .try_fold(
+            Vec::with_capacity(headers_len),
+            |mut headers, (name, value)| {
+                if let Some(name) = name {
+                    headers.push((name.to_string(), vec![value.as_bytes().to_vec().into()]));
+                } else {
+                    let (_, ref mut values) = headers
+                        .last_mut()
+                        .context("header name missing and fields are empty")?;
+                    values.push(value.as_bytes().to_vec().into());
+                }
+                anyhow::Ok(headers)
+            },
+        )
+        .context("failed to construct fields")
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -976,6 +1025,89 @@ pub struct Response<Body, Trailers> {
     pub trailers: Trailers,
     pub status: u16,
     pub headers: Fields,
+}
+
+#[cfg(feature = "http-body")]
+pub struct IncomingBody<Body, Trailers> {
+    body: Body,
+    trailers: Trailers,
+}
+
+#[cfg(feature = "http-body")]
+impl<Body, Trailers> http_body::Body for IncomingBody<Body, Trailers>
+where
+    Body: Stream<Item = anyhow::Result<Vec<u8>>> + Unpin,
+    Trailers: Future<Output = anyhow::Result<Option<Fields>>> + Unpin,
+{
+    type Data = Bytes;
+    type Error = ErrorCode;
+
+    fn poll_frame(
+        mut self: Pin<&mut Self>,
+        cx: &mut core::task::Context<'_>,
+    ) -> core::task::Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>> {
+        use core::task::Poll;
+        use futures::FutureExt as _;
+
+        match self.body.poll_next_unpin(cx) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(Some(Err(err))) => {
+                Poll::Ready(Some(Err(ErrorCode::InternalError(Some(err.to_string())))))
+            }
+            Poll::Ready(Some(Ok(buf))) => Poll::Ready(Some(Ok(http_body::Frame::data(buf.into())))),
+            Poll::Ready(None) => match self.trailers.poll_unpin(cx) {
+                Poll::Pending => Poll::Pending,
+                Poll::Ready(Err(err)) => {
+                    Poll::Ready(Some(Err(ErrorCode::InternalError(Some(err.to_string())))))
+                }
+                Poll::Ready(Ok(None)) => Poll::Ready(None),
+                Poll::Ready(Ok(Some(trailers))) => {
+                    let trailers = try_fields_to_header_map(trailers)
+                        .context("failed to convert trailer fields to header map")
+                        .map_err(|err| format!("{err:#}"))
+                        .map_err(Some)
+                        .map_err(ErrorCode::InternalError)?;
+                    Poll::Ready(Some(Ok(http_body::Frame::trailers(trailers))))
+                }
+            },
+        }
+    }
+}
+
+#[cfg(feature = "wasmtime-wasi-http")]
+impl TryFrom<IncomingResponse> for http::Response<wasmtime_wasi_http::body::HyperIncomingBody> {
+    type Error = anyhow::Error;
+
+    fn try_from(
+        Response {
+            body,
+            trailers,
+            status,
+            headers,
+        }: IncomingResponse,
+    ) -> Result<Self, Self::Error> {
+        use http_body_util::BodyExt as _;
+        use wasmtime_wasi_http::body::HyperIncomingBody;
+
+        let mut resp = http::Response::builder().status(status);
+        let resp_headers = resp
+            .headers_mut()
+            .context("failed to construct header map")?;
+        *resp_headers = try_fields_to_header_map(headers)
+            .context("failed to convert header fields to header map")?;
+        let resp = resp.body(body).context("failed to construct response")?;
+        // TODO: Make trailers Sync and remove this
+        let trailers = spawn(trailers);
+        Ok(resp.map(|body| {
+            HyperIncomingBody::new(
+                IncomingBody {
+                    body,
+                    trailers: Box::pin(async { trailers.await.unwrap() }),
+                }
+                .map_err(Into::into),
+            )
+        }))
+    }
 }
 
 #[async_trait]

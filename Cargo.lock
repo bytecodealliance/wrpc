@@ -2568,13 +2568,15 @@ dependencies = [
 
 [[package]]
 name = "wrpc-interface-http"
-version = "0.10.0"
+version = "0.10.1"
 dependencies = [
  "anyhow",
  "async-trait",
  "bytes",
  "futures",
  "http 1.0.0",
+ "http-body",
+ "http-body-util",
  "tokio",
  "tracing",
  "wasmtime-wasi-http",

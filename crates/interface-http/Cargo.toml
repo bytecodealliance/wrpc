@@ -1,6 +1,6 @@
 [package]
 name = "wrpc-interface-http"
-version = "0.10.0"
+version = "0.10.1"
 description = "wRPC HTTP interface"
 
 authors.workspace = true
@@ -9,12 +9,19 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+http = ["dep:http"]
+http-body = ["dep:http", "dep:http-body", "dep:http-body-util"]
+wasmtime-wasi-http = ["http-body", "dep:wasmtime-wasi-http"]
+
 [dependencies]
 anyhow = { workspace = true, features = ["std"] }
 async-trait = { workspace = true }
 bytes = { workspace = true }
 futures = { workspace = true }
 http = { workspace = true, optional = true }
+http-body = { workspace = true, optional = true }
+http-body-util = { workspace = true, optional = true }
 tokio = { workspace = true }
 tracing = { workspace = true, features = ["attributes"] }
 wasmtime-wasi-http = { workspace = true, optional = true }
