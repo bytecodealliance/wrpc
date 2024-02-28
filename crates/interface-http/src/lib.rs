@@ -195,8 +195,8 @@ pub enum Scheme {
 impl From<&http::uri::Scheme> for Scheme {
     fn from(scheme: &http::uri::Scheme) -> Self {
         match scheme.as_str() {
-            "HTTP" => Self::HTTP,
-            "HTTPS" => Self::HTTPS,
+            "http" => Self::HTTP,
+            "https" => Self::HTTPS,
             _ => Self::Other(scheme.to_string()),
         }
     }
