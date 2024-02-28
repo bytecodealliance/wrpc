@@ -10,10 +10,13 @@ use tokio::try_join;
 use tracing::instrument;
 use wrpc_transport::{
     encode_discriminant, receive_discriminant, AcceptedInvocation, Acceptor, AsyncSubscription,
-    AsyncValue, Encode, EncodeSync, Receive, Subject as _, Subscribe, Subscriber, Value,
+    AsyncValue, Encode, EncodeSync, IncomingInputStream, Receive, Subject as _, Subscribe,
+    Subscriber, Value,
 };
 
 pub type Fields = Vec<(String, Vec<Bytes>)>;
+
+pub type IncomingFields = Pin<Box<dyn Future<Output = anyhow::Result<Option<Fields>>> + Send>>;
 
 fn fields_to_wrpc(fields: Vec<(String, Vec<Bytes>)>) -> wrpc_transport::Value {
     fields
@@ -827,10 +830,7 @@ impl Receive for RequestOptions {
     }
 }
 
-pub type IncomingRequest = Request<
-    Box<dyn Stream<Item = anyhow::Result<Vec<u8>>> + Send + Unpin>,
-    Pin<Box<dyn Future<Output = anyhow::Result<Option<Fields>>> + Send>>,
->;
+pub type IncomingRequest = Request<IncomingInputStream, IncomingFields>;
 
 pub struct Request<Body, Trailers> {
     pub body: Body,
@@ -969,10 +969,7 @@ impl Receive for IncomingRequest {
     }
 }
 
-pub type IncomingResponse = Response<
-    Box<dyn Stream<Item = anyhow::Result<Vec<u8>>> + Send + Unpin>,
-    Pin<Box<dyn Future<Output = anyhow::Result<Option<Fields>>> + Send>>,
->;
+pub type IncomingResponse = Response<IncomingInputStream, IncomingFields>;
 
 pub struct Response<Body, Trailers> {
     pub body: Body,

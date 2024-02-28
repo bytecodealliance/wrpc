@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use futures::{Stream, StreamExt as _};
 use tracing::instrument;
-use wrpc_transport::{AcceptedInvocation, Acceptor, Value};
+use wrpc_transport::{AcceptedInvocation, Acceptor, IncomingInputStream, Value};
 
 type StringStringInvocationStream<T> = Pin<
     Box<
@@ -20,8 +20,6 @@ type StringStringInvocationStream<T> = Pin<
             > + Send,
     >,
 >;
-
-type IncomingInputStream = Box<dyn Stream<Item = anyhow::Result<Vec<u8>>> + Send + Unpin>;
 
 #[async_trait]
 pub trait Eventual: wrpc_transport::Client {

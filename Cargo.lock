@@ -2556,7 +2556,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc-interface-blobstore"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2568,7 +2568,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc-interface-http"
-version = "0.9.1"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2583,7 +2583,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc-interface-keyvalue"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2607,7 +2607,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc-transport"
-version = "0.12.2"
+version = "0.13.0"
 dependencies = [
  "anyhow",
  "async-nats",

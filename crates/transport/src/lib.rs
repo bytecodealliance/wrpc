@@ -25,6 +25,9 @@ use wrpc_types::{Resource, Type};
 
 pub const PROTOCOL: &str = "wrpc.0.0.1";
 
+pub type IncomingInputStream =
+    Box<dyn Stream<Item = anyhow::Result<Vec<u8>>> + Send + Sync + Unpin>;
+
 #[async_trait]
 pub trait Transmitter {
     type Subject: Subject + Send + Sync + Clone;
@@ -555,7 +558,7 @@ where
 }
 
 #[async_trait]
-impl<E> Subscribe for Box<dyn Stream<Item = anyhow::Result<Vec<E>>> + Send + Unpin>
+impl<E> Subscribe for Box<dyn Stream<Item = anyhow::Result<Vec<E>>> + Send + Sync + Unpin>
 where
     E: Subscribe,
 {
@@ -1874,9 +1877,9 @@ where
 }
 
 #[async_trait]
-impl<E> Receive for Box<dyn Stream<Item = anyhow::Result<Vec<E>>> + Send + Unpin>
+impl<E> Receive for Box<dyn Stream<Item = anyhow::Result<Vec<E>>> + Send + Sync + Unpin>
 where
-    E: Receive + Send + 'static,
+    E: Receive + Send + Sync + 'static,
 {
     #[instrument(level = "trace", skip_all)]
     async fn receive<T>(

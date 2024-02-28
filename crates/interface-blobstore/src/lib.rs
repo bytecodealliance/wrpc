@@ -5,7 +5,10 @@ use async_trait::async_trait;
 use bytes::{Buf, BufMut, Bytes};
 use futures::{Stream, StreamExt as _};
 use tracing::instrument;
-use wrpc_transport::{AcceptedInvocation, Acceptor, AsyncSubscription, EncodeSync, Receive, Value};
+use wrpc_transport::{
+    AcceptedInvocation, Acceptor, AsyncSubscription, EncodeSync, IncomingInputStream, Receive,
+    Value,
+};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ContainerMetadata {
@@ -181,8 +184,6 @@ type ObjectIdInvocationStream<T> = Pin<
     >,
 >;
 
-type IncomingInputStream = Box<dyn Stream<Item = anyhow::Result<Vec<u8>>> + Send + Unpin>;
-
 #[async_trait]
 pub trait Blobstore: wrpc_transport::Client {
     type ClearContainerInvocationStream;
@@ -241,7 +242,7 @@ pub trait Blobstore: wrpc_transport::Client {
         limit: Option<u64>,
         offset: Option<u64>,
     ) -> anyhow::Result<(
-        Result<Box<dyn Stream<Item = anyhow::Result<Vec<String>>> + Send + Unpin>, String>,
+        Result<Box<dyn Stream<Item = anyhow::Result<Vec<String>>> + Send + Sync + Unpin>, String>,
         Self::Transmission,
     )>;
     async fn serve_list_container_objects(
@@ -475,7 +476,7 @@ impl<T: wrpc_transport::Client> Blobstore for T {
         limit: Option<u64>,
         offset: Option<u64>,
     ) -> anyhow::Result<(
-        Result<Box<dyn Stream<Item = anyhow::Result<Vec<String>>> + Send + Unpin>, String>,
+        Result<Box<dyn Stream<Item = anyhow::Result<Vec<String>>> + Send + Sync + Unpin>, String>,
         Self::Transmission,
     )> {
         self.invoke_static(
