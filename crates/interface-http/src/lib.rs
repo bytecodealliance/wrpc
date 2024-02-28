@@ -44,8 +44,8 @@ pub enum Method {
 }
 
 #[cfg(feature = "http")]
-impl From<http::Method> for Method {
-    fn from(method: http::Method) -> Self {
+impl From<&http::Method> for Method {
+    fn from(method: &http::Method) -> Self {
         match method.as_str() {
             "GET" => Self::Get,
             "HEAD" => Self::Head,
@@ -62,10 +62,10 @@ impl From<http::Method> for Method {
 }
 
 #[cfg(feature = "http")]
-impl TryFrom<Method> for http::method::Method {
+impl TryFrom<&Method> for http::method::Method {
     type Error = http::method::InvalidMethod;
 
-    fn try_from(method: Method) -> Result<Self, Self::Error> {
+    fn try_from(method: &Method) -> Result<Self, Self::Error> {
         match method {
             Method::Get => Ok(Self::GET),
             Method::Head => Ok(Self::HEAD),
@@ -140,8 +140,8 @@ pub enum Scheme {
 }
 
 #[cfg(feature = "http")]
-impl From<http::uri::Scheme> for Scheme {
-    fn from(scheme: http::uri::Scheme) -> Self {
+impl From<&http::uri::Scheme> for Scheme {
+    fn from(scheme: &http::uri::Scheme) -> Self {
         match scheme.as_str() {
             "HTTP" => Self::HTTP,
             "HTTPS" => Self::HTTPS,
@@ -151,10 +151,10 @@ impl From<http::uri::Scheme> for Scheme {
 }
 
 #[cfg(feature = "http")]
-impl TryFrom<Scheme> for http::uri::Scheme {
+impl TryFrom<&Scheme> for http::uri::Scheme {
     type Error = http::uri::InvalidUri;
 
-    fn try_from(scheme: Scheme) -> Result<Self, Self::Error> {
+    fn try_from(scheme: &Scheme) -> Result<Self, Self::Error> {
         match scheme {
             Scheme::HTTP => Ok(Self::HTTP),
             Scheme::HTTPS => Ok(Self::HTTPS),
