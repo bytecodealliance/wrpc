@@ -1092,18 +1092,16 @@ impl TryFrom<IncomingResponse> for http::Response<wasmtime_wasi_http::body::Hype
             .context("failed to construct header map")?;
         *resp_headers = try_fields_to_header_map(headers)
             .context("failed to convert header fields to header map")?;
-        let resp = resp.body(body).context("failed to construct response")?;
         // TODO: Make trailers Sync and remove this
         let trailers = tokio::spawn(trailers);
-        Ok(resp.map(|body| {
-            HyperIncomingBody::new(
-                IncomingBody {
-                    body,
-                    trailers: Box::pin(async { trailers.await.unwrap() }),
-                }
-                .map_err(Into::into),
-            )
-        }))
+        resp.body(HyperIncomingBody::new(
+            IncomingBody {
+                body,
+                trailers: Box::pin(async { trailers.await.unwrap() }),
+            }
+            .map_err(Into::into),
+        ))
+        .context("failed to construct response")
     }
 }
 
@@ -1218,6 +1216,9 @@ impl Receive for IncomingResponse {
 pub trait IncomingHandler: wrpc_transport::Client {
     type HandleInvocationStream;
 
+    #[cfg(feature = "wasmtime-wasi-http")]
+    type HandleWasmtimeInvocationStream;
+
     fn invoke_handle<Body, Trailers>(
         &self,
         request: Request<Body, Trailers>,
@@ -1231,6 +1232,11 @@ pub trait IncomingHandler: wrpc_transport::Client {
     fn serve_handle(
         &self,
     ) -> impl Future<Output = anyhow::Result<Self::HandleInvocationStream>> + Send;
+
+    #[cfg(feature = "wasmtime-wasi-http")]
+    fn serve_handle_wasmtime(
+        &self,
+    ) -> impl Future<Output = anyhow::Result<Self::HandleWasmtimeInvocationStream>> + Send;
 }
 
 impl<T: wrpc_transport::Client> IncomingHandler for T {
@@ -1241,6 +1247,22 @@ impl<T: wrpc_transport::Client> IncomingHandler for T {
                         AcceptedInvocation<
                             T::Context,
                             IncomingRequest,
+                            T::Subject,
+                            <T::Acceptor as Acceptor>::Transmitter,
+                        >,
+                    >,
+                > + Send,
+        >,
+    >;
+
+    #[cfg(feature = "wasmtime-wasi-http")]
+    type HandleWasmtimeInvocationStream = Pin<
+        Box<
+            dyn Stream<
+                    Item = anyhow::Result<
+                        AcceptedInvocation<
+                            T::Context,
+                            http::Request<wasmtime_wasi_http::body::HyperIncomingBody>,
                             T::Subject,
                             <T::Acceptor as Acceptor>::Transmitter,
                         >,
@@ -1266,6 +1288,78 @@ impl<T: wrpc_transport::Client> IncomingHandler for T {
     async fn serve_handle(&self) -> anyhow::Result<Self::HandleInvocationStream> {
         self.serve_static("wrpc:http/incoming-handler@0.1.0", "handle")
             .await
+    }
+
+    #[cfg(feature = "wasmtime-wasi-http")]
+    #[instrument(level = "trace", skip_all)]
+    async fn serve_handle_wasmtime(&self) -> anyhow::Result<Self::HandleWasmtimeInvocationStream> {
+        use http_body_util::BodyExt as _;
+        use wasmtime_wasi_http::body::HyperIncomingBody;
+
+        let invocations = IncomingHandler::serve_handle(self).await?;
+        Ok(Box::pin(invocations.map(|invocation| {
+            let AcceptedInvocation {
+                context,
+                params:
+                    Request {
+                        body,
+                        trailers,
+                        method,
+                        path_with_query,
+                        scheme,
+                        authority,
+                        headers,
+                    },
+                result_subject,
+                error_subject,
+                transmitter,
+            } = invocation?;
+            let uri = http::Uri::builder();
+            let uri = if let Some(path_with_query) = path_with_query {
+                uri.path_and_query(path_with_query)
+            } else {
+                uri
+            };
+            let uri = if let Some(scheme) = scheme {
+                let scheme =
+                    http::uri::Scheme::try_from(&scheme).context("failed to convert scheme")?;
+                uri.scheme(scheme)
+            } else {
+                uri
+            };
+            let uri = if let Some(authority) = authority {
+                uri.authority(authority)
+            } else {
+                uri
+            };
+            let uri = uri.build().context("failed to build URI")?;
+            let method =
+                http::method::Method::try_from(&method).context("failed to convert method")?;
+            let mut req = http::Request::builder().method(method).uri(uri);
+            let req_headers = req
+                .headers_mut()
+                .context("failed to construct header map")?;
+            *req_headers = try_fields_to_header_map(headers)
+                .context("failed to convert header fields to header map")?;
+            // TODO: Make trailers Sync and remove this
+            let trailers = tokio::spawn(trailers);
+            let req = req
+                .body(HyperIncomingBody::new(
+                    IncomingBody {
+                        body,
+                        trailers: Box::pin(async { trailers.await.unwrap() }),
+                    }
+                    .map_err(Into::into),
+                ))
+                .context("failed to construct request")?;
+            Ok(AcceptedInvocation {
+                context,
+                params: req,
+                result_subject,
+                error_subject,
+                transmitter,
+            })
+        })))
     }
 }
 
@@ -1397,7 +1491,9 @@ impl<T: wrpc_transport::Client> OutgoingHandler for T {
                                     },
                                     Err(_) => {
                                         let _ = errors_tx
-                                            .send(anyhow::anyhow!("frame is neither data, nor trailers"))
+                                            .send(anyhow::anyhow!(
+                                                "frame is neither data, nor trailers"
+                                            ))
                                             .await;
                                         None
                                     }
