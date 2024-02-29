@@ -261,7 +261,7 @@ pub struct Transmitter {
 
 impl Transmitter {
     #[instrument(level = "trace", ret, skip(self))]
-    async fn transmit_with_headers(
+    pub async fn transmit_with_headers(
         &self,
         subject: Subject,
         headers: HeaderMap,
