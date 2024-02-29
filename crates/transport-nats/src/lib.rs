@@ -542,6 +542,39 @@ pub struct Acceptor {
     tx: async_nats::Subject,
 }
 
+impl From<Acceptor> for Transmitter {
+    fn from(Acceptor { nats, .. }: Acceptor) -> Self {
+        Self { nats }
+    }
+}
+
+impl Acceptor {
+    pub fn into_transmitter(self) -> Transmitter {
+        self.into()
+    }
+
+    pub fn result_subject(&self) -> Subject {
+        Subject(format!("{}.results", self.tx).into())
+    }
+
+    pub fn error_subject(&self) -> Subject {
+        Subject(format!("{}.error", self.tx).into())
+    }
+
+    #[instrument(level = "trace", skip(self))]
+    pub async fn accept_with_headers(
+        self,
+        rx: Subject,
+        headers: HeaderMap,
+    ) -> anyhow::Result<(Subject, Subject, Transmitter)> {
+        self.nats
+            .publish_with_reply_and_headers(self.tx.clone(), rx, headers, Bytes::default())
+            .await
+            .context("failed to connect to peer")?;
+        Ok((self.result_subject(), self.error_subject(), self.into()))
+    }
+}
+
 impl wrpc_transport::Acceptor for Acceptor {
     type Subject = Subject;
     type Transmitter = Transmitter;
@@ -555,11 +588,7 @@ impl wrpc_transport::Acceptor for Acceptor {
             .publish_with_reply(self.tx.clone(), rx, Bytes::default())
             .await
             .context("failed to connect to peer")?;
-        Ok((
-            Subject(format!("{}.results", self.tx).into()),
-            Subject(format!("{}.error", self.tx).into()),
-            Transmitter { nats: self.nats },
-        ))
+        Ok((self.result_subject(), self.error_subject(), self.into()))
     }
 }
 
