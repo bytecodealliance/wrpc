@@ -1,7 +1,7 @@
 use core::future::Future;
 use core::pin::Pin;
-use core::str;
 use core::task::{Context, Poll};
+use core::{mem, str};
 
 use std::sync::Arc;
 
@@ -441,7 +441,7 @@ impl InvocationPre {
             );
             self.payload.split_to(max_payload)
         } else {
-            Bytes::default()
+            mem::take(&mut self.payload)
         };
         trace!(rx = ?self.rx, payload = ?self.payload, "publish handshake");
         self.client
