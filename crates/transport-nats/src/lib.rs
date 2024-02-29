@@ -257,6 +257,50 @@ pub struct Transmitter {
     nats: Arc<async_nats::Client>,
 }
 
+// TODO: Refactor transmission to avoid duplicating
+
+impl Transmitter {
+    #[instrument(level = "trace", ret, skip(self))]
+    async fn transmit_with_headers(
+        &self,
+        subject: Subject,
+        headers: HeaderMap,
+        mut payload: Bytes,
+    ) -> Result<(), async_nats::PublishError> {
+        let ServerInfo { max_payload, .. } = self.nats.server_info();
+        let mut tail = if payload.len() > max_payload {
+            assert!(max_payload > 0);
+            payload.split_off(max_payload)
+        } else {
+            Bytes::default()
+        };
+        trace!(
+            ?tail,
+            ?payload,
+            max_payload,
+            "publish initial payload chunk"
+        );
+        let Subject(subject) = subject;
+        self.nats
+            .publish_with_headers(subject.clone(), headers.clone(), payload)
+            .await?;
+        while !tail.is_empty() {
+            let mut payload = tail;
+            tail = if payload.len() > max_payload {
+                assert!(max_payload > 0);
+                payload.split_off(max_payload)
+            } else {
+                Bytes::default()
+            };
+            trace!(?tail, ?payload, max_payload, "publish payload chunk");
+            self.nats
+                .publish_with_headers(subject.clone(), headers.clone(), payload)
+                .await?;
+        }
+        Ok(())
+    }
+}
+
 #[async_trait]
 impl wrpc_transport::Transmitter for Transmitter {
     type Subject = Subject;
