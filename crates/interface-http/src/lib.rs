@@ -924,6 +924,66 @@ where
     }
 }
 
+#[cfg(feature = "http-body")]
+pub enum OutgoingBodyError<E> {
+    InvalidFrame,
+    TrailerReceiverClosed,
+    HeaderConversion(anyhow::Error),
+    Body(E),
+}
+
+#[cfg(feature = "http-body")]
+pub fn outgoing_body<E>(
+    body: impl http_body::Body<Data = Bytes, Error = E>,
+) -> (
+    impl Stream<Item = Bytes>,
+    impl Future<Output = Option<Fields>>,
+    impl Stream<Item = OutgoingBodyError<E>>,
+) {
+    let (errors_tx, errors_rx) = tokio::sync::mpsc::channel(1);
+    let (trailers_tx, mut trailers_rx) = tokio::sync::mpsc::channel(1);
+    let body = http_body_util::BodyStream::new(body).filter_map(move |frame| {
+        let errors_tx = errors_tx.clone();
+        let trailers_tx = trailers_tx.clone();
+        async move {
+            match frame {
+                Ok(frame) => match frame.into_data() {
+                    Ok(buf) => Some(buf),
+                    Err(trailers) => match trailers.into_trailers() {
+                        Ok(trailers) => match try_header_map_to_fields(trailers) {
+                            Ok(trailers) => {
+                                if trailers_tx.send(trailers).await.is_err() {
+                                    let _ = errors_tx
+                                        .send(OutgoingBodyError::TrailerReceiverClosed)
+                                        .await;
+                                }
+                                None
+                            }
+                            Err(err) => {
+                                let _ = errors_tx
+                                    .send(OutgoingBodyError::HeaderConversion(err))
+                                    .await;
+                                None
+                            }
+                        },
+                        Err(_) => {
+                            let _ = errors_tx.send(OutgoingBodyError::InvalidFrame).await;
+                            None
+                        }
+                    },
+                },
+                Err(err) => {
+                    let _ = errors_tx.send(OutgoingBodyError::Body(err)).await;
+                    None
+                }
+            }
+        }
+    });
+    let trailers = async move { trailers_rx.recv().await };
+    let errors_rx = tokio_stream::wrappers::ReceiverStream::new(errors_rx);
+    (body, trailers, errors_rx)
+}
+
 pub type IncomingRequest = Request<IncomingInputStream, IncomingFields>;
 
 pub struct Request<Body, Trailers> {
@@ -934,6 +994,112 @@ pub struct Request<Body, Trailers> {
     pub scheme: Option<Scheme>,
     pub authority: Option<String>,
     pub headers: Fields,
+}
+
+#[cfg(feature = "wasmtime-wasi-http")]
+impl TryFrom<IncomingRequest> for http::Request<wasmtime_wasi_http::body::HyperIncomingBody> {
+    type Error = anyhow::Error;
+
+    fn try_from(
+        Request {
+            body,
+            trailers,
+            method,
+            path_with_query,
+            scheme,
+            authority,
+            headers,
+        }: IncomingRequest,
+    ) -> Result<Self, Self::Error> {
+        use http_body_util::BodyExt as _;
+        use wasmtime_wasi_http::body::HyperIncomingBody;
+
+        let uri = http::Uri::builder();
+        let uri = if let Some(path_with_query) = path_with_query {
+            uri.path_and_query(path_with_query)
+        } else {
+            uri
+        };
+        let uri = if let Some(scheme) = scheme {
+            let scheme =
+                http::uri::Scheme::try_from(&scheme).context("failed to convert scheme")?;
+            uri.scheme(scheme)
+        } else {
+            uri
+        };
+        let uri = if let Some(authority) = authority {
+            uri.authority(authority)
+        } else {
+            uri
+        };
+        let uri = uri.build().context("failed to build URI")?;
+        let method = http::method::Method::try_from(&method).context("failed to convert method")?;
+        let mut req = http::Request::builder().method(method).uri(uri);
+        let req_headers = req
+            .headers_mut()
+            .context("failed to construct header map")?;
+        *req_headers = try_fields_to_header_map(headers)
+            .context("failed to convert header fields to header map")?;
+        // TODO: Make trailers Sync and remove this
+        let trailers = tokio::spawn(trailers);
+        req.body(HyperIncomingBody::new(
+            IncomingBody {
+                body,
+                trailers: Box::pin(async { trailers.await.unwrap() }),
+            }
+            .map_err(Into::into),
+        ))
+        .context("failed to construct request")
+    }
+}
+
+#[cfg(feature = "wasmtime-wasi-http")]
+#[instrument(level = "trace", skip_all)]
+pub fn try_wasmtime_to_outgoing_request(
+    wasmtime_wasi_http::types::OutgoingRequest {
+        use_tls: _,
+        authority,
+        request,
+        connect_timeout,
+        first_byte_timeout,
+        between_bytes_timeout,
+    }: wasmtime_wasi_http::types::OutgoingRequest,
+) -> anyhow::Result<(
+    Request<
+        impl Stream<Item = Bytes> + Send + 'static,
+        impl Future<Output = Option<Fields>> + Send + 'static,
+    >,
+    RequestOptions,
+    impl Stream<Item = OutgoingBodyError<wasmtime_wasi_http::bindings::http::types::ErrorCode>>,
+)> {
+    let (
+        http::request::Parts {
+            ref method,
+            uri,
+            headers,
+            ..
+        },
+        body,
+    ) = request.into_parts();
+    let headers = try_header_map_to_fields(headers)?;
+    let (body, trailers, errors) = outgoing_body(body);
+    Ok((
+        Request {
+            body,
+            trailers,
+            method: method.into(),
+            path_with_query: uri.path_and_query().map(ToString::to_string),
+            scheme: uri.scheme().map(Into::into),
+            authority: Some(authority),
+            headers,
+        },
+        RequestOptions {
+            connect_timeout: Some(connect_timeout),
+            first_byte_timeout: Some(first_byte_timeout),
+            between_bytes_timeout: Some(between_bytes_timeout),
+        },
+        errors,
+    ))
 }
 
 #[async_trait]
@@ -1103,6 +1269,36 @@ impl TryFrom<IncomingResponse> for http::Response<wasmtime_wasi_http::body::Hype
         ))
         .context("failed to construct response")
     }
+}
+
+#[cfg(feature = "wasmtime-wasi-http")]
+#[instrument(level = "trace", skip_all)]
+pub fn try_wasmtime_to_outgoing_response(
+    response: http::Response<wasmtime_wasi_http::body::HyperOutgoingBody>,
+) -> anyhow::Result<(
+    Response<
+        impl Stream<Item = Bytes> + Send + 'static,
+        impl Future<Output = Option<Fields>> + Send + 'static,
+    >,
+    impl Stream<Item = OutgoingBodyError<wasmtime_wasi_http::bindings::http::types::ErrorCode>>,
+)> {
+    let (
+        http::response::Parts {
+            status, headers, ..
+        },
+        body,
+    ) = response.into_parts();
+    let headers = try_header_map_to_fields(headers)?;
+    let (body, trailers, errors) = outgoing_body(body);
+    Ok((
+        Response {
+            body,
+            trailers,
+            status: status.into(),
+            headers,
+        },
+        errors,
+    ))
 }
 
 #[async_trait]
@@ -1293,65 +1489,18 @@ impl<T: wrpc_transport::Client> IncomingHandler for T {
     #[cfg(feature = "wasmtime-wasi-http")]
     #[instrument(level = "trace", skip_all)]
     async fn serve_handle_wasmtime(&self) -> anyhow::Result<Self::HandleWasmtimeInvocationStream> {
-        use http_body_util::BodyExt as _;
-        use wasmtime_wasi_http::body::HyperIncomingBody;
-
         let invocations = IncomingHandler::serve_handle(self).await?;
         Ok(Box::pin(invocations.map(|invocation| {
             let AcceptedInvocation {
                 context,
-                params:
-                    Request {
-                        body,
-                        trailers,
-                        method,
-                        path_with_query,
-                        scheme,
-                        authority,
-                        headers,
-                    },
+                params,
                 result_subject,
                 error_subject,
                 transmitter,
             } = invocation?;
-            let uri = http::Uri::builder();
-            let uri = if let Some(path_with_query) = path_with_query {
-                uri.path_and_query(path_with_query)
-            } else {
-                uri
-            };
-            let uri = if let Some(scheme) = scheme {
-                let scheme =
-                    http::uri::Scheme::try_from(&scheme).context("failed to convert scheme")?;
-                uri.scheme(scheme)
-            } else {
-                uri
-            };
-            let uri = if let Some(authority) = authority {
-                uri.authority(authority)
-            } else {
-                uri
-            };
-            let uri = uri.build().context("failed to build URI")?;
-            let method =
-                http::method::Method::try_from(&method).context("failed to convert method")?;
-            let mut req = http::Request::builder().method(method).uri(uri);
-            let req_headers = req
-                .headers_mut()
-                .context("failed to construct header map")?;
-            *req_headers = try_fields_to_header_map(headers)
-                .context("failed to convert header fields to header map")?;
-            // TODO: Make trailers Sync and remove this
-            let trailers = tokio::spawn(trailers);
-            let req = req
-                .body(HyperIncomingBody::new(
-                    IncomingBody {
-                        body,
-                        trailers: Box::pin(async { trailers.await.unwrap() }),
-                    }
-                    .map_err(Into::into),
-                ))
-                .context("failed to construct request")?;
+            let req = params
+                .try_into()
+                .context("failed to convert `wrpc:http` request to Wasmtime `wasi:http`")?;
             Ok(AcceptedInvocation {
                 context,
                 params: req,
@@ -1387,7 +1536,7 @@ pub trait OutgoingHandler: wrpc_transport::Client {
                 http::Response<wasmtime_wasi_http::body::HyperIncomingBody>,
                 wasmtime_wasi_http::bindings::http::types::ErrorCode,
             >,
-            impl Stream<Item = anyhow::Error>,
+            impl Stream<Item = OutgoingBodyError<wasmtime_wasi_http::bindings::http::types::ErrorCode>>,
             Self::Transmission,
         )>,
     > + Send;
@@ -1434,104 +1583,27 @@ impl<T: wrpc_transport::Client> OutgoingHandler for T {
     #[instrument(level = "trace", skip_all)]
     async fn invoke_handle_wasmtime(
         &self,
-        wasmtime_wasi_http::types::OutgoingRequest {
-            use_tls: _,
-            authority,
-            request,
-            connect_timeout,
-            first_byte_timeout,
-            between_bytes_timeout,
-        }: wasmtime_wasi_http::types::OutgoingRequest,
+        request: wasmtime_wasi_http::types::OutgoingRequest,
     ) -> anyhow::Result<(
         Result<
             http::Response<wasmtime_wasi_http::body::HyperIncomingBody>,
             wasmtime_wasi_http::bindings::http::types::ErrorCode,
         >,
-        impl Stream<Item = anyhow::Error>,
+        impl Stream<Item = OutgoingBodyError<wasmtime_wasi_http::bindings::http::types::ErrorCode>>,
         Self::Transmission,
     )> {
-        let (
-            http::request::Parts {
-                ref method,
-                uri,
-                headers,
-                ..
-            },
-            body,
-        ) = request.into_parts();
-        let headers = try_header_map_to_fields(headers)?;
-        let (errors_tx, errors_rx) = tokio::sync::mpsc::channel(1);
-        let (trailers_tx, mut trailers_rx) = tokio::sync::mpsc::channel(1);
-        let (resp, tx) = OutgoingHandler::invoke_handle(
-            self,
-            Request {
-                body: http_body_util::BodyStream::new(body).filter_map(move |frame| {
-                    let errors_tx = errors_tx.clone();
-                    let trailers_tx = trailers_tx.clone();
-                    async move {
-                        match frame {
-                            Ok(frame) => match frame.into_data() {
-                                Ok(buf) => Some(buf),
-                                Err(trailers) => match trailers.into_trailers() {
-                                    Ok(trailers) => match try_header_map_to_fields(trailers) {
-                                        Ok(trailers) => {
-                                            if trailers_tx.send(trailers).await.is_err() {
-                                                let _ = errors_tx
-                                                    .send(anyhow::anyhow!(
-                                                        "frame is neither data, nor trailers"
-                                                    ))
-                                                    .await;
-                                            }
-                                            None
-                                        }
-                                        Err(err) => {
-                                            let _ = errors_tx.send(err).await;
-                                            None
-                                        }
-                                    },
-                                    Err(_) => {
-                                        let _ = errors_tx
-                                            .send(anyhow::anyhow!(
-                                                "frame is neither data, nor trailers"
-                                            ))
-                                            .await;
-                                        None
-                                    }
-                                },
-                            },
-                            Err(err) => {
-                                let _ = errors_tx
-                                    .send(anyhow::anyhow!("body stream failed with error {err:?}"))
-                                    .await;
-                                None
-                            }
-                        }
-                    }
-                }),
-                trailers: async move { trailers_rx.recv().await },
-                method: method.into(),
-                path_with_query: uri.path_and_query().map(ToString::to_string),
-                scheme: uri.scheme().map(Into::into),
-                authority: Some(authority),
-                headers,
-            },
-            Some(RequestOptions {
-                connect_timeout: Some(connect_timeout),
-                first_byte_timeout: Some(first_byte_timeout),
-                between_bytes_timeout: Some(between_bytes_timeout),
-            }),
-        )
-        .await
-        .context("failed to invoke `wrpc:http/outgoing-handler.handle`")?;
-        let errors_rx = tokio_stream::wrappers::ReceiverStream::new(errors_rx);
+        let (req, opts, errors) = try_wasmtime_to_outgoing_request(request)?;
+        let (resp, tx) = OutgoingHandler::invoke_handle(self, req, Some(opts))
+            .await
+            .context("failed to invoke `wrpc:http/outgoing-handler.handle`")?;
         match resp {
             Ok(resp) => {
                 let resp = resp
                     .try_into()
                     .context("failed to convert `wrpc:http` response to Wasmtime `wasi:http`")?;
-                Ok((Ok(resp), errors_rx, tx))
+                Ok((Ok(resp), errors, tx))
             }
-            Err(code) => Ok((Err(code.into()), errors_rx, tx)),
+            Err(code) => Ok((Err(code.into()), errors, tx)),
         }
     }
 
