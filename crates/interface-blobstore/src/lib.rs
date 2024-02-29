@@ -279,7 +279,8 @@ pub trait Blobstore: wrpc_transport::Client {
 
     fn invoke_delete_objects(
         &self,
-        ids: Vec<ObjectId>,
+        container: String,
+        objects: Vec<String>,
     ) -> impl Future<Output = anyhow::Result<(Result<(), String>, Self::Transmission)>> + Send;
     fn serve_delete_objects(
         &self,
@@ -373,7 +374,7 @@ impl<T: wrpc_transport::Client> Blobstore for T {
                     Item = anyhow::Result<
                         AcceptedInvocation<
                             T::Context,
-                            Vec<ObjectId>,
+                            (String, Vec<String>),
                             T::Subject,
                             <T::Acceptor as Acceptor>::Transmitter,
                         >,
@@ -544,10 +545,15 @@ impl<T: wrpc_transport::Client> Blobstore for T {
 
     async fn invoke_delete_objects(
         &self,
-        ids: Vec<ObjectId>,
+        container: String,
+        objects: Vec<String>,
     ) -> anyhow::Result<(Result<(), String>, Self::Transmission)> {
-        self.invoke_static("wrpc:blobstore/blobstore@0.1.0", "delete-objects", ids)
-            .await
+        self.invoke_static(
+            "wrpc:blobstore/blobstore@0.1.0",
+            "delete-objects",
+            (container, objects),
+        )
+        .await
     }
     async fn serve_delete_objects(&self) -> anyhow::Result<Self::DeleteObjectsInvocationStream> {
         self.serve_static("wrpc:blobstore/blobstore@0.1.0", "delete-objects")

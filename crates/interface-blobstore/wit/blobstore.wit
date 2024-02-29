@@ -25,7 +25,7 @@ interface blobstore {
 
     copy-object: func(src: object-id, dest: object-id) -> result<_, string>;
     delete-object: func(id: object-id) -> result<_, string>;
-    delete-objects: func(ids: list<object-id>) -> result<_, string>;
+    delete-objects: func(container: string, objects: list<string>) -> result<_, string>;
     get-container-data: func(id: object-id, start: u64, end: u64) -> result<stream<u8>, string>;
     get-object-info: func(id: object-id) -> result<object-metadata, string>;
     has-object: func(id: object-id) -> result<bool, string>;

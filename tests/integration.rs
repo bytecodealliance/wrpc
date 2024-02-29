@@ -1822,7 +1822,7 @@ async fn nats() -> anyhow::Result<()> {
         try_join!(
             async {
                 let AcceptedInvocation {
-                    params: ids,
+                    params: (container, objects),
                     result_subject,
                     transmitter,
                     ..
@@ -1831,19 +1831,8 @@ async fn nats() -> anyhow::Result<()> {
                     .await
                     .context("failed to receive invocation")?
                     .context("unexpected end of stream")?;
-                assert_eq!(
-                    ids,
-                    [
-                        ObjectId {
-                            container: "container".to_string(),
-                            object: "object".to_string(),
-                        },
-                        ObjectId {
-                            container: "new-container".to_string(),
-                            object: "new-object".to_string(),
-                        }
-                    ]
-                );
+                assert_eq!(container, "container".to_string());
+                assert_eq!(objects, ["object".to_string(), "new-object".to_string()]);
                 info!("transmit response");
                 transmitter
                     .transmit_static(result_subject, Ok::<_, String>(()))
@@ -1855,16 +1844,10 @@ async fn nats() -> anyhow::Result<()> {
             async {
                 info!("invoke function");
                 let (res, tx) = client
-                    .invoke_delete_objects(vec![
-                        ObjectId {
-                            container: "container".to_string(),
-                            object: "object".to_string(),
-                        },
-                        ObjectId {
-                            container: "new-container".to_string(),
-                            object: "new-object".to_string(),
-                        },
-                    ])
+                    .invoke_delete_objects(
+                        "container".to_string(),
+                        vec!["object".to_string(), "new-object".to_string()],
+                    )
                     .await
                     .context("failed to invoke")?;
                 let () = res.expect("invocation failed");
