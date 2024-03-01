@@ -468,7 +468,7 @@ impl InvocationPre {
             );
             self.payload.split_to(max_payload)
         } else {
-            Bytes::default()
+            mem::take(&mut self.payload)
         };
         trace!(rx = ?self.rx, payload = ?self.payload, "publish handshake");
         self.client
