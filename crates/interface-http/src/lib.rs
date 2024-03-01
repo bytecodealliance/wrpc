@@ -890,7 +890,7 @@ where
     Trailers: Future<Output = anyhow::Result<Option<Fields>>> + Unpin,
 {
     type Data = Bytes;
-    type Error = ErrorCode;
+    type Error = anyhow::Error;
 
     fn poll_frame(
         mut self: Pin<&mut Self>,
@@ -901,22 +901,15 @@ where
 
         match self.body.poll_next_unpin(cx) {
             Poll::Pending => Poll::Pending,
-            Poll::Ready(Some(Err(err))) => {
-                Poll::Ready(Some(Err(ErrorCode::InternalError(Some(err.to_string())))))
-            }
+            Poll::Ready(Some(Err(err))) => Poll::Ready(Some(Err(err))),
             Poll::Ready(Some(Ok(buf))) => Poll::Ready(Some(Ok(http_body::Frame::data(buf.into())))),
             Poll::Ready(None) => match self.trailers.poll_unpin(cx) {
                 Poll::Pending => Poll::Pending,
-                Poll::Ready(Err(err)) => {
-                    Poll::Ready(Some(Err(ErrorCode::InternalError(Some(err.to_string())))))
-                }
+                Poll::Ready(Err(err)) => Poll::Ready(Some(Err(err))),
                 Poll::Ready(Ok(None)) => Poll::Ready(None),
                 Poll::Ready(Ok(Some(trailers))) => {
                     let trailers = try_fields_to_header_map(trailers)
-                        .context("failed to convert trailer fields to header map")
-                        .map_err(|err| format!("{err:#}"))
-                        .map_err(Some)
-                        .map_err(ErrorCode::InternalError)?;
+                        .context("failed to convert trailer fields to header map")?;
                     Poll::Ready(Some(Ok(http_body::Frame::trailers(trailers))))
                 }
             },
@@ -925,7 +918,7 @@ where
 }
 
 #[cfg(feature = "http-body")]
-pub enum OutgoingBodyError<E> {
+pub enum HttpBodyError<E> {
     InvalidFrame,
     TrailerReceiverClosed,
     HeaderConversion(anyhow::Error),
@@ -933,53 +926,66 @@ pub enum OutgoingBodyError<E> {
 }
 
 #[cfg(feature = "http-body")]
-pub fn outgoing_body<E>(
+pub fn split_http_body<E>(
     body: impl http_body::Body<Data = Bytes, Error = E>,
 ) -> (
-    impl Stream<Item = Bytes>,
+    impl Stream<Item = Result<Bytes, HttpBodyError<E>>>,
     impl Future<Output = Option<Fields>>,
-    impl Stream<Item = OutgoingBodyError<E>>,
 ) {
-    let (errors_tx, errors_rx) = tokio::sync::mpsc::channel(1);
     let (trailers_tx, mut trailers_rx) = tokio::sync::mpsc::channel(1);
     let body = http_body_util::BodyStream::new(body).filter_map(move |frame| {
-        let errors_tx = errors_tx.clone();
         let trailers_tx = trailers_tx.clone();
         async move {
             match frame {
                 Ok(frame) => match frame.into_data() {
-                    Ok(buf) => Some(buf),
+                    Ok(buf) => Some(Ok(buf)),
                     Err(trailers) => match trailers.into_trailers() {
                         Ok(trailers) => match try_header_map_to_fields(trailers) {
                             Ok(trailers) => {
                                 if trailers_tx.send(trailers).await.is_err() {
-                                    let _ = errors_tx
-                                        .send(OutgoingBodyError::TrailerReceiverClosed)
-                                        .await;
+                                    Some(Err(HttpBodyError::TrailerReceiverClosed))
+                                } else {
+                                    None
                                 }
-                                None
                             }
-                            Err(err) => {
-                                let _ = errors_tx
-                                    .send(OutgoingBodyError::HeaderConversion(err))
-                                    .await;
-                                None
-                            }
+                            Err(err) => Some(Err(HttpBodyError::HeaderConversion(err))),
                         },
-                        Err(_) => {
-                            let _ = errors_tx.send(OutgoingBodyError::InvalidFrame).await;
-                            None
-                        }
+                        Err(_) => Some(Err(HttpBodyError::InvalidFrame)),
                     },
                 },
+                Err(err) => Some(Err(HttpBodyError::Body(err))),
+            }
+        }
+    });
+    let trailers = async move { trailers_rx.recv().await };
+    (body, trailers)
+}
+
+#[cfg(feature = "http-body")]
+#[instrument(level = "trace", skip_all)]
+pub fn split_outgoing_http_body<E>(
+    body: impl http_body::Body<Data = Bytes, Error = E>,
+) -> (
+    impl Stream<Item = Bytes>,
+    impl Future<Output = Option<Fields>>,
+    impl Stream<Item = HttpBodyError<E>>,
+) {
+    let (body, trailers) = split_http_body(body);
+    let (errors_tx, errors_rx) = tokio::sync::mpsc::channel(1);
+    let body = body.filter_map(move |res| {
+        let errors_tx = errors_tx.clone();
+        async move {
+            match res {
+                Ok(buf) => Some(buf),
                 Err(err) => {
-                    let _ = errors_tx.send(OutgoingBodyError::Body(err)).await;
+                    if errors_tx.send(err).await.is_err() {
+                        tracing::trace!("failed to send body error");
+                    }
                     None
                 }
             }
         }
     });
-    let trailers = async move { trailers_rx.recv().await };
     let errors_rx = tokio_stream::wrappers::ReceiverStream::new(errors_rx);
     (body, trailers, errors_rx)
 }
@@ -1047,12 +1053,61 @@ impl TryFrom<IncomingRequest> for http::Request<wasmtime_wasi_http::body::HyperI
                 body,
                 trailers: Box::pin(async { trailers.await.unwrap() }),
             }
-            .map_err(Into::into),
+            .map_err(|err| {
+                wasmtime_wasi_http::bindings::http::types::ErrorCode::InternalError(Some(format!(
+                    "{err:#}"
+                )))
+            }),
         ))
         .context("failed to construct request")
     }
 }
 
+/// Attempt converting [`http::Request`] to [`Request`].
+/// Values of `path_with_query`, `scheme` and `authority` will be taken from the
+/// request URI
+#[cfg(feature = "http-body")]
+#[instrument(level = "trace", skip_all)]
+pub fn try_http_to_outgoing_request<E>(
+    request: http::Request<impl http_body::Body<Data = Bytes, Error = E> + Send + 'static>,
+) -> anyhow::Result<(
+    Request<
+        impl Stream<Item = Bytes> + Send + 'static,
+        impl Future<Output = Option<Fields>> + Send + 'static,
+    >,
+    impl Stream<Item = HttpBodyError<E>>,
+)>
+where
+    E: Send + 'static,
+{
+    let (
+        http::request::Parts {
+            ref method,
+            uri,
+            headers,
+            ..
+        },
+        body,
+    ) = request.into_parts();
+    let headers = try_header_map_to_fields(headers)?;
+    let (body, trailers, errors) = split_outgoing_http_body(body);
+    Ok((
+        Request {
+            body,
+            trailers,
+            method: method.into(),
+            path_with_query: uri.path_and_query().map(ToString::to_string),
+            scheme: uri.scheme().map(Into::into),
+            authority: uri.authority().map(ToString::to_string),
+            headers,
+        },
+        errors,
+    ))
+}
+
+/// Attempt converting [`wasmtime_wasi_http::types::Request`] to [`Request`].
+/// Values of `path_with_query`, `scheme` and `authority` will be taken from the
+/// request URI.
 #[cfg(feature = "wasmtime-wasi-http")]
 #[instrument(level = "trace", skip_all)]
 pub fn try_wasmtime_to_outgoing_request(
@@ -1070,7 +1125,7 @@ pub fn try_wasmtime_to_outgoing_request(
         impl Future<Output = Option<Fields>> + Send + 'static,
     >,
     RequestOptions,
-    impl Stream<Item = OutgoingBodyError<wasmtime_wasi_http::bindings::http::types::ErrorCode>>,
+    impl Stream<Item = HttpBodyError<wasmtime_wasi_http::bindings::http::types::ErrorCode>>,
 )> {
     let (
         http::request::Parts {
@@ -1082,7 +1137,7 @@ pub fn try_wasmtime_to_outgoing_request(
         body,
     ) = request.into_parts();
     let headers = try_header_map_to_fields(headers)?;
-    let (body, trailers, errors) = outgoing_body(body);
+    let (body, trailers, errors) = split_outgoing_http_body(body);
     Ok((
         Request {
             body,
@@ -1237,6 +1292,31 @@ pub struct Response<Body, Trailers> {
     pub headers: Fields,
 }
 
+#[cfg(feature = "http-body")]
+impl TryFrom<IncomingResponse>
+    for http::Response<IncomingBody<IncomingInputStream, IncomingFields>>
+{
+    type Error = anyhow::Error;
+
+    fn try_from(
+        Response {
+            body,
+            trailers,
+            status,
+            headers,
+        }: IncomingResponse,
+    ) -> Result<Self, Self::Error> {
+        let mut resp = http::Response::builder().status(status);
+        let resp_headers = resp
+            .headers_mut()
+            .context("failed to construct header map")?;
+        *resp_headers = try_fields_to_header_map(headers)
+            .context("failed to convert header fields to header map")?;
+        resp.body(IncomingBody { body, trailers })
+            .context("failed to construct response")
+    }
+}
+
 #[cfg(feature = "wasmtime-wasi-http")]
 impl TryFrom<IncomingResponse> for http::Response<wasmtime_wasi_http::body::HyperIncomingBody> {
     type Error = anyhow::Error;
@@ -1265,7 +1345,11 @@ impl TryFrom<IncomingResponse> for http::Response<wasmtime_wasi_http::body::Hype
                 body,
                 trailers: Box::pin(async { trailers.await.unwrap() }),
             }
-            .map_err(Into::into),
+            .map_err(|err| {
+                wasmtime_wasi_http::bindings::http::types::ErrorCode::InternalError(Some(format!(
+                    "{err:#}"
+                )))
+            }),
         ))
         .context("failed to construct response")
     }
@@ -1280,7 +1364,7 @@ pub fn try_wasmtime_to_outgoing_response(
         impl Stream<Item = Bytes> + Send + 'static,
         impl Future<Output = Option<Fields>> + Send + 'static,
     >,
-    impl Stream<Item = OutgoingBodyError<wasmtime_wasi_http::bindings::http::types::ErrorCode>>,
+    impl Stream<Item = HttpBodyError<wasmtime_wasi_http::bindings::http::types::ErrorCode>>,
 )> {
     let (
         http::response::Parts {
@@ -1289,7 +1373,7 @@ pub fn try_wasmtime_to_outgoing_response(
         body,
     ) = response.into_parts();
     let headers = try_header_map_to_fields(headers)?;
-    let (body, trailers, errors) = outgoing_body(body);
+    let (body, trailers, errors) = split_outgoing_http_body(body);
     Ok((
         Response {
             body,
@@ -1425,6 +1509,33 @@ pub trait IncomingHandler: wrpc_transport::Client {
         Body: Stream<Item = Bytes> + Send + 'static,
         Trailers: Future<Output = Option<Fields>> + Send + 'static;
 
+    #[cfg(feature = "http-body")]
+    fn invoke_handle_http<E: Send + 'static>(
+        &self,
+        request: http::Request<impl http_body::Body<Data = Bytes, Error = E> + Send + 'static>,
+    ) -> impl Future<
+        Output = anyhow::Result<(
+            Result<http::Response<IncomingBody<IncomingInputStream, IncomingFields>>, ErrorCode>,
+            Self::Transmission,
+            impl Stream<Item = HttpBodyError<E>>,
+        )>,
+    > + Send;
+
+    #[cfg(feature = "hyper")]
+    fn invoke_handle_hyper(
+        &self,
+        request: hyper::Request<hyper::body::Incoming>,
+    ) -> impl Future<
+        Output = anyhow::Result<(
+            Result<
+                hyper::Response<IncomingBody<IncomingInputStream, IncomingFields>>,
+                anyhow::Error,
+            >,
+            Self::Transmission,
+            impl Stream<Item = HttpBodyError<hyper::Error>>,
+        )>,
+    > + Send;
+
     fn serve_handle(
         &self,
     ) -> impl Future<Output = anyhow::Result<Self::HandleInvocationStream>> + Send;
@@ -1478,6 +1589,58 @@ impl<T: wrpc_transport::Client> IncomingHandler for T {
     {
         self.invoke_static("wrpc:http/incoming-handler@0.1.0", "handle", request)
             .await
+    }
+
+    #[cfg(feature = "http-body")]
+    #[instrument(level = "trace", skip_all)]
+    async fn invoke_handle_http<E: Send + 'static>(
+        &self,
+        request: http::Request<impl http_body::Body<Data = Bytes, Error = E> + Send + 'static>,
+    ) -> anyhow::Result<(
+        Result<http::Response<IncomingBody<IncomingInputStream, IncomingFields>>, ErrorCode>,
+        Self::Transmission,
+        impl Stream<Item = HttpBodyError<E>>,
+    )> {
+        let (request, errors) = try_http_to_outgoing_request(request).context(
+            "failed to convert incoming `http` request to outgoing `wrpc:http/types.request`",
+        )?;
+        let (response, tx) = IncomingHandler::invoke_handle(self, request)
+            .await
+            .context("failed to invoke `wrpc:http/incoming-handler.handle`")?;
+        match response {
+            Ok(response) => {
+                let response = response.try_into().context(
+                "failed to convert incoming `wrpc:http/types.response` to outgoing `http` response",
+            )?;
+                Ok((Ok(response), tx, errors))
+            }
+            Err(code) => Ok((Err(code), tx, errors)),
+        }
+    }
+
+    #[cfg(feature = "hyper")]
+    #[instrument(level = "trace", skip_all)]
+    async fn invoke_handle_hyper(
+        &self,
+        request: hyper::Request<hyper::body::Incoming>,
+    ) -> anyhow::Result<(
+        Result<hyper::Response<IncomingBody<IncomingInputStream, IncomingFields>>, anyhow::Error>,
+        Self::Transmission,
+        impl Stream<Item = HttpBodyError<hyper::Error>>,
+    )> {
+        let (response, tx, errors) = self.invoke_handle_http(request).await?;
+        match response {
+            Ok(response) => {
+                let response: hyper::Response<IncomingBody<IncomingInputStream, IncomingFields>> = response.try_into().context("failed to convert incoming `wrpc:http/types.response` to hyper outgoing response")?;
+                let (parts, body) = response.into_parts();
+                Ok((Ok(hyper::Response::from_parts(parts, body)), tx, errors))
+            }
+            Err(code) => Ok((
+                Err(anyhow::anyhow!("handler failed with code `{code:?}`")),
+                tx,
+                errors,
+            )),
+        }
     }
 
     #[instrument(level = "trace", skip_all)]
@@ -1536,7 +1699,7 @@ pub trait OutgoingHandler: wrpc_transport::Client {
                 http::Response<wasmtime_wasi_http::body::HyperIncomingBody>,
                 wasmtime_wasi_http::bindings::http::types::ErrorCode,
             >,
-            impl Stream<Item = OutgoingBodyError<wasmtime_wasi_http::bindings::http::types::ErrorCode>>,
+            impl Stream<Item = HttpBodyError<wasmtime_wasi_http::bindings::http::types::ErrorCode>>,
             Self::Transmission,
         )>,
     > + Send;
@@ -1589,7 +1752,7 @@ impl<T: wrpc_transport::Client> OutgoingHandler for T {
             http::Response<wasmtime_wasi_http::body::HyperIncomingBody>,
             wasmtime_wasi_http::bindings::http::types::ErrorCode,
         >,
-        impl Stream<Item = OutgoingBodyError<wasmtime_wasi_http::bindings::http::types::ErrorCode>>,
+        impl Stream<Item = HttpBodyError<wasmtime_wasi_http::bindings::http::types::ErrorCode>>,
         Self::Transmission,
     )> {
         let (req, opts, errors) = try_wasmtime_to_outgoing_request(request)?;

@@ -38,6 +38,11 @@ wrpc-types = { workspace = true }
 anyhow = { workspace = true }
 async-nats = { workspace = true }
 futures = { workspace = true, features = ["async-await"] }
+http-body = { workspace = true }
+http-body-util = { workspace = true }
+hyper = { workspace = true, features = ["server"] }
+hyper-util = { workspace = true, features = ["server-auto", "tokio"] }
+reqwest = { workspace = true }
 tokio = { workspace = true, features = ["process"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = [
@@ -48,6 +53,7 @@ tracing-subscriber = { workspace = true, features = [
 wrpc-interface-http = { workspace = true, features = [
     "http",
     "http-body",
+    "hyper",
     "wasmtime-wasi-http",
 ] }
 
@@ -60,7 +66,10 @@ futures = { version = "0.3", default-features = false }
 http = { version = "1", default-features = false }
 http-body = { version = "1", default-features = false }
 http-body-util = { version = "0.1", default-features = false }
+hyper = { version = "1", default-features = false }
+hyper-util = { version = "0.1", default-features = false }
 leb128 = { version = "0.2", default-features = false }
+reqwest = { version = "0.11", default-features = false }
 serde = { version = "1", default-features = false }
 serde_json = { version = "1", default-features = false }
 tokio = { version = "1", default-features = false }
