@@ -3087,7 +3087,9 @@ pub trait Invocation {
 pub struct IncomingInvocation<Ctx, Subject, Subscriber, Acceptor> {
     pub context: Ctx,
     pub payload: Bytes,
-    pub reply_subject: Subject,
+    pub param_subject: Subject,
+    pub error_subject: Subject,
+    pub handshake_subject: Subject,
     pub subscriber: Subscriber,
     pub acceptor: Acceptor,
 }
@@ -3162,17 +3164,23 @@ pub trait Client: Sync {
             move |IncomingInvocation {
                       context,
                       payload,
-                      reply_subject,
+                      param_subject,
+                      error_subject,
+                      handshake_subject,
                       subscriber,
                       acceptor,
                   }| async move {
-                let (mut rx, nested) = try_join!(
-                    subscriber.subscribe(reply_subject.clone()),
-                    T::subscribe(&subscriber, reply_subject.clone())
+                // TODO: Subscribe for errors
+                let (mut rx, nested, errors) = try_join!(
+                    subscriber.subscribe(param_subject.clone()),
+                    T::subscribe(&subscriber, param_subject.clone()),
+                    subscriber.subscribe(error_subject),
                 )
                 .context("failed to subscribe for parameters")?;
+                // TODO: Propagate the error stream
+                _ = errors;
                 let (result_subject, error_subject, transmitter) = acceptor
-                    .accept(reply_subject)
+                    .accept(handshake_subject)
                     .await
                     .context("failed to accept invocation")?;
                 let (params, _) = T::receive(payload, &mut rx, nested)
@@ -3218,21 +3226,26 @@ pub trait Client: Sync {
             move |IncomingInvocation {
                       context,
                       payload,
-                      reply_subject,
+                      handshake_subject,
+                      param_subject,
+                      error_subject,
                       subscriber,
                       acceptor,
                   }| {
                 let params = Arc::clone(&params);
                 async move {
-                    let (mut rx, nested) = try_join!(
-                        subscriber.subscribe(reply_subject.clone()),
-                        subscriber.subscribe_tuple(reply_subject.clone(), params.as_ref()),
+                    let (mut rx, nested, errors) = try_join!(
+                        subscriber.subscribe(param_subject.clone()),
+                        subscriber.subscribe_tuple(param_subject.clone(), params.as_ref()),
+                        subscriber.subscribe(error_subject),
                     )
                     .context("failed to subscribe for parameters")?;
                     let (result_subject, error_subject, transmitter) = acceptor
-                        .accept(reply_subject)
+                        .accept(handshake_subject)
                         .await
                         .context("failed to accept invocation")?;
+                    // TODO: Propagate the error stream
+                    _ = errors;
                     let (params, _) = ReceiveContext::receive_tuple_context(
                         params.as_ref(),
                         payload,

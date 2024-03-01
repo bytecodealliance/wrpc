@@ -498,7 +498,7 @@ impl InvocationPre {
                     .await
                     .context("failed to receive handshake response")?;
                 let Message { reply, .. } = msg.try_into()?;
-                let reply = reply.map(Subject);
+                let reply = reply.map(|reply| Subject(format!("{reply}.params").into()));
                 let tx = Transmitter { nats: self.nats };
                 try_join!(
                     async {
@@ -641,7 +641,9 @@ impl wrpc_transport::Client for Client {
                     Ok(IncomingInvocation {
                         context: headers,
                         payload,
-                        reply_subject: Subject(rx.clone()),
+                        param_subject: Subject(format!("{rx}.params").into()),
+                        error_subject: Subject(format!("{rx}.error").into()),
+                        handshake_subject: Subject(rx),
                         subscriber: Subscriber::new(Arc::clone(&nats)),
                         acceptor: Acceptor { nats, tx },
                     })
