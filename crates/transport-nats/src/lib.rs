@@ -1,11 +1,13 @@
+use core::fmt::{self, Display};
 use core::future::Future;
 use core::pin::Pin;
 use core::task::{Context, Poll};
 use core::{mem, str};
 
+use std::error::Error;
 use std::sync::Arc;
 
-use anyhow::{anyhow, ensure, Context as _};
+use anyhow::{anyhow, Context as _};
 use async_nats::subject::ToSubject;
 use async_nats::{HeaderMap, ServerInfo, StatusCode};
 use async_trait::async_trait;
@@ -169,6 +171,23 @@ impl Client {
     }
 }
 
+fn split_chunk(nats: &async_nats::Client, payload: &mut Bytes) -> Option<Bytes> {
+    let ServerInfo { max_payload, .. } = nats.server_info();
+    if payload.len() > max_payload {
+        if max_payload == 0 {
+            return None;
+        }
+        trace!(
+            payload = ?payload,
+            max_payload,
+            "payload length exceeds maximum, truncate"
+        );
+        Some(payload.split_to(max_payload))
+    } else {
+        Some(mem::take(payload))
+    }
+}
+
 #[derive(Debug)]
 pub struct ByteSubscription {
     rx: async_nats::Subscriber,
@@ -257,6 +276,18 @@ pub struct Transmitter {
     nats: Arc<async_nats::Client>,
 }
 
+impl From<Client> for Transmitter {
+    fn from(Client { nats, .. }: Client) -> Self {
+        Self { nats }
+    }
+}
+
+impl From<InvocationPre> for Transmitter {
+    fn from(InvocationPre { nats, .. }: InvocationPre) -> Self {
+        Self { nats }
+    }
+}
+
 // TODO: Refactor transmission to avoid duplicating
 
 impl Transmitter {
@@ -266,45 +297,55 @@ impl Transmitter {
         subject: Subject,
         headers: HeaderMap,
         mut payload: Bytes,
-    ) -> Result<(), async_nats::PublishError> {
-        let ServerInfo { max_payload, .. } = self.nats.server_info();
-        let mut tail = if payload.len() > max_payload {
-            assert!(max_payload > 0);
-            payload.split_off(max_payload)
-        } else {
-            Bytes::default()
-        };
-        trace!(
-            ?tail,
-            ?payload,
-            max_payload,
-            "publish initial payload chunk"
-        );
+    ) -> Result<(), PublishError> {
+        let chunk = split_chunk(&self.nats, &mut payload).ok_or(PublishError::MissingServerInfo)?;
+        trace!(?chunk, ?payload, "publish initial payload chunk");
         let Subject(subject) = subject;
         self.nats
-            .publish_with_headers(subject.clone(), headers.clone(), payload)
-            .await?;
-        while !tail.is_empty() {
-            let mut payload = tail;
-            tail = if payload.len() > max_payload {
-                assert!(max_payload > 0);
-                payload.split_off(max_payload)
-            } else {
-                Bytes::default()
-            };
-            trace!(?tail, ?payload, max_payload, "publish payload chunk");
+            .publish_with_headers(subject.clone(), headers.clone(), chunk)
+            .await
+            .map_err(PublishError::Publish)?;
+        while !payload.is_empty() {
+            let chunk =
+                split_chunk(&self.nats, &mut payload).ok_or(PublishError::MissingServerInfo)?;
+            trace!(?chunk, ?payload, "publish payload chunk");
             self.nats
-                .publish_with_headers(subject.clone(), headers.clone(), payload)
-                .await?;
+                .publish_with_headers(subject.clone(), headers.clone(), chunk)
+                .await
+                .map_err(PublishError::Publish)?;
         }
         Ok(())
+    }
+}
+
+#[derive(Debug)]
+pub enum PublishError {
+    Publish(async_nats::PublishError),
+    MissingServerInfo,
+}
+
+impl Error for PublishError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Publish(err) => Some(err),
+            Self::MissingServerInfo => None,
+        }
+    }
+}
+
+impl Display for PublishError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PublishError::Publish(err) => err.fmt(f),
+            PublishError::MissingServerInfo => write!(f, "server info missing"),
+        }
     }
 }
 
 #[async_trait]
 impl wrpc_transport::Transmitter for Transmitter {
     type Subject = Subject;
-    type PublishError = async_nats::PublishError;
+    type PublishError = PublishError;
 
     #[instrument(level = "trace", ret, skip(self))]
     async fn transmit(
@@ -312,31 +353,21 @@ impl wrpc_transport::Transmitter for Transmitter {
         subject: Self::Subject,
         mut payload: Bytes,
     ) -> Result<(), Self::PublishError> {
-        let ServerInfo { max_payload, .. } = self.nats.server_info();
-        let mut tail = if payload.len() > max_payload {
-            assert!(max_payload > 0);
-            payload.split_off(max_payload)
-        } else {
-            Bytes::default()
-        };
-        trace!(
-            ?tail,
-            ?payload,
-            max_payload,
-            "publish initial payload chunk"
-        );
+        let chunk = split_chunk(&self.nats, &mut payload).ok_or(PublishError::MissingServerInfo)?;
+        trace!(?chunk, ?payload, "publish initial payload chunk");
         let Subject(subject) = subject;
-        self.nats.publish(subject.clone(), payload).await?;
-        while !tail.is_empty() {
-            let mut payload = tail;
-            tail = if payload.len() > max_payload {
-                assert!(max_payload > 0);
-                payload.split_off(max_payload)
-            } else {
-                Bytes::default()
-            };
-            trace!(?tail, ?payload, max_payload, "publish payload chunk");
-            self.nats.publish(subject.clone(), payload).await?;
+        self.nats
+            .publish(subject.clone(), chunk)
+            .await
+            .map_err(PublishError::Publish)?;
+        while !payload.is_empty() {
+            let chunk =
+                split_chunk(&self.nats, &mut payload).ok_or(PublishError::MissingServerInfo)?;
+            trace!(?chunk, ?payload, "publish payload chunk");
+            self.nats
+                .publish(subject.clone(), chunk)
+                .await
+                .map_err(PublishError::Publish)?;
         }
         Ok(())
     }
@@ -380,7 +411,7 @@ impl Invocation {
             },
         )?;
         Ok(InvocationPre {
-            client: self.client,
+            nats: self.client.nats,
             tx,
             payload,
             handshake,
@@ -408,7 +439,7 @@ impl wrpc_transport::Invocation for Invocation {
 }
 
 pub struct InvocationPre {
-    client: Client,
+    nats: Arc<async_nats::Client>,
     tx: Option<AsyncValue>,
     rx: async_nats::Subject,
     payload: Bytes,
@@ -431,22 +462,10 @@ impl InvocationPre {
         mut self,
         subject: impl ToSubject,
     ) -> anyhow::Result<(Transmission, impl Future<Output = ()>)> {
-        let ServerInfo { max_payload, .. } = self.client.nats.server_info();
-        let payload = if self.payload.len() > max_payload {
-            ensure!(max_payload > 0);
-            trace!(
-                payload = ?self.payload,
-                max_payload,
-                "payload length exceeds maximum, truncate"
-            );
-            self.payload.split_to(max_payload)
-        } else {
-            mem::take(&mut self.payload)
-        };
-        trace!(rx = ?self.rx, payload = ?self.payload, "publish handshake");
-        self.client
-            .nats
-            .publish_with_reply(subject, self.rx.clone(), payload)
+        let chunk = split_chunk(&self.nats, &mut self.payload).context("server info missing")?;
+        trace!(rx = ?self.rx, ?chunk, "publish handshake");
+        self.nats
+            .publish_with_reply(subject, self.rx.clone(), chunk)
             .await
             .context("failed to publish handshake")?;
         self.finish().await
@@ -458,22 +477,10 @@ impl InvocationPre {
         subject: impl ToSubject,
         headers: HeaderMap,
     ) -> anyhow::Result<(Transmission, impl Future<Output = ()>)> {
-        let ServerInfo { max_payload, .. } = self.client.nats.server_info();
-        let payload = if self.payload.len() > max_payload {
-            ensure!(max_payload > 0);
-            trace!(
-                payload = ?self.payload,
-                max_payload,
-                "payload length exceeds maximum, truncate"
-            );
-            self.payload.split_to(max_payload)
-        } else {
-            mem::take(&mut self.payload)
-        };
-        trace!(rx = ?self.rx, payload = ?self.payload, "publish handshake");
-        self.client
-            .nats
-            .publish_with_reply_and_headers(subject, self.rx.clone(), headers, payload)
+        let chunk = split_chunk(&self.nats, &mut self.payload).context("server info missing")?;
+        trace!(rx = ?self.rx, ?chunk, "publish handshake");
+        self.nats
+            .publish_with_reply_and_headers(subject, self.rx.clone(), headers, chunk)
             .await
             .context("failed to publish handshake")?;
         self.finish().await
@@ -492,9 +499,7 @@ impl InvocationPre {
                     .context("failed to receive handshake response")?;
                 let Message { reply, .. } = msg.try_into()?;
                 let reply = reply.map(Subject);
-                let tx = Transmitter {
-                    nats: self.client.nats,
-                };
+                let tx = Transmitter { nats: self.nats };
                 try_join!(
                     async {
                         if let Some(v) = self.tx {
