@@ -2730,6 +2730,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-nats",
+ "bytes",
  "futures",
  "http-body 1.0.0",
  "http-body-util",
@@ -2804,7 +2805,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc-transport"
-version = "0.15.0"
+version = "0.15.1"
 dependencies = [
  "anyhow",
  "async-nats",

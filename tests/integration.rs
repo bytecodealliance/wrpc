@@ -1,4 +1,5 @@
 use core::iter::zip;
+use core::str;
 use core::time::Duration;
 
 use std::net::Ipv6Addr;
@@ -6,6 +7,7 @@ use std::process::ExitStatus;
 use std::sync::Arc;
 
 use anyhow::{anyhow, bail, Context, Result};
+use bytes::Bytes;
 use futures::{stream, StreamExt as _, TryStreamExt as _};
 use hyper::header::HOST;
 use hyper::Uri;
@@ -1172,7 +1174,7 @@ async fn nats() -> anyhow::Result<()> {
                             .await
                             .context("failed to receive body item")?
                             .context("unexpected end of body stream")?;
-                        assert_eq!(String::from_utf8(item).unwrap(), "element");
+                        assert_eq!(str::from_utf8(&item).unwrap(), "element");
                         info!("await request body end");
                         let item = body
                             .try_next()
@@ -1437,7 +1439,7 @@ async fn nats() -> anyhow::Result<()> {
                             .await
                             .context("failed to receive body item")?
                             .context("unexpected end of body stream")?;
-                        assert_eq!(String::from_utf8(item).unwrap(), "element");
+                        assert_eq!(str::from_utf8(&item).unwrap(), "element");
                         info!("await request body end");
                         let item = body
                             .try_next()
@@ -2052,7 +2054,7 @@ async fn nats() -> anyhow::Result<()> {
                             .try_collect::<Vec<_>>()
                             .await
                             .context("failed to collect data")?;
-                        assert_eq!(data, [[0x42, 0xff]]);
+                        assert_eq!(data, [Bytes::from([0x42, 0xff].as_slice())]);
                         Ok(())
                     },
                     async {
@@ -2276,7 +2278,7 @@ async fn nats() -> anyhow::Result<()> {
                     }
                 );
                 let data = data
-                    .map_ok(|buf| String::from_utf8(buf).unwrap())
+                    .map_ok(|buf| String::from_utf8(buf.to_vec()).unwrap())
                     .try_collect::<Vec<_>>()
                     .await
                     .context("failed to collect data")?;
@@ -2443,7 +2445,7 @@ async fn nats() -> anyhow::Result<()> {
                             .try_collect::<Vec<_>>()
                             .await
                             .context("failed to collect data")?;
-                        assert_eq!(data, [[0x42, 0xff]]);
+                        assert_eq!(data, [Bytes::from([0x42, 0xff].as_slice())]);
                         info!("data stream verified");
                         Ok(())
                     },
@@ -2476,7 +2478,7 @@ async fn nats() -> anyhow::Result<()> {
                 assert_eq!(bucket, "bucket");
                 assert_eq!(key, "key");
                 let value = value
-                    .map_ok(|buf| String::from_utf8(buf).unwrap())
+                    .map_ok(|buf| String::from_utf8(buf.to_vec()).unwrap())
                     .try_collect::<Vec<_>>()
                     .await
                     .context("failed to collect data")?;

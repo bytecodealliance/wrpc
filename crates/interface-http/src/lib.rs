@@ -886,7 +886,7 @@ pub struct IncomingBody<Body, Trailers> {
 #[cfg(feature = "http-body")]
 impl<Body, Trailers> http_body::Body for IncomingBody<Body, Trailers>
 where
-    Body: Stream<Item = anyhow::Result<Vec<u8>>> + Unpin,
+    Body: Stream<Item = anyhow::Result<Bytes>> + Unpin,
     Trailers: Future<Output = anyhow::Result<Option<Fields>>> + Unpin,
 {
     type Data = Bytes;
@@ -902,7 +902,7 @@ where
         match self.body.poll_next_unpin(cx) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Some(Err(err))) => Poll::Ready(Some(Err(err))),
-            Poll::Ready(Some(Ok(buf))) => Poll::Ready(Some(Ok(http_body::Frame::data(buf.into())))),
+            Poll::Ready(Some(Ok(buf))) => Poll::Ready(Some(Ok(http_body::Frame::data(buf)))),
             Poll::Ready(None) => match self.trailers.poll_unpin(cx) {
                 Poll::Pending => Poll::Pending,
                 Poll::Ready(Err(err)) => Poll::Ready(Some(Err(err))),

@@ -25,8 +25,7 @@ use wrpc_types::{Resource, Type};
 
 pub const PROTOCOL: &str = "wrpc.0.0.1";
 
-pub type IncomingInputStream =
-    Box<dyn Stream<Item = anyhow::Result<Vec<u8>>> + Send + Sync + Unpin>;
+pub type IncomingInputStream = Box<dyn Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin>;
 
 #[async_trait]
 pub trait Transmitter {
@@ -565,6 +564,20 @@ where
         )?;
         let nested = nested.map(Box::new);
         Ok(Some(AsyncSubscription::Stream { subscriber, nested }))
+    }
+}
+
+impl Subscribe for IncomingInputStream {
+    #[instrument(level = "trace", skip_all)]
+    async fn subscribe<T: Subscriber + Send + Sync>(
+        subscriber: &T,
+        subject: T::Subject,
+    ) -> Result<Option<AsyncSubscription<T::Stream>>, T::SubscribeError> {
+        let subscriber = subscriber.subscribe(subject).await?;
+        Ok(Some(AsyncSubscription::Stream {
+            subscriber,
+            nested: None,
+        }))
     }
 }
 
@@ -1907,6 +1920,67 @@ where
                 ensure!(payload.get_u8() == 0);
                 Ok((Box::new(stream::iter([Ok(els)])), payload))
             }
+        }
+    }
+}
+
+#[async_trait]
+impl Receive for IncomingInputStream {
+    #[instrument(level = "trace", skip_all)]
+    async fn receive<T>(
+        payload: impl Buf + Send + 'static,
+        rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
+        sub: Option<AsyncSubscription<T>>,
+    ) -> anyhow::Result<(Self, Box<dyn Buf + Send>)>
+    where
+        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin + 'static,
+    {
+        let Some((mut subscriber, _sub)) =
+            sub.map(AsyncSubscription::try_unwrap_stream).transpose()?
+        else {
+            bail!("stream subscription type mismatch")
+        };
+        trace!("decode stream");
+        let (buf, payload) = Bytes::receive_sync(payload, rx)
+            .await
+            .context("failed to receive bytes")?;
+        match buf.len() {
+            0 => {
+                let (items_tx, items_rx) = mpsc::channel(1);
+                let producer = spawn(async move {
+                    let mut payload: Box<dyn Buf + Send> = Box::new(Bytes::new());
+                    loop {
+                        match Bytes::receive_sync(payload, &mut subscriber).await {
+                            Ok((vs, _)) if vs.is_empty() => {
+                                trace!("stream end received, close stream");
+                                return;
+                            }
+                            Ok((vs, buf)) => {
+                                payload = buf;
+                                if let Err(err) = items_tx.send(Ok(vs)).await {
+                                    trace!(?err, "item receiver closed");
+                                    return;
+                                }
+                            }
+                            Err(err) => {
+                                trace!(?err, "stream producer encountered error");
+                                if let Err(err) = items_tx.send(Err(err)).await {
+                                    trace!(?err, "item receiver closed");
+                                }
+                                return;
+                            }
+                        }
+                    }
+                });
+                Ok((
+                    Box::new(StreamValue {
+                        producer,
+                        items: ReceiverStream::new(items_rx),
+                    }),
+                    payload,
+                ))
+            }
+            _ => Ok((Box::new(stream::iter([Ok(buf)])), payload)),
         }
     }
 }

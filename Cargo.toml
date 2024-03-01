@@ -37,6 +37,7 @@ wrpc-types = { workspace = true }
 [dev-dependencies]
 anyhow = { workspace = true }
 async-nats = { workspace = true }
+bytes = { workspace = true }
 futures = { workspace = true, features = ["async-await"] }
 http-body = { workspace = true }
 http-body-util = { workspace = true }
