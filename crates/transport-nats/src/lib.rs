@@ -141,11 +141,11 @@ impl Drop for Transmission {
 #[derive(Clone, Debug)]
 pub struct Client {
     nats: Arc<async_nats::Client>,
-    prefix: Arc<String>,
+    prefix: Arc<str>,
 }
 
 impl Client {
-    pub fn new(nats: impl Into<Arc<async_nats::Client>>, prefix: impl Into<Arc<String>>) -> Self {
+    pub fn new(nats: impl Into<Arc<async_nats::Client>>, prefix: impl Into<Arc<str>>) -> Self {
         Self {
             nats: nats.into(),
             prefix: prefix.into(),
