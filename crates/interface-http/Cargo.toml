@@ -1,6 +1,6 @@
 [package]
 name = "wrpc-interface-http"
-version = "0.13.0"
+version = "0.13.1"
 description = "wRPC HTTP interface"
 
 authors.workspace = true
@@ -11,9 +11,9 @@ repository.workspace = true
 
 [features]
 http = ["dep:http"]
-http-body = ["dep:http", "dep:http-body", "dep:http-body-util"]
+http-body = ["http", "dep:http-body", "dep:http-body-util", "dep:tokio-stream"]
 hyper = ["http-body", "dep:hyper"]
-wasmtime-wasi-http = ["http-body", "dep:tokio-stream", "dep:wasmtime-wasi-http"]
+wasmtime-wasi-http = ["http-body", "dep:wasmtime-wasi-http"]
 
 [dependencies]
 anyhow = { workspace = true, features = ["std"] }
