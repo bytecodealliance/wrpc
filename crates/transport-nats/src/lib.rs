@@ -10,7 +10,6 @@ use std::sync::Arc;
 use anyhow::{anyhow, Context as _};
 use async_nats::subject::ToSubject;
 use async_nats::{HeaderMap, ServerInfo, StatusCode};
-use async_trait::async_trait;
 use bytes::{Bytes, BytesMut};
 use futures::future::FutureExt as _;
 use futures::{Stream, StreamExt};
@@ -250,7 +249,6 @@ impl Subscriber {
     }
 }
 
-#[async_trait]
 impl wrpc_transport::Subscriber for Subscriber {
     type Subject = Subject;
     type Stream = ByteSubscription;
@@ -342,7 +340,6 @@ impl Display for PublishError {
     }
 }
 
-#[async_trait]
 impl wrpc_transport::Transmitter for Transmitter {
     type Subject = Subject;
     type PublishError = PublishError;

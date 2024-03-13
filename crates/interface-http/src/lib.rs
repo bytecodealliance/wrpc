@@ -158,13 +158,13 @@ impl EncodeSync for Method {
 impl Receive for Method {
     async fn receive<'a, T>(
         payload: impl Buf + Send + 'a,
-        rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
+        mut rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
         _sub: Option<AsyncSubscription<T>>,
     ) -> anyhow::Result<(Self, Box<dyn Buf + Send + 'a>)>
     where
-        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin + 'static,
+        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + 'static,
     {
-        let (discriminant, payload) = receive_discriminant(payload, rx).await?;
+        let (discriminant, payload) = receive_discriminant(payload, &mut rx).await?;
         match discriminant {
             0 => Ok((Self::Get, payload)),
             1 => Ok((Self::Head, payload)),
@@ -233,13 +233,13 @@ impl EncodeSync for Scheme {
 impl Receive for Scheme {
     async fn receive<'a, T>(
         payload: impl Buf + Send + 'a,
-        rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
+        mut rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
         _sub: Option<AsyncSubscription<T>>,
     ) -> anyhow::Result<(Self, Box<dyn Buf + Send + 'a>)>
     where
-        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin + 'static,
+        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + 'static,
     {
-        let (discriminant, payload) = receive_discriminant(payload, rx).await?;
+        let (discriminant, payload) = receive_discriminant(payload, &mut rx).await?;
         match discriminant {
             0 => Ok((Self::HTTP, payload)),
             1 => Ok((Self::HTTPS, payload)),
@@ -293,7 +293,7 @@ impl Receive for DnsErrorPayload {
         _sub: Option<AsyncSubscription<T>>,
     ) -> anyhow::Result<(Self, Box<dyn Buf + Send + 'a>)>
     where
-        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin + 'static,
+        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + 'static,
     {
         let (rcode, payload) = Receive::receive_sync(payload, rx)
             .await
@@ -368,7 +368,7 @@ impl Receive for TlsAlertReceivedPayload {
         _sub: Option<AsyncSubscription<T>>,
     ) -> anyhow::Result<(Self, Box<dyn Buf + Send + 'a>)>
     where
-        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin + 'static,
+        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + 'static,
     {
         let (alert_id, payload) = Receive::receive_sync(payload, rx)
             .await
@@ -445,7 +445,7 @@ impl Receive for FieldSizePayload {
         _sub: Option<AsyncSubscription<T>>,
     ) -> anyhow::Result<(Self, Box<dyn Buf + Send + 'a>)>
     where
-        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin + 'static,
+        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + 'static,
     {
         let (field_name, payload) = Receive::receive_sync(payload, rx)
             .await
@@ -725,13 +725,13 @@ impl EncodeSync for ErrorCode {
 impl Receive for ErrorCode {
     async fn receive<'a, T>(
         payload: impl Buf + Send + 'a,
-        rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
+        mut rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
         _sub: Option<AsyncSubscription<T>>,
     ) -> anyhow::Result<(Self, Box<dyn Buf + Send + 'a>)>
     where
-        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin + 'static,
+        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + 'static,
     {
-        let (discriminant, payload) = receive_discriminant(payload, rx).await?;
+        let (discriminant, payload) = receive_discriminant(payload, &mut rx).await?;
         match discriminant {
             0 => Ok((Self::DnsTimeout, payload)),
             1 => {
@@ -855,7 +855,7 @@ impl Receive for RequestOptions {
         _sub: Option<AsyncSubscription<T>>,
     ) -> anyhow::Result<(Self, Box<dyn Buf + Send + 'a>)>
     where
-        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin + 'static,
+        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + 'static,
     {
         let (connect_timeout, payload) = Receive::receive_sync(payload, rx)
             .await
@@ -1229,7 +1229,7 @@ impl Receive for IncomingRequest {
         sub: Option<AsyncSubscription<T>>,
     ) -> anyhow::Result<(Self, Box<dyn Buf + Send + 'a>)>
     where
-        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin + 'static,
+        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + 'static,
     {
         let mut sub = sub
             .map(AsyncSubscription::try_unwrap_record)
@@ -1451,7 +1451,7 @@ impl Receive for IncomingResponse {
         sub: Option<AsyncSubscription<T>>,
     ) -> anyhow::Result<(Self, Box<dyn Buf + Send + 'a>)>
     where
-        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin + 'static,
+        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + 'static,
     {
         let mut sub = sub
             .map(AsyncSubscription::try_unwrap_record)
