@@ -1,5 +1,4 @@
 use core::future::Future;
-use core::pin::Pin;
 
 use anyhow::Context as _;
 use async_trait::async_trait;
@@ -155,93 +154,149 @@ impl Receive for ObjectId {
     }
 }
 
-type StringInvocationStream<T> = Pin<
-    Box<
-        dyn Stream<
-                Item = anyhow::Result<
-                    AcceptedInvocation<
-                        <T as wrpc_transport::Client>::Context,
-                        String,
-                        <T as wrpc_transport::Client>::Subject,
-                        <<T as wrpc_transport::Client>::Acceptor as Acceptor>::Transmitter,
-                    >,
-                >,
-            > + Send,
-    >,
->;
-
-type ObjectIdInvocationStream<T> = Pin<
-    Box<
-        dyn Stream<
-                Item = anyhow::Result<
-                    AcceptedInvocation<
-                        <T as wrpc_transport::Client>::Context,
-                        ObjectId,
-                        <T as wrpc_transport::Client>::Subject,
-                        <<T as wrpc_transport::Client>::Acceptor as Acceptor>::Transmitter,
-                    >,
-                >,
-            > + Send,
-    >,
->;
-
 pub trait Blobstore: wrpc_transport::Client {
-    type ClearContainerInvocationStream;
-    type ContainerExistsInvocationStream;
-    type CreateContainerInvocationStream;
-    type DeleteContainerInvocationStream;
-    type GetContainerInfoInvocationStream;
-    type ListContainerObjectsInvocationStream;
-    type CopyObjectInvocationStream;
-    type DeleteObjectInvocationStream;
-    type DeleteObjectsInvocationStream;
-    type GetContainerDataInvocationStream;
-    type GetObjectInfoInvocationStream;
-    type HasObjectInvocationStream;
-    type MoveObjectInvocationStream;
-    type WriteContainerDataInvocationStream;
-
+    #[instrument(level = "trace", skip_all)]
     fn invoke_clear_container(
         &self,
         name: String,
-    ) -> impl Future<Output = anyhow::Result<(Result<(), String>, Self::Transmission)>> + Send;
+    ) -> impl Future<Output = anyhow::Result<(Result<(), String>, Self::Transmission)>> + Send {
+        self.invoke_static("wrpc:blobstore/blobstore@0.1.0", "clear-container", name)
+    }
+
+    #[instrument(level = "trace", skip_all)]
     fn serve_clear_container(
         &self,
-    ) -> impl Future<Output = anyhow::Result<Self::ClearContainerInvocationStream>> + Send;
+    ) -> impl Future<
+        Output = anyhow::Result<
+            impl Stream<
+                Item = anyhow::Result<
+                    AcceptedInvocation<
+                        <Self as wrpc_transport::Client>::Context,
+                        String,
+                        <Self as wrpc_transport::Client>::Subject,
+                        <<Self as wrpc_transport::Client>::Acceptor as Acceptor>::Transmitter,
+                    >,
+                >,
+            >,
+        >,
+    > + Send {
+        self.serve_static("wrpc:blobstore/blobstore@0.1.0", "clear-container")
+    }
 
+    #[instrument(level = "trace", skip_all)]
     fn invoke_container_exists(
         &self,
         name: String,
-    ) -> impl Future<Output = anyhow::Result<(Result<bool, String>, Self::Transmission)>> + Send;
+    ) -> impl Future<Output = anyhow::Result<(Result<bool, String>, Self::Transmission)>> + Send
+    {
+        self.invoke_static("wrpc:blobstore/blobstore@0.1.0", "container-exists", name)
+    }
+
+    #[instrument(level = "trace", skip_all)]
     fn serve_container_exists(
         &self,
-    ) -> impl Future<Output = anyhow::Result<Self::ContainerExistsInvocationStream>> + Send;
+    ) -> impl Future<
+        Output = anyhow::Result<
+            impl Stream<
+                Item = anyhow::Result<
+                    AcceptedInvocation<
+                        <Self as wrpc_transport::Client>::Context,
+                        String,
+                        <Self as wrpc_transport::Client>::Subject,
+                        <<Self as wrpc_transport::Client>::Acceptor as Acceptor>::Transmitter,
+                    >,
+                >,
+            >,
+        >,
+    > + Send {
+        self.serve_static("wrpc:blobstore/blobstore@0.1.0", "container-exists")
+    }
 
+    #[instrument(level = "trace", skip_all)]
     fn invoke_create_container(
         &self,
         name: String,
-    ) -> impl Future<Output = anyhow::Result<(Result<(), String>, Self::Transmission)>> + Send;
+    ) -> impl Future<Output = anyhow::Result<(Result<(), String>, Self::Transmission)>> + Send {
+        self.invoke_static("wrpc:blobstore/blobstore@0.1.0", "create-container", name)
+    }
+
+    #[instrument(level = "trace", skip_all)]
     fn serve_create_container(
         &self,
-    ) -> impl Future<Output = anyhow::Result<Self::CreateContainerInvocationStream>> + Send;
+    ) -> impl Future<
+        Output = anyhow::Result<
+            impl Stream<
+                Item = anyhow::Result<
+                    AcceptedInvocation<
+                        <Self as wrpc_transport::Client>::Context,
+                        String,
+                        <Self as wrpc_transport::Client>::Subject,
+                        <<Self as wrpc_transport::Client>::Acceptor as Acceptor>::Transmitter,
+                    >,
+                >,
+            >,
+        >,
+    > + Send {
+        self.serve_static("wrpc:blobstore/blobstore@0.1.0", "create-container")
+    }
 
+    #[instrument(level = "trace", skip_all)]
     fn invoke_delete_container(
         &self,
         name: String,
-    ) -> impl Future<Output = anyhow::Result<(Result<(), String>, Self::Transmission)>> + Send;
+    ) -> impl Future<Output = anyhow::Result<(Result<(), String>, Self::Transmission)>> + Send {
+        self.invoke_static("wrpc:blobstore/blobstore@0.1.0", "delete-container", name)
+    }
+
+    #[instrument(level = "trace", skip_all)]
     fn serve_delete_container(
         &self,
-    ) -> impl Future<Output = anyhow::Result<Self::DeleteContainerInvocationStream>> + Send;
+    ) -> impl Future<
+        Output = anyhow::Result<
+            impl Stream<
+                Item = anyhow::Result<
+                    AcceptedInvocation<
+                        <Self as wrpc_transport::Client>::Context,
+                        String,
+                        <Self as wrpc_transport::Client>::Subject,
+                        <<Self as wrpc_transport::Client>::Acceptor as Acceptor>::Transmitter,
+                    >,
+                >,
+            >,
+        >,
+    > + Send {
+        self.serve_static("wrpc:blobstore/blobstore@0.1.0", "delete-container")
+    }
 
+    #[instrument(level = "trace", skip_all)]
     fn invoke_get_container_info(
         &self,
         name: String,
     ) -> impl Future<Output = anyhow::Result<(Result<ContainerMetadata, String>, Self::Transmission)>>
-           + Send;
+           + Send {
+        self.invoke_static("wrpc:blobstore/blobstore@0.1.0", "get-container-info", name)
+    }
+    #[instrument(level = "trace", skip_all)]
     fn serve_get_container_info(
         &self,
-    ) -> impl Future<Output = anyhow::Result<Self::GetContainerInfoInvocationStream>> + Send;
+    ) -> impl Future<
+        Output = anyhow::Result<
+            impl Stream<
+                Item = anyhow::Result<
+                    AcceptedInvocation<
+                        <Self as wrpc_transport::Client>::Context,
+                        String,
+                        <Self as wrpc_transport::Client>::Subject,
+                        <<Self as wrpc_transport::Client>::Acceptor as Acceptor>::Transmitter,
+                    >,
+                >,
+            >,
+        >,
+    > + Send {
+        self.serve_static("wrpc:blobstore/blobstore@0.1.0", "get-container-info")
+    }
 
+    #[instrument(level = "trace", skip_all)]
     fn invoke_list_container_objects(
         &self,
         name: String,
@@ -255,37 +310,123 @@ pub trait Blobstore: wrpc_transport::Client {
             >,
             Self::Transmission,
         )>,
-    > + Send;
+    > + Send {
+        self.invoke_static(
+            "wrpc:blobstore/blobstore@0.1.0",
+            "list-container-objects",
+            (name, limit, offset),
+        )
+    }
+    #[instrument(level = "trace", skip_all)]
     fn serve_list_container_objects(
         &self,
-    ) -> impl Future<Output = anyhow::Result<Self::ListContainerObjectsInvocationStream>> + Send;
+    ) -> impl Future<
+        Output = anyhow::Result<
+            impl Stream<
+                Item = anyhow::Result<
+                    AcceptedInvocation<
+                        Self::Context,
+                        (String, Option<u64>, Option<u64>),
+                        Self::Subject,
+                        <Self::Acceptor as Acceptor>::Transmitter,
+                    >,
+                >,
+            >,
+        >,
+    > + Send {
+        self.serve_static("wrpc:blobstore/blobstore@0.1.0", "list-container-objects")
+    }
 
+    #[instrument(level = "trace", skip_all)]
     fn invoke_copy_object(
         &self,
         src: ObjectId,
         dest: ObjectId,
-    ) -> impl Future<Output = anyhow::Result<(Result<(), String>, Self::Transmission)>> + Send;
+    ) -> impl Future<Output = anyhow::Result<(Result<(), String>, Self::Transmission)>> + Send {
+        self.invoke_static("wrpc:blobstore/blobstore@0.1.0", "copy-object", (src, dest))
+    }
+
+    #[instrument(level = "trace", skip_all)]
     fn serve_copy_object(
         &self,
-    ) -> impl Future<Output = anyhow::Result<Self::CopyObjectInvocationStream>> + Send;
+    ) -> impl Future<
+        Output = anyhow::Result<
+            impl Stream<
+                Item = anyhow::Result<
+                    AcceptedInvocation<
+                        Self::Context,
+                        (ObjectId, ObjectId),
+                        Self::Subject,
+                        <Self::Acceptor as Acceptor>::Transmitter,
+                    >,
+                >,
+            >,
+        >,
+    > + Send {
+        self.serve_static("wrpc:blobstore/blobstore@0.1.0", "copy-object")
+    }
 
+    #[instrument(level = "trace", skip_all)]
     fn invoke_delete_object(
         &self,
         id: ObjectId,
-    ) -> impl Future<Output = anyhow::Result<(Result<(), String>, Self::Transmission)>> + Send;
+    ) -> impl Future<Output = anyhow::Result<(Result<(), String>, Self::Transmission)>> + Send {
+        self.invoke_static("wrpc:blobstore/blobstore@0.1.0", "delete-object", id)
+    }
+    #[instrument(level = "trace", skip_all)]
     fn serve_delete_object(
         &self,
-    ) -> impl Future<Output = anyhow::Result<Self::DeleteObjectInvocationStream>> + Send;
+    ) -> impl Future<
+        Output = anyhow::Result<
+            impl Stream<
+                    Item = anyhow::Result<
+                        AcceptedInvocation<
+                            <Self as wrpc_transport::Client>::Context,
+                            ObjectId,
+                            <Self as wrpc_transport::Client>::Subject,
+                            <<Self as wrpc_transport::Client>::Acceptor as Acceptor>::Transmitter,
+                        >,
+                    >,
+                > + Send,
+        >,
+    > + Send {
+        self.serve_static("wrpc:blobstore/blobstore@0.1.0", "delete-object")
+    }
 
+    #[instrument(level = "trace", skip_all)]
     fn invoke_delete_objects(
         &self,
         container: String,
         objects: Vec<String>,
-    ) -> impl Future<Output = anyhow::Result<(Result<(), String>, Self::Transmission)>> + Send;
+    ) -> impl Future<Output = anyhow::Result<(Result<(), String>, Self::Transmission)>> + Send {
+        self.invoke_static(
+            "wrpc:blobstore/blobstore@0.1.0",
+            "delete-objects",
+            (container, objects),
+        )
+    }
+
+    #[instrument(level = "trace", skip_all)]
     fn serve_delete_objects(
         &self,
-    ) -> impl Future<Output = anyhow::Result<Self::DeleteObjectsInvocationStream>> + Send;
+    ) -> impl Future<
+        Output = anyhow::Result<
+            impl Stream<
+                    Item = anyhow::Result<
+                        AcceptedInvocation<
+                            <Self as wrpc_transport::Client>::Context,
+                            (String, Vec<String>),
+                            <Self as wrpc_transport::Client>::Subject,
+                            <<Self as wrpc_transport::Client>::Acceptor as Acceptor>::Transmitter,
+                        >,
+                    >,
+                > + Send,
+        >,
+    > + Send {
+        self.serve_static("wrpc:blobstore/blobstore@0.1.0", "delete-objects")
+    }
 
+    #[instrument(level = "trace", skip_all)]
     fn invoke_get_container_data(
         &self,
         id: ObjectId,
@@ -293,335 +434,127 @@ pub trait Blobstore: wrpc_transport::Client {
         end: u64,
     ) -> impl Future<
         Output = anyhow::Result<(Result<IncomingInputStream, String>, Self::Transmission)>,
-    > + Send;
-    fn serve_get_container_data(
-        &self,
-    ) -> impl Future<Output = anyhow::Result<Self::GetContainerDataInvocationStream>> + Send;
-
-    fn invoke_get_object_info(
-        &self,
-        id: ObjectId,
-    ) -> impl Future<Output = anyhow::Result<(Result<ObjectMetadata, String>, Self::Transmission)>> + Send;
-    fn serve_get_object_info(
-        &self,
-    ) -> impl Future<Output = anyhow::Result<Self::GetObjectInfoInvocationStream>> + Send;
-
-    fn invoke_has_object(
-        &self,
-        id: ObjectId,
-    ) -> impl Future<Output = anyhow::Result<(Result<bool, String>, Self::Transmission)>> + Send;
-    fn serve_has_object(
-        &self,
-    ) -> impl Future<Output = anyhow::Result<Self::HasObjectInvocationStream>> + Send;
-
-    fn invoke_move_object(
-        &self,
-        src: ObjectId,
-        dest: ObjectId,
-    ) -> impl Future<Output = anyhow::Result<(Result<(), String>, Self::Transmission)>> + Send;
-    fn serve_move_object(
-        &self,
-    ) -> impl Future<Output = anyhow::Result<Self::MoveObjectInvocationStream>> + Send;
-
-    fn invoke_write_container_data(
-        &self,
-        id: ObjectId,
-        data: impl Stream<Item = Bytes> + Send + 'static,
-    ) -> impl Future<Output = anyhow::Result<(Result<(), String>, Self::Transmission)>> + Send;
-    fn serve_write_container_data(
-        &self,
-    ) -> impl Future<Output = anyhow::Result<Self::WriteContainerDataInvocationStream>> + Send;
-}
-
-impl<T: wrpc_transport::Client> Blobstore for T {
-    type ClearContainerInvocationStream = StringInvocationStream<T>;
-    type ContainerExistsInvocationStream = StringInvocationStream<T>;
-    type CreateContainerInvocationStream = StringInvocationStream<T>;
-    type DeleteContainerInvocationStream = StringInvocationStream<T>;
-    type GetContainerInfoInvocationStream = StringInvocationStream<T>;
-    type ListContainerObjectsInvocationStream = Pin<
-        Box<
-            dyn Stream<
-                    Item = anyhow::Result<
-                        AcceptedInvocation<
-                            T::Context,
-                            (String, Option<u64>, Option<u64>),
-                            T::Subject,
-                            <T::Acceptor as Acceptor>::Transmitter,
-                        >,
-                    >,
-                > + Send,
-        >,
-    >;
-    type CopyObjectInvocationStream = Pin<
-        Box<
-            dyn Stream<
-                    Item = anyhow::Result<
-                        AcceptedInvocation<
-                            T::Context,
-                            (ObjectId, ObjectId),
-                            T::Subject,
-                            <T::Acceptor as Acceptor>::Transmitter,
-                        >,
-                    >,
-                > + Send,
-        >,
-    >;
-    type DeleteObjectInvocationStream = ObjectIdInvocationStream<T>;
-    type DeleteObjectsInvocationStream = Pin<
-        Box<
-            dyn Stream<
-                    Item = anyhow::Result<
-                        AcceptedInvocation<
-                            T::Context,
-                            (String, Vec<String>),
-                            T::Subject,
-                            <T::Acceptor as Acceptor>::Transmitter,
-                        >,
-                    >,
-                > + Send,
-        >,
-    >;
-    type GetContainerDataInvocationStream = Pin<
-        Box<
-            dyn Stream<
-                    Item = anyhow::Result<
-                        AcceptedInvocation<
-                            T::Context,
-                            (ObjectId, u64, u64),
-                            T::Subject,
-                            <T::Acceptor as Acceptor>::Transmitter,
-                        >,
-                    >,
-                > + Send,
-        >,
-    >;
-    type GetObjectInfoInvocationStream = ObjectIdInvocationStream<T>;
-    type HasObjectInvocationStream = ObjectIdInvocationStream<T>;
-    type MoveObjectInvocationStream = Pin<
-        Box<
-            dyn Stream<
-                    Item = anyhow::Result<
-                        AcceptedInvocation<
-                            T::Context,
-                            (ObjectId, ObjectId),
-                            T::Subject,
-                            <T::Acceptor as Acceptor>::Transmitter,
-                        >,
-                    >,
-                > + Send,
-        >,
-    >;
-    type WriteContainerDataInvocationStream = Pin<
-        Box<
-            dyn Stream<
-                    Item = anyhow::Result<
-                        AcceptedInvocation<
-                            T::Context,
-                            (ObjectId, IncomingInputStream),
-                            T::Subject,
-                            <T::Acceptor as Acceptor>::Transmitter,
-                        >,
-                    >,
-                > + Send,
-        >,
-    >;
-
-    async fn invoke_clear_container(
-        &self,
-        name: String,
-    ) -> anyhow::Result<(Result<(), String>, T::Transmission)> {
-        self.invoke_static("wrpc:blobstore/blobstore@0.1.0", "clear-container", name)
-            .await
-    }
-    async fn serve_clear_container(&self) -> anyhow::Result<Self::ClearContainerInvocationStream> {
-        self.serve_static("wrpc:blobstore/blobstore@0.1.0", "clear-container")
-            .await
-    }
-
-    async fn invoke_container_exists(
-        &self,
-        name: String,
-    ) -> anyhow::Result<(Result<bool, String>, T::Transmission)> {
-        self.invoke_static("wrpc:blobstore/blobstore@0.1.0", "container-exists", name)
-            .await
-    }
-    async fn serve_container_exists(
-        &self,
-    ) -> anyhow::Result<Self::ContainerExistsInvocationStream> {
-        self.serve_static("wrpc:blobstore/blobstore@0.1.0", "container-exists")
-            .await
-    }
-
-    async fn invoke_create_container(
-        &self,
-        name: String,
-    ) -> anyhow::Result<(Result<(), String>, T::Transmission)> {
-        self.invoke_static("wrpc:blobstore/blobstore@0.1.0", "create-container", name)
-            .await
-    }
-    async fn serve_create_container(
-        &self,
-    ) -> anyhow::Result<Self::CreateContainerInvocationStream> {
-        self.serve_static("wrpc:blobstore/blobstore@0.1.0", "create-container")
-            .await
-    }
-
-    async fn invoke_delete_container(
-        &self,
-        name: String,
-    ) -> anyhow::Result<(Result<(), String>, T::Transmission)> {
-        self.invoke_static("wrpc:blobstore/blobstore@0.1.0", "delete-container", name)
-            .await
-    }
-    async fn serve_delete_container(
-        &self,
-    ) -> anyhow::Result<Self::DeleteContainerInvocationStream> {
-        self.serve_static("wrpc:blobstore/blobstore@0.1.0", "delete-container")
-            .await
-    }
-
-    async fn invoke_get_container_info(
-        &self,
-        name: String,
-    ) -> anyhow::Result<(Result<ContainerMetadata, String>, T::Transmission)> {
-        self.invoke_static("wrpc:blobstore/blobstore@0.1.0", "get-container-info", name)
-            .await
-    }
-    async fn serve_get_container_info(
-        &self,
-    ) -> anyhow::Result<Self::GetContainerInfoInvocationStream> {
-        self.serve_static("wrpc:blobstore/blobstore@0.1.0", "get-container-info")
-            .await
-    }
-
-    async fn invoke_list_container_objects(
-        &self,
-        name: String,
-        limit: Option<u64>,
-        offset: Option<u64>,
-    ) -> anyhow::Result<(
-        Result<Box<dyn Stream<Item = anyhow::Result<Vec<String>>> + Send + Sync + Unpin>, String>,
-        Self::Transmission,
-    )> {
-        self.invoke_static(
-            "wrpc:blobstore/blobstore@0.1.0",
-            "list-container-objects",
-            (name, limit, offset),
-        )
-        .await
-    }
-    async fn serve_list_container_objects(
-        &self,
-    ) -> anyhow::Result<Self::ListContainerObjectsInvocationStream> {
-        self.serve_static("wrpc:blobstore/blobstore@0.1.0", "list-container-objects")
-            .await
-    }
-
-    async fn invoke_copy_object(
-        &self,
-        src: ObjectId,
-        dest: ObjectId,
-    ) -> anyhow::Result<(Result<(), String>, Self::Transmission)> {
-        self.invoke_static("wrpc:blobstore/blobstore@0.1.0", "copy-object", (src, dest))
-            .await
-    }
-    async fn serve_copy_object(&self) -> anyhow::Result<Self::CopyObjectInvocationStream> {
-        self.serve_static("wrpc:blobstore/blobstore@0.1.0", "copy-object")
-            .await
-    }
-
-    async fn invoke_delete_object(
-        &self,
-        id: ObjectId,
-    ) -> anyhow::Result<(Result<(), String>, Self::Transmission)> {
-        self.invoke_static("wrpc:blobstore/blobstore@0.1.0", "delete-object", id)
-            .await
-    }
-    async fn serve_delete_object(&self) -> anyhow::Result<Self::DeleteObjectInvocationStream> {
-        self.serve_static("wrpc:blobstore/blobstore@0.1.0", "delete-object")
-            .await
-    }
-
-    async fn invoke_delete_objects(
-        &self,
-        container: String,
-        objects: Vec<String>,
-    ) -> anyhow::Result<(Result<(), String>, Self::Transmission)> {
-        self.invoke_static(
-            "wrpc:blobstore/blobstore@0.1.0",
-            "delete-objects",
-            (container, objects),
-        )
-        .await
-    }
-    async fn serve_delete_objects(&self) -> anyhow::Result<Self::DeleteObjectsInvocationStream> {
-        self.serve_static("wrpc:blobstore/blobstore@0.1.0", "delete-objects")
-            .await
-    }
-
-    async fn invoke_get_container_data(
-        &self,
-        id: ObjectId,
-        start: u64,
-        end: u64,
-    ) -> anyhow::Result<(Result<IncomingInputStream, String>, Self::Transmission)> {
+    > + Send {
         self.invoke_static(
             "wrpc:blobstore/blobstore@0.1.0",
             "get-container-data",
             (id, start, end),
         )
-        .await
     }
-    async fn serve_get_container_data(
+
+    #[instrument(level = "trace", skip_all)]
+    fn serve_get_container_data(
         &self,
-    ) -> anyhow::Result<Self::GetContainerDataInvocationStream> {
+    ) -> impl Future<
+        Output = anyhow::Result<
+            impl Stream<
+                    Item = anyhow::Result<
+                        AcceptedInvocation<
+                            <Self as wrpc_transport::Client>::Context,
+                            (ObjectId, u64, u64),
+                            <Self as wrpc_transport::Client>::Subject,
+                            <<Self as wrpc_transport::Client>::Acceptor as Acceptor>::Transmitter,
+                        >,
+                    >,
+                > + Send,
+        >,
+    > + Send {
         self.serve_static("wrpc:blobstore/blobstore@0.1.0", "get-container-data")
-            .await
     }
 
-    async fn invoke_get_object_info(
+    #[instrument(level = "trace", skip_all)]
+    fn invoke_get_object_info(
         &self,
         id: ObjectId,
-    ) -> anyhow::Result<(Result<ObjectMetadata, String>, Self::Transmission)> {
+    ) -> impl Future<Output = anyhow::Result<(Result<ObjectMetadata, String>, Self::Transmission)>> + Send
+    {
         self.invoke_static("wrpc:blobstore/blobstore@0.1.0", "get-object-info", id)
-            .await
-    }
-    async fn serve_get_object_info(&self) -> anyhow::Result<Self::GetObjectInfoInvocationStream> {
-        self.serve_static("wrpc:blobstore/blobstore@0.1.0", "get-object-info")
-            .await
     }
 
-    async fn invoke_has_object(
+    #[instrument(level = "trace", skip_all)]
+    fn serve_get_object_info(
+        &self,
+    ) -> impl Future<
+        Output = anyhow::Result<
+            impl Stream<
+                    Item = anyhow::Result<
+                        AcceptedInvocation<
+                            <Self as wrpc_transport::Client>::Context,
+                            ObjectId,
+                            <Self as wrpc_transport::Client>::Subject,
+                            <<Self as wrpc_transport::Client>::Acceptor as Acceptor>::Transmitter,
+                        >,
+                    >,
+                > + Send,
+        >,
+    > + Send {
+        self.serve_static("wrpc:blobstore/blobstore@0.1.0", "get-object-info")
+    }
+
+    #[instrument(level = "trace", skip_all)]
+    fn invoke_has_object(
         &self,
         id: ObjectId,
-    ) -> anyhow::Result<(Result<bool, String>, Self::Transmission)> {
+    ) -> impl Future<Output = anyhow::Result<(Result<bool, String>, Self::Transmission)>> + Send
+    {
         self.invoke_static("wrpc:blobstore/blobstore@0.1.0", "has-object", id)
-            .await
-    }
-    async fn serve_has_object(&self) -> anyhow::Result<Self::HasObjectInvocationStream> {
-        self.serve_static("wrpc:blobstore/blobstore@0.1.0", "has-object")
-            .await
     }
 
-    async fn invoke_move_object(
+    #[instrument(level = "trace", skip_all)]
+    fn serve_has_object(
+        &self,
+    ) -> impl Future<
+        Output = anyhow::Result<
+            impl Stream<
+                    Item = anyhow::Result<
+                        AcceptedInvocation<
+                            <Self as wrpc_transport::Client>::Context,
+                            ObjectId,
+                            <Self as wrpc_transport::Client>::Subject,
+                            <<Self as wrpc_transport::Client>::Acceptor as Acceptor>::Transmitter,
+                        >,
+                    >,
+                > + Send,
+        >,
+    > + Send {
+        self.serve_static("wrpc:blobstore/blobstore@0.1.0", "has-object")
+    }
+
+    #[instrument(level = "trace", skip_all)]
+    fn invoke_move_object(
         &self,
         src: ObjectId,
         dest: ObjectId,
-    ) -> anyhow::Result<(Result<(), String>, Self::Transmission)> {
+    ) -> impl Future<Output = anyhow::Result<(Result<(), String>, Self::Transmission)>> + Send {
         self.invoke_static("wrpc:blobstore/blobstore@0.1.0", "move-object", (src, dest))
-            .await
-    }
-    async fn serve_move_object(&self) -> anyhow::Result<Self::MoveObjectInvocationStream> {
-        self.serve_static("wrpc:blobstore/blobstore@0.1.0", "move-object")
-            .await
     }
 
-    async fn invoke_write_container_data(
+    #[instrument(level = "trace", skip_all)]
+    fn serve_move_object(
+        &self,
+    ) -> impl Future<
+        Output = anyhow::Result<
+            impl Stream<
+                    Item = anyhow::Result<
+                        AcceptedInvocation<
+                            <Self as wrpc_transport::Client>::Context,
+                            (ObjectId, ObjectId),
+                            <Self as wrpc_transport::Client>::Subject,
+                            <<Self as wrpc_transport::Client>::Acceptor as Acceptor>::Transmitter,
+                        >,
+                    >,
+                > + Send,
+        >,
+    > + Send {
+        self.serve_static("wrpc:blobstore/blobstore@0.1.0", "move-object")
+    }
+
+    #[instrument(level = "trace", skip_all)]
+    fn invoke_write_container_data(
         &self,
         id: ObjectId,
         data: impl Stream<Item = Bytes> + Send + 'static,
-    ) -> anyhow::Result<(Result<(), String>, Self::Transmission)> {
+    ) -> impl Future<Output = anyhow::Result<(Result<(), String>, Self::Transmission)>> + Send {
         self.invoke_static(
             "wrpc:blobstore/blobstore@0.1.0",
             "write-container-data",
@@ -632,12 +565,27 @@ impl<T: wrpc_transport::Client> Blobstore for T {
                 )),
             ),
         )
-        .await
     }
-    async fn serve_write_container_data(
+
+    #[instrument(level = "trace", skip_all)]
+    fn serve_write_container_data(
         &self,
-    ) -> anyhow::Result<Self::WriteContainerDataInvocationStream> {
+    ) -> impl Future<
+        Output = anyhow::Result<
+            impl Stream<
+                    Item = anyhow::Result<
+                        AcceptedInvocation<
+                            <Self as wrpc_transport::Client>::Context,
+                            (ObjectId, IncomingInputStream),
+                            <Self as wrpc_transport::Client>::Subject,
+                            <<Self as wrpc_transport::Client>::Acceptor as Acceptor>::Transmitter,
+                        >,
+                    >,
+                > + Send,
+        >,
+    > + Send {
         self.serve_static("wrpc:blobstore/blobstore@0.1.0", "write-container-data")
-            .await
     }
 }
+
+impl<T: wrpc_transport::Client> Blobstore for T {}
