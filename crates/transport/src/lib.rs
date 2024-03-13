@@ -28,51 +28,54 @@ pub const PROTOCOL: &str = "wrpc.0.0.1";
 pub type IncomingInputStream = Box<dyn Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin>;
 
 #[async_trait]
-pub trait Transmitter {
+pub trait Transmitter: Sync {
     type Subject: Subject + Send + Sync + Clone;
     type PublishError: Error + Send + Sync + 'static;
 
-    async fn transmit(
+    fn transmit(
         &self,
         subject: Self::Subject,
         payload: Bytes,
-    ) -> Result<(), Self::PublishError>;
+    ) -> impl Future<Output = Result<(), Self::PublishError>> + Send;
 
-    async fn transmit_static(
+    #[instrument(level = "trace", ret, skip_all)]
+    fn transmit_static(
         &self,
         subject: Self::Subject,
         payload: impl Encode,
-    ) -> anyhow::Result<()> {
+    ) -> impl Future<Output = anyhow::Result<()>> + Send {
         let mut buf = BytesMut::default();
-        let tx = payload
-            .encode(&mut buf)
-            .await
-            .context("failed to encode value")?;
-        try_join!(
-            async {
-                if let Some(tx) = tx {
-                    self.transmit_async(subject.clone(), tx)
+        async move {
+            let tx = payload
+                .encode(&mut buf)
+                .await
+                .context("failed to encode value")?;
+            try_join!(
+                async {
+                    if let Some(tx) = tx {
+                        self.transmit_async(subject.clone(), tx)
+                            .await
+                            .context("failed to transmit asynchronous value")?;
+                    }
+                    Ok(())
+                },
+                async {
+                    trace!("encode tuple value");
+                    self.transmit(subject.clone(), buf.freeze())
                         .await
-                        .context("failed to transmit asynchronous value")?;
-                }
-                Ok(())
-            },
-            async {
-                trace!("encode tuple value");
-                self.transmit(subject.clone(), buf.freeze())
-                    .await
-                    .context("failed to transmit value")
-            },
-        )?;
-        Ok(())
+                        .context("failed to transmit value")
+                },
+            )?;
+            Ok(())
+        }
     }
 
     #[instrument(level = "trace", ret, skip_all)]
-    async fn transmit_tuple_dynamic<T>(
+    fn transmit_tuple_dynamic<T>(
         &self,
         subject: Self::Subject,
         values: T,
-    ) -> anyhow::Result<()>
+    ) -> impl Future<Output = anyhow::Result<()>> + Send
     where
         T: IntoIterator<Item = Value> + Send,
         T::IntoIter: ExactSizeIterator<Item = Value> + Send,
@@ -80,37 +83,39 @@ pub trait Transmitter {
         let values = values.into_iter();
         let mut buf = BytesMut::new();
         let mut nested = Vec::with_capacity(values.len());
-        for v in values {
-            trace!("encode tuple element");
-            let tx = v.encode(&mut buf).await.context("failed to encode value")?;
-            nested.push(tx)
+        async {
+            for v in values {
+                trace!("encode tuple element");
+                let tx = v.encode(&mut buf).await.context("failed to encode value")?;
+                nested.push(tx)
+            }
+            let nested: FuturesUnordered<_> = zip(0.., nested)
+                .filter_map(|(i, v)| {
+                    let v = v?;
+                    let subject = subject.child(Some(i));
+                    let fut: Pin<Box<dyn Future<Output = _> + Send>> = Box::pin(async move {
+                        trace!(i, "transmit asynchronous tuple element value");
+                        self.transmit_async(subject, v).await.with_context(|| {
+                            format!("failed to transmit asynchronous tuple element {i}")
+                        })
+                    });
+                    Some(fut)
+                })
+                .collect();
+            try_join!(
+                async {
+                    try_join_all(nested).await?;
+                    Ok(())
+                },
+                async {
+                    trace!("encode tuple value");
+                    self.transmit(subject, buf.freeze())
+                        .await
+                        .context("failed to transmit value")
+                },
+            )?;
+            Ok(())
         }
-        let nested: FuturesUnordered<_> = zip(0.., nested)
-            .filter_map(|(i, v)| {
-                let v = v?;
-                let subject = subject.child(Some(i));
-                let fut: Pin<Box<dyn Future<Output = _> + Send>> = Box::pin(async move {
-                    trace!(i, "transmit asynchronous tuple element value");
-                    self.transmit_async(subject, v).await.with_context(|| {
-                        format!("failed to transmit asynchronous tuple element {i}")
-                    })
-                });
-                Some(fut)
-            })
-            .collect();
-        try_join!(
-            async {
-                try_join_all(nested).await?;
-                Ok(())
-            },
-            async {
-                trace!("encode tuple value");
-                self.transmit(subject, buf.freeze())
-                    .await
-                    .context("failed to transmit value")
-            },
-        )?;
-        Ok(())
     }
 
     #[instrument(level = "trace", ret, skip_all)]
@@ -582,121 +587,127 @@ impl Subscribe for IncomingInputStream {
 }
 
 #[async_trait]
-pub trait Subscriber {
+pub trait Subscriber: Sync {
     type Subject: Subject + Send + Sync + Clone;
     type Stream: Stream<Item = Result<Bytes, Self::StreamError>> + Send + Sync + Unpin;
     type SubscribeError: Send;
     type StreamError: Send;
 
-    async fn subscribe(&self, subject: Self::Subject)
-        -> Result<Self::Stream, Self::SubscribeError>;
+    fn subscribe(
+        &self,
+        subject: Self::Subject,
+    ) -> impl Future<Output = Result<Self::Stream, Self::SubscribeError>> + Send;
 
     #[instrument(level = "trace", skip_all)]
-    async fn subscribe_async(
+    fn subscribe_async(
         &self,
         subject: Self::Subject,
         ty: impl Borrow<Type> + Send,
-    ) -> Result<Option<AsyncSubscription<Self::Stream>>, Self::SubscribeError> {
-        match ty.borrow() {
-            Type::Bool
-            | Type::U8
-            | Type::U16
-            | Type::U32
-            | Type::U64
-            | Type::S8
-            | Type::S16
-            | Type::S32
-            | Type::S64
-            | Type::Float32
-            | Type::Float64
-            | Type::Char
-            | Type::String
-            | Type::Enum
-            | Type::Flags => Ok(None),
-            Type::List(ty) => {
-                let subs = self
-                    .subscribe_async(subject.child(None), ty.as_ref())
-                    .await?;
-                Ok(subs.map(Box::new).map(AsyncSubscription::List))
+    ) -> impl Future<Output = Result<Option<AsyncSubscription<Self::Stream>>, Self::SubscribeError>> + Send
+    {
+        // pin to break cycle in the compiler
+        Box::pin(async {
+            match ty.borrow() {
+                Type::Bool
+                | Type::U8
+                | Type::U16
+                | Type::U32
+                | Type::U64
+                | Type::S8
+                | Type::S16
+                | Type::S32
+                | Type::S64
+                | Type::Float32
+                | Type::Float64
+                | Type::Char
+                | Type::String
+                | Type::Enum
+                | Type::Flags => Ok(None),
+                Type::List(ty) => {
+                    let subs = self
+                        .subscribe_async(subject.child(None), ty.as_ref())
+                        .await?;
+                    Ok(subs.map(Box::new).map(AsyncSubscription::List))
+                }
+                Type::Record(types) => {
+                    let subs = self.subscribe_async_iter(&subject, types.as_ref()).await?;
+                    Ok(subs.map(AsyncSubscription::Record))
+                }
+                Type::Tuple(types) => {
+                    let subs = self.subscribe_async_iter(&subject, types.as_ref()).await?;
+                    Ok(subs.map(AsyncSubscription::Tuple))
+                }
+                Type::Variant(types) => {
+                    let subs = self
+                        .subscribe_async_iter_optional(&subject, types.iter().map(Option::as_ref))
+                        .await?;
+                    Ok(subs.map(AsyncSubscription::Variant))
+                }
+                Type::Option(ty) => {
+                    let sub = self
+                        .subscribe_async(subject.child(Some(1)), ty.as_ref())
+                        .await?;
+                    Ok(sub.map(Box::new).map(AsyncSubscription::Option))
+                }
+                Type::Result { ok, err } => {
+                    let nested = self
+                        .subscribe_async_sized_optional(
+                            &subject,
+                            [
+                                ok.as_ref().map(AsRef::as_ref),
+                                err.as_ref().map(AsRef::as_ref),
+                            ],
+                        )
+                        .await?;
+                    Ok(nested.map(|[ok, err]| AsyncSubscription::Result {
+                        ok: ok.map(Box::new),
+                        err: err.map(Box::new),
+                    }))
+                }
+                Type::Future(None) => {
+                    let subscriber = self.subscribe(subject).await?;
+                    Ok(Some(AsyncSubscription::Future {
+                        subscriber,
+                        nested: None,
+                    }))
+                }
+                Type::Future(Some(ty)) => {
+                    let nested = subject.child(Some(0));
+                    let (subscriber, nested) = try_join!(
+                        self.subscribe(subject),
+                        self.subscribe_async(nested, ty.as_ref())
+                    )?;
+                    Ok(Some(AsyncSubscription::Future {
+                        subscriber,
+                        nested: nested.map(Box::new),
+                    }))
+                }
+                Type::Stream(None) => {
+                    let subscriber = self.subscribe(subject).await?;
+                    Ok(Some(AsyncSubscription::Stream {
+                        subscriber,
+                        nested: None,
+                    }))
+                }
+                Type::Stream(Some(ty)) => {
+                    let nested = subject.child(None);
+                    let (subscriber, nested) = try_join!(
+                        self.subscribe(subject),
+                        self.subscribe_async(nested, ty.as_ref())
+                    )?;
+                    let nested = nested.map(Box::new);
+                    Ok(Some(AsyncSubscription::Stream { subscriber, nested }))
+                }
+                Type::Resource(Resource::Pollable) => {
+                    self.subscribe_async(subject, &Type::Future(None)).await
+                }
+                Type::Resource(Resource::InputStream) => {
+                    self.subscribe_async(subject, &Type::Stream(Some(Arc::new(Type::U8))))
+                        .await
+                }
+                Type::Resource(Resource::OutputStream | Resource::Dynamic(..)) => Ok(None),
             }
-            Type::Record(types) => {
-                let subs = self.subscribe_async_iter(&subject, types.as_ref()).await?;
-                Ok(subs.map(AsyncSubscription::Record))
-            }
-            Type::Tuple(types) => {
-                let subs = self.subscribe_async_iter(&subject, types.as_ref()).await?;
-                Ok(subs.map(AsyncSubscription::Tuple))
-            }
-            Type::Variant(types) => {
-                let subs = self
-                    .subscribe_async_iter_optional(&subject, types.iter().map(Option::as_ref))
-                    .await?;
-                Ok(subs.map(AsyncSubscription::Variant))
-            }
-            Type::Option(ty) => {
-                let sub = self
-                    .subscribe_async(subject.child(Some(1)), ty.as_ref())
-                    .await?;
-                Ok(sub.map(Box::new).map(AsyncSubscription::Option))
-            }
-            Type::Result { ok, err } => {
-                let nested = self
-                    .subscribe_async_sized_optional(
-                        &subject,
-                        [
-                            ok.as_ref().map(AsRef::as_ref),
-                            err.as_ref().map(AsRef::as_ref),
-                        ],
-                    )
-                    .await?;
-                Ok(nested.map(|[ok, err]| AsyncSubscription::Result {
-                    ok: ok.map(Box::new),
-                    err: err.map(Box::new),
-                }))
-            }
-            Type::Future(None) => {
-                let subscriber = self.subscribe(subject).await?;
-                Ok(Some(AsyncSubscription::Future {
-                    subscriber,
-                    nested: None,
-                }))
-            }
-            Type::Future(Some(ty)) => {
-                let nested = subject.child(Some(0));
-                let (subscriber, nested) = try_join!(
-                    self.subscribe(subject),
-                    self.subscribe_async(nested, ty.as_ref())
-                )?;
-                Ok(Some(AsyncSubscription::Future {
-                    subscriber,
-                    nested: nested.map(Box::new),
-                }))
-            }
-            Type::Stream(None) => {
-                let subscriber = self.subscribe(subject).await?;
-                Ok(Some(AsyncSubscription::Stream {
-                    subscriber,
-                    nested: None,
-                }))
-            }
-            Type::Stream(Some(ty)) => {
-                let nested = subject.child(None);
-                let (subscriber, nested) = try_join!(
-                    self.subscribe(subject),
-                    self.subscribe_async(nested, ty.as_ref())
-                )?;
-                let nested = nested.map(Box::new);
-                Ok(Some(AsyncSubscription::Stream { subscriber, nested }))
-            }
-            Type::Resource(Resource::Pollable) => {
-                self.subscribe_async(subject, &Type::Future(None)).await
-            }
-            Type::Resource(Resource::InputStream) => {
-                self.subscribe_async(subject, &Type::Stream(Some(Arc::new(Type::U8))))
-                    .await
-            }
-            Type::Resource(Resource::OutputStream | Resource::Dynamic(..)) => Ok(None),
-        }
+        })
     }
 
     #[instrument(level = "trace", skip_all)]
@@ -734,7 +745,7 @@ pub trait Subscriber {
     }
 
     #[instrument(level = "trace", skip_all)]
-    async fn subscribe_async_sized<'a, const N: usize>(
+    async fn subscribe_async_sized<const N: usize>(
         &self,
         subject: impl Borrow<Self::Subject> + Send,
         types: [impl Borrow<Type> + Send + Sync; N],
@@ -744,7 +755,7 @@ pub trait Subscriber {
     }
 
     #[instrument(level = "trace", skip_all)]
-    async fn subscribe_async_sized_optional<'a, const N: usize>(
+    async fn subscribe_async_sized_optional<const N: usize>(
         &self,
         subject: impl Borrow<Self::Subject> + Send,
         types: [Option<impl Borrow<Type> + Send + Sync>; N],
@@ -1186,7 +1197,7 @@ pub trait Receive: Sized {
         sub: Option<AsyncSubscription<T>>,
     ) -> anyhow::Result<(Self, Box<dyn Buf + Send + 'a>)>
     where
-        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin + 'static;
+        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + 'static;
 
     async fn receive_sync<'a>(
         payload: impl Buf + Send + 'a,
@@ -1206,7 +1217,7 @@ pub trait Receive: Sized {
 }
 
 #[async_trait]
-pub trait ReceiveContext<Ctx>: Sized
+pub trait ReceiveContext<Ctx>: Sized + Send
 where
     Ctx: ?Sized + Send + Sync + 'static,
 {
@@ -1217,13 +1228,17 @@ where
         sub: Option<AsyncSubscription<T>>,
     ) -> anyhow::Result<(Self, Box<dyn Buf + Send + 'a>)>
     where
-        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin + 'static;
+        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + 'static;
 
-    async fn receive_context_sync<'a>(
-        cx: &Ctx,
-        payload: impl Buf + Send + 'a,
-        rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
-    ) -> anyhow::Result<(Self, Box<dyn Buf + Send + 'a>)> {
+    #[instrument(level = "trace", skip_all)]
+    fn receive_context_sync<'a, 'b: 'a>(
+        cx: &'a Ctx,
+        payload: impl Buf + Send + 'b,
+        rx: &'a mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin + 'a),
+    ) -> impl Future<Output = anyhow::Result<(Self, Box<dyn Buf + Send + 'b>)>> + Send + 'a
+    where
+        Self: 'a,
+    {
         Self::receive_context(
             cx,
             payload,
@@ -1234,37 +1249,38 @@ where
                 >,
             >,
         )
-        .await
     }
 
     /// Receive a list
     #[instrument(level = "trace", skip_all)]
-    async fn receive_list_context<'a, T>(
+    fn receive_list_context<'a, T>(
         cx: &Ctx,
         payload: impl Buf + Send + 'a,
         rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
         sub: Option<AsyncSubscription<T>>,
-    ) -> anyhow::Result<(Vec<Self>, Box<dyn Buf + Send + 'a>)>
+    ) -> impl Future<Output = anyhow::Result<(Vec<Self>, Box<dyn Buf + Send + 'a>)>> + Send
     where
-        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin + 'static,
+        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + 'static,
     {
-        let mut sub = sub.map(AsyncSubscription::try_unwrap_list).transpose()?;
-        let (len, mut payload) = receive_list_header(payload, rx).await?;
-        trace!(len, "decode list");
-        let cap = len
-            .try_into()
-            .context("list length does not fit in usize")?;
-        let mut els = Vec::with_capacity(cap);
-        for i in 0..len {
-            trace!(i, "decode list element");
-            let sub = sub.as_mut().map(|sub| sub.select(i.into()));
-            let el;
-            (el, payload) = Self::receive_context(cx, payload, rx, sub)
-                .await
-                .with_context(|| format!("failed to decode value of list element {i}"))?;
-            els.push(el);
+        async {
+            let mut sub = sub.map(AsyncSubscription::try_unwrap_list).transpose()?;
+            let (len, mut payload) = receive_list_header(payload, rx).await?;
+            trace!(len, "decode list");
+            let cap = len
+                .try_into()
+                .context("list length does not fit in usize")?;
+            let mut els = Vec::with_capacity(cap);
+            for i in 0..len {
+                trace!(i, "decode list element");
+                let sub = sub.as_mut().map(|sub| sub.select(i.into()));
+                let el;
+                (el, payload) = Self::receive_context(cx, payload, rx, sub)
+                    .await
+                    .with_context(|| format!("failed to decode value of list element {i}"))?;
+                els.push(el);
+            }
+            Ok((els, payload))
         }
-        Ok((els, payload))
     }
 
     /// Receive a tuple
@@ -1276,7 +1292,7 @@ where
         sub: Option<AsyncSubscription<T>>,
     ) -> anyhow::Result<(Vec<Self>, Box<dyn Buf + Send + 'a>)>
     where
-        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin + 'static,
+        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + 'static,
         I: IntoIterator<Item = &'a Ctx> + Send,
         I::IntoIter: ExactSizeIterator + Send,
     {
@@ -1299,44 +1315,47 @@ where
         Ok((els, payload))
     }
 
-    async fn receive_stream_item_context<'a, T>(
+    #[instrument(level = "trace", skip_all)]
+    fn receive_stream_item_context<'a, T>(
         cx: Option<&Ctx>,
         payload: impl Buf + Send + 'a,
         rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
         sub: &mut Option<AsyncSubscriptionDemux<T>>,
         offset: u64,
-    ) -> anyhow::Result<(Option<Vec<Option<Self>>>, Box<dyn Buf + Send + 'a>)>
+    ) -> impl Future<Output = anyhow::Result<(Option<Vec<Option<Self>>>, Box<dyn Buf + Send + 'a>)>>
     where
-        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin + 'static,
+        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + 'static,
     {
-        trace!("decode stream length");
-        let (len, mut payload) = receive_leb128_unsigned(payload, rx).await?;
-        match len {
-            0 => Ok((None, payload)),
-            len => {
-                let cap = len
-                    .try_into()
-                    .context("stream element length does not fit in usize")?;
-                trace!(len, "decode stream elements");
-                if let Some(cx) = cx {
-                    let mut els = Vec::with_capacity(cap);
-                    let end = offset
-                        .checked_add(len)
-                        .context("index would overflow u64")?;
-                    for i in offset..end {
-                        let sub = sub.as_mut().map(|sub| sub.select(i));
-                        trace!(i, "decode stream element");
-                        let el;
-                        (el, payload) = Self::receive_context(cx, payload, rx, sub)
-                            .await
-                            .with_context(|| {
-                                format!("failed to decode value of stream element {i}")
-                            })?;
-                        els.push(Some(el));
+        async {
+            trace!("decode stream length");
+            let (len, mut payload) = receive_leb128_unsigned(payload, rx).await?;
+            match len {
+                0 => Ok((None, payload)),
+                len => {
+                    let cap = len
+                        .try_into()
+                        .context("stream element length does not fit in usize")?;
+                    trace!(len, "decode stream elements");
+                    if let Some(cx) = cx {
+                        let mut els = Vec::with_capacity(cap);
+                        let end = offset
+                            .checked_add(len)
+                            .context("index would overflow u64")?;
+                        for i in offset..end {
+                            let sub = sub.as_mut().map(|sub| sub.select(i));
+                            trace!(i, "decode stream element");
+                            let el;
+                            (el, payload) = Self::receive_context(cx, payload, rx, sub)
+                                .await
+                                .with_context(|| {
+                                    format!("failed to decode value of stream element {i}")
+                                })?;
+                            els.push(Some(el));
+                        }
+                        Ok((Some(els), payload))
+                    } else {
+                        Ok((Some((0..cap).map(|_| None).collect()), payload))
                     }
-                    Ok((Some(els), payload))
-                } else {
-                    Ok((Some((0..cap).map(|_| None).collect()), payload))
                 }
             }
         }
@@ -1351,7 +1370,7 @@ pub async fn receive_stream_item<'a, E, T>(
 ) -> anyhow::Result<(Option<Vec<E>>, Box<dyn Buf + Send + 'a>)>
 where
     E: Receive,
-    T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin + 'static,
+    T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + 'static,
 {
     let (len, mut payload) = receive_leb128_unsigned(payload, rx).await?;
     match len {
@@ -1382,7 +1401,7 @@ where
 #[async_trait]
 impl<R, Ctx> ReceiveContext<Ctx> for R
 where
-    R: Receive,
+    R: Receive + Send,
     Ctx: Send + Sync + 'static,
 {
     async fn receive_context<'a, T>(
@@ -1392,7 +1411,7 @@ where
         sub: Option<AsyncSubscription<T>>,
     ) -> anyhow::Result<(Self, Box<dyn Buf + Send + 'a>)>
     where
-        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin + 'static,
+        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + 'static,
     {
         R::receive(payload, rx, sub).await
     }
@@ -1407,7 +1426,7 @@ impl Receive for bool {
         _sub: Option<AsyncSubscription<T>>,
     ) -> anyhow::Result<(Self, Box<dyn Buf + Send + 'a>)>
     where
-        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin + 'static,
+        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + 'static,
     {
         let mut payload = receive_at_least(payload, rx, 1).await?;
         trace!("decode bool");
@@ -1424,7 +1443,7 @@ impl Receive for u8 {
         _sub: Option<AsyncSubscription<T>>,
     ) -> anyhow::Result<(Self, Box<dyn Buf + Send + 'a>)>
     where
-        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin + 'static,
+        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + 'static,
     {
         let mut payload = receive_at_least(payload, rx, 1).await?;
         trace!("decode u8");
@@ -1441,7 +1460,7 @@ impl Receive for u16 {
         _sub: Option<AsyncSubscription<T>>,
     ) -> anyhow::Result<(Self, Box<dyn Buf + Send + 'a>)>
     where
-        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin + 'static,
+        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + 'static,
     {
         trace!("decode u16");
         let (v, payload) = receive_leb128_unsigned(payload, rx)
@@ -1463,7 +1482,7 @@ impl Receive for u32 {
         _sub: Option<AsyncSubscription<T>>,
     ) -> anyhow::Result<(Self, Box<dyn Buf + Send + 'a>)>
     where
-        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin + 'static,
+        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + 'static,
     {
         trace!("decode u32");
         let (v, payload) = receive_leb128_unsigned(payload, rx)
@@ -1485,7 +1504,7 @@ impl Receive for u64 {
         _sub: Option<AsyncSubscription<T>>,
     ) -> anyhow::Result<(Self, Box<dyn Buf + Send + 'a>)>
     where
-        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin + 'static,
+        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + 'static,
     {
         trace!("decode u64");
         let (v, payload) = receive_leb128_unsigned(payload, rx)
@@ -1504,7 +1523,7 @@ impl Receive for i8 {
         _sub: Option<AsyncSubscription<T>>,
     ) -> anyhow::Result<(Self, Box<dyn Buf + Send + 'a>)>
     where
-        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin + 'static,
+        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + 'static,
     {
         let mut payload = receive_at_least(payload, rx, 1).await?;
         trace!("decode s8");
@@ -1521,7 +1540,7 @@ impl Receive for i16 {
         _sub: Option<AsyncSubscription<T>>,
     ) -> anyhow::Result<(Self, Box<dyn Buf + Send + 'a>)>
     where
-        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin + 'static,
+        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + 'static,
     {
         trace!("decode s16");
         let (v, payload) = receive_leb128_signed(payload, rx)
@@ -1543,7 +1562,7 @@ impl Receive for i32 {
         _sub: Option<AsyncSubscription<T>>,
     ) -> anyhow::Result<(Self, Box<dyn Buf + Send + 'a>)>
     where
-        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin + 'static,
+        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + 'static,
     {
         trace!("decode s32");
         let (v, payload) = receive_leb128_signed(payload, rx)
@@ -1565,7 +1584,7 @@ impl Receive for i64 {
         _sub: Option<AsyncSubscription<T>>,
     ) -> anyhow::Result<(Self, Box<dyn Buf + Send + 'a>)>
     where
-        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin + 'static,
+        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + 'static,
     {
         trace!("decode s64");
         let (v, payload) = receive_leb128_signed(payload, rx)
@@ -1584,7 +1603,7 @@ impl Receive for f32 {
         _sub: Option<AsyncSubscription<T>>,
     ) -> anyhow::Result<(Self, Box<dyn Buf + Send + 'a>)>
     where
-        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin + 'static,
+        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + 'static,
     {
         trace!("decode float32");
         let mut payload = receive_at_least(payload, rx, 8).await?;
@@ -1601,7 +1620,7 @@ impl Receive for f64 {
         _sub: Option<AsyncSubscription<T>>,
     ) -> anyhow::Result<(Self, Box<dyn Buf + Send + 'a>)>
     where
-        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin + 'static,
+        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + 'static,
     {
         trace!("decode float64");
         let mut payload = receive_at_least(payload, rx, 8).await?;
@@ -1618,7 +1637,7 @@ impl Receive for char {
         _sub: Option<AsyncSubscription<T>>,
     ) -> anyhow::Result<(Self, Box<dyn Buf + Send + 'a>)>
     where
-        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin + 'static,
+        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + 'static,
     {
         trace!("decode char");
         let (v, payload) = receive_leb128_unsigned(payload, rx)
@@ -1641,7 +1660,7 @@ impl Receive for String {
         _sub: Option<AsyncSubscription<T>>,
     ) -> anyhow::Result<(Self, Box<dyn Buf + Send + 'a>)>
     where
-        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin + 'static,
+        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + 'static,
     {
         trace!("decode string length");
         let (len, payload) = receive_leb128_unsigned(payload, rx)
@@ -1668,7 +1687,7 @@ impl Receive for Duration {
         _sub: Option<AsyncSubscription<T>>,
     ) -> anyhow::Result<(Self, Box<dyn Buf + Send + 'a>)>
     where
-        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin + 'static,
+        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + 'static,
     {
         trace!("decode duration");
         let (v, payload) = u64::receive_sync(payload, rx).await?;
@@ -1688,7 +1707,7 @@ where
         sub: Option<AsyncSubscription<T>>,
     ) -> anyhow::Result<(Self, Box<dyn Buf + Send + 'a>)>
     where
-        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin + 'static,
+        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + 'static,
     {
         let mut sub = sub.map(AsyncSubscription::try_unwrap_list).transpose()?;
         let (len, mut payload) = receive_list_header(payload, rx).await?;
@@ -1719,7 +1738,7 @@ impl Receive for Bytes {
         _sub: Option<AsyncSubscription<T>>,
     ) -> anyhow::Result<(Self, Box<dyn Buf + Send + 'a>)>
     where
-        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin + 'static,
+        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + 'static,
     {
         let (len, payload) = receive_list_header(payload, rx).await?;
         let cap = len
@@ -1742,7 +1761,7 @@ where
         sub: Option<AsyncSubscription<T>>,
     ) -> anyhow::Result<(Self, Box<dyn Buf + Send + 'a>)>
     where
-        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin + 'static,
+        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + 'static,
     {
         let mut payload = receive_at_least(payload, rx, 1).await?;
         trace!("decode option variant");
@@ -1774,7 +1793,7 @@ where
         sub: Option<AsyncSubscription<T>>,
     ) -> anyhow::Result<(Self, Box<dyn Buf + Send + 'a>)>
     where
-        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin + 'static,
+        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + 'static,
     {
         let mut payload = receive_at_least(payload, rx, 1).await?;
         let sub = sub.map(AsyncSubscription::try_unwrap_result).transpose()?;
@@ -1811,10 +1830,9 @@ where
         sub: Option<AsyncSubscription<T>>,
     ) -> anyhow::Result<(Self, Box<dyn Buf + Send + 'a>)>
     where
-        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin + 'static,
+        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + 'static,
     {
-        let Some((mut subscriber, sub)) =
-            sub.map(AsyncSubscription::try_unwrap_future).transpose()?
+        let Some((subscriber, sub)) = sub.map(AsyncSubscription::try_unwrap_future).transpose()?
         else {
             bail!("future subscription type mismatch")
         };
@@ -1827,7 +1845,8 @@ where
                 Ok((
                     Box::pin(async move {
                         trace!("decode future nested value");
-                        let (v, _) = E::receive(Bytes::default(), &mut subscriber, sub).await?;
+                        let (v, _) =
+                            E::receive(Bytes::default(), &mut pin!(subscriber), sub).await?;
                         Ok(v)
                     }),
                     payload,
@@ -1855,9 +1874,9 @@ where
         sub: Option<AsyncSubscription<T>>,
     ) -> anyhow::Result<(Self, Box<dyn Buf + Send + 'a>)>
     where
-        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin + 'static,
+        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + 'static,
     {
-        let Some((mut subscriber, mut sub)) =
+        let Some((subscriber, mut sub)) =
             sub.map(AsyncSubscription::try_unwrap_stream).transpose()?
         else {
             bail!("stream subscription type mismatch")
@@ -1870,6 +1889,7 @@ where
                 let producer = spawn(async move {
                     let mut payload: Box<dyn Buf + Send + 'a> = Box::new(Bytes::new());
                     let mut i = 0;
+                    let mut subscriber = pin!(subscriber);
                     loop {
                         match receive_stream_item(payload, &mut subscriber, &mut sub, i).await {
                             Ok((Some(vs), buf)) => {
@@ -1933,10 +1953,9 @@ impl Receive for IncomingInputStream {
         sub: Option<AsyncSubscription<T>>,
     ) -> anyhow::Result<(Self, Box<dyn Buf + Send + 'a>)>
     where
-        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin + 'static,
+        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + 'static,
     {
-        let Some((mut subscriber, _sub)) =
-            sub.map(AsyncSubscription::try_unwrap_stream).transpose()?
+        let Some((subscriber, _sub)) = sub.map(AsyncSubscription::try_unwrap_stream).transpose()?
         else {
             bail!("stream subscription type mismatch")
         };
@@ -1949,6 +1968,7 @@ impl Receive for IncomingInputStream {
                 let (items_tx, items_rx) = mpsc::channel(1);
                 let producer = spawn(async move {
                     let mut payload: Box<dyn Buf + Send + 'a> = Box::new(Bytes::new());
+                    let mut subscriber = pin!(subscriber);
                     loop {
                         match Bytes::receive_sync(payload, &mut subscriber).await {
                             Ok((vs, _)) if vs.is_empty() => {
@@ -1994,7 +2014,7 @@ impl Receive for () {
         _sub: Option<AsyncSubscription<T>>,
     ) -> anyhow::Result<(Self, Box<dyn Buf + Send + 'a>)>
     where
-        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin + 'static,
+        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + 'static,
     {
         Ok(((), Box::new(payload)))
     }
@@ -2012,7 +2032,7 @@ where
         sub: Option<AsyncSubscription<T>>,
     ) -> anyhow::Result<(Self, Box<dyn Buf + Send + 'a>)>
     where
-        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin + 'static,
+        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + 'static,
     {
         trace!(i = 0, "decode tuple element");
         let mut sub = map_tuple_subscription(sub)?;
@@ -2034,7 +2054,7 @@ where
         sub: Option<AsyncSubscription<T>>,
     ) -> anyhow::Result<(Self, Box<dyn Buf + Send + 'a>)>
     where
-        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin + 'static,
+        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + 'static,
     {
         trace!(i = 0, "decode tuple element");
         let mut sub = sub.map(AsyncSubscription::try_unwrap_tuple).transpose()?;
@@ -2073,7 +2093,7 @@ where
         sub: Option<AsyncSubscription<T>>,
     ) -> anyhow::Result<(Self, Box<dyn Buf + Send + 'a>)>
     where
-        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin + 'static,
+        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + 'static,
     {
         trace!(i = 0, "decode tuple element");
         let mut sub = sub.map(AsyncSubscription::try_unwrap_tuple).transpose()?;
@@ -2122,7 +2142,7 @@ where
         sub: Option<AsyncSubscription<T>>,
     ) -> anyhow::Result<(Self, Box<dyn Buf + Send + 'a>)>
     where
-        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin + 'static,
+        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + 'static,
     {
         trace!(i = 0, "decode tuple element");
         let mut sub = sub.map(AsyncSubscription::try_unwrap_tuple).transpose()?;
@@ -2175,7 +2195,7 @@ impl ReceiveContext<Type> for Value {
         sub: Option<AsyncSubscription<T>>,
     ) -> anyhow::Result<(Self, Box<dyn Buf + Send + 'a>)>
     where
-        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin + 'static,
+        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + 'static,
     {
         match ty {
             Type::Bool => {
@@ -2365,7 +2385,7 @@ impl ReceiveContext<Type> for Value {
                 Ok((Self::Flags(v), payload))
             }
             Type::Future(ty) => {
-                let Some((mut subscriber, nested)) =
+                let Some((subscriber, nested)) =
                     sub.map(AsyncSubscription::try_unwrap_future).transpose()?
                 else {
                     bail!("future subscription type mismatch")
@@ -2379,7 +2399,7 @@ impl ReceiveContext<Type> for Value {
                         Ok((
                             Self::Future(Box::pin(async move {
                                 trace!("decode future unit value");
-                                let buf = subscriber
+                                let buf = pin!(subscriber)
                                     .try_next()
                                     .await
                                     .context("failed to receive future value")?
@@ -2399,7 +2419,7 @@ impl ReceiveContext<Type> for Value {
                                 let (v, _) = Self::receive_context(
                                     &ty,
                                     Bytes::default(),
-                                    &mut subscriber,
+                                    &mut pin!(subscriber),
                                     nested,
                                 )
                                 .await?;
@@ -2421,7 +2441,7 @@ impl ReceiveContext<Type> for Value {
                 }
             }
             Type::Stream(ty) => {
-                let Some((mut subscriber, mut sub)) =
+                let Some((subscriber, mut sub)) =
                     sub.map(AsyncSubscription::try_unwrap_stream).transpose()?
                 else {
                     bail!("stream subscription type mismatch")
@@ -2435,6 +2455,7 @@ impl ReceiveContext<Type> for Value {
                         let producer = spawn(async move {
                             let mut payload: Box<dyn Buf + Send + 'a> = Box::new(Bytes::new());
                             let mut i = 0;
+                            let mut subscriber = pin!(subscriber);
                             loop {
                                 match Self::receive_stream_item_context::<T>(
                                     ty.as_deref(),
@@ -2525,23 +2546,25 @@ pub trait Encode: Send {
     async fn encode(self, payload: &mut (impl BufMut + Send))
         -> anyhow::Result<Option<AsyncValue>>;
 
-    async fn encode_dynamic_future(
+    fn encode_dynamic_future(
         mut fut: impl Future<Output = anyhow::Result<Option<Value>>> + Send + Unpin + 'static,
         mut payload: impl BufMut + Send,
-    ) -> anyhow::Result<Option<AsyncValue>>
+    ) -> impl Future<Output = anyhow::Result<Option<AsyncValue>>>
     where
         Self: Sized,
     {
-        trace!("encode future");
-        if let Some(v) = poll_immediate(&mut fut).await {
-            trace!("encode ready future value");
-            payload.put_u8(1);
-            let v = v.context("failed to acquire future value")?;
-            v.encode(&mut payload).await
-        } else {
-            trace!("encode pending future value");
-            payload.put_u8(0);
-            Ok(Some(AsyncValue::Future(Box::pin(fut))))
+        async move {
+            trace!("encode future");
+            if let Some(v) = poll_immediate(&mut fut).await {
+                trace!("encode ready future value");
+                payload.put_u8(1);
+                let v = v.context("failed to acquire future value")?;
+                v.encode(&mut payload).await
+            } else {
+                trace!("encode pending future value");
+                payload.put_u8(0);
+                Ok(Some(AsyncValue::Future(Box::pin(fut))))
+            }
         }
     }
 }
@@ -3536,7 +3559,9 @@ mod tests {
             .init();
 
         let mut sub = None::<
-            AsyncSubscriptionDemux<Box<dyn Stream<Item = anyhow::Result<Bytes>> + Send + Sync>>,
+            AsyncSubscriptionDemux<
+                Box<dyn Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin>,
+            >,
         >;
 
         let (items, payload) = super::Value::receive_stream_item_context(

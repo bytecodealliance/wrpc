@@ -37,7 +37,7 @@ impl Receive for ContainerMetadata {
         _sub: Option<AsyncSubscription<T>>,
     ) -> anyhow::Result<(Self, Box<dyn Buf + Send + 'a>)>
     where
-        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin + 'static,
+        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + 'static,
     {
         let (name, payload) = Receive::receive_sync(payload, rx)
             .await
@@ -88,7 +88,7 @@ impl Receive for ObjectMetadata {
         _sub: Option<AsyncSubscription<T>>,
     ) -> anyhow::Result<(Self, Box<dyn Buf + Send + 'a>)>
     where
-        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin + 'static,
+        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + 'static,
     {
         let (name, payload) = Receive::receive_sync(payload, rx)
             .await
@@ -142,7 +142,7 @@ impl Receive for ObjectId {
         _sub: Option<AsyncSubscription<T>>,
     ) -> anyhow::Result<(Self, Box<dyn Buf + Send + 'a>)>
     where
-        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin + 'static,
+        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + 'static,
     {
         let (container, payload) = Receive::receive_sync(payload, rx)
             .await
