@@ -71,6 +71,7 @@ hyper = { version = "1", default-features = false }
 hyper-util = { version = "0.1", default-features = false }
 leb128 = { version = "0.2", default-features = false }
 reqwest = { version = "0.11", default-features = false }
+rustc_data_structures = { version = "0", default-features = false }
 serde = { version = "1", default-features = false }
 serde_json = { version = "1", default-features = false }
 tokio = { version = "1", default-features = false }

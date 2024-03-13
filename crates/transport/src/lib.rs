@@ -3543,10 +3543,22 @@ pub trait Client: Sync {
 
 #[cfg(test)]
 mod tests {
+    use rustc_data_structures::captures::Captures;
     use tracing_subscriber::layer::SubscriberExt as _;
     use tracing_subscriber::util::SubscriberInitExt as _;
 
     use super::*;
+
+    // See https://github.com/rust-lang/rust/issues/34511#issuecomment-373423999
+    #[allow(unused)]
+    async fn lifetimes<'a>(
+        client: &'a impl super::Client,
+        instance: &'a str,
+        name: &'a str,
+    ) -> anyhow::Result<impl Stream<Item = ()> + Captures<'a>> {
+        let invocations = client.serve_static::<()>(instance, name).await?;
+        Ok(invocations.map(|invocation| ()))
+    }
 
     #[tokio::test]
     async fn codec() -> anyhow::Result<()> {
