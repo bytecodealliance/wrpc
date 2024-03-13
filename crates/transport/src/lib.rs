@@ -3327,7 +3327,7 @@ pub trait Client: Sync {
     > + Send {
         async {
             let invocations = self.serve(instance, name).await?;
-            Ok(Box::pin(invocations.and_then({
+            Ok(invocations.and_then({
                 move |IncomingInvocation {
                           context,
                           payload,
@@ -3368,7 +3368,7 @@ pub trait Client: Sync {
                         })
                     }
                 }
-            })))
+            }))
         }
     }
 
