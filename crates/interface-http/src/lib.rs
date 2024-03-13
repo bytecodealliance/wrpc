@@ -1494,11 +1494,7 @@ impl Receive for IncomingResponse {
 }
 
 pub trait IncomingHandler: wrpc_transport::Client {
-    type HandleInvocationStream;
-
-    #[cfg(feature = "wasmtime-wasi-http")]
-    type HandleWasmtimeInvocationStream;
-
+    #[instrument(level = "trace", skip_all)]
     fn invoke_handle<Body, Trailers>(
         &self,
         request: Request<Body, Trailers>,
@@ -1507,9 +1503,13 @@ pub trait IncomingHandler: wrpc_transport::Client {
     > + Send
     where
         Body: Stream<Item = Bytes> + Send + 'static,
-        Trailers: Future<Output = Option<Fields>> + Send + 'static;
+        Trailers: Future<Output = Option<Fields>> + Send + 'static,
+    {
+        self.invoke_static("wrpc:http/incoming-handler@0.1.0", "handle", request)
+    }
 
     #[cfg(feature = "http-body")]
+    #[instrument(level = "trace", skip_all)]
     fn invoke_handle_http<E: Send + 'static>(
         &self,
         request: http::Request<impl http_body::Body<Data = Bytes, Error = E> + Send + 'static>,
@@ -1519,9 +1519,28 @@ pub trait IncomingHandler: wrpc_transport::Client {
             Self::Transmission,
             impl Stream<Item = HttpBodyError<E>>,
         )>,
-    > + Send;
+    > + Send {
+        async {
+            let (request, errors) = try_http_to_outgoing_request(request).context(
+                "failed to convert incoming `http` request to outgoing `wrpc:http/types.request`",
+            )?;
+            let (response, tx) = IncomingHandler::invoke_handle(self, request)
+                .await
+                .context("failed to invoke `wrpc:http/incoming-handler.handle`")?;
+            match response {
+                Ok(response) => {
+                    let response = response.try_into().context(
+                "failed to convert incoming `wrpc:http/types.response` to outgoing `http` response",
+            )?;
+                    Ok((Ok(response), tx, errors))
+                }
+                Err(code) => Ok((Err(code), tx, errors)),
+            }
+        }
+    }
 
     #[cfg(feature = "hyper")]
+    #[instrument(level = "trace", skip_all)]
     fn invoke_handle_hyper(
         &self,
         request: hyper::Request<hyper::body::Incoming>,
@@ -1534,150 +1553,91 @@ pub trait IncomingHandler: wrpc_transport::Client {
             Self::Transmission,
             impl Stream<Item = HttpBodyError<hyper::Error>>,
         )>,
-    > + Send;
+    > + Send {
+        async {
+            let (response, tx, errors) = self.invoke_handle_http(request).await?;
+            match response {
+                Ok(response) => {
+                    let response: hyper::Response<IncomingBody<IncomingInputStream, IncomingFields>> = response.try_into().context("failed to convert incoming `wrpc:http/types.response` to hyper outgoing response")?;
+                    let (parts, body) = response.into_parts();
+                    Ok((Ok(hyper::Response::from_parts(parts, body)), tx, errors))
+                }
+                Err(code) => Ok((
+                    Err(anyhow::anyhow!("handler failed with code `{code:?}`")),
+                    tx,
+                    errors,
+                )),
+            }
+        }
+    }
 
+    #[instrument(level = "trace", skip_all)]
     fn serve_handle(
         &self,
-    ) -> impl Future<Output = anyhow::Result<Self::HandleInvocationStream>> + Send;
+    ) -> impl Future<
+        Output = anyhow::Result<
+            impl Stream<
+                    Item = anyhow::Result<
+                        AcceptedInvocation<
+                            Self::Context,
+                            IncomingRequest,
+                            Self::Subject,
+                            <Self::Acceptor as Acceptor>::Transmitter,
+                        >,
+                    >,
+                > + Send,
+        >,
+    > + Send {
+        self.serve_static("wrpc:http/incoming-handler@0.1.0", "handle")
+    }
 
     #[cfg(feature = "wasmtime-wasi-http")]
+    #[instrument(level = "trace", skip_all)]
     fn serve_handle_wasmtime(
         &self,
-    ) -> impl Future<Output = anyhow::Result<Self::HandleWasmtimeInvocationStream>> + Send;
-}
-
-impl<T: wrpc_transport::Client> IncomingHandler for T {
-    type HandleInvocationStream = Pin<
-        Box<
-            dyn Stream<
+    ) -> impl Future<
+        Output = anyhow::Result<
+            impl Stream<
                     Item = anyhow::Result<
                         AcceptedInvocation<
-                            T::Context,
-                            IncomingRequest,
-                            T::Subject,
-                            <T::Acceptor as Acceptor>::Transmitter,
-                        >,
-                    >,
-                > + Send,
-        >,
-    >;
-
-    #[cfg(feature = "wasmtime-wasi-http")]
-    type HandleWasmtimeInvocationStream = Pin<
-        Box<
-            dyn Stream<
-                    Item = anyhow::Result<
-                        AcceptedInvocation<
-                            T::Context,
+                            Self::Context,
                             http::Request<wasmtime_wasi_http::body::HyperIncomingBody>,
-                            T::Subject,
-                            <T::Acceptor as Acceptor>::Transmitter,
+                            Self::Subject,
+                            <Self::Acceptor as Acceptor>::Transmitter,
                         >,
                     >,
                 > + Send,
         >,
-    >;
-
-    #[instrument(level = "trace", skip_all)]
-    async fn invoke_handle<Body, Trailers>(
-        &self,
-        request: Request<Body, Trailers>,
-    ) -> anyhow::Result<(Result<IncomingResponse, ErrorCode>, Self::Transmission)>
-    where
-        Body: Stream<Item = Bytes> + Send + 'static,
-        Trailers: Future<Output = Option<Fields>> + Send + 'static,
-    {
-        self.invoke_static("wrpc:http/incoming-handler@0.1.0", "handle", request)
-            .await
-    }
-
-    #[cfg(feature = "http-body")]
-    #[instrument(level = "trace", skip_all)]
-    async fn invoke_handle_http<E: Send + 'static>(
-        &self,
-        request: http::Request<impl http_body::Body<Data = Bytes, Error = E> + Send + 'static>,
-    ) -> anyhow::Result<(
-        Result<http::Response<IncomingBody<IncomingInputStream, IncomingFields>>, ErrorCode>,
-        Self::Transmission,
-        impl Stream<Item = HttpBodyError<E>>,
-    )> {
-        let (request, errors) = try_http_to_outgoing_request(request).context(
-            "failed to convert incoming `http` request to outgoing `wrpc:http/types.request`",
-        )?;
-        let (response, tx) = IncomingHandler::invoke_handle(self, request)
-            .await
-            .context("failed to invoke `wrpc:http/incoming-handler.handle`")?;
-        match response {
-            Ok(response) => {
-                let response = response.try_into().context(
-                "failed to convert incoming `wrpc:http/types.response` to outgoing `http` response",
-            )?;
-                Ok((Ok(response), tx, errors))
-            }
-            Err(code) => Ok((Err(code), tx, errors)),
+    > + Send {
+        async {
+            let invocations = IncomingHandler::serve_handle(self).await?;
+            Ok(invocations.map(|invocation| {
+                let AcceptedInvocation {
+                    context,
+                    params,
+                    result_subject,
+                    error_subject,
+                    transmitter,
+                } = invocation?;
+                let req = params
+                    .try_into()
+                    .context("failed to convert `wrpc:http` request to Wasmtime `wasi:http`")?;
+                Ok(AcceptedInvocation {
+                    context,
+                    params: req,
+                    result_subject,
+                    error_subject,
+                    transmitter,
+                })
+            }))
         }
-    }
-
-    #[cfg(feature = "hyper")]
-    #[instrument(level = "trace", skip_all)]
-    async fn invoke_handle_hyper(
-        &self,
-        request: hyper::Request<hyper::body::Incoming>,
-    ) -> anyhow::Result<(
-        Result<hyper::Response<IncomingBody<IncomingInputStream, IncomingFields>>, anyhow::Error>,
-        Self::Transmission,
-        impl Stream<Item = HttpBodyError<hyper::Error>>,
-    )> {
-        let (response, tx, errors) = self.invoke_handle_http(request).await?;
-        match response {
-            Ok(response) => {
-                let response: hyper::Response<IncomingBody<IncomingInputStream, IncomingFields>> = response.try_into().context("failed to convert incoming `wrpc:http/types.response` to hyper outgoing response")?;
-                let (parts, body) = response.into_parts();
-                Ok((Ok(hyper::Response::from_parts(parts, body)), tx, errors))
-            }
-            Err(code) => Ok((
-                Err(anyhow::anyhow!("handler failed with code `{code:?}`")),
-                tx,
-                errors,
-            )),
-        }
-    }
-
-    #[instrument(level = "trace", skip_all)]
-    async fn serve_handle(&self) -> anyhow::Result<Self::HandleInvocationStream> {
-        self.serve_static("wrpc:http/incoming-handler@0.1.0", "handle")
-            .await
-    }
-
-    #[cfg(feature = "wasmtime-wasi-http")]
-    #[instrument(level = "trace", skip_all)]
-    async fn serve_handle_wasmtime(&self) -> anyhow::Result<Self::HandleWasmtimeInvocationStream> {
-        let invocations = IncomingHandler::serve_handle(self).await?;
-        Ok(Box::pin(invocations.map(|invocation| {
-            let AcceptedInvocation {
-                context,
-                params,
-                result_subject,
-                error_subject,
-                transmitter,
-            } = invocation?;
-            let req = params
-                .try_into()
-                .context("failed to convert `wrpc:http` request to Wasmtime `wasi:http`")?;
-            Ok(AcceptedInvocation {
-                context,
-                params: req,
-                result_subject,
-                error_subject,
-                transmitter,
-            })
-        })))
     }
 }
+
+impl<T: wrpc_transport::Client> IncomingHandler for T {}
 
 pub trait OutgoingHandler: wrpc_transport::Client {
-    type HandleInvocationStream;
-
+    #[instrument(level = "trace", skip_all)]
     fn invoke_handle(
         &self,
         request: Request<
@@ -1687,9 +1647,16 @@ pub trait OutgoingHandler: wrpc_transport::Client {
         options: Option<RequestOptions>,
     ) -> impl Future<
         Output = anyhow::Result<(Result<IncomingResponse, ErrorCode>, Self::Transmission)>,
-    > + Send;
+    > + Send {
+        self.invoke_static(
+            "wrpc:http/outgoing-handler@0.1.0",
+            "handle",
+            (request, options),
+        )
+    }
 
     #[cfg(feature = "wasmtime-wasi-http")]
+    #[instrument(level = "trace", skip_all)]
     fn invoke_handle_wasmtime(
         &self,
         request: wasmtime_wasi_http::types::OutgoingRequest,
@@ -1702,77 +1669,43 @@ pub trait OutgoingHandler: wrpc_transport::Client {
             impl Stream<Item = HttpBodyError<wasmtime_wasi_http::bindings::http::types::ErrorCode>>,
             Self::Transmission,
         )>,
-    > + Send;
-
-    fn serve_handle(
-        &self,
-    ) -> impl Future<Output = anyhow::Result<Self::HandleInvocationStream>> + Send;
-}
-
-impl<T: wrpc_transport::Client> OutgoingHandler for T {
-    type HandleInvocationStream = Pin<
-        Box<
-            dyn Stream<
-                    Item = anyhow::Result<
-                        AcceptedInvocation<
-                            T::Context,
-                            (IncomingRequest, Option<RequestOptions>),
-                            T::Subject,
-                            <T::Acceptor as Acceptor>::Transmitter,
-                        >,
-                    >,
-                > + Send,
-        >,
-    >;
-
-    #[instrument(level = "trace", skip_all)]
-    async fn invoke_handle(
-        &self,
-        request: Request<
-            impl Stream<Item = Bytes> + Send + 'static,
-            impl Future<Output = Option<Fields>> + Send + 'static,
-        >,
-        options: Option<RequestOptions>,
-    ) -> anyhow::Result<(Result<IncomingResponse, ErrorCode>, T::Transmission)> {
-        self.invoke_static(
-            "wrpc:http/outgoing-handler@0.1.0",
-            "handle",
-            (request, options),
-        )
-        .await
-    }
-
-    #[cfg(feature = "wasmtime-wasi-http")]
-    #[instrument(level = "trace", skip_all)]
-    async fn invoke_handle_wasmtime(
-        &self,
-        request: wasmtime_wasi_http::types::OutgoingRequest,
-    ) -> anyhow::Result<(
-        Result<
-            http::Response<wasmtime_wasi_http::body::HyperIncomingBody>,
-            wasmtime_wasi_http::bindings::http::types::ErrorCode,
-        >,
-        impl Stream<Item = HttpBodyError<wasmtime_wasi_http::bindings::http::types::ErrorCode>>,
-        Self::Transmission,
-    )> {
-        let (req, opts, errors) = try_wasmtime_to_outgoing_request(request)?;
-        let (resp, tx) = OutgoingHandler::invoke_handle(self, req, Some(opts))
-            .await
-            .context("failed to invoke `wrpc:http/outgoing-handler.handle`")?;
-        match resp {
-            Ok(resp) => {
-                let resp = resp
-                    .try_into()
-                    .context("failed to convert `wrpc:http` response to Wasmtime `wasi:http`")?;
-                Ok((Ok(resp), errors, tx))
+    > + Send {
+        async {
+            let (req, opts, errors) = try_wasmtime_to_outgoing_request(request)?;
+            let (resp, tx) = OutgoingHandler::invoke_handle(self, req, Some(opts))
+                .await
+                .context("failed to invoke `wrpc:http/outgoing-handler.handle`")?;
+            match resp {
+                Ok(resp) => {
+                    let resp = resp.try_into().context(
+                        "failed to convert `wrpc:http` response to Wasmtime `wasi:http`",
+                    )?;
+                    Ok((Ok(resp), errors, tx))
+                }
+                Err(code) => Ok((Err(code.into()), errors, tx)),
             }
-            Err(code) => Ok((Err(code.into()), errors, tx)),
         }
     }
 
     #[instrument(level = "trace", skip_all)]
-    async fn serve_handle(&self) -> anyhow::Result<Self::HandleInvocationStream> {
+    fn serve_handle(
+        &self,
+    ) -> impl Future<
+        Output = anyhow::Result<
+            impl Stream<
+                Item = anyhow::Result<
+                    AcceptedInvocation<
+                        Self::Context,
+                        (IncomingRequest, Option<RequestOptions>),
+                        Self::Subject,
+                        <Self::Acceptor as Acceptor>::Transmitter,
+                    >,
+                >,
+            >,
+        >,
+    > + Send {
         self.serve_static("wrpc:http/outgoing-handler@0.1.0", "handle")
-            .await
     }
 }
+
+impl<T: wrpc_transport::Client> OutgoingHandler for T {}

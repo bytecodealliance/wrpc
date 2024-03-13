@@ -1,4 +1,5 @@
 use core::iter::zip;
+use core::pin::pin;
 use core::str;
 use core::time::Duration;
 
@@ -78,7 +79,7 @@ async fn loopback_dynamic(
             results: results_ty,
         } => {
             info!("serve function");
-            let mut invocations = client
+            let invocations = client
                 .serve_dynamic("wrpc:wrpc/test-dynamic", name, params_ty)
                 .await
                 .context("failed to serve static function")?;
@@ -90,7 +91,7 @@ async fn loopback_dynamic(
                         result_subject,
                         transmitter,
                         ..
-                    } = invocations
+                    } = pin!(invocations)
                         .try_next()
                         .await
                         .with_context(|| "unexpected end of invocation stream".to_string())?
@@ -1078,7 +1079,7 @@ async fn nats() -> anyhow::Result<()> {
         ));
     }
 
-    let mut unit_invocations = client
+    let unit_invocations = client
         .serve_static::<()>("wrpc:wrpc/test-static", "unit_unit")
         .await
         .context("failed to serve")?;
@@ -1089,7 +1090,7 @@ async fn nats() -> anyhow::Result<()> {
                 result_subject,
                 transmitter,
                 ..
-            } = unit_invocations
+            } = pin!(unit_invocations)
                 .try_next()
                 .await
                 .context("failed to receive invocation")?
@@ -1120,7 +1121,8 @@ async fn nats() -> anyhow::Result<()> {
             .local_addr()
             .context("failed to query listener local address")?;
 
-        let mut invocations = client.serve_handle().await.context("failed to serve")?;
+        let invocations = client.serve_handle().await.context("failed to serve")?;
+        let mut invocations = pin!(invocations);
         try_join!(
             async {
                 let AcceptedInvocation {
@@ -1373,7 +1375,7 @@ async fn nats() -> anyhow::Result<()> {
     {
         use wrpc_interface_http::OutgoingHandler;
 
-        let mut invocations = client.serve_handle().await.context("failed to serve")?;
+        let invocations = client.serve_handle().await.context("failed to serve")?;
         try_join!(
             async {
                 let AcceptedInvocation {
@@ -1393,7 +1395,7 @@ async fn nats() -> anyhow::Result<()> {
                     result_subject,
                     transmitter,
                     ..
-                } = invocations
+                } = pin!(invocations)
                     .try_next()
                     .await
                     .context("failed to receive invocation")?
@@ -1523,10 +1525,11 @@ async fn nats() -> anyhow::Result<()> {
     {
         use wrpc_interface_blobstore::Blobstore;
 
-        let mut invocations = client
+        let invocations = client
             .serve_clear_container()
             .await
             .context("failed to serve `clear-container`")?;
+        let mut invocations = pin!(invocations);
         try_join!(
             async {
                 let AcceptedInvocation {
@@ -1602,7 +1605,7 @@ async fn nats() -> anyhow::Result<()> {
     {
         use wrpc_interface_blobstore::Blobstore;
 
-        let mut invocations = client
+        let invocations = client
             .serve_container_exists()
             .await
             .context("failed to serve `container-exists`")?;
@@ -1613,7 +1616,7 @@ async fn nats() -> anyhow::Result<()> {
                     result_subject,
                     transmitter,
                     ..
-                } = invocations
+                } = pin!(invocations)
                     .try_next()
                     .await
                     .context("failed to receive invocation")?
@@ -1645,7 +1648,7 @@ async fn nats() -> anyhow::Result<()> {
     {
         use wrpc_interface_blobstore::Blobstore;
 
-        let mut invocations = client
+        let invocations = client
             .serve_create_container()
             .await
             .context("failed to serve `create-container`")?;
@@ -1656,7 +1659,7 @@ async fn nats() -> anyhow::Result<()> {
                     result_subject,
                     transmitter,
                     ..
-                } = invocations
+                } = pin!(invocations)
                     .try_next()
                     .await
                     .context("failed to receive invocation")?
@@ -1687,7 +1690,7 @@ async fn nats() -> anyhow::Result<()> {
     {
         use wrpc_interface_blobstore::Blobstore;
 
-        let mut invocations = client
+        let invocations = client
             .serve_delete_container()
             .await
             .context("failed to serve `delete-container`")?;
@@ -1698,7 +1701,7 @@ async fn nats() -> anyhow::Result<()> {
                     result_subject,
                     transmitter,
                     ..
-                } = invocations
+                } = pin!(invocations)
                     .try_next()
                     .await
                     .context("failed to receive invocation")?
@@ -1729,7 +1732,7 @@ async fn nats() -> anyhow::Result<()> {
     {
         use wrpc_interface_blobstore::Blobstore;
 
-        let mut invocations = client
+        let invocations = client
             .serve_get_container_info()
             .await
             .context("failed to serve `get-container-info`")?;
@@ -1740,7 +1743,7 @@ async fn nats() -> anyhow::Result<()> {
                     result_subject,
                     transmitter,
                     ..
-                } = invocations
+                } = pin!(invocations)
                     .try_next()
                     .await
                     .context("failed to receive invocation")?
@@ -1779,7 +1782,7 @@ async fn nats() -> anyhow::Result<()> {
     {
         use wrpc_interface_blobstore::Blobstore;
 
-        let mut invocations = client
+        let invocations = client
             .serve_list_container_objects()
             .await
             .context("failed to serve `list-container-objects`")?;
@@ -1790,7 +1793,7 @@ async fn nats() -> anyhow::Result<()> {
                     result_subject,
                     transmitter,
                     ..
-                } = invocations
+                } = pin!(invocations)
                     .try_next()
                     .await
                     .context("failed to receive invocation")?
@@ -1834,7 +1837,7 @@ async fn nats() -> anyhow::Result<()> {
     {
         use wrpc_interface_blobstore::Blobstore;
 
-        let mut invocations = client
+        let invocations = client
             .serve_copy_object()
             .await
             .context("failed to serve `copy-object`")?;
@@ -1845,7 +1848,7 @@ async fn nats() -> anyhow::Result<()> {
                     result_subject,
                     transmitter,
                     ..
-                } = invocations
+                } = pin!(invocations)
                     .try_next()
                     .await
                     .context("failed to receive invocation")?
@@ -1898,7 +1901,7 @@ async fn nats() -> anyhow::Result<()> {
     {
         use wrpc_interface_blobstore::Blobstore;
 
-        let mut invocations = client
+        let invocations = client
             .serve_delete_object()
             .await
             .context("failed to serve `delete-object`")?;
@@ -1909,7 +1912,7 @@ async fn nats() -> anyhow::Result<()> {
                     result_subject,
                     transmitter,
                     ..
-                } = invocations
+                } = pin!(invocations)
                     .try_next()
                     .await
                     .context("failed to receive invocation")?
@@ -1949,7 +1952,7 @@ async fn nats() -> anyhow::Result<()> {
     {
         use wrpc_interface_blobstore::Blobstore;
 
-        let mut invocations = client
+        let invocations = client
             .serve_delete_objects()
             .await
             .context("failed to serve `delete-objects`")?;
@@ -1960,7 +1963,7 @@ async fn nats() -> anyhow::Result<()> {
                     result_subject,
                     transmitter,
                     ..
-                } = invocations
+                } = pin!(invocations)
                     .try_next()
                     .await
                     .context("failed to receive invocation")?
@@ -1995,7 +1998,7 @@ async fn nats() -> anyhow::Result<()> {
     {
         use wrpc_interface_blobstore::Blobstore;
 
-        let mut invocations = client
+        let invocations = client
             .serve_get_container_data()
             .await
             .context("failed to serve `get-container-data`")?;
@@ -2006,7 +2009,7 @@ async fn nats() -> anyhow::Result<()> {
                     result_subject,
                     transmitter,
                     ..
-                } = invocations
+                } = pin!(invocations)
                     .try_next()
                     .await
                     .context("failed to receive invocation")?
@@ -2070,7 +2073,7 @@ async fn nats() -> anyhow::Result<()> {
     {
         use wrpc_interface_blobstore::Blobstore;
 
-        let mut invocations = client
+        let invocations = client
             .serve_get_object_info()
             .await
             .context("failed to serve `get-object-info`")?;
@@ -2081,7 +2084,7 @@ async fn nats() -> anyhow::Result<()> {
                     result_subject,
                     transmitter,
                     ..
-                } = invocations
+                } = pin!(invocations)
                     .try_next()
                     .await
                     .context("failed to receive invocation")?
@@ -2138,7 +2141,7 @@ async fn nats() -> anyhow::Result<()> {
     {
         use wrpc_interface_blobstore::Blobstore;
 
-        let mut invocations = client
+        let invocations = client
             .serve_has_object()
             .await
             .context("failed to serve `has-object`")?;
@@ -2149,7 +2152,7 @@ async fn nats() -> anyhow::Result<()> {
                     result_subject,
                     transmitter,
                     ..
-                } = invocations
+                } = pin!(invocations)
                     .try_next()
                     .await
                     .context("failed to receive invocation")?
@@ -2190,7 +2193,7 @@ async fn nats() -> anyhow::Result<()> {
     {
         use wrpc_interface_blobstore::Blobstore;
 
-        let mut invocations = client
+        let invocations = client
             .serve_move_object()
             .await
             .context("failed to serve `move-object`")?;
@@ -2201,7 +2204,7 @@ async fn nats() -> anyhow::Result<()> {
                     result_subject,
                     transmitter,
                     ..
-                } = invocations
+                } = pin!(invocations)
                     .try_next()
                     .await
                     .context("failed to receive invocation")?
@@ -2254,7 +2257,7 @@ async fn nats() -> anyhow::Result<()> {
     {
         use wrpc_interface_blobstore::Blobstore;
 
-        let mut invocations = client
+        let invocations = client
             .serve_write_container_data()
             .await
             .context("failed to serve `move-object`")?;
@@ -2265,7 +2268,7 @@ async fn nats() -> anyhow::Result<()> {
                     result_subject,
                     transmitter,
                     ..
-                } = invocations
+                } = pin!(invocations)
                     .try_next()
                     .await
                     .context("failed to receive invocation")?
@@ -2314,7 +2317,7 @@ async fn nats() -> anyhow::Result<()> {
     {
         use wrpc_interface_keyvalue::Eventual;
 
-        let mut invocations = client
+        let invocations = client
             .serve_delete()
             .await
             .context("failed to serve `delete`")?;
@@ -2325,7 +2328,7 @@ async fn nats() -> anyhow::Result<()> {
                     result_subject,
                     transmitter,
                     ..
-                } = invocations
+                } = pin!(invocations)
                     .try_next()
                     .await
                     .context("failed to receive invocation")?
@@ -2357,7 +2360,7 @@ async fn nats() -> anyhow::Result<()> {
     {
         use wrpc_interface_keyvalue::Eventual;
 
-        let mut invocations = client
+        let invocations = client
             .serve_exists()
             .await
             .context("failed to serve `exists`")?;
@@ -2368,7 +2371,7 @@ async fn nats() -> anyhow::Result<()> {
                     result_subject,
                     transmitter,
                     ..
-                } = invocations
+                } = pin!(invocations)
                     .try_next()
                     .await
                     .context("failed to receive invocation")?
@@ -2401,7 +2404,7 @@ async fn nats() -> anyhow::Result<()> {
     {
         use wrpc_interface_keyvalue::Eventual;
 
-        let mut invocations = client.serve_get().await.context("failed to serve `get`")?;
+        let invocations = client.serve_get().await.context("failed to serve `get`")?;
         try_join!(
             async {
                 let AcceptedInvocation {
@@ -2409,7 +2412,7 @@ async fn nats() -> anyhow::Result<()> {
                     result_subject,
                     transmitter,
                     ..
-                } = invocations
+                } = pin!(invocations)
                     .try_next()
                     .await
                     .context("failed to receive invocation")?
@@ -2462,7 +2465,7 @@ async fn nats() -> anyhow::Result<()> {
     {
         use wrpc_interface_keyvalue::Eventual;
 
-        let mut invocations = client.serve_set().await.context("failed to serve `set`")?;
+        let invocations = client.serve_set().await.context("failed to serve `set`")?;
         try_join!(
             async {
                 let AcceptedInvocation {
@@ -2470,7 +2473,7 @@ async fn nats() -> anyhow::Result<()> {
                     result_subject,
                     transmitter,
                     ..
-                } = invocations
+                } = pin!(invocations)
                     .try_next()
                     .await
                     .context("failed to receive invocation")?
@@ -2512,7 +2515,7 @@ async fn nats() -> anyhow::Result<()> {
     {
         use wrpc_interface_keyvalue::Atomic;
 
-        let mut invocations = client
+        let invocations = client
             .serve_compare_and_swap()
             .await
             .context("failed to serve `compare-and-swap`")?;
@@ -2523,7 +2526,7 @@ async fn nats() -> anyhow::Result<()> {
                     result_subject,
                     transmitter,
                     ..
-                } = invocations
+                } = pin!(invocations)
                     .try_next()
                     .await
                     .context("failed to receive invocation")?
@@ -2558,7 +2561,7 @@ async fn nats() -> anyhow::Result<()> {
     {
         use wrpc_interface_keyvalue::Atomic;
 
-        let mut invocations = client
+        let invocations = client
             .serve_increment()
             .await
             .context("failed to serve `increment`")?;
@@ -2569,7 +2572,7 @@ async fn nats() -> anyhow::Result<()> {
                     result_subject,
                     transmitter,
                     ..
-                } = invocations
+                } = pin!(invocations)
                     .try_next()
                     .await
                     .context("failed to receive invocation")?

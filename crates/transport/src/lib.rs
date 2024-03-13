@@ -3186,7 +3186,6 @@ pub struct OutgoingInvocation<Invocation, Subscriber, Subject> {
 }
 
 /// wRPC transmission client used to invoke and serve functions
-#[async_trait]
 pub trait Client: Sync {
     type Context: Send + 'static;
     type Subject: Subject + Clone + Send + Sync + 'static;
@@ -3199,135 +3198,76 @@ pub trait Client: Sync {
         + Sync
         + 'static;
     type Acceptor: Acceptor<Subject = Self::Subject> + Send + 'static;
-    type InvocationStream: Stream<
-            Item = anyhow::Result<
-                IncomingInvocation<Self::Context, Self::Subject, Self::Subscriber, Self::Acceptor>,
-            >,
-        > + Unpin
-        + Send
-        + 'static;
     type Invocation: Invocation<Transmission = Self::Transmission> + Send;
 
     /// Serve function `name` from instance `instance`
-    async fn serve(&self, instance: &str, name: &str) -> anyhow::Result<Self::InvocationStream>;
+    fn serve(
+        &self,
+        instance: &str,
+        name: &str,
+    ) -> impl Future<
+        Output = anyhow::Result<
+            impl Stream<
+                    Item = anyhow::Result<
+                        IncomingInvocation<
+                            Self::Context,
+                            Self::Subject,
+                            Self::Subscriber,
+                            Self::Acceptor,
+                        >,
+                    >,
+                > + Send,
+        >,
+    > + Send;
 
     /// Serve function `name` from instance `instance` with statically-typed parameter type `T`
     #[instrument(level = "trace", skip(self))]
-    async fn serve_static<T: Receive + Subscribe + 'static>(
+    fn serve_static<T: Receive + Subscribe + 'static>(
         &self,
         instance: &str,
         name: &str,
-    ) -> anyhow::Result<
-        Pin<
-            Box<
-                dyn Stream<
-                        Item = anyhow::Result<
-                            AcceptedInvocation<
-                                Self::Context,
-                                T,
-                                Self::Subject,
-                                <Self::Acceptor as Acceptor>::Transmitter,
-                            >,
+    ) -> impl Future<
+        Output = anyhow::Result<
+            impl Stream<
+                    Item = anyhow::Result<
+                        AcceptedInvocation<
+                            Self::Context,
+                            T,
+                            Self::Subject,
+                            <Self::Acceptor as Acceptor>::Transmitter,
                         >,
-                    > + Send,
-            >,
+                    >,
+                > + Send,
         >,
-    > {
-        let invocations = self.serve(instance, name).await?;
-        Ok(Box::pin(invocations.and_then({
-            move |IncomingInvocation {
-                      context,
-                      payload,
-                      param_subject,
-                      error_subject,
-                      handshake_subject,
-                      subscriber,
-                      acceptor,
-                  }| async move {
-                // TODO: Subscribe for errors
-                let (mut rx, nested, errors) = try_join!(
-                    subscriber.subscribe(param_subject.clone()),
-                    T::subscribe(&subscriber, param_subject.clone()),
-                    subscriber.subscribe(error_subject),
-                )
-                .context("failed to subscribe for parameters")?;
-                // TODO: Propagate the error stream
-                _ = errors;
-                let (result_subject, error_subject, transmitter) = acceptor
-                    .accept(handshake_subject)
-                    .await
-                    .context("failed to accept invocation")?;
-                let (params, _) = T::receive(payload, &mut rx, nested)
-                    .await
-                    .context("failed to receive parameters")?;
-                Ok(AcceptedInvocation {
-                    context,
-                    params,
-                    result_subject,
-                    error_subject,
-                    transmitter,
-                })
-            }
-        })))
-    }
-
-    /// Serve function `name` from instance `instance` with dynamically-typed parameter type
-    /// `params`
-    #[instrument(level = "trace", skip(self, params))]
-    async fn serve_dynamic(
-        &self,
-        instance: &str,
-        name: &str,
-        params: Arc<[Type]>,
-    ) -> anyhow::Result<
-        Pin<
-            Box<
-                dyn Stream<
-                        Item = anyhow::Result<
-                            AcceptedInvocation<
-                                Self::Context,
-                                Vec<Value>,
-                                Self::Subject,
-                                <Self::Acceptor as Acceptor>::Transmitter,
-                            >,
-                        >,
-                    > + Send,
-            >,
-        >,
-    > {
-        let invocations = self.serve(instance, name).await?;
-        Ok(Box::pin(invocations.and_then({
-            move |IncomingInvocation {
-                      context,
-                      payload,
-                      handshake_subject,
-                      param_subject,
-                      error_subject,
-                      subscriber,
-                      acceptor,
-                  }| {
-                let params = Arc::clone(&params);
-                async move {
+    > + Send {
+        async {
+            let invocations = self.serve(instance, name).await?;
+            Ok(invocations.and_then({
+                move |IncomingInvocation {
+                          context,
+                          payload,
+                          param_subject,
+                          error_subject,
+                          handshake_subject,
+                          subscriber,
+                          acceptor,
+                      }| async move {
+                    // TODO: Subscribe for errors
                     let (mut rx, nested, errors) = try_join!(
                         subscriber.subscribe(param_subject.clone()),
-                        subscriber.subscribe_tuple(param_subject.clone(), params.as_ref()),
+                        T::subscribe(&subscriber, param_subject.clone()),
                         subscriber.subscribe(error_subject),
                     )
                     .context("failed to subscribe for parameters")?;
+                    // TODO: Propagate the error stream
+                    _ = errors;
                     let (result_subject, error_subject, transmitter) = acceptor
                         .accept(handshake_subject)
                         .await
                         .context("failed to accept invocation")?;
-                    // TODO: Propagate the error stream
-                    _ = errors;
-                    let (params, _) = ReceiveContext::receive_tuple_context(
-                        params.as_ref(),
-                        payload,
-                        &mut rx,
-                        nested,
-                    )
-                    .await
-                    .context("failed to receive parameters")?;
+                    let (params, _) = T::receive(payload, &mut rx, nested)
+                        .await
+                        .context("failed to receive parameters")?;
                     Ok(AcceptedInvocation {
                         context,
                         params,
@@ -3336,8 +3276,77 @@ pub trait Client: Sync {
                         transmitter,
                     })
                 }
-            }
-        })))
+            }))
+        }
+    }
+
+    /// Serve function `name` from instance `instance` with dynamically-typed parameter type
+    /// `params`
+    #[instrument(level = "trace", skip(self, params))]
+    fn serve_dynamic(
+        &self,
+        instance: &str,
+        name: &str,
+        params: Arc<[Type]>,
+    ) -> impl Future<
+        Output = anyhow::Result<
+            impl Stream<
+                    Item = anyhow::Result<
+                        AcceptedInvocation<
+                            Self::Context,
+                            Vec<Value>,
+                            Self::Subject,
+                            <Self::Acceptor as Acceptor>::Transmitter,
+                        >,
+                    >,
+                > + Send,
+        >,
+    > + Send {
+        async {
+            let invocations = self.serve(instance, name).await?;
+            Ok(Box::pin(invocations.and_then({
+                move |IncomingInvocation {
+                          context,
+                          payload,
+                          handshake_subject,
+                          param_subject,
+                          error_subject,
+                          subscriber,
+                          acceptor,
+                      }| {
+                    let params = Arc::clone(&params);
+                    async move {
+                        let (mut rx, nested, errors) = try_join!(
+                            subscriber.subscribe(param_subject.clone()),
+                            subscriber.subscribe_tuple(param_subject.clone(), params.as_ref()),
+                            subscriber.subscribe(error_subject),
+                        )
+                        .context("failed to subscribe for parameters")?;
+                        let (result_subject, error_subject, transmitter) = acceptor
+                            .accept(handshake_subject)
+                            .await
+                            .context("failed to accept invocation")?;
+                        // TODO: Propagate the error stream
+                        _ = errors;
+                        let (params, _) = ReceiveContext::receive_tuple_context(
+                            params.as_ref(),
+                            payload,
+                            &mut rx,
+                            nested,
+                        )
+                        .await
+                        .context("failed to receive parameters")?;
+                        Ok(AcceptedInvocation {
+                            context,
+                            params,
+                            result_subject,
+                            error_subject,
+                            transmitter,
+                        })
+                    }
+                }
+            })))
+        }
     }
 
     /// Constructs a new invocation to be sent to peer
@@ -3348,12 +3357,12 @@ pub trait Client: Sync {
     /// Invokes function `name` from instance `instance` with parameters `params` and
     /// statically-typed results of type `T`
     #[instrument(level = "trace", skip(self, params))]
-    async fn invoke_static<T>(
+    fn invoke_static<T>(
         &self,
         instance: &str,
         name: &str,
         params: impl Encode,
-    ) -> anyhow::Result<(T, Self::Transmission)>
+    ) -> impl Future<Output = anyhow::Result<(T, Self::Transmission)>> + Send
     where
         T: Receive + Subscribe + Send,
     {
@@ -3364,60 +3373,62 @@ pub trait Client: Sync {
             error_subject,
         } = self.new_invocation();
 
-        let (mut results_rx, results_nested, mut error_rx) = try_join!(
-            async {
-                subscriber
-                    .subscribe(result_subject.clone())
-                    .await
-                    .context("failed to subscribe for result values")
-            },
-            async {
-                T::subscribe(&subscriber, result_subject.clone())
-                    .await
-                    .context("failed to subscribe for asynchronous result values")
-            },
-            async {
-                subscriber
-                    .subscribe(error_subject)
-                    .await
-                    .context("failed to subscribe for error value")
-            },
-        )?;
-        let (tx, tx_fail) = invocation
-            .invoke(instance, name, params)
-            .await
-            .context("failed to invoke function")?;
+        async {
+            let (mut results_rx, results_nested, mut error_rx) = try_join!(
+                async {
+                    subscriber
+                        .subscribe(result_subject.clone())
+                        .await
+                        .context("failed to subscribe for result values")
+                },
+                async {
+                    T::subscribe(&subscriber, result_subject.clone())
+                        .await
+                        .context("failed to subscribe for asynchronous result values")
+                },
+                async {
+                    subscriber
+                        .subscribe(error_subject)
+                        .await
+                        .context("failed to subscribe for error value")
+                },
+            )?;
+            let (tx, tx_fail) = invocation
+                .invoke(instance, name, params)
+                .await
+                .context("failed to invoke function")?;
 
-        select! {
-            _ = tx_fail => {
-                trace!("transmission task failed");
-                match tx.await {
+            select! {
+                _ = tx_fail => {
+                    trace!("transmission task failed");
+                    match tx.await {
 
-                    Err(err) => bail!(anyhow!(err).context("transmission failed")),
-                    Ok(_) => bail!("transmission task desynchronisation occured"),
+                        Err(err) => bail!(anyhow!(err).context("transmission failed")),
+                        Ok(_) => bail!("transmission task desynchronisation occured"),
+                    }
                 }
-            }
-            results = async {
-                let payload = results_rx
-                    .try_next()
-                    .await
-                    .context("failed to receive initial result chunk")?
-                    .context("unexpected end of result stream")?;
-                T::receive(payload, &mut results_rx, results_nested).await
-            } => {
-                trace!("received results");
-                let (results, _) = results?;
-                return Ok((results, tx))
-            }
-            payload = error_rx.try_next() => {
-                let payload = payload
-                    .context("failed to receive initial error chunk")?
-                    .context("unexpected end of error stream")?;
-                trace!("received error");
-                let (err, _) = String::receive_sync(payload, &mut error_rx)
-                    .await
-                    .context("failed to receive error string")?;
-                bail!(err)
+                results = async {
+                    let payload = results_rx
+                        .try_next()
+                        .await
+                        .context("failed to receive initial result chunk")?
+                        .context("unexpected end of result stream")?;
+                    T::receive(payload, &mut results_rx, results_nested).await
+                } => {
+                    trace!("received results");
+                    let (results, _) = results?;
+                    return Ok((results, tx))
+                }
+                payload = error_rx.try_next() => {
+                    let payload = payload
+                        .context("failed to receive initial error chunk")?
+                        .context("unexpected end of error stream")?;
+                    trace!("received error");
+                    let (err, _) = String::receive_sync(payload, &mut error_rx)
+                        .await
+                        .context("failed to receive error string")?;
+                    bail!(err)
+                }
             }
         }
     }
@@ -3425,13 +3436,13 @@ pub trait Client: Sync {
     /// Invokes function `name` from instance `instance` with parameters `params` and
     /// dynamically-typed results of type `results`
     #[instrument(level = "trace", skip(self, params, results))]
-    async fn invoke_dynamic(
+    fn invoke_dynamic(
         &self,
         instance: &str,
         name: &str,
         params: impl Encode,
         results: &[Type],
-    ) -> anyhow::Result<(Vec<Value>, Self::Transmission)> {
+    ) -> impl Future<Output = anyhow::Result<(Vec<Value>, Self::Transmission)>> + Send {
         let OutgoingInvocation {
             invocation,
             subscriber,
@@ -3439,67 +3450,69 @@ pub trait Client: Sync {
             error_subject,
         } = self.new_invocation();
 
-        let (mut results_rx, results_nested, mut error_rx) = try_join!(
-            async {
-                subscriber
-                    .subscribe(result_subject.clone())
-                    .await
-                    .context("failed to subscribe for result values")
-            },
-            async {
-                subscriber
-                    .subscribe_tuple(result_subject.clone(), results)
-                    .await
-                    .context("failed to subscribe for asynchronous result values")
-            },
-            async {
-                subscriber
-                    .subscribe(error_subject)
-                    .await
-                    .context("failed to subscribe for error value")
-            },
-        )?;
-        let (tx, tx_fail) = invocation
-            .invoke(instance, name, params)
-            .await
-            .context("failed to invoke function")?;
-
-        select! {
-            _ = tx_fail => {
-                trace!("transmission task failed");
-                match tx.await {
-
-                    Err(err) => bail!(anyhow!(err).context("transmission failed")),
-                    Ok(_) => bail!("transmission task desynchronisation occured"),
-                }
-            }
-            results = async {
-                let payload = results_rx
-                    .try_next()
-                    .await
-                    .context("failed to receive initial result chunk")?
-                    .context("unexpected end of result stream")?;
-                ReceiveContext::receive_tuple_context(
-                    results,
-                    payload,
-                    &mut results_rx,
-                    results_nested,
-                )
+        async {
+            let (mut results_rx, results_nested, mut error_rx) = try_join!(
+                async {
+                    subscriber
+                        .subscribe(result_subject.clone())
+                        .await
+                        .context("failed to subscribe for result values")
+                },
+                async {
+                    subscriber
+                        .subscribe_tuple(result_subject.clone(), results)
+                        .await
+                        .context("failed to subscribe for asynchronous result values")
+                },
+                async {
+                    subscriber
+                        .subscribe(error_subject)
+                        .await
+                        .context("failed to subscribe for error value")
+                },
+            )?;
+            let (tx, tx_fail) = invocation
+                .invoke(instance, name, params)
                 .await
-            } => {
-                trace!("received results");
-                let (results, _) = results?;
-                return Ok((results, tx))
-            }
-            payload = error_rx.next() => {
-                let payload = payload
-                    .context("failed to receive initial error chunk")?
-                    .context("unexpected end of error stream")?;
-                trace!("received error");
-                let (err, _) = String::receive_sync(payload, &mut error_rx)
+                .context("failed to invoke function")?;
+
+            select! {
+                _ = tx_fail => {
+                    trace!("transmission task failed");
+                    match tx.await {
+
+                        Err(err) => bail!(anyhow!(err).context("transmission failed")),
+                        Ok(_) => bail!("transmission task desynchronisation occured"),
+                    }
+                }
+                results = async {
+                    let payload = results_rx
+                        .try_next()
+                        .await
+                        .context("failed to receive initial result chunk")?
+                        .context("unexpected end of result stream")?;
+                    ReceiveContext::receive_tuple_context(
+                        results,
+                        payload,
+                        &mut results_rx,
+                        results_nested,
+                    )
                     .await
-                    .context("failed to receive error string")?;
-                bail!(err)
+                } => {
+                    trace!("received results");
+                    let (results, _) = results?;
+                    return Ok((results, tx))
+                }
+                payload = error_rx.next() => {
+                    let payload = payload
+                        .context("failed to receive initial error chunk")?
+                        .context("unexpected end of error stream")?;
+                    trace!("received error");
+                    let (err, _) = String::receive_sync(payload, &mut error_rx)
+                        .await
+                        .context("failed to receive error string")?;
+                    bail!(err)
+                }
             }
         }
     }
@@ -3523,9 +3536,7 @@ mod tests {
             .init();
 
         let mut sub = None::<
-            AsyncSubscriptionDemux<
-                Box<dyn Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin>,
-            >,
+            AsyncSubscriptionDemux<Box<dyn Stream<Item = anyhow::Result<Bytes>> + Send + Sync>>,
         >;
 
         let (items, payload) = super::Value::receive_stream_item_context(
