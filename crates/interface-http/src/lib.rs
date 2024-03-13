@@ -156,11 +156,11 @@ impl EncodeSync for Method {
 
 #[async_trait]
 impl Receive for Method {
-    async fn receive<T>(
-        payload: impl Buf + Send + 'static,
+    async fn receive<'a, T>(
+        payload: impl Buf + Send + 'a,
         rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
         _sub: Option<AsyncSubscription<T>>,
-    ) -> anyhow::Result<(Self, Box<dyn Buf + Send>)>
+    ) -> anyhow::Result<(Self, Box<dyn Buf + Send + 'a>)>
     where
         T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin + 'static,
     {
@@ -231,11 +231,11 @@ impl EncodeSync for Scheme {
 
 #[async_trait]
 impl Receive for Scheme {
-    async fn receive<T>(
-        payload: impl Buf + Send + 'static,
+    async fn receive<'a, T>(
+        payload: impl Buf + Send + 'a,
         rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
         _sub: Option<AsyncSubscription<T>>,
-    ) -> anyhow::Result<(Self, Box<dyn Buf + Send>)>
+    ) -> anyhow::Result<(Self, Box<dyn Buf + Send + 'a>)>
     where
         T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin + 'static,
     {
@@ -287,11 +287,11 @@ impl EncodeSync for DnsErrorPayload {
 
 #[async_trait]
 impl Receive for DnsErrorPayload {
-    async fn receive<T>(
-        payload: impl Buf + Send + 'static,
+    async fn receive<'a, T>(
+        payload: impl Buf + Send + 'a,
         rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
         _sub: Option<AsyncSubscription<T>>,
-    ) -> anyhow::Result<(Self, Box<dyn Buf + Send>)>
+    ) -> anyhow::Result<(Self, Box<dyn Buf + Send + 'a>)>
     where
         T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin + 'static,
     {
@@ -362,11 +362,11 @@ impl EncodeSync for TlsAlertReceivedPayload {
 
 #[async_trait]
 impl Receive for TlsAlertReceivedPayload {
-    async fn receive<T>(
-        payload: impl Buf + Send + 'static,
+    async fn receive<'a, T>(
+        payload: impl Buf + Send + 'a,
         rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
         _sub: Option<AsyncSubscription<T>>,
-    ) -> anyhow::Result<(Self, Box<dyn Buf + Send>)>
+    ) -> anyhow::Result<(Self, Box<dyn Buf + Send + 'a>)>
     where
         T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin + 'static,
     {
@@ -439,11 +439,11 @@ impl EncodeSync for FieldSizePayload {
 
 #[async_trait]
 impl Receive for FieldSizePayload {
-    async fn receive<T>(
-        payload: impl Buf + Send + 'static,
+    async fn receive<'a, T>(
+        payload: impl Buf + Send + 'a,
         rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
         _sub: Option<AsyncSubscription<T>>,
-    ) -> anyhow::Result<(Self, Box<dyn Buf + Send>)>
+    ) -> anyhow::Result<(Self, Box<dyn Buf + Send + 'a>)>
     where
         T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin + 'static,
     {
@@ -723,11 +723,11 @@ impl EncodeSync for ErrorCode {
 
 #[async_trait]
 impl Receive for ErrorCode {
-    async fn receive<T>(
-        payload: impl Buf + Send + 'static,
+    async fn receive<'a, T>(
+        payload: impl Buf + Send + 'a,
         rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
         _sub: Option<AsyncSubscription<T>>,
-    ) -> anyhow::Result<(Self, Box<dyn Buf + Send>)>
+    ) -> anyhow::Result<(Self, Box<dyn Buf + Send + 'a>)>
     where
         T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin + 'static,
     {
@@ -849,11 +849,11 @@ impl EncodeSync for RequestOptions {
 
 #[async_trait]
 impl Receive for RequestOptions {
-    async fn receive<T>(
-        payload: impl Buf + Send + 'static,
+    async fn receive<'a, T>(
+        payload: impl Buf + Send + 'a,
         rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
         _sub: Option<AsyncSubscription<T>>,
-    ) -> anyhow::Result<(Self, Box<dyn Buf + Send>)>
+    ) -> anyhow::Result<(Self, Box<dyn Buf + Send + 'a>)>
     where
         T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin + 'static,
     {
@@ -1223,11 +1223,11 @@ impl Subscribe for IncomingRequest {
 
 #[async_trait]
 impl Receive for IncomingRequest {
-    async fn receive<T>(
-        payload: impl Buf + Send + 'static,
+    async fn receive<'a, T>(
+        payload: impl Buf + Send + 'a,
         rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
         sub: Option<AsyncSubscription<T>>,
-    ) -> anyhow::Result<(Self, Box<dyn Buf + Send>)>
+    ) -> anyhow::Result<(Self, Box<dyn Buf + Send + 'a>)>
     where
         T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin + 'static,
     {
@@ -1445,11 +1445,11 @@ impl Subscribe for IncomingResponse {
 
 #[async_trait]
 impl Receive for IncomingResponse {
-    async fn receive<T>(
-        payload: impl Buf + Send + 'static,
+    async fn receive<'a, T>(
+        payload: impl Buf + Send + 'a,
         rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
         sub: Option<AsyncSubscription<T>>,
-    ) -> anyhow::Result<(Self, Box<dyn Buf + Send>)>
+    ) -> anyhow::Result<(Self, Box<dyn Buf + Send + 'a>)>
     where
         T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin + 'static,
     {
