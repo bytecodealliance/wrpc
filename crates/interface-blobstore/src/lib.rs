@@ -31,11 +31,11 @@ impl EncodeSync for ContainerMetadata {
 
 #[async_trait]
 impl Receive for ContainerMetadata {
-    async fn receive<T>(
-        payload: impl Buf + Send + 'static,
+    async fn receive<'a, T>(
+        payload: impl Buf + Send + 'a,
         rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
         _sub: Option<AsyncSubscription<T>>,
-    ) -> anyhow::Result<(Self, Box<dyn Buf + Send>)>
+    ) -> anyhow::Result<(Self, Box<dyn Buf + Send + 'a>)>
     where
         T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin + 'static,
     {
@@ -82,11 +82,11 @@ impl EncodeSync for ObjectMetadata {
 
 #[async_trait]
 impl Receive for ObjectMetadata {
-    async fn receive<T>(
-        payload: impl Buf + Send + 'static,
+    async fn receive<'a, T>(
+        payload: impl Buf + Send + 'a,
         rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
         _sub: Option<AsyncSubscription<T>>,
-    ) -> anyhow::Result<(Self, Box<dyn Buf + Send>)>
+    ) -> anyhow::Result<(Self, Box<dyn Buf + Send + 'a>)>
     where
         T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin + 'static,
     {
@@ -136,11 +136,11 @@ impl EncodeSync for ObjectId {
 
 #[async_trait]
 impl Receive for ObjectId {
-    async fn receive<T>(
-        payload: impl Buf + Send + 'static,
+    async fn receive<'a, T>(
+        payload: impl Buf + Send + 'a,
         rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
         _sub: Option<AsyncSubscription<T>>,
-    ) -> anyhow::Result<(Self, Box<dyn Buf + Send>)>
+    ) -> anyhow::Result<(Self, Box<dyn Buf + Send + 'a>)>
     where
         T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin + 'static,
     {
