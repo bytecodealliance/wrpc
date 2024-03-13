@@ -1558,7 +1558,6 @@ pub trait IncomingHandler: wrpc_transport::Client {
             let (response, tx, errors) = self.invoke_handle_http(request).await?;
             match response {
                 Ok(response) => {
-                    let response: hyper::Response<IncomingBody<IncomingInputStream, IncomingFields>> = response.try_into().context("failed to convert incoming `wrpc:http/types.response` to hyper outgoing response")?;
                     let (parts, body) = response.into_parts();
                     Ok((Ok(hyper::Response::from_parts(parts, body)), tx, errors))
                 }

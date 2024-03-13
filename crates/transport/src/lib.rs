@@ -3440,7 +3440,7 @@ pub trait Client: Sync {
                 } => {
                     trace!("received results");
                     let (results, _) = results?;
-                    return Ok((results, tx))
+                    Ok((results, tx))
                 }
                 payload = error_rx.try_next() => {
                     let payload = payload
@@ -3524,7 +3524,7 @@ pub trait Client: Sync {
                 } => {
                     trace!("received results");
                     let (results, _) = results?;
-                    return Ok((results, tx))
+                    Ok((results, tx))
                 }
                 payload = error_rx.next() => {
                     let payload = payload
