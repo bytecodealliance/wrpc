@@ -193,7 +193,7 @@ pub struct InvocationSubscription {
 }
 
 impl InvocationSubscription {
-    fn into_invocations(
+    pub fn into_invocations(
         self,
     ) -> impl Stream<Item = anyhow::Result<IncomingInvocation<Option<HeaderMap>, Subscriber, Acceptor>>>
     {
