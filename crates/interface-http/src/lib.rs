@@ -1461,17 +1461,20 @@ impl TryFrom<IncomingResponse> for http::Response<wasmtime_wasi_http::body::Hype
     }
 }
 
-#[cfg(feature = "wasmtime-wasi-http")]
+#[cfg(feature = "http-body")]
 #[instrument(level = "trace", skip_all)]
-pub fn try_wasmtime_to_outgoing_response(
-    response: http::Response<wasmtime_wasi_http::body::HyperOutgoingBody>,
+pub fn try_http_to_outgoing_response<E>(
+    response: http::Response<impl http_body::Body<Data = Bytes, Error = E> + Send + 'static>,
 ) -> anyhow::Result<(
     Response<
         impl Stream<Item = Bytes> + Send + 'static,
         impl Future<Output = Option<Fields>> + Send + 'static,
     >,
-    impl Stream<Item = HttpBodyError<wasmtime_wasi_http::bindings::http::types::ErrorCode>>,
-)> {
+    impl Stream<Item = HttpBodyError<E>>,
+)>
+where
+    E: Send + 'static,
+{
     let (
         http::response::Parts {
             status, headers, ..
