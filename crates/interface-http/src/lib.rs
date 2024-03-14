@@ -1580,7 +1580,6 @@ pub trait IncomingHandler: wrpc_transport::Client {
                         AcceptedInvocation<
                             Self::Context,
                             IncomingRequest,
-                            Self::Subject,
                             <Self::Acceptor as Acceptor>::Transmitter,
                         >,
                     >,
@@ -1601,7 +1600,6 @@ pub trait IncomingHandler: wrpc_transport::Client {
                         AcceptedInvocation<
                             Self::Context,
                             http::Request<wasmtime_wasi_http::body::HyperIncomingBody>,
-                            Self::Subject,
                             <Self::Acceptor as Acceptor>::Transmitter,
                         >,
                     >,
@@ -1696,7 +1694,6 @@ pub trait OutgoingHandler: wrpc_transport::Client {
                     AcceptedInvocation<
                         Self::Context,
                         (IncomingRequest, Option<RequestOptions>),
-                        Self::Subject,
                         <Self::Acceptor as Acceptor>::Transmitter,
                     >,
                 >,
