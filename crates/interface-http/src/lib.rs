@@ -1284,7 +1284,14 @@ impl Receive for IncomingRequest {
 
 /// Wasmtime incoming HTTP request wrapper
 #[cfg(feature = "wasmtime-wasi-http")]
-pub struct IncomingRequestWasmtime(http::Request<wasmtime_wasi_http::body::HyperIncomingBody>);
+pub struct IncomingRequestWasmtime(pub http::Request<wasmtime_wasi_http::body::HyperIncomingBody>);
+
+#[cfg(feature = "wasmtime-wasi-http")]
+impl From<IncomingRequestWasmtime> for http::Request<wasmtime_wasi_http::body::HyperIncomingBody> {
+    fn from(IncomingRequestWasmtime(req): IncomingRequestWasmtime) -> Self {
+        req
+    }
+}
 
 #[cfg(feature = "wasmtime-wasi-http")]
 #[async_trait]
