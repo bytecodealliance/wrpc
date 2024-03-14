@@ -1,6 +1,6 @@
 [package]
 name = "wrpc-transport"
-version = "0.17.1"
+version = "0.17.2"
 description = "wRPC core transport functionality"
 
 authors.workspace = true
@@ -22,7 +22,6 @@ tracing = { workspace = true, features = ["attributes"] }
 wrpc-types = { workspace = true }
 
 [dev-dependencies]
-rustc_data_structures = { workspace = true }
 tracing-subscriber = { workspace = true, features = [
     "ansi",
     "env-filter",

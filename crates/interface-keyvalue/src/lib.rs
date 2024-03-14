@@ -23,10 +23,9 @@ pub trait Eventual: wrpc_transport::Client {
             impl Stream<
                     Item = anyhow::Result<
                         AcceptedInvocation<
-                            <Self as wrpc_transport::Client>::Context,
+                            Self::Context,
                             (String, String),
-                            <Self as wrpc_transport::Client>::Subject,
-                            <<Self as wrpc_transport::Client>::Acceptor as Acceptor>::Transmitter,
+                            <Self::Acceptor as Acceptor>::Transmitter,
                         >,
                     >,
                 > + Send,
@@ -53,10 +52,9 @@ pub trait Eventual: wrpc_transport::Client {
             impl Stream<
                     Item = anyhow::Result<
                         AcceptedInvocation<
-                            <Self as wrpc_transport::Client>::Context,
+                            Self::Context,
                             (String, String),
-                            <Self as wrpc_transport::Client>::Subject,
-                            <<Self as wrpc_transport::Client>::Acceptor as Acceptor>::Transmitter,
+                            <Self::Acceptor as Acceptor>::Transmitter,
                         >,
                     >,
                 > + Send,
@@ -87,10 +85,9 @@ pub trait Eventual: wrpc_transport::Client {
             impl Stream<
                     Item = anyhow::Result<
                         AcceptedInvocation<
-                            <Self as wrpc_transport::Client>::Context,
+                            Self::Context,
                             (String, String),
-                            <Self as wrpc_transport::Client>::Subject,
-                            <<Self as wrpc_transport::Client>::Acceptor as Acceptor>::Transmitter,
+                            <Self::Acceptor as Acceptor>::Transmitter,
                         >,
                     >,
                 > + Send,
@@ -127,10 +124,9 @@ pub trait Eventual: wrpc_transport::Client {
             impl Stream<
                     Item = anyhow::Result<
                         AcceptedInvocation<
-                            <Self as wrpc_transport::Client>::Context,
+                            Self::Context,
                             (String, String, IncomingInputStream),
-                            <Self as wrpc_transport::Client>::Subject,
-                            <<Self as wrpc_transport::Client>::Acceptor as Acceptor>::Transmitter,
+                            <Self::Acceptor as Acceptor>::Transmitter,
                         >,
                     >,
                 > + Send,
@@ -169,7 +165,6 @@ pub trait Atomic: wrpc_transport::Client {
                         AcceptedInvocation<
                             Self::Context,
                             (String, String, u64, u64),
-                            Self::Subject,
                             <Self::Acceptor as Acceptor>::Transmitter,
                         >,
                     >,
@@ -204,7 +199,6 @@ pub trait Atomic: wrpc_transport::Client {
                         AcceptedInvocation<
                             Self::Context,
                             (String, String, u64),
-                            Self::Subject,
                             <Self::Acceptor as Acceptor>::Transmitter,
                         >,
                     >,

@@ -171,10 +171,9 @@ pub trait Blobstore: wrpc_transport::Client {
             impl Stream<
                 Item = anyhow::Result<
                     AcceptedInvocation<
-                        <Self as wrpc_transport::Client>::Context,
+                        Self::Context,
                         String,
-                        <Self as wrpc_transport::Client>::Subject,
-                        <<Self as wrpc_transport::Client>::Acceptor as Acceptor>::Transmitter,
+                        <Self::Acceptor as Acceptor>::Transmitter,
                     >,
                 >,
             >,
@@ -200,10 +199,9 @@ pub trait Blobstore: wrpc_transport::Client {
             impl Stream<
                 Item = anyhow::Result<
                     AcceptedInvocation<
-                        <Self as wrpc_transport::Client>::Context,
+                        Self::Context,
                         String,
-                        <Self as wrpc_transport::Client>::Subject,
-                        <<Self as wrpc_transport::Client>::Acceptor as Acceptor>::Transmitter,
+                        <Self::Acceptor as Acceptor>::Transmitter,
                     >,
                 >,
             >,
@@ -228,10 +226,9 @@ pub trait Blobstore: wrpc_transport::Client {
             impl Stream<
                 Item = anyhow::Result<
                     AcceptedInvocation<
-                        <Self as wrpc_transport::Client>::Context,
+                        Self::Context,
                         String,
-                        <Self as wrpc_transport::Client>::Subject,
-                        <<Self as wrpc_transport::Client>::Acceptor as Acceptor>::Transmitter,
+                        <Self::Acceptor as Acceptor>::Transmitter,
                     >,
                 >,
             >,
@@ -256,10 +253,9 @@ pub trait Blobstore: wrpc_transport::Client {
             impl Stream<
                 Item = anyhow::Result<
                     AcceptedInvocation<
-                        <Self as wrpc_transport::Client>::Context,
+                        Self::Context,
                         String,
-                        <Self as wrpc_transport::Client>::Subject,
-                        <<Self as wrpc_transport::Client>::Acceptor as Acceptor>::Transmitter,
+                        <Self::Acceptor as Acceptor>::Transmitter,
                     >,
                 >,
             >,
@@ -284,10 +280,9 @@ pub trait Blobstore: wrpc_transport::Client {
             impl Stream<
                 Item = anyhow::Result<
                     AcceptedInvocation<
-                        <Self as wrpc_transport::Client>::Context,
+                        Self::Context,
                         String,
-                        <Self as wrpc_transport::Client>::Subject,
-                        <<Self as wrpc_transport::Client>::Acceptor as Acceptor>::Transmitter,
+                        <Self::Acceptor as Acceptor>::Transmitter,
                     >,
                 >,
             >,
@@ -327,7 +322,6 @@ pub trait Blobstore: wrpc_transport::Client {
                     AcceptedInvocation<
                         Self::Context,
                         (String, Option<u64>, Option<u64>),
-                        Self::Subject,
                         <Self::Acceptor as Acceptor>::Transmitter,
                     >,
                 >,
@@ -356,7 +350,6 @@ pub trait Blobstore: wrpc_transport::Client {
                     AcceptedInvocation<
                         Self::Context,
                         (ObjectId, ObjectId),
-                        Self::Subject,
                         <Self::Acceptor as Acceptor>::Transmitter,
                     >,
                 >,
@@ -381,10 +374,9 @@ pub trait Blobstore: wrpc_transport::Client {
             impl Stream<
                     Item = anyhow::Result<
                         AcceptedInvocation<
-                            <Self as wrpc_transport::Client>::Context,
+                            Self::Context,
                             ObjectId,
-                            <Self as wrpc_transport::Client>::Subject,
-                            <<Self as wrpc_transport::Client>::Acceptor as Acceptor>::Transmitter,
+                            <Self::Acceptor as Acceptor>::Transmitter,
                         >,
                     >,
                 > + Send,
@@ -414,10 +406,9 @@ pub trait Blobstore: wrpc_transport::Client {
             impl Stream<
                     Item = anyhow::Result<
                         AcceptedInvocation<
-                            <Self as wrpc_transport::Client>::Context,
+                            Self::Context,
                             (String, Vec<String>),
-                            <Self as wrpc_transport::Client>::Subject,
-                            <<Self as wrpc_transport::Client>::Acceptor as Acceptor>::Transmitter,
+                            <Self::Acceptor as Acceptor>::Transmitter,
                         >,
                     >,
                 > + Send,
@@ -450,10 +441,9 @@ pub trait Blobstore: wrpc_transport::Client {
             impl Stream<
                     Item = anyhow::Result<
                         AcceptedInvocation<
-                            <Self as wrpc_transport::Client>::Context,
+                            Self::Context,
                             (ObjectId, u64, u64),
-                            <Self as wrpc_transport::Client>::Subject,
-                            <<Self as wrpc_transport::Client>::Acceptor as Acceptor>::Transmitter,
+                            <Self::Acceptor as Acceptor>::Transmitter,
                         >,
                     >,
                 > + Send,
@@ -479,10 +469,9 @@ pub trait Blobstore: wrpc_transport::Client {
             impl Stream<
                     Item = anyhow::Result<
                         AcceptedInvocation<
-                            <Self as wrpc_transport::Client>::Context,
+                            Self::Context,
                             ObjectId,
-                            <Self as wrpc_transport::Client>::Subject,
-                            <<Self as wrpc_transport::Client>::Acceptor as Acceptor>::Transmitter,
+                            <Self::Acceptor as Acceptor>::Transmitter,
                         >,
                     >,
                 > + Send,
@@ -508,10 +497,9 @@ pub trait Blobstore: wrpc_transport::Client {
             impl Stream<
                     Item = anyhow::Result<
                         AcceptedInvocation<
-                            <Self as wrpc_transport::Client>::Context,
+                            Self::Context,
                             ObjectId,
-                            <Self as wrpc_transport::Client>::Subject,
-                            <<Self as wrpc_transport::Client>::Acceptor as Acceptor>::Transmitter,
+                            <Self::Acceptor as Acceptor>::Transmitter,
                         >,
                     >,
                 > + Send,
@@ -537,10 +525,9 @@ pub trait Blobstore: wrpc_transport::Client {
             impl Stream<
                     Item = anyhow::Result<
                         AcceptedInvocation<
-                            <Self as wrpc_transport::Client>::Context,
+                            Self::Context,
                             (ObjectId, ObjectId),
-                            <Self as wrpc_transport::Client>::Subject,
-                            <<Self as wrpc_transport::Client>::Acceptor as Acceptor>::Transmitter,
+                            <Self::Acceptor as Acceptor>::Transmitter,
                         >,
                     >,
                 > + Send,
@@ -575,10 +562,9 @@ pub trait Blobstore: wrpc_transport::Client {
             impl Stream<
                     Item = anyhow::Result<
                         AcceptedInvocation<
-                            <Self as wrpc_transport::Client>::Context,
+                            Self::Context,
                             (ObjectId, IncomingInputStream),
-                            <Self as wrpc_transport::Client>::Subject,
-                            <<Self as wrpc_transport::Client>::Acceptor as Acceptor>::Transmitter,
+                            <Self::Acceptor as Acceptor>::Transmitter,
                         >,
                     >,
                 > + Send,

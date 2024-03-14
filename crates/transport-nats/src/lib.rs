@@ -601,30 +601,24 @@ impl wrpc_transport::Client for Client {
     type Transmission = Transmission;
     type Acceptor = Acceptor;
     type Invocation = Invocation;
+    type InvocationStream = Pin<
+        Box<
+            dyn Stream<
+                    Item = anyhow::Result<
+                        IncomingInvocation<Self::Context, Self::Subscriber, Self::Acceptor>,
+                    >,
+                > + Send,
+        >,
+    >;
 
     #[instrument(level = "trace", skip(self))]
-    async fn serve(
-        &self,
-        instance: &str,
-        func: &str,
-    ) -> anyhow::Result<
-        impl Stream<
-                Item = anyhow::Result<
-                    IncomingInvocation<
-                        Self::Context,
-                        Self::Subject,
-                        Self::Subscriber,
-                        Self::Acceptor,
-                    >,
-                >,
-            > + Send,
-    > {
+    async fn serve(&self, instance: &str, func: &str) -> anyhow::Result<Self::InvocationStream> {
         let nats = Arc::clone(&self.nats);
         let invocations = nats
             .subscribe(self.static_subject(instance, func))
             .await
             .context("failed to subscribe on invocation subject")?;
-        Ok(invocations.then({
+        Ok(Box::pin(invocations.then({
             move |msg| {
                 let nats = Arc::clone(&nats);
                 async move {
@@ -646,7 +640,7 @@ impl wrpc_transport::Client for Client {
                     })
                 }
             }
-        }))
+        })))
     }
 
     #[instrument(level = "trace", skip(self))]
