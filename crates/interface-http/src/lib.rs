@@ -925,6 +925,33 @@ pub enum HttpBodyError<E> {
 }
 
 #[cfg(feature = "http-body")]
+impl<E: core::fmt::Debug> core::fmt::Debug for HttpBodyError<E> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::InvalidFrame => write!(f, "frame is not valid"),
+            Self::TrailerReceiverClosed => write!(f, "trailer receiver is closed"),
+            Self::HeaderConversion(err) => write!(f, "failed to convert headers: {err:#}"),
+            Self::Body(err) => write!(f, "encountered a body error: {err:?}"),
+        }
+    }
+}
+
+#[cfg(feature = "http-body")]
+impl<E: core::fmt::Display> core::fmt::Display for HttpBodyError<E> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::InvalidFrame => write!(f, "frame is not valid"),
+            Self::TrailerReceiverClosed => write!(f, "trailer receiver is closed"),
+            Self::HeaderConversion(err) => write!(f, "failed to convert headers: {err:#}"),
+            Self::Body(err) => write!(f, "encountered a body error: {err}"),
+        }
+    }
+}
+
+#[cfg(feature = "http-body")]
+impl<E: core::fmt::Debug + core::fmt::Display> std::error::Error for HttpBodyError<E> {}
+
+#[cfg(feature = "http-body")]
 pub fn split_http_body<E>(
     body: impl http_body::Body<Data = Bytes, Error = E>,
 ) -> (
