@@ -1,6 +1,6 @@
 [package]
 name = "wrpc-transport-nats"
-version = "0.15.0"
+version = "0.16.0"
 description = "wRPC NATS transport"
 
 authors.workspace = true
@@ -15,5 +15,6 @@ async-nats = { workspace = true }
 bytes = { workspace = true }
 futures = { workspace = true }
 tokio = { workspace = true }
+tower = { workspace = true }
 tracing = { workspace = true, features = ["attributes"] }
 wrpc-transport = { workspace = true }

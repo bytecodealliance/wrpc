@@ -3,7 +3,7 @@ use core::future::Future;
 use bytes::Bytes;
 use futures::{Stream, StreamExt as _};
 use tracing::instrument;
-use wrpc_transport::{AcceptedInvocation, Acceptor, IncomingInputStream, Value};
+use wrpc_transport::{IncomingInputStream, Value};
 
 pub trait Eventual: wrpc_transport::Client {
     #[instrument(level = "trace", skip_all)]
@@ -18,19 +18,7 @@ pub trait Eventual: wrpc_transport::Client {
     #[instrument(level = "trace", skip_all)]
     fn serve_delete(
         &self,
-    ) -> impl Future<
-        Output = anyhow::Result<
-            impl Stream<
-                    Item = anyhow::Result<
-                        AcceptedInvocation<
-                            Self::Context,
-                            (String, String),
-                            <Self::Acceptor as Acceptor>::Transmitter,
-                        >,
-                    >,
-                > + Send,
-        >,
-    > + Send {
+    ) -> impl Future<Output = anyhow::Result<Self::InvocationStream<(String, String)>>> + Send {
         self.serve_static("wrpc:keyvalue/eventual@0.1.0", "delete")
     }
 
@@ -47,19 +35,7 @@ pub trait Eventual: wrpc_transport::Client {
     #[instrument(level = "trace", skip_all)]
     fn serve_exists(
         &self,
-    ) -> impl Future<
-        Output = anyhow::Result<
-            impl Stream<
-                    Item = anyhow::Result<
-                        AcceptedInvocation<
-                            Self::Context,
-                            (String, String),
-                            <Self::Acceptor as Acceptor>::Transmitter,
-                        >,
-                    >,
-                > + Send,
-        >,
-    > + Send {
+    ) -> impl Future<Output = anyhow::Result<Self::InvocationStream<(String, String)>>> + Send {
         self.serve_static("wrpc:keyvalue/eventual@0.1.0", "exists")
     }
 
@@ -80,19 +56,7 @@ pub trait Eventual: wrpc_transport::Client {
     #[instrument(level = "trace", skip_all)]
     fn serve_get(
         &self,
-    ) -> impl Future<
-        Output = anyhow::Result<
-            impl Stream<
-                    Item = anyhow::Result<
-                        AcceptedInvocation<
-                            Self::Context,
-                            (String, String),
-                            <Self::Acceptor as Acceptor>::Transmitter,
-                        >,
-                    >,
-                > + Send,
-        >,
-    > + Send {
+    ) -> impl Future<Output = anyhow::Result<Self::InvocationStream<(String, String)>>> + Send {
         self.serve_static("wrpc:keyvalue/eventual@0.1.0", "get")
     }
 
@@ -120,17 +84,7 @@ pub trait Eventual: wrpc_transport::Client {
     fn serve_set(
         &self,
     ) -> impl Future<
-        Output = anyhow::Result<
-            impl Stream<
-                    Item = anyhow::Result<
-                        AcceptedInvocation<
-                            Self::Context,
-                            (String, String, IncomingInputStream),
-                            <Self::Acceptor as Acceptor>::Transmitter,
-                        >,
-                    >,
-                > + Send,
-        >,
+        Output = anyhow::Result<Self::InvocationStream<(String, String, IncomingInputStream)>>,
     > + Send {
         self.serve_static("wrpc:keyvalue/eventual@0.1.0", "set")
     }
@@ -158,19 +112,8 @@ pub trait Atomic: wrpc_transport::Client {
     #[instrument(level = "trace", skip_all)]
     fn serve_compare_and_swap(
         &self,
-    ) -> impl Future<
-        Output = anyhow::Result<
-            impl Stream<
-                    Item = anyhow::Result<
-                        AcceptedInvocation<
-                            Self::Context,
-                            (String, String, u64, u64),
-                            <Self::Acceptor as Acceptor>::Transmitter,
-                        >,
-                    >,
-                > + Send,
-        >,
-    > + Send {
+    ) -> impl Future<Output = anyhow::Result<Self::InvocationStream<(String, String, u64, u64)>>> + Send
+    {
         self.serve_static("wrpc:keyvalue/atomic@0.1.0", "compare-and-swap")
     }
 
@@ -192,19 +135,8 @@ pub trait Atomic: wrpc_transport::Client {
     #[instrument(level = "trace", skip_all)]
     fn serve_increment(
         &self,
-    ) -> impl Future<
-        Output = anyhow::Result<
-            impl Stream<
-                    Item = anyhow::Result<
-                        AcceptedInvocation<
-                            Self::Context,
-                            (String, String, u64),
-                            <Self::Acceptor as Acceptor>::Transmitter,
-                        >,
-                    >,
-                > + Send,
-        >,
-    > + Send {
+    ) -> impl Future<Output = anyhow::Result<Self::InvocationStream<(String, String, u64)>>> + Send
+    {
         self.serve_static("wrpc:keyvalue/atomic@0.1.0", "increment")
     }
 }

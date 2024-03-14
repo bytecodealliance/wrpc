@@ -18,7 +18,8 @@ use tokio::task::JoinHandle;
 use tokio::{spawn, try_join};
 use tracing::{instrument, trace};
 use wrpc_transport::{
-    AsyncValue, Encode, IncomingInvocation, OutgoingInvocation, Transmitter as _, PROTOCOL,
+    AcceptedInvocation, AsyncValue, Encode, IncomingInvocation, OutgoingInvocation,
+    Transmitter as _, PROTOCOL,
 };
 
 #[derive(Debug)]
@@ -601,18 +602,38 @@ impl wrpc_transport::Client for Client {
     type Transmission = Transmission;
     type Acceptor = Acceptor;
     type Invocation = Invocation;
-    type InvocationStream = Pin<
+    type InvocationStream<T> = Pin<
         Box<
-            dyn Stream<
-                    Item = anyhow::Result<
-                        IncomingInvocation<Self::Context, Self::Subscriber, Self::Acceptor>,
-                    >,
-                > + Send,
+            dyn Stream<Item = anyhow::Result<AcceptedInvocation<Self::Context, T, Transmitter>>>
+                + Send,
         >,
     >;
 
-    #[instrument(level = "trace", skip(self))]
-    async fn serve(&self, instance: &str, func: &str) -> anyhow::Result<Self::InvocationStream> {
+    #[instrument(level = "trace", skip(self, svc))]
+    async fn serve<T, S, Fut>(
+        &self,
+        instance: &str,
+        func: &str,
+        svc: S,
+    ) -> anyhow::Result<Self::InvocationStream<T>>
+    where
+        S: tower::Service<
+                IncomingInvocation<Self::Context, Self::Subscriber, Self::Acceptor>,
+                Future = Fut,
+            > + Send
+            + Clone
+            + 'static,
+        Fut: Future<
+                Output = Result<
+                    AcceptedInvocation<
+                        Self::Context,
+                        T,
+                        <Self::Acceptor as wrpc_transport::Acceptor>::Transmitter,
+                    >,
+                    anyhow::Error,
+                >,
+            > + Send,
+    {
         let nats = Arc::clone(&self.nats);
         let invocations = nats
             .subscribe(self.static_subject(instance, func))
@@ -621,6 +642,7 @@ impl wrpc_transport::Client for Client {
         Ok(Box::pin(invocations.then({
             move |msg| {
                 let nats = Arc::clone(&nats);
+                let mut svc = svc.clone();
                 async move {
                     let Request {
                         payload,
@@ -629,7 +651,7 @@ impl wrpc_transport::Client for Client {
                         ..
                     } = Request::try_from(msg)?;
                     let rx = nats.new_inbox().to_subject();
-                    Ok(IncomingInvocation {
+                    svc.call(IncomingInvocation {
                         context: headers,
                         payload,
                         param_subject: Subject(format!("{rx}.params").into()),
@@ -638,6 +660,7 @@ impl wrpc_transport::Client for Client {
                         subscriber: Subscriber::new(Arc::clone(&nats)),
                         acceptor: Acceptor { nats, tx },
                     })
+                    .await
                 }
             }
         })))
