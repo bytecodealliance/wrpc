@@ -1295,6 +1295,55 @@ impl Receive for IncomingRequest {
     }
 }
 
+/// `http` incoming HTTP request wrapper
+#[cfg(feature = "http-body")]
+pub struct IncomingRequestHttp(
+    pub http::Request<IncomingBody<IncomingInputStream, IncomingFields>>,
+);
+
+#[cfg(feature = "http-body")]
+impl From<IncomingRequestHttp>
+    for http::Request<IncomingBody<IncomingInputStream, IncomingFields>>
+{
+    fn from(IncomingRequestHttp(req): IncomingRequestHttp) -> Self {
+        req
+    }
+}
+
+#[cfg(feature = "http-body")]
+#[async_trait]
+impl Receive for IncomingRequestHttp {
+    #[instrument(level = "trace", skip_all)]
+    async fn receive<'a, T>(
+        payload: impl Buf + Send + 'a,
+        rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
+        sub: Option<AsyncSubscription<T>>,
+    ) -> anyhow::Result<(Self, Box<dyn Buf + Send + 'a>)>
+    where
+        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + 'static,
+    {
+        // TODO: Optimize by directly receiving `http` values
+        let (req, payload) = IncomingRequest::receive(payload, rx, sub)
+            .await
+            .context("failed to receive request `wrpc:http` request")?;
+        let req = req
+            .try_into()
+            .context("failed to convert `wrpc:http` request to `http`")?;
+        Ok((Self(req), payload))
+    }
+}
+
+#[cfg(feature = "http-body")]
+impl Subscribe for IncomingRequestHttp {
+    #[instrument(level = "trace", skip_all)]
+    async fn subscribe<T: Subscriber + Send + Sync>(
+        subscriber: &T,
+        subject: T::Subject,
+    ) -> Result<Option<AsyncSubscription<T::Stream>>, T::SubscribeError> {
+        IncomingRequest::subscribe(subscriber, subject).await
+    }
+}
+
 /// Wasmtime incoming HTTP request wrapper
 #[cfg(feature = "wasmtime-wasi-http")]
 pub struct IncomingRequestWasmtime(pub http::Request<wasmtime_wasi_http::body::HyperIncomingBody>);
@@ -1702,6 +1751,18 @@ pub trait OutgoingHandler: wrpc_transport::Client {
         &self,
     ) -> impl Future<
         Output = anyhow::Result<Self::InvocationStream<(IncomingRequest, Option<RequestOptions>)>>,
+    > + Send {
+        self.serve_static("wrpc:http/outgoing-handler@0.1.0", "handle")
+    }
+
+    #[cfg(feature = "http-body")]
+    #[instrument(level = "trace", skip_all)]
+    fn serve_handle_http(
+        &self,
+    ) -> impl Future<
+        Output = anyhow::Result<
+            Self::InvocationStream<(IncomingRequestHttp, Option<RequestOptions>)>,
+        >,
     > + Send {
         self.serve_static("wrpc:http/outgoing-handler@0.1.0", "handle")
     }
