@@ -75,16 +75,17 @@ serde = { version = "1", default-features = false }
 serde_json = { version = "1", default-features = false }
 tokio = { version = "1", default-features = false }
 tokio-stream = { version = "0.1", default-features = false }
+tower = { version = "0.4", default-features = false }
 tracing = { version = "0.1", default-features = false }
 tracing-subscriber = { version = "0.3", default-features = false }
 wasmtime = { version = "18", default-features = false }
 wasmtime-wasi = { version = "18", default-features = false }
 wasmtime-wasi-http = { version = "18", default-features = false }
 wit-parser = { version = "0.13", default-features = false }
-wrpc-interface-blobstore = { version = "0.8", path = "./crates/interface-blobstore", default-features = false }
-wrpc-interface-http = { version = "0.15", path = "./crates/interface-http", default-features = false }
-wrpc-interface-keyvalue = { version = "0.7", path = "./crates/interface-keyvalue", default-features = false }
-wrpc-runtime-wasmtime = { version = "0.9", path = "./crates/runtime-wasmtime", default-features = false }
-wrpc-transport = { version = "0.18", path = "./crates/transport", default-features = false }
-wrpc-transport-nats = { version = "0.15", path = "./crates/transport-nats", default-features = false }
+wrpc-interface-blobstore = { version = "0.9", path = "./crates/interface-blobstore", default-features = false }
+wrpc-interface-http = { version = "0.16", path = "./crates/interface-http", default-features = false }
+wrpc-interface-keyvalue = { version = "0.8", path = "./crates/interface-keyvalue", default-features = false }
+wrpc-runtime-wasmtime = { version = "0.10", path = "./crates/runtime-wasmtime", default-features = false }
+wrpc-transport = { version = "0.19", path = "./crates/transport", default-features = false }
+wrpc-transport-nats = { version = "0.16", path = "./crates/transport-nats", default-features = false }
 wrpc-types = { version = "0.4", path = "./crates/types", default-features = false }

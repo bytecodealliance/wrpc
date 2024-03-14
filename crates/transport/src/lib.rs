@@ -3202,6 +3202,7 @@ where
         > + Send,
     Sub::Stream: 'static,
 {
+    /// Accept with statically-typed parameter type `T`
     #[instrument(level = "trace", skip_all)]
     pub async fn accept_static<T: Receive + Subscribe + 'static>(
         self,
@@ -3239,6 +3240,46 @@ where
             transmitter,
         })
     }
+
+    /// Accept with dynamically-typed parameter type `params`
+    #[instrument(level = "trace", skip_all)]
+    pub async fn accept_dynamic(
+        self,
+        params: Arc<[Type]>,
+    ) -> anyhow::Result<AcceptedInvocation<Ctx, Vec<Value>, <Acc as Acceptor>::Transmitter>> {
+        let Self {
+            context,
+            payload,
+            param_subject,
+            error_subject,
+            handshake_subject,
+            subscriber,
+            acceptor,
+        } = self;
+        let (mut rx, nested, errors) = try_join!(
+            subscriber.subscribe(param_subject.clone()),
+            subscriber.subscribe_tuple(param_subject.clone(), params.as_ref()),
+            subscriber.subscribe(error_subject),
+        )
+        .context("failed to subscribe for parameters")?;
+        let (result_subject, error_subject, transmitter) = acceptor
+            .accept(handshake_subject)
+            .await
+            .context("failed to accept invocation")?;
+        // TODO: Propagate the error stream
+        _ = errors;
+        let (params, _) =
+            ReceiveContext::receive_tuple_context(params.as_ref(), payload, &mut rx, nested)
+                .await
+                .context("failed to receive parameters")?;
+        Ok(AcceptedInvocation {
+            context,
+            params,
+            result_subject,
+            error_subject,
+            transmitter,
+        })
+    }
 }
 
 /// An accepted invocation received from a peer
@@ -3258,109 +3299,6 @@ pub struct OutgoingInvocation<Invocation, Subscriber, Subject> {
     pub error_subject: Subject,
 }
 
-/// Future returned by [`Client::serve_invocations`]
-pub struct ServeInvocations<'a, C: ?Sized> {
-    client: &'a C,
-    instance: &'a str,
-    name: &'a str,
-}
-
-impl<C> Future for ServeInvocations<'_, C>
-where
-    C: Client + ?Sized,
-{
-    type Output = anyhow::Result<C::InvocationStream>;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
-        match pin!(self.client.serve(self.instance, self.name)).poll(cx) {
-            Poll::Ready(Ok(invocations)) => Poll::Ready(Ok(invocations)),
-            Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
-            Poll::Pending => Poll::Pending,
-        }
-    }
-}
-
-impl<C> ServeInvocations<'_, C>
-where
-    C: Client + ?Sized,
-{
-    /// Accept with statically-typed parameter type `params`
-    #[instrument(level = "trace", skip(self))]
-    pub async fn accept_static<T: Receive + Subscribe + 'static>(
-        self,
-    ) -> anyhow::Result<
-        impl Stream<
-                Item = anyhow::Result<
-                    AcceptedInvocation<C::Context, T, <C::Acceptor as Acceptor>::Transmitter>,
-                >,
-            > + Send,
-    > {
-        let invocations = self.await?;
-        Ok(invocations.and_then(IncomingInvocation::accept_static))
-    }
-
-    /// Accept with dynamically-typed parameter type `params`
-    #[instrument(level = "trace", skip(self))]
-    pub async fn accept_dynamic(
-        self,
-        params: Arc<[Type]>,
-    ) -> anyhow::Result<
-        impl Stream<
-                Item = anyhow::Result<
-                    AcceptedInvocation<
-                        C::Context,
-                        Vec<Value>,
-                        <C::Acceptor as Acceptor>::Transmitter,
-                    >,
-                >,
-            > + Send,
-    > {
-        let invocations = self.await?;
-        Ok(invocations.and_then({
-            move |IncomingInvocation {
-                      context,
-                      payload,
-                      handshake_subject,
-                      param_subject,
-                      error_subject,
-                      subscriber,
-                      acceptor,
-                  }| {
-                let params = Arc::clone(&params);
-                async move {
-                    let (mut rx, nested, errors) = try_join!(
-                        subscriber.subscribe(param_subject.clone()),
-                        subscriber.subscribe_tuple(param_subject.clone(), params.as_ref()),
-                        subscriber.subscribe(error_subject),
-                    )
-                    .context("failed to subscribe for parameters")?;
-                    let (result_subject, error_subject, transmitter) = acceptor
-                        .accept(handshake_subject)
-                        .await
-                        .context("failed to accept invocation")?;
-                    // TODO: Propagate the error stream
-                    _ = errors;
-                    let (params, _) = ReceiveContext::receive_tuple_context(
-                        params.as_ref(),
-                        payload,
-                        &mut rx,
-                        nested,
-                    )
-                    .await
-                    .context("failed to receive parameters")?;
-                    Ok(AcceptedInvocation {
-                        context,
-                        params,
-                        result_subject,
-                        error_subject,
-                        transmitter,
-                    })
-                }
-            }
-        }))
-    }
-}
-
 /// wRPC transmission client used to invoke and serve functions
 pub trait Client: Sync {
     type Context: Send + 'static;
@@ -3375,84 +3313,71 @@ pub trait Client: Sync {
         + 'static;
     type Acceptor: Acceptor<Subject = Self::Subject> + Send + 'static;
     type Invocation: Invocation<Transmission = Self::Transmission> + Send;
-    type InvocationStream: Stream<
+    type InvocationStream<T>: Stream<
             Item = anyhow::Result<
-                IncomingInvocation<Self::Context, Self::Subscriber, Self::Acceptor>,
+                AcceptedInvocation<Self::Context, T, <Self::Acceptor as Acceptor>::Transmitter>,
             >,
         > + Send;
 
     /// Serve function `name` from instance `instance`
-    fn serve(
+    fn serve<T, S, Fut>(
         &self,
         instance: &str,
         name: &str,
-    ) -> impl Future<Output = anyhow::Result<Self::InvocationStream>> + Send;
-
-    #[instrument(level = "trace", skip(self))]
-    /// Serve function `name` from instance `instance`.
-    fn serve_invocations<'a>(
-        &'a self,
-        instance: &'a str,
-        name: &'a str,
-    ) -> ServeInvocations<'a, Self> {
-        ServeInvocations {
-            client: self,
-            instance,
-            name,
-        }
-    }
+        svc: S,
+    ) -> impl Future<Output = anyhow::Result<Self::InvocationStream<T>>> + Send
+    where
+        S: tower::Service<
+                IncomingInvocation<Self::Context, Self::Subscriber, Self::Acceptor>,
+                Future = Fut,
+            > + Send
+            + Clone
+            + 'static,
+        Fut: Future<
+                Output = Result<
+                    AcceptedInvocation<Self::Context, T, <Self::Acceptor as Acceptor>::Transmitter>,
+                    anyhow::Error,
+                >,
+            > + Send;
 
     /// Serve function `name` from instance `instance`
     /// with statically-typed parameter type `T`.
-    /// Note, due to current compiler limitations, you may encounter
-    /// lifetime issues using this method, consider [`ServeInvocations::accept_static`] instead.
-    /// See https://github.com/rust-lang/rust/issues/34511#issuecomment-373423999 for explanation
-    fn serve_static<'a, T: Receive + Subscribe + 'static>(
-        &'a self,
-        instance: &'a str,
-        name: &'a str,
-    ) -> impl Future<
-        Output = anyhow::Result<
-            impl Stream<
-                    Item = anyhow::Result<
-                        AcceptedInvocation<
-                            Self::Context,
-                            T,
-                            <Self::Acceptor as Acceptor>::Transmitter,
-                        >,
-                    >,
-                > + Send,
-        >,
-    > + Send {
-        self.serve_invocations(instance, name).accept_static()
+    #[instrument(level = "trace", skip(self))]
+    fn serve_static<T: Receive + Subscribe + 'static>(
+        &self,
+        instance: &str,
+        name: &str,
+    ) -> impl Future<Output = anyhow::Result<Self::InvocationStream<T>>> + Send {
+        self.serve(
+            instance,
+            name,
+            tower::service_fn(IncomingInvocation::accept_static),
+        )
     }
 
     /// Serve function `name` from instance `instance` with dynamically-typed parameter type
     /// `params`.
-    /// Note, due to current compiler limitations, you may encounter
-    /// lifetime issues using this method, consider [`ServeInvocations::accept_dynamic`] instead.
-    /// See https://github.com/rust-lang/rust/issues/34511#issuecomment-373423999 for explanation
     #[instrument(level = "trace", skip(self, params))]
-    fn serve_dynamic<'a>(
-        &'a self,
-        instance: &'a str,
-        name: &'a str,
+    fn serve_dynamic(
+        &self,
+        instance: &str,
+        name: &str,
         params: Arc<[Type]>,
-    ) -> impl Future<
-        Output = anyhow::Result<
-            impl Stream<
-                    Item = anyhow::Result<
-                        AcceptedInvocation<
-                            Self::Context,
-                            Vec<Value>,
-                            <Self::Acceptor as Acceptor>::Transmitter,
-                        >,
-                    >,
-                > + Send,
-        >,
-    > + Send {
-        self.serve_invocations(instance, name)
-            .accept_dynamic(params)
+    ) -> impl Future<Output = anyhow::Result<Self::InvocationStream<Vec<Value>>>> + Send {
+        self.serve(
+            instance,
+            name,
+            tower::service_fn(
+                move |invocation: IncomingInvocation<
+                    Self::Context,
+                    Self::Subscriber,
+                    Self::Acceptor,
+                >| {
+                    let params = Arc::clone(&params);
+                    invocation.accept_dynamic(params)
+                },
+            ),
+        )
     }
 
     /// Constructs a new invocation to be sent to peer
@@ -3637,10 +3562,7 @@ mod tests {
         instance: &str,
     ) -> anyhow::Result<impl Stream<Item = ()>> {
         let name = String::from("");
-        let invocations = client
-            .serve_invocations(instance, &name)
-            .accept_static::<()>()
-            .await?;
+        let invocations = client.serve_static::<()>(instance, &name).await?;
         Ok(invocations.map(|invocation| ()))
     }
 
