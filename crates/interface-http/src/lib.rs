@@ -1001,8 +1001,8 @@ pub struct Request<Body, Trailers> {
     pub headers: Fields,
 }
 
-#[cfg(feature = "wasmtime-wasi-http")]
-impl TryFrom<IncomingRequest> for http::Request<wasmtime_wasi_http::body::HyperIncomingBody> {
+#[cfg(feature = "http-body")]
+impl TryFrom<IncomingRequest> for http::Request<IncomingBody<IncomingInputStream, IncomingFields>> {
     type Error = anyhow::Error;
 
     fn try_from(
@@ -1016,9 +1016,6 @@ impl TryFrom<IncomingRequest> for http::Request<wasmtime_wasi_http::body::HyperI
             headers,
         }: IncomingRequest,
     ) -> Result<Self, Self::Error> {
-        use http_body_util::BodyExt as _;
-        use wasmtime_wasi_http::body::HyperIncomingBody;
-
         let uri = http::Uri::builder();
         let uri = if let Some(path_with_query) = path_with_query {
             uri.path_and_query(path_with_query)
@@ -1045,20 +1042,36 @@ impl TryFrom<IncomingRequest> for http::Request<wasmtime_wasi_http::body::HyperI
             .context("failed to construct header map")?;
         *req_headers = try_fields_to_header_map(headers)
             .context("failed to convert header fields to header map")?;
-        // TODO: Make trailers Sync and remove this
-        let trailers = tokio::spawn(trailers);
-        req.body(HyperIncomingBody::new(
-            IncomingBody {
-                body,
-                trailers: Box::pin(async { trailers.await.unwrap() }),
-            }
-            .map_err(|err| {
-                wasmtime_wasi_http::bindings::http::types::ErrorCode::InternalError(Some(format!(
-                    "{err:#}"
-                )))
-            }),
-        ))
-        .context("failed to construct request")
+        req.body(IncomingBody { body, trailers })
+            .context("failed to construct request")
+    }
+}
+
+#[cfg(feature = "wasmtime-wasi-http")]
+impl TryFrom<IncomingRequest> for http::Request<wasmtime_wasi_http::body::HyperIncomingBody> {
+    type Error = anyhow::Error;
+
+    fn try_from(req: IncomingRequest) -> Result<Self, Self::Error> {
+        use http_body_util::BodyExt as _;
+        use wasmtime_wasi_http::body::HyperIncomingBody;
+
+        let req: http::Request<IncomingBody<IncomingInputStream, IncomingFields>> =
+            req.try_into()?;
+        Ok(req.map(|IncomingBody { body, trailers }| {
+            // TODO: Make trailers Sync and remove this
+            let trailers = tokio::spawn(trailers);
+            HyperIncomingBody::new(
+                IncomingBody {
+                    body,
+                    trailers: Box::pin(async { trailers.await.unwrap() }),
+                }
+                .map_err(|err| {
+                    wasmtime_wasi_http::bindings::http::types::ErrorCode::InternalError(Some(
+                        format!("{err:#}"),
+                    ))
+                }),
+            )
+        }))
     }
 }
 
