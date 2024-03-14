@@ -169,6 +169,58 @@ impl Client {
         s.push_str(func);
         s
     }
+
+    pub async fn subscribe(
+        &self,
+        instance: &str,
+        func: &str,
+    ) -> anyhow::Result<InvocationSubscription> {
+        let invocations = self
+            .nats
+            .subscribe(self.static_subject(instance, func))
+            .await
+            .context("failed to subscribe on invocation subject")?;
+        Ok(InvocationSubscription {
+            nats: Arc::clone(&self.nats),
+            invocations,
+        })
+    }
+}
+
+pub struct InvocationSubscription {
+    nats: Arc<async_nats::Client>,
+    invocations: async_nats::Subscriber,
+}
+
+impl InvocationSubscription {
+    fn into_invocations(
+        self,
+    ) -> impl Stream<Item = anyhow::Result<IncomingInvocation<Option<HeaderMap>, Subscriber, Acceptor>>>
+    {
+        self.invocations.then({
+            move |msg| {
+                let nats = Arc::clone(&self.nats);
+                async move {
+                    let Request {
+                        payload,
+                        tx,
+                        headers,
+                        ..
+                    } = Request::try_from(msg)?;
+                    let rx = nats.new_inbox().to_subject();
+                    Ok(IncomingInvocation {
+                        context: headers,
+                        payload,
+                        param_subject: Subject(format!("{rx}.params").into()),
+                        error_subject: Subject(format!("{rx}.error").into()),
+                        handshake_subject: Subject(rx),
+                        subscriber: Subscriber::new(Arc::clone(&nats)),
+                        acceptor: Acceptor { nats, tx },
+                    })
+                }
+            }
+        })
+    }
 }
 
 fn split_chunk(nats: &async_nats::Client, payload: &mut Bytes) -> Option<Bytes> {
@@ -613,7 +665,7 @@ impl wrpc_transport::Client for Client {
     async fn serve<T, S, Fut>(
         &self,
         instance: &str,
-        func: &str,
+        name: &str,
         svc: S,
     ) -> anyhow::Result<Self::InvocationStream<T>>
     where
@@ -634,33 +686,16 @@ impl wrpc_transport::Client for Client {
                 >,
             > + Send,
     {
-        let nats = Arc::clone(&self.nats);
-        let invocations = nats
-            .subscribe(self.static_subject(instance, func))
+        let invocations = self
+            .subscribe(instance, name)
             .await
-            .context("failed to subscribe on invocation subject")?;
+            .map(InvocationSubscription::into_invocations)?;
         Ok(Box::pin(invocations.then({
-            move |msg| {
-                let nats = Arc::clone(&nats);
+            move |invocation| {
                 let mut svc = svc.clone();
                 async move {
-                    let Request {
-                        payload,
-                        tx,
-                        headers,
-                        ..
-                    } = Request::try_from(msg)?;
-                    let rx = nats.new_inbox().to_subject();
-                    svc.call(IncomingInvocation {
-                        context: headers,
-                        payload,
-                        param_subject: Subject(format!("{rx}.params").into()),
-                        error_subject: Subject(format!("{rx}.error").into()),
-                        handshake_subject: Subject(rx),
-                        subscriber: Subscriber::new(Arc::clone(&nats)),
-                        acceptor: Acceptor { nats, tx },
-                    })
-                    .await
+                    let invocation = invocation?;
+                    svc.call(invocation).await
                 }
             }
         })))
