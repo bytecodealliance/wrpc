@@ -1,6 +1,6 @@
 [package]
 name = "wrpc-transport-nats"
-version = "0.14.1"
+version = "0.15.0"
 description = "wRPC NATS transport"
 
 authors.workspace = true
