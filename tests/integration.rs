@@ -1554,7 +1554,7 @@ async fn nats() -> anyhow::Result<()> {
             async {
                 info!("invoke function");
                 let (res, tx) = client
-                    .invoke_clear_container("test".to_string())
+                    .invoke_clear_container("test")
                     .await
                     .context("failed to invoke")?;
                 let () = res.expect("invocation failed");
@@ -1580,7 +1580,7 @@ async fn nats() -> anyhow::Result<()> {
                 assert_eq!(name, "test");
                 info!("transmit response");
                 transmitter
-                    .transmit_static(result_subject, Err::<(), _>("test".to_string()))
+                    .transmit_static(result_subject, Err::<(), _>("test"))
                     .await
                     .context("failed to transmit response")?;
                 info!("response transmitted");
@@ -1589,7 +1589,7 @@ async fn nats() -> anyhow::Result<()> {
             async {
                 info!("invoke function");
                 let (res, tx) = client
-                    .invoke_clear_container("test".to_string())
+                    .invoke_clear_container("test")
                     .await
                     .context("failed to invoke")?;
                 let err = res.expect_err("invocation should have failed");
@@ -1633,7 +1633,7 @@ async fn nats() -> anyhow::Result<()> {
             async {
                 info!("invoke function");
                 let (res, tx) = client
-                    .invoke_container_exists("test".to_string())
+                    .invoke_container_exists("test")
                     .await
                     .context("failed to invoke")?;
                 let exists = res.expect("invocation failed");
@@ -1676,7 +1676,7 @@ async fn nats() -> anyhow::Result<()> {
             async {
                 info!("invoke function");
                 let (res, tx) = client
-                    .invoke_create_container("test".to_string())
+                    .invoke_create_container("test")
                     .await
                     .context("failed to invoke")?;
                 let () = res.expect("invocation failed");
@@ -1718,7 +1718,7 @@ async fn nats() -> anyhow::Result<()> {
             async {
                 info!("invoke function");
                 let (res, tx) = client
-                    .invoke_delete_container("test".to_string())
+                    .invoke_delete_container("test")
                     .await
                     .context("failed to invoke")?;
                 let () = res.expect("invocation failed");
@@ -1763,7 +1763,7 @@ async fn nats() -> anyhow::Result<()> {
             async {
                 info!("invoke function");
                 let (res, tx) = client
-                    .invoke_get_container_info("test".to_string())
+                    .invoke_get_container_info("test")
                     .await
                     .context("failed to invoke")?;
                 let ContainerMetadata { created_at } = res.expect("invocation failed");
@@ -1814,7 +1814,7 @@ async fn nats() -> anyhow::Result<()> {
             async {
                 info!("invoke function");
                 let (res, tx) = client
-                    .invoke_list_container_objects("test".to_string(), Some(100), None)
+                    .invoke_list_container_objects("test", Some(100), None)
                     .await
                     .context("failed to invoke")?;
                 let names = res.expect("invocation failed");
@@ -1875,11 +1875,11 @@ async fn nats() -> anyhow::Result<()> {
                 info!("invoke function");
                 let (res, tx) = client
                     .invoke_copy_object(
-                        ObjectId {
+                        &ObjectId {
                             container: "container".to_string(),
                             object: "object".to_string(),
                         },
-                        ObjectId {
+                        &ObjectId {
                             container: "new-container".to_string(),
                             object: "new-object".to_string(),
                         },
@@ -1931,7 +1931,7 @@ async fn nats() -> anyhow::Result<()> {
             async {
                 info!("invoke function");
                 let (res, tx) = client
-                    .invoke_delete_object(ObjectId {
+                    .invoke_delete_object(&ObjectId {
                         container: "container".to_string(),
                         object: "object".to_string(),
                     })
@@ -1977,10 +1977,7 @@ async fn nats() -> anyhow::Result<()> {
             async {
                 info!("invoke function");
                 let (res, tx) = client
-                    .invoke_delete_objects(
-                        "container".to_string(),
-                        vec!["object".to_string(), "new-object".to_string()],
-                    )
+                    .invoke_delete_objects("container", &["object", "new-object"])
                     .await
                     .context("failed to invoke")?;
                 let () = res.expect("invocation failed");
@@ -2037,7 +2034,7 @@ async fn nats() -> anyhow::Result<()> {
                 info!("invoke function");
                 let (res, tx) = client
                     .invoke_get_container_data(
-                        ObjectId {
+                        &ObjectId {
                             container: "container".to_string(),
                             object: "object".to_string(),
                         },
@@ -2109,7 +2106,7 @@ async fn nats() -> anyhow::Result<()> {
             async {
                 info!("invoke function");
                 let (res, tx) = client
-                    .invoke_get_object_info(ObjectId {
+                    .invoke_get_object_info(&ObjectId {
                         container: "container".to_string(),
                         object: "object".to_string(),
                     })
@@ -2167,7 +2164,7 @@ async fn nats() -> anyhow::Result<()> {
             async {
                 info!("invoke function");
                 let (res, tx) = client
-                    .invoke_has_object(ObjectId {
+                    .invoke_has_object(&ObjectId {
                         container: "container".to_string(),
                         object: "object".to_string(),
                     })
@@ -2227,11 +2224,11 @@ async fn nats() -> anyhow::Result<()> {
                 info!("invoke function");
                 let (res, tx) = client
                     .invoke_move_object(
-                        ObjectId {
+                        &ObjectId {
                             container: "container".to_string(),
                             object: "object".to_string(),
                         },
-                        ObjectId {
+                        &ObjectId {
                             container: "new-container".to_string(),
                             object: "new-object".to_string(),
                         },
@@ -2290,7 +2287,7 @@ async fn nats() -> anyhow::Result<()> {
                 info!("invoke function");
                 let (res, tx) = client
                     .invoke_write_container_data(
-                        ObjectId {
+                        &ObjectId {
                             container: "container".to_string(),
                             object: "object".to_string(),
                         },
@@ -2338,7 +2335,7 @@ async fn nats() -> anyhow::Result<()> {
             async {
                 info!("invoke function");
                 let (res, tx) = client
-                    .invoke_delete("bucket".to_string(), "key".to_string())
+                    .invoke_delete("bucket", "key")
                     .await
                     .context("failed to invoke")?;
                 let () = res.expect("invocation failed");
@@ -2381,7 +2378,7 @@ async fn nats() -> anyhow::Result<()> {
             async {
                 info!("invoke function");
                 let (res, tx) = client
-                    .invoke_exists("bucket".to_string(), "key".to_string())
+                    .invoke_exists("bucket", "key")
                     .await
                     .context("failed to invoke")?;
                 let exists = res.expect("invocation failed");
@@ -2428,7 +2425,7 @@ async fn nats() -> anyhow::Result<()> {
             async {
                 info!("invoke function");
                 let (res, tx) = client
-                    .invoke_get("bucket".to_string(), "key".to_string())
+                    .invoke_get("bucket", "key")
                     .await
                     .context("failed to invoke")?;
                 let data = res.expect("invocation failed");
@@ -2489,11 +2486,7 @@ async fn nats() -> anyhow::Result<()> {
             async {
                 info!("invoke function");
                 let (res, tx) = client
-                    .invoke_set(
-                        "bucket".to_string(),
-                        "key".to_string(),
-                        Box::pin(stream::iter(["test".into()])),
-                    )
+                    .invoke_set("bucket", "key", Box::pin(stream::iter(["test".into()])))
                     .await
                     .context("failed to invoke")?;
                 let () = res.expect("invocation failed");
@@ -2538,7 +2531,7 @@ async fn nats() -> anyhow::Result<()> {
             async {
                 info!("invoke function");
                 let (res, tx) = client
-                    .invoke_compare_and_swap("bucket".to_string(), "key".to_string(), 42, 4242)
+                    .invoke_compare_and_swap("bucket", "key", 42, 4242)
                     .await
                     .context("failed to invoke")?;
                 let res = res.expect("invocation failed");
@@ -2583,7 +2576,7 @@ async fn nats() -> anyhow::Result<()> {
             async {
                 info!("invoke function");
                 let (res, tx) = client
-                    .invoke_increment("bucket".to_string(), "key".to_string(), 42)
+                    .invoke_increment("bucket", "key", 42)
                     .await
                     .context("failed to invoke")?;
                 let res = res.expect("invocation failed");

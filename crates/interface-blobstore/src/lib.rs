@@ -24,8 +24,8 @@ impl EncodeSync for ContainerMetadata {
 }
 
 #[async_trait]
-impl Receive for ContainerMetadata {
-    async fn receive<'a, T>(
+impl<'a> Receive<'a> for ContainerMetadata {
+    async fn receive<T>(
         payload: impl Buf + Send + 'a,
         rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
         _sub: Option<AsyncSubscription<T>>,
@@ -60,8 +60,8 @@ impl EncodeSync for ObjectMetadata {
 }
 
 #[async_trait]
-impl Receive for ObjectMetadata {
-    async fn receive<'a, T>(
+impl<'a> Receive<'a> for ObjectMetadata {
+    async fn receive<T>(
         payload: impl Buf + Send + 'a,
         rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
         _sub: Option<AsyncSubscription<T>>,
@@ -85,23 +85,32 @@ pub struct ObjectId {
     pub object: String,
 }
 
-impl EncodeSync for ObjectId {
+impl EncodeSync for &ObjectId {
     #[instrument(level = "trace", skip_all)]
     fn encode_sync(self, mut payload: impl BufMut) -> anyhow::Result<()> {
-        let Self { container, object } = self;
+        let ObjectId { container, object } = self;
         container
+            .as_str()
             .encode_sync(&mut payload)
             .context("failed to encode `container`")?;
         object
+            .as_str()
             .encode_sync(payload)
             .context("failed to encode `object`")?;
         Ok(())
     }
 }
 
+impl EncodeSync for ObjectId {
+    #[instrument(level = "trace", skip_all)]
+    fn encode_sync(self, payload: impl BufMut) -> anyhow::Result<()> {
+        (&self).encode_sync(payload)
+    }
+}
+
 #[async_trait]
-impl Receive for ObjectId {
-    async fn receive<'a, T>(
+impl<'a> Receive<'a> for ObjectId {
+    async fn receive<T>(
         payload: impl Buf + Send + 'a,
         rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
         _sub: Option<AsyncSubscription<T>>,
@@ -123,7 +132,7 @@ pub trait Blobstore: wrpc_transport::Client {
     #[instrument(level = "trace", skip_all)]
     fn invoke_clear_container(
         &self,
-        name: String,
+        name: &str,
     ) -> impl Future<Output = anyhow::Result<(Result<(), String>, Self::Transmission)>> + Send {
         self.invoke_static("wrpc:blobstore/blobstore@0.1.0", "clear-container", name)
     }
@@ -138,7 +147,7 @@ pub trait Blobstore: wrpc_transport::Client {
     #[instrument(level = "trace", skip_all)]
     fn invoke_container_exists(
         &self,
-        name: String,
+        name: &str,
     ) -> impl Future<Output = anyhow::Result<(Result<bool, String>, Self::Transmission)>> + Send
     {
         self.invoke_static("wrpc:blobstore/blobstore@0.1.0", "container-exists", name)
@@ -154,7 +163,7 @@ pub trait Blobstore: wrpc_transport::Client {
     #[instrument(level = "trace", skip_all)]
     fn invoke_create_container(
         &self,
-        name: String,
+        name: &str,
     ) -> impl Future<Output = anyhow::Result<(Result<(), String>, Self::Transmission)>> + Send {
         self.invoke_static("wrpc:blobstore/blobstore@0.1.0", "create-container", name)
     }
@@ -169,7 +178,7 @@ pub trait Blobstore: wrpc_transport::Client {
     #[instrument(level = "trace", skip_all)]
     fn invoke_delete_container(
         &self,
-        name: String,
+        name: &str,
     ) -> impl Future<Output = anyhow::Result<(Result<(), String>, Self::Transmission)>> + Send {
         self.invoke_static("wrpc:blobstore/blobstore@0.1.0", "delete-container", name)
     }
@@ -184,7 +193,7 @@ pub trait Blobstore: wrpc_transport::Client {
     #[instrument(level = "trace", skip_all)]
     fn invoke_get_container_info(
         &self,
-        name: String,
+        name: &str,
     ) -> impl Future<Output = anyhow::Result<(Result<ContainerMetadata, String>, Self::Transmission)>>
            + Send {
         self.invoke_static("wrpc:blobstore/blobstore@0.1.0", "get-container-info", name)
@@ -199,7 +208,7 @@ pub trait Blobstore: wrpc_transport::Client {
     #[instrument(level = "trace", skip_all)]
     fn invoke_list_container_objects(
         &self,
-        name: String,
+        name: &str,
         limit: Option<u64>,
         offset: Option<u64>,
     ) -> impl Future<
@@ -229,8 +238,8 @@ pub trait Blobstore: wrpc_transport::Client {
     #[instrument(level = "trace", skip_all)]
     fn invoke_copy_object(
         &self,
-        src: ObjectId,
-        dest: ObjectId,
+        src: &ObjectId,
+        dest: &ObjectId,
     ) -> impl Future<Output = anyhow::Result<(Result<(), String>, Self::Transmission)>> + Send {
         self.invoke_static("wrpc:blobstore/blobstore@0.1.0", "copy-object", (src, dest))
     }
@@ -246,7 +255,7 @@ pub trait Blobstore: wrpc_transport::Client {
     #[instrument(level = "trace", skip_all)]
     fn invoke_delete_object(
         &self,
-        id: ObjectId,
+        id: &ObjectId,
     ) -> impl Future<Output = anyhow::Result<(Result<(), String>, Self::Transmission)>> + Send {
         self.invoke_static("wrpc:blobstore/blobstore@0.1.0", "delete-object", id)
     }
@@ -260,8 +269,8 @@ pub trait Blobstore: wrpc_transport::Client {
     #[instrument(level = "trace", skip_all)]
     fn invoke_delete_objects(
         &self,
-        container: String,
-        objects: Vec<String>,
+        container: &str,
+        objects: &[&str],
     ) -> impl Future<Output = anyhow::Result<(Result<(), String>, Self::Transmission)>> + Send {
         self.invoke_static(
             "wrpc:blobstore/blobstore@0.1.0",
@@ -281,7 +290,7 @@ pub trait Blobstore: wrpc_transport::Client {
     #[instrument(level = "trace", skip_all)]
     fn invoke_get_container_data(
         &self,
-        id: ObjectId,
+        id: &ObjectId,
         start: u64,
         end: u64,
     ) -> impl Future<
@@ -305,7 +314,7 @@ pub trait Blobstore: wrpc_transport::Client {
     #[instrument(level = "trace", skip_all)]
     fn invoke_get_object_info(
         &self,
-        id: ObjectId,
+        id: &ObjectId,
     ) -> impl Future<Output = anyhow::Result<(Result<ObjectMetadata, String>, Self::Transmission)>> + Send
     {
         self.invoke_static("wrpc:blobstore/blobstore@0.1.0", "get-object-info", id)
@@ -321,7 +330,7 @@ pub trait Blobstore: wrpc_transport::Client {
     #[instrument(level = "trace", skip_all)]
     fn invoke_has_object(
         &self,
-        id: ObjectId,
+        id: &ObjectId,
     ) -> impl Future<Output = anyhow::Result<(Result<bool, String>, Self::Transmission)>> + Send
     {
         self.invoke_static("wrpc:blobstore/blobstore@0.1.0", "has-object", id)
@@ -337,8 +346,8 @@ pub trait Blobstore: wrpc_transport::Client {
     #[instrument(level = "trace", skip_all)]
     fn invoke_move_object(
         &self,
-        src: ObjectId,
-        dest: ObjectId,
+        src: &ObjectId,
+        dest: &ObjectId,
     ) -> impl Future<Output = anyhow::Result<(Result<(), String>, Self::Transmission)>> + Send {
         self.invoke_static("wrpc:blobstore/blobstore@0.1.0", "move-object", (src, dest))
     }
@@ -354,7 +363,7 @@ pub trait Blobstore: wrpc_transport::Client {
     #[instrument(level = "trace", skip_all)]
     fn invoke_write_container_data(
         &self,
-        id: ObjectId,
+        id: &ObjectId,
         data: impl Stream<Item = Bytes> + Send + 'static,
     ) -> impl Future<Output = anyhow::Result<(Result<(), String>, Self::Transmission)>> + Send {
         self.invoke_static(

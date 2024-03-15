@@ -9,8 +9,8 @@ pub trait Eventual: wrpc_transport::Client {
     #[instrument(level = "trace", skip_all)]
     fn invoke_delete(
         &self,
-        bucket: String,
-        key: String,
+        bucket: &str,
+        key: &str,
     ) -> impl Future<Output = anyhow::Result<(Result<(), String>, Self::Transmission)>> + Send {
         self.invoke_static("wrpc:keyvalue/eventual@0.1.0", "delete", (bucket, key))
     }
@@ -25,8 +25,8 @@ pub trait Eventual: wrpc_transport::Client {
     #[instrument(level = "trace", skip_all)]
     fn invoke_exists(
         &self,
-        bucket: String,
-        key: String,
+        bucket: &str,
+        key: &str,
     ) -> impl Future<Output = anyhow::Result<(Result<bool, String>, Self::Transmission)>> + Send
     {
         self.invoke_static("wrpc:keyvalue/eventual@0.1.0", "exists", (bucket, key))
@@ -42,8 +42,8 @@ pub trait Eventual: wrpc_transport::Client {
     #[instrument(level = "trace", skip_all)]
     fn invoke_get(
         &self,
-        bucket: String,
-        key: String,
+        bucket: &str,
+        key: &str,
     ) -> impl Future<
         Output = anyhow::Result<(
             Result<Option<IncomingInputStream>, String>,
@@ -63,8 +63,8 @@ pub trait Eventual: wrpc_transport::Client {
     #[instrument(level = "trace", skip_all)]
     fn invoke_set(
         &self,
-        bucket: String,
-        key: String,
+        bucket: &str,
+        key: &str,
         value: impl Stream<Item = Bytes> + Send + 'static,
     ) -> impl Future<Output = anyhow::Result<(Result<(), String>, Self::Transmission)>> + Send {
         self.invoke_static(
@@ -96,8 +96,8 @@ pub trait Atomic: wrpc_transport::Client {
     #[instrument(level = "trace", skip_all)]
     fn invoke_compare_and_swap(
         &self,
-        bucket: String,
-        key: String,
+        bucket: &str,
+        key: &str,
         old: u64,
         new: u64,
     ) -> impl Future<Output = anyhow::Result<(Result<bool, String>, Self::Transmission)>> + Send
@@ -120,8 +120,8 @@ pub trait Atomic: wrpc_transport::Client {
     #[instrument(level = "trace", skip_all)]
     fn invoke_increment(
         &self,
-        bucket: String,
-        key: String,
+        bucket: &str,
+        key: &str,
         delta: u64,
     ) -> impl Future<Output = anyhow::Result<(Result<u64, String>, Self::Transmission)>> + Send
     {

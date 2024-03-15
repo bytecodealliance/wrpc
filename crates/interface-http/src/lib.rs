@@ -154,8 +154,8 @@ impl EncodeSync for Method {
 }
 
 #[async_trait]
-impl Receive for Method {
-    async fn receive<'a, T>(
+impl<'a> Receive<'a> for Method {
+    async fn receive<T>(
         payload: impl Buf + Send + 'a,
         mut rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
         _sub: Option<AsyncSubscription<T>>,
@@ -229,8 +229,8 @@ impl EncodeSync for Scheme {
 }
 
 #[async_trait]
-impl Receive for Scheme {
-    async fn receive<'a, T>(
+impl<'a> Receive<'a> for Scheme {
+    async fn receive<T>(
         payload: impl Buf + Send + 'a,
         mut rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
         _sub: Option<AsyncSubscription<T>>,
@@ -285,8 +285,8 @@ impl EncodeSync for DnsErrorPayload {
 }
 
 #[async_trait]
-impl Receive for DnsErrorPayload {
-    async fn receive<'a, T>(
+impl<'a> Receive<'a> for DnsErrorPayload {
+    async fn receive<T>(
         payload: impl Buf + Send + 'a,
         rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
         _sub: Option<AsyncSubscription<T>>,
@@ -360,8 +360,8 @@ impl EncodeSync for TlsAlertReceivedPayload {
 }
 
 #[async_trait]
-impl Receive for TlsAlertReceivedPayload {
-    async fn receive<'a, T>(
+impl<'a> Receive<'a> for TlsAlertReceivedPayload {
+    async fn receive<T>(
         payload: impl Buf + Send + 'a,
         rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
         _sub: Option<AsyncSubscription<T>>,
@@ -437,8 +437,8 @@ impl EncodeSync for FieldSizePayload {
 }
 
 #[async_trait]
-impl Receive for FieldSizePayload {
-    async fn receive<'a, T>(
+impl<'a> Receive<'a> for FieldSizePayload {
+    async fn receive<T>(
         payload: impl Buf + Send + 'a,
         rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
         _sub: Option<AsyncSubscription<T>>,
@@ -721,8 +721,8 @@ impl EncodeSync for ErrorCode {
 }
 
 #[async_trait]
-impl Receive for ErrorCode {
-    async fn receive<'a, T>(
+impl<'a> Receive<'a> for ErrorCode {
+    async fn receive<T>(
         payload: impl Buf + Send + 'a,
         mut rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
         _sub: Option<AsyncSubscription<T>>,
@@ -847,8 +847,8 @@ impl EncodeSync for RequestOptions {
 }
 
 #[async_trait]
-impl Receive for RequestOptions {
-    async fn receive<'a, T>(
+impl<'a> Receive<'a> for RequestOptions {
+    async fn receive<T>(
         payload: impl Buf + Send + 'a,
         rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
         _sub: Option<AsyncSubscription<T>>,
@@ -1261,8 +1261,8 @@ impl Subscribe for IncomingRequest {
 }
 
 #[async_trait]
-impl Receive for IncomingRequest {
-    async fn receive<'a, T>(
+impl<'a> Receive<'a> for IncomingRequest {
+    async fn receive<T>(
         payload: impl Buf + Send + 'a,
         rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
         sub: Option<AsyncSubscription<T>>,
@@ -1339,9 +1339,9 @@ impl From<IncomingRequestHttp>
 
 #[cfg(feature = "http-body")]
 #[async_trait]
-impl Receive for IncomingRequestHttp {
+impl<'a> Receive<'a> for IncomingRequestHttp {
     #[instrument(level = "trace", skip_all)]
-    async fn receive<'a, T>(
+    async fn receive<T>(
         payload: impl Buf + Send + 'a,
         rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
         sub: Option<AsyncSubscription<T>>,
@@ -1384,9 +1384,9 @@ impl From<IncomingRequestWasmtime> for http::Request<wasmtime_wasi_http::body::H
 
 #[cfg(feature = "wasmtime-wasi-http")]
 #[async_trait]
-impl Receive for IncomingRequestWasmtime {
+impl<'a> Receive<'a> for IncomingRequestWasmtime {
     #[instrument(level = "trace", skip_all)]
-    async fn receive<'a, T>(
+    async fn receive<T>(
         payload: impl Buf + Send + 'a,
         rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
         sub: Option<AsyncSubscription<T>>,
@@ -1580,8 +1580,8 @@ impl Subscribe for IncomingResponse {
 }
 
 #[async_trait]
-impl Receive for IncomingResponse {
-    async fn receive<'a, T>(
+impl<'a> Receive<'a> for IncomingResponse {
+    async fn receive<T>(
         payload: impl Buf + Send + 'a,
         rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
         sub: Option<AsyncSubscription<T>>,
