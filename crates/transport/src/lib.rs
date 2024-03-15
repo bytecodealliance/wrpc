@@ -1819,6 +1819,22 @@ where
 }
 
 #[async_trait]
+impl Receive for anyhow::Error {
+    #[instrument(level = "trace", skip_all)]
+    async fn receive<'a, T>(
+        payload: impl Buf + Send + 'a,
+        rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
+        sub: Option<AsyncSubscription<T>>,
+    ) -> anyhow::Result<(Self, Box<dyn Buf + Send + 'a>)>
+    where
+        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + 'static,
+    {
+        let (err, payload) = String::receive(payload, rx, sub).await?;
+        Ok((anyhow!(err), payload))
+    }
+}
+
+#[async_trait]
 impl<E> Receive for Pin<Box<dyn Future<Output = anyhow::Result<E>> + Send>>
 where
     E: Receive + Send + 'static,
@@ -2781,6 +2797,13 @@ impl EncodeSync for Bytes {
             .context("failed to encode byte list length")?;
         payload.put(self);
         Ok(())
+    }
+}
+
+impl EncodeSync for anyhow::Error {
+    #[instrument(level = "trace", skip_all)]
+    fn encode_sync(self, payload: impl BufMut) -> anyhow::Result<()> {
+        format!("{self:#}").encode_sync(payload)
     }
 }
 
