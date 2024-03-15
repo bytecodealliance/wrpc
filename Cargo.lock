@@ -2771,7 +2771,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc-interface-blobstore"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "async-trait",

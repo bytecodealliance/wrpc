@@ -82,7 +82,7 @@ wasmtime = { version = "18", default-features = false }
 wasmtime-wasi = { version = "18", default-features = false }
 wasmtime-wasi-http = { version = "18", default-features = false }
 wit-parser = { version = "0.13", default-features = false }
-wrpc-interface-blobstore = { version = "0.9", path = "./crates/interface-blobstore", default-features = false }
+wrpc-interface-blobstore = { version = "0.10", path = "./crates/interface-blobstore", default-features = false }
 wrpc-interface-http = { version = "0.16", path = "./crates/interface-http", default-features = false }
 wrpc-interface-keyvalue = { version = "0.8", path = "./crates/interface-keyvalue", default-features = false }
 wrpc-runtime-wasmtime = { version = "0.10", path = "./crates/runtime-wasmtime", default-features = false }

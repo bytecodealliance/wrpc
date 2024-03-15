@@ -1753,10 +1753,7 @@ async fn nats() -> anyhow::Result<()> {
                 transmitter
                     .transmit_static(
                         result_subject,
-                        Ok::<_, String>(ContainerMetadata {
-                            name: "container".to_string(),
-                            created_at: 42,
-                        }),
+                        Ok::<_, String>(ContainerMetadata { created_at: 42 }),
                     )
                     .await
                     .context("failed to transmit response")?;
@@ -1769,8 +1766,7 @@ async fn nats() -> anyhow::Result<()> {
                     .invoke_get_container_info("test".to_string())
                     .await
                     .context("failed to invoke")?;
-                let ContainerMetadata { name, created_at } = res.expect("invocation failed");
-                assert_eq!(name, "container");
+                let ContainerMetadata { created_at } = res.expect("invocation failed");
                 assert_eq!(created_at, 42);
                 info!("transmit async parameters");
                 tx.await.context("failed to transmit parameters")?;
@@ -2101,8 +2097,6 @@ async fn nats() -> anyhow::Result<()> {
                     .transmit_static(
                         result_subject,
                         Ok::<_, String>(ObjectMetadata {
-                            name: "object".to_string(),
-                            container: "container".to_string(),
                             created_at: 42,
                             size: 4242,
                         }),
@@ -2125,8 +2119,6 @@ async fn nats() -> anyhow::Result<()> {
                 assert_eq!(
                     v,
                     ObjectMetadata {
-                        name: "object".to_string(),
-                        container: "container".to_string(),
                         created_at: 42,
                         size: 4242,
                     }

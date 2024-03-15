@@ -8,9 +8,21 @@ interface types {
         object-metadata as wasi-object-metadata,
     };
     
-    type container-metadata = wasi-container-metadata;
+    // information about a container
+    record container-metadata {
+      // date and time container was created
+      created-at: timestamp,
+    }
+
     type object-id = wasi-object-id;
-    type object-metadata = wasi-object-metadata;
+
+    // information about an object
+    record object-metadata {
+        // date and time the object was created
+        created-at: timestamp,
+        // size of the object, in bytes
+        size: object-size,
+    }
 }
 
 interface blobstore {

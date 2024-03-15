@@ -9,16 +9,13 @@ use wrpc_transport::{AsyncSubscription, EncodeSync, IncomingInputStream, Receive
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ContainerMetadata {
-    pub name: String,
     pub created_at: u64,
 }
 
 impl EncodeSync for ContainerMetadata {
     #[instrument(level = "trace", skip_all)]
-    fn encode_sync(self, mut payload: impl BufMut) -> anyhow::Result<()> {
-        let Self { name, created_at } = self;
-        name.encode_sync(&mut payload)
-            .context("failed to encode `name`")?;
+    fn encode_sync(self, payload: impl BufMut) -> anyhow::Result<()> {
+        let Self { created_at } = self;
         created_at
             .encode_sync(payload)
             .context("failed to encode `created-at`")?;
@@ -36,20 +33,15 @@ impl Receive for ContainerMetadata {
     where
         T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + 'static,
     {
-        let (name, payload) = Receive::receive_sync(payload, rx)
-            .await
-            .context("failed to receive `name`")?;
         let (created_at, payload) = Receive::receive_sync(payload, rx)
             .await
             .context("failed to receive `created-at`")?;
-        Ok((Self { name, created_at }, payload))
+        Ok((Self { created_at }, payload))
     }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ObjectMetadata {
-    pub name: String,
-    pub container: String,
     pub created_at: u64,
     pub size: u64,
 }
@@ -57,17 +49,7 @@ pub struct ObjectMetadata {
 impl EncodeSync for ObjectMetadata {
     #[instrument(level = "trace", skip_all)]
     fn encode_sync(self, mut payload: impl BufMut) -> anyhow::Result<()> {
-        let Self {
-            name,
-            container,
-            created_at,
-            size,
-        } = self;
-        name.encode_sync(&mut payload)
-            .context("failed to encode `name`")?;
-        container
-            .encode_sync(&mut payload)
-            .context("failed to encode `container`")?;
+        let Self { created_at, size } = self;
         created_at
             .encode_sync(&mut payload)
             .context("failed to encode `created-at`")?;
@@ -87,27 +69,13 @@ impl Receive for ObjectMetadata {
     where
         T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + 'static,
     {
-        let (name, payload) = Receive::receive_sync(payload, rx)
-            .await
-            .context("failed to receive `name`")?;
-        let (container, payload) = Receive::receive_sync(payload, rx)
-            .await
-            .context("failed to receive `container`")?;
         let (created_at, payload) = Receive::receive_sync(payload, rx)
             .await
             .context("failed to receive `created-at`")?;
         let (size, payload) = Receive::receive_sync(payload, rx)
             .await
             .context("failed to receive `size`")?;
-        Ok((
-            Self {
-                name,
-                container,
-                created_at,
-                size,
-            },
-            payload,
-        ))
+        Ok((Self { created_at, size }, payload))
     }
 }
 
