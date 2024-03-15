@@ -917,9 +917,17 @@ where
     #[instrument(level = "trace", skip_all)]
     async fn encode(
         self,
-        payload: &mut (impl BufMut + Send),
+        mut payload: &mut (impl BufMut + Send),
     ) -> anyhow::Result<Option<AsyncValue>> {
-        let txs = encode_sized_iter(payload, self.0).await?;
+        let it = self.0.into_iter();
+        trace!(len = it.len(), "encode list length");
+        let len = it
+            .len()
+            .try_into()
+            .context("list length does not fit in u64")?;
+        leb128::write::unsigned(&mut (&mut payload).writer(), len)
+            .context("failed to encode list length")?;
+        let txs = encode_sized_iter(payload, it).await?;
         Ok(txs.map(AsyncValue::List))
     }
 }
