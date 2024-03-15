@@ -900,6 +900,30 @@ where
     }
 }
 
+/// Iterator wrapper
+pub struct ListIter<T, I>(pub I)
+where
+    T: Encode,
+    I: IntoIterator<Item = T> + Send,
+    I::IntoIter: ExactSizeIterator + Send;
+
+#[async_trait]
+impl<T, I> Encode for ListIter<T, I>
+where
+    T: Encode,
+    I: IntoIterator<Item = T> + Send,
+    I::IntoIter: ExactSizeIterator + Send,
+{
+    #[instrument(level = "trace", skip_all)]
+    async fn encode(
+        self,
+        payload: &mut (impl BufMut + Send),
+    ) -> anyhow::Result<Option<AsyncValue>> {
+        let txs = encode_sized_iter(payload, self.0).await?;
+        Ok(txs.map(AsyncValue::List))
+    }
+}
+
 pub enum Value {
     Bool(bool),
     U8(u8),

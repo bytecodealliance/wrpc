@@ -5,7 +5,9 @@ use async_trait::async_trait;
 use bytes::{Buf, BufMut, Bytes};
 use futures::{Stream, StreamExt as _};
 use tracing::instrument;
-use wrpc_transport::{AsyncSubscription, EncodeSync, IncomingInputStream, Receive, Value};
+use wrpc_transport::{
+    AsyncSubscription, EncodeSync, IncomingInputStream, ListIter, Receive, Value,
+};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ContainerMetadata {
@@ -267,15 +269,19 @@ pub trait Blobstore: wrpc_transport::Client {
     }
 
     #[instrument(level = "trace", skip_all)]
-    fn invoke_delete_objects(
+    fn invoke_delete_objects<'a, I>(
         &self,
         container: &str,
-        objects: &[&str],
-    ) -> impl Future<Output = anyhow::Result<(Result<(), String>, Self::Transmission)>> + Send {
+        objects: I,
+    ) -> impl Future<Output = anyhow::Result<(Result<(), String>, Self::Transmission)>> + Send
+    where
+        I: IntoIterator<Item = &'a str> + Send,
+        I::IntoIter: ExactSizeIterator + Send,
+    {
         self.invoke_static(
             "wrpc:blobstore/blobstore@0.1.0",
             "delete-objects",
-            (container, objects),
+            (container, ListIter(objects)),
         )
     }
 

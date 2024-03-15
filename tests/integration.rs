@@ -1977,7 +1977,7 @@ async fn nats() -> anyhow::Result<()> {
             async {
                 info!("invoke function");
                 let (res, tx) = client
-                    .invoke_delete_objects("container", &["object", "new-object"])
+                    .invoke_delete_objects("container", ["object", "new-object"])
                     .await
                     .context("failed to invoke")?;
                 let () = res.expect("invocation failed");
