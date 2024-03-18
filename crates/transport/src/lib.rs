@@ -2593,28 +2593,6 @@ impl<'a> ReceiveContext<'a, Type> for Value {
 pub trait Encode: Send {
     async fn encode(self, payload: &mut (impl BufMut + Send))
         -> anyhow::Result<Option<AsyncValue>>;
-
-    fn encode_dynamic_future(
-        mut fut: impl Future<Output = anyhow::Result<Option<Value>>> + Send + Unpin + 'static,
-        mut payload: impl BufMut + Send,
-    ) -> impl Future<Output = anyhow::Result<Option<AsyncValue>>>
-    where
-        Self: Sized,
-    {
-        async move {
-            trace!("encode future");
-            if let Some(v) = poll_immediate(&mut fut).await {
-                trace!("encode ready future value");
-                payload.put_u8(1);
-                let v = v.context("failed to acquire future value")?;
-                v.encode(&mut payload).await
-            } else {
-                trace!("encode pending future value");
-                payload.put_u8(0);
-                Ok(Some(AsyncValue::Future(Box::pin(fut))))
-            }
-        }
-    }
 }
 
 #[async_trait]
