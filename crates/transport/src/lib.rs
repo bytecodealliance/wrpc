@@ -1930,8 +1930,8 @@ where
             bail!("stream subscription type mismatch")
         };
         trace!("decode stream");
-        let (len, mut payload) = receive_leb128_unsigned(payload, rx).await?;
-        match len {
+        let mut payload = receive_at_least(payload, rx, 1).await?;
+        match payload.get_u8() {
             0 => {
                 let (items_tx, items_rx) = mpsc::channel(1);
                 let producer = spawn(async move {
@@ -1970,7 +1970,8 @@ where
                     payload,
                 ))
             }
-            _ => {
+            1 => {
+                let (len, mut payload) = receive_leb128_unsigned(payload, rx).await?;
                 trace!(len, "decode stream elements");
                 let cap = len
                     .try_into()
@@ -1987,6 +1988,7 @@ where
                 }
                 Ok((Box::new(stream::iter([Ok(els)])), payload))
             }
+            _ => bail!("invalid stream readiness byte"),
         }
     }
 }
@@ -2007,10 +2009,8 @@ impl<'a> Receive<'a> for IncomingInputStream {
             bail!("stream subscription type mismatch")
         };
         trace!("decode stream");
-        let (buf, payload) = Bytes::receive_sync(payload, rx)
-            .await
-            .context("failed to receive bytes")?;
-        match buf.len() {
+        let mut payload = receive_at_least(payload, rx, 1).await?;
+        match payload.get_u8() {
             0 => {
                 let (items_tx, items_rx) = mpsc::channel(1);
                 let producer = spawn(async move {
@@ -2047,7 +2047,13 @@ impl<'a> Receive<'a> for IncomingInputStream {
                     payload,
                 ))
             }
-            _ => Ok((Box::new(stream::iter([Ok(buf)])), payload)),
+            1 => {
+                let (buf, payload) = Bytes::receive_sync(payload, rx)
+                    .await
+                    .context("failed to receive bytes")?;
+                Ok((Box::new(stream::iter([Ok(buf)])), payload))
+            }
+            _ => bail!("invalid stream readiness byte"),
         }
     }
 }
