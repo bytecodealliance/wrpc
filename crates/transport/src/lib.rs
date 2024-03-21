@@ -1985,7 +1985,6 @@ where
                         .with_context(|| format!("failed to decode value of list element {i}"))?;
                     els.push(el);
                 }
-                ensure!(payload.get_u8() == 0);
                 Ok((Box::new(stream::iter([Ok(els)])), payload))
             }
         }
