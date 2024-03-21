@@ -1986,7 +1986,11 @@ where
                         .with_context(|| format!("failed to decode value of list element {i}"))?;
                     els.push(el);
                 }
-                Ok((Box::new(stream::iter([Ok(els)])), payload))
+                if els.is_empty() {
+                    Ok((Box::new(stream::empty()), payload))
+                } else {
+                    Ok((Box::new(stream::iter([Ok(els)])), payload))
+                }
             }
             _ => bail!("invalid stream readiness byte"),
         }
@@ -2051,7 +2055,11 @@ impl<'a> Receive<'a> for IncomingInputStream {
                 let (buf, payload) = Bytes::receive_sync(payload, rx)
                     .await
                     .context("failed to receive bytes")?;
-                Ok((Box::new(stream::iter([Ok(buf)])), payload))
+                if buf.is_empty() {
+                    Ok((Box::new(stream::empty()), payload))
+                } else {
+                    Ok((Box::new(stream::iter([Ok(buf)])), payload))
+                }
             }
             _ => bail!("invalid stream readiness byte"),
         }
