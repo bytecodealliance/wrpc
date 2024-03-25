@@ -8,7 +8,7 @@ use wasmtime::component::{
     Enum, Flags, List, OptionVal, Record, ResourceType, ResultVal, Tuple, Type, Val, Variant,
 };
 use wasmtime::AsContextMut;
-use wasmtime_wasi::preview2::{InputStream, Pollable, WasiView};
+use wasmtime_wasi::{InputStream, Pollable, WasiView};
 
 #[instrument(level = "trace", skip(store))]
 pub fn to_wrpc_value<T: WasiView>(
