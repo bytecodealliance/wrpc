@@ -654,37 +654,25 @@ impl wrpc_transport::Client for Client {
     type Transmission = Transmission;
     type Acceptor = Acceptor;
     type Invocation = Invocation;
-    type InvocationStream<T> = Pin<
-        Box<
-            dyn Stream<Item = anyhow::Result<AcceptedInvocation<Self::Context, T, Transmitter>>>
-                + Send,
-        >,
-    >;
+    type InvocationStream<Ctx, T, Tx: wrpc_transport::Transmitter> =
+        Pin<Box<dyn Stream<Item = anyhow::Result<AcceptedInvocation<Ctx, T, Tx>>> + Send>>;
 
     #[instrument(level = "trace", skip(self, svc))]
-    async fn serve<T, S, Fut>(
+    async fn serve<Ctx, T, Tx, S, Fut>(
         &self,
         instance: &str,
         name: &str,
         svc: S,
-    ) -> anyhow::Result<Self::InvocationStream<T>>
+    ) -> anyhow::Result<Self::InvocationStream<Ctx, T, Tx>>
     where
+        Tx: wrpc_transport::Transmitter,
         S: tower::Service<
                 IncomingInvocation<Self::Context, Self::Subscriber, Self::Acceptor>,
                 Future = Fut,
             > + Send
             + Clone
             + 'static,
-        Fut: Future<
-                Output = Result<
-                    AcceptedInvocation<
-                        Self::Context,
-                        T,
-                        <Self::Acceptor as wrpc_transport::Acceptor>::Transmitter,
-                    >,
-                    anyhow::Error,
-                >,
-            > + Send,
+        Fut: Future<Output = Result<AcceptedInvocation<Ctx, T, Tx>, anyhow::Error>> + Send,
     {
         let invocations = self
             .subscribe(instance, name)

@@ -3374,6 +3374,67 @@ pub struct AcceptedInvocation<Ctx, T, Tx: Transmitter> {
     pub transmitter: Tx,
 }
 
+impl<Ctx, T, Tx: Transmitter> AcceptedInvocation<Ctx, T, Tx> {
+    /// Map `[Self::context]` to another type
+    pub fn map_context<U>(self, f: impl FnOnce(Ctx) -> U) -> AcceptedInvocation<U, T, Tx> {
+        let Self {
+            context,
+            params,
+            result_subject,
+            error_subject,
+            transmitter,
+        } = self;
+        AcceptedInvocation {
+            context: f(context),
+            params,
+            result_subject,
+            error_subject,
+            transmitter,
+        }
+    }
+
+    /// Map `[Self::params]` to another type
+    pub fn map_params<U>(self, f: impl FnOnce(T) -> U) -> AcceptedInvocation<Ctx, U, Tx> {
+        let Self {
+            context,
+            params,
+            result_subject,
+            error_subject,
+            transmitter,
+        } = self;
+        AcceptedInvocation {
+            context,
+            params: f(params),
+            result_subject,
+            error_subject,
+            transmitter,
+        }
+    }
+
+    /// Map `[Self::transmitter]`, `[Self::result_subject]` and `[Self::error_subject]` to another type
+    pub fn map_transmitter<U: Transmitter>(
+        self,
+        f: impl FnOnce(Tx, Tx::Subject, Tx::Subject) -> (U, U::Subject, U::Subject),
+    ) -> AcceptedInvocation<Ctx, T, U> {
+        let Self {
+            context,
+            params,
+            result_subject,
+            error_subject,
+            transmitter,
+        } = self;
+        let (transmitter, result_subject, error_subject) =
+            f(transmitter, result_subject, error_subject);
+        AcceptedInvocation {
+            context,
+            params,
+            result_subject,
+            error_subject,
+            transmitter,
+        }
+    }
+}
+
 /// Invocation ready to be transmitted to a peer
 pub struct OutgoingInvocation<Invocation, Subscriber, Subject> {
     pub invocation: Invocation,
@@ -3396,32 +3457,25 @@ pub trait Client: Sync {
         + 'static;
     type Acceptor: Acceptor<Subject = Self::Subject> + Send + 'static;
     type Invocation: Invocation<Transmission = Self::Transmission> + Send;
-    type InvocationStream<T>: Stream<
-            Item = anyhow::Result<
-                AcceptedInvocation<Self::Context, T, <Self::Acceptor as Acceptor>::Transmitter>,
-            >,
-        > + Send;
+    type InvocationStream<Ctx, T, Tx: Transmitter>: Stream<Item = anyhow::Result<AcceptedInvocation<Ctx, T, Tx>>>
+        + Send;
 
     /// Serve function `name` from instance `instance`
-    fn serve<T, S, Fut>(
+    fn serve<Ctx, T, Tx, S, Fut>(
         &self,
         instance: &str,
         name: &str,
         svc: S,
-    ) -> impl Future<Output = anyhow::Result<Self::InvocationStream<T>>> + Send
+    ) -> impl Future<Output = anyhow::Result<Self::InvocationStream<Ctx, T, Tx>>> + Send
     where
+        Tx: Transmitter,
         S: tower::Service<
                 IncomingInvocation<Self::Context, Self::Subscriber, Self::Acceptor>,
                 Future = Fut,
             > + Send
             + Clone
             + 'static,
-        Fut: Future<
-                Output = Result<
-                    AcceptedInvocation<Self::Context, T, <Self::Acceptor as Acceptor>::Transmitter>,
-                    anyhow::Error,
-                >,
-            > + Send;
+        Fut: Future<Output = Result<AcceptedInvocation<Ctx, T, Tx>, anyhow::Error>> + Send;
 
     /// Serve function `name` from instance `instance`
     /// with statically-typed parameter type `T`.
@@ -3430,7 +3484,11 @@ pub trait Client: Sync {
         &self,
         instance: &str,
         name: &str,
-    ) -> impl Future<Output = anyhow::Result<Self::InvocationStream<T>>> + Send
+    ) -> impl Future<
+        Output = anyhow::Result<
+            Self::InvocationStream<Self::Context, T, <Self::Acceptor as Acceptor>::Transmitter>,
+        >,
+    > + Send
     where
         T: for<'a> Receive<'a> + Subscribe + 'static,
     {
@@ -3449,7 +3507,15 @@ pub trait Client: Sync {
         instance: &str,
         name: &str,
         params: Arc<[Type]>,
-    ) -> impl Future<Output = anyhow::Result<Self::InvocationStream<Vec<Value>>>> + Send {
+    ) -> impl Future<
+        Output = anyhow::Result<
+            Self::InvocationStream<
+                Self::Context,
+                Vec<Value>,
+                <Self::Acceptor as Acceptor>::Transmitter,
+            >,
+        >,
+    > + Send {
         self.serve(
             instance,
             name,

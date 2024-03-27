@@ -9,8 +9,8 @@ use futures::{Stream, StreamExt as _};
 use tokio::try_join;
 use tracing::instrument;
 use wrpc_transport::{
-    encode_discriminant, receive_discriminant, AsyncSubscription, AsyncValue, Encode, EncodeSync,
-    IncomingInputStream, Receive, Subject as _, Subscribe, Subscriber, Value,
+    encode_discriminant, receive_discriminant, Acceptor, AsyncSubscription, AsyncValue, Encode,
+    EncodeSync, IncomingInputStream, Receive, Subject as _, Subscribe, Subscriber, Value,
 };
 
 pub type Fields = Vec<(String, Vec<Bytes>)>;
@@ -1709,7 +1709,15 @@ pub trait IncomingHandler: wrpc_transport::Client {
     #[instrument(level = "trace", skip_all)]
     fn serve_handle(
         &self,
-    ) -> impl Future<Output = anyhow::Result<Self::InvocationStream<IncomingRequest>>> + Send {
+    ) -> impl Future<
+        Output = anyhow::Result<
+            Self::InvocationStream<
+                Self::Context,
+                IncomingRequest,
+                <Self::Acceptor as Acceptor>::Transmitter,
+            >,
+        >,
+    > + Send {
         self.serve_static("wrpc:http/incoming-handler@0.1.0", "handle")
     }
 
@@ -1717,8 +1725,15 @@ pub trait IncomingHandler: wrpc_transport::Client {
     #[instrument(level = "trace", skip_all)]
     fn serve_handle_wasmtime(
         &self,
-    ) -> impl Future<Output = anyhow::Result<Self::InvocationStream<IncomingRequestWasmtime>>> + Send
-    {
+    ) -> impl Future<
+        Output = anyhow::Result<
+            Self::InvocationStream<
+                Self::Context,
+                IncomingRequestWasmtime,
+                <Self::Acceptor as Acceptor>::Transmitter,
+            >,
+        >,
+    > + Send {
         self.serve_static("wrpc:http/incoming-handler@0.1.0", "handle")
     }
 }
@@ -1780,7 +1795,13 @@ pub trait OutgoingHandler: wrpc_transport::Client {
     fn serve_handle(
         &self,
     ) -> impl Future<
-        Output = anyhow::Result<Self::InvocationStream<(IncomingRequest, Option<RequestOptions>)>>,
+        Output = anyhow::Result<
+            Self::InvocationStream<
+                Self::Context,
+                (IncomingRequest, Option<RequestOptions>),
+                <Self::Acceptor as Acceptor>::Transmitter,
+            >,
+        >,
     > + Send {
         self.serve_static("wrpc:http/outgoing-handler@0.1.0", "handle")
     }
@@ -1791,7 +1812,11 @@ pub trait OutgoingHandler: wrpc_transport::Client {
         &self,
     ) -> impl Future<
         Output = anyhow::Result<
-            Self::InvocationStream<(IncomingRequestHttp, Option<RequestOptions>)>,
+            Self::InvocationStream<
+                Self::Context,
+                (IncomingRequestHttp, Option<RequestOptions>),
+                <Self::Acceptor as Acceptor>::Transmitter,
+            >,
         >,
     > + Send {
         self.serve_static("wrpc:http/outgoing-handler@0.1.0", "handle")
