@@ -3,7 +3,7 @@ use core::future::Future;
 use anyhow::Context as _;
 use async_trait::async_trait;
 use bytes::{Buf, BufMut, Bytes};
-use futures::{Stream, StreamExt as _};
+use futures::{try_join, Stream, StreamExt as _};
 use tracing::instrument;
 use wrpc_transport::{
     Acceptor, AsyncSubscription, EncodeSync, IncomingInputStream, ListIter, Receive, Value,
@@ -499,3 +499,181 @@ pub trait Blobstore: wrpc_transport::Client {
 }
 
 impl<T: wrpc_transport::Client> Blobstore for T {}
+
+/// `wrpc:blobstore/blobstore` invocation streams
+pub struct BlobstoreInvocations<T>
+where
+    T: wrpc_transport::Client,
+{
+    pub clear_container:
+        T::InvocationStream<T::Context, String, <T::Acceptor as Acceptor>::Transmitter>,
+    pub container_exists:
+        T::InvocationStream<T::Context, String, <T::Acceptor as Acceptor>::Transmitter>,
+    pub create_container:
+        T::InvocationStream<T::Context, String, <T::Acceptor as Acceptor>::Transmitter>,
+    pub delete_container:
+        T::InvocationStream<T::Context, String, <T::Acceptor as Acceptor>::Transmitter>,
+    pub get_container_info:
+        T::InvocationStream<T::Context, String, <T::Acceptor as Acceptor>::Transmitter>,
+    pub list_container_objects: T::InvocationStream<
+        T::Context,
+        (String, Option<u64>, Option<u64>),
+        <T::Acceptor as Acceptor>::Transmitter,
+    >,
+    pub copy_object: T::InvocationStream<
+        T::Context,
+        (ObjectId, ObjectId),
+        <T::Acceptor as Acceptor>::Transmitter,
+    >,
+    pub delete_object:
+        T::InvocationStream<T::Context, ObjectId, <T::Acceptor as Acceptor>::Transmitter>,
+    pub delete_objects: T::InvocationStream<
+        T::Context,
+        (String, Vec<String>),
+        <T::Acceptor as Acceptor>::Transmitter,
+    >,
+    pub get_container_data: T::InvocationStream<
+        T::Context,
+        (ObjectId, u64, u64),
+        <T::Acceptor as Acceptor>::Transmitter,
+    >,
+    pub get_object_info:
+        T::InvocationStream<T::Context, ObjectId, <T::Acceptor as Acceptor>::Transmitter>,
+    pub has_object:
+        T::InvocationStream<T::Context, ObjectId, <T::Acceptor as Acceptor>::Transmitter>,
+    pub move_object: T::InvocationStream<
+        T::Context,
+        (ObjectId, ObjectId),
+        <T::Acceptor as Acceptor>::Transmitter,
+    >,
+    pub write_container_data: T::InvocationStream<
+        T::Context,
+        (ObjectId, IncomingInputStream),
+        <T::Acceptor as Acceptor>::Transmitter,
+    >,
+}
+
+/// Serve `wrpc:blobstore/blobstore` invocations
+#[instrument(level = "trace", skip_all)]
+pub async fn serve_blobstore<T>(client: &T) -> anyhow::Result<BlobstoreInvocations<T>>
+where
+    T: Blobstore,
+{
+    let (
+        clear_container,
+        container_exists,
+        create_container,
+        delete_container,
+        get_container_info,
+        list_container_objects,
+        copy_object,
+        delete_object,
+        delete_objects,
+        get_container_data,
+        get_object_info,
+        has_object,
+        move_object,
+        write_container_data,
+    ) = try_join!(
+        async {
+            client
+                .serve_clear_container()
+                .await
+                .context("failed to serve `wrpc:blobstore/blobstore.clear-container`")
+        },
+        async {
+            client
+                .serve_container_exists()
+                .await
+                .context("failed to serve `wrpc:blobstore/blobstore.container-exists`")
+        },
+        async {
+            client
+                .serve_create_container()
+                .await
+                .context("failed to serve `wrpc:blobstore/blobstore.create-container`")
+        },
+        async {
+            client
+                .serve_delete_container()
+                .await
+                .context("failed to serve `wrpc:blobstore/blobstore.delete-container`")
+        },
+        async {
+            client
+                .serve_get_container_info()
+                .await
+                .context("failed to serve `wrpc:blobstore/blobstore.get-container-info`")
+        },
+        async {
+            client
+                .serve_list_container_objects()
+                .await
+                .context("failed to serve `wrpc:blobstore/blobstore.list-container-objects`")
+        },
+        async {
+            client
+                .serve_copy_object()
+                .await
+                .context("failed to serve `wrpc:blobstore/blobstore.copy-object`")
+        },
+        async {
+            client
+                .serve_delete_object()
+                .await
+                .context("failed to serve `wrpc:blobstore/blobstore.delete-object`")
+        },
+        async {
+            client
+                .serve_delete_objects()
+                .await
+                .context("failed to serve `wrpc:blobstore/blobstore.delete-objects`")
+        },
+        async {
+            client
+                .serve_get_container_data()
+                .await
+                .context("failed to serve `wrpc:blobstore/blobstore.get-container-data`")
+        },
+        async {
+            client
+                .serve_get_object_info()
+                .await
+                .context("failed to serve `wrpc:blobstore/blobstore.get-object-info`")
+        },
+        async {
+            client
+                .serve_has_object()
+                .await
+                .context("failed to serve `wrpc:blobstore/blobstore.has-object`")
+        },
+        async {
+            client
+                .serve_move_object()
+                .await
+                .context("failed to serve `wrpc:blobstore/blobstore.move-object`")
+        },
+        async {
+            client
+                .serve_write_container_data()
+                .await
+                .context("failed to serve `wrpc:blobstore/blobstore.write-container-data`")
+        },
+    )?;
+    Ok(BlobstoreInvocations {
+        clear_container,
+        container_exists,
+        create_container,
+        delete_container,
+        get_container_info,
+        list_container_objects,
+        copy_object,
+        delete_object,
+        delete_objects,
+        get_container_data,
+        get_object_info,
+        has_object,
+        move_object,
+        write_container_data,
+    })
+}

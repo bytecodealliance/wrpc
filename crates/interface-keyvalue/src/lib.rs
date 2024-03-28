@@ -1,7 +1,8 @@
 use core::future::Future;
 
+use anyhow::Context as _;
 use bytes::Bytes;
-use futures::{Stream, StreamExt as _};
+use futures::{try_join, Stream, StreamExt as _};
 use tracing::instrument;
 use wrpc_transport::{Acceptor, IncomingInputStream, Value};
 
@@ -186,3 +187,104 @@ pub trait Atomic: wrpc_transport::Client {
 }
 
 impl<T: wrpc_transport::Client> Atomic for T {}
+
+/// `wrpc:keyvalue/atomic` invocation streams
+pub struct AtomicInvocations<T>
+where
+    T: wrpc_transport::Client,
+{
+    pub compare_and_swap: T::InvocationStream<
+        T::Context,
+        (String, String, u64, u64),
+        <T::Acceptor as Acceptor>::Transmitter,
+    >,
+    pub increment: T::InvocationStream<
+        T::Context,
+        (String, String, u64),
+        <T::Acceptor as Acceptor>::Transmitter,
+    >,
+}
+
+/// Serve `wrpc:keyvalue/atomic` invocations
+#[instrument(level = "trace", skip_all)]
+pub async fn serve_atomic<T>(client: &T) -> anyhow::Result<AtomicInvocations<T>>
+where
+    T: Atomic,
+{
+    let (compare_and_swap, increment) = try_join!(
+        async {
+            client
+                .serve_compare_and_swap()
+                .await
+                .context("failed to serve `wrpc:keyvalue/atomic.compare-and-swap`")
+        },
+        async {
+            client
+                .serve_increment()
+                .await
+                .context("failed to serve `wrpc:keyvalue/atomic.increment`")
+        },
+    )?;
+    Ok(AtomicInvocations {
+        compare_and_swap,
+        increment,
+    })
+}
+
+/// `wrpc:keyvalue/eventual` invocation streams
+pub struct EventualInvocations<T>
+where
+    T: wrpc_transport::Client,
+{
+    pub delete:
+        T::InvocationStream<T::Context, (String, String), <T::Acceptor as Acceptor>::Transmitter>,
+    pub exists:
+        T::InvocationStream<T::Context, (String, String), <T::Acceptor as Acceptor>::Transmitter>,
+    pub get:
+        T::InvocationStream<T::Context, (String, String), <T::Acceptor as Acceptor>::Transmitter>,
+    pub set: T::InvocationStream<
+        T::Context,
+        (String, String, IncomingInputStream),
+        <T::Acceptor as Acceptor>::Transmitter,
+    >,
+}
+
+/// Serve `wrpc:keyvalue/eventual` invocations
+#[instrument(level = "trace", skip_all)]
+pub async fn serve_eventual<T>(client: &T) -> anyhow::Result<EventualInvocations<T>>
+where
+    T: Eventual,
+{
+    let (delete, exists, get, set) = try_join!(
+        async {
+            client
+                .serve_delete()
+                .await
+                .context("failed to serve `wrpc:keyvalue/eventual.delete`")
+        },
+        async {
+            client
+                .serve_exists()
+                .await
+                .context("failed to serve `wrpc:keyvalue/eventual.exists`")
+        },
+        async {
+            client
+                .serve_get()
+                .await
+                .context("failed to serve `wrpc:keyvalue/eventual.get`")
+        },
+        async {
+            client
+                .serve_set()
+                .await
+                .context("failed to serve `wrpc:keyvalue/eventual.set`")
+        },
+    )?;
+    Ok(EventualInvocations {
+        delete,
+        exists,
+        get,
+        set,
+    })
+}

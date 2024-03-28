@@ -1,6 +1,6 @@
 [package]
 name = "wrpc-interface-blobstore"
-version = "0.14.0"
+version = "0.14.1"
 description = "wRPC blobstore interface"
 
 authors.workspace = true
@@ -13,6 +13,6 @@ repository.workspace = true
 anyhow = { workspace = true, features = ["std"] }
 async-trait = { workspace = true }
 bytes = { workspace = true }
-futures = { workspace = true }
+futures = { workspace = true, features = ["async-await"] }
 tracing = { workspace = true, features = ["attributes"] }
 wrpc-transport = { workspace = true }
