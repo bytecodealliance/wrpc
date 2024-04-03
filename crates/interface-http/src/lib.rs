@@ -10,7 +10,7 @@ use tokio::try_join;
 use tracing::instrument;
 use wrpc_transport::{
     encode_discriminant, receive_discriminant, Acceptor, AsyncSubscription, AsyncValue, Encode,
-    EncodeSync, IncomingInputStream, Receive, Subject as _, Subscribe, Subscriber, Value,
+    IncomingInputStream, Receive, Subject as _, Subscribe, Subscriber, Value,
 };
 
 pub type Fields = Vec<(String, Vec<Bytes>)>;
@@ -132,22 +132,55 @@ impl TryFrom<&Method> for http::method::Method {
     }
 }
 
-impl EncodeSync for Method {
+impl Subscribe for Method {}
+
+#[async_trait]
+impl Encode for Method {
     #[instrument(level = "trace", skip_all)]
-    fn encode_sync(self, mut payload: impl BufMut) -> anyhow::Result<()> {
+    async fn encode(
+        self,
+        mut payload: &mut (impl BufMut + Send),
+    ) -> anyhow::Result<Option<AsyncValue>> {
         match self {
-            Self::Get => encode_discriminant(payload, 0),
-            Self::Head => encode_discriminant(payload, 1),
-            Self::Post => encode_discriminant(payload, 2),
-            Self::Put => encode_discriminant(payload, 3),
-            Self::Delete => encode_discriminant(payload, 4),
-            Self::Connect => encode_discriminant(payload, 5),
-            Self::Options => encode_discriminant(payload, 6),
-            Self::Trace => encode_discriminant(payload, 7),
-            Self::Patch => encode_discriminant(payload, 8),
+            Self::Get => {
+                encode_discriminant(payload, 0)?;
+                Ok(None)
+            }
+            Self::Head => {
+                encode_discriminant(payload, 1)?;
+                Ok(None)
+            }
+            Self::Post => {
+                encode_discriminant(payload, 2)?;
+                Ok(None)
+            }
+            Self::Put => {
+                encode_discriminant(payload, 3)?;
+                Ok(None)
+            }
+            Self::Delete => {
+                encode_discriminant(payload, 4)?;
+                Ok(None)
+            }
+            Self::Connect => {
+                encode_discriminant(payload, 5)?;
+                Ok(None)
+            }
+            Self::Options => {
+                encode_discriminant(payload, 6)?;
+                Ok(None)
+            }
+            Self::Trace => {
+                encode_discriminant(payload, 7)?;
+                Ok(None)
+            }
+            Self::Patch => {
+                encode_discriminant(payload, 8)?;
+                Ok(None)
+            }
             Self::Other(s) => {
                 encode_discriminant(&mut payload, 9)?;
-                s.encode_sync(payload)
+                s.encode(payload).await
             }
         }
     }
@@ -214,15 +247,27 @@ impl TryFrom<&Scheme> for http::uri::Scheme {
     }
 }
 
-impl EncodeSync for Scheme {
+impl Subscribe for Scheme {}
+
+#[async_trait]
+impl Encode for Scheme {
     #[instrument(level = "trace", skip_all)]
-    fn encode_sync(self, mut payload: impl BufMut) -> anyhow::Result<()> {
+    async fn encode(
+        self,
+        mut payload: &mut (impl BufMut + Send),
+    ) -> anyhow::Result<Option<AsyncValue>> {
         match self {
-            Self::HTTP => encode_discriminant(payload, 0),
-            Self::HTTPS => encode_discriminant(payload, 1),
+            Self::HTTP => {
+                encode_discriminant(payload, 0)?;
+                Ok(None)
+            }
+            Self::HTTPS => {
+                encode_discriminant(payload, 1)?;
+                Ok(None)
+            }
             Self::Other(s) => {
                 encode_discriminant(&mut payload, 2)?;
-                s.encode_sync(payload)
+                s.encode(payload).await
             }
         }
     }
@@ -273,14 +318,25 @@ impl From<DnsErrorPayload> for wasmtime_wasi_http::bindings::http::types::DnsErr
     }
 }
 
-impl EncodeSync for DnsErrorPayload {
+impl Subscribe for DnsErrorPayload {}
+
+#[async_trait]
+impl Encode for DnsErrorPayload {
     #[instrument(level = "trace", skip_all)]
-    fn encode_sync(self, mut payload: impl BufMut) -> anyhow::Result<()> {
+    async fn encode(
+        self,
+        payload: &mut (impl BufMut + Send),
+    ) -> anyhow::Result<Option<AsyncValue>> {
         let Self { rcode, info_code } = self;
-        EncodeSync::encode_sync_option(rcode, &mut payload).context("failed to encode `rcode`")?;
-        EncodeSync::encode_sync_option(info_code, payload)
+        rcode
+            .encode(payload)
+            .await
+            .context("failed to encode `rcode`")?;
+        info_code
+            .encode(payload)
+            .await
             .context("failed to encode `info_code`")?;
-        Ok(())
+        Ok(None)
     }
 }
 
@@ -344,18 +400,28 @@ impl From<TlsAlertReceivedPayload>
     }
 }
 
-impl EncodeSync for TlsAlertReceivedPayload {
+impl Subscribe for TlsAlertReceivedPayload {}
+
+#[async_trait]
+impl Encode for TlsAlertReceivedPayload {
     #[instrument(level = "trace", skip_all)]
-    fn encode_sync(self, mut payload: impl BufMut) -> anyhow::Result<()> {
+    async fn encode(
+        self,
+        payload: &mut (impl BufMut + Send),
+    ) -> anyhow::Result<Option<AsyncValue>> {
         let Self {
             alert_id,
             alert_message,
         } = self;
-        EncodeSync::encode_sync_option(alert_id, &mut payload)
+        alert_id
+            .encode(payload)
+            .await
             .context("failed to encode `alert_id`")?;
-        EncodeSync::encode_sync_option(alert_message, payload)
+        alert_message
+            .encode(payload)
+            .await
             .context("failed to encode `alert_message`")?;
-        Ok(())
+        Ok(None)
     }
 }
 
@@ -421,18 +487,28 @@ impl From<FieldSizePayload> for wasmtime_wasi_http::bindings::http::types::Field
     }
 }
 
-impl EncodeSync for FieldSizePayload {
+impl Subscribe for FieldSizePayload {}
+
+#[async_trait]
+impl Encode for FieldSizePayload {
     #[instrument(level = "trace", skip_all)]
-    fn encode_sync(self, mut payload: impl BufMut) -> anyhow::Result<()> {
+    async fn encode(
+        self,
+        payload: &mut (impl BufMut + Send),
+    ) -> anyhow::Result<Option<AsyncValue>> {
         let Self {
             field_name,
             field_size,
         } = self;
-        EncodeSync::encode_sync_option(field_name, &mut payload)
+        field_name
+            .encode(payload)
+            .await
             .context("failed to encode `field_name`")?;
-        EncodeSync::encode_sync_option(field_size, payload)
+        field_size
+            .encode(payload)
+            .await
             .context("failed to encode `field_size`")?;
-        Ok(())
+        Ok(None)
     }
 }
 
@@ -628,93 +704,171 @@ impl From<ErrorCode> for wasmtime_wasi_http::bindings::http::types::ErrorCode {
     }
 }
 
-impl EncodeSync for ErrorCode {
+impl Subscribe for ErrorCode {}
+
+#[async_trait]
+impl Encode for ErrorCode {
     #[instrument(level = "trace", skip_all)]
-    fn encode_sync(self, mut payload: impl BufMut) -> anyhow::Result<()> {
+    async fn encode(
+        self,
+        mut payload: &mut (impl BufMut + Send),
+    ) -> anyhow::Result<Option<AsyncValue>> {
         match self {
-            Self::DnsTimeout => encode_discriminant(payload, 0),
+            Self::DnsTimeout => {
+                encode_discriminant(payload, 0)?;
+                Ok(None)
+            }
             Self::DnsError(v) => {
                 encode_discriminant(&mut payload, 1)?;
-                v.encode_sync(payload)
+                v.encode(payload).await
             }
-            Self::DestinationNotFound => encode_discriminant(payload, 2),
-            Self::DestinationUnavailable => encode_discriminant(payload, 3),
-            Self::DestinationIpProhibited => encode_discriminant(payload, 4),
-            Self::DestinationIpUnroutable => encode_discriminant(payload, 5),
-            Self::ConnectionRefused => encode_discriminant(payload, 6),
-            Self::ConnectionTerminated => encode_discriminant(payload, 7),
-            Self::ConnectionTimeout => encode_discriminant(payload, 8),
-            Self::ConnectionReadTimeout => encode_discriminant(payload, 9),
-            Self::ConnectionWriteTimeout => encode_discriminant(payload, 10),
-            Self::ConnectionLimitReached => encode_discriminant(payload, 11),
-            Self::TlsProtocolError => encode_discriminant(payload, 12),
-            Self::TlsCertificateError => encode_discriminant(payload, 13),
+            Self::DestinationNotFound => {
+                encode_discriminant(payload, 2)?;
+                Ok(None)
+            }
+            Self::DestinationUnavailable => {
+                encode_discriminant(payload, 3)?;
+                Ok(None)
+            }
+            Self::DestinationIpProhibited => {
+                encode_discriminant(payload, 4)?;
+                Ok(None)
+            }
+            Self::DestinationIpUnroutable => {
+                encode_discriminant(payload, 5)?;
+                Ok(None)
+            }
+            Self::ConnectionRefused => {
+                encode_discriminant(payload, 6)?;
+                Ok(None)
+            }
+            Self::ConnectionTerminated => {
+                encode_discriminant(payload, 7)?;
+                Ok(None)
+            }
+            Self::ConnectionTimeout => {
+                encode_discriminant(payload, 8)?;
+                Ok(None)
+            }
+            Self::ConnectionReadTimeout => {
+                encode_discriminant(payload, 9)?;
+                Ok(None)
+            }
+            Self::ConnectionWriteTimeout => {
+                encode_discriminant(payload, 10)?;
+                Ok(None)
+            }
+            Self::ConnectionLimitReached => {
+                encode_discriminant(payload, 11)?;
+                Ok(None)
+            }
+            Self::TlsProtocolError => {
+                encode_discriminant(payload, 12)?;
+                Ok(None)
+            }
+            Self::TlsCertificateError => {
+                encode_discriminant(payload, 13)?;
+                Ok(None)
+            }
             Self::TlsAlertReceived(v) => {
                 encode_discriminant(&mut payload, 14)?;
-                v.encode_sync(payload)
+                v.encode(payload).await
             }
-            Self::HttpRequestDenied => encode_discriminant(&mut payload, 15),
-            Self::HttpRequestLengthRequired => encode_discriminant(&mut payload, 16),
+            Self::HttpRequestDenied => {
+                encode_discriminant(&mut payload, 15)?;
+                Ok(None)
+            }
+            Self::HttpRequestLengthRequired => {
+                encode_discriminant(&mut payload, 16)?;
+                Ok(None)
+            }
             Self::HttpRequestBodySize(v) => {
                 encode_discriminant(&mut payload, 17)?;
-                EncodeSync::encode_sync_option(v, payload)
+                v.encode(payload).await
             }
-            Self::HttpRequestMethodInvalid => encode_discriminant(&mut payload, 18),
-            Self::HttpRequestUriInvalid => encode_discriminant(&mut payload, 19),
-            Self::HttpRequestUriTooLong => encode_discriminant(&mut payload, 20),
+            Self::HttpRequestMethodInvalid => {
+                encode_discriminant(&mut payload, 18)?;
+                Ok(None)
+            }
+            Self::HttpRequestUriInvalid => {
+                encode_discriminant(&mut payload, 19)?;
+                Ok(None)
+            }
+            Self::HttpRequestUriTooLong => {
+                encode_discriminant(&mut payload, 20)?;
+                Ok(None)
+            }
             Self::HttpRequestHeaderSectionSize(v) => {
                 encode_discriminant(&mut payload, 21)?;
-                EncodeSync::encode_sync_option(v, payload)
+                v.encode(payload).await
             }
             Self::HttpRequestHeaderSize(v) => {
                 encode_discriminant(&mut payload, 22)?;
-                EncodeSync::encode_sync_option(v, payload)
+                v.encode(payload).await
             }
             Self::HttpRequestTrailerSectionSize(v) => {
                 encode_discriminant(&mut payload, 23)?;
-                EncodeSync::encode_sync_option(v, payload)
+                v.encode(payload).await
             }
             Self::HttpRequestTrailerSize(v) => {
                 encode_discriminant(&mut payload, 24)?;
-                v.encode_sync(payload)
+                v.encode(payload).await
             }
-            Self::HttpResponseIncomplete => encode_discriminant(&mut payload, 25),
+            Self::HttpResponseIncomplete => {
+                encode_discriminant(&mut payload, 25)?;
+                Ok(None)
+            }
             Self::HttpResponseHeaderSectionSize(v) => {
                 encode_discriminant(&mut payload, 26)?;
-                EncodeSync::encode_sync_option(v, payload)
+                v.encode(payload).await
             }
             Self::HttpResponseHeaderSize(v) => {
                 encode_discriminant(&mut payload, 27)?;
-                v.encode_sync(payload)
+                v.encode(payload).await
             }
             Self::HttpResponseBodySize(v) => {
                 encode_discriminant(&mut payload, 28)?;
-                EncodeSync::encode_sync_option(v, payload)
+                v.encode(payload).await
             }
             Self::HttpResponseTrailerSectionSize(v) => {
                 encode_discriminant(&mut payload, 29)?;
-                EncodeSync::encode_sync_option(v, payload)
+                v.encode(payload).await
             }
             Self::HttpResponseTrailerSize(v) => {
                 encode_discriminant(&mut payload, 30)?;
-                v.encode_sync(payload)
+                v.encode(payload).await
             }
             Self::HttpResponseTransferCoding(v) => {
                 encode_discriminant(&mut payload, 31)?;
-                EncodeSync::encode_sync_option(v, payload)
+                v.encode(payload).await
             }
             Self::HttpResponseContentCoding(v) => {
                 encode_discriminant(&mut payload, 32)?;
-                EncodeSync::encode_sync_option(v, payload)
+                v.encode(payload).await
             }
-            Self::HttpResponseTimeout => encode_discriminant(&mut payload, 33),
-            Self::HttpUpgradeFailed => encode_discriminant(payload, 34),
-            Self::HttpProtocolError => encode_discriminant(payload, 35),
-            Self::LoopDetected => encode_discriminant(payload, 36),
-            Self::ConfigurationError => encode_discriminant(payload, 37),
+            Self::HttpResponseTimeout => {
+                encode_discriminant(&mut payload, 33)?;
+                Ok(None)
+            }
+            Self::HttpUpgradeFailed => {
+                encode_discriminant(payload, 34)?;
+                Ok(None)
+            }
+            Self::HttpProtocolError => {
+                encode_discriminant(payload, 35)?;
+                Ok(None)
+            }
+            Self::LoopDetected => {
+                encode_discriminant(payload, 36)?;
+                Ok(None)
+            }
+            Self::ConfigurationError => {
+                encode_discriminant(payload, 37)?;
+                Ok(None)
+            }
             Self::InternalError(v) => {
                 encode_discriminant(&mut payload, 38)?;
-                EncodeSync::encode_sync_option(v, payload)
+                v.encode(payload).await
             }
         }
     }
@@ -828,21 +982,33 @@ pub struct RequestOptions {
     pub between_bytes_timeout: Option<Duration>,
 }
 
-impl EncodeSync for RequestOptions {
+impl Subscribe for RequestOptions {}
+
+#[async_trait]
+impl Encode for RequestOptions {
     #[instrument(level = "trace", skip_all)]
-    fn encode_sync(self, mut payload: impl BufMut) -> anyhow::Result<()> {
+    async fn encode(
+        self,
+        mut payload: &mut (impl BufMut + Send),
+    ) -> anyhow::Result<Option<AsyncValue>> {
         let Self {
             connect_timeout,
             first_byte_timeout,
             between_bytes_timeout,
         } = self;
-        EncodeSync::encode_sync_option(connect_timeout, &mut payload)
+        connect_timeout
+            .encode(&mut payload)
+            .await
             .context("failed to encode `connect_timeout`")?;
-        EncodeSync::encode_sync_option(first_byte_timeout, &mut payload)
+        first_byte_timeout
+            .encode(&mut payload)
+            .await
             .context("failed to encode `first_byte_timeout`")?;
-        EncodeSync::encode_sync_option(between_bytes_timeout, payload)
+        between_bytes_timeout
+            .encode(payload)
+            .await
             .context("failed to encode `between_bytes_timeout`")?;
-        Ok(())
+        Ok(None)
     }
 }
 
@@ -1219,10 +1385,10 @@ where
         payload.put_u8(0);
         // mark trailers as pending
         payload.put_u8(0);
-        method.encode_sync(&mut payload)?;
-        EncodeSync::encode_sync_option(path_with_query, &mut payload)?;
-        EncodeSync::encode_sync_option(scheme, &mut payload)?;
-        EncodeSync::encode_sync_option(authority, &mut payload)?;
+        method.encode(&mut payload).await?;
+        path_with_query.encode(&mut payload).await?;
+        scheme.encode(&mut payload).await?;
+        authority.encode(&mut payload).await?;
         headers.encode(&mut payload).await?;
         // TODO: Optimize, this wrapping should not be necessary
         Ok(Some(AsyncValue::Record(vec![
@@ -1541,7 +1707,7 @@ where
         payload.put_u8(0);
         // mark trailers as pending
         payload.put_u8(0);
-        status.encode_sync(&mut payload)?;
+        status.encode(&mut payload).await?;
         headers.encode(&mut payload).await?;
         // TODO: Optimize, this wrapping should not be necessary
         Ok(Some(AsyncValue::Record(vec![

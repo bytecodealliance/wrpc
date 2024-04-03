@@ -5,8 +5,9 @@ use core::future::{ready, Future};
 use core::iter::zip;
 use core::pin::{pin, Pin};
 use core::task::{self, Poll};
-
 use core::time::Duration;
+
+use std::borrow::Cow;
 use std::error::Error;
 use std::sync::Arc;
 
@@ -423,8 +424,30 @@ pub trait Subscribe: Sized {
     fn subscribe<T: Subscriber + Send + Sync>(
         _subscriber: &T,
         _subject: T::Subject,
-    ) -> impl Future<Output = Result<Option<AsyncSubscription<T::Stream>>, T::SubscribeError>> + Send;
+    ) -> impl Future<Output = Result<Option<AsyncSubscription<T::Stream>>, T::SubscribeError>> + Send
+    {
+        async { Ok(None) }
+    }
 }
+
+impl Subscribe for bool {}
+impl Subscribe for u8 {}
+impl Subscribe for u16 {}
+impl Subscribe for u32 {}
+impl Subscribe for u64 {}
+impl Subscribe for i8 {}
+impl Subscribe for i16 {}
+impl Subscribe for i32 {}
+impl Subscribe for i64 {}
+impl Subscribe for f32 {}
+impl Subscribe for f64 {}
+impl Subscribe for char {}
+impl Subscribe for &str {}
+impl Subscribe for String {}
+impl Subscribe for Duration {}
+impl Subscribe for Bytes {}
+impl Subscribe for anyhow::Error {}
+impl Subscribe for () {}
 
 impl<A> Subscribe for Option<A>
 where
@@ -440,7 +463,7 @@ where
     }
 }
 
-impl<A> Subscribe for Vec<A>
+impl<A> Subscribe for &[A]
 where
     A: Subscribe,
 {
@@ -451,6 +474,32 @@ where
     ) -> Result<Option<AsyncSubscription<T::Stream>>, T::SubscribeError> {
         let a = A::subscribe(subscriber, subject.child(None)).await?;
         Ok(a.map(Box::new).map(AsyncSubscription::List))
+    }
+}
+
+impl<A> Subscribe for Vec<A>
+where
+    A: Subscribe,
+{
+    #[instrument(level = "trace", skip_all)]
+    async fn subscribe<T: Subscriber + Send + Sync>(
+        subscriber: &T,
+        subject: T::Subject,
+    ) -> Result<Option<AsyncSubscription<T::Stream>>, T::SubscribeError> {
+        <&[A]>::subscribe(subscriber, subject).await
+    }
+}
+
+impl<A> Subscribe for &Vec<A>
+where
+    A: Subscribe,
+{
+    #[instrument(level = "trace", skip_all)]
+    async fn subscribe<T: Subscriber + Send + Sync>(
+        subscriber: &T,
+        subject: T::Subject,
+    ) -> Result<Option<AsyncSubscription<T::Stream>>, T::SubscribeError> {
+        <&[A]>::subscribe(subscriber, subject).await
     }
 }
 
@@ -491,67 +540,44 @@ where
     }
 }
 
-impl<A, B> Subscribe for (A, B)
-where
-    A: Subscribe,
-    B: Subscribe,
-{
-    #[instrument(level = "trace", skip_all)]
-    async fn subscribe<T: Subscriber + Send + Sync>(
-        subscriber: &T,
-        subject: T::Subject,
-    ) -> Result<Option<AsyncSubscription<T::Stream>>, T::SubscribeError> {
-        let (a, b) = try_join!(
-            A::subscribe(subscriber, subject.child(Some(0))),
-            B::subscribe(subscriber, subject.child(Some(1))),
-        )?;
-        Ok((a.is_some() || b.is_some()).then(|| AsyncSubscription::Tuple(vec![a, b])))
-    }
+macro_rules! impl_subscribe_tuple {
+    ($n:expr; $($t:tt),+; $($i:tt),+) => {
+        impl<$($t),+> Subscribe for ($($t),+)
+        where
+            $($t: Subscribe),+
+        {
+            #[instrument(level = "trace", skip_all)]
+            async fn subscribe<T: Subscriber + Send + Sync>(
+                subscriber: &T,
+                subject: T::Subject,
+            ) -> Result<Option<AsyncSubscription<T::Stream>>, T::SubscribeError> {
+                trace!(len = $n, "subscribe for tuple");
+                let subs = try_join!($($t::subscribe(subscriber, subject.child(Some($i)))),+)?;
+                let subs = [$(subs.$i),+];
+                Ok(subs
+                    .iter()
+                    .any(Option::is_some)
+                    .then(|| AsyncSubscription::Tuple(subs.into())))
+            }
+        }
+    };
 }
 
-impl<A, B, C> Subscribe for (A, B, C)
-where
-    A: Subscribe,
-    B: Subscribe,
-    C: Subscribe,
-{
-    #[instrument(level = "trace", skip_all)]
-    async fn subscribe<T: Subscriber + Send + Sync>(
-        subscriber: &T,
-        subject: T::Subject,
-    ) -> Result<Option<AsyncSubscription<T::Stream>>, T::SubscribeError> {
-        let (a, b, c) = try_join!(
-            A::subscribe(subscriber, subject.child(Some(0))),
-            B::subscribe(subscriber, subject.child(Some(1))),
-            C::subscribe(subscriber, subject.child(Some(2))),
-        )?;
-        Ok((a.is_some() || b.is_some() || c.is_some())
-            .then(|| AsyncSubscription::Tuple(vec![a, b, c])))
-    }
-}
-
-impl<A, B, C, D> Subscribe for (A, B, C, D)
-where
-    A: Subscribe,
-    B: Subscribe,
-    C: Subscribe,
-    D: Subscribe,
-{
-    #[instrument(level = "trace", skip_all)]
-    async fn subscribe<T: Subscriber + Send + Sync>(
-        subscriber: &T,
-        subject: T::Subject,
-    ) -> Result<Option<AsyncSubscription<T::Stream>>, T::SubscribeError> {
-        let (a, b, c, d) = try_join!(
-            A::subscribe(subscriber, subject.child(Some(0))),
-            B::subscribe(subscriber, subject.child(Some(1))),
-            C::subscribe(subscriber, subject.child(Some(2))),
-            D::subscribe(subscriber, subject.child(Some(3))),
-        )?;
-        Ok((a.is_some() || b.is_some() || c.is_some() || d.is_some())
-            .then(|| AsyncSubscription::Tuple(vec![a, b, c, d])))
-    }
-}
+impl_subscribe_tuple!(2; A, B; 0, 1);
+impl_subscribe_tuple!(3; A, B, C; 0, 1, 2);
+impl_subscribe_tuple!(4; A, B, C, D; 0, 1, 2, 3);
+impl_subscribe_tuple!(5; A, B, C, D, E; 0, 1, 2, 3, 4);
+impl_subscribe_tuple!(6; A, B, C, D, E, F; 0, 1, 2, 3, 4, 5);
+impl_subscribe_tuple!(7; A, B, C, D, E, F, G; 0, 1, 2, 3, 4, 5, 6);
+impl_subscribe_tuple!(8; A, B, C, D, E, F, G, H; 0, 1, 2, 3, 4, 5, 6, 7);
+impl_subscribe_tuple!(9; A, B, C, D, E, F, G, H, I; 0, 1, 2, 3, 4, 5, 6, 7, 8);
+impl_subscribe_tuple!(10; A, B, C, D, E, F, G, H, I, J; 0, 1, 2, 3, 4, 5, 6, 7, 8, 9);
+impl_subscribe_tuple!(11; A, B, C, D, E, F, G, H, I, J, K; 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10);
+impl_subscribe_tuple!(12; A, B, C, D, E, F, G, H, I, J, K, L; 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11);
+impl_subscribe_tuple!(13; A, B, C, D, E, F, G, H, I, J, K, L, M; 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12);
+impl_subscribe_tuple!(14; A, B, C, D, E, F, G, H, I, J, K, L, M, N; 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13);
+impl_subscribe_tuple!(15; A, B, C, D, E, F, G, H, I, J, K, L, M, N, O; 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14);
+impl_subscribe_tuple!(16; A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P; 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15);
 
 impl<E> Subscribe for Box<dyn Stream<Item = anyhow::Result<Vec<E>>> + Send + Sync + Unpin>
 where
@@ -1111,7 +1137,7 @@ fn map_tuple_subscription<T>(
     Ok(sub.unwrap_or_default())
 }
 
-/// Receive<'a> bytes until `payload` contains at least `n` bytes
+/// Receive bytes until `payload` contains at least `n` bytes
 #[instrument(level = "trace", skip(payload, rx))]
 pub async fn receive_at_least<'a>(
     payload: impl Buf + Send + 'a,
@@ -2102,149 +2128,54 @@ where
     }
 }
 
-#[async_trait]
-impl<'a, A, B> Receive<'a> for (A, B)
-where
-    A: Receive<'a> + Send,
-    B: Receive<'a> + Send,
-{
-    #[instrument(level = "trace", skip_all)]
-    async fn receive<T>(
-        payload: impl Buf + Send + 'a,
-        rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
-        sub: Option<AsyncSubscription<T>>,
-    ) -> anyhow::Result<(Self, Box<dyn Buf + Send + 'a>)>
-    where
-        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + 'static,
-    {
-        trace!(i = 0, "decode tuple element");
-        let mut sub = sub.map(AsyncSubscription::try_unwrap_tuple).transpose()?;
-        let (a, payload) = A::receive(
-            payload,
-            rx,
-            sub.as_mut()
-                .and_then(|sub| sub.get_mut(0))
-                .and_then(Option::take),
-        )
-        .await?;
-        trace!(i = 1, "decode tuple element");
-        let (b, payload) = B::receive(
-            payload,
-            rx,
-            sub.as_mut()
-                .and_then(|sub| sub.get_mut(1))
-                .and_then(Option::take),
-        )
-        .await?;
-        Ok(((a, b), payload))
-    }
+macro_rules! impl_receive_tuple {
+    ($n:expr; $($t:tt),+; $($i:tt),+) => {
+        #[async_trait]
+        impl<'a, $($t),+> Receive<'a> for ($($t),+)
+        where
+            $($t: Receive<'a> + Send),+
+        {
+            #[instrument(level = "trace", skip_all)]
+            async fn receive<T>(
+                payload: impl Buf + Send + 'a,
+                rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
+                sub: Option<AsyncSubscription<T>>,
+            ) -> anyhow::Result<(Self, Box<dyn Buf + Send + 'a>)>
+            where
+                T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + 'static,
+            {
+                trace!(len = $n, "receive tuple");
+                let mut sub = sub.map(AsyncSubscription::try_unwrap_tuple).transpose()?;
+                let mut payload: Box<dyn Buf + Send + 'a> = Box::new(payload);
+                let vals = ($(
+                    {
+                        let v;
+                        trace!(i = $i, "decode tuple element");
+                        (v, payload) = $t::receive(payload, rx, sub.as_mut().and_then(|sub| sub.get_mut($i)).and_then(Option::take)).await.context(concat!("failed to receive tuple element ", $i))?;
+                        v
+                    }
+                ),+);
+                Ok((vals, payload))
+            }
+        }
+    };
 }
 
-#[async_trait]
-impl<'a, A, B, C> Receive<'a> for (A, B, C)
-where
-    A: Receive<'a> + Send,
-    B: Receive<'a> + Send,
-    C: Receive<'a> + Send,
-{
-    #[instrument(level = "trace", skip_all)]
-    async fn receive<T>(
-        payload: impl Buf + Send + 'a,
-        rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
-        sub: Option<AsyncSubscription<T>>,
-    ) -> anyhow::Result<(Self, Box<dyn Buf + Send + 'a>)>
-    where
-        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + 'static,
-    {
-        trace!(i = 0, "decode tuple element");
-        let mut sub = sub.map(AsyncSubscription::try_unwrap_tuple).transpose()?;
-        let (a, payload) = A::receive(
-            payload,
-            rx,
-            sub.as_mut()
-                .and_then(|sub| sub.get_mut(0))
-                .and_then(Option::take),
-        )
-        .await?;
-        trace!(i = 1, "decode tuple element");
-        let (b, payload) = B::receive(
-            payload,
-            rx,
-            sub.as_mut()
-                .and_then(|sub| sub.get_mut(1))
-                .and_then(Option::take),
-        )
-        .await?;
-        trace!(i = 2, "decode tuple element");
-        let (c, payload) = C::receive(
-            payload,
-            rx,
-            sub.as_mut()
-                .and_then(|sub| sub.get_mut(2))
-                .and_then(Option::take),
-        )
-        .await?;
-        Ok(((a, b, c), payload))
-    }
-}
-
-#[async_trait]
-impl<'a, A, B, C, D> Receive<'a> for (A, B, C, D)
-where
-    A: Receive<'a> + Send,
-    B: Receive<'a> + Send,
-    C: Receive<'a> + Send,
-    D: Receive<'a> + Send,
-{
-    #[instrument(level = "trace", skip_all)]
-    async fn receive<T>(
-        payload: impl Buf + Send + 'a,
-        rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
-        sub: Option<AsyncSubscription<T>>,
-    ) -> anyhow::Result<(Self, Box<dyn Buf + Send + 'a>)>
-    where
-        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + 'static,
-    {
-        trace!(i = 0, "decode tuple element");
-        let mut sub = sub.map(AsyncSubscription::try_unwrap_tuple).transpose()?;
-        let (a, payload) = A::receive(
-            payload,
-            rx,
-            sub.as_mut()
-                .and_then(|sub| sub.get_mut(0))
-                .and_then(Option::take),
-        )
-        .await?;
-        trace!(i = 1, "decode tuple element");
-        let (b, payload) = B::receive(
-            payload,
-            rx,
-            sub.as_mut()
-                .and_then(|sub| sub.get_mut(1))
-                .and_then(Option::take),
-        )
-        .await?;
-        trace!(i = 2, "decode tuple element");
-        let (c, payload) = C::receive(
-            payload,
-            rx,
-            sub.as_mut()
-                .and_then(|sub| sub.get_mut(2))
-                .and_then(Option::take),
-        )
-        .await?;
-        trace!(i = 3, "decode tuple element");
-        let (d, payload) = D::receive(
-            payload,
-            rx,
-            sub.as_mut()
-                .and_then(|sub| sub.get_mut(3))
-                .and_then(Option::take),
-        )
-        .await?;
-        Ok(((a, b, c, d), payload))
-    }
-}
+impl_receive_tuple!(2; A, B; 0, 1);
+impl_receive_tuple!(3; A, B, C; 0, 1, 2);
+impl_receive_tuple!(4; A, B, C, D; 0, 1, 2, 3);
+impl_receive_tuple!(5; A, B, C, D, E; 0, 1, 2, 3, 4);
+impl_receive_tuple!(6; A, B, C, D, E, F; 0, 1, 2, 3, 4, 5);
+impl_receive_tuple!(7; A, B, C, D, E, F, G; 0, 1, 2, 3, 4, 5, 6);
+impl_receive_tuple!(8; A, B, C, D, E, F, G, H; 0, 1, 2, 3, 4, 5, 6, 7);
+impl_receive_tuple!(9; A, B, C, D, E, F, G, H, I; 0, 1, 2, 3, 4, 5, 6, 7, 8);
+impl_receive_tuple!(10; A, B, C, D, E, F, G, H, I, J; 0, 1, 2, 3, 4, 5, 6, 7, 8, 9);
+impl_receive_tuple!(11; A, B, C, D, E, F, G, H, I, J, K; 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10);
+impl_receive_tuple!(12; A, B, C, D, E, F, G, H, I, J, K, L; 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11);
+impl_receive_tuple!(13; A, B, C, D, E, F, G, H, I, J, K, L, M; 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12);
+impl_receive_tuple!(14; A, B, C, D, E, F, G, H, I, J, K, L, M, N; 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13);
+impl_receive_tuple!(15; A, B, C, D, E, F, G, H, I, J, K, L, M, N, O; 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14);
+impl_receive_tuple!(16; A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P; 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15);
 
 #[async_trait]
 impl<'a> ReceiveContext<'a, Type> for Value {
@@ -2512,7 +2443,7 @@ impl<'a> ReceiveContext<'a, Type> for Value {
                 match len {
                     0 => {
                         let (items_tx, items_rx) = mpsc::channel(1);
-                        let ty = ty.as_ref().map(Arc::clone);
+                        let ty = ty.clone();
                         let producer = spawn(async move {
                             let mut payload: Box<dyn Buf + Send + 'a> = Box::new(Bytes::new());
                             let mut i = 0;
@@ -2609,215 +2540,309 @@ pub trait Encode: Send {
 }
 
 #[async_trait]
-impl<T> Encode for T
+impl<'a, 'b, T> Encode for &'a &'b T
 where
-    T: EncodeSync + Send,
+    T: Sync + ?Sized,
+    &'b T: Encode,
 {
+    #[instrument(level = "trace", skip_all)]
     async fn encode(
         self,
         payload: &mut (impl BufMut + Send),
     ) -> anyhow::Result<Option<AsyncValue>> {
-        self.encode_sync(payload)?;
+        (*self).encode(payload).await
+    }
+}
+
+#[async_trait]
+impl Encode for () {
+    #[instrument(level = "trace", skip_all)]
+    async fn encode(
+        self,
+        _payload: &mut (impl BufMut + Send),
+    ) -> anyhow::Result<Option<AsyncValue>> {
         Ok(None)
     }
 }
 
-pub trait EncodeSync: Sized {
-    fn encode_sync(self, payload: impl BufMut) -> anyhow::Result<()>;
-
-    fn encode_sync_option(v: Option<Self>, mut payload: impl BufMut) -> anyhow::Result<()> {
-        if let Some(v) = v {
-            payload.put_u8(1);
-            v.encode_sync(payload)
-        } else {
-            payload.put_u8(0);
-            Ok(())
-        }
-    }
-
-    fn encode_sync_list(vs: Vec<Self>, mut payload: impl BufMut) -> anyhow::Result<()> {
-        trace!(len = vs.len(), "encode list length");
-        let len = vs
-            .len()
-            .try_into()
-            .context("list length does not fit in u64")?;
-        leb128::write::unsigned(&mut (&mut payload).writer(), len)
-            .context("failed to encode list length")?;
-        for v in vs {
-            trace!("encode list element");
-            v.encode_sync(&mut payload)?;
-        }
-        Ok(())
-    }
-}
-
-impl<V: EncodeSync> Subscribe for V {
-    async fn subscribe<T: Subscriber + Send + Sync>(
-        _subscriber: &T,
-        _subject: T::Subject,
-    ) -> Result<Option<AsyncSubscription<T::Stream>>, T::SubscribeError> {
-        Ok(None)
-    }
-}
-
-impl EncodeSync for () {
+#[async_trait]
+impl Encode for bool {
     #[instrument(level = "trace", skip_all)]
-    fn encode_sync(self, _payload: impl BufMut) -> anyhow::Result<()> {
-        Ok(())
-    }
-}
-
-impl EncodeSync for bool {
-    #[instrument(level = "trace", skip_all)]
-    fn encode_sync(self, mut payload: impl BufMut) -> anyhow::Result<()> {
+    async fn encode(
+        self,
+        payload: &mut (impl BufMut + Send),
+    ) -> anyhow::Result<Option<AsyncValue>> {
         trace!(v = self, "encode bool");
         payload.put_u8(if self { 1 } else { 0 });
-        Ok(())
+        Ok(None)
     }
 }
 
-impl EncodeSync for u8 {
+#[async_trait]
+impl Encode for u8 {
     #[instrument(level = "trace", skip_all)]
-    fn encode_sync(self, mut payload: impl BufMut) -> anyhow::Result<()> {
+    async fn encode(
+        self,
+        payload: &mut (impl BufMut + Send),
+    ) -> anyhow::Result<Option<AsyncValue>> {
         trace!(v = self, "encode u8");
         payload.put_u8(self);
-        Ok(())
+        Ok(None)
     }
 }
 
-impl EncodeSync for u16 {
+#[async_trait]
+impl Encode for u16 {
     #[instrument(level = "trace", skip_all)]
-    fn encode_sync(self, payload: impl BufMut) -> anyhow::Result<()> {
+    async fn encode(
+        self,
+        payload: &mut (impl BufMut + Send),
+    ) -> anyhow::Result<Option<AsyncValue>> {
         trace!(v = self, "encode u16");
         leb128::write::unsigned(&mut payload.writer(), self.into())
             .context("failed to encode u16")?;
-        Ok(())
+        Ok(None)
     }
 }
 
-impl EncodeSync for u32 {
+#[async_trait]
+impl Encode for u32 {
     #[instrument(level = "trace", skip_all)]
-    fn encode_sync(self, payload: impl BufMut) -> anyhow::Result<()> {
+    async fn encode(
+        self,
+        payload: &mut (impl BufMut + Send),
+    ) -> anyhow::Result<Option<AsyncValue>> {
         trace!(v = self, "encode u32");
         leb128::write::unsigned(&mut payload.writer(), self.into())
             .context("failed to encode u32")?;
-        Ok(())
+        Ok(None)
     }
 }
 
-impl EncodeSync for u64 {
+#[async_trait]
+impl Encode for u64 {
     #[instrument(level = "trace", skip_all)]
-    fn encode_sync(self, payload: impl BufMut) -> anyhow::Result<()> {
+    async fn encode(
+        self,
+        payload: &mut (impl BufMut + Send),
+    ) -> anyhow::Result<Option<AsyncValue>> {
         trace!(v = self, "encode u64");
         leb128::write::unsigned(&mut payload.writer(), self).context("failed to encode u64")?;
-        Ok(())
+        Ok(None)
     }
 }
 
-impl EncodeSync for i8 {
+#[async_trait]
+impl Encode for i8 {
     #[instrument(level = "trace", skip_all)]
-    fn encode_sync(self, mut payload: impl BufMut) -> anyhow::Result<()> {
+    async fn encode(
+        self,
+        payload: &mut (impl BufMut + Send),
+    ) -> anyhow::Result<Option<AsyncValue>> {
         trace!(v = self, "encode s8");
         payload.put_i8(self);
-        Ok(())
+        Ok(None)
     }
 }
 
-impl EncodeSync for i16 {
+#[async_trait]
+impl Encode for i16 {
     #[instrument(level = "trace", skip_all)]
-    fn encode_sync(self, payload: impl BufMut) -> anyhow::Result<()> {
+    async fn encode(
+        self,
+        payload: &mut (impl BufMut + Send),
+    ) -> anyhow::Result<Option<AsyncValue>> {
         trace!(v = self, "encode s16");
         leb128::write::signed(&mut payload.writer(), self.into())
             .context("failed to encode s16")?;
-        Ok(())
+        Ok(None)
     }
 }
 
-impl EncodeSync for i32 {
+#[async_trait]
+impl Encode for i32 {
     #[instrument(level = "trace", skip_all)]
-    fn encode_sync(self, payload: impl BufMut) -> anyhow::Result<()> {
+    async fn encode(
+        self,
+        payload: &mut (impl BufMut + Send),
+    ) -> anyhow::Result<Option<AsyncValue>> {
         trace!(v = self, "encode s32");
         leb128::write::signed(&mut payload.writer(), self.into())
             .context("failed to encode s32")?;
-        Ok(())
+        Ok(None)
     }
 }
 
-impl EncodeSync for i64 {
+#[async_trait]
+impl Encode for i64 {
     #[instrument(level = "trace", skip_all)]
-    fn encode_sync(self, payload: impl BufMut) -> anyhow::Result<()> {
+    async fn encode(
+        self,
+        payload: &mut (impl BufMut + Send),
+    ) -> anyhow::Result<Option<AsyncValue>> {
         trace!(v = self, "encode s64");
         leb128::write::signed(&mut payload.writer(), self).context("failed to encode s64")?;
-        Ok(())
+        Ok(None)
     }
 }
 
-impl EncodeSync for f32 {
+#[async_trait]
+impl Encode for f32 {
     #[instrument(level = "trace", skip_all)]
-    fn encode_sync(self, mut payload: impl BufMut) -> anyhow::Result<()> {
+    async fn encode(
+        self,
+        payload: &mut (impl BufMut + Send),
+    ) -> anyhow::Result<Option<AsyncValue>> {
         trace!(v = self, "encode float32");
         payload.put_f32_le(self);
-        Ok(())
+        Ok(None)
     }
 }
 
-impl EncodeSync for f64 {
+#[async_trait]
+impl Encode for f64 {
     #[instrument(level = "trace", skip_all)]
-    fn encode_sync(self, mut payload: impl BufMut) -> anyhow::Result<()> {
+    async fn encode(
+        self,
+        payload: &mut (impl BufMut + Send),
+    ) -> anyhow::Result<Option<AsyncValue>> {
         trace!(v = self, "encode float64");
         payload.put_f64_le(self);
-        Ok(())
+        Ok(None)
     }
 }
 
-impl EncodeSync for char {
+#[async_trait]
+impl Encode for char {
     #[instrument(level = "trace", skip_all)]
-    fn encode_sync(self, payload: impl BufMut) -> anyhow::Result<()> {
+    async fn encode(
+        self,
+        payload: &mut (impl BufMut + Send),
+    ) -> anyhow::Result<Option<AsyncValue>> {
         trace!(v = ?self, "encode char");
         leb128::write::unsigned(&mut payload.writer(), self.into())
             .context("failed to encode char")?;
-        Ok(())
+        Ok(None)
     }
 }
 
-impl<'a> EncodeSync for &'a str {
+#[async_trait]
+impl Encode for Duration {
     #[instrument(level = "trace", skip_all)]
-    fn encode_sync(self, mut payload: impl BufMut) -> anyhow::Result<()> {
-        trace!(len = self.len(), "encode string length");
-        let len = self
-            .len()
-            .try_into()
-            .context("string length does not fit in u64")?;
-        leb128::write::unsigned(&mut (&mut payload).writer(), len)
-            .context("failed to encode string length")?;
-        trace!(self, "encode string value");
-        payload.put_slice(self.as_bytes());
-        Ok(())
-    }
-}
-
-impl EncodeSync for String {
-    #[instrument(level = "trace", skip_all)]
-    fn encode_sync(self, payload: impl BufMut) -> anyhow::Result<()> {
-        self.as_str().encode_sync(payload)
-    }
-}
-
-impl EncodeSync for Duration {
-    #[instrument(level = "trace", skip_all)]
-    fn encode_sync(self, payload: impl BufMut) -> anyhow::Result<()> {
+    async fn encode(
+        self,
+        payload: &mut (impl BufMut + Send),
+    ) -> anyhow::Result<Option<AsyncValue>> {
         trace!(v = ?self, "encode duration");
         let v: u64 = self
             .as_nanos()
             .try_into()
             .context("duration nanosecond count does not fit in u64")?;
-        v.encode_sync(payload)
+        v.encode(payload).await
     }
 }
 
-impl EncodeSync for Bytes {
+macro_rules! impl_encode_copy_ref {
+    ($t:ty) => {
+        #[async_trait]
+        impl Encode for &$t {
+            #[instrument(level = "trace", skip_all)]
+            async fn encode(
+                self,
+                payload: &mut (impl BufMut + Send),
+            ) -> anyhow::Result<Option<AsyncValue>> {
+                (*self).encode(payload).await
+            }
+        }
+    };
+}
+
+impl_encode_copy_ref!(());
+impl_encode_copy_ref!(bool);
+impl_encode_copy_ref!(u8);
+impl_encode_copy_ref!(u16);
+impl_encode_copy_ref!(u32);
+impl_encode_copy_ref!(u64);
+impl_encode_copy_ref!(i8);
+impl_encode_copy_ref!(i16);
+impl_encode_copy_ref!(i32);
+impl_encode_copy_ref!(i64);
+impl_encode_copy_ref!(f32);
+impl_encode_copy_ref!(f64);
+impl_encode_copy_ref!(char);
+impl_encode_copy_ref!(Duration);
+
+#[async_trait]
+impl Encode for &str {
     #[instrument(level = "trace", skip_all)]
-    fn encode_sync(self, mut payload: impl BufMut) -> anyhow::Result<()> {
+    async fn encode(
+        self,
+        payload: &mut (impl BufMut + Send),
+    ) -> anyhow::Result<Option<AsyncValue>> {
+        trace!(len = self.len(), "encode string length");
+        let len = self
+            .len()
+            .try_into()
+            .context("string length does not fit in u64")?;
+        leb128::write::unsigned(&mut payload.writer(), len)
+            .context("failed to encode string length")?;
+        trace!(self, "encode string value");
+        payload.put_slice(self.as_bytes());
+        Ok(None)
+    }
+}
+
+#[async_trait]
+impl Encode for String {
+    #[instrument(level = "trace", skip_all)]
+    async fn encode(
+        self,
+        payload: &mut (impl BufMut + Send),
+    ) -> anyhow::Result<Option<AsyncValue>> {
+        self.as_str().encode(payload).await
+    }
+}
+
+#[async_trait]
+impl Encode for &String {
+    #[instrument(level = "trace", skip_all)]
+    async fn encode(
+        self,
+        payload: &mut (impl BufMut + Send),
+    ) -> anyhow::Result<Option<AsyncValue>> {
+        self.as_str().encode(payload).await
+    }
+}
+
+#[async_trait]
+impl Encode for Cow<'_, str> {
+    #[instrument(level = "trace", skip_all)]
+    async fn encode(
+        self,
+        payload: &mut (impl BufMut + Send),
+    ) -> anyhow::Result<Option<AsyncValue>> {
+        self.as_ref().encode(payload).await
+    }
+}
+
+#[async_trait]
+impl Encode for &Cow<'_, str> {
+    #[instrument(level = "trace", skip_all)]
+    async fn encode(
+        self,
+        payload: &mut (impl BufMut + Send),
+    ) -> anyhow::Result<Option<AsyncValue>> {
+        self.as_ref().encode(payload).await
+    }
+}
+
+#[async_trait]
+impl Encode for Bytes {
+    #[instrument(level = "trace", skip_all)]
+    async fn encode(
+        self,
+        mut payload: &mut (impl BufMut + Send),
+    ) -> anyhow::Result<Option<AsyncValue>> {
         trace!(len = self.len(), "encode byte list length");
         let len = self
             .len()
@@ -2826,21 +2851,47 @@ impl EncodeSync for Bytes {
         leb128::write::unsigned(&mut (&mut payload).writer(), len)
             .context("failed to encode byte list length")?;
         payload.put(self);
-        Ok(())
+        Ok(None)
     }
 }
 
-impl EncodeSync for anyhow::Error {
+#[async_trait]
+impl Encode for &Bytes {
     #[instrument(level = "trace", skip_all)]
-    fn encode_sync(self, payload: impl BufMut) -> anyhow::Result<()> {
-        format!("{self:#}").encode_sync(payload)
+    async fn encode(
+        self,
+        payload: &mut (impl BufMut + Send),
+    ) -> anyhow::Result<Option<AsyncValue>> {
+        self.clone().encode(payload).await
+    }
+}
+
+#[async_trait]
+impl Encode for anyhow::Error {
+    #[instrument(level = "trace", skip_all)]
+    async fn encode(
+        self,
+        payload: &mut (impl BufMut + Send),
+    ) -> anyhow::Result<Option<AsyncValue>> {
+        (&self).encode(payload).await
+    }
+}
+
+#[async_trait]
+impl Encode for &anyhow::Error {
+    #[instrument(level = "trace", skip_all)]
+    async fn encode(
+        self,
+        payload: &mut (impl BufMut + Send),
+    ) -> anyhow::Result<Option<AsyncValue>> {
+        format!("{self:#}").encode(payload).await
     }
 }
 
 #[async_trait]
 impl<T> Encode for Arc<T>
 where
-    T: Encode + Send + Sync,
+    T: Encode + Sync,
 {
     #[instrument(level = "trace", skip_all)]
     async fn encode(
@@ -2855,7 +2906,34 @@ where
 #[async_trait]
 impl<T> Encode for Option<T>
 where
-    T: Encode + Send,
+    T: Encode,
+{
+    #[instrument(level = "trace", skip_all)]
+    async fn encode(
+        self,
+        payload: &mut (impl BufMut + Send),
+    ) -> anyhow::Result<Option<AsyncValue>> {
+        match self {
+            None => {
+                trace!("encode option::none");
+                payload.put_u8(0);
+                Ok(None)
+            }
+            Some(v) => {
+                trace!("encode option::some");
+                payload.put_u8(1);
+                let tx = v.encode(payload).await?;
+                Ok(tx.map(Box::new).map(AsyncValue::Option))
+            }
+        }
+    }
+}
+
+#[async_trait]
+impl<'a, T> Encode for &'a Option<T>
+where
+    T: Sync,
+    &'a T: Encode,
 {
     #[instrument(level = "trace", skip_all)]
     async fn encode(
@@ -2881,8 +2959,8 @@ where
 #[async_trait]
 impl<T, U> Encode for Result<T, U>
 where
-    T: Encode + Send,
-    U: Encode + Send,
+    T: Encode,
+    U: Encode,
 {
     #[instrument(level = "trace", skip_all)]
     async fn encode(
@@ -2907,9 +2985,85 @@ where
 }
 
 #[async_trait]
+impl<'a, T, U> Encode for &'a Result<T, U>
+where
+    T: Sync,
+    U: Sync,
+    &'a T: Encode,
+    &'a U: Encode,
+{
+    #[instrument(level = "trace", skip_all)]
+    async fn encode(
+        self,
+        payload: &mut (impl BufMut + Send),
+    ) -> anyhow::Result<Option<AsyncValue>> {
+        match self {
+            Ok(v) => {
+                trace!("encode nested result::ok");
+                payload.put_u8(0);
+                let tx = v.encode(payload).await?;
+                Ok(tx.map(Box::new).map(AsyncValue::ResultOk))
+            }
+            Err(v) => {
+                trace!("encode nested result::err");
+                payload.put_u8(1);
+                let tx = v.encode(payload).await?;
+                Ok(tx.map(Box::new).map(AsyncValue::ResultErr))
+            }
+        }
+    }
+}
+
+#[async_trait]
+impl<const N: usize, T> Encode for [T; N]
+where
+    T: Encode + Sync,
+{
+    #[instrument(level = "trace", skip_all)]
+    async fn encode(
+        self,
+        payload: &mut (impl BufMut + Send),
+    ) -> anyhow::Result<Option<AsyncValue>> {
+        trace!(len = N, "encode list length");
+        let len = self
+            .len()
+            .try_into()
+            .context("list length does not fit in u64")?;
+        leb128::write::unsigned(&mut payload.writer(), len)
+            .context("failed to encode list length")?;
+        let mut txs = Vec::with_capacity(self.len());
+        for v in self {
+            trace!("encode list element");
+            let v = v.encode(payload).await?;
+            txs.push(v)
+        }
+        Ok(txs
+            .iter()
+            .any(Option::is_some)
+            .then_some(AsyncValue::List(txs)))
+    }
+}
+
+#[async_trait]
+impl<'a, const N: usize, T> Encode for &'a [T; N]
+where
+    T: Sync,
+    &'a T: Encode,
+{
+    #[instrument(level = "trace", skip_all)]
+    async fn encode(
+        self,
+        payload: &mut (impl BufMut + Send),
+    ) -> anyhow::Result<Option<AsyncValue>> {
+        self.as_slice().encode(payload).await
+    }
+}
+
+#[async_trait]
 impl<'a, T> Encode for &'a [T]
 where
-    T: Encode + Sync + Send + Copy,
+    T: Sync,
+    &'a T: Encode,
 {
     #[instrument(level = "trace", skip_all)]
     async fn encode(
@@ -2939,7 +3093,7 @@ where
 #[async_trait]
 impl<T> Encode for Vec<T>
 where
-    T: Encode + Send,
+    T: Encode,
 {
     #[instrument(level = "trace", skip_all)]
     async fn encode(
@@ -2967,9 +3121,24 @@ where
 }
 
 #[async_trait]
+impl<'a, T> Encode for &'a Vec<T>
+where
+    T: Sync,
+    &'a T: Encode,
+{
+    #[instrument(level = "trace", skip_all)]
+    async fn encode(
+        self,
+        payload: &mut (impl BufMut + Send),
+    ) -> anyhow::Result<Option<AsyncValue>> {
+        self.as_slice().encode(payload).await
+    }
+}
+
+#[async_trait]
 impl<A> Encode for (A,)
 where
-    A: Encode + Send,
+    A: Encode,
 {
     #[instrument(level = "trace", skip_all)]
     async fn encode(
@@ -2984,79 +3153,85 @@ where
 }
 
 #[async_trait]
-impl<A, B> Encode for (A, B)
+impl<'a, A> Encode for &'a (A,)
 where
-    A: Encode + Send,
-    B: Encode + Send,
+    A: Sync,
+    &'a A: Encode,
 {
     #[instrument(level = "trace", skip_all)]
     async fn encode(
         self,
         payload: &mut (impl BufMut + Send),
     ) -> anyhow::Result<Option<AsyncValue>> {
-        trace!("encode 2 element tuple");
-        let (a, b) = self;
+        trace!("encode 1 element tuple");
+        let (a,) = self;
         let a = a.encode(payload).await?;
-        let b = b.encode(payload).await?;
-        let txs = [a, b];
-        Ok(txs
-            .iter()
-            .any(Option::is_some)
-            .then(|| AsyncValue::Tuple(txs.into())))
+        Ok(a.is_some().then(|| AsyncValue::Tuple(vec![a])))
     }
 }
 
-#[async_trait]
-impl<'a, A, B, C> Encode for (A, B, C)
-where
-    A: Encode + Send,
-    B: Encode + Send,
-    C: Encode + Send,
-{
-    #[instrument(level = "trace", skip_all)]
-    async fn encode(
-        self,
-        payload: &mut (impl BufMut + Send),
-    ) -> anyhow::Result<Option<AsyncValue>> {
-        trace!("encode 3 element tuple");
-        let (a, b, c) = self;
-        let a = a.encode(payload).await?;
-        let b = b.encode(payload).await?;
-        let c = c.encode(payload).await?;
-        let txs = [a, b, c];
-        Ok(txs
-            .iter()
-            .any(Option::is_some)
-            .then(|| AsyncValue::Tuple(txs.into())))
-    }
+macro_rules! impl_encode_tuple {
+    ($n:expr; $($t:tt),+; $($i:tt),+) => {
+        #[async_trait]
+        impl<$($t),+> Encode for ($($t),+)
+        where
+            $($t: Encode),+
+        {
+            #[instrument(level = "trace", skip_all)]
+            async fn encode(
+                self,
+                payload: &mut (impl BufMut + Send),
+            ) -> anyhow::Result<Option<AsyncValue>> {
+                trace!(len = $n, "encode tuple");
+                let txs = ($(self.$i.encode(payload).await?),+);
+                let txs = [$(txs.$i),+];
+                Ok(txs
+                    .iter()
+                    .any(Option::is_some)
+                    .then(|| AsyncValue::Tuple(txs.into())))
+            }
+        }
+
+        #[async_trait]
+        impl<'a, $($t),+> Encode for &'a ($($t),+)
+        where
+            $(
+                $t: Sync,
+                &'a $t: Encode,
+            )+
+        {
+            #[instrument(level = "trace", skip_all)]
+            async fn encode(
+                self,
+                payload: &mut (impl BufMut + Send),
+            ) -> anyhow::Result<Option<AsyncValue>> {
+                trace!(len = $n, "encode tuple");
+                let txs = ($(self.$i.encode(payload).await?),+);
+                let txs = [$(txs.$i),+];
+                Ok(txs
+                    .iter()
+                    .any(Option::is_some)
+                    .then(|| AsyncValue::Tuple(txs.into())))
+            }
+        }
+    };
 }
 
-#[async_trait]
-impl<'a, A, B, C, D> Encode for (A, B, C, D)
-where
-    A: Encode + Send,
-    B: Encode + Send,
-    C: Encode + Send,
-    D: Encode + Send,
-{
-    #[instrument(level = "trace", skip_all)]
-    async fn encode(
-        self,
-        payload: &mut (impl BufMut + Send),
-    ) -> anyhow::Result<Option<AsyncValue>> {
-        trace!("encode 4 element tuple");
-        let (a, b, c, d) = self;
-        let a = a.encode(payload).await?;
-        let b = b.encode(payload).await?;
-        let c = c.encode(payload).await?;
-        let d = d.encode(payload).await?;
-        let txs = [a, b, c, d];
-        Ok(txs
-            .iter()
-            .any(Option::is_some)
-            .then(|| AsyncValue::Tuple(txs.into())))
-    }
-}
+impl_encode_tuple!(2; A, B; 0, 1);
+impl_encode_tuple!(3; A, B, C; 0, 1, 2);
+impl_encode_tuple!(4; A, B, C, D; 0, 1, 2, 3);
+impl_encode_tuple!(5; A, B, C, D, E; 0, 1, 2, 3, 4);
+impl_encode_tuple!(6; A, B, C, D, E, F; 0, 1, 2, 3, 4, 5);
+impl_encode_tuple!(7; A, B, C, D, E, F, G; 0, 1, 2, 3, 4, 5, 6);
+impl_encode_tuple!(8; A, B, C, D, E, F, G, H; 0, 1, 2, 3, 4, 5, 6, 7);
+impl_encode_tuple!(9; A, B, C, D, E, F, G, H, I; 0, 1, 2, 3, 4, 5, 6, 7, 8);
+impl_encode_tuple!(10; A, B, C, D, E, F, G, H, I, J; 0, 1, 2, 3, 4, 5, 6, 7, 8, 9);
+impl_encode_tuple!(11; A, B, C, D, E, F, G, H, I, J, K; 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10);
+impl_encode_tuple!(12; A, B, C, D, E, F, G, H, I, J, K, L; 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11);
+impl_encode_tuple!(13; A, B, C, D, E, F, G, H, I, J, K, L, M; 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12);
+impl_encode_tuple!(14; A, B, C, D, E, F, G, H, I, J, K, L, M, N; 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13);
+impl_encode_tuple!(15; A, B, C, D, E, F, G, H, I, J, K, L, M, N, O; 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14);
+impl_encode_tuple!(16; A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P; 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15);
 
 #[instrument(level = "trace", skip(payload))]
 pub fn encode_discriminant(payload: impl BufMut, discriminant: u32) -> anyhow::Result<()> {
@@ -3707,6 +3882,104 @@ mod tests {
     use tracing_subscriber::util::SubscriberInitExt as _;
 
     use super::*;
+
+    #[allow(unused)]
+    async fn encode_bounds(client: &impl Client) {
+        async fn test(client: &impl Client, v: impl Encode) -> anyhow::Result<()> {
+            let (res, tx) = client.invoke_static("instance", "name", "test").await?;
+            tx.await?;
+            res
+        }
+
+        struct X;
+
+        #[async_trait]
+        impl Encode for X {
+            async fn encode(
+                self,
+                _: &mut (impl BufMut + Send),
+            ) -> anyhow::Result<Option<AsyncValue>> {
+                unreachable!()
+            }
+        }
+
+        #[async_trait]
+        impl Encode for &X {
+            async fn encode(
+                self,
+                _: &mut (impl BufMut + Send),
+            ) -> anyhow::Result<Option<AsyncValue>> {
+                unreachable!()
+            }
+        }
+
+        struct Y<'a> {
+            pub x: &'a X,
+        }
+
+        #[async_trait]
+        impl Encode for Y<'_> {
+            async fn encode(
+                self,
+                _: &mut (impl BufMut + Send),
+            ) -> anyhow::Result<Option<AsyncValue>> {
+                unreachable!()
+            }
+        }
+
+        #[async_trait]
+        impl Encode for &Y<'_> {
+            async fn encode(
+                self,
+                _: &mut (impl BufMut + Send),
+            ) -> anyhow::Result<Option<AsyncValue>> {
+                unreachable!()
+            }
+        }
+
+        test(client, X);
+        test(client, &X);
+        test(client, &&X);
+
+        test(client, [X].as_slice());
+        test(client, &[X].as_slice());
+        test(client, &&[X].as_slice());
+        test(client, &&&[X].as_slice());
+
+        test(client, [&X]);
+        test(client, &[&X]);
+        test(client, &&[&X]);
+        test(client, &&&[&X]);
+
+        test(client, [&X].as_slice());
+        test(client, &[&X].as_slice());
+        test(client, &&[&X].as_slice());
+        test(client, &&&[&X].as_slice());
+
+        test(client, vec![X]);
+        test(client, &vec![X]);
+        test(client, &&vec![X]);
+        test(client, &&&vec![X]);
+
+        test(client, vec![&X]);
+        test(client, &vec![&X]);
+        test(client, &&vec![&X]);
+        test(client, &&&vec![&X]);
+
+        test(client, [1, 2, 3]);
+        test(client, &[1, 2, 3]);
+        test(client, [1, 2, 3].as_slice());
+        test(client, &[1, 2, 3].as_slice());
+
+        test(client, b"test");
+        test(client, &b"test");
+        test(client, b"test".as_slice());
+        test(client, &b"test".as_slice());
+
+        async fn test_y(client: &impl Client, ys: &[Y<'_>]) -> anyhow::Result<()> {
+            test(client, ys).await
+        }
+    }
 
     #[allow(unused)]
     async fn lifetimes(

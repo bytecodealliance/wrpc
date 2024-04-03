@@ -6,7 +6,8 @@ use bytes::{Buf, BufMut, Bytes};
 use futures::{try_join, Stream, StreamExt as _};
 use tracing::instrument;
 use wrpc_transport::{
-    Acceptor, AsyncSubscription, EncodeSync, IncomingInputStream, ListIter, Receive, Value,
+    Acceptor, AsyncSubscription, AsyncValue, Encode, IncomingInputStream, ListIter, Receive,
+    Subscribe, Value,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -14,14 +15,21 @@ pub struct ContainerMetadata {
     pub created_at: u64,
 }
 
-impl EncodeSync for ContainerMetadata {
+impl Subscribe for ContainerMetadata {}
+
+#[async_trait]
+impl Encode for ContainerMetadata {
     #[instrument(level = "trace", skip_all)]
-    fn encode_sync(self, payload: impl BufMut) -> anyhow::Result<()> {
+    async fn encode(
+        self,
+        payload: &mut (impl BufMut + Send),
+    ) -> anyhow::Result<Option<AsyncValue>> {
         let Self { created_at } = self;
         created_at
-            .encode_sync(payload)
+            .encode(payload)
+            .await
             .context("failed to encode `created-at`")?;
-        Ok(())
+        Ok(None)
     }
 }
 
@@ -48,16 +56,24 @@ pub struct ObjectMetadata {
     pub size: u64,
 }
 
-impl EncodeSync for ObjectMetadata {
+impl Subscribe for ObjectMetadata {}
+
+#[async_trait]
+impl Encode for ObjectMetadata {
     #[instrument(level = "trace", skip_all)]
-    fn encode_sync(self, mut payload: impl BufMut) -> anyhow::Result<()> {
+    async fn encode(
+        self,
+        mut payload: &mut (impl BufMut + Send),
+    ) -> anyhow::Result<Option<AsyncValue>> {
         let Self { created_at, size } = self;
         created_at
-            .encode_sync(&mut payload)
+            .encode(&mut payload)
+            .await
             .context("failed to encode `created-at`")?;
-        size.encode_sync(payload)
+        size.encode(payload)
+            .await
             .context("failed to encode `size`")?;
-        Ok(())
+        Ok(None)
     }
 }
 
@@ -87,26 +103,38 @@ pub struct ObjectId {
     pub object: String,
 }
 
-impl EncodeSync for &ObjectId {
+impl Subscribe for ObjectId {}
+
+#[async_trait]
+impl Encode for &ObjectId {
     #[instrument(level = "trace", skip_all)]
-    fn encode_sync(self, mut payload: impl BufMut) -> anyhow::Result<()> {
+    async fn encode(
+        self,
+        payload: &mut (impl BufMut + Send),
+    ) -> anyhow::Result<Option<AsyncValue>> {
         let ObjectId { container, object } = self;
         container
             .as_str()
-            .encode_sync(&mut payload)
+            .encode(payload)
+            .await
             .context("failed to encode `container`")?;
         object
             .as_str()
-            .encode_sync(payload)
+            .encode(payload)
+            .await
             .context("failed to encode `object`")?;
-        Ok(())
+        Ok(None)
     }
 }
 
-impl EncodeSync for ObjectId {
+#[async_trait]
+impl Encode for ObjectId {
     #[instrument(level = "trace", skip_all)]
-    fn encode_sync(self, payload: impl BufMut) -> anyhow::Result<()> {
-        (&self).encode_sync(payload)
+    async fn encode(
+        self,
+        payload: &mut (impl BufMut + Send),
+    ) -> anyhow::Result<Option<AsyncValue>> {
+        (&self).encode(payload).await
     }
 }
 
