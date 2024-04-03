@@ -1,0 +1,26 @@
+[package]
+name = "wit-bindgen-wrpc"
+version = "0.1.0"
+description = """
+Rust bindings generator for wRPC.
+"""
+authors = [
+    "Roman Volosatovs <rvolosatovs@riseup.net>",
+    "Alex Crichton <alex@alexcrichton.com>",
+]
+
+categories.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+bitflags = { workspace = true }
+bytes = { workspace = true }
+futures = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+wit-bindgen-wrpc-rust-macro = { workspace = true }
+wrpc-transport = { workspace = true }

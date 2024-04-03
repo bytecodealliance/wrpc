@@ -9,13 +9,13 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, bail, Context, Result};
 use bytes::Bytes;
-use futures::{stream, StreamExt as _, TryStreamExt as _};
+use futures::{stream, FutureExt as _, StreamExt as _, TryStreamExt as _};
 use hyper::header::HOST;
 use hyper::Uri;
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use tokio::net::TcpListener;
 use tokio::process::Command;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, RwLock};
 use tokio::task::JoinHandle;
 use tokio::time::sleep;
 use tokio::{select, spawn, try_join};
@@ -2586,6 +2586,151 @@ async fn nats() -> anyhow::Result<()> {
                 info!("async parameters transmitted");
                 Ok(())
             }
+        )?;
+    }
+
+    {
+        let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        let shutdown_rx =
+            async move { shutdown_rx.await.expect("shutdown sender dropped") }.shared();
+        try_join!(
+            async {
+                wrpc::generate!({
+                    inline: "
+                        package wrpc-test:integration;
+
+                        interface shared {
+                            fallible: func() -> result<bool, string>;
+                        }
+
+                        world test {
+                            export shared;
+
+                            export f: func(x: string) -> u32;
+                            export foo: interface {
+                                foo: func(x: string);
+                            }
+                        }"
+                });
+
+                #[derive(Clone, Default)]
+                struct Component(Arc<RwLock<Option<String>>>);
+
+                impl Handler<Option<async_nats::HeaderMap>> for Component {
+                    async fn f(
+                        &self,
+                        _cx: Option<async_nats::HeaderMap>,
+                        x: String,
+                    ) -> anyhow::Result<u32> {
+                        let stored = self.0.read().await.as_ref().unwrap().to_string();
+                        assert_eq!(stored, x);
+                        Ok(42)
+                    }
+                }
+
+                impl exports::wrpc_test::integration::shared::Handler<Option<async_nats::HeaderMap>> for Component {
+                    async fn fallible(
+                        &self,
+                        _cx: Option<async_nats::HeaderMap>,
+                    ) -> anyhow::Result<Result<bool, String>> {
+                        Ok(Ok(true))
+                    }
+                }
+
+                impl exports::foo::Handler<Option<async_nats::HeaderMap>> for Component {
+                    async fn foo(
+                        &self,
+                        _cx: Option<async_nats::HeaderMap>,
+                        x: String,
+                    ) -> anyhow::Result<()> {
+                        let old = self.0.write().await.replace(x);
+                        assert!(old.is_none());
+                        Ok(())
+                    }
+                }
+
+                serve(client.as_ref(), Component::default(), shutdown_rx.clone())
+                    .await
+                    .context("failed to serve `wrpc-test:integration/test`")
+            },
+            async {
+                wrpc::generate!({
+                    inline: "
+                        package wrpc-test:integration;
+
+                        interface shared {
+                            fallible: func() -> result<bool, string>;
+                        }
+
+                        world test {
+                            import shared;
+
+                            import f: func(x: string) -> u32;
+                            import foo: interface {
+                                foo: func(x: string);
+                            }
+                            export bar: interface {
+                                bar: func() -> string;
+                            }
+                        }"
+                });
+
+                #[derive(Clone)]
+                struct Component(Arc<wrpc_transport_nats::Client>);
+
+                // TODO: Remove the need for this
+                sleep(Duration::from_secs(1)).await;
+
+                impl exports::bar::Handler<Option<async_nats::HeaderMap>> for Component {
+                    async fn bar(
+                        &self,
+                        _cx: Option<async_nats::HeaderMap>,
+                    ) -> anyhow::Result<String> {
+                        foo::foo(self.0.as_ref(), "foo")
+                            .await
+                            .context("failed to call `wrpc-test:integration/test.foo.foo`")?;
+                        let v = f(self.0.as_ref(), "foo")
+                            .await
+                            .context("failed to call `wrpc-test:integration/test.f`")?;
+                        assert_eq!(v, 42);
+                        let v = wrpc_test::integration::shared::fallible(self.0.as_ref())
+                            .await
+                            .context("failed to call `wrpc-test:integration/shared.fallible`")?;
+                        assert_eq!(v, Ok(true));
+                        Ok("bar".to_string())
+                    }
+                }
+
+                serve(
+                    client.as_ref(),
+                    Component(Arc::clone(&client)),
+                    shutdown_rx.clone(),
+                )
+                .await
+                .context("failed to serve `wrpc-test:integration/test`")
+            },
+            async {
+                wrpc::generate!({
+                    inline: "
+                        package wrpc-test:integration;
+
+                        world test {
+                            import bar: interface {
+                                bar: func() -> string;
+                            }
+                        }"
+                });
+
+                // TODO: Remove the need for this
+                sleep(Duration::from_secs(2)).await;
+
+                let v = bar::bar(client.as_ref())
+                    .await
+                    .context("failed to call `wrpc-test:integration/test.bar.bar`")?;
+                assert_eq!(v, "bar");
+                shutdown_tx.send(()).expect("failed to send shutdown");
+                Ok(())
+            },
         )?;
     }
 
