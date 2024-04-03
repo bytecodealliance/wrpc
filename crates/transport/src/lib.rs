@@ -1477,7 +1477,7 @@ where
 
 #[async_trait]
 impl<'a> Receive<'a> for bool {
-    #[instrument(level = "trace", skip_all)]
+    #[instrument(level = "trace", skip_all, fields(ty = "bool"))]
     async fn receive<T>(
         payload: impl Buf + Send + 'a,
         rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
@@ -1487,14 +1487,13 @@ impl<'a> Receive<'a> for bool {
         T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + 'static,
     {
         let mut payload = receive_at_least(payload, rx, 1).await?;
-        trace!("decode bool");
         Ok((payload.get_u8() == 1, payload))
     }
 }
 
 #[async_trait]
 impl<'a> Receive<'a> for u8 {
-    #[instrument(level = "trace", skip_all)]
+    #[instrument(level = "trace", skip_all, fields(ty = "u8"))]
     async fn receive<T>(
         payload: impl Buf + Send + 'a,
         rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
@@ -1504,14 +1503,13 @@ impl<'a> Receive<'a> for u8 {
         T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + 'static,
     {
         let mut payload = receive_at_least(payload, rx, 1).await?;
-        trace!("decode u8");
         Ok((payload.get_u8(), payload))
     }
 }
 
 #[async_trait]
 impl<'a> Receive<'a> for u16 {
-    #[instrument(level = "trace", skip_all)]
+    #[instrument(level = "trace", skip_all, fields(ty = "u16"))]
     async fn receive<T>(
         payload: impl Buf + Send + 'a,
         rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
@@ -1520,7 +1518,6 @@ impl<'a> Receive<'a> for u16 {
     where
         T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + 'static,
     {
-        trace!("decode u16");
         let (v, payload) = receive_leb128_unsigned(payload, rx)
             .await
             .context("failed to decode u16")?;
@@ -1533,7 +1530,7 @@ impl<'a> Receive<'a> for u16 {
 
 #[async_trait]
 impl<'a> Receive<'a> for u32 {
-    #[instrument(level = "trace", skip_all)]
+    #[instrument(level = "trace", skip_all, fields(ty = "u32"))]
     async fn receive<T>(
         payload: impl Buf + Send + 'a,
         rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
@@ -1542,7 +1539,6 @@ impl<'a> Receive<'a> for u32 {
     where
         T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + 'static,
     {
-        trace!("decode u32");
         let (v, payload) = receive_leb128_unsigned(payload, rx)
             .await
             .context("failed to decode u32")?;
@@ -1555,7 +1551,7 @@ impl<'a> Receive<'a> for u32 {
 
 #[async_trait]
 impl<'a> Receive<'a> for u64 {
-    #[instrument(level = "trace", skip_all)]
+    #[instrument(level = "trace", skip_all, fields(ty = "u64"))]
     async fn receive<T>(
         payload: impl Buf + Send + 'a,
         rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
@@ -1564,7 +1560,6 @@ impl<'a> Receive<'a> for u64 {
     where
         T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + 'static,
     {
-        trace!("decode u64");
         let (v, payload) = receive_leb128_unsigned(payload, rx)
             .await
             .context("failed to decode u64")?;
@@ -1574,7 +1569,7 @@ impl<'a> Receive<'a> for u64 {
 
 #[async_trait]
 impl<'a> Receive<'a> for i8 {
-    #[instrument(level = "trace", skip_all)]
+    #[instrument(level = "trace", skip_all, fields(ty = "i8"))]
     async fn receive<T>(
         payload: impl Buf + Send + 'a,
         rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
@@ -1584,14 +1579,13 @@ impl<'a> Receive<'a> for i8 {
         T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + 'static,
     {
         let mut payload = receive_at_least(payload, rx, 1).await?;
-        trace!("decode s8");
         Ok((payload.get_i8(), payload))
     }
 }
 
 #[async_trait]
 impl<'a> Receive<'a> for i16 {
-    #[instrument(level = "trace", skip_all)]
+    #[instrument(level = "trace", skip_all, fields(ty = "i16"))]
     async fn receive<T>(
         payload: impl Buf + Send + 'a,
         rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
@@ -1600,7 +1594,6 @@ impl<'a> Receive<'a> for i16 {
     where
         T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + 'static,
     {
-        trace!("decode s16");
         let (v, payload) = receive_leb128_signed(payload, rx)
             .await
             .context("failed to decode s16")?;
@@ -1613,7 +1606,7 @@ impl<'a> Receive<'a> for i16 {
 
 #[async_trait]
 impl<'a> Receive<'a> for i32 {
-    #[instrument(level = "trace", skip_all)]
+    #[instrument(level = "trace", skip_all, fields(ty = "i32"))]
     async fn receive<T>(
         payload: impl Buf + Send + 'a,
         rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
@@ -1622,7 +1615,6 @@ impl<'a> Receive<'a> for i32 {
     where
         T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + 'static,
     {
-        trace!("decode s32");
         let (v, payload) = receive_leb128_signed(payload, rx)
             .await
             .context("failed to decode s32")?;
@@ -1635,7 +1627,7 @@ impl<'a> Receive<'a> for i32 {
 
 #[async_trait]
 impl<'a> Receive<'a> for i64 {
-    #[instrument(level = "trace", skip_all)]
+    #[instrument(level = "trace", skip_all, fields(ty = "i64"))]
     async fn receive<T>(
         payload: impl Buf + Send + 'a,
         rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
@@ -1644,7 +1636,6 @@ impl<'a> Receive<'a> for i64 {
     where
         T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + 'static,
     {
-        trace!("decode s64");
         let (v, payload) = receive_leb128_signed(payload, rx)
             .await
             .context("failed to decode s64")?;
@@ -1654,7 +1645,7 @@ impl<'a> Receive<'a> for i64 {
 
 #[async_trait]
 impl<'a> Receive<'a> for f32 {
-    #[instrument(level = "trace", skip_all)]
+    #[instrument(level = "trace", skip_all, fields(ty = "f32"))]
     async fn receive<T>(
         payload: impl Buf + Send + 'a,
         rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
@@ -1663,7 +1654,6 @@ impl<'a> Receive<'a> for f32 {
     where
         T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + 'static,
     {
-        trace!("decode float32");
         let mut payload = receive_at_least(payload, rx, 8).await?;
         Ok((payload.get_f32_le(), payload))
     }
@@ -1671,7 +1661,7 @@ impl<'a> Receive<'a> for f32 {
 
 #[async_trait]
 impl<'a> Receive<'a> for f64 {
-    #[instrument(level = "trace", skip_all)]
+    #[instrument(level = "trace", skip_all, fields(ty = "f64"))]
     async fn receive<T>(
         payload: impl Buf + Send + 'a,
         rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
@@ -1680,7 +1670,6 @@ impl<'a> Receive<'a> for f64 {
     where
         T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + 'static,
     {
-        trace!("decode float64");
         let mut payload = receive_at_least(payload, rx, 8).await?;
         Ok((payload.get_f64_le(), payload))
     }
@@ -1688,7 +1677,7 @@ impl<'a> Receive<'a> for f64 {
 
 #[async_trait]
 impl<'a> Receive<'a> for char {
-    #[instrument(level = "trace", skip_all)]
+    #[instrument(level = "trace", skip_all, fields(ty = "char"))]
     async fn receive<T>(
         payload: impl Buf + Send + 'a,
         rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
@@ -1697,7 +1686,6 @@ impl<'a> Receive<'a> for char {
     where
         T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + 'static,
     {
-        trace!("decode char");
         let (v, payload) = receive_leb128_unsigned(payload, rx)
             .await
             .context("failed to decode char")?;
@@ -1711,7 +1699,7 @@ impl<'a> Receive<'a> for char {
 
 #[async_trait]
 impl<'a> Receive<'a> for String {
-    #[instrument(level = "trace", skip_all)]
+    #[instrument(level = "trace", skip_all, fields(ty = "String"))]
     async fn receive<T>(
         payload: impl Buf + Send + 'a,
         rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
@@ -1738,7 +1726,7 @@ impl<'a> Receive<'a> for String {
 
 #[async_trait]
 impl<'a> Receive<'a> for Duration {
-    #[instrument(level = "trace", skip_all)]
+    #[instrument(level = "trace", skip_all, fields(ty = "duration"))]
     async fn receive<T>(
         payload: impl Buf + Send + 'a,
         rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
@@ -1747,7 +1735,6 @@ impl<'a> Receive<'a> for Duration {
     where
         T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + 'static,
     {
-        trace!("decode duration");
         let (v, payload) = u64::receive_sync(payload, rx).await?;
         Ok((Duration::from_nanos(v), payload))
     }
@@ -1758,7 +1745,7 @@ impl<'a, E> Receive<'a> for Vec<E>
 where
     E: Receive<'a> + Send,
 {
-    #[instrument(level = "trace", skip_all)]
+    #[instrument(level = "trace", skip_all, fields(ty = "vec"))]
     async fn receive<T>(
         payload: impl Buf + Send + 'a,
         rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
@@ -1789,7 +1776,7 @@ where
 
 #[async_trait]
 impl<'a> Receive<'a> for Bytes {
-    #[instrument(level = "trace", skip_all)]
+    #[instrument(level = "trace", skip_all, fields(ty = "bytes"))]
     async fn receive<T>(
         payload: impl Buf + Send + 'a,
         rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
@@ -1812,7 +1799,7 @@ impl<'a, E> Receive<'a> for Option<E>
 where
     E: Receive<'a>,
 {
-    #[instrument(level = "trace", skip_all)]
+    #[instrument(level = "trace", skip_all, fields(ty = "option"))]
     async fn receive<T>(
         payload: impl Buf + Send + 'a,
         rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
@@ -1844,7 +1831,7 @@ where
     Ok: Receive<'a>,
     Err: Receive<'a>,
 {
-    #[instrument(level = "trace", skip_all)]
+    #[instrument(level = "trace", skip_all, fields(ty = "result"))]
     async fn receive<T>(
         payload: impl Buf + Send + 'a,
         rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
@@ -1878,7 +1865,7 @@ where
 
 #[async_trait]
 impl<'a> Receive<'a> for anyhow::Error {
-    #[instrument(level = "trace", skip_all)]
+    #[instrument(level = "trace", skip_all, fields(ty = "anyhow::Error"))]
     async fn receive<T>(
         payload: impl Buf + Send + 'a,
         rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
@@ -1897,7 +1884,7 @@ impl<'a, E> Receive<'a> for Pin<Box<dyn Future<Output = anyhow::Result<E>> + Sen
 where
     E: Receive<'a> + Send + 'static,
 {
-    #[instrument(level = "trace", skip_all)]
+    #[instrument(level = "trace", skip_all, fields(ty = "future"))]
     async fn receive<T>(
         payload: impl Buf + Send + 'a,
         rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
@@ -1941,7 +1928,7 @@ impl<'a, E> Receive<'a> for Box<dyn Stream<Item = anyhow::Result<Vec<E>>> + Send
 where
     E: Receive<'a> + Send + Sync + 'static,
 {
-    #[instrument(level = "trace", skip_all)]
+    #[instrument(level = "trace", skip_all, fields(ty = "stream"))]
     async fn receive<T>(
         payload: impl Buf + Send + 'a,
         rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
@@ -2025,7 +2012,7 @@ where
 
 #[async_trait]
 impl<'a> Receive<'a> for IncomingInputStream {
-    #[instrument(level = "trace", skip_all)]
+    #[instrument(level = "trace", skip_all, fields(ty = "IncomingInputStream"))]
     async fn receive<T>(
         payload: impl Buf + Send + 'a,
         rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
@@ -2094,7 +2081,7 @@ impl<'a> Receive<'a> for IncomingInputStream {
 
 #[async_trait]
 impl<'a> Receive<'a> for () {
-    #[instrument(level = "trace", skip_all)]
+    #[instrument(level = "trace", skip_all, fields(ty = "IncomingInputStream"))]
     async fn receive<T>(
         payload: impl Buf + Send + 'a,
         _rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
@@ -3715,14 +3702,14 @@ pub trait Client: Sync {
     /// Invokes function `name` from instance `instance` with parameters `params` and
     /// statically-typed results of type `T`
     #[instrument(level = "trace", skip(self, params))]
-    fn invoke_static<'a, T>(
+    fn invoke_static<T>(
         &self,
         instance: &str,
         name: &str,
         params: impl Encode,
     ) -> impl Future<Output = anyhow::Result<(T, Self::Transmission)>> + Send
     where
-        T: Receive<'a> + Subscribe + Send,
+        for<'a> T: Receive<'a> + Subscribe + Send,
     {
         let OutgoingInvocation {
             invocation,
