@@ -643,8 +643,8 @@ pub trait Subscriber: Sync {
                 | Type::S16
                 | Type::S32
                 | Type::S64
-                | Type::Float32
-                | Type::Float64
+                | Type::F32
+                | Type::F64
                 | Type::Char
                 | Type::String
                 | Type::Enum
@@ -968,8 +968,8 @@ pub enum Value {
     S16(i16),
     S32(i32),
     S64(i64),
-    Float32(f32),
-    Float64(f64),
+    F32(f32),
+    F64(f64),
     Char(char),
     String(String),
     List(Vec<Value>),
@@ -1043,13 +1043,13 @@ impl From<i64> for Value {
 
 impl From<f32> for Value {
     fn from(v: f32) -> Self {
-        Self::Float32(v)
+        Self::F32(v)
     }
 }
 
 impl From<f64> for Value {
     fn from(v: f64) -> Self {
-        Self::Float64(v)
+        Self::F64(v)
     }
 }
 
@@ -2213,13 +2213,13 @@ impl<'a> ReceiveContext<'a, Type> for Value {
                 let (v, payload) = i64::receive(payload, rx, sub).await?;
                 Ok((Self::S64(v), payload))
             }
-            Type::Float32 => {
+            Type::F32 => {
                 let (v, payload) = f32::receive(payload, rx, sub).await?;
-                Ok((Self::Float32(v), payload))
+                Ok((Self::F32(v), payload))
             }
-            Type::Float64 => {
+            Type::F64 => {
                 let (v, payload) = f64::receive(payload, rx, sub).await?;
-                Ok((Self::Float64(v), payload))
+                Ok((Self::F64(v), payload))
             }
             Type::Char => {
                 let (v, payload) = char::receive(payload, rx, sub).await?;
@@ -3266,8 +3266,8 @@ impl Encode for Value {
             Self::S16(v) => v.encode(payload).await,
             Self::S32(v) => v.encode(payload).await,
             Self::S64(v) => v.encode(payload).await,
-            Self::Float32(v) => v.encode(payload).await,
-            Self::Float64(v) => v.encode(payload).await,
+            Self::F32(v) => v.encode(payload).await,
+            Self::F64(v) => v.encode(payload).await,
             Self::Char(v) => v.encode(payload).await,
             Self::String(v) => v.encode(payload).await,
             Self::List(v) => v.encode(payload).await,

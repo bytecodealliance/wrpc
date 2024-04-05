@@ -1880,7 +1880,7 @@ version = "0.0.0"
 dependencies = [
  "codegen-macro",
  "wit-bindgen-core",
- "wit-parser 0.201.0",
+ "wit-parser 0.202.0",
 ]
 
 [[package]]
@@ -2824,7 +2824,7 @@ dependencies = [
 
 [[package]]
 name = "wit-bindgen-wrpc"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2839,7 +2839,7 @@ dependencies = [
 
 [[package]]
 name = "wit-bindgen-wrpc-rust"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -2854,7 +2854,7 @@ dependencies = [
 
 [[package]]
 name = "wit-bindgen-wrpc-rust-macro"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "proc-macro2",
@@ -2928,7 +2928,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc-interface-blobstore"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2940,7 +2940,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc-interface-http"
-version = "0.20.0"
+version = "0.21.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2959,7 +2959,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc-interface-keyvalue"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2970,7 +2970,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc-runtime-wasmtime"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "anyhow",
  "futures",
@@ -2982,7 +2982,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc-transport"
-version = "0.23.0"
+version = "0.24.0"
 dependencies = [
  "anyhow",
  "async-nats",
@@ -3000,7 +3000,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc-transport-nats"
-version = "0.20.0"
+version = "0.21.0"
 dependencies = [
  "anyhow",
  "async-nats",
@@ -3014,13 +3014,13 @@ dependencies = [
 
 [[package]]
 name = "wrpc-types"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "anyhow",
  "serde",
  "serde_json",
  "tracing",
- "wit-parser 0.201.0",
+ "wit-parser 0.202.0",
 ]
 
 [[package]]

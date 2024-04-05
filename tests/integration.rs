@@ -196,8 +196,8 @@ async fn nats() -> anyhow::Result<()> {
         Type::S16,
         Type::S32,
         Type::S64,
-        Type::Float32,
-        Type::Float64,
+        Type::F32,
+        Type::F64,
         Type::Char,
         Type::String,
         Type::Enum,
@@ -217,8 +217,8 @@ async fn nats() -> anyhow::Result<()> {
         Type::S16,
         Type::S32,
         Type::S64,
-        Type::Float32,
-        Type::Float64,
+        Type::F32,
+        Type::F64,
         Type::Char,
         Type::String,
         Type::List(Arc::new(Type::U64)),
@@ -254,8 +254,8 @@ async fn nats() -> anyhow::Result<()> {
             Value::S16(0x7eff),
             Value::S32(0x7effffff),
             Value::S64(0x7effffffffffffff),
-            Value::Float32(0.42),
-            Value::Float64(0.4242),
+            Value::F32(0.42),
+            Value::F64(0.4242),
             Value::Char('a'),
             Value::String("test".into()),
             Value::List(vec![]),
@@ -274,8 +274,8 @@ async fn nats() -> anyhow::Result<()> {
                 Value::S16(0x7eff),
                 Value::S32(0x7effffff),
                 Value::S64(0x7effffffffffffff),
-                Value::Float32(0.42),
-                Value::Float64(0.4242),
+                Value::F32(0.42),
+                Value::F64(0.4242),
                 Value::Char('a'),
                 Value::String("test".into()),
                 Value::Enum(0xfeff),
@@ -291,8 +291,8 @@ async fn nats() -> anyhow::Result<()> {
                 Value::S16(0x7eff),
                 Value::S32(0x7effffff),
                 Value::S64(0x7effffffffffffff),
-                Value::Float32(0.42),
-                Value::Float64(0.4242),
+                Value::F32(0.42),
+                Value::F64(0.4242),
                 Value::Char('a'),
                 Value::String("test".into()),
                 Value::Enum(0xfeff),
@@ -321,8 +321,8 @@ async fn nats() -> anyhow::Result<()> {
             Value::S16(0x7eff),
             Value::S32(0x7effffff),
             Value::S64(0x7effffffffffffff),
-            Value::Float32(0.42),
-            Value::Float64(0.4242),
+            Value::F32(0.42),
+            Value::F64(0.4242),
             Value::Char('a'),
             Value::String("test".into()),
             Value::List(vec![]),
@@ -341,8 +341,8 @@ async fn nats() -> anyhow::Result<()> {
                 Value::S16(0x7eff),
                 Value::S32(0x7effffff),
                 Value::S64(0x7effffffffffffff),
-                Value::Float32(0.42),
-                Value::Float64(0.4242),
+                Value::F32(0.42),
+                Value::F64(0.4242),
                 Value::Char('a'),
                 Value::String("test".into()),
                 Value::Enum(0xfeff),
@@ -358,8 +358,8 @@ async fn nats() -> anyhow::Result<()> {
                 Value::S16(0x7eff),
                 Value::S32(0x7effffff),
                 Value::S64(0x7effffffffffffff),
-                Value::Float32(0.42),
-                Value::Float64(0.4242),
+                Value::F32(0.42),
+                Value::F64(0.4242),
                 Value::Char('a'),
                 Value::String("test".into()),
                 Value::Enum(0xfeff),
@@ -426,11 +426,11 @@ async fn nats() -> anyhow::Result<()> {
     ));
     assert!(matches!(
         values.next().unwrap(),
-        (Value::Float32(p), Value::Float32(r)) if p == 0.42 && r == 0.42
+        (Value::F32(p), Value::F32(r)) if p == 0.42 && r == 0.42
     ));
     assert!(matches!(
         values.next().unwrap(),
-        (Value::Float64(p), Value::Float64(r)) if p == 0.4242 && r == 0.4242
+        (Value::F64(p), Value::F64(r)) if p == 0.4242 && r == 0.4242
     ));
     assert!(matches!(
         values.next().unwrap(),
@@ -511,11 +511,11 @@ async fn nats() -> anyhow::Result<()> {
         ));
         assert!(matches!(
             values.next().unwrap(),
-            (Value::Float32(p), Value::Float32(r)) if p == 0.42 && r == 0.42
+            (Value::F32(p), Value::F32(r)) if p == 0.42 && r == 0.42
         ));
         assert!(matches!(
             values.next().unwrap(),
-            (Value::Float64(p), Value::Float64(r)) if p == 0.4242 && r == 0.4242
+            (Value::F64(p), Value::F64(r)) if p == 0.4242 && r == 0.4242
         ));
         assert!(matches!(
             values.next().unwrap(),
@@ -583,11 +583,11 @@ async fn nats() -> anyhow::Result<()> {
         ));
         assert!(matches!(
             values.next().unwrap(),
-            (Value::Float32(p), Value::Float32(r)) if p == 0.42 && r == 0.42
+            (Value::F32(p), Value::F32(r)) if p == 0.42 && r == 0.42
         ));
         assert!(matches!(
             values.next().unwrap(),
-            (Value::Float64(p), Value::Float64(r)) if p == 0.4242 && r == 0.4242
+            (Value::F64(p), Value::F64(r)) if p == 0.4242 && r == 0.4242
         ));
         assert!(matches!(
             values.next().unwrap(),

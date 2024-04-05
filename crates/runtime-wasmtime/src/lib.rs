@@ -26,8 +26,8 @@ pub fn to_wrpc_value<T: WasiView>(
         Val::U32(val) => Ok(wrpc_transport::Value::U32(*val)),
         Val::S64(val) => Ok(wrpc_transport::Value::S64(*val)),
         Val::U64(val) => Ok(wrpc_transport::Value::U64(*val)),
-        Val::Float32(val) => Ok(wrpc_transport::Value::Float32(*val)),
-        Val::Float64(val) => Ok(wrpc_transport::Value::Float64(*val)),
+        Val::Float32(val) => Ok(wrpc_transport::Value::F32(*val)),
+        Val::Float64(val) => Ok(wrpc_transport::Value::F64(*val)),
         Val::Char(val) => Ok(wrpc_transport::Value::Char(*val)),
         Val::String(val) => Ok(wrpc_transport::Value::String(val.to_string())),
         Val::List(val) => val
@@ -167,8 +167,8 @@ pub fn from_wrpc_value(val: wrpc_transport::Value, ty: &Type) -> anyhow::Result<
         (wrpc_transport::Value::S16(v), Type::S16) => Ok(Val::S16(v)),
         (wrpc_transport::Value::S32(v), Type::S32) => Ok(Val::S32(v)),
         (wrpc_transport::Value::S64(v), Type::S64) => Ok(Val::S64(v)),
-        (wrpc_transport::Value::Float32(v), Type::Float32) => Ok(Val::Float32(v)),
-        (wrpc_transport::Value::Float64(v), Type::Float64) => Ok(Val::Float64(v)),
+        (wrpc_transport::Value::F32(v), Type::Float32) => Ok(Val::Float32(v)),
+        (wrpc_transport::Value::F64(v), Type::Float64) => Ok(Val::Float64(v)),
         (wrpc_transport::Value::Char(v), Type::Char) => Ok(Val::Char(v)),
         (wrpc_transport::Value::String(v), Type::String) => Ok(Val::String(v.into())),
         (wrpc_transport::Value::List(vs), Type::List(ty)) => {
