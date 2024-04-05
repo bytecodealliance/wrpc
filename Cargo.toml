@@ -90,14 +90,14 @@ wasmtime = { version = "19", default-features = false }
 wasmtime-wasi = { version = "19", default-features = false }
 wasmtime-wasi-http = { version = "19", default-features = false }
 wit-bindgen-core = { version = "0.24", default-features = false }
-wit-bindgen-wrpc = { version = "0.1", default-features = false, path = "./crates/wit-bindgen" }
-wit-bindgen-wrpc-rust = { version = "0.1", default-features = false, path = "./crates/wit-bindgen-rust" }
-wit-bindgen-wrpc-rust-macro = { version = "0.1", default-features = false, path = "./crates/wit-bindgen-rust-macro" }
+wit-bindgen-wrpc = { version = "0.2", default-features = false, path = "./crates/wit-bindgen" }
+wit-bindgen-wrpc-rust = { version = "0.2", default-features = false, path = "./crates/wit-bindgen-rust" }
+wit-bindgen-wrpc-rust-macro = { version = "0.2", default-features = false, path = "./crates/wit-bindgen-rust-macro" }
 wit-parser = { version = "0.201", default-features = false }
-wrpc-interface-blobstore = { version = "0.14", path = "./crates/interface-blobstore", default-features = false }
-wrpc-interface-http = { version = "0.19", path = "./crates/interface-http", default-features = false }
-wrpc-interface-keyvalue = { version = "0.11", path = "./crates/interface-keyvalue", default-features = false }
-wrpc-runtime-wasmtime = { version = "0.13", path = "./crates/runtime-wasmtime", default-features = false }
-wrpc-transport = { version = "0.22", path = "./crates/transport", default-features = false }
-wrpc-transport-nats = { version = "0.19", path = "./crates/transport-nats", default-features = false }
+wrpc-interface-blobstore = { version = "0.15", path = "./crates/interface-blobstore", default-features = false }
+wrpc-interface-http = { version = "0.20", path = "./crates/interface-http", default-features = false }
+wrpc-interface-keyvalue = { version = "0.12", path = "./crates/interface-keyvalue", default-features = false }
+wrpc-runtime-wasmtime = { version = "0.14", path = "./crates/runtime-wasmtime", default-features = false }
+wrpc-transport = { version = "0.23", path = "./crates/transport", default-features = false }
+wrpc-transport-nats = { version = "0.20", path = "./crates/transport-nats", default-features = false }
 wrpc-types = { version = "0.5", path = "./crates/types", default-features = false }

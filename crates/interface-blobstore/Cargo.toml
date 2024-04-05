@@ -1,6 +1,6 @@
 [package]
 name = "wrpc-interface-blobstore"
-version = "0.14.1"
+version = "0.15.0"
 description = "wRPC blobstore interface"
 
 authors.workspace = true
