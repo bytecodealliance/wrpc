@@ -29,5 +29,5 @@ wit-bindgen-core = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 test-helpers = { workspace = true }
-wit-bindgen-wrpc = { workspace = true }
+wit-bindgen-wrpc = { path = "../wit-bindgen" }
 wrpc-transport = { workspace = true }
