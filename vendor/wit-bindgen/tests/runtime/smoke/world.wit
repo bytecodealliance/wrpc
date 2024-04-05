@@ -1,0 +1,11 @@
+package test:smoke;
+
+interface imports {
+  thunk: func();
+}
+
+world smoke {
+  import imports;
+
+  export thunk: func();
+}

@@ -1,0 +1,14 @@
+[package]
+name = "codegen-macro"
+authors = ["Alex Crichton <alex@alexcrichton.com>"]
+edition.workspace = true
+publish = false
+
+[lib]
+proc-macro = true
+doctest = false
+test = false
+
+[dependencies]
+heck = { workspace = true }
+quote = "1.0.32"

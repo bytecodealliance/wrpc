@@ -1,0 +1,15 @@
+[package]
+name = "test-helpers"
+edition.workspace = true
+publish = false
+
+[lib]
+doctest = false
+test = false
+
+[dependencies]
+codegen-macro = { path = 'codegen-macro' }
+wit-bindgen-core = { workspace = true }
+wit-parser = { workspace = true }
+wit-component = { workspace = true, features = ['dummy-module'] }
+wasm-encoder = { workspace = true }

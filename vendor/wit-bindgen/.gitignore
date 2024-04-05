@@ -1,0 +1,10 @@
+target/
+publish
+static
+package-lock.json
+node_modules
+ace
+*.wasm
+!wasi_snapshot_preview1.reactor.wasm
+__pycache__
+crates/guest-rust/src/cabi_realloc.o
