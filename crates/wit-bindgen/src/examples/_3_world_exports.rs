@@ -31,10 +31,6 @@ crate::generate!({
         }
     "#,
 
-    // provided here to get the export macro rendered in documentation, not
-    // required for external use.
-    pub_export_macro: true,
-
     // provided to specify the path to `wasi:*` dependencies referenced above.
     path: "wasi-cli@0.2.0.wasm",
 });

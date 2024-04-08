@@ -418,8 +418,7 @@ pub trait Subject {
     fn child(&self, i: Option<u64>) -> Self;
 }
 
-/// Defines how nested async value subscriptions are top be established.
-/// [`EncodeSync`] implementations receive an implementation of this trait.
+/// Defines how nested async value subscriptions are to be established.
 pub trait Subscribe: Sized {
     fn subscribe<T: Subscriber + Send + Sync>(
         _subscriber: &T,
