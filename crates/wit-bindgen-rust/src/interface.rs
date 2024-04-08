@@ -1296,7 +1296,7 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
         let async_trait = self.gen.async_trait_path().to_string();
         let bytes = self.gen.bytes_path().to_string();
         let wrpc_transport = self.gen.wrpc_transport_path().to_string();
-        uwriteln!(self.src, "#[{async_trait}]");
+        uwriteln!(self.src, "#[{async_trait}::async_trait]");
         self.push_str("#[automatically_derived]\n");
         self.push_str("impl");
         uwrite!(self.src, " {wrpc_transport}::Encode for ");
@@ -1384,7 +1384,7 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
         let futures = self.gen.futures_path().to_string();
         let wrpc_transport = self.gen.wrpc_transport_path().to_string();
 
-        uwriteln!(self.src, "#[{async_trait}]");
+        uwriteln!(self.src, "#[{async_trait}::async_trait]");
         self.push_str("#[automatically_derived]\n");
         self.push_str("impl<'wrpc_receive_>");
         uwrite!(self.src, " {wrpc_transport}::Receive<'wrpc_receive_> for ");
@@ -1437,7 +1437,7 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
         let async_trait = self.gen.async_trait_path().to_string();
         let bytes = self.gen.bytes_path().to_string();
         let wrpc_transport = self.gen.wrpc_transport_path().to_string();
-        uwriteln!(self.src, "#[{async_trait}]");
+        uwriteln!(self.src, "#[{async_trait}::async_trait]");
         self.push_str("#[automatically_derived]\n");
         self.push_str("impl");
         uwrite!(self.src, " {wrpc_transport}::Encode for ");
@@ -1526,7 +1526,7 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
         let bytes = self.gen.bytes_path().to_string();
         let futures = self.gen.futures_path().to_string();
         let wrpc_transport = self.gen.wrpc_transport_path().to_string();
-        uwriteln!(self.src, "#[{async_trait}]");
+        uwriteln!(self.src, "#[{async_trait}::async_trait]");
         self.push_str("#[automatically_derived]\n");
         self.push_str("impl<'wrpc_receive_>");
         uwrite!(self.src, " {wrpc_transport}::Receive<'wrpc_receive_> for ");
@@ -1588,7 +1588,7 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
         let async_trait = self.gen.async_trait_path().to_string();
         let bytes = self.gen.bytes_path().to_string();
         let wrpc_transport = self.gen.wrpc_transport_path().to_string();
-        uwriteln!(self.src, "#[{async_trait}]");
+        uwriteln!(self.src, "#[{async_trait}::async_trait]");
         self.push_str("#[automatically_derived]\n");
         self.push_str("impl");
         uwrite!(self.src, " {wrpc_transport}::Encode for ");
@@ -1621,7 +1621,7 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
         let bytes = self.gen.bytes_path().to_string();
         let futures = self.gen.futures_path().to_string();
         let wrpc_transport = self.gen.wrpc_transport_path().to_string();
-        uwriteln!(self.src, "#[{async_trait}]");
+        uwriteln!(self.src, "#[{async_trait}::async_trait]");
         self.push_str("#[automatically_derived]\n");
         self.push_str("impl<'wrpc_receive_>");
         uwrite!(self.src, " {wrpc_transport}::Receive<'wrpc_receive_> for ");
@@ -2217,7 +2217,7 @@ impl<'a> wit_bindgen_core::InterfaceGenerator<'a> for InterfaceGenerator<'a> {
 #[derive(Debug)]
 pub struct {camel}(String);
 
-#[{async_trait}]
+#[{async_trait}::async_trait]
 #[automatically_derived]
 impl {wrpc_transport}::Encode for {camel} {{
      async fn encode(self, payload: &mut (impl {bytes}::BufMut + Send)) -> {anyhow}::Result<Option<{wrpc_transport}::AsyncValue>> {{
@@ -2225,7 +2225,7 @@ impl {wrpc_transport}::Encode for {camel} {{
      }}
 }}
 
-#[{async_trait}]
+#[{async_trait}::async_trait]
 #[automatically_derived]
 impl {wrpc_transport}::Encode for &{camel} {{
      async fn encode(self, payload: &mut (impl {bytes}::BufMut + Send)) -> {anyhow}::Result<Option<{wrpc_transport}::AsyncValue>> {{
@@ -2239,7 +2239,7 @@ impl {wrpc_transport}::Subscribe for {camel} {{}}
 #[automatically_derived]
 impl {wrpc_transport}::Subscribe for &{camel} {{}}
 
-#[{async_trait}]
+#[{async_trait}::async_trait]
 #[automatically_derived]
 impl<'a> {wrpc_transport}::Receive<'a> for {camel} {{
      async fn receive<T>(
@@ -2274,7 +2274,7 @@ impl {camel} {{
 #[repr(transparent)]
 pub struct {camel}Borrow;
 
-#[{async_trait}]
+#[{async_trait}::async_trait]
 #[automatically_derived]
 impl {wrpc_transport}::Encode for {camel}Borrow {{
      async fn encode(self, mut payload: &mut (impl {bytes}::BufMut + Send)) -> {anyhow}::Result<Option<{wrpc_transport}::AsyncValue>> {{
@@ -2282,7 +2282,7 @@ impl {wrpc_transport}::Encode for {camel}Borrow {{
      }}
 }}
 
-#[{async_trait}]
+#[{async_trait}::async_trait]
 #[automatically_derived]
 impl {wrpc_transport}::Encode for &{camel}Borrow {{
      async fn encode(self, mut payload: &mut (impl {bytes}::BufMut + Send)) -> {anyhow}::Result<Option<{wrpc_transport}::AsyncValue>> {{
@@ -2296,7 +2296,7 @@ impl {wrpc_transport}::Subscribe for {camel}Borrow {{}}
 #[automatically_derived]
 impl {wrpc_transport}::Subscribe for &{camel}Borrow {{}}
 
-#[{async_trait}]
+#[{async_trait}::async_trait]
 #[automatically_derived]
 impl<'a> {wrpc_transport}::Receive<'a> for {camel}Borrow {{
      async fn receive<T>(
@@ -2311,7 +2311,7 @@ impl<'a> {wrpc_transport}::Receive<'a> for {camel}Borrow {{
      }}
 }}
 
-#[{async_trait}]
+#[{async_trait}::async_trait]
 #[automatically_derived]
 impl {wrpc_transport}::Encode for {camel} {{
      async fn encode(self, mut payload: &mut (impl {bytes}::BufMut + Send)) -> {anyhow}::Result<Option<{wrpc_transport}::AsyncValue>> {{
@@ -2319,7 +2319,7 @@ impl {wrpc_transport}::Encode for {camel} {{
      }}
 }}
 
-#[{async_trait}]
+#[{async_trait}::async_trait]
 #[automatically_derived]
 impl {wrpc_transport}::Encode for &{camel} {{
      async fn encode(self, mut payload: &mut (impl {bytes}::BufMut + Send)) -> {anyhow}::Result<Option<{wrpc_transport}::AsyncValue>> {{
@@ -2333,7 +2333,7 @@ impl {wrpc_transport}::Subscribe for {camel} {{}}
 #[automatically_derived]
 impl {wrpc_transport}::Subscribe for &{camel} {{}}
 
-#[{async_trait}]
+#[{async_trait}::async_trait]
 #[automatically_derived]
 impl<'a> {wrpc_transport}::Receive<'a> for {camel} {{
      async fn receive<T>(
@@ -2394,7 +2394,7 @@ impl<'a> {wrpc_transport}::Receive<'a> for {camel} {{
         uwriteln!(
             self.src,
             r#"
-                #[{async_trait}]
+                #[{async_trait}::async_trait]
                 #[automatically_derived]
                 impl {wrpc_transport}::Encode for {name} {{
                      async fn encode(self, _payload: &mut (impl {bytes}::BufMut + Send)) -> {anyhow}::Result<Option<{wrpc_transport}::AsyncValue>> {{
@@ -2402,7 +2402,7 @@ impl<'a> {wrpc_transport}::Receive<'a> for {camel} {{
                      }}
                 }}
 
-                #[{async_trait}]
+                #[{async_trait}::async_trait]
                 #[automatically_derived]
                 impl {wrpc_transport}::Encode for &{name} {{
                      async fn encode(self, _payload: &mut (impl {bytes}::BufMut + Send)) -> {anyhow}::Result<Option<{wrpc_transport}::AsyncValue>> {{
@@ -2410,7 +2410,7 @@ impl<'a> {wrpc_transport}::Receive<'a> for {camel} {{
                      }}
                 }}
 
-                #[{async_trait}]
+                #[{async_trait}::async_trait]
                 #[automatically_derived]
                 impl<'a> {wrpc_transport}::Receive<'a> for {name} {{
                      async fn receive<T>(

@@ -1,4 +1,4 @@
-//! Bindings generation support for Rust with the Component Model.
+//! Bindings generation support for wRPC using Rust with the Component Model.
 //!
 //! This crate is a bindings generator for [WIT] and the [Component Model].
 //! Users are likely interested in the [`generate!`] macro which actually
@@ -7,8 +7,6 @@
 //!
 //! [WIT]: https://component-model.bytecodealliance.org/design/wit.html
 //! [Component Model]: https://component-model.bytecodealliance.org/
-
-#![no_std]
 
 /// Generate bindings for an input WIT document.
 ///
@@ -823,7 +821,7 @@ pub use wit_bindgen_wrpc_rust_macro::generate;
 pub mod examples;
 
 pub use anyhow;
-pub use async_trait::async_trait;
+pub use async_trait;
 pub use bitflags;
 pub use bytes;
 pub use futures;

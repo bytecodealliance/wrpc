@@ -85,8 +85,6 @@ impl Parse for Config {
                     Opt::RawStrings => opts.raw_strings = true,
                     Opt::Ownership(ownership) => opts.ownership = ownership,
                     Opt::Skip(list) => opts.skip.extend(list.iter().map(|i| i.value())),
-                    Opt::WrpcTransportPath(path) => opts.wrpc_transport_path = Some(path.value()),
-                    Opt::BitflagsPath(path) => opts.bitflags_path = Some(path.value()),
                     Opt::Stubs => {
                         opts.stubs = true;
                     }
@@ -103,6 +101,30 @@ impl Parse for Config {
                     }
                     Opt::GenerateUnusedTypes(enable) => {
                         opts.generate_unused_types = enable.value();
+                    }
+                    Opt::AnyhowPath(path) => {
+                        opts.anyhow_path = Some(path.into_token_stream().to_string())
+                    }
+                    Opt::AsyncTraitPath(path) => {
+                        opts.async_trait_path = Some(path.into_token_stream().to_string())
+                    }
+                    Opt::BitflagsPath(path) => {
+                        opts.bitflags_path = Some(path.into_token_stream().to_string())
+                    }
+                    Opt::BytesPath(path) => {
+                        opts.bytes_path = Some(path.into_token_stream().to_string())
+                    }
+                    Opt::FuturesPath(path) => {
+                        opts.futures_path = Some(path.into_token_stream().to_string())
+                    }
+                    Opt::TokioPath(path) => {
+                        opts.tokio_path = Some(path.into_token_stream().to_string())
+                    }
+                    Opt::TracingPath(path) => {
+                        opts.tracing_path = Some(path.into_token_stream().to_string())
+                    }
+                    Opt::WrpcTransportPath(path) => {
+                        opts.wrpc_transport_path = Some(path.into_token_stream().to_string())
                     }
                 }
             }
@@ -210,8 +232,6 @@ mod kw {
     syn::custom_keyword!(path);
     syn::custom_keyword!(inline);
     syn::custom_keyword!(ownership);
-    syn::custom_keyword!(wrpc_transport_path);
-    syn::custom_keyword!(bitflags_path);
     syn::custom_keyword!(exports);
     syn::custom_keyword!(stubs);
     syn::custom_keyword!(export_prefix);
@@ -219,6 +239,14 @@ mod kw {
     syn::custom_keyword!(with);
     syn::custom_keyword!(type_section_suffix);
     syn::custom_keyword!(generate_unused_types);
+    syn::custom_keyword!(anyhow_path);
+    syn::custom_keyword!(async_trait_path);
+    syn::custom_keyword!(bitflags_path);
+    syn::custom_keyword!(bytes_path);
+    syn::custom_keyword!(futures_path);
+    syn::custom_keyword!(tokio_path);
+    syn::custom_keyword!(tracing_path);
+    syn::custom_keyword!(wrpc_transport_path);
 }
 
 enum Opt {
@@ -229,8 +257,6 @@ enum Opt {
     RawStrings,
     Skip(Vec<syn::LitStr>),
     Ownership(Ownership),
-    WrpcTransportPath(syn::LitStr),
-    BitflagsPath(syn::LitStr),
     Stubs,
     ExportPrefix(syn::LitStr),
     // Parse as paths so we can take the concrete types/macro names rather than raw strings
@@ -238,6 +264,14 @@ enum Opt {
     With(HashMap<String, String>),
     TypeSectionSuffix(syn::LitStr),
     GenerateUnusedTypes(syn::LitBool),
+    AnyhowPath(syn::Path),
+    AsyncTraitPath(syn::Path),
+    BitflagsPath(syn::Path),
+    BytesPath(syn::Path),
+    FuturesPath(syn::Path),
+    TokioPath(syn::Path),
+    TracingPath(syn::Path),
+    WrpcTransportPath(syn::Path),
 }
 
 impl Parse for Opt {
@@ -306,14 +340,6 @@ impl Parse for Opt {
             syn::bracketed!(contents in input);
             let list = Punctuated::<_, Token![,]>::parse_terminated(&contents)?;
             Ok(Opt::Skip(list.iter().cloned().collect()))
-        } else if l.peek(kw::wrpc_transport_path) {
-            input.parse::<kw::wrpc_transport_path>()?;
-            input.parse::<Token![:]>()?;
-            Ok(Opt::WrpcTransportPath(input.parse()?))
-        } else if l.peek(kw::bitflags_path) {
-            input.parse::<kw::bitflags_path>()?;
-            input.parse::<Token![:]>()?;
-            Ok(Opt::BitflagsPath(input.parse()?))
         } else if l.peek(kw::stubs) {
             input.parse::<kw::stubs>()?;
             Ok(Opt::Stubs)
@@ -344,6 +370,38 @@ impl Parse for Opt {
             input.parse::<kw::generate_unused_types>()?;
             input.parse::<Token![:]>()?;
             Ok(Opt::GenerateUnusedTypes(input.parse()?))
+        } else if l.peek(kw::anyhow_path) {
+            input.parse::<kw::anyhow_path>()?;
+            input.parse::<Token![:]>()?;
+            Ok(Opt::AnyhowPath(input.parse()?))
+        } else if l.peek(kw::async_trait_path) {
+            input.parse::<kw::async_trait_path>()?;
+            input.parse::<Token![:]>()?;
+            Ok(Opt::AsyncTraitPath(input.parse()?))
+        } else if l.peek(kw::bitflags_path) {
+            input.parse::<kw::bitflags_path>()?;
+            input.parse::<Token![:]>()?;
+            Ok(Opt::BitflagsPath(input.parse()?))
+        } else if l.peek(kw::bytes_path) {
+            input.parse::<kw::bytes_path>()?;
+            input.parse::<Token![:]>()?;
+            Ok(Opt::BytesPath(input.parse()?))
+        } else if l.peek(kw::futures_path) {
+            input.parse::<kw::futures_path>()?;
+            input.parse::<Token![:]>()?;
+            Ok(Opt::FuturesPath(input.parse()?))
+        } else if l.peek(kw::tokio_path) {
+            input.parse::<kw::tokio_path>()?;
+            input.parse::<Token![:]>()?;
+            Ok(Opt::TokioPath(input.parse()?))
+        } else if l.peek(kw::tracing_path) {
+            input.parse::<kw::tracing_path>()?;
+            input.parse::<Token![:]>()?;
+            Ok(Opt::TracingPath(input.parse()?))
+        } else if l.peek(kw::wrpc_transport_path) {
+            input.parse::<kw::wrpc_transport_path>()?;
+            input.parse::<Token![:]>()?;
+            Ok(Opt::WrpcTransportPath(input.parse()?))
         } else {
             Err(l.error())
         }

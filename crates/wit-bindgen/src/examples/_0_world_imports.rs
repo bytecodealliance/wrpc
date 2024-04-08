@@ -14,4 +14,9 @@ crate::generate!({
             }
         }
     "#,
+
+    // provided to satisfy imports, since `wit_bindgen_wrpc` crate is not imported here.
+    // not required for external use.
+    anyhow_path: anyhow,
+    wrpc_transport_path: wrpc_transport,
 });
