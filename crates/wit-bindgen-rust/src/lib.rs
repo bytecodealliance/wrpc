@@ -425,9 +425,7 @@ fn name_package_module(resolve: &Resolve, id: PackageId) -> String {
     // a simpler path is chosen to generate "foo0_1_0" and "foo0_2_0".
     let version = version
         .to_string()
-        .replace('.', "_")
-        .replace('-', "_")
-        .replace('+', "_")
+        .replace(['.', '-', '+'], "_")
         .to_snake_case();
     format!("{base}{version}")
 }
@@ -517,7 +515,7 @@ impl WorldGenerator for RustWasm {
             ref name, package, ..
         } = resolve.worlds[world];
         let instance = if let Some(package) = package {
-            resolve.id_of_name(package, &name)
+            resolve.id_of_name(package, name)
         } else {
             name.to_string()
         };

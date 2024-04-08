@@ -226,7 +226,7 @@ mod alternative_bitflags_path {
                 export get-flag: func() -> bar;
             }
         ",
-        bitflags_path: "my_bitflags",
+        bitflags_path: my_bitflags,
     });
 
     pub(crate) use wit_bindgen_wrpc::bitflags as my_bitflags;
@@ -323,7 +323,7 @@ mod package_with_versions {
 
     impl<Ctx: Send> exports::my::inline::foo::HandlerBar<Ctx> for MyResource {
         async fn new(cx: Ctx) -> anyhow::Result<Self> {
-            loop {}
+            anyhow::bail!("not supported yet")
         }
     }
 
@@ -609,13 +609,13 @@ mod resource_example {
         async fn log(&self, cx: Ctx, level: Level, msg: String) -> anyhow::Result<()> {
             if level as u32 <= *self.level.read().unwrap() as u32 {
                 self.contents.write().unwrap().push_str(&msg);
-                self.contents.write().unwrap().push_str("\n");
+                self.contents.write().unwrap().push('\n');
             }
             Ok(())
         }
 
         async fn level(&self, cx: Ctx) -> anyhow::Result<Level> {
-            Ok(self.level.read().unwrap().clone())
+            Ok(*self.level.read().unwrap())
         }
 
         async fn set_level(&self, cx: Ctx, level: Level) -> anyhow::Result<()> {

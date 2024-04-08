@@ -362,7 +362,7 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
             if !matches!(kind, FunctionKind::Freestanding) {
                 continue;
             }
-            uwrite!(self.src, "{},", to_rust_ident(&name));
+            uwrite!(self.src, "{},", to_rust_ident(name));
         }
         uwrite!(
             self.src,
@@ -391,7 +391,7 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
                     ref name, package, ..
                 } = self.resolve.worlds[world];
                 if let Some(package) = package {
-                    self.resolve.id_of_name(package, &name)
+                    self.resolve.id_of_name(package, name)
                 } else {
                     name.to_string()
                 }
@@ -411,7 +411,7 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
             if !matches!(kind, FunctionKind::Freestanding) {
                 continue;
             }
-            let name = to_rust_ident(&name);
+            let name = to_rust_ident(name);
             uwrite!(self.src, "let mut {name} = ::core::pin::pin!({name});\n",);
         }
         self.push_str("let mut shutdown = ::core::pin::pin!(shutdown);\n");
@@ -429,7 +429,7 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
             uwriteln!(
                 self.src,
                 "invocation = {}.next() => {{",
-                to_rust_ident(&name)
+                to_rust_ident(name)
             );
             self.push_str("match invocation {\n");
             self.push_str("Some(Ok(invocation)) => {\n");
@@ -537,7 +537,7 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
                 to_rust_ident(self.resolve.interfaces[*id].name.as_ref().unwrap())
             }
         };
-        let module_path = crate::compute_module_path(name, &self.resolve, !self.in_import);
+        let module_path = crate::compute_module_path(name, self.resolve, !self.in_import);
         (snake, module_path)
     }
 
@@ -599,7 +599,7 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
         self.src.push_str(r#"", "#);
         match &params[..] {
             [] => self.src.push_str("()"),
-            [p] => self.src.push_str(&p),
+            [p] => self.src.push_str(p),
             _ => {
                 self.src.push_str("(");
                 for p in params {
@@ -795,7 +795,8 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
                 self.push_str(",");
             }
             self.push_str("wrpc__: &impl ");
-            self.push_str(&self.gen.wrpc_transport_path().to_string());
+            let wrpc_transport = self.gen.wrpc_transport_path().to_string();
+            self.push_str(&wrpc_transport);
             self.push_str("::Client,");
         } else {
             if let Some(arg) = &sig.self_arg {
@@ -1264,7 +1265,7 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
         }
     }
 
-    fn print_noop_subscribe<'a>(&mut self, name: &str) {
+    fn print_noop_subscribe(&mut self, name: &str) {
         uwrite!(
             self.src,
             "impl {wrpc_transport}::Subscribe for {name} {{}}",
@@ -1300,7 +1301,7 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
         self.push_str("#[automatically_derived]\n");
         self.push_str("impl");
         uwrite!(self.src, " {wrpc_transport}::Encode for ");
-        self.push_str(&name);
+        self.push_str(name);
         self.push_str(" {\n");
         uwriteln!(self.src, "async fn encode(self, mut payload: &mut (impl {bytes}::BufMut + Send)) -> {anyhow}::Result<Option<{wrpc_transport}::AsyncValue>> {{");
         if !ty.fields.is_empty() {
@@ -1343,7 +1344,7 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
         let wrpc_transport = self.gen.wrpc_transport_path().to_string();
         self.push_str("impl");
         uwrite!(self.src, " {wrpc_transport}::Subscribe for ");
-        self.push_str(&name);
+        self.push_str(name);
         self.push_str(" {\n");
         self.push_str("#[automatically_derived]\n");
         uwriteln!(self.src, "async fn subscribe<T: {wrpc_transport}::Subscriber + Send + Sync>(subscriber: &T, subject: T::Subject) -> Result<Option<{wrpc_transport}::AsyncSubscription<T::Stream>>, T::SubscribeError> {{");
@@ -1352,7 +1353,7 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
             for (i, Field { name, ty, .. }) in ty.fields.iter().enumerate() {
                 let name_rust = to_rust_ident(name);
                 uwrite!(self.src, r#"let f_{name_rust} = <"#,);
-                self.print_ty(&ty, TypeMode::owned());
+                self.print_ty(ty, TypeMode::owned());
                 uwrite!(
                     self.src,
                     r#">::subscribe(subscriber, subject.child(Some({i}))).await?;"#,
@@ -1388,7 +1389,7 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
         self.push_str("#[automatically_derived]\n");
         self.push_str("impl<'wrpc_receive_>");
         uwrite!(self.src, " {wrpc_transport}::Receive<'wrpc_receive_> for ");
-        self.push_str(&name);
+        self.push_str(name);
         self.push_str(" {\n");
         self.push_str("#[automatically_derived]\n");
         uwriteln!(
@@ -1441,7 +1442,7 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
         self.push_str("#[automatically_derived]\n");
         self.push_str("impl");
         uwrite!(self.src, " {wrpc_transport}::Encode for ");
-        self.push_str(&name);
+        self.push_str(name);
         self.push_str(" {\n");
         uwriteln!(self.src, "async fn encode(self, mut payload: &mut (impl {bytes}::BufMut + Send)) -> {anyhow}::Result<Option<{wrpc_transport}::AsyncValue>> {{");
         self.push_str("match self {\n");
@@ -1477,7 +1478,7 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
         let wrpc_transport = self.gen.wrpc_transport_path().to_string();
         self.push_str("impl");
         uwrite!(self.src, " {wrpc_transport}::Subscribe for ");
-        self.push_str(&name);
+        self.push_str(name);
         self.push_str(" {\n");
         self.push_str("#[automatically_derived]\n");
         uwriteln!(self.src, "async fn subscribe<T: {wrpc_transport}::Subscriber + Send + Sync>(subscriber: &T, subject: T::Subject) -> Result<Option<{wrpc_transport}::AsyncSubscription<T::Stream>>, T::SubscribeError> {{");
@@ -1485,7 +1486,7 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
         for (i, (_, _, payload)) in cases.clone().into_iter().enumerate() {
             if let Some(ty) = payload {
                 uwrite!(self.src, r#"let c_{i} = <"#,);
-                self.print_ty(&ty, TypeMode::owned());
+                self.print_ty(ty, TypeMode::owned());
                 uwrite!(
                     self.src,
                     r#">::subscribe(subscriber, subject.child(Some({i}))).await?;"#,
@@ -1530,7 +1531,7 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
         self.push_str("#[automatically_derived]\n");
         self.push_str("impl<'wrpc_receive_>");
         uwrite!(self.src, " {wrpc_transport}::Receive<'wrpc_receive_> for ");
-        self.push_str(&name);
+        self.push_str(name);
         uwriteln!(
             self.src,
             r#" {{
@@ -1583,7 +1584,7 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
         self.push_str("}\n");
     }
 
-    fn print_enum_encode<'a>(&mut self, name: &str, cases: &[EnumCase]) {
+    fn print_enum_encode(&mut self, name: &str, cases: &[EnumCase]) {
         let anyhow = self.gen.anyhow_path().to_string();
         let async_trait = self.gen.async_trait_path().to_string();
         let bytes = self.gen.bytes_path().to_string();
@@ -1592,12 +1593,12 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
         self.push_str("#[automatically_derived]\n");
         self.push_str("impl");
         uwrite!(self.src, " {wrpc_transport}::Encode for ");
-        self.push_str(&name);
+        self.push_str(name);
         self.push_str(" {\n");
         self.push_str("#[automatically_derived]\n");
         uwriteln!(self.src, "async fn encode(self, mut payload: &mut (impl {bytes}::BufMut + Send)) -> {anyhow}::Result<Option<{wrpc_transport}::AsyncValue>> {{");
         self.push_str("match self {\n");
-        for (i, case) in cases.into_iter().enumerate() {
+        for (i, case) in cases.iter().enumerate() {
             let case = case.name.to_upper_camel_case();
             self.push_str(name.trim_start_matches('&'));
             self.push_str("::");
@@ -1615,7 +1616,7 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
         self.push_str("}\n");
     }
 
-    fn print_enum_receive<'a>(&mut self, name: &str, cases: &[EnumCase]) {
+    fn print_enum_receive(&mut self, name: &str, cases: &[EnumCase]) {
         let anyhow = self.gen.anyhow_path().to_string();
         let async_trait = self.gen.async_trait_path().to_string();
         let bytes = self.gen.bytes_path().to_string();
@@ -1625,7 +1626,7 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
         self.push_str("#[automatically_derived]\n");
         self.push_str("impl<'wrpc_receive_>");
         uwrite!(self.src, " {wrpc_transport}::Receive<'wrpc_receive_> for ");
-        self.push_str(&name);
+        self.push_str(name);
         uwriteln!(
             self.src,
             r#" {{
@@ -1647,7 +1648,7 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
                     .context("failed to receive discriminant")?;
                 match disc {{"#,
         );
-        for (i, case) in cases.into_iter().enumerate() {
+        for (i, case) in cases.iter().enumerate() {
             let case = case.name.to_upper_camel_case();
             uwriteln!(self.src, "{i} => Ok((Self::{case}, payload)),");
         }
@@ -1727,20 +1728,20 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
             self.push_str(&format!("pub struct {}", name));
             self.push_str(" {\n");
             for Field { name, ty, docs } in record.fields.iter() {
-                self.rustdoc(&docs);
+                self.rustdoc(docs);
                 self.push_str("pub ");
-                self.push_str(&to_rust_ident(&name));
+                self.push_str(&to_rust_ident(name));
                 self.push_str(": ");
-                self.print_ty(&ty, TypeMode::owned());
+                self.print_ty(ty, TypeMode::owned());
                 self.push_str(",\n");
             }
             self.push_str("}\n");
 
-            self.print_struct_encode(&name, &record);
-            self.print_struct_encode(&format!("&{name}"), &record);
+            self.print_struct_encode(&name, record);
+            self.print_struct_encode(&format!("&{name}"), record);
 
-            self.print_struct_subscribe(&name, &record);
-            self.print_struct_receive(&name, &record);
+            self.print_struct_subscribe(&name, record);
+            self.print_struct_receive(&name, record);
 
             self.push_str("impl");
             self.push_str(" ::core::fmt::Debug for ");
@@ -2124,7 +2125,7 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
         if *remapped {
             let mut path_to_root = self.path_to_root();
             path_to_root.push_str(path);
-            return Some(path_to_root);
+            Some(path_to_root)
         } else {
             let mut full_path = String::new();
             if let Identifier::Interface(cur, name) = self.identifier {
@@ -2143,7 +2144,7 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
                     }
                 }
             }
-            full_path.push_str(&path);
+            full_path.push_str(path);
             Some(full_path)
         }
     }
