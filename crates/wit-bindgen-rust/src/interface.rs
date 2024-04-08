@@ -1314,6 +1314,7 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
         uwrite!(self.src, " {wrpc_transport}::Encode for ");
         self.push_str(name);
         self.push_str(" {\n");
+        uwriteln!(self.src, "#[allow(unused_mut)]");
         uwriteln!(self.src, "async fn encode(self, mut payload: &mut (impl {bytes}::BufMut + Send)) -> {anyhow}::Result<Option<{wrpc_transport}::AsyncValue>> {{");
         if !ty.fields.is_empty() {
             uwriteln!(self.src, "use {anyhow}::Context as _;");
@@ -1412,16 +1413,18 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
         self.push_str("impl<'wrpc_receive_>");
         uwrite!(self.src, " {wrpc_transport}::Receive<'wrpc_receive_> for ");
         self.push_str(name);
-        self.push_str(" {\n");
+        self.push_str(" {");
         uwriteln!(
             self.src,
-            r#"async fn receive<T>(
-            mut payload: impl {bytes}::Buf + Send + 'wrpc_receive_,
-            mut rx: &mut (impl {futures}::Stream<Item={anyhow}::Result<{bytes}::Bytes>> + Send + Sync + Unpin),
-            sub: Option<{wrpc_transport}::AsyncSubscription<T>>,
-        ) -> {anyhow}::Result<(Self, Box<dyn {bytes}::buf::Buf + Send + 'wrpc_receive_>)>
-            where
-                T: {futures}::Stream<Item={anyhow}::Result<{bytes}::Bytes>> + Send + Sync + 'static {{"#
+            r#"
+    #[allow(unused_mut)]
+    async fn receive<T>(
+        payload: impl {bytes}::Buf + Send + 'wrpc_receive_,
+        mut rx: &mut (impl {futures}::Stream<Item={anyhow}::Result<{bytes}::Bytes>> + Send + Sync + Unpin),
+        sub: Option<{wrpc_transport}::AsyncSubscription<T>>,
+    ) -> {anyhow}::Result<(Self, Box<dyn {bytes}::buf::Buf + Send + 'wrpc_receive_>)>
+        where
+            T: {futures}::Stream<Item={anyhow}::Result<{bytes}::Bytes>> + Send + Sync + 'static {{"#
         );
         if !ty.fields.is_empty() {
             uwriteln!(self.src, "use {anyhow}::Context as _;");
@@ -1469,6 +1472,7 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
         uwrite!(self.src, " {wrpc_transport}::Encode for ");
         self.push_str(name);
         self.push_str(" {\n");
+        uwriteln!(self.src, "#[allow(unused_mut)]");
         uwriteln!(self.src, "async fn encode(self, mut payload: &mut (impl {bytes}::BufMut + Send)) -> {anyhow}::Result<Option<{wrpc_transport}::AsyncValue>> {{");
         uwriteln!(self.src, r#"let span = {tracing}::trace_span!("encode");"#);
         self.push_str("let _enter = span.enter();\n");
@@ -1573,7 +1577,7 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
             self.src,
             r#" {{
         async fn receive<T>(
-            mut payload: impl {bytes}::Buf + Send + 'wrpc_receive_,
+            payload: impl {bytes}::Buf + Send + 'wrpc_receive_,
             mut rx: &mut (impl {futures}::Stream<Item={anyhow}::Result<{bytes}::Bytes>> + Send + Sync + Unpin),
             sub: Option<{wrpc_transport}::AsyncSubscription<T>>,
         ) -> {anyhow}::Result<(Self, Box<dyn {bytes}::buf::Buf + Send + 'wrpc_receive_>)>
@@ -1597,7 +1601,7 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
                 uwriteln!(
                     self.src,
                     r#"{{
-                        let mut sub = sub
+                        let sub = sub
                             .map(|sub| {{
                                 let mut sub = sub.try_unwrap_variant()?;
                                 {anyhow}::Ok(sub.get_mut({i}).and_then(Option::take))
@@ -1636,6 +1640,7 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
         uwrite!(self.src, " {wrpc_transport}::Encode for ");
         self.push_str(name);
         self.push_str(" {\n");
+        uwriteln!(self.src, "#[allow(unused_mut)]");
         uwriteln!(self.src, "async fn encode(self, mut payload: &mut (impl {bytes}::BufMut + Send)) -> {anyhow}::Result<Option<{wrpc_transport}::AsyncValue>> {{");
         uwriteln!(self.src, r#"let span = {tracing}::trace_span!("encode");"#);
         self.push_str("let _enter = span.enter();\n");
@@ -1675,7 +1680,7 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
             self.src,
             r#" {{
         async fn receive<T>(
-            mut payload: impl {bytes}::Buf + Send + 'wrpc_receive_,
+            payload: impl {bytes}::Buf + Send + 'wrpc_receive_,
             mut rx: &mut (impl {futures}::Stream<Item={anyhow}::Result<{bytes}::Bytes>> + Send + Sync + Unpin),
             sub: Option<{wrpc_transport}::AsyncSubscription<T>>,
         ) -> {anyhow}::Result<(Self, Box<dyn {bytes}::buf::Buf + Send + 'wrpc_receive_>)>
@@ -2330,7 +2335,7 @@ pub struct {camel}Borrow;
 #[{async_trait}::async_trait]
 #[automatically_derived]
 impl {wrpc_transport}::Encode for {camel}Borrow {{
-     async fn encode(self, mut payload: &mut (impl {bytes}::BufMut + Send)) -> {anyhow}::Result<Option<{wrpc_transport}::AsyncValue>> {{
+     async fn encode(self, payload: &mut (impl {bytes}::BufMut + Send)) -> {anyhow}::Result<Option<{wrpc_transport}::AsyncValue>> {{
         let span = {tracing}::trace_span!("encode");
         let _enter = span.enter();
         {anyhow}::bail!("exported resources not supported yet")
@@ -2340,7 +2345,7 @@ impl {wrpc_transport}::Encode for {camel}Borrow {{
 #[{async_trait}::async_trait]
 #[automatically_derived]
 impl {wrpc_transport}::Encode for &{camel}Borrow {{
-     async fn encode(self, mut payload: &mut (impl {bytes}::BufMut + Send)) -> {anyhow}::Result<Option<{wrpc_transport}::AsyncValue>> {{
+     async fn encode(self, payload: &mut (impl {bytes}::BufMut + Send)) -> {anyhow}::Result<Option<{wrpc_transport}::AsyncValue>> {{
         let span = {tracing}::trace_span!("encode");
         let _enter = span.enter();
         {anyhow}::bail!("exported resources not supported yet")
@@ -2357,8 +2362,8 @@ impl {wrpc_transport}::Subscribe for &{camel}Borrow {{}}
 #[automatically_derived]
 impl<'a> {wrpc_transport}::Receive<'a> for {camel}Borrow {{
      async fn receive<T>(
-        mut payload: impl {bytes}::Buf + Send + 'a,
-        mut rx: &mut (impl {futures}::Stream<Item={anyhow}::Result<{bytes}::Bytes>> + Send + Sync + Unpin),
+        payload: impl {bytes}::Buf + Send + 'a,
+        rx: &mut (impl {futures}::Stream<Item={anyhow}::Result<{bytes}::Bytes>> + Send + Sync + Unpin),
         sub: Option<{wrpc_transport}::AsyncSubscription<T>>,
      ) -> {anyhow}::Result<(Self, Box<dyn {bytes}::buf::Buf + Send + 'a>)>
      where
@@ -2373,7 +2378,7 @@ impl<'a> {wrpc_transport}::Receive<'a> for {camel}Borrow {{
 #[{async_trait}::async_trait]
 #[automatically_derived]
 impl {wrpc_transport}::Encode for {camel} {{
-     async fn encode(self, mut payload: &mut (impl {bytes}::BufMut + Send)) -> {anyhow}::Result<Option<{wrpc_transport}::AsyncValue>> {{
+     async fn encode(self, payload: &mut (impl {bytes}::BufMut + Send)) -> {anyhow}::Result<Option<{wrpc_transport}::AsyncValue>> {{
         let span = {tracing}::trace_span!("encode");
         let _enter = span.enter();
         {anyhow}::bail!("exported resources not supported yet")
@@ -2383,7 +2388,7 @@ impl {wrpc_transport}::Encode for {camel} {{
 #[{async_trait}::async_trait]
 #[automatically_derived]
 impl {wrpc_transport}::Encode for &{camel} {{
-     async fn encode(self, mut payload: &mut (impl {bytes}::BufMut + Send)) -> {anyhow}::Result<Option<{wrpc_transport}::AsyncValue>> {{
+     async fn encode(self, payload: &mut (impl {bytes}::BufMut + Send)) -> {anyhow}::Result<Option<{wrpc_transport}::AsyncValue>> {{
         let span = {tracing}::trace_span!("encode");
         let _enter = span.enter();
         {anyhow}::bail!("exported resources not supported yet")
@@ -2400,8 +2405,8 @@ impl {wrpc_transport}::Subscribe for &{camel} {{}}
 #[automatically_derived]
 impl<'a> {wrpc_transport}::Receive<'a> for {camel} {{
      async fn receive<T>(
-        mut payload: impl {bytes}::Buf + Send + 'a,
-        mut rx: &mut (impl {futures}::Stream<Item={anyhow}::Result<{bytes}::Bytes>> + Send + Sync + Unpin),
+        payload: impl {bytes}::Buf + Send + 'a,
+        rx: &mut (impl {futures}::Stream<Item={anyhow}::Result<{bytes}::Bytes>> + Send + Sync + Unpin),
         sub: Option<{wrpc_transport}::AsyncSubscription<T>>,
      ) -> {anyhow}::Result<(Self, Box<dyn {bytes}::buf::Buf + Send + 'a>)>
      where
@@ -2483,8 +2488,8 @@ impl<'a> {wrpc_transport}::Receive<'a> for {camel} {{
                 #[automatically_derived]
                 impl<'a> {wrpc_transport}::Receive<'a> for {name} {{
                      async fn receive<T>(
-                        mut payload: impl {bytes}::Buf + Send + 'a,
-                        mut rx: &mut (impl {futures}::Stream<Item={anyhow}::Result<{bytes}::Bytes>> + Send + Sync + Unpin),
+                        payload: impl {bytes}::Buf + Send + 'a,
+                        rx: &mut (impl {futures}::Stream<Item={anyhow}::Result<{bytes}::Bytes>> + Send + Sync + Unpin),
                         sub: Option<{wrpc_transport}::AsyncSubscription<T>>,
                      ) -> {anyhow}::Result<(Self, Box<dyn {bytes}::buf::Buf + Send + 'a>)>
                      where
