@@ -1,6 +1,6 @@
 [package]
 name = "wit-bindgen-wrpc"
-version = "0.3.6"
+version = "0.3.7"
 description = """
 Rust bindings generator for wRPC.
 """
@@ -21,6 +21,6 @@ bitflags = { workspace = true }
 bytes = { workspace = true }
 futures = { workspace = true }
 tokio = { workspace = true }
-tracing = { workspace = true, features = ["attributes"] }
+tracing = { workspace = true }
 wit-bindgen-wrpc-rust-macro = { workspace = true }
 wrpc-transport = { workspace = true }
