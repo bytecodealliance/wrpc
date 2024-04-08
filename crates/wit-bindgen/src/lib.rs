@@ -10,7 +10,7 @@
 
 /// Generate bindings for an input WIT document.
 ///
-/// This macro is the bread-and-butter of the `wit-bindgen` crate. The macro
+/// This macro is the bread-and-butter of the `wit-bindgen-wrpc` crate. The macro
 /// here will parse [WIT] as input and generate Rust bindings to work with the
 /// `world` that's specified in the [WIT]. For a primer on WIT see [this
 /// documentation][WIT] and for a primer on worlds see [here][worlds].
@@ -93,7 +93,7 @@
 ///   to the original comments in the WIT format itself.
 /// * If your IDE supports `rust-analyzer` code completion should be available
 ///   to explore and see types.
-/// * The `wit-bindgen` CLI tool, packaged as `wit-bindgen-cli` on crates.io,
+/// * The `wit-bindgen-wrpc` CLI tool, packaged as `wit-bindgen-wrpc-cli` on crates.io,
 ///   can be executed the same as the `generate!` macro and the output can be
 ///   read.
 /// * If you're seeing an error, `WIT_BINDGEN_DEBUG=1` can help debug what's
@@ -104,7 +104,7 @@
 /// into issues or have idea of how to improve the situation please [file an
 /// issue].
 ///
-/// [file an issue]: https://github.com/bytecodealliance/wit-bindgen/issues/new
+/// [file an issue]: https://github.com/rvolosatovs/wit-bindgen-wrpc/issues/new
 ///
 /// ## Namespacing
 ///
@@ -629,7 +629,7 @@
 ///
 /// ## Debugging output to `generate!`
 ///
-/// While `wit-bindgen` is tested to the best of our ability there are
+/// While `wit-bindgen-wrpc` is tested to the best of our ability there are
 /// inevitably bugs and issues that arise. These can range from bad error
 /// messages to misconfigured invocations to bugs in the macro itself. To assist
 /// with debugging these situations the macro recognizes an environment
@@ -738,17 +738,6 @@
 ///     // more allocations than necessary.
 ///     ownership: Owning,
 ///
-///     // Specifies an alternative name for the `serve` function generated for
-///     // any exports this world has.
-///     //
-///     // Defaults to "export"
-///     export_macro_name: "export",
-///
-///     // Indicates whether the `serve` function is `pub` or just `pub(crate)`.
-///     //
-///     // This defaults to `false`.
-///     pub_export_macro: false,
-///
 ///     // The second mode of ownership is "Borrowing". This mode then
 ///     // additionally has a boolean flag indicating whether duplicate types
 ///     // should be generated if necessary.
@@ -765,32 +754,14 @@
 ///     //
 ///     // It's generally recommended to not turn this on unless performance
 ///     // requires it. Even if so, please feel free to open an issue on the
-///     // `wit-bindgen` repository to help improve the default "Owning" use
+///     // `wit-bindgen-wrpc` repository to help improve the default "Owning" use
 ///     // case above if possible.
 ///     ownership: Borrowing { duplicate_if_necessary: false },
-///
-///     // The generated `serve` function, if any, will by default look for
-///     // generated types adjacent to where the `serve` function is invoked
-///     // through the `self` module. This option can be used to change the
-///     // defaults to look somewhere else instead.
-///     default_bindings_module: "path::to::bindings",
-///
-///     // This will suffix the custom section containing component type
-///     // information with the specified string. This is not required by
-///     // default but if the same world is generated in two different locations
-///     // in the crate then one bindings generation location will need this
-///     // suffix to avoid having the custom sections corrupt each other.
-///     type_section_suffix: "suffix",
-///
-///     // Configures the path to the `wit-bindgen` crate itself. By default
-///     // this is `wit_bindgen` assuming that your crate depends on the
-///     // `wit-bindgen` crate itself.
-///     runtime_path: "path::to::wit_bindgen",
 ///
 ///     // Configure where the `bitflags` crate is located. By default this
 ///     // is `wit_bindgen_wrpc::bitflags` which already reexports `bitflags` for
 ///     // you.
-///     bitflags_path: "path::to::bitflags",
+///     bitflags_path: path::to::bitflags,
 ///
 ///     // Indicates that instead of `&str` and `String` the `&[u8]` and
 ///     // `Vec<u8>` types should be used. Only intended for cases where
@@ -802,10 +773,6 @@
 ///     // for generated types. This is a niche option that is only here to
 ///     // support the standard library itself depending on this crate one day.
 ///     std_feature,
-///
-///     // Disable a workaround to force wasm constructors to be run only once
-///     // when exported functions are called.
-///     disable_run_ctors_once_workaround: false,
 ///
 ///     // Whether to generate unused `record`, `enum`, `variant` types.
 ///     // By default, they will not be generated unless they are used as input

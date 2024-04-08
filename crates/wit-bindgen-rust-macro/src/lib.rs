@@ -96,9 +96,6 @@ impl Parse for Config {
                             .collect()
                     }
                     Opt::With(with) => opts.with.extend(with),
-                    Opt::TypeSectionSuffix(suffix) => {
-                        opts.type_section_suffix = Some(suffix.value());
-                    }
                     Opt::GenerateUnusedTypes(enable) => {
                         opts.generate_unused_types = enable.value();
                     }
@@ -237,7 +234,6 @@ mod kw {
     syn::custom_keyword!(export_prefix);
     syn::custom_keyword!(additional_derives);
     syn::custom_keyword!(with);
-    syn::custom_keyword!(type_section_suffix);
     syn::custom_keyword!(generate_unused_types);
     syn::custom_keyword!(anyhow_path);
     syn::custom_keyword!(async_trait_path);
@@ -262,7 +258,6 @@ enum Opt {
     // Parse as paths so we can take the concrete types/macro names rather than raw strings
     AdditionalDerives(Vec<syn::Path>),
     With(HashMap<String, String>),
-    TypeSectionSuffix(syn::LitStr),
     GenerateUnusedTypes(syn::LitBool),
     AnyhowPath(syn::Path),
     AsyncTraitPath(syn::Path),
@@ -362,10 +357,6 @@ impl Parse for Opt {
             let fields: Punctuated<_, Token![,]> =
                 contents.parse_terminated(with_field_parse, Token![,])?;
             Ok(Opt::With(HashMap::from_iter(fields)))
-        } else if l.peek(kw::type_section_suffix) {
-            input.parse::<kw::type_section_suffix>()?;
-            input.parse::<Token![:]>()?;
-            Ok(Opt::TypeSectionSuffix(input.parse()?))
         } else if l.peek(kw::generate_unused_types) {
             input.parse::<kw::generate_unused_types>()?;
             input.parse::<Token![:]>()?;

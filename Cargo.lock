@@ -2824,7 +2824,7 @@ dependencies = [
 
 [[package]]
 name = "wit-bindgen-wrpc"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2854,7 +2854,7 @@ dependencies = [
 
 [[package]]
 name = "wit-bindgen-wrpc-rust-macro"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "anyhow",
  "proc-macro2",
