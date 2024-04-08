@@ -21,8 +21,8 @@ wRPC bindings for a [WIT] [world]. For more information about this crate see the
 [online documentation] which includes some examples and longer form reference
 documentation as well.
 
-This crate is developed as a portion of the [`wit-bindgen` repository] which
-also contains a CLI and generators for other languages.
+This crate is developed as a portion of the [`wRPC` repository] which
+also contains a CLI and the RPC framework itself
 
 [`generate!`]: https://docs.rs/wit-bindgen-wrpc/latest/wit_bindgen_wrpc/macro.generate.html
 [WIT]: https://component-model.bytecodealliance.org/design/wit.html
