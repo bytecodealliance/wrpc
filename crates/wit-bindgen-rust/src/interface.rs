@@ -287,10 +287,11 @@ impl <Ctx, T, Tx> Server<Ctx, Tx> for T
             if !matches!(kind, FunctionKind::Freestanding) {
                 continue;
             }
+            let method_name = format!("serve_{name}", name = name.to_snake_case());
             uwrite!(
                 self.src,
                 r#"
-fn serve_{name}(
+fn {method_name}(
     &self,
     {wrpc_transport}::AcceptedInvocation{{
         context,
@@ -301,7 +302,6 @@ fn serve_{name}(
     }}: {wrpc_transport}::AcceptedInvocation<
         Ctx,
         ("#,
-                name = name.to_snake_case(),
                 wrpc_transport = self.gen.wrpc_transport_path()
             );
             for (_, ty) in params {
@@ -312,11 +312,15 @@ fn serve_{name}(
                 self.src,
                 r#"),
         Tx>) {{
+            use {tracing}::Instrument as _;
+            let span = {tracing}::trace_span!("{method_name}");
+            let _enter = span.enter();
             let handler = self.clone();
             {tokio}::spawn(async move {{
                 match handler.{name}(context, "#,
                 name = to_rust_ident(name),
                 tokio = self.gen.tokio_path(),
+                tracing = self.gen.tracing_path(),
             );
             for i in 0..params.len() {
                 self.src.push_str("params.");
@@ -337,7 +341,7 @@ fn serve_{name}(
                         }}
                     }}
                 }}
-            }});"#,
+            }}.instrument({tracing}::trace_span!("{method_name}")));"#,
                 tracing = self.gen.tracing_path(),
             );
             self.push_str("}\n");
@@ -353,9 +357,13 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
 ) -> {anyhow}::Result<U> {{
     use {anyhow}::Context as _;
     use {futures}::StreamExt as _;
+    use {tracing}::Instrument as _;
+    let span = {tracing}::trace_span!("serve_interface");
+    let _enter = span.enter();
     let ("#,
             anyhow = self.gen.anyhow_path(),
             futures = self.gen.futures_path(),
+            tracing = self.gen.tracing_path(),
             wrpc_transport = self.gen.wrpc_transport_path()
         );
         for Function { kind, name, .. } in &funcs_to_export {
@@ -403,7 +411,8 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
             }
             uwrite!(
                 self.src,
-                r#"async {{ wrpc.serve_static("{instance}", "{name}").await.context("failed to serve `{instance}.{name}`") }},"#
+                r#"async {{ wrpc.serve_static("{instance}", "{name}").await.context("failed to serve `{instance}.{name}`") }}.instrument({tracing}::trace_span!("serve_interface")),"#,
+                tracing = self.gen.tracing_path(),
             );
         }
         self.push_str(")?;\n");
@@ -1296,7 +1305,9 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
         let anyhow = self.gen.anyhow_path().to_string();
         let async_trait = self.gen.async_trait_path().to_string();
         let bytes = self.gen.bytes_path().to_string();
+        let tracing = self.gen.tracing_path().to_string();
         let wrpc_transport = self.gen.wrpc_transport_path().to_string();
+
         uwriteln!(self.src, "#[{async_trait}::async_trait]");
         self.push_str("#[automatically_derived]\n");
         self.push_str("impl");
@@ -1306,6 +1317,8 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
         uwriteln!(self.src, "async fn encode(self, mut payload: &mut (impl {bytes}::BufMut + Send)) -> {anyhow}::Result<Option<{wrpc_transport}::AsyncValue>> {{");
         if !ty.fields.is_empty() {
             uwriteln!(self.src, "use {anyhow}::Context as _;");
+            uwriteln!(self.src, r#"let span = {tracing}::trace_span!("encode");"#);
+            self.push_str("let _enter = span.enter();\n");
             self.push_str("let ");
             self.push_str(name.trim_start_matches('&'));
             self.push_str("{\n");
@@ -1341,15 +1354,23 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
     }
 
     fn print_struct_subscribe(&mut self, name: &str, ty: &Record) {
+        let tracing = self.gen.tracing_path().to_string();
         let wrpc_transport = self.gen.wrpc_transport_path().to_string();
+
+        self.push_str("#[automatically_derived]\n");
         self.push_str("impl");
         uwrite!(self.src, " {wrpc_transport}::Subscribe for ");
         self.push_str(name);
         self.push_str(" {\n");
-        self.push_str("#[automatically_derived]\n");
         uwriteln!(self.src, "async fn subscribe<T: {wrpc_transport}::Subscriber + Send + Sync>(subscriber: &T, subject: T::Subject) -> Result<Option<{wrpc_transport}::AsyncSubscription<T::Stream>>, T::SubscribeError> {{");
         if !ty.fields.is_empty() {
+            self.push_str("#[allow(unused_imports)]\n");
             uwriteln!(self.src, "use {wrpc_transport}::Subject as _;");
+            uwriteln!(
+                self.src,
+                r#"let span = {tracing}::trace_span!("subscribe");"#
+            );
+            self.push_str("let _enter = span.enter();\n");
             for (i, Field { name, ty, .. }) in ty.fields.iter().enumerate() {
                 let name_rust = to_rust_ident(name);
                 uwrite!(self.src, r#"let f_{name_rust} = <"#,);
@@ -1383,6 +1404,7 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
         let async_trait = self.gen.async_trait_path().to_string();
         let bytes = self.gen.bytes_path().to_string();
         let futures = self.gen.futures_path().to_string();
+        let tracing = self.gen.tracing_path().to_string();
         let wrpc_transport = self.gen.wrpc_transport_path().to_string();
 
         uwriteln!(self.src, "#[{async_trait}::async_trait]");
@@ -1391,7 +1413,6 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
         uwrite!(self.src, " {wrpc_transport}::Receive<'wrpc_receive_> for ");
         self.push_str(name);
         self.push_str(" {\n");
-        self.push_str("#[automatically_derived]\n");
         uwriteln!(
             self.src,
             r#"async fn receive<T>(
@@ -1404,6 +1425,8 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
         );
         if !ty.fields.is_empty() {
             uwriteln!(self.src, "use {anyhow}::Context as _;");
+            uwriteln!(self.src, r#"let span = {tracing}::trace_span!("receive");"#);
+            self.push_str("let _enter = span.enter();\n");
             uwriteln!(self.src, "let mut sub = sub.map({wrpc_transport}::AsyncSubscription::try_unwrap_record).transpose()?;");
             for (i, Field { name, .. }) in ty.fields.iter().enumerate() {
                 let name_rust = to_rust_ident(name);
@@ -1437,7 +1460,9 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
         let anyhow = self.gen.anyhow_path().to_string();
         let async_trait = self.gen.async_trait_path().to_string();
         let bytes = self.gen.bytes_path().to_string();
+        let tracing = self.gen.tracing_path().to_string();
         let wrpc_transport = self.gen.wrpc_transport_path().to_string();
+
         uwriteln!(self.src, "#[{async_trait}::async_trait]");
         self.push_str("#[automatically_derived]\n");
         self.push_str("impl");
@@ -1445,6 +1470,8 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
         self.push_str(name);
         self.push_str(" {\n");
         uwriteln!(self.src, "async fn encode(self, mut payload: &mut (impl {bytes}::BufMut + Send)) -> {anyhow}::Result<Option<{wrpc_transport}::AsyncValue>> {{");
+        uwriteln!(self.src, r#"let span = {tracing}::trace_span!("encode");"#);
+        self.push_str("let _enter = span.enter();\n");
         self.push_str("match self {\n");
         for (i, (case_name, _, payload)) in cases.into_iter().enumerate() {
             self.push_str(name.trim_start_matches('&'));
@@ -1475,14 +1502,22 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
         name: &str,
         cases: impl IntoIterator<Item = (String, &'a Docs, Option<&'a Type>)> + Clone,
     ) {
+        let tracing = self.gen.tracing_path().to_string();
         let wrpc_transport = self.gen.wrpc_transport_path().to_string();
+
+        self.push_str("#[automatically_derived]\n");
         self.push_str("impl");
         uwrite!(self.src, " {wrpc_transport}::Subscribe for ");
         self.push_str(name);
         self.push_str(" {\n");
-        self.push_str("#[automatically_derived]\n");
         uwriteln!(self.src, "async fn subscribe<T: {wrpc_transport}::Subscriber + Send + Sync>(subscriber: &T, subject: T::Subject) -> Result<Option<{wrpc_transport}::AsyncSubscription<T::Stream>>, T::SubscribeError> {{");
+        self.push_str("#[allow(unused_imports)]\n");
         uwriteln!(self.src, "use {wrpc_transport}::Subject as _;");
+        uwriteln!(
+            self.src,
+            r#"let span = {tracing}::trace_span!("subscribe");"#
+        );
+        self.push_str("let _enter = span.enter();\n");
         for (i, (_, _, payload)) in cases.clone().into_iter().enumerate() {
             if let Some(ty) = payload {
                 uwrite!(self.src, r#"let c_{i} = <"#,);
@@ -1526,7 +1561,9 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
         let async_trait = self.gen.async_trait_path().to_string();
         let bytes = self.gen.bytes_path().to_string();
         let futures = self.gen.futures_path().to_string();
+        let tracing = self.gen.tracing_path().to_string();
         let wrpc_transport = self.gen.wrpc_transport_path().to_string();
+
         uwriteln!(self.src, "#[{async_trait}::async_trait]");
         self.push_str("#[automatically_derived]\n");
         self.push_str("impl<'wrpc_receive_>");
@@ -1544,6 +1581,8 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
                 T: {futures}::Stream<Item={anyhow}::Result<{bytes}::Bytes>> + Send + Sync + 'static
             {{
                 use {anyhow}::Context as _;
+                let span = {tracing}::trace_span!("receive");
+                let _enter = span.enter();
                 let (disc, payload) = {wrpc_transport}::receive_discriminant(
                         payload,
                         &mut rx,
@@ -1588,15 +1627,18 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
         let anyhow = self.gen.anyhow_path().to_string();
         let async_trait = self.gen.async_trait_path().to_string();
         let bytes = self.gen.bytes_path().to_string();
+        let tracing = self.gen.tracing_path().to_string();
         let wrpc_transport = self.gen.wrpc_transport_path().to_string();
+
         uwriteln!(self.src, "#[{async_trait}::async_trait]");
         self.push_str("#[automatically_derived]\n");
         self.push_str("impl");
         uwrite!(self.src, " {wrpc_transport}::Encode for ");
         self.push_str(name);
         self.push_str(" {\n");
-        self.push_str("#[automatically_derived]\n");
         uwriteln!(self.src, "async fn encode(self, mut payload: &mut (impl {bytes}::BufMut + Send)) -> {anyhow}::Result<Option<{wrpc_transport}::AsyncValue>> {{");
+        uwriteln!(self.src, r#"let span = {tracing}::trace_span!("encode");"#);
+        self.push_str("let _enter = span.enter();\n");
         self.push_str("match self {\n");
         for (i, case) in cases.iter().enumerate() {
             let case = case.name.to_upper_camel_case();
@@ -1621,7 +1663,9 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
         let async_trait = self.gen.async_trait_path().to_string();
         let bytes = self.gen.bytes_path().to_string();
         let futures = self.gen.futures_path().to_string();
+        let tracing = self.gen.tracing_path().to_string();
         let wrpc_transport = self.gen.wrpc_transport_path().to_string();
+
         uwriteln!(self.src, "#[{async_trait}::async_trait]");
         self.push_str("#[automatically_derived]\n");
         self.push_str("impl<'wrpc_receive_>");
@@ -1630,7 +1674,6 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
         uwriteln!(
             self.src,
             r#" {{
-        #[automatically_derived]
         async fn receive<T>(
             mut payload: impl {bytes}::Buf + Send + 'wrpc_receive_,
             mut rx: &mut (impl {futures}::Stream<Item={anyhow}::Result<{bytes}::Bytes>> + Send + Sync + Unpin),
@@ -1640,6 +1683,8 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
                 T: {futures}::Stream<Item={anyhow}::Result<{bytes}::Bytes>> + Send + Sync + 'static
             {{
                 use {anyhow}::Context as _;
+                let span = {tracing}::trace_span!("receive");
+                let _enter = span.enter();
                 let (disc, payload) = {wrpc_transport}::receive_discriminant(
                         payload,
                         &mut rx,
@@ -2209,6 +2254,7 @@ impl<'a> wit_bindgen_core::InterfaceGenerator<'a> for InterfaceGenerator<'a> {
         let async_trait = self.gen.async_trait_path();
         let bytes = self.gen.bytes_path();
         let futures = self.gen.futures_path();
+        let tracing = self.gen.tracing_path();
         let wrpc_transport = self.gen.wrpc_transport_path();
 
         if self.in_import {
@@ -2222,6 +2268,8 @@ pub struct {camel}(String);
 #[automatically_derived]
 impl {wrpc_transport}::Encode for {camel} {{
      async fn encode(self, payload: &mut (impl {bytes}::BufMut + Send)) -> {anyhow}::Result<Option<{wrpc_transport}::AsyncValue>> {{
+        let span = {tracing}::trace_span!("encode");
+        let _enter = span.enter();
         self.0.encode(payload).await
      }}
 }}
@@ -2230,6 +2278,8 @@ impl {wrpc_transport}::Encode for {camel} {{
 #[automatically_derived]
 impl {wrpc_transport}::Encode for &{camel} {{
      async fn encode(self, payload: &mut (impl {bytes}::BufMut + Send)) -> {anyhow}::Result<Option<{wrpc_transport}::AsyncValue>> {{
+        let span = {tracing}::trace_span!("encode");
+        let _enter = span.enter();
         self.0.as_str().encode(payload).await
      }}
 }}
@@ -2251,6 +2301,8 @@ impl<'a> {wrpc_transport}::Receive<'a> for {camel} {{
      where
          T: {futures}::Stream<Item={anyhow}::Result<{bytes}::Bytes>> + Send + Sync + 'static
      {{
+        let span = {tracing}::trace_span!("receive");
+        let _enter = span.enter();
         let (subject, payload) = {wrpc_transport}::Receive::receive(payload, rx, sub).await?;
         Ok((Self(subject), payload))
      }}
@@ -2279,6 +2331,8 @@ pub struct {camel}Borrow;
 #[automatically_derived]
 impl {wrpc_transport}::Encode for {camel}Borrow {{
      async fn encode(self, mut payload: &mut (impl {bytes}::BufMut + Send)) -> {anyhow}::Result<Option<{wrpc_transport}::AsyncValue>> {{
+        let span = {tracing}::trace_span!("encode");
+        let _enter = span.enter();
         {anyhow}::bail!("exported resources not supported yet")
      }}
 }}
@@ -2287,6 +2341,8 @@ impl {wrpc_transport}::Encode for {camel}Borrow {{
 #[automatically_derived]
 impl {wrpc_transport}::Encode for &{camel}Borrow {{
      async fn encode(self, mut payload: &mut (impl {bytes}::BufMut + Send)) -> {anyhow}::Result<Option<{wrpc_transport}::AsyncValue>> {{
+        let span = {tracing}::trace_span!("encode");
+        let _enter = span.enter();
         {anyhow}::bail!("exported resources not supported yet")
      }}
 }}
@@ -2308,6 +2364,8 @@ impl<'a> {wrpc_transport}::Receive<'a> for {camel}Borrow {{
      where
          T: {futures}::Stream<Item={anyhow}::Result<{bytes}::Bytes>> + Send + Sync + 'static
      {{
+        let span = {tracing}::trace_span!("receive");
+        let _enter = span.enter();
         {anyhow}::bail!("exported resources not supported yet")
      }}
 }}
@@ -2316,6 +2374,8 @@ impl<'a> {wrpc_transport}::Receive<'a> for {camel}Borrow {{
 #[automatically_derived]
 impl {wrpc_transport}::Encode for {camel} {{
      async fn encode(self, mut payload: &mut (impl {bytes}::BufMut + Send)) -> {anyhow}::Result<Option<{wrpc_transport}::AsyncValue>> {{
+        let span = {tracing}::trace_span!("encode");
+        let _enter = span.enter();
         {anyhow}::bail!("exported resources not supported yet")
      }}
 }}
@@ -2324,6 +2384,8 @@ impl {wrpc_transport}::Encode for {camel} {{
 #[automatically_derived]
 impl {wrpc_transport}::Encode for &{camel} {{
      async fn encode(self, mut payload: &mut (impl {bytes}::BufMut + Send)) -> {anyhow}::Result<Option<{wrpc_transport}::AsyncValue>> {{
+        let span = {tracing}::trace_span!("encode");
+        let _enter = span.enter();
         {anyhow}::bail!("exported resources not supported yet")
      }}
 }}
@@ -2345,6 +2407,8 @@ impl<'a> {wrpc_transport}::Receive<'a> for {camel} {{
      where
          T: {futures}::Stream<Item={anyhow}::Result<{bytes}::Bytes>> + Send + Sync + 'static
      {{
+        let span = {tracing}::trace_span!("receive");
+        let _enter = span.enter();
         {anyhow}::bail!("exported resources not supported yet")
      }}
 }}
@@ -2399,6 +2463,8 @@ impl<'a> {wrpc_transport}::Receive<'a> for {camel} {{
                 #[automatically_derived]
                 impl {wrpc_transport}::Encode for {name} {{
                      async fn encode(self, payload: &mut (impl {bytes}::BufMut + Send)) -> {anyhow}::Result<Option<{wrpc_transport}::AsyncValue>> {{
+                        let span = {tracing}::trace_span!("encode");
+                        let _enter = span.enter();
                         self.bits().encode(payload).await
                      }}
                 }}
@@ -2407,6 +2473,8 @@ impl<'a> {wrpc_transport}::Receive<'a> for {camel} {{
                 #[automatically_derived]
                 impl {wrpc_transport}::Encode for &{name} {{
                      async fn encode(self, payload: &mut (impl {bytes}::BufMut + Send)) -> {anyhow}::Result<Option<{wrpc_transport}::AsyncValue>> {{
+                        let span = {tracing}::trace_span!("encode");
+                        let _enter = span.enter();
                         self.bits().encode(payload).await
                      }}
                 }}
@@ -2423,6 +2491,8 @@ impl<'a> {wrpc_transport}::Receive<'a> for {camel} {{
                          T: {futures}::Stream<Item={anyhow}::Result<{bytes}::Bytes>> + Send + Sync + 'static
                      {{
                         use {anyhow}::Context as _;
+                        let span = {tracing}::trace_span!("receive");
+                        let _enter = span.enter();
 
                         let (bits, payload) = <Self as {bitflags}::Flags>::Bits::receive(payload, rx, sub).await.context("failed to receive bits")?;
                         let ret = Self::from_bits(bits).context("failed to convert bits into flags")?;
@@ -2434,6 +2504,7 @@ impl<'a> {wrpc_transport}::Receive<'a> for {camel} {{
             bitflags = self.gen.bitflags_path(),
             bytes = self.gen.bytes_path(),
             futures = self.gen.futures_path(),
+            tracing = self.gen.tracing_path(),
             wrpc_transport = self.gen.wrpc_transport_path(),
         );
     }

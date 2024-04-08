@@ -21,6 +21,6 @@ bitflags = { workspace = true }
 bytes = { workspace = true }
 futures = { workspace = true }
 tokio = { workspace = true }
-tracing = { workspace = true }
+tracing = { workspace = true, features = ["attributes"] }
 wit-bindgen-wrpc-rust-macro = { workspace = true }
 wrpc-transport = { workspace = true }

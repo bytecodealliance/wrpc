@@ -915,6 +915,7 @@ impl<T> Encode for DynamicTuple<T>
 where
     T: Encode + Send,
 {
+    #[instrument(level = "trace", skip_all)]
     async fn encode(
         self,
         payload: &mut (impl BufMut + Send),
@@ -1419,6 +1420,7 @@ where
     }
 }
 
+#[instrument(level = "trace", skip_all)]
 pub async fn receive_stream_item<'a, E, T>(
     payload: impl Buf + Send + 'a,
     rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
@@ -1461,6 +1463,7 @@ where
     R: Receive<'a> + Send,
     Ctx: Send + Sync + 'static,
 {
+    #[instrument(level = "trace", skip_all)]
     async fn receive_context<T>(
         _cx: &Ctx,
         payload: impl Buf + Send + 'a,
