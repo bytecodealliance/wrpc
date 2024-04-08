@@ -487,7 +487,11 @@ impl WorldGenerator for RustWasm {
         let interface = &resolve.interfaces[id];
         let name = match name {
             WorldKey::Name(s) => s.to_string(),
-            WorldKey::Interface(..) => interface.name.as_ref().expect("interface name missing").to_string(),
+            WorldKey::Interface(..) => interface
+                .name
+                .as_ref()
+                .expect("interface name missing")
+                .to_string(),
         };
         let instance = if let Some(package) = interface.package {
             resolve.id_of_name(package, &name)
@@ -544,7 +548,6 @@ impl WorldGenerator for RustWasm {
         gen.finish_append_submodule(&snake, module_path);
         if exports {
             self.export_paths
-
                 .push(self.interface_names[&id].path.clone());
         }
 

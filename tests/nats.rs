@@ -1,3 +1,4 @@
+use core::future::Future;
 use core::iter::zip;
 use core::pin::pin;
 use core::str;
@@ -7,7 +8,7 @@ use std::net::Ipv6Addr;
 use std::process::ExitStatus;
 use std::sync::Arc;
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{anyhow, bail, Context};
 use bytes::Bytes;
 use futures::{stream, FutureExt as _, StreamExt as _, TryStreamExt as _};
 use hyper::header::HOST;
@@ -15,7 +16,7 @@ use hyper::Uri;
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use tokio::net::TcpListener;
 use tokio::process::Command;
-use tokio::sync::{mpsc, oneshot, RwLock};
+use tokio::sync::{mpsc, oneshot, OnceCell, RwLock};
 use tokio::task::JoinHandle;
 use tokio::time::sleep;
 use tokio::{select, spawn, try_join};
@@ -27,7 +28,19 @@ use wrpc_interface_blobstore::{ContainerMetadata, ObjectId, ObjectMetadata};
 use wrpc_interface_http::{ErrorCode, Method, Request, RequestOptions, Response, Scheme};
 use wrpc_transport::{AcceptedInvocation, Client as _, DynamicTuple};
 
-async fn free_port() -> Result<u16> {
+static INIT: OnceCell<()> = OnceCell::const_new();
+
+async fn init() {
+    tracing_subscriber::registry()
+        .with(tracing_subscriber::fmt::layer().compact().without_time())
+        .with(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .init()
+}
+
+async fn free_port() -> anyhow::Result<u16> {
     TcpListener::bind((Ipv6Addr::LOCALHOST, 0))
         .await
         .context("failed to start TCP listener")?
@@ -38,7 +51,7 @@ async fn free_port() -> Result<u16> {
 
 async fn spawn_server(
     cmd: &mut Command,
-) -> Result<(JoinHandle<Result<ExitStatus>>, oneshot::Sender<()>)> {
+) -> anyhow::Result<(JoinHandle<anyhow::Result<ExitStatus>>, oneshot::Sender<()>)> {
     let mut child = cmd
         .kill_on_drop(true)
         .spawn()
@@ -58,6 +71,59 @@ async fn spawn_server(
         .context("failed to wait for child")
     });
     Ok((child, stop_tx))
+}
+
+async fn start_nats() -> anyhow::Result<(
+    async_nats::Client,
+    JoinHandle<anyhow::Result<ExitStatus>>,
+    oneshot::Sender<()>,
+)> {
+    let port = free_port().await?;
+    let (server, stop_tx) =
+        spawn_server(Command::new("nats-server").args(["-V", "-T=false", "-p", &port.to_string()]))
+            .await
+            .context("failed to start NATS.io server")?;
+
+    let (conn_tx, mut conn_rx) = mpsc::channel(1);
+    let client = async_nats::connect_with_options(
+        format!("nats://localhost:{port}"),
+        async_nats::ConnectOptions::new()
+            .retry_on_initial_connect()
+            .event_callback(move |event| {
+                let conn_tx = conn_tx.clone();
+                async move {
+                    if let async_nats::Event::Connected = event {
+                        conn_tx
+                            .send(())
+                            .await
+                            .expect("failed to send NATS.io server connection notification");
+                    }
+                }
+            }),
+    )
+    .await
+    .context("failed to connect to NATS.io server")?;
+    conn_rx
+        .recv()
+        .await
+        .context("failed to await NATS.io server connection to be established")?;
+    Ok((client, server, stop_tx))
+}
+
+async fn with_nats<T, Fut>(f: impl FnOnce(async_nats::Client) -> Fut) -> anyhow::Result<T>
+where
+    Fut: Future<Output = anyhow::Result<T>>,
+{
+    let (nats_client, nats_server, stop_tx) = start_nats()
+        .await
+        .context("failed to start NATS.io server")?;
+    let res = f(nats_client).await.context("closure failed")?;
+    stop_tx.send(()).expect("failed to stop NATS.io server");
+    nats_server
+        .await
+        .context("failed to await NATS.io server stop")?
+        .context("NATS.io server failed to stop")?;
+    Ok(res)
 }
 
 #[instrument(skip(client, ty, params, results))]
@@ -129,987 +195,1181 @@ async fn loopback_dynamic(
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn nats() -> anyhow::Result<()> {
-    tracing_subscriber::registry()
-        .with(tracing_subscriber::fmt::layer().compact().without_time())
-        .with(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
-        .init();
+async fn bindgen() -> anyhow::Result<()> {
+    INIT.get_or_init(init).await;
 
-    let port = free_port().await?;
-    let (nats_server, stop_tx) =
-        spawn_server(Command::new("nats-server").args(["-V", "-T=false", "-p", &port.to_string()]))
-            .await
-            .context("failed to start NATS")?;
+    with_nats(|nats_client| async {
+        let client = wrpc::transport::nats::Client::new(nats_client, "test-prefix".to_string());
+        let client = Arc::new(client);
 
-    let (nats_conn_tx, mut nats_conn_rx) = mpsc::channel(1);
-    let nats_client = async_nats::connect_with_options(
-        format!("nats://localhost:{port}"),
-        async_nats::ConnectOptions::new()
-            .retry_on_initial_connect()
-            .event_callback(move |event| {
-                let nats_conn_tx = nats_conn_tx.clone();
-                async move {
-                    if let async_nats::Event::Connected = event {
-                        nats_conn_tx
-                            .send(())
-                            .await
-                            .expect("failed to send NATS connection notification");
+        let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        let shutdown_rx =
+            async move { shutdown_rx.await.expect("shutdown sender dropped") }.shared();
+        try_join!(
+            async {
+                wrpc::generate!({
+                    inline: "
+                        package wrpc-test:integration;
+
+                        interface shared {
+                            flags abc {
+                                a,
+                                b,
+                                c,
+                            }
+
+                            fallible: func() -> result<bool, string>;
+                            numbers: func() -> tuple<u8, u16, u32, u64, s8, s16, s32, s64, f32, f64>;
+                            with-flags: func() -> abc;
+                        }
+
+                        world test {
+                            export shared;
+
+                            export f: func(x: string) -> u32;
+                            export foo: interface {
+                                foo: func(x: string);
+                            }
+                        }"
+                });
+
+                #[derive(Clone, Default)]
+                struct Component(Arc<RwLock<Option<String>>>);
+
+                impl Handler<Option<async_nats::HeaderMap>> for Component {
+                    async fn f(
+                        &self,
+                        _cx: Option<async_nats::HeaderMap>,
+                        x: String,
+                    ) -> anyhow::Result<u32> {
+                        let stored = self.0.read().await.as_ref().unwrap().to_string();
+                        assert_eq!(stored, x);
+                        Ok(42)
                     }
                 }
-            }),
-    )
-    .await
-    .context("failed to connect to NATS")?;
-    nats_conn_rx
-        .recv()
+
+                impl exports::wrpc_test::integration::shared::Handler<Option<async_nats::HeaderMap>> for Component {
+                    async fn fallible(
+                        &self,
+                        _cx: Option<async_nats::HeaderMap>,
+                    ) -> anyhow::Result<Result<bool, String>> {
+                        Ok(Ok(true))
+                    }
+
+                    async fn numbers(
+                        &self,
+                        _cx: Option<async_nats::HeaderMap>,
+                    ) -> anyhow::Result<(u8, u16, u32, u64, i8, i16, i32, i64, f32, f64)> {
+                        Ok((
+                            0xfe,
+                            0xfeff,
+                            0xfeffffff,
+                            0xfeffffffffffffff,
+                            0x7e,
+                            0x7eff,
+                            0x7effffff,
+                            0x7effffffffffffff,
+                            0.42,
+                            0.4242,
+                        ))
+                    }
+
+                    async fn with_flags(
+                        &self,
+                        _cx: Option<async_nats::HeaderMap>,
+                    ) -> anyhow::Result<exports::wrpc_test::integration::shared::Abc> {
+                        use exports::wrpc_test::integration::shared::Abc;
+                        Ok(Abc::A | Abc::C)
+                    }
+                }
+
+                impl exports::foo::Handler<Option<async_nats::HeaderMap>> for Component {
+                    async fn foo(
+                        &self,
+                        _cx: Option<async_nats::HeaderMap>,
+                        x: String,
+                    ) -> anyhow::Result<()> {
+                        let old = self.0.write().await.replace(x);
+                        assert!(old.is_none());
+                        Ok(())
+                    }
+                }
+
+                serve(client.as_ref(), Component::default(), shutdown_rx.clone())
+                    .await
+                    .context("failed to serve `wrpc-test:integration/test`")
+            },
+            async {
+                wrpc::generate!({
+                    inline: "
+                        package wrpc-test:integration;
+
+                        interface shared {
+                            flags abc {
+                                a,
+                                b,
+                                c,
+                            }
+
+                            fallible: func() -> result<bool, string>;
+                            numbers: func() -> tuple<u8, u16, u32, u64, s8, s16, s32, s64, f32, f64>;
+                            with-flags: func() -> abc;
+                        }
+
+                        world test {
+                            import shared;
+
+                            import f: func(x: string) -> u32;
+                            import foo: interface {
+                                foo: func(x: string);
+                            }
+                            export bar: interface {
+                                bar: func() -> string;
+                            }
+                        }"
+                });
+
+                #[derive(Clone)]
+                struct Component(Arc<wrpc_transport_nats::Client>);
+
+                // TODO: Remove the need for this
+                sleep(Duration::from_secs(1)).await;
+
+                impl exports::bar::Handler<Option<async_nats::HeaderMap>> for Component {
+                    async fn bar(
+                        &self,
+                        _cx: Option<async_nats::HeaderMap>,
+                    ) -> anyhow::Result<String> {
+                        use wrpc_test::integration::shared::Abc;
+
+                        foo::foo(self.0.as_ref(), "foo")
+                            .await
+                            .context("failed to call `wrpc-test:integration/test.foo.foo`")?;
+                        let v = f(self.0.as_ref(), "foo")
+                            .await
+                            .context("failed to call `wrpc-test:integration/test.f`")?;
+                        assert_eq!(v, 42);
+                        let v = wrpc_test::integration::shared::fallible(self.0.as_ref())
+                            .await
+                            .context("failed to call `wrpc-test:integration/shared.fallible`")?;
+                        assert_eq!(v, Ok(true));
+                        let v = wrpc_test::integration::shared::numbers(self.0.as_ref())
+                            .await
+                            .context("failed to call `wrpc-test:integration/shared.numbers`")?;
+                        assert_eq!(v, (
+                            0xfe,
+                            0xfeff,
+                            0xfeffffff,
+                            0xfeffffffffffffff,
+                            0x7e,
+                            0x7eff,
+                            0x7effffff,
+                            0x7effffffffffffff,
+                            0.42,
+                            0.4242,
+                        ));
+                        let v = wrpc_test::integration::shared::with_flags(self.0.as_ref())
+                            .await
+                            .context("failed to call `wrpc-test:integration/shared.with-flags`")?;
+                        assert_eq!(v, Abc::A | Abc::C);
+                        Ok("bar".to_string())
+                    }
+                }
+
+                serve(
+                    client.as_ref(),
+                    Component(Arc::clone(&client)),
+                    shutdown_rx.clone(),
+                )
+                .await
+                .context("failed to serve `wrpc-test:integration/test`")
+            },
+            async {
+                wrpc::generate!({
+                    inline: "
+                        package wrpc-test:integration;
+
+                        world test {
+                            import bar: interface {
+                                bar: func() -> string;
+                            }
+                        }"
+                });
+
+                // TODO: Remove the need for this
+                sleep(Duration::from_secs(2)).await;
+
+                let v = bar::bar(client.as_ref())
+                    .await
+                    .context("failed to call `wrpc-test:integration/test.bar.bar`")?;
+                assert_eq!(v, "bar");
+                shutdown_tx.send(()).expect("failed to send shutdown");
+                Ok(())
+            },
+        )?;
+        Ok(())
+    }).await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn dynamic() -> anyhow::Result<()> {
+    INIT.get_or_init(init).await;
+
+    with_nats(|nats_client| async {
+        let client = wrpc::transport::nats::Client::new(nats_client, "test-prefix".to_string());
+        let client = Arc::new(client);
+
+        let (params, results) = loopback_dynamic(
+            client.as_ref(),
+            "unit_unit",
+            DynamicFunctionType::Static {
+                params: vec![].into(),
+                results: vec![].into(),
+            },
+            vec![],
+            vec![],
+        )
         .await
-        .context("failed to await NATS connection to be established")?;
+        .context("failed to invoke `unit_unit`")?;
+        assert!(params.is_empty());
+        assert!(results.is_empty());
+
+        let flat_types = vec![
+            Type::Bool,
+            Type::U8,
+            Type::U16,
+            Type::U32,
+            Type::U64,
+            Type::S8,
+            Type::S16,
+            Type::S32,
+            Type::S64,
+            Type::F32,
+            Type::F64,
+            Type::Char,
+            Type::String,
+            Type::Enum,
+            Type::Flags,
+        ]
+        .into();
+
+        let flat_variant_type = vec![None, Some(Type::Bool)].into();
+
+        let sync_tuple_type = vec![
+            Type::Bool,
+            Type::U8,
+            Type::U16,
+            Type::U32,
+            Type::U64,
+            Type::S8,
+            Type::S16,
+            Type::S32,
+            Type::S64,
+            Type::F32,
+            Type::F64,
+            Type::Char,
+            Type::String,
+            Type::List(Arc::new(Type::U64)),
+            Type::List(Arc::new(Type::Bool)),
+            Type::Record(Arc::clone(&flat_types)),
+            Type::Tuple(Arc::clone(&flat_types)),
+            Type::Variant(Arc::clone(&flat_variant_type)),
+            Type::Variant(Arc::clone(&flat_variant_type)),
+            Type::Enum,
+            Type::Option(Arc::new(Type::Bool)),
+            Type::Result {
+                ok: Some(Arc::new(Type::Bool)),
+                err: Some(Arc::new(Type::Bool)),
+            },
+            Type::Flags,
+        ]
+        .into();
+
+        let (params, results) = loopback_dynamic(
+            client.as_ref(),
+            "sync",
+            DynamicFunctionType::Static {
+                params: Arc::clone(&sync_tuple_type),
+                results: sync_tuple_type,
+            },
+            vec![
+                Value::Bool(true),
+                Value::U8(0xfe),
+                Value::U16(0xfeff),
+                Value::U32(0xfeffffff),
+                Value::U64(0xfeffffffffffffff),
+                Value::S8(0x7e),
+                Value::S16(0x7eff),
+                Value::S32(0x7effffff),
+                Value::S64(0x7effffffffffffff),
+                Value::F32(0.42),
+                Value::F64(0.4242),
+                Value::Char('a'),
+                Value::String("test".into()),
+                Value::List(vec![]),
+                Value::List(vec![
+                    Value::Bool(true),
+                    Value::Bool(false),
+                    Value::Bool(true),
+                ]),
+                Value::Record(vec![
+                    Value::Bool(true),
+                    Value::U8(0xfe),
+                    Value::U16(0xfeff),
+                    Value::U32(0xfeffffff),
+                    Value::U64(0xfeffffffffffffff),
+                    Value::S8(0x7e),
+                    Value::S16(0x7eff),
+                    Value::S32(0x7effffff),
+                    Value::S64(0x7effffffffffffff),
+                    Value::F32(0.42),
+                    Value::F64(0.4242),
+                    Value::Char('a'),
+                    Value::String("test".into()),
+                    Value::Enum(0xfeff),
+                    Value::Flags(0xdeadbeef),
+                ]),
+                Value::Tuple(vec![
+                    Value::Bool(true),
+                    Value::U8(0xfe),
+                    Value::U16(0xfeff),
+                    Value::U32(0xfeffffff),
+                    Value::U64(0xfeffffffffffffff),
+                    Value::S8(0x7e),
+                    Value::S16(0x7eff),
+                    Value::S32(0x7effffff),
+                    Value::S64(0x7effffffffffffff),
+                    Value::F32(0.42),
+                    Value::F64(0.4242),
+                    Value::Char('a'),
+                    Value::String("test".into()),
+                    Value::Enum(0xfeff),
+                    Value::Flags(0xdeadbeef),
+                ]),
+                Value::Variant {
+                    discriminant: 0,
+                    nested: None,
+                },
+                Value::Variant {
+                    discriminant: 1,
+                    nested: Some(Box::new(Value::Bool(true))),
+                },
+                Value::Enum(0xfeff),
+                Value::Option(Some(Box::new(Value::Bool(true)))),
+                Value::Result(Ok(Some(Box::new(Value::Bool(true))))),
+                Value::Flags(0xdeadbeef),
+            ],
+            vec![
+                Value::Bool(true),
+                Value::U8(0xfe),
+                Value::U16(0xfeff),
+                Value::U32(0xfeffffff),
+                Value::U64(0xfeffffffffffffff),
+                Value::S8(0x7e),
+                Value::S16(0x7eff),
+                Value::S32(0x7effffff),
+                Value::S64(0x7effffffffffffff),
+                Value::F32(0.42),
+                Value::F64(0.4242),
+                Value::Char('a'),
+                Value::String("test".into()),
+                Value::List(vec![]),
+                Value::List(vec![
+                    Value::Bool(true),
+                    Value::Bool(false),
+                    Value::Bool(true),
+                ]),
+                Value::Record(vec![
+                    Value::Bool(true),
+                    Value::U8(0xfe),
+                    Value::U16(0xfeff),
+                    Value::U32(0xfeffffff),
+                    Value::U64(0xfeffffffffffffff),
+                    Value::S8(0x7e),
+                    Value::S16(0x7eff),
+                    Value::S32(0x7effffff),
+                    Value::S64(0x7effffffffffffff),
+                    Value::F32(0.42),
+                    Value::F64(0.4242),
+                    Value::Char('a'),
+                    Value::String("test".into()),
+                    Value::Enum(0xfeff),
+                    Value::Flags(0xdeadbeef),
+                ]),
+                Value::Tuple(vec![
+                    Value::Bool(true),
+                    Value::U8(0xfe),
+                    Value::U16(0xfeff),
+                    Value::U32(0xfeffffff),
+                    Value::U64(0xfeffffffffffffff),
+                    Value::S8(0x7e),
+                    Value::S16(0x7eff),
+                    Value::S32(0x7effffff),
+                    Value::S64(0x7effffffffffffff),
+                    Value::F32(0.42),
+                    Value::F64(0.4242),
+                    Value::Char('a'),
+                    Value::String("test".into()),
+                    Value::Enum(0xfeff),
+                    Value::Flags(0xdeadbeef),
+                ]),
+                Value::Variant {
+                    discriminant: 0,
+                    nested: None,
+                },
+                Value::Variant {
+                    discriminant: 1,
+                    nested: Some(Box::new(Value::Bool(true))),
+                },
+                Value::Enum(0xfeff),
+                Value::Option(Some(Box::new(Value::Bool(true)))),
+                Value::Result(Ok(Some(Box::new(Value::Bool(true))))),
+                Value::Flags(0xdeadbeef),
+            ],
+        )
+        .await
+        .context("failed to invoke `sync`")?;
+        let mut values = zip(params, results);
+        assert!(matches!(
+            values.next().unwrap(),
+            (Value::Bool(true), Value::Bool(true))
+        ));
+        assert!(matches!(
+            values.next().unwrap(),
+            (Value::U8(0xfe), Value::U8(0xfe))
+        ));
+        assert!(matches!(
+            values.next().unwrap(),
+            (Value::U16(0xfeff), Value::U16(0xfeff))
+        ));
+        assert!(matches!(
+            values.next().unwrap(),
+            (Value::U32(0xfeffffff), Value::U32(0xfeffffff))
+        ));
+        assert!(matches!(
+            values.next().unwrap(),
+            (
+                Value::U64(0xfeffffffffffffff),
+                Value::U64(0xfeffffffffffffff)
+            )
+        ));
+        assert!(matches!(
+            values.next().unwrap(),
+            (Value::S8(0x7e), Value::S8(0x7e))
+        ));
+        assert!(matches!(
+            values.next().unwrap(),
+            (Value::S16(0x7eff), Value::S16(0x7eff))
+        ));
+        assert!(matches!(
+            values.next().unwrap(),
+            (Value::S32(0x7effffff), Value::S32(0x7effffff))
+        ));
+        assert!(matches!(
+            values.next().unwrap(),
+            (
+                Value::S64(0x7effffffffffffff),
+                Value::S64(0x7effffffffffffff)
+            )
+        ));
+        assert!(matches!(
+            values.next().unwrap(),
+            (Value::F32(p), Value::F32(r)) if p == 0.42 && r == 0.42
+        ));
+        assert!(matches!(
+            values.next().unwrap(),
+            (Value::F64(p), Value::F64(r)) if p == 0.4242 && r == 0.4242
+        ));
+        assert!(matches!(
+            values.next().unwrap(),
+            (Value::Char('a'), Value::Char('a'))
+        ));
+        assert!(matches!(
+            values.next().unwrap(),
+            (Value::String(p), Value::String(r)) if p == "test" && r == "test"
+        ));
+        assert!(matches!(
+            values.next().unwrap(),
+            (Value::List(p), Value::List(r)) if p.is_empty() && r.is_empty()
+        ));
+        let (Value::List(p), Value::List(r)) = values.next().unwrap() else {
+            bail!("list type mismatch")
+        };
+        {
+            let mut values = zip(p, r);
+            assert!(matches!(
+                values.next().unwrap(),
+                (Value::Bool(true), Value::Bool(true))
+            ));
+            assert!(matches!(
+                values.next().unwrap(),
+                (Value::Bool(false), Value::Bool(false))
+            ));
+            assert!(matches!(
+                values.next().unwrap(),
+                (Value::Bool(true), Value::Bool(true))
+            ));
+        }
+        let (Value::Record(p), Value::Record(r)) = values.next().unwrap() else {
+            bail!("record type mismatch")
+        };
+        {
+            let mut values = zip(p, r);
+            assert!(matches!(
+                values.next().unwrap(),
+                (Value::Bool(true), Value::Bool(true))
+            ));
+            assert!(matches!(
+                values.next().unwrap(),
+                (Value::U8(0xfe), Value::U8(0xfe))
+            ));
+            assert!(matches!(
+                values.next().unwrap(),
+                (Value::U16(0xfeff), Value::U16(0xfeff))
+            ));
+            assert!(matches!(
+                values.next().unwrap(),
+                (Value::U32(0xfeffffff), Value::U32(0xfeffffff))
+            ));
+            assert!(matches!(
+                values.next().unwrap(),
+                (
+                    Value::U64(0xfeffffffffffffff),
+                    Value::U64(0xfeffffffffffffff)
+                )
+            ));
+            assert!(matches!(
+                values.next().unwrap(),
+                (Value::S8(0x7e), Value::S8(0x7e))
+            ));
+            assert!(matches!(
+                values.next().unwrap(),
+                (Value::S16(0x7eff), Value::S16(0x7eff))
+            ));
+            assert!(matches!(
+                values.next().unwrap(),
+                (Value::S32(0x7effffff), Value::S32(0x7effffff))
+            ));
+            assert!(matches!(
+                values.next().unwrap(),
+                (
+                    Value::S64(0x7effffffffffffff),
+                    Value::S64(0x7effffffffffffff)
+                )
+            ));
+            assert!(matches!(
+                values.next().unwrap(),
+                (Value::F32(p), Value::F32(r)) if p == 0.42 && r == 0.42
+            ));
+            assert!(matches!(
+                values.next().unwrap(),
+                (Value::F64(p), Value::F64(r)) if p == 0.4242 && r == 0.4242
+            ));
+            assert!(matches!(
+                values.next().unwrap(),
+                (Value::Char('a'), Value::Char('a'))
+            ));
+            assert!(matches!(
+                values.next().unwrap(),
+                (Value::String(p), Value::String(r)) if p == "test" && r == "test"
+            ));
+            assert!(matches!(
+                values.next().unwrap(),
+                (Value::Enum(0xfeff), Value::Enum(0xfeff))
+            ));
+            assert!(matches!(
+                values.next().unwrap(),
+                (Value::Flags(0xdeadbeef), Value::Flags(0xdeadbeef))
+            ));
+        }
+        let (Value::Tuple(p), Value::Tuple(r)) = values.next().unwrap() else {
+            bail!("tuple type mismatch")
+        };
+        {
+            let mut values = zip(p, r);
+            assert!(matches!(
+                values.next().unwrap(),
+                (Value::Bool(true), Value::Bool(true))
+            ));
+            assert!(matches!(
+                values.next().unwrap(),
+                (Value::U8(0xfe), Value::U8(0xfe))
+            ));
+            assert!(matches!(
+                values.next().unwrap(),
+                (Value::U16(0xfeff), Value::U16(0xfeff))
+            ));
+            assert!(matches!(
+                values.next().unwrap(),
+                (Value::U32(0xfeffffff), Value::U32(0xfeffffff))
+            ));
+            assert!(matches!(
+                values.next().unwrap(),
+                (
+                    Value::U64(0xfeffffffffffffff),
+                    Value::U64(0xfeffffffffffffff)
+                )
+            ));
+            assert!(matches!(
+                values.next().unwrap(),
+                (Value::S8(0x7e), Value::S8(0x7e))
+            ));
+            assert!(matches!(
+                values.next().unwrap(),
+                (Value::S16(0x7eff), Value::S16(0x7eff))
+            ));
+            assert!(matches!(
+                values.next().unwrap(),
+                (Value::S32(0x7effffff), Value::S32(0x7effffff))
+            ));
+            assert!(matches!(
+                values.next().unwrap(),
+                (
+                    Value::S64(0x7effffffffffffff),
+                    Value::S64(0x7effffffffffffff)
+                )
+            ));
+            assert!(matches!(
+                values.next().unwrap(),
+                (Value::F32(p), Value::F32(r)) if p == 0.42 && r == 0.42
+            ));
+            assert!(matches!(
+                values.next().unwrap(),
+                (Value::F64(p), Value::F64(r)) if p == 0.4242 && r == 0.4242
+            ));
+            assert!(matches!(
+                values.next().unwrap(),
+                (Value::Char('a'), Value::Char('a'))
+            ));
+            assert!(matches!(
+                values.next().unwrap(),
+                (Value::String(p), Value::String(r)) if p == "test" && r == "test"
+            ));
+            assert!(matches!(
+                values.next().unwrap(),
+                (Value::Enum(0xfeff), Value::Enum(0xfeff))
+            ));
+            assert!(matches!(
+                values.next().unwrap(),
+                (Value::Flags(0xdeadbeef), Value::Flags(0xdeadbeef))
+            ));
+        }
+        assert!(matches!(
+            values.next().unwrap(),
+            (
+                Value::Variant {
+                    discriminant: 0,
+                    nested: None,
+                },
+                Value::Variant {
+                    discriminant: 0,
+                    nested: None,
+                }
+            )
+        ));
+        assert!(matches!(
+            values.next().unwrap(),
+            (
+                Value::Variant {
+                    discriminant: 1,
+                    nested: p,
+                },
+                Value::Variant {
+                    discriminant: 1,
+                    nested: r,
+                }
+            ) if matches!((p.as_deref(), r.as_deref()), (Some(Value::Bool(true)), Some(Value::Bool(true))))
+        ));
+        assert!(matches!(
+            values.next().unwrap(),
+            (Value::Enum(0xfeff), Value::Enum(0xfeff))
+        ));
+        assert!(matches!(
+            values.next().unwrap(),
+            (Value::Option(p), Value::Option(r)) if matches!((p.as_deref(), r.as_deref()), (Some(Value::Bool(true)), Some(Value::Bool(true))))
+        ));
+        assert!(matches!(
+            values.next().unwrap(),
+            (Value::Result(Ok(p)), Value::Result(Ok(r))) if matches!((p.as_deref(), r.as_deref()), (Some(Value::Bool(true)), Some(Value::Bool(true))))
+        ));
+        assert!(matches!(
+            values.next().unwrap(),
+            (Value::Flags(0xdeadbeef), Value::Flags(0xdeadbeef))
+        ));
+
+        let async_tuple_type = vec![
+            Type::Future(None),
+            Type::Future(Some(Arc::new(Type::Bool))),
+            Type::Future(Some(Arc::new(Type::Future(None)))),
+            Type::Future(Some(Arc::new(Type::Future(Some(Arc::new(Type::Future(
+                Some(Arc::new(Type::Bool)),
+            ))))))),
+            Type::Future(Some(Arc::new(Type::Stream(Some(Arc::new(Type::U8)))))),
+            Type::Stream(None),
+            Type::Stream(Some(Arc::new(Type::U8))),
+            Type::Resource(ResourceType::Pollable),
+            Type::Resource(ResourceType::InputStream),
+            Type::Tuple(
+                vec![
+                    Type::Future(None),
+                    Type::Future(Some(Arc::new(Type::Bool))),
+                    Type::Future(Some(Arc::new(Type::Future(None)))),
+                    Type::Resource(ResourceType::InputStream),
+                ]
+                .into(),
+            ),
+            Type::Record(
+                vec![
+                    Type::Future(None),
+                    Type::Future(Some(Arc::new(Type::Bool))),
+                    Type::Future(Some(Arc::new(Type::Future(None)))),
+                    Type::Resource(ResourceType::InputStream),
+                ]
+                .into(),
+            ),
+        ]
+        .into();
+
+        let (params, results) = loopback_dynamic(
+            client.as_ref(),
+            "async",
+            DynamicFunctionType::Static {
+                params: Arc::clone(&async_tuple_type),
+                results: async_tuple_type,
+            },
+            vec![
+                Value::Future(Box::pin(async { Ok(None) })),
+                Value::Future(Box::pin(async {
+                    sleep(Duration::from_nanos(42)).await;
+                    Ok(Some(Value::Bool(true)))
+                })),
+                Value::Future(Box::pin(async {
+                    Ok(Some(Value::Future(Box::pin(async { Ok(None) }))))
+                })),
+                Value::Future(Box::pin(async {
+                    sleep(Duration::from_nanos(42)).await;
+                    Ok(Some(Value::Future(Box::pin(async {
+                        sleep(Duration::from_nanos(42)).await;
+                        Ok(Some(Value::Future(Box::pin(async {
+                            sleep(Duration::from_nanos(42)).await;
+                            Ok(Some(Value::Bool(true)))
+                        }))))
+                    }))))
+                })),
+                Value::Future(Box::pin(async {
+                    sleep(Duration::from_nanos(42)).await;
+                    Ok(Some(Value::Stream(Box::pin(stream::iter([
+                        Ok(vec![Some(Value::U8(0x42))]),
+                        Ok(vec![Some(Value::U8(0xff))]),
+                    ])))))
+                })),
+                Value::Stream(Box::pin(stream::iter([Ok(vec![None, None, None, None])]))),
+                Value::Stream(Box::pin(stream::iter([Ok(vec![
+                    Some(Value::U8(0x42)),
+                    Some(Value::U8(0xff)),
+                ])]))),
+                Value::Future(Box::pin(async { Ok(None) })),
+                Value::Stream(Box::pin(
+                    stream::iter([
+                        Ok(vec![Some(Value::U8(0x42))]),
+                        Ok(vec![Some(Value::U8(0xff))]),
+                    ])
+                    .then(|item| async {
+                        sleep(Duration::from_nanos(42)).await;
+                        item
+                    }),
+                )),
+                Value::Tuple(vec![
+                    Value::Future(Box::pin(async { Ok(None) })),
+                    Value::Future(Box::pin(async {
+                        sleep(Duration::from_nanos(42)).await;
+                        Ok(Some(Value::Bool(true)))
+                    })),
+                    Value::Future(Box::pin(async {
+                        Ok(Some(Value::Future(Box::pin(async { Ok(None) }))))
+                    })),
+                    Value::Stream(Box::pin(
+                        stream::iter([
+                            Ok(vec![Some(Value::U8(0x42))]),
+                            Ok(vec![Some(Value::U8(0xff))]),
+                        ])
+                        .then(|item| async {
+                            sleep(Duration::from_nanos(42)).await;
+                            item
+                        }),
+                    )),
+                ]),
+                Value::Record(vec![
+                    Value::Future(Box::pin(async { Ok(None) })),
+                    Value::Future(Box::pin(async {
+                        sleep(Duration::from_nanos(42)).await;
+                        Ok(Some(Value::Bool(true)))
+                    })),
+                    Value::Future(Box::pin(async {
+                        Ok(Some(Value::Future(Box::pin(async { Ok(None) }))))
+                    })),
+                    Value::Stream(Box::pin(
+                        stream::iter([
+                            Ok(vec![Some(Value::U8(0x42))]),
+                            Ok(vec![Some(Value::U8(0xff))]),
+                        ])
+                        .then(|item| async {
+                            sleep(Duration::from_nanos(42)).await;
+                            item
+                        }),
+                    )),
+                ]),
+            ],
+            vec![
+                Value::Future(Box::pin(async { Ok(None) })),
+                Value::Future(Box::pin(async {
+                    sleep(Duration::from_nanos(42)).await;
+                    Ok(Some(Value::Bool(true)))
+                })),
+                Value::Future(Box::pin(async {
+                    Ok(Some(Value::Future(Box::pin(async { Ok(None) }))))
+                })),
+                Value::Future(Box::pin(async {
+                    sleep(Duration::from_nanos(42)).await;
+                    Ok(Some(Value::Future(Box::pin(async {
+                        sleep(Duration::from_nanos(42)).await;
+                        Ok(Some(Value::Future(Box::pin(async {
+                            sleep(Duration::from_nanos(42)).await;
+                            Ok(Some(Value::Bool(true)))
+                        }))))
+                    }))))
+                })),
+                Value::Future(Box::pin(async {
+                    sleep(Duration::from_nanos(42)).await;
+                    Ok(Some(Value::Stream(Box::pin(stream::iter([
+                        Ok(vec![Some(Value::U8(0x42))]),
+                        Ok(vec![Some(Value::U8(0xff))]),
+                    ])))))
+                })),
+                Value::Stream(Box::pin(stream::iter([Ok(vec![None, None, None, None])]))),
+                Value::Stream(Box::pin(stream::iter([Ok(vec![
+                    Some(Value::U8(0x42)),
+                    Some(Value::U8(0xff)),
+                ])]))),
+                Value::Future(Box::pin(async { Ok(None) })),
+                Value::Stream(Box::pin(
+                    stream::iter([
+                        Ok(vec![Some(Value::U8(0x42))]),
+                        Ok(vec![Some(Value::U8(0xff))]),
+                    ])
+                    .then(|item| async {
+                        sleep(Duration::from_nanos(42)).await;
+                        item
+                    }),
+                )),
+                Value::Tuple(vec![
+                    Value::Future(Box::pin(async { Ok(None) })),
+                    Value::Future(Box::pin(async {
+                        sleep(Duration::from_nanos(42)).await;
+                        Ok(Some(Value::Bool(true)))
+                    })),
+                    Value::Future(Box::pin(async {
+                        Ok(Some(Value::Future(Box::pin(async { Ok(None) }))))
+                    })),
+                    Value::Stream(Box::pin(
+                        stream::iter([
+                            Ok(vec![Some(Value::U8(0x42))]),
+                            Ok(vec![Some(Value::U8(0xff))]),
+                        ])
+                        .then(|item| async {
+                            sleep(Duration::from_nanos(42)).await;
+                            item
+                        }),
+                    )),
+                ]),
+                Value::Record(vec![
+                    Value::Future(Box::pin(async { Ok(None) })),
+                    Value::Future(Box::pin(async {
+                        sleep(Duration::from_nanos(42)).await;
+                        Ok(Some(Value::Bool(true)))
+                    })),
+                    Value::Future(Box::pin(async {
+                        Ok(Some(Value::Future(Box::pin(async { Ok(None) }))))
+                    })),
+                    Value::Stream(Box::pin(
+                        stream::iter([
+                            Ok(vec![Some(Value::U8(0x42))]),
+                            Ok(vec![Some(Value::U8(0xff))]),
+                        ])
+                        .then(|item| async {
+                            sleep(Duration::from_nanos(42)).await;
+                            item
+                        }),
+                    )),
+                ]),
+            ],
+        )
+        .await
+        .context("failed to invoke `async`")?;
+
+        let mut values = zip(params, results);
+        let (Value::Future(p), Value::Future(r)) = values.next().unwrap() else {
+            bail!("future type mismatch")
+        };
+        assert!(matches!((p.await, r.await), (Ok(None), Ok(None))));
+
+        let (Value::Future(p), Value::Future(r)) = values.next().unwrap() else {
+            bail!("future type mismatch")
+        };
+        assert!(matches!(
+            (p.await, r.await),
+            (Ok(Some(Value::Bool(true))), Ok(Some(Value::Bool(true))))
+        ));
+
+        let (Value::Future(p), Value::Future(r)) = values.next().unwrap() else {
+            bail!("future type mismatch")
+        };
+        let (Ok(Some(Value::Future(p))), Ok(Some(Value::Future(r)))) = (p.await, r.await) else {
+            bail!("future type mismatch")
+        };
+        assert!(matches!((p.await, r.await), (Ok(None), Ok(None))));
+
+        let (Value::Future(p), Value::Future(r)) = values.next().unwrap() else {
+            bail!("future type mismatch")
+        };
+        let (Ok(Some(Value::Future(p))), Ok(Some(Value::Future(r)))) = (p.await, r.await) else {
+            bail!("future type mismatch")
+        };
+        let (Ok(Some(Value::Future(p))), Ok(Some(Value::Future(r)))) = (p.await, r.await) else {
+            bail!("future type mismatch")
+        };
+        assert!(matches!(
+            (p.await, r.await),
+            (Ok(Some(Value::Bool(true))), Ok(Some(Value::Bool(true))))
+        ));
+
+        let (Value::Future(p), Value::Future(r)) = values.next().unwrap() else {
+            bail!("future type mismatch")
+        };
+        let (Ok(Some(Value::Stream(mut p))), Ok(Some(Value::Stream(mut r)))) = (p.await, r.await)
+        else {
+            bail!("stream type mismatch")
+        };
+        assert!(matches!(
+            (
+                p.try_next().await.unwrap().as_deref().unwrap(),
+                r.try_next().await.unwrap().as_deref().unwrap(),
+            ),
+            ([Some(Value::U8(0x42))], [Some(Value::U8(0x42))])
+        ));
+        assert!(matches!(
+            (
+                p.try_next().await.unwrap().as_deref().unwrap(),
+                r.try_next().await.unwrap().as_deref().unwrap(),
+            ),
+            ([Some(Value::U8(0xff))], [Some(Value::U8(0xff))])
+        ));
+        assert!(matches!(
+            (p.try_next().await.unwrap(), r.try_next().await.unwrap()),
+            (None, None)
+        ));
+
+        let (Value::Stream(mut p), Value::Stream(mut r)) = values.next().unwrap() else {
+            bail!("stream type mismatch")
+        };
+        assert!(matches!(
+            (
+                p.try_next().await.unwrap().as_deref().unwrap(),
+                r.try_next().await.unwrap().as_deref().unwrap(),
+            ),
+            ([None, None, None, None], [None, None, None, None])
+        ));
+        assert!(matches!(
+            (p.try_next().await.unwrap(), r.try_next().await.unwrap()),
+            (None, None)
+        ));
+
+        let (Value::Stream(mut p), Value::Stream(mut r)) = values.next().unwrap() else {
+            bail!("stream type mismatch")
+        };
+        assert!(matches!(
+            (
+                p.try_next().await.unwrap().as_deref().unwrap(),
+                r.try_next().await.unwrap().as_deref().unwrap(),
+            ),
+            (
+                [Some(Value::U8(0x42)), Some(Value::U8(0xff))],
+                [Some(Value::U8(0x42)), Some(Value::U8(0xff))]
+            )
+        ));
+        assert!(matches!(
+            (p.try_next().await.unwrap(), r.try_next().await.unwrap()),
+            (None, None)
+        ));
+
+        let (Value::Future(p), Value::Future(r)) = values.next().unwrap() else {
+            bail!("future type mismatch")
+        };
+        assert!(matches!((p.await, r.await), (Ok(None), Ok(None))));
+
+        let (Value::Stream(mut p), Value::Stream(mut r)) = values.next().unwrap() else {
+            bail!("stream type mismatch")
+        };
+        assert!(matches!(
+            (
+                p.try_next().await.unwrap().as_deref().unwrap(),
+                r.try_next().await.unwrap().as_deref().unwrap(),
+            ),
+            ([Some(Value::U8(0x42))], [Some(Value::U8(0x42))])
+        ));
+        assert!(matches!(
+            (
+                p.try_next().await.unwrap().as_deref().unwrap(),
+                r.try_next().await.unwrap().as_deref().unwrap(),
+            ),
+            ([Some(Value::U8(0xff))], [Some(Value::U8(0xff))])
+        ));
+        assert!(matches!(
+            (p.try_next().await.unwrap(), r.try_next().await.unwrap()),
+            (None, None)
+        ));
+
+        let (Value::Tuple(p), Value::Tuple(r)) = values.next().unwrap() else {
+            bail!("tuple type mismatch")
+        };
+        {
+            let mut values = zip(p, r);
+            let (Value::Future(p), Value::Future(r)) = values.next().unwrap() else {
+                bail!("future type mismatch")
+            };
+            assert!(matches!((p.await, r.await), (Ok(None), Ok(None))));
+
+            let (Value::Future(p), Value::Future(r)) = values.next().unwrap() else {
+                bail!("future type mismatch")
+            };
+            assert!(matches!(
+                (p.await, r.await),
+                (Ok(Some(Value::Bool(true))), Ok(Some(Value::Bool(true))))
+            ));
+
+            let (Value::Future(p), Value::Future(r)) = values.next().unwrap() else {
+                bail!("future type mismatch")
+            };
+            let (Ok(Some(Value::Future(p))), Ok(Some(Value::Future(r)))) = (p.await, r.await) else {
+                bail!("future type mismatch")
+            };
+            assert!(matches!((p.await, r.await), (Ok(None), Ok(None))));
+
+            let (Value::Stream(mut p), Value::Stream(mut r)) = values.next().unwrap() else {
+                bail!("stream type mismatch")
+            };
+            assert!(matches!(
+                (
+                    p.try_next().await.unwrap().as_deref().unwrap(),
+                    r.try_next().await.unwrap().as_deref().unwrap(),
+                ),
+                ([Some(Value::U8(0x42))], [Some(Value::U8(0x42))])
+            ));
+            assert!(matches!(
+                (
+                    p.try_next().await.unwrap().as_deref().unwrap(),
+                    r.try_next().await.unwrap().as_deref().unwrap(),
+                ),
+                ([Some(Value::U8(0xff))], [Some(Value::U8(0xff))])
+            ));
+            assert!(matches!(
+                (p.try_next().await.unwrap(), r.try_next().await.unwrap()),
+                (None, None)
+            ));
+        }
+
+        let (Value::Record(p), Value::Record(r)) = values.next().unwrap() else {
+            bail!("record type mismatch")
+        };
+        {
+            let mut values = zip(p, r);
+            let (Value::Future(p), Value::Future(r)) = values.next().unwrap() else {
+                bail!("future type mismatch")
+            };
+            assert!(matches!((p.await, r.await), (Ok(None), Ok(None))));
+
+            let (Value::Future(p), Value::Future(r)) = values.next().unwrap() else {
+                bail!("future type mismatch")
+            };
+            assert!(matches!(
+                (p.await, r.await),
+                (Ok(Some(Value::Bool(true))), Ok(Some(Value::Bool(true))))
+            ));
+
+            let (Value::Future(p), Value::Future(r)) = values.next().unwrap() else {
+                bail!("future type mismatch")
+            };
+            let (Ok(Some(Value::Future(p))), Ok(Some(Value::Future(r)))) = (p.await, r.await) else {
+                bail!("future type mismatch")
+            };
+            assert!(matches!((p.await, r.await), (Ok(None), Ok(None))));
+
+            let (Value::Stream(mut p), Value::Stream(mut r)) = values.next().unwrap() else {
+                bail!("stream type mismatch")
+            };
+            assert!(matches!(
+                (
+                    p.try_next().await.unwrap().as_deref().unwrap(),
+                    r.try_next().await.unwrap().as_deref().unwrap(),
+                ),
+                ([Some(Value::U8(0x42))], [Some(Value::U8(0x42))])
+            ));
+            assert!(matches!(
+                (
+                    p.try_next().await.unwrap().as_deref().unwrap(),
+                    r.try_next().await.unwrap().as_deref().unwrap(),
+                ),
+                ([Some(Value::U8(0xff))], [Some(Value::U8(0xff))])
+            ));
+            assert!(matches!(
+                (p.try_next().await.unwrap(), r.try_next().await.unwrap()),
+                (None, None)
+            ));
+        }
+
+        let unit_invocations = client
+            .serve_static::<()>("wrpc:wrpc/test-static", "unit_unit")
+            .await
+            .context("failed to serve")?;
+        try_join!(
+            async {
+                let AcceptedInvocation {
+                    params: (),
+                    result_subject,
+                    transmitter,
+                    ..
+                } = pin!(unit_invocations)
+                    .try_next()
+                    .await
+                    .context("failed to receive invocation")?
+                    .context("unexpected end of stream")?;
+                transmitter
+                    .transmit_static(result_subject, ())
+                    .await
+                    .context("failed to transmit response")?;
+                anyhow::Ok(())
+            },
+            async {
+                let ((), tx) = client
+                    .invoke_static("wrpc:wrpc/test-static", "unit_unit", ())
+                    .await
+                    .context("failed to invoke")?;
+                tx.await.context("failed to transmit parameters")?;
+                Ok(())
+            }
+        )?;
+        Ok(())
+    }).await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn interfaces() -> anyhow::Result<()> {
+    INIT.get_or_init(init).await;
+
+    let (nats_client, nats_server, stop_tx) = start_nats().await?;
 
     let client = wrpc::transport::nats::Client::new(nats_client, "test-prefix".to_string());
     let client = Arc::new(client);
-
-    let (params, results) = loopback_dynamic(
-        client.as_ref(),
-        "unit_unit",
-        DynamicFunctionType::Static {
-            params: vec![].into(),
-            results: vec![].into(),
-        },
-        vec![],
-        vec![],
-    )
-    .await
-    .context("failed to invoke `unit_unit`")?;
-    assert!(params.is_empty());
-    assert!(results.is_empty());
-
-    let flat_types = vec![
-        Type::Bool,
-        Type::U8,
-        Type::U16,
-        Type::U32,
-        Type::U64,
-        Type::S8,
-        Type::S16,
-        Type::S32,
-        Type::S64,
-        Type::F32,
-        Type::F64,
-        Type::Char,
-        Type::String,
-        Type::Enum,
-        Type::Flags,
-    ]
-    .into();
-
-    let flat_variant_type = vec![None, Some(Type::Bool)].into();
-
-    let sync_tuple_type = vec![
-        Type::Bool,
-        Type::U8,
-        Type::U16,
-        Type::U32,
-        Type::U64,
-        Type::S8,
-        Type::S16,
-        Type::S32,
-        Type::S64,
-        Type::F32,
-        Type::F64,
-        Type::Char,
-        Type::String,
-        Type::List(Arc::new(Type::U64)),
-        Type::List(Arc::new(Type::Bool)),
-        Type::Record(Arc::clone(&flat_types)),
-        Type::Tuple(Arc::clone(&flat_types)),
-        Type::Variant(Arc::clone(&flat_variant_type)),
-        Type::Variant(Arc::clone(&flat_variant_type)),
-        Type::Enum,
-        Type::Option(Arc::new(Type::Bool)),
-        Type::Result {
-            ok: Some(Arc::new(Type::Bool)),
-            err: Some(Arc::new(Type::Bool)),
-        },
-        Type::Flags,
-    ]
-    .into();
-
-    let (params, results) = loopback_dynamic(
-        client.as_ref(),
-        "sync",
-        DynamicFunctionType::Static {
-            params: Arc::clone(&sync_tuple_type),
-            results: sync_tuple_type,
-        },
-        vec![
-            Value::Bool(true),
-            Value::U8(0xfe),
-            Value::U16(0xfeff),
-            Value::U32(0xfeffffff),
-            Value::U64(0xfeffffffffffffff),
-            Value::S8(0x7e),
-            Value::S16(0x7eff),
-            Value::S32(0x7effffff),
-            Value::S64(0x7effffffffffffff),
-            Value::F32(0.42),
-            Value::F64(0.4242),
-            Value::Char('a'),
-            Value::String("test".into()),
-            Value::List(vec![]),
-            Value::List(vec![
-                Value::Bool(true),
-                Value::Bool(false),
-                Value::Bool(true),
-            ]),
-            Value::Record(vec![
-                Value::Bool(true),
-                Value::U8(0xfe),
-                Value::U16(0xfeff),
-                Value::U32(0xfeffffff),
-                Value::U64(0xfeffffffffffffff),
-                Value::S8(0x7e),
-                Value::S16(0x7eff),
-                Value::S32(0x7effffff),
-                Value::S64(0x7effffffffffffff),
-                Value::F32(0.42),
-                Value::F64(0.4242),
-                Value::Char('a'),
-                Value::String("test".into()),
-                Value::Enum(0xfeff),
-                Value::Flags(0xdeadbeef),
-            ]),
-            Value::Tuple(vec![
-                Value::Bool(true),
-                Value::U8(0xfe),
-                Value::U16(0xfeff),
-                Value::U32(0xfeffffff),
-                Value::U64(0xfeffffffffffffff),
-                Value::S8(0x7e),
-                Value::S16(0x7eff),
-                Value::S32(0x7effffff),
-                Value::S64(0x7effffffffffffff),
-                Value::F32(0.42),
-                Value::F64(0.4242),
-                Value::Char('a'),
-                Value::String("test".into()),
-                Value::Enum(0xfeff),
-                Value::Flags(0xdeadbeef),
-            ]),
-            Value::Variant {
-                discriminant: 0,
-                nested: None,
-            },
-            Value::Variant {
-                discriminant: 1,
-                nested: Some(Box::new(Value::Bool(true))),
-            },
-            Value::Enum(0xfeff),
-            Value::Option(Some(Box::new(Value::Bool(true)))),
-            Value::Result(Ok(Some(Box::new(Value::Bool(true))))),
-            Value::Flags(0xdeadbeef),
-        ],
-        vec![
-            Value::Bool(true),
-            Value::U8(0xfe),
-            Value::U16(0xfeff),
-            Value::U32(0xfeffffff),
-            Value::U64(0xfeffffffffffffff),
-            Value::S8(0x7e),
-            Value::S16(0x7eff),
-            Value::S32(0x7effffff),
-            Value::S64(0x7effffffffffffff),
-            Value::F32(0.42),
-            Value::F64(0.4242),
-            Value::Char('a'),
-            Value::String("test".into()),
-            Value::List(vec![]),
-            Value::List(vec![
-                Value::Bool(true),
-                Value::Bool(false),
-                Value::Bool(true),
-            ]),
-            Value::Record(vec![
-                Value::Bool(true),
-                Value::U8(0xfe),
-                Value::U16(0xfeff),
-                Value::U32(0xfeffffff),
-                Value::U64(0xfeffffffffffffff),
-                Value::S8(0x7e),
-                Value::S16(0x7eff),
-                Value::S32(0x7effffff),
-                Value::S64(0x7effffffffffffff),
-                Value::F32(0.42),
-                Value::F64(0.4242),
-                Value::Char('a'),
-                Value::String("test".into()),
-                Value::Enum(0xfeff),
-                Value::Flags(0xdeadbeef),
-            ]),
-            Value::Tuple(vec![
-                Value::Bool(true),
-                Value::U8(0xfe),
-                Value::U16(0xfeff),
-                Value::U32(0xfeffffff),
-                Value::U64(0xfeffffffffffffff),
-                Value::S8(0x7e),
-                Value::S16(0x7eff),
-                Value::S32(0x7effffff),
-                Value::S64(0x7effffffffffffff),
-                Value::F32(0.42),
-                Value::F64(0.4242),
-                Value::Char('a'),
-                Value::String("test".into()),
-                Value::Enum(0xfeff),
-                Value::Flags(0xdeadbeef),
-            ]),
-            Value::Variant {
-                discriminant: 0,
-                nested: None,
-            },
-            Value::Variant {
-                discriminant: 1,
-                nested: Some(Box::new(Value::Bool(true))),
-            },
-            Value::Enum(0xfeff),
-            Value::Option(Some(Box::new(Value::Bool(true)))),
-            Value::Result(Ok(Some(Box::new(Value::Bool(true))))),
-            Value::Flags(0xdeadbeef),
-        ],
-    )
-    .await
-    .context("failed to invoke `sync`")?;
-    let mut values = zip(params, results);
-    assert!(matches!(
-        values.next().unwrap(),
-        (Value::Bool(true), Value::Bool(true))
-    ));
-    assert!(matches!(
-        values.next().unwrap(),
-        (Value::U8(0xfe), Value::U8(0xfe))
-    ));
-    assert!(matches!(
-        values.next().unwrap(),
-        (Value::U16(0xfeff), Value::U16(0xfeff))
-    ));
-    assert!(matches!(
-        values.next().unwrap(),
-        (Value::U32(0xfeffffff), Value::U32(0xfeffffff))
-    ));
-    assert!(matches!(
-        values.next().unwrap(),
-        (
-            Value::U64(0xfeffffffffffffff),
-            Value::U64(0xfeffffffffffffff)
-        )
-    ));
-    assert!(matches!(
-        values.next().unwrap(),
-        (Value::S8(0x7e), Value::S8(0x7e))
-    ));
-    assert!(matches!(
-        values.next().unwrap(),
-        (Value::S16(0x7eff), Value::S16(0x7eff))
-    ));
-    assert!(matches!(
-        values.next().unwrap(),
-        (Value::S32(0x7effffff), Value::S32(0x7effffff))
-    ));
-    assert!(matches!(
-        values.next().unwrap(),
-        (
-            Value::S64(0x7effffffffffffff),
-            Value::S64(0x7effffffffffffff)
-        )
-    ));
-    assert!(matches!(
-        values.next().unwrap(),
-        (Value::F32(p), Value::F32(r)) if p == 0.42 && r == 0.42
-    ));
-    assert!(matches!(
-        values.next().unwrap(),
-        (Value::F64(p), Value::F64(r)) if p == 0.4242 && r == 0.4242
-    ));
-    assert!(matches!(
-        values.next().unwrap(),
-        (Value::Char('a'), Value::Char('a'))
-    ));
-    assert!(matches!(
-        values.next().unwrap(),
-        (Value::String(p), Value::String(r)) if p == "test" && r == "test"
-    ));
-    assert!(matches!(
-        values.next().unwrap(),
-        (Value::List(p), Value::List(r)) if p.is_empty() && r.is_empty()
-    ));
-    let (Value::List(p), Value::List(r)) = values.next().unwrap() else {
-        bail!("list type mismatch")
-    };
-    {
-        let mut values = zip(p, r);
-        assert!(matches!(
-            values.next().unwrap(),
-            (Value::Bool(true), Value::Bool(true))
-        ));
-        assert!(matches!(
-            values.next().unwrap(),
-            (Value::Bool(false), Value::Bool(false))
-        ));
-        assert!(matches!(
-            values.next().unwrap(),
-            (Value::Bool(true), Value::Bool(true))
-        ));
-    }
-    let (Value::Record(p), Value::Record(r)) = values.next().unwrap() else {
-        bail!("record type mismatch")
-    };
-    {
-        let mut values = zip(p, r);
-        assert!(matches!(
-            values.next().unwrap(),
-            (Value::Bool(true), Value::Bool(true))
-        ));
-        assert!(matches!(
-            values.next().unwrap(),
-            (Value::U8(0xfe), Value::U8(0xfe))
-        ));
-        assert!(matches!(
-            values.next().unwrap(),
-            (Value::U16(0xfeff), Value::U16(0xfeff))
-        ));
-        assert!(matches!(
-            values.next().unwrap(),
-            (Value::U32(0xfeffffff), Value::U32(0xfeffffff))
-        ));
-        assert!(matches!(
-            values.next().unwrap(),
-            (
-                Value::U64(0xfeffffffffffffff),
-                Value::U64(0xfeffffffffffffff)
-            )
-        ));
-        assert!(matches!(
-            values.next().unwrap(),
-            (Value::S8(0x7e), Value::S8(0x7e))
-        ));
-        assert!(matches!(
-            values.next().unwrap(),
-            (Value::S16(0x7eff), Value::S16(0x7eff))
-        ));
-        assert!(matches!(
-            values.next().unwrap(),
-            (Value::S32(0x7effffff), Value::S32(0x7effffff))
-        ));
-        assert!(matches!(
-            values.next().unwrap(),
-            (
-                Value::S64(0x7effffffffffffff),
-                Value::S64(0x7effffffffffffff)
-            )
-        ));
-        assert!(matches!(
-            values.next().unwrap(),
-            (Value::F32(p), Value::F32(r)) if p == 0.42 && r == 0.42
-        ));
-        assert!(matches!(
-            values.next().unwrap(),
-            (Value::F64(p), Value::F64(r)) if p == 0.4242 && r == 0.4242
-        ));
-        assert!(matches!(
-            values.next().unwrap(),
-            (Value::Char('a'), Value::Char('a'))
-        ));
-        assert!(matches!(
-            values.next().unwrap(),
-            (Value::String(p), Value::String(r)) if p == "test" && r == "test"
-        ));
-        assert!(matches!(
-            values.next().unwrap(),
-            (Value::Enum(0xfeff), Value::Enum(0xfeff))
-        ));
-        assert!(matches!(
-            values.next().unwrap(),
-            (Value::Flags(0xdeadbeef), Value::Flags(0xdeadbeef))
-        ));
-    }
-    let (Value::Tuple(p), Value::Tuple(r)) = values.next().unwrap() else {
-        bail!("tuple type mismatch")
-    };
-    {
-        let mut values = zip(p, r);
-        assert!(matches!(
-            values.next().unwrap(),
-            (Value::Bool(true), Value::Bool(true))
-        ));
-        assert!(matches!(
-            values.next().unwrap(),
-            (Value::U8(0xfe), Value::U8(0xfe))
-        ));
-        assert!(matches!(
-            values.next().unwrap(),
-            (Value::U16(0xfeff), Value::U16(0xfeff))
-        ));
-        assert!(matches!(
-            values.next().unwrap(),
-            (Value::U32(0xfeffffff), Value::U32(0xfeffffff))
-        ));
-        assert!(matches!(
-            values.next().unwrap(),
-            (
-                Value::U64(0xfeffffffffffffff),
-                Value::U64(0xfeffffffffffffff)
-            )
-        ));
-        assert!(matches!(
-            values.next().unwrap(),
-            (Value::S8(0x7e), Value::S8(0x7e))
-        ));
-        assert!(matches!(
-            values.next().unwrap(),
-            (Value::S16(0x7eff), Value::S16(0x7eff))
-        ));
-        assert!(matches!(
-            values.next().unwrap(),
-            (Value::S32(0x7effffff), Value::S32(0x7effffff))
-        ));
-        assert!(matches!(
-            values.next().unwrap(),
-            (
-                Value::S64(0x7effffffffffffff),
-                Value::S64(0x7effffffffffffff)
-            )
-        ));
-        assert!(matches!(
-            values.next().unwrap(),
-            (Value::F32(p), Value::F32(r)) if p == 0.42 && r == 0.42
-        ));
-        assert!(matches!(
-            values.next().unwrap(),
-            (Value::F64(p), Value::F64(r)) if p == 0.4242 && r == 0.4242
-        ));
-        assert!(matches!(
-            values.next().unwrap(),
-            (Value::Char('a'), Value::Char('a'))
-        ));
-        assert!(matches!(
-            values.next().unwrap(),
-            (Value::String(p), Value::String(r)) if p == "test" && r == "test"
-        ));
-        assert!(matches!(
-            values.next().unwrap(),
-            (Value::Enum(0xfeff), Value::Enum(0xfeff))
-        ));
-        assert!(matches!(
-            values.next().unwrap(),
-            (Value::Flags(0xdeadbeef), Value::Flags(0xdeadbeef))
-        ));
-    }
-    assert!(matches!(
-        values.next().unwrap(),
-        (
-            Value::Variant {
-                discriminant: 0,
-                nested: None,
-            },
-            Value::Variant {
-                discriminant: 0,
-                nested: None,
-            }
-        )
-    ));
-    assert!(matches!(
-        values.next().unwrap(),
-        (
-            Value::Variant {
-                discriminant: 1,
-                nested: p,
-            },
-            Value::Variant {
-                discriminant: 1,
-                nested: r,
-            }
-        ) if matches!((p.as_deref(), r.as_deref()), (Some(Value::Bool(true)), Some(Value::Bool(true))))
-    ));
-    assert!(matches!(
-        values.next().unwrap(),
-        (Value::Enum(0xfeff), Value::Enum(0xfeff))
-    ));
-    assert!(matches!(
-        values.next().unwrap(),
-        (Value::Option(p), Value::Option(r)) if matches!((p.as_deref(), r.as_deref()), (Some(Value::Bool(true)), Some(Value::Bool(true))))
-    ));
-    assert!(matches!(
-        values.next().unwrap(),
-        (Value::Result(Ok(p)), Value::Result(Ok(r))) if matches!((p.as_deref(), r.as_deref()), (Some(Value::Bool(true)), Some(Value::Bool(true))))
-    ));
-    assert!(matches!(
-        values.next().unwrap(),
-        (Value::Flags(0xdeadbeef), Value::Flags(0xdeadbeef))
-    ));
-
-    let async_tuple_type = vec![
-        Type::Future(None),
-        Type::Future(Some(Arc::new(Type::Bool))),
-        Type::Future(Some(Arc::new(Type::Future(None)))),
-        Type::Future(Some(Arc::new(Type::Future(Some(Arc::new(Type::Future(
-            Some(Arc::new(Type::Bool)),
-        ))))))),
-        Type::Future(Some(Arc::new(Type::Stream(Some(Arc::new(Type::U8)))))),
-        Type::Stream(None),
-        Type::Stream(Some(Arc::new(Type::U8))),
-        Type::Resource(ResourceType::Pollable),
-        Type::Resource(ResourceType::InputStream),
-        Type::Tuple(
-            vec![
-                Type::Future(None),
-                Type::Future(Some(Arc::new(Type::Bool))),
-                Type::Future(Some(Arc::new(Type::Future(None)))),
-                Type::Resource(ResourceType::InputStream),
-            ]
-            .into(),
-        ),
-        Type::Record(
-            vec![
-                Type::Future(None),
-                Type::Future(Some(Arc::new(Type::Bool))),
-                Type::Future(Some(Arc::new(Type::Future(None)))),
-                Type::Resource(ResourceType::InputStream),
-            ]
-            .into(),
-        ),
-    ]
-    .into();
-
-    let (params, results) = loopback_dynamic(
-        client.as_ref(),
-        "async",
-        DynamicFunctionType::Static {
-            params: Arc::clone(&async_tuple_type),
-            results: async_tuple_type,
-        },
-        vec![
-            Value::Future(Box::pin(async { Ok(None) })),
-            Value::Future(Box::pin(async {
-                sleep(Duration::from_nanos(42)).await;
-                Ok(Some(Value::Bool(true)))
-            })),
-            Value::Future(Box::pin(async {
-                Ok(Some(Value::Future(Box::pin(async { Ok(None) }))))
-            })),
-            Value::Future(Box::pin(async {
-                sleep(Duration::from_nanos(42)).await;
-                Ok(Some(Value::Future(Box::pin(async {
-                    sleep(Duration::from_nanos(42)).await;
-                    Ok(Some(Value::Future(Box::pin(async {
-                        sleep(Duration::from_nanos(42)).await;
-                        Ok(Some(Value::Bool(true)))
-                    }))))
-                }))))
-            })),
-            Value::Future(Box::pin(async {
-                sleep(Duration::from_nanos(42)).await;
-                Ok(Some(Value::Stream(Box::pin(stream::iter([
-                    Ok(vec![Some(Value::U8(0x42))]),
-                    Ok(vec![Some(Value::U8(0xff))]),
-                ])))))
-            })),
-            Value::Stream(Box::pin(stream::iter([Ok(vec![None, None, None, None])]))),
-            Value::Stream(Box::pin(stream::iter([Ok(vec![
-                Some(Value::U8(0x42)),
-                Some(Value::U8(0xff)),
-            ])]))),
-            Value::Future(Box::pin(async { Ok(None) })),
-            Value::Stream(Box::pin(
-                stream::iter([
-                    Ok(vec![Some(Value::U8(0x42))]),
-                    Ok(vec![Some(Value::U8(0xff))]),
-                ])
-                .then(|item| async {
-                    sleep(Duration::from_nanos(42)).await;
-                    item
-                }),
-            )),
-            Value::Tuple(vec![
-                Value::Future(Box::pin(async { Ok(None) })),
-                Value::Future(Box::pin(async {
-                    sleep(Duration::from_nanos(42)).await;
-                    Ok(Some(Value::Bool(true)))
-                })),
-                Value::Future(Box::pin(async {
-                    Ok(Some(Value::Future(Box::pin(async { Ok(None) }))))
-                })),
-                Value::Stream(Box::pin(
-                    stream::iter([
-                        Ok(vec![Some(Value::U8(0x42))]),
-                        Ok(vec![Some(Value::U8(0xff))]),
-                    ])
-                    .then(|item| async {
-                        sleep(Duration::from_nanos(42)).await;
-                        item
-                    }),
-                )),
-            ]),
-            Value::Record(vec![
-                Value::Future(Box::pin(async { Ok(None) })),
-                Value::Future(Box::pin(async {
-                    sleep(Duration::from_nanos(42)).await;
-                    Ok(Some(Value::Bool(true)))
-                })),
-                Value::Future(Box::pin(async {
-                    Ok(Some(Value::Future(Box::pin(async { Ok(None) }))))
-                })),
-                Value::Stream(Box::pin(
-                    stream::iter([
-                        Ok(vec![Some(Value::U8(0x42))]),
-                        Ok(vec![Some(Value::U8(0xff))]),
-                    ])
-                    .then(|item| async {
-                        sleep(Duration::from_nanos(42)).await;
-                        item
-                    }),
-                )),
-            ]),
-        ],
-        vec![
-            Value::Future(Box::pin(async { Ok(None) })),
-            Value::Future(Box::pin(async {
-                sleep(Duration::from_nanos(42)).await;
-                Ok(Some(Value::Bool(true)))
-            })),
-            Value::Future(Box::pin(async {
-                Ok(Some(Value::Future(Box::pin(async { Ok(None) }))))
-            })),
-            Value::Future(Box::pin(async {
-                sleep(Duration::from_nanos(42)).await;
-                Ok(Some(Value::Future(Box::pin(async {
-                    sleep(Duration::from_nanos(42)).await;
-                    Ok(Some(Value::Future(Box::pin(async {
-                        sleep(Duration::from_nanos(42)).await;
-                        Ok(Some(Value::Bool(true)))
-                    }))))
-                }))))
-            })),
-            Value::Future(Box::pin(async {
-                sleep(Duration::from_nanos(42)).await;
-                Ok(Some(Value::Stream(Box::pin(stream::iter([
-                    Ok(vec![Some(Value::U8(0x42))]),
-                    Ok(vec![Some(Value::U8(0xff))]),
-                ])))))
-            })),
-            Value::Stream(Box::pin(stream::iter([Ok(vec![None, None, None, None])]))),
-            Value::Stream(Box::pin(stream::iter([Ok(vec![
-                Some(Value::U8(0x42)),
-                Some(Value::U8(0xff)),
-            ])]))),
-            Value::Future(Box::pin(async { Ok(None) })),
-            Value::Stream(Box::pin(
-                stream::iter([
-                    Ok(vec![Some(Value::U8(0x42))]),
-                    Ok(vec![Some(Value::U8(0xff))]),
-                ])
-                .then(|item| async {
-                    sleep(Duration::from_nanos(42)).await;
-                    item
-                }),
-            )),
-            Value::Tuple(vec![
-                Value::Future(Box::pin(async { Ok(None) })),
-                Value::Future(Box::pin(async {
-                    sleep(Duration::from_nanos(42)).await;
-                    Ok(Some(Value::Bool(true)))
-                })),
-                Value::Future(Box::pin(async {
-                    Ok(Some(Value::Future(Box::pin(async { Ok(None) }))))
-                })),
-                Value::Stream(Box::pin(
-                    stream::iter([
-                        Ok(vec![Some(Value::U8(0x42))]),
-                        Ok(vec![Some(Value::U8(0xff))]),
-                    ])
-                    .then(|item| async {
-                        sleep(Duration::from_nanos(42)).await;
-                        item
-                    }),
-                )),
-            ]),
-            Value::Record(vec![
-                Value::Future(Box::pin(async { Ok(None) })),
-                Value::Future(Box::pin(async {
-                    sleep(Duration::from_nanos(42)).await;
-                    Ok(Some(Value::Bool(true)))
-                })),
-                Value::Future(Box::pin(async {
-                    Ok(Some(Value::Future(Box::pin(async { Ok(None) }))))
-                })),
-                Value::Stream(Box::pin(
-                    stream::iter([
-                        Ok(vec![Some(Value::U8(0x42))]),
-                        Ok(vec![Some(Value::U8(0xff))]),
-                    ])
-                    .then(|item| async {
-                        sleep(Duration::from_nanos(42)).await;
-                        item
-                    }),
-                )),
-            ]),
-        ],
-    )
-    .await
-    .context("failed to invoke `async`")?;
-
-    let mut values = zip(params, results);
-    let (Value::Future(p), Value::Future(r)) = values.next().unwrap() else {
-        bail!("future type mismatch")
-    };
-    assert!(matches!((p.await, r.await), (Ok(None), Ok(None))));
-
-    let (Value::Future(p), Value::Future(r)) = values.next().unwrap() else {
-        bail!("future type mismatch")
-    };
-    assert!(matches!(
-        (p.await, r.await),
-        (Ok(Some(Value::Bool(true))), Ok(Some(Value::Bool(true))))
-    ));
-
-    let (Value::Future(p), Value::Future(r)) = values.next().unwrap() else {
-        bail!("future type mismatch")
-    };
-    let (Ok(Some(Value::Future(p))), Ok(Some(Value::Future(r)))) = (p.await, r.await) else {
-        bail!("future type mismatch")
-    };
-    assert!(matches!((p.await, r.await), (Ok(None), Ok(None))));
-
-    let (Value::Future(p), Value::Future(r)) = values.next().unwrap() else {
-        bail!("future type mismatch")
-    };
-    let (Ok(Some(Value::Future(p))), Ok(Some(Value::Future(r)))) = (p.await, r.await) else {
-        bail!("future type mismatch")
-    };
-    let (Ok(Some(Value::Future(p))), Ok(Some(Value::Future(r)))) = (p.await, r.await) else {
-        bail!("future type mismatch")
-    };
-    assert!(matches!(
-        (p.await, r.await),
-        (Ok(Some(Value::Bool(true))), Ok(Some(Value::Bool(true))))
-    ));
-
-    let (Value::Future(p), Value::Future(r)) = values.next().unwrap() else {
-        bail!("future type mismatch")
-    };
-    let (Ok(Some(Value::Stream(mut p))), Ok(Some(Value::Stream(mut r)))) = (p.await, r.await)
-    else {
-        bail!("stream type mismatch")
-    };
-    assert!(matches!(
-        (
-            p.try_next().await.unwrap().as_deref().unwrap(),
-            r.try_next().await.unwrap().as_deref().unwrap(),
-        ),
-        ([Some(Value::U8(0x42))], [Some(Value::U8(0x42))])
-    ));
-    assert!(matches!(
-        (
-            p.try_next().await.unwrap().as_deref().unwrap(),
-            r.try_next().await.unwrap().as_deref().unwrap(),
-        ),
-        ([Some(Value::U8(0xff))], [Some(Value::U8(0xff))])
-    ));
-    assert!(matches!(
-        (p.try_next().await.unwrap(), r.try_next().await.unwrap()),
-        (None, None)
-    ));
-
-    let (Value::Stream(mut p), Value::Stream(mut r)) = values.next().unwrap() else {
-        bail!("stream type mismatch")
-    };
-    assert!(matches!(
-        (
-            p.try_next().await.unwrap().as_deref().unwrap(),
-            r.try_next().await.unwrap().as_deref().unwrap(),
-        ),
-        ([None, None, None, None], [None, None, None, None])
-    ));
-    assert!(matches!(
-        (p.try_next().await.unwrap(), r.try_next().await.unwrap()),
-        (None, None)
-    ));
-
-    let (Value::Stream(mut p), Value::Stream(mut r)) = values.next().unwrap() else {
-        bail!("stream type mismatch")
-    };
-    assert!(matches!(
-        (
-            p.try_next().await.unwrap().as_deref().unwrap(),
-            r.try_next().await.unwrap().as_deref().unwrap(),
-        ),
-        (
-            [Some(Value::U8(0x42)), Some(Value::U8(0xff))],
-            [Some(Value::U8(0x42)), Some(Value::U8(0xff))]
-        )
-    ));
-    assert!(matches!(
-        (p.try_next().await.unwrap(), r.try_next().await.unwrap()),
-        (None, None)
-    ));
-
-    let (Value::Future(p), Value::Future(r)) = values.next().unwrap() else {
-        bail!("future type mismatch")
-    };
-    assert!(matches!((p.await, r.await), (Ok(None), Ok(None))));
-
-    let (Value::Stream(mut p), Value::Stream(mut r)) = values.next().unwrap() else {
-        bail!("stream type mismatch")
-    };
-    assert!(matches!(
-        (
-            p.try_next().await.unwrap().as_deref().unwrap(),
-            r.try_next().await.unwrap().as_deref().unwrap(),
-        ),
-        ([Some(Value::U8(0x42))], [Some(Value::U8(0x42))])
-    ));
-    assert!(matches!(
-        (
-            p.try_next().await.unwrap().as_deref().unwrap(),
-            r.try_next().await.unwrap().as_deref().unwrap(),
-        ),
-        ([Some(Value::U8(0xff))], [Some(Value::U8(0xff))])
-    ));
-    assert!(matches!(
-        (p.try_next().await.unwrap(), r.try_next().await.unwrap()),
-        (None, None)
-    ));
-
-    let (Value::Tuple(p), Value::Tuple(r)) = values.next().unwrap() else {
-        bail!("tuple type mismatch")
-    };
-    {
-        let mut values = zip(p, r);
-        let (Value::Future(p), Value::Future(r)) = values.next().unwrap() else {
-            bail!("future type mismatch")
-        };
-        assert!(matches!((p.await, r.await), (Ok(None), Ok(None))));
-
-        let (Value::Future(p), Value::Future(r)) = values.next().unwrap() else {
-            bail!("future type mismatch")
-        };
-        assert!(matches!(
-            (p.await, r.await),
-            (Ok(Some(Value::Bool(true))), Ok(Some(Value::Bool(true))))
-        ));
-
-        let (Value::Future(p), Value::Future(r)) = values.next().unwrap() else {
-            bail!("future type mismatch")
-        };
-        let (Ok(Some(Value::Future(p))), Ok(Some(Value::Future(r)))) = (p.await, r.await) else {
-            bail!("future type mismatch")
-        };
-        assert!(matches!((p.await, r.await), (Ok(None), Ok(None))));
-
-        let (Value::Stream(mut p), Value::Stream(mut r)) = values.next().unwrap() else {
-            bail!("stream type mismatch")
-        };
-        assert!(matches!(
-            (
-                p.try_next().await.unwrap().as_deref().unwrap(),
-                r.try_next().await.unwrap().as_deref().unwrap(),
-            ),
-            ([Some(Value::U8(0x42))], [Some(Value::U8(0x42))])
-        ));
-        assert!(matches!(
-            (
-                p.try_next().await.unwrap().as_deref().unwrap(),
-                r.try_next().await.unwrap().as_deref().unwrap(),
-            ),
-            ([Some(Value::U8(0xff))], [Some(Value::U8(0xff))])
-        ));
-        assert!(matches!(
-            (p.try_next().await.unwrap(), r.try_next().await.unwrap()),
-            (None, None)
-        ));
-    }
-
-    let (Value::Record(p), Value::Record(r)) = values.next().unwrap() else {
-        bail!("record type mismatch")
-    };
-    {
-        let mut values = zip(p, r);
-        let (Value::Future(p), Value::Future(r)) = values.next().unwrap() else {
-            bail!("future type mismatch")
-        };
-        assert!(matches!((p.await, r.await), (Ok(None), Ok(None))));
-
-        let (Value::Future(p), Value::Future(r)) = values.next().unwrap() else {
-            bail!("future type mismatch")
-        };
-        assert!(matches!(
-            (p.await, r.await),
-            (Ok(Some(Value::Bool(true))), Ok(Some(Value::Bool(true))))
-        ));
-
-        let (Value::Future(p), Value::Future(r)) = values.next().unwrap() else {
-            bail!("future type mismatch")
-        };
-        let (Ok(Some(Value::Future(p))), Ok(Some(Value::Future(r)))) = (p.await, r.await) else {
-            bail!("future type mismatch")
-        };
-        assert!(matches!((p.await, r.await), (Ok(None), Ok(None))));
-
-        let (Value::Stream(mut p), Value::Stream(mut r)) = values.next().unwrap() else {
-            bail!("stream type mismatch")
-        };
-        assert!(matches!(
-            (
-                p.try_next().await.unwrap().as_deref().unwrap(),
-                r.try_next().await.unwrap().as_deref().unwrap(),
-            ),
-            ([Some(Value::U8(0x42))], [Some(Value::U8(0x42))])
-        ));
-        assert!(matches!(
-            (
-                p.try_next().await.unwrap().as_deref().unwrap(),
-                r.try_next().await.unwrap().as_deref().unwrap(),
-            ),
-            ([Some(Value::U8(0xff))], [Some(Value::U8(0xff))])
-        ));
-        assert!(matches!(
-            (p.try_next().await.unwrap(), r.try_next().await.unwrap()),
-            (None, None)
-        ));
-    }
-
-    let unit_invocations = client
-        .serve_static::<()>("wrpc:wrpc/test-static", "unit_unit")
-        .await
-        .context("failed to serve")?;
-    try_join!(
-        async {
-            let AcceptedInvocation {
-                params: (),
-                result_subject,
-                transmitter,
-                ..
-            } = pin!(unit_invocations)
-                .try_next()
-                .await
-                .context("failed to receive invocation")?
-                .context("unexpected end of stream")?;
-            transmitter
-                .transmit_static(result_subject, ())
-                .await
-                .context("failed to transmit response")?;
-            anyhow::Ok(())
-        },
-        async {
-            let ((), tx) = client
-                .invoke_static("wrpc:wrpc/test-static", "unit_unit", ())
-                .await
-                .context("failed to invoke")?;
-            tx.await.context("failed to transmit parameters")?;
-            Ok(())
-        }
-    )?;
 
     {
         use wrpc_interface_http::IncomingHandler;
@@ -2589,155 +2849,10 @@ async fn nats() -> anyhow::Result<()> {
         )?;
     }
 
-    {
-        let (shutdown_tx, shutdown_rx) = oneshot::channel();
-        let shutdown_rx =
-            async move { shutdown_rx.await.expect("shutdown sender dropped") }.shared();
-        try_join!(
-            async {
-                wrpc::generate!({
-                    inline: "
-                        package wrpc-test:integration;
-
-                        interface shared {
-                            fallible: func() -> result<bool, string>;
-                        }
-
-                        world test {
-                            export shared;
-
-                            export f: func(x: string) -> u32;
-                            export foo: interface {
-                                foo: func(x: string);
-                            }
-                        }"
-                });
-
-                #[derive(Clone, Default)]
-                struct Component(Arc<RwLock<Option<String>>>);
-
-                impl Handler<Option<async_nats::HeaderMap>> for Component {
-                    async fn f(
-                        &self,
-                        _cx: Option<async_nats::HeaderMap>,
-                        x: String,
-                    ) -> anyhow::Result<u32> {
-                        let stored = self.0.read().await.as_ref().unwrap().to_string();
-                        assert_eq!(stored, x);
-                        Ok(42)
-                    }
-                }
-
-                impl exports::wrpc_test::integration::shared::Handler<Option<async_nats::HeaderMap>> for Component {
-                    async fn fallible(
-                        &self,
-                        _cx: Option<async_nats::HeaderMap>,
-                    ) -> anyhow::Result<Result<bool, String>> {
-                        Ok(Ok(true))
-                    }
-                }
-
-                impl exports::foo::Handler<Option<async_nats::HeaderMap>> for Component {
-                    async fn foo(
-                        &self,
-                        _cx: Option<async_nats::HeaderMap>,
-                        x: String,
-                    ) -> anyhow::Result<()> {
-                        let old = self.0.write().await.replace(x);
-                        assert!(old.is_none());
-                        Ok(())
-                    }
-                }
-
-                serve(client.as_ref(), Component::default(), shutdown_rx.clone())
-                    .await
-                    .context("failed to serve `wrpc-test:integration/test`")
-            },
-            async {
-                wrpc::generate!({
-                    inline: "
-                        package wrpc-test:integration;
-
-                        interface shared {
-                            fallible: func() -> result<bool, string>;
-                        }
-
-                        world test {
-                            import shared;
-
-                            import f: func(x: string) -> u32;
-                            import foo: interface {
-                                foo: func(x: string);
-                            }
-                            export bar: interface {
-                                bar: func() -> string;
-                            }
-                        }"
-                });
-
-                #[derive(Clone)]
-                struct Component(Arc<wrpc_transport_nats::Client>);
-
-                // TODO: Remove the need for this
-                sleep(Duration::from_secs(1)).await;
-
-                impl exports::bar::Handler<Option<async_nats::HeaderMap>> for Component {
-                    async fn bar(
-                        &self,
-                        _cx: Option<async_nats::HeaderMap>,
-                    ) -> anyhow::Result<String> {
-                        foo::foo(self.0.as_ref(), "foo")
-                            .await
-                            .context("failed to call `wrpc-test:integration/test.foo.foo`")?;
-                        let v = f(self.0.as_ref(), "foo")
-                            .await
-                            .context("failed to call `wrpc-test:integration/test.f`")?;
-                        assert_eq!(v, 42);
-                        let v = wrpc_test::integration::shared::fallible(self.0.as_ref())
-                            .await
-                            .context("failed to call `wrpc-test:integration/shared.fallible`")?;
-                        assert_eq!(v, Ok(true));
-                        Ok("bar".to_string())
-                    }
-                }
-
-                serve(
-                    client.as_ref(),
-                    Component(Arc::clone(&client)),
-                    shutdown_rx.clone(),
-                )
-                .await
-                .context("failed to serve `wrpc-test:integration/test`")
-            },
-            async {
-                wrpc::generate!({
-                    inline: "
-                        package wrpc-test:integration;
-
-                        world test {
-                            import bar: interface {
-                                bar: func() -> string;
-                            }
-                        }"
-                });
-
-                // TODO: Remove the need for this
-                sleep(Duration::from_secs(2)).await;
-
-                let v = bar::bar(client.as_ref())
-                    .await
-                    .context("failed to call `wrpc-test:integration/test.bar.bar`")?;
-                assert_eq!(v, "bar");
-                shutdown_tx.send(()).expect("failed to send shutdown");
-                Ok(())
-            },
-        )?;
-    }
-
-    stop_tx.send(()).expect("failed to stop NATS");
+    stop_tx.send(()).expect("failed to stop NATS.io server");
     nats_server
         .await
-        .context("failed to stop NATS")?
-        .context("NATS failed to stop")?;
+        .context("failed to await NATS.io server stop")?
+        .context("NATS.io server failed to stop")?;
     Ok(())
 }

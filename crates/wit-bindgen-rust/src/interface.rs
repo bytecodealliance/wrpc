@@ -2397,16 +2397,16 @@ impl<'a> {wrpc_transport}::Receive<'a> for {camel} {{
                 #[{async_trait}::async_trait]
                 #[automatically_derived]
                 impl {wrpc_transport}::Encode for {name} {{
-                     async fn encode(self, _payload: &mut (impl {bytes}::BufMut + Send)) -> {anyhow}::Result<Option<{wrpc_transport}::AsyncValue>> {{
-                        {anyhow}::bail!("flags not supported yet")
+                     async fn encode(self, payload: &mut (impl {bytes}::BufMut + Send)) -> {anyhow}::Result<Option<{wrpc_transport}::AsyncValue>> {{
+                        self.bits().encode(payload).await
                      }}
                 }}
 
                 #[{async_trait}::async_trait]
                 #[automatically_derived]
                 impl {wrpc_transport}::Encode for &{name} {{
-                     async fn encode(self, _payload: &mut (impl {bytes}::BufMut + Send)) -> {anyhow}::Result<Option<{wrpc_transport}::AsyncValue>> {{
-                        {anyhow}::bail!("flags not supported yet")
+                     async fn encode(self, payload: &mut (impl {bytes}::BufMut + Send)) -> {anyhow}::Result<Option<{wrpc_transport}::AsyncValue>> {{
+                        self.bits().encode(payload).await
                      }}
                 }}
 
@@ -2421,11 +2421,16 @@ impl<'a> {wrpc_transport}::Receive<'a> for {camel} {{
                      where
                          T: {futures}::Stream<Item={anyhow}::Result<{bytes}::Bytes>> + Send + Sync + 'static
                      {{
-                        {anyhow}::bail!("flags not supported yet")
+                        use {anyhow}::Context as _;
+
+                        let (bits, payload) = <Self as {bitflags}::Flags>::Bits::receive(payload, rx, sub).await.context("failed to receive bits")?;
+                        let ret = Self::from_bits(bits).context("failed to convert bits into flags")?;
+                        Ok((ret, payload))
                      }}
                 }}"#,
             anyhow = self.gen.anyhow_path(),
             async_trait = self.gen.async_trait_path(),
+            bitflags = self.gen.bitflags_path(),
             bytes = self.gen.bytes_path(),
             futures = self.gen.futures_path(),
             wrpc_transport = self.gen.wrpc_transport_path(),
