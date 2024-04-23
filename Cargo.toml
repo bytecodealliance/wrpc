@@ -17,7 +17,7 @@ license = "Apache-2.0 WITH LLVM-exception"
 repository = "https://github.com/rvolosatovs/wrpc"
 
 [workspace]
-members = ["crates/*"]
+members = ["crates/*", "examples/rust/*"]
 
 [features]
 default = ["nats", "wasmtime"]
@@ -86,6 +86,7 @@ tokio-stream = { version = "0.1", default-features = false }
 tower = { version = "0.4", default-features = false }
 tracing = { version = "0.1", default-features = false }
 tracing-subscriber = { version = "0.3", default-features = false }
+url = { version = "2", default-features = false }
 wasmtime = { version = "19", default-features = false }
 wasmtime-wasi = { version = "19", default-features = false }
 wasmtime-wasi-http = { version = "19", default-features = false }
