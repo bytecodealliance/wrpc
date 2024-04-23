@@ -115,6 +115,7 @@
           extendDerivations {
             buildInputs = [
               pkgs.cargo-audit
+              pkgs.go
               pkgs.nats-server
               pkgs.natscli
               pkgs.wit-deps
