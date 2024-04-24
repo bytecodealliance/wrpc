@@ -1,0 +1,28 @@
+[package]
+name = "http-outgoing-nats-client"
+version = "0.1.0"
+
+authors.workspace = true
+categories.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow = { workspace = true, features = ["std"] }
+async-nats = { workspace = true }
+clap = { workspace = true, features = [
+    "color",
+    "derive",
+    "error-context",
+    "help",
+    "std",
+    "suggestions",
+    "usage",
+] }
+futures = { workspace = true }
+http = { workspace = true, features = ["std"] }
+tokio = { workspace = true, features = ["io-std", "rt-multi-thread", "signal"] }
+tracing-subscriber = { workspace = true, features = ["ansi", "fmt"] }
+wrpc-interface-http = { workspace = true, features = ["http"] }
+wrpc-transport-nats = { workspace = true }

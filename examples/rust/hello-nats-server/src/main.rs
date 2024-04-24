@@ -14,7 +14,7 @@ struct Args {
     #[arg(short, long, default_value = "nats://127.0.0.1:4222")]
     nats: Url,
 
-    /// Prefix to serve `hello` on
+    /// Prefix to serve `wrpc-examples:hello/handler.hello` on
     #[arg(default_value = "rust")]
     prefix: String,
 }

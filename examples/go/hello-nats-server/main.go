@@ -3,23 +3,14 @@ package main
 import (
 	"fmt"
 	"log"
-	"math"
 	"os"
 
 	"github.com/nats-io/nats.go"
-	"github.com/tetratelabs/wabin/leb128"
+	wrpc "github.com/wrpc/wrpc/go"
 )
 
-func encode_string(s string) ([]byte, error) {
-	n := len(s)
-	if n > math.MaxUint32 {
-		return nil, fmt.Errorf("response UTF-8 string byte length of %d overflows u32", n)
-	}
-	return append(leb128.EncodeUint32(uint32(n)), s...), nil
-}
-
-func handle_hello(nc *nats.Conn, results string) (err error) {
-	b, err := encode_string("hello from Go")
+func handleHello(nc *nats.Conn, results string) (err error) {
+	b, err := wrpc.AppendString([]byte{}, "hello from Go")
 	if err != nil {
 		return fmt.Errorf("failed to encode `hello`: %w", err)
 	}
@@ -35,7 +26,6 @@ func handle_hello(nc *nats.Conn, results string) (err error) {
 }
 
 func run() error {
-	// Connect to a server
 	nc, err := nats.Connect(nats.DefaultURL)
 	if err != nil {
 		return fmt.Errorf("failed to connect to NATS.io: %w", err)
@@ -65,13 +55,13 @@ func run() error {
 			continue
 		}
 
-		if err := handle_hello(nc, fmt.Sprintf("%s.results", msg.Reply)); err != nil {
+		if err := handleHello(nc, fmt.Sprintf("%s.results", msg.Reply)); err != nil {
 			log.Printf("failed to handle `hello`: %s", err)
-			b, err := encode_string(fmt.Sprintf("%s", err))
+			b, err := wrpc.AppendString([]byte{}, fmt.Sprintf("%s", err))
 			if err != nil {
 				log.Printf("failed to encode `hello` handling error: %s", err)
 				// Encoding the error failed, let's try encoding the encoding error, shall we?
-				b, err = encode_string(fmt.Sprintf("failed to encode error: %s", err))
+				b, err = wrpc.AppendString([]byte{}, fmt.Sprintf("failed to encode error: %s", err))
 				if err != nil {
 					log.Printf("failed to encode `hello` handling error encoding error: %s", err)
 					// Well, we're out of luck at this point, let's just send an empty string
@@ -90,10 +80,12 @@ func run() error {
 	return nil
 }
 
-func main() {
+func init() {
 	log.SetFlags(0)
 	log.SetOutput(os.Stderr)
+}
 
+func main() {
 	if err := run(); err != nil {
 		log.Fatal(err)
 	}

@@ -19,6 +19,7 @@
   inputs.nixify.inputs.nixlib.follows = "nixlib";
   inputs.nixify.url = "github:rvolosatovs/nixify";
   inputs.nixlib.url = "github:nix-community/nixpkgs.lib";
+  inputs.nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
   inputs.wasmcloud-component-adapters.inputs.nixify.follows = "nixify";
   inputs.wasmcloud-component-adapters.url = "github:wasmCloud/wasmcloud-component-adapters/v0.7.0";
   inputs.wit-deps.inputs.nixify.follows = "nixify";
@@ -28,6 +29,7 @@
   outputs = {
     nixify,
     nixlib,
+    nixpkgs-unstable,
     wasmcloud-component-adapters,
     wit-deps,
     ...
@@ -40,6 +42,21 @@
 
         overlays = [
           wit-deps.overlays.default
+          (
+            final: prev: {
+              pkgsUnstable = import nixpkgs-unstable {
+                inherit
+                  (final.stdenv.hostPlatform)
+                  system
+                  ;
+
+                inherit
+                  (final)
+                  config
+                  ;
+              };
+            }
+          )
         ];
 
         excludePaths = [
@@ -115,10 +132,11 @@
           extendDerivations {
             buildInputs = [
               pkgs.cargo-audit
-              pkgs.go
               pkgs.nats-server
               pkgs.natscli
               pkgs.wit-deps
+
+              pkgs.pkgsUnstable.go
             ];
           }
           devShells;

@@ -14,7 +14,7 @@ struct Args {
     #[arg(short, long, default_value = "nats://127.0.0.1:4222")]
     nats: Url,
 
-    /// Prefixes to invoke `hello` on
+    /// Prefixes to invoke `wrpc-examples:hello/handler.hello` on
     prefixes: Vec<String>,
 }
 

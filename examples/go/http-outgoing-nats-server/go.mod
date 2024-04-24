@@ -1,4 +1,4 @@
-module github.com/wrpc/wrpc/examples/go/hello-nats-server
+module github.com/wrpc/wrpc/examples/go/http-outgoing-nats-server
 
 go 1.22.2
 

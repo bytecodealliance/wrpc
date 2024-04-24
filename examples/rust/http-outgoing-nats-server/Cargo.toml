@@ -1,0 +1,35 @@
+[package]
+name = "http-outgoing-nats-server"
+version = "0.1.0"
+
+authors.workspace = true
+categories.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow = { workspace = true, features = ["std"] }
+async-nats = { workspace = true }
+clap = { workspace = true, features = [
+    "color",
+    "derive",
+    "error-context",
+    "help",
+    "std",
+    "suggestions",
+    "usage",
+] }
+futures = { workspace = true }
+http = { workspace = true, features = ["std"] }
+hyper-rustls = { workspace = true, features = ["http2", "ring"] }
+hyper-util = { workspace = true }
+rustls = { workspace = true, features = ["std"] }
+rustls-native-certs = { workspace = true }
+tokio = { workspace = true, features = ["io-std", "rt-multi-thread", "signal"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["ansi", "fmt"] }
+webpki-roots = { workspace = true }
+wrpc-interface-http = { workspace = true, features = ["http-body"] }
+wrpc-transport = { workspace = true }
+wrpc-transport-nats = { workspace = true }
