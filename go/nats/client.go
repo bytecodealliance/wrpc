@@ -1,12 +1,10 @@
-package natswrpc
+package wrpcnats
 
 import (
 	"context"
 	"errors"
 	"fmt"
 	"log"
-	"strconv"
-	"strings"
 
 	"github.com/nats-io/nats.go"
 	wrpc "github.com/wrpc/wrpc/go"
@@ -43,36 +41,15 @@ func invocationSubject(prefix string, instance string, name string) string {
 	return subject
 }
 
-func subscribeElement(conn *nats.Conn, prefix string, path []*uint32, errCh chan<- error, f func(context.Context, []uint32, []byte)) (*nats.Subscription, error) {
+func subscribeElement(conn *nats.Conn, prefix string, path []uint32, f func(context.Context, []byte)) (*nats.Subscription, error) {
 	subject := prefix
 	for _, p := range path {
-		if p == nil {
-			subject = fmt.Sprintf("%s.*", subject)
-		} else {
-			subject = fmt.Sprintf("%s.%d", subject, p)
-		}
+		subject = fmt.Sprintf("%s.%d", subject, p)
 	}
 	return conn.Subscribe(subject, func(m *nats.Msg) {
 		ctx := context.Background()
 		ctx = ContextWithHeader(ctx, m.Header)
-		path := []uint32(nil)
-		if len(path) > 0 {
-			path = make([]uint32, 0, len(path))
-			ps := strings.Split(strings.TrimPrefix(m.Subject, prefix), ".")
-			if len(ps) != len(path) {
-				errCh <- fmt.Errorf("invalid amount of path elements, expected %d, got %d", len(path), len(ps))
-				return
-			}
-			for _, p := range ps {
-				i, err := strconv.ParseUint(p, 10, 32)
-				if err != nil {
-					errCh <- fmt.Errorf("failed to parse %s as uint32: %w", p, err)
-					return
-				}
-				path = append(path, uint32(i))
-			}
-		}
-		f(ctx, path, m.Data)
+		f(ctx, m.Data)
 	})
 }
 
@@ -116,8 +93,8 @@ type invocation struct {
 	tx   string
 }
 
-func (c *invocation) SubscribeError(f func(context.Context, []byte)) (func() error, error) {
-	sub, err := c.conn.Subscribe(fmt.Sprintf("%s.error", c.rx), func(m *nats.Msg) {
+func (inv *invocation) SubscribeError(f func(context.Context, []byte)) (func() error, error) {
+	sub, err := inv.conn.Subscribe(fmt.Sprintf("%s.error", inv.rx), func(m *nats.Msg) {
 		ctx := context.Background()
 		ctx = ContextWithHeader(ctx, m.Header)
 		f(ctx, m.Data)
@@ -140,8 +117,8 @@ func (c *Client) NewInvocation(instance string, name string) wrpc.OutgoingInvoca
 	}
 }
 
-func (c *OutgoingInvocation) SubscribeBody(f func(context.Context, []byte)) (func() error, error) {
-	sub, err := c.conn.Subscribe(resultSubject(c.rx), func(m *nats.Msg) {
+func (inv *OutgoingInvocation) Subscribe(f func(context.Context, []byte)) (func() error, error) {
+	sub, err := inv.conn.Subscribe(resultSubject(inv.rx), func(m *nats.Msg) {
 		ctx := context.Background()
 		ctx = ContextWithHeader(ctx, m.Header)
 		f(ctx, m.Data)
@@ -152,21 +129,21 @@ func (c *OutgoingInvocation) SubscribeBody(f func(context.Context, []byte)) (fun
 	return sub.Unsubscribe, nil
 }
 
-func (c *OutgoingInvocation) SubscribeBodyElement(path []*uint32, errCh chan<- error, f func(context.Context, []uint32, []byte)) (func() error, error) {
-	sub, err := subscribeElement(c.conn, resultSubject(c.rx), path, errCh, f)
+func (inv *OutgoingInvocation) SubscribePath(path []uint32, f func(context.Context, []byte)) (func() error, error) {
+	sub, err := subscribeElement(inv.conn, resultSubject(inv.rx), path, f)
 	if err != nil {
 		return nil, fmt.Errorf("failed to subscribe for results at path %v: %w", path, err)
 	}
 	return sub.Unsubscribe, nil
 }
 
-func (c *OutgoingInvocation) SubscribeError(f func(context.Context, []byte)) (func() error, error) {
-	return c.invocation.SubscribeError(f)
+func (inv *OutgoingInvocation) SubscribeError(f func(context.Context, []byte)) (func() error, error) {
+	return inv.invocation.SubscribeError(f)
 }
 
-func (c *OutgoingInvocation) Invoke(ctx context.Context, buf []byte, f func(context.Context, []byte)) (func() error, wrpc.Transmitter, error) {
+func (inv *OutgoingInvocation) Invoke(ctx context.Context, buf []byte, f func(context.Context, []byte)) (func() error, wrpc.Transmitter, error) {
 	txCh := make(chan chan<- string, 1)
-	sub, err := c.conn.Subscribe(c.rx, func(m *nats.Msg) {
+	sub, err := inv.conn.Subscribe(inv.rx, func(m *nats.Msg) {
 		ctx := context.Background()
 		ctx = ContextWithHeader(ctx, m.Header)
 		<-txCh <- m.Reply
@@ -175,14 +152,14 @@ func (c *OutgoingInvocation) Invoke(ctx context.Context, buf []byte, f func(cont
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to subscribe for handshake: %w", err)
 	}
-	if err := transmit(ctx, c.conn, c.tx, "", buf); err != nil {
+	if err := transmit(ctx, inv.conn, inv.tx, "", buf); err != nil {
 		return sub.Unsubscribe, nil, fmt.Errorf("failed to transmit handshake: %w", err)
 	}
 	reply := make(chan string, 1)
 	select {
 	case txCh <- reply:
 		return sub.Unsubscribe, &Transmitter{
-			conn:    c.conn,
+			conn:    inv.conn,
 			subject: <-reply,
 		}, nil
 	case <-ctx.Done():
@@ -192,8 +169,8 @@ func (c *OutgoingInvocation) Invoke(ctx context.Context, buf []byte, f func(cont
 
 type IncomingInvocation struct{ invocation }
 
-func (c *IncomingInvocation) SubscribeBody(f func(context.Context, []byte)) (func() error, error) {
-	sub, err := c.conn.Subscribe(paramSubject(c.rx), func(m *nats.Msg) {
+func (inv *IncomingInvocation) Subscribe(f func(context.Context, []byte)) (func() error, error) {
+	sub, err := inv.conn.Subscribe(paramSubject(inv.rx), func(m *nats.Msg) {
 		ctx := context.Background()
 		ctx = ContextWithHeader(ctx, m.Header)
 		f(ctx, m.Data)
@@ -204,20 +181,20 @@ func (c *IncomingInvocation) SubscribeBody(f func(context.Context, []byte)) (fun
 	return sub.Unsubscribe, nil
 }
 
-func (c *IncomingInvocation) SubscribeBodyElement(path []*uint32, errCh chan<- error, f func(context.Context, []uint32, []byte)) (func() error, error) {
-	sub, err := subscribeElement(c.conn, paramSubject(c.rx), path, errCh, f)
+func (inv *IncomingInvocation) SubscribePath(path []uint32, f func(context.Context, []byte)) (func() error, error) {
+	sub, err := subscribeElement(inv.conn, paramSubject(inv.rx), path, f)
 	if err != nil {
 		return nil, fmt.Errorf("failed to subscribe for parameters at path %v: %w", path, err)
 	}
 	return sub.Unsubscribe, nil
 }
 
-func (c *IncomingInvocation) SubscribeError(f func(context.Context, []byte)) (func() error, error) {
-	return c.invocation.SubscribeError(f)
+func (inv *IncomingInvocation) SubscribeError(f func(context.Context, []byte)) (func() error, error) {
+	return inv.invocation.SubscribeError(f)
 }
 
-func (c *IncomingInvocation) Accept(ctx context.Context, buf []byte) error {
-	if err := transmit(ctx, c.conn, c.tx, c.rx, buf); err != nil {
+func (inv *IncomingInvocation) Accept(ctx context.Context, buf []byte) error {
+	if err := transmit(ctx, inv.conn, inv.tx, inv.rx, buf); err != nil {
 		return fmt.Errorf("failed to transmit accept: %w", err)
 	}
 	return nil
@@ -281,7 +258,7 @@ func (c *Client) Serve(instance string, name string, f func(context.Context, []b
 		}
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to serve `wrpc:http/outgoing-handler.handle`: %w", err)
+		return nil, fmt.Errorf("failed to serve `%s` for instance `%s`: %w", name, instance, err)
 	}
 	return sub.Unsubscribe, nil
 }

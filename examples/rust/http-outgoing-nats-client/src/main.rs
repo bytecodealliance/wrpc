@@ -7,6 +7,8 @@ use http::uri::Uri;
 use tokio::io::{stdout, AsyncWriteExt as _};
 use tokio::sync::mpsc;
 use tokio::try_join;
+use tracing_subscriber::layer::SubscriberExt as _;
+use tracing_subscriber::util::SubscriberInitExt as _;
 use wrpc_interface_http::{OutgoingHandler as _, Request, Response};
 
 #[derive(Parser, Debug)]
@@ -30,7 +32,13 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt().init();
+    tracing_subscriber::registry()
+        .with(tracing_subscriber::fmt::layer().compact().without_time())
+        .with(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .init();
 
     let Args {
         nats,

@@ -8,13 +8,19 @@ interface types {
         request-options as wasi-request-options,
         scheme as wasi-scheme,
     };
+    use wasi:clocks/monotonic-clock@0.2.0.{duration};
     
     type error-code = wasi-error-code;
     type method = wasi-method;
-    type request-options = wasi-request-options;
     type scheme = wasi-scheme;
     
     type fields = list<tuple<string, list<list<u8>>>>;
+
+    record request-options {
+        connect-timeout: option<duration>,
+        first-byte-timeout: option<duration>,
+        between-bytes-timeout: option<duration>,
+    }
     
     record request {
         body: stream<u8>,
