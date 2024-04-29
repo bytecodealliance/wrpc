@@ -23,6 +23,12 @@ clap = { workspace = true, features = [
 futures = { workspace = true }
 http = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["io-std", "rt-multi-thread", "signal"] }
-tracing-subscriber = { workspace = true, features = ["ansi", "fmt"] }
+tracing-subscriber = { workspace = true, features = [
+    "ansi",
+    "env-filter",
+    "fmt",
+    "smallvec",
+    "tracing-log",
+] }
 wrpc-interface-http = { workspace = true, features = ["http"] }
 wrpc-transport-nats = { workspace = true }

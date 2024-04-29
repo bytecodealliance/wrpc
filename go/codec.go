@@ -1,14 +1,101 @@
 package wrpc
 
 import (
+	"bytes"
+	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"math"
 
 	"github.com/tetratelabs/wabin/leb128"
 )
+
+type Ready interface {
+	Ready() bool
+}
+
+type Receiver[T any] interface {
+	Receive() (T, error)
+}
+
+type ReadyReceiver[T any] interface {
+	Receiver[T]
+	Ready
+}
+
+type ReadyReader interface {
+	io.Reader
+	Ready
+}
+
+type ReadyByteReader interface {
+	ByteReader
+	Ready
+}
+
+type byteReader struct {
+	*bytes.Reader
+}
+
+func (r *byteReader) Read(b []byte) (int, error) {
+	return r.Reader.Read(b)
+}
+
+func (r *byteReader) ReadByte() (byte, error) {
+	return r.Reader.ReadByte()
+}
+
+func (*byteReader) Ready() bool {
+	return true
+}
+
+type PendingByteReader struct {
+	r ByteReader
+}
+
+func (r *PendingByteReader) Read(b []byte) (int, error) {
+	return r.r.Read(b)
+}
+
+func (r *PendingByteReader) ReadByte() (byte, error) {
+	return r.r.ReadByte()
+}
+
+func (*PendingByteReader) Ready() bool {
+	return false
+}
+
+func NewPendingByteReader(r ByteReader) *PendingByteReader {
+	return &PendingByteReader{r}
+}
+
+type ready[T any] struct {
+	v T
+}
+
+func (r *ready[T]) Receive() (T, error) {
+	return r.v, nil
+}
+
+func (*ready[T]) Ready() bool {
+	return true
+}
+
+type decodeReader[T any] struct {
+	ByteReader
+	decode func(ByteReader) (T, error)
+}
+
+func (r *decodeReader[T]) Receive() (T, error) {
+	return r.decode(r.ByteReader)
+}
+
+func (*decodeReader[T]) Ready() bool {
+	return false
+}
 
 func EncodeInt16(v int16) []byte {
 	return leb128.EncodeInt32(int32(v))
@@ -98,7 +185,7 @@ func WriteString(w io.Writer, s string) (int, error) {
 // The error is [io.EOF] only if no bytes were read.
 // If an [io.EOF] happens after reading some but not all the bytes,
 // ReadUvarint returns [io.ErrUnexpectedEOF].
-func ReadUint64(r io.ByteReader) (uint64, error) {
+func ReadUint64(r ByteReader) (uint64, error) {
 	return binary.ReadUvarint(r)
 }
 
@@ -107,17 +194,324 @@ type ByteReader interface {
 	io.Reader
 }
 
+// ReadOptionStatus reads a single byte from `r` and returns:
+// - `true` for `option::some`
+// - `false` for `option::none`
+func ReadOptionStatus(r ByteReader) (bool, error) {
+	status, err := r.ReadByte()
+	if err != nil {
+		return false, fmt.Errorf("failed to read `option` status byte: %w", err)
+	}
+	switch status {
+	case 0:
+		return false, nil
+	case 1:
+		return true, nil
+	default:
+		return false, fmt.Errorf("invalid `option` status byte %d", status)
+	}
+}
+
+// ReadOption reads an option from `r`
+func ReadOption[T any](r ByteReader, f func(ByteReader) (T, error)) (*T, error) {
+	slog.Debug("reading option status byte")
+	ok, err := ReadOptionStatus(r)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, nil
+	}
+	slog.Debug("reading `option::some` payload")
+	v, err := f(r)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read `option::some` value: %w", err)
+	}
+	return &v, nil
+}
+
+// ReadFlatOption reads an option from `r` and flattens the return value
+func ReadFlatOption[T any](r ByteReader, f func(ByteReader) (*T, error)) (*T, error) {
+	slog.Debug("reading option status byte")
+	ok, err := ReadOptionStatus(r)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, nil
+	}
+	slog.Debug("reading `option::some` payload")
+	v, err := f(r)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read `option::some` value: %w", err)
+	}
+	return v, nil
+}
+
+func FlattenOption[T any](v **T) *T {
+	if v == nil {
+		return nil
+	} else {
+		return *v
+	}
+}
+
+// ReadResultStatus reads a single byte from `r` and returns:
+// - `true` for `result::ok`
+// - `false` for `result::err`
+func ReadResultStatus(r ByteReader) (bool, error) {
+	status, err := r.ReadByte()
+	if err != nil {
+		return false, fmt.Errorf("failed to read `result` status byte: %w", err)
+	}
+	switch status {
+	case 0:
+		return true, nil
+	case 1:
+		return false, nil
+	default:
+		return false, fmt.Errorf("invalid `result` status byte %d", status)
+	}
+}
+
+// ReadResult reads a single byte from `r`
+func ReadResult[T, U any](r ByteReader, fOk func(ByteReader) (T, error), fErr func(ByteReader) (U, error)) (*T, *U, error) {
+	ok, err := ReadResultStatus(r)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !ok {
+		v, err := fErr(r)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to read `result::err` value: %w", err)
+		}
+		return nil, &v, nil
+	}
+	v, err := fOk(r)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to read `result::ok` value: %w", err)
+	}
+	return &v, nil, nil
+}
+
+// ReadString reads a string from `r` and returns it
 func ReadString(r ByteReader) (string, error) {
+	slog.Debug("reading string length")
 	n, err := ReadUint32(r)
 	if err != nil {
 		return "", fmt.Errorf("failed to read string length: %w", err)
 	}
+
 	b := make([]byte, int(n))
-	_, err = r.Read(b)
+	slog.Debug("reading string bytes", "len", n)
+	rn, err := r.Read(b)
 	if err != nil {
 		return "", fmt.Errorf("failed to read string: %w", err)
 	}
+	if rn > int(n) {
+		return "", fmt.Errorf("invalid amount of string bytes read, expected %d, got %d", n, rn)
+	}
+	slog.Debug("read bytes", "buf", b)
 	return string(b), nil
+}
+
+// ReadByteList reads a []byte from `r` and returns it
+func ReadByteList(r ByteReader) ([]byte, error) {
+	slog.Debug("reading byte list length")
+	n, err := ReadUint32(r)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read list length: %w", err)
+	}
+
+	b := make([]byte, n)
+	slog.Debug("reading bytes", "len", n)
+	rn, err := r.Read(b)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read list bytes: %w", err)
+	}
+	if rn > int(n) {
+		return nil, fmt.Errorf("invalid amount of list bytes read, expected %d, got %d", n, rn)
+	}
+	return b, nil
+}
+
+// ReadList reads a list from `r` and returns it
+func ReadList[T any](r ByteReader, f func(ByteReader) (T, error)) ([]T, error) {
+	slog.Debug("reading list length")
+	n, err := ReadUint32(r)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read list length: %w", err)
+	}
+	vs := make([]T, n)
+	slog.Debug("reading list elements", "len", n)
+	for i := range vs {
+		slog.Debug("reading list element", "index", i)
+		v, err := f(r)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read list element %d: %w", i, err)
+		}
+		vs[i] = v
+	}
+	return vs, nil
+}
+
+type Tuple2[T0, T1 any] struct {
+	V0 T0
+	V1 T1
+}
+
+func ReadTuple2[T0, T1 any](r ByteReader, f0 func(ByteReader) (T0, error), f1 func(ByteReader) (T1, error)) (*Tuple2[T0, T1], error,
+) {
+	v0, err := f0(r)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read tuple element 0: %w", err)
+	}
+	v1, err := f1(r)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read tuple element 1: %w", err)
+	}
+	return &Tuple2[T0, T1]{v0, v1}, nil
+}
+
+type Tuple3[T0, T1, T2 any] struct {
+	V0 T0
+	V1 T1
+	V2 T2
+}
+
+func ReadTuple3[T0, T1, T2 any](r ByteReader, f0 func(ByteReader) (T0, error), f1 func(ByteReader) (T1, error), f2 func(ByteReader) (T2, error)) (*Tuple3[T0, T1, T2], error,
+) {
+	v0, err := f0(r)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read tuple element 0: %w", err)
+	}
+	v1, err := f1(r)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read tuple element 1: %w", err)
+	}
+	v2, err := f2(r)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read tuple element 2: %w", err)
+	}
+	return &Tuple3[T0, T1, T2]{v0, v1, v2}, nil
+}
+
+// ReadStreamStatus reads a single byte from `r` and returns:
+// - `true` if stream is "ready"
+// - `false` if stream is "pending"
+func ReadStreamStatus(r ByteReader) (bool, error) {
+	status, err := r.ReadByte()
+	if err != nil {
+		return false, fmt.Errorf("failed to read `stream` status byte: %w", err)
+	}
+	switch status {
+	case 0:
+		return false, nil
+	case 1:
+		return true, nil
+	default:
+		return false, fmt.Errorf("invalid `stream` status byte %d", status)
+	}
+}
+
+// ReadByteStream reads a stream of bytes from `r` and `ch`
+func ReadByteStream(ctx context.Context, r ByteReader, ch <-chan []byte) (ReadyReader, error) {
+	ok, err := ReadStreamStatus(r)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return &decodeReader[[]byte]{&ChanReader{ctx, ch, nil}, func(r ByteReader) ([]byte, error) {
+			n, err := ReadUint32(r)
+			if err != nil {
+				return nil, fmt.Errorf("failed to read pending stream chunk length: %w", err)
+			}
+			if n == 0 {
+				return nil, io.EOF
+			}
+			b := make([]byte, n)
+			rn, err := r.Read(b)
+			if err != nil {
+				return nil, fmt.Errorf("failed to read pending stream chunk bytes: %w", err)
+			}
+			if rn > int(n) {
+				return nil, fmt.Errorf("invalid amount of pending stream chunk bytes read, expected %d, got %d", n, rn)
+			}
+			return b, nil
+		}}, nil
+	}
+	buf, err := ReadByteList(r)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read bytes: %w", err)
+	}
+	return &byteReader{bytes.NewReader(buf)}, nil
+}
+
+// ReadStream reads a stream from `r` and `ch`
+func ReadStream[T any](ctx context.Context, r ByteReader, ch <-chan []byte, f func(ByteReader) (T, error)) (ReadyReceiver[[]T], error) {
+	ok, err := ReadStreamStatus(r)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return &decodeReader[[]T]{&ChanReader{ctx, ch, nil}, func(r ByteReader) ([]T, error) {
+			n, err := ReadUint32(r)
+			if err != nil {
+				return nil, fmt.Errorf("failed to read pending stream chunk length: %w", err)
+			}
+			if n == 0 {
+				return nil, io.EOF
+			}
+			vs := make([]T, n)
+			for i := range vs {
+				v, err := f(r)
+				if err != nil {
+					return nil, fmt.Errorf("failed to read pending stream chunk element %d: %w", i, err)
+				}
+				vs[i] = v
+			}
+			return vs, nil
+		}}, nil
+	}
+	vs, err := ReadList(r, f)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read ready stream: %w", err)
+	}
+	return &ready[[]T]{vs}, nil
+}
+
+// ReadFutureStatus reads a single byte from `r` and returns:
+// - `true` if future is "ready"
+// - `false` if future is "pending"
+func ReadFutureStatus(r ByteReader) (bool, error) {
+	status, err := r.ReadByte()
+	if err != nil {
+		return false, fmt.Errorf("failed to read `future` status byte: %w", err)
+	}
+	switch status {
+	case 0:
+		return false, nil
+	case 1:
+		return true, nil
+	default:
+		return false, fmt.Errorf("invalid `future` status byte %d", status)
+	}
+}
+
+// ReadFuture reads a future from `r` and `ch`
+func ReadFuture[T any](ctx context.Context, r ByteReader, ch <-chan []byte, f func(ByteReader) (T, error)) (ReadyReceiver[T], error) {
+	ok, err := ReadFutureStatus(r)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return &decodeReader[T]{&ChanReader{ctx, ch, nil}, f}, nil
+	}
+	v, err := f(r)
+	if err != nil {
+		return nil, err
+	}
+	return &ready[T]{v}, nil
 }
 
 // NOTE: Below is adapted from https://cs.opensource.google/go/go/+/refs/tags/go1.22.2:src/encoding/binary/varint.go;l=128-153
@@ -134,7 +528,7 @@ var errOverflow16 = errors.New("wrpc: varint overflows a 16-bit integer")
 // The error is [io.EOF] only if no bytes were read.
 // If an [io.EOF] happens after reading some but not all the bytes,
 // ReadUvarint returns [io.ErrUnexpectedEOF].
-func ReadUint16(r io.ByteReader) (uint16, error) {
+func ReadUint16(r ByteReader) (uint16, error) {
 	var x uint16
 	var s uint
 	for i := 0; i < maxVarintLen16; i++ {
@@ -163,7 +557,7 @@ var errOverflow32 = errors.New("wrpc: varint overflows a 32-bit integer")
 // The error is [io.EOF] only if no bytes were read.
 // If an [io.EOF] happens after reading some but not all the bytes,
 // ReadUvarint returns [io.ErrUnexpectedEOF].
-func ReadUint32(r io.ByteReader) (uint32, error) {
+func ReadUint32(r ByteReader) (uint32, error) {
 	var x uint32
 	var s uint
 	for i := 0; i < maxVarintLen32; i++ {
