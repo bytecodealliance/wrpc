@@ -1,6 +1,6 @@
 [package]
 name = "wrpc-runtime-wasmtime"
-version = "0.15.0"
+version = "0.16.0"
 description = "wRPC wasmtime integration"
 
 authors.workspace = true
@@ -11,6 +11,8 @@ repository.workspace = true
 
 [dependencies]
 anyhow = { workspace = true, features = ["std"] }
+async-trait = { workspace = true }
+bytes = { workspace = true }
 futures = { workspace = true }
 tracing = { workspace = true, features = ["attributes"] }
 wasmtime = { workspace = true }
