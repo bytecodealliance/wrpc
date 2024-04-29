@@ -90,9 +90,9 @@ tower = { version = "0.4", default-features = false }
 tracing = { version = "0.1", default-features = false }
 tracing-subscriber = { version = "0.3", default-features = false }
 url = { version = "2", default-features = false }
-wasmtime = { version = "19", default-features = false }
-wasmtime-wasi = { version = "19", default-features = false }
-wasmtime-wasi-http = { version = "19", default-features = false }
+wasmtime = { version = "20", default-features = false }
+wasmtime-wasi = { version = "20", default-features = false }
+wasmtime-wasi-http = { version = "20", default-features = false }
 webpki-roots = { version = "0.26", default-features = false }
 wit-bindgen-core = { version = "0.24", default-features = false }
 wit-bindgen-wrpc = { version = "0.3.6", default-features = false, path = "./crates/wit-bindgen" }
@@ -100,9 +100,9 @@ wit-bindgen-wrpc-rust = { version = "0.3.3", default-features = false, path = ".
 wit-bindgen-wrpc-rust-macro = { version = "0.3.4", default-features = false, path = "./crates/wit-bindgen-rust-macro" }
 wit-parser = { version = "0.202", default-features = false }
 wrpc-interface-blobstore = { version = "0.16", path = "./crates/interface-blobstore", default-features = false }
-wrpc-interface-http = { version = "0.21", path = "./crates/interface-http", default-features = false }
+wrpc-interface-http = { version = "0.22", path = "./crates/interface-http", default-features = false }
 wrpc-interface-keyvalue = { version = "0.13", path = "./crates/interface-keyvalue", default-features = false }
-wrpc-runtime-wasmtime = { version = "0.15", path = "./crates/runtime-wasmtime", default-features = false }
+wrpc-runtime-wasmtime = { version = "0.16", path = "./crates/runtime-wasmtime", default-features = false }
 wrpc-transport = { version = "0.24.2", path = "./crates/transport", default-features = false }
 wrpc-transport-nats = { version = "0.21", path = "./crates/transport-nats", default-features = false }
 wrpc-types = { version = "0.6", path = "./crates/types", default-features = false }
