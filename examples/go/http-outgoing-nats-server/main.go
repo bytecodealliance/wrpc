@@ -189,7 +189,7 @@ func run() error {
 				},
 			}, func() {
 				if err := body.Close(); err != nil {
-					slog.Warn("failed to close GET response body", "err", err)
+					slog.Warn("failed to close response body", "err", err)
 				}
 			}, nil
 	})
