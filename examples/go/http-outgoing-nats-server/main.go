@@ -1,5 +1,3 @@
-// NOTE: This example is a work in-progress and will change significantly going forward
-
 package main
 
 import (
