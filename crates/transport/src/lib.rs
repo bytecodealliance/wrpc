@@ -1787,10 +1787,12 @@ impl<'a> Receive<'a> for Bytes {
     where
         T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + 'static,
     {
+        trace!("receive byte list header");
         let (len, payload) = receive_list_header(payload, rx).await?;
         let cap = len
             .try_into()
             .context("list length does not fit in usize")?;
+        trace!(cap, "receive byte list contents");
         let mut payload = receive_at_least(payload, rx, cap).await?;
         Ok((payload.copy_to_bytes(cap), payload))
     }
@@ -2027,21 +2029,24 @@ impl<'a> Receive<'a> for IncomingInputStream {
         else {
             bail!("stream subscription type mismatch")
         };
-        trace!("decode stream");
+        trace!("decode byte stream");
         let mut payload = receive_at_least(payload, rx, 1).await?;
         match payload.get_u8() {
             0 => {
+                trace!("decode pending byte stream");
                 let (items_tx, items_rx) = mpsc::channel(1);
                 let producer = spawn(async move {
                     let mut payload: Box<dyn Buf + Send + 'a> = Box::new(Bytes::new());
                     let mut subscriber = pin!(subscriber);
                     loop {
+                        trace!("decode pending byte stream chunk");
                         match Bytes::receive_sync(payload, &mut subscriber).await {
                             Ok((vs, _)) if vs.is_empty() => {
                                 trace!("stream end received, close stream");
                                 return;
                             }
                             Ok((vs, buf)) => {
+                                trace!(?vs, "decoded pending byte stream chunk");
                                 payload = buf;
                                 if let Err(err) = items_tx.send(Ok(vs)).await {
                                     trace!(?err, "item receiver closed");
@@ -2067,6 +2072,7 @@ impl<'a> Receive<'a> for IncomingInputStream {
                 ))
             }
             1 => {
+                trace!("decode ready byte stream");
                 let (buf, payload) = Bytes::receive_sync(payload, rx)
                     .await
                     .context("failed to receive bytes")?;

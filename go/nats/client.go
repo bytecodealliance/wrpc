@@ -1,10 +1,10 @@
 package wrpcnats
 
 import (
+	"bytes"
 	"context"
-	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 
 	"github.com/nats-io/nats.go"
 	wrpc "github.com/wrpc/wrpc/go"
@@ -41,7 +41,7 @@ func invocationSubject(prefix string, instance string, name string) string {
 	return subject
 }
 
-func subscribeElement(conn *nats.Conn, prefix string, path []uint32, f func(context.Context, []byte)) (*nats.Subscription, error) {
+func subscribe(conn *nats.Conn, prefix string, f func(context.Context, []byte), path ...uint32) (*nats.Subscription, error) {
 	subject := prefix
 	for _, p := range path {
 		subject = fmt.Sprintf("%s.%d", subject, p)
@@ -117,22 +117,10 @@ func (c *Client) NewInvocation(instance string, name string) wrpc.OutgoingInvoca
 	}
 }
 
-func (inv *OutgoingInvocation) Subscribe(f func(context.Context, []byte)) (func() error, error) {
-	sub, err := inv.conn.Subscribe(resultSubject(inv.rx), func(m *nats.Msg) {
-		ctx := context.Background()
-		ctx = ContextWithHeader(ctx, m.Header)
-		f(ctx, m.Data)
-	})
+func (inv *OutgoingInvocation) Subscribe(f func(context.Context, []byte), path ...uint32) (func() error, error) {
+	sub, err := subscribe(inv.conn, resultSubject(inv.rx), f, path...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to subscribe for results: %w", err)
-	}
-	return sub.Unsubscribe, nil
-}
-
-func (inv *OutgoingInvocation) SubscribePath(path []uint32, f func(context.Context, []byte)) (func() error, error) {
-	sub, err := subscribeElement(inv.conn, resultSubject(inv.rx), path, f)
-	if err != nil {
-		return nil, fmt.Errorf("failed to subscribe for results at path %v: %w", path, err)
 	}
 	return sub.Unsubscribe, nil
 }
@@ -146,7 +134,13 @@ func (inv *OutgoingInvocation) Invoke(ctx context.Context, buf []byte, f func(co
 	sub, err := inv.conn.Subscribe(inv.rx, func(m *nats.Msg) {
 		ctx := context.Background()
 		ctx = ContextWithHeader(ctx, m.Header)
-		<-txCh <- m.Reply
+		reply, ok := <-txCh
+		if !ok {
+			slog.DebugContext(ctx, "handshake reply channel closed")
+			return
+		}
+		reply <- m.Reply
+		close(reply)
 		f(ctx, m.Data)
 	})
 	if err != nil {
@@ -158,33 +152,22 @@ func (inv *OutgoingInvocation) Invoke(ctx context.Context, buf []byte, f func(co
 	reply := make(chan string, 1)
 	select {
 	case txCh <- reply:
+		subject := <-reply
 		return sub.Unsubscribe, &Transmitter{
 			conn:    inv.conn,
-			subject: <-reply,
+			subject: subject,
 		}, nil
 	case <-ctx.Done():
-		return sub.Unsubscribe, nil, errors.New("handshake timed out")
+		return sub.Unsubscribe, nil, ctx.Err()
 	}
 }
 
 type IncomingInvocation struct{ invocation }
 
-func (inv *IncomingInvocation) Subscribe(f func(context.Context, []byte)) (func() error, error) {
-	sub, err := inv.conn.Subscribe(paramSubject(inv.rx), func(m *nats.Msg) {
-		ctx := context.Background()
-		ctx = ContextWithHeader(ctx, m.Header)
-		f(ctx, m.Data)
-	})
+func (inv *IncomingInvocation) Subscribe(f func(context.Context, []byte), path ...uint32) (func() error, error) {
+	sub, err := subscribe(inv.conn, paramSubject(inv.rx), f, path...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to subscribe for parameters: %w", err)
-	}
-	return sub.Unsubscribe, nil
-}
-
-func (inv *IncomingInvocation) SubscribePath(path []uint32, f func(context.Context, []byte)) (func() error, error) {
-	sub, err := subscribeElement(inv.conn, paramSubject(inv.rx), path, f)
-	if err != nil {
-		return nil, fmt.Errorf("failed to subscribe for parameters at path %v: %w", path, err)
 	}
 	return sub.Unsubscribe, nil
 }
@@ -205,7 +188,7 @@ type Transmitter struct {
 	subject string
 }
 
-func (tx *Transmitter) Transmit(ctx context.Context, path []uint32, buf []byte) error {
+func (tx *Transmitter) Transmit(ctx context.Context, buf []byte, path ...uint32) error {
 	subject := tx.subject
 	for _, p := range path {
 		subject = fmt.Sprintf("%s.%d", subject, p)
@@ -224,12 +207,14 @@ func NewClient(conn *nats.Conn, prefix string) *Client {
 
 func (c *Client) Serve(instance string, name string, f func(context.Context, []byte, wrpc.Transmitter, wrpc.IncomingInvocation) error) (stop func() error, err error) {
 	sub, err := c.conn.Subscribe(invocationSubject(c.prefix, instance, name), func(m *nats.Msg) {
+		slog.Debug("received invocation", "instance", instance, "name", name)
 		if m.Reply == "" {
-			log.Println("peer did not specify a reply subject")
+			slog.Warn("peer did not specify a reply subject")
 			return
 		}
 		ctx := context.Background()
 		ctx = ContextWithHeader(ctx, m.Header)
+		slog.Debug("calling handler")
 		if err := f(ctx, m.Data, &Transmitter{
 			conn:    c.conn,
 			subject: resultSubject(m.Reply),
@@ -240,22 +225,24 @@ func (c *Client) Serve(instance string, name string, f func(context.Context, []b
 				tx:   m.Reply,
 			},
 		}); err != nil {
-			log.Printf("failed to handle `handle`: %s", err)
-			b, err := wrpc.AppendString([]byte{}, fmt.Sprintf("%s", err))
-			if err != nil {
-				log.Printf("failed to encode `handle` handling error: %s", err)
+			var buf bytes.Buffer
+			slog.Warn("failed to handle `handle`", "err", err)
+			if err = wrpc.WriteString(fmt.Sprintf("%s", err), &buf); err != nil {
+				slog.Warn("failed to encode `handle` handling error", "err", err)
 				// Encoding the error failed, let's try encoding the encoding error
-				b, err = wrpc.AppendString([]byte{}, fmt.Sprintf("failed to encode error: %s", err))
-				if err != nil {
-					log.Printf("failed to encode `handle` handling error encoding error: %s", err)
+				if err = wrpc.WriteString(fmt.Sprintf("failed to encode error: %s", err), &buf); err != nil {
+					slog.Warn("failed to encode `handle` handling error encoding error", "err", err)
 					// Well, we're out of luck at this point, let's just send an empty string
-					b = []byte{0}
+					buf.Reset()
 				}
 			}
-			if err = transmit(context.Background(), c.conn, fmt.Sprintf("%s.error", m.Reply), "", b); err != nil {
-				log.Printf("failed to send error to client: %s", err)
+			slog.Debug("transmitting error", "err", err)
+			if err = transmit(context.Background(), c.conn, fmt.Sprintf("%s.error", m.Reply), "", buf.Bytes()); err != nil {
+				slog.Warn("failed to send error to client", "err", err)
 			}
+			return
 		}
+		slog.Debug("successfully finished serving invocation")
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to serve `%s` for instance `%s`: %w", name, instance, err)
