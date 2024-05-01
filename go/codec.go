@@ -9,9 +9,129 @@ import (
 	"io"
 	"log/slog"
 	"math"
-
-	"github.com/tetratelabs/wabin/leb128"
 )
+
+type Tuple2[T0, T1 any] struct {
+	V0 T0
+	V1 T1
+}
+
+func (v *Tuple2[T0, T1]) WriteTo(w ByteWriter, f0 func(T0, ByteWriter) error, f1 func(T1, ByteWriter) error) error {
+	slog.Debug("writing tuple element 0")
+	if err := f0(v.V0, w); err != nil {
+		return fmt.Errorf("failed to write tuple element 0: %w", err)
+	}
+	slog.Debug("writing tuple element 1")
+	if err := f1(v.V1, w); err != nil {
+		return fmt.Errorf("failed to write tuple element 1: %w", err)
+	}
+	return nil
+}
+
+type Tuple3[T0, T1, T2 any] struct {
+	V0 T0
+	V1 T1
+	V2 T2
+}
+
+func (v *Tuple3[T0, T1, T2]) WriteTo(w ByteWriter, f0 func(T0, ByteWriter) error, f1 func(T1, ByteWriter) error, f2 func(T2, ByteWriter) error) error {
+	slog.Debug("writing tuple element 0")
+	if err := f0(v.V0, w); err != nil {
+		return fmt.Errorf("failed to write tuple element 0: %w", err)
+	}
+	slog.Debug("writing tuple element 1")
+	if err := f1(v.V1, w); err != nil {
+		return fmt.Errorf("failed to write tuple element 1: %w", err)
+	}
+	slog.Debug("writing tuple element 2")
+	if err := f2(v.V2, w); err != nil {
+		return fmt.Errorf("failed to write tuple element 2: %w", err)
+	}
+	return nil
+}
+
+type Result[T, U any] struct {
+	Ok  *T
+	Err *U
+}
+
+func (v *Result[T, U]) WriteTo(w ByteWriter, fOk func(*T, ByteWriter) error, fErr func(*U, ByteWriter) error) error {
+	switch {
+	case v.Ok == nil && v.Err == nil:
+		return errors.New("both result variants cannot be nil")
+	case v.Ok != nil && v.Err != nil:
+		return errors.New("exactly one result variant must non-nil")
+	case v.Ok != nil:
+		slog.Debug("writing `result::ok` status byte")
+		if err := w.WriteByte(0); err != nil {
+			return fmt.Errorf("failed to write `result::ok` status byte: %w", err)
+		}
+		slog.Debug("writing `result::ok` payload")
+		if err := fOk(v.Ok, w); err != nil {
+			return fmt.Errorf("failed to write `result::ok` payload: %w", err)
+		}
+		return nil
+	default:
+		slog.Debug("writing `result::err` status byte")
+		if err := w.WriteByte(1); err != nil {
+			return fmt.Errorf("failed to write `result::err` status byte: %w", err)
+		}
+		slog.Debug("writing `result::err` payload")
+		if err := fErr(v.Err, w); err != nil {
+			return fmt.Errorf("failed to write `result::err` payload: %w", err)
+		}
+		return nil
+	}
+}
+
+type ByteStreamWriter struct {
+	r     io.Reader
+	chunk []byte
+}
+
+func (v *ByteStreamWriter) WriteTo(w ByteWriter) error {
+	if len(v.chunk) == 0 {
+		v.chunk = make([]byte, 8096)
+	}
+	for {
+		var end bool
+		slog.Debug("reading pending byte stream contents")
+		n, err := v.r.Read(v.chunk)
+		if err == io.EOF {
+			end = true
+			slog.Debug("pending byte stream reached EOF")
+		} else if err != nil {
+			return fmt.Errorf("failed to read pending byte stream chunk: %w", err)
+		}
+		if n > math.MaxUint32 {
+			return fmt.Errorf("pending byte stream chunk length of %d overflows a 32-bit integer", n)
+		}
+		slog.Debug("writing pending byte stream chunk length", "len", n)
+		if err := WriteUint32(uint32(n), w); err != nil {
+			return fmt.Errorf("failed to write pending byte stream chunk length of %d: %w", n, err)
+		}
+		_, err = w.Write(v.chunk[:n])
+		if err != nil {
+			return fmt.Errorf("failed to write pending byte stream chunk contents: %w", err)
+		}
+		if end {
+			if err := w.WriteByte(0); err != nil {
+				return fmt.Errorf("failed to write pending byte stream end byte: %w", err)
+			}
+			return nil
+		}
+	}
+}
+
+type ByteWriter interface {
+	io.ByteWriter
+	io.Writer
+}
+
+type ByteReader interface {
+	io.ByteReader
+	io.Reader
+}
 
 type Ready interface {
 	Ready() bool
@@ -97,22 +217,6 @@ func (*decodeReader[T]) Ready() bool {
 	return false
 }
 
-func EncodeInt16(v int16) []byte {
-	return leb128.EncodeInt32(int32(v))
-}
-
-func EncodeInt32(v int32) []byte {
-	return leb128.EncodeInt32(v)
-}
-
-func EncodeInt64(v int64) []byte {
-	return leb128.EncodeInt64(v)
-}
-
-func EncodeInt(v int) []byte {
-	return leb128.EncodeInt64(int64(v))
-}
-
 func PutUint16(buf []byte, x uint16) {
 	binary.PutUvarint(buf, uint64(x))
 }
@@ -153,32 +257,122 @@ func PutFloat64(buf []byte, x float64) {
 	binary.LittleEndian.PutUint64(buf, math.Float64bits(x))
 }
 
-func AppendString(buf []byte, s string) ([]byte, error) {
-	n := len(s)
-	if n > math.MaxUint32 {
-		return nil, fmt.Errorf("response UTF-8 string byte length of %d overflows u32", n)
-	}
-	return append(append(buf, leb128.EncodeUint32(uint32(n))...), s...), nil
+func WriteUint8(v uint8, w ByteWriter) error {
+	return w.WriteByte(v)
 }
 
-func WriteString(w io.Writer, s string) (int, error) {
-	n := len(s)
+func WriteUint16(v uint16, w ByteWriter) error {
+	b := make([]byte, binary.MaxVarintLen16)
+	i := binary.PutUvarint(b, uint64(v))
+	_, err := w.Write(b[:i])
+	return err
+}
+
+func WriteUint32(v uint32, w ByteWriter) error {
+	b := make([]byte, binary.MaxVarintLen32)
+	i := binary.PutUvarint(b, uint64(v))
+	_, err := w.Write(b[:i])
+	return err
+}
+
+func WriteUint64(v uint64, w ByteWriter) error {
+	b := make([]byte, binary.MaxVarintLen64)
+	i := binary.PutUvarint(b, uint64(v))
+	_, err := w.Write(b[:i])
+	return err
+}
+
+func WriteString(v string, w ByteWriter) error {
+	n := len(v)
 	if n > math.MaxUint32 {
-		return 0, fmt.Errorf("response UTF-8 string byte length of %d overflows u32", n)
+		return fmt.Errorf("string byte length of %d overflows a 32-bit integer", n)
 	}
-	n, err := w.Write(leb128.EncodeUint32(uint32(n)))
+	slog.Debug("writing string byte length", "len", n)
+	if err := WriteUint32(uint32(n), w); err != nil {
+		return fmt.Errorf("failed to write string length of %d: %w", n, err)
+	}
+	slog.Debug("writing string bytes")
+	_, err := w.Write([]byte(v))
 	if err != nil {
-		return n, fmt.Errorf("failed to write string length of %d: %w", n, err)
+		return fmt.Errorf("failed to write string bytes: %w", err)
 	}
-	sn, err := w.Write([]byte(s))
-	if sn > math.MaxInt-n {
-		return math.MaxInt, errors.New("encoded string length overflows int")
+	return nil
+}
+
+func WriteByteList(v []byte, w ByteWriter) error {
+	n := len(v)
+	if n > math.MaxUint32 {
+		return fmt.Errorf("byte list length of %d overflows a 32-bit integer", n)
 	}
-	n += sn
+	slog.Debug("writing byte list length", "len", n)
+	if err := WriteUint32(uint32(n), w); err != nil {
+		return fmt.Errorf("failed to write list length of %d: %w", n, err)
+	}
+	slog.Debug("writing byte list contents")
+	_, err := w.Write(v)
 	if err != nil {
-		return n, fmt.Errorf("failed to write string: %w", err)
+		return fmt.Errorf("failed to write byte list contents: %w", err)
 	}
-	return n, nil
+	return nil
+}
+
+func WriteList[T any](v []T, w ByteWriter, f func(T, ByteWriter) error) error {
+	n := len(v)
+	if n > math.MaxUint32 {
+		return fmt.Errorf("list length of %d overflows a 32-bit integer", n)
+	}
+	slog.Debug("writing list length", "len", n)
+	if err := WriteUint32(uint32(n), w); err != nil {
+		return fmt.Errorf("failed to write list length of %d: %w", n, err)
+	}
+	for i := range v {
+		slog.Debug("writing list element", "index", i)
+		if err := f(v[i], w); err != nil {
+			return fmt.Errorf("failed to write list element %d: %w", i, err)
+		}
+	}
+	return nil
+}
+
+func WriteOption[T any](v *T, w ByteWriter, f func(T, ByteWriter) error) error {
+	if v == nil {
+		slog.Debug("writing `option::none` status byte")
+		if err := w.WriteByte(0); err != nil {
+			return fmt.Errorf("failed to write `option::none` byte: %w", err)
+		}
+		return nil
+	}
+	slog.Debug("writing `option::some` status byte")
+	if err := w.WriteByte(1); err != nil {
+		return fmt.Errorf("failed to write `option::some` status byte: %w", err)
+	}
+	slog.Debug("writing `option::some` payload")
+	if err := f(*v, w); err != nil {
+		return fmt.Errorf("failed to write `option::some` payload: %w", err)
+	}
+	return nil
+}
+
+func WriteByteStream(r ReadyReader, w ByteWriter, chunk []byte) (*ByteStreamWriter, error) {
+	if r.Ready() {
+		slog.Debug("writing byte stream `stream::ready` status byte")
+		if err := w.WriteByte(1); err != nil {
+			return nil, fmt.Errorf("failed to write `stream::ready` byte: %w", err)
+		}
+		var buf bytes.Buffer
+		slog.Debug("reading ready byte stream contents")
+		n, err := io.CopyBuffer(&buf, r, chunk)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read ready byte stream contents: %w", err)
+		}
+		slog.Debug("writing ready byte stream contents", "len", n)
+		return nil, WriteByteList(buf.Bytes(), w)
+	}
+	slog.Debug("writing byte stream `stream::pending` status byte")
+	if err := w.WriteByte(0); err != nil {
+		return nil, fmt.Errorf("failed to write `stream::pending` byte: %w", err)
+	}
+	return &ByteStreamWriter{r, chunk}, nil
 }
 
 // ReadUint64 reads an encoded uint64 from r and returns it.
@@ -187,11 +381,6 @@ func WriteString(w io.Writer, s string) (int, error) {
 // ReadUvarint returns [io.ErrUnexpectedEOF].
 func ReadUint64(r ByteReader) (uint64, error) {
 	return binary.ReadUvarint(r)
-}
-
-type ByteReader interface {
-	io.ByteReader
-	io.Reader
 }
 
 // ReadOptionStatus reads a single byte from `r` and returns:
@@ -275,23 +464,23 @@ func ReadResultStatus(r ByteReader) (bool, error) {
 }
 
 // ReadResult reads a single byte from `r`
-func ReadResult[T, U any](r ByteReader, fOk func(ByteReader) (T, error), fErr func(ByteReader) (U, error)) (*T, *U, error) {
+func ReadResult[T, U any](r ByteReader, fOk func(ByteReader) (T, error), fErr func(ByteReader) (U, error)) (*Result[T, U], error) {
 	ok, err := ReadResultStatus(r)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	if !ok {
 		v, err := fErr(r)
 		if err != nil {
-			return nil, nil, fmt.Errorf("failed to read `result::err` value: %w", err)
+			return nil, fmt.Errorf("failed to read `result::err` value: %w", err)
 		}
-		return nil, &v, nil
+		return &Result[T, U]{Err: &v}, nil
 	}
 	v, err := fOk(r)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to read `result::ok` value: %w", err)
+		return nil, fmt.Errorf("failed to read `result::ok` value: %w", err)
 	}
-	return &v, nil, nil
+	return &Result[T, U]{Ok: &v}, nil
 }
 
 // ReadString reads a string from `r` and returns it
@@ -355,11 +544,6 @@ func ReadList[T any](r ByteReader, f func(ByteReader) (T, error)) ([]T, error) {
 	return vs, nil
 }
 
-type Tuple2[T0, T1 any] struct {
-	V0 T0
-	V1 T1
-}
-
 func ReadTuple2[T0, T1 any](r ByteReader, f0 func(ByteReader) (T0, error), f1 func(ByteReader) (T1, error)) (*Tuple2[T0, T1], error,
 ) {
 	v0, err := f0(r)
@@ -371,12 +555,6 @@ func ReadTuple2[T0, T1 any](r ByteReader, f0 func(ByteReader) (T0, error), f1 fu
 		return nil, fmt.Errorf("failed to read tuple element 1: %w", err)
 	}
 	return &Tuple2[T0, T1]{v0, v1}, nil
-}
-
-type Tuple3[T0, T1, T2 any] struct {
-	V0 T0
-	V1 T1
-	V2 T2
 }
 
 func ReadTuple3[T0, T1, T2 any](r ByteReader, f0 func(ByteReader) (T0, error), f1 func(ByteReader) (T1, error), f2 func(ByteReader) (T2, error)) (*Tuple3[T0, T1, T2], error,

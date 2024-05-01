@@ -23,6 +23,7 @@ clap = { workspace = true, features = [
 futures = { workspace = true }
 http = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["io-std", "rt-multi-thread", "signal"] }
+tracing = { workspace = true, features = ["attributes"] }
 tracing-subscriber = { workspace = true, features = [
     "ansi",
     "env-filter",

@@ -7,6 +7,7 @@ use http::uri::Uri;
 use tokio::io::{stdout, AsyncWriteExt as _};
 use tokio::sync::mpsc;
 use tokio::try_join;
+use tracing::debug;
 use tracing_subscriber::layer::SubscriberExt as _;
 use tracing_subscriber::util::SubscriberInitExt as _;
 use wrpc_interface_http::{OutgoingHandler as _, Request, Response};
@@ -93,6 +94,7 @@ async fn main() -> anyhow::Result<()> {
             try_join!(
                 async { tx.await.context("failed to transmit request") },
                 async {
+                    debug!("receiving body");
                     body.try_for_each(|chunk| async move {
                         stdout()
                             .write_all(&chunk)
@@ -102,9 +104,11 @@ async fn main() -> anyhow::Result<()> {
                     })
                     .await
                     .context("failed to receive response body")?;
+                    debug!("received body");
 
                     println!();
 
+                    debug!("receiving trailers");
                     let trailers = trailers.await.context("failed to receive trailers")?;
                     if let Some(trailers) = trailers {
                         for (trailer, values) in trailers {
@@ -116,6 +120,7 @@ async fn main() -> anyhow::Result<()> {
                             }
                         }
                     }
+                    debug!("received trailers");
                     Ok(())
                 }
             )?;

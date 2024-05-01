@@ -2,15 +2,6 @@ package wrpc
 
 import "context"
 
-type Transmitter interface {
-	Transmit(context.Context, []uint32, []byte) error
-}
-
-type Subscriber interface {
-	Subscribe(func(context.Context, []byte)) (func() error, error)
-	SubscribePath([]uint32, func(context.Context, []byte)) (func() error, error)
-}
-
 type ErrorSubscriber interface {
 	SubscribeError(func(context.Context, []byte)) (func() error, error)
 }
