@@ -962,9 +962,11 @@ func ReadRequest(ctx context.Context, r wrpc.ByteReader, sub *RequestSubscriptio
 
 	slog.DebugContext(ctx, "reading `trailers`")
 	trailers, err := wrpc.ReadFuture(ctx, r, sub.payloadTrailers, func(r wrpc.ByteReader) ([]*wrpc.Tuple2[string, [][]byte], error) {
-		return wrpc.ReadList(r, func(r wrpc.ByteReader) (*wrpc.Tuple2[string, [][]byte], error) {
-			return wrpc.ReadTuple2(r, wrpc.ReadString, func(r wrpc.ByteReader) ([][]byte, error) {
-				return wrpc.ReadList(r, wrpc.ReadByteList)
+		return wrpc.ReadFlatOption(r, func(r wrpc.ByteReader) ([]*wrpc.Tuple2[string, [][]byte], error) {
+			return wrpc.ReadList(r, func(r wrpc.ByteReader) (*wrpc.Tuple2[string, [][]byte], error) {
+				return wrpc.ReadTuple2(r, wrpc.ReadString, func(r wrpc.ByteReader) ([][]byte, error) {
+					return wrpc.ReadList(r, wrpc.ReadByteList)
+				})
 			})
 		})
 	})
@@ -1054,9 +1056,11 @@ func (v *ResponseRecord) WriteTo(w wrpc.ByteWriter) (*ResponseTransmitter, error
 		if err != nil {
 			return nil, fmt.Errorf("failed to receive `trailers`: %w", err)
 		}
-		if err := wrpc.WriteList(trailers, w, func(v *wrpc.Tuple2[string, [][]byte], w wrpc.ByteWriter) error {
-			return v.WriteTo(w, wrpc.WriteString, func(v [][]byte, w wrpc.ByteWriter) error {
-				return wrpc.WriteList(v, w, wrpc.WriteByteList)
+		if err := wrpc.WriteOption(wrpc.Slice(trailers), w, func(v []*wrpc.Tuple2[string, [][]byte], w wrpc.ByteWriter) error {
+			return wrpc.WriteList(trailers, w, func(v *wrpc.Tuple2[string, [][]byte], w wrpc.ByteWriter) error {
+				return v.WriteTo(w, wrpc.WriteString, func(v [][]byte, w wrpc.ByteWriter) error {
+					return wrpc.WriteList(v, w, wrpc.WriteByteList)
+				})
 			})
 		}); err != nil {
 			return nil, fmt.Errorf("failed to write `trailers`: %w", err)
@@ -1118,9 +1122,11 @@ func (v *ResponseTransmitter) Transmit(ctx context.Context, tx wrpc.Transmitter)
 			}
 			w := bufio.NewWriter(wrpc.NewTransmitWriter(ctx, tx, 1))
 			slog.Debug("writing `trailers`")
-			if err := wrpc.WriteList(trailers, w, func(v *wrpc.Tuple2[string, [][]byte], w wrpc.ByteWriter) error {
-				return v.WriteTo(w, wrpc.WriteString, func(v [][]byte, w wrpc.ByteWriter) error {
-					return wrpc.WriteList(v, w, wrpc.WriteByteList)
+			if err := wrpc.WriteOption(wrpc.Slice(trailers), w, func(v []*wrpc.Tuple2[string, [][]byte], w wrpc.ByteWriter) error {
+				return wrpc.WriteList(trailers, w, func(v *wrpc.Tuple2[string, [][]byte], w wrpc.ByteWriter) error {
+					return v.WriteTo(w, wrpc.WriteString, func(v [][]byte, w wrpc.ByteWriter) error {
+						return wrpc.WriteList(v, w, wrpc.WriteByteList)
+					})
 				})
 			}); err != nil {
 				trailersErr = fmt.Errorf("failed to write `trailers`: %w", err)

@@ -11,6 +11,13 @@ import (
 	"math"
 )
 
+func Slice[T any](v []T) *[]T {
+	if v == nil {
+		return nil
+	}
+	return &v
+}
+
 type Tuple2[T0, T1 any] struct {
 	V0 T0
 	V1 T1
@@ -160,28 +167,12 @@ type byteReader struct {
 	*bytes.Reader
 }
 
-func (r *byteReader) Read(b []byte) (int, error) {
-	return r.Reader.Read(b)
-}
-
-func (r *byteReader) ReadByte() (byte, error) {
-	return r.Reader.ReadByte()
-}
-
 func (*byteReader) Ready() bool {
 	return true
 }
 
 type PendingByteReader struct {
-	r ByteReader
-}
-
-func (r *PendingByteReader) Read(b []byte) (int, error) {
-	return r.r.Read(b)
-}
-
-func (r *PendingByteReader) ReadByte() (byte, error) {
-	return r.r.ReadByte()
+	ByteReader
 }
 
 func (*PendingByteReader) Ready() bool {
@@ -204,16 +195,53 @@ func (*ready[T]) Ready() bool {
 	return true
 }
 
-type decodeReader[T any] struct {
+type byteStreamReceiver struct {
 	ByteReader
+	buffered uint32
+}
+
+func (r *byteStreamReceiver) Read(p []byte) (int, error) {
+	n := r.buffered
+	if n == 0 {
+		slog.Debug("reading pending byte stream chunk length")
+		var err error
+		n, err = ReadUint32(r)
+		if err != nil {
+			return 0, fmt.Errorf("failed to read pending byte stream chunk length: %w", err)
+		}
+		if n == 0 {
+			return 0, io.EOF
+		}
+	}
+	if len(p) > int(n) {
+		p = p[:n]
+	}
+	slog.Debug("reading pending byte stream chunk contents", "len", n)
+	rn, err := r.Read(p)
+	if err != nil {
+		return rn, fmt.Errorf("failed to read pending stream chunk bytes: %w", err)
+	}
+	if rn > int(n) {
+		return rn, errors.New("read more bytes than requested")
+	}
+	r.buffered = n - uint32(rn)
+	return rn, nil
+}
+
+func (*byteStreamReceiver) Ready() bool {
+	return false
+}
+
+type decodeReceiver[T any] struct {
+	r      ByteReader
 	decode func(ByteReader) (T, error)
 }
 
-func (r *decodeReader[T]) Receive() (T, error) {
-	return r.decode(r.ByteReader)
+func (r *decodeReceiver[T]) Receive() (T, error) {
+	return r.decode(r.r)
 }
 
-func (*decodeReader[T]) Ready() bool {
+func (*decodeReceiver[T]) Ready() bool {
 	return false
 }
 
@@ -419,20 +447,20 @@ func ReadOption[T any](r ByteReader, f func(ByteReader) (T, error)) (*T, error) 
 	return &v, nil
 }
 
-// ReadFlatOption reads an option from `r` and flattens the return value
-func ReadFlatOption[T any](r ByteReader, f func(ByteReader) (*T, error)) (*T, error) {
+// ReadFlatOption reads an option from `r` without pointer indirection
+func ReadFlatOption[T any](r ByteReader, f func(ByteReader) (T, error)) (v T, err error) {
 	slog.Debug("reading option status byte")
 	ok, err := ReadOptionStatus(r)
 	if err != nil {
-		return nil, err
+		return v, err
 	}
 	if !ok {
-		return nil, nil
+		return v, err
 	}
 	slog.Debug("reading `option::some` payload")
-	v, err := f(r)
+	v, err = f(r)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read `option::some` value: %w", err)
+		return v, fmt.Errorf("failed to read `option::some` value: %w", err)
 	}
 	return v, nil
 }
@@ -500,7 +528,7 @@ func ReadString(r ByteReader) (string, error) {
 	if rn > int(n) {
 		return "", fmt.Errorf("invalid amount of string bytes read, expected %d, got %d", n, rn)
 	}
-	slog.Debug("read bytes", "buf", b)
+	slog.Debug("read string bytes", "buf", b)
 	return string(b), nil
 }
 
@@ -594,45 +622,32 @@ func ReadStreamStatus(r ByteReader) (bool, error) {
 
 // ReadByteStream reads a stream of bytes from `r` and `ch`
 func ReadByteStream(ctx context.Context, r ByteReader, ch <-chan []byte) (ReadyReader, error) {
+	slog.DebugContext(ctx, "reading byte stream status byte")
 	ok, err := ReadStreamStatus(r)
 	if err != nil {
 		return nil, err
 	}
 	if !ok {
-		return &decodeReader[[]byte]{&ChanReader{ctx, ch, nil}, func(r ByteReader) ([]byte, error) {
-			n, err := ReadUint32(r)
-			if err != nil {
-				return nil, fmt.Errorf("failed to read pending stream chunk length: %w", err)
-			}
-			if n == 0 {
-				return nil, io.EOF
-			}
-			b := make([]byte, n)
-			rn, err := r.Read(b)
-			if err != nil {
-				return nil, fmt.Errorf("failed to read pending stream chunk bytes: %w", err)
-			}
-			if rn > int(n) {
-				return nil, fmt.Errorf("invalid amount of pending stream chunk bytes read, expected %d, got %d", n, rn)
-			}
-			return b, nil
-		}}, nil
+		return &byteStreamReceiver{&ChanReader{ctx, ch, nil}, 0}, nil
 	}
+	slog.DebugContext(ctx, "reading ready byte stream")
 	buf, err := ReadByteList(r)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read bytes: %w", err)
 	}
+	slog.DebugContext(ctx, "read ready byte stream", "len", len(buf))
 	return &byteReader{bytes.NewReader(buf)}, nil
 }
 
 // ReadStream reads a stream from `r` and `ch`
 func ReadStream[T any](ctx context.Context, r ByteReader, ch <-chan []byte, f func(ByteReader) (T, error)) (ReadyReceiver[[]T], error) {
+	slog.DebugContext(ctx, "reading stream status byte")
 	ok, err := ReadStreamStatus(r)
 	if err != nil {
 		return nil, err
 	}
 	if !ok {
-		return &decodeReader[[]T]{&ChanReader{ctx, ch, nil}, func(r ByteReader) ([]T, error) {
+		return &decodeReceiver[[]T]{&ChanReader{ctx, ch, nil}, func(r ByteReader) ([]T, error) {
 			n, err := ReadUint32(r)
 			if err != nil {
 				return nil, fmt.Errorf("failed to read pending stream chunk length: %w", err)
@@ -651,10 +666,12 @@ func ReadStream[T any](ctx context.Context, r ByteReader, ch <-chan []byte, f fu
 			return vs, nil
 		}}, nil
 	}
+	slog.DebugContext(ctx, "reading ready stream")
 	vs, err := ReadList(r, f)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read ready stream: %w", err)
 	}
+	slog.DebugContext(ctx, "read ready stream", "len", len(vs))
 	return &ready[[]T]{vs}, nil
 }
 
@@ -678,13 +695,15 @@ func ReadFutureStatus(r ByteReader) (bool, error) {
 
 // ReadFuture reads a future from `r` and `ch`
 func ReadFuture[T any](ctx context.Context, r ByteReader, ch <-chan []byte, f func(ByteReader) (T, error)) (ReadyReceiver[T], error) {
+	slog.DebugContext(ctx, "reading future status byte")
 	ok, err := ReadFutureStatus(r)
 	if err != nil {
 		return nil, err
 	}
 	if !ok {
-		return &decodeReader[T]{&ChanReader{ctx, ch, nil}, f}, nil
+		return &decodeReceiver[T]{&ChanReader{ctx, ch, nil}, f}, nil
 	}
+	slog.DebugContext(ctx, "reading ready future")
 	v, err := f(r)
 	if err != nil {
 		return nil, err

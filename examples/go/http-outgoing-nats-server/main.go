@@ -96,31 +96,6 @@ func run() error {
 	defer nc.Close()
 
 	stop, err := outgoing_handler.ServeHandle(wrpcnats.NewClient(nc, "go"), func(ctx context.Context, request *types.RequestRecord, opts *types.RequestOptionsRecord) (*wrpc.Result[types.ResponseRecord, types.ErrorCodeVariant], func(), error) {
-		var scheme string
-		switch disc := request.Scheme.Discriminant(); disc {
-		case types.SchemeDiscriminant_Http:
-			scheme = "http"
-		case types.SchemeDiscriminant_Https:
-			scheme = "https"
-		case types.SchemeDiscriminant_Other:
-			var ok bool
-			scheme, ok = request.Scheme.GetOther()
-			if !ok {
-				return nil, nil, errors.New("invalid scheme")
-			}
-		default:
-			return nil, nil, fmt.Errorf("invalid scheme discriminant %v", disc)
-		}
-		authority := ""
-		if request.Authority != nil {
-			authority = *request.Authority
-		}
-		pathWithQuery := ""
-		if request.PathWithQuery != nil {
-			pathWithQuery = *request.PathWithQuery
-		}
-		url := fmt.Sprintf("%s://%s/%s", scheme, authority, pathWithQuery)
-
 		var method string
 		switch disc := request.Method.Discriminant(); disc {
 		case types.MethodDiscriminant_Get:
@@ -150,6 +125,30 @@ func run() error {
 		default:
 			return nil, nil, fmt.Errorf("invalid HTTP method discriminant %v", disc)
 		}
+		scheme := "https"
+		if request.Scheme != nil {
+			switch disc := request.Scheme.Discriminant(); disc {
+			case types.SchemeDiscriminant_Http:
+				scheme = "http"
+			case types.SchemeDiscriminant_Https:
+				scheme = "https"
+			case types.SchemeDiscriminant_Other:
+				var ok bool
+				scheme, ok = request.Scheme.GetOther()
+				if !ok {
+					return nil, nil, errors.New("invalid scheme")
+				}
+			default:
+				return nil, nil, fmt.Errorf("invalid scheme discriminant %v", disc)
+			}
+		}
+		url := fmt.Sprintf("%s://", scheme)
+		if request.Authority != nil {
+			url = fmt.Sprintf("%s%s", url, *request.Authority)
+		}
+		if request.PathWithQuery != nil {
+			url = fmt.Sprintf("%s%s", url, *request.PathWithQuery)
+		}
 
 		var trailer http.Header
 		req, err := http.NewRequest(method, url, &incomingBody{body: request.Body, trailer: trailer, trailerRx: request.Trailers})
@@ -159,9 +158,11 @@ func run() error {
 		req.Trailer = trailer
 		for _, header := range request.Headers {
 			for _, value := range header.V1 {
+				slog.DebugContext(ctx, "adding header", "name", header, "value", string(value))
 				req.Header.Add(header.V0, string(value))
 			}
 		}
+		slog.DebugContext(ctx, "sending HTTP request", "url", url, "method", method)
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			return nil, nil, fmt.Errorf("request failed: %w", err)

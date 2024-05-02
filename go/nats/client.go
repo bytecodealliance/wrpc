@@ -236,7 +236,7 @@ func (c *Client) Serve(instance string, name string, f func(context.Context, []b
 					buf.Reset()
 				}
 			}
-			slog.Debug("transmitting error", "err", err)
+			slog.Debug("transmitting error")
 			if err = transmit(context.Background(), c.conn, fmt.Sprintf("%s.error", m.Reply), "", buf.Bytes()); err != nil {
 				slog.Warn("failed to send error to client", "err", err)
 			}
