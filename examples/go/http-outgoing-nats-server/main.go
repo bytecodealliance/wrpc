@@ -124,23 +124,23 @@ func run() error {
 		var method string
 		switch disc := request.Method.Discriminant(); disc {
 		case types.MethodDiscriminant_Get:
-			method = "get"
+			method = "GET"
 		case types.MethodDiscriminant_Head:
-			method = "head"
+			method = "HEAD"
 		case types.MethodDiscriminant_Post:
-			method = "post"
+			method = "POST"
 		case types.MethodDiscriminant_Put:
-			method = "put"
+			method = "PUT"
 		case types.MethodDiscriminant_Delete:
-			method = "delete"
+			method = "DELETE"
 		case types.MethodDiscriminant_Connect:
-			method = "connect"
+			method = "CONNECT"
 		case types.MethodDiscriminant_Options:
-			method = "options"
+			method = "OPTIONS"
 		case types.MethodDiscriminant_Trace:
-			method = "trace"
+			method = "TRACE"
 		case types.MethodDiscriminant_Patch:
-			method = "patch"
+			method = "PATCH"
 		case types.MethodDiscriminant_Other:
 			var ok bool
 			method, ok = request.Method.GetOther()
