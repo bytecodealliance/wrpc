@@ -26,7 +26,20 @@ nats = ["dep:wrpc-transport-nats"]
 wasmtime = ["dep:wrpc-runtime-wasmtime"]
 
 [dependencies]
+anyhow = { workspace = true }
+clap = { workspace = true, features = [
+    "color",
+    "derive",
+    "error-context",
+    "help",
+    "std",
+    "suggestions",
+    "usage",
+] }
+wit-bindgen-core = { workspace = true }
 wit-bindgen-wrpc = { workspace = true }
+wit-bindgen-wrpc-go = { workspace = true, features = ["clap"] }
+wit-bindgen-wrpc-rust = { workspace = true, features = ["clap"] }
 wrpc-interface-blobstore = { workspace = true }
 wrpc-interface-http = { workspace = true }
 wrpc-interface-keyvalue = { workspace = true }
@@ -96,6 +109,7 @@ wasmtime-wasi-http = { version = "20", default-features = false }
 webpki-roots = { version = "0.26", default-features = false }
 wit-bindgen-core = { version = "0.24", default-features = false }
 wit-bindgen-wrpc = { version = "0.3.6", default-features = false, path = "./crates/wit-bindgen" }
+wit-bindgen-wrpc-go = { version = "0.1.0", default-features = false, path = "./crates/wit-bindgen-go" }
 wit-bindgen-wrpc-rust = { version = "0.3.3", default-features = false, path = "./crates/wit-bindgen-rust" }
 wit-bindgen-wrpc-rust-macro = { version = "0.3.4", default-features = false, path = "./crates/wit-bindgen-rust-macro" }
 wit-parser = { version = "0.202", default-features = false }

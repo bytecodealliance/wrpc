@@ -3088,6 +3088,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "wit-bindgen-wrpc-go"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "heck 0.5.0",
+ "test-helpers",
+ "wit-bindgen-core",
+]
+
+[[package]]
 name = "wit-bindgen-wrpc-rust"
 version = "0.3.3"
 dependencies = [
@@ -3139,6 +3150,7 @@ dependencies = [
  "anyhow",
  "async-nats",
  "bytes",
+ "clap",
  "futures",
  "http-body 1.0.0",
  "http-body-util",
@@ -3148,7 +3160,10 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "wit-bindgen-core",
  "wit-bindgen-wrpc",
+ "wit-bindgen-wrpc-go",
+ "wit-bindgen-wrpc-rust",
  "wrpc-interface-blobstore",
  "wrpc-interface-http",
  "wrpc-interface-keyvalue",
