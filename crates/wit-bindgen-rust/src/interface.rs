@@ -1,6 +1,6 @@
 use crate::{
     int_repr, to_rust_ident, to_upper_camel_case, FnSig, Identifier, InterfaceName, Ownership,
-    RustFlagsRepr, RustWasm,
+    RustFlagsRepr, RustWrpc,
 };
 use heck::*;
 use std::collections::{BTreeMap, BTreeSet};
@@ -12,7 +12,7 @@ pub struct InterfaceGenerator<'a> {
     pub src: Source,
     pub(super) identifier: Identifier<'a>,
     pub in_import: bool,
-    pub(super) gen: &'a mut RustWasm,
+    pub(super) gen: &'a mut RustWrpc,
     pub resolve: &'a Resolve,
 }
 

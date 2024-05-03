@@ -1,0 +1,26 @@
+[package]
+name = "wit-bindgen-wrpc-go"
+version = "0.1.0"
+homepage = 'https://github.com/bytecodealliance/wit-bindgen'
+description = """
+Go bindings generator for wRPC
+"""
+authors = ["Roman Volosatovs <rvolosatovs@riseup.net>"]
+
+categories.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+test = false
+doctest = false
+
+[dependencies]
+anyhow = { workspace = true }
+clap = { workspace = true, features = ["derive"], optional = true }
+heck = { workspace = true }
+wit-bindgen-core = { workspace = true }
+
+[dev-dependencies]
+test-helpers = { workspace = true }

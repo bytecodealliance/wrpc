@@ -22,7 +22,7 @@ struct InterfaceName {
 }
 
 #[derive(Default)]
-struct RustWasm {
+struct RustWrpc {
     types: Types,
     src: Source,
     opts: Opts,
@@ -176,16 +176,16 @@ pub struct Opts {
 
 impl Opts {
     pub fn build(self) -> Box<dyn WorldGenerator> {
-        let mut r = RustWasm::new();
+        let mut r = RustWrpc::new();
         r.skip = self.skip.iter().cloned().collect();
         r.opts = self;
         Box::new(r)
     }
 }
 
-impl RustWasm {
-    fn new() -> RustWasm {
-        RustWasm::default()
+impl RustWrpc {
+    fn new() -> RustWrpc {
+        RustWrpc::default()
     }
 
     fn interface<'a>(
@@ -430,7 +430,7 @@ fn name_package_module(resolve: &Resolve, id: PackageId) -> String {
     format!("{base}{version}")
 }
 
-impl WorldGenerator for RustWasm {
+impl WorldGenerator for RustWrpc {
     fn preprocess(&mut self, resolve: &Resolve, world: WorldId) {
         wit_bindgen_core::generated_preamble(&mut self.src, env!("CARGO_PKG_VERSION"));
 

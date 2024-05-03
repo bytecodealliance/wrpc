@@ -1,0 +1,5 @@
+package wrpc-examples:hello-go-server;
+
+world server {
+    include wrpc-examples:hello/server;
+}

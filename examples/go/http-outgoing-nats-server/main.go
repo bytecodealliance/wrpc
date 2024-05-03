@@ -199,11 +199,12 @@ func run() error {
 	signalCh := make(chan os.Signal, 1)
 	signal.Notify(signalCh, syscall.SIGINT)
 	<-signalCh
+
 	if err = stop(); err != nil {
-		slog.Error("failed to stop serving", "err", err)
+		return fmt.Errorf("failed to stop serving: %w", err)
 	}
 	if err = nc.Drain(); err != nil {
-		slog.Error("failed to drain NATS.io connection", "err", err)
+		return fmt.Errorf("failed to drain NATS.io connection: %w", err)
 	}
 	return nil
 }
