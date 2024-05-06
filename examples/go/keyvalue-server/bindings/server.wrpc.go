@@ -3,12 +3,12 @@
 package server
 
 import (
-	exports__wrpc_examples__hello__handler "github.com/wrpc/wrpc/examples/go/hello-nats-server/bindings/exports/wrpc_examples/hello/handler"
+	exports__wrpc__keyvalue__store "github.com/wrpc/wrpc/examples/go/keyvalue-server/bindings/exports/wrpc/keyvalue/store"
 	wrpc "github.com/wrpc/wrpc/go"
 )
 
 func Serve(c wrpc.Client, h interface {
-	exports__wrpc_examples__hello__handler.Handler
+	exports__wrpc__keyvalue__store.Handler
 }) (stop func() error, err error) {
 	stops := make([]func() error, 0, 1)
 	stop = func() error {
@@ -19,7 +19,7 @@ func Serve(c wrpc.Client, h interface {
 		}
 		return nil
 	}
-	stop0, err := exports__wrpc_examples__hello__handler.ServeInterface(c, h)
+	stop0, err := exports__wrpc__keyvalue__store.ServeInterface(c, h)
 	if err != nil {
 		return
 	}

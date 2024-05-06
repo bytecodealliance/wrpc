@@ -22,11 +22,16 @@ members = ["crates/*", "examples/rust/*"]
 [features]
 default = ["nats", "wasmtime"]
 
-nats = ["dep:wrpc-transport-nats"]
+nats = ["dep:async-nats", "dep:wrpc-transport-nats"]
 wasmtime = ["dep:wrpc-runtime-wasmtime"]
 
+[[bin]]
+name = "wrpc-keyvalue-nats"
+required-features = ["nats"]
+
 [dependencies]
-anyhow = { workspace = true }
+anyhow = { workspace = true, features = ["std"] }
+async-nats = { workspace = true, optional = true }
 clap = { workspace = true, features = [
     "color",
     "derive",
@@ -36,6 +41,18 @@ clap = { workspace = true, features = [
     "suggestions",
     "usage",
 ] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "sync"] }
+tracing = { workspace = true, features = ["attributes"] }
+tracing-subscriber = { workspace = true, features = [
+    "ansi",
+    "env-filter",
+    "fmt",
+    "smallvec",
+    "tracing-log",
+] }
+url = { workspace = true }
 wit-bindgen-core = { workspace = true }
 wit-bindgen-wrpc = { workspace = true }
 wit-bindgen-wrpc-go = { workspace = true, features = ["clap"] }
@@ -58,12 +75,6 @@ hyper = { workspace = true, features = ["server"] }
 hyper-util = { workspace = true, features = ["server-auto", "tokio"] }
 reqwest = { workspace = true }
 tokio = { workspace = true, features = ["process"] }
-tracing = { workspace = true }
-tracing-subscriber = { workspace = true, features = [
-    "ansi",
-    "env-filter",
-    "fmt",
-] }
 wrpc-interface-http = { workspace = true, features = [
     "http",
     "http-body",

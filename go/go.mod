@@ -2,10 +2,7 @@ module github.com/wrpc/wrpc/go
 
 go 1.22.2
 
-require (
-	github.com/nats-io/nats.go v1.34.1
-	github.com/tetratelabs/wabin v0.0.0-20230304001439-f6f874872834
-)
+require github.com/nats-io/nats.go v1.34.1
 
 require (
 	github.com/klauspost/compress v1.17.2 // indirect

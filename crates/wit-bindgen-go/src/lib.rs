@@ -57,11 +57,6 @@ impl Deps {
         "bytes"
     }
 
-    fn bufio(&mut self) -> &'static str {
-        self.map.insert("bufio".to_string(), "bufio".to_string());
-        "bufio"
-    }
-
     fn context(&mut self) -> &'static str {
         self.map
             .insert("context".to_string(), "context".to_string());
@@ -78,6 +73,11 @@ impl Deps {
         "fmt"
     }
 
+    fn io(&mut self) -> &'static str {
+        self.map.insert("io".to_string(), "io".to_string());
+        "io"
+    }
+
     fn math(&mut self) -> &'static str {
         self.map.insert("math".to_string(), "math".to_string());
         "math"
@@ -88,9 +88,10 @@ impl Deps {
         "slog"
     }
 
-    fn sync(&mut self) -> &'static str {
-        self.map.insert("sync".to_string(), "sync".to_string());
-        "sync"
+    fn utf8(&mut self) -> &'static str {
+        self.map
+            .insert("utf8".to_string(), "unicode/utf8".to_string());
+        "utf8"
     }
 
     fn wrpc(&mut self) -> &'static str {
@@ -130,7 +131,7 @@ fn generated_preamble() -> String {
 #[cfg_attr(feature = "clap", derive(clap::Args))]
 pub struct Opts {
     /// Whether or not `gofmt` is executed to format generated code.
-    #[cfg_attr(feature = "clap", arg(long, default_value_t = true))]
+    #[cfg_attr(feature = "clap", arg(long, default_missing_value = "true", default_value_t = true, num_args = 0..=1, require_equals = true, action = clap::ArgAction::Set))]
     pub gofmt: bool,
 
     /// Go package path containing the generated bindings
@@ -231,7 +232,7 @@ impl GoWrpc {
         let bound = match traits.len() {
             0 => return,
             1 => traits.pop().unwrap(),
-            _ => traits.join(" "),
+            _ => traits.join("; "),
         };
         uwriteln!(
             self.src,
@@ -328,6 +329,7 @@ fn gofmt(src: &mut String) {
         .stdout(Stdio::piped())
         .spawn()
         .expect("failed to spawn `gofmt`");
+    let buf = src.clone();
     child
         .stdin
         .take()
@@ -337,7 +339,7 @@ fn gofmt(src: &mut String) {
     src.truncate(0);
     child.stdout.take().unwrap().read_to_string(src).unwrap();
     let status = child.wait().unwrap();
-    assert!(status.success());
+    assert!(status.success(), "\n\n\n\n{buf}\n\n\n\n");
 }
 
 impl WorldGenerator for GoWrpc {
@@ -399,6 +401,9 @@ impl WorldGenerator for GoWrpc {
         gen.generate_imports(&instance, funcs.iter().map(|(_, func)| *func));
 
         let src = gen.finish();
+        for (k, v) in gen.deps.map {
+            self.deps.import(k, v);
+        }
         self.src.push_str(&src);
     }
 
@@ -463,6 +468,9 @@ impl WorldGenerator for GoWrpc {
             gen.define_type(name, *ty);
         }
         let src = gen.finish();
+        for (k, v) in gen.deps.map {
+            self.deps.import(k, v);
+        }
         self.src.push_str(&src);
     }
 
@@ -532,21 +540,6 @@ fn compute_module_path(name: &WorldKey, resolve: &Resolve, is_export: bool) -> V
 enum Identifier<'a> {
     World(WorldId),
     Interface(InterfaceId, &'a WorldKey),
-}
-
-fn group_by_resource<'a>(
-    funcs: impl Iterator<Item = &'a Function>,
-) -> BTreeMap<Option<TypeId>, Vec<&'a Function>> {
-    let mut by_resource = BTreeMap::<_, Vec<_>>::new();
-    for func in funcs {
-        match &func.kind {
-            FunctionKind::Freestanding => by_resource.entry(None).or_default().push(func),
-            FunctionKind::Method(ty) | FunctionKind::Static(ty) | FunctionKind::Constructor(ty) => {
-                by_resource.entry(Some(*ty)).or_default().push(func);
-            }
-        }
-    }
-    by_resource
 }
 
 #[derive(Default)]
