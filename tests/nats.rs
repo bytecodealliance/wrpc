@@ -8,7 +8,7 @@ use std::net::Ipv6Addr;
 use std::process::ExitStatus;
 use std::sync::Arc;
 
-use anyhow::{anyhow, bail, Context};
+use anyhow::{anyhow, bail, ensure, Context};
 use bytes::Bytes;
 use futures::{stream, FutureExt as _, StreamExt as _, TryStreamExt as _};
 use hyper::header::HOST;
@@ -16,7 +16,7 @@ use hyper::Uri;
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use tokio::net::TcpListener;
 use tokio::process::Command;
-use tokio::sync::{mpsc, oneshot, OnceCell, RwLock};
+use tokio::sync::{mpsc, oneshot, Notify, OnceCell, RwLock};
 use tokio::task::JoinHandle;
 use tokio::time::sleep;
 use tokio::{select, spawn, try_join};
@@ -1363,6 +1363,188 @@ async fn dynamic() -> anyhow::Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn keyvalue() -> anyhow::Result<()> {
+    mod keyvalue_client {
+        wit_bindgen_wrpc::generate!({
+            world: "keyvalue-client",
+            path: "tests/wit",
+        });
+    }
+
+    INIT.get_or_init(init).await;
+
+    with_nats(|nats_client| async {
+        let client = wrpc::transport::nats::Client::new(nats_client, "test-prefix".to_string());
+
+        let shutdown = Notify::new();
+        let started = Notify::new();
+
+        try_join!(
+            async {
+                mod bindings {
+                    wit_bindgen_wrpc::generate!({
+                        world: "keyvalue-server",
+                        path: "tests/wit",
+                    });
+                }
+
+                #[derive(Clone)]
+                struct Handler;
+                use bindings::exports::wrpc::keyvalue;
+                type Result<T, E = keyvalue::store::Error> = core::result::Result<T, E>;
+
+                impl<Ctx: Send> keyvalue::store::Handler<Ctx> for Handler {
+                    async fn delete(
+                        &self,
+                        _cx: Ctx,
+                        bucket: String,
+                        key: String,
+                    ) -> anyhow::Result<Result<()>> {
+                        assert_eq!(bucket, "bucket");
+                        assert_eq!(key, "key");
+                        Ok(Ok(()))
+                    }
+
+                    async fn exists(
+                        &self,
+                        _cx: Ctx,
+                        bucket: String,
+                        key: String,
+                    ) -> anyhow::Result<Result<bool>> {
+                        assert_eq!(bucket, "bucket");
+                        assert_eq!(key, "key");
+                        Ok(Ok(true))
+                    }
+
+                    async fn get(
+                        &self,
+                        _cx: Ctx,
+                        bucket: String,
+                        key: String,
+                    ) -> anyhow::Result<Result<Option<Vec<u8>>>> {
+                        assert_eq!(bucket, "bucket");
+                        assert_eq!(key, "key");
+                        Ok(Ok(Some(vec![0x42, 0xff])))
+                    }
+
+                    async fn set(
+                        &self,
+                        _cx: Ctx,
+                        bucket: String,
+                        key: String,
+                        value: Vec<u8>,
+                    ) -> anyhow::Result<Result<()>> {
+                        assert_eq!(bucket, "bucket");
+                        assert_eq!(key, "key");
+                        assert_eq!(value, b"test");
+                        Ok(Ok(()))
+                    }
+
+                    async fn list_keys(
+                        &self,
+                        _cx: Ctx,
+                        bucket: String,
+                        cursor: Option<u64>,
+                    ) -> anyhow::Result<Result<keyvalue::store::KeyResponse>> {
+                        assert_eq!(bucket, "bucket");
+                        assert_eq!(cursor, Some(42));
+                        Ok(Ok(keyvalue::store::KeyResponse {
+                            cursor: None,
+                            keys: vec!["key".to_string()],
+                        }))
+                    }
+                }
+
+                impl<Ctx: Send> keyvalue::atomics::Handler<Ctx> for Handler {
+                    async fn increment(
+                        &self,
+                        _cx: Ctx,
+                        bucket: String,
+                        key: String,
+                        delta: u64,
+                    ) -> anyhow::Result<Result<u64, keyvalue::store::Error>> {
+                        assert_eq!(bucket, "bucket");
+                        assert_eq!(key, "key");
+                        assert_eq!(delta, 42);
+                        Ok(Ok(4242))
+                    }
+                }
+
+                let fut = bindings::serve(&client, Handler, shutdown.notified());
+
+                started.notify_one();
+
+                fut.await.context("failed to serve world")
+            },
+            async {
+                mod bindings {
+                    wit_bindgen_wrpc::generate!({
+                        world: "keyvalue-client",
+                        path: "tests/wit",
+                        additional_derives: [Eq, PartialEq],
+                    });
+                }
+                use bindings::wrpc::keyvalue;
+
+                started.notified().await;
+
+                try_join!(
+                    async {
+                        keyvalue::store::delete(&client, "bucket", "key")
+                            .await
+                            .context("failed to call `delete`")?
+                            .context("`delete` call failed")
+                    },
+                    async {
+                        let v = keyvalue::store::exists(&client, "bucket", "key")
+                            .await
+                            .context("failed to call `exists`")?
+                            .context("`exists` call failed")?;
+                        ensure!(v, "`exists` should have returned `true`");
+                        Ok(())
+                    },
+                    async {
+                        let v = keyvalue::store::get(&client, "bucket", "key")
+                            .await
+                            .context("failed to call `get`")?
+                            .context("`get` call failed")?;
+                        ensure!(
+                            v.as_deref() == Some(&[0x42, 0xff]),
+                            "`get` should have returned `Some([0x42, 0xff])`, got `{v:?}`"
+                        );
+                        Ok(())
+                    },
+                    async {
+                        keyvalue::store::set(&client, "bucket", "key", b"test")
+                            .await
+                            .context("failed to call `set`")?
+                            .context("`set` call failed")
+                    },
+                    async {
+                        let v = keyvalue::store::list_keys(&client, "bucket", Some(42))
+                            .await
+                            .context("failed to call `list-keys`")?
+                            .context("`list-keys` call failed")?;
+                        ensure!(
+                            v == keyvalue::store::KeyResponse {
+                                cursor: None,
+                                keys: vec!["key".to_string()]
+                            },
+                            r#"`list-keys` should have returned `{{None, ["key"]}}`, got `{v:?}`"#
+                        );
+                        Ok(())
+                    },
+                )?;
+                shutdown.notify_one();
+                Ok(())
+            }
+        )?;
+        Ok(())
+    })
+    .await
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn interfaces() -> anyhow::Result<()> {
     INIT.get_or_init(init).await;
 
@@ -2556,291 +2738,6 @@ async fn interfaces() -> anyhow::Result<()> {
                     .await
                     .context("failed to invoke")?;
                 let () = res.expect("invocation failed");
-                info!("transmit async parameters");
-                tx.await.context("failed to transmit parameters")?;
-                info!("async parameters transmitted");
-                Ok(())
-            }
-        )?;
-    }
-    {
-        use wrpc_interface_keyvalue::Eventual;
-
-        let invocations = client
-            .serve_delete()
-            .await
-            .context("failed to serve `delete`")?;
-        try_join!(
-            async {
-                let AcceptedInvocation {
-                    params: (bucket, key),
-                    result_subject,
-                    transmitter,
-                    ..
-                } = pin!(invocations)
-                    .try_next()
-                    .await
-                    .context("failed to receive invocation")?
-                    .context("unexpected end of stream")?;
-                assert_eq!(bucket, "bucket");
-                assert_eq!(key, "key");
-                info!("transmit response");
-                transmitter
-                    .transmit_static(result_subject, Ok::<_, String>(()))
-                    .await
-                    .context("failed to transmit response")?;
-                info!("response transmitted");
-                anyhow::Ok(())
-            },
-            async {
-                info!("invoke function");
-                let (res, tx) = client
-                    .invoke_delete("bucket", "key")
-                    .await
-                    .context("failed to invoke")?;
-                let () = res.expect("invocation failed");
-                info!("transmit async parameters");
-                tx.await.context("failed to transmit parameters")?;
-                info!("async parameters transmitted");
-                Ok(())
-            }
-        )?;
-    }
-    {
-        use wrpc_interface_keyvalue::Eventual;
-
-        let invocations = client
-            .serve_exists()
-            .await
-            .context("failed to serve `exists`")?;
-        try_join!(
-            async {
-                let AcceptedInvocation {
-                    params: (bucket, key),
-                    result_subject,
-                    transmitter,
-                    ..
-                } = pin!(invocations)
-                    .try_next()
-                    .await
-                    .context("failed to receive invocation")?
-                    .context("unexpected end of stream")?;
-                assert_eq!(bucket, "bucket");
-                assert_eq!(key, "key");
-                info!("transmit response");
-                transmitter
-                    .transmit_static(result_subject, Ok::<_, String>(true))
-                    .await
-                    .context("failed to transmit response")?;
-                info!("response transmitted");
-                anyhow::Ok(())
-            },
-            async {
-                info!("invoke function");
-                let (res, tx) = client
-                    .invoke_exists("bucket", "key")
-                    .await
-                    .context("failed to invoke")?;
-                let exists = res.expect("invocation failed");
-                assert!(exists);
-                info!("transmit async parameters");
-                tx.await.context("failed to transmit parameters")?;
-                info!("async parameters transmitted");
-                Ok(())
-            }
-        )?;
-    }
-    {
-        use wrpc_interface_keyvalue::Eventual;
-
-        let invocations = client.serve_get().await.context("failed to serve `get`")?;
-        try_join!(
-            async {
-                let AcceptedInvocation {
-                    params: (bucket, key),
-                    result_subject,
-                    transmitter,
-                    ..
-                } = pin!(invocations)
-                    .try_next()
-                    .await
-                    .context("failed to receive invocation")?
-                    .context("unexpected end of stream")?;
-                assert_eq!(bucket, "bucket");
-                assert_eq!(key, "key");
-                info!("transmit response");
-                transmitter
-                    .transmit_static(
-                        result_subject,
-                        Ok::<_, String>(Some(Value::Stream(Box::pin(stream::iter([Ok(vec![
-                            Some(0x42u8.into()),
-                            Some(0xffu8.into()),
-                        ])]))))),
-                    )
-                    .await
-                    .context("failed to transmit response")?;
-                info!("response transmitted");
-                anyhow::Ok(())
-            },
-            async {
-                info!("invoke function");
-                let (res, tx) = client
-                    .invoke_get("bucket", "key")
-                    .await
-                    .context("failed to invoke")?;
-                let data = res.expect("invocation failed");
-                let data = data.expect("data missing");
-                try_join!(
-                    async {
-                        info!("await data stream");
-                        let data = data
-                            .try_collect::<Vec<_>>()
-                            .await
-                            .context("failed to collect data")?;
-                        assert_eq!(data, [Bytes::from([0x42, 0xff].as_slice())]);
-                        info!("data stream verified");
-                        Ok(())
-                    },
-                    async {
-                        info!("transmit async parameters");
-                        tx.await.context("failed to transmit parameters")?;
-                        info!("async parameters transmitted");
-                        Ok(())
-                    }
-                )
-            }
-        )?;
-    }
-    {
-        use wrpc_interface_keyvalue::Eventual;
-
-        let invocations = client.serve_set().await.context("failed to serve `set`")?;
-        try_join!(
-            async {
-                let AcceptedInvocation {
-                    params: (bucket, key, value),
-                    result_subject,
-                    transmitter,
-                    ..
-                } = pin!(invocations)
-                    .try_next()
-                    .await
-                    .context("failed to receive invocation")?
-                    .context("unexpected end of stream")?;
-                assert_eq!(bucket, "bucket");
-                assert_eq!(key, "key");
-                let value = value
-                    .map_ok(|buf| String::from_utf8(buf.to_vec()).unwrap())
-                    .try_collect::<Vec<_>>()
-                    .await
-                    .context("failed to collect data")?;
-                assert_eq!(value, ["test"]);
-                info!("transmit response");
-                transmitter
-                    .transmit_static(result_subject, Ok::<_, String>(()))
-                    .await
-                    .context("failed to transmit response")?;
-                info!("response transmitted");
-                anyhow::Ok(())
-            },
-            async {
-                info!("invoke function");
-                let (res, tx) = client
-                    .invoke_set("bucket", "key", Box::pin(stream::iter(["test".into()])))
-                    .await
-                    .context("failed to invoke")?;
-                let () = res.expect("invocation failed");
-                info!("transmit async parameters");
-                tx.await.context("failed to transmit parameters")?;
-                info!("async parameters transmitted");
-                Ok(())
-            }
-        )?;
-    }
-    {
-        use wrpc_interface_keyvalue::Atomic;
-
-        let invocations = client
-            .serve_compare_and_swap()
-            .await
-            .context("failed to serve `compare-and-swap`")?;
-        try_join!(
-            async {
-                let AcceptedInvocation {
-                    params: (bucket, key, old, new),
-                    result_subject,
-                    transmitter,
-                    ..
-                } = pin!(invocations)
-                    .try_next()
-                    .await
-                    .context("failed to receive invocation")?
-                    .context("unexpected end of stream")?;
-                assert_eq!(bucket, "bucket");
-                assert_eq!(key, "key");
-                assert_eq!(old, 42);
-                assert_eq!(new, 4242);
-                info!("transmit response");
-                transmitter
-                    .transmit_static(result_subject, Ok::<_, String>(false))
-                    .await
-                    .context("failed to transmit response")?;
-                info!("response transmitted");
-                anyhow::Ok(())
-            },
-            async {
-                info!("invoke function");
-                let (res, tx) = client
-                    .invoke_compare_and_swap("bucket", "key", 42, 4242)
-                    .await
-                    .context("failed to invoke")?;
-                let res = res.expect("invocation failed");
-                assert!(!res);
-                info!("transmit async parameters");
-                tx.await.context("failed to transmit parameters")?;
-                info!("async parameters transmitted");
-                Ok(())
-            }
-        )?;
-    }
-    {
-        use wrpc_interface_keyvalue::Atomic;
-
-        let invocations = client
-            .serve_increment()
-            .await
-            .context("failed to serve `increment`")?;
-        try_join!(
-            async {
-                let AcceptedInvocation {
-                    params: (bucket, key, delta),
-                    result_subject,
-                    transmitter,
-                    ..
-                } = pin!(invocations)
-                    .try_next()
-                    .await
-                    .context("failed to receive invocation")?
-                    .context("unexpected end of stream")?;
-                assert_eq!(bucket, "bucket");
-                assert_eq!(key, "key");
-                assert_eq!(delta, 42);
-                info!("transmit response");
-                transmitter
-                    .transmit_static(result_subject, Ok::<_, String>(4242))
-                    .await
-                    .context("failed to transmit response")?;
-                info!("response transmitted");
-                anyhow::Ok(())
-            },
-            async {
-                info!("invoke function");
-                let (res, tx) = client
-                    .invoke_increment("bucket", "key", 42)
-                    .await
-                    .context("failed to invoke")?;
-                let res = res.expect("invocation failed");
-                assert_eq!(res, 4242);
                 info!("transmit async parameters");
                 tx.await.context("failed to transmit parameters")?;
                 info!("async parameters transmitted");

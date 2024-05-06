@@ -3166,7 +3166,6 @@ dependencies = [
  "wit-bindgen-wrpc-rust",
  "wrpc-interface-blobstore",
  "wrpc-interface-http",
- "wrpc-interface-keyvalue",
  "wrpc-runtime-wasmtime",
  "wrpc-transport",
  "wrpc-transport-nats",
@@ -3201,17 +3200,6 @@ dependencies = [
  "tokio-stream",
  "tracing",
  "wasmtime-wasi-http",
- "wrpc-transport",
-]
-
-[[package]]
-name = "wrpc-interface-keyvalue"
-version = "0.13.0"
-dependencies = [
- "anyhow",
- "bytes",
- "futures",
- "tracing",
  "wrpc-transport",
 ]
 
