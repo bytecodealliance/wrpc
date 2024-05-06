@@ -14,7 +14,7 @@ authors = ["Roman Volosatovs <rvolosatovs@riseup.net>"]
 categories = ["wasm"]
 edition = "2021"
 license = "Apache-2.0 WITH LLVM-exception"
-repository = "https://github.com/rvolosatovs/wrpc"
+repository = "https://github.com/wrpc/wrpc"
 
 [workspace]
 members = ["crates/*", "examples/rust/*"]
@@ -42,7 +42,6 @@ wit-bindgen-wrpc-go = { workspace = true, features = ["clap"] }
 wit-bindgen-wrpc-rust = { workspace = true, features = ["clap"] }
 wrpc-interface-blobstore = { workspace = true }
 wrpc-interface-http = { workspace = true }
-wrpc-interface-keyvalue = { workspace = true }
 wrpc-runtime-wasmtime = { workspace = true, optional = true }
 wrpc-transport = { workspace = true }
 wrpc-transport-nats = { workspace = true, optional = true }
@@ -115,7 +114,6 @@ wit-bindgen-wrpc-rust-macro = { version = "0.3.4", default-features = false, pat
 wit-parser = { version = "0.202", default-features = false }
 wrpc-interface-blobstore = { version = "0.16", path = "./crates/interface-blobstore", default-features = false }
 wrpc-interface-http = { version = "0.22", path = "./crates/interface-http", default-features = false }
-wrpc-interface-keyvalue = { version = "0.13", path = "./crates/interface-keyvalue", default-features = false }
 wrpc-runtime-wasmtime = { version = "0.16", path = "./crates/runtime-wasmtime", default-features = false }
 wrpc-transport = { version = "0.24.2", path = "./crates/transport", default-features = false }
 wrpc-transport-nats = { version = "0.21", path = "./crates/transport-nats", default-features = false }
