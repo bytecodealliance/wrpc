@@ -1,11 +1,9 @@
-use core::future::Future;
 use core::iter::zip;
 use core::pin::pin;
 use core::str;
 use core::time::Duration;
 
 use std::net::Ipv6Addr;
-use std::process::ExitStatus;
 use std::sync::Arc;
 
 use anyhow::{anyhow, bail, ensure, Context};
@@ -15,116 +13,17 @@ use hyper::header::HOST;
 use hyper::Uri;
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use tokio::net::TcpListener;
-use tokio::process::Command;
-use tokio::sync::{mpsc, oneshot, Notify, OnceCell, RwLock};
-use tokio::task::JoinHandle;
+use tokio::sync::{oneshot, Notify, RwLock};
 use tokio::time::sleep;
-use tokio::{select, spawn, try_join};
+use tokio::try_join;
 use tracing::{info, instrument};
-use tracing_subscriber::layer::SubscriberExt as _;
-use tracing_subscriber::util::SubscriberInitExt as _;
 use wrpc::{DynamicFunctionType, ResourceType, Transmitter as _, Type, Value};
 use wrpc_interface_blobstore::{ContainerMetadata, ObjectId, ObjectMetadata};
 use wrpc_interface_http::{ErrorCode, Method, Request, RequestOptions, Response, Scheme};
 use wrpc_transport::{AcceptedInvocation, Client as _, DynamicTuple};
 
-static INIT: OnceCell<()> = OnceCell::const_new();
-
-async fn init() {
-    tracing_subscriber::registry()
-        .with(tracing_subscriber::fmt::layer().compact().without_time())
-        .with(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
-        .init()
-}
-
-async fn free_port() -> anyhow::Result<u16> {
-    TcpListener::bind((Ipv6Addr::LOCALHOST, 0))
-        .await
-        .context("failed to start TCP listener")?
-        .local_addr()
-        .context("failed to query listener local address")
-        .map(|v| v.port())
-}
-
-async fn spawn_server(
-    cmd: &mut Command,
-) -> anyhow::Result<(JoinHandle<anyhow::Result<ExitStatus>>, oneshot::Sender<()>)> {
-    let mut child = cmd
-        .kill_on_drop(true)
-        .spawn()
-        .context("failed to spawn child")?;
-    let (stop_tx, stop_rx) = oneshot::channel();
-    let child = spawn(async move {
-        select!(
-            res = stop_rx => {
-                res.context("failed to wait for shutdown")?;
-                child.kill().await.context("failed to kill child")?;
-                child.wait().await
-            }
-            status = child.wait() => {
-                status
-            }
-        )
-        .context("failed to wait for child")
-    });
-    Ok((child, stop_tx))
-}
-
-async fn start_nats() -> anyhow::Result<(
-    async_nats::Client,
-    JoinHandle<anyhow::Result<ExitStatus>>,
-    oneshot::Sender<()>,
-)> {
-    let port = free_port().await?;
-    let (server, stop_tx) =
-        spawn_server(Command::new("nats-server").args(["-V", "-T=false", "-p", &port.to_string()]))
-            .await
-            .context("failed to start NATS.io server")?;
-
-    let (conn_tx, mut conn_rx) = mpsc::channel(1);
-    let client = async_nats::connect_with_options(
-        format!("nats://localhost:{port}"),
-        async_nats::ConnectOptions::new()
-            .retry_on_initial_connect()
-            .event_callback(move |event| {
-                let conn_tx = conn_tx.clone();
-                async move {
-                    if let async_nats::Event::Connected = event {
-                        conn_tx
-                            .send(())
-                            .await
-                            .expect("failed to send NATS.io server connection notification");
-                    }
-                }
-            }),
-    )
-    .await
-    .context("failed to connect to NATS.io server")?;
-    conn_rx
-        .recv()
-        .await
-        .context("failed to await NATS.io server connection to be established")?;
-    Ok((client, server, stop_tx))
-}
-
-async fn with_nats<T, Fut>(f: impl FnOnce(async_nats::Client) -> Fut) -> anyhow::Result<T>
-where
-    Fut: Future<Output = anyhow::Result<T>>,
-{
-    let (nats_client, nats_server, stop_tx) = start_nats()
-        .await
-        .context("failed to start NATS.io server")?;
-    let res = f(nats_client).await.context("closure failed")?;
-    stop_tx.send(()).expect("failed to stop NATS.io server");
-    nats_server
-        .await
-        .context("failed to await NATS.io server stop")?
-        .context("NATS.io server failed to stop")?;
-    Ok(res)
-}
+mod common;
+use common::{init, start_nats, with_nats};
 
 #[instrument(skip(client, ty, params, results))]
 async fn loopback_dynamic(
@@ -195,8 +94,8 @@ async fn loopback_dynamic(
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn bindgen() -> anyhow::Result<()> {
-    INIT.get_or_init(init).await;
+async fn rust_bindgen() -> anyhow::Result<()> {
+    init().await;
 
     with_nats(|nats_client| async {
         let client = wrpc::transport::nats::Client::new(nats_client, "test-prefix".to_string());
@@ -412,8 +311,8 @@ async fn bindgen() -> anyhow::Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn dynamic() -> anyhow::Result<()> {
-    INIT.get_or_init(init).await;
+async fn rust_dynamic() -> anyhow::Result<()> {
+    init().await;
 
     with_nats(|nats_client| async {
         let client = wrpc::transport::nats::Client::new(nats_client, "test-prefix".to_string());
@@ -1363,15 +1262,8 @@ async fn dynamic() -> anyhow::Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn keyvalue() -> anyhow::Result<()> {
-    mod keyvalue_client {
-        wit_bindgen_wrpc::generate!({
-            world: "keyvalue-client",
-            path: "tests/wit",
-        });
-    }
-
-    INIT.get_or_init(init).await;
+async fn rust_keyvalue() -> anyhow::Result<()> {
+    init().await;
 
     with_nats(|nats_client| async {
         let client = wrpc::transport::nats::Client::new(nats_client, "test-prefix".to_string());
@@ -1544,9 +1436,10 @@ async fn keyvalue() -> anyhow::Result<()> {
     .await
 }
 
+// TODO: Split this test into function per package
 #[tokio::test(flavor = "multi_thread")]
-async fn interfaces() -> anyhow::Result<()> {
-    INIT.get_or_init(init).await;
+async fn rust_interfaces() -> anyhow::Result<()> {
+    init().await;
 
     let (nats_client, nats_server, stop_tx) = start_nats().await?;
 

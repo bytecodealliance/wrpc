@@ -18,9 +18,514 @@ pub struct InterfaceGenerator<'a> {
 }
 
 impl InterfaceGenerator<'_> {
-    fn print_encode_ty(&mut self, ty: &Type, name: &str, writer: &str) {
+    fn print_read_ty(&mut self, ty: &Type, reader: &str) {
+        // NOTE: LEB128 decoding adapted from
+        // https://cs.opensource.google/go/go/+/refs/tags/go1.22.2:src/encoding/binary/varint.go;l=128-153
         match ty {
-            Type::Id(t) => self.print_encode_tyid(*t, name, writer),
+            Type::Id(t) => self.print_read_tyid(*t, reader),
+            Type::Bool => uwrite!(
+                self.src,
+                r#"func(r {wrpc}.ByteReader) (bool, error) {{
+    {slog}.Debug("reading `bool` byte")
+    v, err := r.ReadByte()
+    if err != nil {{
+        return false, {fmt}.Errorf("failed to read `bool` byte: %w", err)
+    }}
+    return v == 1, nil
+}}({reader})"#,
+                fmt = self.deps.fmt(),
+                slog = self.deps.slog(),
+                wrpc = self.deps.wrpc(),
+            ),
+            Type::U8 => uwrite!(
+                self.src,
+                r#"func(r {wrpc}.ByteReader) (uint8, error) {{
+    {slog}.Debug("reading `u8` byte")
+    v, err := r.ReadByte()
+    if err != nil {{
+        return 0, {fmt}.Errorf("failed to read `u8` byte: %w", err)
+    }}
+    return v, nil
+}}({reader})"#,
+                fmt = self.deps.fmt(),
+                slog = self.deps.slog(),
+                wrpc = self.deps.wrpc(),
+            ),
+            Type::U16 => uwrite!(
+                self.src,
+                r#"func(r {wrpc}.ByteReader) (uint16, error) {{
+	var x uint16
+	var s uint
+	for i := 0; i < 3; i++ {{
+        {slog}.Debug("reading `uint16` byte", "i", i)
+		b, err := r.ReadByte()
+		if err != nil {{
+			if i > 0 && err == {io}.EOF {{
+				err = {io}.ErrUnexpectedEOF
+			}}
+			return x, {fmt}.Errorf("failed to read `uint16` byte: %w", err)
+		}}
+		if b < 0x80 {{
+			if i == 2 && b > 1 {{
+				return x, {errors}.New("varint overflows a 16-bit integer")
+			}}
+			return x | uint16(b)<<s, nil
+		}}
+		x |= uint16(b&0x7f) << s
+		s += 7
+	}}
+	return x, {errors}.New("varint overflows a 16-bit integer")
+}}({reader})"#,
+                errors = self.deps.errors(),
+                fmt = self.deps.fmt(),
+                io = self.deps.io(),
+                slog = self.deps.slog(),
+                wrpc = self.deps.wrpc(),
+            ),
+            Type::U32 => uwrite!(
+                self.src,
+                r#"func(r {wrpc}.ByteReader) (uint32, error) {{
+	var x uint32
+	var s uint
+	for i := 0; i < 5; i++ {{
+        {slog}.Debug("reading `uint32` byte", "i", i)
+		b, err := r.ReadByte()
+		if err != nil {{
+			if i > 0 && err == {io}.EOF {{
+				err = {io}.ErrUnexpectedEOF
+			}}
+			return x, {fmt}.Errorf("failed to read `uint32` byte: %w", err)
+		}}
+		if b < 0x80 {{
+			if i == 4 && b > 1 {{
+				return x, {errors}.New("varint overflows a 32-bit integer")
+			}}
+			return x | uint32(b)<<s, nil
+		}}
+		x |= uint32(b&0x7f) << s
+		s += 7
+	}}
+	return x, {errors}.New("varint overflows a 32-bit integer")
+}}({reader})"#,
+                errors = self.deps.errors(),
+                fmt = self.deps.fmt(),
+                io = self.deps.io(),
+                slog = self.deps.slog(),
+                wrpc = self.deps.wrpc(),
+            ),
+            Type::U64 => uwrite!(
+                self.src,
+                r#"func(r {wrpc}.ByteReader) (uint64, error) {{
+	var x uint64
+	var s uint
+	for i := 0; i < 10; i++ {{
+        {slog}.Debug("reading `uint64` byte", "i", i)
+		b, err := r.ReadByte()
+		if err != nil {{
+			if i > 0 && err == {io}.EOF {{
+				err = {io}.ErrUnexpectedEOF
+			}}
+			return x, {fmt}.Errorf("failed to read `uint64` byte: %w", err)
+		}}
+		if b < 0x80 {{
+			if i == 9 && b > 1 {{
+				return x, {errors}.New("varint overflows a 64-bit integer")
+			}}
+			return x | uint64(b)<<s, nil
+		}}
+		x |= uint64(b&0x7f) << s
+		s += 7
+	}}
+	return x, {errors}.New("varint overflows a 64-bit integer")
+}}({reader})"#,
+                errors = self.deps.errors(),
+                fmt = self.deps.fmt(),
+                io = self.deps.io(),
+                slog = self.deps.slog(),
+                wrpc = self.deps.wrpc(),
+            ),
+            Type::S8 => uwrite!(
+                self.src,
+                r#"int8(0), {errors}.New("reading s8 not supported yet")"#,
+                errors = self.deps.errors(),
+            ),
+            Type::S16 => uwrite!(
+                self.src,
+                r#"int16(0), {errors}.New("reading s16 not supported yet")"#,
+                errors = self.deps.errors(),
+            ),
+            Type::S32 => uwrite!(
+                self.src,
+                r#"int32(0), {errors}.New("reading s32 not supported yet")"#,
+                errors = self.deps.errors(),
+            ),
+            Type::S64 => uwrite!(
+                self.src,
+                r#"int64(0), {errors}.New("reading s64 not supported yet")"#,
+                errors = self.deps.errors(),
+            ),
+            Type::F32 => uwrite!(
+                self.src,
+                r#"func(r {wrpc}.ByteReader) (float32, error) {{
+    var b [4]byte
+    {slog}.Debug("reading `float32` bytes")
+    _, err := r.Read(b[:])
+    if err != nil {{
+        return 0, {fmt}.Errorf("failed to read `float32`: %w", err)
+    }}
+    return {math}.Float32frombits({binary}.LittleEndian.Uint32(b[:])), nil
+}}({reader})"#,
+                binary = self.deps.binary(),
+                fmt = self.deps.fmt(),
+                math = self.deps.math(),
+                slog = self.deps.slog(),
+                wrpc = self.deps.wrpc(),
+            ),
+            Type::F64 => uwrite!(
+                self.src,
+                r#"func(r {wrpc}.ByteReader) (float64, error) {{
+    var b [8]byte
+    {slog}.Debug("reading `float64` bytes")
+    _, err := r.Read(b[:])
+    if err != nil {{
+        return 0, {fmt}.Errorf("failed to read `float64`: %w", err)
+    }}
+    return {math}.Float64frombits({binary}.LittleEndian.Uint64(b[:])), nil
+}}({reader})"#,
+                binary = self.deps.binary(),
+                fmt = self.deps.fmt(),
+                math = self.deps.math(),
+                slog = self.deps.slog(),
+                wrpc = self.deps.wrpc(),
+            ),
+            Type::Char => uwrite!(
+                self.src,
+                r#"func(r {wrpc}.ByteReader) (rune, error) {{
+	var x uint32
+	var s uint
+	for i := 0; i < 5; i++ {{
+        {slog}.Debug("reading char byte", "i", i)
+		b, err := r.ReadByte()
+		if err != nil {{
+			if i > 0 && err == {io}.EOF {{
+				err = {io}.ErrUnexpectedEOF
+			}}
+			return {utf8}.RuneError, {fmt}.Errorf("failed to read char byte: %w", err)
+		}}
+		if b < 0x80 {{
+			if i == 4 && b > 1 {{
+				return {utf8}.RuneError, {errors}.New("char overflows a 32-bit integer")
+			}}
+            x = x | uint32(b)<<s
+            v := rune(x)
+            if !{utf8}.ValidRune(v) {{
+                return v, {errors}.New("char is not valid UTF-8")
+            }}
+            return v, nil
+		}}
+		x |= uint32(b&0x7f) << s
+		s += 7
+	}}
+	return {utf8}.RuneError, {errors}.New("char overflows a 32-bit integer")
+}}({reader})"#,
+                errors = self.deps.errors(),
+                fmt = self.deps.fmt(),
+                io = self.deps.io(),
+                slog = self.deps.slog(),
+                utf8 = self.deps.utf8(),
+                wrpc = self.deps.wrpc(),
+            ),
+            Type::String => uwrite!(
+                self.src,
+                r#"func(r {wrpc}.ByteReader) (string, error) {{
+	var x uint32
+	var s uint
+	for i := 0; i < 5; i++ {{
+        {slog}.Debug("reading string length byte", "i", i)
+		b, err := r.ReadByte()
+		if err != nil {{
+			if i > 0 && err == {io}.EOF {{
+				err = {io}.ErrUnexpectedEOF
+			}}
+			return "", {fmt}.Errorf("failed to read string length byte: %w", err)
+		}}
+		if b < 0x80 {{
+			if i == 4 && b > 1 {{
+				return "", {errors}.New("string length overflows a 32-bit integer")
+			}}
+            x = x | uint32(b)<<s
+            buf := make([]byte, x)
+            {slog}.Debug("reading string bytes", "len", x)
+	        _, err = r.Read(buf)
+	        if err != nil {{
+	        	return "", {fmt}.Errorf("failed to read string bytes: %w", err)
+	        }}
+            if !{utf8}.Valid(buf) {{
+                return string(buf), {errors}.New("string is not valid UTF-8")
+            }}
+            return string(buf), nil
+		}}
+		x |= uint32(b&0x7f) << s
+		s += 7
+	}}
+	return "", {errors}.New("string length overflows a 32-bit integer")
+}}({reader})"#,
+                errors = self.deps.errors(),
+                fmt = self.deps.fmt(),
+                io = self.deps.io(),
+                slog = self.deps.slog(),
+                utf8 = self.deps.utf8(),
+                wrpc = self.deps.wrpc(),
+            ),
+        }
+    }
+
+    fn print_read_tyid(&mut self, id: TypeId, reader: &str) {
+        let ty = &self.resolve.types[id];
+        if let Some(ref name) = ty.name {
+            let read = self.type_path_with_name(id, format!("Read{}", to_upper_camel_case(&name)));
+            uwrite!(self.src, "{read}({reader})",);
+            return;
+        }
+
+        match &ty.kind {
+            TypeDefKind::List(ty) => {
+                let fmt = self.deps.fmt();
+                let io = self.deps.io();
+                let errors = self.deps.errors();
+                let slog = self.deps.slog();
+                let wrpc = self.deps.wrpc();
+                uwrite!(self.src, "func(r {wrpc}.ByteReader) (",);
+                self.print_list(ty);
+                uwrite!(
+                    self.src,
+                    r#", error) {{
+	var x uint32
+	var s uint
+	for i := 0; i < 5; i++ {{
+        {slog}.Debug("reading list length byte", "i", i)
+		b, err := r.ReadByte()
+		if err != nil {{
+			if i > 0 && err == {io}.EOF {{
+				err = {io}.ErrUnexpectedEOF
+			}}
+			return nil, {fmt}.Errorf("failed to read list length byte: %w", err)
+		}}
+		if b < 0x80 {{
+			if i == 4 && b > 1 {{
+				return nil, {errors}.New("list length overflows a 32-bit integer")
+			}}
+            x = x | uint32(b)<<s
+            vs := make("#,
+                );
+                self.print_list(ty);
+                uwrite!(
+                    self.src,
+                    r#", x)
+            for i := range vs {{
+                {slog}.Debug("reading list element", "i", i)
+                vs[i], err = "#,
+                );
+                self.print_read_ty(ty, "r");
+                self.push_str("\n");
+                uwrite!(
+                    self.src,
+                    r#"if err != nil {{
+			        return nil, {fmt}.Errorf("failed to read list element %d: %w", i, err)
+                }}
+            }}
+            return vs, nil
+		}}
+		x |= uint32(b&0x7f) << s
+		s += 7
+	}}
+	return nil, {errors}.New("list length overflows a 32-bit integer")
+}}({reader})"#,
+                );
+            }
+
+            TypeDefKind::Option(ty) => {
+                let fmt = self.deps.fmt();
+                let slog = self.deps.slog();
+                let wrpc = self.deps.wrpc();
+                uwrite!(self.src, "func(r {wrpc}.ByteReader) (",);
+                self.print_option(ty, true);
+                uwrite!(
+                    self.src,
+                    r#", error) {{
+    {slog}.Debug("reading option status byte")
+	status, err := r.ReadByte()
+	if err != nil {{
+		return nil, {fmt}.Errorf("failed to read option status byte: %w", err)
+	}}
+	switch status {{
+	case 0:
+		return nil, nil
+	case 1:
+        {slog}.Debug("reading `option::some` payload")
+	    v, err := "#,
+                );
+                self.print_read_ty(ty, "r");
+                self.push_str("\n");
+                uwrite!(
+                    self.src,
+                    r#"if err != nil {{
+	    	return nil, {fmt}.Errorf("failed to read `option::some` value: %w", err)
+	    }}
+	    return &v, nil
+	default:
+		return nil, {fmt}.Errorf("invalid option status byte %d", status)
+	}}
+}}({reader})"#,
+                );
+            }
+
+            TypeDefKind::Result(ty) => {
+                let fmt = self.deps.fmt();
+                let slog = self.deps.slog();
+                let wrpc = self.deps.wrpc();
+                uwrite!(self.src, "func(r {wrpc}.ByteReader) (*",);
+                self.print_result(ty);
+                uwriteln!(
+                    self.src,
+                    r#", error) {{
+    {slog}.Debug("reading result status byte")
+	status, err := r.ReadByte()
+	if err != nil {{
+		return nil, {fmt}.Errorf("failed to read result status byte: %w", err)
+	}}"#,
+                );
+                self.push_str("switch status {\n");
+                self.push_str("case 0:\n");
+                if let Some(ref ty) = ty.ok {
+                    uwriteln!(self.src, r#"{slog}.Debug("reading `result::ok` payload")"#);
+                    self.push_str("v, err := ");
+                    self.print_read_ty(ty, "r");
+                    self.push_str("\n");
+                    uwriteln!(
+                        self.src,
+                        r#"if err != nil {{
+	    	return nil, fmt.Errorf("failed to read `result::ok` value: %w", err)
+	    }}"#,
+                    );
+                } else {
+                    self.push_str("var v struct{}\n");
+                }
+                self.push_str("return &");
+                self.print_result(ty);
+                self.push_str("{ Ok: &v }, nil\n");
+                self.push_str("case 1:\n");
+                if let Some(ref err) = ty.err {
+                    uwriteln!(self.src, r#"{slog}.Debug("reading `result::err` payload")"#);
+                    self.push_str("v, err := ");
+                    self.print_read_ty(err, "r");
+                    self.push_str("\n");
+                    uwriteln!(
+                        self.src,
+                        r#"if err != nil {{
+	    	return nil, {fmt}.Errorf("failed to read `result::err` value: %w", err)
+	    }}"#,
+                    );
+                    self.push_str("return &");
+                    self.print_result(ty);
+                    self.push_str("{ Err: ");
+                    self.result_element_ptr(err, false);
+                } else {
+                    self.push_str("var v struct{}\n");
+                    self.push_str("return &");
+                    self.print_result(ty);
+                    self.push_str("{ Err: &");
+                }
+                uwrite!(
+                    self.src,
+                    r#"v }}, nil
+	default:
+		return nil, {fmt}.Errorf("invalid result status byte %d", status)
+	}}
+}}({reader})"#,
+                );
+            }
+
+            TypeDefKind::Variant(_) => panic!("unsupported anonymous variant"),
+
+            TypeDefKind::Tuple(ty) => match ty.types.as_slice() {
+                [] => self.push_str("struct{}{}, nil"),
+                [ty] => self.print_read_ty(ty, reader),
+                _ => {
+                    let wrpc = self.deps.wrpc();
+
+                    uwrite!(self.src, "func(r {wrpc}.ByteReader) (");
+                    self.print_tuple(ty, true);
+                    self.push_str(", error) {\n");
+                    self.push_str("v := ");
+                    self.print_tuple(ty, false);
+                    self.push_str("{}\n");
+                    self.push_str("var err error\n");
+                    for (i, ty) in ty.types.iter().enumerate() {
+                        let fmt = self.deps.fmt();
+                        let slog = self.deps.slog();
+                        uwrite!(
+                            self.src,
+                            r#"{slog}.Debug("reading tuple element {i}")
+        v.V{i}, err = "#
+                        );
+                        self.print_read_ty(ty, "r");
+                        self.push_str("\n");
+                        uwriteln!(
+                            self.src,
+                            r#"if err != nil {{
+		    return nil, {fmt}.Errorf("failed to read tuple element {i}: %w", err)
+	    }}"#
+                        );
+                    }
+                    self.push_str("return v, nil\n");
+                    uwrite!(self.src, "}}({reader})");
+                }
+            },
+            TypeDefKind::Resource => {
+                panic!("unsupported anonymous type reference: resource")
+            }
+            TypeDefKind::Record(_) => {
+                panic!("unsupported anonymous type reference: record")
+            }
+            TypeDefKind::Flags(_) => {
+                panic!("unsupported anonymous type reference: flags")
+            }
+            TypeDefKind::Enum(_) => {
+                panic!("unsupported anonymous type reference: enum")
+            }
+            TypeDefKind::Future(_ty) => uwrite!(
+                self.src,
+                r#"0, {errors}.New("reading futures not supported yet")"#,
+                errors = self.deps.errors(),
+            ),
+            TypeDefKind::Stream(_stream) => uwrite!(
+                self.src,
+                r#"0, {errors}.New("reading streams not supported yet")"#,
+                errors = self.deps.errors(),
+            ),
+
+            TypeDefKind::Handle(Handle::Own(_ty)) => uwrite!(
+                self.src,
+                r#"0, {errors}.New("reading owned handles not supported yet")"#,
+                errors = self.deps.errors(),
+            ),
+
+            TypeDefKind::Handle(Handle::Borrow(_ty)) => uwrite!(
+                self.src,
+                r#"0, {errors}.New("reading borrowed handles not supported yet")"#,
+                errors = self.deps.errors(),
+            ),
+
+            TypeDefKind::Type(t) => self.print_read_ty(t, reader),
+
+            TypeDefKind::Unknown => unreachable!(),
+        }
+    }
+
+    fn print_write_ty(&mut self, ty: &Type, name: &str, writer: &str) {
+        match ty {
+            Type::Id(t) => self.print_write_tyid(*t, name, writer),
             Type::Bool => uwrite!(
                 self.src,
                 r#"func(v bool, w {wrpc}.ByteWriter) error {{
@@ -106,7 +611,7 @@ impl InterfaceGenerator<'_> {
                 self.src,
                 r#"func(v float32, w {wrpc}.ByteWriter) error {{
                 b := make([]byte, 4)
-                {binary}.LittleEndian.PutUint32(b, {math}.Float32bits(x))
+                {binary}.LittleEndian.PutUint32(b, {math}.Float32bits(v))
                 {slog}.Debug("writing f32")
 	            _, err := w.Write(b)
 	            return err
@@ -120,7 +625,7 @@ impl InterfaceGenerator<'_> {
                 self.src,
                 r#"func(v float64, w {wrpc}.ByteWriter) error {{
                 b := make([]byte, 4)
-                {binary}.LittleEndian.PutUint64(b, {math}.Float64bits(x))
+                {binary}.LittleEndian.PutUint64(b, {math}.Float64bits(v))
                 {slog}.Debug("writing f64")
 	            _, err := w.Write(b)
 	            return err
@@ -159,7 +664,7 @@ impl InterfaceGenerator<'_> {
 	            {slog}.Debug("writing string byte length", "len", n)
 	            if err := "#
                 );
-                self.print_encode_ty(&Type::U32, "uint32(n)", "w");
+                self.print_write_ty(&Type::U32, "uint32(n)", "w");
                 uwrite!(
                     self.src,
                     r#"; err != nil {{
@@ -177,90 +682,247 @@ impl InterfaceGenerator<'_> {
         }
     }
 
-    fn print_encode_tyid(&mut self, ty: TypeId, name: &str, writer: &str) {
-        //let ty = &self.resolve.types[id];
-        //if ty.name.is_some() {
-        //    let name = self.type_path(id);
-        //    self.push_str(&name);
-        //    return;
-        //}
+    fn print_write_tyid(&mut self, id: TypeId, name: &str, writer: &str) {
+        let ty = &self.resolve.types[id];
+        if ty.name.is_some() {
+            // TODO: Support async
+            uwrite!(self.src, "({name}).WriteTo({writer})");
+            return;
+        }
 
-        //match &ty.kind {
-        //    TypeDefKind::List(t) => self.print_list(t),
+        match &ty.kind {
+            TypeDefKind::List(ty) => {
+                let fmt = self.deps.fmt();
+                let math = self.deps.math();
+                let slog = self.deps.slog();
+                let wrpc = self.deps.wrpc();
 
-        //    TypeDefKind::Option(t) => {
-        //        self.push_str("*");
-        //        self.print_ty(t);
-        //    }
+                self.push_str("func(v ");
+                self.print_list(ty);
+                uwrite!(
+                    self.src,
+                    r#", w {wrpc}.ByteWriter) error {{
+	    n := len(v)
+	    if n > {math}.MaxUint32 {{
+	        return {fmt}.Errorf("list length of %d overflows a 32-bit integer", n)
+	    }}
+	    {slog}.Debug("writing list length", "len", n)
+	    if err := "#
+                );
+                self.print_write_ty(&Type::U32, "uint32(n)", "w");
+                uwrite!(
+                    self.src,
+                    r#"; err != nil {{
+            return {fmt}.Errorf("failed to write list length of %d: %w", n, err)
+        }}
+        {slog}.Debug("writing list elements")
+        for i, e := range v {{
+            if err := "#
+                );
+                self.print_write_ty(ty, "e", "w");
+                uwrite!(
+                    self.src,
+                    r#"; err != nil {{
+                return {fmt}.Errorf("failed to write list element %d: %w", i, err)
+            }}
+        }}
+        return nil
+    }}({name}, {writer})"#
+                );
+            }
 
-        //    TypeDefKind::Result(r) => {
-        //        self.push_str("wrpc.Result[");
-        //        self.print_optional_ty(r.ok.as_ref());
-        //        self.push_str(",");
-        //        self.print_optional_ty(r.err.as_ref());
-        //        self.push_str("]");
-        //    }
+            TypeDefKind::Option(ty) => {
+                let fmt = self.deps.fmt();
+                let slog = self.deps.slog();
+                let wrpc = self.deps.wrpc();
 
-        //    TypeDefKind::Variant(_) => panic!("unsupported anonymous variant"),
+                self.push_str("func(v ");
+                self.print_option(ty, true);
+                uwrite!(
+                    self.src,
+                    r#", w {wrpc}.ByteWriter) error {{
+	    if v == nil {{
+	    	{slog}.Debug("writing `option::none` status byte")
+	    	if err := w.WriteByte(0); err != nil {{
+	    		return {fmt}.Errorf("failed to write `option::none` byte: %w", err)
+	    	}}
+	    	return nil
+	    }}
+	    {slog}.Debug("writing `option::some` status byte")
+	    if err := w.WriteByte(1); err != nil {{
+	    	return {fmt}.Errorf("failed to write `option::some` status byte: %w", err)
+	    }}
+	    {slog}.Debug("writing `option::some` payload")
+        if err := "#
+                );
 
-        //    // Tuple-like records are mapped directly to Rust tuples of
-        //    // types. Note the trailing comma after each member to
-        //    // appropriately handle 1-tuples.
-        //    TypeDefKind::Tuple(t) => {
-        //        self.push_str("wrpc.Tuple");
-        //        uwrite!(self.src, "{}[", t.types.len());
-        //        for ty in t.types.iter() {
-        //            self.print_ty(ty);
-        //            self.push_str(",");
-        //        }
-        //        self.push_str("]");
-        //    }
-        //    TypeDefKind::Resource => {
-        //        panic!("unsupported anonymous type reference: resource")
-        //    }
-        //    TypeDefKind::Record(_) => {
-        //        panic!("unsupported anonymous type reference: record")
-        //    }
-        //    TypeDefKind::Flags(_) => {
-        //        panic!("unsupported anonymous type reference: flags")
-        //    }
-        //    TypeDefKind::Enum(_) => {
-        //        panic!("unsupported anonymous type reference: enum")
-        //    }
-        //    TypeDefKind::Future(ty) => {
-        //        self.push_str("wrpc.Receiver[");
-        //        self.print_optional_ty(ty.as_ref());
-        //        self.push_str("]");
-        //    }
-        //    TypeDefKind::Stream(stream) => {
-        //        self.push_str("wrpc.Receiver[[]");
-        //        self.print_optional_ty(stream.element.as_ref());
-        //        self.push_str("]");
-        //    }
+                let param = match ty {
+                    Type::Id(id) => {
+                        let ty = &self.resolve.types[*id];
+                        match &ty.kind {
+                            TypeDefKind::Enum(..) => "*v",
+                            TypeDefKind::List(..) => "v",
+                            _ => "*v",
+                        }
+                    }
+                    _ => "*v",
+                };
+                self.print_write_ty(ty, param, "w");
+                uwrite!(
+                    self.src,
+                    r#"; err != nil {{
+		    return {fmt}.Errorf("failed to write `option::some` payload: %w", err)
+	    }}
+	    return nil
+    }}({name}, {writer})"#
+                );
+            }
 
-        //    TypeDefKind::Handle(Handle::Own(ty)) => {
-        //        self.print_ty(&Type::Id(*ty));
-        //    }
+            TypeDefKind::Result(ty) => {
+                let errors = self.deps.errors();
+                let fmt = self.deps.fmt();
+                let slog = self.deps.slog();
+                let wrpc = self.deps.wrpc();
 
-        //    TypeDefKind::Handle(Handle::Borrow(ty)) => {
-        //        if self.is_exported_resource(*ty) {
-        //            let camel = self.resolve.types[*ty]
-        //                .name
-        //                .as_deref()
-        //                .unwrap()
-        //                .to_upper_camel_case();
-        //            let name = self.type_path_with_name(*ty, format!("{camel}Borrow"));
-        //            self.push_str(&name);
-        //        } else {
-        //            let ty = &Type::Id(*ty);
-        //            self.print_ty(ty);
-        //        }
-        //    }
+                self.push_str("func(v *");
+                self.print_result(ty);
+                uwriteln!(
+                    self.src,
+                    r#", w {wrpc}.ByteWriter) error {{
+        switch {{
+        	case v.Ok == nil && v.Err == nil:
+        		return {errors}.New("both result variants cannot be nil")
+        	case v.Ok != nil && v.Err != nil:
+        		return {errors}.New("exactly one result variant must non-nil")"#
+                );
+                uwriteln!(
+                    self.src,
+                    r#"
+        	case v.Ok != nil:
+        		{slog}.Debug("writing `result::ok` status byte")
+        		if err := w.WriteByte(0); err != nil {{
+        			return {fmt}.Errorf("failed to write `result::ok` status byte: %w", err)
+        		}}"#
+                );
+                if let Some(ref ty) = ty.ok {
+                    uwrite!(
+                        self.src,
+                        r#"{slog}.Debug("writing `result::ok` payload")
+                    if err := "#
+                    );
+                    self.print_write_ty(ty, "*v.Ok", "w");
+                    uwriteln!(
+                        self.src,
+                        r#"; err != nil {{
+        			return {fmt}.Errorf("failed to write `result::ok` payload: %w", err)
+        		}}"#
+                    );
+                }
+                uwriteln!(
+                    self.src,
+                    r#"return nil
+        	default:
+        		{slog}.Debug("writing `result::err` status byte")
+        		if err := w.WriteByte(1); err != nil {{
+        			return {fmt}.Errorf("failed to write `result::err` status byte: %w", err)
+        		}}"#
+                );
+                if let Some(ref ty) = ty.err {
+                    uwrite!(
+                        self.src,
+                        r#"{slog}.Debug("writing `result::err` payload")
+        		if err := "#
+                    );
+                    self.print_write_ty(ty, "*v.Err", "w");
+                    uwriteln!(
+                        self.src,
+                        r#"; err != nil {{
+        			return {fmt}.Errorf("failed to write `result::err` payload: %w", err)
+        		}}"#
+                    );
+                }
 
-        //    TypeDefKind::Type(t) => self.print_ty(t),
+                uwrite!(
+                    self.src,
+                    r#"return nil
+	    }}
+    }}({name}, {writer})"#
+                );
+            }
 
-        //    TypeDefKind::Unknown => unreachable!(),
-        //}
+            TypeDefKind::Variant(_) => panic!("unsupported anonymous variant"),
+
+            TypeDefKind::Tuple(ty) => match ty.types.as_slice() {
+                [] => self.push_str("nil"),
+                [ty] => self.print_write_ty(ty, name, writer),
+                _ => {
+                    let wrpc = self.deps.wrpc();
+
+                    self.push_str("func(v ");
+                    self.print_tuple(ty, true);
+                    uwriteln!(self.src, r#", w {wrpc}.ByteWriter) error {{"#);
+                    for (i, ty) in ty.types.iter().enumerate() {
+                        let fmt = self.deps.fmt();
+                        let slog = self.deps.slog();
+                        uwrite!(
+                            self.src,
+                            r#"{slog}.Debug("writing tuple element {i}")
+        if err := "#
+                        );
+                        self.print_write_ty(ty, &format!("v.V{i}"), "w");
+                        uwriteln!(
+                            self.src,
+                            r#"; err != nil {{
+		    return {fmt}.Errorf("failed to write tuple element {i}: %w", err)
+	    }}"#
+                        );
+                    }
+                    uwrite!(
+                        self.src,
+                        r#"return nil
+    }}({name}, {writer})"#
+                    );
+                }
+            },
+            TypeDefKind::Resource => {
+                panic!("unsupported anonymous type reference: resource")
+            }
+            TypeDefKind::Record(_) => {
+                panic!("unsupported anonymous type reference: record")
+            }
+            TypeDefKind::Flags(_) => {
+                panic!("unsupported anonymous type reference: flags")
+            }
+            TypeDefKind::Enum(_) => {
+                panic!("unsupported anonymous type reference: enum")
+            }
+            TypeDefKind::Future(_ty) => uwrite!(
+                self.src,
+                r#"0, {errors}.New("writing futures not supported yet")"#,
+                errors = self.deps.errors(),
+            ),
+            TypeDefKind::Stream(_stream) => uwrite!(
+                self.src,
+                r#"0, {errors}.New("writing streams not supported yet")"#,
+                errors = self.deps.errors(),
+            ),
+
+            TypeDefKind::Handle(Handle::Own(_ty)) => uwrite!(
+                self.src,
+                r#"0, {errors}.New("writing owned handles not supported yet")"#,
+                errors = self.deps.errors(),
+            ),
+
+            TypeDefKind::Handle(Handle::Borrow(_ty)) => uwrite!(
+                self.src,
+                r#"0, {errors}.New("writing borrowed handles not supported yet")"#,
+                errors = self.deps.errors(),
+            ),
+
+            TypeDefKind::Type(ty) => self.print_write_ty(ty, name, writer),
+
+            TypeDefKind::Unknown => unreachable!(),
+        }
     }
 
     pub(super) fn generate_exports<'a>(
@@ -310,8 +972,9 @@ impl InterfaceGenerator<'_> {
             if let FunctionKind::Constructor(_) = &func.kind {
                 uwriteln!(self.src, " ({}, error)", "Self"); // TODO: Use the correct Go name
             } else {
-                self.print_results(&func.results)
+                self.print_return_decl(&func.results)
             }
+            self.push_str("\n\n");
             let trait_method = mem::replace(&mut self.src, prev);
             methods.push(trait_method);
         }
@@ -342,7 +1005,7 @@ impl InterfaceGenerator<'_> {
             return false;
         }
         uwriteln!(
-            &mut self.src,
+            self.src,
             "func ServeInterface(c {wrpc}.Client, h Handler) (stop func() error, err error) {{",
             wrpc = self.deps.wrpc(),
         );
@@ -400,10 +1063,6 @@ impl InterfaceGenerator<'_> {
             if !matches!(kind, FunctionKind::Freestanding) {
                 continue;
             }
-            if !params.is_empty() {
-                eprintln!("skip function with non-empty parameters");
-                continue;
-            }
             let bytes = self.deps.bytes();
             let context = self.deps.context();
             let fmt = self.deps.fmt();
@@ -411,19 +1070,45 @@ impl InterfaceGenerator<'_> {
             let wrpc = self.deps.wrpc();
             uwriteln!(
                 self.src,
-                r#"stop{i}, err := c.Serve("{instance}", "{name}", func(ctx {context}.Context, buffer []byte, tx {wrpc}.Transmitter, inv {wrpc}.IncomingInvocation) error {{"#,
+                r#"stop{i}, err := c.Serve("{instance}", "{name}", func(ctx {context}.Context, buffer []byte, tx {wrpc}.Transmitter, inv {wrpc}.IncomingInvocation) error {{
+        {slog}.DebugContext(ctx, "subscribing for `{instance}.{name}` parameters")
+
+		payload := make(chan []byte)
+		stop, err := inv.Subscribe(func(ctx {context}.Context, buf []byte) {{
+			payload <- buf
+		}})
+		if err != nil {{
+			return err
+		}}
+		defer func() {{
+			if err := stop(); err != nil {{
+                {slog}.ErrorContext(ctx, "failed to stop parameter subscription", "err", err)
+			}}
+		}}()
+
+        // TODO: Handle async parameters
+
+        {slog}.DebugContext(ctx, "accepting handshake")
+        if err := inv.Accept(ctx, nil); err != nil {{
+            return {fmt}.Errorf("failed to complete handshake: %w", err)
+        }}"#,
             );
-            uwriteln!(
-                self.src,
-                r#"{slog}.DebugContext(ctx, "accepting handshake")"#,
-            );
-            self.src
-                .push_str("if err := inv.Accept(ctx, nil); err != nil {\n");
-            uwriteln!(
-                self.src,
-                r#"return {fmt}.Errorf("failed to complete handshake: %w", err)"#,
-            );
-            self.src.push_str("}\n");
+            if !params.is_empty() {
+                uwriteln!(self.src, "r := {wrpc}.NewChanReader(ctx, payload, buffer)",);
+            }
+            for (i, (_, ty)) in params.iter().enumerate() {
+                uwrite!(
+                    self.src,
+                    r#"{slog}.DebugContext(ctx, "reading parameter", "i", {i})
+        p{i}, err := "#
+                );
+                self.print_read_ty(ty, &format!("r"));
+                self.push_str("\n");
+                uwriteln!(
+                    self.src,
+                    r#"if err != nil {{ return {fmt}.Errorf("failed to read parameter {i}") }}"#,
+                );
+            }
             uwriteln!(
                 self.src,
                 r#"{slog}.DebugContext(ctx, "calling `{instance}.{name}` handler")"#,
@@ -431,7 +1116,11 @@ impl InterfaceGenerator<'_> {
             for (i, _) in results.iter_types().enumerate() {
                 uwrite!(self.src, "r{i}, ");
             }
-            self.push_str("err := h.");
+            self.push_str("err ");
+            if results.len() > 0 {
+                self.push_str(":");
+            }
+            self.push_str("= h.");
             self.push_str(&name.to_upper_camel_case());
             self.push_str("(ctx");
             for (i, _) in params.iter().enumerate() {
@@ -448,7 +1137,7 @@ impl InterfaceGenerator<'_> {
             uwriteln!(self.src, r#"var buf {bytes}.Buffer"#,);
             for (i, ty) in results.iter_types().enumerate() {
                 self.push_str("if err :=");
-                self.print_encode_ty(ty, &format!("r{i}"), "&buf");
+                self.print_write_ty(ty, &format!("r{i}"), "&buf");
                 self.push_str("; err != nil {\n");
                 uwriteln!(
                     self.src,
@@ -567,9 +1256,9 @@ impl InterfaceGenerator<'_> {
                 }
             }
         }
-        let params = self.print_signature(func, &sig);
+        let _params = self.print_signature(func, &sig);
         self.src.push_str("{\n");
-        self.src.push_str("tx__, txErr__ := wrpc__.Invoke(");
+        self.src.push_str("wrpc__.NewInvocation(");
         match func.kind {
             FunctionKind::Freestanding
             | FunctionKind::Static(..)
@@ -580,28 +1269,16 @@ impl InterfaceGenerator<'_> {
                 self.src.push_str("self.0");
             }
         }
-        self.src.push_str(r#", ""#);
+        self.src.push_str(", \"");
         self.src.push_str(&func.name);
-        self.src.push_str(r#"", "#);
-        match &params[..] {
-            [] => self.src.push_str("()"),
-            [p] => self.src.push_str(p),
-            _ => {
-                self.src.push_str("(");
-                for p in params {
-                    uwrite!(self.src, "{p}, ");
-                }
-                self.src.push_str(")");
-            }
-        }
-        // TODO: There should be a way to "split" the future and pass I/O to the caller
+        self.src.push_str("\")\n");
         uwriteln!(
             self.src,
             r#"
-        if err != nil {{
-            err__ = fmt.Sprintf("failed to invoke `{}`: %w", txErr__)
-            return 
-        }}
+        //if err != nil {{
+        //    err__ = fmt.Sprintf("failed to invoke `{}`: %w", txErr__)
+        //    return 
+        //}}
         //wrpc__.1.await.context("failed to transmit parameters")?;
         //Ok(tx__)
         panic("not supported yet")
@@ -624,7 +1301,7 @@ impl InterfaceGenerator<'_> {
             None => return,
         };
         for line in docs.trim().lines() {
-            self.push_str("///");
+            self.push_str("//");
             if !line.is_empty() {
                 self.push_str(" ");
                 self.push_str(line);
@@ -633,7 +1310,7 @@ impl InterfaceGenerator<'_> {
         }
     }
 
-    fn rustdoc_params(&mut self, docs: &[(String, Type)], header: &str) {
+    fn godoc_params(&mut self, docs: &[(String, Type)], header: &str) {
         let _ = (docs, header);
         // let docs = docs
         //     .iter()
@@ -674,16 +1351,16 @@ impl InterfaceGenerator<'_> {
         if let FunctionKind::Constructor(_) = &func.kind {
             uwrite!(self.src, " (Self, error)",);
         } else {
-            self.print_results(&func.results);
+            self.print_return_decl(&func.results);
         }
         params
     }
 
     fn print_docs_and_params(&mut self, func: &Function, sig: &FnSig) -> Vec<String> {
         self.godoc(&func.docs);
-        self.rustdoc_params(&func.params, "Parameters");
+        self.godoc_params(&func.params, "Parameters");
         // TODO: re-add this when docs are back
-        // self.rustdoc_params(&func.results, "Return");
+        // self.godoc_params(&func.results, "Return");
 
         if self.in_import {
             self.push_str("func ");
@@ -703,9 +1380,9 @@ impl InterfaceGenerator<'_> {
             self.push_str(")");
         }
         self.push_str(&func_name.to_upper_camel_case());
-        uwrite!(&mut self.src, "(ctx__ {}.Context, ", self.deps.context());
+        uwrite!(self.src, "(ctx__ {}.Context, ", self.deps.context());
         if self.in_import {
-            uwrite!(&mut self.src, "(wrpc__ {}.Client, ", self.deps.wrpc());
+            uwrite!(self.src, "wrpc__ {}.Client, ", self.deps.wrpc());
         }
         let mut params = Vec::new();
         for (i, (name, param)) in func.params.iter().enumerate() {
@@ -718,7 +1395,7 @@ impl InterfaceGenerator<'_> {
             let name = to_go_ident(name);
             self.push_str(&name);
             self.push_str(" ");
-            self.print_ty(param);
+            self.print_opt_ty(param, true);
             self.push_str(",");
 
             params.push(name);
@@ -727,19 +1404,19 @@ impl InterfaceGenerator<'_> {
         params
     }
 
-    fn print_results(&mut self, results: &Results) {
+    fn print_return_decl(&mut self, results: &Results) {
         self.src.push_str(" (");
         for (i, ty) in results.iter_types().enumerate() {
             uwrite!(self.src, "r{i}__ ");
-            self.print_ty(ty);
+            self.print_opt_ty(ty, true);
             self.src.push_str(", ")
         }
-        self.push_str("err__ error)\n");
+        self.push_str("err__ error) ");
     }
 
-    fn print_ty(&mut self, ty: &Type) {
+    fn print_ty(&mut self, ty: &Type, decl: bool) {
         match ty {
-            Type::Id(t) => self.print_tyid(*t),
+            Type::Id(t) => self.print_tyid(*t, decl),
             Type::Bool => self.push_str("bool"),
             Type::U8 => self.push_str("uint8"),
             Type::U16 => self.push_str("uint16"),
@@ -758,19 +1435,9 @@ impl InterfaceGenerator<'_> {
 
     fn print_optional_ty(&mut self, ty: Option<&Type>) {
         match ty {
-            Some(ty) => self.print_ty(ty),
-            None => self.push_str("wrpc.Void"),
+            Some(ty) => self.print_ty(ty, true),
+            None => self.push_str("struct{}"),
         }
-    }
-
-    pub fn type_path(&mut self, id: TypeId) -> String {
-        self.type_path_with_name(
-            id,
-            //if owned {
-            self.result_name(id), //} else {
-                                  //self.param_name(id)
-                                  //},
-        )
     }
 
     fn type_path_with_name(&mut self, id: TypeId, name: String) -> String {
@@ -782,44 +1449,134 @@ impl InterfaceGenerator<'_> {
         name
     }
 
-    fn print_tyid(&mut self, id: TypeId) {
+    fn result_element_ptr(&mut self, ty: &Type, decl: bool) {
+        if let Type::Id(id) = ty {
+            match &self.resolve.types[*id].kind {
+                TypeDefKind::Option(..) | TypeDefKind::List(..) | TypeDefKind::Enum(..) => {}
+                TypeDefKind::Tuple(Tuple { types }) if types.len() == 1 => {
+                    self.result_element_ptr(&types[0], decl);
+                    return;
+                }
+                TypeDefKind::Type(ty) => {
+                    self.result_element_ptr(ty, decl);
+                    return;
+                }
+                _ => return,
+            }
+        }
+        if decl {
+            self.push_str("*");
+        } else {
+            self.push_str("&");
+        }
+    }
+
+    fn print_tuple(&mut self, Tuple { types }: &Tuple, decl: bool) {
+        match types.as_slice() {
+            [] => self.push_str("struct{}"),
+            [ty] => self.print_opt_ty(&ty, decl),
+            _ => {
+                let wrpc = self.deps.wrpc();
+                if decl {
+                    self.push_str("*");
+                } else {
+                    self.push_str("&");
+                }
+                self.push_str(wrpc);
+                self.push_str(".Tuple");
+                uwrite!(self.src, "{}[", types.len());
+                for ty in types {
+                    self.print_opt_ty(ty, true);
+                    self.push_str(",");
+                }
+                self.push_str("]");
+            }
+        }
+    }
+
+    fn print_opt_ty(&mut self, ty: &Type, decl: bool) {
+        match ty {
+            Type::Id(id) => {
+                let ty = &self.resolve.types[*id];
+                match &ty.kind {
+                    TypeDefKind::Enum(..) => {
+                        let name = ty.name.as_ref().expect("enum missing a name");
+                        let name = self.type_path_with_name(*id, to_upper_camel_case(name));
+                        self.push_str(&name);
+                    }
+                    TypeDefKind::List(ty) => self.print_list(&ty),
+                    TypeDefKind::Option(ty) => self.print_option(&ty, decl),
+                    TypeDefKind::Tuple(ty) => self.print_tuple(ty, decl),
+                    _ => {
+                        if decl {
+                            self.push_str("*");
+                        } else {
+                            self.push_str("&");
+                        }
+                        self.print_tyid(*id, true);
+                    }
+                }
+            }
+            Type::Bool => self.push_str("bool"),
+            Type::U8 => self.push_str("uint8"),
+            Type::U16 => self.push_str("uint16"),
+            Type::U32 => self.push_str("uint32"),
+            Type::U64 => self.push_str("uint64"),
+            Type::S8 => self.push_str("int8"),
+            Type::S16 => self.push_str("int16"),
+            Type::S32 => self.push_str("int32"),
+            Type::S64 => self.push_str("int64"),
+            Type::F32 => self.push_str("float32"),
+            Type::F64 => self.push_str("float64"),
+            Type::Char => self.push_str("rune"),
+            Type::String => self.push_str("string"),
+        }
+    }
+
+    fn print_option(&mut self, ty: &Type, decl: bool) {
+        if let Type::Id(id) = ty {
+            if let TypeDefKind::List(t) = self.resolve.types[*id].kind {
+                // Go slices are pointer types
+                self.print_list(&t);
+                return;
+            }
+        }
+        if decl {
+            self.push_str("*");
+        } else {
+            self.push_str("&");
+        }
+        self.print_ty(ty, true);
+    }
+
+    fn print_result(&mut self, ty: &Result_) {
+        let wrpc = self.deps.wrpc();
+        self.push_str(wrpc);
+        self.push_str(".Result[");
+        self.print_optional_ty(ty.ok.as_ref());
+        self.push_str(",");
+        self.print_optional_ty(ty.err.as_ref());
+        self.push_str("]");
+    }
+
+    fn print_tyid(&mut self, id: TypeId, decl: bool) {
         let ty = &self.resolve.types[id];
-        if ty.name.is_some() {
-            let name = self.type_path(id);
+        if let Some(name) = &ty.name {
+            let name = self.type_path_with_name(id, to_upper_camel_case(name));
             self.push_str(&name);
             return;
         }
 
         match &ty.kind {
             TypeDefKind::List(t) => self.print_list(t),
-
-            TypeDefKind::Option(t) => {
-                self.push_str("*");
-                self.print_ty(t);
-            }
-
-            TypeDefKind::Result(r) => {
-                self.push_str("wrpc.Result[");
-                self.print_optional_ty(r.ok.as_ref());
-                self.push_str(",");
-                self.print_optional_ty(r.err.as_ref());
-                self.push_str("]");
-            }
+            TypeDefKind::Option(t) => self.print_option(t, decl),
+            TypeDefKind::Result(r) => self.print_result(r),
 
             TypeDefKind::Variant(_) => panic!("unsupported anonymous variant"),
 
-            // Tuple-like records are mapped directly to Rust tuples of
-            // types. Note the trailing comma after each member to
-            // appropriately handle 1-tuples.
-            TypeDefKind::Tuple(t) => {
-                self.push_str("wrpc.Tuple");
-                uwrite!(self.src, "{}[", t.types.len());
-                for ty in t.types.iter() {
-                    self.print_ty(ty);
-                    self.push_str(",");
-                }
-                self.push_str("]");
-            }
+            // Tuple-like records are mapped directly to wrpc tuples of
+            // types.
+            TypeDefKind::Tuple(t) => self.print_tuple(t, decl),
             TypeDefKind::Resource => {
                 panic!("unsupported anonymous type reference: resource")
             }
@@ -833,18 +1590,22 @@ impl InterfaceGenerator<'_> {
                 panic!("unsupported anonymous type reference: enum")
             }
             TypeDefKind::Future(ty) => {
-                self.push_str("wrpc.Receiver[");
+                let wrpc = self.deps.wrpc();
+                self.push_str(wrpc);
+                self.push_str(".Receiver[");
                 self.print_optional_ty(ty.as_ref());
                 self.push_str("]");
             }
             TypeDefKind::Stream(stream) => {
-                self.push_str("wrpc.Receiver[[]");
+                let wrpc = self.deps.wrpc();
+                self.push_str(wrpc);
+                self.push_str(".Receiver[[]");
                 self.print_optional_ty(stream.element.as_ref());
                 self.push_str("]");
             }
 
             TypeDefKind::Handle(Handle::Own(ty)) => {
-                self.print_ty(&Type::Id(*ty));
+                self.print_ty(&Type::Id(*ty), decl);
             }
 
             TypeDefKind::Handle(Handle::Borrow(ty)) => {
@@ -858,712 +1619,31 @@ impl InterfaceGenerator<'_> {
                     self.push_str(&name);
                 } else {
                     let ty = &Type::Id(*ty);
-                    self.print_ty(ty);
+                    self.print_ty(ty, decl);
                 }
             }
 
-            TypeDefKind::Type(t) => self.print_ty(t),
+            TypeDefKind::Type(t) => self.print_ty(t, decl),
 
             TypeDefKind::Unknown => unreachable!(),
         }
     }
 
-    fn print_noop_subscribe(&mut self, name: &str) {
-        uwrite!(self.src, "impl wrpc::Subscribe for {name} {{}}",);
-    }
-
     fn print_list(&mut self, ty: &Type) {
         self.push_str("[]");
-        self.print_ty(ty);
-    }
-
-    fn print_struct_encode(&mut self, name: &str, ty: &Record) {
-        self.push_str("impl");
-        uwrite!(self.src, " wrpc::Encode for ");
-        self.push_str(name);
-        self.push_str(" {\n");
-        uwriteln!(self.src, "async fn encode(self, mut payload: &mut (impl bytes::BufMut + Send)) -> anyhow::Result<Option<wrpc::AsyncValue>> {{");
-        if !ty.fields.is_empty() {
-            uwriteln!(self.src, r#"let span = slog::trace_span!("encode");"#);
-            self.push_str("let _enter = span.enter();\n");
-            self.push_str("let ");
-            self.push_str(name.trim_start_matches('&'));
-            self.push_str("{\n");
-            for Field { name, .. } in ty.fields.iter() {
-                let name_rust = to_go_ident(name);
-                uwriteln!(self.src, "{name_rust} f_{name_rust},")
-            }
-            self.push_str("} = self;\n");
-            for Field { name, .. } in ty.fields.iter() {
-                let name_rust = to_go_ident(name);
-                uwriteln!(
-                    self.src,
-                    r#"let f_{name_rust} = f_{name_rust}.encode(&mut payload).await.context("failed to encode `{name}`")?;"#,
-                )
-            }
-            self.push_str("if false");
-            for Field { name, .. } in ty.fields.iter() {
-                uwrite!(self.src, r#" || f_{}.is_some()"#, to_go_ident(name))
-            }
-            self.push_str("{\n");
-            uwrite!(self.src, "return Ok(Some(wrpc::AsyncValue::Record(vec![");
-            for Field { name, .. } in ty.fields.iter() {
-                uwrite!(self.src, r#"f_{},"#, to_go_ident(name))
-            }
-            self.push_str("\n])))}\n");
-        }
-        self.push_str("Ok(None)\n");
-        self.push_str("}\n");
-        self.push_str("}\n");
-    }
-
-    fn print_struct_subscribe(&mut self, name: &str, ty: &Record) {
-        self.push_str("impl");
-        uwrite!(self.src, " wrpc::Subscribe for ");
-        self.push_str(name);
-        self.push_str(" {\n");
-        uwriteln!(self.src, "async fn subscribe<T: wrpc::Subscriber + Send + Sync>(subscriber: &T, subject: T::Subject) -> Result<Option<wrpc::AsyncSubscription<T::Stream>>, T::SubscribeError> {{");
-        if !ty.fields.is_empty() {
-            uwriteln!(self.src, r#"let span = slog::trace_span!("subscribe");"#);
-            self.push_str("let _enter = span.enter();\n");
-            for (i, Field { name, ty, .. }) in ty.fields.iter().enumerate() {
-                let name_rust = to_go_ident(name);
-                uwrite!(self.src, r#"let f_{name_rust} = <"#,);
-                self.print_ty(ty);
-                uwrite!(
-                    self.src,
-                    r#">::subscribe(subscriber, subject.child(Some({i}))).await?;"#,
-                )
-            }
-            self.push_str("if false");
-            for Field { name, .. } in ty.fields.iter() {
-                uwrite!(self.src, r#" || f_{}.is_some()"#, to_go_ident(name))
-            }
-            self.push_str("{\n");
-            uwrite!(
-                self.src,
-                "return Ok(Some(wrpc::AsyncSubscription::Record(vec!["
-            );
-            for Field { name, .. } in ty.fields.iter() {
-                uwrite!(self.src, r#"f_{},"#, to_go_ident(name))
-            }
-            self.push_str("\n])))}\n");
-        }
-        self.push_str("Ok(None)\n");
-        self.push_str("}\n");
-        self.push_str("}\n");
-    }
-
-    fn print_struct_receive(&mut self, name: &str, ty: &Record) {
-        uwriteln!(self.src, "");
-        self.push_str("impl<'wrpc_receive_>");
-        uwrite!(self.src, " wrpc::Receive<'wrpc_receive_> for ");
-        self.push_str(name);
-        self.push_str(" {");
-        uwriteln!(
-            self.src,
-            r#"
-    #[allow(unused_mut)]
-    async fn receive<T>(
-        payload: impl bytes::Buf + Send + 'wrpc_receive_,
-        mut rx: &mut (impl futures::Stream<Item=anyhow::Result<[]byte>> + Send + Sync + Unpin),
-        sub: Option<wrpc::AsyncSubscription<T>>,
-    ) -> anyhow::Result<(Self, Box<dyn bytes::buf::Buf + Send + 'wrpc_receive_>)>
-        where
-            T: futures::Stream<Item=anyhow::Result<[]byte>> {{"#
-        );
-        if !ty.fields.is_empty() {
-            uwriteln!(self.src, r#"let span = slog::trace_span!("receive");"#);
-            self.push_str("let _enter = span.enter();\n");
-            uwriteln!(
-                self.src,
-                "let mut sub = sub.map(wrpc::AsyncSubscription::try_unwrap_record).transpose()?;"
-            );
-            for (i, Field { name, .. }) in ty.fields.iter().enumerate() {
-                let name_rust = to_go_ident(name);
-                uwriteln!(
-                    self.src,
-                    r#"let (f_{name_rust}, payload) = wrpc::Receive::receive(
-                        payload,
-                        &mut rx,
-                        sub.as_mut().and_then(|sub| sub.get_mut({i})).and_then(Option::take)
-                    )
-                    .await
-                    .context("failed to receive `{name}`")?;"#,
-                )
-            }
-        }
-        self.push_str("Ok((Self {\n");
-        for Field { name, .. } in ty.fields.iter() {
-            let name_rust = to_go_ident(name);
-            uwrite!(self.src, r#"{name_rust}: f_{name_rust},"#)
-        }
-        self.push_str("\n}, payload))\n");
-        self.push_str("}\n");
-        self.push_str("}\n");
-    }
-
-    fn print_variant_encode<'a>(
-        &mut self,
-        name: &str,
-        cases: impl IntoIterator<Item = (String, &'a Docs, Option<&'a Type>)>,
-    ) {
-        uwriteln!(self.src, "");
-        self.push_str("impl");
-        uwrite!(self.src, " wrpc::Encode for ");
-        self.push_str(name);
-        self.push_str(" {\n");
-        uwriteln!(self.src, "#[allow(unused_mut)]");
-        uwriteln!(self.src, "async fn encode(self, mut payload: &mut (impl bytes::BufMut + Send)) -> anyhow::Result<Option<wrpc::AsyncValue>> {{");
-        uwriteln!(self.src, r#"let span = slog::trace_span!("encode");"#);
-        self.push_str("let _enter = span.enter();\n");
-        self.push_str("match self {\n");
-        for (i, (case_name, _, payload)) in cases.into_iter().enumerate() {
-            self.push_str(name.trim_start_matches('&'));
-            self.push_str("::");
-            self.push_str(&case_name);
-            if payload.is_some() {
-                self.push_str("(nested)");
-            }
-            self.push_str(" => {\n");
-            uwriteln!(self.src, "wrpc::encode_discriminant(&mut payload, {i})?;");
-            if payload.is_some() {
-                self.push_str("nested.encode(payload).await\n");
-            } else {
-                self.push_str("Ok(None)\n");
-            }
-            self.push_str("}\n");
-        }
-        self.push_str("}\n");
-        self.push_str("}\n");
-        self.push_str("}\n");
-    }
-
-    fn print_variant_subscribe<'a>(
-        &mut self,
-        name: &str,
-        cases: impl IntoIterator<Item = (String, &'a Docs, Option<&'a Type>)> + Clone,
-    ) {
-        self.push_str("impl");
-        uwrite!(self.src, " wrpc::Subscribe for ");
-        self.push_str(name);
-        self.push_str(" {\n");
-        uwriteln!(self.src, "async fn subscribe<T: wrpc::Subscriber + Send + Sync>(subscriber: &T, subject: T::Subject) -> Result<Option<wrpc::AsyncSubscription<T::Stream>>, T::SubscribeError> {{");
-        uwriteln!(self.src, r#"let span = slog::trace_span!("subscribe");"#);
-        self.push_str("let _enter = span.enter();\n");
-        for (i, (_, _, payload)) in cases.clone().into_iter().enumerate() {
-            if let Some(ty) = payload {
-                uwrite!(self.src, r#"let c_{i} = <"#,);
-                self.print_ty(ty);
-                uwrite!(
-                    self.src,
-                    r#">::subscribe(subscriber, subject.child(Some({i}))).await?;"#,
-                )
-            }
-        }
-        self.push_str("if false");
-        for (i, (_, _, payload)) in cases.clone().into_iter().enumerate() {
-            if payload.is_some() {
-                uwrite!(self.src, r#" || c_{i}.is_some()"#)
-            }
-        }
-        self.push_str("{\n");
-        uwrite!(
-            self.src,
-            "return Ok(Some(wrpc::AsyncSubscription::Variant(vec!["
-        );
-        for (i, (_, _, payload)) in cases.into_iter().enumerate() {
-            if payload.is_some() {
-                uwrite!(self.src, r#"c_{i},"#)
-            } else {
-                self.push_str("None,");
-            }
-        }
-        self.push_str("\n])))}\n");
-        self.push_str("Ok(None)\n");
-        self.push_str("}\n");
-        self.push_str("}\n");
-    }
-
-    fn print_variant_receive<'a>(
-        &mut self,
-        name: &str,
-        cases: impl IntoIterator<Item = (String, &'a Docs, Option<&'a Type>)>,
-    ) {
-        uwriteln!(self.src, "");
-        self.push_str("impl<'wrpc_receive_>");
-        uwrite!(self.src, " wrpc::Receive<'wrpc_receive_> for ");
-        self.push_str(name);
-        uwriteln!(
-            self.src,
-            r#" {{
-        async fn receive<T>(
-            payload: impl bytes::Buf + Send + 'wrpc_receive_,
-            mut rx: &mut (impl futures::Stream<Item=anyhow::Result<[]byte>> + Send + Sync + Unpin),
-            sub: Option<wrpc::AsyncSubscription<T>>,
-        ) -> anyhow::Result<(Self, Box<dyn bytes::buf::Buf + Send + 'wrpc_receive_>)>
-            where
-                T: futures::Stream<Item=anyhow::Result<[]byte>>
-            {{
-                let span = slog::trace_span!("receive");
-                let _enter = span.enter();
-                let (disc, payload) = wrpc::receive_discriminant(
-                        payload,
-                        &mut rx,
-                    )
-                    .await
-                    .context("failed to receive discriminant")?;
-                match disc {{"#,
-        );
-        for (i, (case_name, _, payload)) in cases.into_iter().enumerate() {
-            uwriteln!(self.src, "{i} => ");
-            if payload.is_some() {
-                uwriteln!(
-                    self.src,
-                    r#"{{
-                        let sub = sub
-                            .map(|sub| {{
-                                let mut sub = sub.try_unwrap_variant()?;
-                                anyhow::Ok(sub.get_mut({i}).and_then(Option::take))
-                            }})
-                            .transpose()?
-                            .flatten();
-                        let (nested, payload) = wrpc::Receive::receive(payload, rx, sub)
-                            .await
-                            .context("failed to receive nested variant value")?;
-                        Ok((Self::{case_name}(nested), payload))
-                    }}"#
-                );
-            } else {
-                uwriteln!(self.src, "Ok((Self::{case_name}, payload)),")
-            }
-        }
-        uwriteln!(
-            self.src,
-            r#"_ => anyhow::bail!("unknown variant discriminant `{{disc}}`")"#
-        );
-        self.push_str("}\n");
-        self.push_str("}\n");
-        self.push_str("}\n");
-    }
-
-    fn print_enum_encode(&mut self, name: &str, cases: &[EnumCase]) {
-        uwriteln!(self.src, "");
-        self.push_str("impl");
-        uwrite!(self.src, " wrpc::Encode for ");
-        self.push_str(name);
-        self.push_str(" {\n");
-        uwriteln!(self.src, "#[allow(unused_mut)]");
-        uwriteln!(self.src, "async fn encode(self, mut payload: &mut (impl bytes::BufMut + Send)) -> anyhow::Result<Option<wrpc::AsyncValue>> {{");
-        uwriteln!(self.src, r#"let span = slog::trace_span!("encode");"#);
-        self.push_str("let _enter = span.enter();\n");
-        self.push_str("match self {\n");
-        for (i, case) in cases.iter().enumerate() {
-            let case = case.name.to_upper_camel_case();
-            self.push_str(name.trim_start_matches('&'));
-            self.push_str("::");
-            self.push_str(&case);
-            self.push_str(" => {\n");
-            uwriteln!(self.src, "wrpc::encode_discriminant(&mut payload, {i})?;");
-            self.push_str("Ok(None)\n");
-            self.push_str("}\n");
-        }
-        self.push_str("}\n");
-        self.push_str("}\n");
-        self.push_str("}\n");
-    }
-
-    fn print_enum_receive(&mut self, name: &str, cases: &[EnumCase]) {
-        uwriteln!(self.src, "");
-        self.push_str("impl<'wrpc_receive_>");
-        uwrite!(self.src, " wrpc::Receive<'wrpc_receive_> for ");
-        self.push_str(name);
-        uwriteln!(
-            self.src,
-            r#" {{
-        async fn receive<T>(
-            payload: impl bytes::Buf + Send + 'wrpc_receive_,
-            mut rx: &mut (impl futures::Stream<Item=anyhow::Result<[]byte>> + Send + Sync + Unpin),
-            sub: Option<wrpc::AsyncSubscription<T>>,
-        ) -> anyhow::Result<(Self, Box<dyn bytes::buf::Buf + Send + 'wrpc_receive_>)>
-            where
-                T: futures::Stream<Item=anyhow::Result<[]byte>>
-            {{
-                let span = slog::trace_span!("receive");
-                let _enter = span.enter();
-                let (disc, payload) = wrpc::receive_discriminant(
-                        payload,
-                        &mut rx,
-                    )
-                    .await
-                    .context("failed to receive discriminant")?;
-                match disc {{"#,
-        );
-        for (i, case) in cases.iter().enumerate() {
-            let case = case.name.to_upper_camel_case();
-            uwriteln!(self.src, "{i} => Ok((Self::{case}, payload)),");
-        }
-        uwriteln!(
-            self.src,
-            r#"_ => anyhow::bail!("unknown enum discriminant `{{disc}}`")"#
-        );
-        self.push_str("}\n");
-        self.push_str("}\n");
-        self.push_str("}\n");
+        self.print_ty(ty, true);
     }
 
     fn int_repr(&mut self, repr: Int) {
         self.push_str(int_repr(repr));
     }
 
-    fn modes_of(&self, ty: TypeId) -> Vec<String> {
+    fn name_of(&self, ty: TypeId) -> Option<String> {
         let info = self.info(ty);
+
         // If this type isn't actually used, no need to generate it.
-        if !info.owned && !info.borrowed {
-            return vec![];
-        }
-        vec![self.result_name(ty)]
-    }
-
-    fn print_typedef_record(&mut self, id: TypeId, record: &Record, docs: &Docs) {
-        let info = self.info(id);
-        // We use a BTree set to make sure we don't have any duplicates and we have a stable order
-        for name in self.modes_of(id) {
-            self.godoc(docs);
-            self.push_str(&format!("pub struct {}", name));
-            self.push_str(" {\n");
-            for Field { name, ty, docs } in record.fields.iter() {
-                self.godoc(docs);
-                self.push_str(&to_go_ident(name));
-                self.push_str(": ");
-                self.print_ty(ty);
-                self.push_str(",\n");
-            }
-            self.push_str("}\n");
-
-            self.print_struct_encode(&name, record);
-            self.print_struct_encode(&format!("&{name}"), record);
-
-            self.print_struct_subscribe(&name, record);
-            self.print_struct_receive(&name, record);
-
-            self.push_str("impl");
-            self.push_str(" ::core::fmt::Debug for ");
-            self.push_str(&name);
-            self.push_str(" {\n");
-            self.push_str(
-                "fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {\n",
-            );
-            self.push_str(&format!("f.debug_struct(\"{}\")", name));
-            for field in record.fields.iter() {
-                self.push_str(&format!(
-                    ".field(\"{}\", &self.{})",
-                    field.name,
-                    to_go_ident(&field.name)
-                ));
-            }
-            self.push_str(".finish()\n");
-            self.push_str("}\n");
-            self.push_str("}\n");
-
-            if info.error {
-                self.push_str("impl");
-                self.push_str(" ::core::fmt::Display for ");
-                self.push_str(&name);
-                self.push_str(" {\n");
-                self.push_str(
-                    "fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {\n",
-                );
-                self.push_str("write!(f, \"{:?}\", self)\n");
-                self.push_str("}\n");
-                self.push_str("}\n");
-            }
-        }
-    }
-
-    fn print_typedef_variant(&mut self, id: TypeId, variant: &Variant, docs: &Docs)
-    where
-        Self: Sized,
-    {
-        self.print_rust_enum(
-            id,
-            variant
-                .cases
-                .iter()
-                .map(|c| (c.name.to_upper_camel_case(), &c.docs, c.ty.as_ref())),
-            docs,
-        );
-    }
-
-    fn print_rust_enum<'b>(
-        &mut self,
-        id: TypeId,
-        cases: impl IntoIterator<Item = (String, &'b Docs, Option<&'b Type>)> + Clone,
-        docs: &Docs,
-    ) where
-        Self: Sized,
-    {
-        let info = self.info(id);
-        // We use a BTree set to make sure we don't have any duplicates and have a stable order
-        for name in self.modes_of(id) {
-            self.godoc(docs);
-            self.push_str(&format!("pub enum {name}"));
-            self.push_str(" {\n");
-            for (case_name, docs, payload) in cases.clone() {
-                self.godoc(docs);
-                self.push_str(&case_name);
-                if let Some(ty) = payload {
-                    self.push_str("(");
-                    self.print_ty(ty);
-                    self.push_str(")")
-                }
-                self.push_str(",\n");
-            }
-            self.push_str("}\n");
-
-            self.print_rust_enum_debug(
-                &name,
-                cases
-                    .clone()
-                    .into_iter()
-                    .map(|(name, _docs, ty)| (name, ty)),
-            );
-
-            if info.error {
-                self.push_str("impl");
-                self.push_str(" ::core::fmt::Display for ");
-                self.push_str(&name);
-                self.push_str(" {\n");
-                self.push_str(
-                    "fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {\n",
-                );
-                self.push_str("write!(f, \"{:?}\", self)\n");
-                self.push_str("}\n");
-                self.push_str("}\n");
-                self.push_str("\n");
-            }
-
-            self.print_variant_encode(&name, cases.clone());
-            self.print_variant_encode(&format!("&{name}"), cases.clone());
-
-            self.print_variant_subscribe(&name, cases.clone());
-
-            self.print_variant_receive(&name, cases.clone());
-        }
-    }
-
-    fn print_rust_enum_debug<'b>(
-        &mut self,
-        name: &str,
-        cases: impl IntoIterator<Item = (String, Option<&'b Type>)>,
-    ) where
-        Self: Sized,
-    {
-        self.push_str("impl");
-        self.push_str(" ::core::fmt::Debug for ");
-        self.push_str(name);
-        self.push_str(" {\n");
-        self.push_str(
-            "fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {\n",
-        );
-        self.push_str("match self {\n");
-        for (case_name, payload) in cases {
-            self.push_str(name);
-            self.push_str("::");
-            self.push_str(&case_name);
-            if payload.is_some() {
-                self.push_str("(e)");
-            }
-            self.push_str(" => {\n");
-            self.push_str(&format!("f.debug_tuple(\"{}::{}\")", name, case_name));
-            if payload.is_some() {
-                self.push_str(".field(e)");
-            }
-            self.push_str(".finish()\n");
-            self.push_str("}\n");
-        }
-        self.push_str("}\n");
-        self.push_str("}\n");
-        self.push_str("}\n");
-    }
-
-    fn print_typedef_option(&mut self, id: TypeId, payload: &Type, docs: &Docs) {
-        for name in self.modes_of(id) {
-            self.godoc(docs);
-            self.push_str(&format!("type {}", name));
-            self.push_str("= Option<");
-            self.print_ty(payload);
-            self.push_str(">;\n");
-        }
-    }
-
-    fn print_typedef_result(&mut self, id: TypeId, result: &Result_, docs: &Docs) {
-        for name in self.modes_of(id) {
-            self.godoc(docs);
-            self.push_str(&format!("type {}", name));
-            self.push_str("= Result<");
-            self.print_optional_ty(result.ok.as_ref());
-            self.push_str(",");
-            self.print_optional_ty(result.err.as_ref());
-            self.push_str(">;\n");
-        }
-    }
-
-    fn print_typedef_enum(
-        &mut self,
-        id: TypeId,
-        name: &str,
-        enum_: &Enum,
-        docs: &Docs,
-        attrs: &[String],
-        case_attr: Box<dyn Fn(&EnumCase) -> String>,
-    ) where
-        Self: Sized,
-    {
-        let info = self.info(id);
-
-        let name = to_upper_camel_case(name);
-        self.godoc(docs);
-        for attr in attrs {
-            self.push_str(&format!("{}\n", attr));
-        }
-        self.push_str("#[repr(");
-        self.int_repr(enum_.tag());
-        self.push_str(")]\n");
-        // We use a BTree set to make sure we don't have any duplicates and a stable order
-        self.push_str(&format!("pub enum {name} {{\n"));
-        for case in enum_.cases.iter() {
-            self.godoc(&case.docs);
-            self.push_str(&case_attr(case));
-            self.push_str(&case.name.to_upper_camel_case());
-            self.push_str(",\n");
-        }
-        self.push_str("}\n");
-
-        // Auto-synthesize an implementation of the standard `Error` trait for
-        // error-looking types based on their name.
-        if info.error {
-            self.push_str("impl ");
-            self.push_str(&name);
-            self.push_str("{\n");
-
-            self.push_str("pub fn name(&self) -> &'static str {\n");
-            self.push_str("match self {\n");
-            for case in enum_.cases.iter() {
-                self.push_str(&name);
-                self.push_str("::");
-                self.push_str(&case.name.to_upper_camel_case());
-                self.push_str(" => \"");
-                self.push_str(case.name.as_str());
-                self.push_str("\",\n");
-            }
-            self.push_str("}\n");
-            self.push_str("}\n");
-
-            self.push_str("pub fn message(&self) -> &'static str {\n");
-            self.push_str("match self {\n");
-            for case in enum_.cases.iter() {
-                self.push_str(&name);
-                self.push_str("::");
-                self.push_str(&case.name.to_upper_camel_case());
-                self.push_str(" => \"");
-                if let Some(contents) = &case.docs.contents {
-                    self.push_str(contents.trim());
-                }
-                self.push_str("\",\n");
-            }
-            self.push_str("}\n");
-            self.push_str("}\n");
-
-            self.push_str("}\n");
-
-            self.push_str("impl ::core::fmt::Debug for ");
-            self.push_str(&name);
-            self.push_str(
-                "{\nfn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {\n",
-            );
-            self.push_str("f.debug_struct(\"");
-            self.push_str(&name);
-            self.push_str("\")\n");
-            self.push_str(".field(\"code\", &(*self as i32))\n");
-            self.push_str(".field(\"name\", &self.name())\n");
-            self.push_str(".field(\"message\", &self.message())\n");
-            self.push_str(".finish()\n");
-            self.push_str("}\n");
-            self.push_str("}\n");
-
-            self.push_str("impl ::core::fmt::Display for ");
-            self.push_str(&name);
-            self.push_str(
-                "{\nfn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {\n",
-            );
-            self.push_str("write!(f, \"{} (error {})\", self.name(), *self as i32)\n");
-            self.push_str("}\n");
-            self.push_str("}\n");
-            self.push_str("\n");
-            self.push_str("impl std::error::Error for ");
-            self.push_str(&name);
-            self.push_str(" {}\n");
-        } else {
-            self.print_rust_enum_debug(
-                &name,
-                enum_
-                    .cases
-                    .iter()
-                    .map(|c| (c.name.to_upper_camel_case(), None)),
-            )
-        }
-    }
-
-    fn print_typedef_alias(&mut self, id: TypeId, ty: &Type, docs: &Docs) {
-        for name in self.modes_of(id) {
-            self.godoc(docs);
-            self.push_str(&format!("type {name}"));
-            self.push_str(" = ");
-            self.print_ty(ty);
-            self.push_str(";\n");
-        }
-
-        if self.is_exported_resource(id) {
-            self.godoc(docs);
-            let name = self.resolve.types[id].name.as_ref().unwrap();
-            let name = name.to_upper_camel_case();
-            self.push_str(&format!("type {name}Borrow"));
-            self.push_str(" = ");
-            self.print_ty(ty);
-            self.push_str("Borrow");
-            self.push_str(";\n");
-        }
-    }
-
-    fn param_name(&self, ty: TypeId) -> String {
-        let info = self.info(ty);
-        let name = to_upper_camel_case(self.resolve.types[ty].name.as_ref().unwrap());
-        if self.uses_two_names(&info) {
-            format!("{}Param", name)
-        } else {
-            name
-        }
-    }
-
-    fn result_name(&self, ty: TypeId) -> String {
-        let info = self.info(ty);
-        let name = to_upper_camel_case(self.resolve.types[ty].name.as_ref().unwrap());
-        if self.uses_two_names(&info) {
-            format!("{}Result", name)
-        } else {
-            name
-        }
-    }
-
-    fn uses_two_names(&self, info: &TypeInfo) -> bool {
-        info.borrowed
-            && info.owned
-            // ... and they have a list ...
-            && info.has_list
-            // ... and if there's NOT an `own` handle since those are always
-            // done by ownership.
-            && !info.has_own_handle
+        (info.owned || info.borrowed)
+            .then(|| to_upper_camel_case(self.resolve.types[ty].name.as_ref().unwrap()))
     }
 
     fn path_to_interface(&mut self, interface: InterfaceId) -> Option<String> {
@@ -1614,169 +1694,102 @@ impl<'a> wit_bindgen_core::InterfaceGenerator<'a> for InterfaceGenerator<'a> {
         self.resolve
     }
 
-    fn type_record(&mut self, id: TypeId, _name: &str, record: &Record, docs: &Docs) {
-        self.print_typedef_record(id, record, docs);
-    }
+    fn type_record(
+        &mut self,
+        id: TypeId,
+        _name: &str,
+        Record { fields, .. }: &Record,
+        docs: &Docs,
+    ) {
+        let info = self.info(id);
+        if let Some(name) = self.name_of(id) {
+            self.godoc(docs);
+            uwriteln!(self.src, "type {name} struct {{");
+            for Field { name, ty, docs } in fields.iter() {
+                self.godoc(docs);
+                self.push_str(&name.to_upper_camel_case());
+                self.push_str(" ");
+                self.print_opt_ty(ty, true);
+                self.push_str("\n");
+            }
+            self.push_str("}\n");
 
-    fn type_resource(&mut self, _id: TypeId, name: &str, docs: &Docs) {
-        self.godoc(docs);
-        let camel = to_upper_camel_case(name);
+            let wrpc = self.deps.wrpc();
 
-        if self.in_import {
+            // TODO: Print something more useful
             uwriteln!(
                 self.src,
-                r#"
-#[derive(Debug)]
-pub struct {camel}(String);
+                r#"func (v *{name}) String() string {{ return "{name}" }}
 
-
-impl wrpc::Encode for {camel} {{
-     async fn encode(self, payload: &mut (impl bytes::BufMut + Send)) -> anyhow::Result<Option<wrpc::AsyncValue>> {{
-        let span = slog::trace_span!("encode");
-        let _enter = span.enter();
-        self.0.encode(payload).await
-     }}
-}}
-
-
-impl wrpc::Encode for &{camel} {{
-     async fn encode(self, payload: &mut (impl bytes::BufMut + Send)) -> anyhow::Result<Option<wrpc::AsyncValue>> {{
-        let span = slog::trace_span!("encode");
-        let _enter = span.enter();
-        self.0.as_str().encode(payload).await
-     }}
-}}
-
-impl wrpc::Subscribe for {camel} {{}}
-
-impl wrpc::Subscribe for &{camel} {{}}
-
-
-impl<'a> wrpc::Receive<'a> for {camel} {{
-     async fn receive<T>(
-        payload: impl bytes::Buf,
-        rx: &mut (impl futures::Stream<Item=anyhow::Result<[]byte>> + Send + Sync + Unpin),
-        sub: Option<wrpc::AsyncSubscription<T>>,
-     ) -> anyhow::Result<(Self, Box<dyn bytes::buf::Buf>)>
-     where
-         T: futures::Stream<Item=anyhow::Result<[]byte>>
-     {{
-        let span = slog::trace_span!("receive");
-        let _enter = span.enter();
-        let (subject, payload) = wrpc::Receive::receive(payload, rx, sub).await?;
-        Ok((Self(subject), payload))
-     }}
-}}
-"#
+func (v *{name}) WriteTo(w {wrpc}.ByteWriter) error {{"#
             );
-        } else {
+            for Field { name, ty, .. } in fields.iter() {
+                let fmt = self.deps.fmt();
+                let slog = self.deps.slog();
+                uwrite!(
+                    self.src,
+                    r#"{slog}.Debug("writing field", "name", "{name}")
+        if err := "#
+                );
+                let ident = name.to_upper_camel_case();
+                self.print_write_ty(ty, &format!("v.{ident}"), "w");
+                uwriteln!(
+                    self.src,
+                    r#"; err != nil {{
+		    return {fmt}.Errorf("failed to write `{name}` field: %w", err)
+	    }}"#
+                );
+            }
+            self.push_str("return nil\n");
+            self.push_str("}\n");
+
             uwriteln!(
                 self.src,
-                r#"
-#[derive(Debug)]
-#[repr(transparent)]
-pub struct {camel};
-
-impl {camel} {{
-    /// Creates a new resource from the specified representation.
-    pub fn new() -> Self {{ Self {{ }} }}
-}}
-
-/// A borrowed version of [`{camel}`] which represents a borrowed value
-#[derive(Debug)]
-#[repr(transparent)]
-pub struct {camel}Borrow;
-
-
-impl wrpc::Encode for {camel}Borrow {{
-     async fn encode(self, payload: &mut (impl bytes::BufMut + Send)) -> anyhow::Result<Option<wrpc::AsyncValue>> {{
-        let span = slog::trace_span!("encode");
-        let _enter = span.enter();
-        anyhow::bail!("exported resources not supported yet")
-     }}
-}}
-
-
-impl wrpc::Encode for &{camel}Borrow {{
-     async fn encode(self, payload: &mut (impl bytes::BufMut + Send)) -> anyhow::Result<Option<wrpc::AsyncValue>> {{
-        let span = slog::trace_span!("encode");
-        let _enter = span.enter();
-        anyhow::bail!("exported resources not supported yet")
-     }}
-}}
-
-impl wrpc::Subscribe for {camel}Borrow {{}}
-
-impl wrpc::Subscribe for &{camel}Borrow {{}}
-
-
-impl<'a> wrpc::Receive<'a> for {camel}Borrow {{
-     async fn receive<T>(
-        payload: impl bytes::Buf,
-        rx: &mut (impl futures::Stream<Item=anyhow::Result<[]byte>> + Send + Sync + Unpin),
-        sub: Option<wrpc::AsyncSubscription<T>>,
-     ) -> anyhow::Result<(Self, Box<dyn bytes::buf::Buf>)>
-     where
-         T: futures::Stream<Item=anyhow::Result<[]byte>>
-     {{
-        let span = slog::trace_span!("receive");
-        let _enter = span.enter();
-        anyhow::bail!("exported resources not supported yet")
-     }}
-}}
-
-
-impl wrpc::Encode for {camel} {{
-     async fn encode(self, payload: &mut (impl bytes::BufMut + Send)) -> anyhow::Result<Option<wrpc::AsyncValue>> {{
-        let span = slog::trace_span!("encode");
-        let _enter = span.enter();
-        anyhow::bail!("exported resources not supported yet")
-     }}
-}}
-
-
-impl wrpc::Encode for &{camel} {{
-     async fn encode(self, payload: &mut (impl bytes::BufMut + Send)) -> anyhow::Result<Option<wrpc::AsyncValue>> {{
-        let span = slog::trace_span!("encode");
-        let _enter = span.enter();
-        anyhow::bail!("exported resources not supported yet")
-     }}
-}}
-
-impl wrpc::Subscribe for {camel} {{}}
-
-impl wrpc::Subscribe for &{camel} {{}}
-
-
-impl<'a> wrpc::Receive<'a> for {camel} {{
-     async fn receive<T>(
-        payload: impl bytes::Buf,
-        rx: &mut (impl futures::Stream<Item=anyhow::Result<[]byte>> + Send + Sync + Unpin),
-        sub: Option<wrpc::AsyncSubscription<T>>,
-     ) -> anyhow::Result<(Self, Box<dyn bytes::buf::Buf>)>
-     where
-         T: futures::Stream<Item=anyhow::Result<[]byte>>
-     {{
-        let span = slog::trace_span!("receive");
-        let _enter = span.enter();
-        anyhow::bail!("exported resources not supported yet")
-     }}
-}}
-"#,
+                r#"func Read{name}(r {wrpc}.ByteReader) (*{name}, error) {{
+    v := &{name}{{}}
+    var err error"#
             );
+            for Field { name, ty, .. } in fields.iter() {
+                let fmt = self.deps.fmt();
+                let slog = self.deps.slog();
+                let ident = name.to_upper_camel_case();
+                uwrite!(
+                    self.src,
+                    r#"{slog}.Debug("reading field", "name", "{name}")
+    v.{ident}, err = "#
+                );
+                self.print_read_ty(ty, "r");
+                self.push_str("\n");
+                uwriteln!(
+                    self.src,
+                    r#"if err != nil {{
+		    return nil, {fmt}.Errorf("failed to read `{name}` field: %w", err)
+	    }}"#
+                );
+            }
+            self.push_str("return v, nil\n");
+            self.push_str("}\n");
+
+            if info.error {
+                uwriteln!(
+                    self.src,
+                    r#"func (v *{name}) Error() string {{ return v.String() }}"#
+                );
+            }
         }
     }
 
+    fn type_resource(&mut self, _id: TypeId, _name: &str, _docs: &Docs) {
+        // TODO: Support resources
+    }
+
     fn type_tuple(&mut self, id: TypeId, _name: &str, tuple: &Tuple, docs: &Docs) {
-        for name in self.modes_of(id) {
+        if let Some(name) = self.name_of(id) {
             self.godoc(docs);
             self.push_str(&format!("type {}", name));
-            self.push_str(" = (");
-            for ty in tuple.types.iter() {
-                self.print_ty(ty);
-                self.push_str(",");
-            }
-            self.push_str(");\n");
+            self.push_str(" = ");
+            self.print_tuple(tuple, true);
+            self.push_str("\n");
         }
     }
 
@@ -1798,86 +1811,408 @@ impl<'a> wrpc::Receive<'a> for {camel} {{
         }
         self.src.push_str("}\n");
         self.src.push_str("}\n");
-
-        self.print_noop_subscribe(&name);
-        self.print_noop_subscribe(&format!("&{name}"));
-
-        uwriteln!(
-            self.src,
-            r#"
-                impl wrpc::Encode for {name} {{
-                     async fn encode(self, payload: &mut (impl bytes::BufMut + Send)) -> anyhow::Result<Option<wrpc::AsyncValue>> {{
-                        let span = slog::trace_span!("encode");
-                        let _enter = span.enter();
-                        self.bits().encode(payload).await
-                     }}
-                }}
-
-                impl wrpc::Encode for &{name} {{
-                     async fn encode(self, payload: &mut (impl bytes::BufMut + Send)) -> anyhow::Result<Option<wrpc::AsyncValue>> {{
-                        let span = slog::trace_span!("encode");
-                        let _enter = span.enter();
-                        self.bits().encode(payload).await
-                     }}
-                }}
-
-                impl<'a> wrpc::Receive<'a> for {name} {{
-                     async fn receive<T>(
-                        payload: impl bytes::Buf,
-                        rx: &mut (impl futures::Stream<Item=anyhow::Result<[]byte>> + Send + Sync + Unpin),
-                        sub: Option<wrpc::AsyncSubscription<T>>,
-                     ) -> anyhow::Result<(Self, Box<dyn bytes::buf::Buf>)>
-                     where
-                         T: futures::Stream<Item=anyhow::Result<[]byte>>
-                     {{
-                        let span = slog::trace_span!("receive");
-                        let _enter = span.enter();
-
-                        let (bits, payload) = <Self as bitflags::Flags>::Bits::receive(payload, rx, sub).await.context("failed to receive bits")?;
-                        let ret = Self::from_bits(bits).context("failed to convert bits into flags")?;
-                        Ok((ret, payload))
-                     }}
-                }}"#,
-        );
     }
 
     fn type_variant(&mut self, id: TypeId, _name: &str, variant: &Variant, docs: &Docs) {
-        self.print_typedef_variant(id, variant, docs);
+        let info = self.info(id);
+        if let Some(name) = self.name_of(id) {
+            self.godoc(docs);
+            uwriteln!(
+                self.src,
+                r#"type {name} struct {{ payload any; discriminant {name}Discriminant }}"#
+            );
+            uwriteln!(
+                self.src,
+                r#"func (v *{name}) Discriminant() {name}Discriminant {{ return v.discriminant }}"#
+            );
+            uwrite!(self.src, r#"type {name}Discriminant "#);
+            self.int_repr(variant.tag());
+            self.push_str("\n");
+            self.push_str("const (\n");
+            for (
+                i,
+                Case {
+                    name: case_name,
+                    docs,
+                    ..
+                },
+            ) in variant.cases.iter().enumerate()
+            {
+                self.godoc(docs);
+                self.push_str(&name);
+                self.push_str("Discriminant_");
+                self.push_str(&case_name.to_upper_camel_case());
+                self.push_str(" ");
+                self.push_str(&name);
+                uwriteln!(self.src, "Discriminant = {i}")
+            }
+            self.push_str(")\n");
+
+            uwriteln!(
+                self.src,
+                r#"func (v *{name}) String() string {{ switch v.discriminant {{"#
+            );
+            for Case {
+                name: case_name, ..
+            } in variant.cases.iter()
+            {
+                self.push_str("case ");
+                self.push_str(&name);
+                self.push_str("Discriminant_");
+                self.push_str(&case_name.to_upper_camel_case());
+                self.push_str(": return \"");
+                self.push_str(&case_name);
+                self.push_str("\"\n");
+            }
+            self.push_str("default: panic(\"invalid variant\")\n}\n");
+            self.push_str("}\n");
+
+            for Case {
+                name: case_name,
+                ty,
+                docs,
+            } in variant.cases.iter()
+            {
+                let camel = case_name.to_upper_camel_case();
+                self.godoc(docs);
+                uwrite!(self.src, r#"func (v *{name}) Get{camel}() ("#);
+                if let Some(ty) = ty {
+                    self.push_str("payload ");
+                    self.print_ty(ty, true);
+                    self.push_str(", ");
+                }
+                self.push_str("ok bool) {\n");
+                uwriteln!(
+                    self.src,
+                    r#"if ok = (v.discriminant == {name}Discriminant_{camel}); !ok {{ return }}"#
+                );
+                if let Some(ty) = ty {
+                    self.push_str("payload, ok = v.payload.(");
+                    self.print_ty(ty, true);
+                    self.push_str(")\n");
+                }
+                self.push_str("return\n}\n");
+
+                self.godoc(docs);
+                uwrite!(self.src, r#"func New{name}_{camel}("#);
+                if let Some(ty) = ty {
+                    self.push_str("payload ");
+                    self.print_opt_ty(ty, true);
+                }
+                uwriteln!(self.src, ") *{name} {{ return &{name}{{");
+                if ty.is_some() {
+                    self.push_str("payload");
+                } else {
+                    self.push_str("nil")
+                }
+                uwriteln!(self.src, r#", {name}Discriminant_{camel} }} }}"#);
+            }
+
+            if info.error {
+                uwriteln!(
+                    self.src,
+                    r#"func (v *{name}) Error() string {{ return v.String() }}"#
+                );
+            }
+
+            let fmt = self.deps.fmt();
+            let wrpc = self.deps.wrpc();
+            uwriteln!(
+                self.src,
+                r#"func (v *{name}) WriteTo(w {wrpc}.ByteWriter) error {{"#,
+            );
+            self.push_str("if err := ");
+            match variant.tag() {
+                Int::U8 => {
+                    self.print_write_ty(&Type::U8, "uint8(v.discriminant)", "w");
+                }
+                Int::U16 => {
+                    self.print_write_ty(&Type::U16, "uint16(v.discriminant)", "w");
+                }
+                Int::U32 => {
+                    self.print_write_ty(&Type::U32, "uint32(v.discriminant)", "w");
+                }
+                Int::U64 => {
+                    self.print_write_ty(&Type::U64, "uint64(v.discriminant)", "w");
+                }
+            }
+            self.push_str("; err != nil { return ");
+            self.push_str(fmt);
+            self.push_str(".Errorf(\"failed to write discriminant: %w\", err)\n}\n");
+            self.push_str("switch v.discriminant {\n");
+            for Case {
+                name: case_name,
+                ty,
+                ..
+            } in variant.cases.iter()
+            {
+                self.push_str("case ");
+                self.push_str(&name);
+                self.push_str("Discriminant_");
+                self.push_str(&case_name.to_upper_camel_case());
+                self.push_str(":\n");
+                if let Some(ty) = ty {
+                    self.push_str("payload, ok := v.payload.(");
+                    self.print_opt_ty(&ty, true);
+                    self.push_str(")\n");
+                    self.push_str("if !ok { return ");
+                    let errors = self.deps.errors();
+                    self.push_str(errors);
+                    self.push_str(".New(\"invalid payload\") }\n");
+                    self.push_str("if err := ");
+                    self.print_write_ty(&ty, "payload", "w");
+                    self.push_str("; err != nil { return ");
+                    self.push_str(fmt);
+                    self.push_str(".Errorf(\"failed to write payload: %w\", err)\n}\n");
+                }
+            }
+            self.push_str("default: panic(\"invalid variant\")\n}\n");
+            self.push_str("return nil\n");
+            self.push_str("}\n");
+
+            uwrite!(
+                self.src,
+                r#"func Read{name}(r {wrpc}.ByteReader) (*{name}, error) {{
+    disc, err := "#,
+            );
+            match variant.tag() {
+                Int::U8 => {
+                    self.print_read_ty(&Type::U8, "r");
+                }
+                Int::U16 => {
+                    self.print_read_ty(&Type::U16, "r");
+                }
+                Int::U32 => {
+                    self.print_read_ty(&Type::U32, "r");
+                }
+                Int::U64 => {
+                    self.print_read_ty(&Type::U64, "r");
+                }
+            }
+            self.push_str("\n");
+            self.push_str("if err != nil {\n");
+            self.push_str("return nil, ");
+            self.push_str(fmt);
+            self.push_str(".Errorf(\"failed to read discriminant: %w\", err)\n}\n");
+            uwriteln!(self.src, "switch {name}Discriminant(disc) {{");
+            for Case {
+                name: case_name,
+                ty,
+                ..
+            } in variant.cases.iter()
+            {
+                self.push_str("case ");
+                self.push_str(&name);
+                self.push_str("Discriminant_");
+                self.push_str(&case_name.to_upper_camel_case());
+                self.push_str(":\n");
+                if let Some(ty) = ty {
+                    self.push_str("payload, err := ");
+                    self.print_read_ty(ty, "r");
+                    self.push_str("\n");
+                    self.push_str("if err != nil { return nil, ");
+                    self.push_str(fmt);
+                    uwriteln!(
+                        self.src,
+                        r#".Errorf("failed to read `{case_name}` payload: %w", err) }}"#
+                    );
+                    uwriteln!(
+                        self.src,
+                        "return New{name}_{}(payload), nil",
+                        case_name.to_upper_camel_case()
+                    )
+                } else {
+                    uwriteln!(
+                        self.src,
+                        "return New{name}_{}(), nil",
+                        case_name.to_upper_camel_case()
+                    )
+                }
+            }
+            uwriteln!(
+                self.src,
+                r#"default: return nil, {fmt}.Errorf("unknown discriminant value %d", disc) }}"#
+            );
+            self.push_str("}\n");
+        }
     }
 
     fn type_option(&mut self, id: TypeId, _name: &str, payload: &Type, docs: &Docs) {
-        self.print_typedef_option(id, payload, docs);
+        if let Some(name) = self.name_of(id) {
+            self.godoc(docs);
+            self.push_str(&format!("type {}", name));
+            self.push_str("=");
+            self.print_option(payload, true);
+            self.push_str("\n");
+        }
     }
 
     fn type_result(&mut self, id: TypeId, _name: &str, result: &Result_, docs: &Docs) {
-        self.print_typedef_result(id, result, docs);
+        if let Some(name) = self.name_of(id) {
+            self.godoc(docs);
+            self.push_str(&format!("type {}", name));
+            self.push_str("=");
+            self.print_result(result);
+            self.push_str("\n");
+        }
     }
 
-    fn type_enum(&mut self, id: TypeId, name: &str, enum_: &Enum, docs: &Docs) {
-        self.print_typedef_enum(id, name, enum_, docs, &[], Box::new(|_| String::new()));
+    fn type_enum(&mut self, id: TypeId, _name: &str, enum_: &Enum, docs: &Docs) {
+        let info = self.info(id);
+        if let Some(name) = self.name_of(id) {
+            self.godoc(docs);
+            uwrite!(self.src, r#"type {name} "#);
+            self.int_repr(enum_.tag());
+            self.push_str("\n");
+            self.push_str("const (\n");
+            for (
+                i,
+                EnumCase {
+                    name: case_name,
+                    docs,
+                    ..
+                },
+            ) in enum_.cases.iter().enumerate()
+            {
+                self.godoc(docs);
+                self.push_str(&name);
+                self.push_str("_");
+                self.push_str(&case_name.to_upper_camel_case());
+                self.push_str(" ");
+                self.push_str(&name);
+                uwriteln!(self.src, " = {i}")
+            }
+            self.push_str(")\n");
 
-        let name = to_upper_camel_case(name);
+            uwriteln!(
+                self.src,
+                r#"func (v {name}) String() string {{ switch v {{"#
+            );
+            for EnumCase {
+                name: case_name, ..
+            } in enum_.cases.iter()
+            {
+                self.push_str("case ");
+                self.push_str(&name);
+                self.push_str("_");
+                self.push_str(&case_name.to_upper_camel_case());
+                self.push_str(": return \"");
+                self.push_str(&case_name);
+                self.push_str("\"\n");
+            }
+            self.push_str("default: panic(\"invalid enum\")\n}\n");
+            self.push_str("}\n");
 
-        self.print_enum_encode(&name, &enum_.cases);
-        self.print_enum_encode(&format!("&{name}"), &enum_.cases);
+            if info.error {
+                uwriteln!(
+                    self.src,
+                    r#"func (v {name}) Error() string {{ return v.String() }}"#
+                );
+            }
 
-        self.print_noop_subscribe(&name);
-        self.print_noop_subscribe(&format!("&{name}"));
+            let fmt = self.deps.fmt();
+            let wrpc = self.deps.wrpc();
+            uwriteln!(
+                self.src,
+                r#"func (v {name}) WriteTo(w {wrpc}.ByteWriter) error {{"#,
+            );
+            self.push_str("if err := ");
+            match enum_.tag() {
+                Int::U8 => {
+                    self.print_write_ty(&Type::U8, "uint8(v)", "w");
+                }
+                Int::U16 => {
+                    self.print_write_ty(&Type::U16, "uint16(v)", "w");
+                }
+                Int::U32 => {
+                    self.print_write_ty(&Type::U32, "uint32(v)", "w");
+                }
+                Int::U64 => {
+                    self.print_write_ty(&Type::U64, "uint64(v)", "w");
+                }
+            }
+            self.push_str("; err != nil { return ");
+            self.push_str(fmt);
+            self.push_str(".Errorf(\"failed to write discriminant: %w\", err)\n}\n");
+            self.push_str("return nil\n");
+            self.push_str("}\n");
 
-        self.print_enum_receive(&name, &enum_.cases);
+            uwrite!(
+                self.src,
+                r#"func Read{name}(r {wrpc}.ByteReader) (v {name}, err error) {{
+    disc, err := "#,
+            );
+            match enum_.tag() {
+                Int::U8 => {
+                    self.print_read_ty(&Type::U8, "r");
+                }
+                Int::U16 => {
+                    self.print_read_ty(&Type::U16, "r");
+                }
+                Int::U32 => {
+                    self.print_read_ty(&Type::U32, "r");
+                }
+                Int::U64 => {
+                    self.print_read_ty(&Type::U64, "r");
+                }
+            }
+            self.push_str("\n");
+            self.push_str("if err != nil {\n");
+            self.push_str("return v, ");
+            self.push_str(fmt);
+            self.push_str(".Errorf(\"failed to read discriminant: %w\", err)\n}\n");
+            uwriteln!(self.src, "switch {name}(disc) {{");
+            for EnumCase {
+                name: case_name, ..
+            } in enum_.cases.iter()
+            {
+                self.push_str("case ");
+                self.push_str(&name);
+                self.push_str("_");
+                self.push_str(&case_name.to_upper_camel_case());
+                self.push_str(":\n");
+                self.push_str("return ");
+                self.push_str(&name);
+                self.push_str("_");
+                self.push_str(&case_name.to_upper_camel_case());
+                self.push_str(", nil\n");
+            }
+            uwriteln!(
+                self.src,
+                r#"default: return v, {fmt}.Errorf("unknown discriminant value %d", disc) }}"#
+            );
+            self.push_str("}\n");
+        }
     }
 
     fn type_alias(&mut self, id: TypeId, _name: &str, ty: &Type, docs: &Docs) {
-        self.print_typedef_alias(id, ty, docs);
+        if let Some(name) = self.name_of(id) {
+            self.godoc(docs);
+            self.push_str(&format!("type {name}"));
+            self.push_str(" = ");
+            self.print_ty(ty, true);
+            self.push_str("\n");
+        }
+
+        if self.is_exported_resource(id) {
+            self.godoc(docs);
+            let name = self.resolve.types[id].name.as_ref().unwrap();
+            let name = name.to_upper_camel_case();
+            self.push_str(&format!("type {name}Borrow"));
+            self.push_str(" = ");
+            self.print_ty(ty, true);
+            self.push_str("Borrow");
+            self.push_str("\n");
+        }
     }
 
     fn type_list(&mut self, id: TypeId, _name: &str, ty: &Type, docs: &Docs) {
-        for name in self.modes_of(id) {
+        if let Some(name) = self.name_of(id) {
             self.godoc(docs);
             self.push_str(&format!("type {}", name));
             self.push_str(" = ");
             self.print_list(ty);
-            self.push_str(";\n");
+            self.push_str("\n");
         }
     }
 
@@ -1886,7 +2221,7 @@ impl<'a> wrpc::Receive<'a> for {camel} {{
         self.src
             .push_str(&format!("type {}", name.to_upper_camel_case()));
         self.src.push_str(" = ");
-        self.print_ty(ty);
-        self.src.push_str(";\n");
+        self.print_ty(ty, true);
+        self.src.push_str("\n");
     }
 }
