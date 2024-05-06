@@ -10,7 +10,7 @@ import (
 	"syscall"
 
 	"github.com/nats-io/nats.go"
-	server "github.com/wrpc/wrpc/examples/go/hello-nats-server/bindings"
+	server "github.com/wrpc/wrpc/examples/go/hello-server/bindings"
 	wrpcnats "github.com/wrpc/wrpc/go/nats"
 )
 

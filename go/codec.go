@@ -57,12 +57,44 @@ func (v *Tuple3[T0, T1, T2]) WriteTo(w ByteWriter, f0 func(T0, ByteWriter) error
 	return nil
 }
 
-type Result[T, U any] struct {
-	Ok  *T
-	Err *U
+type Tuple4[T0, T1, T2, T3 any] struct {
+	V0 T0
+	V1 T1
+	V2 T2
+	V3 T3
 }
 
-func (v *Result[T, U]) WriteTo(w ByteWriter, fOk func(*T, ByteWriter) error, fErr func(*U, ByteWriter) error) error {
+type Tuple5[T0, T1, T2, T3, T4 any] struct {
+	V0 T0
+	V1 T1
+	V2 T2
+	V3 T3
+	V4 T4
+}
+
+type Tuple6[T0, T1, T2, T3, T4, T5 any] struct {
+	V0 T0
+	V1 T1
+	V2 T2
+	V3 T3
+	V4 T4
+	V5 T5
+}
+
+type Result[Ok, Err any] struct {
+	Ok  *Ok
+	Err *Err
+}
+
+func Ok[Err, Ok any](v Ok) *Result[Ok, Err] {
+	return &Result[Ok, Err]{Ok: &v}
+}
+
+func Err[Ok, Err any](v Err) *Result[Ok, Err] {
+	return &Result[Ok, Err]{Err: &v}
+}
+
+func (v *Result[Ok, Err]) WriteTo(w ByteWriter, fOk func(*Ok, ByteWriter) error, fErr func(*Err, ByteWriter) error) error {
 	switch {
 	case v.Ok == nil && v.Err == nil:
 		return errors.New("both result variants cannot be nil")

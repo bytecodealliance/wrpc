@@ -1,0 +1,5 @@
+package wrpc:wrpc;
+
+world keyvalue-client {
+    import wrpc:keyvalue/store@0.2.0-draft;
+}
