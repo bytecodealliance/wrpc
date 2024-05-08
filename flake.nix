@@ -71,6 +71,12 @@
 
         doCheck = false; # testing is performed in checks via `nextest`
 
+        targets.arm-unknown-linux-gnueabihf = false;
+        targets.arm-unknown-linux-musleabihf = false;
+        targets.armv7-unknown-linux-gnueabihf = false;
+        targets.armv7-unknown-linux-musleabihf = false;
+        targets.powerpc64le-unknown-linux-gnu = false;
+        targets.s390x-unknown-linux-gnu = false;
         targets.wasm32-unknown-unknown = false;
         targets.wasm32-wasi = false;
 
