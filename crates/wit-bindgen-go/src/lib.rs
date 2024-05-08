@@ -1,14 +1,19 @@
 use crate::interface::InterfaceGenerator;
 use anyhow::Result;
 use core::fmt::Display;
-use heck::*;
+use heck::{ToLowerCamelCase, ToSnakeCase, ToUpperCamelCase};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::{self, Write as _};
 use std::io::{Read, Write};
 use std::mem;
 use std::process::{Command, Stdio};
 use wit_bindgen_core::{
-    uwrite, uwriteln, wit_parser::*, Files, InterfaceGenerator as _, Source, Types, WorldGenerator,
+    uwrite, uwriteln,
+    wit_parser::{
+        Flags, FlagsRepr, Function, Int, InterfaceId, PackageId, Resolve, TypeId, World, WorldId,
+        WorldKey,
+    },
+    Files, InterfaceGenerator as _, Source, Types, WorldGenerator,
 };
 
 mod interface;
@@ -102,9 +107,10 @@ impl Deps {
 
     fn import(&mut self, name: String, path: String) -> String {
         if let Some(old) = self.map.insert(name.clone(), path.clone()) {
-            if old != path {
-                panic!("dependency path mismatch, import of `{name}` refers to both `{old}` and `{path}`")
-            }
+            assert!(
+                old == path,
+                "dependency path mismatch, import of `{name}` refers to both `{old}` and `{path}`"
+            );
         }
         name
     }
@@ -114,7 +120,7 @@ impl Display for Deps {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "import (")?;
         for (k, v) in &self.map {
-            writeln!(f, r#"{k} "{v}""#)?
+            writeln!(f, r#"{k} "{v}""#)?;
         }
         writeln!(f, ")")
     }
@@ -149,6 +155,7 @@ impl Default for Opts {
 }
 
 impl Opts {
+    #[must_use]
     pub fn build(self) -> Box<dyn WorldGenerator> {
         let mut r = GoWrpc::new();
         r.opts = self;
@@ -246,7 +253,7 @@ func Serve(c {wrpc}.Client, h interface{{ {bound} }}) (stop func() error, err er
             self.export_paths.len()
         );
         self.src.push_str(
-            r#"stop = func() error {
+            r"stop = func() error {
             for _, stop := range stops {
                 if err := stop(); err != nil {
                     return err
@@ -254,7 +261,7 @@ func Serve(c {wrpc}.Client, h interface{{ {bound} }}) (stop func() error, err er
             }
             return nil
         }
-"#,
+",
         );
 
         for (i, path) in self.export_paths.iter().enumerate() {
@@ -507,7 +514,7 @@ package {go_name}
             self.deps
         );
         if self.opts.gofmt {
-            gofmt(src.as_mut_string())
+            gofmt(src.as_mut_string());
         }
         let file = format!("{go_name}.wrpc.go");
         files.push(&file, generated_preamble().as_bytes());
@@ -549,6 +556,7 @@ struct FnSig {
     self_is_first_param: bool,
 }
 
+#[must_use]
 pub fn to_package_ident(name: &str) -> String {
     match name {
         // Escape Go keywords.
@@ -585,6 +593,7 @@ pub fn to_package_ident(name: &str) -> String {
     }
 }
 
+#[must_use]
 pub fn to_go_ident(name: &str) -> String {
     match name {
         // Escape Go keywords.

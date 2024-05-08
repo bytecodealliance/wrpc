@@ -180,7 +180,7 @@ pub fn to_wrpc_value<T: WasiView>(
                     i < 64,
                     "flag discriminants over 64 currently cannot be represented"
                 );
-                v |= 1 << i
+                v |= 1 << i;
             }
             Ok(wrpc_transport::Value::Flags(v))
         }
@@ -297,7 +297,7 @@ impl HostInputStream for IncomingValueInputStream {
                     "stream item type mismatch"
                 )))?
             };
-            buffer.put_u8(v)
+            buffer.put_u8(v);
         }
         let buffer = buffer.freeze();
         if buffer.len() > size {
@@ -423,7 +423,7 @@ pub fn from_wrpc_value<T: WasiView>(
             let mut names = Vec::with_capacity(64);
             for (i, name) in zip(0..64, ty.names()) {
                 if v & (1 << i) != 0 {
-                    names.push(name.to_string())
+                    names.push(name.to_string());
                 }
             }
             Ok(Val::Flags(names))

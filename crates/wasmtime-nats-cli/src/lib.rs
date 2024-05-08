@@ -68,7 +68,7 @@ pub async fn run() -> anyhow::Result<()> {
             "file" => {
                 let wasm = wasm
                     .to_file_path()
-                    .map_err(|_| anyhow!("failed to convert Wasm URL to file path"))?;
+                    .map_err(|()| anyhow!("failed to convert Wasm URL to file path"))?;
                 fs::read(wasm)
                     .await
                     .context("failed to read Wasm from file URL")?
@@ -152,5 +152,5 @@ pub async fn run() -> anyhow::Result<()> {
         .call_run(&mut store)
         .await
         .context("failed to run component")?
-        .map_err(|_| anyhow!("component failed"))
+        .map_err(|()| anyhow!("component failed"))
 }

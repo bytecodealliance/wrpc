@@ -55,14 +55,14 @@ impl Parse for Config {
                 match field.into_value() {
                     Opt::Path(s) => {
                         source = Some(match source {
-                            Some(Source::Path(_)) | Some(Source::Inline(_, Some(_))) => {
+                            Some(Source::Path(_) | Source::Inline(_, Some(_))) => {
                                 return Err(Error::new(s.span(), "cannot specify second source"));
                             }
                             Some(Source::Inline(i, None)) => {
                                 Source::Inline(i, Some(PathBuf::from(s.value())))
                             }
                             None => Source::Path(s.value()),
-                        })
+                        });
                     }
                     Opt::World(s) => {
                         if world.is_some() {
@@ -79,12 +79,12 @@ impl Parse for Config {
                                 Source::Inline(s.value(), Some(PathBuf::from(p)))
                             }
                             None => Source::Inline(s.value(), None),
-                        })
+                        });
                     }
                     Opt::UseStdFeature => opts.std_feature = true,
                     Opt::RawStrings => opts.raw_strings = true,
                     Opt::Ownership(ownership) => opts.ownership = ownership,
-                    Opt::Skip(list) => opts.skip.extend(list.iter().map(|i| i.value())),
+                    Opt::Skip(list) => opts.skip.extend(list.iter().map(syn::LitStr::value)),
                     Opt::Stubs => {
                         opts.stubs = true;
                     }
@@ -93,35 +93,35 @@ impl Parse for Config {
                         opts.additional_derive_attributes = paths
                             .into_iter()
                             .map(|p| p.into_token_stream().to_string())
-                            .collect()
+                            .collect();
                     }
                     Opt::With(with) => opts.with.extend(with),
                     Opt::GenerateUnusedTypes(enable) => {
                         opts.generate_unused_types = enable.value();
                     }
                     Opt::AnyhowPath(path) => {
-                        opts.anyhow_path = Some(path.into_token_stream().to_string())
+                        opts.anyhow_path = Some(path.into_token_stream().to_string());
                     }
                     Opt::AsyncTraitPath(path) => {
-                        opts.async_trait_path = Some(path.into_token_stream().to_string())
+                        opts.async_trait_path = Some(path.into_token_stream().to_string());
                     }
                     Opt::BitflagsPath(path) => {
-                        opts.bitflags_path = Some(path.into_token_stream().to_string())
+                        opts.bitflags_path = Some(path.into_token_stream().to_string());
                     }
                     Opt::BytesPath(path) => {
-                        opts.bytes_path = Some(path.into_token_stream().to_string())
+                        opts.bytes_path = Some(path.into_token_stream().to_string());
                     }
                     Opt::FuturesPath(path) => {
-                        opts.futures_path = Some(path.into_token_stream().to_string())
+                        opts.futures_path = Some(path.into_token_stream().to_string());
                     }
                     Opt::TokioPath(path) => {
-                        opts.tokio_path = Some(path.into_token_stream().to_string())
+                        opts.tokio_path = Some(path.into_token_stream().to_string());
                     }
                     Opt::TracingPath(path) => {
-                        opts.tracing_path = Some(path.into_token_stream().to_string())
+                        opts.tracing_path = Some(path.into_token_stream().to_string());
                     }
                     Opt::WrpcTransportPath(path) => {
-                        opts.wrpc_transport_path = Some(path.into_token_stream().to_string())
+                        opts.wrpc_transport_path = Some(path.into_token_stream().to_string());
                     }
                 }
             }
@@ -206,7 +206,7 @@ impl Config {
 
         // Include a dummy `include_bytes!` for any files we read so rustc knows that
         // we depend on the contents of those files.
-        for file in self.files.iter() {
+        for file in &self.files {
             contents.extend(
                 format!(
                     "const _: &[u8] = include_bytes!(r#\"{}\"#);\n",

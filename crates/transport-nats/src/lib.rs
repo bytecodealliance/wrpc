@@ -134,7 +134,7 @@ impl Future for Transmission {
 
 impl Drop for Transmission {
     fn drop(&mut self) {
-        self.handle.abort()
+        self.handle.abort();
     }
 }
 
@@ -152,6 +152,7 @@ impl Client {
         }
     }
 
+    #[must_use]
     pub fn static_subject(&self, instance: &str, func: &str) -> String {
         let mut s = String::with_capacity(
             self.prefix.len() + PROTOCOL.len() + instance.len() + func.len() + 3,
@@ -297,6 +298,7 @@ pub struct Subscriber {
 }
 
 impl Subscriber {
+    #[must_use]
     pub fn new(nats: Arc<async_nats::Client>) -> Self {
         Self { nats }
     }

@@ -32,7 +32,7 @@ async fn main() -> anyhow::Result<()> {
         let hello = bindings::wrpc_examples::hello::handler::hello(&wrpc)
             .await
             .context("failed to invoke `wrpc-examples.hello/handler.hello`")?;
-        eprintln!("{prefix}: {hello}")
+        eprintln!("{prefix}: {hello}");
     }
     Ok(())
 }

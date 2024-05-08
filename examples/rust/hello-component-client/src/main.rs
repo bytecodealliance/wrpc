@@ -1,3 +1,4 @@
+#[allow(clippy::missing_safety_doc)]
 mod bindings {
     wit_bindgen::generate!();
 }
