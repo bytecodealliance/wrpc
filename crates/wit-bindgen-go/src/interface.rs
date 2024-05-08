@@ -283,7 +283,7 @@ impl InterfaceGenerator<'_> {
     fn print_read_tyid(&mut self, id: TypeId, reader: &str) {
         let ty = &self.resolve.types[id];
         if let Some(ref name) = ty.name {
-            let read = self.type_path_with_name(id, format!("Read{}", to_upper_camel_case(&name)));
+            let read = self.type_path_with_name(id, format!("Read{}", to_upper_camel_case(name)));
             uwrite!(self.src, "{read}({reader})",);
             return;
         }
@@ -928,7 +928,7 @@ impl InterfaceGenerator<'_> {
     pub(super) fn generate_exports<'a>(
         &mut self,
         identifier: Identifier<'a>,
-        funcs: impl Iterator<Item = &'a Function> + Clone + ExactSizeIterator,
+        funcs: impl Clone + ExactSizeIterator<Item = &'a Function>,
     ) -> bool {
         let mut traits = BTreeMap::new();
         let mut funcs_to_export = Vec::new();
@@ -1102,7 +1102,7 @@ impl InterfaceGenerator<'_> {
                     r#"{slog}.DebugContext(ctx, "reading parameter", "i", {i})
         p{i}, err := "#
                 );
-                self.print_read_ty(ty, &format!("r"));
+                self.print_read_ty(ty, "r");
                 self.push_str("\n");
                 uwriteln!(
                     self.src,
@@ -1474,7 +1474,7 @@ impl InterfaceGenerator<'_> {
     fn print_tuple(&mut self, Tuple { types }: &Tuple, decl: bool) {
         match types.as_slice() {
             [] => self.push_str("struct{}"),
-            [ty] => self.print_opt_ty(&ty, decl),
+            [ty] => self.print_opt_ty(ty, decl),
             _ => {
                 let wrpc = self.deps.wrpc();
                 if decl {
@@ -1504,8 +1504,8 @@ impl InterfaceGenerator<'_> {
                         let name = self.type_path_with_name(*id, to_upper_camel_case(name));
                         self.push_str(&name);
                     }
-                    TypeDefKind::List(ty) => self.print_list(&ty),
-                    TypeDefKind::Option(ty) => self.print_option(&ty, decl),
+                    TypeDefKind::List(ty) => self.print_list(ty),
+                    TypeDefKind::Option(ty) => self.print_option(ty, decl),
                     TypeDefKind::Tuple(ty) => self.print_tuple(ty, decl),
                     _ => {
                         if decl {
@@ -1794,7 +1794,7 @@ func (v *{name}) WriteTo(w {wrpc}.ByteWriter) error {{"#
     }
 
     fn type_flags(&mut self, _id: TypeId, name: &str, flags: &Flags, docs: &Docs) {
-        self.src.push_str(&format!("bitflags::bitflags! {{\n",));
+        self.src.push_str("bitflags::bitflags! {\n");
         self.godoc(docs);
         let repr = RustFlagsRepr::new(flags);
         let name = to_upper_camel_case(name);
@@ -1861,7 +1861,7 @@ func (v *{name}) WriteTo(w {wrpc}.ByteWriter) error {{"#
                 self.push_str("Discriminant_");
                 self.push_str(&case_name.to_upper_camel_case());
                 self.push_str(": return \"");
-                self.push_str(&case_name);
+                self.push_str(case_name);
                 self.push_str("\"\n");
             }
             self.push_str("default: panic(\"invalid variant\")\n}\n");
@@ -1953,14 +1953,14 @@ func (v *{name}) WriteTo(w {wrpc}.ByteWriter) error {{"#
                 self.push_str(":\n");
                 if let Some(ty) = ty {
                     self.push_str("payload, ok := v.payload.(");
-                    self.print_opt_ty(&ty, true);
+                    self.print_opt_ty(ty, true);
                     self.push_str(")\n");
                     self.push_str("if !ok { return ");
                     let errors = self.deps.errors();
                     self.push_str(errors);
                     self.push_str(".New(\"invalid payload\") }\n");
                     self.push_str("if err := ");
-                    self.print_write_ty(&ty, "payload", "w");
+                    self.print_write_ty(ty, "payload", "w");
                     self.push_str("; err != nil { return ");
                     self.push_str(fmt);
                     self.push_str(".Errorf(\"failed to write payload: %w\", err)\n}\n");
@@ -2097,7 +2097,7 @@ func (v *{name}) WriteTo(w {wrpc}.ByteWriter) error {{"#
                 self.push_str("_");
                 self.push_str(&case_name.to_upper_camel_case());
                 self.push_str(": return \"");
-                self.push_str(&case_name);
+                self.push_str(case_name);
                 self.push_str("\"\n");
             }
             self.push_str("default: panic(\"invalid enum\")\n}\n");

@@ -14,6 +14,7 @@ mod bindings {
 }
 
 #[derive(Debug, Subcommand)]
+#[allow(clippy::enum_variant_names)]
 enum Operation {
     #[clap(name = "store.get")]
     StoreGet { bucket: String, key: String },
