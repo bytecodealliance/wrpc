@@ -1,0 +1,9 @@
+package wrpc:runtime@0.1.0;
+
+world interfaces {
+    import wasi:keyvalue/store@0.2.0-draft;
+}
+
+world interfaces-wrpc {
+    import wrpc:keyvalue/store@0.2.0-draft;
+}

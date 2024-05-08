@@ -1,0 +1,2 @@
+wasi-keyvalue = "https://github.com/WebAssembly/wasi-keyvalue/archive/main.tar.gz"
+wrpc-keyvalue = "https://github.com/wrpc/keyvalue/archive/main.tar.gz"

@@ -1,0 +1,67 @@
+[package]
+name = "wrpc-wasmtime-nats-cli"
+version = "0.1.0"
+description = "wRPC Wasmtime NATS CLI"
+publish = false
+
+authors.workspace = true
+categories.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+async-nats = { workspace = true }
+clap = { workspace = true, features = [
+    "color",
+    "derive",
+    "error-context",
+    "help",
+    "std",
+    "suggestions",
+    "usage",
+] }
+futures = { workspace = true }
+hyper = { workspace = true, features = ["server"] }
+hyper-util = { workspace = true, features = ["server-auto", "tokio"] }
+reqwest = { workspace = true }
+tokio = { workspace = true, features = ["fs"] }
+tracing = { workspace = true, features = ["attributes"] }
+tracing-subscriber = { workspace = true, features = [
+    "ansi",
+    "env-filter",
+    "fmt",
+] }
+url = { workspace = true }
+wasmcloud-component-adapters = { workspace = true }
+wasmparser = { workspace = true }
+wasmtime = { workspace = true, features = [
+    "addr2line",
+    "async",
+    "cache",
+    "coredump",
+    "cranelift",
+    "demangle",
+    "gc",
+    "parallel-compilation",
+    "runtime",
+    "threads",
+    "wat",
+] }
+wasmtime-wasi = { workspace = true }
+wasmtime-wasi-http = { workspace = true }
+wit-bindgen-wrpc = { workspace = true }
+wit-component = { workspace = true }
+wit-parser = { workspace = true }
+wrpc-cli = { workspace = true, features = ["nats"] }
+wrpc-transport = { workspace = true }
+wrpc-transport-nats = { workspace = true }
+wrpc-types = { workspace = true }
+wrpc-interface-http = { workspace = true, features = [
+    "http",
+    "http-body",
+    "hyper",
+    "wasmtime-wasi-http",
+] }
+wrpc-runtime-wasmtime = { workspace = true }

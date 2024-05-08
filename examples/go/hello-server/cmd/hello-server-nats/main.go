@@ -17,6 +17,7 @@ import (
 type Handler struct{}
 
 func (Handler) Hello(ctx context.Context) (string, error) {
+	slog.InfoContext(ctx, "handling `wrpc-examples:hello/handler.hello`")
 	return "hello from Go", nil
 }
 
