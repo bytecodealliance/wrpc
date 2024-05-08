@@ -13,6 +13,7 @@ fn version() -> &'static str {
 
 #[derive(Debug, Parser)]
 #[command(version = version())]
+#[allow(clippy::large_enum_variant)]
 enum Opt {
     /// Generates bindings for Rust wRPC applications
     Rust {

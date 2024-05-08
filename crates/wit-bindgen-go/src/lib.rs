@@ -100,7 +100,7 @@ impl Deps {
         "wrpc"
     }
 
-    fn import<'a>(&mut self, name: String, path: String) -> String {
+    fn import(&mut self, name: String, path: String) -> String {
         if let Some(old) = self.map.insert(name.clone(), path.clone()) {
             if old != path {
                 panic!("dependency path mismatch, import of `{name}` refers to both `{old}` and `{path}`")
@@ -152,7 +152,7 @@ impl Opts {
     pub fn build(self) -> Box<dyn WorldGenerator> {
         let mut r = GoWrpc::new();
         r.opts = self;
-        r.deps.package = r.opts.package.clone();
+        r.deps.package.clone_from(&r.opts.package);
         Box::new(r)
     }
 }
@@ -202,7 +202,7 @@ impl GoWrpc {
     ) {
         let path = compute_module_path(name, resolve, is_export);
         let import_name = path.join("__");
-        let import_path = if self.opts.package != "" {
+        let import_path = if !self.opts.package.is_empty() {
             format!("{}/{}", self.opts.package, path.join("/"))
         } else {
             path.join("/")

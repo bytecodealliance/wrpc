@@ -1,3 +1,5 @@
+#![allow(clippy::type_complexity)] // TODO: https://github.com/wrpc/wrpc/issues/2
+
 use core::future::Future;
 
 use anyhow::Context as _;

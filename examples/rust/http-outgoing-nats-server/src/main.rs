@@ -80,7 +80,7 @@ async fn main() -> anyhow::Result<()> {
     let Args { nats, prefix } = Args::parse();
 
     let native_roots = match rustls_native_certs::load_native_certs() {
-        Ok(certs) => certs.into(),
+        Ok(certs) => certs,
         Err(err) => {
             warn!(?err, "failed to load native root certificate store");
             vec![]

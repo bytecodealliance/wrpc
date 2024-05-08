@@ -1,3 +1,5 @@
+#![allow(clippy::type_complexity)] // TODO: https://github.com/wrpc/wrpc/issues/2
+
 use core::fmt::{self, Display};
 use core::future::Future;
 use core::iter::zip;
@@ -327,7 +329,7 @@ pub fn from_wrpc_value<T: WasiView>(
         (wrpc_transport::Value::F32(v), Type::Float32) => Ok(Val::Float32(v)),
         (wrpc_transport::Value::F64(v), Type::Float64) => Ok(Val::Float64(v)),
         (wrpc_transport::Value::Char(v), Type::Char) => Ok(Val::Char(v)),
-        (wrpc_transport::Value::String(v), Type::String) => Ok(Val::String(v.into())),
+        (wrpc_transport::Value::String(v), Type::String) => Ok(Val::String(v)),
         (wrpc_transport::Value::List(vs), Type::List(ty)) => {
             let mut w_vs = Vec::with_capacity(vs.len());
             let el_ty = ty.ty();

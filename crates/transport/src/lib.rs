@@ -1,3 +1,5 @@
+#![allow(clippy::type_complexity)] // TODO: https://github.com/wrpc/wrpc/issues/2
+
 use core::array;
 use core::borrow::Borrow;
 use core::fmt::Debug;

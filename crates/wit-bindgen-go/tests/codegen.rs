@@ -49,6 +49,6 @@ replace github.com/wrpc/wrpc/go v0.0.0-unpublished => {}"#,
                 .display(),
         ),
     )
-    .expect(&format!("failed to write `{}`", go_mod.display()));
+    .unwrap_or_else(|_| panic!("failed to write `{}`", go_mod.display()));
     test_helpers::run_command(Command::new("go").args(["test", "./..."]).current_dir(dir));
 }
