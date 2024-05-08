@@ -6,7 +6,7 @@ use wit_bindgen_core::{wit_parser, Files, WorldGenerator};
 use wit_parser::Resolve;
 
 /// Helper for passing VERSION to opt.
-/// If CARGO_VERSION_INFO is set, use it, otherwise use CARGO_PKG_VERSION.
+/// If `CARGO_VERSION_INFO` is set, use it, otherwise use `CARGO_PKG_VERSION`.
 fn version() -> &'static str {
     option_env!("CARGO_VERSION_INFO").unwrap_or(env!("CARGO_PKG_VERSION"))
 }
@@ -68,10 +68,10 @@ fn main() -> Result<()> {
             Some(path) => path.join(name),
             None => name.into(),
         };
-        println!("Generating {:?}", dst);
+        println!("Generating {dst:?}");
 
         if opt.check {
-            let prev = std::fs::read(&dst).with_context(|| format!("failed to read {:?}", dst))?;
+            let prev = std::fs::read(&dst).with_context(|| format!("failed to read {dst:?}"))?;
             if prev != contents {
                 // The contents differ. If it looks like textual contents, do a
                 // line-by-line comparison so that we can tell users what the
@@ -96,9 +96,9 @@ fn main() -> Result<()> {
 
         if let Some(parent) = dst.parent() {
             std::fs::create_dir_all(parent)
-                .with_context(|| format!("failed to create {:?}", parent))?;
+                .with_context(|| format!("failed to create {parent:?}"))?;
         }
-        std::fs::write(&dst, contents).with_context(|| format!("failed to write {:?}", dst))?;
+        std::fs::write(&dst, contents).with_context(|| format!("failed to write {dst:?}"))?;
     }
 
     Ok(())
@@ -120,5 +120,5 @@ fn gen_world(
 #[test]
 fn verify_cli() {
     use clap::CommandFactory;
-    Opt::command().debug_assert()
+    Opt::command().debug_assert();
 }

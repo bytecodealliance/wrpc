@@ -162,12 +162,12 @@ async fn rust_bindgen() -> anyhow::Result<()> {
                         Ok((
                             0xfe,
                             0xfeff,
-                            0xfeffffff,
-                            0xfeffffffffffffff,
+                            0xfeff_ffff,
+                            0xfeff_ffff_ffff_ffff,
                             0x7e,
                             0x7eff,
-                            0x7effffff,
-                            0x7effffffffffffff,
+                            0x7eff_ffff,
+                            0x7eff_ffff_ffff_ffff,
                             0.42,
                             0.4242,
                         ))
@@ -258,12 +258,12 @@ async fn rust_bindgen() -> anyhow::Result<()> {
                         assert_eq!(v, (
                             0xfe,
                             0xfeff,
-                            0xfeffffff,
-                            0xfeffffffffffffff,
+                            0xfeff_ffff,
+                            0xfeff_ffff_ffff_ffff,
                             0x7e,
                             0x7eff,
-                            0x7effffff,
-                            0x7effffffffffffff,
+                            0x7eff_ffff,
+                            0x7eff_ffff_ffff_ffff,
                             0.42,
                             0.4242,
                         ));
@@ -395,12 +395,12 @@ async fn rust_dynamic() -> anyhow::Result<()> {
                 Value::Bool(true),
                 Value::U8(0xfe),
                 Value::U16(0xfeff),
-                Value::U32(0xfeffffff),
-                Value::U64(0xfeffffffffffffff),
+                Value::U32(0xfeff_ffff),
+                Value::U64(0xfeff_ffff_ffff_ffff),
                 Value::S8(0x7e),
                 Value::S16(0x7eff),
-                Value::S32(0x7effffff),
-                Value::S64(0x7effffffffffffff),
+                Value::S32(0x7eff_ffff),
+                Value::S64(0x7eff_ffff_ffff_ffff),
                 Value::F32(0.42),
                 Value::F64(0.4242),
                 Value::Char('a'),
@@ -415,35 +415,35 @@ async fn rust_dynamic() -> anyhow::Result<()> {
                     Value::Bool(true),
                     Value::U8(0xfe),
                     Value::U16(0xfeff),
-                    Value::U32(0xfeffffff),
-                    Value::U64(0xfeffffffffffffff),
+                    Value::U32(0xfeff_ffff),
+                    Value::U64(0xfeff_ffff_ffff_ffff),
                     Value::S8(0x7e),
                     Value::S16(0x7eff),
-                    Value::S32(0x7effffff),
-                    Value::S64(0x7effffffffffffff),
+                    Value::S32(0x7eff_ffff),
+                    Value::S64(0x7eff_ffff_ffff_ffff),
                     Value::F32(0.42),
                     Value::F64(0.4242),
                     Value::Char('a'),
                     Value::String("test".into()),
                     Value::Enum(0xfeff),
-                    Value::Flags(0xdeadbeef),
+                    Value::Flags(0xdead_beef),
                 ]),
                 Value::Tuple(vec![
                     Value::Bool(true),
                     Value::U8(0xfe),
                     Value::U16(0xfeff),
-                    Value::U32(0xfeffffff),
-                    Value::U64(0xfeffffffffffffff),
+                    Value::U32(0xfeff_ffff),
+                    Value::U64(0xfeff_ffff_ffff_ffff),
                     Value::S8(0x7e),
                     Value::S16(0x7eff),
-                    Value::S32(0x7effffff),
-                    Value::S64(0x7effffffffffffff),
+                    Value::S32(0x7eff_ffff),
+                    Value::S64(0x7eff_ffff_ffff_ffff),
                     Value::F32(0.42),
                     Value::F64(0.4242),
                     Value::Char('a'),
                     Value::String("test".into()),
                     Value::Enum(0xfeff),
-                    Value::Flags(0xdeadbeef),
+                    Value::Flags(0xdead_beef),
                 ]),
                 Value::Variant {
                     discriminant: 0,
@@ -456,18 +456,18 @@ async fn rust_dynamic() -> anyhow::Result<()> {
                 Value::Enum(0xfeff),
                 Value::Option(Some(Box::new(Value::Bool(true)))),
                 Value::Result(Ok(Some(Box::new(Value::Bool(true))))),
-                Value::Flags(0xdeadbeef),
+                Value::Flags(0xdead_beef),
             ],
             vec![
                 Value::Bool(true),
                 Value::U8(0xfe),
                 Value::U16(0xfeff),
-                Value::U32(0xfeffffff),
-                Value::U64(0xfeffffffffffffff),
+                Value::U32(0xfeff_ffff),
+                Value::U64(0xfeff_ffff_ffff_ffff),
                 Value::S8(0x7e),
                 Value::S16(0x7eff),
-                Value::S32(0x7effffff),
-                Value::S64(0x7effffffffffffff),
+                Value::S32(0x7eff_ffff),
+                Value::S64(0x7eff_ffff_ffff_ffff),
                 Value::F32(0.42),
                 Value::F64(0.4242),
                 Value::Char('a'),
@@ -482,35 +482,35 @@ async fn rust_dynamic() -> anyhow::Result<()> {
                     Value::Bool(true),
                     Value::U8(0xfe),
                     Value::U16(0xfeff),
-                    Value::U32(0xfeffffff),
-                    Value::U64(0xfeffffffffffffff),
+                    Value::U32(0xfeff_ffff),
+                    Value::U64(0xfeff_ffff_ffff_ffff),
                     Value::S8(0x7e),
                     Value::S16(0x7eff),
-                    Value::S32(0x7effffff),
-                    Value::S64(0x7effffffffffffff),
+                    Value::S32(0x7eff_ffff),
+                    Value::S64(0x7eff_ffff_ffff_ffff),
                     Value::F32(0.42),
                     Value::F64(0.4242),
                     Value::Char('a'),
                     Value::String("test".into()),
                     Value::Enum(0xfeff),
-                    Value::Flags(0xdeadbeef),
+                    Value::Flags(0xdead_beef),
                 ]),
                 Value::Tuple(vec![
                     Value::Bool(true),
                     Value::U8(0xfe),
                     Value::U16(0xfeff),
-                    Value::U32(0xfeffffff),
-                    Value::U64(0xfeffffffffffffff),
+                    Value::U32(0xfeff_ffff),
+                    Value::U64(0xfeff_ffff_ffff_ffff),
                     Value::S8(0x7e),
                     Value::S16(0x7eff),
-                    Value::S32(0x7effffff),
-                    Value::S64(0x7effffffffffffff),
+                    Value::S32(0x7eff_ffff),
+                    Value::S64(0x7eff_ffff_ffff_ffff),
                     Value::F32(0.42),
                     Value::F64(0.4242),
                     Value::Char('a'),
                     Value::String("test".into()),
                     Value::Enum(0xfeff),
-                    Value::Flags(0xdeadbeef),
+                    Value::Flags(0xdead_beef),
                 ]),
                 Value::Variant {
                     discriminant: 0,
@@ -523,7 +523,7 @@ async fn rust_dynamic() -> anyhow::Result<()> {
                 Value::Enum(0xfeff),
                 Value::Option(Some(Box::new(Value::Bool(true)))),
                 Value::Result(Ok(Some(Box::new(Value::Bool(true))))),
-                Value::Flags(0xdeadbeef),
+                Value::Flags(0xdead_beef),
             ],
         )
         .await
@@ -543,13 +543,13 @@ async fn rust_dynamic() -> anyhow::Result<()> {
         ));
         assert!(matches!(
             values.next().unwrap(),
-            (Value::U32(0xfeffffff), Value::U32(0xfeffffff))
+            (Value::U32(0xfeff_ffff), Value::U32(0xfeff_ffff))
         ));
         assert!(matches!(
             values.next().unwrap(),
             (
-                Value::U64(0xfeffffffffffffff),
-                Value::U64(0xfeffffffffffffff)
+                Value::U64(0xfeff_ffff_ffff_ffff),
+                Value::U64(0xfeff_ffff_ffff_ffff)
             )
         ));
         assert!(matches!(
@@ -562,13 +562,13 @@ async fn rust_dynamic() -> anyhow::Result<()> {
         ));
         assert!(matches!(
             values.next().unwrap(),
-            (Value::S32(0x7effffff), Value::S32(0x7effffff))
+            (Value::S32(0x7eff_ffff), Value::S32(0x7eff_ffff))
         ));
         assert!(matches!(
             values.next().unwrap(),
             (
-                Value::S64(0x7effffffffffffff),
-                Value::S64(0x7effffffffffffff)
+                Value::S64(0x7eff_ffff_ffff_ffff),
+                Value::S64(0x7eff_ffff_ffff_ffff)
             )
         ));
         assert!(matches!(
@@ -628,13 +628,13 @@ async fn rust_dynamic() -> anyhow::Result<()> {
             ));
             assert!(matches!(
                 values.next().unwrap(),
-                (Value::U32(0xfeffffff), Value::U32(0xfeffffff))
+                (Value::U32(0xfeff_ffff), Value::U32(0xfeff_ffff))
             ));
             assert!(matches!(
                 values.next().unwrap(),
                 (
-                    Value::U64(0xfeffffffffffffff),
-                    Value::U64(0xfeffffffffffffff)
+                    Value::U64(0xfeff_ffff_ffff_ffff),
+                    Value::U64(0xfeff_ffff_ffff_ffff)
                 )
             ));
             assert!(matches!(
@@ -647,13 +647,13 @@ async fn rust_dynamic() -> anyhow::Result<()> {
             ));
             assert!(matches!(
                 values.next().unwrap(),
-                (Value::S32(0x7effffff), Value::S32(0x7effffff))
+                (Value::S32(0x7eff_ffff), Value::S32(0x7eff_ffff))
             ));
             assert!(matches!(
                 values.next().unwrap(),
                 (
-                    Value::S64(0x7effffffffffffff),
-                    Value::S64(0x7effffffffffffff)
+                    Value::S64(0x7eff_ffff_ffff_ffff),
+                    Value::S64(0x7eff_ffff_ffff_ffff)
                 )
             ));
             assert!(matches!(
@@ -678,7 +678,7 @@ async fn rust_dynamic() -> anyhow::Result<()> {
             ));
             assert!(matches!(
                 values.next().unwrap(),
-                (Value::Flags(0xdeadbeef), Value::Flags(0xdeadbeef))
+                (Value::Flags(0xdead_beef), Value::Flags(0xdead_beef))
             ));
         }
         let (Value::Tuple(p), Value::Tuple(r)) = values.next().unwrap() else {
@@ -700,13 +700,13 @@ async fn rust_dynamic() -> anyhow::Result<()> {
             ));
             assert!(matches!(
                 values.next().unwrap(),
-                (Value::U32(0xfeffffff), Value::U32(0xfeffffff))
+                (Value::U32(0xfeff_ffff), Value::U32(0xfeff_ffff))
             ));
             assert!(matches!(
                 values.next().unwrap(),
                 (
-                    Value::U64(0xfeffffffffffffff),
-                    Value::U64(0xfeffffffffffffff)
+                    Value::U64(0xfeff_ffff_ffff_ffff),
+                    Value::U64(0xfeff_ffff_ffff_ffff)
                 )
             ));
             assert!(matches!(
@@ -719,13 +719,13 @@ async fn rust_dynamic() -> anyhow::Result<()> {
             ));
             assert!(matches!(
                 values.next().unwrap(),
-                (Value::S32(0x7effffff), Value::S32(0x7effffff))
+                (Value::S32(0x7eff_ffff), Value::S32(0x7eff_ffff))
             ));
             assert!(matches!(
                 values.next().unwrap(),
                 (
-                    Value::S64(0x7effffffffffffff),
-                    Value::S64(0x7effffffffffffff)
+                    Value::S64(0x7eff_ffff_ffff_ffff),
+                    Value::S64(0x7eff_ffff_ffff_ffff)
                 )
             ));
             assert!(matches!(
@@ -750,7 +750,7 @@ async fn rust_dynamic() -> anyhow::Result<()> {
             ));
             assert!(matches!(
                 values.next().unwrap(),
-                (Value::Flags(0xdeadbeef), Value::Flags(0xdeadbeef))
+                (Value::Flags(0xdead_beef), Value::Flags(0xdead_beef))
             ));
         }
         assert!(matches!(
@@ -793,7 +793,7 @@ async fn rust_dynamic() -> anyhow::Result<()> {
         ));
         assert!(matches!(
             values.next().unwrap(),
-            (Value::Flags(0xdeadbeef), Value::Flags(0xdeadbeef))
+            (Value::Flags(0xdead_beef), Value::Flags(0xdead_beef))
         ));
 
         let async_tuple_type = vec![
