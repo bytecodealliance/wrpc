@@ -72,7 +72,7 @@ jobs:
     name: wrpc-${{ matrix.config.target }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4.1.1
+      - uses: actions/checkout@v4.1.5
       - uses: ./.github/actions/install-nix
         with:
           cachixAuthToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
@@ -146,7 +146,7 @@ jobs:
     name: cargo ${{ matrix.check }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4.1.1
+      - uses: actions/checkout@v4.1.5
       - uses: ./.github/actions/install-nix
         with:
           cachixAuthToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
@@ -155,7 +155,7 @@ jobs:
   build-doc:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4.1.1
+      - uses: actions/checkout@v4.1.5
       - uses: ./.github/actions/install-nix
         with:
           cachixAuthToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
@@ -199,7 +199,7 @@ jobs:
       - build-bin
       - test-linux
     steps:
-      - uses: actions/checkout@v4.1.1
+      - uses: actions/checkout@v4.1.5
       - uses: ./.github/actions/install-nix
         with:
           cachixAuthToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
@@ -274,7 +274,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4.1.1
+      - uses: actions/checkout@v4.1.5
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
@@ -331,7 +331,7 @@ jobs:
     needs: cargo
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4.1.1
+      - uses: actions/checkout@v4.1.5
 
       - name: Extract tag context
         id: ctx
