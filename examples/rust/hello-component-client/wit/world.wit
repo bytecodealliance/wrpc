@@ -1,0 +1,5 @@
+package wrpc-examples:hello-component-client;
+
+world client {
+    include wrpc-examples:hello/client;
+}

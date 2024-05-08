@@ -11,19 +11,11 @@ use tokio::process::Command;
 use tokio::sync::{mpsc, oneshot, OnceCell};
 use tokio::task::JoinHandle;
 use tokio::{select, spawn};
-use tracing_subscriber::layer::SubscriberExt as _;
-use tracing_subscriber::util::SubscriberInitExt as _;
 
 static INIT: OnceCell<()> = OnceCell::const_new();
 
 async fn init_log() {
-    tracing_subscriber::registry()
-        .with(tracing_subscriber::fmt::layer().compact().without_time())
-        .with(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
-        .init()
+    wrpc_cli::tracing::init()
 }
 
 pub async fn init() {

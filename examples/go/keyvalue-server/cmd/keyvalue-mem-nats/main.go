@@ -31,6 +31,7 @@ func Ok[T any](v T) *wrpc.Result[T, store.Error] {
 }
 
 func (h *Handler) Delete(ctx context.Context, bucket string, key string) (*wrpc.Result[struct{}, store.Error], error) {
+	slog.InfoContext(ctx, "handling `wrpc:keyvalue/store.delete`", "bucket", bucket, "key", key)
 	v, ok := h.Load(bucket)
 	if !ok {
 		return wrpc.Err[struct{}](*errNoSuchStore), nil
@@ -44,6 +45,7 @@ func (h *Handler) Delete(ctx context.Context, bucket string, key string) (*wrpc.
 }
 
 func (h *Handler) Exists(ctx context.Context, bucket string, key string) (*wrpc.Result[bool, store.Error], error) {
+	slog.InfoContext(ctx, "handling `wrpc:keyvalue/store.exists`", "bucket", bucket, "key", key)
 	v, ok := h.Load(bucket)
 	if !ok {
 		return wrpc.Err[bool](*errNoSuchStore), nil
@@ -52,11 +54,13 @@ func (h *Handler) Exists(ctx context.Context, bucket string, key string) (*wrpc.
 	if !ok {
 		return wrpc.Err[bool](*errInvalidDataType), nil
 	}
+	slog.InfoContext(ctx, "delete", "bucket", bucket, "key", key)
 	_, ok = b.Load(key)
 	return Ok(ok), nil
 }
 
 func (h *Handler) Get(ctx context.Context, bucket string, key string) (*wrpc.Result[[]uint8, store.Error], error) {
+	slog.InfoContext(ctx, "handling `wrpc:keyvalue/store.get`", "bucket", bucket, "key", key)
 	v, ok := h.Load(bucket)
 	if !ok {
 		return wrpc.Err[[]uint8](*errNoSuchStore), nil
@@ -77,6 +81,7 @@ func (h *Handler) Get(ctx context.Context, bucket string, key string) (*wrpc.Res
 }
 
 func (h *Handler) Set(ctx context.Context, bucket string, key string, value []byte) (*wrpc.Result[struct{}, store.Error], error) {
+	slog.InfoContext(ctx, "handling `wrpc:keyvalue/store.set`", "bucket", bucket, "key", key, "value", value)
 	b := &sync.Map{}
 	v, ok := h.LoadOrStore(bucket, b)
 	if ok {
@@ -90,6 +95,7 @@ func (h *Handler) Set(ctx context.Context, bucket string, key string, value []by
 }
 
 func (h *Handler) ListKeys(ctx context.Context, bucket string, cursor *uint64) (*wrpc.Result[store.KeyResponse, store.Error], error) {
+	slog.InfoContext(ctx, "handling `wrpc:keyvalue/store.list-keys`", "bucket", bucket, "cursor", cursor)
 	if cursor != nil {
 		return wrpc.Err[store.KeyResponse](*store.NewError_Other("cursors are not supported")), nil
 	}

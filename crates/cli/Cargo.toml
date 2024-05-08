@@ -1,0 +1,28 @@
+[package]
+name = "wrpc-cli"
+version = "0.1.0"
+description = "wRPC CLI"
+publish = false
+
+authors.workspace = true
+categories.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = ["nats"]
+nats = ["dep:async-nats", "dep:tokio", "tokio/sync", "dep:url"]
+
+[dependencies]
+anyhow = { workspace = true }
+async-nats = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
+tracing-subscriber = { workspace = true, features = [
+    "ansi",
+    "env-filter",
+    "fmt",
+    "smallvec",
+    "tracing-log",
+] }
+url = { workspace = true, optional = true }
