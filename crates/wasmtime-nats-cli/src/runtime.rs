@@ -118,7 +118,7 @@ impl<C: wrpc_transport::Client + Send> wasmtime_bindings::wasi::keyvalue::store:
         key: String,
     ) -> anyhow::Result<Result<Option<Vec<u8>>>> {
         let bucket = self.table.get(&bucket).context("failed to get bucket")?;
-        let v = wrpc_bindings::wrpc::keyvalue::store::get(&self.wrpc, &bucket, &key)
+        let v = wrpc_bindings::wrpc::keyvalue::store::get(&self.wrpc, bucket, &key)
             .await
             .context("failed to invoke `wrpc:keyvalue/store.get`")?;
         Ok(v.map_err(FromWrpc::from_wrpc))
@@ -132,7 +132,7 @@ impl<C: wrpc_transport::Client + Send> wasmtime_bindings::wasi::keyvalue::store:
         value: Vec<u8>,
     ) -> anyhow::Result<Result<()>> {
         let bucket = self.table.get(&bucket).context("failed to get bucket")?;
-        let v = wrpc_bindings::wrpc::keyvalue::store::set(&self.wrpc, &bucket, &key, &value)
+        let v = wrpc_bindings::wrpc::keyvalue::store::set(&self.wrpc, bucket, &key, &value)
             .await
             .context("failed to invoke `wrpc:keyvalue/store.set`")?;
         Ok(v.map_err(FromWrpc::from_wrpc))
@@ -145,7 +145,7 @@ impl<C: wrpc_transport::Client + Send> wasmtime_bindings::wasi::keyvalue::store:
         key: String,
     ) -> anyhow::Result<Result<()>> {
         let bucket = self.table.get(&bucket).context("failed to get bucket")?;
-        let v = wrpc_bindings::wrpc::keyvalue::store::delete(&self.wrpc, &bucket, &key)
+        let v = wrpc_bindings::wrpc::keyvalue::store::delete(&self.wrpc, bucket, &key)
             .await
             .context("failed to invoke `wrpc:keyvalue/store.delete`")?;
         Ok(v.map_err(FromWrpc::from_wrpc))
@@ -158,7 +158,7 @@ impl<C: wrpc_transport::Client + Send> wasmtime_bindings::wasi::keyvalue::store:
         key: String,
     ) -> anyhow::Result<Result<bool>> {
         let bucket = self.table.get(&bucket).context("failed to get bucket")?;
-        let v = wrpc_bindings::wrpc::keyvalue::store::exists(&self.wrpc, &bucket, &key)
+        let v = wrpc_bindings::wrpc::keyvalue::store::exists(&self.wrpc, bucket, &key)
             .await
             .context("failed to invoke `wrpc:keyvalue/store.delete`")?;
         Ok(v.map_err(FromWrpc::from_wrpc))
@@ -171,7 +171,7 @@ impl<C: wrpc_transport::Client + Send> wasmtime_bindings::wasi::keyvalue::store:
         cursor: Option<u64>,
     ) -> anyhow::Result<Result<wasmtime_bindings::wasi::keyvalue::store::KeyResponse>> {
         let bucket = self.table.get(&bucket).context("failed to get bucket")?;
-        let keys = wrpc_bindings::wrpc::keyvalue::store::list_keys(&self.wrpc, &bucket, cursor)
+        let keys = wrpc_bindings::wrpc::keyvalue::store::list_keys(&self.wrpc, bucket, cursor)
             .await
             .context("failed to invoke `wrpc:keyvalue/store.list-keys`")?;
         Ok(FromWrpc::from_wrpc(keys))

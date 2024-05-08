@@ -12,6 +12,7 @@ use wit_parser::{Resolve, WorldId};
 ///
 /// This tries to pick a location in the `target` directory that can be
 /// relatively easily debugged if a test goes wrong.
+#[must_use]
 pub fn test_directory(suite_name: &str, gen_name: &str, wit_name: &str) -> PathBuf {
     let mut me = std::env::current_exe().unwrap();
     me.pop(); // chop off exe name

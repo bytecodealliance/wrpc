@@ -90,7 +90,7 @@ pub trait Transmitter: Sync {
             for v in values {
                 trace!("encode tuple element");
                 let tx = v.encode(&mut buf).await.context("failed to encode value")?;
-                nested.push(tx)
+                nested.push(tx);
             }
             let nested: FuturesUnordered<_> = zip(0.., nested)
                 .filter_map(|(i, v)| {
@@ -1113,7 +1113,7 @@ impl<T> Stream for StreamValue<T> {
 
 impl<T> Drop for StreamValue<T> {
     fn drop(&mut self) {
-        self.producer.abort()
+        self.producer.abort();
     }
 }
 
@@ -1155,7 +1155,7 @@ pub async fn receive_at_least<'a>(
             .context("failed to receive payload chunk")?
             .context("unexpected end of stream")?;
         trace!("payload chunk received");
-        payload = Box::new(payload.chain(chunk))
+        payload = Box::new(payload.chain(chunk));
     }
     Ok(payload)
 }
@@ -1186,7 +1186,7 @@ pub async fn receive_leb128_unsigned<'a>(
                 .context("failed to receive payload chunk")?
                 .context("unexpected end of stream")?;
             trace!("payload chunk received");
-            payload = Box::new(payload.chain(chunk))
+            payload = Box::new(payload.chain(chunk));
         }
     }
 }
@@ -1217,7 +1217,7 @@ pub async fn receive_leb128_signed<'a>(
                 .context("failed to receive payload chunk")?
                 .context("unexpected end of stream")?;
             trace!("payload chunk received");
-            payload = Box::new(payload.chain(chunk))
+            payload = Box::new(payload.chain(chunk));
         }
     }
 }
@@ -2570,7 +2570,7 @@ impl Encode for bool {
         payload: &mut (impl BufMut + Send),
     ) -> anyhow::Result<Option<AsyncValue>> {
         trace!(v = self, "encode bool");
-        payload.put_u8(if self { 1 } else { 0 });
+        payload.put_u8(u8::from(self));
         Ok(None)
     }
 }
@@ -3032,7 +3032,7 @@ where
         for v in self {
             trace!("encode list element");
             let v = v.encode(payload).await?;
-            txs.push(v)
+            txs.push(v);
         }
         Ok(txs
             .iter()
@@ -3078,7 +3078,7 @@ where
         for v in self {
             trace!("encode list element");
             let v = v.encode(payload).await?;
-            txs.push(v)
+            txs.push(v);
         }
         Ok(txs
             .iter()
@@ -3108,7 +3108,7 @@ where
         for v in self {
             trace!("encode list element");
             let v = v.encode(payload).await?;
-            txs.push(v)
+            txs.push(v);
         }
         Ok(txs
             .iter()
@@ -3254,7 +3254,7 @@ where
     for v in it {
         trace!("encode iterator element");
         let v = v.encode(&mut payload).await?;
-        txs.push(v)
+        txs.push(v);
     }
     Ok(txs.iter().any(Option::is_some).then_some(txs))
 }
@@ -3287,7 +3287,7 @@ impl Encode for Value {
                 for v in vs {
                     trace!("encode record field");
                     let v = v.encode(payload).await?;
-                    txs.push(v)
+                    txs.push(v);
                 }
                 Ok(txs
                     .iter()
@@ -3300,7 +3300,7 @@ impl Encode for Value {
                 for v in vs {
                     trace!("encode tuple element");
                     let v = v.encode(payload).await?;
-                    txs.push(v)
+                    txs.push(v);
                 }
                 Ok(txs
                     .iter()
@@ -3754,12 +3754,12 @@ pub trait Client: Sync {
                 .context("failed to invoke function")?;
 
             select! {
-                _ = tx_fail => {
+                () = tx_fail => {
                     trace!("transmission task failed");
                     match tx.await {
 
                         Err(err) => bail!(anyhow!(err).context("transmission failed")),
-                        Ok(_) => bail!("transmission task desynchronisation occured"),
+                        Ok(()) => bail!("transmission task desynchronisation occured"),
                     }
                 }
                 results = async {
@@ -3832,12 +3832,12 @@ pub trait Client: Sync {
                 .context("failed to invoke function")?;
 
             select! {
-                _ = tx_fail => {
+                () = tx_fail => {
                     trace!("transmission task failed");
                     match tx.await {
 
                         Err(err) => bail!(anyhow!(err).context("transmission failed")),
-                        Ok(_) => bail!("transmission task desynchronisation occured"),
+                        Ok(()) => bail!("transmission task desynchronisation occured"),
                     }
                 }
                 results = async {
@@ -3983,7 +3983,7 @@ mod tests {
         client: &impl super::Client,
         instance: &str,
     ) -> anyhow::Result<impl Stream<Item = ()>> {
-        let name = String::from("");
+        let name = String::new();
         let invocations = client.serve_static::<()>(instance, &name).await?;
         Ok(invocations.map(|invocation| ()))
     }

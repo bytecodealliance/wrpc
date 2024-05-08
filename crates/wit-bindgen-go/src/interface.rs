@@ -2,11 +2,19 @@ use crate::{
     int_repr, to_go_ident, to_package_ident, to_upper_camel_case, Deps, FnSig, GoWrpc, Identifier,
     InterfaceName, RustFlagsRepr,
 };
-use heck::*;
+use heck::{ToShoutySnakeCase, ToUpperCamelCase};
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::mem;
-use wit_bindgen_core::{dealias, uwrite, uwriteln, wit_parser::*, Source, TypeInfo};
+use wit_bindgen_core::{
+    dealias, uwrite, uwriteln,
+    wit_parser::{
+        Case, Docs, Enum, EnumCase, Field, Flags, Function, FunctionKind, Handle, Int, InterfaceId,
+        Record, Resolve, Result_, Results, Tuple, Type, TypeDefKind, TypeId, TypeOwner, Variant,
+        World, WorldKey,
+    },
+    Source, TypeInfo,
+};
 
 pub struct InterfaceGenerator<'a> {
     pub src: Source,
@@ -937,7 +945,7 @@ impl InterfaceGenerator<'_> {
         traits.insert(None, ("Handler".to_string(), Vec::new()));
 
         if let Identifier::Interface(id, ..) = identifier {
-            for (name, id) in self.resolve.interfaces[id].types.iter() {
+            for (name, id) in &self.resolve.interfaces[id].types {
                 match self.resolve.types[*id].kind {
                     TypeDefKind::Resource => {}
                     _ => continue,
@@ -972,7 +980,7 @@ impl InterfaceGenerator<'_> {
             if let FunctionKind::Constructor(_) = &func.kind {
                 uwriteln!(self.src, " ({}, error)", "Self"); // TODO: Use the correct Go name
             } else {
-                self.print_return_decl(&func.results)
+                self.print_return_decl(&func.results);
             }
             self.push_str("\n\n");
             let trait_method = mem::replace(&mut self.src, prev);
@@ -987,10 +995,10 @@ impl InterfaceGenerator<'_> {
                 traits.iter().map(|(resource, (trait_name, _methods))| {
                     (resource.unwrap(), trait_name.as_str())
                 }),
-            )
+            );
         }
 
-        for (_, (trait_name, methods)) in traits.iter() {
+        for (trait_name, methods) in traits.values() {
             uwriteln!(self.src, "type {trait_name} interface {{");
             for method in methods {
                 self.src.push_str(method);
@@ -1011,7 +1019,7 @@ impl InterfaceGenerator<'_> {
         );
         uwriteln!(self.src, r#"stops := make([]func() error, 0, {n})"#);
         self.src.push_str(
-            r#"stop = func() error {
+            r"stop = func() error {
             for _, stop := range stops {
                 if err := stop(); err != nil {
                     return err
@@ -1019,7 +1027,7 @@ impl InterfaceGenerator<'_> {
             }
             return nil
         }
-"#,
+",
         );
         let instance = match identifier {
             Identifier::Interface(id, name) => {
@@ -1234,7 +1242,7 @@ impl InterfaceGenerator<'_> {
         } else {
             &mut self.gen.export_modules
         };
-        map.push((module, module_path))
+        map.push((module, module_path));
     }
 
     fn generate_guest_import(&mut self, instance: &str, func: &Function) {
@@ -1409,7 +1417,7 @@ impl InterfaceGenerator<'_> {
         for (i, ty) in results.iter_types().enumerate() {
             uwrite!(self.src, "r{i}__ ");
             self.print_opt_ty(ty, true);
-            self.src.push_str(", ")
+            self.src.push_str(", ");
         }
         self.push_str("err__ error) ");
     }
@@ -1705,7 +1713,7 @@ impl<'a> wit_bindgen_core::InterfaceGenerator<'a> for InterfaceGenerator<'a> {
         if let Some(name) = self.name_of(id) {
             self.godoc(docs);
             uwriteln!(self.src, "type {name} struct {{");
-            for Field { name, ty, docs } in fields.iter() {
+            for Field { name, ty, docs } in fields {
                 self.godoc(docs);
                 self.push_str(&name.to_upper_camel_case());
                 self.push_str(" ");
@@ -1723,7 +1731,7 @@ impl<'a> wit_bindgen_core::InterfaceGenerator<'a> for InterfaceGenerator<'a> {
 
 func (v *{name}) WriteTo(w {wrpc}.ByteWriter) error {{"#
             );
-            for Field { name, ty, .. } in fields.iter() {
+            for Field { name, ty, .. } in fields {
                 let fmt = self.deps.fmt();
                 let slog = self.deps.slog();
                 uwrite!(
@@ -1749,7 +1757,7 @@ func (v *{name}) WriteTo(w {wrpc}.ByteWriter) error {{"#
     v := &{name}{{}}
     var err error"#
             );
-            for Field { name, ty, .. } in fields.iter() {
+            for Field { name, ty, .. } in fields {
                 let fmt = self.deps.fmt();
                 let slog = self.deps.slog();
                 let ident = name.to_upper_camel_case();
@@ -1786,7 +1794,7 @@ func (v *{name}) WriteTo(w {wrpc}.ByteWriter) error {{"#
     fn type_tuple(&mut self, id: TypeId, _name: &str, tuple: &Tuple, docs: &Docs) {
         if let Some(name) = self.name_of(id) {
             self.godoc(docs);
-            self.push_str(&format!("type {}", name));
+            self.push_str(&format!("type {name}"));
             self.push_str(" = ");
             self.print_tuple(tuple, true);
             self.push_str("\n");
@@ -1844,7 +1852,7 @@ func (v *{name}) WriteTo(w {wrpc}.ByteWriter) error {{"#
                 self.push_str(&case_name.to_upper_camel_case());
                 self.push_str(" ");
                 self.push_str(&name);
-                uwriteln!(self.src, "Discriminant = {i}")
+                uwriteln!(self.src, "Discriminant = {i}");
             }
             self.push_str(")\n");
 
@@ -1854,7 +1862,7 @@ func (v *{name}) WriteTo(w {wrpc}.ByteWriter) error {{"#
             );
             for Case {
                 name: case_name, ..
-            } in variant.cases.iter()
+            } in &variant.cases
             {
                 self.push_str("case ");
                 self.push_str(&name);
@@ -1871,7 +1879,7 @@ func (v *{name}) WriteTo(w {wrpc}.ByteWriter) error {{"#
                 name: case_name,
                 ty,
                 docs,
-            } in variant.cases.iter()
+            } in &variant.cases
             {
                 let camel = case_name.to_upper_camel_case();
                 self.godoc(docs);
@@ -1903,7 +1911,7 @@ func (v *{name}) WriteTo(w {wrpc}.ByteWriter) error {{"#
                 if ty.is_some() {
                     self.push_str("payload");
                 } else {
-                    self.push_str("nil")
+                    self.push_str("nil");
                 }
                 uwriteln!(self.src, r#", {name}Discriminant_{camel} }} }}"#);
             }
@@ -1944,7 +1952,7 @@ func (v *{name}) WriteTo(w {wrpc}.ByteWriter) error {{"#
                 name: case_name,
                 ty,
                 ..
-            } in variant.cases.iter()
+            } in &variant.cases
             {
                 self.push_str("case ");
                 self.push_str(&name);
@@ -1999,7 +2007,7 @@ func (v *{name}) WriteTo(w {wrpc}.ByteWriter) error {{"#
                 name: case_name,
                 ty,
                 ..
-            } in variant.cases.iter()
+            } in &variant.cases
             {
                 self.push_str("case ");
                 self.push_str(&name);
@@ -2020,13 +2028,13 @@ func (v *{name}) WriteTo(w {wrpc}.ByteWriter) error {{"#
                         self.src,
                         "return New{name}_{}(payload), nil",
                         case_name.to_upper_camel_case()
-                    )
+                    );
                 } else {
                     uwriteln!(
                         self.src,
                         "return New{name}_{}(), nil",
                         case_name.to_upper_camel_case()
-                    )
+                    );
                 }
             }
             uwriteln!(
@@ -2040,7 +2048,7 @@ func (v *{name}) WriteTo(w {wrpc}.ByteWriter) error {{"#
     fn type_option(&mut self, id: TypeId, _name: &str, payload: &Type, docs: &Docs) {
         if let Some(name) = self.name_of(id) {
             self.godoc(docs);
-            self.push_str(&format!("type {}", name));
+            self.push_str(&format!("type {name}"));
             self.push_str("=");
             self.print_option(payload, true);
             self.push_str("\n");
@@ -2050,7 +2058,7 @@ func (v *{name}) WriteTo(w {wrpc}.ByteWriter) error {{"#
     fn type_result(&mut self, id: TypeId, _name: &str, result: &Result_, docs: &Docs) {
         if let Some(name) = self.name_of(id) {
             self.godoc(docs);
-            self.push_str(&format!("type {}", name));
+            self.push_str(&format!("type {name}"));
             self.push_str("=");
             self.print_result(result);
             self.push_str("\n");
@@ -2080,7 +2088,7 @@ func (v *{name}) WriteTo(w {wrpc}.ByteWriter) error {{"#
                 self.push_str(&case_name.to_upper_camel_case());
                 self.push_str(" ");
                 self.push_str(&name);
-                uwriteln!(self.src, " = {i}")
+                uwriteln!(self.src, " = {i}");
             }
             self.push_str(")\n");
 
@@ -2090,7 +2098,7 @@ func (v *{name}) WriteTo(w {wrpc}.ByteWriter) error {{"#
             );
             for EnumCase {
                 name: case_name, ..
-            } in enum_.cases.iter()
+            } in &enum_.cases
             {
                 self.push_str("case ");
                 self.push_str(&name);
@@ -2164,7 +2172,7 @@ func (v *{name}) WriteTo(w {wrpc}.ByteWriter) error {{"#
             uwriteln!(self.src, "switch {name}(disc) {{");
             for EnumCase {
                 name: case_name, ..
-            } in enum_.cases.iter()
+            } in &enum_.cases
             {
                 self.push_str("case ");
                 self.push_str(&name);
@@ -2209,7 +2217,7 @@ func (v *{name}) WriteTo(w {wrpc}.ByteWriter) error {{"#
     fn type_list(&mut self, id: TypeId, _name: &str, ty: &Type, docs: &Docs) {
         if let Some(name) = self.name_of(id) {
             self.godoc(docs);
-            self.push_str(&format!("type {}", name));
+            self.push_str(&format!("type {name}"));
             self.push_str(" = ");
             self.print_list(ty);
             self.push_str("\n");
