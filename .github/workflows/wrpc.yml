@@ -110,7 +110,7 @@ jobs:
       - run: chmod +x ./artifact/bin/wit-bindgen-wrpc
       - run: ./artifact/bin/wit-bindgen-wrpc --version
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4.3.3
         with:
           name: wrpc-universal-darwin
           path: artifact
