@@ -15,7 +15,7 @@ use tokio::{select, spawn};
 static INIT: OnceCell<()> = OnceCell::const_new();
 
 async fn init_log() {
-    wrpc_cli::tracing::init()
+    wrpc_cli::tracing::init();
 }
 
 pub async fn init() {

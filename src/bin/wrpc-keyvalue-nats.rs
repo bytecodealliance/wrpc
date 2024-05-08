@@ -76,13 +76,13 @@ async fn main() -> anyhow::Result<()> {
             bindings::wrpc::keyvalue::store::set(&wrpc, &bucket, &key, &buf)
                 .await
                 .context("failed to invoke `wrpc:keyvalue/store.set`")?
-                .context("`wrpc:keyvalue/store.set` failed")?
+                .context("`wrpc:keyvalue/store.set` failed")?;
         }
         Operation::StoreDelete { bucket, key } => {
             bindings::wrpc::keyvalue::store::delete(&wrpc, &bucket, &key)
                 .await
                 .context("failed to invoke `wrpc:keyvalue/store.delete`")?
-                .context("`wrpc:keyvalue/store.delete` failed")?
+                .context("`wrpc:keyvalue/store.delete` failed")?;
         }
         Operation::StoreExists { bucket, key } => {
             let ok = bindings::wrpc::keyvalue::store::exists(&wrpc, &bucket, &key)
@@ -90,9 +90,9 @@ async fn main() -> anyhow::Result<()> {
                 .context("failed to invoke `wrpc:keyvalue/store.exists`")?
                 .context("`wrpc:keyvalue/store.exists` failed")?;
             if !ok {
-                println!("false")
+                println!("false");
             } else {
-                println!("true")
+                println!("true");
             }
         }
         Operation::StoreListKeys { bucket, cursor } => {
