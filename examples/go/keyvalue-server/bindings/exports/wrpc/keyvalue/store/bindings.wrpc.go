@@ -22,7 +22,7 @@ type Error struct {
 
 func (v *Error) Discriminant() ErrorDiscriminant { return v.discriminant }
 
-type ErrorDiscriminant uint32
+type ErrorDiscriminant uint8
 
 const (
 	// The host does not recognize the store identifier requested.
@@ -43,7 +43,7 @@ func (v *Error) String() string {
 	case ErrorDiscriminant_Other:
 		return "other"
 	default:
-		panic("unreachable")
+		panic("invalid variant")
 	}
 }
 
@@ -93,13 +93,13 @@ func NewError_Other(payload string) *Error {
 }
 func (v *Error) Error() string { return v.String() }
 func (v *Error) WriteTo(w wrpc.ByteWriter) error {
-	if err := func(v uint32, w wrpc.ByteWriter) error {
-		b := make([]byte, binary.MaxVarintLen32)
+	if err := func(v uint8, w wrpc.ByteWriter) error {
+		b := make([]byte, 2)
 		i := binary.PutUvarint(b, uint64(v))
-		slog.Debug("writing u32")
+		slog.Debug("writing u8")
 		_, err := w.Write(b[:i])
 		return err
-	}(uint32(v.discriminant), w); err != nil {
+	}(uint8(v.discriminant), w); err != nil {
 		return fmt.Errorf("failed to write discriminant: %w", err)
 	}
 	switch v.discriminant {
@@ -135,9 +135,83 @@ func (v *Error) WriteTo(w wrpc.ByteWriter) error {
 			return fmt.Errorf("failed to write payload: %w", err)
 		}
 	default:
-		panic("unreachable")
+		panic("invalid variant")
 	}
 	return nil
+}
+func ReadError(r wrpc.ByteReader) (*Error, error) {
+	disc, err := func(r wrpc.ByteReader) (uint8, error) {
+		var x uint8
+		var s uint
+		for i := 0; i < 2; i++ {
+			slog.Debug("reading `uint8` byte", "i", i)
+			b, err := r.ReadByte()
+			if err != nil {
+				if i > 0 && err == io.EOF {
+					err = io.ErrUnexpectedEOF
+				}
+				return x, fmt.Errorf("failed to read `uint8` byte: %w", err)
+			}
+			if b < 0x80 {
+				if i == 2 && b > 1 {
+					return x, errors.New("varint overflows a 8-bit integer")
+				}
+				return x | uint8(b)<<s, nil
+			}
+			x |= uint8(b&0x7f) << s
+			s += 7
+		}
+		return x, errors.New("varint overflows a 8-bit integer")
+	}(r)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read discriminant: %w", err)
+	}
+	switch ErrorDiscriminant(disc) {
+	case ErrorDiscriminant_NoSuchStore:
+		return NewError_NoSuchStore(), nil
+	case ErrorDiscriminant_AccessDenied:
+		return NewError_AccessDenied(), nil
+	case ErrorDiscriminant_Other:
+		payload, err := func(r wrpc.ByteReader) (string, error) {
+			var x uint32
+			var s uint
+			for i := 0; i < 5; i++ {
+				slog.Debug("reading string length byte", "i", i)
+				b, err := r.ReadByte()
+				if err != nil {
+					if i > 0 && err == io.EOF {
+						err = io.ErrUnexpectedEOF
+					}
+					return "", fmt.Errorf("failed to read string length byte: %w", err)
+				}
+				if b < 0x80 {
+					if i == 4 && b > 1 {
+						return "", errors.New("string length overflows a 32-bit integer")
+					}
+					x = x | uint32(b)<<s
+					buf := make([]byte, x)
+					slog.Debug("reading string bytes", "len", x)
+					_, err = r.Read(buf)
+					if err != nil {
+						return "", fmt.Errorf("failed to read string bytes: %w", err)
+					}
+					if !utf8.Valid(buf) {
+						return string(buf), errors.New("string is not valid UTF-8")
+					}
+					return string(buf), nil
+				}
+				x |= uint32(b&0x7f) << s
+				s += 7
+			}
+			return "", errors.New("string length overflows a 32-bit integer")
+		}(r)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read `other` payload: %w", err)
+		}
+		return NewError_Other(payload), nil
+	default:
+		return nil, fmt.Errorf("unknown discriminant value %d", disc)
+	}
 }
 
 // A response to a `list-keys` operation.
@@ -440,9 +514,6 @@ func ServeInterface(c wrpc.Client, h Handler) (stop func() error, err error) {
 				slog.ErrorContext(ctx, "failed to stop parameter subscription", "err", err)
 			}
 		}()
-
-		// TODO: Handle async parameters
-
 		slog.DebugContext(ctx, "accepting handshake")
 		if err := inv.Accept(ctx, nil); err != nil {
 			return fmt.Errorf("failed to complete handshake: %w", err)
@@ -626,9 +697,6 @@ func ServeInterface(c wrpc.Client, h Handler) (stop func() error, err error) {
 				slog.ErrorContext(ctx, "failed to stop parameter subscription", "err", err)
 			}
 		}()
-
-		// TODO: Handle async parameters
-
 		slog.DebugContext(ctx, "accepting handshake")
 		if err := inv.Accept(ctx, nil); err != nil {
 			return fmt.Errorf("failed to complete handshake: %w", err)
@@ -809,9 +877,6 @@ func ServeInterface(c wrpc.Client, h Handler) (stop func() error, err error) {
 				slog.ErrorContext(ctx, "failed to stop parameter subscription", "err", err)
 			}
 		}()
-
-		// TODO: Handle async parameters
-
 		slog.DebugContext(ctx, "accepting handshake")
 		if err := inv.Accept(ctx, nil); err != nil {
 			return fmt.Errorf("failed to complete handshake: %w", err)
@@ -949,9 +1014,6 @@ func ServeInterface(c wrpc.Client, h Handler) (stop func() error, err error) {
 				slog.ErrorContext(ctx, "failed to stop parameter subscription", "err", err)
 			}
 		}()
-
-		// TODO: Handle async parameters
-
 		slog.DebugContext(ctx, "accepting handshake")
 		if err := inv.Accept(ctx, nil); err != nil {
 			return fmt.Errorf("failed to complete handshake: %w", err)
@@ -1100,9 +1162,6 @@ func ServeInterface(c wrpc.Client, h Handler) (stop func() error, err error) {
 				slog.ErrorContext(ctx, "failed to stop parameter subscription", "err", err)
 			}
 		}()
-
-		// TODO: Handle async parameters
-
 		slog.DebugContext(ctx, "accepting handshake")
 		if err := inv.Accept(ctx, nil); err != nil {
 			return fmt.Errorf("failed to complete handshake: %w", err)
