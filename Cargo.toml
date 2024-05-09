@@ -27,7 +27,6 @@ bin = [
     "dep:serde",
     "dep:serde_json",
     "dep:tokio",
-    "dep:url",
     "dep:wit-bindgen-core",
     "dep:wit-bindgen-wrpc-go",
     "dep:wrpc-cli",
@@ -68,7 +67,6 @@ serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true }
 tracing = { workspace = true, features = ["attributes"] }
-url = { workspace = true, optional = true }
 wit-bindgen-core = { workspace = true, optional = true }
 wit-bindgen-wrpc = { workspace = true }
 wit-bindgen-wrpc-go = { workspace = true, optional = true }

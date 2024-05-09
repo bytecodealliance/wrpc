@@ -1,5 +1,11 @@
 package wrpc:wrpc;
 
 world keyvalue-client {
+    import wrpc:keyvalue/atomics@0.2.0-draft;
     import wrpc:keyvalue/store@0.2.0-draft;
+}
+
+world keyvalue-server {
+    export wrpc:keyvalue/atomics@0.2.0-draft;
+    export wrpc:keyvalue/store@0.2.0-draft;
 }

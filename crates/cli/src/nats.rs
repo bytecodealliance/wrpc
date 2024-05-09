@@ -1,15 +1,14 @@
 use anyhow::Context as _;
 use tokio::sync::mpsc;
-use url::Url;
 
 pub const DEFAULT_URL: &str = "nats://127.0.0.1:4222";
 
 /// Connect to NATS.io server and ensure that the connection is fully established before
 /// returning the resulting [`async_nats::Client`]
-pub async fn connect(url: Url) -> anyhow::Result<async_nats::Client> {
+pub async fn connect(addrs: impl async_nats::ToServerAddrs) -> anyhow::Result<async_nats::Client> {
     let (conn_tx, mut conn_rx) = mpsc::channel(1);
     let client = async_nats::connect_with_options(
-        String::from(url),
+        addrs,
         async_nats::ConnectOptions::new()
             .retry_on_initial_connect()
             .event_callback(move |event| {

@@ -3621,7 +3621,6 @@ dependencies = [
  "serde_json",
  "tokio",
  "tracing",
- "url",
  "wit-bindgen-core",
  "wit-bindgen-wrpc",
  "wit-bindgen-wrpc-go",
@@ -3644,7 +3643,6 @@ dependencies = [
  "async-nats",
  "tokio",
  "tracing-subscriber",
- "url",
 ]
 
 [[package]]

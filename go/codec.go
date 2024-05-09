@@ -81,6 +81,151 @@ type Tuple6[T0, T1, T2, T3, T4, T5 any] struct {
 	V5 T5
 }
 
+type Tuple7[T0, T1, T2, T3, T4, T5, T6 any] struct {
+	V0 T0
+	V1 T1
+	V2 T2
+	V3 T3
+	V4 T4
+	V5 T5
+	V6 T6
+}
+
+type Tuple8[T0, T1, T2, T3, T4, T5, T6, T7 any] struct {
+	V0 T0
+	V1 T1
+	V2 T2
+	V3 T3
+	V4 T4
+	V5 T5
+	V6 T6
+	V7 T7
+}
+
+type Tuple9[T0, T1, T2, T3, T4, T5, T6, T7, T8 any] struct {
+	V0 T0
+	V1 T1
+	V2 T2
+	V3 T3
+	V4 T4
+	V5 T5
+	V6 T6
+	V7 T7
+	V8 T8
+}
+
+type Tuple10[T0, T1, T2, T3, T4, T5, T6, T7, T8, T9 any] struct {
+	V0 T0
+	V1 T1
+	V2 T2
+	V3 T3
+	V4 T4
+	V5 T5
+	V6 T6
+	V7 T7
+	V8 T8
+	V9 T9
+}
+
+type Tuple11[T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10 any] struct {
+	V0  T0
+	V1  T1
+	V2  T2
+	V3  T3
+	V4  T4
+	V5  T5
+	V6  T6
+	V7  T7
+	V8  T8
+	V9  T9
+	V10 T10
+}
+
+type Tuple12[T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11 any] struct {
+	V0  T0
+	V1  T1
+	V2  T2
+	V3  T3
+	V4  T4
+	V5  T5
+	V6  T6
+	V7  T7
+	V8  T8
+	V9  T9
+	V10 T10
+	V11 T11
+}
+
+type Tuple13[T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12 any] struct {
+	V0  T0
+	V1  T1
+	V2  T2
+	V3  T3
+	V4  T4
+	V5  T5
+	V6  T6
+	V7  T7
+	V8  T8
+	V9  T9
+	V10 T10
+	V11 T11
+	V12 T12
+}
+
+type Tuple14[T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13 any] struct {
+	V0  T0
+	V1  T1
+	V2  T2
+	V3  T3
+	V4  T4
+	V5  T5
+	V6  T6
+	V7  T7
+	V8  T8
+	V9  T9
+	V10 T10
+	V11 T11
+	V12 T12
+	V13 T13
+}
+
+type Tuple15[T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14 any] struct {
+	V0  T0
+	V1  T1
+	V2  T2
+	V3  T3
+	V4  T4
+	V5  T5
+	V6  T6
+	V7  T7
+	V8  T8
+	V9  T9
+	V10 T10
+	V11 T11
+	V12 T12
+	V13 T13
+	V14 T14
+}
+
+type Tuple16[T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15 any] struct {
+	V0  T0
+	V1  T1
+	V2  T2
+	V3  T3
+	V4  T4
+	V5  T5
+	V6  T6
+	V7  T7
+	V8  T8
+	V9  T9
+	V10 T10
+	V11 T11
+	V12 T12
+	V13 T13
+	V14 T14
+	V15 T15
+}
+
 type Result[Ok, Err any] struct {
 	Ok  *Ok
 	Err *Err

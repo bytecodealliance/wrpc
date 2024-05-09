@@ -1,17 +1,17 @@
 use crate::{
-    int_repr, to_go_ident, to_package_ident, to_upper_camel_case, Deps, FnSig, GoWrpc, Identifier,
-    InterfaceName, RustFlagsRepr,
+    to_go_ident, to_package_ident, to_upper_camel_case, Deps, FnSig, GoWrpc, Identifier,
+    InterfaceName,
 };
-use heck::{ToShoutySnakeCase, ToUpperCamelCase};
+use heck::ToUpperCamelCase;
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::mem;
 use wit_bindgen_core::{
     dealias, uwrite, uwriteln,
     wit_parser::{
-        Case, Docs, Enum, EnumCase, Field, Flags, Function, FunctionKind, Handle, Int, InterfaceId,
-        Record, Resolve, Result_, Results, Tuple, Type, TypeDefKind, TypeId, TypeOwner, Variant,
-        World, WorldKey,
+        Case, Docs, Enum, EnumCase, Field, Flag, Flags, Function, FunctionKind, Handle, Int,
+        InterfaceId, Record, Resolve, Result_, Results, Tuple, Type, TypeDefKind, TypeId,
+        TypeOwner, Variant, World, WorldKey,
     },
     Source, TypeInfo,
 };
@@ -27,8 +27,10 @@ pub struct InterfaceGenerator<'a> {
 
 impl InterfaceGenerator<'_> {
     fn print_read_ty(&mut self, ty: &Type, reader: &str) {
-        // NOTE: LEB128 decoding adapted from
+        // NOTE: u{16,32,64} decoding adapted from
         // https://cs.opensource.google/go/go/+/refs/tags/go1.22.2:src/encoding/binary/varint.go;l=128-153
+        // NOTE: s{16,32,64} decoding adapted from
+        // https://github.com/go-delve/delve/blob/26799555e5518e8a9fe2d68e02379257ebda4dd2/pkg/dwarf/leb128/decode.go#L51-L81
         match ty {
             Type::Id(t) => self.print_read_tyid(*t, reader),
             Type::Bool => uwrite!(
@@ -154,23 +156,116 @@ impl InterfaceGenerator<'_> {
             ),
             Type::S8 => uwrite!(
                 self.src,
-                r#"int8(0), {errors}.New("reading s8 not supported yet")"#,
-                errors = self.deps.errors(),
+                r#"func(r {wrpc}.ByteReader) (int8, error) {{
+    {slog}.Debug("reading `s8` byte")
+    v, err := r.ReadByte()
+    if err != nil {{
+        return 0, {fmt}.Errorf("failed to read `s8` byte: %w", err)
+    }}
+    return int8(v), nil
+}}({reader})"#,
+                fmt = self.deps.fmt(),
+                slog = self.deps.slog(),
+                wrpc = self.deps.wrpc(),
             ),
             Type::S16 => uwrite!(
                 self.src,
-                r#"int16(0), {errors}.New("reading s16 not supported yet")"#,
-                errors = self.deps.errors(),
+                r#"func(r {wrpc}.ByteReader) (int16, error) {{
+    var (
+		b      byte
+		err    error
+		result int16
+		shift  uint16
+		length uint32
+	)
+	for {{
+        {slog}.Debug("reading `s16` byte")
+		b, err = r.ReadByte()
+        if err != nil {{
+            return 0, {fmt}.Errorf("failed to read `s16` byte: %w", err)
+        }}
+		length++
+
+		result |= (int16(b) & 0x7f) << shift
+		shift += 7
+		if b&0x80 == 0 {{
+			break
+		}}
+	}}
+	if (shift < 8*uint16(length)) && (b&0x40 > 0) {{
+		result |= -(1 << shift)
+	}}
+	return result, nil
+}}({reader})"#,
+                fmt = self.deps.fmt(),
+                slog = self.deps.slog(),
+                wrpc = self.deps.wrpc(),
             ),
             Type::S32 => uwrite!(
                 self.src,
-                r#"int32(0), {errors}.New("reading s32 not supported yet")"#,
-                errors = self.deps.errors(),
+                r#"func(r {wrpc}.ByteReader) (int32, error) {{
+    var (
+		b      byte
+		err    error
+		result int32
+		shift  uint32
+		length uint32
+	)
+	for {{
+        {slog}.Debug("reading `s32` byte")
+		b, err = r.ReadByte()
+        if err != nil {{
+            return 0, {fmt}.Errorf("failed to read `s32` byte: %w", err)
+        }}
+		length++
+
+		result |= (int32(b) & 0x7f) << shift
+		shift += 7
+		if b&0x80 == 0 {{
+			break
+		}}
+	}}
+	if (shift < 8*uint32(length)) && (b&0x40 > 0) {{
+		result |= -(1 << shift)
+	}}
+	return result, nil
+}}({reader})"#,
+                fmt = self.deps.fmt(),
+                slog = self.deps.slog(),
+                wrpc = self.deps.wrpc(),
             ),
             Type::S64 => uwrite!(
                 self.src,
-                r#"int64(0), {errors}.New("reading s64 not supported yet")"#,
-                errors = self.deps.errors(),
+                r#"func(r {wrpc}.ByteReader) (int64, error) {{
+    var (
+		b      byte
+		err    error
+		result int64
+		shift  uint64
+		length uint32
+	)
+	for {{
+        {slog}.Debug("reading `s64` byte")
+		b, err = r.ReadByte()
+        if err != nil {{
+            return 0, {fmt}.Errorf("failed to read `s64` byte: %w", err)
+        }}
+		length++
+
+		result |= (int64(b) & 0x7f) << shift
+		shift += 7
+		if b&0x80 == 0 {{
+			break
+		}}
+	}}
+	if (shift < 8*uint64(length)) && (b&0x40 > 0) {{
+		result |= -(1 << shift)
+	}}
+	return result, nil
+}}({reader})"#,
+                fmt = self.deps.fmt(),
+                slog = self.deps.slog(),
+                wrpc = self.deps.wrpc(),
             ),
             Type::F32 => uwrite!(
                 self.src,
@@ -532,6 +627,8 @@ impl InterfaceGenerator<'_> {
     }
 
     fn print_write_ty(&mut self, ty: &Type, name: &str, writer: &str) {
+        // NOTE: s{16,32,64} encoding adapted from
+        // https://github.com/go-delve/delve/blob/26799555e5518e8a9fe2d68e02379257ebda4dd2/pkg/dwarf/leb128/encode.go#L23-L42
         match ty {
             Type::Id(t) => self.print_write_tyid(*t, name, writer),
             Type::Bool => uwrite!(
@@ -597,23 +694,96 @@ impl InterfaceGenerator<'_> {
             ),
             Type::S8 => uwrite!(
                 self.src,
-                r#"{errors}.New("writing s8 not supported yet")"#,
-                errors = self.deps.errors(),
+                r#"func(v int8, w {wrpc}.ByteWriter) error {{
+                {slog}.Debug("writing s8 byte")
+                return w.WriteByte(byte(v))
+            }}({name}, {writer})"#,
+                slog = self.deps.slog(),
+                wrpc = self.deps.wrpc(),
             ),
             Type::S16 => uwrite!(
                 self.src,
-                r#"{errors}.New("writing s16 not supported yet")"#,
-                errors = self.deps.errors(),
+                r#"func(v int16, w {wrpc}.ByteWriter) error {{
+                for {{
+	            	b := byte(v & 0x7f)
+	            	v >>= 7
+
+	            	signb := b & 0x40
+
+	            	last := false
+	            	if (v == 0 && signb == 0) || (v == -1 && signb != 0) {{
+	            		last = true
+	            	}} else {{
+	            		b = b | 0x80
+	            	}}
+                    {slog}.Debug("writing s16 byte")
+                    if err := w.WriteByte(b); err != nil {{
+	    		        return {fmt}.Errorf("failed to write `s16` byte: %w", err)
+                    }}
+	            	if last {{
+	            		return nil
+	            	}}
+	            }}
+            }}({name}, {writer})"#,
+                fmt = self.deps.fmt(),
+                slog = self.deps.slog(),
+                wrpc = self.deps.wrpc(),
             ),
             Type::S32 => uwrite!(
                 self.src,
-                r#"{errors}.New("writing s32 not supported yet")"#,
-                errors = self.deps.errors(),
+                r#"func(v int32, w {wrpc}.ByteWriter) error {{
+                for {{
+	            	b := byte(v & 0x7f)
+	            	v >>= 7
+
+	            	signb := b & 0x40
+
+	            	last := false
+	            	if (v == 0 && signb == 0) || (v == -1 && signb != 0) {{
+	            		last = true
+	            	}} else {{
+	            		b = b | 0x80
+	            	}}
+                    {slog}.Debug("writing s32 byte")
+                    if err := w.WriteByte(b); err != nil {{
+	    		        return {fmt}.Errorf("failed to write `s32` byte: %w", err)
+                    }}
+	            	if last {{
+	            		return nil
+	            	}}
+	            }}
+            }}({name}, {writer})"#,
+                fmt = self.deps.fmt(),
+                slog = self.deps.slog(),
+                wrpc = self.deps.wrpc(),
             ),
             Type::S64 => uwrite!(
                 self.src,
-                r#"{errors}.New("writing s64 not supported yet")"#,
-                errors = self.deps.errors(),
+                r#"func(v int64, w {wrpc}.ByteWriter) error {{
+                for {{
+	            	b := byte(v & 0x7f)
+	            	v >>= 7
+
+	            	signb := b & 0x40
+
+	            	last := false
+	            	if (v == 0 && signb == 0) || (v == -1 && signb != 0) {{
+	            		last = true
+	            	}} else {{
+	            		b = b | 0x80
+	            	}}
+                    {slog}.Debug("writing s64 byte")
+                    if err := w.WriteByte(b); err != nil {{
+	    		        return {fmt}.Errorf("failed to write `s64` byte: %w", err)
+                    }}
+	            	if last {{
+	            		return nil
+	            	}}
+	            }}
+            }}({name}, {writer})"#,
+                fmt = self.deps.fmt(),
+                slog = self.deps.slog(),
+                wrpc = self.deps.wrpc(),
             ),
             Type::F32 => uwrite!(
                 self.src,
@@ -632,7 +802,7 @@ impl InterfaceGenerator<'_> {
             Type::F64 => uwrite!(
                 self.src,
                 r#"func(v float64, w {wrpc}.ByteWriter) error {{
-                b := make([]byte, 4)
+                b := make([]byte, 8)
                 {binary}.LittleEndian.PutUint64(b, {math}.Float64bits(v))
                 {slog}.Debug("writing f64")
 	            _, err := w.Write(b)
@@ -1332,18 +1502,21 @@ impl InterfaceGenerator<'_> {
             return;
         }
 
-        let mut sig = FnSig::default();
+        let sig = FnSig::default();
         match func.kind {
             FunctionKind::Freestanding => {}
-            FunctionKind::Method(id) | FunctionKind::Static(id) | FunctionKind::Constructor(id) => {
-                let name = self.resolve.types[id].name.as_ref().unwrap();
-                let name = to_upper_camel_case(name);
-                uwriteln!(self.src, "impl {name} {{");
-                sig.use_item_name = true;
-                if let FunctionKind::Method(_) = &func.kind {
-                    sig.self_arg = Some("&self".into());
-                    sig.self_is_first_param = true;
-                }
+            FunctionKind::Method(_id)
+            | FunctionKind::Static(_id)
+            | FunctionKind::Constructor(_id) => {
+                return;
+                // TODO: Generate
+                //let name = self.resolve.types[id].name.as_ref().unwrap();
+                //let name = to_upper_camel_case(name);
+                //sig.use_item_name = true;
+                //if let FunctionKind::Method(_) = &func.kind {
+                //    sig.self_arg = Some(format!("self__ {name}"));
+                //    sig.self_is_first_param = true;
+                //}
             }
         }
         let _params = self.print_signature(func, &sig);
@@ -1376,13 +1549,6 @@ impl InterfaceGenerator<'_> {
     }}"#,
             func.name
         );
-
-        match func.kind {
-            FunctionKind::Freestanding => {}
-            FunctionKind::Method(_) | FunctionKind::Static(_) | FunctionKind::Constructor(_) => {
-                self.src.push_str("}\n");
-            }
-        }
     }
 
     fn godoc(&mut self, docs: &Docs) {
@@ -1721,11 +1887,16 @@ impl InterfaceGenerator<'_> {
 
     fn print_list(&mut self, ty: &Type) {
         self.push_str("[]");
-        self.print_ty(ty, true);
+        self.print_opt_ty(ty, true);
     }
 
     fn int_repr(&mut self, repr: Int) {
-        self.push_str(int_repr(repr));
+        match repr {
+            Int::U8 => self.push_str("uint8"),
+            Int::U16 => self.push_str("uint16"),
+            Int::U32 => self.push_str("uint32"),
+            Int::U64 => self.push_str("uint64"),
+        }
     }
 
     fn name_of(&self, ty: TypeId) -> Option<String> {
@@ -1869,8 +2040,13 @@ func (v *{name}) WriteTo(w {wrpc}.ByteWriter) error {{"#
         }
     }
 
-    fn type_resource(&mut self, _id: TypeId, _name: &str, _docs: &Docs) {
+    fn type_resource(&mut self, id: TypeId, _name: &str, docs: &Docs) {
         // TODO: Support resources
+        if let Some(name) = self.name_of(id) {
+            self.godoc(docs);
+            self.push_str(&format!("type {name}"));
+            self.push_str(" = struct{}\n");
+        }
     }
 
     fn type_tuple(&mut self, id: TypeId, _name: &str, tuple: &Tuple, docs: &Docs) {
@@ -1883,24 +2059,100 @@ func (v *{name}) WriteTo(w {wrpc}.ByteWriter) error {{"#
         }
     }
 
-    fn type_flags(&mut self, _id: TypeId, name: &str, flags: &Flags, docs: &Docs) {
-        self.src.push_str("bitflags::bitflags! {\n");
-        self.godoc(docs);
-        let repr = RustFlagsRepr::new(flags);
-        let name = to_upper_camel_case(name);
-        self.src.push_str(&format!(
-            "#[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Clone, Copy)]\npub struct {name}: {repr} {{\n",
-        ));
-        for (i, flag) in flags.flags.iter().enumerate() {
-            self.godoc(&flag.docs);
-            self.src.push_str(&format!(
-                "const {} = 1 << {};\n",
-                flag.name.to_shouty_snake_case(),
-                i,
-            ));
+    fn type_flags(&mut self, id: TypeId, _name: &str, Flags { flags }: &Flags, docs: &Docs) {
+        let repr = match flags.len() {
+            ..=8 => Int::U8,
+            9..=16 => Int::U16,
+            17..=32 => Int::U32,
+            33.. => Int::U64,
+        };
+
+        let info = self.info(id);
+        if let Some(name) = self.name_of(id) {
+            let fmt = self.deps.fmt();
+            let strings = self.deps.strings();
+            let wrpc = self.deps.wrpc();
+
+            self.godoc(docs);
+            uwriteln!(self.src, "type {name} struct {{");
+            for Flag { name, docs } in flags {
+                self.godoc(docs);
+                self.push_str(&name.to_upper_camel_case());
+                self.push_str(" bool\n");
+            }
+            self.push_str("}\n");
+
+            uwriteln!(self.src, "func (v *{name}) String() string {{");
+            uwriteln!(self.src, "flags := make([]string, 0, {})", flags.len());
+            for Flag { name, .. } in flags {
+                self.push_str("if v.");
+                self.push_str(&name.to_upper_camel_case());
+                self.push_str(" {\n");
+                uwriteln!(self.src, r#"flags = append(flags, "{name}")"#);
+                self.push_str("}\n");
+            }
+            uwriteln!(self.src, r#"return {strings}.Join(flags, " | ")"#);
+            self.push_str("}\n");
+            uwriteln!(
+                self.src,
+                r#"func (v *{name}) WriteTo(w {wrpc}.ByteWriter) error {{"#
+            );
+            self.push_str("var n ");
+            self.int_repr(repr);
+            self.push_str("\n");
+            for (i, Flag { name, .. }) in flags.iter().enumerate() {
+                self.push_str("if v.");
+                self.push_str(&name.to_upper_camel_case());
+                self.push_str(" {\n");
+                if i <= 64 {
+                    uwriteln!(self.src, "n |= 1 << {i}");
+                } else {
+                    let errors = self.deps.errors();
+                    uwriteln!(
+                        self.src,
+                        r#"return {errors}.New("encoding `{name}` flag value would overflow 64-bit integer, flags containing more than 64 members are not supported yet")"#
+                    );
+                }
+                self.push_str("}\n");
+            }
+            self.push_str("return ");
+            self.print_write_discriminant(repr, "n", "w");
+            self.push_str("\n");
+            self.push_str("}\n");
+
+            uwrite!(
+                self.src,
+                r#"func Read{name}(r {wrpc}.ByteReader) (*{name}, error) {{
+    v := &{name}{{}}
+    n, err := "#
+            );
+            self.print_read_discriminant(repr, "r");
+            self.push_str("\n");
+            self.push_str("if err != nil {\n");
+            self.push_str("return nil, ");
+            self.push_str(fmt);
+            self.push_str(".Errorf(\"failed to read flag: %w\", err)\n}\n");
+            self.push_str("\n");
+            for (i, Flag { name, .. }) in flags.iter().enumerate() {
+                if i > 64 {
+                    break;
+                }
+                uwriteln!(self.src, "if n | (1 << {i}) > 0 {{");
+                self.push_str("v.");
+                self.push_str(&name.to_upper_camel_case());
+                self.push_str(" = true\n");
+                self.push_str("}\n");
+            }
+            self.push_str("return v, nil\n");
+            self.push_str("}\n");
+
+            if info.error {
+                uwriteln!(
+                    self.src,
+                    r#"func (v *{name}) Error() string {{ return v.String() }}"#
+                );
+            }
         }
-        self.src.push_str("}\n");
-        self.src.push_str("}\n");
     }
 
     fn type_variant(&mut self, id: TypeId, _name: &str, variant: &Variant, docs: &Docs) {
