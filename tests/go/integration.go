@@ -1,4 +1,5 @@
 //go:generate $WIT_BINDGEN_WRPC go --world sync-server --out-dir bindings/sync_server --package github.com/wrpc/wrpc/tests/go/bindings/sync_server ../wit
+//go:generate $WIT_BINDGEN_WRPC go --world sync-client --out-dir bindings/sync_client --package github.com/wrpc/wrpc/tests/go/bindings/sync_client ../wit
 
 package integration
 
