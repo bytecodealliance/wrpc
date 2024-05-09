@@ -234,7 +234,7 @@ jobs:
 
       - name: Test `wrpc` image
         run: |
-          buildah push wrpc:amd64 docker-daemon:wrpc:test
+          buildah push wrpc:$(nix eval --raw .#wrpc-x86_64-unknown-linux-musl-oci.imageTag) docker-daemon:wrpc:test
           docker run --rm wrpc:test wit-bindgen-wrpc --version
 
       - name: Push `wrpc` commit rev tag
