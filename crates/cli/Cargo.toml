@@ -12,7 +12,7 @@ repository.workspace = true
 
 [features]
 default = ["nats"]
-nats = ["dep:async-nats", "dep:tokio", "tokio/sync", "dep:url"]
+nats = ["dep:async-nats", "dep:tokio", "tokio/sync"]
 
 [dependencies]
 anyhow = { workspace = true }
@@ -25,4 +25,3 @@ tracing-subscriber = { workspace = true, features = [
     "smallvec",
     "tracing-log",
 ] }
-url = { workspace = true, optional = true }

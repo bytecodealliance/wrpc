@@ -56,6 +56,7 @@ async fn spawn_server(
 }
 
 pub async fn start_nats() -> anyhow::Result<(
+    u16,
     async_nats::Client,
     JoinHandle<anyhow::Result<ExitStatus>>,
     oneshot::Sender<()>,
@@ -66,40 +67,20 @@ pub async fn start_nats() -> anyhow::Result<(
             .await
             .context("failed to start NATS.io server")?;
 
-    let (conn_tx, mut conn_rx) = mpsc::channel(1);
-    let client = async_nats::connect_with_options(
-        format!("nats://localhost:{port}"),
-        async_nats::ConnectOptions::new()
-            .retry_on_initial_connect()
-            .event_callback(move |event| {
-                let conn_tx = conn_tx.clone();
-                async move {
-                    if let async_nats::Event::Connected = event {
-                        conn_tx
-                            .send(())
-                            .await
-                            .expect("failed to send NATS.io server connection notification");
-                    }
-                }
-            }),
-    )
-    .await
-    .context("failed to connect to NATS.io server")?;
-    conn_rx
-        .recv()
+    let client = wrpc_cli::nats::connect(format!("nats://localhost:{port}"))
         .await
-        .context("failed to await NATS.io server connection to be established")?;
-    Ok((client, server, stop_tx))
+        .context("failed to connect to NATS.io server")?;
+    Ok((port, client, server, stop_tx))
 }
 
-pub async fn with_nats<T, Fut>(f: impl FnOnce(async_nats::Client) -> Fut) -> anyhow::Result<T>
+pub async fn with_nats<T, Fut>(f: impl FnOnce(u16, async_nats::Client) -> Fut) -> anyhow::Result<T>
 where
     Fut: Future<Output = anyhow::Result<T>>,
 {
-    let (nats_client, nats_server, stop_tx) = start_nats()
+    let (port, nats_client, nats_server, stop_tx) = start_nats()
         .await
         .context("failed to start NATS.io server")?;
-    let res = f(nats_client).await.context("closure failed")?;
+    let res = f(port, nats_client).await.context("closure failed")?;
     stop_tx.send(()).expect("failed to stop NATS.io server");
     nats_server
         .await

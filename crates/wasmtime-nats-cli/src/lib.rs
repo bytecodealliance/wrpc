@@ -19,7 +19,7 @@ use runtime::{polyfill, Ctx};
 struct Args {
     /// NATS address to use
     #[arg(short, long, default_value = wrpc_cli::nats::DEFAULT_URL)]
-    nats: Url,
+    nats: String,
 
     /// Prefix to listen on
     prefix: String,

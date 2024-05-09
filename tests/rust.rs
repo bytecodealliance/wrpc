@@ -97,7 +97,7 @@ async fn loopback_dynamic(
 async fn rust_bindgen() -> anyhow::Result<()> {
     init().await;
 
-    with_nats(|nats_client| async {
+    with_nats(|_, nats_client| async {
         let client = wrpc::transport::nats::Client::new(nats_client, "test-prefix".to_string());
         let client = Arc::new(client);
 
@@ -314,7 +314,7 @@ async fn rust_bindgen() -> anyhow::Result<()> {
 async fn rust_dynamic() -> anyhow::Result<()> {
     init().await;
 
-    with_nats(|nats_client| async {
+    with_nats(|_, nats_client| async {
         let client = wrpc::transport::nats::Client::new(nats_client, "test-prefix".to_string());
         let client = Arc::new(client);
 
@@ -1265,7 +1265,7 @@ async fn rust_dynamic() -> anyhow::Result<()> {
 async fn rust_keyvalue() -> anyhow::Result<()> {
     init().await;
 
-    with_nats(|nats_client| async {
+    with_nats(|_, nats_client| async {
         let client = wrpc::transport::nats::Client::new(nats_client, "test-prefix".to_string());
 
         let shutdown = Notify::new();
@@ -1274,10 +1274,7 @@ async fn rust_keyvalue() -> anyhow::Result<()> {
         try_join!(
             async {
                 mod bindings {
-                    wit_bindgen_wrpc::generate!({
-                        world: "keyvalue-server",
-                        path: "tests/wit",
-                    });
+                    wit_bindgen_wrpc::generate!("keyvalue-server");
                 }
 
                 #[derive(Clone)]
@@ -1372,7 +1369,6 @@ async fn rust_keyvalue() -> anyhow::Result<()> {
                 mod bindings {
                     wit_bindgen_wrpc::generate!({
                         world: "keyvalue-client",
-                        path: "tests/wit",
                         additional_derives: [Eq, PartialEq],
                     });
                 }
@@ -1441,7 +1437,7 @@ async fn rust_keyvalue() -> anyhow::Result<()> {
 async fn rust_interfaces() -> anyhow::Result<()> {
     init().await;
 
-    let (nats_client, nats_server, stop_tx) = start_nats().await?;
+    let (_port, nats_client, nats_server, stop_tx) = start_nats().await?;
 
     let client = wrpc::transport::nats::Client::new(nats_client, "test-prefix".to_string());
     let client = Arc::new(client);

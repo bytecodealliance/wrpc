@@ -9,10 +9,7 @@ use std::mem;
 use std::process::{Command, Stdio};
 use wit_bindgen_core::{
     uwrite, uwriteln,
-    wit_parser::{
-        Flags, FlagsRepr, Function, Int, InterfaceId, PackageId, Resolve, TypeId, World, WorldId,
-        WorldKey,
-    },
+    wit_parser::{Function, InterfaceId, PackageId, Resolve, TypeId, World, WorldId, WorldKey},
     Files, InterfaceGenerator as _, Source, Types, WorldGenerator,
 };
 
@@ -91,6 +88,12 @@ impl Deps {
     fn slog(&mut self) -> &'static str {
         self.map.insert("slog".to_string(), "log/slog".to_string());
         "slog"
+    }
+
+    fn strings(&mut self) -> &'static str {
+        self.map
+            .insert("strings".to_string(), "strings".to_string());
+        "strings"
     }
 
     fn utf8(&mut self) -> &'static str {
@@ -635,47 +638,5 @@ fn to_upper_camel_case(name: &str) -> String {
         // interfaces, so remap types defined in wit to something else.
         "handler" => "Handler_".to_string(),
         s => s.to_upper_camel_case(),
-    }
-}
-
-fn int_repr(repr: Int) -> &'static str {
-    match repr {
-        Int::U8 => "uint8",
-        Int::U16 => "uint16",
-        Int::U32 => "uint32",
-        Int::U64 => "uint64",
-    }
-}
-
-enum RustFlagsRepr {
-    U8,
-    U16,
-    U32,
-    U64,
-    U128,
-}
-
-impl RustFlagsRepr {
-    fn new(f: &Flags) -> RustFlagsRepr {
-        match f.repr() {
-            FlagsRepr::U8 => RustFlagsRepr::U8,
-            FlagsRepr::U16 => RustFlagsRepr::U16,
-            FlagsRepr::U32(1) => RustFlagsRepr::U32,
-            FlagsRepr::U32(2) => RustFlagsRepr::U64,
-            FlagsRepr::U32(3 | 4) => RustFlagsRepr::U128,
-            FlagsRepr::U32(n) => panic!("unsupported number of flags: {}", n * 32),
-        }
-    }
-}
-
-impl fmt::Display for RustFlagsRepr {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            RustFlagsRepr::U8 => "u8".fmt(f),
-            RustFlagsRepr::U16 => "u16".fmt(f),
-            RustFlagsRepr::U32 => "u32".fmt(f),
-            RustFlagsRepr::U64 => "u64".fmt(f),
-            RustFlagsRepr::U128 => "u128".fmt(f),
-        }
     }
 }

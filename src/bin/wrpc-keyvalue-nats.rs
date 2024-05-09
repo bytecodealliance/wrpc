@@ -1,7 +1,6 @@
 use anyhow::Context as _;
 use clap::{Parser, Subcommand};
 use tokio::io::{stdin, stdout, AsyncReadExt as _, AsyncWriteExt as _};
-use url::Url;
 
 mod bindings {
     wit_bindgen_wrpc::generate!({
@@ -30,7 +29,7 @@ enum Operation {
 struct Args {
     /// NATS.io URL to connect to
     #[arg(short, long, default_value = wrpc_cli::nats::DEFAULT_URL)]
-    nats: Url,
+    nats: String,
 
     /// Prefix to invoke `wrpc:keyvalue` operations on
     prefix: String,
