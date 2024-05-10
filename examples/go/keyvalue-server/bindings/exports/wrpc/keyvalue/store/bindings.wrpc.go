@@ -8,6 +8,7 @@ import (
 	errors "errors"
 	fmt "fmt"
 	wrpc "github.com/wrpc/wrpc/go"
+	errgroup "golang.org/x/sync/errgroup"
 	io "io"
 	slog "log/slog"
 	math "math"
@@ -92,7 +93,7 @@ func NewError_Other(payload string) *Error {
 		payload, ErrorDiscriminant_Other}
 }
 func (v *Error) Error() string { return v.String() }
-func (v *Error) WriteTo(w wrpc.ByteWriter) error {
+func (v *Error) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, error) {
 	if err := func(v uint8, w wrpc.ByteWriter) error {
 		b := make([]byte, 2)
 		i := binary.PutUvarint(b, uint64(v))
@@ -100,7 +101,7 @@ func (v *Error) WriteTo(w wrpc.ByteWriter) error {
 		_, err := w.Write(b[:i])
 		return err
 	}(uint8(v.discriminant), w); err != nil {
-		return fmt.Errorf("failed to write discriminant: %w", err)
+		return nil, fmt.Errorf("failed to write discriminant: %w", err)
 	}
 	switch v.discriminant {
 	case ErrorDiscriminant_NoSuchStore:
@@ -108,36 +109,46 @@ func (v *Error) WriteTo(w wrpc.ByteWriter) error {
 	case ErrorDiscriminant_Other:
 		payload, ok := v.payload.(string)
 		if !ok {
-			return errors.New("invalid payload")
+			return nil, errors.New("invalid payload")
 		}
-		if err := func(v string, w wrpc.ByteWriter) error {
+		write, err := func(v string, w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, error) {
 			n := len(v)
 			if n > math.MaxUint32 {
-				return fmt.Errorf("string byte length of %d overflows a 32-bit integer", n)
+				return nil, fmt.Errorf("string byte length of %d overflows a 32-bit integer", n)
 			}
-			slog.Debug("writing string byte length", "len", n)
-			if err := func(v uint32, w wrpc.ByteWriter) error {
+			if err := func(v int, w wrpc.ByteWriter) error {
 				b := make([]byte, binary.MaxVarintLen32)
 				i := binary.PutUvarint(b, uint64(v))
-				slog.Debug("writing u32")
+				slog.Debug("writing string byte length", "len", n)
 				_, err := w.Write(b[:i])
 				return err
-			}(uint32(n), w); err != nil {
-				return fmt.Errorf("failed to write string length of %d: %w", n, err)
+			}(n, w); err != nil {
+				return nil, fmt.Errorf("failed to write string length of %d: %w", n, err)
 			}
 			slog.Debug("writing string bytes")
 			_, err := w.Write([]byte(v))
 			if err != nil {
-				return fmt.Errorf("failed to write string bytes: %w", err)
+				return nil, fmt.Errorf("failed to write string bytes: %w", err)
 			}
-			return nil
-		}(payload, w); err != nil {
-			return fmt.Errorf("failed to write payload: %w", err)
+			return nil, nil
+		}(payload, w)
+		if err != nil {
+			return nil, fmt.Errorf("failed to write payload: %w", err)
+		}
+
+		if write != nil {
+			return func(w wrpc.IndexWriter) error {
+				w, err := w.Index(2)
+				if err != nil {
+					return fmt.Errorf("failed to index writer: %w", err)
+				}
+				return write(w)
+			}, nil
 		}
 	default:
-		panic("invalid variant")
+		return nil, errors.New("invalid variant")
 	}
-	return nil
+	return nil, nil
 }
 func ReadError(r wrpc.ByteReader) (*Error, error) {
 	disc, err := func(r wrpc.ByteReader) (uint8, error) {
@@ -225,82 +236,137 @@ type KeyResponse struct {
 
 func (v *KeyResponse) String() string { return "KeyResponse" }
 
-func (v *KeyResponse) WriteTo(w wrpc.ByteWriter) error {
+func (v *KeyResponse) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, error) {
+	writes := make(map[uint32]func(wrpc.IndexWriter) error, 2)
 	slog.Debug("writing field", "name", "keys")
-	if err := func(v []string, w wrpc.ByteWriter) error {
+	write0, err := func(v []string, w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, error) {
 		n := len(v)
 		if n > math.MaxUint32 {
-			return fmt.Errorf("list length of %d overflows a 32-bit integer", n)
+			return nil, fmt.Errorf("list length of %d overflows a 32-bit integer", n)
 		}
-		slog.Debug("writing list length", "len", n)
-		if err := func(v uint32, w wrpc.ByteWriter) error {
+		if err := func(v int, w wrpc.ByteWriter) error {
 			b := make([]byte, binary.MaxVarintLen32)
 			i := binary.PutUvarint(b, uint64(v))
-			slog.Debug("writing u32")
+			slog.Debug("writing list length", "len", n)
 			_, err := w.Write(b[:i])
 			return err
-		}(uint32(n), w); err != nil {
-			return fmt.Errorf("failed to write list length of %d: %w", n, err)
+		}(n, w); err != nil {
+			return nil, fmt.Errorf("failed to write list length of %d: %w", n, err)
 		}
 		slog.Debug("writing list elements")
+		writes := make(map[uint32]func(wrpc.IndexWriter) error, n)
 		for i, e := range v {
-			if err := func(v string, w wrpc.ByteWriter) error {
+			write, err := func(v string, w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, error) {
 				n := len(v)
 				if n > math.MaxUint32 {
-					return fmt.Errorf("string byte length of %d overflows a 32-bit integer", n)
+					return nil, fmt.Errorf("string byte length of %d overflows a 32-bit integer", n)
 				}
-				slog.Debug("writing string byte length", "len", n)
-				if err := func(v uint32, w wrpc.ByteWriter) error {
+				if err := func(v int, w wrpc.ByteWriter) error {
 					b := make([]byte, binary.MaxVarintLen32)
 					i := binary.PutUvarint(b, uint64(v))
-					slog.Debug("writing u32")
+					slog.Debug("writing string byte length", "len", n)
 					_, err := w.Write(b[:i])
 					return err
-				}(uint32(n), w); err != nil {
-					return fmt.Errorf("failed to write string length of %d: %w", n, err)
+				}(n, w); err != nil {
+					return nil, fmt.Errorf("failed to write string length of %d: %w", n, err)
 				}
 				slog.Debug("writing string bytes")
 				_, err := w.Write([]byte(v))
 				if err != nil {
-					return fmt.Errorf("failed to write string bytes: %w", err)
+					return nil, fmt.Errorf("failed to write string bytes: %w", err)
 				}
-				return nil
-			}(e, w); err != nil {
-				return fmt.Errorf("failed to write list element %d: %w", i, err)
+				return nil, nil
+			}(e, w)
+			if err != nil {
+				return nil, fmt.Errorf("failed to write list element %d: %w", i, err)
+			}
+			if write != nil {
+				writes[uint32(i)] = write
 			}
 		}
-		return nil
-	}(v.Keys, w); err != nil {
-		return fmt.Errorf("failed to write `keys` field: %w", err)
+		if len(writes) > 0 {
+			return func(w wrpc.IndexWriter) error {
+				var wg errgroup.Group
+				for index, write := range writes {
+					w, err := w.Index(index)
+					if err != nil {
+						return fmt.Errorf("failed to index writer: %w", err)
+					}
+					write := write
+					wg.Go(func() error {
+						return write(w)
+					})
+				}
+				return wg.Wait()
+			}, nil
+		}
+		return nil, nil
+	}(v.Keys, w)
+	if err != nil {
+		return nil, fmt.Errorf("failed to write `keys` field: %w", err)
+	}
+	if write0 != nil {
+		writes[0] = write0
 	}
 	slog.Debug("writing field", "name", "cursor")
-	if err := func(v *uint64, w wrpc.ByteWriter) error {
+	write1, err := func(v *uint64, w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, error) {
 		if v == nil {
 			slog.Debug("writing `option::none` status byte")
 			if err := w.WriteByte(0); err != nil {
-				return fmt.Errorf("failed to write `option::none` byte: %w", err)
+				return nil, fmt.Errorf("failed to write `option::none` byte: %w", err)
 			}
-			return nil
+			return nil, nil
 		}
 		slog.Debug("writing `option::some` status byte")
 		if err := w.WriteByte(1); err != nil {
-			return fmt.Errorf("failed to write `option::some` status byte: %w", err)
+			return nil, fmt.Errorf("failed to write `option::some` status byte: %w", err)
 		}
 		slog.Debug("writing `option::some` payload")
-		if err := func(v uint64, w wrpc.ByteWriter) error {
+		write, err := func(v uint64, w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, error) {
 			b := make([]byte, binary.MaxVarintLen64)
 			i := binary.PutUvarint(b, uint64(v))
 			slog.Debug("writing u64")
 			_, err := w.Write(b[:i])
-			return err
-		}(*v, w); err != nil {
-			return fmt.Errorf("failed to write `option::some` payload: %w", err)
+			return nil, err
+		}(*v, w)
+		if err != nil {
+			return nil, fmt.Errorf("failed to write `option::some` payload: %w", err)
 		}
-		return nil
-	}(v.Cursor, w); err != nil {
-		return fmt.Errorf("failed to write `cursor` field: %w", err)
+		if write != nil {
+			return func(w wrpc.IndexWriter) error {
+				w, err := w.Index(1)
+				if err != nil {
+					return fmt.Errorf("failed to index writer: %w", err)
+				}
+				return write(w)
+			}, nil
+		}
+		return nil, nil
+	}(v.Cursor, w)
+	if err != nil {
+		return nil, fmt.Errorf("failed to write `cursor` field: %w", err)
 	}
-	return nil
+	if write1 != nil {
+		writes[1] = write1
+	}
+
+	if len(writes) > 0 {
+		return func(w wrpc.IndexWriter) error {
+			var wg errgroup.Group
+			for index, write := range writes {
+				w, err := w.Index(index)
+				if err != nil {
+					return fmt.Errorf("failed to index writer: %w", err)
+				}
+				write := write
+				wg.Go(func() error {
+					return write(w)
+				})
+			}
+			return wg.Wait()
+		}, nil
+	}
+	return nil, nil
 }
 func ReadKeyResponse(r wrpc.ByteReader) (*KeyResponse, error) {
 	v := &KeyResponse{}
@@ -499,7 +565,7 @@ func ServeInterface(c wrpc.Client, h Handler) (stop func() error, err error) {
 		}
 		return nil
 	}
-	stop0, err := c.Serve("wrpc:keyvalue/store@0.2.0-draft", "get", func(ctx context.Context, w wrpc.IndexWriter, r wrpc.IndexReader, errCh <-chan error) error {
+	stop0, err := c.Serve("wrpc:keyvalue/store@0.2.0-draft", "get", func(ctx context.Context, w wrpc.IndexWriter, r wrpc.IndexReadCloser) error {
 		slog.DebugContext(ctx, "reading parameter", "i", 0)
 		p0, err := func(r wrpc.ByteReader) (string, error) {
 			var x uint32
@@ -579,84 +645,154 @@ func ServeInterface(c wrpc.Client, h Handler) (stop func() error, err error) {
 		if err != nil {
 			return fmt.Errorf("failed to handle `wrpc:keyvalue/store@0.2.0-draft.get` invocation: %w", err)
 		}
+
 		var buf bytes.Buffer
-		if err := func(v *wrpc.Result[[]uint8, Error], w wrpc.ByteWriter) error {
+		writes := make(map[uint32]func(wrpc.IndexWriter) error, 1)
+		write0, err := func(v *wrpc.Result[[]uint8, Error], w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, error) {
 			switch {
 			case v.Ok == nil && v.Err == nil:
-				return errors.New("both result variants cannot be nil")
+				return nil, errors.New("both result variants cannot be nil")
 			case v.Ok != nil && v.Err != nil:
-				return errors.New("exactly one result variant must non-nil")
+				return nil, errors.New("exactly one result variant must non-nil")
 
 			case v.Ok != nil:
 				slog.Debug("writing `result::ok` status byte")
 				if err := w.WriteByte(0); err != nil {
-					return fmt.Errorf("failed to write `result::ok` status byte: %w", err)
+					return nil, fmt.Errorf("failed to write `result::ok` status byte: %w", err)
 				}
 				slog.Debug("writing `result::ok` payload")
-				if err := func(v []uint8, w wrpc.ByteWriter) error {
+				write, err := func(v []uint8, w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, error) {
 					if v == nil {
 						slog.Debug("writing `option::none` status byte")
 						if err := w.WriteByte(0); err != nil {
-							return fmt.Errorf("failed to write `option::none` byte: %w", err)
+							return nil, fmt.Errorf("failed to write `option::none` byte: %w", err)
 						}
-						return nil
+						return nil, nil
 					}
 					slog.Debug("writing `option::some` status byte")
 					if err := w.WriteByte(1); err != nil {
-						return fmt.Errorf("failed to write `option::some` status byte: %w", err)
+						return nil, fmt.Errorf("failed to write `option::some` status byte: %w", err)
 					}
 					slog.Debug("writing `option::some` payload")
-					if err := func(v []uint8, w wrpc.ByteWriter) error {
+					write, err := func(v []uint8, w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, error) {
 						n := len(v)
 						if n > math.MaxUint32 {
-							return fmt.Errorf("list length of %d overflows a 32-bit integer", n)
+							return nil, fmt.Errorf("list length of %d overflows a 32-bit integer", n)
 						}
-						slog.Debug("writing list length", "len", n)
-						if err := func(v uint32, w wrpc.ByteWriter) error {
+						if err := func(v int, w wrpc.ByteWriter) error {
 							b := make([]byte, binary.MaxVarintLen32)
 							i := binary.PutUvarint(b, uint64(v))
-							slog.Debug("writing u32")
+							slog.Debug("writing list length", "len", n)
 							_, err := w.Write(b[:i])
 							return err
-						}(uint32(n), w); err != nil {
-							return fmt.Errorf("failed to write list length of %d: %w", n, err)
+						}(n, w); err != nil {
+							return nil, fmt.Errorf("failed to write list length of %d: %w", n, err)
 						}
 						slog.Debug("writing list elements")
+						writes := make(map[uint32]func(wrpc.IndexWriter) error, n)
 						for i, e := range v {
-							if err := func(v uint8, w wrpc.ByteWriter) error {
+							write, err := func(v uint8, w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, error) {
 								slog.Debug("writing u8 byte")
-								return w.WriteByte(v)
-							}(e, w); err != nil {
-								return fmt.Errorf("failed to write list element %d: %w", i, err)
+								return nil, w.WriteByte(v)
+							}(e, w)
+							if err != nil {
+								return nil, fmt.Errorf("failed to write list element %d: %w", i, err)
+							}
+							if write != nil {
+								writes[uint32(i)] = write
 							}
 						}
-						return nil
-					}(v, w); err != nil {
-						return fmt.Errorf("failed to write `option::some` payload: %w", err)
+						if len(writes) > 0 {
+							return func(w wrpc.IndexWriter) error {
+								var wg errgroup.Group
+								for index, write := range writes {
+									w, err := w.Index(index)
+									if err != nil {
+										return fmt.Errorf("failed to index writer: %w", err)
+									}
+									write := write
+									wg.Go(func() error {
+										return write(w)
+									})
+								}
+								return wg.Wait()
+							}, nil
+						}
+						return nil, nil
+					}(v, w)
+					if err != nil {
+						return nil, fmt.Errorf("failed to write `option::some` payload: %w", err)
 					}
-					return nil
-				}(*v.Ok, w); err != nil {
-					return fmt.Errorf("failed to write `result::ok` payload: %w", err)
+					if write != nil {
+						return func(w wrpc.IndexWriter) error {
+							w, err := w.Index(1)
+							if err != nil {
+								return fmt.Errorf("failed to index writer: %w", err)
+							}
+							return write(w)
+						}, nil
+					}
+					return nil, nil
+				}(*v.Ok, w)
+				if err != nil {
+					return nil, fmt.Errorf("failed to write `result::ok` payload: %w", err)
 				}
-				return nil
+				if write != nil {
+					return func(w wrpc.IndexWriter) error {
+						w, err := w.Index(0)
+						if err != nil {
+							return fmt.Errorf("failed to index writer: %w", err)
+						}
+						return write(w)
+					}, nil
+				}
+				return nil, nil
 			default:
 				slog.Debug("writing `result::err` status byte")
 				if err := w.WriteByte(1); err != nil {
-					return fmt.Errorf("failed to write `result::err` status byte: %w", err)
+					return nil, fmt.Errorf("failed to write `result::err` status byte: %w", err)
 				}
 				slog.Debug("writing `result::err` payload")
-				if err := (*v.Err).WriteTo(w); err != nil {
-					return fmt.Errorf("failed to write `result::err` payload: %w", err)
+				write, err := (*v.Err).WriteToIndex(w)
+				if err != nil {
+					return nil, fmt.Errorf("failed to write `result::err` payload: %w", err)
 				}
-				return nil
+				if write != nil {
+					return func(w wrpc.IndexWriter) error {
+						w, err := w.Index(1)
+						if err != nil {
+							return fmt.Errorf("failed to index writer: %w", err)
+						}
+						return write(w)
+					}, nil
+				}
+				return nil, nil
 			}
-		}(r0, &buf); err != nil {
+		}(r0, &buf)
+		if err != nil {
 			return fmt.Errorf("failed to write result value 0: %w", err)
+		}
+		if write0 != nil {
+			writes[0] = write0
 		}
 		slog.DebugContext(ctx, "transmitting `wrpc:keyvalue/store@0.2.0-draft.get` result")
 		_, err = w.Write(buf.Bytes())
 		if err != nil {
 			return fmt.Errorf("failed to write result: %w", err)
+		}
+		if len(writes) > 0 {
+			var wg errgroup.Group
+			for index, write := range writes {
+				w, err := w.Index(index)
+				if err != nil {
+					return fmt.Errorf("failed to index writer: %w", err)
+				}
+				write := write
+				wg.Go(func() error {
+					return write(w)
+				})
+			}
+			return wg.Wait()
 		}
 		return nil
 	})
@@ -664,7 +800,7 @@ func ServeInterface(c wrpc.Client, h Handler) (stop func() error, err error) {
 		return nil, fmt.Errorf("failed to serve `wrpc:keyvalue/store@0.2.0-draft.get`: %w", err)
 	}
 	stops = append(stops, stop0)
-	stop1, err := c.Serve("wrpc:keyvalue/store@0.2.0-draft", "set", func(ctx context.Context, w wrpc.IndexWriter, r wrpc.IndexReader, errCh <-chan error) error {
+	stop1, err := c.Serve("wrpc:keyvalue/store@0.2.0-draft", "set", func(ctx context.Context, w wrpc.IndexWriter, r wrpc.IndexReadCloser) error {
 		slog.DebugContext(ctx, "reading parameter", "i", 0)
 		p0, err := func(r wrpc.ByteReader) (string, error) {
 			var x uint32
@@ -787,38 +923,68 @@ func ServeInterface(c wrpc.Client, h Handler) (stop func() error, err error) {
 		if err != nil {
 			return fmt.Errorf("failed to handle `wrpc:keyvalue/store@0.2.0-draft.set` invocation: %w", err)
 		}
+
 		var buf bytes.Buffer
-		if err := func(v *wrpc.Result[struct{}, Error], w wrpc.ByteWriter) error {
+		writes := make(map[uint32]func(wrpc.IndexWriter) error, 1)
+		write0, err := func(v *wrpc.Result[struct{}, Error], w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, error) {
 			switch {
 			case v.Ok == nil && v.Err == nil:
-				return errors.New("both result variants cannot be nil")
+				return nil, errors.New("both result variants cannot be nil")
 			case v.Ok != nil && v.Err != nil:
-				return errors.New("exactly one result variant must non-nil")
+				return nil, errors.New("exactly one result variant must non-nil")
 
 			case v.Ok != nil:
 				slog.Debug("writing `result::ok` status byte")
 				if err := w.WriteByte(0); err != nil {
-					return fmt.Errorf("failed to write `result::ok` status byte: %w", err)
+					return nil, fmt.Errorf("failed to write `result::ok` status byte: %w", err)
 				}
-				return nil
+				return nil, nil
 			default:
 				slog.Debug("writing `result::err` status byte")
 				if err := w.WriteByte(1); err != nil {
-					return fmt.Errorf("failed to write `result::err` status byte: %w", err)
+					return nil, fmt.Errorf("failed to write `result::err` status byte: %w", err)
 				}
 				slog.Debug("writing `result::err` payload")
-				if err := (*v.Err).WriteTo(w); err != nil {
-					return fmt.Errorf("failed to write `result::err` payload: %w", err)
+				write, err := (*v.Err).WriteToIndex(w)
+				if err != nil {
+					return nil, fmt.Errorf("failed to write `result::err` payload: %w", err)
 				}
-				return nil
+				if write != nil {
+					return func(w wrpc.IndexWriter) error {
+						w, err := w.Index(1)
+						if err != nil {
+							return fmt.Errorf("failed to index writer: %w", err)
+						}
+						return write(w)
+					}, nil
+				}
+				return nil, nil
 			}
-		}(r0, &buf); err != nil {
+		}(r0, &buf)
+		if err != nil {
 			return fmt.Errorf("failed to write result value 0: %w", err)
+		}
+		if write0 != nil {
+			writes[0] = write0
 		}
 		slog.DebugContext(ctx, "transmitting `wrpc:keyvalue/store@0.2.0-draft.set` result")
 		_, err = w.Write(buf.Bytes())
 		if err != nil {
 			return fmt.Errorf("failed to write result: %w", err)
+		}
+		if len(writes) > 0 {
+			var wg errgroup.Group
+			for index, write := range writes {
+				w, err := w.Index(index)
+				if err != nil {
+					return fmt.Errorf("failed to index writer: %w", err)
+				}
+				write := write
+				wg.Go(func() error {
+					return write(w)
+				})
+			}
+			return wg.Wait()
 		}
 		return nil
 	})
@@ -826,7 +992,7 @@ func ServeInterface(c wrpc.Client, h Handler) (stop func() error, err error) {
 		return nil, fmt.Errorf("failed to serve `wrpc:keyvalue/store@0.2.0-draft.set`: %w", err)
 	}
 	stops = append(stops, stop1)
-	stop2, err := c.Serve("wrpc:keyvalue/store@0.2.0-draft", "delete", func(ctx context.Context, w wrpc.IndexWriter, r wrpc.IndexReader, errCh <-chan error) error {
+	stop2, err := c.Serve("wrpc:keyvalue/store@0.2.0-draft", "delete", func(ctx context.Context, w wrpc.IndexWriter, r wrpc.IndexReadCloser) error {
 		slog.DebugContext(ctx, "reading parameter", "i", 0)
 		p0, err := func(r wrpc.ByteReader) (string, error) {
 			var x uint32
@@ -906,38 +1072,68 @@ func ServeInterface(c wrpc.Client, h Handler) (stop func() error, err error) {
 		if err != nil {
 			return fmt.Errorf("failed to handle `wrpc:keyvalue/store@0.2.0-draft.delete` invocation: %w", err)
 		}
+
 		var buf bytes.Buffer
-		if err := func(v *wrpc.Result[struct{}, Error], w wrpc.ByteWriter) error {
+		writes := make(map[uint32]func(wrpc.IndexWriter) error, 1)
+		write0, err := func(v *wrpc.Result[struct{}, Error], w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, error) {
 			switch {
 			case v.Ok == nil && v.Err == nil:
-				return errors.New("both result variants cannot be nil")
+				return nil, errors.New("both result variants cannot be nil")
 			case v.Ok != nil && v.Err != nil:
-				return errors.New("exactly one result variant must non-nil")
+				return nil, errors.New("exactly one result variant must non-nil")
 
 			case v.Ok != nil:
 				slog.Debug("writing `result::ok` status byte")
 				if err := w.WriteByte(0); err != nil {
-					return fmt.Errorf("failed to write `result::ok` status byte: %w", err)
+					return nil, fmt.Errorf("failed to write `result::ok` status byte: %w", err)
 				}
-				return nil
+				return nil, nil
 			default:
 				slog.Debug("writing `result::err` status byte")
 				if err := w.WriteByte(1); err != nil {
-					return fmt.Errorf("failed to write `result::err` status byte: %w", err)
+					return nil, fmt.Errorf("failed to write `result::err` status byte: %w", err)
 				}
 				slog.Debug("writing `result::err` payload")
-				if err := (*v.Err).WriteTo(w); err != nil {
-					return fmt.Errorf("failed to write `result::err` payload: %w", err)
+				write, err := (*v.Err).WriteToIndex(w)
+				if err != nil {
+					return nil, fmt.Errorf("failed to write `result::err` payload: %w", err)
 				}
-				return nil
+				if write != nil {
+					return func(w wrpc.IndexWriter) error {
+						w, err := w.Index(1)
+						if err != nil {
+							return fmt.Errorf("failed to index writer: %w", err)
+						}
+						return write(w)
+					}, nil
+				}
+				return nil, nil
 			}
-		}(r0, &buf); err != nil {
+		}(r0, &buf)
+		if err != nil {
 			return fmt.Errorf("failed to write result value 0: %w", err)
+		}
+		if write0 != nil {
+			writes[0] = write0
 		}
 		slog.DebugContext(ctx, "transmitting `wrpc:keyvalue/store@0.2.0-draft.delete` result")
 		_, err = w.Write(buf.Bytes())
 		if err != nil {
 			return fmt.Errorf("failed to write result: %w", err)
+		}
+		if len(writes) > 0 {
+			var wg errgroup.Group
+			for index, write := range writes {
+				w, err := w.Index(index)
+				if err != nil {
+					return fmt.Errorf("failed to index writer: %w", err)
+				}
+				write := write
+				wg.Go(func() error {
+					return write(w)
+				})
+			}
+			return wg.Wait()
 		}
 		return nil
 	})
@@ -945,7 +1141,7 @@ func ServeInterface(c wrpc.Client, h Handler) (stop func() error, err error) {
 		return nil, fmt.Errorf("failed to serve `wrpc:keyvalue/store@0.2.0-draft.delete`: %w", err)
 	}
 	stops = append(stops, stop2)
-	stop3, err := c.Serve("wrpc:keyvalue/store@0.2.0-draft", "exists", func(ctx context.Context, w wrpc.IndexWriter, r wrpc.IndexReader, errCh <-chan error) error {
+	stop3, err := c.Serve("wrpc:keyvalue/store@0.2.0-draft", "exists", func(ctx context.Context, w wrpc.IndexWriter, r wrpc.IndexReadCloser) error {
 		slog.DebugContext(ctx, "reading parameter", "i", 0)
 		p0, err := func(r wrpc.ByteReader) (string, error) {
 			var x uint32
@@ -1025,49 +1221,89 @@ func ServeInterface(c wrpc.Client, h Handler) (stop func() error, err error) {
 		if err != nil {
 			return fmt.Errorf("failed to handle `wrpc:keyvalue/store@0.2.0-draft.exists` invocation: %w", err)
 		}
+
 		var buf bytes.Buffer
-		if err := func(v *wrpc.Result[bool, Error], w wrpc.ByteWriter) error {
+		writes := make(map[uint32]func(wrpc.IndexWriter) error, 1)
+		write0, err := func(v *wrpc.Result[bool, Error], w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, error) {
 			switch {
 			case v.Ok == nil && v.Err == nil:
-				return errors.New("both result variants cannot be nil")
+				return nil, errors.New("both result variants cannot be nil")
 			case v.Ok != nil && v.Err != nil:
-				return errors.New("exactly one result variant must non-nil")
+				return nil, errors.New("exactly one result variant must non-nil")
 
 			case v.Ok != nil:
 				slog.Debug("writing `result::ok` status byte")
 				if err := w.WriteByte(0); err != nil {
-					return fmt.Errorf("failed to write `result::ok` status byte: %w", err)
+					return nil, fmt.Errorf("failed to write `result::ok` status byte: %w", err)
 				}
 				slog.Debug("writing `result::ok` payload")
-				if err := func(v bool, w wrpc.ByteWriter) error {
+				write, err := func(v bool, w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, error) {
 					if !v {
 						slog.Debug("writing `false` byte")
-						return w.WriteByte(0)
+						return nil, w.WriteByte(0)
 					}
 					slog.Debug("writing `true` byte")
-					return w.WriteByte(1)
-				}(*v.Ok, w); err != nil {
-					return fmt.Errorf("failed to write `result::ok` payload: %w", err)
+					return nil, w.WriteByte(1)
+				}(*v.Ok, w)
+				if err != nil {
+					return nil, fmt.Errorf("failed to write `result::ok` payload: %w", err)
 				}
-				return nil
+				if write != nil {
+					return func(w wrpc.IndexWriter) error {
+						w, err := w.Index(0)
+						if err != nil {
+							return fmt.Errorf("failed to index writer: %w", err)
+						}
+						return write(w)
+					}, nil
+				}
+				return nil, nil
 			default:
 				slog.Debug("writing `result::err` status byte")
 				if err := w.WriteByte(1); err != nil {
-					return fmt.Errorf("failed to write `result::err` status byte: %w", err)
+					return nil, fmt.Errorf("failed to write `result::err` status byte: %w", err)
 				}
 				slog.Debug("writing `result::err` payload")
-				if err := (*v.Err).WriteTo(w); err != nil {
-					return fmt.Errorf("failed to write `result::err` payload: %w", err)
+				write, err := (*v.Err).WriteToIndex(w)
+				if err != nil {
+					return nil, fmt.Errorf("failed to write `result::err` payload: %w", err)
 				}
-				return nil
+				if write != nil {
+					return func(w wrpc.IndexWriter) error {
+						w, err := w.Index(1)
+						if err != nil {
+							return fmt.Errorf("failed to index writer: %w", err)
+						}
+						return write(w)
+					}, nil
+				}
+				return nil, nil
 			}
-		}(r0, &buf); err != nil {
+		}(r0, &buf)
+		if err != nil {
 			return fmt.Errorf("failed to write result value 0: %w", err)
+		}
+		if write0 != nil {
+			writes[0] = write0
 		}
 		slog.DebugContext(ctx, "transmitting `wrpc:keyvalue/store@0.2.0-draft.exists` result")
 		_, err = w.Write(buf.Bytes())
 		if err != nil {
 			return fmt.Errorf("failed to write result: %w", err)
+		}
+		if len(writes) > 0 {
+			var wg errgroup.Group
+			for index, write := range writes {
+				w, err := w.Index(index)
+				if err != nil {
+					return fmt.Errorf("failed to index writer: %w", err)
+				}
+				write := write
+				wg.Go(func() error {
+					return write(w)
+				})
+			}
+			return wg.Wait()
 		}
 		return nil
 	})
@@ -1075,7 +1311,7 @@ func ServeInterface(c wrpc.Client, h Handler) (stop func() error, err error) {
 		return nil, fmt.Errorf("failed to serve `wrpc:keyvalue/store@0.2.0-draft.exists`: %w", err)
 	}
 	stops = append(stops, stop3)
-	stop4, err := c.Serve("wrpc:keyvalue/store@0.2.0-draft", "list-keys", func(ctx context.Context, w wrpc.IndexWriter, r wrpc.IndexReader, errCh <-chan error) error {
+	stop4, err := c.Serve("wrpc:keyvalue/store@0.2.0-draft", "list-keys", func(ctx context.Context, w wrpc.IndexWriter, r wrpc.IndexReadCloser) error {
 		slog.DebugContext(ctx, "reading parameter", "i", 0)
 		p0, err := func(r wrpc.ByteReader) (string, error) {
 			var x uint32
@@ -1164,42 +1400,82 @@ func ServeInterface(c wrpc.Client, h Handler) (stop func() error, err error) {
 		if err != nil {
 			return fmt.Errorf("failed to handle `wrpc:keyvalue/store@0.2.0-draft.list-keys` invocation: %w", err)
 		}
+
 		var buf bytes.Buffer
-		if err := func(v *wrpc.Result[KeyResponse, Error], w wrpc.ByteWriter) error {
+		writes := make(map[uint32]func(wrpc.IndexWriter) error, 1)
+		write0, err := func(v *wrpc.Result[KeyResponse, Error], w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, error) {
 			switch {
 			case v.Ok == nil && v.Err == nil:
-				return errors.New("both result variants cannot be nil")
+				return nil, errors.New("both result variants cannot be nil")
 			case v.Ok != nil && v.Err != nil:
-				return errors.New("exactly one result variant must non-nil")
+				return nil, errors.New("exactly one result variant must non-nil")
 
 			case v.Ok != nil:
 				slog.Debug("writing `result::ok` status byte")
 				if err := w.WriteByte(0); err != nil {
-					return fmt.Errorf("failed to write `result::ok` status byte: %w", err)
+					return nil, fmt.Errorf("failed to write `result::ok` status byte: %w", err)
 				}
 				slog.Debug("writing `result::ok` payload")
-				if err := (*v.Ok).WriteTo(w); err != nil {
-					return fmt.Errorf("failed to write `result::ok` payload: %w", err)
+				write, err := (*v.Ok).WriteToIndex(w)
+				if err != nil {
+					return nil, fmt.Errorf("failed to write `result::ok` payload: %w", err)
 				}
-				return nil
+				if write != nil {
+					return func(w wrpc.IndexWriter) error {
+						w, err := w.Index(0)
+						if err != nil {
+							return fmt.Errorf("failed to index writer: %w", err)
+						}
+						return write(w)
+					}, nil
+				}
+				return nil, nil
 			default:
 				slog.Debug("writing `result::err` status byte")
 				if err := w.WriteByte(1); err != nil {
-					return fmt.Errorf("failed to write `result::err` status byte: %w", err)
+					return nil, fmt.Errorf("failed to write `result::err` status byte: %w", err)
 				}
 				slog.Debug("writing `result::err` payload")
-				if err := (*v.Err).WriteTo(w); err != nil {
-					return fmt.Errorf("failed to write `result::err` payload: %w", err)
+				write, err := (*v.Err).WriteToIndex(w)
+				if err != nil {
+					return nil, fmt.Errorf("failed to write `result::err` payload: %w", err)
 				}
-				return nil
+				if write != nil {
+					return func(w wrpc.IndexWriter) error {
+						w, err := w.Index(1)
+						if err != nil {
+							return fmt.Errorf("failed to index writer: %w", err)
+						}
+						return write(w)
+					}, nil
+				}
+				return nil, nil
 			}
-		}(r0, &buf); err != nil {
+		}(r0, &buf)
+		if err != nil {
 			return fmt.Errorf("failed to write result value 0: %w", err)
+		}
+		if write0 != nil {
+			writes[0] = write0
 		}
 		slog.DebugContext(ctx, "transmitting `wrpc:keyvalue/store@0.2.0-draft.list-keys` result")
 		_, err = w.Write(buf.Bytes())
 		if err != nil {
 			return fmt.Errorf("failed to write result: %w", err)
+		}
+		if len(writes) > 0 {
+			var wg errgroup.Group
+			for index, write := range writes {
+				w, err := w.Index(index)
+				if err != nil {
+					return fmt.Errorf("failed to index writer: %w", err)
+				}
+				write := write
+				wg.Go(func() error {
+					return write(w)
+				})
+			}
+			return wg.Wait()
 		}
 		return nil
 	})

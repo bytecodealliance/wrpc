@@ -7,6 +7,7 @@ import (
 	binary "encoding/binary"
 	fmt "fmt"
 	wrpc "github.com/wrpc/wrpc/go"
+	errgroup "golang.org/x/sync/errgroup"
 	slog "log/slog"
 	math "math"
 )
@@ -25,41 +26,60 @@ func ServeInterface(c wrpc.Client, h Handler) (stop func() error, err error) {
 		}
 		return nil
 	}
-	stop0, err := c.Serve("wrpc-examples:hello/handler", "hello", func(ctx context.Context, w wrpc.IndexWriter, r wrpc.IndexReader, errCh <-chan error) error {
+	stop0, err := c.Serve("wrpc-examples:hello/handler", "hello", func(ctx context.Context, w wrpc.IndexWriter, r wrpc.IndexReadCloser) error {
 		slog.DebugContext(ctx, "calling `wrpc-examples:hello/handler.hello` handler")
 		r0, err := h.Hello(ctx)
 		if err != nil {
 			return fmt.Errorf("failed to handle `wrpc-examples:hello/handler.hello` invocation: %w", err)
 		}
+
 		var buf bytes.Buffer
-		if err := func(v string, w wrpc.ByteWriter) error {
+		writes := make(map[uint32]func(wrpc.IndexWriter) error, 1)
+		write0, err := func(v string, w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, error) {
 			n := len(v)
 			if n > math.MaxUint32 {
-				return fmt.Errorf("string byte length of %d overflows a 32-bit integer", n)
+				return nil, fmt.Errorf("string byte length of %d overflows a 32-bit integer", n)
 			}
-			slog.Debug("writing string byte length", "len", n)
-			if err := func(v uint32, w wrpc.ByteWriter) error {
+			if err := func(v int, w wrpc.ByteWriter) error {
 				b := make([]byte, binary.MaxVarintLen32)
 				i := binary.PutUvarint(b, uint64(v))
-				slog.Debug("writing u32")
+				slog.Debug("writing string byte length", "len", n)
 				_, err := w.Write(b[:i])
 				return err
-			}(uint32(n), w); err != nil {
-				return fmt.Errorf("failed to write string length of %d: %w", n, err)
+			}(n, w); err != nil {
+				return nil, fmt.Errorf("failed to write string length of %d: %w", n, err)
 			}
 			slog.Debug("writing string bytes")
 			_, err := w.Write([]byte(v))
 			if err != nil {
-				return fmt.Errorf("failed to write string bytes: %w", err)
+				return nil, fmt.Errorf("failed to write string bytes: %w", err)
 			}
-			return nil
-		}(r0, &buf); err != nil {
+			return nil, nil
+		}(r0, &buf)
+		if err != nil {
 			return fmt.Errorf("failed to write result value 0: %w", err)
+		}
+		if write0 != nil {
+			writes[0] = write0
 		}
 		slog.DebugContext(ctx, "transmitting `wrpc-examples:hello/handler.hello` result")
 		_, err = w.Write(buf.Bytes())
 		if err != nil {
 			return fmt.Errorf("failed to write result: %w", err)
+		}
+		if len(writes) > 0 {
+			var wg errgroup.Group
+			for index, write := range writes {
+				w, err := w.Index(index)
+				if err != nil {
+					return fmt.Errorf("failed to index writer: %w", err)
+				}
+				write := write
+				wg.Go(func() error {
+					return write(w)
+				})
+			}
+			return wg.Wait()
 		}
 		return nil
 	})

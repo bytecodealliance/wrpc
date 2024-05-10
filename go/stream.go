@@ -1,6 +1,7 @@
 package wrpc
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
@@ -15,10 +16,20 @@ type ByteStreamWriter struct {
 	chunk []byte
 }
 
-func (v *ByteStreamWriter) WriteTo(w ByteWriter) error {
+func (v *ByteStreamWriter) WriteTo(w ByteWriter) (err error) {
 	if len(v.chunk) == 0 {
 		v.chunk = make([]byte, 8096)
 	}
+	buf := bufio.NewWriter(w)
+	defer func() {
+		if fErr := buf.Flush(); fErr != nil {
+			if err == nil {
+				err = fmt.Errorf("failed to flush writer: %w", fErr)
+			} else {
+				slog.Warn("failed to flush writer", "err", fErr)
+			}
+		}
+	}()
 	for {
 		var end bool
 		slog.Debug("reading pending byte stream contents")
@@ -33,15 +44,15 @@ func (v *ByteStreamWriter) WriteTo(w ByteWriter) error {
 			return fmt.Errorf("pending byte stream chunk length of %d overflows a 32-bit integer", n)
 		}
 		slog.Debug("writing pending byte stream chunk length", "len", n)
-		if err := WriteUint32(uint32(n), w); err != nil {
+		if err := WriteUint32(uint32(n), buf); err != nil {
 			return fmt.Errorf("failed to write pending byte stream chunk length of %d: %w", n, err)
 		}
-		_, err = w.Write(v.chunk[:n])
+		_, err = buf.Write(v.chunk[:n])
 		if err != nil {
 			return fmt.Errorf("failed to write pending byte stream chunk contents: %w", err)
 		}
 		if end {
-			if err := w.WriteByte(0); err != nil {
+			if err := buf.WriteByte(0); err != nil {
 				return fmt.Errorf("failed to write pending byte stream end byte: %w", err)
 			}
 			return nil
@@ -59,7 +70,7 @@ func (r *byteStreamReceiver) Read(p []byte) (int, error) {
 	if n == 0 {
 		slog.Debug("reading pending byte stream chunk length")
 		var err error
-		n, err = ReadUint32(r)
+		n, err = ReadUint32(r.ByteReader)
 		if err != nil {
 			return 0, fmt.Errorf("failed to read pending byte stream chunk length: %w", err)
 		}
@@ -71,7 +82,7 @@ func (r *byteStreamReceiver) Read(p []byte) (int, error) {
 		p = p[:n]
 	}
 	slog.Debug("reading pending byte stream chunk contents", "len", n)
-	rn, err := r.Read(p)
+	rn, err := r.ByteReader.Read(p)
 	if err != nil {
 		return rn, fmt.Errorf("failed to read pending stream chunk bytes: %w", err)
 	}
