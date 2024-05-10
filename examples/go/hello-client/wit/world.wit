@@ -1,0 +1,5 @@
+package wrpc-examples:hello-go-client;
+
+world client {
+    include wrpc-examples:hello/client;
+}
