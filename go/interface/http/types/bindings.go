@@ -2,7 +2,6 @@ package types
 
 import (
 	"bytes"
-	"context"
 	"fmt"
 	"io"
 	"log/slog"
@@ -11,6 +10,11 @@ import (
 	wrpc "github.com/wrpc/wrpc/go"
 	"golang.org/x/sync/errgroup"
 )
+
+var RequestSubscribePaths = []wrpc.SubscribePath{
+	wrpc.NewSubscribePath().Index(0).Index(0),
+	wrpc.NewSubscribePath().Index(0).Index(1),
+}
 
 type MethodDiscriminant uint32
 
@@ -914,38 +918,6 @@ func (v *FieldSizePayloadRecord) WriteTo(w wrpc.ByteWriter) error {
 		return fmt.Errorf("failed to write `field-size`: %w", err)
 	}
 	return nil
-}
-
-func SubscribeRequest(sub wrpc.Subscriber) (*RequestSubscription, error) {
-	slog.Debug("subscribe for `body`")
-	payloadBody := make(chan []byte)
-	stopBody, err := sub.Subscribe(func(ctx context.Context, buf []byte) {
-		payloadBody <- buf
-	}, 0)
-	if err != nil {
-		return nil, err
-	}
-
-	slog.Debug("subscribe for `trailers`")
-	payloadTrailers := make(chan []byte)
-	stopTrailers, err := sub.Subscribe(func(ctx context.Context, buf []byte) {
-		payloadTrailers <- buf
-	}, 1)
-	if err != nil {
-		defer func() {
-			if err := stopBody(); err != nil {
-				slog.Error("failed to stop `body` subscription", "err", err)
-			}
-		}()
-		return nil, err
-	}
-
-	return &RequestSubscription{
-		payloadBody,
-		payloadTrailers,
-		stopBody,
-		stopTrailers,
-	}, nil
 }
 
 func ReadRequest(r wrpc.IndexReader, path ...uint32) (*RequestRecord, error) {

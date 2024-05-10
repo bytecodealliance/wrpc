@@ -89,58 +89,6 @@ func transmit(ctx context.Context, conn *nats.Conn, subject string, reply string
 	return nil
 }
 
-type invocation struct {
-	conn *nats.Conn
-	rx   string
-	tx   string
-}
-
-func (inv *invocation) SubscribeError(f func(context.Context, []byte)) (func() error, error) {
-	sub, err := inv.conn.Subscribe(fmt.Sprintf("%s.error", inv.rx), func(m *nats.Msg) {
-		ctx := context.Background()
-		ctx = ContextWithHeader(ctx, m.Header)
-		f(ctx, m.Data)
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to subscribe for error: %w", err)
-	}
-	return sub.Unsubscribe, nil
-}
-
-type IncomingInvocation struct{ invocation }
-
-func (inv *IncomingInvocation) Subscribe(f func(context.Context, []byte), path ...uint32) (func() error, error) {
-	sub, err := subscribe(inv.conn, paramSubject(inv.rx), f, path...)
-	if err != nil {
-		return nil, fmt.Errorf("failed to subscribe for parameters: %w", err)
-	}
-	return sub.Unsubscribe, nil
-}
-
-func (inv *IncomingInvocation) SubscribeError(f func(context.Context, []byte)) (func() error, error) {
-	return inv.invocation.SubscribeError(f)
-}
-
-func (inv *IncomingInvocation) Accept(ctx context.Context, buf []byte) error {
-	if err := transmit(ctx, inv.conn, inv.tx, inv.rx, buf); err != nil {
-		return fmt.Errorf("failed to transmit accept: %w", err)
-	}
-	return nil
-}
-
-type Transmitter struct {
-	conn    *nats.Conn
-	subject string
-}
-
-func (tx *Transmitter) Transmit(ctx context.Context, buf []byte, path ...uint32) error {
-	subject := tx.subject
-	for _, p := range path {
-		subject = fmt.Sprintf("%s.%d", subject, p)
-	}
-	return transmit(ctx, tx.conn, subject, "", buf)
-}
-
 type Client struct {
 	conn   *nats.Conn
 	prefix string
@@ -148,51 +96,6 @@ type Client struct {
 
 func NewClient(conn *nats.Conn, prefix string) *Client {
 	return &Client{conn, prefix}
-}
-
-func (c *Client) Serve(instance string, name string, f func(context.Context, []byte, wrpc.Transmitter, wrpc.IncomingInvocation) error) (stop func() error, err error) {
-	sub, err := c.conn.Subscribe(invocationSubject(c.prefix, instance, name), func(m *nats.Msg) {
-		slog.Debug("received invocation", "instance", instance, "name", name)
-		if m.Reply == "" {
-			slog.Warn("peer did not specify a reply subject")
-			return
-		}
-		ctx := context.Background()
-		ctx = ContextWithHeader(ctx, m.Header)
-		slog.Debug("calling server handler")
-		if err := f(ctx, m.Data, &Transmitter{
-			conn:    c.conn,
-			subject: resultSubject(m.Reply),
-		}, &IncomingInvocation{
-			invocation: invocation{
-				conn: c.conn,
-				rx:   nats.NewInbox(),
-				tx:   m.Reply,
-			},
-		}); err != nil {
-			var buf bytes.Buffer
-			slog.Warn("failed to handle `handle`", "err", err)
-			if err = wrpc.WriteString(fmt.Sprintf("%s", err), &buf); err != nil {
-				slog.Warn("failed to encode `handle` handling error", "err", err)
-				// Encoding the error failed, let's try encoding the encoding error
-				if err = wrpc.WriteString(fmt.Sprintf("failed to encode error: %s", err), &buf); err != nil {
-					slog.Warn("failed to encode `handle` handling error encoding error", "err", err)
-					// Well, we're out of luck at this point, let's just send an empty string
-					buf.Reset()
-				}
-			}
-			slog.Debug("transmitting error")
-			if err = transmit(context.Background(), c.conn, fmt.Sprintf("%s.error", m.Reply), "", buf.Bytes()); err != nil {
-				slog.Warn("failed to send error to client", "err", err)
-			}
-			return
-		}
-		slog.Debug("successfully finished serving invocation")
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to serve `%s` for instance `%s`: %w", name, instance, err)
-	}
-	return sub.Unsubscribe, nil
 }
 
 type paramWriter struct {
@@ -533,7 +436,7 @@ func (w *resultWriter) Index(path ...uint32) (wrpc.IndexWriter, error) {
 	return &resultWriter{nc: w.nc, tx: indexPath(w.tx, path...)}, nil
 }
 
-func (c *Client) ServeIndex(instance string, name string, f func(context.Context, wrpc.IndexWriter, wrpc.IndexReader, <-chan error) error, subs ...wrpc.SubscribePath) (stop func() error, err error) {
+func (c *Client) Serve(instance string, name string, f func(context.Context, wrpc.IndexWriter, wrpc.IndexReader, <-chan error) error, subs ...wrpc.SubscribePath) (stop func() error, err error) {
 	sub, err := c.conn.Subscribe(invocationSubject(c.prefix, instance, name), func(m *nats.Msg) {
 		ctx := context.Background()
 		ctx, cancel := context.WithCancel(ctx)

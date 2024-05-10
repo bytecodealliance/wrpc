@@ -96,7 +96,7 @@ func (v *Error) WriteTo(w wrpc.ByteWriter) error {
 	if err := func(v uint8, w wrpc.ByteWriter) error {
 		b := make([]byte, 2)
 		i := binary.PutUvarint(b, uint64(v))
-		slog.Debug("writing u8")
+		slog.Debug("writing u8 discriminant")
 		_, err := w.Write(b[:i])
 		return err
 	}(uint8(v.discriminant), w); err != nil {
@@ -144,24 +144,24 @@ func ReadError(r wrpc.ByteReader) (*Error, error) {
 		var x uint8
 		var s uint
 		for i := 0; i < 2; i++ {
-			slog.Debug("reading `uint8` byte", "i", i)
+			slog.Debug("reading u8 discriminant byte", "i", i)
 			b, err := r.ReadByte()
 			if err != nil {
 				if i > 0 && err == io.EOF {
 					err = io.ErrUnexpectedEOF
 				}
-				return x, fmt.Errorf("failed to read `uint8` byte: %w", err)
+				return x, fmt.Errorf("failed to read u8 discriminant byte: %w", err)
 			}
 			if b < 0x80 {
 				if i == 2 && b > 1 {
-					return x, errors.New("varint overflows a 8-bit integer")
+					return x, errors.New("discriminant overflows a 8-bit integer")
 				}
 				return x | uint8(b)<<s, nil
 			}
 			x |= uint8(b&0x7f) << s
 			s += 7
 		}
-		return x, errors.New("varint overflows a 8-bit integer")
+		return x, errors.New("discriminant overflows a 8-bit integer")
 	}(r)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read discriminant: %w", err)
@@ -389,13 +389,13 @@ func ReadKeyResponse(r wrpc.ByteReader) (*KeyResponse, error) {
 				var x uint64
 				var s uint
 				for i := 0; i < 10; i++ {
-					slog.Debug("reading `uint64` byte", "i", i)
+					slog.Debug("reading u64 byte", "i", i)
 					b, err := r.ReadByte()
 					if err != nil {
 						if i > 0 && err == io.EOF {
 							err = io.ErrUnexpectedEOF
 						}
-						return x, fmt.Errorf("failed to read `uint64` byte: %w", err)
+						return x, fmt.Errorf("failed to read u64 byte: %w", err)
 					}
 					if b < 0x80 {
 						if i == 9 && b > 1 {
@@ -499,26 +499,7 @@ func ServeInterface(c wrpc.Client, h Handler) (stop func() error, err error) {
 		}
 		return nil
 	}
-	stop0, err := c.Serve("wrpc:keyvalue/store@0.2.0-draft", "get", func(ctx context.Context, buffer []byte, tx wrpc.Transmitter, inv wrpc.IncomingInvocation) error {
-		slog.DebugContext(ctx, "subscribing for `wrpc:keyvalue/store@0.2.0-draft.get` parameters")
-
-		payload := make(chan []byte)
-		stop, err := inv.Subscribe(func(ctx context.Context, buf []byte) {
-			payload <- buf
-		})
-		if err != nil {
-			return err
-		}
-		defer func() {
-			if err := stop(); err != nil {
-				slog.ErrorContext(ctx, "failed to stop parameter subscription", "err", err)
-			}
-		}()
-		slog.DebugContext(ctx, "accepting handshake")
-		if err := inv.Accept(ctx, nil); err != nil {
-			return fmt.Errorf("failed to complete handshake: %w", err)
-		}
-		r := wrpc.NewChanReader(ctx, payload, buffer)
+	stop0, err := c.Serve("wrpc:keyvalue/store@0.2.0-draft", "get", func(ctx context.Context, w wrpc.IndexWriter, r wrpc.IndexReader, errCh <-chan error) error {
 		slog.DebugContext(ctx, "reading parameter", "i", 0)
 		p0, err := func(r wrpc.ByteReader) (string, error) {
 			var x uint32
@@ -554,7 +535,7 @@ func ServeInterface(c wrpc.Client, h Handler) (stop func() error, err error) {
 			return "", errors.New("string length overflows a 32-bit integer")
 		}(r)
 		if err != nil {
-			return fmt.Errorf("failed to read parameter 0")
+			return fmt.Errorf("failed to read parameter 0: %w", err)
 		}
 		slog.DebugContext(ctx, "reading parameter", "i", 1)
 		p1, err := func(r wrpc.ByteReader) (string, error) {
@@ -591,7 +572,7 @@ func ServeInterface(c wrpc.Client, h Handler) (stop func() error, err error) {
 			return "", errors.New("string length overflows a 32-bit integer")
 		}(r)
 		if err != nil {
-			return fmt.Errorf("failed to read parameter 1")
+			return fmt.Errorf("failed to read parameter 1: %w", err)
 		}
 		slog.DebugContext(ctx, "calling `wrpc:keyvalue/store@0.2.0-draft.get` handler")
 		r0, err := h.Get(ctx, p0, p1)
@@ -673,8 +654,9 @@ func ServeInterface(c wrpc.Client, h Handler) (stop func() error, err error) {
 			return fmt.Errorf("failed to write result value 0: %w", err)
 		}
 		slog.DebugContext(ctx, "transmitting `wrpc:keyvalue/store@0.2.0-draft.get` result")
-		if err := tx.Transmit(context.Background(), buf.Bytes()); err != nil {
-			return fmt.Errorf("failed to transmit result: %w", err)
+		_, err = w.Write(buf.Bytes())
+		if err != nil {
+			return fmt.Errorf("failed to write result: %w", err)
 		}
 		return nil
 	})
@@ -682,26 +664,7 @@ func ServeInterface(c wrpc.Client, h Handler) (stop func() error, err error) {
 		return nil, fmt.Errorf("failed to serve `wrpc:keyvalue/store@0.2.0-draft.get`: %w", err)
 	}
 	stops = append(stops, stop0)
-	stop1, err := c.Serve("wrpc:keyvalue/store@0.2.0-draft", "set", func(ctx context.Context, buffer []byte, tx wrpc.Transmitter, inv wrpc.IncomingInvocation) error {
-		slog.DebugContext(ctx, "subscribing for `wrpc:keyvalue/store@0.2.0-draft.set` parameters")
-
-		payload := make(chan []byte)
-		stop, err := inv.Subscribe(func(ctx context.Context, buf []byte) {
-			payload <- buf
-		})
-		if err != nil {
-			return err
-		}
-		defer func() {
-			if err := stop(); err != nil {
-				slog.ErrorContext(ctx, "failed to stop parameter subscription", "err", err)
-			}
-		}()
-		slog.DebugContext(ctx, "accepting handshake")
-		if err := inv.Accept(ctx, nil); err != nil {
-			return fmt.Errorf("failed to complete handshake: %w", err)
-		}
-		r := wrpc.NewChanReader(ctx, payload, buffer)
+	stop1, err := c.Serve("wrpc:keyvalue/store@0.2.0-draft", "set", func(ctx context.Context, w wrpc.IndexWriter, r wrpc.IndexReader, errCh <-chan error) error {
 		slog.DebugContext(ctx, "reading parameter", "i", 0)
 		p0, err := func(r wrpc.ByteReader) (string, error) {
 			var x uint32
@@ -737,7 +700,7 @@ func ServeInterface(c wrpc.Client, h Handler) (stop func() error, err error) {
 			return "", errors.New("string length overflows a 32-bit integer")
 		}(r)
 		if err != nil {
-			return fmt.Errorf("failed to read parameter 0")
+			return fmt.Errorf("failed to read parameter 0: %w", err)
 		}
 		slog.DebugContext(ctx, "reading parameter", "i", 1)
 		p1, err := func(r wrpc.ByteReader) (string, error) {
@@ -774,7 +737,7 @@ func ServeInterface(c wrpc.Client, h Handler) (stop func() error, err error) {
 			return "", errors.New("string length overflows a 32-bit integer")
 		}(r)
 		if err != nil {
-			return fmt.Errorf("failed to read parameter 1")
+			return fmt.Errorf("failed to read parameter 1: %w", err)
 		}
 		slog.DebugContext(ctx, "reading parameter", "i", 2)
 		p2, err := func(r wrpc.ByteReader) ([]uint8, error) {
@@ -798,10 +761,10 @@ func ServeInterface(c wrpc.Client, h Handler) (stop func() error, err error) {
 					for i := range vs {
 						slog.Debug("reading list element", "i", i)
 						vs[i], err = func(r wrpc.ByteReader) (uint8, error) {
-							slog.Debug("reading `u8` byte")
+							slog.Debug("reading u8 byte")
 							v, err := r.ReadByte()
 							if err != nil {
-								return 0, fmt.Errorf("failed to read `u8` byte: %w", err)
+								return 0, fmt.Errorf("failed to read u8 byte: %w", err)
 							}
 							return v, nil
 						}(r)
@@ -817,7 +780,7 @@ func ServeInterface(c wrpc.Client, h Handler) (stop func() error, err error) {
 			return nil, errors.New("list length overflows a 32-bit integer")
 		}(r)
 		if err != nil {
-			return fmt.Errorf("failed to read parameter 2")
+			return fmt.Errorf("failed to read parameter 2: %w", err)
 		}
 		slog.DebugContext(ctx, "calling `wrpc:keyvalue/store@0.2.0-draft.set` handler")
 		r0, err := h.Set(ctx, p0, p1, p2)
@@ -853,8 +816,9 @@ func ServeInterface(c wrpc.Client, h Handler) (stop func() error, err error) {
 			return fmt.Errorf("failed to write result value 0: %w", err)
 		}
 		slog.DebugContext(ctx, "transmitting `wrpc:keyvalue/store@0.2.0-draft.set` result")
-		if err := tx.Transmit(context.Background(), buf.Bytes()); err != nil {
-			return fmt.Errorf("failed to transmit result: %w", err)
+		_, err = w.Write(buf.Bytes())
+		if err != nil {
+			return fmt.Errorf("failed to write result: %w", err)
 		}
 		return nil
 	})
@@ -862,26 +826,7 @@ func ServeInterface(c wrpc.Client, h Handler) (stop func() error, err error) {
 		return nil, fmt.Errorf("failed to serve `wrpc:keyvalue/store@0.2.0-draft.set`: %w", err)
 	}
 	stops = append(stops, stop1)
-	stop2, err := c.Serve("wrpc:keyvalue/store@0.2.0-draft", "delete", func(ctx context.Context, buffer []byte, tx wrpc.Transmitter, inv wrpc.IncomingInvocation) error {
-		slog.DebugContext(ctx, "subscribing for `wrpc:keyvalue/store@0.2.0-draft.delete` parameters")
-
-		payload := make(chan []byte)
-		stop, err := inv.Subscribe(func(ctx context.Context, buf []byte) {
-			payload <- buf
-		})
-		if err != nil {
-			return err
-		}
-		defer func() {
-			if err := stop(); err != nil {
-				slog.ErrorContext(ctx, "failed to stop parameter subscription", "err", err)
-			}
-		}()
-		slog.DebugContext(ctx, "accepting handshake")
-		if err := inv.Accept(ctx, nil); err != nil {
-			return fmt.Errorf("failed to complete handshake: %w", err)
-		}
-		r := wrpc.NewChanReader(ctx, payload, buffer)
+	stop2, err := c.Serve("wrpc:keyvalue/store@0.2.0-draft", "delete", func(ctx context.Context, w wrpc.IndexWriter, r wrpc.IndexReader, errCh <-chan error) error {
 		slog.DebugContext(ctx, "reading parameter", "i", 0)
 		p0, err := func(r wrpc.ByteReader) (string, error) {
 			var x uint32
@@ -917,7 +862,7 @@ func ServeInterface(c wrpc.Client, h Handler) (stop func() error, err error) {
 			return "", errors.New("string length overflows a 32-bit integer")
 		}(r)
 		if err != nil {
-			return fmt.Errorf("failed to read parameter 0")
+			return fmt.Errorf("failed to read parameter 0: %w", err)
 		}
 		slog.DebugContext(ctx, "reading parameter", "i", 1)
 		p1, err := func(r wrpc.ByteReader) (string, error) {
@@ -954,7 +899,7 @@ func ServeInterface(c wrpc.Client, h Handler) (stop func() error, err error) {
 			return "", errors.New("string length overflows a 32-bit integer")
 		}(r)
 		if err != nil {
-			return fmt.Errorf("failed to read parameter 1")
+			return fmt.Errorf("failed to read parameter 1: %w", err)
 		}
 		slog.DebugContext(ctx, "calling `wrpc:keyvalue/store@0.2.0-draft.delete` handler")
 		r0, err := h.Delete(ctx, p0, p1)
@@ -990,8 +935,9 @@ func ServeInterface(c wrpc.Client, h Handler) (stop func() error, err error) {
 			return fmt.Errorf("failed to write result value 0: %w", err)
 		}
 		slog.DebugContext(ctx, "transmitting `wrpc:keyvalue/store@0.2.0-draft.delete` result")
-		if err := tx.Transmit(context.Background(), buf.Bytes()); err != nil {
-			return fmt.Errorf("failed to transmit result: %w", err)
+		_, err = w.Write(buf.Bytes())
+		if err != nil {
+			return fmt.Errorf("failed to write result: %w", err)
 		}
 		return nil
 	})
@@ -999,26 +945,7 @@ func ServeInterface(c wrpc.Client, h Handler) (stop func() error, err error) {
 		return nil, fmt.Errorf("failed to serve `wrpc:keyvalue/store@0.2.0-draft.delete`: %w", err)
 	}
 	stops = append(stops, stop2)
-	stop3, err := c.Serve("wrpc:keyvalue/store@0.2.0-draft", "exists", func(ctx context.Context, buffer []byte, tx wrpc.Transmitter, inv wrpc.IncomingInvocation) error {
-		slog.DebugContext(ctx, "subscribing for `wrpc:keyvalue/store@0.2.0-draft.exists` parameters")
-
-		payload := make(chan []byte)
-		stop, err := inv.Subscribe(func(ctx context.Context, buf []byte) {
-			payload <- buf
-		})
-		if err != nil {
-			return err
-		}
-		defer func() {
-			if err := stop(); err != nil {
-				slog.ErrorContext(ctx, "failed to stop parameter subscription", "err", err)
-			}
-		}()
-		slog.DebugContext(ctx, "accepting handshake")
-		if err := inv.Accept(ctx, nil); err != nil {
-			return fmt.Errorf("failed to complete handshake: %w", err)
-		}
-		r := wrpc.NewChanReader(ctx, payload, buffer)
+	stop3, err := c.Serve("wrpc:keyvalue/store@0.2.0-draft", "exists", func(ctx context.Context, w wrpc.IndexWriter, r wrpc.IndexReader, errCh <-chan error) error {
 		slog.DebugContext(ctx, "reading parameter", "i", 0)
 		p0, err := func(r wrpc.ByteReader) (string, error) {
 			var x uint32
@@ -1054,7 +981,7 @@ func ServeInterface(c wrpc.Client, h Handler) (stop func() error, err error) {
 			return "", errors.New("string length overflows a 32-bit integer")
 		}(r)
 		if err != nil {
-			return fmt.Errorf("failed to read parameter 0")
+			return fmt.Errorf("failed to read parameter 0: %w", err)
 		}
 		slog.DebugContext(ctx, "reading parameter", "i", 1)
 		p1, err := func(r wrpc.ByteReader) (string, error) {
@@ -1091,7 +1018,7 @@ func ServeInterface(c wrpc.Client, h Handler) (stop func() error, err error) {
 			return "", errors.New("string length overflows a 32-bit integer")
 		}(r)
 		if err != nil {
-			return fmt.Errorf("failed to read parameter 1")
+			return fmt.Errorf("failed to read parameter 1: %w", err)
 		}
 		slog.DebugContext(ctx, "calling `wrpc:keyvalue/store@0.2.0-draft.exists` handler")
 		r0, err := h.Exists(ctx, p0, p1)
@@ -1138,8 +1065,9 @@ func ServeInterface(c wrpc.Client, h Handler) (stop func() error, err error) {
 			return fmt.Errorf("failed to write result value 0: %w", err)
 		}
 		slog.DebugContext(ctx, "transmitting `wrpc:keyvalue/store@0.2.0-draft.exists` result")
-		if err := tx.Transmit(context.Background(), buf.Bytes()); err != nil {
-			return fmt.Errorf("failed to transmit result: %w", err)
+		_, err = w.Write(buf.Bytes())
+		if err != nil {
+			return fmt.Errorf("failed to write result: %w", err)
 		}
 		return nil
 	})
@@ -1147,26 +1075,7 @@ func ServeInterface(c wrpc.Client, h Handler) (stop func() error, err error) {
 		return nil, fmt.Errorf("failed to serve `wrpc:keyvalue/store@0.2.0-draft.exists`: %w", err)
 	}
 	stops = append(stops, stop3)
-	stop4, err := c.Serve("wrpc:keyvalue/store@0.2.0-draft", "list-keys", func(ctx context.Context, buffer []byte, tx wrpc.Transmitter, inv wrpc.IncomingInvocation) error {
-		slog.DebugContext(ctx, "subscribing for `wrpc:keyvalue/store@0.2.0-draft.list-keys` parameters")
-
-		payload := make(chan []byte)
-		stop, err := inv.Subscribe(func(ctx context.Context, buf []byte) {
-			payload <- buf
-		})
-		if err != nil {
-			return err
-		}
-		defer func() {
-			if err := stop(); err != nil {
-				slog.ErrorContext(ctx, "failed to stop parameter subscription", "err", err)
-			}
-		}()
-		slog.DebugContext(ctx, "accepting handshake")
-		if err := inv.Accept(ctx, nil); err != nil {
-			return fmt.Errorf("failed to complete handshake: %w", err)
-		}
-		r := wrpc.NewChanReader(ctx, payload, buffer)
+	stop4, err := c.Serve("wrpc:keyvalue/store@0.2.0-draft", "list-keys", func(ctx context.Context, w wrpc.IndexWriter, r wrpc.IndexReader, errCh <-chan error) error {
 		slog.DebugContext(ctx, "reading parameter", "i", 0)
 		p0, err := func(r wrpc.ByteReader) (string, error) {
 			var x uint32
@@ -1202,7 +1111,7 @@ func ServeInterface(c wrpc.Client, h Handler) (stop func() error, err error) {
 			return "", errors.New("string length overflows a 32-bit integer")
 		}(r)
 		if err != nil {
-			return fmt.Errorf("failed to read parameter 0")
+			return fmt.Errorf("failed to read parameter 0: %w", err)
 		}
 		slog.DebugContext(ctx, "reading parameter", "i", 1)
 		p1, err := func(r wrpc.ByteReader) (*uint64, error) {
@@ -1220,13 +1129,13 @@ func ServeInterface(c wrpc.Client, h Handler) (stop func() error, err error) {
 					var x uint64
 					var s uint
 					for i := 0; i < 10; i++ {
-						slog.Debug("reading `uint64` byte", "i", i)
+						slog.Debug("reading u64 byte", "i", i)
 						b, err := r.ReadByte()
 						if err != nil {
 							if i > 0 && err == io.EOF {
 								err = io.ErrUnexpectedEOF
 							}
-							return x, fmt.Errorf("failed to read `uint64` byte: %w", err)
+							return x, fmt.Errorf("failed to read u64 byte: %w", err)
 						}
 						if b < 0x80 {
 							if i == 9 && b > 1 {
@@ -1248,7 +1157,7 @@ func ServeInterface(c wrpc.Client, h Handler) (stop func() error, err error) {
 			}
 		}(r)
 		if err != nil {
-			return fmt.Errorf("failed to read parameter 1")
+			return fmt.Errorf("failed to read parameter 1: %w", err)
 		}
 		slog.DebugContext(ctx, "calling `wrpc:keyvalue/store@0.2.0-draft.list-keys` handler")
 		r0, err := h.ListKeys(ctx, p0, p1)
@@ -1288,8 +1197,9 @@ func ServeInterface(c wrpc.Client, h Handler) (stop func() error, err error) {
 			return fmt.Errorf("failed to write result value 0: %w", err)
 		}
 		slog.DebugContext(ctx, "transmitting `wrpc:keyvalue/store@0.2.0-draft.list-keys` result")
-		if err := tx.Transmit(context.Background(), buf.Bytes()); err != nil {
-			return fmt.Errorf("failed to transmit result: %w", err)
+		_, err = w.Write(buf.Bytes())
+		if err != nil {
+			return fmt.Errorf("failed to write result: %w", err)
 		}
 		return nil
 	})

@@ -1337,38 +1337,8 @@ impl InterfaceGenerator<'_> {
             let wrpc = self.deps.wrpc();
             uwriteln!(
                 self.src,
-                r#"stop{i}, err := c.Serve("{instance}", "{name}", func(ctx {context}.Context, buffer []byte, tx {wrpc}.Transmitter, inv {wrpc}.IncomingInvocation) error {{"#,
+                r#"stop{i}, err := c.Serve("{instance}", "{name}", func(ctx {context}.Context, w {wrpc}.IndexWriter, r {wrpc}.IndexReader, errCh <-chan error) error {{"#,
             );
-            if !params.is_empty() {
-                // TODO: Handle async parameters
-                uwriteln!(
-                    self.src,
-                    r#"{slog}.DebugContext(ctx, "subscribing for `{instance}.{name}` parameters")
-
-		payload := make(chan []byte)
-		stop, err := inv.Subscribe(func(ctx {context}.Context, buf []byte) {{
-			payload <- buf
-		}})
-		if err != nil {{
-			return err
-		}}
-		defer func() {{
-			if err := stop(); err != nil {{
-                {slog}.ErrorContext(ctx, "failed to stop parameter subscription", "err", err)
-			}}
-		}}()"#,
-                );
-            }
-            uwriteln!(
-                self.src,
-                r#"{slog}.DebugContext(ctx, "accepting handshake")
-        if err := inv.Accept(ctx, nil); err != nil {{
-            return {fmt}.Errorf("failed to complete handshake: %w", err)
-        }}"#,
-            );
-            if !params.is_empty() {
-                uwriteln!(self.src, "r := {wrpc}.NewChanReader(ctx, payload, buffer)");
-            }
             for (i, (_, ty)) in params.iter().enumerate() {
                 uwrite!(
                     self.src,
@@ -1425,8 +1395,9 @@ impl InterfaceGenerator<'_> {
             );
             uwriteln!(
                 self.src,
-                r#"if err := tx.Transmit({context}.Background(), buf.Bytes()); err != nil {{
-                    return {fmt}.Errorf("failed to transmit result: %w", err)
+                r#"_, err = w.Write(buf.Bytes())
+                if err != nil {{
+                    return {fmt}.Errorf("failed to write result: %w", err)
                 }}"#,
             );
             self.push_str("return nil\n");

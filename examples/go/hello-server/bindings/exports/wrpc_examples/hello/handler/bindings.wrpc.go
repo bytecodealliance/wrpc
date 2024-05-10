@@ -25,11 +25,7 @@ func ServeInterface(c wrpc.Client, h Handler) (stop func() error, err error) {
 		}
 		return nil
 	}
-	stop0, err := c.Serve("wrpc-examples:hello/handler", "hello", func(ctx context.Context, buffer []byte, tx wrpc.Transmitter, inv wrpc.IncomingInvocation) error {
-		slog.DebugContext(ctx, "accepting handshake")
-		if err := inv.Accept(ctx, nil); err != nil {
-			return fmt.Errorf("failed to complete handshake: %w", err)
-		}
+	stop0, err := c.Serve("wrpc-examples:hello/handler", "hello", func(ctx context.Context, w wrpc.IndexWriter, r wrpc.IndexReader, errCh <-chan error) error {
 		slog.DebugContext(ctx, "calling `wrpc-examples:hello/handler.hello` handler")
 		r0, err := h.Hello(ctx)
 		if err != nil {
@@ -61,8 +57,9 @@ func ServeInterface(c wrpc.Client, h Handler) (stop func() error, err error) {
 			return fmt.Errorf("failed to write result value 0: %w", err)
 		}
 		slog.DebugContext(ctx, "transmitting `wrpc-examples:hello/handler.hello` result")
-		if err := tx.Transmit(context.Background(), buf.Bytes()); err != nil {
-			return fmt.Errorf("failed to transmit result: %w", err)
+		_, err = w.Write(buf.Bytes())
+		if err != nil {
+			return fmt.Errorf("failed to write result: %w", err)
 		}
 		return nil
 	})
