@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 
 	"github.com/nats-io/nats.go"
 	wrpc "github.com/wrpc/wrpc/go"
@@ -106,63 +107,6 @@ func (inv *invocation) SubscribeError(f func(context.Context, []byte)) (func() e
 	return sub.Unsubscribe, nil
 }
 
-type OutgoingInvocation struct{ invocation }
-
-func (c *Client) NewInvocation(instance string, name string) wrpc.OutgoingInvocation {
-	return &OutgoingInvocation{
-		invocation: invocation{
-			conn: c.conn,
-			rx:   nats.NewInbox(),
-			tx:   invocationSubject(c.prefix, instance, name),
-		},
-	}
-}
-
-func (inv *OutgoingInvocation) Subscribe(f func(context.Context, []byte), path ...uint32) (func() error, error) {
-	sub, err := subscribe(inv.conn, resultSubject(inv.rx), f, path...)
-	if err != nil {
-		return nil, fmt.Errorf("failed to subscribe for results: %w", err)
-	}
-	return sub.Unsubscribe, nil
-}
-
-func (inv *OutgoingInvocation) SubscribeError(f func(context.Context, []byte)) (func() error, error) {
-	return inv.invocation.SubscribeError(f)
-}
-
-func (inv *OutgoingInvocation) Invoke(ctx context.Context, buf []byte, f func(context.Context, []byte)) (func() error, wrpc.Transmitter, error) {
-	txCh := make(chan chan<- string, 1)
-	sub, err := inv.conn.Subscribe(inv.rx, func(m *nats.Msg) {
-		ctx := context.Background()
-		ctx = ContextWithHeader(ctx, m.Header)
-		reply, ok := <-txCh
-		if !ok {
-			slog.DebugContext(ctx, "handshake reply channel closed")
-			return
-		}
-		reply <- m.Reply
-		close(reply)
-		f(ctx, m.Data)
-	})
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to subscribe for handshake: %w", err)
-	}
-	if err := transmit(ctx, inv.conn, inv.tx, "", buf); err != nil {
-		return sub.Unsubscribe, nil, fmt.Errorf("failed to transmit handshake: %w", err)
-	}
-	reply := make(chan string, 1)
-	select {
-	case txCh <- reply:
-		subject := <-reply
-		return sub.Unsubscribe, &Transmitter{
-			conn:    inv.conn,
-			subject: subject,
-		}, nil
-	case <-ctx.Done():
-		return sub.Unsubscribe, nil, ctx.Err()
-	}
-}
-
 type IncomingInvocation struct{ invocation }
 
 func (inv *IncomingInvocation) Subscribe(f func(context.Context, []byte), path ...uint32) (func() error, error) {
@@ -215,7 +159,7 @@ func (c *Client) Serve(instance string, name string, f func(context.Context, []b
 		}
 		ctx := context.Background()
 		ctx = ContextWithHeader(ctx, m.Header)
-		slog.Debug("calling handler")
+		slog.Debug("calling server handler")
 		if err := f(ctx, m.Data, &Transmitter{
 			conn:    c.conn,
 			subject: resultSubject(m.Reply),
@@ -252,44 +196,52 @@ func (c *Client) Serve(instance string, name string, f func(context.Context, []b
 }
 
 type paramWriter struct {
-	ctx context.Context
-	nc  *nats.Conn
-	rx  string
-	tx  string
+	ctx  context.Context
+	nc   *nats.Conn
+	rx   string
+	tx   string
+	init bool
 }
 
-func (w *paramWriter) Write(p []byte) (int, error) {
-	if w.nc == nil {
-		return 0, errors.New("writer is invalid")
-	}
-	defer func() {
-		*w = paramWriter{}
-	}()
-
+func (w *paramWriter) publish(p []byte) (int, error) {
 	maxPayload := w.nc.MaxPayload()
-	if int64(len(p)) <= maxPayload {
-		if err := w.nc.Publish(w.tx, p); err != nil {
-			return 0, fmt.Errorf("failed to send payload: %w", err)
+	pn := len(p)
+	if !w.init {
+		header, hasHeader := HeaderFromContext(w.ctx)
+		m := nats.NewMsg(w.tx)
+		m.Reply = w.rx
+		if hasHeader {
+			m.Header = header
 		}
-	}
+		mSize := int64(m.Size())
+		if mSize > maxPayload {
+			return 0, fmt.Errorf("message size %d is larger than maximum allowed payload size %d", mSize, maxPayload)
+		}
+		maxPayload -= mSize
+		maxPayload = min(maxPayload, int64(len(p)))
+		m.Data, p = p[:maxPayload], p[maxPayload:]
 
-	sub, err := w.nc.SubscribeSync(w.rx)
-	if err != nil {
-		return 0, fmt.Errorf("failed to subscribe payload: %w", err)
-	}
+		sub, err := w.nc.SubscribeSync(w.rx)
+		if err != nil {
+			return 0, fmt.Errorf("failed to subscribe on Rx subject: %w", err)
+		}
+		slog.DebugContext(w.ctx, "publishing handshake", "rx", m.Reply)
+		if err := w.nc.PublishMsg(m); err != nil {
+			return 0, fmt.Errorf("failed to send initial payload chunk: %w", err)
+		}
+		n := len(m.Data)
 
-	n := len(p)
-	maxPayload = min(maxPayload, int64(n))
-	var buf []byte
-	p, buf = p[:maxPayload], p[maxPayload:]
-	if err := w.nc.Publish(w.tx, p); err != nil {
-		return 0, fmt.Errorf("failed to send initial payload chunk: %w", err)
+		m, err = sub.NextMsgWithContext(w.ctx)
+		if err != nil {
+			return n, fmt.Errorf("failed to receive handshake: %w", err)
+		}
+		if m.Reply == "" {
+			return n, errors.New("peer did not specify a reply subject")
+		}
+		w.tx = fmt.Sprintf("%s.params", m.Reply)
+		w.init = true
 	}
-	msg, err := sub.NextMsgWithContext(w.ctx)
-	if err != nil {
-		return 0, fmt.Errorf("failed to receive handshake: %w", err)
-	}
-	w.tx = fmt.Sprintf("%s.params", msg.Reply)
+	buf := p
 	for len(buf) > 0 {
 		maxPayload = min(maxPayload, int64(len(buf)))
 		p, buf = buf[:maxPayload], buf[maxPayload:]
@@ -297,12 +249,17 @@ func (w *paramWriter) Write(p []byte) (int, error) {
 			return 0, fmt.Errorf("failed to send payload chunk: %w", err)
 		}
 	}
-	return n, nil
+	return pn, nil
+}
+
+func (w *paramWriter) Write(p []byte) (int, error) {
+	return w.publish(p)
 }
 
 func (w *paramWriter) WriteByte(b byte) error {
-	if err := w.nc.Publish(w.tx, []byte{b}); err != nil {
-		return fmt.Errorf("failed to send byte: %w", err)
+	_, err := w.publish([]byte{b})
+	if err != nil {
+		return err
 	}
 	return nil
 }
@@ -311,17 +268,24 @@ func (w *paramWriter) Index(path ...uint32) (wrpc.IndexWriter, error) {
 	return nil, errors.New("indexing not supported yet")
 }
 
-func (c *Client) Invoke(instance string, name string, w wrpc.WriterToIndex, subs ...[]*uint32) (wrpc.IndexReader, <-chan error, error) {
+func (c *Client) Invoke(ctx context.Context, instance string, name string, f func(wrpc.IndexWriter, wrpc.IndexReader, <-chan error) error, subs ...wrpc.SubscribePath) (err error) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	rx := nats.NewInbox()
 
 	resultRx := fmt.Sprintf("%s.results", rx)
 	resultSub, err := c.conn.SubscribeSync(resultRx)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to subscribe on result subject `%s`: %w", resultRx, err)
+		return fmt.Errorf("failed to subscribe on result subject `%s`: %w", resultRx, err)
 	}
 	defer func() {
-		if err := resultSub.Unsubscribe(); err != nil {
-			slog.Error("failed to unsubscribe from result subject", "err", err)
+		if sErr := resultSub.Unsubscribe(); sErr != nil {
+			if err == nil {
+				err = fmt.Errorf("failed to unsubscribe from result subject: %w", sErr)
+			} else {
+				slog.Error("failed to unsubscribe from result subject", "err", sErr)
+			}
 		}
 	}()
 
@@ -331,23 +295,103 @@ func (c *Client) Invoke(instance string, name string, w wrpc.WriterToIndex, subs
 		errPayloadCh <- m.Data
 	})
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to subscribe on error subject `%s`: %w", errRx, err)
+		return fmt.Errorf("failed to subscribe on error subject `%s`: %w", errRx, err)
 	}
 	defer func() {
-		if err := errSub.Drain(); err != nil {
-			slog.Error("failed to drain error subject", "err", err)
+		if sErr := errSub.Drain(); sErr != nil {
+			if err == nil {
+				err = fmt.Errorf("failed to drain error subject: %w", sErr)
+			} else {
+				slog.Error("failed to drain error subject", "err", sErr)
+			}
 		}
 	}()
+
+	errCh := make(chan error, 1)
+	go func() {
+		defer close(errCh)
+		s, err := wrpc.ReadString(wrpc.NewChanReader(ctx, errPayloadCh, nil))
+		if err == context.Canceled {
+			return
+		}
+		if err != nil {
+			errCh <- fmt.Errorf("failed to read error string: %w", err)
+		}
+		errCh <- errors.New(s)
+	}()
+
 	// TODO: subscribe on the paths
 	//for sub := range subs {
 	//}
-	panic("todo")
+
+	slog.Debug("calling client handler")
+	w := &paramWriter{
+		ctx: ctx,
+		nc:  c.conn,
+		rx:  rx,
+		tx:  invocationSubject(c.prefix, instance, name),
+	}
+	if err = f(w, &streamReader{
+		ctx:  ctx,
+		root: resultSub,
+		buf:  nil,
+	}, errCh); err != nil && w.init {
+		var buf bytes.Buffer
+		if err := wrpc.WriteString(fmt.Sprintf("%s", err), &buf); err != nil {
+			slog.Warn("failed to encode handling error", "err", err)
+			if err := wrpc.WriteString(fmt.Sprintf("failed to encode error: %s", err), &buf); err != nil {
+				slog.Warn("failed to encode handling error encoding error", "err", err)
+				buf.Reset()
+			}
+		}
+		slog.Debug("transmitting error")
+		if err := transmit(context.Background(), c.conn, fmt.Sprintf("%s.error", w.tx), "", buf.Bytes()); err != nil {
+			slog.Warn("failed to send error to client", "err", err)
+		}
+	}
+	return err
 }
 
 type streamReader struct {
-	ctx context.Context
-	sub *nats.Subscription
-	buf []byte
+	ctx    context.Context
+	root   *nats.Subscription
+	nestMu sync.Mutex
+	nest   map[string]*nats.Subscription
+	buf    []byte
+}
+
+type indexedStreamReader struct {
+	*streamReader
+	sub  *nats.Subscription
+	path string
+	buf  []byte
+}
+
+func indexPath(prefix string, path ...uint32) string {
+	s := prefix
+	for _, p := range path {
+		if s != "" {
+			s = fmt.Sprintf("%s.%d", s, p)
+		} else {
+			s = fmt.Sprintf("%d", p)
+		}
+	}
+	return s
+}
+
+func subscribePath(prefix string, path wrpc.SubscribePath) string {
+	s := prefix
+	for _, p := range path {
+		if s != "" {
+			s = fmt.Sprintf("%s.", s)
+		}
+		if p == nil {
+			s = fmt.Sprintf("%s*", s)
+		} else {
+			s = fmt.Sprintf("%s%d", s, *p)
+		}
+	}
+	return s
 }
 
 func (r *streamReader) Read(p []byte) (int, error) {
@@ -358,7 +402,7 @@ func (r *streamReader) Read(p []byte) (int, error) {
 		return n, nil
 	}
 	slog.Debug("receiving next byte chunk")
-	msg, err := r.sub.NextMsgWithContext(r.ctx)
+	msg, err := r.root.NextMsgWithContext(r.ctx)
 	if err != nil {
 		return 0, err
 	}
@@ -376,7 +420,7 @@ func (r *streamReader) ReadByte() (byte, error) {
 	}
 	for {
 		slog.Debug("receiving next byte chunk")
-		msg, err := r.sub.NextMsgWithContext(r.ctx)
+		msg, err := r.root.NextMsgWithContext(r.ctx)
 		if err != nil {
 			return 0, err
 		}
@@ -389,7 +433,69 @@ func (r *streamReader) ReadByte() (byte, error) {
 }
 
 func (r *streamReader) Index(path ...uint32) (wrpc.IndexReader, error) {
-	return nil, errors.New("indexing not supported yet")
+	s := indexPath("", path...)
+	r.nestMu.Lock()
+	defer r.nestMu.Unlock()
+	sub, ok := r.nest[s]
+	if !ok {
+		return nil, errors.New("unknown subscription")
+	}
+	delete(r.nest, s)
+	return &indexedStreamReader{
+		r, sub, s, nil,
+	}, nil
+}
+
+func (r *indexedStreamReader) Read(p []byte) (int, error) {
+	if len(r.buf) > 0 {
+		n := copy(p, r.buf)
+		slog.Debug("copied bytes from buffer", "requested", len(p), "buffered", len(r.buf), "copied", n)
+		r.buf = r.buf[n:]
+		return n, nil
+	}
+	slog.Debug("receiving next byte chunk", "path", r.path)
+	msg, err := r.sub.NextMsgWithContext(r.ctx)
+	if err != nil {
+		return 0, err
+	}
+	n := copy(p, msg.Data)
+	r.buf = msg.Data[n:]
+	return n, nil
+}
+
+func (r *indexedStreamReader) ReadByte() (byte, error) {
+	if len(r.buf) > 0 {
+		b := r.buf[0]
+		slog.Debug("copied byte from buffer", "buffered", len(r.buf))
+		r.buf = r.buf[1:]
+		return b, nil
+	}
+	for {
+		slog.Debug("receiving next byte chunk", "path", r.path)
+		msg, err := r.sub.NextMsgWithContext(r.ctx)
+		if err != nil {
+			return 0, err
+		}
+		if len(msg.Data) == 0 {
+			continue
+		}
+		r.buf = msg.Data[1:]
+		return msg.Data[0], nil
+	}
+}
+
+func (r *indexedStreamReader) Index(path ...uint32) (wrpc.IndexReader, error) {
+	s := indexPath(r.path, path...)
+	r.nestMu.Lock()
+	defer r.nestMu.Unlock()
+	sub, ok := r.nest[s]
+	if !ok {
+		return nil, errors.New("unknown subscription")
+	}
+	delete(r.nest, s)
+	return &indexedStreamReader{
+		r.streamReader, sub, s, nil,
+	}, nil
 }
 
 type resultWriter struct {
@@ -424,11 +530,16 @@ func (w *resultWriter) WriteByte(b byte) error {
 }
 
 func (w *resultWriter) Index(path ...uint32) (wrpc.IndexWriter, error) {
-	return nil, errors.New("indexing not supported yet")
+	return &resultWriter{nc: w.nc, tx: indexPath(w.tx, path...)}, nil
 }
 
-func (c *Client) ServeIndex(instance string, name string, f func(context.Context, wrpc.IndexReader, <-chan error) (wrpc.WriterToIndex, error), subs ...[]*uint32) (stop func() error, err error) {
+func (c *Client) ServeIndex(instance string, name string, f func(context.Context, wrpc.IndexWriter, wrpc.IndexReader, <-chan error) error, subs ...wrpc.SubscribePath) (stop func() error, err error) {
 	sub, err := c.conn.Subscribe(invocationSubject(c.prefix, instance, name), func(m *nats.Msg) {
+		ctx := context.Background()
+		ctx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		ctx = ContextWithHeader(ctx, m.Header)
+
 		slog.Debug("received invocation", "instance", instance, "name", name)
 		if m.Reply == "" {
 			slog.Warn("peer did not specify a reply subject")
@@ -445,7 +556,7 @@ func (c *Client) ServeIndex(instance string, name string, f func(context.Context
 		}
 		defer func() {
 			if err := paramSub.Unsubscribe(); err != nil {
-				slog.Error("failed to unsubscribe from parameter subject", "err", err)
+				slog.Error("failed to unsubscribe from parameter subject", "subject", paramRx, "err", err)
 			}
 		}()
 
@@ -464,21 +575,29 @@ func (c *Client) ServeIndex(instance string, name string, f func(context.Context
 			}
 		}()
 
-		// TODO: subscribe on the paths
-		//for sub := range subs {
-		//}
+		nest := make(map[string]*nats.Subscription, len(subs))
+		for _, path := range subs {
+			s := subscribePath(paramRx, path)
+			sub, err := c.conn.SubscribeSync(s)
+			if err != nil {
+				slog.Warn("failed to subscribe on nested parameter subject", "subject", s, "err", err)
+				return
+			}
+			defer func() {
+				if err := sub.Unsubscribe(); err != nil {
+					slog.Error("failed to unsubscribe from nested parameter subject", "subject", s, "err", err)
+				}
+			}()
+			nest[subscribePath("", path)] = sub
+		}
 
+		slog.DebugContext(ctx, "sending handshake accept")
 		accept := nats.NewMsg(m.Reply)
 		accept.Reply = rx
 		if err := c.conn.PublishMsg(accept); err != nil {
 			slog.Error("failed to send handshake", "err", err)
 			return
 		}
-
-		ctx := context.Background()
-		ctx, cancel := context.WithCancel(ctx)
-		defer cancel()
-		ctx = ContextWithHeader(ctx, m.Header)
 
 		errCh := make(chan error, 1)
 		go func() {
@@ -493,21 +612,22 @@ func (c *Client) ServeIndex(instance string, name string, f func(context.Context
 			errCh <- errors.New(s)
 		}()
 
-		slog.Debug("calling handler")
-		w, err := f(ctx, &streamReader{
-			ctx: ctx,
-			buf: m.Data,
-			sub: paramSub,
-		}, errCh)
-		if err != nil {
+		slog.Debug("calling server handler")
+		if err := f(ctx, &resultWriter{
+			nc: c.conn,
+			tx: fmt.Sprintf("%s.results", m.Reply),
+		}, &streamReader{
+			ctx:  ctx,
+			root: paramSub,
+			nest: nest,
+			buf:  m.Data,
+		}, errCh); err != nil {
+			slog.Warn("failed to handle invocation", "err", err)
 			var buf bytes.Buffer
-			slog.Warn("failed to handle `handle`", "err", err)
 			if err = wrpc.WriteString(fmt.Sprintf("%s", err), &buf); err != nil {
-				slog.Warn("failed to encode `handle` handling error", "err", err)
-				// Encoding the error failed, let's try encoding the encoding error
+				slog.Warn("failed to encode handling error", "err", err)
 				if err = wrpc.WriteString(fmt.Sprintf("failed to encode error: %s", err), &buf); err != nil {
-					slog.Warn("failed to encode `handle` handling error encoding error", "err", err)
-					// Well, we're out of luck at this point, let's just send an empty string
+					slog.Warn("failed to encode handling error encoding error", "err", err)
 					buf.Reset()
 				}
 			}
@@ -516,12 +636,6 @@ func (c *Client) ServeIndex(instance string, name string, f func(context.Context
 				slog.Warn("failed to send error to client", "err", err)
 			}
 			return
-		}
-		if err := w.WriteToIndex(&resultWriter{
-			nc: c.conn,
-			tx: fmt.Sprintf("%s.results", m.Reply),
-		}); err != nil {
-			slog.Warn("failed to write response to client", "err", err)
 		}
 		slog.Debug("successfully finished serving invocation")
 	})

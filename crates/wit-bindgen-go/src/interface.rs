@@ -36,12 +36,20 @@ impl InterfaceGenerator<'_> {
             Type::Bool => uwrite!(
                 self.src,
                 r#"func(r {wrpc}.ByteReader) (bool, error) {{
-    {slog}.Debug("reading `bool` byte")
+    {slog}.Debug("reading bool byte")
     v, err := r.ReadByte()
     if err != nil {{
-        return false, {fmt}.Errorf("failed to read `bool` byte: %w", err)
+        {slog}.Debug("reading bool", "value", false)
+        return false, {fmt}.Errorf("failed to read bool byte: %w", err)
     }}
-    return v == 1, nil
+    switch v {{
+        case 0:
+            return false, nil
+        case 1:
+            return true, nil
+        default:
+            return false, {fmt}.Errorf("invalid bool value %d", v)
+    }}
 }}({reader})"#,
                 fmt = self.deps.fmt(),
                 slog = self.deps.slog(),
@@ -50,10 +58,10 @@ impl InterfaceGenerator<'_> {
             Type::U8 => uwrite!(
                 self.src,
                 r#"func(r {wrpc}.ByteReader) (uint8, error) {{
-    {slog}.Debug("reading `u8` byte")
+    {slog}.Debug("reading u8 byte")
     v, err := r.ReadByte()
     if err != nil {{
-        return 0, {fmt}.Errorf("failed to read `u8` byte: %w", err)
+        return 0, {fmt}.Errorf("failed to read u8 byte: %w", err)
     }}
     return v, nil
 }}({reader})"#,
@@ -67,13 +75,13 @@ impl InterfaceGenerator<'_> {
 	var x uint16
 	var s uint
 	for i := 0; i < 3; i++ {{
-        {slog}.Debug("reading `uint16` byte", "i", i)
+        {slog}.Debug("reading u16 byte", "i", i)
 		b, err := r.ReadByte()
 		if err != nil {{
 			if i > 0 && err == {io}.EOF {{
 				err = {io}.ErrUnexpectedEOF
 			}}
-			return x, {fmt}.Errorf("failed to read `uint16` byte: %w", err)
+			return x, {fmt}.Errorf("failed to read u16 byte: %w", err)
 		}}
 		if b < 0x80 {{
 			if i == 2 && b > 1 {{
@@ -98,13 +106,13 @@ impl InterfaceGenerator<'_> {
 	var x uint32
 	var s uint
 	for i := 0; i < 5; i++ {{
-        {slog}.Debug("reading `uint32` byte", "i", i)
+        {slog}.Debug("reading u32 byte", "i", i)
 		b, err := r.ReadByte()
 		if err != nil {{
 			if i > 0 && err == {io}.EOF {{
 				err = {io}.ErrUnexpectedEOF
 			}}
-			return x, {fmt}.Errorf("failed to read `uint32` byte: %w", err)
+			return x, {fmt}.Errorf("failed to read u32 byte: %w", err)
 		}}
 		if b < 0x80 {{
 			if i == 4 && b > 1 {{
@@ -129,13 +137,13 @@ impl InterfaceGenerator<'_> {
 	var x uint64
 	var s uint
 	for i := 0; i < 10; i++ {{
-        {slog}.Debug("reading `uint64` byte", "i", i)
+        {slog}.Debug("reading u64 byte", "i", i)
 		b, err := r.ReadByte()
 		if err != nil {{
 			if i > 0 && err == {io}.EOF {{
 				err = {io}.ErrUnexpectedEOF
 			}}
-			return x, {fmt}.Errorf("failed to read `uint64` byte: %w", err)
+			return x, {fmt}.Errorf("failed to read u64 byte: %w", err)
 		}}
 		if b < 0x80 {{
 			if i == 9 && b > 1 {{
@@ -157,10 +165,10 @@ impl InterfaceGenerator<'_> {
             Type::S8 => uwrite!(
                 self.src,
                 r#"func(r {wrpc}.ByteReader) (int8, error) {{
-    {slog}.Debug("reading `s8` byte")
+    {slog}.Debug("reading s8 byte")
     v, err := r.ReadByte()
     if err != nil {{
-        return 0, {fmt}.Errorf("failed to read `s8` byte: %w", err)
+        return 0, {fmt}.Errorf("failed to read s8 byte: %w", err)
     }}
     return int8(v), nil
 }}({reader})"#,
@@ -179,10 +187,10 @@ impl InterfaceGenerator<'_> {
 		length uint32
 	)
 	for {{
-        {slog}.Debug("reading `s16` byte")
+        {slog}.Debug("reading s16 byte")
 		b, err = r.ReadByte()
         if err != nil {{
-            return 0, {fmt}.Errorf("failed to read `s16` byte: %w", err)
+            return 0, {fmt}.Errorf("failed to read s16 byte: %w", err)
         }}
 		length++
 
@@ -212,10 +220,10 @@ impl InterfaceGenerator<'_> {
 		length uint32
 	)
 	for {{
-        {slog}.Debug("reading `s32` byte")
+        {slog}.Debug("reading s32 byte")
 		b, err = r.ReadByte()
         if err != nil {{
-            return 0, {fmt}.Errorf("failed to read `s32` byte: %w", err)
+            return 0, {fmt}.Errorf("failed to read s32 byte: %w", err)
         }}
 		length++
 
@@ -245,10 +253,10 @@ impl InterfaceGenerator<'_> {
 		length uint32
 	)
 	for {{
-        {slog}.Debug("reading `s64` byte")
+        {slog}.Debug("reading s64 byte")
 		b, err = r.ReadByte()
         if err != nil {{
-            return 0, {fmt}.Errorf("failed to read `s64` byte: %w", err)
+            return 0, {fmt}.Errorf("failed to read s64 byte: %w", err)
         }}
 		length++
 
@@ -271,10 +279,10 @@ impl InterfaceGenerator<'_> {
                 self.src,
                 r#"func(r {wrpc}.ByteReader) (float32, error) {{
     var b [4]byte
-    {slog}.Debug("reading `float32` bytes")
+    {slog}.Debug("reading f32 bytes")
     _, err := r.Read(b[:])
     if err != nil {{
-        return 0, {fmt}.Errorf("failed to read `float32`: %w", err)
+        return 0, {fmt}.Errorf("failed to read f32: %w", err)
     }}
     return {math}.Float32frombits({binary}.LittleEndian.Uint32(b[:])), nil
 }}({reader})"#,
@@ -288,10 +296,10 @@ impl InterfaceGenerator<'_> {
                 self.src,
                 r#"func(r {wrpc}.ByteReader) (float64, error) {{
     var b [8]byte
-    {slog}.Debug("reading `float64` bytes")
+    {slog}.Debug("reading f64 bytes")
     _, err := r.Read(b[:])
     if err != nil {{
-        return 0, {fmt}.Errorf("failed to read `float64`: %w", err)
+        return 0, {fmt}.Errorf("failed to read f64: %w", err)
     }}
     return {math}.Float64frombits({binary}.LittleEndian.Uint64(b[:])), nil
 }}({reader})"#,
@@ -387,7 +395,7 @@ impl InterfaceGenerator<'_> {
         let ty = &self.resolve.types[id];
         if let Some(ref name) = ty.name {
             let read = self.type_path_with_name(id, format!("Read{}", to_upper_camel_case(name)));
-            uwrite!(self.src, "{read}({reader})",);
+            uwrite!(self.src, "{read}({reader})");
             return;
         }
 
@@ -398,7 +406,7 @@ impl InterfaceGenerator<'_> {
                 let errors = self.deps.errors();
                 let slog = self.deps.slog();
                 let wrpc = self.deps.wrpc();
-                uwrite!(self.src, "func(r {wrpc}.ByteReader) (",);
+                uwrite!(self.src, "func(r {wrpc}.ByteReader) (");
                 self.print_list(ty);
                 uwrite!(
                     self.src,
@@ -451,7 +459,7 @@ impl InterfaceGenerator<'_> {
                 let fmt = self.deps.fmt();
                 let slog = self.deps.slog();
                 let wrpc = self.deps.wrpc();
-                uwrite!(self.src, "func(r {wrpc}.ByteReader) (",);
+                uwrite!(self.src, "func(r {wrpc}.ByteReader) (");
                 self.print_option(ty, true);
                 uwrite!(
                     self.src,
@@ -475,7 +483,12 @@ impl InterfaceGenerator<'_> {
                     r#"if err != nil {{
 	    	return nil, {fmt}.Errorf("failed to read `option::some` value: %w", err)
 	    }}
-	    return &v, nil
+	    return "#,
+                );
+                self.result_element_ptr(ty, false);
+                uwrite!(
+                    self.src,
+                    r#"v, nil
 	default:
 		return nil, {fmt}.Errorf("invalid option status byte %d", status)
 	}}
@@ -487,7 +500,7 @@ impl InterfaceGenerator<'_> {
                 let fmt = self.deps.fmt();
                 let slog = self.deps.slog();
                 let wrpc = self.deps.wrpc();
-                uwrite!(self.src, "func(r {wrpc}.ByteReader) (*",);
+                uwrite!(self.src, "func(r {wrpc}.ByteReader) (*");
                 self.print_result(ty);
                 uwriteln!(
                     self.src,
@@ -869,24 +882,24 @@ impl InterfaceGenerator<'_> {
 	var x uint8
 	var s uint
 	for i := 0; i < 2; i++ {{
-        {slog}.Debug("reading `uint8` byte", "i", i)
+        {slog}.Debug("reading u8 discriminant byte", "i", i)
 		b, err := r.ReadByte()
 		if err != nil {{
 			if i > 0 && err == {io}.EOF {{
 				err = {io}.ErrUnexpectedEOF
 			}}
-			return x, {fmt}.Errorf("failed to read `uint8` byte: %w", err)
+			return x, {fmt}.Errorf("failed to read u8 discriminant byte: %w", err)
 		}}
 		if b < 0x80 {{
 			if i == 2 && b > 1 {{
-				return x, {errors}.New("varint overflows a 8-bit integer")
+				return x, {errors}.New("discriminant overflows a 8-bit integer")
 			}}
 			return x | uint8(b)<<s, nil
 		}}
 		x |= uint8(b&0x7f) << s
 		s += 7
 	}}
-	return x, {errors}.New("varint overflows a 8-bit integer")
+	return x, {errors}.New("discriminant overflows a 8-bit integer")
 }}({reader})"#,
                     errors = self.deps.errors(),
                     fmt = self.deps.fmt(),
@@ -915,7 +928,7 @@ impl InterfaceGenerator<'_> {
                     r#"func(v uint8, w {wrpc}.ByteWriter) error {{
 	            b := make([]byte, 2)
 	            i := {binary}.PutUvarint(b, uint64(v))
-                {slog}.Debug("writing u8")
+                {slog}.Debug("writing u8 discriminant")
 	            _, err := w.Write(b[:i])
 	            return err
             }}(uint8({name}), {writer})"#,
@@ -1354,7 +1367,7 @@ impl InterfaceGenerator<'_> {
         }}"#,
             );
             if !params.is_empty() {
-                uwriteln!(self.src, "r := {wrpc}.NewChanReader(ctx, payload, buffer)",);
+                uwriteln!(self.src, "r := {wrpc}.NewChanReader(ctx, payload, buffer)");
             }
             for (i, (_, ty)) in params.iter().enumerate() {
                 uwrite!(
@@ -1366,7 +1379,7 @@ impl InterfaceGenerator<'_> {
                 self.push_str("\n");
                 uwriteln!(
                     self.src,
-                    r#"if err != nil {{ return {fmt}.Errorf("failed to read parameter {i}") }}"#,
+                    r#"if err != nil {{ return {fmt}.Errorf("failed to read parameter {i}: %w", err) }}"#,
                 );
             }
             uwriteln!(
@@ -1394,7 +1407,7 @@ impl InterfaceGenerator<'_> {
             );
             self.push_str("}\n");
 
-            uwriteln!(self.src, r#"var buf {bytes}.Buffer"#,);
+            uwriteln!(self.src, r#"var buf {bytes}.Buffer"#);
             for (i, ty) in results.iter_types().enumerate() {
                 self.push_str("if err :=");
                 self.print_write_ty(ty, &format!("r{i}"), "&buf");
@@ -1519,9 +1532,12 @@ impl InterfaceGenerator<'_> {
                 //}
             }
         }
+        let fmt = self.deps.fmt();
+        let wrpc = self.deps.wrpc();
+
         let _params = self.print_signature(func, &sig);
         self.src.push_str("{\n");
-        self.src.push_str("wrpc__.NewInvocation(");
+        self.src.push_str("if err__ = wrpc__.Invoke(ctx__, ");
         match func.kind {
             FunctionKind::Freestanding
             | FunctionKind::Static(..)
@@ -1534,17 +1550,56 @@ impl InterfaceGenerator<'_> {
         }
         self.src.push_str(", \"");
         self.src.push_str(&func.name);
-        self.src.push_str("\")\n");
+        self.src.push_str("\", ");
         uwriteln!(
             self.src,
-            r#"
-        //if err != nil {{
-        //    err__ = fmt.Sprintf("failed to invoke `{}`: %w", txErr__)
-        //    return 
-        //}}
-        //wrpc__.1.await.context("failed to transmit parameters")?;
-        //Ok(tx__)
-        panic("not supported yet")
+            "func(w__ {wrpc}.IndexWriter, r__ {wrpc}.IndexReader, errCh__ <-chan error) error {{"
+        );
+        if !func.params.is_empty() {
+            let bytes = self.deps.bytes();
+            uwriteln!(self.src, "var buf__ {bytes}.Buffer");
+            for (name, ty) in &func.params {
+                self.src.push_str("if err__ =");
+                self.print_write_ty(ty, &to_go_ident(name), "&buf__");
+                self.src.push_str("; err__ != nil {\n");
+                uwriteln!(
+                    self.src,
+                    r#"return {fmt}.Errorf("failed to write `{name}` parameter: %w", err__)"#,
+                );
+                self.src.push_str("}\n");
+            }
+            self.push_str("_, err__ = w__.Write(buf__.Bytes())\n");
+            self.push_str("if err__ != nil {\n");
+            uwriteln!(
+                self.src,
+                r#"return {fmt}.Errorf("failed to write parameters: %w", err__)"#,
+            );
+            self.src.push_str("}\n");
+        } else {
+            self.push_str("_, err__ = w__.Write(nil)\n");
+            self.push_str("if err__ != nil {\n");
+            uwriteln!(
+                self.src,
+                r#"return {fmt}.Errorf("failed to write empty parameters: %w", err__)"#,
+            );
+            self.src.push_str("}\n");
+        }
+        for (i, ty) in func.results.iter_types().enumerate() {
+            uwrite!(self.src, "r{i}__, err__ = ");
+            self.print_read_ty(ty, "r__");
+            self.push_str("\n");
+            uwriteln!(
+                self.src,
+                r#"if err__ != nil {{ return {fmt}.Errorf("failed to read result {i}: %w", err__) }}"#,
+            );
+        }
+        self.src.push_str("return nil\n");
+        self.src.push_str("}); err__ != nil {\n");
+        uwriteln!(
+            self.src,
+            r#"err__ = {fmt}.Errorf("failed to invoke `{}`: %w", err__)
+            return
+        }}
         return
     }}"#,
             func.name
@@ -1605,7 +1660,7 @@ impl InterfaceGenerator<'_> {
     fn print_signature(&mut self, func: &Function, sig: &FnSig) -> Vec<String> {
         let params = self.print_docs_and_params(func, sig);
         if let FunctionKind::Constructor(_) = &func.kind {
-            uwrite!(self.src, " (Self, error)",);
+            uwrite!(self.src, " (Self, error)");
         } else {
             self.print_return_decl(&func.results);
         }
@@ -1636,9 +1691,11 @@ impl InterfaceGenerator<'_> {
             self.push_str(")");
         }
         self.push_str(&func_name.to_upper_camel_case());
-        uwrite!(self.src, "(ctx__ {}.Context, ", self.deps.context());
+        let context = self.deps.context();
+        uwrite!(self.src, "(ctx__ {context}.Context, ");
         if self.in_import {
-            uwrite!(self.src, "wrpc__ {}.Client, ", self.deps.wrpc());
+            let wrpc = self.deps.wrpc();
+            uwrite!(self.src, "wrpc__ {wrpc}.Client, ");
         }
         let mut params = Vec::new();
         for (i, (name, param)) in func.params.iter().enumerate() {
@@ -2131,13 +2188,13 @@ func (v *{name}) WriteTo(w {wrpc}.ByteWriter) error {{"#
             self.push_str("if err != nil {\n");
             self.push_str("return nil, ");
             self.push_str(fmt);
-            self.push_str(".Errorf(\"failed to read flag: %w\", err)\n}\n");
-            self.push_str("\n");
+            self.push_str(".Errorf(\"failed to read flag: %w\", err)\n");
+            self.push_str("}\n");
             for (i, Flag { name, .. }) in flags.iter().enumerate() {
                 if i > 64 {
                     break;
                 }
-                uwriteln!(self.src, "if n | (1 << {i}) > 0 {{");
+                uwriteln!(self.src, "if n & (1 << {i}) > 0 {{");
                 self.push_str("v.");
                 self.push_str(&name.to_upper_camel_case());
                 self.push_str(" = true\n");

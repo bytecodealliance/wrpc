@@ -16,11 +16,30 @@ type IncomingInvocation interface {
 	Accept(context.Context, []byte) error
 }
 
-type OutgoingInvocation interface {
-	Subscriber
-	ErrorSubscriber
+type SubscribePath []*uint32
 
-	Invoke(context.Context, []byte, func(context.Context, []byte)) (func() error, Transmitter, error)
+func NewSubscribePath(ps ...*uint32) SubscribePath {
+	return SubscribePath(ps)
+}
+
+func (p SubscribePath) push(v *uint32) SubscribePath {
+	return SubscribePath(append(append(make(SubscribePath, 0, len(p)+1), p...), v))
+}
+
+func (p SubscribePath) Index(i uint32) SubscribePath {
+	return p.push(&i)
+}
+
+func (p SubscribePath) Wildcard() SubscribePath {
+	return p.push(nil)
+}
+
+func (p SubscribePath) Parent() (SubscribePath, bool) {
+	n := len(p)
+	if n == 0 {
+		return nil, false
+	}
+	return SubscribePath(p[:n-1]), true
 }
 
 type Index[T any] interface {
@@ -50,10 +69,8 @@ type WriterToIndex interface {
 }
 
 type Client interface {
-	NewInvocation(instance string, name string) OutgoingInvocation
-
-	Invoke(instance string, name string, w WriterToIndex, subs ...[]*uint32) (IndexReader, <-chan error, error)
-	ServeIndex(instance string, name string, f func(context.Context, IndexReader, <-chan error) (WriterToIndex, error), subs ...[]*uint32) (func() error, error)
+	Invoke(ctx context.Context, instance string, name string, f func(IndexWriter, IndexReader, <-chan error) error, subs ...SubscribePath) error
+	ServeIndex(instance string, name string, f func(context.Context, IndexWriter, IndexReader, <-chan error) error, subs ...SubscribePath) (func() error, error)
 
 	Serve(instance string, name string, f func(context.Context, []byte, Transmitter, IncomingInvocation) error) (func() error, error)
 }

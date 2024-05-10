@@ -95,7 +95,7 @@ func run() error {
 	}
 	defer nc.Close()
 
-	stop, err := outgoing_handler.ServeHandle(wrpcnats.NewClient(nc, "go"), func(ctx context.Context, request *types.RequestRecord, opts *types.RequestOptionsRecord) (*wrpc.Result[types.ResponseRecord, types.ErrorCodeVariant], func(), error) {
+	stop, err := outgoing_handler.ServeHandle(wrpcnats.NewClient(nc, "go"), func(ctx context.Context, request *types.RequestRecord, opts *types.RequestOptionsRecord) (*wrpc.Result[types.ResponseRecord, types.ErrorCodeVariant], error) {
 		var method string
 		switch disc := request.Method.Discriminant(); disc {
 		case types.MethodDiscriminant_Get:
@@ -120,10 +120,10 @@ func run() error {
 			var ok bool
 			method, ok = request.Method.GetOther()
 			if !ok {
-				return nil, nil, errors.New("invalid HTTP method")
+				return nil, errors.New("invalid HTTP method")
 			}
 		default:
-			return nil, nil, fmt.Errorf("invalid HTTP method discriminant %v", disc)
+			return nil, fmt.Errorf("invalid HTTP method discriminant %v", disc)
 		}
 		scheme := "https"
 		if request.Scheme != nil {
@@ -136,10 +136,10 @@ func run() error {
 				var ok bool
 				scheme, ok = request.Scheme.GetOther()
 				if !ok {
-					return nil, nil, errors.New("invalid scheme")
+					return nil, errors.New("invalid scheme")
 				}
 			default:
-				return nil, nil, fmt.Errorf("invalid scheme discriminant %v", disc)
+				return nil, fmt.Errorf("invalid scheme discriminant %v", disc)
 			}
 		}
 		url := fmt.Sprintf("%s://", scheme)
@@ -153,7 +153,7 @@ func run() error {
 		var trailer http.Header
 		req, err := http.NewRequest(method, url, &incomingBody{body: request.Body, trailer: trailer, trailerRx: request.Trailers})
 		if err != nil {
-			return nil, nil, fmt.Errorf("failed to construct a new HTTP request: %w", err)
+			return nil, fmt.Errorf("failed to construct a new HTTP request: %w", err)
 		}
 		req.Trailer = trailer
 		for _, header := range request.Headers {
@@ -165,7 +165,7 @@ func run() error {
 		slog.DebugContext(ctx, "sending HTTP request", "url", url, "method", method)
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
-			return nil, nil, fmt.Errorf("request failed: %w", err)
+			return nil, fmt.Errorf("request failed: %w", err)
 		}
 
 		headers := make([]*wrpc.Tuple2[string, [][]byte], 0, len(resp.Header))
@@ -180,17 +180,13 @@ func run() error {
 		trailerCh := make(chan []*wrpc.Tuple2[string, [][]byte], 1)
 		body := &outgoingBody{body: resp.Body, trailer: resp.Trailer, trailerCh: trailerCh}
 		return &wrpc.Result[types.ResponseRecord, types.ErrorCodeVariant]{
-				Ok: &types.ResponseRecord{
-					Body:     wrpc.NewPendingByteReader(bufio.NewReader(body)),
-					Trailers: trailerReceiver(trailerCh),
-					Status:   uint16(resp.StatusCode),
-					Headers:  headers,
-				},
-			}, func() {
-				if err := body.Close(); err != nil {
-					slog.Warn("failed to close response body", "err", err)
-				}
-			}, nil
+			Ok: &types.ResponseRecord{
+				Body:     wrpc.NewPendingByteReader(bufio.NewReader(body)),
+				Trailers: trailerReceiver(trailerCh),
+				Status:   uint16(resp.StatusCode),
+				Headers:  headers,
+			},
+		}, nil
 	})
 	if err != nil {
 		return err
