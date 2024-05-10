@@ -31,7 +31,7 @@ async fn go_bindgen() -> anyhow::Result<()> {
 
     let status = Command::new("go")
         .current_dir("tests/go")
-        .args(["test", "./..."])
+        .args(["test", "-v"])
         .kill_on_drop(true)
         .status()
         .await
@@ -217,7 +217,7 @@ async fn go() -> anyhow::Result<()> {
 
     let status = Command::new("go")
         .current_dir("go")
-        .args(["test", "./..."])
+        .args(["test", "-v", "./..."])
         .kill_on_drop(true)
         .status()
         .await

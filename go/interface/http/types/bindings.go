@@ -1,13 +1,15 @@
 package types
 
 import (
-	"bufio"
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
-	"sync"
+	"math"
 
 	wrpc "github.com/wrpc/wrpc/go"
+	"golang.org/x/sync/errgroup"
 )
 
 type MethodDiscriminant uint32
@@ -650,15 +652,15 @@ func ReadErrorCode(r wrpc.ByteReader) (*ErrorCodeVariant, error) {
 	}
 }
 
-func (v *ErrorCodeVariant) WriteTo(w wrpc.ByteWriter) error {
+func (v *ErrorCodeVariant) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.Index[wrpc.IndexWriter]) error, error) {
 	if err := wrpc.WriteUint32(uint32(v.discriminant), w); err != nil {
-		return fmt.Errorf("failed to write discriminant: %w", err)
+		return nil, fmt.Errorf("failed to write discriminant: %w", err)
 	}
 	switch v.discriminant {
 	case ErrorCodeDiscriminant_DNSTimeout:
 	case ErrorCodeDiscriminant_DNSError:
 		if err := v.payload.(*DNSErrorPayloadRecord).WriteTo(w); err != nil {
-			return fmt.Errorf("failed to write payload: %w", err)
+			return nil, fmt.Errorf("failed to write payload: %w", err)
 		}
 	case ErrorCodeDiscriminant_DestinationNotFound:
 	case ErrorCodeDiscriminant_DestinationUnavailable:
@@ -674,7 +676,7 @@ func (v *ErrorCodeVariant) WriteTo(w wrpc.ByteWriter) error {
 	case ErrorCodeDiscriminant_TLSCertificateError:
 	case ErrorCodeDiscriminant_TLSAlertReceived:
 		if err := v.payload.(*TLSAlertReceivedPayloadRecord).WriteTo(w); err != nil {
-			return fmt.Errorf("failed to write payload: %w", err)
+			return nil, fmt.Errorf("failed to write payload: %w", err)
 		}
 	case ErrorCodeDiscriminant_HTTPRequestDenied:
 	case ErrorCodeDiscriminant_HTTPRequestLengthRequired:
@@ -683,7 +685,7 @@ func (v *ErrorCodeVariant) WriteTo(w wrpc.ByteWriter) error {
 			break
 		}
 		if err := wrpc.WriteUint64(*v.payload.(*uint64), w); err != nil {
-			return fmt.Errorf("failed to write payload: %w", err)
+			return nil, fmt.Errorf("failed to write payload: %w", err)
 		}
 	case ErrorCodeDiscriminant_HTTPRequestMethodInvalid:
 	case ErrorCodeDiscriminant_HTTPRequestUriInvalid:
@@ -693,25 +695,25 @@ func (v *ErrorCodeVariant) WriteTo(w wrpc.ByteWriter) error {
 			break
 		}
 		if err := wrpc.WriteUint32(*v.payload.(*uint32), w); err != nil {
-			return fmt.Errorf("failed to write payload: %w", err)
+			return nil, fmt.Errorf("failed to write payload: %w", err)
 		}
 	case ErrorCodeDiscriminant_HTTPRequestHeaderSize:
 		if v.payload == nil {
 			break
 		}
 		if err := v.payload.(*FieldSizePayloadRecord).WriteTo(w); err != nil {
-			return fmt.Errorf("failed to write payload: %w", err)
+			return nil, fmt.Errorf("failed to write payload: %w", err)
 		}
 	case ErrorCodeDiscriminant_HTTPRequestTrailerSectionSize:
 		if v.payload == nil {
 			break
 		}
 		if err := wrpc.WriteUint32(*v.payload.(*uint32), w); err != nil {
-			return fmt.Errorf("failed to write payload: %w", err)
+			return nil, fmt.Errorf("failed to write payload: %w", err)
 		}
 	case ErrorCodeDiscriminant_HTTPRequestTrailerSize:
 		if err := v.payload.(*FieldSizePayloadRecord).WriteTo(w); err != nil {
-			return fmt.Errorf("failed to write payload: %w", err)
+			return nil, fmt.Errorf("failed to write payload: %w", err)
 		}
 	case ErrorCodeDiscriminant_HTTPResponseIncomplete:
 	case ErrorCodeDiscriminant_HTTPResponseHeaderSectionSize:
@@ -719,43 +721,43 @@ func (v *ErrorCodeVariant) WriteTo(w wrpc.ByteWriter) error {
 			break
 		}
 		if err := wrpc.WriteUint32(*v.payload.(*uint32), w); err != nil {
-			return fmt.Errorf("failed to write payload: %w", err)
+			return nil, fmt.Errorf("failed to write payload: %w", err)
 		}
 	case ErrorCodeDiscriminant_HTTPResponseHeaderSize:
 		if err := v.payload.(*FieldSizePayloadRecord).WriteTo(w); err != nil {
-			return fmt.Errorf("failed to write payload: %w", err)
+			return nil, fmt.Errorf("failed to write payload: %w", err)
 		}
 	case ErrorCodeDiscriminant_HTTPResponseBodySize:
 		if v.payload == nil {
 			break
 		}
 		if err := wrpc.WriteUint64(*v.payload.(*uint64), w); err != nil {
-			return fmt.Errorf("failed to write payload: %w", err)
+			return nil, fmt.Errorf("failed to write payload: %w", err)
 		}
 	case ErrorCodeDiscriminant_HTTPResponseTrailerSectionSize:
 		if v.payload == nil {
 			break
 		}
 		if err := wrpc.WriteUint32(*v.payload.(*uint32), w); err != nil {
-			return fmt.Errorf("failed to write payload: %w", err)
+			return nil, fmt.Errorf("failed to write payload: %w", err)
 		}
 	case ErrorCodeDiscriminant_HTTPResponseTrailerSize:
 		if err := v.payload.(*FieldSizePayloadRecord).WriteTo(w); err != nil {
-			return fmt.Errorf("failed to write payload: %w", err)
+			return nil, fmt.Errorf("failed to write payload: %w", err)
 		}
 	case ErrorCodeDiscriminant_HTTPResponseTransferCoding:
 		if v.payload == nil {
 			break
 		}
 		if err := wrpc.WriteString(*v.payload.(*string), w); err != nil {
-			return fmt.Errorf("failed to write payload: %w", err)
+			return nil, fmt.Errorf("failed to write payload: %w", err)
 		}
 	case ErrorCodeDiscriminant_HTTPResponseContentCoding:
 		if v.payload == nil {
 			break
 		}
 		if err := wrpc.WriteString(*v.payload.(*string), w); err != nil {
-			return fmt.Errorf("failed to write payload: %w", err)
+			return nil, fmt.Errorf("failed to write payload: %w", err)
 		}
 	case ErrorCodeDiscriminant_HTTPResponseTimeout:
 	case ErrorCodeDiscriminant_HTTPUpgradeFailed:
@@ -767,12 +769,12 @@ func (v *ErrorCodeVariant) WriteTo(w wrpc.ByteWriter) error {
 			break
 		}
 		if err := wrpc.WriteString(*v.payload.(*string), w); err != nil {
-			return fmt.Errorf("failed to write payload: %w", err)
+			return nil, fmt.Errorf("failed to write payload: %w", err)
 		}
 	default:
 		panic("unreachable")
 	}
-	return nil
+	return nil, nil
 }
 
 type (
@@ -806,10 +808,6 @@ type (
 		stopBody     func() error
 		stopTrailers func() error
 	}
-	ResponseTransmitter struct {
-		body     *wrpc.ByteStreamWriter
-		trailers wrpc.ReadyReceiver[[]*wrpc.Tuple2[string, [][]byte]]
-	}
 
 	ResponseRecord struct {
 		Body     wrpc.ReadyReader
@@ -818,8 +816,6 @@ type (
 		Headers  []*wrpc.Tuple2[string, [][]byte]
 	}
 )
-
-var zeroResponseTransmitter ResponseTransmitter
 
 type DNSErrorPayloadRecord struct {
 	Rcode    *string
@@ -952,16 +948,16 @@ func SubscribeRequest(sub wrpc.Subscriber) (*RequestSubscription, error) {
 	}, nil
 }
 
-func ReadRequest(ctx context.Context, r wrpc.ByteReader, sub *RequestSubscription) (*RequestRecord, error) {
-	slog.DebugContext(ctx, "reading `body`")
-	body, err := wrpc.ReadByteStream(ctx, r, sub.payloadBody)
+func ReadRequest(r wrpc.IndexReader, path ...uint32) (*RequestRecord, error) {
+	slog.Debug("reading `body`")
+	body, err := wrpc.ReadByteStream(r, append(path, 0)...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read `body`: %w", err)
 	}
-	slog.DebugContext(ctx, "read `body`", "body", body)
+	slog.Debug("read `body`", "body", body)
 
-	slog.DebugContext(ctx, "reading `trailers`")
-	trailers, err := wrpc.ReadFuture(ctx, r, sub.payloadTrailers, func(r wrpc.ByteReader) ([]*wrpc.Tuple2[string, [][]byte], error) {
+	slog.Debug("reading `trailers`")
+	trailers, err := wrpc.ReadFuture(r, func(r wrpc.ByteReader) ([]*wrpc.Tuple2[string, [][]byte], error) {
 		return wrpc.ReadFlatOption(r, func(r wrpc.ByteReader) ([]*wrpc.Tuple2[string, [][]byte], error) {
 			return wrpc.ReadList(r, func(r wrpc.ByteReader) (*wrpc.Tuple2[string, [][]byte], error) {
 				return wrpc.ReadTuple2(r, wrpc.ReadString, func(r wrpc.ByteReader) ([][]byte, error) {
@@ -969,41 +965,41 @@ func ReadRequest(ctx context.Context, r wrpc.ByteReader, sub *RequestSubscriptio
 				})
 			})
 		})
-	})
+	}, append(path, 1)...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read `trailers`: %w", err)
 	}
-	slog.DebugContext(ctx, "read `trailers`", "trailers", trailers)
+	slog.Debug("read `trailers`", "trailers", trailers)
 
-	slog.DebugContext(ctx, "reading `method`")
+	slog.Debug("reading `method`")
 	method, err := ReadMethod(r)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read `method`: %w", err)
 	}
-	slog.DebugContext(ctx, "read `method`", "method", method)
+	slog.Debug("read `method`", "method", method)
 
-	slog.DebugContext(ctx, "reading `path-with-query`")
+	slog.Debug("reading `path-with-query`")
 	pathWithQuery, err := wrpc.ReadOption(r, wrpc.ReadString)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read `path-with-query`: %w", err)
 	}
-	slog.DebugContext(ctx, "read `path-with-query`", "path-with-query", *pathWithQuery)
+	slog.Debug("read `path-with-query`", "path-with-query", *pathWithQuery)
 
-	slog.DebugContext(ctx, "reading `scheme`")
+	slog.Debug("reading `scheme`")
 	scheme, err := wrpc.ReadFlatOption(r, ReadScheme)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read `scheme`: %w", err)
 	}
-	slog.DebugContext(ctx, "read `scheme`", "scheme", scheme)
+	slog.Debug("read `scheme`", "scheme", scheme)
 
-	slog.DebugContext(ctx, "reading `authority`")
+	slog.Debug("reading `authority`")
 	authority, err := wrpc.ReadOption(r, wrpc.ReadString)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read `authority`: %w", err)
 	}
-	slog.DebugContext(ctx, "read `authority`", "authority", authority)
+	slog.Debug("read `authority`", "authority", authority)
 
-	slog.DebugContext(ctx, "reading `headers`")
+	slog.Debug("reading `headers`")
 	headers, err := wrpc.ReadList(r, func(r wrpc.ByteReader) (*wrpc.Tuple2[string, [][]byte], error) {
 		return wrpc.ReadTuple2(r, wrpc.ReadString, func(r wrpc.ByteReader) ([][]byte, error) {
 			return wrpc.ReadList(r, wrpc.ReadByteList)
@@ -1012,7 +1008,7 @@ func ReadRequest(ctx context.Context, r wrpc.ByteReader, sub *RequestSubscriptio
 	if err != nil {
 		return nil, fmt.Errorf("failed to read `headers`: %w", err)
 	}
-	slog.DebugContext(ctx, "read `headers`", "headers", headers)
+	slog.Debug("read `headers`", "headers", headers)
 
 	return &RequestRecord{body, trailers, method, pathWithQuery, scheme, authority, headers}, nil
 }
@@ -1039,13 +1035,86 @@ func ReadRequestOptions(r wrpc.ByteReader) (*RequestOptionsRecord, error) {
 	return &RequestOptionsRecord{connectTimeout, firstByteTimeout, betweenByteTimeout}, nil
 }
 
-func (v *ResponseRecord) WriteTo(w wrpc.ByteWriter) (*ResponseTransmitter, error) {
-	var res ResponseTransmitter
-	var err error
+func (v *ResponseRecord) WriteToIndex(w wrpc.ByteWriter) (write func(wrpc.Index[wrpc.IndexWriter]) error, err error) {
+	writes := map[uint32]func(wrpc.IndexWriter) error{}
+
 	slog.Debug("writing `body`")
-	res.body, err = wrpc.WriteByteStream(v.Body, w, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to write `body`: %w", err)
+	if v.Body.Ready() {
+		defer func() {
+			body, ok := v.Body.(io.Closer)
+			if ok {
+				if cErr := body.Close(); cErr != nil {
+					if err == nil {
+						err = fmt.Errorf("failed to close ready byte stream: %w", cErr)
+					} else {
+						slog.Warn("failed to close ready byte stream", "err", cErr)
+					}
+				}
+			}
+		}()
+		slog.Debug("writing byte stream `stream::ready` status byte")
+		if err := w.WriteByte(1); err != nil {
+			return nil, fmt.Errorf("failed to write `stream::ready` byte: %w", err)
+		}
+		slog.Debug("reading ready byte stream contents")
+		var buf bytes.Buffer
+		n, err := io.Copy(&buf, v.Body)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read ready byte stream contents: %w", err)
+		}
+		slog.Debug("writing ready byte stream contents", "len", n)
+		if err = wrpc.WriteByteList(buf.Bytes(), w); err != nil {
+			return nil, fmt.Errorf("failed to write ready byte stream contents: %w", err)
+		}
+		return nil, nil
+	} else {
+		slog.Debug("writing byte stream `stream::pending` status byte")
+		if err := w.WriteByte(0); err != nil {
+			return nil, fmt.Errorf("failed to write `stream::pending` byte: %w", err)
+		}
+		writes[0] = func(w wrpc.IndexWriter) (err error) {
+			defer func() {
+				body, ok := v.Body.(io.Closer)
+				if ok {
+					if cErr := body.Close(); cErr != nil {
+						if err == nil {
+							err = fmt.Errorf("failed to close pending byte stream: %w", cErr)
+						} else {
+							slog.Warn("failed to close pending byte stream", "err", cErr)
+						}
+					}
+				}
+			}()
+			chunk := make([]byte, 8096)
+			for {
+				var end bool
+				slog.Debug("reading pending byte stream contents")
+				n, err := v.Body.Read(chunk)
+				if err == io.EOF {
+					end = true
+					slog.Debug("pending byte stream reached EOF")
+				} else if err != nil {
+					return fmt.Errorf("failed to read pending byte stream chunk: %w", err)
+				}
+				if n > math.MaxUint32 {
+					return fmt.Errorf("pending byte stream chunk length of %d overflows a 32-bit integer", n)
+				}
+				slog.Debug("writing pending byte stream chunk length", "len", n)
+				if err := wrpc.WriteUint32(uint32(n), w); err != nil {
+					return fmt.Errorf("failed to write pending byte stream chunk length of %d: %w", n, err)
+				}
+				_, err = w.Write(chunk[:n])
+				if err != nil {
+					return fmt.Errorf("failed to write pending byte stream chunk contents: %w", err)
+				}
+				if end {
+					if err := w.WriteByte(0); err != nil {
+						return fmt.Errorf("failed to write pending byte stream end byte: %w", err)
+					}
+					return nil
+				}
+			}
+		}
 	}
 	slog.Debug("writing `trailers`")
 	if v.Trailers.Ready() {
@@ -1069,7 +1138,20 @@ func (v *ResponseRecord) WriteTo(w wrpc.ByteWriter) (*ResponseTransmitter, error
 		if err := w.WriteByte(0); err != nil {
 			return nil, fmt.Errorf("failed to write `stream::pending` byte: %w", err)
 		}
-		res.trailers = v.Trailers
+		writes[1] = func(w wrpc.IndexWriter) error {
+			trailers, err := v.Trailers.Receive()
+			if err != nil {
+				return fmt.Errorf("failed to receive `trailers`: %w", err)
+			}
+			if err := wrpc.WriteList(trailers, w, func(v *wrpc.Tuple2[string, [][]byte], w wrpc.ByteWriter) error {
+				return v.WriteTo(w, wrpc.WriteString, func(v [][]byte, w wrpc.ByteWriter) error {
+					return wrpc.WriteList(v, w, wrpc.WriteByteList)
+				})
+			}); err != nil {
+				return fmt.Errorf("failed to write `trailers`: %w", err)
+			}
+			return nil
+		}
 	}
 	slog.Debug("writing `status`")
 	if err := wrpc.WriteUint16(v.Status, w); err != nil {
@@ -1083,67 +1165,21 @@ func (v *ResponseRecord) WriteTo(w wrpc.ByteWriter) (*ResponseTransmitter, error
 	}); err != nil {
 		return nil, fmt.Errorf("failed to write `headers`: %w", err)
 	}
-	if res == zeroResponseTransmitter {
-		return nil, nil
-	}
-	return &res, nil
-}
-
-func (v *ResponseTransmitter) Transmit(ctx context.Context, tx wrpc.Transmitter) error {
-	var wg sync.WaitGroup
-	var bodyErr error
-	var trailersErr error
-	if v.body != nil {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			w := bufio.NewWriter(wrpc.NewTransmitWriter(ctx, tx, 0))
-			slog.Debug("writing `body`")
-			if err := v.body.WriteTo(w); err != nil {
-				bodyErr = fmt.Errorf("failed to write `body`: %w", err)
-				return
-			}
-			slog.Debug("flushing `body`")
-			if err := w.Flush(); err != nil {
-				trailersErr = fmt.Errorf("failed to flush `body`: %w", err)
-				return
-			}
-		}()
-	}
-	if v.trailers != nil {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			slog.Debug("receiving `trailers`")
-			trailers, err := v.trailers.Receive()
-			if err != nil {
-				trailersErr = fmt.Errorf("failed to receive `trailers`: %w", err)
-				return
-			}
-			w := bufio.NewWriter(wrpc.NewTransmitWriter(ctx, tx, 1))
-			slog.Debug("writing `trailers`")
-			if err := wrpc.WriteOption(wrpc.Slice(trailers), w, func(v []*wrpc.Tuple2[string, [][]byte], w wrpc.ByteWriter) error {
-				return wrpc.WriteList(trailers, w, func(v *wrpc.Tuple2[string, [][]byte], w wrpc.ByteWriter) error {
-					return v.WriteTo(w, wrpc.WriteString, func(v [][]byte, w wrpc.ByteWriter) error {
-						return wrpc.WriteList(v, w, wrpc.WriteByteList)
-					})
+	if len(writes) > 0 {
+		return func(w wrpc.Index[wrpc.IndexWriter]) error {
+			var wg errgroup.Group
+			for index, write := range writes {
+				w, err := w.Index(index)
+				if err != nil {
+					return fmt.Errorf("failed to index writer: %w", err)
+				}
+				write := write
+				wg.Go(func() error {
+					return write(w)
 				})
-			}); err != nil {
-				trailersErr = fmt.Errorf("failed to write `trailers`: %w", err)
-				return
 			}
-			if err := w.Flush(); err != nil {
-				trailersErr = fmt.Errorf("failed to flush `trailers`: %w", err)
-				return
-			}
-		}()
+			return wg.Wait()
+		}, nil
 	}
-	wg.Wait()
-	if bodyErr != nil {
-		return bodyErr
-	}
-	if trailersErr != nil {
-		return trailersErr
-	}
-	return nil
+	return nil, nil
 }

@@ -558,7 +558,7 @@ func WriteOption[T any](v *T, w ByteWriter, f func(T, ByteWriter) error) error {
 	return nil
 }
 
-func WriteByteStream(r ReadyReader, w ByteWriter, chunk []byte) (*ByteStreamWriter, error) {
+func WriteByteStream(r ReadyReader, w ByteWriter, chunk []byte, path ...uint32) (*ByteStreamWriter, error) {
 	if r.Ready() {
 		slog.Debug("writing byte stream `stream::ready` status byte")
 		if err := w.WriteByte(1); err != nil {
@@ -798,21 +798,25 @@ func ReadStreamStatus(r ByteReader) (bool, error) {
 }
 
 // ReadByteStream reads a stream of bytes from `r` and `ch`
-func ReadByteStream(ctx context.Context, r ByteReader, ch <-chan []byte) (ReadyReader, error) {
-	slog.DebugContext(ctx, "reading byte stream status byte")
+func ReadByteStream(r IndexReader, path ...uint32) (ReadyReader, error) {
+	slog.Debug("reading byte stream status byte")
 	ok, err := ReadStreamStatus(r)
 	if err != nil {
 		return nil, err
 	}
 	if !ok {
-		return &byteStreamReceiver{&ChanReader{ctx, ch, nil}, 0}, nil
+		r, err = r.Index(path...)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get byte stream reader: %w", err)
+		}
+		return &byteStreamReceiver{r, 0}, nil
 	}
-	slog.DebugContext(ctx, "reading ready byte stream")
+	slog.Debug("reading ready byte stream")
 	buf, err := ReadByteList(r)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read bytes: %w", err)
 	}
-	slog.DebugContext(ctx, "read ready byte stream", "len", len(buf))
+	slog.Debug("read ready byte stream", "len", len(buf))
 	return &byteReader{bytes.NewReader(buf)}, nil
 }
 
@@ -871,16 +875,20 @@ func ReadFutureStatus(r ByteReader) (bool, error) {
 }
 
 // ReadFuture reads a future from `r` and `ch`
-func ReadFuture[T any](ctx context.Context, r ByteReader, ch <-chan []byte, f func(ByteReader) (T, error)) (ReadyReceiver[T], error) {
-	slog.DebugContext(ctx, "reading future status byte")
+func ReadFuture[T any](r IndexReader, f func(ByteReader) (T, error), path ...uint32) (ReadyReceiver[T], error) {
+	slog.Debug("reading future status byte")
 	ok, err := ReadFutureStatus(r)
 	if err != nil {
 		return nil, err
 	}
 	if !ok {
-		return &decodeReceiver[T]{&ChanReader{ctx, ch, nil}, f}, nil
+		r, err = r.Index(path...)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get future reader: %w", err)
+		}
+		return &decodeReceiver[T]{r, f}, nil
 	}
-	slog.DebugContext(ctx, "reading ready future")
+	slog.Debug("reading ready future")
 	v, err := f(r)
 	if err != nil {
 		return nil, err
