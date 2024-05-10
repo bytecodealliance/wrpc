@@ -35,6 +35,33 @@ func resultSubject(prefix string) string {
 	return fmt.Sprintf("%s.results", prefix)
 }
 
+func indexPath(prefix string, path ...uint32) string {
+	s := prefix
+	for _, p := range path {
+		if s != "" {
+			s = fmt.Sprintf("%s.%d", s, p)
+		} else {
+			s = fmt.Sprintf("%d", p)
+		}
+	}
+	return s
+}
+
+func subscribePath(prefix string, path wrpc.SubscribePath) string {
+	s := prefix
+	for _, p := range path {
+		if s != "" {
+			s = fmt.Sprintf("%s.", s)
+		}
+		if p == nil {
+			s = fmt.Sprintf("%s*", s)
+		} else {
+			s = fmt.Sprintf("%s%d", s, *p)
+		}
+	}
+	return s
+}
+
 func invocationSubject(prefix string, instance string, name string) string {
 	subject := fmt.Sprintf("wrpc.0.0.1.%s.%s", instance, name)
 	if prefix != "" {
@@ -55,35 +82,30 @@ func subscribe(conn *nats.Conn, prefix string, f func(context.Context, []byte), 
 	})
 }
 
-func transmit(ctx context.Context, conn *nats.Conn, subject string, reply string, buf []byte) error {
-	header, hasHeader := HeaderFromContext(ctx)
-	m := nats.NewMsg(subject)
-	m.Reply = reply
-	if hasHeader {
-		m.Header = header
-	}
-
-	maxPayload := conn.MaxPayload()
-	mSize := int64(m.Size())
-	if mSize > maxPayload {
-		return fmt.Errorf("message size %d is larger than maximum allowed payload size %d", mSize, maxPayload)
-	}
-	maxPayload -= mSize
-	maxPayload = min(maxPayload, int64(len(buf)))
-	m.Data, buf = buf[:maxPayload], buf[maxPayload:]
-	if err := conn.PublishMsg(m); err != nil {
-		return fmt.Errorf("failed to send initial payload chunk: %w", err)
-	}
-	for len(buf) > 0 {
-		m := nats.NewMsg(subject)
-		m.Reply = reply
-		if hasHeader {
-			m.Header = header
+func transmitError(nc *nats.Conn, subject string, err error) error {
+	var buf bytes.Buffer
+	if err := wrpc.WriteString(fmt.Sprintf("%s", err), &buf); err != nil {
+		slog.Warn("failed to encode handling error", "err", err)
+		if err := wrpc.WriteString(fmt.Sprintf("failed to encode error: %s", err), &buf); err != nil {
+			slog.Warn("failed to encode handling error encoding error", "err", err)
+			buf.Reset()
 		}
-		maxPayload = min(maxPayload, int64(len(buf)))
-		m.Data, buf = buf[:maxPayload], buf[maxPayload:]
-		if err := conn.PublishMsg(m); err != nil {
-			return fmt.Errorf("failed to send payload chunk: %w", err)
+	}
+	maxPayload := nc.MaxPayload()
+	maxPayload = min(maxPayload, int64(buf.Len()))
+	b := buf.Bytes()
+	var tail []byte
+	b, tail = b[:maxPayload], b[maxPayload:]
+	slog.Debug("transmitting initial error chunk")
+	if err := nc.Publish(subject, b); err != nil {
+		return fmt.Errorf("failed to send initial error chunk: %w", err)
+	}
+	for len(tail) > 0 {
+		maxPayload = min(maxPayload, int64(len(tail)))
+		b, tail = b[:maxPayload], b[maxPayload:]
+		slog.Debug("transmitting error chunk")
+		if err := nc.Publish(subject, b); err != nil {
+			return fmt.Errorf("failed to send error chunk: %w", err)
 		}
 	}
 	return nil
@@ -141,7 +163,7 @@ func (w *paramWriter) publish(p []byte) (int, error) {
 		if m.Reply == "" {
 			return n, errors.New("peer did not specify a reply subject")
 		}
-		w.tx = fmt.Sprintf("%s.params", m.Reply)
+		w.tx = paramSubject(m.Reply)
 		w.init = true
 	}
 	buf := p
@@ -177,7 +199,7 @@ func (c *Client) Invoke(ctx context.Context, instance string, name string, f fun
 
 	rx := nats.NewInbox()
 
-	resultRx := fmt.Sprintf("%s.results", rx)
+	resultRx := resultSubject(rx)
 	resultSub, err := c.conn.SubscribeSync(resultRx)
 	if err != nil {
 		return fmt.Errorf("failed to subscribe on result subject `%s`: %w", resultRx, err)
@@ -192,7 +214,7 @@ func (c *Client) Invoke(ctx context.Context, instance string, name string, f fun
 		}
 	}()
 
-	errRx := fmt.Sprintf("%s.error", rx)
+	errRx := errorSubject(rx)
 	errPayloadCh := make(chan []byte, 1)
 	errSub, err := c.conn.Subscribe(errRx, func(m *nats.Msg) {
 		errPayloadCh <- m.Data
@@ -239,16 +261,7 @@ func (c *Client) Invoke(ctx context.Context, instance string, name string, f fun
 		root: resultSub,
 		buf:  nil,
 	}, errCh); err != nil && w.init {
-		var buf bytes.Buffer
-		if err := wrpc.WriteString(fmt.Sprintf("%s", err), &buf); err != nil {
-			slog.Warn("failed to encode handling error", "err", err)
-			if err := wrpc.WriteString(fmt.Sprintf("failed to encode error: %s", err), &buf); err != nil {
-				slog.Warn("failed to encode handling error encoding error", "err", err)
-				buf.Reset()
-			}
-		}
-		slog.Debug("transmitting error")
-		if err := transmit(context.Background(), c.conn, fmt.Sprintf("%s.error", w.tx), "", buf.Bytes()); err != nil {
+		if err := transmitError(c.conn, errorSubject(w.tx), err); err != nil {
 			slog.Warn("failed to send error to client", "err", err)
 		}
 	}
@@ -258,9 +271,9 @@ func (c *Client) Invoke(ctx context.Context, instance string, name string, f fun
 type streamReader struct {
 	ctx    context.Context
 	root   *nats.Subscription
-	nestMu sync.Mutex
 	nest   map[string]*nats.Subscription
 	buf    []byte
+	nestMu sync.Mutex
 }
 
 type indexedStreamReader struct {
@@ -268,33 +281,6 @@ type indexedStreamReader struct {
 	sub  *nats.Subscription
 	path string
 	buf  []byte
-}
-
-func indexPath(prefix string, path ...uint32) string {
-	s := prefix
-	for _, p := range path {
-		if s != "" {
-			s = fmt.Sprintf("%s.%d", s, p)
-		} else {
-			s = fmt.Sprintf("%d", p)
-		}
-	}
-	return s
-}
-
-func subscribePath(prefix string, path wrpc.SubscribePath) string {
-	s := prefix
-	for _, p := range path {
-		if s != "" {
-			s = fmt.Sprintf("%s.", s)
-		}
-		if p == nil {
-			s = fmt.Sprintf("%s*", s)
-		} else {
-			s = fmt.Sprintf("%s%d", s, *p)
-		}
-	}
-	return s
 }
 
 func (r *streamReader) Read(p []byte) (int, error) {
@@ -451,7 +437,7 @@ func (c *Client) Serve(instance string, name string, f func(context.Context, wrp
 
 		rx := nats.NewInbox()
 
-		paramRx := fmt.Sprintf("%s.params", rx)
+		paramRx := paramSubject(rx)
 		paramSub, err := c.conn.SubscribeSync(paramRx)
 		if err != nil {
 			slog.Warn("failed to subscribe on parameter subject", "subject", paramRx, "err", err)
@@ -463,7 +449,7 @@ func (c *Client) Serve(instance string, name string, f func(context.Context, wrp
 			}
 		}()
 
-		errRx := fmt.Sprintf("%s.error", rx)
+		errRx := errorSubject(rx)
 		errPayloadCh := make(chan []byte, 1)
 		errSub, err := c.conn.Subscribe(errRx, func(m *nats.Msg) {
 			errPayloadCh <- m.Data
@@ -518,7 +504,7 @@ func (c *Client) Serve(instance string, name string, f func(context.Context, wrp
 		slog.Debug("calling server handler")
 		if err := f(ctx, &resultWriter{
 			nc: c.conn,
-			tx: fmt.Sprintf("%s.results", m.Reply),
+			tx: resultSubject(m.Reply),
 		}, &streamReader{
 			ctx:  ctx,
 			root: paramSub,
@@ -526,16 +512,7 @@ func (c *Client) Serve(instance string, name string, f func(context.Context, wrp
 			buf:  m.Data,
 		}, errCh); err != nil {
 			slog.Warn("failed to handle invocation", "err", err)
-			var buf bytes.Buffer
-			if err = wrpc.WriteString(fmt.Sprintf("%s", err), &buf); err != nil {
-				slog.Warn("failed to encode handling error", "err", err)
-				if err = wrpc.WriteString(fmt.Sprintf("failed to encode error: %s", err), &buf); err != nil {
-					slog.Warn("failed to encode handling error encoding error", "err", err)
-					buf.Reset()
-				}
-			}
-			slog.Debug("transmitting error")
-			if err = transmit(context.Background(), c.conn, fmt.Sprintf("%s.error", m.Reply), "", buf.Bytes()); err != nil {
+			if err := transmitError(c.conn, errorSubject(m.Reply), err); err != nil {
 				slog.Warn("failed to send error to client", "err", err)
 			}
 			return
