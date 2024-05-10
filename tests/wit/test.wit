@@ -35,6 +35,10 @@ interface sync {
     with-enum: func() -> foobar;
 }
 
+interface async {
+    with-stream: func() -> stream<u8>;
+}
+
 world sync-server {
     export sync;
 
@@ -51,4 +55,12 @@ world sync-client {
         f: func(x: string) -> u32;
         foo: func(x: string);
     }
+}
+
+world async-server {
+    export async;
+}
+
+world async-client {
+    import async;
 }

@@ -75,6 +75,14 @@ impl Deps {
         "fmt"
     }
 
+    fn errgroup(&mut self) -> &'static str {
+        self.map.insert(
+            "errgroup".to_string(),
+            "golang.org/x/sync/errgroup".to_string(),
+        );
+        "errgroup"
+    }
+
     fn io(&mut self) -> &'static str {
         self.map.insert("io".to_string(), "io".to_string());
         "io"

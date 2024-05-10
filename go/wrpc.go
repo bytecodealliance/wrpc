@@ -43,10 +43,6 @@ type IndexReader interface {
 	Index[IndexReader]
 }
 
-type ReaderFromIndex interface {
-	ReadFromIndex(IndexReader) error
-}
-
 type IndexWriter interface {
 	io.Writer
 	io.ByteWriter
@@ -54,13 +50,14 @@ type IndexWriter interface {
 	Index[IndexWriter]
 }
 
-type WriterToIndex interface {
-	WriteToIndex(IndexWriter) error
+type IndexReadCloser interface {
+	IndexReader
+	io.Closer
 }
 
 type Client interface {
-	Invoke(ctx context.Context, instance string, name string, f func(IndexWriter, IndexReader, <-chan error) error, subs ...SubscribePath) error
-	Serve(instance string, name string, f func(context.Context, IndexWriter, IndexReader, <-chan error) error, subs ...SubscribePath) (func() error, error)
+	Invoke(ctx context.Context, instance string, name string, f func(IndexWriter, IndexReadCloser) error, subs ...SubscribePath) error
+	Serve(instance string, name string, f func(context.Context, IndexWriter, IndexReadCloser) error, subs ...SubscribePath) (func() error, error)
 }
 
 type ByteWriter interface {
