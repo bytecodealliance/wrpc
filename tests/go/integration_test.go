@@ -299,7 +299,7 @@ func TestAsync(t *testing.T) {
 
 	stop, err := async_server.Serve(client, integration.AsyncHandler{})
 	if err != nil {
-		t.Errorf("failed to serve `sync-server` world: %s", err)
+		t.Errorf("failed to serve `async-server` world: %s", err)
 		return
 	}
 
