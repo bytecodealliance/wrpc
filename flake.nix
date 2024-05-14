@@ -99,7 +99,7 @@
           depsBuildBuild ? [],
           nativeBuildInputs ? [],
           nativeCheckInputs ? [],
-          checkPhase ? "",
+          preCheck ? "",
           ...
         } @ args:
           with pkgs.lib; let
@@ -121,11 +121,11 @@
               depsBuildBuild = depsBuildBuild';
             }
             // optionalAttrs (args ? cargoArtifacts) {
-              checkPhase =
+              preCheck =
                 ''
                   export GOCACHE=$TMPDIR/go-cache
                 ''
-                + checkPhase;
+                + preCheck;
 
               depsBuildBuild =
                 depsBuildBuild'
