@@ -1,7 +1,6 @@
 package wrpc
 
 import (
-	"bytes"
 	"context"
 	"io"
 )
@@ -70,70 +69,89 @@ type ByteReader interface {
 	io.Reader
 }
 
-type Ready interface {
-	Ready() bool
+type Completer interface {
+	IsComplete() bool
 }
 
 type Receiver[T any] interface {
 	Receive() (T, error)
 }
 
-type ReadyReceiver[T any] interface {
+type ReceiveCompleter[T any] interface {
 	Receiver[T]
-	Ready
+	Completer
 }
 
-type ReadyReader interface {
+type ReadCompleter interface {
 	io.Reader
-	Ready
+	Completer
 }
 
-type ReadyByteReader interface {
+type ByteReadCompleter interface {
 	ByteReader
-	Ready
+	Completer
 }
 
-type byteReader struct {
-	*bytes.Reader
+type PendingReceiver[T any] struct {
+	Receiver[T]
 }
 
-func (*byteReader) Ready() bool {
-	return true
+func (r *PendingReceiver[T]) Receive() (T, error) {
+	return r.Receiver.Receive()
 }
 
-type PendingByteReader struct {
-	ByteReader
-}
-
-func (*PendingByteReader) Ready() bool {
+func (*PendingReceiver[T]) IsComplete() bool {
 	return false
 }
 
-func NewPendingByteReader(r ByteReader) *PendingByteReader {
-	return &PendingByteReader{r}
+func NewPendingReceiver[T any](rx Receiver[T]) *PendingReceiver[T] {
+	return &PendingReceiver[T]{rx}
 }
 
-type ready[T any] struct {
-	v T
+type CompleteReceiver[T any] struct {
+	v     T
+	ready bool
 }
 
-func (r *ready[T]) Receive() (T, error) {
+func (r *CompleteReceiver[T]) Receive() (T, error) {
+	defer func() {
+		*r = CompleteReceiver[T]{}
+	}()
+	if !r.ready {
+		return r.v, io.EOF
+	}
 	return r.v, nil
 }
 
-func (*ready[T]) Ready() bool {
+func (*CompleteReceiver[T]) IsComplete() bool {
 	return true
 }
 
-type decodeReceiver[T any] struct {
-	r      ByteReader
-	decode func(ByteReader) (T, error)
+func NewCompleteReceiver[T any](v T) *CompleteReceiver[T] {
+	return &CompleteReceiver[T]{v, true}
 }
 
-func (r *decodeReceiver[T]) Receive() (T, error) {
+type DecodeReceiver[T any] struct {
+	r      IndexReader
+	decode func(IndexReader) (T, error)
+}
+
+func (r *DecodeReceiver[T]) Receive() (T, error) {
 	return r.decode(r.r)
 }
 
-func (*decodeReceiver[T]) Ready() bool {
+func (*DecodeReceiver[T]) IsComplete() bool {
 	return false
+}
+
+func (r *DecodeReceiver[T]) Close() error {
+	c, ok := r.r.(io.Closer)
+	if ok {
+		return c.Close()
+	}
+	return nil
+}
+
+func NewDecodeReceiver[T any](r IndexReader, decode func(IndexReader) (T, error)) *DecodeReceiver[T] {
+	return &DecodeReceiver[T]{r, decode}
 }

@@ -36,7 +36,7 @@ interface sync {
 }
 
 interface async {
-    with-stream: func() -> stream<u8>;
+    with-streams: func(complete: bool) -> (bytes: stream<u8>, lists: stream<list<string>>);
 }
 
 world sync-server {

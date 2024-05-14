@@ -112,6 +112,13 @@ func (SyncHandler) WithEnum(ctx context.Context) (sync.Foobar, error) {
 
 type AsyncHandler struct{}
 
-func (AsyncHandler) WithStream(ctx context.Context) (wrpc.ReadyReader, error) {
-	return wrpc.ReadyReader(wrpc.NewPendingByteReader(bytes.NewBuffer([]byte("test")))), nil
+func (AsyncHandler) WithStreams(ctx context.Context, complete bool) (wrpc.ReadCompleter, wrpc.ReceiveCompleter[[][]string], error) {
+	slog.DebugContext(ctx, "handling `with-streams`", "complete", complete)
+	buf := bytes.NewBuffer([]byte("test"))
+	str := wrpc.NewCompleteReceiver([][]string{{"foo", "bar"}, {"baz"}})
+	if complete {
+		return wrpc.NewCompleteReader(buf), str, nil
+	} else {
+		return wrpc.NewPendingByteReader(buf), wrpc.NewPendingReceiver(str), nil
+	}
 }

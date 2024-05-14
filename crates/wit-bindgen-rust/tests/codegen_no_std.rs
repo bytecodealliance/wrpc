@@ -1,4 +1,4 @@
-//! Like `codegen_tests` in codegen.rs, but with no_std.
+//! Like `codegen_tests` in codegen.rs, but with `no_std`.
 //!
 //! We use `std_feature` and don't enable the "std" feature.
 

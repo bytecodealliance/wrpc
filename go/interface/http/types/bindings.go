@@ -192,7 +192,7 @@ func (v *SchemeVariant) String() string {
 	}
 }
 
-func ReadScheme(r wrpc.ByteReader) (*SchemeVariant, error) {
+func ReadScheme(r wrpc.IndexReader) (*SchemeVariant, error) {
 	disc, err := wrpc.ReadUint32(r)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read `scheme` discriminant: %w", err)
@@ -507,7 +507,7 @@ func (v *ErrorCodeVariant) String() string {
 	}
 }
 
-func ReadErrorCode(r wrpc.ByteReader) (*ErrorCodeVariant, error) {
+func ReadErrorCode(r wrpc.IndexReader) (*ErrorCodeVariant, error) {
 	disc, err := wrpc.ReadUint32(r)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read `error-code` discriminant: %w", err)
@@ -790,8 +790,8 @@ type (
 		stopTrailers func() error
 	}
 	RequestRecord struct {
-		Body          wrpc.ReadyReader
-		Trailers      wrpc.ReadyReceiver[[]*wrpc.Tuple2[string, [][]byte]]
+		Body          wrpc.ReadCompleter
+		Trailers      wrpc.ReceiveCompleter[[]*wrpc.Tuple2[string, [][]byte]]
 		Method        *MethodVariant
 		PathWithQuery *string
 		Scheme        *SchemeVariant
@@ -814,8 +814,8 @@ type (
 	}
 
 	ResponseRecord struct {
-		Body     wrpc.ReadyReader
-		Trailers wrpc.ReadyReceiver[[]*wrpc.Tuple2[string, [][]byte]]
+		Body     wrpc.ReadCompleter
+		Trailers wrpc.ReceiveCompleter[[]*wrpc.Tuple2[string, [][]byte]]
 		Status   uint16
 		Headers  []*wrpc.Tuple2[string, [][]byte]
 	}
@@ -892,7 +892,7 @@ type FieldSizePayloadRecord struct {
 	FieldSize *uint32
 }
 
-func ReadFieldSizePayload(r wrpc.ByteReader) (*FieldSizePayloadRecord, error) {
+func ReadFieldSizePayload(r wrpc.IndexReader) (*FieldSizePayloadRecord, error) {
 	slog.Debug("reading `field-name`")
 	fieldName, err := wrpc.ReadOption(r, wrpc.ReadString)
 	if err != nil {
@@ -929,12 +929,18 @@ func ReadRequest(r wrpc.IndexReader, path ...uint32) (*RequestRecord, error) {
 	slog.Debug("read `body`", "body", body)
 
 	slog.Debug("reading `trailers`")
-	trailers, err := wrpc.ReadFuture(r, func(r wrpc.ByteReader) ([]*wrpc.Tuple2[string, [][]byte], error) {
-		return wrpc.ReadFlatOption(r, func(r wrpc.ByteReader) ([]*wrpc.Tuple2[string, [][]byte], error) {
-			return wrpc.ReadList(r, func(r wrpc.ByteReader) (*wrpc.Tuple2[string, [][]byte], error) {
-				return wrpc.ReadTuple2(r, wrpc.ReadString, func(r wrpc.ByteReader) ([][]byte, error) {
-					return wrpc.ReadList(r, wrpc.ReadByteList)
-				})
+	trailers, err := wrpc.ReadFuture(r, func(r wrpc.IndexReader) ([]*wrpc.Tuple2[string, [][]byte], error) {
+		return wrpc.ReadFlatOption(r, func(r wrpc.IndexReader) ([]*wrpc.Tuple2[string, [][]byte], error) {
+			return wrpc.ReadList(r, func(r wrpc.IndexReader) (*wrpc.Tuple2[string, [][]byte], error) {
+				return wrpc.ReadTuple2(r,
+					func(r wrpc.IndexReader) (string, error) {
+						return wrpc.ReadString(r)
+					},
+					func(r wrpc.IndexReader) ([][]byte, error) {
+						return wrpc.ReadList(r, func(r wrpc.IndexReader) ([]byte, error) {
+							return wrpc.ReadByteList(r)
+						})
+					})
 			})
 		})
 	}, append(path, 1)...)
@@ -972,10 +978,16 @@ func ReadRequest(r wrpc.IndexReader, path ...uint32) (*RequestRecord, error) {
 	slog.Debug("read `authority`", "authority", authority)
 
 	slog.Debug("reading `headers`")
-	headers, err := wrpc.ReadList(r, func(r wrpc.ByteReader) (*wrpc.Tuple2[string, [][]byte], error) {
-		return wrpc.ReadTuple2(r, wrpc.ReadString, func(r wrpc.ByteReader) ([][]byte, error) {
-			return wrpc.ReadList(r, wrpc.ReadByteList)
-		})
+	headers, err := wrpc.ReadList(r, func(r wrpc.IndexReader) (*wrpc.Tuple2[string, [][]byte], error) {
+		return wrpc.ReadTuple2(r,
+			func(r wrpc.IndexReader) (string, error) {
+				return wrpc.ReadString(r)
+			},
+			func(r wrpc.IndexReader) ([][]byte, error) {
+				return wrpc.ReadList(r, func(r wrpc.IndexReader) ([]byte, error) {
+					return wrpc.ReadByteList(r)
+				})
+			})
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to read `headers`: %w", err)
@@ -985,7 +997,7 @@ func ReadRequest(r wrpc.IndexReader, path ...uint32) (*RequestRecord, error) {
 	return &RequestRecord{body, trailers, method, pathWithQuery, scheme, authority, headers}, nil
 }
 
-func ReadRequestOptions(r wrpc.ByteReader) (*RequestOptionsRecord, error) {
+func ReadRequestOptions(r wrpc.IndexReader) (*RequestOptionsRecord, error) {
 	slog.Debug("reading `connect-timeout`")
 	connectTimeout, err := wrpc.ReadOption(r, wrpc.ReadUint64)
 	if err != nil {
@@ -1011,7 +1023,7 @@ func (v *ResponseRecord) WriteToIndex(w wrpc.ByteWriter) (write func(wrpc.Index[
 	writes := map[uint32]func(wrpc.IndexWriter) error{}
 
 	slog.Debug("writing `body`")
-	if v.Body.Ready() {
+	if v.Body.IsComplete() {
 		defer func() {
 			body, ok := v.Body.(io.Closer)
 			if ok {
@@ -1089,7 +1101,7 @@ func (v *ResponseRecord) WriteToIndex(w wrpc.ByteWriter) (write func(wrpc.Index[
 		}
 	}
 	slog.Debug("writing `trailers`")
-	if v.Trailers.Ready() {
+	if v.Trailers.IsComplete() {
 		if err := w.WriteByte(1); err != nil {
 			return nil, fmt.Errorf("failed to write `future::ready` byte: %w", err)
 		}
