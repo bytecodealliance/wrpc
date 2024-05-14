@@ -50,7 +50,7 @@ func ReadOption[T any](r ByteReader, f func(ByteReader) (T, error)) (*T, error) 
 }
 
 // ReadFlatOption reads an option from `r` without pointer indirection
-func ReadFlatOption[T any](r ByteReader, f func(ByteReader) (T, error)) (v T, err error) {
+func ReadFlatOption[T any](r IndexReader, f func(IndexReader) (T, error)) (v T, err error) {
 	slog.Debug("reading option status byte")
 	ok, err := ReadOptionStatus(r)
 	if err != nil {

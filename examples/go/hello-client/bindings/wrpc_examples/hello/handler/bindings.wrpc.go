@@ -18,7 +18,10 @@ func Hello(ctx__ context.Context, wrpc__ wrpc.Client) (r0__ string, close__ func
 		if err__ != nil {
 			return fmt.Errorf("failed to write empty parameters: %w", err__)
 		}
-		r0__, err__ = func(r wrpc.ByteReader) (string, error) {
+		r0__, err__ = func(r interface {
+			io.ByteReader
+			io.Reader
+		}) (string, error) {
 			var x uint32
 			var s uint
 			for i := 0; i < 5; i++ {

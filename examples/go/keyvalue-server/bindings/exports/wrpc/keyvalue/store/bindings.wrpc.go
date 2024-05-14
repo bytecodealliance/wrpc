@@ -111,26 +111,26 @@ func (v *Error) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, e
 		if !ok {
 			return nil, errors.New("invalid payload")
 		}
-		write, err := func(v string, w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, error) {
+		write, err := (func(wrpc.IndexWriter) error)(nil), func(v string, w io.Writer) (err error) {
 			n := len(v)
 			if n > math.MaxUint32 {
-				return nil, fmt.Errorf("string byte length of %d overflows a 32-bit integer", n)
+				return fmt.Errorf("string byte length of %d overflows a 32-bit integer", n)
 			}
-			if err := func(v int, w wrpc.ByteWriter) error {
+			if err = func(v int, w io.Writer) error {
 				b := make([]byte, binary.MaxVarintLen32)
 				i := binary.PutUvarint(b, uint64(v))
 				slog.Debug("writing string byte length", "len", n)
-				_, err := w.Write(b[:i])
+				_, err = w.Write(b[:i])
 				return err
 			}(n, w); err != nil {
-				return nil, fmt.Errorf("failed to write string length of %d: %w", n, err)
+				return fmt.Errorf("failed to write string byte length of %d: %w", n, err)
 			}
 			slog.Debug("writing string bytes")
-			_, err := w.Write([]byte(v))
+			_, err = w.Write([]byte(v))
 			if err != nil {
-				return nil, fmt.Errorf("failed to write string bytes: %w", err)
+				return fmt.Errorf("failed to write string bytes: %w", err)
 			}
-			return nil, nil
+			return nil
 		}(payload, w)
 		if err != nil {
 			return nil, fmt.Errorf("failed to write payload: %w", err)
@@ -183,7 +183,10 @@ func ReadError(r wrpc.ByteReader) (*Error, error) {
 	case ErrorDiscriminant_AccessDenied:
 		return NewError_AccessDenied(), nil
 	case ErrorDiscriminant_Other:
-		payload, err := func(r wrpc.ByteReader) (string, error) {
+		payload, err := func(r interface {
+			io.ByteReader
+			io.Reader
+		}) (string, error) {
 			var x uint32
 			var s uint
 			for i := 0; i < 5; i++ {
@@ -239,16 +242,16 @@ func (v *KeyResponse) String() string { return "KeyResponse" }
 func (v *KeyResponse) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, error) {
 	writes := make(map[uint32]func(wrpc.IndexWriter) error, 2)
 	slog.Debug("writing field", "name", "keys")
-	write0, err := func(v []string, w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, error) {
+	write0, err := func(v []string, w wrpc.ByteWriter) (write func(wrpc.IndexWriter) error, err error) {
 		n := len(v)
 		if n > math.MaxUint32 {
 			return nil, fmt.Errorf("list length of %d overflows a 32-bit integer", n)
 		}
-		if err := func(v int, w wrpc.ByteWriter) error {
+		if err = func(v int, w io.Writer) error {
 			b := make([]byte, binary.MaxVarintLen32)
 			i := binary.PutUvarint(b, uint64(v))
 			slog.Debug("writing list length", "len", n)
-			_, err := w.Write(b[:i])
+			_, err = w.Write(b[:i])
 			return err
 		}(n, w); err != nil {
 			return nil, fmt.Errorf("failed to write list length of %d: %w", n, err)
@@ -256,26 +259,26 @@ func (v *KeyResponse) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) er
 		slog.Debug("writing list elements")
 		writes := make(map[uint32]func(wrpc.IndexWriter) error, n)
 		for i, e := range v {
-			write, err := func(v string, w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, error) {
+			write, err := (func(wrpc.IndexWriter) error)(nil), func(v string, w io.Writer) (err error) {
 				n := len(v)
 				if n > math.MaxUint32 {
-					return nil, fmt.Errorf("string byte length of %d overflows a 32-bit integer", n)
+					return fmt.Errorf("string byte length of %d overflows a 32-bit integer", n)
 				}
-				if err := func(v int, w wrpc.ByteWriter) error {
+				if err = func(v int, w io.Writer) error {
 					b := make([]byte, binary.MaxVarintLen32)
 					i := binary.PutUvarint(b, uint64(v))
 					slog.Debug("writing string byte length", "len", n)
-					_, err := w.Write(b[:i])
+					_, err = w.Write(b[:i])
 					return err
 				}(n, w); err != nil {
-					return nil, fmt.Errorf("failed to write string length of %d: %w", n, err)
+					return fmt.Errorf("failed to write string byte length of %d: %w", n, err)
 				}
 				slog.Debug("writing string bytes")
-				_, err := w.Write([]byte(v))
+				_, err = w.Write([]byte(v))
 				if err != nil {
-					return nil, fmt.Errorf("failed to write string bytes: %w", err)
+					return fmt.Errorf("failed to write string bytes: %w", err)
 				}
-				return nil, nil
+				return nil
 			}(e, w)
 			if err != nil {
 				return nil, fmt.Errorf("failed to write list element %d: %w", i, err)
@@ -322,13 +325,10 @@ func (v *KeyResponse) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) er
 			return nil, fmt.Errorf("failed to write `option::some` status byte: %w", err)
 		}
 		slog.Debug("writing `option::some` payload")
-		write, err := func(v uint64, w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, error) {
-			b := make([]byte, binary.MaxVarintLen64)
-			i := binary.PutUvarint(b, uint64(v))
-			slog.Debug("writing u64")
-			_, err := w.Write(b[:i])
-			return nil, err
-		}(*v, w)
+		write, err := (func(wrpc.IndexWriter) error)(nil), func(v uint64, w interface {
+			io.ByteWriter
+			io.Writer
+		}) (err error) { b := make([]byte, binary.MaxVarintLen64); i := binary.PutUvarint(b, uint64(v)); slog.Debug("writing u64"); _, err = w.Write(b[:i]); return err }(*v, w)
 		if err != nil {
 			return nil, fmt.Errorf("failed to write `option::some` payload: %w", err)
 		}
@@ -372,7 +372,7 @@ func ReadKeyResponse(r wrpc.ByteReader) (*KeyResponse, error) {
 	v := &KeyResponse{}
 	var err error
 	slog.Debug("reading field", "name", "keys")
-	v.Keys, err = func(r wrpc.ByteReader) ([]string, error) {
+	v.Keys, err = func(r wrpc.IndexReader) ([]string, error) {
 		var x uint32
 		var s uint
 		for i := 0; i < 5; i++ {
@@ -392,7 +392,10 @@ func ReadKeyResponse(r wrpc.ByteReader) (*KeyResponse, error) {
 				vs := make([]string, x)
 				for i := range vs {
 					slog.Debug("reading list element", "i", i)
-					vs[i], err = func(r wrpc.ByteReader) (string, error) {
+					vs[i], err = func(r interface {
+						io.ByteReader
+						io.Reader
+					}) (string, error) {
 						var x uint32
 						var s uint
 						for i := 0; i < 5; i++ {
@@ -440,7 +443,7 @@ func ReadKeyResponse(r wrpc.ByteReader) (*KeyResponse, error) {
 		return nil, fmt.Errorf("failed to read `keys` field: %w", err)
 	}
 	slog.Debug("reading field", "name", "cursor")
-	v.Cursor, err = func(r wrpc.ByteReader) (*uint64, error) {
+	v.Cursor, err = func(r wrpc.IndexReader) (*uint64, error) {
 		slog.Debug("reading option status byte")
 		status, err := r.ReadByte()
 		if err != nil {
@@ -451,7 +454,7 @@ func ReadKeyResponse(r wrpc.ByteReader) (*KeyResponse, error) {
 			return nil, nil
 		case 1:
 			slog.Debug("reading `option::some` payload")
-			v, err := func(r wrpc.ByteReader) (uint64, error) {
+			v, err := func(r io.ByteReader) (uint64, error) {
 				var x uint64
 				var s uint
 				for i := 0; i < 10; i++ {
@@ -567,7 +570,10 @@ func ServeInterface(c wrpc.Client, h Handler) (stop func() error, err error) {
 	}
 	stop0, err := c.Serve("wrpc:keyvalue/store@0.2.0-draft", "get", func(ctx context.Context, w wrpc.IndexWriter, r wrpc.IndexReadCloser) error {
 		slog.DebugContext(ctx, "reading parameter", "i", 0)
-		p0, err := func(r wrpc.ByteReader) (string, error) {
+		p0, err := func(r interface {
+			io.ByteReader
+			io.Reader
+		}) (string, error) {
 			var x uint32
 			var s uint
 			for i := 0; i < 5; i++ {
@@ -604,7 +610,10 @@ func ServeInterface(c wrpc.Client, h Handler) (stop func() error, err error) {
 			return fmt.Errorf("failed to read parameter 0: %w", err)
 		}
 		slog.DebugContext(ctx, "reading parameter", "i", 1)
-		p1, err := func(r wrpc.ByteReader) (string, error) {
+		p1, err := func(r interface {
+			io.ByteReader
+			io.Reader
+		}) (string, error) {
 			var x uint32
 			var s uint
 			for i := 0; i < 5; i++ {
@@ -674,16 +683,16 @@ func ServeInterface(c wrpc.Client, h Handler) (stop func() error, err error) {
 						return nil, fmt.Errorf("failed to write `option::some` status byte: %w", err)
 					}
 					slog.Debug("writing `option::some` payload")
-					write, err := func(v []uint8, w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, error) {
+					write, err := func(v []uint8, w wrpc.ByteWriter) (write func(wrpc.IndexWriter) error, err error) {
 						n := len(v)
 						if n > math.MaxUint32 {
 							return nil, fmt.Errorf("list length of %d overflows a 32-bit integer", n)
 						}
-						if err := func(v int, w wrpc.ByteWriter) error {
+						if err = func(v int, w io.Writer) error {
 							b := make([]byte, binary.MaxVarintLen32)
 							i := binary.PutUvarint(b, uint64(v))
 							slog.Debug("writing list length", "len", n)
-							_, err := w.Write(b[:i])
+							_, err = w.Write(b[:i])
 							return err
 						}(n, w); err != nil {
 							return nil, fmt.Errorf("failed to write list length of %d: %w", n, err)
@@ -691,9 +700,9 @@ func ServeInterface(c wrpc.Client, h Handler) (stop func() error, err error) {
 						slog.Debug("writing list elements")
 						writes := make(map[uint32]func(wrpc.IndexWriter) error, n)
 						for i, e := range v {
-							write, err := func(v uint8, w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, error) {
+							write, err := (func(wrpc.IndexWriter) error)(nil), func(v uint8, w io.ByteWriter) error {
 								slog.Debug("writing u8 byte")
-								return nil, w.WriteByte(v)
+								return w.WriteByte(v)
 							}(e, w)
 							if err != nil {
 								return nil, fmt.Errorf("failed to write list element %d: %w", i, err)
@@ -802,7 +811,10 @@ func ServeInterface(c wrpc.Client, h Handler) (stop func() error, err error) {
 	stops = append(stops, stop0)
 	stop1, err := c.Serve("wrpc:keyvalue/store@0.2.0-draft", "set", func(ctx context.Context, w wrpc.IndexWriter, r wrpc.IndexReadCloser) error {
 		slog.DebugContext(ctx, "reading parameter", "i", 0)
-		p0, err := func(r wrpc.ByteReader) (string, error) {
+		p0, err := func(r interface {
+			io.ByteReader
+			io.Reader
+		}) (string, error) {
 			var x uint32
 			var s uint
 			for i := 0; i < 5; i++ {
@@ -839,7 +851,10 @@ func ServeInterface(c wrpc.Client, h Handler) (stop func() error, err error) {
 			return fmt.Errorf("failed to read parameter 0: %w", err)
 		}
 		slog.DebugContext(ctx, "reading parameter", "i", 1)
-		p1, err := func(r wrpc.ByteReader) (string, error) {
+		p1, err := func(r interface {
+			io.ByteReader
+			io.Reader
+		}) (string, error) {
 			var x uint32
 			var s uint
 			for i := 0; i < 5; i++ {
@@ -876,44 +891,38 @@ func ServeInterface(c wrpc.Client, h Handler) (stop func() error, err error) {
 			return fmt.Errorf("failed to read parameter 1: %w", err)
 		}
 		slog.DebugContext(ctx, "reading parameter", "i", 2)
-		p2, err := func(r wrpc.ByteReader) ([]uint8, error) {
+		p2, err := func(r interface {
+			io.ByteReader
+			io.Reader
+		}) ([]byte, error) {
 			var x uint32
 			var s uint
 			for i := 0; i < 5; i++ {
-				slog.Debug("reading list length byte", "i", i)
+				slog.Debug("reading byte list length", "i", i)
 				b, err := r.ReadByte()
 				if err != nil {
 					if i > 0 && err == io.EOF {
 						err = io.ErrUnexpectedEOF
 					}
-					return nil, fmt.Errorf("failed to read list length byte: %w", err)
+					return nil, fmt.Errorf("failed to read byte list length byte: %w", err)
 				}
 				if b < 0x80 {
 					if i == 4 && b > 1 {
-						return nil, errors.New("list length overflows a 32-bit integer")
+						return nil, errors.New("byte list length overflows a 32-bit integer")
 					}
 					x = x | uint32(b)<<s
-					vs := make([]uint8, x)
-					for i := range vs {
-						slog.Debug("reading list element", "i", i)
-						vs[i], err = func(r wrpc.ByteReader) (uint8, error) {
-							slog.Debug("reading u8 byte")
-							v, err := r.ReadByte()
-							if err != nil {
-								return 0, fmt.Errorf("failed to read u8 byte: %w", err)
-							}
-							return v, nil
-						}(r)
-						if err != nil {
-							return nil, fmt.Errorf("failed to read list element %d: %w", i, err)
-						}
+					buf := make([]byte, x)
+					slog.Debug("reading byte list contents", "len", x)
+					_, err = r.Read(buf)
+					if err != nil {
+						return nil, fmt.Errorf("failed to read byte list contents: %w", err)
 					}
-					return vs, nil
+					return buf, nil
 				}
 				x |= uint32(b&0x7f) << s
 				s += 7
 			}
-			return nil, errors.New("list length overflows a 32-bit integer")
+			return nil, errors.New("byte length overflows a 32-bit integer")
 		}(r)
 		if err != nil {
 			return fmt.Errorf("failed to read parameter 2: %w", err)
@@ -994,7 +1003,10 @@ func ServeInterface(c wrpc.Client, h Handler) (stop func() error, err error) {
 	stops = append(stops, stop1)
 	stop2, err := c.Serve("wrpc:keyvalue/store@0.2.0-draft", "delete", func(ctx context.Context, w wrpc.IndexWriter, r wrpc.IndexReadCloser) error {
 		slog.DebugContext(ctx, "reading parameter", "i", 0)
-		p0, err := func(r wrpc.ByteReader) (string, error) {
+		p0, err := func(r interface {
+			io.ByteReader
+			io.Reader
+		}) (string, error) {
 			var x uint32
 			var s uint
 			for i := 0; i < 5; i++ {
@@ -1031,7 +1043,10 @@ func ServeInterface(c wrpc.Client, h Handler) (stop func() error, err error) {
 			return fmt.Errorf("failed to read parameter 0: %w", err)
 		}
 		slog.DebugContext(ctx, "reading parameter", "i", 1)
-		p1, err := func(r wrpc.ByteReader) (string, error) {
+		p1, err := func(r interface {
+			io.ByteReader
+			io.Reader
+		}) (string, error) {
 			var x uint32
 			var s uint
 			for i := 0; i < 5; i++ {
@@ -1143,7 +1158,10 @@ func ServeInterface(c wrpc.Client, h Handler) (stop func() error, err error) {
 	stops = append(stops, stop2)
 	stop3, err := c.Serve("wrpc:keyvalue/store@0.2.0-draft", "exists", func(ctx context.Context, w wrpc.IndexWriter, r wrpc.IndexReadCloser) error {
 		slog.DebugContext(ctx, "reading parameter", "i", 0)
-		p0, err := func(r wrpc.ByteReader) (string, error) {
+		p0, err := func(r interface {
+			io.ByteReader
+			io.Reader
+		}) (string, error) {
 			var x uint32
 			var s uint
 			for i := 0; i < 5; i++ {
@@ -1180,7 +1198,10 @@ func ServeInterface(c wrpc.Client, h Handler) (stop func() error, err error) {
 			return fmt.Errorf("failed to read parameter 0: %w", err)
 		}
 		slog.DebugContext(ctx, "reading parameter", "i", 1)
-		p1, err := func(r wrpc.ByteReader) (string, error) {
+		p1, err := func(r interface {
+			io.ByteReader
+			io.Reader
+		}) (string, error) {
 			var x uint32
 			var s uint
 			for i := 0; i < 5; i++ {
@@ -1237,13 +1258,13 @@ func ServeInterface(c wrpc.Client, h Handler) (stop func() error, err error) {
 					return nil, fmt.Errorf("failed to write `result::ok` status byte: %w", err)
 				}
 				slog.Debug("writing `result::ok` payload")
-				write, err := func(v bool, w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, error) {
+				write, err := (func(wrpc.IndexWriter) error)(nil), func(v bool, w io.ByteWriter) error {
 					if !v {
 						slog.Debug("writing `false` byte")
-						return nil, w.WriteByte(0)
+						return w.WriteByte(0)
 					}
 					slog.Debug("writing `true` byte")
-					return nil, w.WriteByte(1)
+					return w.WriteByte(1)
 				}(*v.Ok, w)
 				if err != nil {
 					return nil, fmt.Errorf("failed to write `result::ok` payload: %w", err)
@@ -1313,7 +1334,10 @@ func ServeInterface(c wrpc.Client, h Handler) (stop func() error, err error) {
 	stops = append(stops, stop3)
 	stop4, err := c.Serve("wrpc:keyvalue/store@0.2.0-draft", "list-keys", func(ctx context.Context, w wrpc.IndexWriter, r wrpc.IndexReadCloser) error {
 		slog.DebugContext(ctx, "reading parameter", "i", 0)
-		p0, err := func(r wrpc.ByteReader) (string, error) {
+		p0, err := func(r interface {
+			io.ByteReader
+			io.Reader
+		}) (string, error) {
 			var x uint32
 			var s uint
 			for i := 0; i < 5; i++ {
@@ -1350,7 +1374,7 @@ func ServeInterface(c wrpc.Client, h Handler) (stop func() error, err error) {
 			return fmt.Errorf("failed to read parameter 0: %w", err)
 		}
 		slog.DebugContext(ctx, "reading parameter", "i", 1)
-		p1, err := func(r wrpc.ByteReader) (*uint64, error) {
+		p1, err := func(r wrpc.IndexReader) (*uint64, error) {
 			slog.Debug("reading option status byte")
 			status, err := r.ReadByte()
 			if err != nil {
@@ -1361,7 +1385,7 @@ func ServeInterface(c wrpc.Client, h Handler) (stop func() error, err error) {
 				return nil, nil
 			case 1:
 				slog.Debug("reading `option::some` payload")
-				v, err := func(r wrpc.ByteReader) (uint64, error) {
+				v, err := func(r io.ByteReader) (uint64, error) {
 					var x uint64
 					var s uint
 					for i := 0; i < 10; i++ {

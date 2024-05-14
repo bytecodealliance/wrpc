@@ -8,6 +8,7 @@ import (
 	fmt "fmt"
 	wrpc "github.com/wrpc/wrpc/go"
 	errgroup "golang.org/x/sync/errgroup"
+	io "io"
 	slog "log/slog"
 	math "math"
 )
@@ -35,26 +36,26 @@ func ServeInterface(c wrpc.Client, h Handler) (stop func() error, err error) {
 
 		var buf bytes.Buffer
 		writes := make(map[uint32]func(wrpc.IndexWriter) error, 1)
-		write0, err := func(v string, w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, error) {
+		write0, err := (func(wrpc.IndexWriter) error)(nil), func(v string, w io.Writer) (err error) {
 			n := len(v)
 			if n > math.MaxUint32 {
-				return nil, fmt.Errorf("string byte length of %d overflows a 32-bit integer", n)
+				return fmt.Errorf("string byte length of %d overflows a 32-bit integer", n)
 			}
-			if err := func(v int, w wrpc.ByteWriter) error {
+			if err = func(v int, w io.Writer) error {
 				b := make([]byte, binary.MaxVarintLen32)
 				i := binary.PutUvarint(b, uint64(v))
 				slog.Debug("writing string byte length", "len", n)
-				_, err := w.Write(b[:i])
+				_, err = w.Write(b[:i])
 				return err
 			}(n, w); err != nil {
-				return nil, fmt.Errorf("failed to write string length of %d: %w", n, err)
+				return fmt.Errorf("failed to write string byte length of %d: %w", n, err)
 			}
 			slog.Debug("writing string bytes")
-			_, err := w.Write([]byte(v))
+			_, err = w.Write([]byte(v))
 			if err != nil {
-				return nil, fmt.Errorf("failed to write string bytes: %w", err)
+				return fmt.Errorf("failed to write string bytes: %w", err)
 			}
-			return nil, nil
+			return nil
 		}(r0, &buf)
 		if err != nil {
 			return fmt.Errorf("failed to write result value 0: %w", err)

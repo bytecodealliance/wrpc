@@ -30,11 +30,14 @@ func run() (err error) {
 
 	for _, prefix := range os.Args[1:] {
 		wrpc := wrpcnats.NewClient(nc, prefix)
-		greeting, err := handler.Hello(context.Background(), wrpc)
+		greeting, cleanup, err := handler.Hello(context.Background(), wrpc)
 		if err != nil {
 			return fmt.Errorf("failed to call `wrpc-examples:hello/handler.hello`: %w", err)
 		}
 		fmt.Printf("%s: %s\n", prefix, greeting)
+		if err := cleanup(); err != nil {
+			return fmt.Errorf("failed to shutdown `wrpc-examples:hello/handler.hello` invocation: %w", err)
+		}
 	}
 	return nil
 }

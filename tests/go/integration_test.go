@@ -314,19 +314,71 @@ func TestAsync(t *testing.T) {
 	defer cancel()
 
 	{
-		slog.DebugContext(ctx, "calling `wrpc-test:integration/async.with-stream`")
-		v, shutdown, err := async.WithStream(ctx, client)
+		slog.DebugContext(ctx, "calling `wrpc-test:integration/async.with-streams`")
+		byteRx, stringListRx, shutdown, err := async.WithStreams(ctx, client, true)
 		if err != nil {
-			t.Errorf("failed to call `wrpc-test:integration/async.with-stream`: %s", err)
+			t.Errorf("failed to call `wrpc-test:integration/async.with-streams`: %s", err)
 			return
 		}
-		b, err := io.ReadAll(v)
+		b, err := io.ReadAll(byteRx)
 		if err != nil {
 			t.Errorf("failed to read from stream: %s", err)
 			return
 		}
 		if string(b) != "test" {
 			t.Errorf("expected: `test`, got: %s", string(b))
+			return
+		}
+		ss, err := stringListRx.Receive()
+		if err != nil {
+			t.Errorf("failed to receive ready list<string> stream: %s", err)
+			return
+		}
+		expected := [][]string{{"foo", "bar"}, {"baz"}}
+		if !reflect.DeepEqual(ss, expected) {
+			t.Errorf("expected: `%#v`, got: %#v", expected, ss)
+			return
+		}
+		ss, err = stringListRx.Receive()
+		if ss != nil || err != io.EOF {
+			t.Errorf("ready list<string> should have returned (nil, io.EOF), got: (%#v, %v)", ss, err)
+			return
+		}
+		if err := shutdown(); err != nil {
+			t.Errorf("failed to shutdown: %s", err)
+			return
+		}
+	}
+
+	{
+		slog.DebugContext(ctx, "calling `wrpc-test:integration/async.with-streams`")
+		byteRx, stringListRx, shutdown, err := async.WithStreams(ctx, client, false)
+		if err != nil {
+			t.Errorf("failed to call `wrpc-test:integration/async.with-streams`: %s", err)
+			return
+		}
+		b, err := io.ReadAll(byteRx)
+		if err != nil {
+			t.Errorf("failed to read from stream: %s", err)
+			return
+		}
+		if string(b) != "test" {
+			t.Errorf("expected: `test`, got: %s", string(b))
+			return
+		}
+		ss, err := stringListRx.Receive()
+		if err != nil {
+			t.Errorf("failed to receive ready list<string> stream: %s", err)
+			return
+		}
+		expected := [][]string{{"foo", "bar"}, {"baz"}}
+		if !reflect.DeepEqual(ss, expected) {
+			t.Errorf("expected: `%#v`, got: %#v", expected, ss)
+			return
+		}
+		ss, err = stringListRx.Receive()
+		if ss != nil || err != io.EOF {
+			t.Errorf("ready list<string> should have returned (nil, io.EOF), got: (%#v, %v)", ss, err)
 			return
 		}
 		if err := shutdown(); err != nil {
@@ -336,7 +388,7 @@ func TestAsync(t *testing.T) {
 	}
 
 	if err = stop(); err != nil {
-		t.Errorf("failed to stop serving `sync-server` world: %s", err)
+		t.Errorf("failed to stop serving `async-server` world: %s", err)
 		return
 	}
 }

@@ -79,12 +79,12 @@ type trailerReceiver <-chan []*wrpc.Tuple2[string, [][]byte]
 func (r trailerReceiver) Receive() ([]*wrpc.Tuple2[string, [][]byte], error) {
 	trailers, ok := <-r
 	if !ok {
-		return nil, errors.New("trailer receiver channel closed")
+		return nil, io.EOF
 	}
 	return trailers, nil
 }
 
-func (r trailerReceiver) Ready() bool {
+func (r trailerReceiver) IsComplete() bool {
 	return false
 }
 

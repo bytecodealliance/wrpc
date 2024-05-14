@@ -14,7 +14,7 @@ func ServeHandle(c wrpc.Client, f func(context.Context, *types.RequestRecord, *t
 	request := wrpc.NewSubscribePath().Index(0)
 	body := request.Index(0)
 	trailers := request.Index(1)
-	return c.Serve("wrpc:http/outgoing-handler@0.1.0", "handle", func(ctx context.Context, w wrpc.IndexWriter, r wrpc.IndexReader, errCh <-chan error) error {
+	return c.Serve("wrpc:http/outgoing-handler@0.1.0", "handle", func(ctx context.Context, w wrpc.IndexWriter, r wrpc.IndexReadCloser) error {
 		slog.DebugContext(ctx, "receiving `wrpc:http/types.request`")
 		request, err := types.ReadRequest(r, 0)
 		if err != nil {

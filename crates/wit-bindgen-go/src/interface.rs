@@ -26,16 +26,22 @@ pub struct InterfaceGenerator<'a> {
 }
 
 impl InterfaceGenerator<'_> {
-    fn print_read_ty(&mut self, ty: &Type, reader: &str, path: &str) {
-        // NOTE: u{16,32,64} decoding adapted from
-        // https://cs.opensource.google/go/go/+/refs/tags/go1.22.2:src/encoding/binary/varint.go;l=128-153
-        // NOTE: s{16,32,64} decoding adapted from
-        // https://github.com/go-delve/delve/blob/26799555e5518e8a9fe2d68e02379257ebda4dd2/pkg/dwarf/leb128/decode.go#L51-L81
-        match ty {
-            Type::Id(t) => self.print_read_tyid(*t, reader, path),
-            Type::Bool => uwrite!(
-                self.src,
-                r#"func(r {wrpc}.ByteReader) (bool, error) {{
+    // u{16,32,64} decoding adapted from
+    // https://cs.opensource.google/go/go/+/refs/tags/go1.22.2:src/encoding/binary/varint.go;l=128-153
+    //
+    // s{16,32,64} decoding adapted from
+    // https://github.com/go-delve/delve/blob/26799555e5518e8a9fe2d68e02379257ebda4dd2/pkg/dwarf/leb128/decode.go#L51-L81
+    //
+    // s{16,32,64} encoding adapted from
+    // https://github.com/go-delve/delve/blob/26799555e5518e8a9fe2d68e02379257ebda4dd2/pkg/dwarf/leb128/encode.go#L23-L42
+
+    fn print_read_bool(&mut self, reader: &str) {
+        let fmt = self.deps.fmt();
+        let slog = self.deps.slog();
+        let wrpc = self.deps.wrpc();
+        uwrite!(
+            self.src,
+            r#"func(r {wrpc}.ByteReader) (bool, error) {{
     {slog}.Debug("reading bool byte")
     v, err := r.ReadByte()
     if err != nil {{
@@ -51,13 +57,16 @@ impl InterfaceGenerator<'_> {
             return false, {fmt}.Errorf("invalid bool value %d", v)
     }}
 }}({reader})"#,
-                fmt = self.deps.fmt(),
-                slog = self.deps.slog(),
-                wrpc = self.deps.wrpc(),
-            ),
-            Type::U8 => uwrite!(
-                self.src,
-                r#"func(r {wrpc}.ByteReader) (uint8, error) {{
+        );
+    }
+
+    fn print_read_u8(&mut self, reader: &str) {
+        let fmt = self.deps.fmt();
+        let io = self.deps.io();
+        let slog = self.deps.slog();
+        uwrite!(
+            self.src,
+            r#"func(r {io}.ByteReader) (uint8, error) {{
     {slog}.Debug("reading u8 byte")
     v, err := r.ReadByte()
     if err != nil {{
@@ -65,13 +74,17 @@ impl InterfaceGenerator<'_> {
     }}
     return v, nil
 }}({reader})"#,
-                fmt = self.deps.fmt(),
-                slog = self.deps.slog(),
-                wrpc = self.deps.wrpc(),
-            ),
-            Type::U16 => uwrite!(
-                self.src,
-                r#"func(r {wrpc}.ByteReader) (uint16, error) {{
+        );
+    }
+
+    fn print_read_u16(&mut self, reader: &str) {
+        let fmt = self.deps.fmt();
+        let errors = self.deps.errors();
+        let io = self.deps.io();
+        let slog = self.deps.slog();
+        uwrite!(
+            self.src,
+            r#"func(r {io}.ByteReader) (uint16, error) {{
 	var x uint16
 	var s uint
 	for i := 0; i < 3; i++ {{
@@ -94,15 +107,17 @@ impl InterfaceGenerator<'_> {
 	}}
 	return x, {errors}.New("varint overflows a 16-bit integer")
 }}({reader})"#,
-                errors = self.deps.errors(),
-                fmt = self.deps.fmt(),
-                io = self.deps.io(),
-                slog = self.deps.slog(),
-                wrpc = self.deps.wrpc(),
-            ),
-            Type::U32 => uwrite!(
-                self.src,
-                r#"func(r {wrpc}.ByteReader) (uint32, error) {{
+        );
+    }
+
+    fn print_read_u32(&mut self, reader: &str) {
+        let fmt = self.deps.fmt();
+        let errors = self.deps.errors();
+        let io = self.deps.io();
+        let slog = self.deps.slog();
+        uwrite!(
+            self.src,
+            r#"func(r {io}.ByteReader) (uint32, error) {{
 	var x uint32
 	var s uint
 	for i := 0; i < 5; i++ {{
@@ -125,15 +140,17 @@ impl InterfaceGenerator<'_> {
 	}}
 	return x, {errors}.New("varint overflows a 32-bit integer")
 }}({reader})"#,
-                errors = self.deps.errors(),
-                fmt = self.deps.fmt(),
-                io = self.deps.io(),
-                slog = self.deps.slog(),
-                wrpc = self.deps.wrpc(),
-            ),
-            Type::U64 => uwrite!(
-                self.src,
-                r#"func(r {wrpc}.ByteReader) (uint64, error) {{
+        );
+    }
+
+    fn print_read_u64(&mut self, reader: &str) {
+        let fmt = self.deps.fmt();
+        let errors = self.deps.errors();
+        let io = self.deps.io();
+        let slog = self.deps.slog();
+        uwrite!(
+            self.src,
+            r#"func(r {io}.ByteReader) (uint64, error) {{
 	var x uint64
 	var s uint
 	for i := 0; i < 10; i++ {{
@@ -156,15 +173,16 @@ impl InterfaceGenerator<'_> {
 	}}
 	return x, {errors}.New("varint overflows a 64-bit integer")
 }}({reader})"#,
-                errors = self.deps.errors(),
-                fmt = self.deps.fmt(),
-                io = self.deps.io(),
-                slog = self.deps.slog(),
-                wrpc = self.deps.wrpc(),
-            ),
-            Type::S8 => uwrite!(
-                self.src,
-                r#"func(r {wrpc}.ByteReader) (int8, error) {{
+        );
+    }
+
+    fn print_read_s8(&mut self, reader: &str) {
+        let fmt = self.deps.fmt();
+        let io = self.deps.io();
+        let slog = self.deps.slog();
+        uwrite!(
+            self.src,
+            r#"func(r {io}.ByteReader) (int8, error) {{
     {slog}.Debug("reading s8 byte")
     v, err := r.ReadByte()
     if err != nil {{
@@ -172,13 +190,16 @@ impl InterfaceGenerator<'_> {
     }}
     return int8(v), nil
 }}({reader})"#,
-                fmt = self.deps.fmt(),
-                slog = self.deps.slog(),
-                wrpc = self.deps.wrpc(),
-            ),
-            Type::S16 => uwrite!(
-                self.src,
-                r#"func(r {wrpc}.ByteReader) (int16, error) {{
+        );
+    }
+
+    fn print_read_s16(&mut self, reader: &str) {
+        let fmt = self.deps.fmt();
+        let io = self.deps.io();
+        let slog = self.deps.slog();
+        uwrite!(
+            self.src,
+            r#"func(r {io}.ByteReader) (int16, error) {{
     var (
 		b      byte
 		err    error
@@ -205,13 +226,16 @@ impl InterfaceGenerator<'_> {
 	}}
 	return result, nil
 }}({reader})"#,
-                fmt = self.deps.fmt(),
-                slog = self.deps.slog(),
-                wrpc = self.deps.wrpc(),
-            ),
-            Type::S32 => uwrite!(
-                self.src,
-                r#"func(r {wrpc}.ByteReader) (int32, error) {{
+        );
+    }
+
+    fn print_read_s32(&mut self, reader: &str) {
+        let fmt = self.deps.fmt();
+        let io = self.deps.io();
+        let slog = self.deps.slog();
+        uwrite!(
+            self.src,
+            r#"func(r {io}.ByteReader) (int32, error) {{
     var (
 		b      byte
 		err    error
@@ -238,13 +262,16 @@ impl InterfaceGenerator<'_> {
 	}}
 	return result, nil
 }}({reader})"#,
-                fmt = self.deps.fmt(),
-                slog = self.deps.slog(),
-                wrpc = self.deps.wrpc(),
-            ),
-            Type::S64 => uwrite!(
-                self.src,
-                r#"func(r {wrpc}.ByteReader) (int64, error) {{
+        );
+    }
+
+    fn print_read_s64(&mut self, reader: &str) {
+        let fmt = self.deps.fmt();
+        let io = self.deps.io();
+        let slog = self.deps.slog();
+        uwrite!(
+            self.src,
+            r#"func(r {io}.ByteReader) (int64, error) {{
     var (
 		b      byte
 		err    error
@@ -271,13 +298,18 @@ impl InterfaceGenerator<'_> {
 	}}
 	return result, nil
 }}({reader})"#,
-                fmt = self.deps.fmt(),
-                slog = self.deps.slog(),
-                wrpc = self.deps.wrpc(),
-            ),
-            Type::F32 => uwrite!(
-                self.src,
-                r#"func(r {wrpc}.ByteReader) (float32, error) {{
+        );
+    }
+
+    fn print_read_f32(&mut self, reader: &str) {
+        let binary = self.deps.binary();
+        let fmt = self.deps.fmt();
+        let io = self.deps.io();
+        let math = self.deps.math();
+        let slog = self.deps.slog();
+        uwrite!(
+            self.src,
+            r#"func(r {io}.Reader) (float32, error) {{
     var b [4]byte
     {slog}.Debug("reading f32 bytes")
     _, err := r.Read(b[:])
@@ -286,15 +318,18 @@ impl InterfaceGenerator<'_> {
     }}
     return {math}.Float32frombits({binary}.LittleEndian.Uint32(b[:])), nil
 }}({reader})"#,
-                binary = self.deps.binary(),
-                fmt = self.deps.fmt(),
-                math = self.deps.math(),
-                slog = self.deps.slog(),
-                wrpc = self.deps.wrpc(),
-            ),
-            Type::F64 => uwrite!(
-                self.src,
-                r#"func(r {wrpc}.ByteReader) (float64, error) {{
+        );
+    }
+
+    fn print_read_f64(&mut self, reader: &str) {
+        let binary = self.deps.binary();
+        let fmt = self.deps.fmt();
+        let io = self.deps.io();
+        let math = self.deps.math();
+        let slog = self.deps.slog();
+        uwrite!(
+            self.src,
+            r#"func(r {io}.Reader) (float64, error) {{
     var b [8]byte
     {slog}.Debug("reading f64 bytes")
     _, err := r.Read(b[:])
@@ -303,15 +338,18 @@ impl InterfaceGenerator<'_> {
     }}
     return {math}.Float64frombits({binary}.LittleEndian.Uint64(b[:])), nil
 }}({reader})"#,
-                binary = self.deps.binary(),
-                fmt = self.deps.fmt(),
-                math = self.deps.math(),
-                slog = self.deps.slog(),
-                wrpc = self.deps.wrpc(),
-            ),
-            Type::Char => uwrite!(
-                self.src,
-                r#"func(r {wrpc}.ByteReader) (rune, error) {{
+        );
+    }
+
+    fn print_read_char(&mut self, reader: &str) {
+        let errors = self.deps.errors();
+        let fmt = self.deps.fmt();
+        let io = self.deps.io();
+        let slog = self.deps.slog();
+        let utf8 = self.deps.utf8();
+        uwrite!(
+            self.src,
+            r#"func(r {io}.ByteReader) (rune, error) {{
 	var x uint32
 	var s uint
 	for i := 0; i < 5; i++ {{
@@ -339,16 +377,18 @@ impl InterfaceGenerator<'_> {
 	}}
 	return {utf8}.RuneError, {errors}.New("char overflows a 32-bit integer")
 }}({reader})"#,
-                errors = self.deps.errors(),
-                fmt = self.deps.fmt(),
-                io = self.deps.io(),
-                slog = self.deps.slog(),
-                utf8 = self.deps.utf8(),
-                wrpc = self.deps.wrpc(),
-            ),
-            Type::String => uwrite!(
-                self.src,
-                r#"func(r {wrpc}.ByteReader) (string, error) {{
+        );
+    }
+
+    fn print_read_string(&mut self, reader: &str) {
+        let errors = self.deps.errors();
+        let fmt = self.deps.fmt();
+        let io = self.deps.io();
+        let slog = self.deps.slog();
+        let utf8 = self.deps.utf8();
+        uwrite!(
+            self.src,
+            r#"func(r interface {{ {io}.ByteReader; {io}.Reader }}) (string, error) {{
 	var x uint32
 	var s uint
 	for i := 0; i < 5; i++ {{
@@ -381,36 +421,80 @@ impl InterfaceGenerator<'_> {
 	}}
 	return "", {errors}.New("string length overflows a 32-bit integer")
 }}({reader})"#,
-                errors = self.deps.errors(),
-                fmt = self.deps.fmt(),
-                io = self.deps.io(),
-                slog = self.deps.slog(),
-                utf8 = self.deps.utf8(),
-                wrpc = self.deps.wrpc(),
-            ),
-        }
+        );
     }
 
-    fn print_read_tyid(&mut self, id: TypeId, reader: &str, path: &str) {
-        let ty = &self.resolve.types[id];
-        if let Some(ref name) = ty.name {
-            let read = self.type_path_with_name(id, format!("Read{}", to_upper_camel_case(name)));
-            uwrite!(self.src, "{read}({reader})");
-            return;
-        }
+    fn print_read_byte_list(&mut self, reader: &str) {
+        let errors = self.deps.errors();
+        let fmt = self.deps.fmt();
+        let io = self.deps.io();
+        let slog = self.deps.slog();
+        uwrite!(
+            self.src,
+            r#"func(r interface {{ {io}.ByteReader; {io}.Reader }}) ([]byte, error) {{
+	var x uint32
+	var s uint
+	for i := 0; i < 5; i++ {{
+        {slog}.Debug("reading byte list length", "i", i)
+		b, err := r.ReadByte()
+		if err != nil {{
+			if i > 0 && err == {io}.EOF {{
+				err = {io}.ErrUnexpectedEOF
+			}}
+			return nil, {fmt}.Errorf("failed to read byte list length byte: %w", err)
+		}}
+		if b < 0x80 {{
+			if i == 4 && b > 1 {{
+				return nil, {errors}.New("byte list length overflows a 32-bit integer")
+			}}
+            x = x | uint32(b)<<s
+            buf := make([]byte, x)
+            {slog}.Debug("reading byte list contents", "len", x)
+	        _, err = {io}.ReadFull(r, buf)
+	        if err != nil {{
+	        	return nil, {fmt}.Errorf("failed to read byte list contents: %w", err)
+	        }}
+            return buf, nil
+		}}
+		x |= uint32(b&0x7f) << s
+		s += 7
+	}}
+	return nil, {errors}.New("byte length overflows a 32-bit integer")
+}}({reader})"#,
+        );
+    }
 
-        match &ty.kind {
-            TypeDefKind::List(ty) => {
-                let fmt = self.deps.fmt();
-                let io = self.deps.io();
-                let errors = self.deps.errors();
-                let slog = self.deps.slog();
-                let wrpc = self.deps.wrpc();
-                uwrite!(self.src, "func(r {wrpc}.ByteReader) (");
-                self.print_list(ty);
-                uwrite!(
-                    self.src,
-                    r#", error) {{
+    fn print_read_list(&mut self, ty: &Type, reader: &str, path: &str) {
+        {
+            let mut ty = *ty;
+            let is_u8 = loop {
+                match ty {
+                    Type::U8 => break true,
+                    Type::Id(id) => {
+                        if let TypeDefKind::Type(t) = self.resolve.types[id].kind {
+                            ty = t;
+                        } else {
+                            break false;
+                        }
+                    }
+                    _ => break false,
+                }
+            };
+            if is_u8 {
+                self.print_read_byte_list(reader);
+                return;
+            }
+        }
+        let fmt = self.deps.fmt();
+        let io = self.deps.io();
+        let errors = self.deps.errors();
+        let slog = self.deps.slog();
+        let wrpc = self.deps.wrpc();
+        uwrite!(self.src, "func(r {wrpc}.IndexReader) (");
+        self.print_list(ty);
+        uwrite!(
+            self.src,
+            r#", error) {{
 	var x uint32
 	var s uint
 	for i := 0; i < 5; i++ {{
@@ -428,20 +512,20 @@ impl InterfaceGenerator<'_> {
 			}}
             x = x | uint32(b)<<s
             vs := make("#,
-                );
-                self.print_list(ty);
-                uwrite!(
-                    self.src,
-                    r#", x)
+        );
+        self.print_list(ty);
+        uwrite!(
+            self.src,
+            r#", x)
             for i := range vs {{
                 {slog}.Debug("reading list element", "i", i)
                 vs[i], err = "#,
-                );
-                self.print_read_ty(ty, "r", &format!("{path}, i"));
-                self.push_str("\n");
-                uwrite!(
-                    self.src,
-                    r#"if err != nil {{
+        );
+        self.print_read_ty(ty, "r", &format!("{path}, i"));
+        self.push_str("\n");
+        uwrite!(
+            self.src,
+            r#"if err != nil {{
 			        return nil, {fmt}.Errorf("failed to read list element %d: %w", i, err)
                 }}
             }}
@@ -452,18 +536,18 @@ impl InterfaceGenerator<'_> {
 	}}
 	return nil, {errors}.New("list length overflows a 32-bit integer")
 }}({reader})"#,
-                );
-            }
+        );
+    }
 
-            TypeDefKind::Option(ty) => {
-                let fmt = self.deps.fmt();
-                let slog = self.deps.slog();
-                let wrpc = self.deps.wrpc();
-                uwrite!(self.src, "func(r {wrpc}.ByteReader) (");
-                self.print_option(ty, true);
-                uwrite!(
-                    self.src,
-                    r#", error) {{
+    fn print_read_option(&mut self, ty: &Type, reader: &str, path: &str) {
+        let fmt = self.deps.fmt();
+        let slog = self.deps.slog();
+        let wrpc = self.deps.wrpc();
+        uwrite!(self.src, "func(r {wrpc}.IndexReader) (");
+        self.print_option(ty, true);
+        uwrite!(
+            self.src,
+            r#", error) {{
     {slog}.Debug("reading option status byte")
 	status, err := r.ReadByte()
 	if err != nil {{
@@ -475,255 +559,419 @@ impl InterfaceGenerator<'_> {
 	case 1:
         {slog}.Debug("reading `option::some` payload")
 	    v, err := "#,
-                );
-                self.print_read_ty(ty, "r", &format!("{path}, 1"));
-                self.push_str("\n");
-                uwrite!(
-                    self.src,
-                    r#"if err != nil {{
+        );
+        self.print_read_ty(ty, "r", &format!("{path}, 1"));
+        self.push_str("\n");
+        uwrite!(
+            self.src,
+            r#"if err != nil {{
 	    	return nil, {fmt}.Errorf("failed to read `option::some` value: %w", err)
 	    }}
 	    return "#,
-                );
-                self.result_element_ptr(ty, false);
-                uwrite!(
-                    self.src,
-                    r#"v, nil
+        );
+        self.result_element_ptr(ty, false);
+        uwrite!(
+            self.src,
+            r#"v, nil
 	default:
 		return nil, {fmt}.Errorf("invalid option status byte %d", status)
 	}}
 }}({reader})"#,
-                );
-            }
+        );
+    }
 
-            TypeDefKind::Result(ty) => {
-                let fmt = self.deps.fmt();
-                let slog = self.deps.slog();
-                let wrpc = self.deps.wrpc();
-                uwrite!(self.src, "func(r {wrpc}.ByteReader) (*");
-                self.print_result(ty);
-                uwriteln!(
-                    self.src,
-                    r#", error) {{
+    fn print_read_result(&mut self, ty: &Result_, reader: &str, path: &str) {
+        let fmt = self.deps.fmt();
+        let slog = self.deps.slog();
+        let wrpc = self.deps.wrpc();
+        uwrite!(self.src, "func(r {wrpc}.IndexReader) (*");
+        self.print_result(ty);
+        uwriteln!(
+            self.src,
+            r#", error) {{
     {slog}.Debug("reading result status byte")
 	status, err := r.ReadByte()
 	if err != nil {{
 		return nil, {fmt}.Errorf("failed to read result status byte: %w", err)
 	}}"#,
-                );
-                self.push_str("switch status {\n");
-                self.push_str("case 0:\n");
-                if let Some(ref ty) = ty.ok {
-                    uwriteln!(self.src, r#"{slog}.Debug("reading `result::ok` payload")"#);
-                    self.push_str("v, err := ");
-                    self.print_read_ty(ty, "r", &format!("{path}, 0"));
-                    self.push_str("\n");
-                    uwriteln!(
-                        self.src,
-                        r#"if err != nil {{
+        );
+        self.push_str("switch status {\n");
+        self.push_str("case 0:\n");
+        if let Some(ref ty) = ty.ok {
+            uwriteln!(self.src, r#"{slog}.Debug("reading `result::ok` payload")"#);
+            self.push_str("v, err := ");
+            self.print_read_ty(ty, "r", &format!("{path}, 0"));
+            self.push_str("\n");
+            uwriteln!(
+                self.src,
+                r#"if err != nil {{
 	    	return nil, fmt.Errorf("failed to read `result::ok` value: %w", err)
 	    }}"#,
-                    );
-                } else {
-                    self.push_str("var v struct{}\n");
-                }
-                self.push_str("return &");
-                self.print_result(ty);
-                self.push_str("{ Ok: &v }, nil\n");
-                self.push_str("case 1:\n");
-                if let Some(ref err) = ty.err {
-                    uwriteln!(self.src, r#"{slog}.Debug("reading `result::err` payload")"#);
-                    self.push_str("v, err := ");
-                    self.print_read_ty(err, "r", &format!("{path}, 1"));
-                    self.push_str("\n");
-                    uwriteln!(
-                        self.src,
-                        r#"if err != nil {{
+            );
+        } else {
+            self.push_str("var v struct{}\n");
+        }
+        self.push_str("return &");
+        self.print_result(ty);
+        self.push_str("{ Ok: &v }, nil\n");
+        self.push_str("case 1:\n");
+        if let Some(ref err) = ty.err {
+            uwriteln!(self.src, r#"{slog}.Debug("reading `result::err` payload")"#);
+            self.push_str("v, err := ");
+            self.print_read_ty(err, "r", &format!("{path}, 1"));
+            self.push_str("\n");
+            uwriteln!(
+                self.src,
+                r#"if err != nil {{
 	    	return nil, {fmt}.Errorf("failed to read `result::err` value: %w", err)
 	    }}"#,
-                    );
-                    self.push_str("return &");
-                    self.print_result(ty);
-                    self.push_str("{ Err: ");
-                    self.result_element_ptr(err, false);
-                } else {
-                    self.push_str("var v struct{}\n");
-                    self.push_str("return &");
-                    self.print_result(ty);
-                    self.push_str("{ Err: &");
-                }
-                uwrite!(
-                    self.src,
-                    r#"v }}, nil
+            );
+            self.push_str("return &");
+            self.print_result(ty);
+            self.push_str("{ Err: ");
+            self.result_element_ptr(err, false);
+        } else {
+            self.push_str("var v struct{}\n");
+            self.push_str("return &");
+            self.print_result(ty);
+            self.push_str("{ Err: &");
+        }
+        uwrite!(
+            self.src,
+            r#"v }}, nil
 	default:
 		return nil, {fmt}.Errorf("invalid result status byte %d", status)
 	}}
 }}({reader})"#,
-                );
-            }
+        );
+    }
 
-            TypeDefKind::Variant(_) => panic!("unsupported anonymous variant"),
+    fn print_read_tuple(&mut self, ty: &Tuple, reader: &str, path: &str) {
+        match ty.types.as_slice() {
+            [] => self.push_str("struct{}{}, nil"),
+            [ty] => self.print_read_ty(ty, reader, &format!("{path}, 0")),
+            _ => {
+                let wrpc = self.deps.wrpc();
 
-            TypeDefKind::Tuple(ty) => match ty.types.as_slice() {
-                [] => self.push_str("struct{}{}, nil"),
-                [ty] => self.print_read_ty(ty, reader, &format!("{path}, 0")),
-                _ => {
-                    let wrpc = self.deps.wrpc();
-
-                    uwrite!(self.src, "func(r {wrpc}.ByteReader) (");
-                    self.print_tuple(ty, true);
-                    self.push_str(", error) {\n");
-                    self.push_str("v := ");
-                    self.print_tuple(ty, false);
-                    self.push_str("{}\n");
-                    self.push_str("var err error\n");
-                    for (i, ty) in ty.types.iter().enumerate() {
-                        let fmt = self.deps.fmt();
-                        let slog = self.deps.slog();
-                        uwrite!(
-                            self.src,
-                            r#"{slog}.Debug("reading tuple element {i}")
+                uwrite!(self.src, "func(r {wrpc}.IndexReader) (");
+                self.print_tuple(ty, true);
+                self.push_str(", error) {\n");
+                self.push_str("v := ");
+                self.print_tuple(ty, false);
+                self.push_str("{}\n");
+                self.push_str("var err error\n");
+                for (i, ty) in ty.types.iter().enumerate() {
+                    let fmt = self.deps.fmt();
+                    let slog = self.deps.slog();
+                    uwrite!(
+                        self.src,
+                        r#"{slog}.Debug("reading tuple element {i}")
         v.V{i}, err = "#
-                        );
-                        self.print_read_ty(ty, "r", &format!("{path}, {i}"));
-                        self.push_str("\n");
-                        uwriteln!(
-                            self.src,
-                            r#"if err != nil {{
+                    );
+                    self.print_read_ty(ty, "r", &format!("{path}, {i}"));
+                    self.push_str("\n");
+                    uwriteln!(
+                        self.src,
+                        r#"if err != nil {{
 		    return nil, {fmt}.Errorf("failed to read tuple element {i}: %w", err)
 	    }}"#
-                        );
-                    }
-                    self.push_str("return v, nil\n");
-                    uwrite!(self.src, "}}({reader})");
+                    );
                 }
-            },
-            TypeDefKind::Resource => {
-                panic!("unsupported anonymous type reference: resource")
+                self.push_str("return v, nil\n");
+                uwrite!(self.src, "}}({reader})");
             }
-            TypeDefKind::Record(_) => {
-                panic!("unsupported anonymous type reference: record")
-            }
-            TypeDefKind::Flags(_) => {
-                panic!("unsupported anonymous type reference: flags")
-            }
-            TypeDefKind::Enum(_) => {
-                panic!("unsupported anonymous type reference: enum")
-            }
-            TypeDefKind::Future(_ty) => uwrite!(
-                self.src,
-                r#"nil, {errors}.New("reading futures not supported yet")"#,
-                errors = self.deps.errors(),
-            ),
-            TypeDefKind::Stream(ty) => match ty.element {
-                Some(Type::U8) => uwrite!(
-                    self.src,
-                    "{wrpc}.ReadByteStream({reader}, {path})",
-                    wrpc = self.deps.wrpc(),
-                ),
-                _ => uwrite!(
-                    self.src,
-                    r#"nil, {errors}.New("reading non-byte streams not supported yet")"#,
-                    errors = self.deps.errors(),
-                ),
-            },
+        }
+    }
 
+    fn print_read_stream(&mut self, Stream { element, .. }: &Stream, reader: &str, path: &str) {
+        match element {
+            Some(Type::U8) => {
+                let bytes = self.deps.bytes();
+                let fmt = self.deps.fmt();
+                let slog = self.deps.slog();
+                let wrpc = self.deps.wrpc();
+
+                uwriteln!(
+                    self.src,
+                    r#"func(r {wrpc}.IndexReader, path ...uint32) ({wrpc}.ReadCompleter, error) {{
+    {slog}.Debug("reading byte stream status byte")
+	status, err := r.ReadByte()
+	if err != nil {{
+		return nil, {fmt}.Errorf("failed to read byte stream status byte: %w", err)
+	}}
+	switch status {{
+	case 0:
+		r, err = r.Index(path...)
+		if err != nil {{
+			return nil, {fmt}.Errorf("failed to index reader: %w", err)
+		}}
+		return {wrpc}.NewByteStreamReader({wrpc}.NewPendingByteReader(r)), nil
+	case 1:
+	    {slog}.Debug("reading ready byte stream contents")
+	    buf, err := "#
+                );
+                self.print_read_byte_list("r");
+                uwriteln!(
+                    self.src,
+                    r#"
+        if err != nil {{
+	    	return nil, {fmt}.Errorf("failed to read ready byte stream contents: %w", err)
+	    }}
+	    {slog}.Debug("read ready byte stream contents", "len", len(buf))
+	    return {wrpc}.NewCompleteReader({bytes}.NewReader(buf)), nil
+	default:
+		return nil, {fmt}.Errorf("invalid stream status byte %d", status)
+	}}
+}}({reader}, {path})"#
+                );
+            }
+            Some(ty) => {
+                let errors = self.deps.errors();
+                let fmt = self.deps.fmt();
+                let io = self.deps.io();
+                let math = self.deps.math();
+                let slog = self.deps.slog();
+                let wrpc = self.deps.wrpc();
+
+                uwrite!(
+                    self.src,
+                    r#"func(r {wrpc}.IndexReader, path ...uint32) ({wrpc}.ReceiveCompleter["#
+                );
+                self.print_list(ty);
+                uwrite!(
+                    self.src,
+                    r#"], error) {{
+    {slog}.Debug("reading stream status byte")
+	status, err := r.ReadByte()
+	if err != nil {{
+		return nil, {fmt}.Errorf("failed to read stream status byte: %w", err)
+	}}
+	switch status {{
+	case 0:
+		r, err = r.Index(path...)
+		if err != nil {{
+			return nil, {fmt}.Errorf("failed to index reader: %w", err)
+		}}
+        var total uint32
+		return {wrpc}.NewDecodeReceiver(r, func(r {wrpc}.IndexReader) ("#
+                );
+                self.print_list(ty);
+                uwrite!(
+                    self.src,
+                    r#", error) {{
+            {slog}.Debug("reading pending stream chunk length")
+			n, err := "#
+                );
+                self.print_read_u32("r");
+                uwrite!(
+                    self.src,
+                    r#"
+			if err != nil {{
+				return nil, {fmt}.Errorf("failed to read pending stream chunk length: %w", err)
+			}}
+			if n == 0 {{
+				return nil, {io}.EOF
+			}}
+            if {math}.MaxUint32 - n < total {{
+                return nil, {errors}.New("total incoming pending stream element count would overflow a 32-bit unsigned integer")
+            }}
+			vs := make("#
+                );
+                self.print_list(ty);
+                uwrite!(
+                    self.src,
+                    r#", n)
+			for i := range vs {{
+	            {slog}.Debug("reading pending stream element", "i", total)
+				v, err := "#
+                );
+                self.print_read_ty(ty, "r", "total");
+                uwriteln!(
+                    self.src,
+                    r#"
+				if err != nil {{
+					return nil, {fmt}.Errorf("failed to read pending stream chunk element %d: %w", i, err)
+				}}
+				vs[i] = v
+                total++
+			}}
+			return vs, nil
+		}}), nil
+	case 1:
+	    {slog}.Debug("reading ready stream contents")
+	    vs, err := "#
+                );
+                self.print_read_list(ty, "r", path);
+                uwriteln!(
+                    self.src,
+                    r#"
+        if err != nil {{
+	    	return nil, {fmt}.Errorf("failed to read ready stream contents: %w", err)
+	    }}
+	    {slog}.Debug("read ready stream contents", "len", len(vs))
+	    return {wrpc}.NewCompleteReceiver(vs), nil
+	default:
+		return nil, {fmt}.Errorf("invalid stream status byte %d", status)
+	}}
+}}({reader}, {path})"#
+                );
+            }
+            None => panic!("streams with no element types are not supported"),
+        }
+    }
+
+    fn print_read_ty(&mut self, ty: &Type, reader: &str, path: &str) {
+        match ty {
+            Type::Id(ty) => self.print_read_tyid(*ty, reader, path),
+            Type::Bool => self.print_read_bool(reader),
+            Type::U8 => self.print_read_u8(reader),
+            Type::U16 => self.print_read_u16(reader),
+            Type::U32 => self.print_read_u32(reader),
+            Type::U64 => self.print_read_u64(reader),
+            Type::S8 => self.print_read_s8(reader),
+            Type::S16 => self.print_read_s16(reader),
+            Type::S32 => self.print_read_s32(reader),
+            Type::S64 => self.print_read_s64(reader),
+            Type::F32 => self.print_read_f32(reader),
+            Type::F64 => self.print_read_f64(reader),
+            Type::Char => self.print_read_char(reader),
+            Type::String => self.print_read_string(reader),
+        }
+    }
+
+    fn print_read_tyid(&mut self, id: TypeId, reader: &str, path: &str) {
+        let ty = &self.resolve.types[id];
+        if let Some(ref name) = ty.name {
+            let read = self.type_path_with_name(id, format!("Read{}", to_upper_camel_case(name)));
+            uwrite!(self.src, "{read}({reader})");
+            return;
+        }
+        match &ty.kind {
+            TypeDefKind::Record(_) => panic!("unsupported anonymous type reference: record"),
+            TypeDefKind::Resource => panic!("unsupported anonymous type reference: resource"),
             TypeDefKind::Handle(Handle::Own(_ty)) => uwrite!(
                 self.src,
                 r#"0, {errors}.New("reading owned handles not supported yet")"#,
                 errors = self.deps.errors(),
             ),
-
             TypeDefKind::Handle(Handle::Borrow(_ty)) => uwrite!(
                 self.src,
                 r#"0, {errors}.New("reading borrowed handles not supported yet")"#,
                 errors = self.deps.errors(),
             ),
-
+            TypeDefKind::Flags(_) => panic!("unsupported anonymous type reference: flags"),
+            TypeDefKind::Tuple(ty) => self.print_read_tuple(ty, reader, path),
+            TypeDefKind::Variant(_) => panic!("unsupported anonymous variant"),
+            TypeDefKind::Enum(_) => panic!("unsupported anonymous type reference: enum"),
+            TypeDefKind::Option(ty) => self.print_read_option(ty, reader, path),
+            TypeDefKind::Result(ty) => self.print_read_result(ty, reader, path),
+            TypeDefKind::List(ty) => self.print_read_list(ty, reader, path),
+            TypeDefKind::Future(_ty) => uwrite!(
+                self.src,
+                r#"nil, {errors}.New("reading futures not supported yet")"#,
+                errors = self.deps.errors(),
+            ),
+            TypeDefKind::Stream(ty) => self.print_read_stream(ty, reader, path),
             TypeDefKind::Type(t) => self.print_read_ty(t, reader, path),
-
             TypeDefKind::Unknown => unreachable!(),
         }
     }
 
-    fn print_write_ty(&mut self, ty: &Type, name: &str, writer: &str) {
-        // NOTE: s{16,32,64} encoding adapted from
-        // https://github.com/go-delve/delve/blob/26799555e5518e8a9fe2d68e02379257ebda4dd2/pkg/dwarf/leb128/encode.go#L23-L42
-        match ty {
-            Type::Id(t) => self.print_write_tyid(*t, name, writer),
-            Type::Bool => uwrite!(
-                self.src,
-                r#"func(v bool, w {wrpc}.ByteWriter) (func({wrpc}.IndexWriter) error, error) {{
+    fn print_write_bool(&mut self, name: &str, writer: &str) {
+        let io = self.deps.io();
+        let slog = self.deps.slog();
+        uwrite!(
+            self.src,
+            r#"func(v bool, w {io}.ByteWriter) error {{
                 if !v {{
                     {slog}.Debug("writing `false` byte")
-                    return nil, w.WriteByte(0)
+                    return w.WriteByte(0)
                 }}
                 {slog}.Debug("writing `true` byte")
-                return nil, w.WriteByte(1)
+                return w.WriteByte(1)
             }}({name}, {writer})"#,
-                slog = self.deps.slog(),
-                wrpc = self.deps.wrpc(),
-            ),
-            Type::U8 => uwrite!(
-                self.src,
-                r#"func(v uint8, w {wrpc}.ByteWriter) (func({wrpc}.IndexWriter) error, error) {{
+        );
+    }
+
+    fn print_write_u8(&mut self, name: &str, writer: &str) {
+        let io = self.deps.io();
+        let slog = self.deps.slog();
+        uwrite!(
+            self.src,
+            r#"func(v uint8, w {io}.ByteWriter) error {{
                 {slog}.Debug("writing u8 byte")
-                return nil, w.WriteByte(v)
+                return w.WriteByte(v)
             }}({name}, {writer})"#,
-                slog = self.deps.slog(),
-                wrpc = self.deps.wrpc(),
-            ),
-            Type::U16 => uwrite!(
-                self.src,
-                r#"func(v uint16, w {wrpc}.ByteWriter) (func({wrpc}.IndexWriter) error, error) {{
+        );
+    }
+
+    fn print_write_u16(&mut self, name: &str, writer: &str) {
+        let binary = self.deps.binary();
+        let io = self.deps.io();
+        let slog = self.deps.slog();
+        uwrite!(
+            self.src,
+            r#"func(v uint16, w interface {{ {io}.ByteWriter; {io}.Writer }}) (err error) {{
 	            b := make([]byte, {binary}.MaxVarintLen16)
 	            i := {binary}.PutUvarint(b, uint64(v))
                 {slog}.Debug("writing u16")
-	            _, err := w.Write(b[:i])
-	            return nil, err
+	            _, err = w.Write(b[:i])
+                return err
             }}({name}, {writer})"#,
-                binary = self.deps.binary(),
-                slog = self.deps.slog(),
-                wrpc = self.deps.wrpc(),
-            ),
-            Type::U32 => uwrite!(
-                self.src,
-                r#"func(v uint32, w {wrpc}.ByteWriter) (func({wrpc}.IndexWriter) error, error) {{
+        );
+    }
+
+    fn print_write_u32(&mut self, name: &str, writer: &str) {
+        let binary = self.deps.binary();
+        let io = self.deps.io();
+        let slog = self.deps.slog();
+        uwrite!(
+            self.src,
+            r#"func(v uint32, w interface {{ {io}.ByteWriter; {io}.Writer }}) (err error) {{
 	            b := make([]byte, {binary}.MaxVarintLen32)
 	            i := {binary}.PutUvarint(b, uint64(v))
                 {slog}.Debug("writing u32")
-	            _, err := w.Write(b[:i])
-	            return nil, err
+	            _, err = w.Write(b[:i])
+                return err
             }}({name}, {writer})"#,
-                binary = self.deps.binary(),
-                slog = self.deps.slog(),
-                wrpc = self.deps.wrpc(),
-            ),
-            Type::U64 => uwrite!(
-                self.src,
-                r#"func(v uint64, w {wrpc}.ByteWriter) (func({wrpc}.IndexWriter) error, error) {{
+        );
+    }
+
+    fn print_write_u64(&mut self, name: &str, writer: &str) {
+        let binary = self.deps.binary();
+        let io = self.deps.io();
+        let slog = self.deps.slog();
+        uwrite!(
+            self.src,
+            r#"func(v uint64, w interface {{ {io}.ByteWriter; {io}.Writer }}) (err error) {{
 	            b := make([]byte, {binary}.MaxVarintLen64)
 	            i := {binary}.PutUvarint(b, uint64(v))
                 {slog}.Debug("writing u64")
-	            _, err := w.Write(b[:i])
-	            return nil, err
+	            _, err = w.Write(b[:i])
+                return err
             }}({name}, {writer})"#,
-                binary = self.deps.binary(),
-                slog = self.deps.slog(),
-                wrpc = self.deps.wrpc(),
-            ),
-            Type::S8 => uwrite!(
-                self.src,
-                r#"func(v int8, w {wrpc}.ByteWriter) (func({wrpc}.IndexWriter) error, error) {{
+        );
+    }
+
+    fn print_write_s8(&mut self, name: &str, writer: &str) {
+        let io = self.deps.io();
+        let slog = self.deps.slog();
+        uwrite!(
+            self.src,
+            r#"func(v int8, w {io}.ByteWriter) error {{
                 {slog}.Debug("writing s8 byte")
-                return nil, w.WriteByte(byte(v))
+                return w.WriteByte(byte(v))
             }}({name}, {writer})"#,
-                slog = self.deps.slog(),
-                wrpc = self.deps.wrpc(),
-            ),
-            Type::S16 => uwrite!(
-                self.src,
-                r#"func(v int16, w {wrpc}.ByteWriter) (func({wrpc}.IndexWriter) error, error) {{
+        );
+    }
+
+    fn print_write_s16(&mut self, name: &str, writer: &str) {
+        let io = self.deps.io();
+        let fmt = self.deps.fmt();
+        let slog = self.deps.slog();
+        uwrite!(
+            self.src,
+            r#"func(v int16, w {io}.ByteWriter) (err error) {{
                 for {{
 	            	b := byte(v & 0x7f)
 	            	v >>= 7
@@ -737,21 +985,24 @@ impl InterfaceGenerator<'_> {
 	            		b = b | 0x80
 	            	}}
                     {slog}.Debug("writing s16 byte")
-                    if err := w.WriteByte(b); err != nil {{
-	    		        return nil, {fmt}.Errorf("failed to write `s16` byte: %w", err)
+                    if err = w.WriteByte(b); err != nil {{
+	    		        return {fmt}.Errorf("failed to write `s16` byte: %w", err)
                     }}
 	            	if last {{
-	            		return nil, nil
+	            		return nil
 	            	}}
 	            }}
             }}({name}, {writer})"#,
-                fmt = self.deps.fmt(),
-                slog = self.deps.slog(),
-                wrpc = self.deps.wrpc(),
-            ),
-            Type::S32 => uwrite!(
-                self.src,
-                r#"func(v int32, w {wrpc}.ByteWriter) (func({wrpc}.IndexWriter) error, error) {{
+        );
+    }
+
+    fn print_write_s32(&mut self, name: &str, writer: &str) {
+        let io = self.deps.io();
+        let fmt = self.deps.fmt();
+        let slog = self.deps.slog();
+        uwrite!(
+            self.src,
+            r#"func(v int32, w {io}.ByteWriter) (err error) {{
                 for {{
 	            	b := byte(v & 0x7f)
 	            	v >>= 7
@@ -765,21 +1016,24 @@ impl InterfaceGenerator<'_> {
 	            		b = b | 0x80
 	            	}}
                     {slog}.Debug("writing s32 byte")
-                    if err := w.WriteByte(b); err != nil {{
-	    		        return nil, {fmt}.Errorf("failed to write `s32` byte: %w", err)
+                    if err = w.WriteByte(b); err != nil {{
+	    		        return {fmt}.Errorf("failed to write `s32` byte: %w", err)
                     }}
 	            	if last {{
-	            		return nil, nil
+	            		return nil
 	            	}}
 	            }}
             }}({name}, {writer})"#,
-                fmt = self.deps.fmt(),
-                slog = self.deps.slog(),
-                wrpc = self.deps.wrpc(),
-            ),
-            Type::S64 => uwrite!(
-                self.src,
-                r#"func(v int64, w {wrpc}.ByteWriter) (func({wrpc}.IndexWriter) error, error) {{
+        );
+    }
+
+    fn print_write_s64(&mut self, name: &str, writer: &str) {
+        let io = self.deps.io();
+        let fmt = self.deps.fmt();
+        let slog = self.deps.slog();
+        uwrite!(
+            self.src,
+            r#"func(v int64, w {io}.ByteWriter) (err error) {{
                 for {{
 	            	b := byte(v & 0x7f)
 	            	v >>= 7
@@ -793,91 +1047,712 @@ impl InterfaceGenerator<'_> {
 	            		b = b | 0x80
 	            	}}
                     {slog}.Debug("writing s64 byte")
-                    if err := w.WriteByte(b); err != nil {{
-	    		        return nil, {fmt}.Errorf("failed to write `s64` byte: %w", err)
+                    if err = w.WriteByte(b); err != nil {{
+	    		        return {fmt}.Errorf("failed to write `s64` byte: %w", err)
                     }}
 	            	if last {{
-	            		return nil, nil
+	            		return nil
 	            	}}
 	            }}
             }}({name}, {writer})"#,
-                fmt = self.deps.fmt(),
-                slog = self.deps.slog(),
-                wrpc = self.deps.wrpc(),
-            ),
-            Type::F32 => uwrite!(
-                self.src,
-                r#"func(v float32, w {wrpc}.ByteWriter) (func({wrpc}.IndexWriter) error, error) {{
+        );
+    }
+
+    fn print_write_f32(&mut self, name: &str, writer: &str) {
+        let binary = self.deps.binary();
+        let io = self.deps.io();
+        let math = self.deps.math();
+        let slog = self.deps.slog();
+        uwrite!(
+            self.src,
+            r#"func(v float32, w {io}.Writer) (err error) {{
                 b := make([]byte, 4)
                 {binary}.LittleEndian.PutUint32(b, {math}.Float32bits(v))
                 {slog}.Debug("writing f32")
-	            _, err := w.Write(b)
-	            return nil, err
+	            _, err = w.Write(b)
+                return err
             }}({name}, {writer})"#,
-                binary = self.deps.binary(),
-                math = self.deps.math(),
-                slog = self.deps.slog(),
-                wrpc = self.deps.wrpc(),
-            ),
-            Type::F64 => uwrite!(
-                self.src,
-                r#"func(v float64, w {wrpc}.ByteWriter) (func({wrpc}.IndexWriter) error, error) {{
+        );
+    }
+
+    fn print_write_f64(&mut self, name: &str, writer: &str) {
+        let binary = self.deps.binary();
+        let io = self.deps.io();
+        let math = self.deps.math();
+        let slog = self.deps.slog();
+        uwrite!(
+            self.src,
+            r#"func(v float64, w {io}.Writer) (err error) {{
                 b := make([]byte, 8)
                 {binary}.LittleEndian.PutUint64(b, {math}.Float64bits(v))
                 {slog}.Debug("writing f64")
-	            _, err := w.Write(b)
-	            return nil, err
+	            _, err = w.Write(b)
+                return err
             }}({name}, {writer})"#,
-                binary = self.deps.binary(),
-                math = self.deps.math(),
-                slog = self.deps.slog(),
-                wrpc = self.deps.wrpc(),
-            ),
-            Type::Char => uwrite!(
-                self.src,
-                r#"func(v rune, w {wrpc}.ByteWriter) (func({wrpc}.IndexWriter) error, error) {{
+        );
+    }
+
+    fn print_write_char(&mut self, name: &str, writer: &str) {
+        let binary = self.deps.binary();
+        let io = self.deps.io();
+        let slog = self.deps.slog();
+        uwrite!(
+            self.src,
+            r#"func(v rune, w {io}.Writer) (err error) {{
 	            b := make([]byte, {binary}.MaxVarintLen32)
 	            i := {binary}.PutUvarint(b, uint64(v))
                 {slog}.Debug("writing char")
-	            _, err := w.Write(b[:i])
-	            return nil, err
+	            _, err = w.Write(b[:i])
+                return err
             }}({name}, {writer})"#,
-                binary = self.deps.binary(),
-                slog = self.deps.slog(),
-                wrpc = self.deps.wrpc(),
-            ),
-            Type::String => {
-                let binary = self.deps.binary();
-                let fmt = self.deps.fmt();
-                let math = self.deps.math();
-                let slog = self.deps.slog();
-                let wrpc = self.deps.wrpc();
+        );
+    }
 
-                uwrite!(
-                    self.src,
-                    r#"func(v string, w {wrpc}.ByteWriter) (func({wrpc}.IndexWriter) error, error) {{
+    fn print_write_string(&mut self, name: &str, writer: &str) {
+        let binary = self.deps.binary();
+        let io = self.deps.io();
+        let fmt = self.deps.fmt();
+        let math = self.deps.math();
+        let slog = self.deps.slog();
+        uwrite!(
+            self.src,
+            r#"func(v string, w {io}.Writer) (err error) {{
 	            n := len(v)
 	            if n > {math}.MaxUint32 {{
-	            	return nil, {fmt}.Errorf("string byte length of %d overflows a 32-bit integer", n)
+	            	return {fmt}.Errorf("string byte length of %d overflows a 32-bit integer", n)
 	            }}
-	            if err := func(v int, w {wrpc}.ByteWriter) error {{
+	            if err = func(v int, w {io}.Writer) error {{
 	                b := make([]byte, {binary}.MaxVarintLen32)
 	                i := {binary}.PutUvarint(b, uint64(v))
 	                {slog}.Debug("writing string byte length", "len", n)
-	                _, err := w.Write(b[:i])
+	                _, err = w.Write(b[:i])
 	                return err
                 }}(n, w); err != nil {{
-                	return nil, {fmt}.Errorf("failed to write string length of %d: %w", n, err)
+                	return {fmt}.Errorf("failed to write string byte length of %d: %w", n, err)
                 }}
                 {slog}.Debug("writing string bytes")
-                _, err := w.Write([]byte(v))
+                _, err = w.Write([]byte(v))
                 if err != nil {{
-                	return nil, {fmt}.Errorf("failed to write string bytes: %w", err)
+                	return {fmt}.Errorf("failed to write string bytes: %w", err)
                 }}
-                return nil, nil
-                }}({name}, {writer})"#
+                return nil
+            }}({name}, {writer})"#,
+        );
+    }
+
+    fn print_write_list(&mut self, ty: &Type, name: &str, writer: &str) {
+        let binary = self.deps.binary();
+        let errgroup = self.deps.errgroup();
+        let fmt = self.deps.fmt();
+        let io = self.deps.io();
+        let math = self.deps.math();
+        let slog = self.deps.slog();
+        let wrpc = self.deps.wrpc();
+
+        self.push_str("func(v ");
+        self.print_list(ty);
+        uwrite!(
+            self.src,
+            r#", w {wrpc}.ByteWriter) (write func({wrpc}.IndexWriter) error, err error) {{
+	    n := len(v)
+	    if n > {math}.MaxUint32 {{
+	        return nil, {fmt}.Errorf("list length of %d overflows a 32-bit integer", n)
+	    }}
+	    if err = func(v int, w {io}.Writer) error {{
+	        b := make([]byte, {binary}.MaxVarintLen32)
+	        i := {binary}.PutUvarint(b, uint64(v))
+            {slog}.Debug("writing list length", "len", n)
+	        _, err = w.Write(b[:i])
+	        return err
+        }}(n, w); err != nil {{
+            return nil, {fmt}.Errorf("failed to write list length of %d: %w", n, err)
+        }}
+        {slog}.Debug("writing list elements")
+	    writes := make(map[uint32]func({wrpc}.IndexWriter) error, n)
+        for i, e := range v {{
+            write, err := "#
+        );
+        self.print_write_ty(ty, "e", "w");
+        uwrite!(
+            self.src,
+            r#"
+            if err != nil {{
+                return nil, {fmt}.Errorf("failed to write list element %d: %w", i, err)
+            }}
+            if write != nil {{
+                writes[uint32(i)] = write
+            }}
+        }}
+	    if len(writes) > 0 {{
+	    	return func(w {wrpc}.IndexWriter) error {{
+	    		var wg {errgroup}.Group
+	    		for index, write := range writes {{
+	    			w, err := w.Index(index)
+	    			if err != nil {{
+	    				return {fmt}.Errorf("failed to index writer: %w", err)
+	    			}}
+	    			write := write
+	    			wg.Go(func() error {{
+	    				return write(w)
+	    			}})
+	    		}}
+	    		return wg.Wait()
+	    	}}, nil
+	    }}
+	    return nil, nil
+    }}({name}, {writer})"#
+        );
+    }
+
+    fn print_write_option(&mut self, ty: &Type, name: &str, writer: &str) {
+        let fmt = self.deps.fmt();
+        let slog = self.deps.slog();
+        let wrpc = self.deps.wrpc();
+
+        self.push_str("func(v ");
+        self.print_option(ty, true);
+        uwrite!(
+            self.src,
+            r#", w {wrpc}.ByteWriter) (func({wrpc}.IndexWriter) error, error) {{
+	    if v == nil {{
+	    	{slog}.Debug("writing `option::none` status byte")
+	    	if err := w.WriteByte(0); err != nil {{
+	    		return nil, {fmt}.Errorf("failed to write `option::none` byte: %w", err)
+	    	}}
+	    	return nil, nil
+	    }}
+	    {slog}.Debug("writing `option::some` status byte")
+	    if err := w.WriteByte(1); err != nil {{
+	    	return nil, {fmt}.Errorf("failed to write `option::some` status byte: %w", err)
+	    }}
+	    {slog}.Debug("writing `option::some` payload")
+        write, err := "#
+        );
+
+        let param = match ty {
+            Type::Id(id) => {
+                let ty = &self.resolve.types[*id];
+                match &ty.kind {
+                    TypeDefKind::Enum(..) => "*v",
+                    TypeDefKind::List(..) => "v",
+                    _ => "*v",
+                }
+            }
+            _ => "*v",
+        };
+        self.print_write_ty(ty, param, "w");
+        uwrite!(
+            self.src,
+            r#"
+        if err != nil {{
+		    return nil, {fmt}.Errorf("failed to write `option::some` payload: %w", err)
+	    }}
+        if write != nil {{
+	    	return func(w {wrpc}.IndexWriter) error {{
+	    		w, err := w.Index(1)
+	    		if err != nil {{
+	    			return {fmt}.Errorf("failed to index writer: %w", err)
+	    		}}
+                return write(w)
+            }}, nil
+        }}
+	    return nil, nil
+    }}({name}, {writer})"#
+        );
+    }
+
+    fn print_write_result(&mut self, ty: &Result_, name: &str, writer: &str) {
+        let errors = self.deps.errors();
+        let fmt = self.deps.fmt();
+        let slog = self.deps.slog();
+        let wrpc = self.deps.wrpc();
+
+        self.push_str("func(v *");
+        self.print_result(ty);
+        uwriteln!(
+            self.src,
+            r#", w {wrpc}.ByteWriter) (func({wrpc}.IndexWriter) error, error) {{
+        switch {{
+        	case v.Ok == nil && v.Err == nil:
+        		return nil, {errors}.New("both result variants cannot be nil")
+        	case v.Ok != nil && v.Err != nil:
+        		return nil, {errors}.New("exactly one result variant must non-nil")"#
+        );
+        uwriteln!(
+            self.src,
+            r#"
+        	case v.Ok != nil:
+        		{slog}.Debug("writing `result::ok` status byte")
+        		if err := w.WriteByte(0); err != nil {{
+        			return nil, {fmt}.Errorf("failed to write `result::ok` status byte: %w", err)
+        		}}"#
+        );
+        if let Some(ref ty) = ty.ok {
+            uwrite!(
+                self.src,
+                r#"{slog}.Debug("writing `result::ok` payload")
+                    write, err := "#
+            );
+            self.print_write_ty(ty, "*v.Ok", "w");
+            uwriteln!(
+                self.src,
+                r#"
+                    if err != nil {{
+        			    return nil, {fmt}.Errorf("failed to write `result::ok` payload: %w", err)
+        		    }}
+                    if write != nil {{
+	    	            return func(w {wrpc}.IndexWriter) error {{
+	    		            w, err := w.Index(0)
+	    		            if err != nil {{
+	    		            	return {fmt}.Errorf("failed to index writer: %w", err)
+	    		            }}
+                            return write(w)
+                        }}, nil
+                    }}"#
+            );
+        }
+        uwriteln!(
+            self.src,
+            r#"return nil, nil
+        	default:
+        		{slog}.Debug("writing `result::err` status byte")
+        		if err := w.WriteByte(1); err != nil {{
+        			return nil, {fmt}.Errorf("failed to write `result::err` status byte: %w", err)
+        		}}"#
+        );
+        if let Some(ref ty) = ty.err {
+            uwrite!(
+                self.src,
+                r#"{slog}.Debug("writing `result::err` payload")
+        		write, err := "#
+            );
+            self.print_write_ty(ty, "*v.Err", "w");
+            uwriteln!(
+                self.src,
+                r#"
+                if err != nil {{
+        			return nil, {fmt}.Errorf("failed to write `result::err` payload: %w", err)
+        		}}
+                if write != nil {{
+	    	        return func(w {wrpc}.IndexWriter) error {{
+	    		        w, err := w.Index(1)
+	    		        if err != nil {{
+	    		        	return {fmt}.Errorf("failed to index writer: %w", err)
+	    		        }}
+                        return write(w)
+                    }}, nil
+                }}"#
+            );
+        }
+        uwrite!(
+            self.src,
+            r#"return nil, nil
+	    }}
+    }}({name}, {writer})"#
+        );
+    }
+
+    fn print_write_tuple(&mut self, ty: &Tuple, name: &str, writer: &str) {
+        match ty.types.as_slice() {
+            [] => self.push_str("error(nil), error(nil)"),
+            [ty] => self.print_write_ty(ty, name, writer),
+            _ => {
+                let fmt = self.deps.fmt();
+                let errgroup = self.deps.errgroup();
+                let wrpc = self.deps.wrpc();
+
+                self.push_str("func(v ");
+                self.print_tuple(ty, true);
+                uwriteln!(
+                    self.src,
+                    r", w {wrpc}.ByteWriter) (func({wrpc}.IndexWriter) error, error) {{
+        writes := make(map[uint32]func({wrpc}.IndexWriter) error, {})",
+                    ty.types.len(),
+                );
+                for (i, ty) in ty.types.iter().enumerate() {
+                    let slog = self.deps.slog();
+                    uwrite!(
+                        self.src,
+                        r#"{slog}.Debug("writing tuple element {i}")
+        write{i}, err := "#
+                    );
+                    self.print_write_ty(ty, &format!("v.V{i}"), "w");
+                    uwriteln!(
+                        self.src,
+                        r#"
+        if err != nil {{
+		    return nil, {fmt}.Errorf("failed to write tuple element {i}: %w", err)
+	    }}
+        if write{i} != nil {{
+                writes[{i}] = write{i}
+        }}"#
+                    );
+                }
+                uwrite!(
+                    self.src,
+                    r#"if len(writes) > 0 {{
+	    	return func(w {wrpc}.IndexWriter) error {{
+	    		var wg {errgroup}.Group
+	    		for index, write := range writes {{
+	    			w, err := w.Index(index)
+	    			if err != nil {{
+	    				return {fmt}.Errorf("failed to index writer: %w", err)
+	    			}}
+	    			write := write
+	    			wg.Go(func() error {{
+	    				return write(w)
+	    			}})
+	    		}}
+	    		return wg.Wait()
+	    	}}, nil
+	    }}
+        return nil, nil
+    }}({name}, {writer})"#
                 );
             }
+        }
+    }
+
+    fn print_write_stream(&mut self, Stream { element, .. }: &Stream, name: &str, writer: &str) {
+        match element {
+            Some(Type::U8) => {
+                let bytes = self.deps.bytes();
+                let fmt = self.deps.fmt();
+                let io = self.deps.io();
+                let math = self.deps.math();
+                let slog = self.deps.slog();
+                let wrpc = self.deps.wrpc();
+                uwrite!(
+                    self.src,
+                    r#"func(v {wrpc}.ReadCompleter, w {wrpc}.ByteWriter) (write func({wrpc}.IndexWriter) error, err error) {{
+                if v.IsComplete() {{
+		            defer func() {{
+		            	body, ok := v.({io}.Closer)
+		            	if ok {{
+		            		if cErr := body.Close(); cErr != nil {{
+		            			if err == nil {{
+		            				err = {fmt}.Errorf("failed to close ready byte stream: %w", cErr)
+		            			}} else {{
+		            				slog.Warn("failed to close ready byte stream", "err", cErr)
+		            			}}
+		            		}}
+		            	}}
+		            }}()
+		            {slog}.Debug("writing byte stream `stream::ready` status byte")
+		            if err = w.WriteByte(1); err != nil {{
+		            	return nil, {fmt}.Errorf("failed to write `stream::ready` byte: %w", err)
+		            }}
+		            {slog}.Debug("reading ready byte stream contents")
+		            var buf {bytes}.Buffer
+                    var n int64
+		            n, err = {io}.Copy(&buf, v)
+		            if err != nil {{
+		            	return nil, {fmt}.Errorf("failed to read ready byte stream contents: %w", err)
+		            }}
+		            {slog}.Debug("writing ready byte stream contents", "len", n)
+		            if err = {wrpc}.WriteByteList(buf.Bytes(), w); err != nil {{
+		            	return nil, {fmt}.Errorf("failed to write ready byte stream contents: %w", err)
+		            }}
+		            return nil, nil
+                }} else {{
+		            {slog}.Debug("writing byte stream `stream::pending` status byte")
+		            if err = w.WriteByte(0); err != nil {{
+		            	return nil, fmt.Errorf("failed to write `stream::pending` byte: %w", err)
+		            }}
+		            return func(w {wrpc}.IndexWriter) (err error) {{
+		            	defer func() {{
+		            		body, ok := v.({io}.Closer)
+		            		if ok {{
+		            			if cErr := body.Close(); cErr != nil {{
+		            				if err == nil {{
+		            					err = {fmt}.Errorf("failed to close pending byte stream: %w", cErr)
+		            				}} else {{
+		            					{slog}.Warn("failed to close pending byte stream", "err", cErr)
+		            				}}
+		            			}}
+		            		}}
+		            	}}()
+		            	chunk := make([]byte, 8096)
+		            	for {{
+		            		var end bool
+		            		{slog}.Debug("reading pending byte stream contents")
+		            		n, err := v.Read(chunk)
+		            		if err == {io}.EOF {{
+		            			end = true
+		            			{slog}.Debug("pending byte stream reached EOF")
+		            		}} else if err != nil {{
+		            			return {fmt}.Errorf("failed to read pending byte stream chunk: %w", err)
+		            		}}
+		            		if n > {math}.MaxUint32 {{
+		            			return {fmt}.Errorf("pending byte stream chunk length of %d overflows a 32-bit integer", n)
+		            		}}
+		            		{slog}.Debug("writing pending byte stream chunk length", "len", n)
+		            		if err := {wrpc}.WriteUint32(uint32(n), w); err != nil {{
+		            			return {fmt}.Errorf("failed to write pending byte stream chunk length of %d: %w", n, err)
+		            		}}
+		            		_, err = w.Write(chunk[:n])
+		            		if err != nil {{
+		            			return {fmt}.Errorf("failed to write pending byte stream chunk contents: %w", err)
+		            		}}
+		            		if end {{
+		            			if err := w.WriteByte(0); err != nil {{
+		            				return {fmt}.Errorf("failed to write pending byte stream end byte: %w", err)
+		            			}}
+		            			return nil
+		            		}}
+		            	}}
+		            }}, nil
+                }}
+            }}({name}, {writer})"#,
+                );
+            }
+            Some(ty) => {
+                let errgroup = self.deps.errgroup();
+                let errors = self.deps.errors();
+                let fmt = self.deps.fmt();
+                let io = self.deps.io();
+                let math = self.deps.math();
+                let slog = self.deps.slog();
+                let wrpc = self.deps.wrpc();
+                uwrite!(self.src, "func(v {wrpc}.ReceiveCompleter[",);
+                self.print_list(ty);
+                uwrite!(
+                    self.src,
+                    r#"], w {wrpc}.ByteWriter) (write func({wrpc}.IndexWriter) error, err error) {{
+            if v.IsComplete() {{
+		        defer func() {{
+		        	body, ok := v.({io}.Closer)
+		        	if ok {{
+		        		if cErr := body.Close(); cErr != nil {{
+		        			if err == nil {{
+		        				err = {fmt}.Errorf("failed to close ready stream: %w", cErr)
+		        			}} else {{
+		        				slog.Warn("failed to close ready stream", "err", cErr)
+		        			}}
+		        		}}
+		        	}}
+		        }}()
+		        {slog}.Debug("writing stream `stream::ready` status byte")
+		        if err = w.WriteByte(1); err != nil {{
+		        	return nil, {fmt}.Errorf("failed to write `stream::ready` byte: %w", err)
+		        }}
+		        {slog}.Debug("receiving ready stream contents")
+                vs, err := v.Receive()
+		        if err != nil && err != {io}.EOF {{
+		        	return nil, {fmt}.Errorf("failed to receive ready stream contents: %w", err)
+		        }}
+                if err != {io}.EOF && len(vs) > 0 {{
+                    for {{
+                        chunk, err := v.Receive()
+		                if err != nil && err != {io}.EOF {{
+		                	return nil, {fmt}.Errorf("failed to receive ready stream contents: %w", err)
+		                }}
+                        if len(chunk) > 0 {{
+                            vs = append(vs, chunk...)
+                        }}
+                        if err == {io}.EOF {{
+                            break
+                        }}
+                    }}
+                }}
+		        {slog}.Debug("writing ready stream contents", "len", len(vs))
+		        write, err := "#,
+                );
+                self.print_write_list(ty, "vs", "w");
+                uwrite!(
+                    self.src,
+                    r#"
+                if err != nil {{
+		            return nil, {fmt}.Errorf("failed to write ready stream contents: %w", err)
+		        }}
+		        return write, nil
+            }} else {{
+	            {slog}.Debug("writing stream `stream::pending` status byte")
+	            if err := w.WriteByte(0); err != nil {{
+	            	return nil, fmt.Errorf("failed to write `stream::pending` byte: %w", err)
+	            }}
+	            return func(w {wrpc}.IndexWriter) (err error) {{
+	            	defer func() {{
+	            		body, ok := v.({io}.Closer)
+	            		if ok {{
+	            			if cErr := body.Close(); cErr != nil {{
+	            				if err == nil {{
+	            					err = {fmt}.Errorf("failed to close pending stream: %w", cErr)
+	            				}} else {{
+	            					{slog}.Warn("failed to close pending stream", "err", cErr)
+	            				}}
+	            			}}
+	            		}}
+	            	}}()
+	            	var wg {errgroup}.Group
+                    var total uint32
+	            	for {{
+	            		var end bool
+	            		{slog}.Debug("receiving outgoing pending stream contents")
+	            		chunk, err := v.Receive()
+                        n := len(chunk)
+	            		if n == 0 || err == {io}.EOF {{
+	            			end = true
+	            			{slog}.Debug("outgoing pending stream reached EOF")
+	            		}} else if err != nil {{
+	            			return {fmt}.Errorf("failed to receive outgoing pending stream chunk: %w", err)
+	            		}}
+	            		if n > {math}.MaxUint32 {{
+	            			return {fmt}.Errorf("outgoing pending stream chunk length of %d overflows a 32-bit integer", n)
+	            		}}
+                        if {math}.MaxUint32 - uint32(n) < total {{
+                            return {errors}.New("total outgoing pending stream element count would overflow a 32-bit unsigned integer")
+                        }}
+	            		{slog}.Debug("writing pending stream chunk length", "len", n)
+	            		if err = {wrpc}.WriteUint32(uint32(n), w); err != nil {{
+	            			return {fmt}.Errorf("failed to write pending stream chunk length of %d: %w", n, err)
+	            		}}
+                        for _, v := range chunk {{
+	            			{slog}.Debug("writing pending stream element", "i", total)
+                            write, err :="#,
+                );
+                self.print_write_ty(ty, "v", "w");
+                uwrite!(
+                    self.src,
+                    r#"
+	            		    if err != nil {{
+	            		    	return {fmt}.Errorf("failed to write pending stream chunk element %d: %w", total, err)
+	            		    }}
+                            if write != nil {{
+	            		        w, err := w.Index(total)
+	            		        if err != nil {{
+	            		        	return {fmt}.Errorf("failed to index writer: %w", err)
+	            		        }}
+	            		        wg.Go(func() error {{
+	            		        	return write(w)
+	            		        }})
+                            }}
+                            total++
+                        }}
+	            		if end {{
+	            			if err := w.WriteByte(0); err != nil {{
+	            				return {fmt}.Errorf("failed to write pending stream end byte: %w", err)
+	            			}}
+	            			return wg.Wait()
+	            		}}
+	            	}}
+	            }}, nil
+            }}
+        }}({name}, {writer})"#,
+                );
+            }
+            None => panic!("streams with no element types are not supported"),
+        }
+    }
+
+    fn print_write_ty(&mut self, ty: &Type, name: &str, writer: &str) {
+        match ty {
+            Type::Id(t) => self.print_write_tyid(*t, name, writer),
+            Type::Bool => {
+                let wrpc = self.deps.wrpc();
+                uwrite!(self.src, "(func({wrpc}.IndexWriter) error)(nil), ");
+                self.print_write_bool(name, writer);
+            }
+            Type::U8 => {
+                let wrpc = self.deps.wrpc();
+                uwrite!(self.src, "(func({wrpc}.IndexWriter) error)(nil), ");
+                self.print_write_u8(name, writer);
+            }
+            Type::U16 => {
+                let wrpc = self.deps.wrpc();
+                uwrite!(self.src, "(func({wrpc}.IndexWriter) error)(nil), ");
+                self.print_write_u16(name, writer);
+            }
+            Type::U32 => {
+                let wrpc = self.deps.wrpc();
+                uwrite!(self.src, "(func({wrpc}.IndexWriter) error)(nil), ");
+                self.print_write_u32(name, writer);
+            }
+            Type::U64 => {
+                let wrpc = self.deps.wrpc();
+                uwrite!(self.src, "(func({wrpc}.IndexWriter) error)(nil), ");
+                self.print_write_u64(name, writer);
+            }
+            Type::S8 => {
+                let wrpc = self.deps.wrpc();
+                uwrite!(self.src, "(func({wrpc}.IndexWriter) error)(nil), ");
+                self.print_write_s8(name, writer);
+            }
+            Type::S16 => {
+                let wrpc = self.deps.wrpc();
+                uwrite!(self.src, "(func({wrpc}.IndexWriter) error)(nil), ");
+                self.print_write_s16(name, writer);
+            }
+            Type::S32 => {
+                let wrpc = self.deps.wrpc();
+                uwrite!(self.src, "(func({wrpc}.IndexWriter) error)(nil), ");
+                self.print_write_s32(name, writer);
+            }
+            Type::S64 => {
+                let wrpc = self.deps.wrpc();
+                uwrite!(self.src, "(func({wrpc}.IndexWriter) error)(nil), ");
+                self.print_write_s64(name, writer);
+            }
+            Type::F32 => {
+                let wrpc = self.deps.wrpc();
+                uwrite!(self.src, "(func({wrpc}.IndexWriter) error)(nil), ");
+                self.print_write_f32(name, writer);
+            }
+            Type::F64 => {
+                let wrpc = self.deps.wrpc();
+                uwrite!(self.src, "(func({wrpc}.IndexWriter) error)(nil), ");
+                self.print_write_f64(name, writer);
+            }
+            Type::Char => {
+                let wrpc = self.deps.wrpc();
+                uwrite!(self.src, "(func({wrpc}.IndexWriter) error)(nil), ");
+                self.print_write_char(name, writer);
+            }
+            Type::String => {
+                let wrpc = self.deps.wrpc();
+                uwrite!(self.src, "(func({wrpc}.IndexWriter) error)(nil), ");
+                self.print_write_string(name, writer);
+            }
+        }
+    }
+
+    fn print_write_tyid(&mut self, id: TypeId, name: &str, writer: &str) {
+        let ty = &self.resolve.types[id];
+        if ty.name.is_some() {
+            // TODO: Support async
+            uwrite!(self.src, "({name}).WriteToIndex({writer})");
+            return;
+        }
+
+        match &ty.kind {
+            TypeDefKind::Record(_) => panic!("unsupported anonymous type reference: record"),
+            TypeDefKind::Resource => panic!("unsupported anonymous type reference: resource"),
+            TypeDefKind::Handle(Handle::Own(_ty)) => uwrite!(
+                self.src,
+                r#"0, {errors}.New("writing owned handles not supported yet")"#,
+                errors = self.deps.errors(),
+            ),
+
+            TypeDefKind::Handle(Handle::Borrow(_ty)) => uwrite!(
+                self.src,
+                r#"0, {errors}.New("writing borrowed handles not supported yet")"#,
+                errors = self.deps.errors(),
+            ),
+            TypeDefKind::Flags(_) => panic!("unsupported anonymous type reference: flags"),
+            TypeDefKind::Tuple(ty) => self.print_write_tuple(ty, name, writer),
+            TypeDefKind::Variant(_) => panic!("unsupported anonymous variant"),
+            TypeDefKind::Enum(_) => panic!("unsupported anonymous type reference: enum"),
+            TypeDefKind::Option(ty) => self.print_write_option(ty, name, writer),
+            TypeDefKind::Result(ty) => self.print_write_result(ty, name, writer),
+            TypeDefKind::List(ty) => self.print_write_list(ty, name, writer),
+            TypeDefKind::Future(_ty) => uwrite!(
+                self.src,
+                r#"0, {errors}.New("writing futures not supported yet")"#,
+                errors = self.deps.errors(),
+            ),
+            TypeDefKind::Stream(ty) => self.print_write_stream(ty, name, writer),
+            TypeDefKind::Type(ty) => self.print_write_ty(ty, name, writer),
+            TypeDefKind::Unknown => unreachable!(),
         }
     }
 
@@ -916,15 +1791,9 @@ impl InterfaceGenerator<'_> {
                     wrpc = self.deps.wrpc(),
                 );
             }
-            Int::U16 => {
-                self.print_read_ty(&Type::U16, reader, "");
-            }
-            Int::U32 => {
-                self.print_read_ty(&Type::U32, reader, "");
-            }
-            Int::U64 => {
-                self.print_read_ty(&Type::U64, reader, "");
-            }
+            Int::U16 => self.print_read_u16(reader),
+            Int::U32 => self.print_read_u32(reader),
+            Int::U64 => self.print_read_u64(reader),
         }
     }
 
@@ -985,419 +1854,6 @@ impl InterfaceGenerator<'_> {
         }
     }
 
-    fn print_write_tyid(&mut self, id: TypeId, name: &str, writer: &str) {
-        let ty = &self.resolve.types[id];
-        if ty.name.is_some() {
-            // TODO: Support async
-            uwrite!(self.src, "({name}).WriteToIndex({writer})");
-            return;
-        }
-
-        match &ty.kind {
-            TypeDefKind::List(ty) => {
-                let binary = self.deps.binary();
-                let errgroup = self.deps.errgroup();
-                let fmt = self.deps.fmt();
-                let math = self.deps.math();
-                let slog = self.deps.slog();
-                let wrpc = self.deps.wrpc();
-
-                self.push_str("func(v ");
-                self.print_list(ty);
-                uwrite!(
-                    self.src,
-                    r#", w {wrpc}.ByteWriter) (func({wrpc}.IndexWriter) error, error) {{
-	    n := len(v)
-	    if n > {math}.MaxUint32 {{
-	        return nil, {fmt}.Errorf("list length of %d overflows a 32-bit integer", n)
-	    }}
-	    if err := func(v int, w {wrpc}.ByteWriter) error {{
-	        b := make([]byte, {binary}.MaxVarintLen32)
-	        i := {binary}.PutUvarint(b, uint64(v))
-            {slog}.Debug("writing list length", "len", n)
-	        _, err := w.Write(b[:i])
-	        return err
-        }}(n, w); err != nil {{
-            return nil, {fmt}.Errorf("failed to write list length of %d: %w", n, err)
-        }}
-        {slog}.Debug("writing list elements")
-	    writes := make(map[uint32]func({wrpc}.IndexWriter) error, n)
-        for i, e := range v {{
-            write, err := "#
-                );
-                self.print_write_ty(ty, "e", "w");
-                uwrite!(
-                    self.src,
-                    r#"
-            if err != nil {{
-                return nil, {fmt}.Errorf("failed to write list element %d: %w", i, err)
-            }}
-            if write != nil {{
-                writes[uint32(i)] = write
-            }}
-        }}
-	    if len(writes) > 0 {{
-	    	return func(w {wrpc}.IndexWriter) error {{
-	    		var wg {errgroup}.Group
-	    		for index, write := range writes {{
-	    			w, err := w.Index(index)
-	    			if err != nil {{
-	    				return {fmt}.Errorf("failed to index writer: %w", err)
-	    			}}
-	    			write := write
-	    			wg.Go(func() error {{
-	    				return write(w)
-	    			}})
-	    		}}
-	    		return wg.Wait()
-	    	}}, nil
-	    }}
-	    return nil, nil
-    }}({name}, {writer})"#
-                );
-            }
-
-            TypeDefKind::Option(ty) => {
-                let fmt = self.deps.fmt();
-                let slog = self.deps.slog();
-                let wrpc = self.deps.wrpc();
-
-                self.push_str("func(v ");
-                self.print_option(ty, true);
-                uwrite!(
-                    self.src,
-                    r#", w {wrpc}.ByteWriter) (func({wrpc}.IndexWriter) error, error) {{
-	    if v == nil {{
-	    	{slog}.Debug("writing `option::none` status byte")
-	    	if err := w.WriteByte(0); err != nil {{
-	    		return nil, {fmt}.Errorf("failed to write `option::none` byte: %w", err)
-	    	}}
-	    	return nil, nil
-	    }}
-	    {slog}.Debug("writing `option::some` status byte")
-	    if err := w.WriteByte(1); err != nil {{
-	    	return nil, {fmt}.Errorf("failed to write `option::some` status byte: %w", err)
-	    }}
-	    {slog}.Debug("writing `option::some` payload")
-        write, err := "#
-                );
-
-                let param = match ty {
-                    Type::Id(id) => {
-                        let ty = &self.resolve.types[*id];
-                        match &ty.kind {
-                            TypeDefKind::Enum(..) => "*v",
-                            TypeDefKind::List(..) => "v",
-                            _ => "*v",
-                        }
-                    }
-                    _ => "*v",
-                };
-                self.print_write_ty(ty, param, "w");
-                uwrite!(
-                    self.src,
-                    r#"
-        if err != nil {{
-		    return nil, {fmt}.Errorf("failed to write `option::some` payload: %w", err)
-	    }}
-        if write != nil {{
-	    	return func(w {wrpc}.IndexWriter) error {{
-	    		w, err := w.Index(1)
-	    		if err != nil {{
-	    			return {fmt}.Errorf("failed to index writer: %w", err)
-	    		}}
-                return write(w)
-            }}, nil
-        }}
-	    return nil, nil
-    }}({name}, {writer})"#
-                );
-            }
-
-            TypeDefKind::Result(ty) => {
-                let errors = self.deps.errors();
-                let fmt = self.deps.fmt();
-                let slog = self.deps.slog();
-                let wrpc = self.deps.wrpc();
-
-                self.push_str("func(v *");
-                self.print_result(ty);
-                uwriteln!(
-                    self.src,
-                    r#", w {wrpc}.ByteWriter) (func({wrpc}.IndexWriter) error, error) {{
-        switch {{
-        	case v.Ok == nil && v.Err == nil:
-        		return nil, {errors}.New("both result variants cannot be nil")
-        	case v.Ok != nil && v.Err != nil:
-        		return nil, {errors}.New("exactly one result variant must non-nil")"#
-                );
-                uwriteln!(
-                    self.src,
-                    r#"
-        	case v.Ok != nil:
-        		{slog}.Debug("writing `result::ok` status byte")
-        		if err := w.WriteByte(0); err != nil {{
-        			return nil, {fmt}.Errorf("failed to write `result::ok` status byte: %w", err)
-        		}}"#
-                );
-                if let Some(ref ty) = ty.ok {
-                    uwrite!(
-                        self.src,
-                        r#"{slog}.Debug("writing `result::ok` payload")
-                    write, err := "#
-                    );
-                    self.print_write_ty(ty, "*v.Ok", "w");
-                    uwriteln!(
-                        self.src,
-                        r#"
-                    if err != nil {{
-        			    return nil, {fmt}.Errorf("failed to write `result::ok` payload: %w", err)
-        		    }}
-                    if write != nil {{
-	    	            return func(w {wrpc}.IndexWriter) error {{
-	    		            w, err := w.Index(0)
-	    		            if err != nil {{
-	    		            	return {fmt}.Errorf("failed to index writer: %w", err)
-	    		            }}
-                            return write(w)
-                        }}, nil
-                    }}"#
-                    );
-                }
-                uwriteln!(
-                    self.src,
-                    r#"return nil, nil
-        	default:
-        		{slog}.Debug("writing `result::err` status byte")
-        		if err := w.WriteByte(1); err != nil {{
-        			return nil, {fmt}.Errorf("failed to write `result::err` status byte: %w", err)
-        		}}"#
-                );
-                if let Some(ref ty) = ty.err {
-                    uwrite!(
-                        self.src,
-                        r#"{slog}.Debug("writing `result::err` payload")
-        		write, err := "#
-                    );
-                    self.print_write_ty(ty, "*v.Err", "w");
-                    uwriteln!(
-                        self.src,
-                        r#"
-                if err != nil {{
-        			return nil, {fmt}.Errorf("failed to write `result::err` payload: %w", err)
-        		}}
-                if write != nil {{
-	    	        return func(w {wrpc}.IndexWriter) error {{
-	    		        w, err := w.Index(1)
-	    		        if err != nil {{
-	    		        	return {fmt}.Errorf("failed to index writer: %w", err)
-	    		        }}
-                        return write(w)
-                    }}, nil
-                }}"#
-                    );
-                }
-                uwrite!(
-                    self.src,
-                    r#"return nil, nil
-	    }}
-    }}({name}, {writer})"#
-                );
-            }
-
-            TypeDefKind::Variant(_) => panic!("unsupported anonymous variant"),
-
-            TypeDefKind::Tuple(ty) => match ty.types.as_slice() {
-                [] => self.push_str("error(nil), error(nil)"),
-                [ty] => self.print_write_ty(ty, name, writer),
-                _ => {
-                    let fmt = self.deps.fmt();
-                    let errgroup = self.deps.errgroup();
-                    let wrpc = self.deps.wrpc();
-
-                    self.push_str("func(v ");
-                    self.print_tuple(ty, true);
-                    uwriteln!(
-                        self.src,
-                        r", w {wrpc}.ByteWriter) (func({wrpc}.IndexWriter) error, error) {{
-        writes := make(map[uint32]func({wrpc}.IndexWriter) error, {})",
-                        ty.types.len(),
-                    );
-                    for (i, ty) in ty.types.iter().enumerate() {
-                        let slog = self.deps.slog();
-                        uwrite!(
-                            self.src,
-                            r#"{slog}.Debug("writing tuple element {i}")
-        write{i}, err := "#
-                        );
-                        self.print_write_ty(ty, &format!("v.V{i}"), "w");
-                        uwriteln!(
-                            self.src,
-                            r#"
-        if err != nil {{
-		    return nil, {fmt}.Errorf("failed to write tuple element {i}: %w", err)
-	    }}
-        if write{i} != nil {{
-                writes[{i}] = write{i}
-        }}"#
-                        );
-                    }
-                    uwrite!(
-                        self.src,
-                        r#"if len(writes) > 0 {{
-	    	return func(w {wrpc}.IndexWriter) error {{
-	    		var wg {errgroup}.Group
-	    		for index, write := range writes {{
-	    			w, err := w.Index(index)
-	    			if err != nil {{
-	    				return {fmt}.Errorf("failed to index writer: %w", err)
-	    			}}
-	    			write := write
-	    			wg.Go(func() error {{
-	    				return write(w)
-	    			}})
-	    		}}
-	    		return wg.Wait()
-	    	}}, nil
-	    }}
-        return nil, nil
-    }}({name}, {writer})"#
-                    );
-                }
-            },
-            TypeDefKind::Resource => {
-                panic!("unsupported anonymous type reference: resource")
-            }
-            TypeDefKind::Record(_) => {
-                panic!("unsupported anonymous type reference: record")
-            }
-            TypeDefKind::Flags(_) => {
-                panic!("unsupported anonymous type reference: flags")
-            }
-            TypeDefKind::Enum(_) => {
-                panic!("unsupported anonymous type reference: enum")
-            }
-            TypeDefKind::Future(_ty) => uwrite!(
-                self.src,
-                r#"0, {errors}.New("writing futures not supported yet")"#,
-                errors = self.deps.errors(),
-            ),
-            TypeDefKind::Stream(ty) => match ty.element {
-                Some(Type::U8) => {
-                    uwrite!(
-                        self.src,
-                        r#"func(v {wrpc}.ReadyReader, w {wrpc}.ByteWriter) (write func({wrpc}.IndexWriter) error, err error) {{
-                if v.Ready() {{
-		            defer func() {{
-		            	body, ok := v.({io}.Closer)
-		            	if ok {{
-		            		if cErr := body.Close(); cErr != nil {{
-		            			if err == nil {{
-		            				err = {fmt}.Errorf("failed to close ready byte stream: %w", cErr)
-		            			}} else {{
-		            				slog.Warn("failed to close ready byte stream", "err", cErr)
-		            			}}
-		            		}}
-		            	}}
-		            }}()
-		            {slog}.Debug("writing byte stream `stream::ready` status byte")
-		            if err := w.WriteByte(1); err != nil {{
-		            	return nil, {fmt}.Errorf("failed to write `stream::ready` byte: %w", err)
-		            }}
-		            {slog}.Debug("reading ready byte stream contents")
-		            var buf {bytes}.Buffer
-		            n, err := {io}.Copy(&buf, v)
-		            if err != nil {{
-		            	return nil, {fmt}.Errorf("failed to read ready byte stream contents: %w", err)
-		            }}
-		            {slog}.Debug("writing ready byte stream contents", "len", n)
-		            if err = {wrpc}.WriteByteList(buf.Bytes(), w); err != nil {{
-		            	return nil, {fmt}.Errorf("failed to write ready byte stream contents: %w", err)
-		            }}
-		            return nil, nil
-                }} else {{
-		            {slog}.Debug("writing byte stream `stream::pending` status byte")
-		            if err := w.WriteByte(0); err != nil {{
-		            	return nil, fmt.Errorf("failed to write `stream::pending` byte: %w", err)
-		            }}
-		            return func(w {wrpc}.IndexWriter) (err error) {{
-		            	defer func() {{
-		            		body, ok := v.({io}.Closer)
-		            		if ok {{
-		            			if cErr := body.Close(); cErr != nil {{
-		            				if err == nil {{
-		            					err = {fmt}.Errorf("failed to close pending byte stream: %w", cErr)
-		            				}} else {{
-		            					{slog}.Warn("failed to close pending byte stream", "err", cErr)
-		            				}}
-		            			}}
-		            		}}
-		            	}}()
-		            	chunk := make([]byte, 8096)
-		            	for {{
-		            		var end bool
-		            		{slog}.Debug("reading pending byte stream contents")
-		            		n, err := v.Read(chunk)
-		            		if err == {io}.EOF {{
-		            			end = true
-		            			{slog}.Debug("pending byte stream reached EOF")
-		            		}} else if err != nil {{
-		            			return {fmt}.Errorf("failed to read pending byte stream chunk: %w", err)
-		            		}}
-		            		if n > {math}.MaxUint32 {{
-		            			return {fmt}.Errorf("pending byte stream chunk length of %d overflows a 32-bit integer", n)
-		            		}}
-		            		{slog}.Debug("writing pending byte stream chunk length", "len", n)
-		            		if err := {wrpc}.WriteUint32(uint32(n), w); err != nil {{
-		            			return {fmt}.Errorf("failed to write pending byte stream chunk length of %d: %w", n, err)
-		            		}}
-		            		_, err = w.Write(chunk[:n])
-		            		if err != nil {{
-		            			return {fmt}.Errorf("failed to write pending byte stream chunk contents: %w", err)
-		            		}}
-		            		if end {{
-		            			if err := w.WriteByte(0); err != nil {{
-		            				return {fmt}.Errorf("failed to write pending byte stream end byte: %w", err)
-		            			}}
-		            			return nil
-		            		}}
-		            	}}
-		            }}, nil
-                }}
-            }}({name}, {writer})"#,
-                        bytes = self.deps.bytes(),
-                        fmt = self.deps.fmt(),
-                        io = self.deps.io(),
-                        math = self.deps.math(),
-                        slog = self.deps.slog(),
-                        wrpc = self.deps.wrpc(),
-                    );
-                }
-                _ => uwrite!(
-                    self.src,
-                    r#"0, {errors}.New("writing non-byte streams not supported yet")"#,
-                    errors = self.deps.errors(),
-                ),
-            },
-
-            TypeDefKind::Handle(Handle::Own(_ty)) => uwrite!(
-                self.src,
-                r#"0, {errors}.New("writing owned handles not supported yet")"#,
-                errors = self.deps.errors(),
-            ),
-
-            TypeDefKind::Handle(Handle::Borrow(_ty)) => uwrite!(
-                self.src,
-                r#"0, {errors}.New("writing borrowed handles not supported yet")"#,
-                errors = self.deps.errors(),
-            ),
-
-            TypeDefKind::Type(ty) => self.print_write_ty(ty, name, writer),
-
-            TypeDefKind::Unknown => unreachable!(),
-        }
-    }
-
     fn async_paths_ty(&mut self, ty: &Type) -> (Vec<VecDeque<Option<u32>>>, bool) {
         if let Type::Id(ty) = ty {
             self.async_paths_tyid(*ty)
@@ -1413,10 +1869,10 @@ impl InterfaceGenerator<'_> {
                 let (nested, fut) = self.async_paths_ty(ty);
                 for mut path in nested {
                     path.push_front(None);
-                    paths.push(path)
+                    paths.push(path);
                 }
                 if fut {
-                    paths.push(vec![None].into())
+                    paths.push(vec![None].into());
                 }
                 (paths, false)
             }
@@ -1425,10 +1881,10 @@ impl InterfaceGenerator<'_> {
                 let (nested, fut) = self.async_paths_ty(ty);
                 for mut path in nested {
                     path.push_front(Some(1));
-                    paths.push(path)
+                    paths.push(path);
                 }
                 if fut {
-                    paths.push(vec![Some(1)].into())
+                    paths.push(vec![Some(1)].into());
                 }
                 (paths, false)
             }
@@ -1438,20 +1894,20 @@ impl InterfaceGenerator<'_> {
                     let (nested, fut) = self.async_paths_ty(ty);
                     for mut path in nested {
                         path.push_front(Some(0));
-                        paths.push(path)
+                        paths.push(path);
                     }
                     if fut {
-                        paths.push(vec![Some(0)].into())
+                        paths.push(vec![Some(0)].into());
                     }
                 }
                 if let Some(ty) = ty.err.as_ref() {
                     let (nested, fut) = self.async_paths_ty(ty);
                     for mut path in nested {
                         path.push_front(Some(1));
-                        paths.push(path)
+                        paths.push(path);
                     }
                     if fut {
-                        paths.push(vec![Some(1)].into())
+                        paths.push(vec![Some(1)].into());
                     }
                 }
                 (paths, false)
@@ -1463,10 +1919,10 @@ impl InterfaceGenerator<'_> {
                         let (nested, fut) = self.async_paths_ty(ty);
                         for mut path in nested {
                             path.push_front(Some(i.try_into().unwrap()));
-                            paths.push(path)
+                            paths.push(path);
                         }
                         if fut {
-                            paths.push(vec![Some(i.try_into().unwrap())].into())
+                            paths.push(vec![Some(i.try_into().unwrap())].into());
                         }
                     }
                 }
@@ -1478,10 +1934,10 @@ impl InterfaceGenerator<'_> {
                     let (nested, fut) = self.async_paths_ty(ty);
                     for mut path in nested {
                         path.push_front(Some(i.try_into().unwrap()));
-                        paths.push(path)
+                        paths.push(path);
                     }
                     if fut {
-                        paths.push(vec![Some(i.try_into().unwrap())].into())
+                        paths.push(vec![Some(i.try_into().unwrap())].into());
                     }
                 }
                 (paths, false)
@@ -1492,10 +1948,10 @@ impl InterfaceGenerator<'_> {
                     let (nested, fut) = self.async_paths_ty(ty);
                     for mut path in nested {
                         path.push_front(Some(i.try_into().unwrap()));
-                        paths.push(path)
+                        paths.push(path);
                     }
                     if fut {
-                        paths.push(vec![Some(i.try_into().unwrap())].into())
+                        paths.push(vec![Some(i.try_into().unwrap())].into());
                     }
                 }
                 (paths, false)
@@ -1506,10 +1962,10 @@ impl InterfaceGenerator<'_> {
                     let (nested, fut) = self.async_paths_ty(ty);
                     for mut path in nested {
                         path.push_front(Some(0));
-                        paths.push(path)
+                        paths.push(path);
                     }
                     if fut {
-                        paths.push(vec![Some(0)].into())
+                        paths.push(vec![Some(0)].into());
                     }
                 }
                 (paths, true)
@@ -1520,10 +1976,10 @@ impl InterfaceGenerator<'_> {
                     let (nested, fut) = self.async_paths_ty(ty);
                     for mut path in nested {
                         path.push_front(None);
-                        paths.push(path)
+                        paths.push(path);
                     }
                     if fut {
-                        paths.push(vec![None].into())
+                        paths.push(vec![None].into());
                     }
                 }
                 (paths, true)
@@ -1786,15 +2242,15 @@ impl InterfaceGenerator<'_> {
                     uwrite!(self.src, "{i})");
                     for p in path {
                         if let Some(p) = p {
-                            uwrite!(self.src, ".Index({p})")
+                            uwrite!(self.src, ".Index({p})");
                         } else {
-                            self.push_str(".Wildcard()")
+                            self.push_str(".Wildcard()");
                         }
                     }
-                    self.push_str(", ")
+                    self.push_str(", ");
                 }
                 if fut {
-                    uwrite!(self.src, "{wrpc}.NewSubscribePath().Index({i})");
+                    uwrite!(self.src, "{wrpc}.NewSubscribePath().Index({i}), ");
                 }
             }
             uwriteln!(
@@ -1991,15 +2447,15 @@ impl InterfaceGenerator<'_> {
                 uwrite!(self.src, "{i})");
                 for p in path {
                     if let Some(p) = p {
-                        uwrite!(self.src, ".Index({p})")
+                        uwrite!(self.src, ".Index({p})");
                     } else {
-                        self.push_str(".Wildcard()")
+                        self.push_str(".Wildcard()");
                     }
                 }
-                self.push_str(", ")
+                self.push_str(", ");
             }
             if fut {
-                uwrite!(self.src, "{wrpc}.NewSubscribePath().Index({i})");
+                uwrite!(self.src, "{wrpc}.NewSubscribePath().Index({i}), ");
             }
         }
         self.src.push_str("); err__ != nil {\n");
@@ -2265,8 +2721,9 @@ impl InterfaceGenerator<'_> {
     fn print_future(&mut self, ty: &Option<Type>) {
         let wrpc = self.deps.wrpc();
         self.push_str(wrpc);
-        self.push_str(".ReadyReceiver[");
-        self.print_optional_ty(ty.as_ref());
+        self.push_str(".ReceiveCompleter[");
+        let ty = ty.expect("futures with not element types are not supported");
+        self.print_opt_ty(&ty, true);
         self.push_str("]");
     }
 
@@ -2275,12 +2732,15 @@ impl InterfaceGenerator<'_> {
         self.push_str(wrpc);
         match ty.element {
             Some(Type::U8) => {
-                self.push_str(".ReadyReader");
+                self.push_str(".ReadCompleter");
             }
-            _ => {
-                self.push_str(".ReadyReceiver[[]");
-                self.print_optional_ty(ty.element.as_ref());
+            Some(ty) => {
+                self.push_str(".ReceiveCompleter[");
+                self.print_list(&ty);
                 self.push_str("]");
+            }
+            None => {
+                panic!("streams with no element types are not supported")
             }
         }
     }
@@ -2795,7 +3255,7 @@ func (v *{name}) WriteToIndex(w {wrpc}.ByteWriter) (func({wrpc}.IndexWriter) err
                             return write(w)
                         }}, nil
                     }} "#
-                    )
+                    );
                 }
             }
             self.push_str("default: return nil, ");
