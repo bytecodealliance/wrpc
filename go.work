@@ -3,7 +3,8 @@ go 1.22.2
 use (
 	examples/go/hello-client
 	examples/go/hello-server
-	examples/go/http-outgoing-nats-server
+	examples/go/http-outgoing-client
+	examples/go/http-outgoing-server
 	examples/go/keyvalue-server
 	go
 	tests/go

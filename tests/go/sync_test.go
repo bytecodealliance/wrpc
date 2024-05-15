@@ -1,4 +1,4 @@
-//go:generate $WIT_BINDGEN_WRPC go --world sync-client --out-dir bindings/sync_client --package github.com/wrpc/wrpc/tests/go/bindings/sync_client ../wit
+//go:generate $WIT_BINDGEN_WRPC go --gofmt=false --world sync-client --out-dir bindings/sync_client --package github.com/wrpc/wrpc/tests/go/bindings/sync_client ../wit
 
 package integration_test
 
@@ -153,7 +153,7 @@ func TestSync(t *testing.T) {
 			t.Errorf("failed to call `wrpc-test:integration/sync.with-variant-option`: %s", err)
 			return
 		}
-		expected := sync.NewVar_Var(&sync.Rec{
+		expected := (&sync.Var{}).SetVar(&sync.Rec{
 			Nested: &sync.RecNested{
 				Foo: "bar",
 			},

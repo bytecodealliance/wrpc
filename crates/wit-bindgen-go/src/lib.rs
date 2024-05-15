@@ -379,6 +379,7 @@ impl WorldGenerator for GoWrpc {
         gen.gen.name_interface(resolve, id, name, false);
         gen.types(id);
 
+        let identifier = Identifier::Interface(id, name);
         let interface = &resolve.interfaces[id];
         let name = match name {
             WorldKey::Name(s) => s.to_string(),
@@ -393,7 +394,11 @@ impl WorldGenerator for GoWrpc {
         } else {
             name
         };
-        gen.generate_imports(&instance, resolve.interfaces[id].functions.values());
+        gen.generate_imports(
+            identifier,
+            &instance,
+            resolve.interfaces[id].functions.values(),
+        );
 
         gen.finish_append_submodule(&snake, module_path);
     }
@@ -416,7 +421,11 @@ impl WorldGenerator for GoWrpc {
         } else {
             name.to_string()
         };
-        gen.generate_imports(&instance, funcs.iter().map(|(_, func)| *func));
+        gen.generate_imports(
+            Identifier::World(world),
+            &instance,
+            funcs.iter().map(|(_, func)| *func),
+        );
 
         let src = gen.finish();
         for (k, v) in gen.deps.map {
@@ -563,7 +572,6 @@ enum Identifier<'a> {
 #[derive(Default)]
 struct FnSig {
     self_arg: Option<String>,
-    self_is_first_param: bool,
 }
 
 #[must_use]
