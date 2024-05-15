@@ -913,7 +913,7 @@ func ServeInterface(c wrpc.Client, h Handler) (stop func() error, err error) {
 					x = x | uint32(b)<<s
 					buf := make([]byte, x)
 					slog.Debug("reading byte list contents", "len", x)
-					_, err = r.Read(buf)
+					_, err = io.ReadFull(r, buf)
 					if err != nil {
 						return nil, fmt.Errorf("failed to read byte list contents: %w", err)
 					}
