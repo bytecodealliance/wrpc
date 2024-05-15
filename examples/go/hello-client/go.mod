@@ -1,4 +1,4 @@
-module github.com/wrpc/wrpc/examples/go/hello-server
+module github.com/wrpc/wrpc/examples/go/hello-client
 
 go 1.22.2
 

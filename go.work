@@ -1,0 +1,12 @@
+go 1.22.2
+
+use (
+	examples/go/hello-client
+	examples/go/hello-server
+	examples/go/http-outgoing-nats-server
+	examples/go/keyvalue-server
+	go
+	tests/go
+)
+
+replace github.com/wrpc/wrpc/go v0.0.0-unpublished => ./go
