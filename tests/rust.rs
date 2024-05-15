@@ -3,7 +3,7 @@ use core::pin::pin;
 use core::str;
 use core::time::Duration;
 
-use std::net::Ipv6Addr;
+use std::net::Ipv4Addr;
 use std::sync::Arc;
 
 use anyhow::{anyhow, bail, ensure, Context};
@@ -1445,7 +1445,7 @@ async fn rust_interfaces() -> anyhow::Result<()> {
     {
         use wrpc_interface_http::IncomingHandler;
 
-        let listener = TcpListener::bind((Ipv6Addr::LOCALHOST, 0))
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
             .await
             .context("failed to start TCP listener")?;
         let addr = listener
