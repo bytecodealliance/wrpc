@@ -562,7 +562,6 @@ enum Identifier<'a> {
 
 #[derive(Default)]
 struct FnSig {
-    use_item_name: bool,
     self_arg: Option<String>,
     self_is_first_param: bool,
 }

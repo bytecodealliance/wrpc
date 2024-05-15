@@ -465,25 +465,9 @@ impl InterfaceGenerator<'_> {
     }
 
     fn print_read_list(&mut self, ty: &Type, reader: &str, path: &str) {
-        {
-            let mut ty = *ty;
-            let is_u8 = loop {
-                match ty {
-                    Type::U8 => break true,
-                    Type::Id(id) => {
-                        if let TypeDefKind::Type(t) = self.resolve.types[id].kind {
-                            ty = t;
-                        } else {
-                            break false;
-                        }
-                    }
-                    _ => break false,
-                }
-            };
-            if is_u8 {
-                self.print_read_byte_list(reader);
-                return;
-            }
+        if self.is_ty(Type::U8, ty) {
+            self.print_read_byte_list(reader);
+            return;
         }
         let fmt = self.deps.fmt();
         let io = self.deps.io();
@@ -569,7 +553,7 @@ impl InterfaceGenerator<'_> {
 	    }}
 	    return "#,
         );
-        self.result_element_ptr(ty, false);
+        self.print_result_element_ptr(ty, false);
         uwrite!(
             self.src,
             r#"v, nil
@@ -629,7 +613,7 @@ impl InterfaceGenerator<'_> {
             self.push_str("return &");
             self.print_result(ty);
             self.push_str("{ Err: ");
-            self.result_element_ptr(err, false);
+            self.print_result_element_ptr(err, false);
         } else {
             self.push_str("var v struct{}\n");
             self.push_str("return &");
@@ -685,7 +669,7 @@ impl InterfaceGenerator<'_> {
 
     fn print_read_stream(&mut self, Stream { element, .. }: &Stream, reader: &str, path: &str) {
         match element {
-            Some(Type::U8) => {
+            Some(ty) if self.is_ty(Type::U8, ty) => {
                 let bytes = self.deps.bytes();
                 let fmt = self.deps.fmt();
                 let slog = self.deps.slog();
@@ -1415,7 +1399,7 @@ impl InterfaceGenerator<'_> {
 
     fn print_write_stream(&mut self, Stream { element, .. }: &Stream, name: &str, writer: &str) {
         match element {
-            Some(Type::U8) => {
+            Some(ty) if self.is_ty(Type::U8, ty) => {
                 let bytes = self.deps.bytes();
                 let fmt = self.deps.fmt();
                 let io = self.deps.io();
@@ -1854,6 +1838,22 @@ impl InterfaceGenerator<'_> {
         }
     }
 
+    fn is_ty(&mut self, expected: Type, ty: &Type) -> bool {
+        let mut ty = *ty;
+        loop {
+            if ty == expected {
+                return true;
+            }
+            if let Type::Id(id) = ty {
+                if let TypeDefKind::Type(t) = self.resolve.types[id].kind {
+                    ty = t;
+                    continue;
+                }
+            }
+            return false;
+        }
+    }
+
     fn async_paths_ty(&mut self, ty: &Type) -> (Vec<VecDeque<Option<u32>>>, bool) {
         if let Type::Id(ty) = ty {
             self.async_paths_tyid(*ty)
@@ -2000,10 +2000,10 @@ impl InterfaceGenerator<'_> {
         funcs: impl Clone + ExactSizeIterator<Item = &'a Function>,
     ) -> bool {
         let mut traits = BTreeMap::new();
-        let mut funcs_to_export = Vec::new();
-        let mut resources_to_drop = Vec::new();
+        let mut funcs_to_export = vec![];
+        let mut resources_to_drop = vec![];
 
-        traits.insert(None, ("Handler".to_string(), Vec::new()));
+        traits.insert(None, ("Handler".to_string(), (vec![], vec![])));
 
         if let Identifier::Interface(id, ..) = identifier {
             for (name, id) in &self.resolve.interfaces[id].types {
@@ -2012,79 +2012,108 @@ impl InterfaceGenerator<'_> {
                     _ => continue,
                 }
                 resources_to_drop.push(name);
-                let camel = name.to_upper_camel_case();
-                traits.insert(Some(*id), (format!("Handler{camel}"), Vec::new()));
+                let camel = to_upper_camel_case(name);
+                traits.insert(Some(*id), (camel, (vec![], vec![])));
             }
         }
 
-        let n = funcs.len();
         for func in funcs {
             if self.gen.skip.contains(&func.name) {
                 continue;
             }
 
-            let resource = match func.kind {
-                FunctionKind::Freestanding => None,
-                FunctionKind::Method(id)
-                | FunctionKind::Constructor(id)
-                | FunctionKind::Static(id) => Some(id),
+            let resource = if let FunctionKind::Method(id) = func.kind {
+                Some(id)
+            } else {
+                funcs_to_export.push(func);
+                None
             };
-            funcs_to_export.push(func);
-            let (_, methods) = traits.get_mut(&resource).unwrap();
+            let (_, (handler_methods, client_methods)) = traits.get_mut(&resource).unwrap();
 
             let prev = mem::take(&mut self.src);
             let sig = FnSig {
-                use_item_name: true,
                 ..Default::default()
             };
             self.print_docs_and_params(func, &sig);
-            if let FunctionKind::Constructor(_) = &func.kind {
-                uwriteln!(self.src, " ({}, error)", "Self"); // TODO: Use the correct Go name
+            if let FunctionKind::Constructor(id) = &func.kind {
+                let ty = &self.resolve.types[*id];
+                let Some(name) = &ty.name else {
+                    panic!("unnamed resources are not supported")
+                };
+                let camel = name.to_upper_camel_case();
+                let name = self.type_path_with_name(*id, format!("Handler{camel}"));
+                self.push_str(" (");
+                self.push_str(&name);
+                self.push_str(", error)");
             } else {
                 self.src.push_str(" (");
-                for (i, ty) in func.results.iter_types().enumerate() {
-                    uwrite!(self.src, "r{i}__ ");
+                for ty in func.results.iter_types() {
                     self.print_opt_ty(ty, true);
                     self.src.push_str(", ");
                 }
-                self.push_str("err__ error) ");
+                self.push_str("error) ");
             }
-            self.push_str("\n\n");
+            self.push_str("\n");
             let trait_method = mem::replace(&mut self.src, prev);
-            methods.push(trait_method);
+            handler_methods.push(trait_method);
+
+            if matches!(func.kind, FunctionKind::Method(..)) {
+                let prev = mem::take(&mut self.src);
+                let sig = FnSig {
+                    ..Default::default()
+                };
+                self.in_import = true;
+                self.print_docs_and_params(func, &sig);
+                self.src.push_str(" (");
+                for ty in func.results.iter_types() {
+                    self.print_opt_ty(ty, true);
+                    self.src.push_str(", ");
+                }
+                self.push_str("func() error, error)\n");
+                let trait_method = mem::replace(&mut self.src, prev);
+                client_methods.push(trait_method);
+                self.in_import = false;
+            }
         }
 
-        let (name, methods) = traits.remove(&None).unwrap();
+        let (name, (methods, _)) = traits.remove(&None).unwrap();
         if !methods.is_empty() || !traits.is_empty() {
-            self.generate_interface_trait(
-                &name,
-                &methods,
-                traits.iter().map(|(resource, (trait_name, _methods))| {
-                    (resource.unwrap(), trait_name.as_str())
-                }),
-            );
-        }
-
-        for (trait_name, methods) in traits.values() {
-            uwriteln!(self.src, "type {trait_name} interface {{");
-            for method in methods {
+            uwriteln!(self.src, "type {name} interface {{");
+            for method in &methods {
                 self.src.push_str(method);
             }
             uwriteln!(self.src, "}}");
         }
 
-        if !funcs_to_export
-            .iter()
-            .any(|Function { kind, .. }| matches!(kind, FunctionKind::Freestanding))
-        {
-            return false;
+        for (trait_name, (handler_methods, client_methods)) in traits.values() {
+            uwriteln!(self.src, "type Handler{trait_name} interface {{");
+            for method in handler_methods {
+                self.src.push_str(method);
+            }
+            uwriteln!(self.src, "}}");
+            uwriteln!(self.src, "type {trait_name} interface {{");
+            for method in client_methods {
+                self.src.push_str(method);
+            }
+            let context = self.deps.context();
+            let wrpc = self.deps.wrpc();
+            uwriteln!(
+                self.src,
+                "Drop(ctx__ {context}.Context, wrpc__ {wrpc}.Client) error"
+            );
+            uwriteln!(self.src, "}}");
         }
+
         uwriteln!(
             self.src,
             "func ServeInterface(c {wrpc}.Client, h Handler) (stop func() error, err error) {{",
             wrpc = self.deps.wrpc(),
         );
-        uwriteln!(self.src, r#"stops := make([]func() error, 0, {n})"#);
+        uwriteln!(
+            self.src,
+            r#"stops := make([]func() error, 0, {})"#,
+            funcs_to_export.len()
+        );
         self.src.push_str(
             r"stop = func() error {
             for _, stop := range stops {
@@ -2124,20 +2153,8 @@ impl InterfaceGenerator<'_> {
                 }
             }
         };
-        for (
-            i,
-            Function {
-                kind,
-                name,
-                params,
-                results,
-                ..
-            },
-        ) in funcs_to_export.iter().enumerate()
-        {
-            if !matches!(kind, FunctionKind::Freestanding) {
-                continue;
-            }
+        for (i, func) in funcs_to_export.iter().enumerate() {
+            let name = &func.name;
             let bytes = self.deps.bytes();
             let errgroup = self.deps.errgroup();
             let context = self.deps.context();
@@ -2148,7 +2165,7 @@ impl InterfaceGenerator<'_> {
                 self.src,
                 r#"stop{i}, err := c.Serve("{instance}", "{name}", func(ctx {context}.Context, w {wrpc}.IndexWriter, r {wrpc}.IndexReadCloser) error {{"#,
             );
-            for (i, (_, ty)) in params.iter().enumerate() {
+            for (i, (_, ty)) in func.params.iter().enumerate() {
                 uwrite!(
                     self.src,
                     r#"{slog}.DebugContext(ctx, "reading parameter", "i", {i})
@@ -2165,17 +2182,17 @@ impl InterfaceGenerator<'_> {
                 self.src,
                 r#"{slog}.DebugContext(ctx, "calling `{instance}.{name}` handler")"#,
             );
-            for (i, _) in results.iter_types().enumerate() {
+            for (i, _) in func.results.iter_types().enumerate() {
                 uwrite!(self.src, "r{i}, ");
             }
             self.push_str("err ");
-            if results.len() > 0 {
+            if func.results.len() > 0 {
                 self.push_str(":");
             }
             self.push_str("= h.");
-            self.push_str(&name.to_upper_camel_case());
+            self.push_str(&self.func_name(&func));
             self.push_str("(ctx");
-            for (i, _) in params.iter().enumerate() {
+            for (i, _) in func.params.iter().enumerate() {
                 uwrite!(self.src, ", p{i}");
             }
             self.push_str(")\n");
@@ -2191,9 +2208,9 @@ impl InterfaceGenerator<'_> {
                 r"
             var buf {bytes}.Buffer
             writes := make(map[uint32]func({wrpc}.IndexWriter) error, {})",
-                results.len()
+                func.results.len()
             );
-            for (i, ty) in results.iter_types().enumerate() {
+            for (i, ty) in func.results.iter_types().enumerate() {
                 uwrite!(self.src, "write{i}, err :=");
                 self.print_write_ty(ty, &format!("r{i}"), "&buf");
                 self.push_str("\n");
@@ -2234,7 +2251,7 @@ impl InterfaceGenerator<'_> {
                 return nil
              }}"#,
             );
-            for (i, (_, ty)) in params.iter().enumerate() {
+            for (i, (_, ty)) in func.params.iter().enumerate() {
                 let (nested, fut) = self.async_paths_ty(ty);
                 for path in nested {
                     self.push_str(wrpc);
@@ -2265,27 +2282,6 @@ impl InterfaceGenerator<'_> {
         self.push_str("return stop, nil\n");
         self.push_str("}\n");
         true
-    }
-
-    fn generate_interface_trait<'a>(
-        &mut self,
-        trait_name: &str,
-        methods: &[Source],
-        resource_traits: impl Iterator<Item = (TypeId, &'a str)>,
-    ) {
-        uwriteln!(self.src, "type {trait_name} interface {{");
-        for (id, trait_name) in resource_traits {
-            let name = self.resolve.types[id]
-                .name
-                .as_ref()
-                .unwrap()
-                .to_upper_camel_case();
-            uwriteln!(self.src, "//type {name} {trait_name}");
-        }
-        for method in methods {
-            self.src.push_str(method);
-        }
-        uwriteln!(self.src, "}}");
     }
 
     pub fn generate_imports<'a>(
@@ -2346,7 +2342,6 @@ impl InterfaceGenerator<'_> {
                 // TODO: Generate
                 //let name = self.resolve.types[id].name.as_ref().unwrap();
                 //let name = to_upper_camel_case(name);
-                //sig.use_item_name = true;
                 //if let FunctionKind::Method(_) = &func.kind {
                 //    sig.self_arg = Some(format!("self__ {name}"));
                 //    sig.self_is_first_param = true;
@@ -2521,30 +2516,47 @@ impl InterfaceGenerator<'_> {
         // }
     }
 
+    fn func_name(&self, func: &Function) -> String {
+        match &func.kind {
+            FunctionKind::Constructor(ty) => to_upper_camel_case(
+                self.resolve.types[*ty]
+                    .name
+                    .as_ref()
+                    .expect("unnamed resource"),
+            ),
+            FunctionKind::Static(..) => {
+                let name = func
+                    .name
+                    .strip_prefix("[static]")
+                    .expect("failed to strip `[static]` prefix");
+                let (res, name) = name
+                    .split_once('.')
+                    .expect("missing '.' in static function name");
+                format!(
+                    "{}_{}",
+                    res.to_upper_camel_case(),
+                    name.to_upper_camel_case()
+                )
+            }
+            _ => to_upper_camel_case(func.item_name()),
+        }
+    }
+
     fn print_docs_and_params(&mut self, func: &Function, sig: &FnSig) -> Vec<String> {
         self.godoc(&func.docs);
         self.godoc_params(&func.params, "Parameters");
         // TODO: re-add this when docs are back
         // self.godoc_params(&func.results, "Return");
 
-        if self.in_import {
+        if self.in_import && !matches!(func.kind, FunctionKind::Method(..)) {
             self.push_str("func ");
         }
-        let func_name = if sig.use_item_name {
-            if let FunctionKind::Constructor(_) = &func.kind {
-                "New"
-            } else {
-                func.item_name()
-            }
-        } else {
-            &func.name
-        };
         if let Some(arg) = &sig.self_arg {
             self.push_str("(");
             self.push_str(arg);
             self.push_str(")");
         }
-        self.push_str(&func_name.to_upper_camel_case());
+        self.push_str(&self.func_name(func));
         let context = self.deps.context();
         uwrite!(self.src, "(ctx__ {context}.Context, ");
         if self.in_import {
@@ -2554,8 +2566,7 @@ impl InterfaceGenerator<'_> {
         let mut params = Vec::new();
         for (i, (name, param)) in func.params.iter().enumerate() {
             if let FunctionKind::Method(..) = &func.kind {
-                if i == 0 && sig.self_is_first_param {
-                    params.push("self".to_string());
+                if i == 0 {
                     continue;
                 }
             }
@@ -2606,16 +2617,16 @@ impl InterfaceGenerator<'_> {
         name
     }
 
-    fn result_element_ptr(&mut self, ty: &Type, decl: bool) {
+    fn print_result_element_ptr(&mut self, ty: &Type, decl: bool) {
         if let Type::Id(id) = ty {
             match &self.resolve.types[*id].kind {
                 TypeDefKind::Option(..) | TypeDefKind::List(..) | TypeDefKind::Enum(..) => {}
                 TypeDefKind::Tuple(Tuple { types }) if types.len() == 1 => {
-                    self.result_element_ptr(&types[0], decl);
+                    self.print_result_element_ptr(&types[0], decl);
                     return;
                 }
                 TypeDefKind::Type(ty) => {
-                    self.result_element_ptr(ty, decl);
+                    self.print_result_element_ptr(ty, decl);
                     return;
                 }
                 _ => return,
@@ -2666,6 +2677,10 @@ impl InterfaceGenerator<'_> {
                     TypeDefKind::Tuple(ty) => self.print_tuple(ty, decl),
                     TypeDefKind::Future(ty) => self.print_future(ty),
                     TypeDefKind::Stream(ty) => self.print_stream(ty),
+                    TypeDefKind::Type(ty) => self.print_opt_ty(ty, decl),
+                    TypeDefKind::Handle(Handle::Own(id) | Handle::Borrow(id)) => {
+                        self.print_tyid(*id, decl)
+                    }
                     _ => {
                         if decl {
                             self.push_str("*");
@@ -2727,11 +2742,11 @@ impl InterfaceGenerator<'_> {
         self.push_str("]");
     }
 
-    fn print_stream(&mut self, ty: &Stream) {
+    fn print_stream(&mut self, Stream { element, .. }: &Stream) {
         let wrpc = self.deps.wrpc();
         self.push_str(wrpc);
-        match ty.element {
-            Some(Type::U8) => {
+        match element {
+            Some(ty) if self.is_ty(Type::U8, ty) => {
                 self.push_str(".ReadCompleter");
             }
             Some(ty) => {
@@ -2752,53 +2767,21 @@ impl InterfaceGenerator<'_> {
             self.push_str(&name);
             return;
         }
-
         match &ty.kind {
             TypeDefKind::List(t) => self.print_list(t),
             TypeDefKind::Option(t) => self.print_option(t, decl),
             TypeDefKind::Result(r) => self.print_result(r),
-
             TypeDefKind::Variant(_) => panic!("unsupported anonymous variant"),
-
-            // Tuple-like records are mapped directly to wrpc tuples of
-            // types.
             TypeDefKind::Tuple(t) => self.print_tuple(t, decl),
-            TypeDefKind::Resource => {
-                panic!("unsupported anonymous type reference: resource")
-            }
-            TypeDefKind::Record(_) => {
-                panic!("unsupported anonymous type reference: record")
-            }
-            TypeDefKind::Flags(_) => {
-                panic!("unsupported anonymous type reference: flags")
-            }
-            TypeDefKind::Enum(_) => {
-                panic!("unsupported anonymous type reference: enum")
-            }
+            TypeDefKind::Resource => panic!("unsupported anonymous type reference: resource"),
+            TypeDefKind::Record(_) => panic!("unsupported anonymous type reference: record"),
+            TypeDefKind::Flags(_) => panic!("unsupported anonymous type reference: flags"),
+            TypeDefKind::Enum(_) => panic!("unsupported anonymous type reference: enum"),
             TypeDefKind::Future(ty) => self.print_future(ty),
             TypeDefKind::Stream(ty) => self.print_stream(ty),
-
-            TypeDefKind::Handle(Handle::Own(ty)) => {
-                self.print_ty(&Type::Id(*ty), decl);
-            }
-
-            TypeDefKind::Handle(Handle::Borrow(ty)) => {
-                if self.is_exported_resource(*ty) {
-                    let camel = self.resolve.types[*ty]
-                        .name
-                        .as_deref()
-                        .unwrap()
-                        .to_upper_camel_case();
-                    let name = self.type_path_with_name(*ty, format!("{camel}Borrow"));
-                    self.push_str(&name);
-                } else {
-                    let ty = &Type::Id(*ty);
-                    self.print_ty(ty, decl);
-                }
-            }
-
+            TypeDefKind::Handle(Handle::Own(ty)) => self.print_ty(&Type::Id(*ty), decl),
+            TypeDefKind::Handle(Handle::Borrow(ty)) => self.print_ty(&Type::Id(*ty), decl),
             TypeDefKind::Type(t) => self.print_ty(t, decl),
-
             TypeDefKind::Unknown => unreachable!(),
         }
     }
@@ -2986,13 +2969,8 @@ func (v *{name}) WriteToIndex(w {wrpc}.ByteWriter) (func({wrpc}.IndexWriter) err
         }
     }
 
-    fn type_resource(&mut self, id: TypeId, _name: &str, docs: &Docs) {
-        // TODO: Support resources
-        if let Some(name) = self.name_of(id) {
-            self.godoc(docs);
-            self.push_str(&format!("type {name}"));
-            self.push_str(" = struct{}\n");
-        }
+    fn type_resource(&mut self, _id: TypeId, _name: &str, _docs: &Docs) {
+        // appropriate interfaces will be generated in imports and exports
     }
 
     fn type_tuple(&mut self, id: TypeId, _name: &str, tuple: &Tuple, docs: &Docs) {
@@ -3449,17 +3427,6 @@ func (v *{name}) WriteToIndex(w {wrpc}.ByteWriter) (func({wrpc}.IndexWriter) err
             self.push_str(&format!("type {name}"));
             self.push_str(" = ");
             self.print_ty(ty, true);
-            self.push_str("\n");
-        }
-
-        if self.is_exported_resource(id) {
-            self.godoc(docs);
-            let name = self.resolve.types[id].name.as_ref().unwrap();
-            let name = name.to_upper_camel_case();
-            self.push_str(&format!("type {name}Borrow"));
-            self.push_str(" = ");
-            self.print_ty(ty, true);
-            self.push_str("Borrow");
             self.push_str("\n");
         }
     }

@@ -1,65 +1,26 @@
+//go:generate $WIT_BINDGEN_WRPC go --world sync-client --out-dir bindings/sync_client --package github.com/wrpc/wrpc/tests/go/bindings/sync_client ../wit
+
 package integration_test
 
 import (
 	"context"
-	"io"
 	"log/slog"
-	"os"
 	"reflect"
 	"testing"
 	"time"
 
-	"github.com/nats-io/nats-server/v2/server"
-	"github.com/nats-io/nats-server/v2/test"
 	"github.com/nats-io/nats.go"
 	wrpc "github.com/wrpc/wrpc/go"
 	wrpcnats "github.com/wrpc/wrpc/go/nats"
 	integration "github.com/wrpc/wrpc/tests/go"
-	"github.com/wrpc/wrpc/tests/go/bindings/async_client/wrpc_test/integration/async"
-	"github.com/wrpc/wrpc/tests/go/bindings/async_server"
 	"github.com/wrpc/wrpc/tests/go/bindings/sync_client/foo"
 	"github.com/wrpc/wrpc/tests/go/bindings/sync_client/wrpc_test/integration/sync"
 	"github.com/wrpc/wrpc/tests/go/bindings/sync_server"
+	"github.com/wrpc/wrpc/tests/go/internal"
 )
 
-func init() {
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
-		AddSource: true,
-		Level:     slog.LevelDebug,
-		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
-			if a.Key == slog.TimeKey {
-				return slog.Attr{}
-			}
-			return a
-		},
-	})))
-}
-
-func runNats(t *testing.T) *server.Server {
-	opts := test.DefaultTestOptions
-	opts.Cluster.Compression.Mode = server.CompressionOff
-	opts.Cluster.PoolSize = -1
-	opts.Debug = true
-	opts.LeafNode.Compression.Mode = server.CompressionOff
-	opts.NoLog = false
-	opts.Port = -1
-	opts.Trace = true
-	opts.TraceVerbose = true
-
-	s, err := server.NewServer(&opts)
-	if err != nil {
-		t.Fatal("failed to contruct NATS server")
-	}
-	s.ConfigureLogger()
-	go s.Start()
-	if !s.ReadyForConnections(10 * time.Second) {
-		t.Fatal("failed to start NATS Server")
-	}
-	return s
-}
-
 func TestSync(t *testing.T) {
-	natsSrv := runNats(t)
+	natsSrv := internal.RunNats(t)
 	nc, err := nats.Connect(natsSrv.ClientURL())
 	if err != nil {
 		t.Errorf("failed to connect to NATS.io: %s", err)
@@ -277,118 +238,6 @@ func TestSync(t *testing.T) {
 
 	if err = stop(); err != nil {
 		t.Errorf("failed to stop serving `sync-server` world: %s", err)
-		return
-	}
-}
-
-func TestAsync(t *testing.T) {
-	natsSrv := runNats(t)
-	nc, err := nats.Connect(natsSrv.ClientURL())
-	if err != nil {
-		t.Errorf("failed to connect to NATS.io: %s", err)
-		return
-	}
-	defer nc.Close()
-	defer func() {
-		if err := nc.Drain(); err != nil {
-			t.Errorf("failed to drain NATS.io connection: %s", err)
-			return
-		}
-	}()
-	client := wrpcnats.NewClient(nc, "go")
-
-	stop, err := async_server.Serve(client, integration.AsyncHandler{})
-	if err != nil {
-		t.Errorf("failed to serve `async-server` world: %s", err)
-		return
-	}
-
-	var cancel func()
-	ctx := context.Background()
-	dl, ok := t.Deadline()
-	if ok {
-		ctx, cancel = context.WithDeadline(ctx, dl)
-	} else {
-		ctx, cancel = context.WithTimeout(ctx, time.Minute)
-	}
-	defer cancel()
-
-	{
-		slog.DebugContext(ctx, "calling `wrpc-test:integration/async.with-streams`")
-		byteRx, stringListRx, shutdown, err := async.WithStreams(ctx, client, true)
-		if err != nil {
-			t.Errorf("failed to call `wrpc-test:integration/async.with-streams`: %s", err)
-			return
-		}
-		b, err := io.ReadAll(byteRx)
-		if err != nil {
-			t.Errorf("failed to read from stream: %s", err)
-			return
-		}
-		if string(b) != "test" {
-			t.Errorf("expected: `test`, got: %s", string(b))
-			return
-		}
-		ss, err := stringListRx.Receive()
-		if err != nil {
-			t.Errorf("failed to receive ready list<string> stream: %s", err)
-			return
-		}
-		expected := [][]string{{"foo", "bar"}, {"baz"}}
-		if !reflect.DeepEqual(ss, expected) {
-			t.Errorf("expected: `%#v`, got: %#v", expected, ss)
-			return
-		}
-		ss, err = stringListRx.Receive()
-		if ss != nil || err != io.EOF {
-			t.Errorf("ready list<string> should have returned (nil, io.EOF), got: (%#v, %v)", ss, err)
-			return
-		}
-		if err := shutdown(); err != nil {
-			t.Errorf("failed to shutdown: %s", err)
-			return
-		}
-	}
-
-	{
-		slog.DebugContext(ctx, "calling `wrpc-test:integration/async.with-streams`")
-		byteRx, stringListRx, shutdown, err := async.WithStreams(ctx, client, false)
-		if err != nil {
-			t.Errorf("failed to call `wrpc-test:integration/async.with-streams`: %s", err)
-			return
-		}
-		b, err := io.ReadAll(byteRx)
-		if err != nil {
-			t.Errorf("failed to read from stream: %s", err)
-			return
-		}
-		if string(b) != "test" {
-			t.Errorf("expected: `test`, got: %s", string(b))
-			return
-		}
-		ss, err := stringListRx.Receive()
-		if err != nil {
-			t.Errorf("failed to receive ready list<string> stream: %s", err)
-			return
-		}
-		expected := [][]string{{"foo", "bar"}, {"baz"}}
-		if !reflect.DeepEqual(ss, expected) {
-			t.Errorf("expected: `%#v`, got: %#v", expected, ss)
-			return
-		}
-		ss, err = stringListRx.Receive()
-		if ss != nil || err != io.EOF {
-			t.Errorf("ready list<string> should have returned (nil, io.EOF), got: (%#v, %v)", ss, err)
-			return
-		}
-		if err := shutdown(); err != nil {
-			t.Errorf("failed to shutdown: %s", err)
-			return
-		}
-	}
-
-	if err = stop(); err != nil {
-		t.Errorf("failed to stop serving `async-server` world: %s", err)
 		return
 	}
 }

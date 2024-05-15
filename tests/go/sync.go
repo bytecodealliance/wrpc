@@ -1,12 +1,8 @@
 //go:generate $WIT_BINDGEN_WRPC go --world sync-server --out-dir bindings/sync_server --package github.com/wrpc/wrpc/tests/go/bindings/sync_server ../wit
-//go:generate $WIT_BINDGEN_WRPC go --world sync-client --out-dir bindings/sync_client --package github.com/wrpc/wrpc/tests/go/bindings/sync_client ../wit
-//go:generate $WIT_BINDGEN_WRPC go --world async-server --out-dir bindings/async_server --package github.com/wrpc/wrpc/tests/go/bindings/async_server ../wit
-//go:generate $WIT_BINDGEN_WRPC go --world async-client --out-dir bindings/async_client --package github.com/wrpc/wrpc/tests/go/bindings/async_client ../wit
 
 package integration
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"log/slog"
@@ -108,17 +104,4 @@ func (SyncHandler) WithRecordTuple(ctx context.Context) (*wrpc.Tuple2[*sync.Rec,
 
 func (SyncHandler) WithEnum(ctx context.Context) (sync.Foobar, error) {
 	return sync.Foobar_Bar, nil
-}
-
-type AsyncHandler struct{}
-
-func (AsyncHandler) WithStreams(ctx context.Context, complete bool) (wrpc.ReadCompleter, wrpc.ReceiveCompleter[[][]string], error) {
-	slog.DebugContext(ctx, "handling `with-streams`", "complete", complete)
-	buf := bytes.NewBuffer([]byte("test"))
-	str := wrpc.NewCompleteReceiver([][]string{{"foo", "bar"}, {"baz"}})
-	if complete {
-		return wrpc.NewCompleteReader(buf), str, nil
-	} else {
-		return wrpc.NewPendingByteReader(buf), wrpc.NewPendingReceiver(str), nil
-	}
 }

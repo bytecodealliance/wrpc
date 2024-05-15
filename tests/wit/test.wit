@@ -39,6 +39,16 @@ interface async {
     with-streams: func(complete: bool) -> (bytes: stream<u8>, lists: stream<list<string>>);
 }
 
+interface resources {
+    resource foo {
+        constructor();
+        foo: static func(v: foo) -> string;
+        bar: func() -> string;
+    }
+
+    bar: func(v: foo) -> string;
+}
+
 world sync-server {
     export sync;
 
@@ -63,4 +73,18 @@ world async-server {
 
 world async-client {
     import async;
+}
+
+world resources-server {
+    export resources;
+
+    export strange: interface {
+        use resources.{foo};
+
+        bar: func(v: foo) -> string;
+    }
+}
+
+world resources-client {
+    import resources;
 }
