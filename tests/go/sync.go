@@ -1,4 +1,4 @@
-//go:generate $WIT_BINDGEN_WRPC go --world sync-server --out-dir bindings/sync_server --package github.com/wrpc/wrpc/tests/go/bindings/sync_server ../wit
+//go:generate $WIT_BINDGEN_WRPC go --gofmt=false --world sync-server --out-dir bindings/sync_server --package github.com/wrpc/wrpc/tests/go/bindings/sync_server ../wit
 
 package integration
 
@@ -52,7 +52,7 @@ func (SyncHandler) WithFlags(ctx context.Context, a, b, c bool) (*sync.Abc, erro
 func (SyncHandler) WithVariantOption(ctx context.Context, ok bool) (*sync.Var, error) {
 	slog.DebugContext(ctx, "handling `with-variant-option`", "ok", ok)
 	if ok {
-		return sync.NewVar_Var(&sync.Rec{
+		return (&sync.Var{}).SetVar(&sync.Rec{
 			Nested: &sync.RecNested{
 				Foo: "bar",
 			},
