@@ -50,5 +50,16 @@ replace github.com/wrpc/wrpc/go v0.0.0-unpublished => {}"#,
         ),
     )
     .unwrap_or_else(|_| panic!("failed to write `{}`", go_mod.display()));
-    test_helpers::run_command(Command::new("go").args(["test", "./..."]).current_dir(dir));
+    test_helpers::run_command(
+        Command::new("go")
+            .env("GOWORK", "off")
+            .args(["mod", "tidy"])
+            .current_dir(dir),
+    );
+    test_helpers::run_command(
+        Command::new("go")
+            .env("GOWORK", "off")
+            .args(["test", "./..."])
+            .current_dir(dir),
+    );
 }
