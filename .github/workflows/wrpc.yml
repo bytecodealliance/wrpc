@@ -150,6 +150,23 @@ jobs:
       - uses: ./.github/actions/install-nix
         with:
           cachixAuthToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
+      - run: go mod vendor -e -v
+        working-directory: tests/go
+        if: ${{ matrix.check }} == "nextest" 
+      - run: go mod vendor -e -v
+        working-directory: examples/go/hello-client
+        if: ${{ matrix.check }} == "nextest" 
+      - run: go mod vendor -e -v
+        working-directory: examples/go/hello-server
+        if: ${{ matrix.check }} == "nextest" 
+      - run: go mod vendor -e -v
+        working-directory: examples/go/http-outgoing-nats-server
+        if: ${{ matrix.check }} == "nextest" 
+      - run: go mod vendor -e -v
+        working-directory: examples/go/keyvalue-server
+        if: ${{ matrix.check }} == "nextest" 
+      - run: git add .
+        if: ${{ matrix.check }} == "nextest" 
       - run: nix build -L .#checks.x86_64-linux.${{ matrix.check }}
 
   build-doc:
