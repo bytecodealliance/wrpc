@@ -53,7 +53,7 @@ func TestResources(t *testing.T) {
 	var foo wrpc.Own[resources.Foo]
 	{
 		slog.DebugContext(ctx, "calling `wrpc-test:integration/resources.[constructor]foo`")
-		v, shutdown, err := resources.NewFoo(context.Background(), client)
+		v, shutdown, err := resources.NewFoo(ctx, client)
 		if err != nil {
 			t.Errorf("failed to call `wrpc-test:integration/resources.[constructor]foo`: %s", err)
 			return
@@ -71,7 +71,7 @@ func TestResources(t *testing.T) {
 
 	{
 		slog.DebugContext(ctx, "calling `wrpc-test:integration/resources.[constructor]foo`")
-		v, shutdown, err := resources.NewFoo(context.Background(), client)
+		v, shutdown, err := resources.NewFoo(ctx, client)
 		if err != nil {
 			t.Errorf("failed to call `wrpc-test:integration/resources.[constructor]foo`: %s", err)
 			return
@@ -85,7 +85,7 @@ func TestResources(t *testing.T) {
 
 	{
 		slog.DebugContext(ctx, "calling `wrpc-test:integration/resources.[method]foo.bar`")
-		v, shutdown, err := resources.FooBar(context.Background(), client, foo.Borrow())
+		v, shutdown, err := resources.FooBar(ctx, client, foo.Borrow())
 		if err != nil {
 			t.Errorf("failed to call `wrpc-test:integration/resources.[method]foo.bar`: %s", err)
 			return
@@ -102,7 +102,7 @@ func TestResources(t *testing.T) {
 
 	{
 		slog.DebugContext(ctx, "calling `wrpc-test:integration/resources.bar`")
-		v, shutdown, err := resources.Bar(context.Background(), client, foo.Borrow())
+		v, shutdown, err := resources.Bar(ctx, client, foo.Borrow())
 		if err != nil {
 			t.Errorf("failed to call `wrpc-test:integration/resources.bar`: %s", err)
 			return
@@ -119,7 +119,7 @@ func TestResources(t *testing.T) {
 
 	{
 		slog.DebugContext(ctx, "calling `wrpc-test:integration/strange.bar`")
-		v, shutdown, err := strange.Bar(context.Background(), client, foo.Borrow())
+		v, shutdown, err := strange.Bar(ctx, client, foo.Borrow())
 		if err != nil {
 			t.Errorf("failed to call `wrpc-test:integration/strange.bar`: %s", err)
 			return
@@ -136,7 +136,7 @@ func TestResources(t *testing.T) {
 
 	{
 		slog.DebugContext(ctx, "calling `wrpc-test:integration/resources.[static]foo.foo`")
-		v, shutdown, err := resources.FooFoo(context.Background(), client, foo)
+		v, shutdown, err := resources.FooFoo(ctx, client, foo)
 		if err != nil {
 			t.Errorf("failed to call `wrpc-test:integration/resources.bar`: %s", err)
 			return
