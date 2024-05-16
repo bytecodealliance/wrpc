@@ -46,11 +46,11 @@ impl InterfaceGenerator<'_> {
 
     fn print_read_bool(&mut self, reader: &str) {
         let fmt = self.deps.fmt();
+        let io = self.deps.io();
         let slog = self.deps.slog();
-        let wrpc = self.deps.wrpc();
         uwrite!(
             self.src,
-            r#"func(r {wrpc}.ByteReader) (bool, error) {{
+            r#"func(r {io}.ByteReader) (bool, error) {{
     {slog}.Debug("reading bool byte")
     v, err := r.ReadByte()
     if err != nil {{
@@ -1276,7 +1276,7 @@ impl InterfaceGenerator<'_> {
         let slog = self.deps.slog();
         uwrite!(
             self.src,
-            r#"func(v uint16, w interface {{ {io}.ByteWriter; {io}.Writer }}) (err error) {{
+            r#"func(v uint16, w {io}.Writer) (err error) {{
 	            b := make([]byte, {binary}.MaxVarintLen16)
 	            i := {binary}.PutUvarint(b, uint64(v))
                 {slog}.Debug("writing u16")
@@ -1292,7 +1292,7 @@ impl InterfaceGenerator<'_> {
         let slog = self.deps.slog();
         uwrite!(
             self.src,
-            r#"func(v uint32, w interface {{ {io}.ByteWriter; {io}.Writer }}) (err error) {{
+            r#"func(v uint32, w {io}.Writer) (err error) {{
 	            b := make([]byte, {binary}.MaxVarintLen32)
 	            i := {binary}.PutUvarint(b, uint64(v))
                 {slog}.Debug("writing u32")
@@ -1308,7 +1308,7 @@ impl InterfaceGenerator<'_> {
         let slog = self.deps.slog();
         uwrite!(
             self.src,
-            r#"func(v uint64, w interface {{ {io}.ByteWriter; {io}.Writer }}) (err error) {{
+            r#"func(v uint64, w {io}.Writer) (err error) {{
 	            b := make([]byte, {binary}.MaxVarintLen64)
 	            i := {binary}.PutUvarint(b, uint64(v))
                 {slog}.Debug("writing u64")
@@ -1518,7 +1518,7 @@ impl InterfaceGenerator<'_> {
         self.print_list(ty);
         uwrite!(
             self.src,
-            r#", w {wrpc}.ByteWriter) (write func({wrpc}.IndexWriter) error, err error) {{
+            r#", w interface {{ {io}.ByteWriter; {io}.Writer }}) (write func({wrpc}.IndexWriter) error, err error) {{
 	    n := len(v)
 	    if n > {math}.MaxUint32 {{
 	        return nil, {fmt}.Errorf("list length of %d overflows a 32-bit integer", n)
@@ -1571,6 +1571,7 @@ impl InterfaceGenerator<'_> {
 
     fn print_write_option(&mut self, ty: &Type, name: &str, writer: &str) {
         let fmt = self.deps.fmt();
+        let io = self.deps.io();
         let slog = self.deps.slog();
         let wrpc = self.deps.wrpc();
 
@@ -1578,7 +1579,7 @@ impl InterfaceGenerator<'_> {
         self.print_option(ty, true);
         uwrite!(
             self.src,
-            r#", w {wrpc}.ByteWriter) (func({wrpc}.IndexWriter) error, error) {{
+            r#", w interface {{ {io}.ByteWriter; {io}.Writer }}) (func({wrpc}.IndexWriter) error, error) {{
 	    if v == nil {{
 	    	{slog}.Debug("writing `option::none` status byte")
 	    	if err := w.WriteByte(0); err != nil {{
@@ -1620,6 +1621,7 @@ impl InterfaceGenerator<'_> {
     fn print_write_result(&mut self, ty: &Result_, name: &str, writer: &str) {
         let errors = self.deps.errors();
         let fmt = self.deps.fmt();
+        let io = self.deps.io();
         let slog = self.deps.slog();
         let wrpc = self.deps.wrpc();
 
@@ -1627,7 +1629,7 @@ impl InterfaceGenerator<'_> {
         self.print_result(ty);
         uwriteln!(
             self.src,
-            r#", w {wrpc}.ByteWriter) (func({wrpc}.IndexWriter) error, error) {{
+            r#", w interface {{ {io}.ByteWriter; {io}.Writer }}) (func({wrpc}.IndexWriter) error, error) {{
         switch {{
         	case v.Ok == nil && v.Err == nil:
         		return nil, {errors}.New("both result variants cannot be nil")
@@ -1701,6 +1703,7 @@ impl InterfaceGenerator<'_> {
             [] => self.push_str("(func({wrpc}.IndexWriter) error)(nil), error(nil)"),
             [ty] => {
                 let fmt = self.deps.fmt();
+                let io = self.deps.io();
                 let slog = self.deps.slog();
                 let wrpc = self.deps.wrpc();
 
@@ -1708,7 +1711,7 @@ impl InterfaceGenerator<'_> {
                 self.print_ty(ty, true);
                 uwrite!(
                     self.src,
-                    r#", w {wrpc}.ByteWriter) (func({wrpc}.IndexWriter) error, error) {{
+                    r#", w interface {{ {io}.ByteWriter; {io}.Writer }}) (func({wrpc}.IndexWriter) error, error) {{
         {slog}.Debug("writing tuple element 0")
         write, err := "#
                 );
@@ -1733,15 +1736,16 @@ impl InterfaceGenerator<'_> {
                 );
             }
             _ => {
-                let fmt = self.deps.fmt();
                 let errgroup = self.deps.errgroup();
+                let fmt = self.deps.fmt();
+                let io = self.deps.io();
                 let wrpc = self.deps.wrpc();
 
                 self.push_str("func(v ");
                 self.print_tuple(ty, true);
                 uwriteln!(
                     self.src,
-                    r", w {wrpc}.ByteWriter) (func({wrpc}.IndexWriter) error, error) {{
+                    r", w interface {{ {io}.ByteWriter; {io}.Writer }}) (func({wrpc}.IndexWriter) error, error) {{
         writes := make(map[uint32]func({wrpc}.IndexWriter) error, {})",
                     ty.types.len(),
                 );
@@ -1800,7 +1804,7 @@ impl InterfaceGenerator<'_> {
                 let wrpc = self.deps.wrpc();
                 uwrite!(
                     self.src,
-                    r#"func(v {wrpc}.ReadCompleter, w {wrpc}.ByteWriter) (write func({wrpc}.IndexWriter) error, err error) {{
+                    r#"func(v {wrpc}.ReadCompleter, w interface {{ {io}.ByteWriter; {io}.Writer }}) (write func({wrpc}.IndexWriter) error, err error) {{
                 if v.IsComplete() {{
 		            defer func() {{
 		            	body, ok := v.({io}.Closer)
@@ -1878,7 +1882,7 @@ impl InterfaceGenerator<'_> {
                 self.print_opt_ty(ty, true);
                 uwrite!(
                     self.src,
-                    r#"], w {wrpc}.ByteWriter) (write func({wrpc}.IndexWriter) error, err error) {{
+                    r#"], w interface {{ {io}.ByteWriter; {io}.Writer }}) (write func({wrpc}.IndexWriter) error, err error) {{
             if v.IsComplete() {{
 		        defer func() {{
 		        	body, ok := v.({io}.Closer)
@@ -1969,7 +1973,7 @@ impl InterfaceGenerator<'_> {
                 let wrpc = self.deps.wrpc();
                 uwrite!(
                     self.src,
-                    r#"func(v {wrpc}.ReadCompleter, w {wrpc}.ByteWriter) (write func({wrpc}.IndexWriter) error, err error) {{
+                    r#"func(v {wrpc}.ReadCompleter, w interface {{ {io}.ByteWriter; {io}.Writer }}) (write func({wrpc}.IndexWriter) error, err error) {{
                 if v.IsComplete() {{
 		            defer func() {{
 		            	body, ok := v.({io}.Closer)
@@ -2063,7 +2067,7 @@ impl InterfaceGenerator<'_> {
                 self.print_list(ty);
                 uwrite!(
                     self.src,
-                    r#"], w {wrpc}.ByteWriter) (write func({wrpc}.IndexWriter) error, err error) {{
+                    r#"], w interface {{ {io}.ByteWriter; {io}.Writer }}) (write func({wrpc}.IndexWriter) error, err error) {{
             if v.IsComplete() {{
 		        defer func() {{
 		        	body, ok := v.({io}.Closer)
@@ -2349,7 +2353,7 @@ impl InterfaceGenerator<'_> {
         match repr {
             Int::U8 => uwrite!(
                 self.src,
-                r#"func(v uint8, w {wrpc}.ByteWriter) error {{
+                r#"func(v uint8, w {io}.Writer) error {{
 	            b := make([]byte, 2)
 	            i := {binary}.PutUvarint(b, uint64(v))
                 {slog}.Debug("writing u8 discriminant")
@@ -2357,12 +2361,12 @@ impl InterfaceGenerator<'_> {
 	            return err
             }}(uint8({name}), {writer})"#,
                 binary = self.deps.binary(),
+                io = self.deps.io(),
                 slog = self.deps.slog(),
-                wrpc = self.deps.wrpc(),
             ),
             Int::U16 => uwrite!(
                 self.src,
-                r#"func(v uint16, w {wrpc}.ByteWriter) error {{
+                r#"func(v uint16, w {io}.Writer) error {{
 	            b := make([]byte, {binary}.MaxVarintLen16)
 	            i := {binary}.PutUvarint(b, uint64(v))
                 {slog}.Debug("writing u16 discriminant")
@@ -2370,12 +2374,12 @@ impl InterfaceGenerator<'_> {
 	            return err
             }}(uint16({name}), {writer})"#,
                 binary = self.deps.binary(),
+                io = self.deps.io(),
                 slog = self.deps.slog(),
-                wrpc = self.deps.wrpc(),
             ),
             Int::U32 => uwrite!(
                 self.src,
-                r#"func(v uint32, w {wrpc}.ByteWriter) (any, error) {{
+                r#"func(v uint32, w {io}.Writer) (any, error) {{
 	            b := make([]byte, {binary}.MaxVarintLen32)
 	            i := {binary}.PutUvarint(b, uint64(v))
                 {slog}.Debug("writing u32 discriminant")
@@ -2383,12 +2387,12 @@ impl InterfaceGenerator<'_> {
 	            return err
             }}(uint32({name}), {writer})"#,
                 binary = self.deps.binary(),
+                io = self.deps.io(),
                 slog = self.deps.slog(),
-                wrpc = self.deps.wrpc(),
             ),
             Int::U64 => uwrite!(
                 self.src,
-                r#"func(v uint64, w {wrpc}.ByteWriter) (any, error) {{
+                r#"func(v uint64, w {io}.Writer) (any, error) {{
 	            b := make([]byte, {binary}.MaxVarintLen64)
 	            i := {binary}.PutUvarint(b, uint64(v))
                 {slog}.Debug("writing u64 discriminant")
@@ -2396,8 +2400,8 @@ impl InterfaceGenerator<'_> {
 	            return err
             }}(uint64({name}), {writer})"#,
                 binary = self.deps.binary(),
+                io = self.deps.io(),
                 slog = self.deps.slog(),
-                wrpc = self.deps.wrpc(),
             ),
         }
     }
