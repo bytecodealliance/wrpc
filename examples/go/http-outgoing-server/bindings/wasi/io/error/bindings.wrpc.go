@@ -2,9 +2,107 @@
 package error
 
 import (
+	bytes "bytes"
 	context "context"
+	binary "encoding/binary"
+	errors "errors"
+	fmt "fmt"
 	wrpc "github.com/wrpc/wrpc/go"
+	io "io"
+	slog "log/slog"
+	math "math"
+	utf8 "unicode/utf8"
 )
+
+// Returns a string that is suitable to assist humans in debugging
+// this error.
+//
+// WARNING: The returned string should not be consumed mechanically!
+// It may change across platforms, hosts, or other implementation
+// details. Parsing this string is a major platform-compatibility
+// hazard.
+func ErrorToDebugString(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[Error]) (r0__ string, close__ func() error, err__ error) {
+	if err__ = wrpc__.Invoke(ctx__, string(self), "to-debug-string", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
+		close__ = r__.Close
+		var buf__ bytes.Buffer
+		writes__ := make(map[uint32]func(wrpc.IndexWriter) error, 1)
+		write0__, err__ := (func(wrpc.IndexWriter) error)(nil), func(v string, w io.Writer) (err error) {
+			n := len(v)
+			if n > math.MaxUint32 {
+				return fmt.Errorf("string byte length of %d overflows a 32-bit integer", n)
+			}
+			if err = func(v int, w io.Writer) error {
+				b := make([]byte, binary.MaxVarintLen32)
+				i := binary.PutUvarint(b, uint64(v))
+				slog.Debug("writing string byte length", "len", n)
+				_, err = w.Write(b[:i])
+				return err
+			}(n, w); err != nil {
+				return fmt.Errorf("failed to write string byte length of %d: %w", n, err)
+			}
+			slog.Debug("writing string bytes")
+			_, err = w.Write([]byte(v))
+			if err != nil {
+				return fmt.Errorf("failed to write string bytes: %w", err)
+			}
+			return nil
+		}(string(self), &buf__)
+		if err__ != nil {
+			return fmt.Errorf("failed to write `self` parameter: %w", err__)
+		}
+		if write0__ != nil {
+			writes__[0] = write0__
+		}
+		_, err__ = w__.Write(buf__.Bytes())
+		if err__ != nil {
+			return fmt.Errorf("failed to write parameters: %w", err__)
+		}
+		r0__, err__ = func(r interface {
+			io.ByteReader
+			io.Reader
+		}) (string, error) {
+			var x uint32
+			var s uint
+			for i := 0; i < 5; i++ {
+				slog.Debug("reading string length byte", "i", i)
+				b, err := r.ReadByte()
+				if err != nil {
+					if i > 0 && err == io.EOF {
+						err = io.ErrUnexpectedEOF
+					}
+					return "", fmt.Errorf("failed to read string length byte: %w", err)
+				}
+				if b < 0x80 {
+					if i == 4 && b > 1 {
+						return "", errors.New("string length overflows a 32-bit integer")
+					}
+					x = x | uint32(b)<<s
+					buf := make([]byte, x)
+					slog.Debug("reading string bytes", "len", x)
+					_, err = r.Read(buf)
+					if err != nil {
+						return "", fmt.Errorf("failed to read string bytes: %w", err)
+					}
+					if !utf8.Valid(buf) {
+						return string(buf), errors.New("string is not valid UTF-8")
+					}
+					return string(buf), nil
+				}
+				x |= uint32(b&0x7f) << s
+				s += 7
+			}
+			return "", errors.New("string length overflows a 32-bit integer")
+		}(r__)
+		if err__ != nil {
+			return fmt.Errorf("failed to read result 0: %w", err__)
+		}
+		return nil
+	}); err__ != nil {
+		err__ = fmt.Errorf("failed to invoke `[method]error.to-debug-string`: %w", err__)
+		return
+	}
+	return
+}
 
 type Error interface {
 	// Returns a string that is suitable to assist humans in debugging
@@ -15,5 +113,4 @@ type Error interface {
 	// details. Parsing this string is a major platform-compatibility
 	// hazard.
 	ToDebugString(ctx__ context.Context, wrpc__ wrpc.Client) (string, func() error, error)
-	Drop(ctx__ context.Context, wrpc__ wrpc.Client) error
 }

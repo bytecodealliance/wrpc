@@ -95,25 +95,25 @@ type Handler struct{}
 func (Handler) Handle(ctx context.Context, request *wrpctypes.Request, opts *wrpctypes.RequestOptions) (*wrpc.Result[wrpctypes.Response, wasitypes.ErrorCode], error) {
 	var method string
 	switch disc := request.Method.Discriminant(); disc {
-	case wasitypes.MethodDiscriminant_Get:
+	case wasitypes.MethodGet:
 		method = "GET"
-	case wasitypes.MethodDiscriminant_Head:
+	case wasitypes.MethodHead:
 		method = "HEAD"
-	case wasitypes.MethodDiscriminant_Post:
+	case wasitypes.MethodPost:
 		method = "POST"
-	case wasitypes.MethodDiscriminant_Put:
+	case wasitypes.MethodPut:
 		method = "PUT"
-	case wasitypes.MethodDiscriminant_Delete:
+	case wasitypes.MethodDelete:
 		method = "DELETE"
-	case wasitypes.MethodDiscriminant_Connect:
+	case wasitypes.MethodConnect:
 		method = "CONNECT"
-	case wasitypes.MethodDiscriminant_Options:
+	case wasitypes.MethodOptions:
 		method = "OPTIONS"
-	case wasitypes.MethodDiscriminant_Trace:
+	case wasitypes.MethodTrace:
 		method = "TRACE"
-	case wasitypes.MethodDiscriminant_Patch:
+	case wasitypes.MethodPatch:
 		method = "PATCH"
-	case wasitypes.MethodDiscriminant_Other:
+	case wasitypes.MethodOther:
 		var ok bool
 		method, ok = request.Method.GetOther()
 		if !ok {
@@ -125,11 +125,11 @@ func (Handler) Handle(ctx context.Context, request *wrpctypes.Request, opts *wrp
 	scheme := "https"
 	if request.Scheme != nil {
 		switch disc := request.Scheme.Discriminant(); disc {
-		case wasitypes.SchemeDiscriminant_Http:
+		case wasitypes.SchemeHttp:
 			scheme = "http"
-		case wasitypes.SchemeDiscriminant_Https:
+		case wasitypes.SchemeHttps:
 			scheme = "https"
-		case wasitypes.SchemeDiscriminant_Other:
+		case wasitypes.SchemeOther:
 			var ok bool
 			scheme, ok = request.Scheme.GetOther()
 			if !ok {

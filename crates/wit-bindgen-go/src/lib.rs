@@ -622,6 +622,7 @@ pub fn to_go_ident(name: &str) -> String {
         "if" => "if_".into(),
         "import" => "import_".into(),
         "interface" => "interface_".into(),
+        "len" => "len_".into(),
         "map" => "map_".into(),
         "package" => "package_".into(),
         "range" => "range_".into(),

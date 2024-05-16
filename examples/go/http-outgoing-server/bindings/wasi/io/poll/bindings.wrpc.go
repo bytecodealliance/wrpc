@@ -14,6 +14,121 @@ import (
 	math "math"
 )
 
+// Return the readiness of a pollable. This function never blocks.
+//
+// Returns `true` when the pollable is ready, and `false` otherwise.
+func PollableReady(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[Pollable]) (r0__ bool, close__ func() error, err__ error) {
+	if err__ = wrpc__.Invoke(ctx__, string(self), "ready", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
+		close__ = r__.Close
+		var buf__ bytes.Buffer
+		writes__ := make(map[uint32]func(wrpc.IndexWriter) error, 1)
+		write0__, err__ := (func(wrpc.IndexWriter) error)(nil), func(v string, w io.Writer) (err error) {
+			n := len(v)
+			if n > math.MaxUint32 {
+				return fmt.Errorf("string byte length of %d overflows a 32-bit integer", n)
+			}
+			if err = func(v int, w io.Writer) error {
+				b := make([]byte, binary.MaxVarintLen32)
+				i := binary.PutUvarint(b, uint64(v))
+				slog.Debug("writing string byte length", "len", n)
+				_, err = w.Write(b[:i])
+				return err
+			}(n, w); err != nil {
+				return fmt.Errorf("failed to write string byte length of %d: %w", n, err)
+			}
+			slog.Debug("writing string bytes")
+			_, err = w.Write([]byte(v))
+			if err != nil {
+				return fmt.Errorf("failed to write string bytes: %w", err)
+			}
+			return nil
+		}(string(self), &buf__)
+		if err__ != nil {
+			return fmt.Errorf("failed to write `self` parameter: %w", err__)
+		}
+		if write0__ != nil {
+			writes__[0] = write0__
+		}
+		_, err__ = w__.Write(buf__.Bytes())
+		if err__ != nil {
+			return fmt.Errorf("failed to write parameters: %w", err__)
+		}
+		r0__, err__ = func(r io.ByteReader) (bool, error) {
+			slog.Debug("reading bool byte")
+			v, err := r.ReadByte()
+			if err != nil {
+				slog.Debug("reading bool", "value", false)
+				return false, fmt.Errorf("failed to read bool byte: %w", err)
+			}
+			switch v {
+			case 0:
+				return false, nil
+			case 1:
+				return true, nil
+			default:
+				return false, fmt.Errorf("invalid bool value %d", v)
+			}
+		}(r__)
+		if err__ != nil {
+			return fmt.Errorf("failed to read result 0: %w", err__)
+		}
+		return nil
+	}); err__ != nil {
+		err__ = fmt.Errorf("failed to invoke `[method]pollable.ready`: %w", err__)
+		return
+	}
+	return
+}
+
+// `block` returns immediately if the pollable is ready, and otherwise
+// blocks until ready.
+//
+// This function is equivalent to calling `poll.poll` on a list
+// containing only this pollable.
+func PollableBlock(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[Pollable]) (close__ func() error, err__ error) {
+	if err__ = wrpc__.Invoke(ctx__, string(self), "block", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
+		close__ = r__.Close
+		var buf__ bytes.Buffer
+		writes__ := make(map[uint32]func(wrpc.IndexWriter) error, 1)
+		write0__, err__ := (func(wrpc.IndexWriter) error)(nil), func(v string, w io.Writer) (err error) {
+			n := len(v)
+			if n > math.MaxUint32 {
+				return fmt.Errorf("string byte length of %d overflows a 32-bit integer", n)
+			}
+			if err = func(v int, w io.Writer) error {
+				b := make([]byte, binary.MaxVarintLen32)
+				i := binary.PutUvarint(b, uint64(v))
+				slog.Debug("writing string byte length", "len", n)
+				_, err = w.Write(b[:i])
+				return err
+			}(n, w); err != nil {
+				return fmt.Errorf("failed to write string byte length of %d: %w", n, err)
+			}
+			slog.Debug("writing string bytes")
+			_, err = w.Write([]byte(v))
+			if err != nil {
+				return fmt.Errorf("failed to write string bytes: %w", err)
+			}
+			return nil
+		}(string(self), &buf__)
+		if err__ != nil {
+			return fmt.Errorf("failed to write `self` parameter: %w", err__)
+		}
+		if write0__ != nil {
+			writes__[0] = write0__
+		}
+		_, err__ = w__.Write(buf__.Bytes())
+		if err__ != nil {
+			return fmt.Errorf("failed to write parameters: %w", err__)
+		}
+		return nil
+	}); err__ != nil {
+		err__ = fmt.Errorf("failed to invoke `[method]pollable.block`: %w", err__)
+		return
+	}
+	return
+}
+
 // Poll for completion on a set of pollables.
 //
 // This function takes a list of pollables, which identify I/O sources of
@@ -32,12 +147,12 @@ import (
 // do any I/O so it doesn't fail. If any of the I/O sources identified by
 // the pollables has an error, it is indicated by marking the source as
 // being reaedy for I/O.
-func Poll(ctx__ context.Context, wrpc__ wrpc.Client, in []Pollable) (r0__ []uint32, close__ func() error, err__ error) {
+func Poll(ctx__ context.Context, wrpc__ wrpc.Client, in []wrpc.Borrow[Pollable]) (r0__ []uint32, close__ func() error, err__ error) {
 	if err__ = wrpc__.Invoke(ctx__, "wasi:io/poll@0.2.0", "poll", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		var buf__ bytes.Buffer
 		writes__ := make(map[uint32]func(wrpc.IndexWriter) error, 1)
-		write0__, err__ := func(v []Pollable, w interface {
+		write0__, err__ := func(v []wrpc.Borrow[Pollable], w interface {
 			io.ByteWriter
 			io.Writer
 		}) (write func(wrpc.IndexWriter) error, err error) {
@@ -57,7 +172,27 @@ func Poll(ctx__ context.Context, wrpc__ wrpc.Client, in []Pollable) (r0__ []uint
 			slog.Debug("writing list elements")
 			writes := make(map[uint32]func(wrpc.IndexWriter) error, n)
 			for i, e := range v {
-				write, err := (func(wrpc.IndexWriter) error)(nil), func(any) error { return errors.New("writing borrowed handles not supported yet") }(e)
+				write, err := (func(wrpc.IndexWriter) error)(nil), func(v string, w io.Writer) (err error) {
+					n := len(v)
+					if n > math.MaxUint32 {
+						return fmt.Errorf("string byte length of %d overflows a 32-bit integer", n)
+					}
+					if err = func(v int, w io.Writer) error {
+						b := make([]byte, binary.MaxVarintLen32)
+						i := binary.PutUvarint(b, uint64(v))
+						slog.Debug("writing string byte length", "len", n)
+						_, err = w.Write(b[:i])
+						return err
+					}(n, w); err != nil {
+						return fmt.Errorf("failed to write string byte length of %d: %w", n, err)
+					}
+					slog.Debug("writing string bytes")
+					_, err = w.Write([]byte(v))
+					if err != nil {
+						return fmt.Errorf("failed to write string bytes: %w", err)
+					}
+					return nil
+				}(string(e), w)
 				if err != nil {
 					return nil, fmt.Errorf("failed to write list element %d: %w", i, err)
 				}
@@ -169,5 +304,4 @@ type Pollable interface {
 	// This function is equivalent to calling `poll.poll` on a list
 	// containing only this pollable.
 	Block(ctx__ context.Context, wrpc__ wrpc.Client) (func() error, error)
-	Drop(ctx__ context.Context, wrpc__ wrpc.Client) error
 }

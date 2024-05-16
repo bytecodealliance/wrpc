@@ -38,8 +38,8 @@ func run() (err error) {
 	res, stop, err := outgoing_handler.Handle(context.Background(), client, &wrpctypes.Request{
 		Body:      wrpc.NewCompleteReader(bytes.NewBuffer(nil)),
 		Trailers:  wrpc.NewCompleteReceiver([]*wrpc.Tuple2[string, [][]uint8](nil)),
-		Method:    wasitypes.Method{}.NewGet(),
-		Scheme:    wasitypes.Scheme{}.NewHttps(),
+		Method:    wasitypes.NewMethodGet(),
+		Scheme:    wasitypes.NewSchemeHttps(),
 		Authority: &authority,
 	}, &wrpctypes.RequestOptions{})
 	if err != nil {
