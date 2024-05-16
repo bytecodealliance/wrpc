@@ -514,7 +514,7 @@ impl InterfaceGenerator<'_> {
                 {slog}.Debug("reading list element", "i", i)
                 vs[i], err = "#,
         );
-        self.print_read_ty(ty, "r", &format!("append(path, uint32(i))"));
+        self.print_read_ty(ty, "r", "append(path, uint32(i))");
         self.push_str("\n");
         uwrite!(
             self.src,
@@ -759,12 +759,12 @@ impl InterfaceGenerator<'_> {
         } in &ty.cases
         {
             self.push_str("case ");
-            self.push_str(&name);
+            self.push_str(name);
             self.push_str("_");
             self.push_str(&case_name.to_upper_camel_case());
             self.push_str(":\n");
             self.push_str("return ");
-            self.push_str(&name);
+            self.push_str(name);
             self.push_str("_");
             self.push_str(&case_name.to_upper_camel_case());
             self.push_str(", nil\n");
@@ -801,7 +801,7 @@ impl InterfaceGenerator<'_> {
         {
             let camel = case_name.to_upper_camel_case();
             self.push_str("case ");
-            self.push_str(&name);
+            self.push_str(name);
             self.push_str("Discriminant_");
             self.push_str(&camel);
             self.push_str(":\n");
@@ -838,9 +838,9 @@ impl InterfaceGenerator<'_> {
             [] => self.push_str("struct{}{}, nil"),
             [ty] => {
                 if path.is_empty() {
-                    self.print_read_ty(ty, reader, "0")
+                    self.print_read_ty(ty, reader, "0");
                 } else {
-                    self.print_read_ty(ty, reader, &format!("append({path}, 0)"))
+                    self.print_read_ty(ty, reader, &format!("append({path}, 0)"));
                 }
             }
             _ => {
@@ -1184,7 +1184,7 @@ impl InterfaceGenerator<'_> {
             .map(|name| self.type_path_with_name(id, to_upper_camel_case(name)));
         match &ty.kind {
             TypeDefKind::Record(ty) => {
-                self.print_read_record(ty, reader, path, &name.expect("record missing a name"))
+                self.print_read_record(ty, reader, path, &name.expect("record missing a name"));
             }
             TypeDefKind::Resource => self.print_read_string(reader),
             TypeDefKind::Handle(Handle::Own(ty)) => {
@@ -1206,14 +1206,14 @@ impl InterfaceGenerator<'_> {
                 );
             }
             TypeDefKind::Flags(ty) => {
-                self.print_read_flags(ty, reader, &name.expect("flag missing a name"))
+                self.print_read_flags(ty, reader, &name.expect("flag missing a name"));
             }
             TypeDefKind::Tuple(ty) => self.print_read_tuple(ty, reader, path),
             TypeDefKind::Variant(ty) => {
-                self.print_read_variant(ty, reader, path, &name.expect("variant missing a name"))
+                self.print_read_variant(ty, reader, path, &name.expect("variant missing a name"));
             }
             TypeDefKind::Enum(ty) => {
-                self.print_read_enum(ty, reader, &name.expect("enum missing a name"))
+                self.print_read_enum(ty, reader, &name.expect("enum missing a name"));
             }
             TypeDefKind::Option(ty) => self.print_read_option(ty, reader, path),
             TypeDefKind::Result(ty) => self.print_read_result(ty, reader, path),
@@ -1235,7 +1235,7 @@ impl InterfaceGenerator<'_> {
                     self.push_str(")(v), err\n");
                     self.push_str("}()\n");
                 } else {
-                    self.print_read_ty(ty, reader, path)
+                    self.print_read_ty(ty, reader, path);
                 }
             }
             TypeDefKind::Unknown => unreachable!(),
@@ -2467,7 +2467,7 @@ impl InterfaceGenerator<'_> {
                         paths.insert(path);
                     }
                     if fut {
-                        is_fut = true
+                        is_fut = true;
                     }
                 }
                 if let Some(ty) = ty.err.as_ref() {
@@ -2476,7 +2476,7 @@ impl InterfaceGenerator<'_> {
                         paths.insert(path);
                     }
                     if fut {
-                        is_fut = true
+                        is_fut = true;
                     }
                 }
                 (paths, is_fut)
@@ -2484,14 +2484,14 @@ impl InterfaceGenerator<'_> {
             TypeDefKind::Variant(ty) => {
                 let mut paths = BTreeSet::default();
                 let mut is_fut = false;
-                for Case { ty, .. } in ty.cases.iter() {
+                for Case { ty, .. } in &ty.cases {
                     if let Some(ty) = ty {
                         let (nested, fut) = self.async_paths_ty(ty);
                         for path in nested {
                             paths.insert(path);
                         }
                         if fut {
-                            is_fut = true
+                            is_fut = true;
                         }
                     }
                 }
@@ -2555,8 +2555,9 @@ impl InterfaceGenerator<'_> {
             TypeDefKind::Resource
             | TypeDefKind::Flags(..)
             | TypeDefKind::Enum(..)
-            | TypeDefKind::Handle(Handle::Own(..))
-            | TypeDefKind::Handle(Handle::Borrow(..)) => (BTreeSet::default(), false),
+            | TypeDefKind::Handle(Handle::Own(..) | Handle::Borrow(..)) => {
+                (BTreeSet::default(), false)
+            }
             TypeDefKind::Unknown => unreachable!(),
         }
     }
@@ -2753,7 +2754,7 @@ impl InterfaceGenerator<'_> {
                 self.push_str(":");
             }
             self.push_str("= h.");
-            self.push_str(&self.func_name(&func));
+            self.push_str(&self.func_name(func));
             self.push_str("(ctx");
             for (i, _) in func.params.iter().enumerate() {
                 uwrite!(self.src, ", p{i}");
@@ -3315,7 +3316,7 @@ impl InterfaceGenerator<'_> {
                     TypeDefKind::Stream(ty) => self.print_stream(ty),
                     TypeDefKind::Type(ty) => self.print_opt_ty(ty, decl),
                     TypeDefKind::Handle(Handle::Own(id) | Handle::Borrow(id)) => {
-                        self.print_tyid(*id, decl)
+                        self.print_tyid(*id, decl);
                     }
                     _ => {
                         if decl {
@@ -3387,7 +3388,7 @@ impl InterfaceGenerator<'_> {
             }
             Some(ty) => {
                 self.push_str(".ReceiveCompleter[");
-                self.print_list(&ty);
+                self.print_list(ty);
                 self.push_str("]");
             }
             None => {
