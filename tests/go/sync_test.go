@@ -35,7 +35,8 @@ func TestSync(t *testing.T) {
 	}()
 	client := wrpcnats.NewClient(nc, "go")
 
-	stop, err := sync_server.Serve(client, integration.SyncHandler{})
+	var h integration.SyncHandler
+	stop, err := sync_server.Serve(client, h, h)
 	if err != nil {
 		t.Errorf("failed to serve `sync-server` world: %s", err)
 		return
@@ -153,7 +154,7 @@ func TestSync(t *testing.T) {
 			t.Errorf("failed to call `wrpc-test:integration/sync.with-variant-option`: %s", err)
 			return
 		}
-		expected := (&sync.Var{}).SetVar(&sync.Rec{
+		expected := sync.NewVarVar(&sync.Rec{
 			Nested: &sync.RecNested{
 				Foo: "bar",
 			},

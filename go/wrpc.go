@@ -2,8 +2,50 @@ package wrpc
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io"
 )
+
+type Invoker interface {
+	Invoke(ctx context.Context, instance string, name string, f func(IndexWriter, IndexReadCloser) error, subs ...SubscribePath) error
+}
+
+type Server interface {
+	Serve(instance string, name string, f func(context.Context, IndexWriter, IndexReadCloser) error, subs ...SubscribePath) (func() error, error)
+}
+
+type Client interface {
+	Invoker
+	Server
+}
+
+// Own is an owned resource handle
+type Own[T any] string
+
+func (v Own[T]) Drop(ctx context.Context, c Invoker) error {
+	if v == "" {
+		return errors.New("cannot drop a resource without an ID")
+	}
+	return c.Invoke(ctx, string(v), "drop", func(w IndexWriter, r IndexReadCloser) error {
+		_, err := w.Write(nil)
+		if err != nil {
+			return fmt.Errorf("failed to write empty `drop` parameters")
+		}
+		_, err = r.Read(nil)
+		if err != nil {
+			return fmt.Errorf("failed to read empty `drop` result")
+		}
+		return nil
+	})
+}
+
+func (v Own[T]) Borrow() Borrow[T] {
+	return Borrow[T](v)
+}
+
+// Borrow is a borrowed resource handle
+type Borrow[T any] string
 
 type SubscribePath []*uint32
 
@@ -52,11 +94,6 @@ type IndexWriter interface {
 type IndexReadCloser interface {
 	IndexReader
 	io.Closer
-}
-
-type Client interface {
-	Invoke(ctx context.Context, instance string, name string, f func(IndexWriter, IndexReadCloser) error, subs ...SubscribePath) error
-	Serve(instance string, name string, f func(context.Context, IndexWriter, IndexReadCloser) error, subs ...SubscribePath) (func() error, error)
 }
 
 type ByteWriter interface {

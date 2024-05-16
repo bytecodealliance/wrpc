@@ -1,6 +1,5 @@
 use crate::{
-    to_go_ident, to_package_ident, to_upper_camel_case, Deps, FnSig, GoWrpc, Identifier,
-    InterfaceName,
+    to_go_ident, to_package_ident, to_upper_camel_case, Deps, GoWrpc, Identifier, InterfaceName,
 };
 use heck::ToUpperCamelCase;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -802,7 +801,6 @@ impl InterfaceGenerator<'_> {
             let camel = case_name.to_upper_camel_case();
             self.push_str("case ");
             self.push_str(name);
-            self.push_str("Discriminant_");
             self.push_str(&camel);
             self.push_str(":\n");
             if let Some(ty) = ty {
@@ -1157,6 +1155,116 @@ impl InterfaceGenerator<'_> {
         }
     }
 
+    fn print_read_own(&mut self, reader: &str, id: TypeId) {
+        let errors = self.deps.errors();
+        let fmt = self.deps.fmt();
+        let io = self.deps.io();
+        let slog = self.deps.slog();
+        let utf8 = self.deps.utf8();
+        let wrpc = self.deps.wrpc();
+        uwrite!(
+            self.src,
+            "func(r interface {{ {io}.ByteReader; {io}.Reader }}) ({wrpc}.Own[",
+        );
+        self.print_tyid(id, true);
+        uwrite!(
+            self.src,
+            r#"], error) {{
+	var x uint32
+	var s uint
+	for i := 0; i < 5; i++ {{
+        {slog}.Debug("reading owned resource ID length byte", "i", i)
+		b, err := r.ReadByte()
+		if err != nil {{
+			if i > 0 && err == {io}.EOF {{
+				err = {io}.ErrUnexpectedEOF
+			}}
+			return "", {fmt}.Errorf("failed to read owned resource ID length byte: %w", err)
+		}}
+		if b < 0x80 {{
+			if i == 4 && b > 1 {{
+				return "", {errors}.New("owned resource ID length overflows a 32-bit integer")
+			}}
+            x = x | uint32(b)<<s
+            buf := make([]byte, x)
+            {slog}.Debug("reading owned resource ID bytes", "len", x)
+	        _, err = r.Read(buf)
+	        if err != nil {{
+	        	return "", {fmt}.Errorf("failed to read owned resource ID bytes: %w", err)
+	        }}
+            if !{utf8}.Valid(buf) {{
+                return "", {errors}.New("owned resource ID is not valid UTF-8")
+            }}
+            return {wrpc}.Own["#,
+        );
+        self.print_tyid(id, true);
+        uwrite!(
+            self.src,
+            r#"](buf), nil
+		}}
+		x |= uint32(b&0x7f) << s
+		s += 7
+	}}
+	return "", {errors}.New("owned resource ID length overflows a 32-bit integer")
+}}({reader})"#,
+        );
+    }
+
+    fn print_read_borrow(&mut self, reader: &str, id: TypeId) {
+        let errors = self.deps.errors();
+        let fmt = self.deps.fmt();
+        let io = self.deps.io();
+        let slog = self.deps.slog();
+        let utf8 = self.deps.utf8();
+        let wrpc = self.deps.wrpc();
+        uwrite!(
+            self.src,
+            "func(r interface {{ {io}.ByteReader; {io}.Reader }}) ({wrpc}.Borrow[",
+        );
+        self.print_tyid(id, true);
+        uwrite!(
+            self.src,
+            r#"], error) {{
+	var x uint32
+	var s uint
+	for i := 0; i < 5; i++ {{
+        {slog}.Debug("reading borrowed resource ID length byte", "i", i)
+		b, err := r.ReadByte()
+		if err != nil {{
+			if i > 0 && err == {io}.EOF {{
+				err = {io}.ErrUnexpectedEOF
+			}}
+			return "", {fmt}.Errorf("failed to read borrowed resource ID length byte: %w", err)
+		}}
+		if b < 0x80 {{
+			if i == 4 && b > 1 {{
+				return "", {errors}.New("borrowed resource ID length overflows a 32-bit integer")
+			}}
+            x = x | uint32(b)<<s
+            buf := make([]byte, x)
+            {slog}.Debug("reading borrowed resource ID bytes", "len", x)
+	        _, err = r.Read(buf)
+	        if err != nil {{
+	        	return "", {fmt}.Errorf("failed to read borrowed resource ID bytes: %w", err)
+	        }}
+            if !{utf8}.Valid(buf) {{
+                return "", {errors}.New("borrowed resource ID is not valid UTF-8")
+            }}
+            return {wrpc}.Borrow["#,
+        );
+        self.print_tyid(id, true);
+        uwrite!(
+            self.src,
+            r#"](buf), nil
+		}}
+		x |= uint32(b&0x7f) << s
+		s += 7
+	}}
+	return "", {errors}.New("borrowed resource ID length overflows a 32-bit integer")
+}}({reader})"#,
+        );
+    }
+
     fn print_read_ty(&mut self, ty: &Type, reader: &str, path: &str) {
         match ty {
             Type::Id(ty) => self.print_read_tyid(*ty, reader, path),
@@ -1187,24 +1295,8 @@ impl InterfaceGenerator<'_> {
                 self.print_read_record(ty, reader, path, &name.expect("record missing a name"));
             }
             TypeDefKind::Resource => self.print_read_string(reader),
-            TypeDefKind::Handle(Handle::Own(ty)) => {
-                let errors = self.deps.errors();
-                self.src.push_str("(");
-                self.print_tyid(*ty, true);
-                uwrite!(
-                    self.src,
-                    r#")(nil), {errors}.New("reading owned handles not supported yet")"#,
-                );
-            }
-            TypeDefKind::Handle(Handle::Borrow(ty)) => {
-                let errors = self.deps.errors();
-                self.src.push_str("(");
-                self.print_tyid(*ty, true);
-                uwrite!(
-                    self.src,
-                    r#")(nil), {errors}.New("reading borrowed handles not supported yet")"#,
-                );
-            }
+            TypeDefKind::Handle(Handle::Own(id)) => self.print_read_own(reader, *id),
+            TypeDefKind::Handle(Handle::Borrow(id)) => self.print_read_borrow(reader, *id),
             TypeDefKind::Flags(ty) => {
                 self.print_read_flags(ty, reader, &name.expect("flag missing a name"));
             }
@@ -2268,19 +2360,16 @@ impl InterfaceGenerator<'_> {
     fn print_write_tyid(&mut self, id: TypeId, name: &str, writer: &str) {
         let ty = &self.resolve.types[id];
         match &ty.kind {
-            TypeDefKind::Handle(Handle::Own(_ty)) => uwrite!(
-                self.src,
-                r#"(func({wrpc}.IndexWriter) error)(nil), func(any) error {{ return {errors}.New("writing owned handles not supported yet") }}({name})"#,
-                errors = self.deps.errors(),
-                wrpc = self.deps.wrpc(),
-            ),
-
-            TypeDefKind::Handle(Handle::Borrow(_ty)) => uwrite!(
-                self.src,
-                r#"(func({wrpc}.IndexWriter) error)(nil), func(any) error {{ return {errors}.New("writing borrowed handles not supported yet") }}({name})"#,
-                errors = self.deps.errors(),
-                wrpc = self.deps.wrpc(),
-            ),
+            TypeDefKind::Handle(Handle::Own(_id)) => {
+                let wrpc = self.deps.wrpc();
+                uwrite!(self.src, "(func({wrpc}.IndexWriter) error)(nil), ");
+                self.print_write_string(&format!("string({name})"), writer);
+            }
+            TypeDefKind::Handle(Handle::Borrow(_id)) => {
+                let wrpc = self.deps.wrpc();
+                uwrite!(self.src, "(func({wrpc}.IndexWriter) error)(nil), ");
+                self.print_write_string(&format!("string({name})"), writer);
+            }
             TypeDefKind::Tuple(ty) => self.print_write_tuple(ty, name, writer),
             TypeDefKind::Option(ty) => self.print_write_option(ty, name, writer),
             TypeDefKind::Result(ty) => self.print_write_result(ty, name, writer),
@@ -2379,7 +2468,7 @@ impl InterfaceGenerator<'_> {
             ),
             Int::U32 => uwrite!(
                 self.src,
-                r#"func(v uint32, w {io}.Writer) (any, error) {{
+                r#"func(v uint32, w {io}.Writer) error {{
 	            b := make([]byte, {binary}.MaxVarintLen32)
 	            i := {binary}.PutUvarint(b, uint64(v))
                 {slog}.Debug("writing u32 discriminant")
@@ -2392,7 +2481,7 @@ impl InterfaceGenerator<'_> {
             ),
             Int::U64 => uwrite!(
                 self.src,
-                r#"func(v uint64, w {io}.Writer) (any, error) {{
+                r#"func(v uint64, w {io}.Writer) error {{
 	            b := make([]byte, {binary}.MaxVarintLen64)
 	            i := {binary}.PutUvarint(b, uint64(v))
                 {slog}.Debug("writing u64 discriminant")
@@ -2572,6 +2661,7 @@ impl InterfaceGenerator<'_> {
         funcs: impl Clone + ExactSizeIterator<Item = &'a Function>,
     ) -> bool {
         let mut traits = BTreeMap::new();
+        let mut methods = BTreeMap::new();
         let mut funcs_to_export = vec![];
         let mut resources_to_drop = vec![];
 
@@ -2586,6 +2676,7 @@ impl InterfaceGenerator<'_> {
                 resources_to_drop.push(name);
                 let camel = to_upper_camel_case(name);
                 traits.insert(Some(*id), (camel, (vec![], vec![])));
+                methods.insert(*id, vec![]);
             }
         }
 
@@ -2595,6 +2686,7 @@ impl InterfaceGenerator<'_> {
             }
 
             let resource = if let FunctionKind::Method(id) = func.kind {
+                methods.get_mut(&id).unwrap().push(func);
                 Some(id)
             } else {
                 funcs_to_export.push(func);
@@ -2603,25 +2695,27 @@ impl InterfaceGenerator<'_> {
             let (_, (handler_methods, client_methods)) = traits.get_mut(&resource).unwrap();
 
             let prev = mem::take(&mut self.src);
-            let sig = FnSig::default();
-            self.print_docs_and_params(func, &sig);
+            self.print_docs_and_params(func, true);
             if let FunctionKind::Constructor(id) = &func.kind {
                 let ty = &self.resolve.types[*id];
                 let Some(name) = &ty.name else {
                     panic!("unnamed resources are not supported")
                 };
+                let context = self.deps.context();
                 let camel = name.to_upper_camel_case();
                 let name = self.type_path_with_name(*id, format!("Handler{camel}"));
                 self.push_str(" (");
                 self.push_str(&name);
-                self.push_str(", error)");
+                self.push_str(", ");
+                self.push_str(context);
+                self.push_str(".Context, string, error)");
             } else {
                 self.src.push_str(" (");
                 for ty in func.results.iter_types() {
                     self.print_opt_ty(ty, true);
                     self.src.push_str(", ");
                 }
-                self.push_str("error) ");
+                self.push_str("error)");
             }
             self.push_str("\n");
             let trait_method = mem::replace(&mut self.src, prev);
@@ -2629,9 +2723,7 @@ impl InterfaceGenerator<'_> {
 
             if matches!(func.kind, FunctionKind::Method(..)) {
                 let prev = mem::take(&mut self.src);
-                let sig = FnSig::default();
-                self.in_import = true;
-                self.print_docs_and_params(func, &sig);
+                self.print_docs_and_params(func, true);
                 self.src.push_str(" (");
                 for ty in func.results.iter_types() {
                     self.print_opt_ty(ty, true);
@@ -2640,14 +2732,13 @@ impl InterfaceGenerator<'_> {
                 self.push_str("func() error, error)\n");
                 let trait_method = mem::replace(&mut self.src, prev);
                 client_methods.push(trait_method);
-                self.in_import = false;
             }
         }
 
-        let (name, (methods, _)) = traits.remove(&None).unwrap();
-        if !methods.is_empty() || !traits.is_empty() {
+        let (name, (interface_methods, _)) = traits.remove(&None).unwrap();
+        if !interface_methods.is_empty() || !traits.is_empty() {
             uwriteln!(self.src, "type {name} interface {{");
-            for method in &methods {
+            for method in &interface_methods {
                 self.src.push_str(method);
             }
             uwriteln!(self.src, "}}");
@@ -2663,12 +2754,6 @@ impl InterfaceGenerator<'_> {
             for method in client_methods {
                 self.src.push_str(method);
             }
-            let context = self.deps.context();
-            let wrpc = self.deps.wrpc();
-            uwriteln!(
-                self.src,
-                "Drop(ctx__ {context}.Context, wrpc__ {wrpc}.Client) error"
-            );
             uwriteln!(self.src, "}}");
         }
 
@@ -2750,6 +2835,12 @@ impl InterfaceGenerator<'_> {
                 self.src,
                 r#"{slog}.DebugContext(ctx, "calling `{instance}.{name}` handler")"#,
             );
+            if let FunctionKind::Constructor(..) = func.kind {
+                self.push_str("ctx, cancel := ");
+                self.push_str(context);
+                self.push_str(".WithCancelCause(ctx)\n");
+                self.push_str("res, ctx, ");
+            }
             for (i, _) in func.results.iter_types().enumerate() {
                 uwrite!(self.src, "r{i}, ");
             }
@@ -2770,6 +2861,178 @@ impl InterfaceGenerator<'_> {
                 r#"return {fmt}.Errorf("failed to handle `{instance}.{name}` invocation: %w", err)"#,
             );
             self.push_str("}\n");
+
+            if let FunctionKind::Constructor(id) = func.kind {
+                self.push_str("go func() {\n");
+                self.push_str("var err error\n");
+                self.push_str("rx := string(r0)\n");
+                uwriteln!(
+                    self.src,
+                    r#"stops := make([]func() error, 0, {})"#,
+                    methods.len() + 1
+                );
+                self.src.push_str(
+                    r"stop := func() error {
+                        for _, stop := range stops {
+                            if err := stop(); err != nil {
+                                return err
+                            }
+                        }
+                        return nil
+                    }
+",
+                );
+                for (i, func) in methods[&id].iter().enumerate() {
+                    let name = &func.item_name();
+                    uwriteln!(
+                        self.src,
+                        r#"stop{i}, err := c.Serve(rx, "{name}", func(ctx {context}.Context, w {wrpc}.IndexWriter, r {wrpc}.IndexReadCloser) error {{"#,
+                    );
+                    for (i, (_, ty)) in func.params.iter().enumerate().skip(1) {
+                        uwrite!(
+                            self.src,
+                            r#"{slog}.DebugContext(ctx, "reading method parameter", "i", {i})
+        p{i}, err := "#
+                        );
+                        self.print_read_ty(ty, "r", &format!("[]uint32{{ {i} }}"));
+                        self.push_str("\n");
+                        uwriteln!(
+                            self.src,
+                            r#"if err != nil {{ return {fmt}.Errorf("failed to read method parameter {i}: %w", err) }}"#,
+                        );
+                    }
+                    uwriteln!(
+                        self.src,
+                        r#"{slog}.DebugContext(ctx, "calling `{name}` handler", "resource", rx)"#,
+                    );
+                    for (i, _) in func.results.iter_types().enumerate() {
+                        uwrite!(self.src, "r{i}, ");
+                    }
+                    self.push_str("err ");
+                    if func.results.len() > 0 {
+                        self.push_str(":");
+                    }
+                    self.push_str("= res.");
+                    self.push_str(&self.func_name(func));
+                    self.push_str("(ctx");
+                    for (i, _) in func.params.iter().enumerate().skip(1) {
+                        uwrite!(self.src, ", p{i}");
+                    }
+                    self.push_str(")\n");
+                    self.push_str("if err != nil {\n");
+                    uwriteln!(
+                        self.src,
+                        r#"return {fmt}.Errorf("failed to handle `%s.{name}` invocation: %w", rx, err)"#,
+                    );
+                    self.push_str("}\n");
+                    uwriteln!(
+                        self.src,
+                        r"
+                    var buf {bytes}.Buffer
+                    writes := make(map[uint32]func({wrpc}.IndexWriter) error, {})",
+                        func.results.len()
+                    );
+                    for (i, ty) in func.results.iter_types().enumerate() {
+                        uwrite!(self.src, "write{i}, err :=");
+                        self.print_write_ty(ty, &format!("r{i}"), "&buf");
+                        self.push_str("\n");
+                        self.push_str("if err != nil {\n");
+                        uwriteln!(
+                            self.src,
+                            r#"return {fmt}.Errorf("failed to write result value {i}: %w", err)"#,
+                        );
+                        self.src.push_str("}\n");
+                        uwriteln!(
+                            self.src,
+                            r#"if write{i} != nil {{
+                            writes[{i}] = write{i}
+                        }}"#,
+                        );
+                    }
+                    uwrite!(
+                        self.src,
+                        r#"{slog}.DebugContext(ctx, "transmitting `{instance}.{name}` result")
+                        _, err = w.Write(buf.Bytes())
+                        if err != nil {{
+                            return {fmt}.Errorf("failed to write result: %w", err)
+                        }}
+                        if len(writes) > 0 {{
+	                    	var wg {errgroup}.Group
+	                    	for index, write := range writes {{
+	                    		w, err := w.Index(index)
+	                    		if err != nil {{
+	                    			return {fmt}.Errorf("failed to index writer: %w", err)
+	                    		}}
+	                    		write := write
+	                    		wg.Go(func() error {{
+	                    			return write(w)
+	                    		}})
+	                    	}}
+	                    	return wg.Wait()
+	                    }}
+                        return nil
+                     }}, "#,
+                    );
+                    for (i, (_, ty)) in func.params.iter().enumerate() {
+                        let (nested, fut) = self.async_paths_ty(ty);
+                        for path in nested {
+                            self.push_str(wrpc);
+                            self.push_str(".NewSubscribePath().Index(");
+                            uwrite!(self.src, "{i})");
+                            for p in path {
+                                if let Some(p) = p {
+                                    uwrite!(self.src, ".Index({p})");
+                                } else {
+                                    self.push_str(".Wildcard()");
+                                }
+                            }
+                            self.push_str(", ");
+                        }
+                        if fut {
+                            uwrite!(self.src, "{wrpc}.NewSubscribePath().Index({i}), ");
+                        }
+                    }
+                    uwriteln!(
+                        self.src,
+                        r#")
+                     if err != nil {{
+                        err = {fmt}.Errorf("failed to serve `%s.{name}`: %w", rx, err)
+                        if sErr := stop(); sErr != nil {{
+                            {slog}.ErrorContext(ctx, "failed to stop serving resource methods", "err", err)
+                        }}
+                        cancel(err)
+                        return
+                    }}
+                    stops = append(stops, stop{i})"#,
+                    );
+                }
+                uwriteln!(
+                    self.src,
+                    r#"stopDrop, err := c.Serve(rx, "drop", func(_ {context}.Context, w {wrpc}.IndexWriter, _ {wrpc}.IndexReadCloser) error {{ 
+                        defer cancel(nil)
+                        _, err := w.Write(nil)
+                        if err != nil {{
+                            return {fmt}.Errorf("failed to write empty result: %w", err)
+                        }}
+                        return nil
+                    }})
+                    if err != nil {{
+                        err = {fmt}.Errorf("failed to serve `%s.drop`: %w", rx, err)
+                        if sErr := stop(); sErr != nil {{
+                            {slog}.ErrorContext(ctx, "failed to stop serving resource methods", "err", err)
+                        }}
+                        cancel(err)
+                        return
+                    }}
+                    stops = append(stops, stopDrop)
+                    <-ctx.Done()
+                    if sErr := stop(); sErr != nil {{
+                        {slog}.ErrorContext(ctx, "failed to stop serving resource methods", "err", err)
+                    }}
+                    "#,
+                );
+                self.push_str("}()\n");
+            }
 
             uwriteln!(
                 self.src,
@@ -2878,8 +3141,7 @@ impl InterfaceGenerator<'_> {
             if let FunctionKind::Method(id) = &func.kind {
                 let (_, methods) = resources.get_mut(id).unwrap();
                 let prev = mem::take(&mut self.src);
-                let sig = FnSig::default();
-                self.print_docs_and_params(func, &sig);
+                self.print_docs_and_params(func, true);
                 self.src.push_str(" (");
                 for ty in func.results.iter_types() {
                     self.print_opt_ty(ty, true);
@@ -2888,16 +3150,18 @@ impl InterfaceGenerator<'_> {
                 self.push_str("func() error, error)\n");
                 let trait_method = mem::replace(&mut self.src, prev);
                 methods.push(trait_method);
-                continue;
             }
 
-            let sig = FnSig::default();
             let fmt = self.deps.fmt();
             let wrpc = self.deps.wrpc();
 
-            let _params = self.print_docs_and_params(func, &sig);
-            if let FunctionKind::Constructor(_) = &func.kind {
-                uwrite!(self.src, " (r0__ any, close__ func() error, err__ error)");
+            self.print_docs_and_params(func, false);
+            if let FunctionKind::Constructor(id) = &func.kind {
+                self.push_str(" (r0__ ");
+                self.push_str(wrpc);
+                self.push_str(".Own[");
+                self.print_tyid(*id, true);
+                self.src.push_str("], ");
             } else {
                 self.src.push_str(" (");
                 for (i, ty) in func.results.iter_types().enumerate() {
@@ -2905,8 +3169,8 @@ impl InterfaceGenerator<'_> {
                     self.print_opt_ty(ty, true);
                     self.src.push_str(", ");
                 }
-                self.push_str("close__ func() error, err__ error) ");
             }
+            self.push_str("close__ func() error, err__ error) ");
             self.src.push_str("{\n");
             self.src.push_str("if err__ = wrpc__.Invoke(ctx__, ");
             match func.kind {
@@ -2914,13 +3178,16 @@ impl InterfaceGenerator<'_> {
                 | FunctionKind::Static(..)
                 | FunctionKind::Constructor(..) => {
                     uwrite!(self.src, r#""{instance}""#);
+                    self.src.push_str(", \"");
+                    self.src.push_str(&func.name);
                 }
                 FunctionKind::Method(..) => {
-                    self.src.push_str("self.0");
+                    self.src.push_str("string(self)");
+                    self.src.push_str(", \"");
+                    let name = &func.name;
+                    self.push_str(&name[name.find('.').unwrap() + 1..]);
                 }
             }
-            self.src.push_str(", \"");
-            self.src.push_str(&func.name);
             self.src.push_str("\", ");
             uwriteln!(
                 self.src,
@@ -3014,12 +3281,6 @@ impl InterfaceGenerator<'_> {
             for method in methods {
                 self.src.push_str(method);
             }
-            let context = self.deps.context();
-            let wrpc = self.deps.wrpc();
-            uwriteln!(
-                self.src,
-                "Drop(ctx__ {context}.Context, wrpc__ {wrpc}.Client) error"
-            );
             uwriteln!(self.src, "}}");
         }
     }
@@ -3121,32 +3382,27 @@ impl InterfaceGenerator<'_> {
                     .name
                     .strip_prefix("[static]")
                     .expect("failed to strip `[static]` prefix");
-                let (res, name) = name
-                    .split_once('.')
-                    .expect("missing '.' in static function name");
-                format!(
-                    "{}_{}",
-                    res.to_upper_camel_case(),
-                    name.to_upper_camel_case()
-                )
+                to_upper_camel_case(name)
             }
             _ => to_upper_camel_case(func.item_name()),
         }
     }
 
-    fn print_docs_and_params(&mut self, func: &Function, sig: &FnSig) -> Vec<String> {
+    fn print_docs_and_params(&mut self, func: &Function, interface: bool) {
         self.godoc(&func.docs);
         self.godoc_params(&func.params, "Parameters");
         // TODO: re-add this when docs are back
         // self.godoc_params(&func.results, "Return");
 
-        if self.in_import && !matches!(func.kind, FunctionKind::Method(..)) {
+        if !interface {
             self.push_str("func ");
-        }
-        if let Some(arg) = &sig.self_arg {
-            self.push_str("(");
-            self.push_str(arg);
-            self.push_str(")");
+            if let FunctionKind::Method(..) = &func.kind {
+                let name = func
+                    .name
+                    .strip_prefix("[method]")
+                    .expect("failed to strip `[method]` prefix");
+                self.push_str(&name[..name.find('.').unwrap()].to_upper_camel_case());
+            }
         }
         if self.in_import && matches!(func.kind, FunctionKind::Constructor(..)) {
             self.push_str("New");
@@ -3158,23 +3414,18 @@ impl InterfaceGenerator<'_> {
             let wrpc = self.deps.wrpc();
             uwrite!(self.src, "wrpc__ {wrpc}.Client, ");
         }
-        let mut params = Vec::new();
         for (i, (name, param)) in func.params.iter().enumerate() {
             if let FunctionKind::Method(..) = &func.kind {
-                if i == 0 {
+                if i == 0 && interface {
                     continue;
                 }
             }
-            let name = to_go_ident(name);
-            self.push_str(&name);
+            self.push_str(&to_go_ident(name));
             self.push_str(" ");
             self.print_opt_ty(param, true);
             self.push_str(",");
-
-            params.push(name);
         }
         self.push_str(")");
-        params
     }
 
     fn print_ty(&mut self, ty: &Type, decl: bool) {
@@ -3319,9 +3570,7 @@ impl InterfaceGenerator<'_> {
                     TypeDefKind::Future(ty) => self.print_future(ty),
                     TypeDefKind::Stream(ty) => self.print_stream(ty),
                     TypeDefKind::Type(ty) => self.print_opt_ty(ty, decl),
-                    TypeDefKind::Handle(Handle::Own(id) | Handle::Borrow(id)) => {
-                        self.print_tyid(*id, decl);
-                    }
+                    TypeDefKind::Handle(..) => self.print_tyid(*id, decl),
                     _ => {
                         if decl {
                             self.push_str("*");
@@ -3420,8 +3669,20 @@ impl InterfaceGenerator<'_> {
             TypeDefKind::Enum(_) => panic!("unsupported anonymous type reference: enum"),
             TypeDefKind::Future(ty) => self.print_future(ty),
             TypeDefKind::Stream(ty) => self.print_stream(ty),
-            TypeDefKind::Handle(Handle::Own(ty)) => self.print_ty(&Type::Id(*ty), decl),
-            TypeDefKind::Handle(Handle::Borrow(ty)) => self.print_ty(&Type::Id(*ty), decl),
+            TypeDefKind::Handle(Handle::Own(ty)) => {
+                let wrpc = self.deps.wrpc();
+                self.push_str(wrpc);
+                self.push_str(".Own[");
+                self.print_ty(&Type::Id(*ty), decl);
+                self.push_str("]");
+            }
+            TypeDefKind::Handle(Handle::Borrow(ty)) => {
+                let wrpc = self.deps.wrpc();
+                self.push_str(wrpc);
+                self.push_str(".Borrow[");
+                self.print_ty(&Type::Id(*ty), decl);
+                self.push_str("]");
+            }
             TypeDefKind::Type(t) => self.print_ty(t, decl),
             TypeDefKind::Unknown => unreachable!(),
         }
@@ -3666,7 +3927,6 @@ func (v *{name}) WriteToIndex(w {wrpc}.ByteWriter) (func({wrpc}.IndexWriter) err
             {
                 self.godoc(docs);
                 self.push_str(&name);
-                self.push_str("Discriminant_");
                 self.push_str(&case_name.to_upper_camel_case());
                 self.push_str(" ");
                 self.push_str(&name);
@@ -3684,7 +3944,6 @@ func (v *{name}) WriteToIndex(w {wrpc}.ByteWriter) (func({wrpc}.IndexWriter) err
             {
                 self.push_str("case ");
                 self.push_str(&name);
-                self.push_str("Discriminant_");
                 self.push_str(&case_name.to_upper_camel_case());
                 self.push_str(": return \"");
                 self.push_str(case_name);
@@ -3710,7 +3969,7 @@ func (v *{name}) WriteToIndex(w {wrpc}.ByteWriter) (func({wrpc}.IndexWriter) err
                 self.push_str("ok bool) {\n");
                 uwriteln!(
                     self.src,
-                    r#"if ok = (v.discriminant == {name}Discriminant_{camel}); !ok {{ return }}"#
+                    r#"if ok = (v.discriminant == {name}{camel}); !ok {{ return }}"#
                 );
                 if let Some(ty) = ty {
                     self.push_str("payload, ok = v.payload.(");
@@ -3726,7 +3985,7 @@ func (v *{name}) WriteToIndex(w {wrpc}.ByteWriter) (func({wrpc}.IndexWriter) err
                     self.print_opt_ty(ty, true);
                 }
                 uwriteln!(self.src, ") *{name} {{");
-                uwriteln!(self.src, "v.discriminant = {name}Discriminant_{camel}");
+                uwriteln!(self.src, "v.discriminant = {name}{camel}");
                 if ty.is_some() {
                     self.push_str("v.payload = payload\n");
                 } else {
@@ -3735,7 +3994,7 @@ func (v *{name}) WriteToIndex(w {wrpc}.ByteWriter) (func({wrpc}.IndexWriter) err
                 self.push_str("return v\n}\n");
 
                 self.godoc(docs);
-                uwrite!(self.src, r#"func ({name}) New{camel}("#);
+                uwrite!(self.src, r#"func New{name}{camel}("#);
                 if let Some(ty) = ty {
                     self.push_str("payload ");
                     self.print_opt_ty(ty, true);
@@ -3779,7 +4038,6 @@ func (v *{name}) WriteToIndex(w {wrpc}.ByteWriter) (func({wrpc}.IndexWriter) err
             {
                 self.push_str("case ");
                 self.push_str(&name);
-                self.push_str("Discriminant_");
                 self.push_str(&case_name.to_upper_camel_case());
                 self.push_str(":\n");
                 if let Some(ty) = ty {
