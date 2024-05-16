@@ -52,7 +52,7 @@ func (SyncHandler) WithFlags(ctx context.Context, a, b, c bool) (*sync.Abc, erro
 func (SyncHandler) WithVariantOption(ctx context.Context, ok bool) (*sync.Var, error) {
 	slog.DebugContext(ctx, "handling `with-variant-option`", "ok", ok)
 	if ok {
-		return (&sync.Var{}).SetVar(&sync.Rec{
+		return sync.NewVarVar(&sync.Rec{
 			Nested: &sync.RecNested{
 				Foo: "bar",
 			},

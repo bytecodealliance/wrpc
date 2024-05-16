@@ -46,7 +46,7 @@ interface resources {
         bar: func() -> string;
     }
 
-    bar: func(v: foo) -> string;
+    bar: func(v: borrow<foo>) -> string;
 }
 
 world sync-server {
@@ -81,10 +81,16 @@ world resources-server {
     export strange: interface {
         use resources.{foo};
 
-        bar: func(v: foo) -> string;
+        bar: func(v: borrow<foo>) -> u64;
     }
 }
 
 world resources-client {
     import resources;
+
+    import strange: interface {
+        use resources.{foo};
+
+        bar: func(v: borrow<foo>) -> u64;
+    }
 }

@@ -236,28 +236,22 @@ impl GoWrpc {
 
     /// Generates imports and a `Serve` function for the world
     fn finish_serve_function(&mut self) {
-        let mut traits: Vec<String> = self
-            .export_paths
-            .iter()
-            .map(|path| {
-                if path.is_empty() {
-                    "Handler".to_string()
-                } else {
-                    format!("{path}.Handler")
-                }
-            })
-            .collect();
-        let bound = match traits.len() {
-            0 => return,
-            1 => traits.pop().unwrap(),
-            _ => traits.join("; "),
-        };
-        uwriteln!(
-            self.src,
-            r#"
-func Serve(c {wrpc}.Client, h interface{{ {bound} }}) (stop func() error, err error) {{"#,
-            wrpc = self.deps.wrpc()
-        );
+        let interfaces = self.export_paths.iter().map(|path| {
+            if path.is_empty() {
+                "Handler".to_string()
+            } else {
+                format!("{path}.Handler")
+            }
+        });
+        if interfaces.len() == 0 {
+            return;
+        }
+        let wrpc = self.deps.wrpc();
+        uwrite!(self.src, "func Serve(c {wrpc}.Client",);
+        for (i, bound) in interfaces.enumerate() {
+            uwrite!(self.src, ", h{i} {bound}");
+        }
+        self.src.push_str(") (stop func() error, err error) {\n");
         uwriteln!(
             self.src,
             "stops := make([]func() error, 0, {})",
@@ -281,7 +275,7 @@ func Serve(c {wrpc}.Client, h interface{{ {bound} }}) (stop func() error, err er
                 self.src.push_str(path);
                 self.src.push_str(".");
             }
-            self.src.push_str("ServeInterface(c, h)\n");
+            uwriteln!(self.src, "ServeInterface(c, h{i})");
             self.src.push_str("if err != nil { return }\n");
             uwriteln!(self.src, "stops = append(stops, stop{i})");
         }
@@ -567,11 +561,6 @@ fn compute_module_path(name: &WorldKey, resolve: &Resolve, is_export: bool) -> V
 enum Identifier<'a> {
     World(WorldId),
     Interface(InterfaceId, &'a WorldKey),
-}
-
-#[derive(Default)]
-struct FnSig {
-    self_arg: Option<String>,
 }
 
 #[must_use]

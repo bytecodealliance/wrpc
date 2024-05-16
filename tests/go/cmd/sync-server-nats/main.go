@@ -31,7 +31,8 @@ func run(url string) error {
 	}()
 
 	wrpc := wrpcnats.NewClient(nc, "go")
-	stop, err := sync_server.Serve(wrpc, integration.SyncHandler{})
+	var h integration.SyncHandler
+	stop, err := sync_server.Serve(wrpc, h, h)
 	if err != nil {
 		return fmt.Errorf("failed to serve world: %w", err)
 	}

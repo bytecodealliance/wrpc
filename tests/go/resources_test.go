@@ -4,14 +4,18 @@ package integration_test
 
 import (
 	"context"
+	"log/slog"
 	"testing"
 	"time"
 
 	"github.com/nats-io/nats.go"
+	wrpc "github.com/wrpc/wrpc/go"
 	wrpcnats "github.com/wrpc/wrpc/go/nats"
+	integration "github.com/wrpc/wrpc/tests/go"
+	"github.com/wrpc/wrpc/tests/go/bindings/resources_client/strange"
+	"github.com/wrpc/wrpc/tests/go/bindings/resources_client/wrpc_test/integration/resources"
+	"github.com/wrpc/wrpc/tests/go/bindings/resources_server"
 	"github.com/wrpc/wrpc/tests/go/internal"
-	// TODO: Implement resource support
-	// integration "github.com/wrpc/wrpc/tests/go"
 )
 
 func TestResources(t *testing.T) {
@@ -28,14 +32,13 @@ func TestResources(t *testing.T) {
 			return
 		}
 	}()
-	_ = wrpcnats.NewClient(nc, "go")
+	client := wrpcnats.NewClient(nc, "go")
 
-	// TODO: Implement resource support
-	//stop, err := resources_server.Serve(client, integration.ResourcesHandler{})
-	//if err != nil {
-	//	t.Errorf("failed to serve `async-server` world: %s", err)
-	//	return
-	//}
+	stop, err := resources_server.Serve(client, &integration.ResourcesHandler{}, integration.ResourcesStrangeHandler{})
+	if err != nil {
+		t.Errorf("failed to serve `resources-server` world: %s", err)
+		return
+	}
 
 	var cancel func()
 	ctx := context.Background()
@@ -47,8 +50,114 @@ func TestResources(t *testing.T) {
 	}
 	defer cancel()
 
-	//if err = stop(); err != nil {
-	//	t.Errorf("failed to stop serving `async-server` world: %s", err)
-	//	return
-	//}
+	var foo wrpc.Own[resources.Foo]
+	{
+		slog.DebugContext(ctx, "calling `wrpc-test:integration/resources.[constructor]foo`")
+		v, shutdown, err := resources.NewFoo(context.Background(), client)
+		if err != nil {
+			t.Errorf("failed to call `wrpc-test:integration/resources.[constructor]foo`: %s", err)
+			return
+		}
+		if err := shutdown(); err != nil {
+			t.Errorf("failed to shutdown: %s", err)
+			return
+		}
+		foo = v
+	}
+	if err := foo.Drop(ctx, client); err != nil {
+		t.Errorf("failed to drop `foo` resource: %s", err)
+		return
+	}
+
+	{
+		slog.DebugContext(ctx, "calling `wrpc-test:integration/resources.[constructor]foo`")
+		v, shutdown, err := resources.NewFoo(context.Background(), client)
+		if err != nil {
+			t.Errorf("failed to call `wrpc-test:integration/resources.[constructor]foo`: %s", err)
+			return
+		}
+		if err := shutdown(); err != nil {
+			t.Errorf("failed to shutdown: %s", err)
+			return
+		}
+		foo = v
+	}
+
+	{
+		slog.DebugContext(ctx, "calling `wrpc-test:integration/resources.[method]foo.bar`")
+		v, shutdown, err := resources.FooBar(context.Background(), client, foo.Borrow())
+		if err != nil {
+			t.Errorf("failed to call `wrpc-test:integration/resources.[method]foo.bar`: %s", err)
+			return
+		}
+		if v != "bar" {
+			t.Errorf("expected: `bar`, got: %s", v)
+			return
+		}
+		if err := shutdown(); err != nil {
+			t.Errorf("failed to shutdown: %s", err)
+			return
+		}
+	}
+
+	{
+		slog.DebugContext(ctx, "calling `wrpc-test:integration/resources.bar`")
+		v, shutdown, err := resources.Bar(context.Background(), client, foo.Borrow())
+		if err != nil {
+			t.Errorf("failed to call `wrpc-test:integration/resources.bar`: %s", err)
+			return
+		}
+		if v != "bar" {
+			t.Errorf("expected: `bar`, got: %s", v)
+			return
+		}
+		if err := shutdown(); err != nil {
+			t.Errorf("failed to shutdown: %s", err)
+			return
+		}
+	}
+
+	{
+		slog.DebugContext(ctx, "calling `wrpc-test:integration/strange.bar`")
+		v, shutdown, err := strange.Bar(context.Background(), client, foo.Borrow())
+		if err != nil {
+			t.Errorf("failed to call `wrpc-test:integration/strange.bar`: %s", err)
+			return
+		}
+		if v != 42 {
+			t.Errorf("expected: `bar`, got: %v", v)
+			return
+		}
+		if err := shutdown(); err != nil {
+			t.Errorf("failed to shutdown: %s", err)
+			return
+		}
+	}
+
+	{
+		slog.DebugContext(ctx, "calling `wrpc-test:integration/resources.[static]foo.foo`")
+		v, shutdown, err := resources.FooFoo(context.Background(), client, foo)
+		if err != nil {
+			t.Errorf("failed to call `wrpc-test:integration/resources.bar`: %s", err)
+			return
+		}
+		if v != "foo" {
+			t.Errorf("expected: `foo`, got: %s", v)
+			return
+		}
+		if err := shutdown(); err != nil {
+			t.Errorf("failed to shutdown: %s", err)
+			return
+		}
+	}
+
+	if err := foo.Drop(ctx, client); err == nil {
+		t.Errorf("`foo` resource did not get dropped by moving")
+		return
+	}
+
+	if err = stop(); err != nil {
+		t.Errorf("failed to stop serving `resources-server` world: %s", err)
+		return
+	}
 }
