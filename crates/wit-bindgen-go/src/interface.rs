@@ -3474,6 +3474,7 @@ impl InterfaceGenerator<'_> {
                     self.print_option_element_ptr(ty, decl);
                     return;
                 }
+                TypeDefKind::Handle(..) => {}
                 _ => return,
             }
         }

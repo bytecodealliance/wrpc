@@ -720,9 +720,9 @@ func Handle(ctx__ context.Context, wrpc__ wrpc.Client, request *wrpc__http__type
 									return nil, fmt.Errorf("failed to read discriminant: %w", err)
 								}
 								switch wasi__http__types.ErrorCodeDiscriminant(n) {
-								case wasi__http__types.ErrorCodeDiscriminant_DnsTimeout:
+								case wasi__http__types.ErrorCodeDnsTimeout:
 									return v.SetDnsTimeout(), nil
-								case wasi__http__types.ErrorCodeDiscriminant_DnsError:
+								case wasi__http__types.ErrorCodeDnsError:
 									payload, err := func(r wrpc.IndexReader, path ...uint32) (*wasi__http__types.DnsErrorPayload, error) {
 										v := &wasi__http__types.DnsErrorPayload{}
 										var err error
@@ -837,31 +837,31 @@ func Handle(ctx__ context.Context, wrpc__ wrpc.Client, request *wrpc__http__type
 										return nil, fmt.Errorf("failed to read `DNS-error` payload: %w", err)
 									}
 									return v.SetDnsError(payload), nil
-								case wasi__http__types.ErrorCodeDiscriminant_DestinationNotFound:
+								case wasi__http__types.ErrorCodeDestinationNotFound:
 									return v.SetDestinationNotFound(), nil
-								case wasi__http__types.ErrorCodeDiscriminant_DestinationUnavailable:
+								case wasi__http__types.ErrorCodeDestinationUnavailable:
 									return v.SetDestinationUnavailable(), nil
-								case wasi__http__types.ErrorCodeDiscriminant_DestinationIpProhibited:
+								case wasi__http__types.ErrorCodeDestinationIpProhibited:
 									return v.SetDestinationIpProhibited(), nil
-								case wasi__http__types.ErrorCodeDiscriminant_DestinationIpUnroutable:
+								case wasi__http__types.ErrorCodeDestinationIpUnroutable:
 									return v.SetDestinationIpUnroutable(), nil
-								case wasi__http__types.ErrorCodeDiscriminant_ConnectionRefused:
+								case wasi__http__types.ErrorCodeConnectionRefused:
 									return v.SetConnectionRefused(), nil
-								case wasi__http__types.ErrorCodeDiscriminant_ConnectionTerminated:
+								case wasi__http__types.ErrorCodeConnectionTerminated:
 									return v.SetConnectionTerminated(), nil
-								case wasi__http__types.ErrorCodeDiscriminant_ConnectionTimeout:
+								case wasi__http__types.ErrorCodeConnectionTimeout:
 									return v.SetConnectionTimeout(), nil
-								case wasi__http__types.ErrorCodeDiscriminant_ConnectionReadTimeout:
+								case wasi__http__types.ErrorCodeConnectionReadTimeout:
 									return v.SetConnectionReadTimeout(), nil
-								case wasi__http__types.ErrorCodeDiscriminant_ConnectionWriteTimeout:
+								case wasi__http__types.ErrorCodeConnectionWriteTimeout:
 									return v.SetConnectionWriteTimeout(), nil
-								case wasi__http__types.ErrorCodeDiscriminant_ConnectionLimitReached:
+								case wasi__http__types.ErrorCodeConnectionLimitReached:
 									return v.SetConnectionLimitReached(), nil
-								case wasi__http__types.ErrorCodeDiscriminant_TlsProtocolError:
+								case wasi__http__types.ErrorCodeTlsProtocolError:
 									return v.SetTlsProtocolError(), nil
-								case wasi__http__types.ErrorCodeDiscriminant_TlsCertificateError:
+								case wasi__http__types.ErrorCodeTlsCertificateError:
 									return v.SetTlsCertificateError(), nil
-								case wasi__http__types.ErrorCodeDiscriminant_TlsAlertReceived:
+								case wasi__http__types.ErrorCodeTlsAlertReceived:
 									payload, err := func(r wrpc.IndexReader, path ...uint32) (*wasi__http__types.TlsAlertReceivedPayload, error) {
 										v := &wasi__http__types.TlsAlertReceivedPayload{}
 										var err error
@@ -961,11 +961,11 @@ func Handle(ctx__ context.Context, wrpc__ wrpc.Client, request *wrpc__http__type
 										return nil, fmt.Errorf("failed to read `TLS-alert-received` payload: %w", err)
 									}
 									return v.SetTlsAlertReceived(payload), nil
-								case wasi__http__types.ErrorCodeDiscriminant_HttpRequestDenied:
+								case wasi__http__types.ErrorCodeHttpRequestDenied:
 									return v.SetHttpRequestDenied(), nil
-								case wasi__http__types.ErrorCodeDiscriminant_HttpRequestLengthRequired:
+								case wasi__http__types.ErrorCodeHttpRequestLengthRequired:
 									return v.SetHttpRequestLengthRequired(), nil
-								case wasi__http__types.ErrorCodeDiscriminant_HttpRequestBodySize:
+								case wasi__http__types.ErrorCodeHttpRequestBodySize:
 									payload, err := func(r wrpc.IndexReader, path ...uint32) (*uint64, error) {
 										slog.Debug("reading option status byte")
 										status, err := r.ReadByte()
@@ -1012,13 +1012,13 @@ func Handle(ctx__ context.Context, wrpc__ wrpc.Client, request *wrpc__http__type
 										return nil, fmt.Errorf("failed to read `HTTP-request-body-size` payload: %w", err)
 									}
 									return v.SetHttpRequestBodySize(payload), nil
-								case wasi__http__types.ErrorCodeDiscriminant_HttpRequestMethodInvalid:
+								case wasi__http__types.ErrorCodeHttpRequestMethodInvalid:
 									return v.SetHttpRequestMethodInvalid(), nil
-								case wasi__http__types.ErrorCodeDiscriminant_HttpRequestUriInvalid:
+								case wasi__http__types.ErrorCodeHttpRequestUriInvalid:
 									return v.SetHttpRequestUriInvalid(), nil
-								case wasi__http__types.ErrorCodeDiscriminant_HttpRequestUriTooLong:
+								case wasi__http__types.ErrorCodeHttpRequestUriTooLong:
 									return v.SetHttpRequestUriTooLong(), nil
-								case wasi__http__types.ErrorCodeDiscriminant_HttpRequestHeaderSectionSize:
+								case wasi__http__types.ErrorCodeHttpRequestHeaderSectionSize:
 									payload, err := func(r wrpc.IndexReader, path ...uint32) (*uint32, error) {
 										slog.Debug("reading option status byte")
 										status, err := r.ReadByte()
@@ -1065,7 +1065,7 @@ func Handle(ctx__ context.Context, wrpc__ wrpc.Client, request *wrpc__http__type
 										return nil, fmt.Errorf("failed to read `HTTP-request-header-section-size` payload: %w", err)
 									}
 									return v.SetHttpRequestHeaderSectionSize(payload), nil
-								case wasi__http__types.ErrorCodeDiscriminant_HttpRequestHeaderSize:
+								case wasi__http__types.ErrorCodeHttpRequestHeaderSize:
 									payload, err := func(r wrpc.IndexReader, path ...uint32) (*wasi__http__types.FieldSizePayload, error) {
 										slog.Debug("reading option status byte")
 										status, err := r.ReadByte()
@@ -1199,7 +1199,7 @@ func Handle(ctx__ context.Context, wrpc__ wrpc.Client, request *wrpc__http__type
 										return nil, fmt.Errorf("failed to read `HTTP-request-header-size` payload: %w", err)
 									}
 									return v.SetHttpRequestHeaderSize(payload), nil
-								case wasi__http__types.ErrorCodeDiscriminant_HttpRequestTrailerSectionSize:
+								case wasi__http__types.ErrorCodeHttpRequestTrailerSectionSize:
 									payload, err := func(r wrpc.IndexReader, path ...uint32) (*uint32, error) {
 										slog.Debug("reading option status byte")
 										status, err := r.ReadByte()
@@ -1246,7 +1246,7 @@ func Handle(ctx__ context.Context, wrpc__ wrpc.Client, request *wrpc__http__type
 										return nil, fmt.Errorf("failed to read `HTTP-request-trailer-section-size` payload: %w", err)
 									}
 									return v.SetHttpRequestTrailerSectionSize(payload), nil
-								case wasi__http__types.ErrorCodeDiscriminant_HttpRequestTrailerSize:
+								case wasi__http__types.ErrorCodeHttpRequestTrailerSize:
 									payload, err := func(r wrpc.IndexReader, path ...uint32) (*wasi__http__types.FieldSizePayload, error) {
 										v := &wasi__http__types.FieldSizePayload{}
 										var err error
@@ -1361,9 +1361,9 @@ func Handle(ctx__ context.Context, wrpc__ wrpc.Client, request *wrpc__http__type
 										return nil, fmt.Errorf("failed to read `HTTP-request-trailer-size` payload: %w", err)
 									}
 									return v.SetHttpRequestTrailerSize(payload), nil
-								case wasi__http__types.ErrorCodeDiscriminant_HttpResponseIncomplete:
+								case wasi__http__types.ErrorCodeHttpResponseIncomplete:
 									return v.SetHttpResponseIncomplete(), nil
-								case wasi__http__types.ErrorCodeDiscriminant_HttpResponseHeaderSectionSize:
+								case wasi__http__types.ErrorCodeHttpResponseHeaderSectionSize:
 									payload, err := func(r wrpc.IndexReader, path ...uint32) (*uint32, error) {
 										slog.Debug("reading option status byte")
 										status, err := r.ReadByte()
@@ -1410,7 +1410,7 @@ func Handle(ctx__ context.Context, wrpc__ wrpc.Client, request *wrpc__http__type
 										return nil, fmt.Errorf("failed to read `HTTP-response-header-section-size` payload: %w", err)
 									}
 									return v.SetHttpResponseHeaderSectionSize(payload), nil
-								case wasi__http__types.ErrorCodeDiscriminant_HttpResponseHeaderSize:
+								case wasi__http__types.ErrorCodeHttpResponseHeaderSize:
 									payload, err := func(r wrpc.IndexReader, path ...uint32) (*wasi__http__types.FieldSizePayload, error) {
 										v := &wasi__http__types.FieldSizePayload{}
 										var err error
@@ -1525,7 +1525,7 @@ func Handle(ctx__ context.Context, wrpc__ wrpc.Client, request *wrpc__http__type
 										return nil, fmt.Errorf("failed to read `HTTP-response-header-size` payload: %w", err)
 									}
 									return v.SetHttpResponseHeaderSize(payload), nil
-								case wasi__http__types.ErrorCodeDiscriminant_HttpResponseBodySize:
+								case wasi__http__types.ErrorCodeHttpResponseBodySize:
 									payload, err := func(r wrpc.IndexReader, path ...uint32) (*uint64, error) {
 										slog.Debug("reading option status byte")
 										status, err := r.ReadByte()
@@ -1572,7 +1572,7 @@ func Handle(ctx__ context.Context, wrpc__ wrpc.Client, request *wrpc__http__type
 										return nil, fmt.Errorf("failed to read `HTTP-response-body-size` payload: %w", err)
 									}
 									return v.SetHttpResponseBodySize(payload), nil
-								case wasi__http__types.ErrorCodeDiscriminant_HttpResponseTrailerSectionSize:
+								case wasi__http__types.ErrorCodeHttpResponseTrailerSectionSize:
 									payload, err := func(r wrpc.IndexReader, path ...uint32) (*uint32, error) {
 										slog.Debug("reading option status byte")
 										status, err := r.ReadByte()
@@ -1619,7 +1619,7 @@ func Handle(ctx__ context.Context, wrpc__ wrpc.Client, request *wrpc__http__type
 										return nil, fmt.Errorf("failed to read `HTTP-response-trailer-section-size` payload: %w", err)
 									}
 									return v.SetHttpResponseTrailerSectionSize(payload), nil
-								case wasi__http__types.ErrorCodeDiscriminant_HttpResponseTrailerSize:
+								case wasi__http__types.ErrorCodeHttpResponseTrailerSize:
 									payload, err := func(r wrpc.IndexReader, path ...uint32) (*wasi__http__types.FieldSizePayload, error) {
 										v := &wasi__http__types.FieldSizePayload{}
 										var err error
@@ -1734,7 +1734,7 @@ func Handle(ctx__ context.Context, wrpc__ wrpc.Client, request *wrpc__http__type
 										return nil, fmt.Errorf("failed to read `HTTP-response-trailer-size` payload: %w", err)
 									}
 									return v.SetHttpResponseTrailerSize(payload), nil
-								case wasi__http__types.ErrorCodeDiscriminant_HttpResponseTransferCoding:
+								case wasi__http__types.ErrorCodeHttpResponseTransferCoding:
 									payload, err := func(r wrpc.IndexReader, path ...uint32) (*string, error) {
 										slog.Debug("reading option status byte")
 										status, err := r.ReadByte()
@@ -1794,7 +1794,7 @@ func Handle(ctx__ context.Context, wrpc__ wrpc.Client, request *wrpc__http__type
 										return nil, fmt.Errorf("failed to read `HTTP-response-transfer-coding` payload: %w", err)
 									}
 									return v.SetHttpResponseTransferCoding(payload), nil
-								case wasi__http__types.ErrorCodeDiscriminant_HttpResponseContentCoding:
+								case wasi__http__types.ErrorCodeHttpResponseContentCoding:
 									payload, err := func(r wrpc.IndexReader, path ...uint32) (*string, error) {
 										slog.Debug("reading option status byte")
 										status, err := r.ReadByte()
@@ -1854,17 +1854,17 @@ func Handle(ctx__ context.Context, wrpc__ wrpc.Client, request *wrpc__http__type
 										return nil, fmt.Errorf("failed to read `HTTP-response-content-coding` payload: %w", err)
 									}
 									return v.SetHttpResponseContentCoding(payload), nil
-								case wasi__http__types.ErrorCodeDiscriminant_HttpResponseTimeout:
+								case wasi__http__types.ErrorCodeHttpResponseTimeout:
 									return v.SetHttpResponseTimeout(), nil
-								case wasi__http__types.ErrorCodeDiscriminant_HttpUpgradeFailed:
+								case wasi__http__types.ErrorCodeHttpUpgradeFailed:
 									return v.SetHttpUpgradeFailed(), nil
-								case wasi__http__types.ErrorCodeDiscriminant_HttpProtocolError:
+								case wasi__http__types.ErrorCodeHttpProtocolError:
 									return v.SetHttpProtocolError(), nil
-								case wasi__http__types.ErrorCodeDiscriminant_LoopDetected:
+								case wasi__http__types.ErrorCodeLoopDetected:
 									return v.SetLoopDetected(), nil
-								case wasi__http__types.ErrorCodeDiscriminant_ConfigurationError:
+								case wasi__http__types.ErrorCodeConfigurationError:
 									return v.SetConfigurationError(), nil
-								case wasi__http__types.ErrorCodeDiscriminant_InternalError:
+								case wasi__http__types.ErrorCodeInternalError:
 									payload, err := func(r wrpc.IndexReader, path ...uint32) (*string, error) {
 										slog.Debug("reading option status byte")
 										status, err := r.ReadByte()

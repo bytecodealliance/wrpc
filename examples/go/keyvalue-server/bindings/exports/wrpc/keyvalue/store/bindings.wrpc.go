@@ -27,21 +27,21 @@ type ErrorDiscriminant uint8
 
 const (
 	// The host does not recognize the store identifier requested.
-	ErrorDiscriminant_NoSuchStore ErrorDiscriminant = 0
+	ErrorNoSuchStore ErrorDiscriminant = 0
 	// The requesting component does not have access to the specified store
 	// (which may or may not exist).
-	ErrorDiscriminant_AccessDenied ErrorDiscriminant = 1
+	ErrorAccessDenied ErrorDiscriminant = 1
 	// Some implementation-specific error has occurred (e.g. I/O)
-	ErrorDiscriminant_Other ErrorDiscriminant = 2
+	ErrorOther ErrorDiscriminant = 2
 )
 
 func (v *Error) String() string {
 	switch v.discriminant {
-	case ErrorDiscriminant_NoSuchStore:
+	case ErrorNoSuchStore:
 		return "no-such-store"
-	case ErrorDiscriminant_AccessDenied:
+	case ErrorAccessDenied:
 		return "access-denied"
-	case ErrorDiscriminant_Other:
+	case ErrorOther:
 		return "other"
 	default:
 		panic("invalid variant")
@@ -50,7 +50,7 @@ func (v *Error) String() string {
 
 // The host does not recognize the store identifier requested.
 func (v *Error) GetNoSuchStore() (ok bool) {
-	if ok = (v.discriminant == ErrorDiscriminant_NoSuchStore); !ok {
+	if ok = (v.discriminant == ErrorNoSuchStore); !ok {
 		return
 	}
 	return
@@ -58,20 +58,20 @@ func (v *Error) GetNoSuchStore() (ok bool) {
 
 // The host does not recognize the store identifier requested.
 func (v *Error) SetNoSuchStore() *Error {
-	v.discriminant = ErrorDiscriminant_NoSuchStore
+	v.discriminant = ErrorNoSuchStore
 	v.payload = nil
 	return v
 }
 
 // The host does not recognize the store identifier requested.
-func (Error) NewNoSuchStore() *Error {
+func NewErrorNoSuchStore() *Error {
 	return (&Error{}).SetNoSuchStore()
 }
 
 // The requesting component does not have access to the specified store
 // (which may or may not exist).
 func (v *Error) GetAccessDenied() (ok bool) {
-	if ok = (v.discriminant == ErrorDiscriminant_AccessDenied); !ok {
+	if ok = (v.discriminant == ErrorAccessDenied); !ok {
 		return
 	}
 	return
@@ -80,20 +80,20 @@ func (v *Error) GetAccessDenied() (ok bool) {
 // The requesting component does not have access to the specified store
 // (which may or may not exist).
 func (v *Error) SetAccessDenied() *Error {
-	v.discriminant = ErrorDiscriminant_AccessDenied
+	v.discriminant = ErrorAccessDenied
 	v.payload = nil
 	return v
 }
 
 // The requesting component does not have access to the specified store
 // (which may or may not exist).
-func (Error) NewAccessDenied() *Error {
+func NewErrorAccessDenied() *Error {
 	return (&Error{}).SetAccessDenied()
 }
 
 // Some implementation-specific error has occurred (e.g. I/O)
 func (v *Error) GetOther() (payload string, ok bool) {
-	if ok = (v.discriminant == ErrorDiscriminant_Other); !ok {
+	if ok = (v.discriminant == ErrorOther); !ok {
 		return
 	}
 	payload, ok = v.payload.(string)
@@ -102,13 +102,13 @@ func (v *Error) GetOther() (payload string, ok bool) {
 
 // Some implementation-specific error has occurred (e.g. I/O)
 func (v *Error) SetOther(payload string) *Error {
-	v.discriminant = ErrorDiscriminant_Other
+	v.discriminant = ErrorOther
 	v.payload = payload
 	return v
 }
 
 // Some implementation-specific error has occurred (e.g. I/O)
-func (Error) NewOther(payload string) *Error {
+func NewErrorOther(payload string) *Error {
 	return (&Error{}).SetOther(
 		payload)
 }
@@ -124,9 +124,9 @@ func (v *Error) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, e
 		return nil, fmt.Errorf("failed to write discriminant: %w", err)
 	}
 	switch v.discriminant {
-	case ErrorDiscriminant_NoSuchStore:
-	case ErrorDiscriminant_AccessDenied:
-	case ErrorDiscriminant_Other:
+	case ErrorNoSuchStore:
+	case ErrorAccessDenied:
+	case ErrorOther:
 		payload, ok := v.payload.(string)
 		if !ok {
 			return nil, errors.New("invalid payload")

@@ -11,6 +11,7 @@ import (
 	wrpc "github.com/wrpc/wrpc/go"
 	io "io"
 	slog "log/slog"
+	utf8 "unicode/utf8"
 )
 
 type Pollable = wasi__io__poll.Pollable
@@ -121,7 +122,7 @@ func Resolution(ctx__ context.Context, wrpc__ wrpc.Client) (r0__ uint64, close__
 
 // Create a `pollable` which will resolve once the specified instant
 // occured.
-func SubscribeInstant(ctx__ context.Context, wrpc__ wrpc.Client, when uint64) (r0__ Pollable, close__ func() error, err__ error) {
+func SubscribeInstant(ctx__ context.Context, wrpc__ wrpc.Client, when uint64) (r0__ wrpc.Own[Pollable], close__ func() error, err__ error) {
 	if err__ = wrpc__.Invoke(ctx__, "wasi:clocks/monotonic-clock@0.2.0", "subscribe-instant", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		var buf__ bytes.Buffer
@@ -143,7 +144,42 @@ func SubscribeInstant(ctx__ context.Context, wrpc__ wrpc.Client, when uint64) (r
 		if err__ != nil {
 			return fmt.Errorf("failed to write parameters: %w", err__)
 		}
-		r0__, err__ = (Pollable)(nil), errors.New("reading owned handles not supported yet")
+		r0__, err__ = func(r interface {
+			io.ByteReader
+			io.Reader
+		}) (wrpc.Own[Pollable], error) {
+			var x uint32
+			var s uint
+			for i := 0; i < 5; i++ {
+				slog.Debug("reading owned resource ID length byte", "i", i)
+				b, err := r.ReadByte()
+				if err != nil {
+					if i > 0 && err == io.EOF {
+						err = io.ErrUnexpectedEOF
+					}
+					return "", fmt.Errorf("failed to read owned resource ID length byte: %w", err)
+				}
+				if b < 0x80 {
+					if i == 4 && b > 1 {
+						return "", errors.New("owned resource ID length overflows a 32-bit integer")
+					}
+					x = x | uint32(b)<<s
+					buf := make([]byte, x)
+					slog.Debug("reading owned resource ID bytes", "len", x)
+					_, err = r.Read(buf)
+					if err != nil {
+						return "", fmt.Errorf("failed to read owned resource ID bytes: %w", err)
+					}
+					if !utf8.Valid(buf) {
+						return "", errors.New("owned resource ID is not valid UTF-8")
+					}
+					return wrpc.Own[Pollable](buf), nil
+				}
+				x |= uint32(b&0x7f) << s
+				s += 7
+			}
+			return "", errors.New("owned resource ID length overflows a 32-bit integer")
+		}(r__)
 		if err__ != nil {
 			return fmt.Errorf("failed to read result 0: %w", err__)
 		}
@@ -158,7 +194,7 @@ func SubscribeInstant(ctx__ context.Context, wrpc__ wrpc.Client, when uint64) (r
 // Create a `pollable` which will resolve once the given duration has
 // elapsed, starting at the time at which this function was called.
 // occured.
-func SubscribeDuration(ctx__ context.Context, wrpc__ wrpc.Client, when uint64) (r0__ Pollable, close__ func() error, err__ error) {
+func SubscribeDuration(ctx__ context.Context, wrpc__ wrpc.Client, when uint64) (r0__ wrpc.Own[Pollable], close__ func() error, err__ error) {
 	if err__ = wrpc__.Invoke(ctx__, "wasi:clocks/monotonic-clock@0.2.0", "subscribe-duration", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		var buf__ bytes.Buffer
@@ -180,7 +216,42 @@ func SubscribeDuration(ctx__ context.Context, wrpc__ wrpc.Client, when uint64) (
 		if err__ != nil {
 			return fmt.Errorf("failed to write parameters: %w", err__)
 		}
-		r0__, err__ = (Pollable)(nil), errors.New("reading owned handles not supported yet")
+		r0__, err__ = func(r interface {
+			io.ByteReader
+			io.Reader
+		}) (wrpc.Own[Pollable], error) {
+			var x uint32
+			var s uint
+			for i := 0; i < 5; i++ {
+				slog.Debug("reading owned resource ID length byte", "i", i)
+				b, err := r.ReadByte()
+				if err != nil {
+					if i > 0 && err == io.EOF {
+						err = io.ErrUnexpectedEOF
+					}
+					return "", fmt.Errorf("failed to read owned resource ID length byte: %w", err)
+				}
+				if b < 0x80 {
+					if i == 4 && b > 1 {
+						return "", errors.New("owned resource ID length overflows a 32-bit integer")
+					}
+					x = x | uint32(b)<<s
+					buf := make([]byte, x)
+					slog.Debug("reading owned resource ID bytes", "len", x)
+					_, err = r.Read(buf)
+					if err != nil {
+						return "", fmt.Errorf("failed to read owned resource ID bytes: %w", err)
+					}
+					if !utf8.Valid(buf) {
+						return "", errors.New("owned resource ID is not valid UTF-8")
+					}
+					return wrpc.Own[Pollable](buf), nil
+				}
+				x |= uint32(b&0x7f) << s
+				s += 7
+			}
+			return "", errors.New("owned resource ID length overflows a 32-bit integer")
+		}(r__)
 		if err__ != nil {
 			return fmt.Errorf("failed to read result 0: %w", err__)
 		}

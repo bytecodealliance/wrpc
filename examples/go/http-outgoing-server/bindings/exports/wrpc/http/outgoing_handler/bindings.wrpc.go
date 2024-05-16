@@ -498,25 +498,25 @@ func ServeInterface(c wrpc.Client, h Handler) (stop func() error, err error) {
 								return nil, fmt.Errorf("failed to read discriminant: %w", err)
 							}
 							switch wasi__http__types.MethodDiscriminant(n) {
-							case wasi__http__types.MethodDiscriminant_Get:
+							case wasi__http__types.MethodGet:
 								return v.SetGet(), nil
-							case wasi__http__types.MethodDiscriminant_Head:
+							case wasi__http__types.MethodHead:
 								return v.SetHead(), nil
-							case wasi__http__types.MethodDiscriminant_Post:
+							case wasi__http__types.MethodPost:
 								return v.SetPost(), nil
-							case wasi__http__types.MethodDiscriminant_Put:
+							case wasi__http__types.MethodPut:
 								return v.SetPut(), nil
-							case wasi__http__types.MethodDiscriminant_Delete:
+							case wasi__http__types.MethodDelete:
 								return v.SetDelete(), nil
-							case wasi__http__types.MethodDiscriminant_Connect:
+							case wasi__http__types.MethodConnect:
 								return v.SetConnect(), nil
-							case wasi__http__types.MethodDiscriminant_Options:
+							case wasi__http__types.MethodOptions:
 								return v.SetOptions(), nil
-							case wasi__http__types.MethodDiscriminant_Trace:
+							case wasi__http__types.MethodTrace:
 								return v.SetTrace(), nil
-							case wasi__http__types.MethodDiscriminant_Patch:
+							case wasi__http__types.MethodPatch:
 								return v.SetPatch(), nil
-							case wasi__http__types.MethodDiscriminant_Other:
+							case wasi__http__types.MethodOther:
 								payload, err := func(r interface {
 									io.ByteReader
 									io.Reader
@@ -672,11 +672,11 @@ func ServeInterface(c wrpc.Client, h Handler) (stop func() error, err error) {
 										return nil, fmt.Errorf("failed to read discriminant: %w", err)
 									}
 									switch wasi__http__types.SchemeDiscriminant(n) {
-									case wasi__http__types.SchemeDiscriminant_Http:
+									case wasi__http__types.SchemeHttp:
 										return v.SetHttp(), nil
-									case wasi__http__types.SchemeDiscriminant_Https:
+									case wasi__http__types.SchemeHttps:
 										return v.SetHttps(), nil
-									case wasi__http__types.SchemeDiscriminant_Other:
+									case wasi__http__types.SchemeOther:
 										payload, err := func(r interface {
 											io.ByteReader
 											io.Reader
