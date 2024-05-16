@@ -217,7 +217,7 @@ func (Method) NewOther(payload string) *Method {
 		payload)
 }
 func (v *Method) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, error) {
-	if err := func(v uint8, w wrpc.ByteWriter) error {
+	if err := func(v uint8, w io.Writer) error {
 		b := make([]byte, 2)
 		i := binary.PutUvarint(b, uint64(v))
 		slog.Debug("writing u8 discriminant")
@@ -354,7 +354,7 @@ func (Scheme) NewOther(payload string) *Scheme {
 		payload)
 }
 func (v *Scheme) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, error) {
-	if err := func(v uint8, w wrpc.ByteWriter) error {
+	if err := func(v uint8, w io.Writer) error {
 		b := make([]byte, 2)
 		i := binary.PutUvarint(b, uint64(v))
 		slog.Debug("writing u8 discriminant")
@@ -422,7 +422,10 @@ func (v *DnsErrorPayload) String() string { return "DnsErrorPayload" }
 func (v *DnsErrorPayload) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, error) {
 	writes := make(map[uint32]func(wrpc.IndexWriter) error, 2)
 	slog.Debug("writing field", "name", "rcode")
-	write0, err := func(v *string, w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, error) {
+	write0, err := func(v *string, w interface {
+		io.ByteWriter
+		io.Writer
+	}) (func(wrpc.IndexWriter) error, error) {
 		if v == nil {
 			slog.Debug("writing `option::none` status byte")
 			if err := w.WriteByte(0); err != nil {
@@ -468,7 +471,10 @@ func (v *DnsErrorPayload) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter
 		writes[0] = write0
 	}
 	slog.Debug("writing field", "name", "info-code")
-	write1, err := func(v *uint16, w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, error) {
+	write1, err := func(v *uint16, w interface {
+		io.ByteWriter
+		io.Writer
+	}) (func(wrpc.IndexWriter) error, error) {
 		if v == nil {
 			slog.Debug("writing `option::none` status byte")
 			if err := w.WriteByte(0); err != nil {
@@ -481,10 +487,13 @@ func (v *DnsErrorPayload) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter
 			return nil, fmt.Errorf("failed to write `option::some` status byte: %w", err)
 		}
 		slog.Debug("writing `option::some` payload")
-		write, err := (func(wrpc.IndexWriter) error)(nil), func(v uint16, w interface {
-			io.ByteWriter
-			io.Writer
-		}) (err error) { b := make([]byte, binary.MaxVarintLen16); i := binary.PutUvarint(b, uint64(v)); slog.Debug("writing u16"); _, err = w.Write(b[:i]); return err }(*v, w)
+		write, err := (func(wrpc.IndexWriter) error)(nil), func(v uint16, w io.Writer) (err error) {
+			b := make([]byte, binary.MaxVarintLen16)
+			i := binary.PutUvarint(b, uint64(v))
+			slog.Debug("writing u16")
+			_, err = w.Write(b[:i])
+			return err
+		}(*v, w)
 		if err != nil {
 			return nil, fmt.Errorf("failed to write `option::some` payload: %w", err)
 		}
@@ -527,7 +536,10 @@ func (v *TlsAlertReceivedPayload) String() string { return "TlsAlertReceivedPayl
 func (v *TlsAlertReceivedPayload) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, error) {
 	writes := make(map[uint32]func(wrpc.IndexWriter) error, 2)
 	slog.Debug("writing field", "name", "alert-id")
-	write0, err := func(v *uint8, w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, error) {
+	write0, err := func(v *uint8, w interface {
+		io.ByteWriter
+		io.Writer
+	}) (func(wrpc.IndexWriter) error, error) {
 		if v == nil {
 			slog.Debug("writing `option::none` status byte")
 			if err := w.WriteByte(0); err != nil {
@@ -556,7 +568,10 @@ func (v *TlsAlertReceivedPayload) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.Ind
 		writes[0] = write0
 	}
 	slog.Debug("writing field", "name", "alert-message")
-	write1, err := func(v *string, w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, error) {
+	write1, err := func(v *string, w interface {
+		io.ByteWriter
+		io.Writer
+	}) (func(wrpc.IndexWriter) error, error) {
 		if v == nil {
 			slog.Debug("writing `option::none` status byte")
 			if err := w.WriteByte(0); err != nil {
@@ -632,7 +647,10 @@ func (v *FieldSizePayload) String() string { return "FieldSizePayload" }
 func (v *FieldSizePayload) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, error) {
 	writes := make(map[uint32]func(wrpc.IndexWriter) error, 2)
 	slog.Debug("writing field", "name", "field-name")
-	write0, err := func(v *string, w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, error) {
+	write0, err := func(v *string, w interface {
+		io.ByteWriter
+		io.Writer
+	}) (func(wrpc.IndexWriter) error, error) {
 		if v == nil {
 			slog.Debug("writing `option::none` status byte")
 			if err := w.WriteByte(0); err != nil {
@@ -678,7 +696,10 @@ func (v *FieldSizePayload) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWrite
 		writes[0] = write0
 	}
 	slog.Debug("writing field", "name", "field-size")
-	write1, err := func(v *uint32, w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, error) {
+	write1, err := func(v *uint32, w interface {
+		io.ByteWriter
+		io.Writer
+	}) (func(wrpc.IndexWriter) error, error) {
 		if v == nil {
 			slog.Debug("writing `option::none` status byte")
 			if err := w.WriteByte(0); err != nil {
@@ -691,10 +712,13 @@ func (v *FieldSizePayload) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWrite
 			return nil, fmt.Errorf("failed to write `option::some` status byte: %w", err)
 		}
 		slog.Debug("writing `option::some` payload")
-		write, err := (func(wrpc.IndexWriter) error)(nil), func(v uint32, w interface {
-			io.ByteWriter
-			io.Writer
-		}) (err error) { b := make([]byte, binary.MaxVarintLen32); i := binary.PutUvarint(b, uint64(v)); slog.Debug("writing u32"); _, err = w.Write(b[:i]); return err }(*v, w)
+		write, err := (func(wrpc.IndexWriter) error)(nil), func(v uint32, w io.Writer) (err error) {
+			b := make([]byte, binary.MaxVarintLen32)
+			i := binary.PutUvarint(b, uint64(v))
+			slog.Debug("writing u32")
+			_, err = w.Write(b[:i])
+			return err
+		}(*v, w)
 		if err != nil {
 			return nil, fmt.Errorf("failed to write `option::some` payload: %w", err)
 		}
@@ -1464,7 +1488,7 @@ func (ErrorCode) NewInternalError(payload *string) *ErrorCode {
 }
 func (v *ErrorCode) Error() string { return v.String() }
 func (v *ErrorCode) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, error) {
-	if err := func(v uint8, w wrpc.ByteWriter) error {
+	if err := func(v uint8, w io.Writer) error {
 		b := make([]byte, 2)
 		i := binary.PutUvarint(b, uint64(v))
 		slog.Debug("writing u8 discriminant")
@@ -1532,7 +1556,10 @@ func (v *ErrorCode) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) erro
 		if !ok {
 			return nil, errors.New("invalid payload")
 		}
-		write, err := func(v *uint64, w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, error) {
+		write, err := func(v *uint64, w interface {
+			io.ByteWriter
+			io.Writer
+		}) (func(wrpc.IndexWriter) error, error) {
 			if v == nil {
 				slog.Debug("writing `option::none` status byte")
 				if err := w.WriteByte(0); err != nil {
@@ -1545,10 +1572,13 @@ func (v *ErrorCode) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) erro
 				return nil, fmt.Errorf("failed to write `option::some` status byte: %w", err)
 			}
 			slog.Debug("writing `option::some` payload")
-			write, err := (func(wrpc.IndexWriter) error)(nil), func(v uint64, w interface {
-				io.ByteWriter
-				io.Writer
-			}) (err error) { b := make([]byte, binary.MaxVarintLen64); i := binary.PutUvarint(b, uint64(v)); slog.Debug("writing u64"); _, err = w.Write(b[:i]); return err }(*v, w)
+			write, err := (func(wrpc.IndexWriter) error)(nil), func(v uint64, w io.Writer) (err error) {
+				b := make([]byte, binary.MaxVarintLen64)
+				i := binary.PutUvarint(b, uint64(v))
+				slog.Debug("writing u64")
+				_, err = w.Write(b[:i])
+				return err
+			}(*v, w)
 			if err != nil {
 				return nil, fmt.Errorf("failed to write `option::some` payload: %w", err)
 			}
@@ -1575,7 +1605,10 @@ func (v *ErrorCode) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) erro
 		if !ok {
 			return nil, errors.New("invalid payload")
 		}
-		write, err := func(v *uint32, w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, error) {
+		write, err := func(v *uint32, w interface {
+			io.ByteWriter
+			io.Writer
+		}) (func(wrpc.IndexWriter) error, error) {
 			if v == nil {
 				slog.Debug("writing `option::none` status byte")
 				if err := w.WriteByte(0); err != nil {
@@ -1588,10 +1621,13 @@ func (v *ErrorCode) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) erro
 				return nil, fmt.Errorf("failed to write `option::some` status byte: %w", err)
 			}
 			slog.Debug("writing `option::some` payload")
-			write, err := (func(wrpc.IndexWriter) error)(nil), func(v uint32, w interface {
-				io.ByteWriter
-				io.Writer
-			}) (err error) { b := make([]byte, binary.MaxVarintLen32); i := binary.PutUvarint(b, uint64(v)); slog.Debug("writing u32"); _, err = w.Write(b[:i]); return err }(*v, w)
+			write, err := (func(wrpc.IndexWriter) error)(nil), func(v uint32, w io.Writer) (err error) {
+				b := make([]byte, binary.MaxVarintLen32)
+				i := binary.PutUvarint(b, uint64(v))
+				slog.Debug("writing u32")
+				_, err = w.Write(b[:i])
+				return err
+			}(*v, w)
 			if err != nil {
 				return nil, fmt.Errorf("failed to write `option::some` payload: %w", err)
 			}
@@ -1615,7 +1651,10 @@ func (v *ErrorCode) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) erro
 		if !ok {
 			return nil, errors.New("invalid payload")
 		}
-		write, err := func(v *FieldSizePayload, w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, error) {
+		write, err := func(v *FieldSizePayload, w interface {
+			io.ByteWriter
+			io.Writer
+		}) (func(wrpc.IndexWriter) error, error) {
 			if v == nil {
 				slog.Debug("writing `option::none` status byte")
 				if err := w.WriteByte(0); err != nil {
@@ -1652,7 +1691,10 @@ func (v *ErrorCode) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) erro
 		if !ok {
 			return nil, errors.New("invalid payload")
 		}
-		write, err := func(v *uint32, w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, error) {
+		write, err := func(v *uint32, w interface {
+			io.ByteWriter
+			io.Writer
+		}) (func(wrpc.IndexWriter) error, error) {
 			if v == nil {
 				slog.Debug("writing `option::none` status byte")
 				if err := w.WriteByte(0); err != nil {
@@ -1665,10 +1707,13 @@ func (v *ErrorCode) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) erro
 				return nil, fmt.Errorf("failed to write `option::some` status byte: %w", err)
 			}
 			slog.Debug("writing `option::some` payload")
-			write, err := (func(wrpc.IndexWriter) error)(nil), func(v uint32, w interface {
-				io.ByteWriter
-				io.Writer
-			}) (err error) { b := make([]byte, binary.MaxVarintLen32); i := binary.PutUvarint(b, uint64(v)); slog.Debug("writing u32"); _, err = w.Write(b[:i]); return err }(*v, w)
+			write, err := (func(wrpc.IndexWriter) error)(nil), func(v uint32, w io.Writer) (err error) {
+				b := make([]byte, binary.MaxVarintLen32)
+				i := binary.PutUvarint(b, uint64(v))
+				slog.Debug("writing u32")
+				_, err = w.Write(b[:i])
+				return err
+			}(*v, w)
 			if err != nil {
 				return nil, fmt.Errorf("failed to write `option::some` payload: %w", err)
 			}
@@ -1712,7 +1757,10 @@ func (v *ErrorCode) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) erro
 		if !ok {
 			return nil, errors.New("invalid payload")
 		}
-		write, err := func(v *uint32, w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, error) {
+		write, err := func(v *uint32, w interface {
+			io.ByteWriter
+			io.Writer
+		}) (func(wrpc.IndexWriter) error, error) {
 			if v == nil {
 				slog.Debug("writing `option::none` status byte")
 				if err := w.WriteByte(0); err != nil {
@@ -1725,10 +1773,13 @@ func (v *ErrorCode) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) erro
 				return nil, fmt.Errorf("failed to write `option::some` status byte: %w", err)
 			}
 			slog.Debug("writing `option::some` payload")
-			write, err := (func(wrpc.IndexWriter) error)(nil), func(v uint32, w interface {
-				io.ByteWriter
-				io.Writer
-			}) (err error) { b := make([]byte, binary.MaxVarintLen32); i := binary.PutUvarint(b, uint64(v)); slog.Debug("writing u32"); _, err = w.Write(b[:i]); return err }(*v, w)
+			write, err := (func(wrpc.IndexWriter) error)(nil), func(v uint32, w io.Writer) (err error) {
+				b := make([]byte, binary.MaxVarintLen32)
+				i := binary.PutUvarint(b, uint64(v))
+				slog.Debug("writing u32")
+				_, err = w.Write(b[:i])
+				return err
+			}(*v, w)
 			if err != nil {
 				return nil, fmt.Errorf("failed to write `option::some` payload: %w", err)
 			}
@@ -1771,7 +1822,10 @@ func (v *ErrorCode) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) erro
 		if !ok {
 			return nil, errors.New("invalid payload")
 		}
-		write, err := func(v *uint64, w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, error) {
+		write, err := func(v *uint64, w interface {
+			io.ByteWriter
+			io.Writer
+		}) (func(wrpc.IndexWriter) error, error) {
 			if v == nil {
 				slog.Debug("writing `option::none` status byte")
 				if err := w.WriteByte(0); err != nil {
@@ -1784,10 +1838,13 @@ func (v *ErrorCode) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) erro
 				return nil, fmt.Errorf("failed to write `option::some` status byte: %w", err)
 			}
 			slog.Debug("writing `option::some` payload")
-			write, err := (func(wrpc.IndexWriter) error)(nil), func(v uint64, w interface {
-				io.ByteWriter
-				io.Writer
-			}) (err error) { b := make([]byte, binary.MaxVarintLen64); i := binary.PutUvarint(b, uint64(v)); slog.Debug("writing u64"); _, err = w.Write(b[:i]); return err }(*v, w)
+			write, err := (func(wrpc.IndexWriter) error)(nil), func(v uint64, w io.Writer) (err error) {
+				b := make([]byte, binary.MaxVarintLen64)
+				i := binary.PutUvarint(b, uint64(v))
+				slog.Debug("writing u64")
+				_, err = w.Write(b[:i])
+				return err
+			}(*v, w)
 			if err != nil {
 				return nil, fmt.Errorf("failed to write `option::some` payload: %w", err)
 			}
@@ -1811,7 +1868,10 @@ func (v *ErrorCode) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) erro
 		if !ok {
 			return nil, errors.New("invalid payload")
 		}
-		write, err := func(v *uint32, w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, error) {
+		write, err := func(v *uint32, w interface {
+			io.ByteWriter
+			io.Writer
+		}) (func(wrpc.IndexWriter) error, error) {
 			if v == nil {
 				slog.Debug("writing `option::none` status byte")
 				if err := w.WriteByte(0); err != nil {
@@ -1824,10 +1884,13 @@ func (v *ErrorCode) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) erro
 				return nil, fmt.Errorf("failed to write `option::some` status byte: %w", err)
 			}
 			slog.Debug("writing `option::some` payload")
-			write, err := (func(wrpc.IndexWriter) error)(nil), func(v uint32, w interface {
-				io.ByteWriter
-				io.Writer
-			}) (err error) { b := make([]byte, binary.MaxVarintLen32); i := binary.PutUvarint(b, uint64(v)); slog.Debug("writing u32"); _, err = w.Write(b[:i]); return err }(*v, w)
+			write, err := (func(wrpc.IndexWriter) error)(nil), func(v uint32, w io.Writer) (err error) {
+				b := make([]byte, binary.MaxVarintLen32)
+				i := binary.PutUvarint(b, uint64(v))
+				slog.Debug("writing u32")
+				_, err = w.Write(b[:i])
+				return err
+			}(*v, w)
 			if err != nil {
 				return nil, fmt.Errorf("failed to write `option::some` payload: %w", err)
 			}
@@ -1870,7 +1933,10 @@ func (v *ErrorCode) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) erro
 		if !ok {
 			return nil, errors.New("invalid payload")
 		}
-		write, err := func(v *string, w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, error) {
+		write, err := func(v *string, w interface {
+			io.ByteWriter
+			io.Writer
+		}) (func(wrpc.IndexWriter) error, error) {
 			if v == nil {
 				slog.Debug("writing `option::none` status byte")
 				if err := w.WriteByte(0); err != nil {
@@ -1927,7 +1993,10 @@ func (v *ErrorCode) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) erro
 		if !ok {
 			return nil, errors.New("invalid payload")
 		}
-		write, err := func(v *string, w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, error) {
+		write, err := func(v *string, w interface {
+			io.ByteWriter
+			io.Writer
+		}) (func(wrpc.IndexWriter) error, error) {
 			if v == nil {
 				slog.Debug("writing `option::none` status byte")
 				if err := w.WriteByte(0); err != nil {
@@ -1989,7 +2058,10 @@ func (v *ErrorCode) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) erro
 		if !ok {
 			return nil, errors.New("invalid payload")
 		}
-		write, err := func(v *string, w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, error) {
+		write, err := func(v *string, w interface {
+			io.ByteWriter
+			io.Writer
+		}) (func(wrpc.IndexWriter) error, error) {
 			if v == nil {
 				slog.Debug("writing `option::none` status byte")
 				if err := w.WriteByte(0); err != nil {
@@ -2157,7 +2229,7 @@ func (HeaderError) NewImmutable() *HeaderError {
 }
 func (v *HeaderError) Error() string { return v.String() }
 func (v *HeaderError) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, error) {
-	if err := func(v uint8, w wrpc.ByteWriter) error {
+	if err := func(v uint8, w io.Writer) error {
 		b := make([]byte, 2)
 		i := binary.PutUvarint(b, uint64(v))
 		slog.Debug("writing u8 discriminant")
@@ -3529,7 +3601,10 @@ func Fields_FromList(ctx__ context.Context, wrpc__ wrpc.Client, entries []*wrpc.
 		close__ = r__.Close
 		var buf__ bytes.Buffer
 		writes__ := make(map[uint32]func(wrpc.IndexWriter) error, 1)
-		write0__, err__ := func(v []*wrpc.Tuple2[string, []uint8], w wrpc.ByteWriter) (write func(wrpc.IndexWriter) error, err error) {
+		write0__, err__ := func(v []*wrpc.Tuple2[string, []uint8], w interface {
+			io.ByteWriter
+			io.Writer
+		}) (write func(wrpc.IndexWriter) error, err error) {
 			n := len(v)
 			if n > math.MaxUint32 {
 				return nil, fmt.Errorf("list length of %d overflows a 32-bit integer", n)
@@ -3546,7 +3621,10 @@ func Fields_FromList(ctx__ context.Context, wrpc__ wrpc.Client, entries []*wrpc.
 			slog.Debug("writing list elements")
 			writes := make(map[uint32]func(wrpc.IndexWriter) error, n)
 			for i, e := range v {
-				write, err := func(v *wrpc.Tuple2[string, []uint8], w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, error) {
+				write, err := func(v *wrpc.Tuple2[string, []uint8], w interface {
+					io.ByteWriter
+					io.Writer
+				}) (func(wrpc.IndexWriter) error, error) {
 					writes := make(map[uint32]func(wrpc.IndexWriter) error, 2)
 					slog.Debug("writing tuple element 0")
 					write0, err := (func(wrpc.IndexWriter) error)(nil), func(v string, w io.Writer) (err error) {
@@ -3577,7 +3655,10 @@ func Fields_FromList(ctx__ context.Context, wrpc__ wrpc.Client, entries []*wrpc.
 						writes[0] = write0
 					}
 					slog.Debug("writing tuple element 1")
-					write1, err := func(v []uint8, w wrpc.ByteWriter) (write func(wrpc.IndexWriter) error, err error) {
+					write1, err := func(v []uint8, w interface {
+						io.ByteWriter
+						io.Writer
+					}) (write func(wrpc.IndexWriter) error, err error) {
 						n := len(v)
 						if n > math.MaxUint32 {
 							return nil, fmt.Errorf("list length of %d overflows a 32-bit integer", n)
@@ -3835,7 +3916,10 @@ func ResponseOutparam_Set(ctx__ context.Context, wrpc__ wrpc.Client, param Respo
 		if write0__ != nil {
 			writes__[0] = write0__
 		}
-		write1__, err__ := func(v *wrpc.Result[OutgoingResponse, ErrorCode], w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, error) {
+		write1__, err__ := func(v *wrpc.Result[OutgoingResponse, ErrorCode], w interface {
+			io.ByteWriter
+			io.Writer
+		}) (func(wrpc.IndexWriter) error, error) {
 			switch {
 			case v.Ok == nil && v.Err == nil:
 				return nil, errors.New("both result variants cannot be nil")
@@ -3974,7 +4058,10 @@ func OutgoingBody_Finish(ctx__ context.Context, wrpc__ wrpc.Client, this Outgoin
 		if write0__ != nil {
 			writes__[0] = write0__
 		}
-		write1__, err__ := func(v *Trailers, w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, error) {
+		write1__, err__ := func(v *Trailers, w interface {
+			io.ByteWriter
+			io.Writer
+		}) (func(wrpc.IndexWriter) error, error) {
 			if v == nil {
 				slog.Debug("writing `option::none` status byte")
 				if err := w.WriteByte(0); err != nil {

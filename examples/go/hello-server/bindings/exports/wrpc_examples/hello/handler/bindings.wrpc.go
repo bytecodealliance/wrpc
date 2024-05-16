@@ -14,7 +14,7 @@ import (
 )
 
 type Handler interface {
-	Hello(ctx__ context.Context) (r0__ string, err__ error)
+	Hello(ctx__ context.Context) (string, error)
 }
 
 func ServeInterface(c wrpc.Client, h Handler) (stop func() error, err error) {

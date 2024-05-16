@@ -31,7 +31,10 @@ func Handle(ctx__ context.Context, wrpc__ wrpc.Client, request *wrpc__http__type
 		if write0__ != nil {
 			writes__[0] = write0__
 		}
-		write1__, err__ := func(v *RequestOptions, w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, error) {
+		write1__, err__ := func(v *RequestOptions, w interface {
+			io.ByteWriter
+			io.Writer
+		}) (func(wrpc.IndexWriter) error, error) {
 			if v == nil {
 				slog.Debug("writing `option::none` status byte")
 				if err := w.WriteByte(0); err != nil {

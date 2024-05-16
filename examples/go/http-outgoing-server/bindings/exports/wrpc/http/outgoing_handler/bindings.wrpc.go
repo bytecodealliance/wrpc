@@ -1155,7 +1155,10 @@ func ServeInterface(c wrpc.Client, h Handler) (stop func() error, err error) {
 
 		var buf bytes.Buffer
 		writes := make(map[uint32]func(wrpc.IndexWriter) error, 1)
-		write0, err := func(v *wrpc.Result[Response, ErrorCode], w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, error) {
+		write0, err := func(v *wrpc.Result[Response, ErrorCode], w interface {
+			io.ByteWriter
+			io.Writer
+		}) (func(wrpc.IndexWriter) error, error) {
 			switch {
 			case v.Ok == nil && v.Err == nil:
 				return nil, errors.New("both result variants cannot be nil")

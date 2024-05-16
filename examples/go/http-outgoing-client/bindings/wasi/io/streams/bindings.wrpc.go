@@ -9,6 +9,7 @@ import (
 	wasi__io__error "github.com/wrpc/wrpc/examples/go/http-outgoing-client/bindings/wasi/io/error"
 	wasi__io__poll "github.com/wrpc/wrpc/examples/go/http-outgoing-client/bindings/wasi/io/poll"
 	wrpc "github.com/wrpc/wrpc/go"
+	io "io"
 	slog "log/slog"
 )
 
@@ -102,7 +103,7 @@ func (StreamError) NewClosed() *StreamError {
 }
 func (v *StreamError) Error() string { return v.String() }
 func (v *StreamError) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, error) {
-	if err := func(v uint8, w wrpc.ByteWriter) error {
+	if err := func(v uint8, w io.Writer) error {
 		b := make([]byte, 2)
 		i := binary.PutUvarint(b, uint64(v))
 		slog.Debug("writing u8 discriminant")
