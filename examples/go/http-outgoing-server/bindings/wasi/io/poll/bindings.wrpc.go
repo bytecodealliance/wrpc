@@ -37,7 +37,10 @@ func Poll(ctx__ context.Context, wrpc__ wrpc.Client, in []Pollable) (r0__ []uint
 		close__ = r__.Close
 		var buf__ bytes.Buffer
 		writes__ := make(map[uint32]func(wrpc.IndexWriter) error, 1)
-		write0__, err__ := func(v []Pollable, w wrpc.ByteWriter) (write func(wrpc.IndexWriter) error, err error) {
+		write0__, err__ := func(v []Pollable, w interface {
+			io.ByteWriter
+			io.Writer
+		}) (write func(wrpc.IndexWriter) error, err error) {
 			n := len(v)
 			if n > math.MaxUint32 {
 				return nil, fmt.Errorf("list length of %d overflows a 32-bit integer", n)

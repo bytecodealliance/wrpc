@@ -18,8 +18,8 @@ import (
 )
 
 var (
-	errNoSuchStore     = store.NewError_NoSuchStore()
-	errInvalidDataType = store.NewError_Other("invalid data type stored in map")
+	errNoSuchStore     = (store.Error{}).NewNoSuchStore()
+	errInvalidDataType = (store.Error{}).NewOther("invalid data type stored in map")
 )
 
 type Handler struct {
@@ -97,7 +97,7 @@ func (h *Handler) Set(ctx context.Context, bucket string, key string, value []by
 func (h *Handler) ListKeys(ctx context.Context, bucket string, cursor *uint64) (*wrpc.Result[store.KeyResponse, store.Error], error) {
 	slog.InfoContext(ctx, "handling `wrpc:keyvalue/store.list-keys`", "bucket", bucket, "cursor", cursor)
 	if cursor != nil {
-		return wrpc.Err[store.KeyResponse](*store.NewError_Other("cursors are not supported")), nil
+		return wrpc.Err[store.KeyResponse](*store.Error{}.NewOther("cursors are not supported")), nil
 	}
 	b := &sync.Map{}
 	v, ok := h.LoadOrStore(bucket, b)

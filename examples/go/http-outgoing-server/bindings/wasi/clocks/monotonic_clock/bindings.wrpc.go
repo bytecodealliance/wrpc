@@ -126,10 +126,13 @@ func SubscribeInstant(ctx__ context.Context, wrpc__ wrpc.Client, when uint64) (r
 		close__ = r__.Close
 		var buf__ bytes.Buffer
 		writes__ := make(map[uint32]func(wrpc.IndexWriter) error, 1)
-		write0__, err__ := (func(wrpc.IndexWriter) error)(nil), func(v uint64, w interface {
-			io.ByteWriter
-			io.Writer
-		}) (err error) { b := make([]byte, binary.MaxVarintLen64); i := binary.PutUvarint(b, uint64(v)); slog.Debug("writing u64"); _, err = w.Write(b[:i]); return err }(when, &buf__)
+		write0__, err__ := (func(wrpc.IndexWriter) error)(nil), func(v uint64, w io.Writer) (err error) {
+			b := make([]byte, binary.MaxVarintLen64)
+			i := binary.PutUvarint(b, uint64(v))
+			slog.Debug("writing u64")
+			_, err = w.Write(b[:i])
+			return err
+		}(when, &buf__)
 		if err__ != nil {
 			return fmt.Errorf("failed to write `when` parameter: %w", err__)
 		}
@@ -160,10 +163,13 @@ func SubscribeDuration(ctx__ context.Context, wrpc__ wrpc.Client, when uint64) (
 		close__ = r__.Close
 		var buf__ bytes.Buffer
 		writes__ := make(map[uint32]func(wrpc.IndexWriter) error, 1)
-		write0__, err__ := (func(wrpc.IndexWriter) error)(nil), func(v uint64, w interface {
-			io.ByteWriter
-			io.Writer
-		}) (err error) { b := make([]byte, binary.MaxVarintLen64); i := binary.PutUvarint(b, uint64(v)); slog.Debug("writing u64"); _, err = w.Write(b[:i]); return err }(when, &buf__)
+		write0__, err__ := (func(wrpc.IndexWriter) error)(nil), func(v uint64, w io.Writer) (err error) {
+			b := make([]byte, binary.MaxVarintLen64)
+			i := binary.PutUvarint(b, uint64(v))
+			slog.Debug("writing u64")
+			_, err = w.Write(b[:i])
+			return err
+		}(when, &buf__)
 		if err__ != nil {
 			return fmt.Errorf("failed to write `when` parameter: %w", err__)
 		}
