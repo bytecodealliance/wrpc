@@ -3,6 +3,7 @@ module github.com/wrpc/wrpc/tests/go
 go 1.22.2
 
 require (
+	github.com/google/uuid v1.6.0
 	github.com/nats-io/nats-server/v2 v2.10.14
 	github.com/nats-io/nats.go v1.34.1
 	github.com/wrpc/wrpc/go v0.0.0-unpublished
@@ -10,7 +11,6 @@ require (
 )
 
 require (
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/klauspost/compress v1.17.8 // indirect
 	github.com/minio/highwayhash v1.0.2 // indirect
 	github.com/nats-io/jwt/v2 v2.5.5 // indirect
