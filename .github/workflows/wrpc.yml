@@ -308,7 +308,10 @@ jobs:
           draft: true
           prerelease: true
           generate_release_notes: true
-          files: ./wrpc/*
+          files: |
+            ./wit-bindgen-wrpc/*
+            ./wrpc-keyvalue-nats/*
+            ./wrpc-wasmtime-nats/*
 
   crates:
     strategy:
