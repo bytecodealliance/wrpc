@@ -2854,8 +2854,6 @@ impl InterfaceGenerator<'_> {
             self.push_str("}\n");
 
             if let FunctionKind::Constructor(id) = func.kind {
-                self.push_str("go func() {\n");
-                self.push_str("var err error\n");
                 self.push_str("rx := string(r0)\n");
                 uwriteln!(
                     self.src,
@@ -2992,7 +2990,7 @@ impl InterfaceGenerator<'_> {
                             {slog}.ErrorContext(ctx, "failed to stop serving resource methods", "err", err)
                         }}
                         cancel(err)
-                        return
+                        return err
                     }}
                     stops = append(stops, stop{i})"#,
                     );
@@ -3010,19 +3008,20 @@ impl InterfaceGenerator<'_> {
                     if err != nil {{
                         err = {fmt}.Errorf("failed to serve `%s.drop`: %w", rx, err)
                         if sErr := stop(); sErr != nil {{
-                            {slog}.ErrorContext(ctx, "failed to stop serving resource methods", "err", err)
+                            {slog}.ErrorContext(ctx, "failed to stop serving resource methods", "err", sErr)
                         }}
                         cancel(err)
-                        return
+                        return err
                     }}
                     stops = append(stops, stopDrop)
-                    <-ctx.Done()
-                    if sErr := stop(); sErr != nil {{
-                        {slog}.ErrorContext(ctx, "failed to stop serving resource methods", "err", err)
-                    }}
-                    "#,
+                    go func() {{
+                        <-ctx.Done()
+                        if sErr := stop(); sErr != nil {{
+                            {slog}.ErrorContext(ctx, "failed to stop serving resource methods", "err", sErr)
+                        }}
+                        cancel(ctx.Err())
+                    }}()"#,
                 );
-                self.push_str("}()\n");
             }
 
             uwriteln!(
