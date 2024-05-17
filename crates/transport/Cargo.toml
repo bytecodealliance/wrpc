@@ -11,12 +11,11 @@ repository.workspace = true
 
 [dependencies]
 anyhow = { workspace = true, features = ["std"] }
-async-nats = { workspace = true }
 async-trait = { workspace = true }
-bytes = { workspace = true }
+bytes = { workspace = true, features = ["std"] }
 futures = { workspace = true }
 leb128 = { workspace = true }
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt"] }
 tokio-stream = { workspace = true }
 tower = { workspace = true, features = ["util"] }
 tracing = { workspace = true, features = ["attributes"] }
