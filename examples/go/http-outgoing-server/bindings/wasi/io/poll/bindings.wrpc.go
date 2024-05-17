@@ -17,7 +17,7 @@ import (
 // Return the readiness of a pollable. This function never blocks.
 //
 // Returns `true` when the pollable is ready, and `false` otherwise.
-func Pollable_Ready(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[Pollable]) (r0__ bool, close__ func() error, err__ error) {
+func Pollable_Ready(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borrow[Pollable]) (r0__ bool, close__ func() error, err__ error) {
 	if err__ = wrpc__.Invoke(ctx__, string(self), "ready", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		var buf__ bytes.Buffer
@@ -85,7 +85,7 @@ func Pollable_Ready(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[
 //
 // This function is equivalent to calling `poll.poll` on a list
 // containing only this pollable.
-func Pollable_Block(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[Pollable]) (close__ func() error, err__ error) {
+func Pollable_Block(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borrow[Pollable]) (close__ func() error, err__ error) {
 	if err__ = wrpc__.Invoke(ctx__, string(self), "block", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		var buf__ bytes.Buffer
@@ -147,7 +147,7 @@ func Pollable_Block(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[
 // do any I/O so it doesn't fail. If any of the I/O sources identified by
 // the pollables has an error, it is indicated by marking the source as
 // being reaedy for I/O.
-func Poll(ctx__ context.Context, wrpc__ wrpc.Client, in []wrpc.Borrow[Pollable]) (r0__ []uint32, close__ func() error, err__ error) {
+func Poll(ctx__ context.Context, wrpc__ wrpc.Invoker, in []wrpc.Borrow[Pollable]) (r0__ []uint32, close__ func() error, err__ error) {
 	if err__ = wrpc__.Invoke(ctx__, "wasi:io/poll@0.2.0", "poll", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		var buf__ bytes.Buffer
@@ -297,11 +297,11 @@ type Pollable interface {
 	// Return the readiness of a pollable. This function never blocks.
 	//
 	// Returns `true` when the pollable is ready, and `false` otherwise.
-	Ready(ctx__ context.Context, wrpc__ wrpc.Client) (bool, func() error, error)
+	Ready(ctx__ context.Context, wrpc__ wrpc.Invoker) (bool, func() error, error)
 	// `block` returns immediately if the pollable is ready, and otherwise
 	// blocks until ready.
 	//
 	// This function is equivalent to calling `poll.poll` on a list
 	// containing only this pollable.
-	Block(ctx__ context.Context, wrpc__ wrpc.Client) (func() error, error)
+	Block(ctx__ context.Context, wrpc__ wrpc.Invoker) (func() error, error)
 }

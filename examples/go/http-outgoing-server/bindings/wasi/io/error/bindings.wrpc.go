@@ -21,7 +21,7 @@ import (
 // It may change across platforms, hosts, or other implementation
 // details. Parsing this string is a major platform-compatibility
 // hazard.
-func Error_ToDebugString(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[Error]) (r0__ string, close__ func() error, err__ error) {
+func Error_ToDebugString(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borrow[Error]) (r0__ string, close__ func() error, err__ error) {
 	if err__ = wrpc__.Invoke(ctx__, string(self), "to-debug-string", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		var buf__ bytes.Buffer
@@ -112,5 +112,5 @@ type Error interface {
 	// It may change across platforms, hosts, or other implementation
 	// details. Parsing this string is a major platform-compatibility
 	// hazard.
-	ToDebugString(ctx__ context.Context, wrpc__ wrpc.Client) (string, func() error, error)
+	ToDebugString(ctx__ context.Context, wrpc__ wrpc.Invoker) (string, func() error, error)
 }

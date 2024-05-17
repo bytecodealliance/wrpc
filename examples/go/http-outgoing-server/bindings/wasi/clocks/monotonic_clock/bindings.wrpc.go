@@ -28,7 +28,7 @@ type Duration = uint64
 //
 // The clock is monotonic, therefore calling this function repeatedly will
 // produce a sequence of non-decreasing values.
-func Now(ctx__ context.Context, wrpc__ wrpc.Client) (r0__ uint64, close__ func() error, err__ error) {
+func Now(ctx__ context.Context, wrpc__ wrpc.Invoker) (r0__ uint64, close__ func() error, err__ error) {
 	if err__ = wrpc__.Invoke(ctx__, "wasi:clocks/monotonic-clock@0.2.0", "now", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		_, err__ = w__.Write(nil)
@@ -75,7 +75,7 @@ func Now(ctx__ context.Context, wrpc__ wrpc.Client) (r0__ uint64, close__ func()
 
 // Query the resolution of the clock. Returns the duration of time
 // corresponding to a clock tick.
-func Resolution(ctx__ context.Context, wrpc__ wrpc.Client) (r0__ uint64, close__ func() error, err__ error) {
+func Resolution(ctx__ context.Context, wrpc__ wrpc.Invoker) (r0__ uint64, close__ func() error, err__ error) {
 	if err__ = wrpc__.Invoke(ctx__, "wasi:clocks/monotonic-clock@0.2.0", "resolution", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		_, err__ = w__.Write(nil)
@@ -122,7 +122,7 @@ func Resolution(ctx__ context.Context, wrpc__ wrpc.Client) (r0__ uint64, close__
 
 // Create a `pollable` which will resolve once the specified instant
 // occured.
-func SubscribeInstant(ctx__ context.Context, wrpc__ wrpc.Client, when uint64) (r0__ wrpc.Own[Pollable], close__ func() error, err__ error) {
+func SubscribeInstant(ctx__ context.Context, wrpc__ wrpc.Invoker, when uint64) (r0__ wrpc.Own[Pollable], close__ func() error, err__ error) {
 	if err__ = wrpc__.Invoke(ctx__, "wasi:clocks/monotonic-clock@0.2.0", "subscribe-instant", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		var buf__ bytes.Buffer
@@ -194,7 +194,7 @@ func SubscribeInstant(ctx__ context.Context, wrpc__ wrpc.Client, when uint64) (r
 // Create a `pollable` which will resolve once the given duration has
 // elapsed, starting at the time at which this function was called.
 // occured.
-func SubscribeDuration(ctx__ context.Context, wrpc__ wrpc.Client, when uint64) (r0__ wrpc.Own[Pollable], close__ func() error, err__ error) {
+func SubscribeDuration(ctx__ context.Context, wrpc__ wrpc.Invoker, when uint64) (r0__ wrpc.Own[Pollable], close__ func() error, err__ error) {
 	if err__ = wrpc__.Invoke(ctx__, "wasi:clocks/monotonic-clock@0.2.0", "subscribe-duration", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		var buf__ bytes.Buffer

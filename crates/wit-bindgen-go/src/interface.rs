@@ -2789,7 +2789,7 @@ impl InterfaceGenerator<'_> {
 
         uwriteln!(
             self.src,
-            "func ServeInterface(c {wrpc}.Client, h Handler) (stop func() error, err error) {{",
+            "func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {{",
             wrpc = self.deps.wrpc(),
         );
         uwriteln!(
@@ -2846,7 +2846,7 @@ impl InterfaceGenerator<'_> {
             let wrpc = self.deps.wrpc();
             uwriteln!(
                 self.src,
-                r#"stop{i}, err := c.Serve("{instance}", "{name}", func(ctx {context}.Context, w {wrpc}.IndexWriter, r {wrpc}.IndexReadCloser) error {{"#,
+                r#"stop{i}, err := s.Serve("{instance}", "{name}", func(ctx {context}.Context, w {wrpc}.IndexWriter, r {wrpc}.IndexReadCloser) error {{"#,
             );
             for (i, (_, ty)) in func.params.iter().enumerate() {
                 uwrite!(
@@ -2914,7 +2914,7 @@ impl InterfaceGenerator<'_> {
                     let name = &func.item_name();
                     uwriteln!(
                         self.src,
-                        r#"stop{i}, err := c.Serve(rx, "{name}", func(ctx {context}.Context, w {wrpc}.IndexWriter, r {wrpc}.IndexReadCloser) error {{"#,
+                        r#"stop{i}, err := s.Serve(rx, "{name}", func(ctx {context}.Context, w {wrpc}.IndexWriter, r {wrpc}.IndexReadCloser) error {{"#,
                     );
                     for (i, (_, ty)) in func.params.iter().enumerate().skip(1) {
                         uwrite!(
@@ -3036,7 +3036,7 @@ impl InterfaceGenerator<'_> {
                 }
                 uwriteln!(
                     self.src,
-                    r#"stopDrop, err := c.Serve(rx, "drop", func(_ {context}.Context, w {wrpc}.IndexWriter, _ {wrpc}.IndexReadCloser) error {{ 
+                    r#"stopDrop, err := s.Serve(rx, "drop", func(_ {context}.Context, w {wrpc}.IndexWriter, _ {wrpc}.IndexReadCloser) error {{ 
                         defer cancel(nil)
                         _, err := w.Write(nil)
                         if err != nil {{
@@ -3429,7 +3429,7 @@ impl InterfaceGenerator<'_> {
         uwrite!(self.src, "(ctx__ {context}.Context, ");
         if self.in_import {
             let wrpc = self.deps.wrpc();
-            uwrite!(self.src, "wrpc__ {wrpc}.Client, ");
+            uwrite!(self.src, "wrpc__ {wrpc}.Invoker, ");
         }
         for (i, (name, param)) in func.params.iter().enumerate() {
             if let FunctionKind::Method(..) = &func.kind {

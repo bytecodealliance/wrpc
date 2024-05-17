@@ -375,7 +375,7 @@ type Handler interface {
 	ListKeys(ctx__ context.Context, bucket string, cursor *uint64) (*wrpc.Result[KeyResponse, Error], error)
 }
 
-func ServeInterface(c wrpc.Client, h Handler) (stop func() error, err error) {
+func ServeInterface(c wrpc.Server, h Handler) (stop func() error, err error) {
 	stops := make([]func() error, 0, 5)
 	stop = func() error {
 		for _, stop := range stops {

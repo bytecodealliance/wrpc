@@ -189,7 +189,7 @@ func (v *StreamError) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) er
 // is not possible to allocate in wasm32, or not desirable to allocate as
 // as a return value by the callee. The callee may return a list of bytes
 // less than `len` in size while more bytes are available for reading.
-func InputStream_Read(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[InputStream], len_ uint64) (r0__ *wrpc.Result[[]uint8, StreamError], close__ func() error, err__ error) {
+func InputStream_Read(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borrow[InputStream], len_ uint64) (r0__ *wrpc.Result[[]uint8, StreamError], close__ func() error, err__ error) {
 	if err__ = wrpc__.Invoke(ctx__, string(self), "read", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		var buf__ bytes.Buffer
@@ -383,7 +383,7 @@ func InputStream_Read(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borro
 
 // Read bytes from a stream, after blocking until at least one byte can
 // be read. Except for blocking, behavior is identical to `read`.
-func InputStream_BlockingRead(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[InputStream], len_ uint64) (r0__ *wrpc.Result[[]uint8, StreamError], close__ func() error, err__ error) {
+func InputStream_BlockingRead(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borrow[InputStream], len_ uint64) (r0__ *wrpc.Result[[]uint8, StreamError], close__ func() error, err__ error) {
 	if err__ = wrpc__.Invoke(ctx__, string(self), "blocking-read", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		var buf__ bytes.Buffer
@@ -579,7 +579,7 @@ func InputStream_BlockingRead(ctx__ context.Context, wrpc__ wrpc.Client, self wr
 //
 // Behaves identical to `read`, except instead of returning a list
 // of bytes, returns the number of bytes consumed from the stream.
-func InputStream_Skip(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[InputStream], len_ uint64) (r0__ *wrpc.Result[uint64, StreamError], close__ func() error, err__ error) {
+func InputStream_Skip(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borrow[InputStream], len_ uint64) (r0__ *wrpc.Result[uint64, StreamError], close__ func() error, err__ error) {
 	if err__ = wrpc__.Invoke(ctx__, string(self), "skip", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		var buf__ bytes.Buffer
@@ -763,7 +763,7 @@ func InputStream_Skip(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borro
 
 // Skip bytes from a stream, after blocking until at least one byte
 // can be skipped. Except for blocking behavior, identical to `skip`.
-func InputStream_BlockingSkip(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[InputStream], len_ uint64) (r0__ *wrpc.Result[uint64, StreamError], close__ func() error, err__ error) {
+func InputStream_BlockingSkip(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borrow[InputStream], len_ uint64) (r0__ *wrpc.Result[uint64, StreamError], close__ func() error, err__ error) {
 	if err__ = wrpc__.Invoke(ctx__, string(self), "blocking-skip", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		var buf__ bytes.Buffer
@@ -951,7 +951,7 @@ func InputStream_BlockingSkip(ctx__ context.Context, wrpc__ wrpc.Client, self wr
 // The created `pollable` is a child resource of the `input-stream`.
 // Implementations may trap if the `input-stream` is dropped before
 // all derived `pollable`s created with this function are dropped.
-func InputStream_Subscribe(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[InputStream]) (r0__ wrpc.Own[Pollable], close__ func() error, err__ error) {
+func InputStream_Subscribe(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borrow[InputStream]) (r0__ wrpc.Own[Pollable], close__ func() error, err__ error) {
 	if err__ = wrpc__.Invoke(ctx__, string(self), "subscribe", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		var buf__ bytes.Buffer
@@ -1043,7 +1043,7 @@ func InputStream_Subscribe(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.
 // When this function returns 0 bytes, the `subscribe` pollable will
 // become ready when this function will report at least 1 byte, or an
 // error.
-func OutputStream_CheckWrite(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[OutputStream]) (r0__ *wrpc.Result[uint64, StreamError], close__ func() error, err__ error) {
+func OutputStream_CheckWrite(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borrow[OutputStream]) (r0__ *wrpc.Result[uint64, StreamError], close__ func() error, err__ error) {
 	if err__ = wrpc__.Invoke(ctx__, string(self), "check-write", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		var buf__ bytes.Buffer
@@ -1225,7 +1225,7 @@ func OutputStream_CheckWrite(ctx__ context.Context, wrpc__ wrpc.Client, self wrp
 //
 // returns Err(closed) without writing if the stream has closed since
 // the last call to check-write provided a permit.
-func OutputStream_Write(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[OutputStream], contents []uint8) (r0__ *wrpc.Result[struct{}, StreamError], close__ func() error, err__ error) {
+func OutputStream_Write(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borrow[OutputStream], contents []uint8) (r0__ *wrpc.Result[struct{}, StreamError], close__ func() error, err__ error) {
 	if err__ = wrpc__.Invoke(ctx__, string(self), "write", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		var buf__ bytes.Buffer
@@ -1447,7 +1447,7 @@ func OutputStream_Write(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Bor
 // // Check for any errors that arose during `flush`
 // let _ = this.check-write();         // eliding error handling
 // ```
-func OutputStream_BlockingWriteAndFlush(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[OutputStream], contents []uint8) (r0__ *wrpc.Result[struct{}, StreamError], close__ func() error, err__ error) {
+func OutputStream_BlockingWriteAndFlush(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borrow[OutputStream], contents []uint8) (r0__ *wrpc.Result[struct{}, StreamError], close__ func() error, err__ error) {
 	if err__ = wrpc__.Invoke(ctx__, string(self), "blocking-write-and-flush", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		var buf__ bytes.Buffer
@@ -1655,7 +1655,7 @@ func OutputStream_BlockingWriteAndFlush(ctx__ context.Context, wrpc__ wrpc.Clien
 // writes (`check-write` will return `ok(0)`) until the flush has
 // completed. The `subscribe` pollable will become ready when the
 // flush has completed and the stream can accept more writes.
-func OutputStream_Flush(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[OutputStream]) (r0__ *wrpc.Result[struct{}, StreamError], close__ func() error, err__ error) {
+func OutputStream_Flush(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borrow[OutputStream]) (r0__ *wrpc.Result[struct{}, StreamError], close__ func() error, err__ error) {
 	if err__ = wrpc__.Invoke(ctx__, string(self), "flush", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		var buf__ bytes.Buffer
@@ -1800,7 +1800,7 @@ func OutputStream_Flush(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Bor
 
 // Request to flush buffered output, and block until flush completes
 // and stream is ready for writing again.
-func OutputStream_BlockingFlush(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[OutputStream]) (r0__ *wrpc.Result[struct{}, StreamError], close__ func() error, err__ error) {
+func OutputStream_BlockingFlush(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borrow[OutputStream]) (r0__ *wrpc.Result[struct{}, StreamError], close__ func() error, err__ error) {
 	if err__ = wrpc__.Invoke(ctx__, string(self), "blocking-flush", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		var buf__ bytes.Buffer
@@ -1953,7 +1953,7 @@ func OutputStream_BlockingFlush(ctx__ context.Context, wrpc__ wrpc.Client, self 
 // The created `pollable` is a child resource of the `output-stream`.
 // Implementations may trap if the `output-stream` is dropped before
 // all derived `pollable`s created with this function are dropped.
-func OutputStream_Subscribe(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[OutputStream]) (r0__ wrpc.Own[Pollable], close__ func() error, err__ error) {
+func OutputStream_Subscribe(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borrow[OutputStream]) (r0__ wrpc.Own[Pollable], close__ func() error, err__ error) {
 	if err__ = wrpc__.Invoke(ctx__, string(self), "subscribe", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		var buf__ bytes.Buffer
@@ -2042,7 +2042,7 @@ func OutputStream_Subscribe(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc
 // preconditions (must use check-write first), but instead of
 // passing a list of bytes, you simply pass the number of zero-bytes
 // that should be written.
-func OutputStream_WriteZeroes(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[OutputStream], len_ uint64) (r0__ *wrpc.Result[struct{}, StreamError], close__ func() error, err__ error) {
+func OutputStream_WriteZeroes(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borrow[OutputStream], len_ uint64) (r0__ *wrpc.Result[struct{}, StreamError], close__ func() error, err__ error) {
 	if err__ = wrpc__.Invoke(ctx__, string(self), "write-zeroes", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		var buf__ bytes.Buffer
@@ -2222,7 +2222,7 @@ func OutputStream_WriteZeroes(ctx__ context.Context, wrpc__ wrpc.Client, self wr
 // // Check for any errors that arose during `flush`
 // let _ = this.check-write();         // eliding error handling
 // ```
-func OutputStream_BlockingWriteZeroesAndFlush(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[OutputStream], len_ uint64) (r0__ *wrpc.Result[struct{}, StreamError], close__ func() error, err__ error) {
+func OutputStream_BlockingWriteZeroesAndFlush(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borrow[OutputStream], len_ uint64) (r0__ *wrpc.Result[struct{}, StreamError], close__ func() error, err__ error) {
 	if err__ = wrpc__.Invoke(ctx__, string(self), "blocking-write-zeroes-and-flush", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		var buf__ bytes.Buffer
@@ -2391,7 +2391,7 @@ func OutputStream_BlockingWriteZeroesAndFlush(ctx__ context.Context, wrpc__ wrpc
 //
 // This function returns the number of bytes transferred; it may be less
 // than `len`.
-func OutputStream_Splice(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[OutputStream], src wrpc.Borrow[InputStream], len_ uint64) (r0__ *wrpc.Result[uint64, StreamError], close__ func() error, err__ error) {
+func OutputStream_Splice(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borrow[OutputStream], src wrpc.Borrow[InputStream], len_ uint64) (r0__ *wrpc.Result[uint64, StreamError], close__ func() error, err__ error) {
 	if err__ = wrpc__.Invoke(ctx__, string(self), "splice", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		var buf__ bytes.Buffer
@@ -2605,7 +2605,7 @@ func OutputStream_Splice(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Bo
 // This is similar to `splice`, except that it blocks until the
 // `output-stream` is ready for writing, and the `input-stream`
 // is ready for reading, before performing the `splice`.
-func OutputStream_BlockingSplice(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[OutputStream], src wrpc.Borrow[InputStream], len_ uint64) (r0__ *wrpc.Result[uint64, StreamError], close__ func() error, err__ error) {
+func OutputStream_BlockingSplice(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borrow[OutputStream], src wrpc.Borrow[InputStream], len_ uint64) (r0__ *wrpc.Result[uint64, StreamError], close__ func() error, err__ error) {
 	if err__ = wrpc__.Invoke(ctx__, string(self), "blocking-splice", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		var buf__ bytes.Buffer
@@ -2841,25 +2841,25 @@ type InputStream interface {
 	// is not possible to allocate in wasm32, or not desirable to allocate as
 	// as a return value by the callee. The callee may return a list of bytes
 	// less than `len` in size while more bytes are available for reading.
-	Read(ctx__ context.Context, wrpc__ wrpc.Client, len_ uint64) (*wrpc.Result[[]uint8, StreamError], func() error, error)
+	Read(ctx__ context.Context, wrpc__ wrpc.Invoker, len_ uint64) (*wrpc.Result[[]uint8, StreamError], func() error, error)
 	// Read bytes from a stream, after blocking until at least one byte can
 	// be read. Except for blocking, behavior is identical to `read`.
-	BlockingRead(ctx__ context.Context, wrpc__ wrpc.Client, len_ uint64) (*wrpc.Result[[]uint8, StreamError], func() error, error)
+	BlockingRead(ctx__ context.Context, wrpc__ wrpc.Invoker, len_ uint64) (*wrpc.Result[[]uint8, StreamError], func() error, error)
 	// Skip bytes from a stream. Returns number of bytes skipped.
 	//
 	// Behaves identical to `read`, except instead of returning a list
 	// of bytes, returns the number of bytes consumed from the stream.
-	Skip(ctx__ context.Context, wrpc__ wrpc.Client, len_ uint64) (*wrpc.Result[uint64, StreamError], func() error, error)
+	Skip(ctx__ context.Context, wrpc__ wrpc.Invoker, len_ uint64) (*wrpc.Result[uint64, StreamError], func() error, error)
 	// Skip bytes from a stream, after blocking until at least one byte
 	// can be skipped. Except for blocking behavior, identical to `skip`.
-	BlockingSkip(ctx__ context.Context, wrpc__ wrpc.Client, len_ uint64) (*wrpc.Result[uint64, StreamError], func() error, error)
+	BlockingSkip(ctx__ context.Context, wrpc__ wrpc.Invoker, len_ uint64) (*wrpc.Result[uint64, StreamError], func() error, error)
 	// Create a `pollable` which will resolve once either the specified stream
 	// has bytes available to read or the other end of the stream has been
 	// closed.
 	// The created `pollable` is a child resource of the `input-stream`.
 	// Implementations may trap if the `input-stream` is dropped before
 	// all derived `pollable`s created with this function are dropped.
-	Subscribe(ctx__ context.Context, wrpc__ wrpc.Client) (wrpc.Own[Pollable], func() error, error)
+	Subscribe(ctx__ context.Context, wrpc__ wrpc.Invoker) (wrpc.Own[Pollable], func() error, error)
 }
 type OutputStream interface {
 	// Check readiness for writing. This function never blocks.
@@ -2871,7 +2871,7 @@ type OutputStream interface {
 	// When this function returns 0 bytes, the `subscribe` pollable will
 	// become ready when this function will report at least 1 byte, or an
 	// error.
-	CheckWrite(ctx__ context.Context, wrpc__ wrpc.Client) (*wrpc.Result[uint64, StreamError], func() error, error)
+	CheckWrite(ctx__ context.Context, wrpc__ wrpc.Invoker) (*wrpc.Result[uint64, StreamError], func() error, error)
 	// Perform a write. This function never blocks.
 	//
 	// When the destination of a `write` is binary data, the bytes from
@@ -2885,7 +2885,7 @@ type OutputStream interface {
 	//
 	// returns Err(closed) without writing if the stream has closed since
 	// the last call to check-write provided a permit.
-	Write(ctx__ context.Context, wrpc__ wrpc.Client, contents []uint8) (*wrpc.Result[struct{}, StreamError], func() error, error)
+	Write(ctx__ context.Context, wrpc__ wrpc.Invoker, contents []uint8) (*wrpc.Result[struct{}, StreamError], func() error, error)
 	// Perform a write of up to 4096 bytes, and then flush the stream. Block
 	// until all of these operations are complete, or an error occurs.
 	//
@@ -2910,7 +2910,7 @@ type OutputStream interface {
 	// // Check for any errors that arose during `flush`
 	// let _ = this.check-write();         // eliding error handling
 	// ```
-	BlockingWriteAndFlush(ctx__ context.Context, wrpc__ wrpc.Client, contents []uint8) (*wrpc.Result[struct{}, StreamError], func() error, error)
+	BlockingWriteAndFlush(ctx__ context.Context, wrpc__ wrpc.Invoker, contents []uint8) (*wrpc.Result[struct{}, StreamError], func() error, error)
 	// Request to flush buffered output. This function never blocks.
 	//
 	// This tells the output-stream that the caller intends any buffered
@@ -2921,10 +2921,10 @@ type OutputStream interface {
 	// writes (`check-write` will return `ok(0)`) until the flush has
 	// completed. The `subscribe` pollable will become ready when the
 	// flush has completed and the stream can accept more writes.
-	Flush(ctx__ context.Context, wrpc__ wrpc.Client) (*wrpc.Result[struct{}, StreamError], func() error, error)
+	Flush(ctx__ context.Context, wrpc__ wrpc.Invoker) (*wrpc.Result[struct{}, StreamError], func() error, error)
 	// Request to flush buffered output, and block until flush completes
 	// and stream is ready for writing again.
-	BlockingFlush(ctx__ context.Context, wrpc__ wrpc.Client) (*wrpc.Result[struct{}, StreamError], func() error, error)
+	BlockingFlush(ctx__ context.Context, wrpc__ wrpc.Invoker) (*wrpc.Result[struct{}, StreamError], func() error, error)
 	// Create a `pollable` which will resolve once the output-stream
 	// is ready for more writing, or an error has occured. When this
 	// pollable is ready, `check-write` will return `ok(n)` with n>0, or an
@@ -2935,14 +2935,14 @@ type OutputStream interface {
 	// The created `pollable` is a child resource of the `output-stream`.
 	// Implementations may trap if the `output-stream` is dropped before
 	// all derived `pollable`s created with this function are dropped.
-	Subscribe(ctx__ context.Context, wrpc__ wrpc.Client) (wrpc.Own[Pollable], func() error, error)
+	Subscribe(ctx__ context.Context, wrpc__ wrpc.Invoker) (wrpc.Own[Pollable], func() error, error)
 	// Write zeroes to a stream.
 	//
 	// This should be used precisely like `write` with the exact same
 	// preconditions (must use check-write first), but instead of
 	// passing a list of bytes, you simply pass the number of zero-bytes
 	// that should be written.
-	WriteZeroes(ctx__ context.Context, wrpc__ wrpc.Client, len_ uint64) (*wrpc.Result[struct{}, StreamError], func() error, error)
+	WriteZeroes(ctx__ context.Context, wrpc__ wrpc.Invoker, len_ uint64) (*wrpc.Result[struct{}, StreamError], func() error, error)
 	// Perform a write of up to 4096 zeroes, and then flush the stream.
 	// Block until all of these operations are complete, or an error
 	// occurs.
@@ -2967,7 +2967,7 @@ type OutputStream interface {
 	// // Check for any errors that arose during `flush`
 	// let _ = this.check-write();         // eliding error handling
 	// ```
-	BlockingWriteZeroesAndFlush(ctx__ context.Context, wrpc__ wrpc.Client, len_ uint64) (*wrpc.Result[struct{}, StreamError], func() error, error)
+	BlockingWriteZeroesAndFlush(ctx__ context.Context, wrpc__ wrpc.Invoker, len_ uint64) (*wrpc.Result[struct{}, StreamError], func() error, error)
 	// Read from one stream and write to another.
 	//
 	// The behavior of splice is equivelant to:
@@ -2981,11 +2981,11 @@ type OutputStream interface {
 	//
 	// This function returns the number of bytes transferred; it may be less
 	// than `len`.
-	Splice(ctx__ context.Context, wrpc__ wrpc.Client, src wrpc.Borrow[InputStream], len_ uint64) (*wrpc.Result[uint64, StreamError], func() error, error)
+	Splice(ctx__ context.Context, wrpc__ wrpc.Invoker, src wrpc.Borrow[InputStream], len_ uint64) (*wrpc.Result[uint64, StreamError], func() error, error)
 	// Read from one stream and write to another, with blocking.
 	//
 	// This is similar to `splice`, except that it blocks until the
 	// `output-stream` is ready for writing, and the `input-stream`
 	// is ready for reading, before performing the `splice`.
-	BlockingSplice(ctx__ context.Context, wrpc__ wrpc.Client, src wrpc.Borrow[InputStream], len_ uint64) (*wrpc.Result[uint64, StreamError], func() error, error)
+	BlockingSplice(ctx__ context.Context, wrpc__ wrpc.Invoker, src wrpc.Borrow[InputStream], len_ uint64) (*wrpc.Result[uint64, StreamError], func() error, error)
 }

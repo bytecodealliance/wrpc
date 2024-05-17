@@ -17,7 +17,7 @@ type Handler interface {
 	Hello(ctx__ context.Context) (string, error)
 }
 
-func ServeInterface(c wrpc.Client, h Handler) (stop func() error, err error) {
+func ServeInterface(c wrpc.Server, h Handler) (stop func() error, err error) {
 	stops := make([]func() error, 0, 1)
 	stop = func() error {
 		for _, stop := range stops {
