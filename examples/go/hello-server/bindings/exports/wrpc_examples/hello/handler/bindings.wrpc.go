@@ -7,17 +7,18 @@ import (
 	binary "encoding/binary"
 	fmt "fmt"
 	wrpc "github.com/wrpc/wrpc/go"
-	errgroup "golang.org/x/sync/errgroup"
 	io "io"
 	slog "log/slog"
 	math "math"
+	sync "sync"
+	atomic "sync/atomic"
 )
 
 type Handler interface {
 	Hello(ctx__ context.Context) (string, error)
 }
 
-func ServeInterface(c wrpc.Server, h Handler) (stop func() error, err error) {
+func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 	stops := make([]func() error, 0, 1)
 	stop = func() error {
 		for _, stop := range stops {
@@ -27,7 +28,7 @@ func ServeInterface(c wrpc.Server, h Handler) (stop func() error, err error) {
 		}
 		return nil
 	}
-	stop0, err := c.Serve("wrpc-examples:hello/handler", "hello", func(ctx context.Context, w wrpc.IndexWriter, r wrpc.IndexReadCloser) error {
+	stop0, err := s.Serve("wrpc-examples:hello/handler", "hello", func(ctx context.Context, w wrpc.IndexWriter, r wrpc.IndexReadCloser) error {
 		slog.DebugContext(ctx, "calling `wrpc-examples:hello/handler.hello` handler")
 		r0, err := h.Hello(ctx)
 		if err != nil {
@@ -69,18 +70,28 @@ func ServeInterface(c wrpc.Server, h Handler) (stop func() error, err error) {
 			return fmt.Errorf("failed to write result: %w", err)
 		}
 		if len(writes) > 0 {
-			var wg errgroup.Group
+			var wg sync.WaitGroup
+			var wgErr atomic.Value
 			for index, write := range writes {
+				wg.Add(1)
 				w, err := w.Index(index)
 				if err != nil {
 					return fmt.Errorf("failed to index writer: %w", err)
 				}
 				write := write
-				wg.Go(func() error {
-					return write(w)
-				})
+				go func() {
+					defer wg.Done()
+					if err := write(w); err != nil {
+						wgErr.Store(err)
+					}
+				}()
 			}
-			return wg.Wait()
+			wg.Wait()
+			err := wgErr.Load()
+			if err == nil {
+				return nil
+			}
+			return err.(error)
 		}
 		return nil
 	})

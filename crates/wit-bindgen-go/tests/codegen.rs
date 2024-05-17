@@ -34,33 +34,28 @@ fn verify(dir: &Path, _name: &str) {
         .unwrap()
         .parent()
         .unwrap();
+    let go_work = dir.join("go.work");
+    fs::write(
+        &go_work,
+        r"go 1.22.2
+use .",
+    )
+    .unwrap_or_else(|_| panic!("failed to write `{}`", go_work.display()));
     let go_mod = dir.join("go.mod");
     fs::write(
         &go_mod,
         format!(
-            r#"module bindings
-    
+            r"module bindings
+
 go 1.22.2
-    
+
 require github.com/wrpc/wrpc/go v0.0.0-unpublished
-    
-replace github.com/wrpc/wrpc/go v0.0.0-unpublished => {}"#,
+
+replace github.com/wrpc/wrpc/go v0.0.0-unpublished => {}",
             root.join("go").display(),
         ),
     )
     .unwrap_or_else(|_| panic!("failed to write `{}`", go_mod.display()));
 
-    #[cfg(unix)]
-    std::os::unix::fs::symlink(root.join("vendor"), dir.join("vendor"))
-        .expect("failed to symlink `vendor`");
-    #[cfg(windows)]
-    std::os::windows::fs::symlink_dir(root.join("vendor"), dir.join("vendor"))
-        .expect("failed to symlink `vendor`");
-
-    test_helpers::run_command(
-        Command::new("go")
-            .env("GOWORK", "off")
-            .args(["test", "-mod=mod", "./..."])
-            .current_dir(dir),
-    );
+    test_helpers::run_command(Command::new("go").args(["test", "./..."]).current_dir(dir));
 }

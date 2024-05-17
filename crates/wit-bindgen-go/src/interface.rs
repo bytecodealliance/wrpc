@@ -133,27 +133,27 @@ impl InterfaceGenerator<'_> {
         uwrite!(
             self.src,
             r#"func(r {io}.ByteReader) (uint16, error) {{
-	var x uint16
-	var s uint
-	for i := 0; i < 3; i++ {{
+    var x uint16
+    var s uint
+    for i := 0; i < 3; i++ {{
         {slog}.Debug("reading u16 byte", "i", i)
-		b, err := r.ReadByte()
-		if err != nil {{
-			if i > 0 && err == {io}.EOF {{
-				err = {io}.ErrUnexpectedEOF
-			}}
-			return x, {fmt}.Errorf("failed to read u16 byte: %w", err)
-		}}
-		if b < 0x80 {{
-			if i == 2 && b > 1 {{
-				return x, {errors}.New("varint overflows a 16-bit integer")
-			}}
-			return x | uint16(b)<<s, nil
-		}}
-		x |= uint16(b&0x7f) << s
-		s += 7
-	}}
-	return x, {errors}.New("varint overflows a 16-bit integer")
+        b, err := r.ReadByte()
+        if err != nil {{
+            if i > 0 && err == {io}.EOF {{
+                err = {io}.ErrUnexpectedEOF
+            }}
+            return x, {fmt}.Errorf("failed to read u16 byte: %w", err)
+        }}
+        if b < 0x80 {{
+            if i == 2 && b > 1 {{
+                return x, {errors}.New("varint overflows a 16-bit integer")
+            }}
+            return x | uint16(b)<<s, nil
+        }}
+        x |= uint16(b&0x7f) << s
+        s += 7
+    }}
+    return x, {errors}.New("varint overflows a 16-bit integer")
 }}({reader})"#,
         );
     }
@@ -166,27 +166,27 @@ impl InterfaceGenerator<'_> {
         uwrite!(
             self.src,
             r#"func(r {io}.ByteReader) (uint32, error) {{
-	var x uint32
-	var s uint
-	for i := 0; i < 5; i++ {{
+    var x uint32
+    var s uint
+    for i := 0; i < 5; i++ {{
         {slog}.Debug("reading u32 byte", "i", i)
-		b, err := r.ReadByte()
-		if err != nil {{
-			if i > 0 && err == {io}.EOF {{
-				err = {io}.ErrUnexpectedEOF
-			}}
-			return x, {fmt}.Errorf("failed to read u32 byte: %w", err)
-		}}
-		if b < 0x80 {{
-			if i == 4 && b > 1 {{
-				return x, {errors}.New("varint overflows a 32-bit integer")
-			}}
-			return x | uint32(b)<<s, nil
-		}}
-		x |= uint32(b&0x7f) << s
-		s += 7
-	}}
-	return x, {errors}.New("varint overflows a 32-bit integer")
+        b, err := r.ReadByte()
+        if err != nil {{
+            if i > 0 && err == {io}.EOF {{
+                err = {io}.ErrUnexpectedEOF
+            }}
+            return x, {fmt}.Errorf("failed to read u32 byte: %w", err)
+        }}
+        if b < 0x80 {{
+            if i == 4 && b > 1 {{
+                return x, {errors}.New("varint overflows a 32-bit integer")
+            }}
+            return x | uint32(b)<<s, nil
+        }}
+        x |= uint32(b&0x7f) << s
+        s += 7
+    }}
+    return x, {errors}.New("varint overflows a 32-bit integer")
 }}({reader})"#,
         );
     }
@@ -199,27 +199,27 @@ impl InterfaceGenerator<'_> {
         uwrite!(
             self.src,
             r#"func(r {io}.ByteReader) (uint64, error) {{
-	var x uint64
-	var s uint
-	for i := 0; i < 10; i++ {{
+    var x uint64
+    var s uint
+    for i := 0; i < 10; i++ {{
         {slog}.Debug("reading u64 byte", "i", i)
-		b, err := r.ReadByte()
-		if err != nil {{
-			if i > 0 && err == {io}.EOF {{
-				err = {io}.ErrUnexpectedEOF
-			}}
-			return x, {fmt}.Errorf("failed to read u64 byte: %w", err)
-		}}
-		if b < 0x80 {{
-			if i == 9 && b > 1 {{
-				return x, {errors}.New("varint overflows a 64-bit integer")
-			}}
-			return x | uint64(b)<<s, nil
-		}}
-		x |= uint64(b&0x7f) << s
-		s += 7
-	}}
-	return x, {errors}.New("varint overflows a 64-bit integer")
+        b, err := r.ReadByte()
+        if err != nil {{
+            if i > 0 && err == {io}.EOF {{
+                err = {io}.ErrUnexpectedEOF
+            }}
+            return x, {fmt}.Errorf("failed to read u64 byte: %w", err)
+        }}
+        if b < 0x80 {{
+            if i == 9 && b > 1 {{
+                return x, {errors}.New("varint overflows a 64-bit integer")
+            }}
+            return x | uint64(b)<<s, nil
+        }}
+        x |= uint64(b&0x7f) << s
+        s += 7
+    }}
+    return x, {errors}.New("varint overflows a 64-bit integer")
 }}({reader})"#,
         );
     }
@@ -249,30 +249,30 @@ impl InterfaceGenerator<'_> {
             self.src,
             r#"func(r {io}.ByteReader) (int16, error) {{
     var (
-		b      byte
-		err    error
-		result int16
-		shift  uint16
-		length uint32
-	)
-	for {{
+        b      byte
+        err    error
+        result int16
+        shift  uint16
+        length uint32
+    )
+    for {{
         {slog}.Debug("reading s16 byte")
-		b, err = r.ReadByte()
+        b, err = r.ReadByte()
         if err != nil {{
             return 0, {fmt}.Errorf("failed to read s16 byte: %w", err)
         }}
-		length++
+        length++
 
-		result |= (int16(b) & 0x7f) << shift
-		shift += 7
-		if b&0x80 == 0 {{
-			break
-		}}
-	}}
-	if (shift < 8*uint16(length)) && (b&0x40 > 0) {{
-		result |= -(1 << shift)
-	}}
-	return result, nil
+        result |= (int16(b) & 0x7f) << shift
+        shift += 7
+        if b&0x80 == 0 {{
+            break
+        }}
+    }}
+    if (shift < 8*uint16(length)) && (b&0x40 > 0) {{
+        result |= -(1 << shift)
+    }}
+    return result, nil
 }}({reader})"#,
         );
     }
@@ -285,30 +285,30 @@ impl InterfaceGenerator<'_> {
             self.src,
             r#"func(r {io}.ByteReader) (int32, error) {{
     var (
-		b      byte
-		err    error
-		result int32
-		shift  uint32
-		length uint32
-	)
-	for {{
+        b      byte
+        err    error
+        result int32
+        shift  uint32
+        length uint32
+    )
+    for {{
         {slog}.Debug("reading s32 byte")
-		b, err = r.ReadByte()
+        b, err = r.ReadByte()
         if err != nil {{
             return 0, {fmt}.Errorf("failed to read s32 byte: %w", err)
         }}
-		length++
+        length++
 
-		result |= (int32(b) & 0x7f) << shift
-		shift += 7
-		if b&0x80 == 0 {{
-			break
-		}}
-	}}
-	if (shift < 8*uint32(length)) && (b&0x40 > 0) {{
-		result |= -(1 << shift)
-	}}
-	return result, nil
+        result |= (int32(b) & 0x7f) << shift
+        shift += 7
+        if b&0x80 == 0 {{
+            break
+        }}
+    }}
+    if (shift < 8*uint32(length)) && (b&0x40 > 0) {{
+        result |= -(1 << shift)
+    }}
+    return result, nil
 }}({reader})"#,
         );
     }
@@ -321,30 +321,30 @@ impl InterfaceGenerator<'_> {
             self.src,
             r#"func(r {io}.ByteReader) (int64, error) {{
     var (
-		b      byte
-		err    error
-		result int64
-		shift  uint64
-		length uint32
-	)
-	for {{
+        b      byte
+        err    error
+        result int64
+        shift  uint64
+        length uint32
+    )
+    for {{
         {slog}.Debug("reading s64 byte")
-		b, err = r.ReadByte()
+        b, err = r.ReadByte()
         if err != nil {{
             return 0, {fmt}.Errorf("failed to read s64 byte: %w", err)
         }}
-		length++
+        length++
 
-		result |= (int64(b) & 0x7f) << shift
-		shift += 7
-		if b&0x80 == 0 {{
-			break
-		}}
-	}}
-	if (shift < 8*uint64(length)) && (b&0x40 > 0) {{
-		result |= -(1 << shift)
-	}}
-	return result, nil
+        result |= (int64(b) & 0x7f) << shift
+        shift += 7
+        if b&0x80 == 0 {{
+            break
+        }}
+    }}
+    if (shift < 8*uint64(length)) && (b&0x40 > 0) {{
+        result |= -(1 << shift)
+    }}
+    return result, nil
 }}({reader})"#,
         );
     }
@@ -398,32 +398,32 @@ impl InterfaceGenerator<'_> {
         uwrite!(
             self.src,
             r#"func(r {io}.ByteReader) (rune, error) {{
-	var x uint32
-	var s uint
-	for i := 0; i < 5; i++ {{
+    var x uint32
+    var s uint
+    for i := 0; i < 5; i++ {{
         {slog}.Debug("reading char byte", "i", i)
-		b, err := r.ReadByte()
-		if err != nil {{
-			if i > 0 && err == {io}.EOF {{
-				err = {io}.ErrUnexpectedEOF
-			}}
-			return {utf8}.RuneError, {fmt}.Errorf("failed to read char byte: %w", err)
-		}}
-		if b < 0x80 {{
-			if i == 4 && b > 1 {{
-				return {utf8}.RuneError, {errors}.New("char overflows a 32-bit integer")
-			}}
+        b, err := r.ReadByte()
+        if err != nil {{
+            if i > 0 && err == {io}.EOF {{
+                err = {io}.ErrUnexpectedEOF
+            }}
+            return {utf8}.RuneError, {fmt}.Errorf("failed to read char byte: %w", err)
+        }}
+        if b < 0x80 {{
+            if i == 4 && b > 1 {{
+                return {utf8}.RuneError, {errors}.New("char overflows a 32-bit integer")
+            }}
             x = x | uint32(b)<<s
             v := rune(x)
             if !{utf8}.ValidRune(v) {{
                 return v, {errors}.New("char is not valid UTF-8")
             }}
             return v, nil
-		}}
-		x |= uint32(b&0x7f) << s
-		s += 7
-	}}
-	return {utf8}.RuneError, {errors}.New("char overflows a 32-bit integer")
+        }}
+        x |= uint32(b&0x7f) << s
+        s += 7
+    }}
+    return {utf8}.RuneError, {errors}.New("char overflows a 32-bit integer")
 }}({reader})"#,
         );
     }
@@ -437,37 +437,37 @@ impl InterfaceGenerator<'_> {
         uwrite!(
             self.src,
             r#"func(r interface {{ {io}.ByteReader; {io}.Reader }}) (string, error) {{
-	var x uint32
-	var s uint
-	for i := 0; i < 5; i++ {{
+    var x uint32
+    var s uint
+    for i := 0; i < 5; i++ {{
         {slog}.Debug("reading string length byte", "i", i)
-		b, err := r.ReadByte()
-		if err != nil {{
-			if i > 0 && err == {io}.EOF {{
-				err = {io}.ErrUnexpectedEOF
-			}}
-			return "", {fmt}.Errorf("failed to read string length byte: %w", err)
-		}}
-		if b < 0x80 {{
-			if i == 4 && b > 1 {{
-				return "", {errors}.New("string length overflows a 32-bit integer")
-			}}
+        b, err := r.ReadByte()
+        if err != nil {{
+            if i > 0 && err == {io}.EOF {{
+                err = {io}.ErrUnexpectedEOF
+            }}
+            return "", {fmt}.Errorf("failed to read string length byte: %w", err)
+        }}
+        if b < 0x80 {{
+            if i == 4 && b > 1 {{
+                return "", {errors}.New("string length overflows a 32-bit integer")
+            }}
             x = x | uint32(b)<<s
             buf := make([]byte, x)
             {slog}.Debug("reading string bytes", "len", x)
-	        _, err = r.Read(buf)
-	        if err != nil {{
-	        	return "", {fmt}.Errorf("failed to read string bytes: %w", err)
-	        }}
+            _, err = r.Read(buf)
+            if err != nil {{
+                return "", {fmt}.Errorf("failed to read string bytes: %w", err)
+            }}
             if !{utf8}.Valid(buf) {{
                 return string(buf), {errors}.New("string is not valid UTF-8")
             }}
             return string(buf), nil
-		}}
-		x |= uint32(b&0x7f) << s
-		s += 7
-	}}
-	return "", {errors}.New("string length overflows a 32-bit integer")
+        }}
+        x |= uint32(b&0x7f) << s
+        s += 7
+    }}
+    return "", {errors}.New("string length overflows a 32-bit integer")
 }}({reader})"#,
         );
     }
@@ -480,34 +480,34 @@ impl InterfaceGenerator<'_> {
         uwrite!(
             self.src,
             r#"func(r interface {{ {io}.ByteReader; {io}.Reader }}) ([]byte, error) {{
-	var x uint32
-	var s uint
-	for i := 0; i < 5; i++ {{
+    var x uint32
+    var s uint
+    for i := 0; i < 5; i++ {{
         {slog}.Debug("reading byte list length", "i", i)
-		b, err := r.ReadByte()
-		if err != nil {{
-			if i > 0 && err == {io}.EOF {{
-				err = {io}.ErrUnexpectedEOF
-			}}
-			return nil, {fmt}.Errorf("failed to read byte list length byte: %w", err)
-		}}
-		if b < 0x80 {{
-			if i == 4 && b > 1 {{
-				return nil, {errors}.New("byte list length overflows a 32-bit integer")
-			}}
+        b, err := r.ReadByte()
+        if err != nil {{
+            if i > 0 && err == {io}.EOF {{
+                err = {io}.ErrUnexpectedEOF
+            }}
+            return nil, {fmt}.Errorf("failed to read byte list length byte: %w", err)
+        }}
+        if b < 0x80 {{
+            if i == 4 && b > 1 {{
+                return nil, {errors}.New("byte list length overflows a 32-bit integer")
+            }}
             x = x | uint32(b)<<s
             buf := make([]byte, x)
             {slog}.Debug("reading byte list contents", "len", x)
-	        _, err = {io}.ReadFull(r, buf)
-	        if err != nil {{
-	        	return nil, {fmt}.Errorf("failed to read byte list contents: %w", err)
-	        }}
+            _, err = {io}.ReadFull(r, buf)
+            if err != nil {{
+                return nil, {fmt}.Errorf("failed to read byte list contents: %w", err)
+            }}
             return buf, nil
-		}}
-		x |= uint32(b&0x7f) << s
-		s += 7
-	}}
-	return nil, {errors}.New("byte length overflows a 32-bit integer")
+        }}
+        x |= uint32(b&0x7f) << s
+        s += 7
+    }}
+    return nil, {errors}.New("byte length overflows a 32-bit integer")
 }}({reader})"#,
         );
     }
@@ -527,21 +527,21 @@ impl InterfaceGenerator<'_> {
         uwrite!(
             self.src,
             r#", error) {{
-	var x uint32
-	var s uint
-	for i := 0; i < 5; i++ {{
+    var x uint32
+    var s uint
+    for i := 0; i < 5; i++ {{
         {slog}.Debug("reading list length byte", "i", i)
-		b, err := r.ReadByte()
-		if err != nil {{
-			if i > 0 && err == {io}.EOF {{
-				err = {io}.ErrUnexpectedEOF
-			}}
-			return nil, {fmt}.Errorf("failed to read list length byte: %w", err)
-		}}
-		if b < 0x80 {{
-			if i == 4 && b > 1 {{
-				return nil, {errors}.New("list length overflows a 32-bit integer")
-			}}
+        b, err := r.ReadByte()
+        if err != nil {{
+            if i > 0 && err == {io}.EOF {{
+                err = {io}.ErrUnexpectedEOF
+            }}
+            return nil, {fmt}.Errorf("failed to read list length byte: %w", err)
+        }}
+        if b < 0x80 {{
+            if i == 4 && b > 1 {{
+                return nil, {errors}.New("list length overflows a 32-bit integer")
+            }}
             x = x | uint32(b)<<s
             vs := make("#,
         );
@@ -558,15 +558,15 @@ impl InterfaceGenerator<'_> {
         uwrite!(
             self.src,
             r#"if err != nil {{
-			        return nil, {fmt}.Errorf("failed to read list element %d: %w", i, err)
+                    return nil, {fmt}.Errorf("failed to read list element %d: %w", i, err)
                 }}
             }}
             return vs, nil
-		}}
-		x |= uint32(b&0x7f) << s
-		s += 7
-	}}
-	return nil, {errors}.New("list length overflows a 32-bit integer")
+        }}
+        x |= uint32(b&0x7f) << s
+        s += 7
+    }}
+    return nil, {errors}.New("list length overflows a 32-bit integer")
 }}({reader}"#,
         );
         if !path.is_empty() {
@@ -587,33 +587,33 @@ impl InterfaceGenerator<'_> {
             self.src,
             r#", error) {{
     {slog}.Debug("reading option status byte")
-	status, err := r.ReadByte()
-	if err != nil {{
-		return nil, {fmt}.Errorf("failed to read option status byte: %w", err)
-	}}
-	switch status {{
-	case 0:
-		return nil, nil
-	case 1:
+    status, err := r.ReadByte()
+    if err != nil {{
+        return nil, {fmt}.Errorf("failed to read option status byte: %w", err)
+    }}
+    switch status {{
+    case 0:
+        return nil, nil
+    case 1:
         {slog}.Debug("reading `option::some` payload")
-	    v, err := "#,
+        v, err := "#,
         );
         self.print_read_ty(ty, "r", "path");
         self.push_str("\n");
         uwrite!(
             self.src,
             r#"if err != nil {{
-	    	return nil, {fmt}.Errorf("failed to read `option::some` value: %w", err)
-	    }}
-	    return "#,
+            return nil, {fmt}.Errorf("failed to read `option::some` value: %w", err)
+        }}
+        return "#,
         );
         self.print_nillable_ptr(ty, false, false);
         uwrite!(
             self.src,
             r#"v, nil
-	default:
-		return nil, {fmt}.Errorf("invalid option status byte %d", status)
-	}}
+    default:
+        return nil, {fmt}.Errorf("invalid option status byte %d", status)
+    }}
 }}({reader}"#,
         );
         if !path.is_empty() {
@@ -634,10 +634,10 @@ impl InterfaceGenerator<'_> {
             self.src,
             r#", error) {{
     {slog}.Debug("reading result status byte")
-	status, err := r.ReadByte()
-	if err != nil {{
-		return nil, {fmt}.Errorf("failed to read result status byte: %w", err)
-	}}"#,
+    status, err := r.ReadByte()
+    if err != nil {{
+        return nil, {fmt}.Errorf("failed to read result status byte: %w", err)
+    }}"#,
         );
         self.push_str("switch status {\n");
         self.push_str("case 0:\n");
@@ -649,8 +649,8 @@ impl InterfaceGenerator<'_> {
             uwriteln!(
                 self.src,
                 r#"if err != nil {{
-	    	return nil, fmt.Errorf("failed to read `result::ok` value: %w", err)
-	    }}"#,
+            return nil, fmt.Errorf("failed to read `result::ok` value: %w", err)
+        }}"#,
             );
             self.push_str("return &");
             self.print_result(ty);
@@ -672,8 +672,8 @@ impl InterfaceGenerator<'_> {
             uwriteln!(
                 self.src,
                 r#"if err != nil {{
-	    	return nil, {fmt}.Errorf("failed to read `result::err` value: %w", err)
-	    }}"#,
+            return nil, {fmt}.Errorf("failed to read `result::err` value: %w", err)
+        }}"#,
             );
             self.push_str("return &");
             self.print_result(ty);
@@ -688,9 +688,9 @@ impl InterfaceGenerator<'_> {
         uwrite!(
             self.src,
             r#"v }}, nil
-	default:
-		return nil, {fmt}.Errorf("invalid result status byte %d", status)
-	}}
+    default:
+        return nil, {fmt}.Errorf("invalid result status byte %d", status)
+    }}
 }}({reader}"#
         );
         if !path.is_empty() {
@@ -730,8 +730,8 @@ impl InterfaceGenerator<'_> {
             uwriteln!(
                 self.src,
                 r#"if err != nil {{
-		    return nil, {fmt}.Errorf("failed to read `{name}` field: %w", err)
-	    }}"#
+            return nil, {fmt}.Errorf("failed to read `{name}` field: %w", err)
+        }}"#
             );
         }
         self.push_str("return v, nil\n");
@@ -904,8 +904,8 @@ impl InterfaceGenerator<'_> {
                     uwriteln!(
                         self.src,
                         r#"if err != nil {{
-		    return nil, {fmt}.Errorf("failed to read tuple element {i}: %w", err)
-	    }}"#
+            return nil, {fmt}.Errorf("failed to read tuple element {i}: %w", err)
+        }}"#
                     );
                 }
                 self.push_str("return v, nil\n");
@@ -932,35 +932,35 @@ impl InterfaceGenerator<'_> {
                     self.src,
                     r#"func(r {wrpc}.IndexReader, path ...uint32) ({wrpc}.ReadCompleter, error) {{
     {slog}.Debug("reading byte list future status byte")
-	status, err := r.ReadByte()
-	if err != nil {{
-		return nil, {fmt}.Errorf("failed to read byte list future status byte: %w", err)
-	}}
-	switch status {{
-	case 0:
+    status, err := r.ReadByte()
+    if err != nil {{
+        return nil, {fmt}.Errorf("failed to read byte list future status byte: %w", err)
+    }}
+    switch status {{
+    case 0:
         if len(path) > 0 {{
-		    r, err = r.Index(path...)
-		    if err != nil {{
-		    	return nil, {fmt}.Errorf("failed to index reader: %w", err)
-		    }}
+            r, err = r.Index(path...)
+            if err != nil {{
+                return nil, {fmt}.Errorf("failed to index reader: %w", err)
+            }}
         }}
-		return {wrpc}.NewByteStreamReader({wrpc}.NewPendingByteReader(r)), nil
-	case 1:
-	    {slog}.Debug("reading ready byte list future contents")
-	    buf, err := "#
+        return {wrpc}.NewByteStreamReader({wrpc}.NewPendingByteReader(r)), nil
+    case 1:
+        {slog}.Debug("reading ready byte list future contents")
+        buf, err := "#
                 );
                 self.print_read_byte_list("r");
                 uwrite!(
                     self.src,
                     r#"
         if err != nil {{
-	    	return nil, {fmt}.Errorf("failed to read ready byte list future contents: %w", err)
-	    }}
-	    {slog}.Debug("read ready byte list future contents", "len", len(buf))
-	    return {wrpc}.NewCompleteReader({bytes}.NewReader(buf)), nil
-	default:
-		return nil, {fmt}.Errorf("invalid byte list future status byte %d", status)
-	}}
+            return nil, {fmt}.Errorf("failed to read ready byte list future contents: %w", err)
+        }}
+        {slog}.Debug("read ready byte list future contents", "len", len(buf))
+        return {wrpc}.NewCompleteReader({bytes}.NewReader(buf)), nil
+    default:
+        return nil, {fmt}.Errorf("invalid byte list future status byte %d", status)
+    }}
 }}({reader}"#
                 );
                 if !path.is_empty() {
@@ -984,51 +984,51 @@ impl InterfaceGenerator<'_> {
                     self.src,
                     r#"], error) {{
     {slog}.Debug("reading future status byte")
-	status, err := r.ReadByte()
-	if err != nil {{
-		return nil, {fmt}.Errorf("failed to read future status byte: %w", err)
-	}}
-	switch status {{
-	case 0:
+    status, err := r.ReadByte()
+    if err != nil {{
+        return nil, {fmt}.Errorf("failed to read future status byte: %w", err)
+    }}
+    switch status {{
+    case 0:
         if len(path) > 0 {{
-		    r, err = r.Index(path...)
-		    if err != nil {{
-		    	return nil, {fmt}.Errorf("failed to index reader: %w", err)
-		    }}
+            r, err = r.Index(path...)
+            if err != nil {{
+                return nil, {fmt}.Errorf("failed to index reader: %w", err)
+            }}
         }}
-		return {wrpc}.NewDecodeReceiver(r, func(r {wrpc}.IndexReader) ("#
+        return {wrpc}.NewDecodeReceiver(r, func(r {wrpc}.IndexReader) ("#
                 );
                 self.print_opt_ty(ty, true);
                 uwrite!(
                     self.src,
                     r#", error) {{
-	            {slog}.Debug("reading pending future element")
-				v, err := "#
+                {slog}.Debug("reading pending future element")
+                v, err := "#
                 );
                 self.print_read_ty(ty, "r", "");
                 uwriteln!(
                     self.src,
                     r#"
-				if err != nil {{
-					return nil, {fmt}.Errorf("failed to read pending future element: %w", err)
-				}}
-			return v, nil
-		}}), nil
-	case 1:
-	    {slog}.Debug("reading ready future contents")
-	    v, err := "#
+                if err != nil {{
+                    return nil, {fmt}.Errorf("failed to read pending future element: %w", err)
+                }}
+            return v, nil
+        }}), nil
+    case 1:
+        {slog}.Debug("reading ready future contents")
+        v, err := "#
                 );
                 self.print_read_ty(ty, "r", "path");
                 uwrite!(
                     self.src,
                     r#"
         if err != nil {{
-	    	return nil, {fmt}.Errorf("failed to read ready future contents: %w", err)
-	    }}
-	    return {wrpc}.NewCompleteReceiver(v), nil
-	default:
-		return nil, {fmt}.Errorf("invalid future status byte %d", status)
-	}}
+            return nil, {fmt}.Errorf("failed to read ready future contents: %w", err)
+        }}
+        return {wrpc}.NewCompleteReceiver(v), nil
+    default:
+        return nil, {fmt}.Errorf("invalid future status byte %d", status)
+    }}
 }}({reader}"#
                 );
                 if !path.is_empty() {
@@ -1054,35 +1054,35 @@ impl InterfaceGenerator<'_> {
                     self.src,
                     r#"func(r {wrpc}.IndexReader, path ...uint32) ({wrpc}.ReadCompleter, error) {{
     {slog}.Debug("reading byte stream status byte")
-	status, err := r.ReadByte()
-	if err != nil {{
-		return nil, {fmt}.Errorf("failed to read byte stream status byte: %w", err)
-	}}
-	switch status {{
-	case 0:
+    status, err := r.ReadByte()
+    if err != nil {{
+        return nil, {fmt}.Errorf("failed to read byte stream status byte: %w", err)
+    }}
+    switch status {{
+    case 0:
         if len(path) > 0 {{
-		    r, err = r.Index(path...)
-		    if err != nil {{
-		    	return nil, {fmt}.Errorf("failed to index reader: %w", err)
-		    }}
+            r, err = r.Index(path...)
+            if err != nil {{
+                return nil, {fmt}.Errorf("failed to index reader: %w", err)
+            }}
         }}
-		return {wrpc}.NewByteStreamReader({wrpc}.NewPendingByteReader(r)), nil
-	case 1:
-	    {slog}.Debug("reading ready byte stream contents")
-	    buf, err := "#
+        return {wrpc}.NewByteStreamReader({wrpc}.NewPendingByteReader(r)), nil
+    case 1:
+        {slog}.Debug("reading ready byte stream contents")
+        buf, err := "#
                 );
                 self.print_read_byte_list("r");
                 uwrite!(
                     self.src,
                     r#"
         if err != nil {{
-	    	return nil, {fmt}.Errorf("failed to read ready byte stream contents: %w", err)
-	    }}
-	    {slog}.Debug("read ready byte stream contents", "len", len(buf))
-	    return {wrpc}.NewCompleteReader({bytes}.NewReader(buf)), nil
-	default:
-		return nil, {fmt}.Errorf("invalid stream status byte %d", status)
-	}}
+            return nil, {fmt}.Errorf("failed to read ready byte stream contents: %w", err)
+        }}
+        {slog}.Debug("read ready byte stream contents", "len", len(buf))
+        return {wrpc}.NewCompleteReader({bytes}.NewReader(buf)), nil
+    default:
+        return nil, {fmt}.Errorf("invalid stream status byte %d", status)
+    }}
 }}({reader}"#
                 );
                 if !path.is_empty() {
@@ -1109,79 +1109,79 @@ impl InterfaceGenerator<'_> {
                     self.src,
                     r#"], error) {{
     {slog}.Debug("reading stream status byte")
-	status, err := r.ReadByte()
-	if err != nil {{
-		return nil, {fmt}.Errorf("failed to read stream status byte: %w", err)
-	}}
-	switch status {{
-	case 0:
+    status, err := r.ReadByte()
+    if err != nil {{
+        return nil, {fmt}.Errorf("failed to read stream status byte: %w", err)
+    }}
+    switch status {{
+    case 0:
         if len(path) > 0 {{
-		    r, err = r.Index(path...)
-		    if err != nil {{
-		    	return nil, {fmt}.Errorf("failed to index reader: %w", err)
-		    }}
+            r, err = r.Index(path...)
+            if err != nil {{
+                return nil, {fmt}.Errorf("failed to index reader: %w", err)
+            }}
         }}
         var total uint32
-		return {wrpc}.NewDecodeReceiver(r, func(r {wrpc}.IndexReader) ("#
+        return {wrpc}.NewDecodeReceiver(r, func(r {wrpc}.IndexReader) ("#
                 );
                 self.print_list(ty);
                 uwrite!(
                     self.src,
                     r#", error) {{
             {slog}.Debug("reading pending stream chunk length")
-			n, err := "#
+            n, err := "#
                 );
                 self.print_read_u32("r");
                 uwrite!(
                     self.src,
                     r#"
-			if err != nil {{
-				return nil, {fmt}.Errorf("failed to read pending stream chunk length: %w", err)
-			}}
-			if n == 0 {{
-				return nil, {io}.EOF
-			}}
+            if err != nil {{
+                return nil, {fmt}.Errorf("failed to read pending stream chunk length: %w", err)
+            }}
+            if n == 0 {{
+                return nil, {io}.EOF
+            }}
             if {math}.MaxUint32 - n < total {{
                 return nil, {errors}.New("total incoming pending stream element count would overflow a 32-bit unsigned integer")
             }}
-			vs := make("#
+            vs := make("#
                 );
                 self.print_list(ty);
                 uwrite!(
                     self.src,
                     r#", n)
-			for i := range vs {{
-	            {slog}.Debug("reading pending stream element", "i", total)
-				v, err := "#
+            for i := range vs {{
+                {slog}.Debug("reading pending stream element", "i", total)
+                v, err := "#
                 );
                 self.print_read_ty(ty, "r", "[]uint32{total}");
                 uwriteln!(
                     self.src,
                     r#"
-				if err != nil {{
-					return nil, {fmt}.Errorf("failed to read pending stream chunk element %d: %w", i, err)
-				}}
-				vs[i] = v
+                if err != nil {{
+                    return nil, {fmt}.Errorf("failed to read pending stream chunk element %d: %w", i, err)
+                }}
+                vs[i] = v
                 total++
-			}}
-			return vs, nil
-		}}), nil
-	case 1:
-	    {slog}.Debug("reading ready stream contents")
-	    vs, err := "#
+            }}
+            return vs, nil
+        }}), nil
+    case 1:
+        {slog}.Debug("reading ready stream contents")
+        vs, err := "#
                 );
                 self.print_read_list(ty, "r", "path");
                 uwrite!(
                     self.src,
                     r#"
         if err != nil {{
-	    	return nil, {fmt}.Errorf("failed to read ready stream contents: %w", err)
-	    }}
-	    {slog}.Debug("read ready stream contents", "len", len(vs))
-	    return {wrpc}.NewCompleteReceiver(vs), nil
-	default:
-		return nil, {fmt}.Errorf("invalid stream status byte %d", status)
-	}}
+            return nil, {fmt}.Errorf("failed to read ready stream contents: %w", err)
+        }}
+        {slog}.Debug("read ready stream contents", "len", len(vs))
+        return {wrpc}.NewCompleteReceiver(vs), nil
+    default:
+        return nil, {fmt}.Errorf("invalid stream status byte %d", status)
+    }}
 }}({reader}"#
                 );
                 if !path.is_empty() {
@@ -1209,28 +1209,28 @@ impl InterfaceGenerator<'_> {
         uwrite!(
             self.src,
             r#", error) {{
-	var x uint32
-	var s uint
-	for i := 0; i < 5; i++ {{
+    var x uint32
+    var s uint
+    for i := 0; i < 5; i++ {{
         {slog}.Debug("reading owned resource ID length byte", "i", i)
-		b, err := r.ReadByte()
-		if err != nil {{
-			if i > 0 && err == {io}.EOF {{
-				err = {io}.ErrUnexpectedEOF
-			}}
-			return "", {fmt}.Errorf("failed to read owned resource ID length byte: %w", err)
-		}}
-		if b < 0x80 {{
-			if i == 4 && b > 1 {{
-				return "", {errors}.New("owned resource ID length overflows a 32-bit integer")
-			}}
+        b, err := r.ReadByte()
+        if err != nil {{
+            if i > 0 && err == {io}.EOF {{
+                err = {io}.ErrUnexpectedEOF
+            }}
+            return "", {fmt}.Errorf("failed to read owned resource ID length byte: %w", err)
+        }}
+        if b < 0x80 {{
+            if i == 4 && b > 1 {{
+                return "", {errors}.New("owned resource ID length overflows a 32-bit integer")
+            }}
             x = x | uint32(b)<<s
             buf := make([]byte, x)
             {slog}.Debug("reading owned resource ID bytes", "len", x)
-	        _, err = r.Read(buf)
-	        if err != nil {{
-	        	return "", {fmt}.Errorf("failed to read owned resource ID bytes: %w", err)
-	        }}
+            _, err = r.Read(buf)
+            if err != nil {{
+                return "", {fmt}.Errorf("failed to read owned resource ID bytes: %w", err)
+            }}
             if !{utf8}.Valid(buf) {{
                 return "", {errors}.New("owned resource ID is not valid UTF-8")
             }}
@@ -1240,11 +1240,11 @@ impl InterfaceGenerator<'_> {
         uwrite!(
             self.src,
             r#"(buf), nil
-		}}
-		x |= uint32(b&0x7f) << s
-		s += 7
-	}}
-	return "", {errors}.New("owned resource ID length overflows a 32-bit integer")
+        }}
+        x |= uint32(b&0x7f) << s
+        s += 7
+    }}
+    return "", {errors}.New("owned resource ID length overflows a 32-bit integer")
 }}({reader})"#,
         );
     }
@@ -1263,28 +1263,28 @@ impl InterfaceGenerator<'_> {
         uwrite!(
             self.src,
             r#", error) {{
-	var x uint32
-	var s uint
-	for i := 0; i < 5; i++ {{
+    var x uint32
+    var s uint
+    for i := 0; i < 5; i++ {{
         {slog}.Debug("reading borrowed resource ID length byte", "i", i)
-		b, err := r.ReadByte()
-		if err != nil {{
-			if i > 0 && err == {io}.EOF {{
-				err = {io}.ErrUnexpectedEOF
-			}}
-			return "", {fmt}.Errorf("failed to read borrowed resource ID length byte: %w", err)
-		}}
-		if b < 0x80 {{
-			if i == 4 && b > 1 {{
-				return "", {errors}.New("borrowed resource ID length overflows a 32-bit integer")
-			}}
+        b, err := r.ReadByte()
+        if err != nil {{
+            if i > 0 && err == {io}.EOF {{
+                err = {io}.ErrUnexpectedEOF
+            }}
+            return "", {fmt}.Errorf("failed to read borrowed resource ID length byte: %w", err)
+        }}
+        if b < 0x80 {{
+            if i == 4 && b > 1 {{
+                return "", {errors}.New("borrowed resource ID length overflows a 32-bit integer")
+            }}
             x = x | uint32(b)<<s
             buf := make([]byte, x)
             {slog}.Debug("reading borrowed resource ID bytes", "len", x)
-	        _, err = r.Read(buf)
-	        if err != nil {{
-	        	return "", {fmt}.Errorf("failed to read borrowed resource ID bytes: %w", err)
-	        }}
+            _, err = r.Read(buf)
+            if err != nil {{
+                return "", {fmt}.Errorf("failed to read borrowed resource ID bytes: %w", err)
+            }}
             if !{utf8}.Valid(buf) {{
                 return "", {errors}.New("borrowed resource ID is not valid UTF-8")
             }}
@@ -1294,11 +1294,11 @@ impl InterfaceGenerator<'_> {
         uwrite!(
             self.src,
             r#"(buf), nil
-		}}
-		x |= uint32(b&0x7f) << s
-		s += 7
-	}}
-	return "", {errors}.New("borrowed resource ID length overflows a 32-bit integer")
+        }}
+        x |= uint32(b&0x7f) << s
+        s += 7
+    }}
+    return "", {errors}.New("borrowed resource ID length overflows a 32-bit integer")
 }}({reader})"#,
         );
     }
@@ -1407,10 +1407,10 @@ impl InterfaceGenerator<'_> {
         uwrite!(
             self.src,
             r#"func(v uint16, w {io}.Writer) (err error) {{
-	            b := make([]byte, {binary}.MaxVarintLen16)
-	            i := {binary}.PutUvarint(b, uint64(v))
+                b := make([]byte, {binary}.MaxVarintLen16)
+                i := {binary}.PutUvarint(b, uint64(v))
                 {slog}.Debug("writing u16")
-	            _, err = w.Write(b[:i])
+                _, err = w.Write(b[:i])
                 return err
             }}({name}, {writer})"#,
         );
@@ -1423,10 +1423,10 @@ impl InterfaceGenerator<'_> {
         uwrite!(
             self.src,
             r#"func(v uint32, w {io}.Writer) (err error) {{
-	            b := make([]byte, {binary}.MaxVarintLen32)
-	            i := {binary}.PutUvarint(b, uint64(v))
+                b := make([]byte, {binary}.MaxVarintLen32)
+                i := {binary}.PutUvarint(b, uint64(v))
                 {slog}.Debug("writing u32")
-	            _, err = w.Write(b[:i])
+                _, err = w.Write(b[:i])
                 return err
             }}({name}, {writer})"#,
         );
@@ -1439,10 +1439,10 @@ impl InterfaceGenerator<'_> {
         uwrite!(
             self.src,
             r#"func(v uint64, w {io}.Writer) (err error) {{
-	            b := make([]byte, {binary}.MaxVarintLen64)
-	            i := {binary}.PutUvarint(b, uint64(v))
+                b := make([]byte, {binary}.MaxVarintLen64)
+                i := {binary}.PutUvarint(b, uint64(v))
                 {slog}.Debug("writing u64")
-	            _, err = w.Write(b[:i])
+                _, err = w.Write(b[:i])
                 return err
             }}({name}, {writer})"#,
         );
@@ -1468,25 +1468,25 @@ impl InterfaceGenerator<'_> {
             self.src,
             r#"func(v int16, w {io}.ByteWriter) (err error) {{
                 for {{
-	            	b := byte(v & 0x7f)
-	            	v >>= 7
+                    b := byte(v & 0x7f)
+                    v >>= 7
 
-	            	signb := b & 0x40
+                    signb := b & 0x40
 
-	            	last := false
-	            	if (v == 0 && signb == 0) || (v == -1 && signb != 0) {{
-	            		last = true
-	            	}} else {{
-	            		b = b | 0x80
-	            	}}
+                    last := false
+                    if (v == 0 && signb == 0) || (v == -1 && signb != 0) {{
+                        last = true
+                    }} else {{
+                        b = b | 0x80
+                    }}
                     {slog}.Debug("writing s16 byte")
                     if err = w.WriteByte(b); err != nil {{
-	    		        return {fmt}.Errorf("failed to write `s16` byte: %w", err)
+                        return {fmt}.Errorf("failed to write `s16` byte: %w", err)
                     }}
-	            	if last {{
-	            		return nil
-	            	}}
-	            }}
+                    if last {{
+                        return nil
+                    }}
+                }}
             }}({name}, {writer})"#,
         );
     }
@@ -1499,25 +1499,25 @@ impl InterfaceGenerator<'_> {
             self.src,
             r#"func(v int32, w {io}.ByteWriter) (err error) {{
                 for {{
-	            	b := byte(v & 0x7f)
-	            	v >>= 7
+                    b := byte(v & 0x7f)
+                    v >>= 7
 
-	            	signb := b & 0x40
+                    signb := b & 0x40
 
-	            	last := false
-	            	if (v == 0 && signb == 0) || (v == -1 && signb != 0) {{
-	            		last = true
-	            	}} else {{
-	            		b = b | 0x80
-	            	}}
+                    last := false
+                    if (v == 0 && signb == 0) || (v == -1 && signb != 0) {{
+                        last = true
+                    }} else {{
+                        b = b | 0x80
+                    }}
                     {slog}.Debug("writing s32 byte")
                     if err = w.WriteByte(b); err != nil {{
-	    		        return {fmt}.Errorf("failed to write `s32` byte: %w", err)
+                        return {fmt}.Errorf("failed to write `s32` byte: %w", err)
                     }}
-	            	if last {{
-	            		return nil
-	            	}}
-	            }}
+                    if last {{
+                        return nil
+                    }}
+                }}
             }}({name}, {writer})"#,
         );
     }
@@ -1530,25 +1530,25 @@ impl InterfaceGenerator<'_> {
             self.src,
             r#"func(v int64, w {io}.ByteWriter) (err error) {{
                 for {{
-	            	b := byte(v & 0x7f)
-	            	v >>= 7
+                    b := byte(v & 0x7f)
+                    v >>= 7
 
-	            	signb := b & 0x40
+                    signb := b & 0x40
 
-	            	last := false
-	            	if (v == 0 && signb == 0) || (v == -1 && signb != 0) {{
-	            		last = true
-	            	}} else {{
-	            		b = b | 0x80
-	            	}}
+                    last := false
+                    if (v == 0 && signb == 0) || (v == -1 && signb != 0) {{
+                        last = true
+                    }} else {{
+                        b = b | 0x80
+                    }}
                     {slog}.Debug("writing s64 byte")
                     if err = w.WriteByte(b); err != nil {{
-	    		        return {fmt}.Errorf("failed to write `s64` byte: %w", err)
+                        return {fmt}.Errorf("failed to write `s64` byte: %w", err)
                     }}
-	            	if last {{
-	            		return nil
-	            	}}
-	            }}
+                    if last {{
+                        return nil
+                    }}
+                }}
             }}({name}, {writer})"#,
         );
     }
@@ -1564,7 +1564,7 @@ impl InterfaceGenerator<'_> {
                 b := make([]byte, 4)
                 {binary}.LittleEndian.PutUint32(b, {math}.Float32bits(v))
                 {slog}.Debug("writing f32")
-	            _, err = w.Write(b)
+                _, err = w.Write(b)
                 return err
             }}({name}, {writer})"#,
         );
@@ -1581,7 +1581,7 @@ impl InterfaceGenerator<'_> {
                 b := make([]byte, 8)
                 {binary}.LittleEndian.PutUint64(b, {math}.Float64bits(v))
                 {slog}.Debug("writing f64")
-	            _, err = w.Write(b)
+                _, err = w.Write(b)
                 return err
             }}({name}, {writer})"#,
         );
@@ -1594,10 +1594,10 @@ impl InterfaceGenerator<'_> {
         uwrite!(
             self.src,
             r#"func(v rune, w {io}.Writer) (err error) {{
-	            b := make([]byte, {binary}.MaxVarintLen32)
-	            i := {binary}.PutUvarint(b, uint64(v))
+                b := make([]byte, {binary}.MaxVarintLen32)
+                i := {binary}.PutUvarint(b, uint64(v))
                 {slog}.Debug("writing char")
-	            _, err = w.Write(b[:i])
+                _, err = w.Write(b[:i])
                 return err
             }}({name}, {writer})"#,
         );
@@ -1612,23 +1612,23 @@ impl InterfaceGenerator<'_> {
         uwrite!(
             self.src,
             r#"func(v string, w {io}.Writer) (err error) {{
-	            n := len(v)
-	            if n > {math}.MaxUint32 {{
-	            	return {fmt}.Errorf("string byte length of %d overflows a 32-bit integer", n)
-	            }}
-	            if err = func(v int, w {io}.Writer) error {{
-	                b := make([]byte, {binary}.MaxVarintLen32)
-	                i := {binary}.PutUvarint(b, uint64(v))
-	                {slog}.Debug("writing string byte length", "len", n)
-	                _, err = w.Write(b[:i])
-	                return err
+                n := len(v)
+                if n > {math}.MaxUint32 {{
+                    return {fmt}.Errorf("string byte length of %d overflows a 32-bit integer", n)
+                }}
+                if err = func(v int, w {io}.Writer) error {{
+                    b := make([]byte, {binary}.MaxVarintLen32)
+                    i := {binary}.PutUvarint(b, uint64(v))
+                    {slog}.Debug("writing string byte length", "len", n)
+                    _, err = w.Write(b[:i])
+                    return err
                 }}(n, w); err != nil {{
-                	return {fmt}.Errorf("failed to write string byte length of %d: %w", n, err)
+                    return {fmt}.Errorf("failed to write string byte length of %d: %w", n, err)
                 }}
                 {slog}.Debug("writing string bytes")
                 _, err = w.Write([]byte(v))
                 if err != nil {{
-                	return {fmt}.Errorf("failed to write string bytes: %w", err)
+                    return {fmt}.Errorf("failed to write string bytes: %w", err)
                 }}
                 return nil
             }}({name}, {writer})"#,
@@ -1636,12 +1636,13 @@ impl InterfaceGenerator<'_> {
     }
 
     fn print_write_list(&mut self, ty: &Type, name: &str, writer: &str) {
+        let atomic = self.deps.atomic();
         let binary = self.deps.binary();
-        let errgroup = self.deps.errgroup();
         let fmt = self.deps.fmt();
         let io = self.deps.io();
         let math = self.deps.math();
         let slog = self.deps.slog();
+        let sync = self.deps.sync();
         let wrpc = self.deps.wrpc();
 
         self.push_str("func(v ");
@@ -1649,21 +1650,21 @@ impl InterfaceGenerator<'_> {
         uwrite!(
             self.src,
             r#", w interface {{ {io}.ByteWriter; {io}.Writer }}) (write func({wrpc}.IndexWriter) error, err error) {{
-	    n := len(v)
-	    if n > {math}.MaxUint32 {{
-	        return nil, {fmt}.Errorf("list length of %d overflows a 32-bit integer", n)
-	    }}
-	    if err = func(v int, w {io}.Writer) error {{
-	        b := make([]byte, {binary}.MaxVarintLen32)
-	        i := {binary}.PutUvarint(b, uint64(v))
+        n := len(v)
+        if n > {math}.MaxUint32 {{
+            return nil, {fmt}.Errorf("list length of %d overflows a 32-bit integer", n)
+        }}
+        if err = func(v int, w {io}.Writer) error {{
+            b := make([]byte, {binary}.MaxVarintLen32)
+            i := {binary}.PutUvarint(b, uint64(v))
             {slog}.Debug("writing list length", "len", n)
-	        _, err = w.Write(b[:i])
-	        return err
+            _, err = w.Write(b[:i])
+            return err
         }}(n, w); err != nil {{
             return nil, {fmt}.Errorf("failed to write list length of %d: %w", n, err)
         }}
         {slog}.Debug("writing list elements")
-	    writes := make(map[uint32]func({wrpc}.IndexWriter) error, n)
+        writes := make(map[uint32]func({wrpc}.IndexWriter) error, n)
         for i, e := range v {{
             write, err := "#
         );
@@ -1678,23 +1679,33 @@ impl InterfaceGenerator<'_> {
                 writes[uint32(i)] = write
             }}
         }}
-	    if len(writes) > 0 {{
-	    	return func(w {wrpc}.IndexWriter) error {{
-	    		var wg {errgroup}.Group
-	    		for index, write := range writes {{
-	    			w, err := w.Index(index)
-	    			if err != nil {{
-	    				return {fmt}.Errorf("failed to index writer: %w", err)
-	    			}}
-	    			write := write
-	    			wg.Go(func() error {{
-	    				return write(w)
-	    			}})
-	    		}}
-	    		return wg.Wait()
-	    	}}, nil
-	    }}
-	    return nil, nil
+        if len(writes) > 0 {{
+            return func(w {wrpc}.IndexWriter) error {{
+                var wg {sync}.WaitGroup
+                var wgErr {atomic}.Value
+                for index, write := range writes {{
+                    wg.Add(1)
+                    w, err := w.Index(index)
+                    if err != nil {{
+                        return {fmt}.Errorf("failed to index writer: %w", err)
+                    }}
+                    write := write
+                    go func() {{
+                        defer wg.Done()
+                        if err := write(w); err != nil {{
+                            wgErr.Store(err)
+                        }}
+                    }}()
+                }}
+                wg.Wait()
+                err := wgErr.Load()
+                if err == nil {{
+                    return nil
+                }}
+                return err.(error)
+            }}, nil
+        }}
+        return nil, nil
     }}({name}, {writer})"#
         );
     }
@@ -1710,18 +1721,18 @@ impl InterfaceGenerator<'_> {
         uwrite!(
             self.src,
             r#", w interface {{ {io}.ByteWriter; {io}.Writer }}) (func({wrpc}.IndexWriter) error, error) {{
-	    if v == nil {{
-	    	{slog}.Debug("writing `option::none` status byte")
-	    	if err := w.WriteByte(0); err != nil {{
-	    		return nil, {fmt}.Errorf("failed to write `option::none` byte: %w", err)
-	    	}}
-	    	return nil, nil
-	    }}
-	    {slog}.Debug("writing `option::some` status byte")
-	    if err := w.WriteByte(1); err != nil {{
-	    	return nil, {fmt}.Errorf("failed to write `option::some` status byte: %w", err)
-	    }}
-	    {slog}.Debug("writing `option::some` payload")
+        if v == nil {{
+            {slog}.Debug("writing `option::none` status byte")
+            if err := w.WriteByte(0); err != nil {{
+                return nil, {fmt}.Errorf("failed to write `option::none` byte: %w", err)
+            }}
+            return nil, nil
+        }}
+        {slog}.Debug("writing `option::some` status byte")
+        if err := w.WriteByte(1); err != nil {{
+            return nil, {fmt}.Errorf("failed to write `option::some` status byte: %w", err)
+        }}
+        {slog}.Debug("writing `option::some` payload")
         write, err := "#
         );
         let ptr = self.nillable_ptr(ty, false, true);
@@ -1731,9 +1742,9 @@ impl InterfaceGenerator<'_> {
             self.src,
             r#"
         if err != nil {{
-		    return nil, {fmt}.Errorf("failed to write `option::some` payload: %w", err)
-	    }}
-	    return write, nil
+            return nil, {fmt}.Errorf("failed to write `option::some` payload: %w", err)
+        }}
+        return write, nil
     }}({name}, {writer})"#
         );
     }
@@ -1751,19 +1762,19 @@ impl InterfaceGenerator<'_> {
             self.src,
             r#", w interface {{ {io}.ByteWriter; {io}.Writer }}) (func({wrpc}.IndexWriter) error, error) {{
         switch {{
-        	case v.Ok == nil && v.Err == nil:
-        		return nil, {errors}.New("both result variants cannot be nil")
-        	case v.Ok != nil && v.Err != nil:
-        		return nil, {errors}.New("exactly one result variant must non-nil")"#
+            case v.Ok == nil && v.Err == nil:
+                return nil, {errors}.New("both result variants cannot be nil")
+            case v.Ok != nil && v.Err != nil:
+                return nil, {errors}.New("exactly one result variant must non-nil")"#
         );
         uwriteln!(
             self.src,
             r#"
-        	case v.Ok != nil:
-        		{slog}.Debug("writing `result::ok` status byte")
-        		if err := w.WriteByte(0); err != nil {{
-        			return nil, {fmt}.Errorf("failed to write `result::ok` status byte: %w", err)
-        		}}"#
+            case v.Ok != nil:
+                {slog}.Debug("writing `result::ok` status byte")
+                if err := w.WriteByte(0); err != nil {{
+                    return nil, {fmt}.Errorf("failed to write `result::ok` status byte: %w", err)
+                }}"#
         );
         if let Some(ref ty) = ty.ok {
             uwrite!(
@@ -1778,27 +1789,27 @@ impl InterfaceGenerator<'_> {
                 self.src,
                 r#"
                     if err != nil {{
-        			    return nil, {fmt}.Errorf("failed to write `result::ok` payload: %w", err)
-        		    }}
+                        return nil, {fmt}.Errorf("failed to write `result::ok` payload: %w", err)
+                    }}
                     if write != nil {{
-	    	            return write, nil
+                        return write, nil
                     }}"#
             );
         }
         uwriteln!(
             self.src,
             r#"return nil, nil
-        	default:
-        		{slog}.Debug("writing `result::err` status byte")
-        		if err := w.WriteByte(1); err != nil {{
-        			return nil, {fmt}.Errorf("failed to write `result::err` status byte: %w", err)
-        		}}"#
+            default:
+                {slog}.Debug("writing `result::err` status byte")
+                if err := w.WriteByte(1); err != nil {{
+                    return nil, {fmt}.Errorf("failed to write `result::err` status byte: %w", err)
+                }}"#
         );
         if let Some(ref ty) = ty.err {
             uwrite!(
                 self.src,
                 r#"{slog}.Debug("writing `result::err` payload")
-        		write, err := "#
+                write, err := "#
             );
             let ptr = self.nillable_ptr(ty, true, true);
             let param = format!("{ptr}v.Err");
@@ -1807,17 +1818,17 @@ impl InterfaceGenerator<'_> {
                 self.src,
                 r#"
                 if err != nil {{
-        			return nil, {fmt}.Errorf("failed to write `result::err` payload: %w", err)
-        		}}
+                    return nil, {fmt}.Errorf("failed to write `result::err` payload: %w", err)
+                }}
                 if write != nil {{
-	    	        return write, nil
+                    return write, nil
                 }}"#
             );
         }
         uwrite!(
             self.src,
             r#"return nil, nil
-	    }}
+        }}
     }}({name}, {writer})"#
         );
     }
@@ -1844,25 +1855,26 @@ impl InterfaceGenerator<'_> {
                     self.src,
                     r#"
         if err != nil {{
-		    return nil, {fmt}.Errorf("failed to write tuple element 0: %w", err)
-	    }}
+            return nil, {fmt}.Errorf("failed to write tuple element 0: %w", err)
+        }}
         if write != nil {{
             return func(w {wrpc}.IndexWriter) error {{
-            	    w, err := w.Index(0)
-            	    if err != nil {{
-            	        return {fmt}.Errorf("failed to index writer: %w", err)
-            	    }}
-            	    return write(w)
+                    w, err := w.Index(0)
+                    if err != nil {{
+                        return {fmt}.Errorf("failed to index writer: %w", err)
+                    }}
+                    return write(w)
             }}, nil
         }}
-	    return write, nil
+        return write, nil
     }}({name}, {writer})"#
                 );
             }
             _ => {
-                let errgroup = self.deps.errgroup();
+                let atomic = self.deps.atomic();
                 let fmt = self.deps.fmt();
                 let io = self.deps.io();
+                let sync = self.deps.sync();
                 let wrpc = self.deps.wrpc();
 
                 self.push_str("func(v *");
@@ -1885,8 +1897,8 @@ impl InterfaceGenerator<'_> {
                         self.src,
                         r#"
         if err != nil {{
-		    return nil, {fmt}.Errorf("failed to write tuple element {i}: %w", err)
-	    }}
+            return nil, {fmt}.Errorf("failed to write tuple element {i}: %w", err)
+        }}
         if write{i} != nil {{
                 writes[{i}] = write{i}
         }}"#
@@ -1895,21 +1907,31 @@ impl InterfaceGenerator<'_> {
                 uwrite!(
                     self.src,
                     r#"if len(writes) > 0 {{
-	    	return func(w {wrpc}.IndexWriter) error {{
-	    		var wg {errgroup}.Group
-	    		for index, write := range writes {{
-	    			w, err := w.Index(index)
-	    			if err != nil {{
-	    				return {fmt}.Errorf("failed to index writer: %w", err)
-	    			}}
-	    			write := write
-	    			wg.Go(func() error {{
-	    				return write(w)
-	    			}})
-	    		}}
-	    		return wg.Wait()
-	    	}}, nil
-	    }}
+            return func(w {wrpc}.IndexWriter) error {{
+                var wg {sync}.WaitGroup
+                var wgErr {atomic}.Value
+                for index, write := range writes {{
+                    wg.Add(1)
+                    w, err := w.Index(index)
+                    if err != nil {{
+                        return {fmt}.Errorf("failed to index writer: %w", err)
+                    }}
+                    write := write
+                    go func() {{
+                        defer wg.Done()
+                        if err := write(w); err != nil {{
+                            wgErr.Store(err)
+                        }}
+                    }}()
+                }}
+                wg.Wait()
+                err := wgErr.Load()
+                if err == nil {{
+                    return nil
+                }}
+                return err.(error)
+            }}, nil
+        }}
         return nil, nil
     }}({name}, {writer})"#
                 );
@@ -1930,69 +1952,69 @@ impl InterfaceGenerator<'_> {
                     self.src,
                     r#"func(v {wrpc}.ReadCompleter, w interface {{ {io}.ByteWriter; {io}.Writer }}) (write func({wrpc}.IndexWriter) error, err error) {{
                 if v.IsComplete() {{
-		            defer func() {{
-		            	body, ok := v.({io}.Closer)
-		            	if ok {{
-		            		if cErr := body.Close(); cErr != nil {{
-		            			if err == nil {{
-		            				err = {fmt}.Errorf("failed to close ready byte list future: %w", cErr)
-		            			}} else {{
-		            				slog.Warn("failed to close ready byte list future", "err", cErr)
-		            			}}
-		            		}}
-		            	}}
-		            }}()
-		            {slog}.Debug("writing byte list future `future::ready` status byte")
-		            if err = w.WriteByte(1); err != nil {{
-		            	return nil, {fmt}.Errorf("failed to write `future::ready` byte: %w", err)
-		            }}
-		            {slog}.Debug("reading ready byte list future contents")
-		            var buf {bytes}.Buffer
+                    defer func() {{
+                        body, ok := v.({io}.Closer)
+                        if ok {{
+                            if cErr := body.Close(); cErr != nil {{
+                                if err == nil {{
+                                    err = {fmt}.Errorf("failed to close ready byte list future: %w", cErr)
+                                }} else {{
+                                    slog.Warn("failed to close ready byte list future", "err", cErr)
+                                }}
+                            }}
+                        }}
+                    }}()
+                    {slog}.Debug("writing byte list future `future::ready` status byte")
+                    if err = w.WriteByte(1); err != nil {{
+                        return nil, {fmt}.Errorf("failed to write `future::ready` byte: %w", err)
+                    }}
+                    {slog}.Debug("reading ready byte list future contents")
+                    var buf {bytes}.Buffer
                     var n int64
-		            n, err = {io}.Copy(&buf, v)
-		            if err != nil {{
-		            	return nil, {fmt}.Errorf("failed to read ready byte list future contents: %w", err)
-		            }}
-		            {slog}.Debug("writing ready byte list future contents", "len", n)
-		            if err = {wrpc}.WriteByteList(buf.Bytes(), w); err != nil {{
-		            	return nil, {fmt}.Errorf("failed to write ready byte list future contents: %w", err)
-		            }}
-		            return nil, nil
+                    n, err = {io}.Copy(&buf, v)
+                    if err != nil {{
+                        return nil, {fmt}.Errorf("failed to read ready byte list future contents: %w", err)
+                    }}
+                    {slog}.Debug("writing ready byte list future contents", "len", n)
+                    if err = {wrpc}.WriteByteList(buf.Bytes(), w); err != nil {{
+                        return nil, {fmt}.Errorf("failed to write ready byte list future contents: %w", err)
+                    }}
+                    return nil, nil
                 }} else {{
-		            {slog}.Debug("writing byte list future `future::pending` status byte")
-		            if err = w.WriteByte(0); err != nil {{
-		            	return nil, fmt.Errorf("failed to write `future::pending` byte: %w", err)
-		            }}
-		            return func(w {wrpc}.IndexWriter) (err error) {{
-		            	defer func() {{
-		            		body, ok := v.({io}.Closer)
-		            		if ok {{
-		            			if cErr := body.Close(); cErr != nil {{
-		            				if err == nil {{
-		            					err = {fmt}.Errorf("failed to close pending byte list future: %w", cErr)
-		            				}} else {{
-		            					{slog}.Warn("failed to close pending byte list future", "err", cErr)
-		            				}}
-		            			}}
-		            		}}
-		            	}}()
-		            	{slog}.Debug("reading pending byte list future contents")
-		            	chunk, err := {io}.ReadAll(chunk)
-		            	if err != nil {{
-		            		return {fmt}.Errorf("failed to read pending byte list future: %w", err)
-		            	}}
-		            	if n > {math}.MaxUint32 {{
-		            		return {fmt}.Errorf("pending byte list future length of %d overflows a 32-bit integer", n)
-		            	}}
-		            	{slog}.Debug("writing pending byte list future length", "len", n)
-		            	if err := {wrpc}.WriteUint32(uint32(n), w); err != nil {{
-		            		return {fmt}.Errorf("failed to write pending byte list future length of %d: %w", n, err)
-		            	}}
-		            	_, err = w.Write(chunk[:n])
-		            	if err != nil {{
-		            		return {fmt}.Errorf("failed to write pending byte list future contents: %w", err)
-		            	}}
-		            }}, nil
+                    {slog}.Debug("writing byte list future `future::pending` status byte")
+                    if err = w.WriteByte(0); err != nil {{
+                        return nil, fmt.Errorf("failed to write `future::pending` byte: %w", err)
+                    }}
+                    return func(w {wrpc}.IndexWriter) (err error) {{
+                        defer func() {{
+                            body, ok := v.({io}.Closer)
+                            if ok {{
+                                if cErr := body.Close(); cErr != nil {{
+                                    if err == nil {{
+                                        err = {fmt}.Errorf("failed to close pending byte list future: %w", cErr)
+                                    }} else {{
+                                        {slog}.Warn("failed to close pending byte list future", "err", cErr)
+                                    }}
+                                }}
+                            }}
+                        }}()
+                        {slog}.Debug("reading pending byte list future contents")
+                        chunk, err := {io}.ReadAll(chunk)
+                        if err != nil {{
+                            return {fmt}.Errorf("failed to read pending byte list future: %w", err)
+                        }}
+                        if n > {math}.MaxUint32 {{
+                            return {fmt}.Errorf("pending byte list future length of %d overflows a 32-bit integer", n)
+                        }}
+                        {slog}.Debug("writing pending byte list future length", "len", n)
+                        if err := {wrpc}.WriteUint32(uint32(n), w); err != nil {{
+                            return {fmt}.Errorf("failed to write pending byte list future length of %d: %w", n, err)
+                        }}
+                        _, err = w.Write(chunk[:n])
+                        if err != nil {{
+                            return {fmt}.Errorf("failed to write pending byte list future contents: %w", err)
+                        }}
+                    }}, nil
                 }}
             }}({name}, {writer})"#,
                 );
@@ -2008,76 +2030,76 @@ impl InterfaceGenerator<'_> {
                     self.src,
                     r#"], w interface {{ {io}.ByteWriter; {io}.Writer }}) (write func({wrpc}.IndexWriter) error, err error) {{
             if v.IsComplete() {{
-		        defer func() {{
-		        	body, ok := v.({io}.Closer)
-		        	if ok {{
-		        		if cErr := body.Close(); cErr != nil {{
-		        			if err == nil {{
-		        				err = {fmt}.Errorf("failed to close ready future: %w", cErr)
-		        			}} else {{
-		        				slog.Warn("failed to close ready future", "err", cErr)
-		        			}}
-		        		}}
-		        	}}
-		        }}()
-		        {slog}.Debug("writing future `future::ready` status byte")
-		        if err = w.WriteByte(1); err != nil {{
-		        	return nil, {fmt}.Errorf("failed to write `future::ready` byte: %w", err)
-		        }}
-		        {slog}.Debug("receiving ready future contents")
+                defer func() {{
+                    body, ok := v.({io}.Closer)
+                    if ok {{
+                        if cErr := body.Close(); cErr != nil {{
+                            if err == nil {{
+                                err = {fmt}.Errorf("failed to close ready future: %w", cErr)
+                            }} else {{
+                                slog.Warn("failed to close ready future", "err", cErr)
+                            }}
+                        }}
+                    }}
+                }}()
+                {slog}.Debug("writing future `future::ready` status byte")
+                if err = w.WriteByte(1); err != nil {{
+                    return nil, {fmt}.Errorf("failed to write `future::ready` byte: %w", err)
+                }}
+                {slog}.Debug("receiving ready future contents")
                 rx, err := v.Receive()
-		        if err != nil && err != {io}.EOF {{
-		        	return nil, {fmt}.Errorf("failed to receive ready future contents: %w", err)
-		        }}
-		        {slog}.Debug("writing ready future contents")
-		        write, err := "#,
+                if err != nil && err != {io}.EOF {{
+                    return nil, {fmt}.Errorf("failed to receive ready future contents: %w", err)
+                }}
+                {slog}.Debug("writing ready future contents")
+                write, err := "#,
                 );
                 self.print_write_ty(ty, "rx", "w");
                 uwrite!(
                     self.src,
                     r#"
                 if err != nil {{
-		            return nil, {fmt}.Errorf("failed to write ready future contents: %w", err)
-		        }}
-		        return write, nil
+                    return nil, {fmt}.Errorf("failed to write ready future contents: %w", err)
+                }}
+                return write, nil
             }} else {{
-	            {slog}.Debug("writing future `future::pending` status byte")
-	            if err := w.WriteByte(0); err != nil {{
-	            	return nil, fmt.Errorf("failed to write `future::pending` byte: %w", err)
-	            }}
-	            return func(w {wrpc}.IndexWriter) (err error) {{
-	            	defer func() {{
-	            		body, ok := v.({io}.Closer)
-	            		if ok {{
-	            			if cErr := body.Close(); cErr != nil {{
-	            				if err == nil {{
-	            					err = {fmt}.Errorf("failed to close pending future: %w", cErr)
-	            				}} else {{
-	            					{slog}.Warn("failed to close pending future", "err", cErr)
-	            				}}
-	            			}}
-	            		}}
-	            	}}()
-	            	{slog}.Debug("receiving outgoing pending future contents")
-	            	rx, err := v.Receive()
-	            	if err != nil {{
-	            		return {fmt}.Errorf("failed to receive outgoing pending future: %w", err)
-	            	}}
-	            	{slog}.Debug("writing pending future element")
+                {slog}.Debug("writing future `future::pending` status byte")
+                if err := w.WriteByte(0); err != nil {{
+                    return nil, fmt.Errorf("failed to write `future::pending` byte: %w", err)
+                }}
+                return func(w {wrpc}.IndexWriter) (err error) {{
+                    defer func() {{
+                        body, ok := v.({io}.Closer)
+                        if ok {{
+                            if cErr := body.Close(); cErr != nil {{
+                                if err == nil {{
+                                    err = {fmt}.Errorf("failed to close pending future: %w", cErr)
+                                }} else {{
+                                    {slog}.Warn("failed to close pending future", "err", cErr)
+                                }}
+                            }}
+                        }}
+                    }}()
+                    {slog}.Debug("receiving outgoing pending future contents")
+                    rx, err := v.Receive()
+                    if err != nil {{
+                        return {fmt}.Errorf("failed to receive outgoing pending future: %w", err)
+                    }}
+                    {slog}.Debug("writing pending future element")
                     write, err :="#,
                 );
                 self.print_write_ty(ty, "rx", "w");
                 uwrite!(
                     self.src,
                     r#"
-	            	if err != nil {{
-	            		return {fmt}.Errorf("failed to write pending future element: %w", err)
-	            	}}
+                    if err != nil {{
+                        return {fmt}.Errorf("failed to write pending future element: %w", err)
+                    }}
                     if write != nil {{
-	            	    return write(w)
-	            	}}
+                        return write(w)
+                    }}
                     return nil
-	            }}, nil
+                }}, nil
             }}
         }}({name}, {writer})"#,
                 );
@@ -2099,93 +2121,94 @@ impl InterfaceGenerator<'_> {
                     self.src,
                     r#"func(v {wrpc}.ReadCompleter, w interface {{ {io}.ByteWriter; {io}.Writer }}) (write func({wrpc}.IndexWriter) error, err error) {{
                 if v.IsComplete() {{
-		            defer func() {{
-		            	body, ok := v.({io}.Closer)
-		            	if ok {{
-		            		if cErr := body.Close(); cErr != nil {{
-		            			if err == nil {{
-		            				err = {fmt}.Errorf("failed to close ready byte stream: %w", cErr)
-		            			}} else {{
-		            				slog.Warn("failed to close ready byte stream", "err", cErr)
-		            			}}
-		            		}}
-		            	}}
-		            }}()
-		            {slog}.Debug("writing byte stream `stream::ready` status byte")
-		            if err = w.WriteByte(1); err != nil {{
-		            	return nil, {fmt}.Errorf("failed to write `stream::ready` byte: %w", err)
-		            }}
-		            {slog}.Debug("reading ready byte stream contents")
-		            var buf {bytes}.Buffer
+                    defer func() {{
+                        body, ok := v.({io}.Closer)
+                        if ok {{
+                            if cErr := body.Close(); cErr != nil {{
+                                if err == nil {{
+                                    err = {fmt}.Errorf("failed to close ready byte stream: %w", cErr)
+                                }} else {{
+                                    slog.Warn("failed to close ready byte stream", "err", cErr)
+                                }}
+                            }}
+                        }}
+                    }}()
+                    {slog}.Debug("writing byte stream `stream::ready` status byte")
+                    if err = w.WriteByte(1); err != nil {{
+                        return nil, {fmt}.Errorf("failed to write `stream::ready` byte: %w", err)
+                    }}
+                    {slog}.Debug("reading ready byte stream contents")
+                    var buf {bytes}.Buffer
                     var n int64
-		            n, err = {io}.Copy(&buf, v)
-		            if err != nil {{
-		            	return nil, {fmt}.Errorf("failed to read ready byte stream contents: %w", err)
-		            }}
-		            {slog}.Debug("writing ready byte stream contents", "len", n)
-		            if err = {wrpc}.WriteByteList(buf.Bytes(), w); err != nil {{
-		            	return nil, {fmt}.Errorf("failed to write ready byte stream contents: %w", err)
-		            }}
-		            return nil, nil
+                    n, err = {io}.Copy(&buf, v)
+                    if err != nil {{
+                        return nil, {fmt}.Errorf("failed to read ready byte stream contents: %w", err)
+                    }}
+                    {slog}.Debug("writing ready byte stream contents", "len", n)
+                    if err = {wrpc}.WriteByteList(buf.Bytes(), w); err != nil {{
+                        return nil, {fmt}.Errorf("failed to write ready byte stream contents: %w", err)
+                    }}
+                    return nil, nil
                 }} else {{
-		            {slog}.Debug("writing byte stream `stream::pending` status byte")
-		            if err = w.WriteByte(0); err != nil {{
-		            	return nil, fmt.Errorf("failed to write `stream::pending` byte: %w", err)
-		            }}
-		            return func(w {wrpc}.IndexWriter) (err error) {{
-		            	defer func() {{
-		            		body, ok := v.({io}.Closer)
-		            		if ok {{
-		            			if cErr := body.Close(); cErr != nil {{
-		            				if err == nil {{
-		            					err = {fmt}.Errorf("failed to close pending byte stream: %w", cErr)
-		            				}} else {{
-		            					{slog}.Warn("failed to close pending byte stream", "err", cErr)
-		            				}}
-		            			}}
-		            		}}
-		            	}}()
-		            	chunk := make([]byte, 8096)
-		            	for {{
-		            		var end bool
-		            		{slog}.Debug("reading pending byte stream contents")
-		            		n, err := v.Read(chunk)
-		            		if err == {io}.EOF {{
-		            			end = true
-		            			{slog}.Debug("pending byte stream reached EOF")
-		            		}} else if err != nil {{
-		            			return {fmt}.Errorf("failed to read pending byte stream chunk: %w", err)
-		            		}}
-		            		if n > {math}.MaxUint32 {{
-		            			return {fmt}.Errorf("pending byte stream chunk length of %d overflows a 32-bit integer", n)
-		            		}}
-		            		{slog}.Debug("writing pending byte stream chunk length", "len", n)
-		            		if err := {wrpc}.WriteUint32(uint32(n), w); err != nil {{
-		            			return {fmt}.Errorf("failed to write pending byte stream chunk length of %d: %w", n, err)
-		            		}}
-		            		_, err = w.Write(chunk[:n])
-		            		if err != nil {{
-		            			return {fmt}.Errorf("failed to write pending byte stream chunk contents: %w", err)
-		            		}}
-		            		if end {{
-		            			if err := w.WriteByte(0); err != nil {{
-		            				return {fmt}.Errorf("failed to write pending byte stream end byte: %w", err)
-		            			}}
-		            			return nil
-		            		}}
-		            	}}
-		            }}, nil
+                    {slog}.Debug("writing byte stream `stream::pending` status byte")
+                    if err = w.WriteByte(0); err != nil {{
+                        return nil, fmt.Errorf("failed to write `stream::pending` byte: %w", err)
+                    }}
+                    return func(w {wrpc}.IndexWriter) (err error) {{
+                        defer func() {{
+                            body, ok := v.({io}.Closer)
+                            if ok {{
+                                if cErr := body.Close(); cErr != nil {{
+                                    if err == nil {{
+                                        err = {fmt}.Errorf("failed to close pending byte stream: %w", cErr)
+                                    }} else {{
+                                        {slog}.Warn("failed to close pending byte stream", "err", cErr)
+                                    }}
+                                }}
+                            }}
+                        }}()
+                        chunk := make([]byte, 8096)
+                        for {{
+                            var end bool
+                            {slog}.Debug("reading pending byte stream contents")
+                            n, err := v.Read(chunk)
+                            if err == {io}.EOF {{
+                                end = true
+                                {slog}.Debug("pending byte stream reached EOF")
+                            }} else if err != nil {{
+                                return {fmt}.Errorf("failed to read pending byte stream chunk: %w", err)
+                            }}
+                            if n > {math}.MaxUint32 {{
+                                return {fmt}.Errorf("pending byte stream chunk length of %d overflows a 32-bit integer", n)
+                            }}
+                            {slog}.Debug("writing pending byte stream chunk length", "len", n)
+                            if err := {wrpc}.WriteUint32(uint32(n), w); err != nil {{
+                                return {fmt}.Errorf("failed to write pending byte stream chunk length of %d: %w", n, err)
+                            }}
+                            _, err = w.Write(chunk[:n])
+                            if err != nil {{
+                                return {fmt}.Errorf("failed to write pending byte stream chunk contents: %w", err)
+                            }}
+                            if end {{
+                                if err := w.WriteByte(0); err != nil {{
+                                    return {fmt}.Errorf("failed to write pending byte stream end byte: %w", err)
+                                }}
+                                return nil
+                            }}
+                        }}
+                    }}, nil
                 }}
             }}({name}, {writer})"#,
                 );
             }
             Some(ty) => {
-                let errgroup = self.deps.errgroup();
+                let atomic = self.deps.atomic();
                 let errors = self.deps.errors();
                 let fmt = self.deps.fmt();
                 let io = self.deps.io();
                 let math = self.deps.math();
                 let slog = self.deps.slog();
+                let sync = self.deps.sync();
                 let wrpc = self.deps.wrpc();
                 uwrite!(self.src, "func(v {wrpc}.ReceiveCompleter[",);
                 self.print_list(ty);
@@ -2193,33 +2216,33 @@ impl InterfaceGenerator<'_> {
                     self.src,
                     r#"], w interface {{ {io}.ByteWriter; {io}.Writer }}) (write func({wrpc}.IndexWriter) error, err error) {{
             if v.IsComplete() {{
-		        defer func() {{
-		        	body, ok := v.({io}.Closer)
-		        	if ok {{
-		        		if cErr := body.Close(); cErr != nil {{
-		        			if err == nil {{
-		        				err = {fmt}.Errorf("failed to close ready stream: %w", cErr)
-		        			}} else {{
-		        				slog.Warn("failed to close ready stream", "err", cErr)
-		        			}}
-		        		}}
-		        	}}
-		        }}()
-		        {slog}.Debug("writing stream `stream::ready` status byte")
-		        if err = w.WriteByte(1); err != nil {{
-		        	return nil, {fmt}.Errorf("failed to write `stream::ready` byte: %w", err)
-		        }}
-		        {slog}.Debug("receiving ready stream contents")
+                defer func() {{
+                    body, ok := v.({io}.Closer)
+                    if ok {{
+                        if cErr := body.Close(); cErr != nil {{
+                            if err == nil {{
+                                err = {fmt}.Errorf("failed to close ready stream: %w", cErr)
+                            }} else {{
+                                slog.Warn("failed to close ready stream", "err", cErr)
+                            }}
+                        }}
+                    }}
+                }}()
+                {slog}.Debug("writing stream `stream::ready` status byte")
+                if err = w.WriteByte(1); err != nil {{
+                    return nil, {fmt}.Errorf("failed to write `stream::ready` byte: %w", err)
+                }}
+                {slog}.Debug("receiving ready stream contents")
                 vs, err := v.Receive()
-		        if err != nil && err != {io}.EOF {{
-		        	return nil, {fmt}.Errorf("failed to receive ready stream contents: %w", err)
-		        }}
+                if err != nil && err != {io}.EOF {{
+                    return nil, {fmt}.Errorf("failed to receive ready stream contents: %w", err)
+                }}
                 if err != {io}.EOF && len(vs) > 0 {{
                     for {{
                         chunk, err := v.Receive()
-		                if err != nil && err != {io}.EOF {{
-		                	return nil, {fmt}.Errorf("failed to receive ready stream contents: %w", err)
-		                }}
+                        if err != nil && err != {io}.EOF {{
+                            return nil, {fmt}.Errorf("failed to receive ready stream contents: %w", err)
+                        }}
                         if len(chunk) > 0 {{
                             vs = append(vs, chunk...)
                         }}
@@ -2228,88 +2251,98 @@ impl InterfaceGenerator<'_> {
                         }}
                     }}
                 }}
-		        {slog}.Debug("writing ready stream contents", "len", len(vs))
-		        write, err := "#,
+                {slog}.Debug("writing ready stream contents", "len", len(vs))
+                write, err := "#,
                 );
                 self.print_write_list(ty, "vs", "w");
                 uwrite!(
                     self.src,
                     r#"
                 if err != nil {{
-		            return nil, {fmt}.Errorf("failed to write ready stream contents: %w", err)
-		        }}
-		        return write, nil
+                    return nil, {fmt}.Errorf("failed to write ready stream contents: %w", err)
+                }}
+                return write, nil
             }} else {{
-	            {slog}.Debug("writing stream `stream::pending` status byte")
-	            if err := w.WriteByte(0); err != nil {{
-	            	return nil, fmt.Errorf("failed to write `stream::pending` byte: %w", err)
-	            }}
-	            return func(w {wrpc}.IndexWriter) (err error) {{
-	            	defer func() {{
-	            		body, ok := v.({io}.Closer)
-	            		if ok {{
-	            			if cErr := body.Close(); cErr != nil {{
-	            				if err == nil {{
-	            					err = {fmt}.Errorf("failed to close pending stream: %w", cErr)
-	            				}} else {{
-	            					{slog}.Warn("failed to close pending stream", "err", cErr)
-	            				}}
-	            			}}
-	            		}}
-	            	}}()
-	            	var wg {errgroup}.Group
+                {slog}.Debug("writing stream `stream::pending` status byte")
+                if err := w.WriteByte(0); err != nil {{
+                    return nil, fmt.Errorf("failed to write `stream::pending` byte: %w", err)
+                }}
+                return func(w {wrpc}.IndexWriter) (err error) {{
+                    defer func() {{
+                        body, ok := v.({io}.Closer)
+                        if ok {{
+                            if cErr := body.Close(); cErr != nil {{
+                                if err == nil {{
+                                    err = {fmt}.Errorf("failed to close pending stream: %w", cErr)
+                                }} else {{
+                                    {slog}.Warn("failed to close pending stream", "err", cErr)
+                                }}
+                            }}
+                        }}
+                    }}()
+                    var wg {sync}.WaitGroup
+                    var wgErr {atomic}.Value
                     var total uint32
-	            	for {{
-	            		var end bool
-	            		{slog}.Debug("receiving outgoing pending stream contents")
-	            		chunk, err := v.Receive()
+                    for {{
+                        var end bool
+                        {slog}.Debug("receiving outgoing pending stream contents")
+                        chunk, err := v.Receive()
                         n := len(chunk)
-	            		if n == 0 || err == {io}.EOF {{
-	            			end = true
-	            			{slog}.Debug("outgoing pending stream reached EOF")
-	            		}} else if err != nil {{
-	            			return {fmt}.Errorf("failed to receive outgoing pending stream chunk: %w", err)
-	            		}}
-	            		if n > {math}.MaxUint32 {{
-	            			return {fmt}.Errorf("outgoing pending stream chunk length of %d overflows a 32-bit integer", n)
-	            		}}
+                        if n == 0 || err == {io}.EOF {{
+                            end = true
+                            {slog}.Debug("outgoing pending stream reached EOF")
+                        }} else if err != nil {{
+                            return {fmt}.Errorf("failed to receive outgoing pending stream chunk: %w", err)
+                        }}
+                        if n > {math}.MaxUint32 {{
+                            return {fmt}.Errorf("outgoing pending stream chunk length of %d overflows a 32-bit integer", n)
+                        }}
                         if {math}.MaxUint32 - uint32(n) < total {{
                             return {errors}.New("total outgoing pending stream element count would overflow a 32-bit unsigned integer")
                         }}
-	            		{slog}.Debug("writing pending stream chunk length", "len", n)
-	            		if err = {wrpc}.WriteUint32(uint32(n), w); err != nil {{
-	            			return {fmt}.Errorf("failed to write pending stream chunk length of %d: %w", n, err)
-	            		}}
+                        {slog}.Debug("writing pending stream chunk length", "len", n)
+                        if err = {wrpc}.WriteUint32(uint32(n), w); err != nil {{
+                            return {fmt}.Errorf("failed to write pending stream chunk length of %d: %w", n, err)
+                        }}
                         for _, v := range chunk {{
-	            			{slog}.Debug("writing pending stream element", "i", total)
+                            {slog}.Debug("writing pending stream element", "i", total)
                             write, err :="#,
                 );
                 self.print_write_ty(ty, "v", "w");
                 uwrite!(
                     self.src,
                     r#"
-	            		    if err != nil {{
-	            		    	return {fmt}.Errorf("failed to write pending stream chunk element %d: %w", total, err)
-	            		    }}
+                            if err != nil {{
+                                return {fmt}.Errorf("failed to write pending stream chunk element %d: %w", total, err)
+                            }}
                             if write != nil {{
-	            		        w, err := w.Index(total)
-	            		        if err != nil {{
-	            		        	return {fmt}.Errorf("failed to index writer: %w", err)
-	            		        }}
-	            		        wg.Go(func() error {{
-	            		        	return write(w)
-	            		        }})
+                                wg.Add(1)
+                                w, err := w.Index(total)
+                                if err != nil {{
+                                    return {fmt}.Errorf("failed to index writer: %w", err)
+                                }}
+                                go func() {{
+                                    defer wg.Done()
+                                    if err := write(w); err != nil {{
+                                        wgErr.Store(err)
+                                    }}
+                                }}()
                             }}
                             total++
                         }}
-	            		if end {{
-	            			if err := w.WriteByte(0); err != nil {{
-	            				return {fmt}.Errorf("failed to write pending stream end byte: %w", err)
-	            			}}
-	            			return wg.Wait()
-	            		}}
-	            	}}
-	            }}, nil
+                        if end {{
+                            if err := w.WriteByte(0); err != nil {{
+                                return {fmt}.Errorf("failed to write pending stream end byte: %w", err)
+                            }}
+                            wg.Wait()
+                            err := wgErr.Load()
+                            if err == nil {{
+                                return nil
+                            }}
+                            return err.(error)
+                        }}
+                    }}
+                }}, nil
             }}
         }}({name}, {writer})"#,
                 );
@@ -2436,27 +2469,27 @@ impl InterfaceGenerator<'_> {
                 uwrite!(
                     self.src,
                     r#"func(r {io}.ByteReader) (uint8, error) {{
-	var x uint8
-	var s uint
-	for i := 0; i < 2; i++ {{
+    var x uint8
+    var s uint
+    for i := 0; i < 2; i++ {{
         {slog}.Debug("reading u8 discriminant byte", "i", i)
-		b, err := r.ReadByte()
-		if err != nil {{
-			if i > 0 && err == {io}.EOF {{
-				err = {io}.ErrUnexpectedEOF
-			}}
-			return x, {fmt}.Errorf("failed to read u8 discriminant byte: %w", err)
-		}}
-		if b < 0x80 {{
-			if i == 2 && b > 1 {{
-				return x, {errors}.New("discriminant overflows an 8-bit integer")
-			}}
-			return x | uint8(b)<<s, nil
-		}}
-		x |= uint8(b&0x7f) << s
-		s += 7
-	}}
-	return x, {errors}.New("discriminant overflows an 8-bit integer")
+        b, err := r.ReadByte()
+        if err != nil {{
+            if i > 0 && err == {io}.EOF {{
+                err = {io}.ErrUnexpectedEOF
+            }}
+            return x, {fmt}.Errorf("failed to read u8 discriminant byte: %w", err)
+        }}
+        if b < 0x80 {{
+            if i == 2 && b > 1 {{
+                return x, {errors}.New("discriminant overflows an 8-bit integer")
+            }}
+            return x | uint8(b)<<s, nil
+        }}
+        x |= uint8(b&0x7f) << s
+        s += 7
+    }}
+    return x, {errors}.New("discriminant overflows an 8-bit integer")
 }}({reader})"#,
                     errors = self.deps.errors(),
                     fmt = self.deps.fmt(),
@@ -2475,11 +2508,11 @@ impl InterfaceGenerator<'_> {
             Int::U8 => uwrite!(
                 self.src,
                 r#"func(v uint8, w {io}.Writer) error {{
-	            b := make([]byte, 2)
-	            i := {binary}.PutUvarint(b, uint64(v))
+                b := make([]byte, 2)
+                i := {binary}.PutUvarint(b, uint64(v))
                 {slog}.Debug("writing u8 discriminant")
-	            _, err := w.Write(b[:i])
-	            return err
+                _, err := w.Write(b[:i])
+                return err
             }}(uint8({name}), {writer})"#,
                 binary = self.deps.binary(),
                 io = self.deps.io(),
@@ -2488,11 +2521,11 @@ impl InterfaceGenerator<'_> {
             Int::U16 => uwrite!(
                 self.src,
                 r#"func(v uint16, w {io}.Writer) error {{
-	            b := make([]byte, {binary}.MaxVarintLen16)
-	            i := {binary}.PutUvarint(b, uint64(v))
+                b := make([]byte, {binary}.MaxVarintLen16)
+                i := {binary}.PutUvarint(b, uint64(v))
                 {slog}.Debug("writing u16 discriminant")
-	            _, err := w.Write(b[:i])
-	            return err
+                _, err := w.Write(b[:i])
+                return err
             }}(uint16({name}), {writer})"#,
                 binary = self.deps.binary(),
                 io = self.deps.io(),
@@ -2501,11 +2534,11 @@ impl InterfaceGenerator<'_> {
             Int::U32 => uwrite!(
                 self.src,
                 r#"func(v uint32, w {io}.Writer) error {{
-	            b := make([]byte, {binary}.MaxVarintLen32)
-	            i := {binary}.PutUvarint(b, uint64(v))
+                b := make([]byte, {binary}.MaxVarintLen32)
+                i := {binary}.PutUvarint(b, uint64(v))
                 {slog}.Debug("writing u32 discriminant")
-	            _, err := w.Write(b[:i])
-	            return err
+                _, err := w.Write(b[:i])
+                return err
             }}(uint32({name}), {writer})"#,
                 binary = self.deps.binary(),
                 io = self.deps.io(),
@@ -2514,11 +2547,11 @@ impl InterfaceGenerator<'_> {
             Int::U64 => uwrite!(
                 self.src,
                 r#"func(v uint64, w {io}.Writer) error {{
-	            b := make([]byte, {binary}.MaxVarintLen64)
-	            i := {binary}.PutUvarint(b, uint64(v))
+                b := make([]byte, {binary}.MaxVarintLen64)
+                i := {binary}.PutUvarint(b, uint64(v))
                 {slog}.Debug("writing u64 discriminant")
-	            _, err := w.Write(b[:i])
-	            return err
+                _, err := w.Write(b[:i])
+                return err
             }}(uint64({name}), {writer})"#,
                 binary = self.deps.binary(),
                 io = self.deps.io(),
@@ -2838,11 +2871,13 @@ impl InterfaceGenerator<'_> {
         };
         for (i, func) in funcs_to_export.iter().enumerate() {
             let name = rpc_func_name(func);
+
+            let atomic = self.deps.atomic();
             let bytes = self.deps.bytes();
-            let errgroup = self.deps.errgroup();
             let context = self.deps.context();
             let fmt = self.deps.fmt();
             let slog = self.deps.slog();
+            let sync = self.deps.sync();
             let wrpc = self.deps.wrpc();
             uwriteln!(
                 self.src,
@@ -2985,19 +3020,29 @@ impl InterfaceGenerator<'_> {
                             return {fmt}.Errorf("failed to write result: %w", err)
                         }}
                         if len(writes) > 0 {{
-	                    	var wg {errgroup}.Group
-	                    	for index, write := range writes {{
-	                    		w, err := w.Index(index)
-	                    		if err != nil {{
-	                    			return {fmt}.Errorf("failed to index writer: %w", err)
-	                    		}}
-	                    		write := write
-	                    		wg.Go(func() error {{
-	                    			return write(w)
-	                    		}})
-	                    	}}
-	                    	return wg.Wait()
-	                    }}
+                            var wg {sync}.WaitGroup
+                            var wgErr {atomic}.Value
+                            for index, write := range writes {{
+                                wg.Add(1)
+                                w, err := w.Index(index)
+                                if err != nil {{
+                                    return {fmt}.Errorf("failed to index writer: %w", err)
+                                }}
+                                write := write
+                                go func() {{
+                                    defer wg.Done()
+                                    if err := write(w); err != nil {{
+                                        wgErr.Store(err)
+                                    }}
+                                }}()
+                            }}
+                            wg.Wait()
+                            err := wgErr.Load()
+                            if err == nil {{
+                                return nil
+                            }}
+                            return err.(error)
+                        }}
                         return nil
                      }}, "#,
                     );
@@ -3095,19 +3140,29 @@ impl InterfaceGenerator<'_> {
                     return {fmt}.Errorf("failed to write result: %w", err)
                 }}
                 if len(writes) > 0 {{
-	            	var wg {errgroup}.Group
-	            	for index, write := range writes {{
-	            		w, err := w.Index(index)
-	            		if err != nil {{
-	            			return {fmt}.Errorf("failed to index writer: %w", err)
-	            		}}
-	            		write := write
-	            		wg.Go(func() error {{
-	            			return write(w)
-	            		}})
-	            	}}
-	            	return wg.Wait()
-	            }}
+                    var wg {sync}.WaitGroup
+                    var wgErr {atomic}.Value
+                    for index, write := range writes {{
+                        wg.Add(1)
+                        w, err := w.Index(index)
+                        if err != nil {{
+                            return {fmt}.Errorf("failed to index writer: %w", err)
+                        }}
+                        write := write
+                        go func() {{
+                            defer wg.Done()
+                            if err := write(w); err != nil {{
+                                wgErr.Store(err)
+                            }}
+                        }}()
+                    }}
+                    wg.Wait()
+                    err := wgErr.Load()
+                    if err == nil {{
+                        return nil
+                    }}
+                    return err.(error)
+                }}
                 return nil
              }}, "#,
             );
@@ -3789,33 +3844,44 @@ func (v *{name}) WriteToIndex(w {wrpc}.ByteWriter) (func({wrpc}.IndexWriter) err
                     self.src,
                     r#"
     if err != nil {{
-	    return nil, {fmt}.Errorf("failed to write `{name}` field: %w", err)
-	}}
+        return nil, {fmt}.Errorf("failed to write `{name}` field: %w", err)
+    }}
     if write{i} != nil {{
         writes[{i}] = write{i}
     }}"#
                 );
             }
+            let atomic = self.deps.atomic();
             let fmt = self.deps.fmt();
-            let errgroup = self.deps.errgroup();
+            let sync = self.deps.sync();
             uwriteln!(
                 self.src,
                 r#"
     if len(writes) > 0 {{
-    	return func(w {wrpc}.IndexWriter) error {{
-    		var wg {errgroup}.Group
-    		for index, write := range writes {{
-    			w, err := w.Index(index)
-    			if err != nil {{
-    				return {fmt}.Errorf("failed to index writer: %w", err)
-    			}}
-    			write := write
-    			wg.Go(func() error {{
-    				return write(w)
-    			}})
-    		}}
-    		return wg.Wait()
-    	}}, nil
+        return func(w {wrpc}.IndexWriter) error {{
+            var wg {sync}.WaitGroup
+            var wgErr {atomic}.Value
+            for index, write := range writes {{
+                wg.Add(1)
+                w, err := w.Index(index)
+                if err != nil {{
+                    return {fmt}.Errorf("failed to index writer: %w", err)
+                }}
+                write := write
+                go func() {{
+                    defer wg.Done()
+                    if err := write(w); err != nil {{
+                        wgErr.Store(err)
+                    }}
+                }}()
+            }}
+            wg.Wait()
+            err := wgErr.Load()
+            if err == nil {{
+                return nil
+            }}
+            return err.(error)
+        }}, nil
     }}
     return nil, nil
 }}"#
@@ -4064,11 +4130,11 @@ func (v *{name}) WriteToIndex(w {wrpc}.ByteWriter) (func({wrpc}.IndexWriter) err
                         self.src,
                         r#"
                     if write != nil {{
-	                	return func(w {wrpc}.IndexWriter) error {{
-	                		w, err := w.Index({i})
-	                		if err != nil {{
-	                			return {fmt}.Errorf("failed to index writer: %w", err)
-	                		}}
+                        return func(w {wrpc}.IndexWriter) error {{
+                            w, err := w.Index({i})
+                            if err != nil {{
+                                return {fmt}.Errorf("failed to index writer: %w", err)
+                            }}
                             return write(w)
                         }}, nil
                     }} "#

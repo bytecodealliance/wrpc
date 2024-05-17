@@ -49,11 +49,18 @@ struct Deps {
 }
 
 impl Deps {
+    fn atomic(&mut self) -> &'static str {
+        self.map
+            .insert("atomic".to_string(), "sync/atomic".to_string());
+        "atomic"
+    }
+
     fn binary(&mut self) -> &'static str {
         self.map
             .insert("binary".to_string(), "encoding/binary".to_string());
         "binary"
     }
+
     fn bytes(&mut self) -> &'static str {
         self.map.insert("bytes".to_string(), "bytes".to_string());
         "bytes"
@@ -75,14 +82,6 @@ impl Deps {
         "fmt"
     }
 
-    fn errgroup(&mut self) -> &'static str {
-        self.map.insert(
-            "errgroup".to_string(),
-            "golang.org/x/sync/errgroup".to_string(),
-        );
-        "errgroup"
-    }
-
     fn io(&mut self) -> &'static str {
         self.map.insert("io".to_string(), "io".to_string());
         "io"
@@ -102,6 +101,11 @@ impl Deps {
         self.map
             .insert("strings".to_string(), "strings".to_string());
         "strings"
+    }
+
+    fn sync(&mut self) -> &'static str {
+        self.map.insert("sync".to_string(), "sync".to_string());
+        "sync"
     }
 
     fn utf8(&mut self) -> &'static str {
