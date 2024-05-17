@@ -10,9 +10,10 @@ import (
 	wasi__http__types "github.com/wrpc/wrpc/examples/go/http-outgoing-server/bindings/wasi/http/types"
 	wrpc__http__types "github.com/wrpc/wrpc/examples/go/http-outgoing-server/bindings/wrpc/http/types"
 	wrpc "github.com/wrpc/wrpc/go"
-	errgroup "golang.org/x/sync/errgroup"
 	io "io"
 	slog "log/slog"
+	sync "sync"
+	atomic "sync/atomic"
 	utf8 "unicode/utf8"
 )
 
@@ -24,7 +25,7 @@ type Handler interface {
 	Handle(ctx__ context.Context, request *wrpc__http__types.Request, options *RequestOptions) (*wrpc.Result[Response, ErrorCode], error)
 }
 
-func ServeInterface(c wrpc.Server, h Handler) (stop func() error, err error) {
+func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 	stops := make([]func() error, 0, 1)
 	stop = func() error {
 		for _, stop := range stops {
@@ -34,7 +35,7 @@ func ServeInterface(c wrpc.Server, h Handler) (stop func() error, err error) {
 		}
 		return nil
 	}
-	stop0, err := c.Serve("wrpc:http/outgoing-handler@0.1.0", "handle", func(ctx context.Context, w wrpc.IndexWriter, r wrpc.IndexReadCloser) error {
+	stop0, err := s.Serve("wrpc:http/outgoing-handler@0.1.0", "handle", func(ctx context.Context, w wrpc.IndexWriter, r wrpc.IndexReadCloser) error {
 		slog.DebugContext(ctx, "reading parameter", "i", 0)
 		p0, err := func() (*Request, error) {
 			v, err := func(r wrpc.IndexReader, path ...uint32) (*wrpc__http__types.Request, error) {
@@ -1207,18 +1208,28 @@ func ServeInterface(c wrpc.Server, h Handler) (stop func() error, err error) {
 			return fmt.Errorf("failed to write result: %w", err)
 		}
 		if len(writes) > 0 {
-			var wg errgroup.Group
+			var wg sync.WaitGroup
+			var wgErr atomic.Value
 			for index, write := range writes {
+				wg.Add(1)
 				w, err := w.Index(index)
 				if err != nil {
 					return fmt.Errorf("failed to index writer: %w", err)
 				}
 				write := write
-				wg.Go(func() error {
-					return write(w)
-				})
+				go func() {
+					defer wg.Done()
+					if err := write(w); err != nil {
+						wgErr.Store(err)
+					}
+				}()
 			}
-			return wg.Wait()
+			wg.Wait()
+			err := wgErr.Load()
+			if err == nil {
+				return nil
+			}
+			return err.(error)
 		}
 		return nil
 	}, wrpc.NewSubscribePath().Index(0).Index(0), wrpc.NewSubscribePath().Index(0).Index(1))

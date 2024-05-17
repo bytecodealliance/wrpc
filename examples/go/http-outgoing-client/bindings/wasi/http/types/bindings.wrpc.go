@@ -12,10 +12,11 @@ import (
 	wasi__io__poll "github.com/wrpc/wrpc/examples/go/http-outgoing-client/bindings/wasi/io/poll"
 	wasi__io__streams "github.com/wrpc/wrpc/examples/go/http-outgoing-client/bindings/wasi/io/streams"
 	wrpc "github.com/wrpc/wrpc/go"
-	errgroup "golang.org/x/sync/errgroup"
 	io "io"
 	slog "log/slog"
 	math "math"
+	sync "sync"
+	atomic "sync/atomic"
 	utf8 "unicode/utf8"
 )
 
@@ -508,18 +509,28 @@ func (v *DnsErrorPayload) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter
 
 	if len(writes) > 0 {
 		return func(w wrpc.IndexWriter) error {
-			var wg errgroup.Group
+			var wg sync.WaitGroup
+			var wgErr atomic.Value
 			for index, write := range writes {
+				wg.Add(1)
 				w, err := w.Index(index)
 				if err != nil {
 					return fmt.Errorf("failed to index writer: %w", err)
 				}
 				write := write
-				wg.Go(func() error {
-					return write(w)
-				})
+				go func() {
+					defer wg.Done()
+					if err := write(w); err != nil {
+						wgErr.Store(err)
+					}
+				}()
 			}
-			return wg.Wait()
+			wg.Wait()
+			err := wgErr.Load()
+			if err == nil {
+				return nil
+			}
+			return err.(error)
 		}, nil
 	}
 	return nil, nil
@@ -619,18 +630,28 @@ func (v *TlsAlertReceivedPayload) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.Ind
 
 	if len(writes) > 0 {
 		return func(w wrpc.IndexWriter) error {
-			var wg errgroup.Group
+			var wg sync.WaitGroup
+			var wgErr atomic.Value
 			for index, write := range writes {
+				wg.Add(1)
 				w, err := w.Index(index)
 				if err != nil {
 					return fmt.Errorf("failed to index writer: %w", err)
 				}
 				write := write
-				wg.Go(func() error {
-					return write(w)
-				})
+				go func() {
+					defer wg.Done()
+					if err := write(w); err != nil {
+						wgErr.Store(err)
+					}
+				}()
 			}
-			return wg.Wait()
+			wg.Wait()
+			err := wgErr.Load()
+			if err == nil {
+				return nil
+			}
+			return err.(error)
 		}, nil
 	}
 	return nil, nil
@@ -733,18 +754,28 @@ func (v *FieldSizePayload) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWrite
 
 	if len(writes) > 0 {
 		return func(w wrpc.IndexWriter) error {
-			var wg errgroup.Group
+			var wg sync.WaitGroup
+			var wgErr atomic.Value
 			for index, write := range writes {
+				wg.Add(1)
 				w, err := w.Index(index)
 				if err != nil {
 					return fmt.Errorf("failed to index writer: %w", err)
 				}
 				write := write
-				wg.Go(func() error {
-					return write(w)
-				})
+				go func() {
+					defer wg.Done()
+					if err := write(w); err != nil {
+						wgErr.Store(err)
+					}
+				}()
 			}
-			return wg.Wait()
+			wg.Wait()
+			err := wgErr.Load()
+			if err == nil {
+				return nil
+			}
+			return err.(error)
 		}, nil
 	}
 	return nil, nil
@@ -3743,18 +3774,28 @@ func Fields_FromList(ctx__ context.Context, wrpc__ wrpc.Invoker, entries []*wrpc
 						}
 						if len(writes) > 0 {
 							return func(w wrpc.IndexWriter) error {
-								var wg errgroup.Group
+								var wg sync.WaitGroup
+								var wgErr atomic.Value
 								for index, write := range writes {
+									wg.Add(1)
 									w, err := w.Index(index)
 									if err != nil {
 										return fmt.Errorf("failed to index writer: %w", err)
 									}
 									write := write
-									wg.Go(func() error {
-										return write(w)
-									})
+									go func() {
+										defer wg.Done()
+										if err := write(w); err != nil {
+											wgErr.Store(err)
+										}
+									}()
 								}
-								return wg.Wait()
+								wg.Wait()
+								err := wgErr.Load()
+								if err == nil {
+									return nil
+								}
+								return err.(error)
 							}, nil
 						}
 						return nil, nil
@@ -3767,18 +3808,28 @@ func Fields_FromList(ctx__ context.Context, wrpc__ wrpc.Invoker, entries []*wrpc
 					}
 					if len(writes) > 0 {
 						return func(w wrpc.IndexWriter) error {
-							var wg errgroup.Group
+							var wg sync.WaitGroup
+							var wgErr atomic.Value
 							for index, write := range writes {
+								wg.Add(1)
 								w, err := w.Index(index)
 								if err != nil {
 									return fmt.Errorf("failed to index writer: %w", err)
 								}
 								write := write
-								wg.Go(func() error {
-									return write(w)
-								})
+								go func() {
+									defer wg.Done()
+									if err := write(w); err != nil {
+										wgErr.Store(err)
+									}
+								}()
 							}
-							return wg.Wait()
+							wg.Wait()
+							err := wgErr.Load()
+							if err == nil {
+								return nil
+							}
+							return err.(error)
 						}, nil
 					}
 					return nil, nil
@@ -3792,18 +3843,28 @@ func Fields_FromList(ctx__ context.Context, wrpc__ wrpc.Invoker, entries []*wrpc
 			}
 			if len(writes) > 0 {
 				return func(w wrpc.IndexWriter) error {
-					var wg errgroup.Group
+					var wg sync.WaitGroup
+					var wgErr atomic.Value
 					for index, write := range writes {
+						wg.Add(1)
 						w, err := w.Index(index)
 						if err != nil {
 							return fmt.Errorf("failed to index writer: %w", err)
 						}
 						write := write
-						wg.Go(func() error {
-							return write(w)
-						})
+						go func() {
+							defer wg.Done()
+							if err := write(w); err != nil {
+								wgErr.Store(err)
+							}
+						}()
 					}
-					return wg.Wait()
+					wg.Wait()
+					err := wgErr.Load()
+					if err == nil {
+						return nil
+					}
+					return err.(error)
 				}, nil
 			}
 			return nil, nil
@@ -4277,18 +4338,28 @@ func Fields_Set(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borrow[Fie
 					}
 					if len(writes) > 0 {
 						return func(w wrpc.IndexWriter) error {
-							var wg errgroup.Group
+							var wg sync.WaitGroup
+							var wgErr atomic.Value
 							for index, write := range writes {
+								wg.Add(1)
 								w, err := w.Index(index)
 								if err != nil {
 									return fmt.Errorf("failed to index writer: %w", err)
 								}
 								write := write
-								wg.Go(func() error {
-									return write(w)
-								})
+								go func() {
+									defer wg.Done()
+									if err := write(w); err != nil {
+										wgErr.Store(err)
+									}
+								}()
 							}
-							return wg.Wait()
+							wg.Wait()
+							err := wgErr.Load()
+							if err == nil {
+								return nil
+							}
+							return err.(error)
 						}, nil
 					}
 					return nil, nil
@@ -4302,18 +4373,28 @@ func Fields_Set(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borrow[Fie
 			}
 			if len(writes) > 0 {
 				return func(w wrpc.IndexWriter) error {
-					var wg errgroup.Group
+					var wg sync.WaitGroup
+					var wgErr atomic.Value
 					for index, write := range writes {
+						wg.Add(1)
 						w, err := w.Index(index)
 						if err != nil {
 							return fmt.Errorf("failed to index writer: %w", err)
 						}
 						write := write
-						wg.Go(func() error {
-							return write(w)
-						})
+						go func() {
+							defer wg.Done()
+							if err := write(w); err != nil {
+								wgErr.Store(err)
+							}
+						}()
 					}
-					return wg.Wait()
+					wg.Wait()
+					err := wgErr.Load()
+					if err == nil {
+						return nil
+					}
+					return err.(error)
 				}, nil
 			}
 			return nil, nil
@@ -4631,18 +4712,28 @@ func Fields_Append(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borrow[
 			}
 			if len(writes) > 0 {
 				return func(w wrpc.IndexWriter) error {
-					var wg errgroup.Group
+					var wg sync.WaitGroup
+					var wgErr atomic.Value
 					for index, write := range writes {
+						wg.Add(1)
 						w, err := w.Index(index)
 						if err != nil {
 							return fmt.Errorf("failed to index writer: %w", err)
 						}
 						write := write
-						wg.Go(func() error {
-							return write(w)
-						})
+						go func() {
+							defer wg.Done()
+							if err := write(w); err != nil {
+								wgErr.Store(err)
+							}
+						}()
 					}
-					return wg.Wait()
+					wg.Wait()
+					err := wgErr.Load()
+					if err == nil {
+						return nil
+					}
+					return err.(error)
 				}, nil
 			}
 			return nil, nil

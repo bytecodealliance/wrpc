@@ -8,10 +8,11 @@ import (
 	errors "errors"
 	fmt "fmt"
 	wrpc "github.com/wrpc/wrpc/go"
-	errgroup "golang.org/x/sync/errgroup"
 	io "io"
 	slog "log/slog"
 	math "math"
+	sync "sync"
+	atomic "sync/atomic"
 	utf8 "unicode/utf8"
 )
 
@@ -235,18 +236,28 @@ func (v *KeyResponse) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) er
 		}
 		if len(writes) > 0 {
 			return func(w wrpc.IndexWriter) error {
-				var wg errgroup.Group
+				var wg sync.WaitGroup
+				var wgErr atomic.Value
 				for index, write := range writes {
+					wg.Add(1)
 					w, err := w.Index(index)
 					if err != nil {
 						return fmt.Errorf("failed to index writer: %w", err)
 					}
 					write := write
-					wg.Go(func() error {
-						return write(w)
-					})
+					go func() {
+						defer wg.Done()
+						if err := write(w); err != nil {
+							wgErr.Store(err)
+						}
+					}()
 				}
-				return wg.Wait()
+				wg.Wait()
+				err := wgErr.Load()
+				if err == nil {
+					return nil
+				}
+				return err.(error)
 			}, nil
 		}
 		return nil, nil
@@ -295,18 +306,28 @@ func (v *KeyResponse) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) er
 
 	if len(writes) > 0 {
 		return func(w wrpc.IndexWriter) error {
-			var wg errgroup.Group
+			var wg sync.WaitGroup
+			var wgErr atomic.Value
 			for index, write := range writes {
+				wg.Add(1)
 				w, err := w.Index(index)
 				if err != nil {
 					return fmt.Errorf("failed to index writer: %w", err)
 				}
 				write := write
-				wg.Go(func() error {
-					return write(w)
-				})
+				go func() {
+					defer wg.Done()
+					if err := write(w); err != nil {
+						wgErr.Store(err)
+					}
+				}()
 			}
-			return wg.Wait()
+			wg.Wait()
+			err := wgErr.Load()
+			if err == nil {
+				return nil
+			}
+			return err.(error)
 		}, nil
 	}
 	return nil, nil
@@ -375,7 +396,7 @@ type Handler interface {
 	ListKeys(ctx__ context.Context, bucket string, cursor *uint64) (*wrpc.Result[KeyResponse, Error], error)
 }
 
-func ServeInterface(c wrpc.Server, h Handler) (stop func() error, err error) {
+func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 	stops := make([]func() error, 0, 5)
 	stop = func() error {
 		for _, stop := range stops {
@@ -385,7 +406,7 @@ func ServeInterface(c wrpc.Server, h Handler) (stop func() error, err error) {
 		}
 		return nil
 	}
-	stop0, err := c.Serve("wrpc:keyvalue/store@0.2.0-draft", "get", func(ctx context.Context, w wrpc.IndexWriter, r wrpc.IndexReadCloser) error {
+	stop0, err := s.Serve("wrpc:keyvalue/store@0.2.0-draft", "get", func(ctx context.Context, w wrpc.IndexWriter, r wrpc.IndexReadCloser) error {
 		slog.DebugContext(ctx, "reading parameter", "i", 0)
 		p0, err := func(r interface {
 			io.ByteReader
@@ -539,18 +560,28 @@ func ServeInterface(c wrpc.Server, h Handler) (stop func() error, err error) {
 						}
 						if len(writes) > 0 {
 							return func(w wrpc.IndexWriter) error {
-								var wg errgroup.Group
+								var wg sync.WaitGroup
+								var wgErr atomic.Value
 								for index, write := range writes {
+									wg.Add(1)
 									w, err := w.Index(index)
 									if err != nil {
 										return fmt.Errorf("failed to index writer: %w", err)
 									}
 									write := write
-									wg.Go(func() error {
-										return write(w)
-									})
+									go func() {
+										defer wg.Done()
+										if err := write(w); err != nil {
+											wgErr.Store(err)
+										}
+									}()
 								}
-								return wg.Wait()
+								wg.Wait()
+								err := wgErr.Load()
+								if err == nil {
+									return nil
+								}
+								return err.(error)
 							}, nil
 						}
 						return nil, nil
@@ -595,18 +626,28 @@ func ServeInterface(c wrpc.Server, h Handler) (stop func() error, err error) {
 			return fmt.Errorf("failed to write result: %w", err)
 		}
 		if len(writes) > 0 {
-			var wg errgroup.Group
+			var wg sync.WaitGroup
+			var wgErr atomic.Value
 			for index, write := range writes {
+				wg.Add(1)
 				w, err := w.Index(index)
 				if err != nil {
 					return fmt.Errorf("failed to index writer: %w", err)
 				}
 				write := write
-				wg.Go(func() error {
-					return write(w)
-				})
+				go func() {
+					defer wg.Done()
+					if err := write(w); err != nil {
+						wgErr.Store(err)
+					}
+				}()
 			}
-			return wg.Wait()
+			wg.Wait()
+			err := wgErr.Load()
+			if err == nil {
+				return nil
+			}
+			return err.(error)
 		}
 		return nil
 	})
@@ -614,7 +655,7 @@ func ServeInterface(c wrpc.Server, h Handler) (stop func() error, err error) {
 		return nil, fmt.Errorf("failed to serve `wrpc:keyvalue/store@0.2.0-draft.get`: %w", err)
 	}
 	stops = append(stops, stop0)
-	stop1, err := c.Serve("wrpc:keyvalue/store@0.2.0-draft", "set", func(ctx context.Context, w wrpc.IndexWriter, r wrpc.IndexReadCloser) error {
+	stop1, err := s.Serve("wrpc:keyvalue/store@0.2.0-draft", "set", func(ctx context.Context, w wrpc.IndexWriter, r wrpc.IndexReadCloser) error {
 		slog.DebugContext(ctx, "reading parameter", "i", 0)
 		p0, err := func(r interface {
 			io.ByteReader
@@ -784,18 +825,28 @@ func ServeInterface(c wrpc.Server, h Handler) (stop func() error, err error) {
 			return fmt.Errorf("failed to write result: %w", err)
 		}
 		if len(writes) > 0 {
-			var wg errgroup.Group
+			var wg sync.WaitGroup
+			var wgErr atomic.Value
 			for index, write := range writes {
+				wg.Add(1)
 				w, err := w.Index(index)
 				if err != nil {
 					return fmt.Errorf("failed to index writer: %w", err)
 				}
 				write := write
-				wg.Go(func() error {
-					return write(w)
-				})
+				go func() {
+					defer wg.Done()
+					if err := write(w); err != nil {
+						wgErr.Store(err)
+					}
+				}()
 			}
-			return wg.Wait()
+			wg.Wait()
+			err := wgErr.Load()
+			if err == nil {
+				return nil
+			}
+			return err.(error)
 		}
 		return nil
 	})
@@ -803,7 +854,7 @@ func ServeInterface(c wrpc.Server, h Handler) (stop func() error, err error) {
 		return nil, fmt.Errorf("failed to serve `wrpc:keyvalue/store@0.2.0-draft.set`: %w", err)
 	}
 	stops = append(stops, stop1)
-	stop2, err := c.Serve("wrpc:keyvalue/store@0.2.0-draft", "delete", func(ctx context.Context, w wrpc.IndexWriter, r wrpc.IndexReadCloser) error {
+	stop2, err := s.Serve("wrpc:keyvalue/store@0.2.0-draft", "delete", func(ctx context.Context, w wrpc.IndexWriter, r wrpc.IndexReadCloser) error {
 		slog.DebugContext(ctx, "reading parameter", "i", 0)
 		p0, err := func(r interface {
 			io.ByteReader
@@ -936,18 +987,28 @@ func ServeInterface(c wrpc.Server, h Handler) (stop func() error, err error) {
 			return fmt.Errorf("failed to write result: %w", err)
 		}
 		if len(writes) > 0 {
-			var wg errgroup.Group
+			var wg sync.WaitGroup
+			var wgErr atomic.Value
 			for index, write := range writes {
+				wg.Add(1)
 				w, err := w.Index(index)
 				if err != nil {
 					return fmt.Errorf("failed to index writer: %w", err)
 				}
 				write := write
-				wg.Go(func() error {
-					return write(w)
-				})
+				go func() {
+					defer wg.Done()
+					if err := write(w); err != nil {
+						wgErr.Store(err)
+					}
+				}()
 			}
-			return wg.Wait()
+			wg.Wait()
+			err := wgErr.Load()
+			if err == nil {
+				return nil
+			}
+			return err.(error)
 		}
 		return nil
 	})
@@ -955,7 +1016,7 @@ func ServeInterface(c wrpc.Server, h Handler) (stop func() error, err error) {
 		return nil, fmt.Errorf("failed to serve `wrpc:keyvalue/store@0.2.0-draft.delete`: %w", err)
 	}
 	stops = append(stops, stop2)
-	stop3, err := c.Serve("wrpc:keyvalue/store@0.2.0-draft", "exists", func(ctx context.Context, w wrpc.IndexWriter, r wrpc.IndexReadCloser) error {
+	stop3, err := s.Serve("wrpc:keyvalue/store@0.2.0-draft", "exists", func(ctx context.Context, w wrpc.IndexWriter, r wrpc.IndexReadCloser) error {
 		slog.DebugContext(ctx, "reading parameter", "i", 0)
 		p0, err := func(r interface {
 			io.ByteReader
@@ -1103,18 +1164,28 @@ func ServeInterface(c wrpc.Server, h Handler) (stop func() error, err error) {
 			return fmt.Errorf("failed to write result: %w", err)
 		}
 		if len(writes) > 0 {
-			var wg errgroup.Group
+			var wg sync.WaitGroup
+			var wgErr atomic.Value
 			for index, write := range writes {
+				wg.Add(1)
 				w, err := w.Index(index)
 				if err != nil {
 					return fmt.Errorf("failed to index writer: %w", err)
 				}
 				write := write
-				wg.Go(func() error {
-					return write(w)
-				})
+				go func() {
+					defer wg.Done()
+					if err := write(w); err != nil {
+						wgErr.Store(err)
+					}
+				}()
 			}
-			return wg.Wait()
+			wg.Wait()
+			err := wgErr.Load()
+			if err == nil {
+				return nil
+			}
+			return err.(error)
 		}
 		return nil
 	})
@@ -1122,7 +1193,7 @@ func ServeInterface(c wrpc.Server, h Handler) (stop func() error, err error) {
 		return nil, fmt.Errorf("failed to serve `wrpc:keyvalue/store@0.2.0-draft.exists`: %w", err)
 	}
 	stops = append(stops, stop3)
-	stop4, err := c.Serve("wrpc:keyvalue/store@0.2.0-draft", "list-keys", func(ctx context.Context, w wrpc.IndexWriter, r wrpc.IndexReadCloser) error {
+	stop4, err := s.Serve("wrpc:keyvalue/store@0.2.0-draft", "list-keys", func(ctx context.Context, w wrpc.IndexWriter, r wrpc.IndexReadCloser) error {
 		slog.DebugContext(ctx, "reading parameter", "i", 0)
 		p0, err := func(r interface {
 			io.ByteReader
@@ -1269,18 +1340,28 @@ func ServeInterface(c wrpc.Server, h Handler) (stop func() error, err error) {
 			return fmt.Errorf("failed to write result: %w", err)
 		}
 		if len(writes) > 0 {
-			var wg errgroup.Group
+			var wg sync.WaitGroup
+			var wgErr atomic.Value
 			for index, write := range writes {
+				wg.Add(1)
 				w, err := w.Index(index)
 				if err != nil {
 					return fmt.Errorf("failed to index writer: %w", err)
 				}
 				write := write
-				wg.Go(func() error {
-					return write(w)
-				})
+				go func() {
+					defer wg.Done()
+					if err := write(w); err != nil {
+						wgErr.Store(err)
+					}
+				}()
 			}
-			return wg.Wait()
+			wg.Wait()
+			err := wgErr.Load()
+			if err == nil {
+				return nil
+			}
+			return err.(error)
 		}
 		return nil
 	})

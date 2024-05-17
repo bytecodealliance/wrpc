@@ -7,7 +7,7 @@ import (
 	wrpc "github.com/wrpc/wrpc/go"
 )
 
-func Serve(c wrpc.Client, h0 exports__wrpc__keyvalue__store.Handler) (stop func() error, err error) {
+func Serve(s wrpc.Server, h0 exports__wrpc__keyvalue__store.Handler) (stop func() error, err error) {
 	stops := make([]func() error, 0, 1)
 	stop = func() error {
 		for _, stop := range stops {
@@ -17,7 +17,7 @@ func Serve(c wrpc.Client, h0 exports__wrpc__keyvalue__store.Handler) (stop func(
 		}
 		return nil
 	}
-	stop0, err := exports__wrpc__keyvalue__store.ServeInterface(c, h0)
+	stop0, err := exports__wrpc__keyvalue__store.ServeInterface(s, h0)
 	if err != nil {
 		return
 	}

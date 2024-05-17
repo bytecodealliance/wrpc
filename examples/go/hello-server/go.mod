@@ -5,7 +5,6 @@ go 1.22.2
 require (
 	github.com/nats-io/nats.go v1.34.1
 	github.com/wrpc/wrpc/go v0.0.0-unpublished
-	golang.org/x/sync v0.7.0
 )
 
 require (

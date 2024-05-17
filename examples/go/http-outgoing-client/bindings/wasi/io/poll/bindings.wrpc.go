@@ -8,10 +8,11 @@ import (
 	errors "errors"
 	fmt "fmt"
 	wrpc "github.com/wrpc/wrpc/go"
-	errgroup "golang.org/x/sync/errgroup"
 	io "io"
 	slog "log/slog"
 	math "math"
+	sync "sync"
+	atomic "sync/atomic"
 )
 
 // Return the readiness of a pollable. This function never blocks.
@@ -202,18 +203,28 @@ func Poll(ctx__ context.Context, wrpc__ wrpc.Invoker, in []wrpc.Borrow[Pollable]
 			}
 			if len(writes) > 0 {
 				return func(w wrpc.IndexWriter) error {
-					var wg errgroup.Group
+					var wg sync.WaitGroup
+					var wgErr atomic.Value
 					for index, write := range writes {
+						wg.Add(1)
 						w, err := w.Index(index)
 						if err != nil {
 							return fmt.Errorf("failed to index writer: %w", err)
 						}
 						write := write
-						wg.Go(func() error {
-							return write(w)
-						})
+						go func() {
+							defer wg.Done()
+							if err := write(w); err != nil {
+								wgErr.Store(err)
+							}
+						}()
 					}
-					return wg.Wait()
+					wg.Wait()
+					err := wgErr.Load()
+					if err == nil {
+						return nil
+					}
+					return err.(error)
 				}, nil
 			}
 			return nil, nil
