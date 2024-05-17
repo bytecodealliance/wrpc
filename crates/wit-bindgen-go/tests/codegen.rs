@@ -29,6 +29,11 @@ macro_rules! codegen_test {
 test_helpers::codegen_tests!();
 
 fn verify(dir: &Path, _name: &str) {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap();
     let go_mod = dir.join("go.mod");
     fs::write(
         &go_mod,
@@ -40,16 +45,18 @@ go 1.22.2
 require github.com/wrpc/wrpc/go v0.0.0-unpublished
     
 replace github.com/wrpc/wrpc/go v0.0.0-unpublished => {}"#,
-            Path::new(env!("CARGO_MANIFEST_DIR"))
-                .parent()
-                .unwrap()
-                .parent()
-                .unwrap()
-                .join("go")
-                .display(),
+            root.join("go").display(),
         ),
     )
     .unwrap_or_else(|_| panic!("failed to write `{}`", go_mod.display()));
+
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(root.join("vendor"), dir.join("vendor"))
+        .expect("failed to symlink `vendor`");
+    #[cfg(windows)]
+    std::os::windows::fs::symlink_dir(root.join("vendor"), dir.join("vendor"))
+        .expect("failed to symlink `vendor`");
+
     test_helpers::run_command(
         Command::new("go")
             .env("GOWORK", "off")
