@@ -1667,7 +1667,7 @@ func (v *ErrorCode) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) erro
 				return nil, fmt.Errorf("failed to write `option::some` status byte: %w", err)
 			}
 			slog.Debug("writing `option::some` payload")
-			write, err := (*v).WriteToIndex(w)
+			write, err := (v).WriteToIndex(w)
 			if err != nil {
 				return nil, fmt.Errorf("failed to write `option::some` payload: %w", err)
 			}
@@ -3651,7 +3651,7 @@ func NewFields(ctx__ context.Context, wrpc__ wrpc.Client) (r0__ wrpc.Own[Fields]
 //
 // An error result will be returned if any header or value was
 // syntactically invalid, or if a header was forbidden.
-func FieldsFromList(ctx__ context.Context, wrpc__ wrpc.Client, entries []*wrpc.Tuple2[string, []uint8]) (r0__ *wrpc.Result[wrpc.Own[Fields], HeaderError], close__ func() error, err__ error) {
+func Fields_FromList(ctx__ context.Context, wrpc__ wrpc.Client, entries []*wrpc.Tuple2[string, []uint8]) (r0__ *wrpc.Result[wrpc.Own[Fields], HeaderError], close__ func() error, err__ error) {
 	if err__ = wrpc__.Invoke(ctx__, "wasi:http/types@0.2.0", "[static]fields.from-list", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		var buf__ bytes.Buffer
@@ -3931,7 +3931,7 @@ func FieldsFromList(ctx__ context.Context, wrpc__ wrpc.Client, entries []*wrpc.T
 // in this `fields`, an empty list is returned. However, if the key is
 // present but empty, this is represented by a list with one or more
 // empty field-values present.
-func FieldsGet(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[Fields], name string) (r0__ [][]uint8, close__ func() error, err__ error) {
+func Fields_Get(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[Fields], name string) (r0__ [][]uint8, close__ func() error, err__ error) {
 	if err__ = wrpc__.Invoke(ctx__, string(self), "get", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		var buf__ bytes.Buffer
@@ -4071,7 +4071,7 @@ func FieldsGet(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[Field
 
 // Returns `true` when the key is present in this `fields`. If the key is
 // syntactically invalid, `false` is returned.
-func FieldsHas(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[Fields], name string) (r0__ bool, close__ func() error, err__ error) {
+func Fields_Has(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[Fields], name string) (r0__ bool, close__ func() error, err__ error) {
 	if err__ = wrpc__.Invoke(ctx__, string(self), "has", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		var buf__ bytes.Buffer
@@ -4165,7 +4165,7 @@ func FieldsHas(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[Field
 // key, if they have been set.
 //
 // Fails with `header-error.immutable` if the `fields` are immutable.
-func FieldsSet(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[Fields], name string, value [][]uint8) (r0__ *wrpc.Result[struct{}, HeaderError], close__ func() error, err__ error) {
+func Fields_Set(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[Fields], name string, value [][]uint8) (r0__ *wrpc.Result[struct{}, HeaderError], close__ func() error, err__ error) {
 	if err__ = wrpc__.Invoke(ctx__, string(self), "set", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		var buf__ bytes.Buffer
@@ -4402,7 +4402,7 @@ func FieldsSet(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[Field
 // exist.
 //
 // Fails with `header-error.immutable` if the `fields` are immutable.
-func FieldsDelete(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[Fields], name string) (r0__ *wrpc.Result[struct{}, HeaderError], close__ func() error, err__ error) {
+func Fields_Delete(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[Fields], name string) (r0__ *wrpc.Result[struct{}, HeaderError], close__ func() error, err__ error) {
 	if err__ = wrpc__.Invoke(ctx__, string(self), "delete", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		var buf__ bytes.Buffer
@@ -4539,7 +4539,7 @@ func FieldsDelete(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[Fi
 // values for that key.
 //
 // Fails with `header-error.immutable` if the `fields` are immutable.
-func FieldsAppend(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[Fields], name string, value []uint8) (r0__ *wrpc.Result[struct{}, HeaderError], close__ func() error, err__ error) {
+func Fields_Append(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[Fields], name string, value []uint8) (r0__ *wrpc.Result[struct{}, HeaderError], close__ func() error, err__ error) {
 	if err__ = wrpc__.Invoke(ctx__, string(self), "append", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		var buf__ bytes.Buffer
@@ -4733,7 +4733,7 @@ func FieldsAppend(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[Fi
 // The outer list represents each key-value pair in the Fields. Keys
 // which have multiple values are represented by multiple entries in this
 // list with the same key.
-func FieldsEntries(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[Fields]) (r0__ []*wrpc.Tuple2[string, []uint8], close__ func() error, err__ error) {
+func Fields_Entries(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[Fields]) (r0__ []*wrpc.Tuple2[string, []uint8], close__ func() error, err__ error) {
 	if err__ = wrpc__.Invoke(ctx__, string(self), "entries", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		var buf__ bytes.Buffer
@@ -4900,7 +4900,7 @@ func FieldsEntries(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[F
 // Make a deep copy of the Fields. Equivelant in behavior to calling the
 // `fields` constructor on the return value of `entries`. The resulting
 // `fields` is mutable.
-func FieldsClone(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[Fields]) (r0__ wrpc.Own[Fields], close__ func() error, err__ error) {
+func Fields_Clone(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[Fields]) (r0__ wrpc.Own[Fields], close__ func() error, err__ error) {
 	if err__ = wrpc__.Invoke(ctx__, string(self), "clone", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		var buf__ bytes.Buffer
@@ -4984,7 +4984,7 @@ func FieldsClone(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[Fie
 }
 
 // Returns the method of the incoming request.
-func IncomingRequestMethod(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[IncomingRequest]) (r0__ *Method, close__ func() error, err__ error) {
+func IncomingRequest_Method(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[IncomingRequest]) (r0__ *Method, close__ func() error, err__ error) {
 	if err__ = wrpc__.Invoke(ctx__, string(self), "method", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		var buf__ bytes.Buffer
@@ -5124,7 +5124,7 @@ func IncomingRequestMethod(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.
 }
 
 // Returns the path with query parameters from the request, as a string.
-func IncomingRequestPathWithQuery(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[IncomingRequest]) (r0__ *string, close__ func() error, err__ error) {
+func IncomingRequest_PathWithQuery(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[IncomingRequest]) (r0__ *string, close__ func() error, err__ error) {
 	if err__ = wrpc__.Invoke(ctx__, string(self), "path-with-query", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		var buf__ bytes.Buffer
@@ -5227,7 +5227,7 @@ func IncomingRequestPathWithQuery(ctx__ context.Context, wrpc__ wrpc.Client, sel
 }
 
 // Returns the protocol scheme from the request.
-func IncomingRequestScheme(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[IncomingRequest]) (r0__ *Scheme, close__ func() error, err__ error) {
+func IncomingRequest_Scheme(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[IncomingRequest]) (r0__ *Scheme, close__ func() error, err__ error) {
 	if err__ = wrpc__.Invoke(ctx__, string(self), "scheme", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		var buf__ bytes.Buffer
@@ -5372,7 +5372,7 @@ func IncomingRequestScheme(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.
 }
 
 // Returns the authority from the request, if it was present.
-func IncomingRequestAuthority(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[IncomingRequest]) (r0__ *string, close__ func() error, err__ error) {
+func IncomingRequest_Authority(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[IncomingRequest]) (r0__ *string, close__ func() error, err__ error) {
 	if err__ = wrpc__.Invoke(ctx__, string(self), "authority", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		var buf__ bytes.Buffer
@@ -5482,7 +5482,7 @@ func IncomingRequestAuthority(ctx__ context.Context, wrpc__ wrpc.Client, self wr
 // The `headers` returned are a child resource: it must be dropped before
 // the parent `incoming-request` is dropped. Dropping this
 // `incoming-request` before all children are dropped will trap.
-func IncomingRequestHeaders(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[IncomingRequest]) (r0__ wrpc.Own[Headers], close__ func() error, err__ error) {
+func IncomingRequest_Headers(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[IncomingRequest]) (r0__ wrpc.Own[Headers], close__ func() error, err__ error) {
 	if err__ = wrpc__.Invoke(ctx__, string(self), "headers", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		var buf__ bytes.Buffer
@@ -5567,7 +5567,7 @@ func IncomingRequestHeaders(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc
 
 // Gives the `incoming-body` associated with this request. Will only
 // return success at most once, and subsequent calls will return error.
-func IncomingRequestConsume(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[IncomingRequest]) (r0__ *wrpc.Result[wrpc.Own[IncomingBody], struct{}], close__ func() error, err__ error) {
+func IncomingRequest_Consume(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[IncomingRequest]) (r0__ *wrpc.Result[wrpc.Own[IncomingBody], struct{}], close__ func() error, err__ error) {
 	if err__ = wrpc__.Invoke(ctx__, string(self), "consume", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		var buf__ bytes.Buffer
@@ -5769,7 +5769,7 @@ func NewOutgoingRequest(ctx__ context.Context, wrpc__ wrpc.Client, headers wrpc.
 // Returns success on the first call: the `outgoing-body` resource for
 // this `outgoing-request` can be retrieved at most once. Subsequent
 // calls will return error.
-func OutgoingRequestBody(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[OutgoingRequest]) (r0__ *wrpc.Result[wrpc.Own[OutgoingBody], struct{}], close__ func() error, err__ error) {
+func OutgoingRequest_Body(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[OutgoingRequest]) (r0__ *wrpc.Result[wrpc.Own[OutgoingBody], struct{}], close__ func() error, err__ error) {
 	if err__ = wrpc__.Invoke(ctx__, string(self), "body", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		var buf__ bytes.Buffer
@@ -5873,7 +5873,7 @@ func OutgoingRequestBody(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Bo
 }
 
 // Get the Method for the Request.
-func OutgoingRequestMethod(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[OutgoingRequest]) (r0__ *Method, close__ func() error, err__ error) {
+func OutgoingRequest_Method(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[OutgoingRequest]) (r0__ *Method, close__ func() error, err__ error) {
 	if err__ = wrpc__.Invoke(ctx__, string(self), "method", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		var buf__ bytes.Buffer
@@ -6014,7 +6014,7 @@ func OutgoingRequestMethod(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.
 
 // Set the Method for the Request. Fails if the string present in a
 // `method.other` argument is not a syntactically valid method.
-func OutgoingRequestSetMethod(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[OutgoingRequest], method *Method) (r0__ *wrpc.Result[struct{}, struct{}], close__ func() error, err__ error) {
+func OutgoingRequest_SetMethod(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[OutgoingRequest], method *Method) (r0__ *wrpc.Result[struct{}, struct{}], close__ func() error, err__ error) {
 	if err__ = wrpc__.Invoke(ctx__, string(self), "set-method", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		var buf__ bytes.Buffer
@@ -6087,7 +6087,7 @@ func OutgoingRequestSetMethod(ctx__ context.Context, wrpc__ wrpc.Client, self wr
 
 // Get the combination of the HTTP Path and Query for the Request.
 // When `none`, this represents an empty Path and empty Query.
-func OutgoingRequestPathWithQuery(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[OutgoingRequest]) (r0__ *string, close__ func() error, err__ error) {
+func OutgoingRequest_PathWithQuery(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[OutgoingRequest]) (r0__ *string, close__ func() error, err__ error) {
 	if err__ = wrpc__.Invoke(ctx__, string(self), "path-with-query", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		var buf__ bytes.Buffer
@@ -6192,7 +6192,7 @@ func OutgoingRequestPathWithQuery(ctx__ context.Context, wrpc__ wrpc.Client, sel
 // Set the combination of the HTTP Path and Query for the Request.
 // When `none`, this represents an empty Path and empty Query. Fails is the
 // string given is not a syntactically valid path and query uri component.
-func OutgoingRequestSetPathWithQuery(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[OutgoingRequest], pathWithQuery *string) (r0__ *wrpc.Result[struct{}, struct{}], close__ func() error, err__ error) {
+func OutgoingRequest_SetPathWithQuery(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[OutgoingRequest], pathWithQuery *string) (r0__ *wrpc.Result[struct{}, struct{}], close__ func() error, err__ error) {
 	if err__ = wrpc__.Invoke(ctx__, string(self), "set-path-with-query", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		var buf__ bytes.Buffer
@@ -6306,7 +6306,7 @@ func OutgoingRequestSetPathWithQuery(ctx__ context.Context, wrpc__ wrpc.Client, 
 
 // Get the HTTP Related Scheme for the Request. When `none`, the
 // implementation may choose an appropriate default scheme.
-func OutgoingRequestScheme(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[OutgoingRequest]) (r0__ *Scheme, close__ func() error, err__ error) {
+func OutgoingRequest_Scheme(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[OutgoingRequest]) (r0__ *Scheme, close__ func() error, err__ error) {
 	if err__ = wrpc__.Invoke(ctx__, string(self), "scheme", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		var buf__ bytes.Buffer
@@ -6453,7 +6453,7 @@ func OutgoingRequestScheme(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.
 // Set the HTTP Related Scheme for the Request. When `none`, the
 // implementation may choose an appropriate default scheme. Fails if the
 // string given is not a syntactically valid uri scheme.
-func OutgoingRequestSetScheme(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[OutgoingRequest], scheme *Scheme) (r0__ *wrpc.Result[struct{}, struct{}], close__ func() error, err__ error) {
+func OutgoingRequest_SetScheme(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[OutgoingRequest], scheme *Scheme) (r0__ *wrpc.Result[struct{}, struct{}], close__ func() error, err__ error) {
 	if err__ = wrpc__.Invoke(ctx__, string(self), "set-scheme", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		var buf__ bytes.Buffer
@@ -6501,7 +6501,7 @@ func OutgoingRequestSetScheme(ctx__ context.Context, wrpc__ wrpc.Client, self wr
 				return nil, fmt.Errorf("failed to write `option::some` status byte: %w", err)
 			}
 			slog.Debug("writing `option::some` payload")
-			write, err := (*v).WriteToIndex(w)
+			write, err := (v).WriteToIndex(w)
 			if err != nil {
 				return nil, fmt.Errorf("failed to write `option::some` payload: %w", err)
 			}
@@ -6548,7 +6548,7 @@ func OutgoingRequestSetScheme(ctx__ context.Context, wrpc__ wrpc.Client, self wr
 // Get the HTTP Authority for the Request. A value of `none` may be used
 // with Related Schemes which do not require an Authority. The HTTP and
 // HTTPS schemes always require an authority.
-func OutgoingRequestAuthority(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[OutgoingRequest]) (r0__ *string, close__ func() error, err__ error) {
+func OutgoingRequest_Authority(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[OutgoingRequest]) (r0__ *string, close__ func() error, err__ error) {
 	if err__ = wrpc__.Invoke(ctx__, string(self), "authority", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		var buf__ bytes.Buffer
@@ -6654,7 +6654,7 @@ func OutgoingRequestAuthority(ctx__ context.Context, wrpc__ wrpc.Client, self wr
 // with Related Schemes which do not require an Authority. The HTTP and
 // HTTPS schemes always require an authority. Fails if the string given is
 // not a syntactically valid uri authority.
-func OutgoingRequestSetAuthority(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[OutgoingRequest], authority *string) (r0__ *wrpc.Result[struct{}, struct{}], close__ func() error, err__ error) {
+func OutgoingRequest_SetAuthority(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[OutgoingRequest], authority *string) (r0__ *wrpc.Result[struct{}, struct{}], close__ func() error, err__ error) {
 	if err__ = wrpc__.Invoke(ctx__, string(self), "set-authority", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		var buf__ bytes.Buffer
@@ -6774,7 +6774,7 @@ func OutgoingRequestSetAuthority(ctx__ context.Context, wrpc__ wrpc.Client, self
 // This headers resource is a child: it must be dropped before the parent
 // `outgoing-request` is dropped, or its ownership is transfered to
 // another component by e.g. `outgoing-handler.handle`.
-func OutgoingRequestHeaders(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[OutgoingRequest]) (r0__ wrpc.Own[Headers], close__ func() error, err__ error) {
+func OutgoingRequest_Headers(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[OutgoingRequest]) (r0__ wrpc.Own[Headers], close__ func() error, err__ error) {
 	if err__ = wrpc__.Invoke(ctx__, string(self), "headers", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		var buf__ bytes.Buffer
@@ -6913,7 +6913,7 @@ func NewRequestOptions(ctx__ context.Context, wrpc__ wrpc.Client) (r0__ wrpc.Own
 }
 
 // The timeout for the initial connect to the HTTP Server.
-func RequestOptionsConnectTimeout(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[RequestOptions]) (r0__ *Duration, close__ func() error, err__ error) {
+func RequestOptions_ConnectTimeout(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[RequestOptions]) (r0__ *Duration, close__ func() error, err__ error) {
 	if err__ = wrpc__.Invoke(ctx__, string(self), "connect-timeout", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		var buf__ bytes.Buffer
@@ -7012,7 +7012,7 @@ func RequestOptionsConnectTimeout(ctx__ context.Context, wrpc__ wrpc.Client, sel
 
 // Set the timeout for the initial connect to the HTTP Server. An error
 // return value indicates that this timeout is not supported.
-func RequestOptionsSetConnectTimeout(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[RequestOptions], duration *Duration) (r0__ *wrpc.Result[struct{}, struct{}], close__ func() error, err__ error) {
+func RequestOptions_SetConnectTimeout(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[RequestOptions], duration *Duration) (r0__ *wrpc.Result[struct{}, struct{}], close__ func() error, err__ error) {
 	if err__ = wrpc__.Invoke(ctx__, string(self), "set-connect-timeout", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		var buf__ bytes.Buffer
@@ -7111,7 +7111,7 @@ func RequestOptionsSetConnectTimeout(ctx__ context.Context, wrpc__ wrpc.Client, 
 }
 
 // The timeout for receiving the first byte of the Response body.
-func RequestOptionsFirstByteTimeout(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[RequestOptions]) (r0__ *Duration, close__ func() error, err__ error) {
+func RequestOptions_FirstByteTimeout(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[RequestOptions]) (r0__ *Duration, close__ func() error, err__ error) {
 	if err__ = wrpc__.Invoke(ctx__, string(self), "first-byte-timeout", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		var buf__ bytes.Buffer
@@ -7210,7 +7210,7 @@ func RequestOptionsFirstByteTimeout(ctx__ context.Context, wrpc__ wrpc.Client, s
 
 // Set the timeout for receiving the first byte of the Response body. An
 // error return value indicates that this timeout is not supported.
-func RequestOptionsSetFirstByteTimeout(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[RequestOptions], duration *Duration) (r0__ *wrpc.Result[struct{}, struct{}], close__ func() error, err__ error) {
+func RequestOptions_SetFirstByteTimeout(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[RequestOptions], duration *Duration) (r0__ *wrpc.Result[struct{}, struct{}], close__ func() error, err__ error) {
 	if err__ = wrpc__.Invoke(ctx__, string(self), "set-first-byte-timeout", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		var buf__ bytes.Buffer
@@ -7310,7 +7310,7 @@ func RequestOptionsSetFirstByteTimeout(ctx__ context.Context, wrpc__ wrpc.Client
 
 // The timeout for receiving subsequent chunks of bytes in the Response
 // body stream.
-func RequestOptionsBetweenBytesTimeout(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[RequestOptions]) (r0__ *Duration, close__ func() error, err__ error) {
+func RequestOptions_BetweenBytesTimeout(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[RequestOptions]) (r0__ *Duration, close__ func() error, err__ error) {
 	if err__ = wrpc__.Invoke(ctx__, string(self), "between-bytes-timeout", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		var buf__ bytes.Buffer
@@ -7410,7 +7410,7 @@ func RequestOptionsBetweenBytesTimeout(ctx__ context.Context, wrpc__ wrpc.Client
 // Set the timeout for receiving subsequent chunks of bytes in the Response
 // body stream. An error return value indicates that this timeout is not
 // supported.
-func RequestOptionsSetBetweenBytesTimeout(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[RequestOptions], duration *Duration) (r0__ *wrpc.Result[struct{}, struct{}], close__ func() error, err__ error) {
+func RequestOptions_SetBetweenBytesTimeout(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[RequestOptions], duration *Duration) (r0__ *wrpc.Result[struct{}, struct{}], close__ func() error, err__ error) {
 	if err__ = wrpc__.Invoke(ctx__, string(self), "set-between-bytes-timeout", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		var buf__ bytes.Buffer
@@ -7517,7 +7517,7 @@ func RequestOptionsSetBetweenBytesTimeout(ctx__ context.Context, wrpc__ wrpc.Cli
 //
 // The user may provide an `error` to `response` to allow the
 // implementation determine how to respond with an HTTP error response.
-func ResponseOutparamSet(ctx__ context.Context, wrpc__ wrpc.Client, param wrpc.Own[ResponseOutparam], response *wrpc.Result[wrpc.Own[OutgoingResponse], ErrorCode]) (close__ func() error, err__ error) {
+func ResponseOutparam_Set(ctx__ context.Context, wrpc__ wrpc.Client, param wrpc.Own[ResponseOutparam], response *wrpc.Result[wrpc.Own[OutgoingResponse], ErrorCode]) (close__ func() error, err__ error) {
 	if err__ = wrpc__.Invoke(ctx__, "wasi:http/types@0.2.0", "[static]response-outparam.set", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		var buf__ bytes.Buffer
@@ -7599,7 +7599,7 @@ func ResponseOutparamSet(ctx__ context.Context, wrpc__ wrpc.Client, param wrpc.O
 					return nil, fmt.Errorf("failed to write `result::err` status byte: %w", err)
 				}
 				slog.Debug("writing `result::err` payload")
-				write, err := (*v.Err).WriteToIndex(w)
+				write, err := (v.Err).WriteToIndex(w)
 				if err != nil {
 					return nil, fmt.Errorf("failed to write `result::err` payload: %w", err)
 				}
@@ -7628,7 +7628,7 @@ func ResponseOutparamSet(ctx__ context.Context, wrpc__ wrpc.Client, param wrpc.O
 }
 
 // Returns the status code from the incoming response.
-func IncomingResponseStatus(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[IncomingResponse]) (r0__ uint16, close__ func() error, err__ error) {
+func IncomingResponse_Status(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[IncomingResponse]) (r0__ uint16, close__ func() error, err__ error) {
 	if err__ = wrpc__.Invoke(ctx__, string(self), "status", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		var buf__ bytes.Buffer
@@ -7709,7 +7709,7 @@ func IncomingResponseStatus(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc
 //
 // This headers resource is a child: it must be dropped before the parent
 // `incoming-response` is dropped.
-func IncomingResponseHeaders(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[IncomingResponse]) (r0__ wrpc.Own[Headers], close__ func() error, err__ error) {
+func IncomingResponse_Headers(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[IncomingResponse]) (r0__ wrpc.Own[Headers], close__ func() error, err__ error) {
 	if err__ = wrpc__.Invoke(ctx__, string(self), "headers", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		var buf__ bytes.Buffer
@@ -7794,7 +7794,7 @@ func IncomingResponseHeaders(ctx__ context.Context, wrpc__ wrpc.Client, self wrp
 
 // Returns the incoming body. May be called at most once. Returns error
 // if called additional times.
-func IncomingResponseConsume(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[IncomingResponse]) (r0__ *wrpc.Result[wrpc.Own[IncomingBody], struct{}], close__ func() error, err__ error) {
+func IncomingResponse_Consume(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[IncomingResponse]) (r0__ *wrpc.Result[wrpc.Own[IncomingBody], struct{}], close__ func() error, err__ error) {
 	if err__ = wrpc__.Invoke(ctx__, string(self), "consume", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		var buf__ bytes.Buffer
@@ -7912,7 +7912,7 @@ func IncomingResponseConsume(ctx__ context.Context, wrpc__ wrpc.Client, self wrp
 // backpressure is to be applied when the user is consuming the body,
 // and for that backpressure to not inhibit delivery of the trailers if
 // the user does not read the entire body.
-func IncomingBodyStream(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[IncomingBody]) (r0__ *wrpc.Result[wrpc.Own[InputStream], struct{}], close__ func() error, err__ error) {
+func IncomingBody_Stream(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[IncomingBody]) (r0__ *wrpc.Result[wrpc.Own[InputStream], struct{}], close__ func() error, err__ error) {
 	if err__ = wrpc__.Invoke(ctx__, string(self), "stream", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		var buf__ bytes.Buffer
@@ -8017,7 +8017,7 @@ func IncomingBodyStream(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Bor
 
 // Takes ownership of `incoming-body`, and returns a `future-trailers`.
 // This function will trap if the `input-stream` child is still alive.
-func IncomingBodyFinish(ctx__ context.Context, wrpc__ wrpc.Client, this wrpc.Own[IncomingBody]) (r0__ wrpc.Own[FutureTrailers], close__ func() error, err__ error) {
+func IncomingBody_Finish(ctx__ context.Context, wrpc__ wrpc.Client, this wrpc.Own[IncomingBody]) (r0__ wrpc.Own[FutureTrailers], close__ func() error, err__ error) {
 	if err__ = wrpc__.Invoke(ctx__, "wasi:http/types@0.2.0", "[static]incoming-body.finish", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		var buf__ bytes.Buffer
@@ -8103,7 +8103,7 @@ func IncomingBodyFinish(ctx__ context.Context, wrpc__ wrpc.Client, this wrpc.Own
 // Returns a pollable which becomes ready when either the trailers have
 // been received, or an error has occured. When this pollable is ready,
 // the `get` method will return `some`.
-func FutureTrailersSubscribe(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[FutureTrailers]) (r0__ wrpc.Own[Pollable], close__ func() error, err__ error) {
+func FutureTrailers_Subscribe(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[FutureTrailers]) (r0__ wrpc.Own[Pollable], close__ func() error, err__ error) {
 	if err__ = wrpc__.Invoke(ctx__, string(self), "subscribe", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		var buf__ bytes.Buffer
@@ -8205,7 +8205,7 @@ func FutureTrailersSubscribe(ctx__ context.Context, wrpc__ wrpc.Client, self wrp
 // resource is immutable, and a child. Use of the `set`, `append`, or
 // `delete` methods will return an error, and the resource must be
 // dropped before the parent `future-trailers` is dropped.
-func FutureTrailersGet(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[FutureTrailers]) (r0__ *wrpc.Result[wrpc.Result[*wrpc.Own[Trailers], ErrorCode], struct{}], close__ func() error, err__ error) {
+func FutureTrailers_Get(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[FutureTrailers]) (r0__ *wrpc.Result[wrpc.Result[*wrpc.Own[Trailers], ErrorCode], struct{}], close__ func() error, err__ error) {
 	if err__ = wrpc__.Invoke(ctx__, string(self), "get", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		var buf__ bytes.Buffer
@@ -9695,7 +9695,7 @@ func NewOutgoingResponse(ctx__ context.Context, wrpc__ wrpc.Client, headers wrpc
 }
 
 // Get the HTTP Status Code for the Response.
-func OutgoingResponseStatusCode(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[OutgoingResponse]) (r0__ uint16, close__ func() error, err__ error) {
+func OutgoingResponse_StatusCode(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[OutgoingResponse]) (r0__ uint16, close__ func() error, err__ error) {
 	if err__ = wrpc__.Invoke(ctx__, string(self), "status-code", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		var buf__ bytes.Buffer
@@ -9771,7 +9771,7 @@ func OutgoingResponseStatusCode(ctx__ context.Context, wrpc__ wrpc.Client, self 
 
 // Set the HTTP Status Code for the Response. Fails if the status-code
 // given is not a valid http status code.
-func OutgoingResponseSetStatusCode(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[OutgoingResponse], statusCode uint16) (r0__ *wrpc.Result[struct{}, struct{}], close__ func() error, err__ error) {
+func OutgoingResponse_SetStatusCode(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[OutgoingResponse], statusCode uint16) (r0__ *wrpc.Result[struct{}, struct{}], close__ func() error, err__ error) {
 	if err__ = wrpc__.Invoke(ctx__, string(self), "set-status-code", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		var buf__ bytes.Buffer
@@ -9856,7 +9856,7 @@ func OutgoingResponseSetStatusCode(ctx__ context.Context, wrpc__ wrpc.Client, se
 // This headers resource is a child: it must be dropped before the parent
 // `outgoing-request` is dropped, or its ownership is transfered to
 // another component by e.g. `outgoing-handler.handle`.
-func OutgoingResponseHeaders(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[OutgoingResponse]) (r0__ wrpc.Own[Headers], close__ func() error, err__ error) {
+func OutgoingResponse_Headers(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[OutgoingResponse]) (r0__ wrpc.Own[Headers], close__ func() error, err__ error) {
 	if err__ = wrpc__.Invoke(ctx__, string(self), "headers", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		var buf__ bytes.Buffer
@@ -9944,7 +9944,7 @@ func OutgoingResponseHeaders(ctx__ context.Context, wrpc__ wrpc.Client, self wrp
 // Returns success on the first call: the `outgoing-body` resource for
 // this `outgoing-response` can be retrieved at most once. Subsequent
 // calls will return error.
-func OutgoingResponseBody(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[OutgoingResponse]) (r0__ *wrpc.Result[wrpc.Own[OutgoingBody], struct{}], close__ func() error, err__ error) {
+func OutgoingResponse_Body(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[OutgoingResponse]) (r0__ *wrpc.Result[wrpc.Own[OutgoingBody], struct{}], close__ func() error, err__ error) {
 	if err__ = wrpc__.Invoke(ctx__, string(self), "body", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		var buf__ bytes.Buffer
@@ -10056,7 +10056,7 @@ func OutgoingResponseBody(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.B
 // Returns success on the first call: the `output-stream` resource for
 // this `outgoing-body` may be retrieved at most once. Subsequent calls
 // will return error.
-func OutgoingBodyWrite(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[OutgoingBody]) (r0__ *wrpc.Result[wrpc.Own[OutputStream], struct{}], close__ func() error, err__ error) {
+func OutgoingBody_Write(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[OutgoingBody]) (r0__ *wrpc.Result[wrpc.Own[OutputStream], struct{}], close__ func() error, err__ error) {
 	if err__ = wrpc__.Invoke(ctx__, string(self), "write", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		var buf__ bytes.Buffer
@@ -10168,7 +10168,7 @@ func OutgoingBodyWrite(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borr
 // constructed with a Content-Length header, and the contents written
 // to the body (via `write`) does not match the value given in the
 // Content-Length.
-func OutgoingBodyFinish(ctx__ context.Context, wrpc__ wrpc.Client, this wrpc.Own[OutgoingBody], trailers *wrpc.Own[Trailers]) (r0__ *wrpc.Result[struct{}, ErrorCode], close__ func() error, err__ error) {
+func OutgoingBody_Finish(ctx__ context.Context, wrpc__ wrpc.Client, this wrpc.Own[OutgoingBody], trailers *wrpc.Own[Trailers]) (r0__ *wrpc.Result[struct{}, ErrorCode], close__ func() error, err__ error) {
 	if err__ = wrpc__.Invoke(ctx__, "wasi:http/types@0.2.0", "[static]outgoing-body.finish", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		var buf__ bytes.Buffer
@@ -11523,7 +11523,7 @@ func OutgoingBodyFinish(ctx__ context.Context, wrpc__ wrpc.Client, this wrpc.Own
 // Returns a pollable which becomes ready when either the Response has
 // been received, or an error has occured. When this pollable is ready,
 // the `get` method will return `some`.
-func FutureIncomingResponseSubscribe(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[FutureIncomingResponse]) (r0__ wrpc.Own[Pollable], close__ func() error, err__ error) {
+func FutureIncomingResponse_Subscribe(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[FutureIncomingResponse]) (r0__ wrpc.Own[Pollable], close__ func() error, err__ error) {
 	if err__ = wrpc__.Invoke(ctx__, string(self), "subscribe", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		var buf__ bytes.Buffer
@@ -11620,7 +11620,7 @@ func FutureIncomingResponseSubscribe(ctx__ context.Context, wrpc__ wrpc.Client, 
 // occured. Errors may also occur while consuming the response body,
 // but those will be reported by the `incoming-body` and its
 // `output-stream` child.
-func FutureIncomingResponseGet(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[FutureIncomingResponse]) (r0__ *wrpc.Result[wrpc.Result[wrpc.Own[IncomingResponse], ErrorCode], struct{}], close__ func() error, err__ error) {
+func FutureIncomingResponse_Get(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[FutureIncomingResponse]) (r0__ *wrpc.Result[wrpc.Result[wrpc.Own[IncomingResponse], ErrorCode], struct{}], close__ func() error, err__ error) {
 	if err__ = wrpc__.Invoke(ctx__, string(self), "get", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		var buf__ bytes.Buffer

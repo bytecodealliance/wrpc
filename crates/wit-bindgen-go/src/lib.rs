@@ -129,6 +129,9 @@ impl Deps {
 
 impl Display for Deps {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.map.is_empty() {
+            return Ok(());
+        }
         writeln!(f, "import (")?;
         for (k, v) in &self.map {
             writeln!(f, r#"{k} "{v}""#)?;

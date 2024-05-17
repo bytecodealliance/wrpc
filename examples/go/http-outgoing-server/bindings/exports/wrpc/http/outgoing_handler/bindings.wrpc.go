@@ -1171,7 +1171,7 @@ func ServeInterface(c wrpc.Client, h Handler) (stop func() error, err error) {
 					return nil, fmt.Errorf("failed to write `result::ok` status byte: %w", err)
 				}
 				slog.Debug("writing `result::ok` payload")
-				write, err := (*v.Ok).WriteToIndex(w)
+				write, err := (v.Ok).WriteToIndex(w)
 				if err != nil {
 					return nil, fmt.Errorf("failed to write `result::ok` payload: %w", err)
 				}
@@ -1185,7 +1185,7 @@ func ServeInterface(c wrpc.Client, h Handler) (stop func() error, err error) {
 					return nil, fmt.Errorf("failed to write `result::err` status byte: %w", err)
 				}
 				slog.Debug("writing `result::err` payload")
-				write, err := (*v.Err).WriteToIndex(w)
+				write, err := (v.Err).WriteToIndex(w)
 				if err != nil {
 					return nil, fmt.Errorf("failed to write `result::err` payload: %w", err)
 				}

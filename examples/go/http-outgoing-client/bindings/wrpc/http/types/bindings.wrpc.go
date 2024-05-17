@@ -843,7 +843,7 @@ func (v *Request) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) error,
 			return nil, fmt.Errorf("failed to write `option::some` status byte: %w", err)
 		}
 		slog.Debug("writing `option::some` payload")
-		write, err := (*v).WriteToIndex(w)
+		write, err := (v).WriteToIndex(w)
 		if err != nil {
 			return nil, fmt.Errorf("failed to write `option::some` payload: %w", err)
 		}

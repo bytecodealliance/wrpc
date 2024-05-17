@@ -85,9 +85,6 @@
         clippy.workspace = true;
 
         test.allTargets = true;
-        test.excludes = [
-          "wit-bindgen-wrpc-go" # TODO: Reenable once complete
-        ];
         test.workspace = true;
 
         buildOverrides = {
