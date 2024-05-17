@@ -25,6 +25,45 @@ fn flag_repr(ty: &Flags) -> Int {
     }
 }
 
+fn rpc_func_name(func: &Function) -> &str {
+    match &func.kind {
+        FunctionKind::Constructor(..) => func
+            .name
+            .strip_prefix("[constructor]")
+            .expect("failed to strip `[constructor]` prefix"),
+        FunctionKind::Static(..) => func
+            .name
+            .strip_prefix("[static]")
+            .expect("failed to strip `[static]` prefix"),
+        FunctionKind::Method(..) => func.item_name(),
+        FunctionKind::Freestanding => &func.name,
+    }
+}
+
+fn go_func_name(func: &Function) -> String {
+    match &func.kind {
+        FunctionKind::Constructor(..) => to_upper_camel_case(
+            func.name
+                .strip_prefix("[constructor]")
+                .expect("failed to strip `[constructor]` prefix"),
+        ),
+        FunctionKind::Static(..) => {
+            let name = func
+                .name
+                .strip_prefix("[static]")
+                .expect("failed to strip `[static]` prefix");
+            let (head, tail) = name.split_once('.').expect("failed to split on `.`");
+            format!(
+                "{}_{}",
+                head.to_upper_camel_case(),
+                tail.to_upper_camel_case()
+            )
+        }
+        FunctionKind::Method(..) => to_upper_camel_case(func.item_name()),
+        FunctionKind::Freestanding => to_upper_camel_case(&func.name),
+    }
+}
+
 pub struct InterfaceGenerator<'a> {
     pub src: Source,
     pub(super) identifier: Identifier<'a>,
@@ -2798,7 +2837,7 @@ impl InterfaceGenerator<'_> {
             }
         };
         for (i, func) in funcs_to_export.iter().enumerate() {
-            let name = &func.name;
+            let name = rpc_func_name(func);
             let bytes = self.deps.bytes();
             let errgroup = self.deps.errgroup();
             let context = self.deps.context();
@@ -2840,7 +2879,7 @@ impl InterfaceGenerator<'_> {
                 self.push_str(":");
             }
             self.push_str("= h.");
-            self.push_str(&self.func_name(func));
+            self.push_str(&go_func_name(func));
             self.push_str("(ctx");
             for (i, _) in func.params.iter().enumerate() {
                 uwrite!(self.src, ", p{i}");
@@ -2902,7 +2941,7 @@ impl InterfaceGenerator<'_> {
                         self.push_str(":");
                     }
                     self.push_str("= res.");
-                    self.push_str(&self.func_name(func));
+                    self.push_str(&go_func_name(func));
                     self.push_str("(ctx");
                     for (i, _) in func.params.iter().enumerate().skip(1) {
                         uwrite!(self.src, ", p{i}");
@@ -3177,17 +3216,13 @@ impl InterfaceGenerator<'_> {
                 FunctionKind::Freestanding
                 | FunctionKind::Static(..)
                 | FunctionKind::Constructor(..) => {
-                    uwrite!(self.src, r#""{instance}""#);
-                    self.src.push_str(", \"");
-                    self.src.push_str(&func.name);
+                    uwrite!(self.src, r#""{instance}", ""#);
                 }
                 FunctionKind::Method(..) => {
-                    self.src.push_str("string(self)");
-                    self.src.push_str(", \"");
-                    let name = &func.name;
-                    self.push_str(&name[name.find('.').unwrap() + 1..]);
+                    self.src.push_str("string(self), \"");
                 }
             }
+            self.src.push_str(rpc_func_name(&func));
             self.src.push_str("\", ");
             uwriteln!(
                 self.src,
@@ -3369,31 +3404,6 @@ impl InterfaceGenerator<'_> {
         // }
     }
 
-    fn func_name(&self, func: &Function) -> String {
-        match &func.kind {
-            FunctionKind::Constructor(ty) => to_upper_camel_case(
-                self.resolve.types[*ty]
-                    .name
-                    .as_ref()
-                    .expect("unnamed resource"),
-            ),
-            FunctionKind::Static(..) => {
-                let name = func
-                    .name
-                    .strip_prefix("[static]")
-                    .expect("failed to strip `[static]` prefix");
-                let (head, tail) = name.split_once('.').expect("failed to split on `.`");
-                format!(
-                    "{}_{}",
-                    head.to_upper_camel_case(),
-                    tail.to_upper_camel_case()
-                )
-            }
-            FunctionKind::Method(..) => to_upper_camel_case(func.item_name()),
-            FunctionKind::Freestanding => to_upper_camel_case(&func.name),
-        }
-    }
-
     fn print_docs_and_params(&mut self, func: &Function, interface: bool) {
         self.godoc(&func.docs);
         self.godoc_params(&func.params, "Parameters");
@@ -3414,7 +3424,7 @@ impl InterfaceGenerator<'_> {
         if self.in_import && matches!(func.kind, FunctionKind::Constructor(..)) {
             self.push_str("New");
         }
-        self.push_str(&self.func_name(func));
+        self.push_str(&go_func_name(func));
         let context = self.deps.context();
         uwrite!(self.src, "(ctx__ {context}.Context, ");
         if self.in_import {

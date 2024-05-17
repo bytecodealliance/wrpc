@@ -3583,7 +3583,7 @@ func HttpErrorCode(ctx__ context.Context, wrpc__ wrpc.Client, err wrpc.Borrow[Io
 //
 // The resulting `fields` is mutable.
 func NewFields(ctx__ context.Context, wrpc__ wrpc.Client) (r0__ wrpc.Own[Fields], close__ func() error, err__ error) {
-	if err__ = wrpc__.Invoke(ctx__, "wasi:http/types@0.2.0", "[constructor]fields", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
+	if err__ = wrpc__.Invoke(ctx__, "wasi:http/types@0.2.0", "fields", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		_, err__ = w__.Write(nil)
 		if err__ != nil {
@@ -3652,7 +3652,7 @@ func NewFields(ctx__ context.Context, wrpc__ wrpc.Client) (r0__ wrpc.Own[Fields]
 // An error result will be returned if any header or value was
 // syntactically invalid, or if a header was forbidden.
 func Fields_FromList(ctx__ context.Context, wrpc__ wrpc.Client, entries []*wrpc.Tuple2[string, []uint8]) (r0__ *wrpc.Result[wrpc.Own[Fields], HeaderError], close__ func() error, err__ error) {
-	if err__ = wrpc__.Invoke(ctx__, "wasi:http/types@0.2.0", "[static]fields.from-list", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
+	if err__ = wrpc__.Invoke(ctx__, "wasi:http/types@0.2.0", "fields.from-list", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		var buf__ bytes.Buffer
 		writes__ := make(map[uint32]func(wrpc.IndexWriter) error, 1)
@@ -5681,7 +5681,7 @@ func IncomingRequest_Consume(ctx__ context.Context, wrpc__ wrpc.Client, self wrp
 // It is the obligation of the `outgoing-handler.handle` implementation
 // to reject invalid constructions of `outgoing-request`.
 func NewOutgoingRequest(ctx__ context.Context, wrpc__ wrpc.Client, headers wrpc.Own[Headers]) (r0__ wrpc.Own[OutgoingRequest], close__ func() error, err__ error) {
-	if err__ = wrpc__.Invoke(ctx__, "wasi:http/types@0.2.0", "[constructor]outgoing-request", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
+	if err__ = wrpc__.Invoke(ctx__, "wasi:http/types@0.2.0", "outgoing-request", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		var buf__ bytes.Buffer
 		writes__ := make(map[uint32]func(wrpc.IndexWriter) error, 1)
@@ -6859,7 +6859,7 @@ func OutgoingRequest_Headers(ctx__ context.Context, wrpc__ wrpc.Client, self wrp
 
 // Construct a default `request-options` value.
 func NewRequestOptions(ctx__ context.Context, wrpc__ wrpc.Client) (r0__ wrpc.Own[RequestOptions], close__ func() error, err__ error) {
-	if err__ = wrpc__.Invoke(ctx__, "wasi:http/types@0.2.0", "[constructor]request-options", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
+	if err__ = wrpc__.Invoke(ctx__, "wasi:http/types@0.2.0", "request-options", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		_, err__ = w__.Write(nil)
 		if err__ != nil {
@@ -7518,7 +7518,7 @@ func RequestOptions_SetBetweenBytesTimeout(ctx__ context.Context, wrpc__ wrpc.Cl
 // The user may provide an `error` to `response` to allow the
 // implementation determine how to respond with an HTTP error response.
 func ResponseOutparam_Set(ctx__ context.Context, wrpc__ wrpc.Client, param wrpc.Own[ResponseOutparam], response *wrpc.Result[wrpc.Own[OutgoingResponse], ErrorCode]) (close__ func() error, err__ error) {
-	if err__ = wrpc__.Invoke(ctx__, "wasi:http/types@0.2.0", "[static]response-outparam.set", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
+	if err__ = wrpc__.Invoke(ctx__, "wasi:http/types@0.2.0", "response-outparam.set", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		var buf__ bytes.Buffer
 		writes__ := make(map[uint32]func(wrpc.IndexWriter) error, 2)
@@ -8018,7 +8018,7 @@ func IncomingBody_Stream(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Bo
 // Takes ownership of `incoming-body`, and returns a `future-trailers`.
 // This function will trap if the `input-stream` child is still alive.
 func IncomingBody_Finish(ctx__ context.Context, wrpc__ wrpc.Client, this wrpc.Own[IncomingBody]) (r0__ wrpc.Own[FutureTrailers], close__ func() error, err__ error) {
-	if err__ = wrpc__.Invoke(ctx__, "wasi:http/types@0.2.0", "[static]incoming-body.finish", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
+	if err__ = wrpc__.Invoke(ctx__, "wasi:http/types@0.2.0", "incoming-body.finish", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		var buf__ bytes.Buffer
 		writes__ := make(map[uint32]func(wrpc.IndexWriter) error, 1)
@@ -9612,7 +9612,7 @@ func FutureTrailers_Get(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Bor
 //
 // * `headers` is the HTTP Headers for the Response.
 func NewOutgoingResponse(ctx__ context.Context, wrpc__ wrpc.Client, headers wrpc.Own[Headers]) (r0__ wrpc.Own[OutgoingResponse], close__ func() error, err__ error) {
-	if err__ = wrpc__.Invoke(ctx__, "wasi:http/types@0.2.0", "[constructor]outgoing-response", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
+	if err__ = wrpc__.Invoke(ctx__, "wasi:http/types@0.2.0", "outgoing-response", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		var buf__ bytes.Buffer
 		writes__ := make(map[uint32]func(wrpc.IndexWriter) error, 1)
@@ -10169,7 +10169,7 @@ func OutgoingBody_Write(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Bor
 // to the body (via `write`) does not match the value given in the
 // Content-Length.
 func OutgoingBody_Finish(ctx__ context.Context, wrpc__ wrpc.Client, this wrpc.Own[OutgoingBody], trailers *wrpc.Own[Trailers]) (r0__ *wrpc.Result[struct{}, ErrorCode], close__ func() error, err__ error) {
-	if err__ = wrpc__.Invoke(ctx__, "wasi:http/types@0.2.0", "[static]outgoing-body.finish", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
+	if err__ = wrpc__.Invoke(ctx__, "wasi:http/types@0.2.0", "outgoing-body.finish", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		var buf__ bytes.Buffer
 		writes__ := make(map[uint32]func(wrpc.IndexWriter) error, 2)
