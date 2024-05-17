@@ -250,7 +250,7 @@ impl GoWrpc {
             return;
         }
         let wrpc = self.deps.wrpc();
-        uwrite!(self.src, "func Serve(c {wrpc}.Client",);
+        uwrite!(self.src, "func Serve(s {wrpc}.Server",);
         for (i, bound) in interfaces.enumerate() {
             uwrite!(self.src, ", h{i} {bound}");
         }
@@ -278,7 +278,7 @@ impl GoWrpc {
                 self.src.push_str(path);
                 self.src.push_str(".");
             }
-            uwriteln!(self.src, "ServeInterface(c, h{i})");
+            uwriteln!(self.src, "ServeInterface(s, h{i})");
             self.src.push_str("if err != nil { return }\n");
             uwriteln!(self.src, "stops = append(stops, stop{i})");
         }

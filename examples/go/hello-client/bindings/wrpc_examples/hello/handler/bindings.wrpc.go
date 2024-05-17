@@ -11,7 +11,7 @@ import (
 	utf8 "unicode/utf8"
 )
 
-func Hello(ctx__ context.Context, wrpc__ wrpc.Client) (r0__ string, close__ func() error, err__ error) {
+func Hello(ctx__ context.Context, wrpc__ wrpc.Invoker) (r0__ string, close__ func() error, err__ error) {
 	if err__ = wrpc__.Invoke(ctx__, "wrpc-examples:hello/handler", "hello", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		_, err__ = w__.Write(nil)

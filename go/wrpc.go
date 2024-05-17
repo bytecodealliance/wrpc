@@ -15,11 +15,6 @@ type Server interface {
 	Serve(instance string, name string, f func(context.Context, IndexWriter, IndexReadCloser) error, subs ...SubscribePath) (func() error, error)
 }
 
-type Client interface {
-	Invoker
-	Server
-}
-
 // Own is an owned resource handle
 type Own[T any] string
 

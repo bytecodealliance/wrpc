@@ -19,7 +19,7 @@ type Response = wrpc__http__types.Response
 type ErrorCode = wrpc__http__types.ErrorCode
 type RequestOptions = wrpc__http__types.RequestOptions
 
-func Handle(ctx__ context.Context, wrpc__ wrpc.Client, request *wrpc__http__types.Request, options *RequestOptions) (r0__ *wrpc.Result[Response, ErrorCode], close__ func() error, err__ error) {
+func Handle(ctx__ context.Context, wrpc__ wrpc.Invoker, request *wrpc__http__types.Request, options *RequestOptions) (r0__ *wrpc.Result[Response, ErrorCode], close__ func() error, err__ error) {
 	if err__ = wrpc__.Invoke(ctx__, "wrpc:http/outgoing-handler@0.1.0", "handle", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		var buf__ bytes.Buffer

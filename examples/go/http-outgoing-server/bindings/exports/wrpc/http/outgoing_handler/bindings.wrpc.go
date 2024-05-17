@@ -24,7 +24,7 @@ type Handler interface {
 	Handle(ctx__ context.Context, request *wrpc__http__types.Request, options *RequestOptions) (*wrpc.Result[Response, ErrorCode], error)
 }
 
-func ServeInterface(c wrpc.Client, h Handler) (stop func() error, err error) {
+func ServeInterface(c wrpc.Server, h Handler) (stop func() error, err error) {
 	stops := make([]func() error, 0, 1)
 	stop = func() error {
 		for _, stop := range stops {
