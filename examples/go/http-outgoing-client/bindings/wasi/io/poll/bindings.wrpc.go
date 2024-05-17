@@ -17,7 +17,7 @@ import (
 // Return the readiness of a pollable. This function never blocks.
 //
 // Returns `true` when the pollable is ready, and `false` otherwise.
-func PollableReady(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[Pollable]) (r0__ bool, close__ func() error, err__ error) {
+func Pollable_Ready(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[Pollable]) (r0__ bool, close__ func() error, err__ error) {
 	if err__ = wrpc__.Invoke(ctx__, string(self), "ready", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		var buf__ bytes.Buffer
@@ -85,7 +85,7 @@ func PollableReady(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[P
 //
 // This function is equivalent to calling `poll.poll` on a list
 // containing only this pollable.
-func PollableBlock(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[Pollable]) (close__ func() error, err__ error) {
+func Pollable_Block(ctx__ context.Context, wrpc__ wrpc.Client, self wrpc.Borrow[Pollable]) (close__ func() error, err__ error) {
 	if err__ = wrpc__.Invoke(ctx__, string(self), "block", func(w__ wrpc.IndexWriter, r__ wrpc.IndexReadCloser) error {
 		close__ = r__.Close
 		var buf__ bytes.Buffer

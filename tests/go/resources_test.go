@@ -85,7 +85,7 @@ func TestResources(t *testing.T) {
 
 	{
 		slog.DebugContext(ctx, "calling `wrpc-test:integration/resources.[method]foo.bar`")
-		v, shutdown, err := resources.FooBar(ctx, client, foo.Borrow())
+		v, shutdown, err := resources.Foo_Bar(ctx, client, foo.Borrow())
 		if err != nil {
 			t.Errorf("failed to call `wrpc-test:integration/resources.[method]foo.bar`: %s", err)
 			return
@@ -136,7 +136,7 @@ func TestResources(t *testing.T) {
 
 	{
 		slog.DebugContext(ctx, "calling `wrpc-test:integration/resources.[static]foo.foo`")
-		v, shutdown, err := resources.FooFoo(ctx, client, foo)
+		v, shutdown, err := resources.Foo_Foo(ctx, client, foo)
 		if err != nil {
 			t.Errorf("failed to call `wrpc-test:integration/resources.bar`: %s", err)
 			return

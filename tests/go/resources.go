@@ -40,7 +40,7 @@ func (h *ResourcesHandler) Foo(ctx context.Context) (resources.HandlerFoo, conte
 	return v, ctx, id.String(), nil
 }
 
-func (h *ResourcesHandler) FooFoo(ctx context.Context, v wrpc.Own[resources.Foo]) (string, error) {
+func (h *ResourcesHandler) Foo_Foo(ctx context.Context, v wrpc.Own[resources.Foo]) (string, error) {
 	stored, ok := h.Load(string(v))
 	if !ok {
 		return "", fmt.Errorf("unknown resource ID `%s`", string(v))

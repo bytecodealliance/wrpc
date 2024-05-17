@@ -5,6 +5,7 @@ use heck::ToUpperCamelCase;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt::Write as _;
 use std::mem;
+use wit_bindgen_core::wit_parser::WorldItem;
 use wit_bindgen_core::{
     uwrite, uwriteln,
     wit_parser::{
@@ -567,7 +568,7 @@ impl InterfaceGenerator<'_> {
 	    }}
 	    return "#,
         );
-        self.print_option_element_ptr(ty, false);
+        self.print_nillable_ptr(ty, false, false);
         uwrite!(
             self.src,
             r#"v, nil
@@ -615,7 +616,7 @@ impl InterfaceGenerator<'_> {
             self.push_str("return &");
             self.print_result(ty);
             self.push_str("{ Ok: ");
-            self.print_result_element_ptr(ok, false);
+            self.print_nillable_ptr(ok, true, false);
         } else {
             self.push_str("var v struct{}\n");
             self.push_str("return &");
@@ -638,7 +639,7 @@ impl InterfaceGenerator<'_> {
             self.push_str("return &");
             self.print_result(ty);
             self.push_str("{ Err: ");
-            self.print_result_element_ptr(err, false);
+            self.print_nillable_ptr(err, true, false);
         } else {
             self.push_str("var v struct{}\n");
             self.push_str("return &");
@@ -844,10 +845,10 @@ impl InterfaceGenerator<'_> {
             _ => {
                 let wrpc = self.deps.wrpc();
 
-                uwrite!(self.src, "func(r {wrpc}.IndexReader, path ...uint32) (");
+                uwrite!(self.src, "func(r {wrpc}.IndexReader, path ...uint32) (*");
                 self.print_tuple(ty, true);
                 self.push_str(", error) {\n");
-                self.push_str("v := ");
+                self.push_str("v := &");
                 self.print_tuple(ty, false);
                 self.push_str("{}\n");
                 self.push_str("var err error\n");
@@ -1161,15 +1162,14 @@ impl InterfaceGenerator<'_> {
         let io = self.deps.io();
         let slog = self.deps.slog();
         let utf8 = self.deps.utf8();
-        let wrpc = self.deps.wrpc();
         uwrite!(
             self.src,
-            "func(r interface {{ {io}.ByteReader; {io}.Reader }}) ({wrpc}.Own[",
+            "func(r interface {{ {io}.ByteReader; {io}.Reader }}) (",
         );
-        self.print_tyid(id, true);
+        self.print_own(id);
         uwrite!(
             self.src,
-            r#"], error) {{
+            r#", error) {{
 	var x uint32
 	var s uint
 	for i := 0; i < 5; i++ {{
@@ -1195,12 +1195,12 @@ impl InterfaceGenerator<'_> {
             if !{utf8}.Valid(buf) {{
                 return "", {errors}.New("owned resource ID is not valid UTF-8")
             }}
-            return {wrpc}.Own["#,
+            return "#,
         );
-        self.print_tyid(id, true);
+        self.print_own(id);
         uwrite!(
             self.src,
-            r#"](buf), nil
+            r#"(buf), nil
 		}}
 		x |= uint32(b&0x7f) << s
 		s += 7
@@ -1216,15 +1216,14 @@ impl InterfaceGenerator<'_> {
         let io = self.deps.io();
         let slog = self.deps.slog();
         let utf8 = self.deps.utf8();
-        let wrpc = self.deps.wrpc();
         uwrite!(
             self.src,
-            "func(r interface {{ {io}.ByteReader; {io}.Reader }}) ({wrpc}.Borrow[",
+            "func(r interface {{ {io}.ByteReader; {io}.Reader }}) (",
         );
-        self.print_tyid(id, true);
+        self.print_borrow(id);
         uwrite!(
             self.src,
-            r#"], error) {{
+            r#", error) {{
 	var x uint32
 	var s uint
 	for i := 0; i < 5; i++ {{
@@ -1250,12 +1249,12 @@ impl InterfaceGenerator<'_> {
             if !{utf8}.Valid(buf) {{
                 return "", {errors}.New("borrowed resource ID is not valid UTF-8")
             }}
-            return {wrpc}.Borrow["#,
+            return "#,
         );
-        self.print_tyid(id, true);
+        self.print_borrow(id);
         uwrite!(
             self.src,
-            r#"](buf), nil
+            r#"(buf), nil
 		}}
 		x |= uint32(b&0x7f) << s
 		s += 7
@@ -1686,19 +1685,9 @@ impl InterfaceGenerator<'_> {
 	    {slog}.Debug("writing `option::some` payload")
         write, err := "#
         );
-
-        let param = match ty {
-            Type::Id(id) => {
-                let ty = &self.resolve.types[*id];
-                match &ty.kind {
-                    TypeDefKind::Enum(..) => "*v",
-                    TypeDefKind::List(..) => "v",
-                    _ => "*v",
-                }
-            }
-            _ => "*v",
-        };
-        self.print_write_ty(ty, param, "w");
+        let ptr = self.nillable_ptr(ty, false, true);
+        let param = format!("{ptr}v");
+        self.print_write_ty(ty, &param, "w");
         uwrite!(
             self.src,
             r#"
@@ -1743,7 +1732,9 @@ impl InterfaceGenerator<'_> {
                 r#"{slog}.Debug("writing `result::ok` payload")
                     write, err := "#
             );
-            self.print_write_ty(ty, "*v.Ok", "w");
+            let ptr = self.nillable_ptr(ty, true, true);
+            let param = format!("{ptr}v.Ok");
+            self.print_write_ty(ty, &param, "w");
             uwriteln!(
                 self.src,
                 r#"
@@ -1770,7 +1761,9 @@ impl InterfaceGenerator<'_> {
                 r#"{slog}.Debug("writing `result::err` payload")
         		write, err := "#
             );
-            self.print_write_ty(ty, "*v.Err", "w");
+            let ptr = self.nillable_ptr(ty, true, true);
+            let param = format!("{ptr}v.Err");
+            self.print_write_ty(ty, &param, "w");
             uwriteln!(
                 self.src,
                 r#"
@@ -1800,7 +1793,7 @@ impl InterfaceGenerator<'_> {
                 let wrpc = self.deps.wrpc();
 
                 self.push_str("func(v ");
-                self.print_ty(ty, true);
+                self.print_opt_ty(ty, true);
                 uwrite!(
                     self.src,
                     r#", w interface {{ {io}.ByteWriter; {io}.Writer }}) (func({wrpc}.IndexWriter) error, error) {{
@@ -1833,7 +1826,7 @@ impl InterfaceGenerator<'_> {
                 let io = self.deps.io();
                 let wrpc = self.deps.wrpc();
 
-                self.push_str("func(v ");
+                self.push_str("func(v *");
                 self.print_tuple(ty, true);
                 uwriteln!(
                     self.src,
@@ -2663,20 +2656,16 @@ impl InterfaceGenerator<'_> {
         let mut traits = BTreeMap::new();
         let mut methods = BTreeMap::new();
         let mut funcs_to_export = vec![];
-        let mut resources_to_drop = vec![];
 
         traits.insert(None, ("Handler".to_string(), (vec![], vec![])));
 
         if let Identifier::Interface(id, ..) = identifier {
             for (name, id) in &self.resolve.interfaces[id].types {
-                match self.resolve.types[*id].kind {
-                    TypeDefKind::Resource => {}
-                    _ => continue,
+                if let TypeDefKind::Resource = self.resolve.types[*id].kind {
+                    let camel = to_upper_camel_case(name);
+                    traits.insert(Some(*id), (camel, (vec![], vec![])));
+                    methods.insert(*id, vec![]);
                 }
-                resources_to_drop.push(name);
-                let camel = to_upper_camel_case(name);
-                traits.insert(Some(*id), (camel, (vec![], vec![])));
-                methods.insert(*id, vec![]);
             }
         }
 
@@ -2736,13 +2725,15 @@ impl InterfaceGenerator<'_> {
         }
 
         let (name, (interface_methods, _)) = traits.remove(&None).unwrap();
-        if !interface_methods.is_empty() || !traits.is_empty() {
-            uwriteln!(self.src, "type {name} interface {{");
-            for method in &interface_methods {
-                self.src.push_str(method);
-            }
-            uwriteln!(self.src, "}}");
+        if interface_methods.is_empty() {
+            return false;
         }
+
+        uwriteln!(self.src, "type {name} interface {{");
+        for method in &interface_methods {
+            self.src.push_str(method);
+        }
+        uwriteln!(self.src, "}}");
 
         for (trait_name, (handler_methods, client_methods)) in traits.values() {
             uwriteln!(self.src, "type Handler{trait_name} interface {{");
@@ -3122,15 +3113,27 @@ impl InterfaceGenerator<'_> {
         funcs: impl Iterator<Item = &'a Function>,
     ) {
         let mut resources = BTreeMap::new();
-
-        if let Identifier::Interface(id, ..) = identifier {
-            for (name, id) in &self.resolve.interfaces[id].types {
-                match self.resolve.types[*id].kind {
-                    TypeDefKind::Resource => {}
-                    _ => continue,
+        match identifier {
+            Identifier::Interface(id, ..) => {
+                for (name, id) in &self.resolve.interfaces[id].types {
+                    if let TypeDefKind::Resource = self.resolve.types[*id].kind {
+                        let camel = to_upper_camel_case(name);
+                        resources.insert(*id, (camel, vec![]));
+                    }
                 }
-                let camel = to_upper_camel_case(name);
-                resources.insert(*id, (camel, vec![]));
+            }
+            Identifier::World(id) => {
+                for (wk, wi) in &self.resolve.worlds[id].imports {
+                    if let WorldItem::Type(id) = wi {
+                        if let TypeDefKind::Resource = self.resolve.types[*id].kind {
+                            let WorldKey::Name(name) = wk else {
+                                panic!("unnamed world resource")
+                            };
+                            let camel = to_upper_camel_case(name);
+                            resources.insert(*id, (camel, vec![]));
+                        }
+                    }
+                }
             }
         }
         for func in funcs {
@@ -3158,10 +3161,8 @@ impl InterfaceGenerator<'_> {
             self.print_docs_and_params(func, false);
             if let FunctionKind::Constructor(id) = &func.kind {
                 self.push_str(" (r0__ ");
-                self.push_str(wrpc);
-                self.push_str(".Own[");
-                self.print_tyid(*id, true);
-                self.src.push_str("], ");
+                self.print_own(*id);
+                self.src.push_str(", ");
             } else {
                 self.src.push_str(" (");
                 for (i, ty) in func.results.iter_types().enumerate() {
@@ -3382,9 +3383,15 @@ impl InterfaceGenerator<'_> {
                     .name
                     .strip_prefix("[static]")
                     .expect("failed to strip `[static]` prefix");
-                to_upper_camel_case(name)
+                let (head, tail) = name.split_once('.').expect("failed to split on `.`");
+                format!(
+                    "{}_{}",
+                    head.to_upper_camel_case(),
+                    tail.to_upper_camel_case()
+                )
             }
-            _ => to_upper_camel_case(func.item_name()),
+            FunctionKind::Method(..) => to_upper_camel_case(func.item_name()),
+            FunctionKind::Freestanding => to_upper_camel_case(&func.name),
         }
     }
 
@@ -3396,12 +3403,13 @@ impl InterfaceGenerator<'_> {
 
         if !interface {
             self.push_str("func ");
-            if let FunctionKind::Method(..) = &func.kind {
+            if let FunctionKind::Method(..) = func.kind {
                 let name = func
                     .name
                     .strip_prefix("[method]")
                     .expect("failed to strip `[method]` prefix");
-                self.push_str(&name[..name.find('.').unwrap()].to_upper_camel_case());
+                let (head, _) = name.split_once('.').expect("failed to split on `.`");
+                self.push_str(&format!("{}_", head.to_upper_camel_case()));
             }
         }
         if self.in_import && matches!(func.kind, FunctionKind::Constructor(..)) {
@@ -3463,51 +3471,32 @@ impl InterfaceGenerator<'_> {
         name
     }
 
-    fn print_option_element_ptr(&mut self, ty: &Type, decl: bool) {
-        if let Type::Id(id) = ty {
-            match &self.resolve.types[*id].kind {
-                TypeDefKind::Tuple(Tuple { types }) if types.len() == 1 => {
-                    self.print_option_element_ptr(&types[0], decl);
-                    return;
-                }
-                TypeDefKind::Type(ty) => {
-                    self.print_option_element_ptr(ty, decl);
-                    return;
-                }
-                TypeDefKind::Handle(..) => {}
-                _ => return,
-            }
-        }
-        if decl {
-            self.push_str("*");
-        } else {
-            self.push_str("&");
-        }
-    }
-
-    fn print_result_element_ptr(&mut self, ty: &Type, decl: bool) {
+    fn nillable_ptr(&self, ty: &Type, result: bool, decl: bool) -> &'static str {
         if let Type::Id(id) = ty {
             match &self.resolve.types[*id].kind {
                 TypeDefKind::Option(..)
-                | TypeDefKind::List(..)
                 | TypeDefKind::Enum(..)
                 | TypeDefKind::Resource
                 | TypeDefKind::Handle(..) => {}
+                TypeDefKind::List(..) if result => {}
                 TypeDefKind::Tuple(Tuple { types }) if types.len() == 1 => {
-                    self.print_result_element_ptr(&types[0], decl);
-                    return;
+                    return self.nillable_ptr(&types[0], result, decl)
                 }
-                TypeDefKind::Type(ty) => {
-                    self.print_result_element_ptr(ty, decl);
-                    return;
-                }
-                _ => return,
+                TypeDefKind::Type(ty) => return self.nillable_ptr(ty, result, decl),
+                _ => return "",
             }
         }
         if decl {
-            self.push_str("*");
+            "*"
         } else {
-            self.push_str("&");
+            "&"
+        }
+    }
+
+    fn print_nillable_ptr(&mut self, ty: &Type, result: bool, decl: bool) {
+        let ptr = self.nillable_ptr(ty, result, decl);
+        if !ptr.is_empty() {
+            self.push_str(ptr);
         }
     }
 
@@ -3517,11 +3506,6 @@ impl InterfaceGenerator<'_> {
             [ty] => self.print_opt_ty(ty, decl),
             _ => {
                 let wrpc = self.deps.wrpc();
-                if decl {
-                    self.push_str("*");
-                } else {
-                    self.push_str("&");
-                }
                 self.push_str(wrpc);
                 self.push_str(".Tuple");
                 uwrite!(self.src, "{}[", types.len());
@@ -3540,9 +3524,18 @@ impl InterfaceGenerator<'_> {
             match &ty.kind {
                 TypeDefKind::Record(..)
                 | TypeDefKind::Flags(..)
-                | TypeDefKind::Tuple(..)
                 | TypeDefKind::Variant(..)
                 | TypeDefKind::Result(..) => {
+                    if decl {
+                        self.push_str("*");
+                    } else {
+                        self.push_str("&");
+                    }
+                }
+                TypeDefKind::Tuple(ty) if ty.types.len() == 1 => {
+                    self.print_opt_ptr(&ty.types[0], decl);
+                }
+                TypeDefKind::Tuple(ty) if ty.types.len() >= 2 => {
                     if decl {
                         self.push_str("*");
                     } else {
@@ -3560,18 +3553,18 @@ impl InterfaceGenerator<'_> {
             Type::Id(id) => {
                 let ty = &self.resolve.types[*id];
                 match &ty.kind {
+                    TypeDefKind::Handle(..) => self.print_tyid(*id, decl),
+                    TypeDefKind::Tuple(ty) if ty.types.len() < 2 => self.print_tuple(ty, decl),
                     TypeDefKind::Enum(..) => {
                         let name = ty.name.as_ref().expect("enum missing a name");
                         let name = self.type_path_with_name(*id, to_upper_camel_case(name));
                         self.push_str(&name);
                     }
-                    TypeDefKind::List(ty) => self.print_list(ty),
                     TypeDefKind::Option(ty) => self.print_option(ty, decl),
-                    TypeDefKind::Tuple(ty) => self.print_tuple(ty, decl),
+                    TypeDefKind::List(ty) => self.print_list(ty),
                     TypeDefKind::Future(ty) => self.print_future(ty),
                     TypeDefKind::Stream(ty) => self.print_stream(ty),
                     TypeDefKind::Type(ty) => self.print_opt_ty(ty, decl),
-                    TypeDefKind::Handle(..) => self.print_tyid(*id, decl),
                     _ => {
                         if decl {
                             self.push_str("*");
@@ -3651,6 +3644,22 @@ impl InterfaceGenerator<'_> {
         }
     }
 
+    fn print_own(&mut self, id: TypeId) {
+        let wrpc = self.deps.wrpc();
+        self.push_str(wrpc);
+        self.push_str(".Own[");
+        self.print_tyid(id, true);
+        self.push_str("]");
+    }
+
+    fn print_borrow(&mut self, id: TypeId) {
+        let wrpc = self.deps.wrpc();
+        self.push_str(wrpc);
+        self.push_str(".Borrow[");
+        self.print_tyid(id, true);
+        self.push_str("]");
+    }
+
     fn print_tyid(&mut self, id: TypeId, decl: bool) {
         let ty = &self.resolve.types[id];
         if let Some(name) = &ty.name {
@@ -3659,31 +3668,19 @@ impl InterfaceGenerator<'_> {
             return;
         }
         match &ty.kind {
-            TypeDefKind::List(t) => self.print_list(t),
-            TypeDefKind::Option(t) => self.print_option(t, decl),
-            TypeDefKind::Result(r) => self.print_result(r),
+            TypeDefKind::List(ty) => self.print_list(ty),
+            TypeDefKind::Option(ty) => self.print_option(ty, decl),
+            TypeDefKind::Result(ty) => self.print_result(ty),
             TypeDefKind::Variant(_) => panic!("unsupported anonymous variant"),
-            TypeDefKind::Tuple(t) => self.print_tuple(t, decl),
+            TypeDefKind::Tuple(ty) => self.print_tuple(ty, decl),
             TypeDefKind::Resource => panic!("unsupported anonymous type reference: resource"),
             TypeDefKind::Record(_) => panic!("unsupported anonymous type reference: record"),
             TypeDefKind::Flags(_) => panic!("unsupported anonymous type reference: flags"),
             TypeDefKind::Enum(_) => panic!("unsupported anonymous type reference: enum"),
             TypeDefKind::Future(ty) => self.print_future(ty),
             TypeDefKind::Stream(ty) => self.print_stream(ty),
-            TypeDefKind::Handle(Handle::Own(ty)) => {
-                let wrpc = self.deps.wrpc();
-                self.push_str(wrpc);
-                self.push_str(".Own[");
-                self.print_ty(&Type::Id(*ty), decl);
-                self.push_str("]");
-            }
-            TypeDefKind::Handle(Handle::Borrow(ty)) => {
-                let wrpc = self.deps.wrpc();
-                self.push_str(wrpc);
-                self.push_str(".Borrow[");
-                self.print_ty(&Type::Id(*ty), decl);
-                self.push_str("]");
-            }
+            TypeDefKind::Handle(Handle::Own(id)) => self.print_own(*id),
+            TypeDefKind::Handle(Handle::Borrow(id)) => self.print_borrow(*id),
             TypeDefKind::Type(t) => self.print_ty(t, decl),
             TypeDefKind::Unknown => unreachable!(),
         }
