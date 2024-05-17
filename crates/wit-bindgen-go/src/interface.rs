@@ -3277,7 +3277,7 @@ impl InterfaceGenerator<'_> {
                     self.src.push_str("string(self), \"");
                 }
             }
-            self.src.push_str(rpc_func_name(&func));
+            self.src.push_str(rpc_func_name(func));
             self.src.push_str("\", ");
             uwriteln!(
                 self.src,
