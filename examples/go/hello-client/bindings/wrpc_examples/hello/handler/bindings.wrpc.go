@@ -23,7 +23,7 @@ func Hello(ctx__ context.Context, wrpc__ wrpc.Invoker) (r0__ string, close__ fun
 			io.Reader
 		}) (string, error) {
 			var x uint32
-			var s uint
+			var s uint8
 			for i := 0; i < 5; i++ {
 				slog.Debug("reading string length byte", "i", i)
 				b, err := r.ReadByte()
@@ -33,10 +33,10 @@ func Hello(ctx__ context.Context, wrpc__ wrpc.Invoker) (r0__ string, close__ fun
 					}
 					return "", fmt.Errorf("failed to read string length byte: %w", err)
 				}
+				if s == 28 && b > 0x0f {
+					return "", errors.New("string length overflows a 32-bit integer")
+				}
 				if b < 0x80 {
-					if i == 4 && b > 1 {
-						return "", errors.New("string length overflows a 32-bit integer")
-					}
 					x = x | uint32(b)<<s
 					buf := make([]byte, x)
 					slog.Debug("reading string bytes", "len", x)

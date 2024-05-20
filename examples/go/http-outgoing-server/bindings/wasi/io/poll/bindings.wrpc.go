@@ -261,7 +261,7 @@ func Poll(ctx__ context.Context, wrpc__ wrpc.Invoker, in []wrpc.Borrow[Pollable]
 						slog.Debug("reading list element", "i", i)
 						vs[i], err = func(r io.ByteReader) (uint32, error) {
 							var x uint32
-							var s uint
+							var s uint8
 							for i := 0; i < 5; i++ {
 								slog.Debug("reading u32 byte", "i", i)
 								b, err := r.ReadByte()
@@ -271,10 +271,10 @@ func Poll(ctx__ context.Context, wrpc__ wrpc.Invoker, in []wrpc.Borrow[Pollable]
 									}
 									return x, fmt.Errorf("failed to read u32 byte: %w", err)
 								}
+								if s == 28 && b > 0x0f {
+									return x, errors.New("varint overflows a 32-bit integer")
+								}
 								if b < 0x80 {
-									if i == 4 && b > 1 {
-										return x, errors.New("varint overflows a 32-bit integer")
-									}
 									return x | uint32(b)<<s, nil
 								}
 								x |= uint32(b&0x7f) << s

@@ -2368,10 +2368,10 @@ func HttpErrorCode(ctx__ context.Context, wrpc__ wrpc.Invoker, err wrpc.Borrow[I
 								}
 								return x, fmt.Errorf("failed to read u8 discriminant byte: %w", err)
 							}
+							if s == 7 && b > 0x01 {
+								return x, errors.New("discriminant overflows an 8-bit integer")
+							}
 							if b < 0x80 {
-								if i == 2 && b > 1 {
-									return x, errors.New("discriminant overflows an 8-bit integer")
-								}
 								return x | uint8(b)<<s, nil
 							}
 							x |= uint8(b&0x7f) << s
@@ -2406,7 +2406,7 @@ func HttpErrorCode(ctx__ context.Context, wrpc__ wrpc.Invoker, err wrpc.Borrow[I
 										io.Reader
 									}) (string, error) {
 										var x uint32
-										var s uint
+										var s uint8
 										for i := 0; i < 5; i++ {
 											slog.Debug("reading string length byte", "i", i)
 											b, err := r.ReadByte()
@@ -2416,10 +2416,10 @@ func HttpErrorCode(ctx__ context.Context, wrpc__ wrpc.Invoker, err wrpc.Borrow[I
 												}
 												return "", fmt.Errorf("failed to read string length byte: %w", err)
 											}
+											if s == 28 && b > 0x0f {
+												return "", errors.New("string length overflows a 32-bit integer")
+											}
 											if b < 0x80 {
-												if i == 4 && b > 1 {
-													return "", errors.New("string length overflows a 32-bit integer")
-												}
 												x = x | uint32(b)<<s
 												buf := make([]byte, x)
 												slog.Debug("reading string bytes", "len", x)
@@ -2462,7 +2462,7 @@ func HttpErrorCode(ctx__ context.Context, wrpc__ wrpc.Invoker, err wrpc.Borrow[I
 									slog.Debug("reading `option::some` payload")
 									v, err := func(r io.ByteReader) (uint16, error) {
 										var x uint16
-										var s uint
+										var s uint8
 										for i := 0; i < 3; i++ {
 											slog.Debug("reading u16 byte", "i", i)
 											b, err := r.ReadByte()
@@ -2472,10 +2472,10 @@ func HttpErrorCode(ctx__ context.Context, wrpc__ wrpc.Invoker, err wrpc.Borrow[I
 												}
 												return x, fmt.Errorf("failed to read u16 byte: %w", err)
 											}
+											if s == 14 && b > 0x03 {
+												return x, errors.New("varint overflows a 16-bit integer")
+											}
 											if b < 0x80 {
-												if i == 2 && b > 1 {
-													return x, errors.New("varint overflows a 16-bit integer")
-												}
 												return x | uint16(b)<<s, nil
 											}
 											x |= uint16(b&0x7f) << s
@@ -2576,7 +2576,7 @@ func HttpErrorCode(ctx__ context.Context, wrpc__ wrpc.Invoker, err wrpc.Borrow[I
 										io.Reader
 									}) (string, error) {
 										var x uint32
-										var s uint
+										var s uint8
 										for i := 0; i < 5; i++ {
 											slog.Debug("reading string length byte", "i", i)
 											b, err := r.ReadByte()
@@ -2586,10 +2586,10 @@ func HttpErrorCode(ctx__ context.Context, wrpc__ wrpc.Invoker, err wrpc.Borrow[I
 												}
 												return "", fmt.Errorf("failed to read string length byte: %w", err)
 											}
+											if s == 28 && b > 0x0f {
+												return "", errors.New("string length overflows a 32-bit integer")
+											}
 											if b < 0x80 {
-												if i == 4 && b > 1 {
-													return "", errors.New("string length overflows a 32-bit integer")
-												}
 												x = x | uint32(b)<<s
 												buf := make([]byte, x)
 												slog.Debug("reading string bytes", "len", x)
@@ -2642,7 +2642,7 @@ func HttpErrorCode(ctx__ context.Context, wrpc__ wrpc.Invoker, err wrpc.Borrow[I
 								slog.Debug("reading `option::some` payload")
 								v, err := func(r io.ByteReader) (uint64, error) {
 									var x uint64
-									var s uint
+									var s uint8
 									for i := 0; i < 10; i++ {
 										slog.Debug("reading u64 byte", "i", i)
 										b, err := r.ReadByte()
@@ -2652,10 +2652,10 @@ func HttpErrorCode(ctx__ context.Context, wrpc__ wrpc.Invoker, err wrpc.Borrow[I
 											}
 											return x, fmt.Errorf("failed to read u64 byte: %w", err)
 										}
+										if s == 63 && b > 0x01 {
+											return x, errors.New("varint overflows a 64-bit integer")
+										}
 										if b < 0x80 {
-											if i == 9 && b > 1 {
-												return x, errors.New("varint overflows a 64-bit integer")
-											}
 											return x | uint64(b)<<s, nil
 										}
 										x |= uint64(b&0x7f) << s
@@ -2695,7 +2695,7 @@ func HttpErrorCode(ctx__ context.Context, wrpc__ wrpc.Invoker, err wrpc.Borrow[I
 								slog.Debug("reading `option::some` payload")
 								v, err := func(r io.ByteReader) (uint32, error) {
 									var x uint32
-									var s uint
+									var s uint8
 									for i := 0; i < 5; i++ {
 										slog.Debug("reading u32 byte", "i", i)
 										b, err := r.ReadByte()
@@ -2705,10 +2705,10 @@ func HttpErrorCode(ctx__ context.Context, wrpc__ wrpc.Invoker, err wrpc.Borrow[I
 											}
 											return x, fmt.Errorf("failed to read u32 byte: %w", err)
 										}
+										if s == 28 && b > 0x0f {
+											return x, errors.New("varint overflows a 32-bit integer")
+										}
 										if b < 0x80 {
-											if i == 4 && b > 1 {
-												return x, errors.New("varint overflows a 32-bit integer")
-											}
 											return x | uint32(b)<<s, nil
 										}
 										x |= uint32(b&0x7f) << s
@@ -2760,7 +2760,7 @@ func HttpErrorCode(ctx__ context.Context, wrpc__ wrpc.Invoker, err wrpc.Borrow[I
 												io.Reader
 											}) (string, error) {
 												var x uint32
-												var s uint
+												var s uint8
 												for i := 0; i < 5; i++ {
 													slog.Debug("reading string length byte", "i", i)
 													b, err := r.ReadByte()
@@ -2770,10 +2770,10 @@ func HttpErrorCode(ctx__ context.Context, wrpc__ wrpc.Invoker, err wrpc.Borrow[I
 														}
 														return "", fmt.Errorf("failed to read string length byte: %w", err)
 													}
+													if s == 28 && b > 0x0f {
+														return "", errors.New("string length overflows a 32-bit integer")
+													}
 													if b < 0x80 {
-														if i == 4 && b > 1 {
-															return "", errors.New("string length overflows a 32-bit integer")
-														}
 														x = x | uint32(b)<<s
 														buf := make([]byte, x)
 														slog.Debug("reading string bytes", "len", x)
@@ -2816,7 +2816,7 @@ func HttpErrorCode(ctx__ context.Context, wrpc__ wrpc.Invoker, err wrpc.Borrow[I
 											slog.Debug("reading `option::some` payload")
 											v, err := func(r io.ByteReader) (uint32, error) {
 												var x uint32
-												var s uint
+												var s uint8
 												for i := 0; i < 5; i++ {
 													slog.Debug("reading u32 byte", "i", i)
 													b, err := r.ReadByte()
@@ -2826,10 +2826,10 @@ func HttpErrorCode(ctx__ context.Context, wrpc__ wrpc.Invoker, err wrpc.Borrow[I
 														}
 														return x, fmt.Errorf("failed to read u32 byte: %w", err)
 													}
+													if s == 28 && b > 0x0f {
+														return x, errors.New("varint overflows a 32-bit integer")
+													}
 													if b < 0x80 {
-														if i == 4 && b > 1 {
-															return x, errors.New("varint overflows a 32-bit integer")
-														}
 														return x | uint32(b)<<s, nil
 													}
 													x |= uint32(b&0x7f) << s
@@ -2876,7 +2876,7 @@ func HttpErrorCode(ctx__ context.Context, wrpc__ wrpc.Invoker, err wrpc.Borrow[I
 								slog.Debug("reading `option::some` payload")
 								v, err := func(r io.ByteReader) (uint32, error) {
 									var x uint32
-									var s uint
+									var s uint8
 									for i := 0; i < 5; i++ {
 										slog.Debug("reading u32 byte", "i", i)
 										b, err := r.ReadByte()
@@ -2886,10 +2886,10 @@ func HttpErrorCode(ctx__ context.Context, wrpc__ wrpc.Invoker, err wrpc.Borrow[I
 											}
 											return x, fmt.Errorf("failed to read u32 byte: %w", err)
 										}
+										if s == 28 && b > 0x0f {
+											return x, errors.New("varint overflows a 32-bit integer")
+										}
 										if b < 0x80 {
-											if i == 4 && b > 1 {
-												return x, errors.New("varint overflows a 32-bit integer")
-											}
 											return x | uint32(b)<<s, nil
 										}
 										x |= uint32(b&0x7f) << s
@@ -2930,7 +2930,7 @@ func HttpErrorCode(ctx__ context.Context, wrpc__ wrpc.Invoker, err wrpc.Borrow[I
 										io.Reader
 									}) (string, error) {
 										var x uint32
-										var s uint
+										var s uint8
 										for i := 0; i < 5; i++ {
 											slog.Debug("reading string length byte", "i", i)
 											b, err := r.ReadByte()
@@ -2940,10 +2940,10 @@ func HttpErrorCode(ctx__ context.Context, wrpc__ wrpc.Invoker, err wrpc.Borrow[I
 												}
 												return "", fmt.Errorf("failed to read string length byte: %w", err)
 											}
+											if s == 28 && b > 0x0f {
+												return "", errors.New("string length overflows a 32-bit integer")
+											}
 											if b < 0x80 {
-												if i == 4 && b > 1 {
-													return "", errors.New("string length overflows a 32-bit integer")
-												}
 												x = x | uint32(b)<<s
 												buf := make([]byte, x)
 												slog.Debug("reading string bytes", "len", x)
@@ -2986,7 +2986,7 @@ func HttpErrorCode(ctx__ context.Context, wrpc__ wrpc.Invoker, err wrpc.Borrow[I
 									slog.Debug("reading `option::some` payload")
 									v, err := func(r io.ByteReader) (uint32, error) {
 										var x uint32
-										var s uint
+										var s uint8
 										for i := 0; i < 5; i++ {
 											slog.Debug("reading u32 byte", "i", i)
 											b, err := r.ReadByte()
@@ -2996,10 +2996,10 @@ func HttpErrorCode(ctx__ context.Context, wrpc__ wrpc.Invoker, err wrpc.Borrow[I
 												}
 												return x, fmt.Errorf("failed to read u32 byte: %w", err)
 											}
+											if s == 28 && b > 0x0f {
+												return x, errors.New("varint overflows a 32-bit integer")
+											}
 											if b < 0x80 {
-												if i == 4 && b > 1 {
-													return x, errors.New("varint overflows a 32-bit integer")
-												}
 												return x | uint32(b)<<s, nil
 											}
 											x |= uint32(b&0x7f) << s
@@ -3040,7 +3040,7 @@ func HttpErrorCode(ctx__ context.Context, wrpc__ wrpc.Invoker, err wrpc.Borrow[I
 								slog.Debug("reading `option::some` payload")
 								v, err := func(r io.ByteReader) (uint32, error) {
 									var x uint32
-									var s uint
+									var s uint8
 									for i := 0; i < 5; i++ {
 										slog.Debug("reading u32 byte", "i", i)
 										b, err := r.ReadByte()
@@ -3050,10 +3050,10 @@ func HttpErrorCode(ctx__ context.Context, wrpc__ wrpc.Invoker, err wrpc.Borrow[I
 											}
 											return x, fmt.Errorf("failed to read u32 byte: %w", err)
 										}
+										if s == 28 && b > 0x0f {
+											return x, errors.New("varint overflows a 32-bit integer")
+										}
 										if b < 0x80 {
-											if i == 4 && b > 1 {
-												return x, errors.New("varint overflows a 32-bit integer")
-											}
 											return x | uint32(b)<<s, nil
 										}
 										x |= uint32(b&0x7f) << s
@@ -3094,7 +3094,7 @@ func HttpErrorCode(ctx__ context.Context, wrpc__ wrpc.Invoker, err wrpc.Borrow[I
 										io.Reader
 									}) (string, error) {
 										var x uint32
-										var s uint
+										var s uint8
 										for i := 0; i < 5; i++ {
 											slog.Debug("reading string length byte", "i", i)
 											b, err := r.ReadByte()
@@ -3104,10 +3104,10 @@ func HttpErrorCode(ctx__ context.Context, wrpc__ wrpc.Invoker, err wrpc.Borrow[I
 												}
 												return "", fmt.Errorf("failed to read string length byte: %w", err)
 											}
+											if s == 28 && b > 0x0f {
+												return "", errors.New("string length overflows a 32-bit integer")
+											}
 											if b < 0x80 {
-												if i == 4 && b > 1 {
-													return "", errors.New("string length overflows a 32-bit integer")
-												}
 												x = x | uint32(b)<<s
 												buf := make([]byte, x)
 												slog.Debug("reading string bytes", "len", x)
@@ -3150,7 +3150,7 @@ func HttpErrorCode(ctx__ context.Context, wrpc__ wrpc.Invoker, err wrpc.Borrow[I
 									slog.Debug("reading `option::some` payload")
 									v, err := func(r io.ByteReader) (uint32, error) {
 										var x uint32
-										var s uint
+										var s uint8
 										for i := 0; i < 5; i++ {
 											slog.Debug("reading u32 byte", "i", i)
 											b, err := r.ReadByte()
@@ -3160,10 +3160,10 @@ func HttpErrorCode(ctx__ context.Context, wrpc__ wrpc.Invoker, err wrpc.Borrow[I
 												}
 												return x, fmt.Errorf("failed to read u32 byte: %w", err)
 											}
+											if s == 28 && b > 0x0f {
+												return x, errors.New("varint overflows a 32-bit integer")
+											}
 											if b < 0x80 {
-												if i == 4 && b > 1 {
-													return x, errors.New("varint overflows a 32-bit integer")
-												}
 												return x | uint32(b)<<s, nil
 											}
 											x |= uint32(b&0x7f) << s
@@ -3202,7 +3202,7 @@ func HttpErrorCode(ctx__ context.Context, wrpc__ wrpc.Invoker, err wrpc.Borrow[I
 								slog.Debug("reading `option::some` payload")
 								v, err := func(r io.ByteReader) (uint64, error) {
 									var x uint64
-									var s uint
+									var s uint8
 									for i := 0; i < 10; i++ {
 										slog.Debug("reading u64 byte", "i", i)
 										b, err := r.ReadByte()
@@ -3212,10 +3212,10 @@ func HttpErrorCode(ctx__ context.Context, wrpc__ wrpc.Invoker, err wrpc.Borrow[I
 											}
 											return x, fmt.Errorf("failed to read u64 byte: %w", err)
 										}
+										if s == 63 && b > 0x01 {
+											return x, errors.New("varint overflows a 64-bit integer")
+										}
 										if b < 0x80 {
-											if i == 9 && b > 1 {
-												return x, errors.New("varint overflows a 64-bit integer")
-											}
 											return x | uint64(b)<<s, nil
 										}
 										x |= uint64(b&0x7f) << s
@@ -3249,7 +3249,7 @@ func HttpErrorCode(ctx__ context.Context, wrpc__ wrpc.Invoker, err wrpc.Borrow[I
 								slog.Debug("reading `option::some` payload")
 								v, err := func(r io.ByteReader) (uint32, error) {
 									var x uint32
-									var s uint
+									var s uint8
 									for i := 0; i < 5; i++ {
 										slog.Debug("reading u32 byte", "i", i)
 										b, err := r.ReadByte()
@@ -3259,10 +3259,10 @@ func HttpErrorCode(ctx__ context.Context, wrpc__ wrpc.Invoker, err wrpc.Borrow[I
 											}
 											return x, fmt.Errorf("failed to read u32 byte: %w", err)
 										}
+										if s == 28 && b > 0x0f {
+											return x, errors.New("varint overflows a 32-bit integer")
+										}
 										if b < 0x80 {
-											if i == 4 && b > 1 {
-												return x, errors.New("varint overflows a 32-bit integer")
-											}
 											return x | uint32(b)<<s, nil
 										}
 										x |= uint32(b&0x7f) << s
@@ -3303,7 +3303,7 @@ func HttpErrorCode(ctx__ context.Context, wrpc__ wrpc.Invoker, err wrpc.Borrow[I
 										io.Reader
 									}) (string, error) {
 										var x uint32
-										var s uint
+										var s uint8
 										for i := 0; i < 5; i++ {
 											slog.Debug("reading string length byte", "i", i)
 											b, err := r.ReadByte()
@@ -3313,10 +3313,10 @@ func HttpErrorCode(ctx__ context.Context, wrpc__ wrpc.Invoker, err wrpc.Borrow[I
 												}
 												return "", fmt.Errorf("failed to read string length byte: %w", err)
 											}
+											if s == 28 && b > 0x0f {
+												return "", errors.New("string length overflows a 32-bit integer")
+											}
 											if b < 0x80 {
-												if i == 4 && b > 1 {
-													return "", errors.New("string length overflows a 32-bit integer")
-												}
 												x = x | uint32(b)<<s
 												buf := make([]byte, x)
 												slog.Debug("reading string bytes", "len", x)
@@ -3359,7 +3359,7 @@ func HttpErrorCode(ctx__ context.Context, wrpc__ wrpc.Invoker, err wrpc.Borrow[I
 									slog.Debug("reading `option::some` payload")
 									v, err := func(r io.ByteReader) (uint32, error) {
 										var x uint32
-										var s uint
+										var s uint8
 										for i := 0; i < 5; i++ {
 											slog.Debug("reading u32 byte", "i", i)
 											b, err := r.ReadByte()
@@ -3369,10 +3369,10 @@ func HttpErrorCode(ctx__ context.Context, wrpc__ wrpc.Invoker, err wrpc.Borrow[I
 												}
 												return x, fmt.Errorf("failed to read u32 byte: %w", err)
 											}
+											if s == 28 && b > 0x0f {
+												return x, errors.New("varint overflows a 32-bit integer")
+											}
 											if b < 0x80 {
-												if i == 4 && b > 1 {
-													return x, errors.New("varint overflows a 32-bit integer")
-												}
 												return x | uint32(b)<<s, nil
 											}
 											x |= uint32(b&0x7f) << s
@@ -3414,7 +3414,7 @@ func HttpErrorCode(ctx__ context.Context, wrpc__ wrpc.Invoker, err wrpc.Borrow[I
 									io.Reader
 								}) (string, error) {
 									var x uint32
-									var s uint
+									var s uint8
 									for i := 0; i < 5; i++ {
 										slog.Debug("reading string length byte", "i", i)
 										b, err := r.ReadByte()
@@ -3424,10 +3424,10 @@ func HttpErrorCode(ctx__ context.Context, wrpc__ wrpc.Invoker, err wrpc.Borrow[I
 											}
 											return "", fmt.Errorf("failed to read string length byte: %w", err)
 										}
+										if s == 28 && b > 0x0f {
+											return "", errors.New("string length overflows a 32-bit integer")
+										}
 										if b < 0x80 {
-											if i == 4 && b > 1 {
-												return "", errors.New("string length overflows a 32-bit integer")
-											}
 											x = x | uint32(b)<<s
 											buf := make([]byte, x)
 											slog.Debug("reading string bytes", "len", x)
@@ -3474,7 +3474,7 @@ func HttpErrorCode(ctx__ context.Context, wrpc__ wrpc.Invoker, err wrpc.Borrow[I
 									io.Reader
 								}) (string, error) {
 									var x uint32
-									var s uint
+									var s uint8
 									for i := 0; i < 5; i++ {
 										slog.Debug("reading string length byte", "i", i)
 										b, err := r.ReadByte()
@@ -3484,10 +3484,10 @@ func HttpErrorCode(ctx__ context.Context, wrpc__ wrpc.Invoker, err wrpc.Borrow[I
 											}
 											return "", fmt.Errorf("failed to read string length byte: %w", err)
 										}
+										if s == 28 && b > 0x0f {
+											return "", errors.New("string length overflows a 32-bit integer")
+										}
 										if b < 0x80 {
-											if i == 4 && b > 1 {
-												return "", errors.New("string length overflows a 32-bit integer")
-											}
 											x = x | uint32(b)<<s
 											buf := make([]byte, x)
 											slog.Debug("reading string bytes", "len", x)
@@ -3544,7 +3544,7 @@ func HttpErrorCode(ctx__ context.Context, wrpc__ wrpc.Invoker, err wrpc.Borrow[I
 									io.Reader
 								}) (string, error) {
 									var x uint32
-									var s uint
+									var s uint8
 									for i := 0; i < 5; i++ {
 										slog.Debug("reading string length byte", "i", i)
 										b, err := r.ReadByte()
@@ -3554,10 +3554,10 @@ func HttpErrorCode(ctx__ context.Context, wrpc__ wrpc.Invoker, err wrpc.Borrow[I
 											}
 											return "", fmt.Errorf("failed to read string length byte: %w", err)
 										}
+										if s == 28 && b > 0x0f {
+											return "", errors.New("string length overflows a 32-bit integer")
+										}
 										if b < 0x80 {
-											if i == 4 && b > 1 {
-												return "", errors.New("string length overflows a 32-bit integer")
-											}
 											x = x | uint32(b)<<s
 											buf := make([]byte, x)
 											slog.Debug("reading string bytes", "len", x)
@@ -3944,10 +3944,10 @@ func Fields_FromList(ctx__ context.Context, wrpc__ wrpc.Invoker, entries []*wrpc
 								}
 								return x, fmt.Errorf("failed to read u8 discriminant byte: %w", err)
 							}
+							if s == 7 && b > 0x01 {
+								return x, errors.New("discriminant overflows an 8-bit integer")
+							}
 							if b < 0x80 {
-								if i == 2 && b > 1 {
-									return x, errors.New("discriminant overflows an 8-bit integer")
-								}
 								return x | uint8(b)<<s, nil
 							}
 							x |= uint8(b&0x7f) << s
@@ -4435,10 +4435,10 @@ func Fields_Set(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borrow[Fie
 								}
 								return x, fmt.Errorf("failed to read u8 discriminant byte: %w", err)
 							}
+							if s == 7 && b > 0x01 {
+								return x, errors.New("discriminant overflows an 8-bit integer")
+							}
 							if b < 0x80 {
-								if i == 2 && b > 1 {
-									return x, errors.New("discriminant overflows an 8-bit integer")
-								}
 								return x | uint8(b)<<s, nil
 							}
 							x |= uint8(b&0x7f) << s
@@ -4572,10 +4572,10 @@ func Fields_Delete(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borrow[
 								}
 								return x, fmt.Errorf("failed to read u8 discriminant byte: %w", err)
 							}
+							if s == 7 && b > 0x01 {
+								return x, errors.New("discriminant overflows an 8-bit integer")
+							}
 							if b < 0x80 {
-								if i == 2 && b > 1 {
-									return x, errors.New("discriminant overflows an 8-bit integer")
-								}
 								return x | uint8(b)<<s, nil
 							}
 							x |= uint8(b&0x7f) << s
@@ -4774,10 +4774,10 @@ func Fields_Append(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borrow[
 								}
 								return x, fmt.Errorf("failed to read u8 discriminant byte: %w", err)
 							}
+							if s == 7 && b > 0x01 {
+								return x, errors.New("discriminant overflows an 8-bit integer")
+							}
 							if b < 0x80 {
-								if i == 2 && b > 1 {
-									return x, errors.New("discriminant overflows an 8-bit integer")
-								}
 								return x | uint8(b)<<s, nil
 							}
 							x |= uint8(b&0x7f) << s
@@ -4890,7 +4890,7 @@ func Fields_Entries(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borrow
 									io.Reader
 								}) (string, error) {
 									var x uint32
-									var s uint
+									var s uint8
 									for i := 0; i < 5; i++ {
 										slog.Debug("reading string length byte", "i", i)
 										b, err := r.ReadByte()
@@ -4900,10 +4900,10 @@ func Fields_Entries(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borrow
 											}
 											return "", fmt.Errorf("failed to read string length byte: %w", err)
 										}
+										if s == 28 && b > 0x0f {
+											return "", errors.New("string length overflows a 32-bit integer")
+										}
 										if b < 0x80 {
-											if i == 4 && b > 1 {
-												return "", errors.New("string length overflows a 32-bit integer")
-											}
 											x = x | uint32(b)<<s
 											buf := make([]byte, x)
 											slog.Debug("reading string bytes", "len", x)
@@ -5125,10 +5125,10 @@ func IncomingRequest_Method(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrp
 						}
 						return x, fmt.Errorf("failed to read u8 discriminant byte: %w", err)
 					}
+					if s == 7 && b > 0x01 {
+						return x, errors.New("discriminant overflows an 8-bit integer")
+					}
 					if b < 0x80 {
-						if i == 2 && b > 1 {
-							return x, errors.New("discriminant overflows an 8-bit integer")
-						}
 						return x | uint8(b)<<s, nil
 					}
 					x |= uint8(b&0x7f) << s
@@ -5164,7 +5164,7 @@ func IncomingRequest_Method(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrp
 					io.Reader
 				}) (string, error) {
 					var x uint32
-					var s uint
+					var s uint8
 					for i := 0; i < 5; i++ {
 						slog.Debug("reading string length byte", "i", i)
 						b, err := r.ReadByte()
@@ -5174,10 +5174,10 @@ func IncomingRequest_Method(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrp
 							}
 							return "", fmt.Errorf("failed to read string length byte: %w", err)
 						}
+						if s == 28 && b > 0x0f {
+							return "", errors.New("string length overflows a 32-bit integer")
+						}
 						if b < 0x80 {
-							if i == 4 && b > 1 {
-								return "", errors.New("string length overflows a 32-bit integer")
-							}
 							x = x | uint32(b)<<s
 							buf := make([]byte, x)
 							slog.Debug("reading string bytes", "len", x)
@@ -5267,7 +5267,7 @@ func IncomingRequest_PathWithQuery(ctx__ context.Context, wrpc__ wrpc.Invoker, s
 					io.Reader
 				}) (string, error) {
 					var x uint32
-					var s uint
+					var s uint8
 					for i := 0; i < 5; i++ {
 						slog.Debug("reading string length byte", "i", i)
 						b, err := r.ReadByte()
@@ -5277,10 +5277,10 @@ func IncomingRequest_PathWithQuery(ctx__ context.Context, wrpc__ wrpc.Invoker, s
 							}
 							return "", fmt.Errorf("failed to read string length byte: %w", err)
 						}
+						if s == 28 && b > 0x0f {
+							return "", errors.New("string length overflows a 32-bit integer")
+						}
 						if b < 0x80 {
-							if i == 4 && b > 1 {
-								return "", errors.New("string length overflows a 32-bit integer")
-							}
 							x = x | uint32(b)<<s
 							buf := make([]byte, x)
 							slog.Debug("reading string bytes", "len", x)
@@ -5379,10 +5379,10 @@ func IncomingRequest_Scheme(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrp
 								}
 								return x, fmt.Errorf("failed to read u8 discriminant byte: %w", err)
 							}
+							if s == 7 && b > 0x01 {
+								return x, errors.New("discriminant overflows an 8-bit integer")
+							}
 							if b < 0x80 {
-								if i == 2 && b > 1 {
-									return x, errors.New("discriminant overflows an 8-bit integer")
-								}
 								return x | uint8(b)<<s, nil
 							}
 							x |= uint8(b&0x7f) << s
@@ -5404,7 +5404,7 @@ func IncomingRequest_Scheme(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrp
 							io.Reader
 						}) (string, error) {
 							var x uint32
-							var s uint
+							var s uint8
 							for i := 0; i < 5; i++ {
 								slog.Debug("reading string length byte", "i", i)
 								b, err := r.ReadByte()
@@ -5414,10 +5414,10 @@ func IncomingRequest_Scheme(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrp
 									}
 									return "", fmt.Errorf("failed to read string length byte: %w", err)
 								}
+								if s == 28 && b > 0x0f {
+									return "", errors.New("string length overflows a 32-bit integer")
+								}
 								if b < 0x80 {
-									if i == 4 && b > 1 {
-										return "", errors.New("string length overflows a 32-bit integer")
-									}
 									x = x | uint32(b)<<s
 									buf := make([]byte, x)
 									slog.Debug("reading string bytes", "len", x)
@@ -5515,7 +5515,7 @@ func IncomingRequest_Authority(ctx__ context.Context, wrpc__ wrpc.Invoker, self 
 					io.Reader
 				}) (string, error) {
 					var x uint32
-					var s uint
+					var s uint8
 					for i := 0; i < 5; i++ {
 						slog.Debug("reading string length byte", "i", i)
 						b, err := r.ReadByte()
@@ -5525,10 +5525,10 @@ func IncomingRequest_Authority(ctx__ context.Context, wrpc__ wrpc.Invoker, self 
 							}
 							return "", fmt.Errorf("failed to read string length byte: %w", err)
 						}
+						if s == 28 && b > 0x0f {
+							return "", errors.New("string length overflows a 32-bit integer")
+						}
 						if b < 0x80 {
-							if i == 4 && b > 1 {
-								return "", errors.New("string length overflows a 32-bit integer")
-							}
 							x = x | uint32(b)<<s
 							buf := make([]byte, x)
 							slog.Debug("reading string bytes", "len", x)
@@ -6014,10 +6014,10 @@ func OutgoingRequest_Method(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrp
 						}
 						return x, fmt.Errorf("failed to read u8 discriminant byte: %w", err)
 					}
+					if s == 7 && b > 0x01 {
+						return x, errors.New("discriminant overflows an 8-bit integer")
+					}
 					if b < 0x80 {
-						if i == 2 && b > 1 {
-							return x, errors.New("discriminant overflows an 8-bit integer")
-						}
 						return x | uint8(b)<<s, nil
 					}
 					x |= uint8(b&0x7f) << s
@@ -6053,7 +6053,7 @@ func OutgoingRequest_Method(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrp
 					io.Reader
 				}) (string, error) {
 					var x uint32
-					var s uint
+					var s uint8
 					for i := 0; i < 5; i++ {
 						slog.Debug("reading string length byte", "i", i)
 						b, err := r.ReadByte()
@@ -6063,10 +6063,10 @@ func OutgoingRequest_Method(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrp
 							}
 							return "", fmt.Errorf("failed to read string length byte: %w", err)
 						}
+						if s == 28 && b > 0x0f {
+							return "", errors.New("string length overflows a 32-bit integer")
+						}
 						if b < 0x80 {
-							if i == 4 && b > 1 {
-								return "", errors.New("string length overflows a 32-bit integer")
-							}
 							x = x | uint32(b)<<s
 							buf := make([]byte, x)
 							slog.Debug("reading string bytes", "len", x)
@@ -6230,7 +6230,7 @@ func OutgoingRequest_PathWithQuery(ctx__ context.Context, wrpc__ wrpc.Invoker, s
 					io.Reader
 				}) (string, error) {
 					var x uint32
-					var s uint
+					var s uint8
 					for i := 0; i < 5; i++ {
 						slog.Debug("reading string length byte", "i", i)
 						b, err := r.ReadByte()
@@ -6240,10 +6240,10 @@ func OutgoingRequest_PathWithQuery(ctx__ context.Context, wrpc__ wrpc.Invoker, s
 							}
 							return "", fmt.Errorf("failed to read string length byte: %w", err)
 						}
+						if s == 28 && b > 0x0f {
+							return "", errors.New("string length overflows a 32-bit integer")
+						}
 						if b < 0x80 {
-							if i == 4 && b > 1 {
-								return "", errors.New("string length overflows a 32-bit integer")
-							}
 							x = x | uint32(b)<<s
 							buf := make([]byte, x)
 							slog.Debug("reading string bytes", "len", x)
@@ -6458,10 +6458,10 @@ func OutgoingRequest_Scheme(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrp
 								}
 								return x, fmt.Errorf("failed to read u8 discriminant byte: %w", err)
 							}
+							if s == 7 && b > 0x01 {
+								return x, errors.New("discriminant overflows an 8-bit integer")
+							}
 							if b < 0x80 {
-								if i == 2 && b > 1 {
-									return x, errors.New("discriminant overflows an 8-bit integer")
-								}
 								return x | uint8(b)<<s, nil
 							}
 							x |= uint8(b&0x7f) << s
@@ -6483,7 +6483,7 @@ func OutgoingRequest_Scheme(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrp
 							io.Reader
 						}) (string, error) {
 							var x uint32
-							var s uint
+							var s uint8
 							for i := 0; i < 5; i++ {
 								slog.Debug("reading string length byte", "i", i)
 								b, err := r.ReadByte()
@@ -6493,10 +6493,10 @@ func OutgoingRequest_Scheme(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrp
 									}
 									return "", fmt.Errorf("failed to read string length byte: %w", err)
 								}
+								if s == 28 && b > 0x0f {
+									return "", errors.New("string length overflows a 32-bit integer")
+								}
 								if b < 0x80 {
-									if i == 4 && b > 1 {
-										return "", errors.New("string length overflows a 32-bit integer")
-									}
 									x = x | uint32(b)<<s
 									buf := make([]byte, x)
 									slog.Debug("reading string bytes", "len", x)
@@ -6691,7 +6691,7 @@ func OutgoingRequest_Authority(ctx__ context.Context, wrpc__ wrpc.Invoker, self 
 					io.Reader
 				}) (string, error) {
 					var x uint32
-					var s uint
+					var s uint8
 					for i := 0; i < 5; i++ {
 						slog.Debug("reading string length byte", "i", i)
 						b, err := r.ReadByte()
@@ -6701,10 +6701,10 @@ func OutgoingRequest_Authority(ctx__ context.Context, wrpc__ wrpc.Invoker, self 
 							}
 							return "", fmt.Errorf("failed to read string length byte: %w", err)
 						}
+						if s == 28 && b > 0x0f {
+							return "", errors.New("string length overflows a 32-bit integer")
+						}
 						if b < 0x80 {
-							if i == 4 && b > 1 {
-								return "", errors.New("string length overflows a 32-bit integer")
-							}
 							x = x | uint32(b)<<s
 							buf := make([]byte, x)
 							slog.Debug("reading string bytes", "len", x)
@@ -7055,7 +7055,7 @@ func RequestOptions_ConnectTimeout(ctx__ context.Context, wrpc__ wrpc.Invoker, s
 					v, err := func() (wasi__clocks__monotonic_clock.Duration, error) {
 						v, err := func(r io.ByteReader) (uint64, error) {
 							var x uint64
-							var s uint
+							var s uint8
 							for i := 0; i < 10; i++ {
 								slog.Debug("reading u64 byte", "i", i)
 								b, err := r.ReadByte()
@@ -7065,10 +7065,10 @@ func RequestOptions_ConnectTimeout(ctx__ context.Context, wrpc__ wrpc.Invoker, s
 									}
 									return x, fmt.Errorf("failed to read u64 byte: %w", err)
 								}
+								if s == 63 && b > 0x01 {
+									return x, errors.New("varint overflows a 64-bit integer")
+								}
 								if b < 0x80 {
-									if i == 9 && b > 1 {
-										return x, errors.New("varint overflows a 64-bit integer")
-									}
 									return x | uint64(b)<<s, nil
 								}
 								x |= uint64(b&0x7f) << s
@@ -7253,7 +7253,7 @@ func RequestOptions_FirstByteTimeout(ctx__ context.Context, wrpc__ wrpc.Invoker,
 					v, err := func() (wasi__clocks__monotonic_clock.Duration, error) {
 						v, err := func(r io.ByteReader) (uint64, error) {
 							var x uint64
-							var s uint
+							var s uint8
 							for i := 0; i < 10; i++ {
 								slog.Debug("reading u64 byte", "i", i)
 								b, err := r.ReadByte()
@@ -7263,10 +7263,10 @@ func RequestOptions_FirstByteTimeout(ctx__ context.Context, wrpc__ wrpc.Invoker,
 									}
 									return x, fmt.Errorf("failed to read u64 byte: %w", err)
 								}
+								if s == 63 && b > 0x01 {
+									return x, errors.New("varint overflows a 64-bit integer")
+								}
 								if b < 0x80 {
-									if i == 9 && b > 1 {
-										return x, errors.New("varint overflows a 64-bit integer")
-									}
 									return x | uint64(b)<<s, nil
 								}
 								x |= uint64(b&0x7f) << s
@@ -7452,7 +7452,7 @@ func RequestOptions_BetweenBytesTimeout(ctx__ context.Context, wrpc__ wrpc.Invok
 					v, err := func() (wasi__clocks__monotonic_clock.Duration, error) {
 						v, err := func(r io.ByteReader) (uint64, error) {
 							var x uint64
-							var s uint
+							var s uint8
 							for i := 0; i < 10; i++ {
 								slog.Debug("reading u64 byte", "i", i)
 								b, err := r.ReadByte()
@@ -7462,10 +7462,10 @@ func RequestOptions_BetweenBytesTimeout(ctx__ context.Context, wrpc__ wrpc.Invok
 									}
 									return x, fmt.Errorf("failed to read u64 byte: %w", err)
 								}
+								if s == 63 && b > 0x01 {
+									return x, errors.New("varint overflows a 64-bit integer")
+								}
 								if b < 0x80 {
-									if i == 9 && b > 1 {
-										return x, errors.New("varint overflows a 64-bit integer")
-									}
 									return x | uint64(b)<<s, nil
 								}
 								x |= uint64(b&0x7f) << s
@@ -7758,7 +7758,7 @@ func IncomingResponse_Status(ctx__ context.Context, wrpc__ wrpc.Invoker, self wr
 		r0__, err__ = func() (StatusCode, error) {
 			v, err := func(r io.ByteReader) (uint16, error) {
 				var x uint16
-				var s uint
+				var s uint8
 				for i := 0; i < 3; i++ {
 					slog.Debug("reading u16 byte", "i", i)
 					b, err := r.ReadByte()
@@ -7768,10 +7768,10 @@ func IncomingResponse_Status(ctx__ context.Context, wrpc__ wrpc.Invoker, self wr
 						}
 						return x, fmt.Errorf("failed to read u16 byte: %w", err)
 					}
+					if s == 14 && b > 0x03 {
+						return x, errors.New("varint overflows a 16-bit integer")
+					}
 					if b < 0x80 {
-						if i == 2 && b > 1 {
-							return x, errors.New("varint overflows a 16-bit integer")
-						}
 						return x | uint16(b)<<s, nil
 					}
 					x |= uint16(b&0x7f) << s
@@ -8436,10 +8436,10 @@ func FutureTrailers_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Bo
 												}
 												return x, fmt.Errorf("failed to read u8 discriminant byte: %w", err)
 											}
+											if s == 7 && b > 0x01 {
+												return x, errors.New("discriminant overflows an 8-bit integer")
+											}
 											if b < 0x80 {
-												if i == 2 && b > 1 {
-													return x, errors.New("discriminant overflows an 8-bit integer")
-												}
 												return x | uint8(b)<<s, nil
 											}
 											x |= uint8(b&0x7f) << s
@@ -8474,7 +8474,7 @@ func FutureTrailers_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Bo
 														io.Reader
 													}) (string, error) {
 														var x uint32
-														var s uint
+														var s uint8
 														for i := 0; i < 5; i++ {
 															slog.Debug("reading string length byte", "i", i)
 															b, err := r.ReadByte()
@@ -8484,10 +8484,10 @@ func FutureTrailers_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Bo
 																}
 																return "", fmt.Errorf("failed to read string length byte: %w", err)
 															}
+															if s == 28 && b > 0x0f {
+																return "", errors.New("string length overflows a 32-bit integer")
+															}
 															if b < 0x80 {
-																if i == 4 && b > 1 {
-																	return "", errors.New("string length overflows a 32-bit integer")
-																}
 																x = x | uint32(b)<<s
 																buf := make([]byte, x)
 																slog.Debug("reading string bytes", "len", x)
@@ -8530,7 +8530,7 @@ func FutureTrailers_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Bo
 													slog.Debug("reading `option::some` payload")
 													v, err := func(r io.ByteReader) (uint16, error) {
 														var x uint16
-														var s uint
+														var s uint8
 														for i := 0; i < 3; i++ {
 															slog.Debug("reading u16 byte", "i", i)
 															b, err := r.ReadByte()
@@ -8540,10 +8540,10 @@ func FutureTrailers_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Bo
 																}
 																return x, fmt.Errorf("failed to read u16 byte: %w", err)
 															}
+															if s == 14 && b > 0x03 {
+																return x, errors.New("varint overflows a 16-bit integer")
+															}
 															if b < 0x80 {
-																if i == 2 && b > 1 {
-																	return x, errors.New("varint overflows a 16-bit integer")
-																}
 																return x | uint16(b)<<s, nil
 															}
 															x |= uint16(b&0x7f) << s
@@ -8644,7 +8644,7 @@ func FutureTrailers_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Bo
 														io.Reader
 													}) (string, error) {
 														var x uint32
-														var s uint
+														var s uint8
 														for i := 0; i < 5; i++ {
 															slog.Debug("reading string length byte", "i", i)
 															b, err := r.ReadByte()
@@ -8654,10 +8654,10 @@ func FutureTrailers_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Bo
 																}
 																return "", fmt.Errorf("failed to read string length byte: %w", err)
 															}
+															if s == 28 && b > 0x0f {
+																return "", errors.New("string length overflows a 32-bit integer")
+															}
 															if b < 0x80 {
-																if i == 4 && b > 1 {
-																	return "", errors.New("string length overflows a 32-bit integer")
-																}
 																x = x | uint32(b)<<s
 																buf := make([]byte, x)
 																slog.Debug("reading string bytes", "len", x)
@@ -8710,7 +8710,7 @@ func FutureTrailers_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Bo
 												slog.Debug("reading `option::some` payload")
 												v, err := func(r io.ByteReader) (uint64, error) {
 													var x uint64
-													var s uint
+													var s uint8
 													for i := 0; i < 10; i++ {
 														slog.Debug("reading u64 byte", "i", i)
 														b, err := r.ReadByte()
@@ -8720,10 +8720,10 @@ func FutureTrailers_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Bo
 															}
 															return x, fmt.Errorf("failed to read u64 byte: %w", err)
 														}
+														if s == 63 && b > 0x01 {
+															return x, errors.New("varint overflows a 64-bit integer")
+														}
 														if b < 0x80 {
-															if i == 9 && b > 1 {
-																return x, errors.New("varint overflows a 64-bit integer")
-															}
 															return x | uint64(b)<<s, nil
 														}
 														x |= uint64(b&0x7f) << s
@@ -8763,7 +8763,7 @@ func FutureTrailers_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Bo
 												slog.Debug("reading `option::some` payload")
 												v, err := func(r io.ByteReader) (uint32, error) {
 													var x uint32
-													var s uint
+													var s uint8
 													for i := 0; i < 5; i++ {
 														slog.Debug("reading u32 byte", "i", i)
 														b, err := r.ReadByte()
@@ -8773,10 +8773,10 @@ func FutureTrailers_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Bo
 															}
 															return x, fmt.Errorf("failed to read u32 byte: %w", err)
 														}
+														if s == 28 && b > 0x0f {
+															return x, errors.New("varint overflows a 32-bit integer")
+														}
 														if b < 0x80 {
-															if i == 4 && b > 1 {
-																return x, errors.New("varint overflows a 32-bit integer")
-															}
 															return x | uint32(b)<<s, nil
 														}
 														x |= uint32(b&0x7f) << s
@@ -8828,7 +8828,7 @@ func FutureTrailers_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Bo
 																io.Reader
 															}) (string, error) {
 																var x uint32
-																var s uint
+																var s uint8
 																for i := 0; i < 5; i++ {
 																	slog.Debug("reading string length byte", "i", i)
 																	b, err := r.ReadByte()
@@ -8838,10 +8838,10 @@ func FutureTrailers_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Bo
 																		}
 																		return "", fmt.Errorf("failed to read string length byte: %w", err)
 																	}
+																	if s == 28 && b > 0x0f {
+																		return "", errors.New("string length overflows a 32-bit integer")
+																	}
 																	if b < 0x80 {
-																		if i == 4 && b > 1 {
-																			return "", errors.New("string length overflows a 32-bit integer")
-																		}
 																		x = x | uint32(b)<<s
 																		buf := make([]byte, x)
 																		slog.Debug("reading string bytes", "len", x)
@@ -8884,7 +8884,7 @@ func FutureTrailers_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Bo
 															slog.Debug("reading `option::some` payload")
 															v, err := func(r io.ByteReader) (uint32, error) {
 																var x uint32
-																var s uint
+																var s uint8
 																for i := 0; i < 5; i++ {
 																	slog.Debug("reading u32 byte", "i", i)
 																	b, err := r.ReadByte()
@@ -8894,10 +8894,10 @@ func FutureTrailers_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Bo
 																		}
 																		return x, fmt.Errorf("failed to read u32 byte: %w", err)
 																	}
+																	if s == 28 && b > 0x0f {
+																		return x, errors.New("varint overflows a 32-bit integer")
+																	}
 																	if b < 0x80 {
-																		if i == 4 && b > 1 {
-																			return x, errors.New("varint overflows a 32-bit integer")
-																		}
 																		return x | uint32(b)<<s, nil
 																	}
 																	x |= uint32(b&0x7f) << s
@@ -8944,7 +8944,7 @@ func FutureTrailers_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Bo
 												slog.Debug("reading `option::some` payload")
 												v, err := func(r io.ByteReader) (uint32, error) {
 													var x uint32
-													var s uint
+													var s uint8
 													for i := 0; i < 5; i++ {
 														slog.Debug("reading u32 byte", "i", i)
 														b, err := r.ReadByte()
@@ -8954,10 +8954,10 @@ func FutureTrailers_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Bo
 															}
 															return x, fmt.Errorf("failed to read u32 byte: %w", err)
 														}
+														if s == 28 && b > 0x0f {
+															return x, errors.New("varint overflows a 32-bit integer")
+														}
 														if b < 0x80 {
-															if i == 4 && b > 1 {
-																return x, errors.New("varint overflows a 32-bit integer")
-															}
 															return x | uint32(b)<<s, nil
 														}
 														x |= uint32(b&0x7f) << s
@@ -8998,7 +8998,7 @@ func FutureTrailers_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Bo
 														io.Reader
 													}) (string, error) {
 														var x uint32
-														var s uint
+														var s uint8
 														for i := 0; i < 5; i++ {
 															slog.Debug("reading string length byte", "i", i)
 															b, err := r.ReadByte()
@@ -9008,10 +9008,10 @@ func FutureTrailers_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Bo
 																}
 																return "", fmt.Errorf("failed to read string length byte: %w", err)
 															}
+															if s == 28 && b > 0x0f {
+																return "", errors.New("string length overflows a 32-bit integer")
+															}
 															if b < 0x80 {
-																if i == 4 && b > 1 {
-																	return "", errors.New("string length overflows a 32-bit integer")
-																}
 																x = x | uint32(b)<<s
 																buf := make([]byte, x)
 																slog.Debug("reading string bytes", "len", x)
@@ -9054,7 +9054,7 @@ func FutureTrailers_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Bo
 													slog.Debug("reading `option::some` payload")
 													v, err := func(r io.ByteReader) (uint32, error) {
 														var x uint32
-														var s uint
+														var s uint8
 														for i := 0; i < 5; i++ {
 															slog.Debug("reading u32 byte", "i", i)
 															b, err := r.ReadByte()
@@ -9064,10 +9064,10 @@ func FutureTrailers_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Bo
 																}
 																return x, fmt.Errorf("failed to read u32 byte: %w", err)
 															}
+															if s == 28 && b > 0x0f {
+																return x, errors.New("varint overflows a 32-bit integer")
+															}
 															if b < 0x80 {
-																if i == 4 && b > 1 {
-																	return x, errors.New("varint overflows a 32-bit integer")
-																}
 																return x | uint32(b)<<s, nil
 															}
 															x |= uint32(b&0x7f) << s
@@ -9108,7 +9108,7 @@ func FutureTrailers_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Bo
 												slog.Debug("reading `option::some` payload")
 												v, err := func(r io.ByteReader) (uint32, error) {
 													var x uint32
-													var s uint
+													var s uint8
 													for i := 0; i < 5; i++ {
 														slog.Debug("reading u32 byte", "i", i)
 														b, err := r.ReadByte()
@@ -9118,10 +9118,10 @@ func FutureTrailers_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Bo
 															}
 															return x, fmt.Errorf("failed to read u32 byte: %w", err)
 														}
+														if s == 28 && b > 0x0f {
+															return x, errors.New("varint overflows a 32-bit integer")
+														}
 														if b < 0x80 {
-															if i == 4 && b > 1 {
-																return x, errors.New("varint overflows a 32-bit integer")
-															}
 															return x | uint32(b)<<s, nil
 														}
 														x |= uint32(b&0x7f) << s
@@ -9162,7 +9162,7 @@ func FutureTrailers_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Bo
 														io.Reader
 													}) (string, error) {
 														var x uint32
-														var s uint
+														var s uint8
 														for i := 0; i < 5; i++ {
 															slog.Debug("reading string length byte", "i", i)
 															b, err := r.ReadByte()
@@ -9172,10 +9172,10 @@ func FutureTrailers_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Bo
 																}
 																return "", fmt.Errorf("failed to read string length byte: %w", err)
 															}
+															if s == 28 && b > 0x0f {
+																return "", errors.New("string length overflows a 32-bit integer")
+															}
 															if b < 0x80 {
-																if i == 4 && b > 1 {
-																	return "", errors.New("string length overflows a 32-bit integer")
-																}
 																x = x | uint32(b)<<s
 																buf := make([]byte, x)
 																slog.Debug("reading string bytes", "len", x)
@@ -9218,7 +9218,7 @@ func FutureTrailers_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Bo
 													slog.Debug("reading `option::some` payload")
 													v, err := func(r io.ByteReader) (uint32, error) {
 														var x uint32
-														var s uint
+														var s uint8
 														for i := 0; i < 5; i++ {
 															slog.Debug("reading u32 byte", "i", i)
 															b, err := r.ReadByte()
@@ -9228,10 +9228,10 @@ func FutureTrailers_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Bo
 																}
 																return x, fmt.Errorf("failed to read u32 byte: %w", err)
 															}
+															if s == 28 && b > 0x0f {
+																return x, errors.New("varint overflows a 32-bit integer")
+															}
 															if b < 0x80 {
-																if i == 4 && b > 1 {
-																	return x, errors.New("varint overflows a 32-bit integer")
-																}
 																return x | uint32(b)<<s, nil
 															}
 															x |= uint32(b&0x7f) << s
@@ -9270,7 +9270,7 @@ func FutureTrailers_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Bo
 												slog.Debug("reading `option::some` payload")
 												v, err := func(r io.ByteReader) (uint64, error) {
 													var x uint64
-													var s uint
+													var s uint8
 													for i := 0; i < 10; i++ {
 														slog.Debug("reading u64 byte", "i", i)
 														b, err := r.ReadByte()
@@ -9280,10 +9280,10 @@ func FutureTrailers_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Bo
 															}
 															return x, fmt.Errorf("failed to read u64 byte: %w", err)
 														}
+														if s == 63 && b > 0x01 {
+															return x, errors.New("varint overflows a 64-bit integer")
+														}
 														if b < 0x80 {
-															if i == 9 && b > 1 {
-																return x, errors.New("varint overflows a 64-bit integer")
-															}
 															return x | uint64(b)<<s, nil
 														}
 														x |= uint64(b&0x7f) << s
@@ -9317,7 +9317,7 @@ func FutureTrailers_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Bo
 												slog.Debug("reading `option::some` payload")
 												v, err := func(r io.ByteReader) (uint32, error) {
 													var x uint32
-													var s uint
+													var s uint8
 													for i := 0; i < 5; i++ {
 														slog.Debug("reading u32 byte", "i", i)
 														b, err := r.ReadByte()
@@ -9327,10 +9327,10 @@ func FutureTrailers_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Bo
 															}
 															return x, fmt.Errorf("failed to read u32 byte: %w", err)
 														}
+														if s == 28 && b > 0x0f {
+															return x, errors.New("varint overflows a 32-bit integer")
+														}
 														if b < 0x80 {
-															if i == 4 && b > 1 {
-																return x, errors.New("varint overflows a 32-bit integer")
-															}
 															return x | uint32(b)<<s, nil
 														}
 														x |= uint32(b&0x7f) << s
@@ -9371,7 +9371,7 @@ func FutureTrailers_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Bo
 														io.Reader
 													}) (string, error) {
 														var x uint32
-														var s uint
+														var s uint8
 														for i := 0; i < 5; i++ {
 															slog.Debug("reading string length byte", "i", i)
 															b, err := r.ReadByte()
@@ -9381,10 +9381,10 @@ func FutureTrailers_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Bo
 																}
 																return "", fmt.Errorf("failed to read string length byte: %w", err)
 															}
+															if s == 28 && b > 0x0f {
+																return "", errors.New("string length overflows a 32-bit integer")
+															}
 															if b < 0x80 {
-																if i == 4 && b > 1 {
-																	return "", errors.New("string length overflows a 32-bit integer")
-																}
 																x = x | uint32(b)<<s
 																buf := make([]byte, x)
 																slog.Debug("reading string bytes", "len", x)
@@ -9427,7 +9427,7 @@ func FutureTrailers_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Bo
 													slog.Debug("reading `option::some` payload")
 													v, err := func(r io.ByteReader) (uint32, error) {
 														var x uint32
-														var s uint
+														var s uint8
 														for i := 0; i < 5; i++ {
 															slog.Debug("reading u32 byte", "i", i)
 															b, err := r.ReadByte()
@@ -9437,10 +9437,10 @@ func FutureTrailers_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Bo
 																}
 																return x, fmt.Errorf("failed to read u32 byte: %w", err)
 															}
+															if s == 28 && b > 0x0f {
+																return x, errors.New("varint overflows a 32-bit integer")
+															}
 															if b < 0x80 {
-																if i == 4 && b > 1 {
-																	return x, errors.New("varint overflows a 32-bit integer")
-																}
 																return x | uint32(b)<<s, nil
 															}
 															x |= uint32(b&0x7f) << s
@@ -9482,7 +9482,7 @@ func FutureTrailers_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Bo
 													io.Reader
 												}) (string, error) {
 													var x uint32
-													var s uint
+													var s uint8
 													for i := 0; i < 5; i++ {
 														slog.Debug("reading string length byte", "i", i)
 														b, err := r.ReadByte()
@@ -9492,10 +9492,10 @@ func FutureTrailers_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Bo
 															}
 															return "", fmt.Errorf("failed to read string length byte: %w", err)
 														}
+														if s == 28 && b > 0x0f {
+															return "", errors.New("string length overflows a 32-bit integer")
+														}
 														if b < 0x80 {
-															if i == 4 && b > 1 {
-																return "", errors.New("string length overflows a 32-bit integer")
-															}
 															x = x | uint32(b)<<s
 															buf := make([]byte, x)
 															slog.Debug("reading string bytes", "len", x)
@@ -9542,7 +9542,7 @@ func FutureTrailers_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Bo
 													io.Reader
 												}) (string, error) {
 													var x uint32
-													var s uint
+													var s uint8
 													for i := 0; i < 5; i++ {
 														slog.Debug("reading string length byte", "i", i)
 														b, err := r.ReadByte()
@@ -9552,10 +9552,10 @@ func FutureTrailers_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Bo
 															}
 															return "", fmt.Errorf("failed to read string length byte: %w", err)
 														}
+														if s == 28 && b > 0x0f {
+															return "", errors.New("string length overflows a 32-bit integer")
+														}
 														if b < 0x80 {
-															if i == 4 && b > 1 {
-																return "", errors.New("string length overflows a 32-bit integer")
-															}
 															x = x | uint32(b)<<s
 															buf := make([]byte, x)
 															slog.Debug("reading string bytes", "len", x)
@@ -9612,7 +9612,7 @@ func FutureTrailers_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Bo
 													io.Reader
 												}) (string, error) {
 													var x uint32
-													var s uint
+													var s uint8
 													for i := 0; i < 5; i++ {
 														slog.Debug("reading string length byte", "i", i)
 														b, err := r.ReadByte()
@@ -9622,10 +9622,10 @@ func FutureTrailers_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Bo
 															}
 															return "", fmt.Errorf("failed to read string length byte: %w", err)
 														}
+														if s == 28 && b > 0x0f {
+															return "", errors.New("string length overflows a 32-bit integer")
+														}
 														if b < 0x80 {
-															if i == 4 && b > 1 {
-																return "", errors.New("string length overflows a 32-bit integer")
-															}
 															x = x | uint32(b)<<s
 															buf := make([]byte, x)
 															slog.Debug("reading string bytes", "len", x)
@@ -9825,7 +9825,7 @@ func OutgoingResponse_StatusCode(ctx__ context.Context, wrpc__ wrpc.Invoker, sel
 		r0__, err__ = func() (StatusCode, error) {
 			v, err := func(r io.ByteReader) (uint16, error) {
 				var x uint16
-				var s uint
+				var s uint8
 				for i := 0; i < 3; i++ {
 					slog.Debug("reading u16 byte", "i", i)
 					b, err := r.ReadByte()
@@ -9835,10 +9835,10 @@ func OutgoingResponse_StatusCode(ctx__ context.Context, wrpc__ wrpc.Invoker, sel
 						}
 						return x, fmt.Errorf("failed to read u16 byte: %w", err)
 					}
+					if s == 14 && b > 0x03 {
+						return x, errors.New("varint overflows a 16-bit integer")
+					}
 					if b < 0x80 {
-						if i == 2 && b > 1 {
-							return x, errors.New("varint overflows a 16-bit integer")
-						}
 						return x | uint16(b)<<s, nil
 					}
 					x |= uint16(b&0x7f) << s
@@ -10369,10 +10369,10 @@ func OutgoingBody_Finish(ctx__ context.Context, wrpc__ wrpc.Invoker, this wrpc.O
 								}
 								return x, fmt.Errorf("failed to read u8 discriminant byte: %w", err)
 							}
+							if s == 7 && b > 0x01 {
+								return x, errors.New("discriminant overflows an 8-bit integer")
+							}
 							if b < 0x80 {
-								if i == 2 && b > 1 {
-									return x, errors.New("discriminant overflows an 8-bit integer")
-								}
 								return x | uint8(b)<<s, nil
 							}
 							x |= uint8(b&0x7f) << s
@@ -10407,7 +10407,7 @@ func OutgoingBody_Finish(ctx__ context.Context, wrpc__ wrpc.Invoker, this wrpc.O
 										io.Reader
 									}) (string, error) {
 										var x uint32
-										var s uint
+										var s uint8
 										for i := 0; i < 5; i++ {
 											slog.Debug("reading string length byte", "i", i)
 											b, err := r.ReadByte()
@@ -10417,10 +10417,10 @@ func OutgoingBody_Finish(ctx__ context.Context, wrpc__ wrpc.Invoker, this wrpc.O
 												}
 												return "", fmt.Errorf("failed to read string length byte: %w", err)
 											}
+											if s == 28 && b > 0x0f {
+												return "", errors.New("string length overflows a 32-bit integer")
+											}
 											if b < 0x80 {
-												if i == 4 && b > 1 {
-													return "", errors.New("string length overflows a 32-bit integer")
-												}
 												x = x | uint32(b)<<s
 												buf := make([]byte, x)
 												slog.Debug("reading string bytes", "len", x)
@@ -10463,7 +10463,7 @@ func OutgoingBody_Finish(ctx__ context.Context, wrpc__ wrpc.Invoker, this wrpc.O
 									slog.Debug("reading `option::some` payload")
 									v, err := func(r io.ByteReader) (uint16, error) {
 										var x uint16
-										var s uint
+										var s uint8
 										for i := 0; i < 3; i++ {
 											slog.Debug("reading u16 byte", "i", i)
 											b, err := r.ReadByte()
@@ -10473,10 +10473,10 @@ func OutgoingBody_Finish(ctx__ context.Context, wrpc__ wrpc.Invoker, this wrpc.O
 												}
 												return x, fmt.Errorf("failed to read u16 byte: %w", err)
 											}
+											if s == 14 && b > 0x03 {
+												return x, errors.New("varint overflows a 16-bit integer")
+											}
 											if b < 0x80 {
-												if i == 2 && b > 1 {
-													return x, errors.New("varint overflows a 16-bit integer")
-												}
 												return x | uint16(b)<<s, nil
 											}
 											x |= uint16(b&0x7f) << s
@@ -10577,7 +10577,7 @@ func OutgoingBody_Finish(ctx__ context.Context, wrpc__ wrpc.Invoker, this wrpc.O
 										io.Reader
 									}) (string, error) {
 										var x uint32
-										var s uint
+										var s uint8
 										for i := 0; i < 5; i++ {
 											slog.Debug("reading string length byte", "i", i)
 											b, err := r.ReadByte()
@@ -10587,10 +10587,10 @@ func OutgoingBody_Finish(ctx__ context.Context, wrpc__ wrpc.Invoker, this wrpc.O
 												}
 												return "", fmt.Errorf("failed to read string length byte: %w", err)
 											}
+											if s == 28 && b > 0x0f {
+												return "", errors.New("string length overflows a 32-bit integer")
+											}
 											if b < 0x80 {
-												if i == 4 && b > 1 {
-													return "", errors.New("string length overflows a 32-bit integer")
-												}
 												x = x | uint32(b)<<s
 												buf := make([]byte, x)
 												slog.Debug("reading string bytes", "len", x)
@@ -10643,7 +10643,7 @@ func OutgoingBody_Finish(ctx__ context.Context, wrpc__ wrpc.Invoker, this wrpc.O
 								slog.Debug("reading `option::some` payload")
 								v, err := func(r io.ByteReader) (uint64, error) {
 									var x uint64
-									var s uint
+									var s uint8
 									for i := 0; i < 10; i++ {
 										slog.Debug("reading u64 byte", "i", i)
 										b, err := r.ReadByte()
@@ -10653,10 +10653,10 @@ func OutgoingBody_Finish(ctx__ context.Context, wrpc__ wrpc.Invoker, this wrpc.O
 											}
 											return x, fmt.Errorf("failed to read u64 byte: %w", err)
 										}
+										if s == 63 && b > 0x01 {
+											return x, errors.New("varint overflows a 64-bit integer")
+										}
 										if b < 0x80 {
-											if i == 9 && b > 1 {
-												return x, errors.New("varint overflows a 64-bit integer")
-											}
 											return x | uint64(b)<<s, nil
 										}
 										x |= uint64(b&0x7f) << s
@@ -10696,7 +10696,7 @@ func OutgoingBody_Finish(ctx__ context.Context, wrpc__ wrpc.Invoker, this wrpc.O
 								slog.Debug("reading `option::some` payload")
 								v, err := func(r io.ByteReader) (uint32, error) {
 									var x uint32
-									var s uint
+									var s uint8
 									for i := 0; i < 5; i++ {
 										slog.Debug("reading u32 byte", "i", i)
 										b, err := r.ReadByte()
@@ -10706,10 +10706,10 @@ func OutgoingBody_Finish(ctx__ context.Context, wrpc__ wrpc.Invoker, this wrpc.O
 											}
 											return x, fmt.Errorf("failed to read u32 byte: %w", err)
 										}
+										if s == 28 && b > 0x0f {
+											return x, errors.New("varint overflows a 32-bit integer")
+										}
 										if b < 0x80 {
-											if i == 4 && b > 1 {
-												return x, errors.New("varint overflows a 32-bit integer")
-											}
 											return x | uint32(b)<<s, nil
 										}
 										x |= uint32(b&0x7f) << s
@@ -10761,7 +10761,7 @@ func OutgoingBody_Finish(ctx__ context.Context, wrpc__ wrpc.Invoker, this wrpc.O
 												io.Reader
 											}) (string, error) {
 												var x uint32
-												var s uint
+												var s uint8
 												for i := 0; i < 5; i++ {
 													slog.Debug("reading string length byte", "i", i)
 													b, err := r.ReadByte()
@@ -10771,10 +10771,10 @@ func OutgoingBody_Finish(ctx__ context.Context, wrpc__ wrpc.Invoker, this wrpc.O
 														}
 														return "", fmt.Errorf("failed to read string length byte: %w", err)
 													}
+													if s == 28 && b > 0x0f {
+														return "", errors.New("string length overflows a 32-bit integer")
+													}
 													if b < 0x80 {
-														if i == 4 && b > 1 {
-															return "", errors.New("string length overflows a 32-bit integer")
-														}
 														x = x | uint32(b)<<s
 														buf := make([]byte, x)
 														slog.Debug("reading string bytes", "len", x)
@@ -10817,7 +10817,7 @@ func OutgoingBody_Finish(ctx__ context.Context, wrpc__ wrpc.Invoker, this wrpc.O
 											slog.Debug("reading `option::some` payload")
 											v, err := func(r io.ByteReader) (uint32, error) {
 												var x uint32
-												var s uint
+												var s uint8
 												for i := 0; i < 5; i++ {
 													slog.Debug("reading u32 byte", "i", i)
 													b, err := r.ReadByte()
@@ -10827,10 +10827,10 @@ func OutgoingBody_Finish(ctx__ context.Context, wrpc__ wrpc.Invoker, this wrpc.O
 														}
 														return x, fmt.Errorf("failed to read u32 byte: %w", err)
 													}
+													if s == 28 && b > 0x0f {
+														return x, errors.New("varint overflows a 32-bit integer")
+													}
 													if b < 0x80 {
-														if i == 4 && b > 1 {
-															return x, errors.New("varint overflows a 32-bit integer")
-														}
 														return x | uint32(b)<<s, nil
 													}
 													x |= uint32(b&0x7f) << s
@@ -10877,7 +10877,7 @@ func OutgoingBody_Finish(ctx__ context.Context, wrpc__ wrpc.Invoker, this wrpc.O
 								slog.Debug("reading `option::some` payload")
 								v, err := func(r io.ByteReader) (uint32, error) {
 									var x uint32
-									var s uint
+									var s uint8
 									for i := 0; i < 5; i++ {
 										slog.Debug("reading u32 byte", "i", i)
 										b, err := r.ReadByte()
@@ -10887,10 +10887,10 @@ func OutgoingBody_Finish(ctx__ context.Context, wrpc__ wrpc.Invoker, this wrpc.O
 											}
 											return x, fmt.Errorf("failed to read u32 byte: %w", err)
 										}
+										if s == 28 && b > 0x0f {
+											return x, errors.New("varint overflows a 32-bit integer")
+										}
 										if b < 0x80 {
-											if i == 4 && b > 1 {
-												return x, errors.New("varint overflows a 32-bit integer")
-											}
 											return x | uint32(b)<<s, nil
 										}
 										x |= uint32(b&0x7f) << s
@@ -10931,7 +10931,7 @@ func OutgoingBody_Finish(ctx__ context.Context, wrpc__ wrpc.Invoker, this wrpc.O
 										io.Reader
 									}) (string, error) {
 										var x uint32
-										var s uint
+										var s uint8
 										for i := 0; i < 5; i++ {
 											slog.Debug("reading string length byte", "i", i)
 											b, err := r.ReadByte()
@@ -10941,10 +10941,10 @@ func OutgoingBody_Finish(ctx__ context.Context, wrpc__ wrpc.Invoker, this wrpc.O
 												}
 												return "", fmt.Errorf("failed to read string length byte: %w", err)
 											}
+											if s == 28 && b > 0x0f {
+												return "", errors.New("string length overflows a 32-bit integer")
+											}
 											if b < 0x80 {
-												if i == 4 && b > 1 {
-													return "", errors.New("string length overflows a 32-bit integer")
-												}
 												x = x | uint32(b)<<s
 												buf := make([]byte, x)
 												slog.Debug("reading string bytes", "len", x)
@@ -10987,7 +10987,7 @@ func OutgoingBody_Finish(ctx__ context.Context, wrpc__ wrpc.Invoker, this wrpc.O
 									slog.Debug("reading `option::some` payload")
 									v, err := func(r io.ByteReader) (uint32, error) {
 										var x uint32
-										var s uint
+										var s uint8
 										for i := 0; i < 5; i++ {
 											slog.Debug("reading u32 byte", "i", i)
 											b, err := r.ReadByte()
@@ -10997,10 +10997,10 @@ func OutgoingBody_Finish(ctx__ context.Context, wrpc__ wrpc.Invoker, this wrpc.O
 												}
 												return x, fmt.Errorf("failed to read u32 byte: %w", err)
 											}
+											if s == 28 && b > 0x0f {
+												return x, errors.New("varint overflows a 32-bit integer")
+											}
 											if b < 0x80 {
-												if i == 4 && b > 1 {
-													return x, errors.New("varint overflows a 32-bit integer")
-												}
 												return x | uint32(b)<<s, nil
 											}
 											x |= uint32(b&0x7f) << s
@@ -11041,7 +11041,7 @@ func OutgoingBody_Finish(ctx__ context.Context, wrpc__ wrpc.Invoker, this wrpc.O
 								slog.Debug("reading `option::some` payload")
 								v, err := func(r io.ByteReader) (uint32, error) {
 									var x uint32
-									var s uint
+									var s uint8
 									for i := 0; i < 5; i++ {
 										slog.Debug("reading u32 byte", "i", i)
 										b, err := r.ReadByte()
@@ -11051,10 +11051,10 @@ func OutgoingBody_Finish(ctx__ context.Context, wrpc__ wrpc.Invoker, this wrpc.O
 											}
 											return x, fmt.Errorf("failed to read u32 byte: %w", err)
 										}
+										if s == 28 && b > 0x0f {
+											return x, errors.New("varint overflows a 32-bit integer")
+										}
 										if b < 0x80 {
-											if i == 4 && b > 1 {
-												return x, errors.New("varint overflows a 32-bit integer")
-											}
 											return x | uint32(b)<<s, nil
 										}
 										x |= uint32(b&0x7f) << s
@@ -11095,7 +11095,7 @@ func OutgoingBody_Finish(ctx__ context.Context, wrpc__ wrpc.Invoker, this wrpc.O
 										io.Reader
 									}) (string, error) {
 										var x uint32
-										var s uint
+										var s uint8
 										for i := 0; i < 5; i++ {
 											slog.Debug("reading string length byte", "i", i)
 											b, err := r.ReadByte()
@@ -11105,10 +11105,10 @@ func OutgoingBody_Finish(ctx__ context.Context, wrpc__ wrpc.Invoker, this wrpc.O
 												}
 												return "", fmt.Errorf("failed to read string length byte: %w", err)
 											}
+											if s == 28 && b > 0x0f {
+												return "", errors.New("string length overflows a 32-bit integer")
+											}
 											if b < 0x80 {
-												if i == 4 && b > 1 {
-													return "", errors.New("string length overflows a 32-bit integer")
-												}
 												x = x | uint32(b)<<s
 												buf := make([]byte, x)
 												slog.Debug("reading string bytes", "len", x)
@@ -11151,7 +11151,7 @@ func OutgoingBody_Finish(ctx__ context.Context, wrpc__ wrpc.Invoker, this wrpc.O
 									slog.Debug("reading `option::some` payload")
 									v, err := func(r io.ByteReader) (uint32, error) {
 										var x uint32
-										var s uint
+										var s uint8
 										for i := 0; i < 5; i++ {
 											slog.Debug("reading u32 byte", "i", i)
 											b, err := r.ReadByte()
@@ -11161,10 +11161,10 @@ func OutgoingBody_Finish(ctx__ context.Context, wrpc__ wrpc.Invoker, this wrpc.O
 												}
 												return x, fmt.Errorf("failed to read u32 byte: %w", err)
 											}
+											if s == 28 && b > 0x0f {
+												return x, errors.New("varint overflows a 32-bit integer")
+											}
 											if b < 0x80 {
-												if i == 4 && b > 1 {
-													return x, errors.New("varint overflows a 32-bit integer")
-												}
 												return x | uint32(b)<<s, nil
 											}
 											x |= uint32(b&0x7f) << s
@@ -11203,7 +11203,7 @@ func OutgoingBody_Finish(ctx__ context.Context, wrpc__ wrpc.Invoker, this wrpc.O
 								slog.Debug("reading `option::some` payload")
 								v, err := func(r io.ByteReader) (uint64, error) {
 									var x uint64
-									var s uint
+									var s uint8
 									for i := 0; i < 10; i++ {
 										slog.Debug("reading u64 byte", "i", i)
 										b, err := r.ReadByte()
@@ -11213,10 +11213,10 @@ func OutgoingBody_Finish(ctx__ context.Context, wrpc__ wrpc.Invoker, this wrpc.O
 											}
 											return x, fmt.Errorf("failed to read u64 byte: %w", err)
 										}
+										if s == 63 && b > 0x01 {
+											return x, errors.New("varint overflows a 64-bit integer")
+										}
 										if b < 0x80 {
-											if i == 9 && b > 1 {
-												return x, errors.New("varint overflows a 64-bit integer")
-											}
 											return x | uint64(b)<<s, nil
 										}
 										x |= uint64(b&0x7f) << s
@@ -11250,7 +11250,7 @@ func OutgoingBody_Finish(ctx__ context.Context, wrpc__ wrpc.Invoker, this wrpc.O
 								slog.Debug("reading `option::some` payload")
 								v, err := func(r io.ByteReader) (uint32, error) {
 									var x uint32
-									var s uint
+									var s uint8
 									for i := 0; i < 5; i++ {
 										slog.Debug("reading u32 byte", "i", i)
 										b, err := r.ReadByte()
@@ -11260,10 +11260,10 @@ func OutgoingBody_Finish(ctx__ context.Context, wrpc__ wrpc.Invoker, this wrpc.O
 											}
 											return x, fmt.Errorf("failed to read u32 byte: %w", err)
 										}
+										if s == 28 && b > 0x0f {
+											return x, errors.New("varint overflows a 32-bit integer")
+										}
 										if b < 0x80 {
-											if i == 4 && b > 1 {
-												return x, errors.New("varint overflows a 32-bit integer")
-											}
 											return x | uint32(b)<<s, nil
 										}
 										x |= uint32(b&0x7f) << s
@@ -11304,7 +11304,7 @@ func OutgoingBody_Finish(ctx__ context.Context, wrpc__ wrpc.Invoker, this wrpc.O
 										io.Reader
 									}) (string, error) {
 										var x uint32
-										var s uint
+										var s uint8
 										for i := 0; i < 5; i++ {
 											slog.Debug("reading string length byte", "i", i)
 											b, err := r.ReadByte()
@@ -11314,10 +11314,10 @@ func OutgoingBody_Finish(ctx__ context.Context, wrpc__ wrpc.Invoker, this wrpc.O
 												}
 												return "", fmt.Errorf("failed to read string length byte: %w", err)
 											}
+											if s == 28 && b > 0x0f {
+												return "", errors.New("string length overflows a 32-bit integer")
+											}
 											if b < 0x80 {
-												if i == 4 && b > 1 {
-													return "", errors.New("string length overflows a 32-bit integer")
-												}
 												x = x | uint32(b)<<s
 												buf := make([]byte, x)
 												slog.Debug("reading string bytes", "len", x)
@@ -11360,7 +11360,7 @@ func OutgoingBody_Finish(ctx__ context.Context, wrpc__ wrpc.Invoker, this wrpc.O
 									slog.Debug("reading `option::some` payload")
 									v, err := func(r io.ByteReader) (uint32, error) {
 										var x uint32
-										var s uint
+										var s uint8
 										for i := 0; i < 5; i++ {
 											slog.Debug("reading u32 byte", "i", i)
 											b, err := r.ReadByte()
@@ -11370,10 +11370,10 @@ func OutgoingBody_Finish(ctx__ context.Context, wrpc__ wrpc.Invoker, this wrpc.O
 												}
 												return x, fmt.Errorf("failed to read u32 byte: %w", err)
 											}
+											if s == 28 && b > 0x0f {
+												return x, errors.New("varint overflows a 32-bit integer")
+											}
 											if b < 0x80 {
-												if i == 4 && b > 1 {
-													return x, errors.New("varint overflows a 32-bit integer")
-												}
 												return x | uint32(b)<<s, nil
 											}
 											x |= uint32(b&0x7f) << s
@@ -11415,7 +11415,7 @@ func OutgoingBody_Finish(ctx__ context.Context, wrpc__ wrpc.Invoker, this wrpc.O
 									io.Reader
 								}) (string, error) {
 									var x uint32
-									var s uint
+									var s uint8
 									for i := 0; i < 5; i++ {
 										slog.Debug("reading string length byte", "i", i)
 										b, err := r.ReadByte()
@@ -11425,10 +11425,10 @@ func OutgoingBody_Finish(ctx__ context.Context, wrpc__ wrpc.Invoker, this wrpc.O
 											}
 											return "", fmt.Errorf("failed to read string length byte: %w", err)
 										}
+										if s == 28 && b > 0x0f {
+											return "", errors.New("string length overflows a 32-bit integer")
+										}
 										if b < 0x80 {
-											if i == 4 && b > 1 {
-												return "", errors.New("string length overflows a 32-bit integer")
-											}
 											x = x | uint32(b)<<s
 											buf := make([]byte, x)
 											slog.Debug("reading string bytes", "len", x)
@@ -11475,7 +11475,7 @@ func OutgoingBody_Finish(ctx__ context.Context, wrpc__ wrpc.Invoker, this wrpc.O
 									io.Reader
 								}) (string, error) {
 									var x uint32
-									var s uint
+									var s uint8
 									for i := 0; i < 5; i++ {
 										slog.Debug("reading string length byte", "i", i)
 										b, err := r.ReadByte()
@@ -11485,10 +11485,10 @@ func OutgoingBody_Finish(ctx__ context.Context, wrpc__ wrpc.Invoker, this wrpc.O
 											}
 											return "", fmt.Errorf("failed to read string length byte: %w", err)
 										}
+										if s == 28 && b > 0x0f {
+											return "", errors.New("string length overflows a 32-bit integer")
+										}
 										if b < 0x80 {
-											if i == 4 && b > 1 {
-												return "", errors.New("string length overflows a 32-bit integer")
-											}
 											x = x | uint32(b)<<s
 											buf := make([]byte, x)
 											slog.Debug("reading string bytes", "len", x)
@@ -11545,7 +11545,7 @@ func OutgoingBody_Finish(ctx__ context.Context, wrpc__ wrpc.Invoker, this wrpc.O
 									io.Reader
 								}) (string, error) {
 									var x uint32
-									var s uint
+									var s uint8
 									for i := 0; i < 5; i++ {
 										slog.Debug("reading string length byte", "i", i)
 										b, err := r.ReadByte()
@@ -11555,10 +11555,10 @@ func OutgoingBody_Finish(ctx__ context.Context, wrpc__ wrpc.Invoker, this wrpc.O
 											}
 											return "", fmt.Errorf("failed to read string length byte: %w", err)
 										}
+										if s == 28 && b > 0x0f {
+											return "", errors.New("string length overflows a 32-bit integer")
+										}
 										if b < 0x80 {
-											if i == 4 && b > 1 {
-												return "", errors.New("string length overflows a 32-bit integer")
-											}
 											x = x | uint32(b)<<s
 											buf := make([]byte, x)
 											slog.Debug("reading string bytes", "len", x)
@@ -11832,10 +11832,10 @@ func FutureIncomingResponse_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self
 												}
 												return x, fmt.Errorf("failed to read u8 discriminant byte: %w", err)
 											}
+											if s == 7 && b > 0x01 {
+												return x, errors.New("discriminant overflows an 8-bit integer")
+											}
 											if b < 0x80 {
-												if i == 2 && b > 1 {
-													return x, errors.New("discriminant overflows an 8-bit integer")
-												}
 												return x | uint8(b)<<s, nil
 											}
 											x |= uint8(b&0x7f) << s
@@ -11870,7 +11870,7 @@ func FutureIncomingResponse_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self
 														io.Reader
 													}) (string, error) {
 														var x uint32
-														var s uint
+														var s uint8
 														for i := 0; i < 5; i++ {
 															slog.Debug("reading string length byte", "i", i)
 															b, err := r.ReadByte()
@@ -11880,10 +11880,10 @@ func FutureIncomingResponse_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self
 																}
 																return "", fmt.Errorf("failed to read string length byte: %w", err)
 															}
+															if s == 28 && b > 0x0f {
+																return "", errors.New("string length overflows a 32-bit integer")
+															}
 															if b < 0x80 {
-																if i == 4 && b > 1 {
-																	return "", errors.New("string length overflows a 32-bit integer")
-																}
 																x = x | uint32(b)<<s
 																buf := make([]byte, x)
 																slog.Debug("reading string bytes", "len", x)
@@ -11926,7 +11926,7 @@ func FutureIncomingResponse_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self
 													slog.Debug("reading `option::some` payload")
 													v, err := func(r io.ByteReader) (uint16, error) {
 														var x uint16
-														var s uint
+														var s uint8
 														for i := 0; i < 3; i++ {
 															slog.Debug("reading u16 byte", "i", i)
 															b, err := r.ReadByte()
@@ -11936,10 +11936,10 @@ func FutureIncomingResponse_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self
 																}
 																return x, fmt.Errorf("failed to read u16 byte: %w", err)
 															}
+															if s == 14 && b > 0x03 {
+																return x, errors.New("varint overflows a 16-bit integer")
+															}
 															if b < 0x80 {
-																if i == 2 && b > 1 {
-																	return x, errors.New("varint overflows a 16-bit integer")
-																}
 																return x | uint16(b)<<s, nil
 															}
 															x |= uint16(b&0x7f) << s
@@ -12040,7 +12040,7 @@ func FutureIncomingResponse_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self
 														io.Reader
 													}) (string, error) {
 														var x uint32
-														var s uint
+														var s uint8
 														for i := 0; i < 5; i++ {
 															slog.Debug("reading string length byte", "i", i)
 															b, err := r.ReadByte()
@@ -12050,10 +12050,10 @@ func FutureIncomingResponse_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self
 																}
 																return "", fmt.Errorf("failed to read string length byte: %w", err)
 															}
+															if s == 28 && b > 0x0f {
+																return "", errors.New("string length overflows a 32-bit integer")
+															}
 															if b < 0x80 {
-																if i == 4 && b > 1 {
-																	return "", errors.New("string length overflows a 32-bit integer")
-																}
 																x = x | uint32(b)<<s
 																buf := make([]byte, x)
 																slog.Debug("reading string bytes", "len", x)
@@ -12106,7 +12106,7 @@ func FutureIncomingResponse_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self
 												slog.Debug("reading `option::some` payload")
 												v, err := func(r io.ByteReader) (uint64, error) {
 													var x uint64
-													var s uint
+													var s uint8
 													for i := 0; i < 10; i++ {
 														slog.Debug("reading u64 byte", "i", i)
 														b, err := r.ReadByte()
@@ -12116,10 +12116,10 @@ func FutureIncomingResponse_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self
 															}
 															return x, fmt.Errorf("failed to read u64 byte: %w", err)
 														}
+														if s == 63 && b > 0x01 {
+															return x, errors.New("varint overflows a 64-bit integer")
+														}
 														if b < 0x80 {
-															if i == 9 && b > 1 {
-																return x, errors.New("varint overflows a 64-bit integer")
-															}
 															return x | uint64(b)<<s, nil
 														}
 														x |= uint64(b&0x7f) << s
@@ -12159,7 +12159,7 @@ func FutureIncomingResponse_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self
 												slog.Debug("reading `option::some` payload")
 												v, err := func(r io.ByteReader) (uint32, error) {
 													var x uint32
-													var s uint
+													var s uint8
 													for i := 0; i < 5; i++ {
 														slog.Debug("reading u32 byte", "i", i)
 														b, err := r.ReadByte()
@@ -12169,10 +12169,10 @@ func FutureIncomingResponse_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self
 															}
 															return x, fmt.Errorf("failed to read u32 byte: %w", err)
 														}
+														if s == 28 && b > 0x0f {
+															return x, errors.New("varint overflows a 32-bit integer")
+														}
 														if b < 0x80 {
-															if i == 4 && b > 1 {
-																return x, errors.New("varint overflows a 32-bit integer")
-															}
 															return x | uint32(b)<<s, nil
 														}
 														x |= uint32(b&0x7f) << s
@@ -12224,7 +12224,7 @@ func FutureIncomingResponse_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self
 																io.Reader
 															}) (string, error) {
 																var x uint32
-																var s uint
+																var s uint8
 																for i := 0; i < 5; i++ {
 																	slog.Debug("reading string length byte", "i", i)
 																	b, err := r.ReadByte()
@@ -12234,10 +12234,10 @@ func FutureIncomingResponse_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self
 																		}
 																		return "", fmt.Errorf("failed to read string length byte: %w", err)
 																	}
+																	if s == 28 && b > 0x0f {
+																		return "", errors.New("string length overflows a 32-bit integer")
+																	}
 																	if b < 0x80 {
-																		if i == 4 && b > 1 {
-																			return "", errors.New("string length overflows a 32-bit integer")
-																		}
 																		x = x | uint32(b)<<s
 																		buf := make([]byte, x)
 																		slog.Debug("reading string bytes", "len", x)
@@ -12280,7 +12280,7 @@ func FutureIncomingResponse_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self
 															slog.Debug("reading `option::some` payload")
 															v, err := func(r io.ByteReader) (uint32, error) {
 																var x uint32
-																var s uint
+																var s uint8
 																for i := 0; i < 5; i++ {
 																	slog.Debug("reading u32 byte", "i", i)
 																	b, err := r.ReadByte()
@@ -12290,10 +12290,10 @@ func FutureIncomingResponse_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self
 																		}
 																		return x, fmt.Errorf("failed to read u32 byte: %w", err)
 																	}
+																	if s == 28 && b > 0x0f {
+																		return x, errors.New("varint overflows a 32-bit integer")
+																	}
 																	if b < 0x80 {
-																		if i == 4 && b > 1 {
-																			return x, errors.New("varint overflows a 32-bit integer")
-																		}
 																		return x | uint32(b)<<s, nil
 																	}
 																	x |= uint32(b&0x7f) << s
@@ -12340,7 +12340,7 @@ func FutureIncomingResponse_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self
 												slog.Debug("reading `option::some` payload")
 												v, err := func(r io.ByteReader) (uint32, error) {
 													var x uint32
-													var s uint
+													var s uint8
 													for i := 0; i < 5; i++ {
 														slog.Debug("reading u32 byte", "i", i)
 														b, err := r.ReadByte()
@@ -12350,10 +12350,10 @@ func FutureIncomingResponse_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self
 															}
 															return x, fmt.Errorf("failed to read u32 byte: %w", err)
 														}
+														if s == 28 && b > 0x0f {
+															return x, errors.New("varint overflows a 32-bit integer")
+														}
 														if b < 0x80 {
-															if i == 4 && b > 1 {
-																return x, errors.New("varint overflows a 32-bit integer")
-															}
 															return x | uint32(b)<<s, nil
 														}
 														x |= uint32(b&0x7f) << s
@@ -12394,7 +12394,7 @@ func FutureIncomingResponse_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self
 														io.Reader
 													}) (string, error) {
 														var x uint32
-														var s uint
+														var s uint8
 														for i := 0; i < 5; i++ {
 															slog.Debug("reading string length byte", "i", i)
 															b, err := r.ReadByte()
@@ -12404,10 +12404,10 @@ func FutureIncomingResponse_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self
 																}
 																return "", fmt.Errorf("failed to read string length byte: %w", err)
 															}
+															if s == 28 && b > 0x0f {
+																return "", errors.New("string length overflows a 32-bit integer")
+															}
 															if b < 0x80 {
-																if i == 4 && b > 1 {
-																	return "", errors.New("string length overflows a 32-bit integer")
-																}
 																x = x | uint32(b)<<s
 																buf := make([]byte, x)
 																slog.Debug("reading string bytes", "len", x)
@@ -12450,7 +12450,7 @@ func FutureIncomingResponse_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self
 													slog.Debug("reading `option::some` payload")
 													v, err := func(r io.ByteReader) (uint32, error) {
 														var x uint32
-														var s uint
+														var s uint8
 														for i := 0; i < 5; i++ {
 															slog.Debug("reading u32 byte", "i", i)
 															b, err := r.ReadByte()
@@ -12460,10 +12460,10 @@ func FutureIncomingResponse_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self
 																}
 																return x, fmt.Errorf("failed to read u32 byte: %w", err)
 															}
+															if s == 28 && b > 0x0f {
+																return x, errors.New("varint overflows a 32-bit integer")
+															}
 															if b < 0x80 {
-																if i == 4 && b > 1 {
-																	return x, errors.New("varint overflows a 32-bit integer")
-																}
 																return x | uint32(b)<<s, nil
 															}
 															x |= uint32(b&0x7f) << s
@@ -12504,7 +12504,7 @@ func FutureIncomingResponse_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self
 												slog.Debug("reading `option::some` payload")
 												v, err := func(r io.ByteReader) (uint32, error) {
 													var x uint32
-													var s uint
+													var s uint8
 													for i := 0; i < 5; i++ {
 														slog.Debug("reading u32 byte", "i", i)
 														b, err := r.ReadByte()
@@ -12514,10 +12514,10 @@ func FutureIncomingResponse_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self
 															}
 															return x, fmt.Errorf("failed to read u32 byte: %w", err)
 														}
+														if s == 28 && b > 0x0f {
+															return x, errors.New("varint overflows a 32-bit integer")
+														}
 														if b < 0x80 {
-															if i == 4 && b > 1 {
-																return x, errors.New("varint overflows a 32-bit integer")
-															}
 															return x | uint32(b)<<s, nil
 														}
 														x |= uint32(b&0x7f) << s
@@ -12558,7 +12558,7 @@ func FutureIncomingResponse_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self
 														io.Reader
 													}) (string, error) {
 														var x uint32
-														var s uint
+														var s uint8
 														for i := 0; i < 5; i++ {
 															slog.Debug("reading string length byte", "i", i)
 															b, err := r.ReadByte()
@@ -12568,10 +12568,10 @@ func FutureIncomingResponse_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self
 																}
 																return "", fmt.Errorf("failed to read string length byte: %w", err)
 															}
+															if s == 28 && b > 0x0f {
+																return "", errors.New("string length overflows a 32-bit integer")
+															}
 															if b < 0x80 {
-																if i == 4 && b > 1 {
-																	return "", errors.New("string length overflows a 32-bit integer")
-																}
 																x = x | uint32(b)<<s
 																buf := make([]byte, x)
 																slog.Debug("reading string bytes", "len", x)
@@ -12614,7 +12614,7 @@ func FutureIncomingResponse_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self
 													slog.Debug("reading `option::some` payload")
 													v, err := func(r io.ByteReader) (uint32, error) {
 														var x uint32
-														var s uint
+														var s uint8
 														for i := 0; i < 5; i++ {
 															slog.Debug("reading u32 byte", "i", i)
 															b, err := r.ReadByte()
@@ -12624,10 +12624,10 @@ func FutureIncomingResponse_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self
 																}
 																return x, fmt.Errorf("failed to read u32 byte: %w", err)
 															}
+															if s == 28 && b > 0x0f {
+																return x, errors.New("varint overflows a 32-bit integer")
+															}
 															if b < 0x80 {
-																if i == 4 && b > 1 {
-																	return x, errors.New("varint overflows a 32-bit integer")
-																}
 																return x | uint32(b)<<s, nil
 															}
 															x |= uint32(b&0x7f) << s
@@ -12666,7 +12666,7 @@ func FutureIncomingResponse_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self
 												slog.Debug("reading `option::some` payload")
 												v, err := func(r io.ByteReader) (uint64, error) {
 													var x uint64
-													var s uint
+													var s uint8
 													for i := 0; i < 10; i++ {
 														slog.Debug("reading u64 byte", "i", i)
 														b, err := r.ReadByte()
@@ -12676,10 +12676,10 @@ func FutureIncomingResponse_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self
 															}
 															return x, fmt.Errorf("failed to read u64 byte: %w", err)
 														}
+														if s == 63 && b > 0x01 {
+															return x, errors.New("varint overflows a 64-bit integer")
+														}
 														if b < 0x80 {
-															if i == 9 && b > 1 {
-																return x, errors.New("varint overflows a 64-bit integer")
-															}
 															return x | uint64(b)<<s, nil
 														}
 														x |= uint64(b&0x7f) << s
@@ -12713,7 +12713,7 @@ func FutureIncomingResponse_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self
 												slog.Debug("reading `option::some` payload")
 												v, err := func(r io.ByteReader) (uint32, error) {
 													var x uint32
-													var s uint
+													var s uint8
 													for i := 0; i < 5; i++ {
 														slog.Debug("reading u32 byte", "i", i)
 														b, err := r.ReadByte()
@@ -12723,10 +12723,10 @@ func FutureIncomingResponse_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self
 															}
 															return x, fmt.Errorf("failed to read u32 byte: %w", err)
 														}
+														if s == 28 && b > 0x0f {
+															return x, errors.New("varint overflows a 32-bit integer")
+														}
 														if b < 0x80 {
-															if i == 4 && b > 1 {
-																return x, errors.New("varint overflows a 32-bit integer")
-															}
 															return x | uint32(b)<<s, nil
 														}
 														x |= uint32(b&0x7f) << s
@@ -12767,7 +12767,7 @@ func FutureIncomingResponse_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self
 														io.Reader
 													}) (string, error) {
 														var x uint32
-														var s uint
+														var s uint8
 														for i := 0; i < 5; i++ {
 															slog.Debug("reading string length byte", "i", i)
 															b, err := r.ReadByte()
@@ -12777,10 +12777,10 @@ func FutureIncomingResponse_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self
 																}
 																return "", fmt.Errorf("failed to read string length byte: %w", err)
 															}
+															if s == 28 && b > 0x0f {
+																return "", errors.New("string length overflows a 32-bit integer")
+															}
 															if b < 0x80 {
-																if i == 4 && b > 1 {
-																	return "", errors.New("string length overflows a 32-bit integer")
-																}
 																x = x | uint32(b)<<s
 																buf := make([]byte, x)
 																slog.Debug("reading string bytes", "len", x)
@@ -12823,7 +12823,7 @@ func FutureIncomingResponse_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self
 													slog.Debug("reading `option::some` payload")
 													v, err := func(r io.ByteReader) (uint32, error) {
 														var x uint32
-														var s uint
+														var s uint8
 														for i := 0; i < 5; i++ {
 															slog.Debug("reading u32 byte", "i", i)
 															b, err := r.ReadByte()
@@ -12833,10 +12833,10 @@ func FutureIncomingResponse_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self
 																}
 																return x, fmt.Errorf("failed to read u32 byte: %w", err)
 															}
+															if s == 28 && b > 0x0f {
+																return x, errors.New("varint overflows a 32-bit integer")
+															}
 															if b < 0x80 {
-																if i == 4 && b > 1 {
-																	return x, errors.New("varint overflows a 32-bit integer")
-																}
 																return x | uint32(b)<<s, nil
 															}
 															x |= uint32(b&0x7f) << s
@@ -12878,7 +12878,7 @@ func FutureIncomingResponse_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self
 													io.Reader
 												}) (string, error) {
 													var x uint32
-													var s uint
+													var s uint8
 													for i := 0; i < 5; i++ {
 														slog.Debug("reading string length byte", "i", i)
 														b, err := r.ReadByte()
@@ -12888,10 +12888,10 @@ func FutureIncomingResponse_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self
 															}
 															return "", fmt.Errorf("failed to read string length byte: %w", err)
 														}
+														if s == 28 && b > 0x0f {
+															return "", errors.New("string length overflows a 32-bit integer")
+														}
 														if b < 0x80 {
-															if i == 4 && b > 1 {
-																return "", errors.New("string length overflows a 32-bit integer")
-															}
 															x = x | uint32(b)<<s
 															buf := make([]byte, x)
 															slog.Debug("reading string bytes", "len", x)
@@ -12938,7 +12938,7 @@ func FutureIncomingResponse_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self
 													io.Reader
 												}) (string, error) {
 													var x uint32
-													var s uint
+													var s uint8
 													for i := 0; i < 5; i++ {
 														slog.Debug("reading string length byte", "i", i)
 														b, err := r.ReadByte()
@@ -12948,10 +12948,10 @@ func FutureIncomingResponse_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self
 															}
 															return "", fmt.Errorf("failed to read string length byte: %w", err)
 														}
+														if s == 28 && b > 0x0f {
+															return "", errors.New("string length overflows a 32-bit integer")
+														}
 														if b < 0x80 {
-															if i == 4 && b > 1 {
-																return "", errors.New("string length overflows a 32-bit integer")
-															}
 															x = x | uint32(b)<<s
 															buf := make([]byte, x)
 															slog.Debug("reading string bytes", "len", x)
@@ -13008,7 +13008,7 @@ func FutureIncomingResponse_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self
 													io.Reader
 												}) (string, error) {
 													var x uint32
-													var s uint
+													var s uint8
 													for i := 0; i < 5; i++ {
 														slog.Debug("reading string length byte", "i", i)
 														b, err := r.ReadByte()
@@ -13018,10 +13018,10 @@ func FutureIncomingResponse_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self
 															}
 															return "", fmt.Errorf("failed to read string length byte: %w", err)
 														}
+														if s == 28 && b > 0x0f {
+															return "", errors.New("string length overflows a 32-bit integer")
+														}
 														if b < 0x80 {
-															if i == 4 && b > 1 {
-																return "", errors.New("string length overflows a 32-bit integer")
-															}
 															x = x | uint32(b)<<s
 															buf := make([]byte, x)
 															slog.Debug("reading string bytes", "len", x)

@@ -38,7 +38,7 @@ func Now(ctx__ context.Context, wrpc__ wrpc.Invoker) (r0__ uint64, close__ func(
 		r0__, err__ = func() (Instant, error) {
 			v, err := func(r io.ByteReader) (uint64, error) {
 				var x uint64
-				var s uint
+				var s uint8
 				for i := 0; i < 10; i++ {
 					slog.Debug("reading u64 byte", "i", i)
 					b, err := r.ReadByte()
@@ -48,10 +48,10 @@ func Now(ctx__ context.Context, wrpc__ wrpc.Invoker) (r0__ uint64, close__ func(
 						}
 						return x, fmt.Errorf("failed to read u64 byte: %w", err)
 					}
+					if s == 63 && b > 0x01 {
+						return x, errors.New("varint overflows a 64-bit integer")
+					}
 					if b < 0x80 {
-						if i == 9 && b > 1 {
-							return x, errors.New("varint overflows a 64-bit integer")
-						}
 						return x | uint64(b)<<s, nil
 					}
 					x |= uint64(b&0x7f) << s
@@ -85,7 +85,7 @@ func Resolution(ctx__ context.Context, wrpc__ wrpc.Invoker) (r0__ uint64, close_
 		r0__, err__ = func() (Duration, error) {
 			v, err := func(r io.ByteReader) (uint64, error) {
 				var x uint64
-				var s uint
+				var s uint8
 				for i := 0; i < 10; i++ {
 					slog.Debug("reading u64 byte", "i", i)
 					b, err := r.ReadByte()
@@ -95,10 +95,10 @@ func Resolution(ctx__ context.Context, wrpc__ wrpc.Invoker) (r0__ uint64, close_
 						}
 						return x, fmt.Errorf("failed to read u64 byte: %w", err)
 					}
+					if s == 63 && b > 0x01 {
+						return x, errors.New("varint overflows a 64-bit integer")
+					}
 					if b < 0x80 {
-						if i == 9 && b > 1 {
-							return x, errors.New("varint overflows a 64-bit integer")
-						}
 						return x | uint64(b)<<s, nil
 					}
 					x |= uint64(b&0x7f) << s
