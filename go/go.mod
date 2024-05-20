@@ -2,7 +2,7 @@ module github.com/wrpc/wrpc/go
 
 go 1.22.2
 
-require github.com/nats-io/nats.go v1.34.1
+require github.com/nats-io/nats.go v1.35.0
 
 require (
 	github.com/klauspost/compress v1.17.8 // indirect
