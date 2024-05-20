@@ -301,10 +301,10 @@ func InputStream_Read(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borr
 								}
 								return x, fmt.Errorf("failed to read u8 discriminant byte: %w", err)
 							}
+							if s == 7 && b > 0x01 {
+								return x, errors.New("discriminant overflows an 8-bit integer")
+							}
 							if b < 0x80 {
-								if i == 2 && b > 1 {
-									return x, errors.New("discriminant overflows an 8-bit integer")
-								}
 								return x | uint8(b)<<s, nil
 							}
 							x |= uint8(b&0x7f) << s
@@ -495,10 +495,10 @@ func InputStream_BlockingRead(ctx__ context.Context, wrpc__ wrpc.Invoker, self w
 								}
 								return x, fmt.Errorf("failed to read u8 discriminant byte: %w", err)
 							}
+							if s == 7 && b > 0x01 {
+								return x, errors.New("discriminant overflows an 8-bit integer")
+							}
 							if b < 0x80 {
-								if i == 2 && b > 1 {
-									return x, errors.New("discriminant overflows an 8-bit integer")
-								}
 								return x | uint8(b)<<s, nil
 							}
 							x |= uint8(b&0x7f) << s
@@ -640,7 +640,7 @@ func InputStream_Skip(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borr
 				slog.Debug("reading `result::ok` payload")
 				v, err := func(r io.ByteReader) (uint64, error) {
 					var x uint64
-					var s uint
+					var s uint8
 					for i := 0; i < 10; i++ {
 						slog.Debug("reading u64 byte", "i", i)
 						b, err := r.ReadByte()
@@ -650,10 +650,10 @@ func InputStream_Skip(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borr
 							}
 							return x, fmt.Errorf("failed to read u64 byte: %w", err)
 						}
+						if s == 63 && b > 0x01 {
+							return x, errors.New("varint overflows a 64-bit integer")
+						}
 						if b < 0x80 {
-							if i == 9 && b > 1 {
-								return x, errors.New("varint overflows a 64-bit integer")
-							}
 							return x | uint64(b)<<s, nil
 						}
 						x |= uint64(b&0x7f) << s
@@ -681,10 +681,10 @@ func InputStream_Skip(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borr
 								}
 								return x, fmt.Errorf("failed to read u8 discriminant byte: %w", err)
 							}
+							if s == 7 && b > 0x01 {
+								return x, errors.New("discriminant overflows an 8-bit integer")
+							}
 							if b < 0x80 {
-								if i == 2 && b > 1 {
-									return x, errors.New("discriminant overflows an 8-bit integer")
-								}
 								return x | uint8(b)<<s, nil
 							}
 							x |= uint8(b&0x7f) << s
@@ -824,7 +824,7 @@ func InputStream_BlockingSkip(ctx__ context.Context, wrpc__ wrpc.Invoker, self w
 				slog.Debug("reading `result::ok` payload")
 				v, err := func(r io.ByteReader) (uint64, error) {
 					var x uint64
-					var s uint
+					var s uint8
 					for i := 0; i < 10; i++ {
 						slog.Debug("reading u64 byte", "i", i)
 						b, err := r.ReadByte()
@@ -834,10 +834,10 @@ func InputStream_BlockingSkip(ctx__ context.Context, wrpc__ wrpc.Invoker, self w
 							}
 							return x, fmt.Errorf("failed to read u64 byte: %w", err)
 						}
+						if s == 63 && b > 0x01 {
+							return x, errors.New("varint overflows a 64-bit integer")
+						}
 						if b < 0x80 {
-							if i == 9 && b > 1 {
-								return x, errors.New("varint overflows a 64-bit integer")
-							}
 							return x | uint64(b)<<s, nil
 						}
 						x |= uint64(b&0x7f) << s
@@ -865,10 +865,10 @@ func InputStream_BlockingSkip(ctx__ context.Context, wrpc__ wrpc.Invoker, self w
 								}
 								return x, fmt.Errorf("failed to read u8 discriminant byte: %w", err)
 							}
+							if s == 7 && b > 0x01 {
+								return x, errors.New("discriminant overflows an 8-bit integer")
+							}
 							if b < 0x80 {
-								if i == 2 && b > 1 {
-									return x, errors.New("discriminant overflows an 8-bit integer")
-								}
 								return x | uint8(b)<<s, nil
 							}
 							x |= uint8(b&0x7f) << s
@@ -1091,7 +1091,7 @@ func OutputStream_CheckWrite(ctx__ context.Context, wrpc__ wrpc.Invoker, self wr
 				slog.Debug("reading `result::ok` payload")
 				v, err := func(r io.ByteReader) (uint64, error) {
 					var x uint64
-					var s uint
+					var s uint8
 					for i := 0; i < 10; i++ {
 						slog.Debug("reading u64 byte", "i", i)
 						b, err := r.ReadByte()
@@ -1101,10 +1101,10 @@ func OutputStream_CheckWrite(ctx__ context.Context, wrpc__ wrpc.Invoker, self wr
 							}
 							return x, fmt.Errorf("failed to read u64 byte: %w", err)
 						}
+						if s == 63 && b > 0x01 {
+							return x, errors.New("varint overflows a 64-bit integer")
+						}
 						if b < 0x80 {
-							if i == 9 && b > 1 {
-								return x, errors.New("varint overflows a 64-bit integer")
-							}
 							return x | uint64(b)<<s, nil
 						}
 						x |= uint64(b&0x7f) << s
@@ -1132,10 +1132,10 @@ func OutputStream_CheckWrite(ctx__ context.Context, wrpc__ wrpc.Invoker, self wr
 								}
 								return x, fmt.Errorf("failed to read u8 discriminant byte: %w", err)
 							}
+							if s == 7 && b > 0x01 {
+								return x, errors.New("discriminant overflows an 8-bit integer")
+							}
 							if b < 0x80 {
-								if i == 2 && b > 1 {
-									return x, errors.New("discriminant overflows an 8-bit integer")
-								}
 								return x | uint8(b)<<s, nil
 							}
 							x |= uint8(b&0x7f) << s
@@ -1353,10 +1353,10 @@ func OutputStream_Write(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Bo
 								}
 								return x, fmt.Errorf("failed to read u8 discriminant byte: %w", err)
 							}
+							if s == 7 && b > 0x01 {
+								return x, errors.New("discriminant overflows an 8-bit integer")
+							}
 							if b < 0x80 {
-								if i == 2 && b > 1 {
-									return x, errors.New("discriminant overflows an 8-bit integer")
-								}
 								return x | uint8(b)<<s, nil
 							}
 							x |= uint8(b&0x7f) << s
@@ -1585,10 +1585,10 @@ func OutputStream_BlockingWriteAndFlush(ctx__ context.Context, wrpc__ wrpc.Invok
 								}
 								return x, fmt.Errorf("failed to read u8 discriminant byte: %w", err)
 							}
+							if s == 7 && b > 0x01 {
+								return x, errors.New("discriminant overflows an 8-bit integer")
+							}
 							if b < 0x80 {
-								if i == 2 && b > 1 {
-									return x, errors.New("discriminant overflows an 8-bit integer")
-								}
 								return x | uint8(b)<<s, nil
 							}
 							x |= uint8(b&0x7f) << s
@@ -1738,10 +1738,10 @@ func OutputStream_Flush(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Bo
 								}
 								return x, fmt.Errorf("failed to read u8 discriminant byte: %w", err)
 							}
+							if s == 7 && b > 0x01 {
+								return x, errors.New("discriminant overflows an 8-bit integer")
+							}
 							if b < 0x80 {
-								if i == 2 && b > 1 {
-									return x, errors.New("discriminant overflows an 8-bit integer")
-								}
 								return x | uint8(b)<<s, nil
 							}
 							x |= uint8(b&0x7f) << s
@@ -1883,10 +1883,10 @@ func OutputStream_BlockingFlush(ctx__ context.Context, wrpc__ wrpc.Invoker, self
 								}
 								return x, fmt.Errorf("failed to read u8 discriminant byte: %w", err)
 							}
+							if s == 7 && b > 0x01 {
+								return x, errors.New("discriminant overflows an 8-bit integer")
+							}
 							if b < 0x80 {
-								if i == 2 && b > 1 {
-									return x, errors.New("discriminant overflows an 8-bit integer")
-								}
 								return x | uint8(b)<<s, nil
 							}
 							x |= uint8(b&0x7f) << s
@@ -2138,10 +2138,10 @@ func OutputStream_WriteZeroes(ctx__ context.Context, wrpc__ wrpc.Invoker, self w
 								}
 								return x, fmt.Errorf("failed to read u8 discriminant byte: %w", err)
 							}
+							if s == 7 && b > 0x01 {
+								return x, errors.New("discriminant overflows an 8-bit integer")
+							}
 							if b < 0x80 {
-								if i == 2 && b > 1 {
-									return x, errors.New("discriminant overflows an 8-bit integer")
-								}
 								return x | uint8(b)<<s, nil
 							}
 							x |= uint8(b&0x7f) << s
@@ -2318,10 +2318,10 @@ func OutputStream_BlockingWriteZeroesAndFlush(ctx__ context.Context, wrpc__ wrpc
 								}
 								return x, fmt.Errorf("failed to read u8 discriminant byte: %w", err)
 							}
+							if s == 7 && b > 0x01 {
+								return x, errors.New("discriminant overflows an 8-bit integer")
+							}
 							if b < 0x80 {
-								if i == 2 && b > 1 {
-									return x, errors.New("discriminant overflows an 8-bit integer")
-								}
 								return x | uint8(b)<<s, nil
 							}
 							x |= uint8(b&0x7f) << s
@@ -2499,7 +2499,7 @@ func OutputStream_Splice(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.B
 				slog.Debug("reading `result::ok` payload")
 				v, err := func(r io.ByteReader) (uint64, error) {
 					var x uint64
-					var s uint
+					var s uint8
 					for i := 0; i < 10; i++ {
 						slog.Debug("reading u64 byte", "i", i)
 						b, err := r.ReadByte()
@@ -2509,10 +2509,10 @@ func OutputStream_Splice(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.B
 							}
 							return x, fmt.Errorf("failed to read u64 byte: %w", err)
 						}
+						if s == 63 && b > 0x01 {
+							return x, errors.New("varint overflows a 64-bit integer")
+						}
 						if b < 0x80 {
-							if i == 9 && b > 1 {
-								return x, errors.New("varint overflows a 64-bit integer")
-							}
 							return x | uint64(b)<<s, nil
 						}
 						x |= uint64(b&0x7f) << s
@@ -2540,10 +2540,10 @@ func OutputStream_Splice(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.B
 								}
 								return x, fmt.Errorf("failed to read u8 discriminant byte: %w", err)
 							}
+							if s == 7 && b > 0x01 {
+								return x, errors.New("discriminant overflows an 8-bit integer")
+							}
 							if b < 0x80 {
-								if i == 2 && b > 1 {
-									return x, errors.New("discriminant overflows an 8-bit integer")
-								}
 								return x | uint8(b)<<s, nil
 							}
 							x |= uint8(b&0x7f) << s
@@ -2713,7 +2713,7 @@ func OutputStream_BlockingSplice(ctx__ context.Context, wrpc__ wrpc.Invoker, sel
 				slog.Debug("reading `result::ok` payload")
 				v, err := func(r io.ByteReader) (uint64, error) {
 					var x uint64
-					var s uint
+					var s uint8
 					for i := 0; i < 10; i++ {
 						slog.Debug("reading u64 byte", "i", i)
 						b, err := r.ReadByte()
@@ -2723,10 +2723,10 @@ func OutputStream_BlockingSplice(ctx__ context.Context, wrpc__ wrpc.Invoker, sel
 							}
 							return x, fmt.Errorf("failed to read u64 byte: %w", err)
 						}
+						if s == 63 && b > 0x01 {
+							return x, errors.New("varint overflows a 64-bit integer")
+						}
 						if b < 0x80 {
-							if i == 9 && b > 1 {
-								return x, errors.New("varint overflows a 64-bit integer")
-							}
 							return x | uint64(b)<<s, nil
 						}
 						x |= uint64(b&0x7f) << s
@@ -2754,10 +2754,10 @@ func OutputStream_BlockingSplice(ctx__ context.Context, wrpc__ wrpc.Invoker, sel
 								}
 								return x, fmt.Errorf("failed to read u8 discriminant byte: %w", err)
 							}
+							if s == 7 && b > 0x01 {
+								return x, errors.New("discriminant overflows an 8-bit integer")
+							}
 							if b < 0x80 {
-								if i == 2 && b > 1 {
-									return x, errors.New("discriminant overflows an 8-bit integer")
-								}
 								return x | uint8(b)<<s, nil
 							}
 							x |= uint8(b&0x7f) << s
