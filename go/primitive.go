@@ -120,14 +120,6 @@ func ReadUint64(r ByteReader) (uint64, error) {
 	return binary.ReadUvarint(r)
 }
 
-// NOTE: Below is adapted from https://cs.opensource.google/go/go/+/refs/tags/go1.22.2:src/encoding/binary/varint.go;l=128-153
-
-// maxVarintLenN is the maximum length of a varint-encoded N-bit integer.
-const (
-	maxVarintLen16 = 3
-	maxVarintLen32 = 5
-)
-
 var errOverflow16 = errors.New("wrpc: varint overflows a 16-bit integer")
 
 // ReadUint16 reads an encoded uint16 from r and returns it.
@@ -136,8 +128,8 @@ var errOverflow16 = errors.New("wrpc: varint overflows a 16-bit integer")
 // ReadUvarint returns [io.ErrUnexpectedEOF].
 func ReadUint16(r ByteReader) (uint16, error) {
 	var x uint16
-	var s uint
-	for i := 0; i < maxVarintLen16; i++ {
+	var s uint8
+	for i := 0; i < 3; i++ {
 		b, err := r.ReadByte()
 		if err != nil {
 			if i > 0 && err == io.EOF {
@@ -145,10 +137,10 @@ func ReadUint16(r ByteReader) (uint16, error) {
 			}
 			return x, err
 		}
+		if s == 14 && b > 0x03 {
+			return x, errOverflow16
+		}
 		if b < 0x80 {
-			if i == maxVarintLen16-1 && b > 1 {
-				return x, errOverflow16
-			}
 			return x | uint16(b)<<s, nil
 		}
 		x |= uint16(b&0x7f) << s
@@ -165,8 +157,8 @@ var errOverflow32 = errors.New("wrpc: varint overflows a 32-bit integer")
 // ReadUvarint returns [io.ErrUnexpectedEOF].
 func ReadUint32(r ByteReader) (uint32, error) {
 	var x uint32
-	var s uint
-	for i := 0; i < maxVarintLen32; i++ {
+	var s uint8
+	for i := 0; i < 5; i++ {
 		b, err := r.ReadByte()
 		if err != nil {
 			if i > 0 && err == io.EOF {
@@ -174,10 +166,10 @@ func ReadUint32(r ByteReader) (uint32, error) {
 			}
 			return x, err
 		}
+		if s == 28 && b > 0x0f {
+			return x, errOverflow32
+		}
 		if b < 0x80 {
-			if i == maxVarintLen32-1 && b > 1 {
-				return x, errOverflow32
-			}
 			return x | uint32(b)<<s, nil
 		}
 		x |= uint32(b&0x7f) << s
