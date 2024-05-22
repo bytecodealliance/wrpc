@@ -2336,17 +2336,21 @@ impl<'a> {wrpc_transport}::Receive<'a> for {camel} {{
                 r#"
 #[derive(Debug)]
 #[repr(transparent)]
-pub struct {camel};
+pub struct {camel} {{
+    id: String,
+}}
 
 impl {camel} {{
     /// Creates a new resource from the specified representation.
-    pub fn new() -> Self {{ Self {{ }} }}
+    pub fn new() -> Self {{ Self {{ id: ulid::Ulid::new().into() }} }}
 }}
 
 /// A borrowed version of [`{camel}`] which represents a borrowed value
 #[derive(Debug)]
 #[repr(transparent)]
-pub struct {camel}Borrow;
+pub struct {camel}Borrow {{
+    id: String,
+}}
 
 #[{async_trait}::async_trait]
 #[automatically_derived]
@@ -2354,7 +2358,7 @@ impl {wrpc_transport}::Encode for {camel}Borrow {{
      async fn encode(self, payload: &mut (impl {bytes}::BufMut + Send)) -> {anyhow}::Result<Option<{wrpc_transport}::AsyncValue>> {{
         let span = {tracing}::trace_span!("encode");
         let _enter = span.enter();
-        {anyhow}::bail!("exported resources not supported yet")
+        self.id.encode(payload).await
      }}
 }}
 
@@ -2364,7 +2368,7 @@ impl {wrpc_transport}::Encode for &{camel}Borrow {{
      async fn encode(self, payload: &mut (impl {bytes}::BufMut + Send)) -> {anyhow}::Result<Option<{wrpc_transport}::AsyncValue>> {{
         let span = {tracing}::trace_span!("encode");
         let _enter = span.enter();
-        {anyhow}::bail!("exported resources not supported yet")
+        self.id.as_str().encode(payload).await
      }}
 }}
 
@@ -2387,7 +2391,8 @@ impl<'a> {wrpc_transport}::Receive<'a> for {camel}Borrow {{
      {{
         let span = {tracing}::trace_span!("receive");
         let _enter = span.enter();
-        {anyhow}::bail!("exported resources not supported yet")
+        let (subject, payload) = {wrpc_transport}::Receive::receive(payload, rx, sub).await?;
+        Ok((Self {{ id: subject }}, payload))
      }}
 }}
 
@@ -2397,7 +2402,7 @@ impl {wrpc_transport}::Encode for {camel} {{
      async fn encode(self, payload: &mut (impl {bytes}::BufMut + Send)) -> {anyhow}::Result<Option<{wrpc_transport}::AsyncValue>> {{
         let span = {tracing}::trace_span!("encode");
         let _enter = span.enter();
-        {anyhow}::bail!("exported resources not supported yet")
+        self.id.encode(payload).await
      }}
 }}
 
@@ -2407,7 +2412,7 @@ impl {wrpc_transport}::Encode for &{camel} {{
      async fn encode(self, payload: &mut (impl {bytes}::BufMut + Send)) -> {anyhow}::Result<Option<{wrpc_transport}::AsyncValue>> {{
         let span = {tracing}::trace_span!("encode");
         let _enter = span.enter();
-        {anyhow}::bail!("exported resources not supported yet")
+        self.id.as_str().encode(payload).await
      }}
 }}
 
@@ -2430,7 +2435,8 @@ impl<'a> {wrpc_transport}::Receive<'a> for {camel} {{
      {{
         let span = {tracing}::trace_span!("receive");
         let _enter = span.enter();
-        {anyhow}::bail!("exported resources not supported yet")
+        let (subject, payload) = {wrpc_transport}::Receive::receive(payload, rx, sub).await?;
+        Ok((Self {{ id: subject }}, payload))
      }}
 }}
 "#,

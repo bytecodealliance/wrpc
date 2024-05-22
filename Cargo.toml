@@ -129,6 +129,7 @@ tokio-stream = { version = "0.1", default-features = false }
 tower = { version = "0.4", default-features = false }
 tracing = { version = "0.1", default-features = false }
 tracing-subscriber = { version = "0.3", default-features = false }
+ulid = { version = "1.1.2", default-features = false }
 url = { version = "2", default-features = false }
 wasmcloud-component-adapters = { version = "0.9", default-features = false }
 wasmparser = { version = "0.207", default-features = false }

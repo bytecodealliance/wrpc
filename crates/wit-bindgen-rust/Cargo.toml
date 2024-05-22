@@ -24,6 +24,8 @@ anyhow = { workspace = true }
 clap = { workspace = true, features = ["derive", "std"], optional = true }
 heck = { workspace = true }
 wit-bindgen-core = { workspace = true }
+tokio = { workspace = true }
+ulid ={ workspace = true, features = ["std"] }
 
 [dev-dependencies]
 serde = { workspace = true, features = ["derive"] }
