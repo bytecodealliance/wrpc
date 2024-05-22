@@ -86,6 +86,7 @@ func transmitError(nc *nats.Conn, subject string, err error) error {
 	var buf bytes.Buffer
 	if err := wrpc.WriteString(fmt.Sprintf("%s", err), &buf); err != nil {
 		slog.Warn("failed to encode handling error", "err", err)
+		buf.Reset()
 		if err := wrpc.WriteString(fmt.Sprintf("failed to encode error: %s", err), &buf); err != nil {
 			slog.Warn("failed to encode handling error encoding error", "err", err)
 			buf.Reset()
@@ -229,10 +230,10 @@ func (w *resultWriter) Index(path ...uint32) (wrpc.IndexWriter, error) {
 }
 
 type subReader struct {
-	sub    *nats.Subscription
 	ctx    context.Context
-	buf    []byte
+	sub    *nats.Subscription
 	cancel func()
+	buf    []byte
 }
 
 func (r *subReader) Read(p []byte) (int, error) {
