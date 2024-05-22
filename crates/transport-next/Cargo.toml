@@ -1,22 +1,22 @@
 [package]
-name = "wrpc-transport"
-version = "0.24.3"
+name = "wrpc-transport-next"
+version = "0.25.0"
 description = "wRPC core transport functionality"
 
 authors.workspace = true
 categories.workspace = true
 edition.workspace = true
-homepage.workspace = true
 license.workspace = true
 repository.workspace = true
 
 [dependencies]
 anyhow = { workspace = true, features = ["std"] }
+async-nats = { workspace = true }
 async-trait = { workspace = true }
-bytes = { workspace = true, features = ["std"] }
+bytes = { workspace = true }
 futures = { workspace = true }
 leb128 = { workspace = true }
-tokio = { workspace = true, features = ["macros", "rt"] }
+tokio = { workspace = true }
 tokio-stream = { workspace = true }
 tower = { workspace = true, features = ["util"] }
 tracing = { workspace = true, features = ["attributes"] }
