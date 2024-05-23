@@ -3537,6 +3537,7 @@ dependencies = [
  "heck 0.5.0",
  "test-helpers",
  "wit-bindgen-core",
+ "wrpc-introspect",
 ]
 
 [[package]]
@@ -3674,6 +3675,13 @@ dependencies = [
  "tracing",
  "wasmtime-wasi-http",
  "wrpc-transport",
+]
+
+[[package]]
+name = "wrpc-introspect"
+version = "0.1.0"
+dependencies = [
+ "wit-parser",
 ]
 
 [[package]]
