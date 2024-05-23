@@ -696,12 +696,13 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
         match func.kind {
             FunctionKind::Freestanding
             | FunctionKind::Static(..)
-            | FunctionKind::Constructor(..) => {
+            | FunctionKind::Constructor(..)
+            | FunctionKind::Method(..) => {
                 uwrite!(self.src, r#""{instance}""#);
-            }
-            FunctionKind::Method(..) => {
-                self.src.push_str("&self.0");
-            }
+            } // TODO: Refactor to pass the resource identifier via instance
+              // FunctionKind::Method(..) => {
+              // self.src.push_str("&self.0");
+              // }
         }
         self.src.push_str(r#", ""#);
         self.src.push_str(&func.name);
