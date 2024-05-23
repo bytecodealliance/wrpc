@@ -236,17 +236,15 @@ impl InterfaceGenerator<'_> {
         }
 
         for (trait_name, methods) in traits.values() {
-            uwriteln!(self.src, "pub trait {trait_name}<Ctx>: 'static {{");
+            uwriteln!(self.src, "pub trait {trait_name}<Ctx>: Send {{");
             for method in methods {
                 self.src.push_str(method);
             }
+            // TODO: Add drop method here
             uwriteln!(self.src, "}}");
         }
 
-        if !funcs_to_export
-            .iter()
-            .any(|Function { kind, .. }| matches!(kind, FunctionKind::Freestanding))
-        {
+        if funcs_to_export.is_empty() {
             return false;
         }
 
@@ -255,13 +253,7 @@ impl InterfaceGenerator<'_> {
             "pub trait Server<Ctx, Tx: {wrpc_transport}::Transmitter> {{\n",
             wrpc_transport = self.gen.wrpc_transport_path()
         );
-        for Function {
-            kind, params, name, ..
-        } in &funcs_to_export
-        {
-            if !matches!(kind, FunctionKind::Freestanding) {
-                continue;
-            }
+        for Function { params, name, .. } in &funcs_to_export {
             uwrite!(
                 self.src,
                 r#"fn serve_{}(&self, invocation: {wrpc_transport}::AcceptedInvocation<Ctx, ("#,
@@ -292,9 +284,6 @@ impl <Ctx, T, Tx> Server<Ctx, Tx> for T
             kind, params, name, ..
         } in &funcs_to_export
         {
-            if !matches!(kind, FunctionKind::Freestanding) {
-                continue;
-            }
             let method_name = format!("serve_{name}", name = name.to_snake_case());
             uwrite!(
                 self.src,
@@ -316,7 +305,8 @@ fn {method_name}(
                 self.print_ty(ty, TypeMode::owned());
                 self.push_str(",");
             }
-            uwrite!(
+
+            uwriteln!(
                 self.src,
                 r#"),
         Tx>) {{
@@ -324,34 +314,139 @@ fn {method_name}(
             let span = {tracing}::trace_span!("{method_name}");
             let _enter = span.enter();
             let handler = self.clone();
-            {tokio}::spawn(async move {{
-                match handler.{name}(context, "#,
-                name = to_rust_ident(name),
+                {tokio}::spawn(async move {{"#,
                 tokio = self.gen.tokio_path(),
-                tracing = self.gen.tracing_path(),
+                tracing = self.gen.tracing_path()
             );
+
+            // print function call
+            match kind {
+                FunctionKind::Freestanding => {
+                    uwrite!(
+                        self.src,
+                        "match handler.{name}(context, ",
+                        name = to_rust_ident(name)
+                    );
+                }
+                FunctionKind::Constructor(id) => {
+                    let resource_name = self.resolve.types[*id]
+                        .name
+                        .as_ref()
+                        .unwrap()
+                        .to_upper_camel_case();
+
+                    uwrite!(
+                        self.src,
+                        "match <T as Handler<Ctx>>::{resource_name}::new(context, ",
+                    )
+                }
+                FunctionKind::Method(id) => {
+                    let resource_name = self.resolve.types[*id]
+                        .name
+                        .as_ref()
+                        .unwrap()
+                        .to_upper_camel_case();
+                    let method_name = name
+                        .to_snake_case()
+                        .replace("method_", "")
+                        .replace(&format!("{}_", resource_name.to_snake_case()), "");
+
+                    uwrite!(
+                        self.src,
+                        r#"let resource_table_ref = handler.table();
+                        let resource_table = resource_table_ref.lock().await;
+                        let resource: &<T as Handler<Ctx>>::{resource_name} = resource_table.get(&params.0.id).unwrap().downcast_ref().unwrap();
+                        match resource.{method_name}(context, "#,
+                        method_name = to_rust_ident(&method_name)
+                    )
+                }
+                // TODO: Resolve the resource arguments to static functions to resource instances correctly,
+                // or provide another way for them to be accessed
+                FunctionKind::Static(id) => {
+                    let resource_name = self.resolve.types[*id]
+                        .name
+                        .as_ref()
+                        .unwrap()
+                        .to_upper_camel_case();
+                    let method_name = name
+                        .to_snake_case()
+                        .replace("static_", "")
+                        .replace(&format!("{}_", resource_name.to_snake_case()), "");
+
+                    uwrite!(
+                        self.src,
+                        "match <T as Handler<Ctx>>::{resource_name}::{method_name}(context, ",
+                        method_name = to_rust_ident(&method_name)
+                    );
+                }
+            }
+
+            // print function arguments
             for i in 0..params.len() {
+                // skip self
+                if i == 0 && matches!(kind, FunctionKind::Method(_)) {
+                    continue;
+                }
+
                 self.src.push_str("params.");
                 self.src.push_str(&i.to_string());
                 self.src.push_str(",");
             }
-            uwrite!(
-                self.src,
-                r#").await {{
-                    Ok(res) => {{
-                        if let Err(err) = transmitter.transmit_static(result_subject, res).await {{
-                            {tracing}::error!(?err, "failed to transmit result")
+
+            // handle function call return value
+            match kind {
+                FunctionKind::Constructor(id) => {
+                    let resource_name = self.resolve.types[*id]
+                        .name
+                        .as_ref()
+                        .unwrap()
+                        .to_upper_camel_case();
+
+                    uwrite!(
+                        self.src,
+                        r#").await {{
+                            Ok(res) => {{
+                                let resource = {resource_name}::new();
+
+                                let resource_table_ref = handler.table();
+                                let mut resource_table = resource_table_ref.lock().await;
+                                resource_table.insert(resource.id.clone(), Box::new(res));
+
+                                if let Err(err) = transmitter.transmit_static(result_subject, resource).await {{
+                                    {tracing}::error!(?err, "failed to transmit result")
+                                }}
+                            }}
+                            Err(err) => {{
+                                if let Err(err) = transmitter.transmit_static(error_subject, err).await {{
+                                    {tracing}::error!(?err, "failed to transmit error")
+                                }}
+                            }}
                         }}
-                    }}
-                    Err(err) => {{
-                        if let Err(err) = transmitter.transmit_static(error_subject, err).await {{
-                            {tracing}::error!(?err, "failed to transmit error")
+                    }}.instrument({tracing}::trace_span!("{method_name}")));"#,
+                        tracing = self.gen.tracing_path(),
+                    );
+                }
+                _ => {
+                    uwrite!(
+                        self.src,
+                        r#").await {{
+                            Ok(res) => {{
+                                if let Err(err) = transmitter.transmit_static(result_subject, res).await {{
+                                    {tracing}::error!(?err, "failed to transmit result")
+                                }}
+                            }}
+                            Err(err) => {{
+                                if let Err(err) = transmitter.transmit_static(error_subject, err).await {{
+                                    {tracing}::error!(?err, "failed to transmit error")
+                                }}
+                            }}
                         }}
-                    }}
-                }}
-            }}.instrument({tracing}::trace_span!("{method_name}")));"#,
-                tracing = self.gen.tracing_path(),
-            );
+                    }}.instrument({tracing}::trace_span!("{method_name}")));"#,
+                        tracing = self.gen.tracing_path(),
+                    );
+                }
+            }
+
             self.push_str("}\n");
         }
         self.push_str("}\n");
@@ -374,10 +469,7 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
             tracing = self.gen.tracing_path(),
             wrpc_transport = self.gen.wrpc_transport_path()
         );
-        for Function { kind, name, .. } in &funcs_to_export {
-            if !matches!(kind, FunctionKind::Freestanding) {
-                continue;
-            }
+        for Function { name, .. } in &funcs_to_export {
             uwrite!(self.src, "{},", to_rust_ident(name));
         }
         uwrite!(
@@ -413,10 +505,7 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
                 }
             }
         };
-        for Function { kind, name, .. } in &funcs_to_export {
-            if !matches!(kind, FunctionKind::Freestanding) {
-                continue;
-            }
+        for Function { name, .. } in &funcs_to_export {
             uwrite!(
                 self.src,
                 r#"async {{ wrpc.serve_static("{instance}", "{name}").await.context("failed to serve `{instance}.{name}`") }}.instrument({tracing}::trace_span!("serve_interface")),"#,
@@ -424,10 +513,7 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
             );
         }
         self.push_str(")?;\n");
-        for Function { kind, name, .. } in &funcs_to_export {
-            if !matches!(kind, FunctionKind::Freestanding) {
-                continue;
-            }
+        for Function { name, .. } in &funcs_to_export {
             let name = to_rust_ident(name);
             uwrite!(self.src, "let mut {name} = ::core::pin::pin!({name});\n",);
         }
@@ -439,10 +525,7 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
             tokio = self.gen.tokio_path()
         );
 
-        for Function { kind, name, .. } in &funcs_to_export {
-            if !matches!(kind, FunctionKind::Freestanding) {
-                continue;
-            }
+        for Function { name, .. } in &funcs_to_export {
             uwriteln!(
                 self.src,
                 "invocation = {}.next() => {{",
@@ -496,7 +579,16 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
         resource_traits: impl Iterator<Item = (TypeId, &'a str)>,
     ) {
         uwriteln!(self.src, "pub trait {trait_name}<Ctx> {{");
+
+        let mut has_resources = false;
+
         for (id, trait_name) in resource_traits {
+            // resource table method
+            if !has_resources {
+                uwriteln!(self.src, "fn table(&self) -> std::sync::Arc<tokio::sync::Mutex<std::collections::HashMap<String, Box<dyn std::any::Any + Send>>>>;");
+                has_resources = true;
+            }
+
             let name = self.resolve.types[id]
                 .name
                 .as_ref()
@@ -654,12 +746,16 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
         let root_methods = funcs.remove(&None).unwrap_or(Vec::new());
 
         let mut extra_trait_items = String::new();
+        let mut has_resources = false;
+
         let guest_trait = match interface {
             Some((id, _)) => {
                 let path = self.path_to_interface(id).unwrap();
                 for (name, id) in &self.resolve.interfaces[id].types {
                     match self.resolve.types[*id].kind {
-                        TypeDefKind::Resource => {}
+                        TypeDefKind::Resource => {
+                            has_resources = true;
+                        }
                         _ => continue,
                     }
                     let camel = name.to_upper_camel_case();
@@ -676,6 +772,17 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
                 "Handler".to_string()
             }
         };
+
+        if has_resources {
+            uwriteln!(
+                extra_trait_items,
+                r#"
+                fn table(&self) -> std::sync::Arc<tokio::sync::Mutex<std::collections::HashMap<String, Box<dyn std::any::Any + Send>>>> {{
+                    unreachable!()
+                }}
+                "#
+            );
+        }
 
         if !root_methods.is_empty() || !extra_trait_items.is_empty() {
             self.generate_stub_impl(&guest_trait, &extra_trait_items, &root_methods);

@@ -277,8 +277,12 @@ mod owned_resource_deref_mut {
             Ok(self.data)
         }
 
-        async fn consume(cx: Ctx, mut _this: exports::my::inline::foo::Bar) -> anyhow::Result<u32> {
-            todo!("resources not supported at this time")
+        async fn consume(
+            cx: Ctx,
+            self_: self::exports::my::inline::foo::Bar,
+        ) -> anyhow::Result<u32> {
+            todo!("there needs to be a way for resource arguments other than `self` to be mapped to their host implementation")
+
             //let me = this.get::<Ctx, MyResource>();
             //let prior_data: &u32 = &me.data;
             //let new_data = prior_data + 1;
@@ -290,15 +294,36 @@ mod owned_resource_deref_mut {
     }
 
     #[derive(Clone)]
-    struct Component;
+    struct Component {
+        table: std::sync::Arc<
+            tokio::sync::Mutex<std::collections::HashMap<String, Box<dyn std::any::Any + Send>>>,
+        >,
+    }
+
+    impl Component {
+        fn new() -> Self {
+            Self {
+                table: std::sync::Arc::new(tokio::sync::Mutex::new(
+                    std::collections::HashMap::new(),
+                )),
+            }
+        }
+    }
 
     impl<Ctx: Send> exports::my::inline::foo::Handler<Ctx> for Component {
         type Bar = MyResource;
+
+        fn table(
+            &self,
+        ) -> std::sync::Arc<
+            tokio::sync::Mutex<std::collections::HashMap<String, Box<dyn std::any::Any + Send>>>,
+        > {
+            self.table.clone()
+        }
     }
 
     async fn serve_exports(wrpc: &impl wrpc_transport::Client) {
-        // TODO: Support resources
-        //serve(wrpc, Component, async {}).await.unwrap();
+        serve(wrpc, Component::new(), async {}).await.unwrap();
     }
 }
 
@@ -323,20 +348,41 @@ mod package_with_versions {
 
     impl<Ctx: Send> exports::my::inline::foo::HandlerBar<Ctx> for MyResource {
         async fn new(cx: Ctx) -> anyhow::Result<Self> {
-            anyhow::bail!("not supported yet")
+            Ok(MyResource)
         }
     }
 
     #[derive(Clone)]
-    struct Component;
+    struct Component {
+        table: std::sync::Arc<
+            tokio::sync::Mutex<std::collections::HashMap<String, Box<dyn std::any::Any + Send>>>,
+        >,
+    }
+
+    impl Component {
+        fn new() -> Self {
+            Self {
+                table: std::sync::Arc::new(tokio::sync::Mutex::new(
+                    std::collections::HashMap::new(),
+                )),
+            }
+        }
+    }
 
     impl<Ctx: Send> exports::my::inline::foo::Handler<Ctx> for Component {
         type Bar = MyResource;
+
+        fn table(
+            &self,
+        ) -> std::sync::Arc<
+            tokio::sync::Mutex<std::collections::HashMap<String, Box<dyn std::any::Any + Send>>>,
+        > {
+            self.table.clone()
+        }
     }
 
     async fn serve_exports(wrpc: &impl wrpc_transport::Client) {
-        // TODO: Support resources
-        //serve(wrpc, Component, async {}).await.unwrap();
+        serve(wrpc, Component::new(), async {}).await.unwrap();
     }
 }
 
@@ -585,12 +631,34 @@ mod resource_example {
     use exports::my::test::logging::{Handler, HandlerLogger, Level};
 
     #[derive(Clone)]
-    struct MyComponent;
+    struct MyComponent {
+        table: std::sync::Arc<
+            tokio::sync::Mutex<std::collections::HashMap<String, Box<dyn std::any::Any + Send>>>,
+        >,
+    }
+
+    impl MyComponent {
+        fn new() -> Self {
+            Self {
+                table: std::sync::Arc::new(tokio::sync::Mutex::new(
+                    std::collections::HashMap::new(),
+                )),
+            }
+        }
+    }
 
     // Note that the `logging` interface has no methods of its own but a trait
     // is required to be implemented here to specify the type of `Logger`.
     impl<Ctx: Send> Handler<Ctx> for MyComponent {
         type Logger = MyLogger;
+
+        fn table(
+            &self,
+        ) -> std::sync::Arc<
+            tokio::sync::Mutex<std::collections::HashMap<String, Box<dyn std::any::Any + Send>>>,
+        > {
+            self.table.clone()
+        }
     }
 
     struct MyLogger {
@@ -625,9 +693,7 @@ mod resource_example {
     }
 
     async fn serve_exports(wrpc: &impl wrpc_transport::Client) -> anyhow::Result<()> {
-        // TODO: Support resources
-        //serve(wrpc, MyComponent, async {}).await
-        anyhow::bail!("resources not supported yet")
+        serve(wrpc, MyComponent::new(), async {}).await
     }
 }
 
