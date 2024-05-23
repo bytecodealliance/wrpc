@@ -19,15 +19,9 @@ pub mod wasmtime_bindings {
         world: "interfaces",
         async: true,
         tracing: true,
+        trappable_imports: true,
         with: {
-           "wasi:cli": wasmtime_wasi::bindings::cli,
-           "wasi:clocks": wasmtime_wasi::bindings::clocks,
-           "wasi:filesystem": wasmtime_wasi::bindings::filesystem,
-           "wasi:http": wasmtime_wasi_http::bindings::http,
-           "wasi:io": wasmtime_wasi::bindings::io,
            "wasi:keyvalue/store/bucket": keyvalue::Bucket,
-           "wasi:random": wasmtime_wasi::bindings::random,
-           "wasi:sockets": wasmtime_wasi::bindings::sockets,
         },
     });
 }
