@@ -3,6 +3,8 @@ use core::pin::pin;
 use core::str;
 use core::time::Duration;
 
+use std::any::Any;
+use std::collections::HashMap;
 use std::net::Ipv6Addr;
 use std::sync::Arc;
 
@@ -13,7 +15,7 @@ use hyper::header::HOST;
 use hyper::Uri;
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use tokio::net::TcpListener;
-use tokio::sync::{oneshot, Notify, RwLock};
+use tokio::sync::{oneshot, Mutex, Notify, RwLock};
 use tokio::time::sleep;
 use tokio::try_join;
 use tracing::{info, instrument};
@@ -120,6 +122,12 @@ async fn rust_bindgen() -> anyhow::Result<()> {
                             fallible: func() -> result<bool, string>;
                             numbers: func() -> tuple<u8, u16, u32, u64, s8, s16, s32, s64, f32, f64>;
                             with-flags: func() -> abc;
+
+                            resource counter {
+                                constructor(initial: u32);
+                                get-count: func() -> u32;
+                                increment-by: func(num: u32);
+                            }
                         }
 
                         world test {
@@ -133,7 +141,10 @@ async fn rust_bindgen() -> anyhow::Result<()> {
                 });
 
                 #[derive(Clone, Default)]
-                struct Component(Arc<RwLock<Option<String>>>);
+                struct Component {
+                    inner: Arc<RwLock<Option<String>>>,
+                    table: Arc<Mutex<HashMap<String, Box<dyn Any + Send>>>>,
+                }
 
                 impl Handler<Option<async_nats::HeaderMap>> for Component {
                     async fn f(
@@ -141,13 +152,42 @@ async fn rust_bindgen() -> anyhow::Result<()> {
                         _cx: Option<async_nats::HeaderMap>,
                         x: String,
                     ) -> anyhow::Result<u32> {
-                        let stored = self.0.read().await.as_ref().unwrap().to_string();
+                        let stored = self.inner.read().await.as_ref().unwrap().to_string();
                         assert_eq!(stored, x);
                         Ok(42)
                     }
                 }
 
+                struct CounterResource(Mutex<u32>);
+
+                impl exports::wrpc_test::integration::shared::HandlerCounter<Option<async_nats::HeaderMap>> for CounterResource {
+                    async fn new(_cx: Option<async_nats::HeaderMap>, count: u32) -> anyhow::Result<Self> {
+                        Ok(Self(Mutex::new(count)))
+                    }
+            
+                    async fn get_count(&self, _cx: Option<async_nats::HeaderMap>) -> anyhow::Result<u32> {
+                        Ok(*self.0.lock().await)
+                    }
+
+                    async fn increment_by(&self, _cx: Option<async_nats::HeaderMap>, num: u32) -> anyhow::Result<()> {
+                        let mut count = self.0.lock().await;
+                        *count += num;
+
+                        Ok(())
+                    }
+                }
+
                 impl exports::wrpc_test::integration::shared::Handler<Option<async_nats::HeaderMap>> for Component {
+                    type Counter = CounterResource;
+
+                    fn table(
+                        &self,
+                    ) -> std::sync::Arc<
+                        tokio::sync::Mutex<std::collections::HashMap<String, Box<dyn std::any::Any + Send>>>,
+                    > {
+                        self.table.clone()
+                    }
+
                     async fn fallible(
                         &self,
                         _cx: Option<async_nats::HeaderMap>,
@@ -188,7 +228,7 @@ async fn rust_bindgen() -> anyhow::Result<()> {
                         _cx: Option<async_nats::HeaderMap>,
                         x: String,
                     ) -> anyhow::Result<()> {
-                        let old = self.0.write().await.replace(x);
+                        let old = self.inner.write().await.replace(x);
                         assert!(old.is_none());
                         Ok(())
                     }
@@ -213,6 +253,12 @@ async fn rust_bindgen() -> anyhow::Result<()> {
                             fallible: func() -> result<bool, string>;
                             numbers: func() -> tuple<u8, u16, u32, u64, s8, s16, s32, s64, f32, f64>;
                             with-flags: func() -> abc;
+
+                            resource counter {
+                                constructor(initial: u32);
+                                get-count: func() -> u32;
+                                increment-by: func(num: u32);
+                            }
                         }
 
                         world test {
@@ -271,6 +317,23 @@ async fn rust_bindgen() -> anyhow::Result<()> {
                             .await
                             .context("failed to call `wrpc-test:integration/shared.with-flags`")?;
                         assert_eq!(v, Abc::A | Abc::C);
+                        let counter = wrpc_test::integration::shared::Counter::new(self.0.as_ref(), 0)
+                            .await
+                            .context("failed to call `wrpc-test:integration/shared.[constructor]counter`")?;
+                        counter.increment_by(self.0.as_ref(), 1)
+                            .await
+                            .context("failed to call `wrpc-test:integration/shared.[method]counter-increment-by`")?;
+                        let count = counter.get_count(self.0.as_ref())
+                            .await
+                            .context("failed to call `wrpc-test:integration/shared.[method]counter-get-count`")?;
+                        assert_eq!(count, 1);
+                        counter.increment_by(self.0.as_ref(), 2)
+                            .await
+                            .context("failed to call `wrpc-test:integration/shared.[method]counter-increment-by`")?;
+                        let count = counter.get_count(self.0.as_ref())
+                            .await
+                            .context("failed to call `wrpc-test:integration/shared.[method]counter-get-count`")?;
+                        assert_eq!(count, 3);
                         Ok("bar".to_string())
                     }
                 }

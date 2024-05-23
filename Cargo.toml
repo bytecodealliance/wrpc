@@ -91,6 +91,7 @@ hyper = { workspace = true, features = ["server"] }
 hyper-util = { workspace = true, features = ["server-auto", "tokio"] }
 reqwest = { workspace = true }
 tokio = { workspace = true, features = ["process"] }
+ulid = { workspace = true }
 wrpc-cli = { workspace = true }
 wrpc-interface-http = { workspace = true, features = [
     "http",

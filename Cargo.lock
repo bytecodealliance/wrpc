@@ -3646,6 +3646,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "tracing",
+ "ulid",
  "wit-bindgen-core",
  "wit-bindgen-wrpc",
  "wit-bindgen-wrpc-go",
