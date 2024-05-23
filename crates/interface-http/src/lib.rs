@@ -5,7 +5,7 @@ use core::time::Duration;
 use anyhow::{bail, Context as _};
 use async_trait::async_trait;
 use bytes::{Buf, BufMut, Bytes};
-use futures::{Stream, StreamExt as _};
+use futures::{stream, Stream, StreamExt as _};
 use tokio::try_join;
 use tracing::instrument;
 use wrpc_transport::{
@@ -132,6 +132,42 @@ impl TryFrom<&Method> for http::method::Method {
     }
 }
 
+#[cfg(feature = "wasmtime-wasi-http")]
+impl From<wasmtime_wasi_http::bindings::http::types::Method> for Method {
+    fn from(method: wasmtime_wasi_http::bindings::http::types::Method) -> Self {
+        match method {
+            wasmtime_wasi_http::bindings::http::types::Method::Get => Self::Get,
+            wasmtime_wasi_http::bindings::http::types::Method::Head => Self::Head,
+            wasmtime_wasi_http::bindings::http::types::Method::Post => Self::Post,
+            wasmtime_wasi_http::bindings::http::types::Method::Put => Self::Put,
+            wasmtime_wasi_http::bindings::http::types::Method::Delete => Self::Delete,
+            wasmtime_wasi_http::bindings::http::types::Method::Connect => Self::Connect,
+            wasmtime_wasi_http::bindings::http::types::Method::Options => Self::Options,
+            wasmtime_wasi_http::bindings::http::types::Method::Trace => Self::Trace,
+            wasmtime_wasi_http::bindings::http::types::Method::Patch => Self::Patch,
+            wasmtime_wasi_http::bindings::http::types::Method::Other(other) => Self::Other(other),
+        }
+    }
+}
+
+#[cfg(feature = "wasmtime-wasi-http")]
+impl From<Method> for wasmtime_wasi_http::bindings::http::types::Method {
+    fn from(method: Method) -> Self {
+        match method {
+            Method::Get => Self::Get,
+            Method::Head => Self::Head,
+            Method::Post => Self::Post,
+            Method::Put => Self::Put,
+            Method::Delete => Self::Delete,
+            Method::Connect => Self::Connect,
+            Method::Options => Self::Options,
+            Method::Trace => Self::Trace,
+            Method::Patch => Self::Patch,
+            Method::Other(other) => Self::Other(other),
+        }
+    }
+}
+
 impl Subscribe for Method {}
 
 #[async_trait]
@@ -243,6 +279,28 @@ impl TryFrom<&Scheme> for http::uri::Scheme {
             Scheme::HTTP => Ok(Self::HTTP),
             Scheme::HTTPS => Ok(Self::HTTPS),
             Scheme::Other(scheme) => scheme.parse(),
+        }
+    }
+}
+
+#[cfg(feature = "wasmtime-wasi-http")]
+impl From<wasmtime_wasi_http::bindings::http::types::Scheme> for Scheme {
+    fn from(scheme: wasmtime_wasi_http::bindings::http::types::Scheme) -> Self {
+        match scheme {
+            wasmtime_wasi_http::bindings::http::types::Scheme::Http => Self::HTTP,
+            wasmtime_wasi_http::bindings::http::types::Scheme::Https => Self::HTTPS,
+            wasmtime_wasi_http::bindings::http::types::Scheme::Other(other) => Self::Other(other),
+        }
+    }
+}
+
+#[cfg(feature = "wasmtime-wasi-http")]
+impl From<Scheme> for wasmtime_wasi_http::bindings::http::types::Scheme {
+    fn from(scheme: Scheme) -> Self {
+        match scheme {
+            Scheme::HTTP => Self::Http,
+            Scheme::HTTPS => Self::Https,
+            Scheme::Other(other) => Self::Other(other),
         }
     }
 }
@@ -1310,47 +1368,57 @@ where
     ))
 }
 
-/// Attempt converting [`wasmtime_wasi_http::types::Request`] to [`Request`].
+/// Attempt converting [`wasmtime_wasi_http::types::HostOutgoingRequest`] to [`Request`].
 /// Values of `path_with_query`, `scheme` and `authority` will be taken from the
 /// request URI.
 #[cfg(feature = "wasmtime-wasi-http")]
 #[instrument(level = "trace", skip_all)]
 pub fn try_wasmtime_to_outgoing_request(
-    wasmtime_wasi_http::types::OutgoingRequest {
-        use_tls: _,
+    wasmtime_wasi_http::types::HostOutgoingRequest {
+        method,
+        scheme,
         authority,
-        request,
+        path_with_query,
+        headers,
+        body,
+    }: wasmtime_wasi_http::types::HostOutgoingRequest,
+    wasmtime_wasi_http::types::OutgoingRequestConfig {
+        use_tls: _,
         connect_timeout,
         first_byte_timeout,
         between_bytes_timeout,
-    }: wasmtime_wasi_http::types::OutgoingRequest,
+    }: wasmtime_wasi_http::types::OutgoingRequestConfig,
 ) -> anyhow::Result<(
     Request<
         impl Stream<Item = Bytes> + Send + 'static,
         impl Future<Output = Option<Fields>> + Send + 'static,
     >,
     RequestOptions,
-    impl Stream<Item = HttpBodyError<wasmtime_wasi_http::bindings::http::types::ErrorCode>>,
+    impl Stream<Item = HttpBodyError<wasmtime_wasi_http::bindings::http::types::ErrorCode>> + Send,
 )> {
-    let (
-        http::request::Parts {
-            ref method,
-            uri,
-            headers,
-            ..
-        },
-        body,
-    ) = request.into_parts();
     let headers = try_header_map_to_fields(headers)?;
-    let (body, trailers, errors) = split_outgoing_http_body(body);
+    let (body, trailers, errors) = if let Some(body) = body {
+        let (body, trailers, errors) = split_outgoing_http_body(body);
+        (
+            Box::pin(body) as Pin<Box<dyn Stream<Item = _> + Send + 'static>>,
+            Box::pin(trailers) as Pin<Box<dyn Future<Output = _> + Send + 'static>>,
+            Box::pin(errors) as Pin<Box<dyn Stream<Item = _> + Send>>,
+        )
+    } else {
+        (
+            Box::pin(stream::empty()) as Pin<Box<dyn Stream<Item = _> + Send + 'static>>,
+            Box::pin(async { None }) as Pin<Box<dyn Future<Output = _> + Send + 'static>>,
+            Box::pin(stream::empty()) as Pin<Box<dyn Stream<Item = _> + Send>>,
+        )
+    };
     Ok((
         Request {
             body,
             trailers,
             method: method.into(),
-            path_with_query: uri.path_and_query().map(ToString::to_string),
-            scheme: uri.scheme().map(Into::into),
-            authority: Some(authority),
+            path_with_query,
+            scheme: scheme.map(Into::into),
+            authority,
             headers,
         },
         RequestOptions {
@@ -1929,7 +1997,8 @@ pub trait OutgoingHandler: wrpc_transport::Client {
     #[instrument(level = "trace", skip_all)]
     fn invoke_handle_wasmtime(
         &self,
-        request: wasmtime_wasi_http::types::OutgoingRequest,
+        request: wasmtime_wasi_http::types::HostOutgoingRequest,
+        options: wasmtime_wasi_http::types::OutgoingRequestConfig,
     ) -> impl Future<
         Output = anyhow::Result<(
             Result<
@@ -1941,7 +2010,7 @@ pub trait OutgoingHandler: wrpc_transport::Client {
         )>,
     > + Send {
         async {
-            let (req, opts, errors) = try_wasmtime_to_outgoing_request(request)?;
+            let (req, opts, errors) = try_wasmtime_to_outgoing_request(request, options)?;
             let (resp, tx) = OutgoingHandler::invoke_handle(self, req, Some(opts))
                 .await
                 .context("failed to invoke `wrpc:http/outgoing-handler.handle`")?;
