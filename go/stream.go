@@ -3,13 +3,60 @@ package wrpc
 import (
 	"bufio"
 	"bytes"
-	"context"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"math"
 )
+
+type CompleteReader struct {
+	io.Reader
+}
+
+func (*CompleteReader) IsComplete() bool {
+	return true
+}
+
+func NewCompleteReader(r io.Reader) *CompleteReader {
+	return &CompleteReader{r}
+}
+
+type CompleteByteReader struct {
+	ByteReader
+}
+
+func (*CompleteByteReader) IsComplete() bool {
+	return true
+}
+
+func NewCompleteByteReader(r ByteReader) *CompleteByteReader {
+	return &CompleteByteReader{r}
+}
+
+type PendingReader struct {
+	io.Reader
+}
+
+func (*PendingReader) IsComplete() bool {
+	return false
+}
+
+func NewPendingReader(r io.Reader) *PendingReader {
+	return &PendingReader{r}
+}
+
+type PendingByteReader struct {
+	ByteReader
+}
+
+func (*PendingByteReader) IsComplete() bool {
+	return false
+}
+
+func NewPendingByteReader(r ByteReader) *PendingByteReader {
+	return &PendingByteReader{r}
+}
 
 type ByteStreamWriter struct {
 	r     io.Reader
@@ -60,17 +107,17 @@ func (v *ByteStreamWriter) WriteTo(w ByteWriter) (err error) {
 	}
 }
 
-type byteStreamReceiver struct {
-	ByteReader
-	buffered uint32
+type ByteStreamReader struct {
+	r   ByteReadCompleter
+	buf uint32
 }
 
-func (r *byteStreamReceiver) Read(p []byte) (int, error) {
-	n := r.buffered
+func (r *ByteStreamReader) Read(p []byte) (int, error) {
+	n := r.buf
 	if n == 0 {
 		slog.Debug("reading pending byte stream chunk length")
 		var err error
-		n, err = ReadUint32(r.ByteReader)
+		n, err = ReadUint32(r.r)
 		if err != nil {
 			return 0, fmt.Errorf("failed to read pending byte stream chunk length: %w", err)
 		}
@@ -82,19 +129,33 @@ func (r *byteStreamReceiver) Read(p []byte) (int, error) {
 		p = p[:n]
 	}
 	slog.Debug("reading pending byte stream chunk contents", "len", n)
-	rn, err := r.ByteReader.Read(p)
+	rn, err := r.r.Read(p)
 	if err != nil {
 		return rn, fmt.Errorf("failed to read pending stream chunk bytes: %w", err)
 	}
 	if rn > int(n) {
 		return rn, errors.New("read more bytes than requested")
 	}
-	r.buffered = n - uint32(rn)
+	r.buf = n - uint32(rn)
 	return rn, nil
 }
 
-func (*byteStreamReceiver) Ready() bool {
-	return false
+func (r *ByteStreamReader) IsComplete() bool {
+	return r.r.IsComplete()
+}
+
+func (r *ByteStreamReader) Close() error {
+	c, ok := r.r.(io.Closer)
+	if ok {
+		return c.Close()
+	}
+	return nil
+}
+
+func NewByteStreamReader(r ByteReadCompleter) *ByteStreamReader {
+	return &ByteStreamReader{
+		r: r,
+	}
 }
 
 // ReadStreamStatus reads a single byte from `r` and returns:
@@ -115,8 +176,8 @@ func ReadStreamStatus(r ByteReader) (bool, error) {
 	}
 }
 
-// ReadByteStream reads a stream of bytes from `r` and `ch`
-func ReadByteStream(r IndexReader, path ...uint32) (ReadyReader, error) {
+// ReadByteStream reads a stream of bytes from `r`
+func ReadByteStream(r IndexReader, path ...uint32) (ReadCompleter, error) {
 	slog.Debug("reading byte stream status byte")
 	ok, err := ReadStreamStatus(r)
 	if err != nil {
@@ -125,9 +186,9 @@ func ReadByteStream(r IndexReader, path ...uint32) (ReadyReader, error) {
 	if !ok {
 		r, err = r.Index(path...)
 		if err != nil {
-			return nil, fmt.Errorf("failed to get byte stream reader: %w", err)
+			return nil, fmt.Errorf("failed to index reader: %w", err)
 		}
-		return &byteStreamReceiver{r, 0}, nil
+		return NewByteStreamReader(NewPendingByteReader(r)), nil
 	}
 	slog.Debug("reading ready byte stream")
 	buf, err := ReadByteList(r)
@@ -135,18 +196,22 @@ func ReadByteStream(r IndexReader, path ...uint32) (ReadyReader, error) {
 		return nil, fmt.Errorf("failed to read bytes: %w", err)
 	}
 	slog.Debug("read ready byte stream", "len", len(buf))
-	return &byteReader{bytes.NewReader(buf)}, nil
+	return NewCompleteReader(bytes.NewReader(buf)), nil
 }
 
-// ReadStream reads a stream from `r` and `ch`
-func ReadStream[T any](ctx context.Context, r ByteReader, ch <-chan []byte, f func(ByteReader) (T, error)) (ReadyReceiver[[]T], error) {
-	slog.DebugContext(ctx, "reading stream status byte")
+// ReadStream reads a stream from `r`
+func ReadStream[T any](r IndexReader, f func(IndexReader) (T, error), path ...uint32) (ReceiveCompleter[[]T], error) {
+	slog.Debug("reading stream status byte")
 	ok, err := ReadStreamStatus(r)
 	if err != nil {
 		return nil, err
 	}
 	if !ok {
-		return &decodeReceiver[[]T]{&ChanReader{ctx, ch, nil}, func(r ByteReader) ([]T, error) {
+		r, err = r.Index(path...)
+		if err != nil {
+			return nil, fmt.Errorf("failed to index reader: %w", err)
+		}
+		return NewDecodeReceiver(r, func(r IndexReader) ([]T, error) {
 			n, err := ReadUint32(r)
 			if err != nil {
 				return nil, fmt.Errorf("failed to read pending stream chunk length: %w", err)
@@ -163,19 +228,19 @@ func ReadStream[T any](ctx context.Context, r ByteReader, ch <-chan []byte, f fu
 				vs[i] = v
 			}
 			return vs, nil
-		}}, nil
+		}), nil
 	}
-	slog.DebugContext(ctx, "reading ready stream")
+	slog.Debug("reading ready stream")
 	vs, err := ReadList(r, f)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read ready stream: %w", err)
 	}
-	slog.DebugContext(ctx, "read ready stream", "len", len(vs))
-	return &ready[[]T]{vs}, nil
+	slog.Debug("read ready stream", "len", len(vs))
+	return NewCompleteReceiver(vs), nil
 }
 
-func WriteByteStream(r ReadyReader, w ByteWriter, chunk []byte, path ...uint32) (*ByteStreamWriter, error) {
-	if r.Ready() {
+func WriteByteStream(r ReadCompleter, w ByteWriter, chunk []byte, path ...uint32) (*ByteStreamWriter, error) {
+	if r.IsComplete() {
 		slog.Debug("writing byte stream `stream::ready` status byte")
 		if err := w.WriteByte(1); err != nil {
 			return nil, fmt.Errorf("failed to write `stream::ready` byte: %w", err)

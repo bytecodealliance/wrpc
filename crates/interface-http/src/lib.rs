@@ -1213,7 +1213,7 @@ impl TryFrom<IncomingRequest> for http::Request<IncomingBody<IncomingInputStream
         let uri = if let Some(path_with_query) = path_with_query {
             uri.path_and_query(path_with_query)
         } else {
-            uri
+            uri.path_and_query("/")
         };
         let uri = if let Some(scheme) = scheme {
             let scheme =

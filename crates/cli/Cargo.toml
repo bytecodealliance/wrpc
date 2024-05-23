@@ -1,8 +1,7 @@
 [package]
 name = "wrpc-cli"
 version = "0.1.0"
-description = "wRPC CLI"
-publish = false
+description = "wRPC CLI utilities"
 
 authors.workspace = true
 categories.workspace = true
@@ -15,7 +14,7 @@ default = ["nats"]
 nats = ["dep:async-nats", "dep:tokio", "tokio/sync"]
 
 [dependencies]
-anyhow = { workspace = true }
+anyhow = { workspace = true, features = ["std"] }
 async-nats = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true }
 tracing-subscriber = { workspace = true, features = [

@@ -85,9 +85,6 @@
         clippy.workspace = true;
 
         test.allTargets = true;
-        test.excludes = [
-          "wit-bindgen-wrpc-go" # TODO: Reenable once complete
-        ];
         test.workspace = true;
 
         buildOverrides = {
@@ -99,7 +96,7 @@
           depsBuildBuild ? [],
           nativeBuildInputs ? [],
           nativeCheckInputs ? [],
-          checkPhase ? "",
+          preCheck ? "",
           ...
         } @ args:
           with pkgs.lib; let
@@ -121,11 +118,14 @@
               depsBuildBuild = depsBuildBuild';
             }
             // optionalAttrs (args ? cargoArtifacts) {
-              checkPhase =
+              preCheck =
                 ''
-                  export GOCACHE=$TMPDIR/go-cache
+                  export GOCACHE=$TMPDIR/gocache
+                  export GOMODCACHE=$TMPDIR/gomod
+                  export GOPATH=$TMPDIR/go
+                  export HOME=$TMPDIR/home
                 ''
-                + checkPhase;
+                + preCheck;
 
               depsBuildBuild =
                 depsBuildBuild'

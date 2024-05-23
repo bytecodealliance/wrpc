@@ -10,7 +10,7 @@ type Tuple2[T0, T1 any] struct {
 	V1 T1
 }
 
-func ReadTuple2[T0, T1 any](r ByteReader, f0 func(ByteReader) (T0, error), f1 func(ByteReader) (T1, error)) (*Tuple2[T0, T1], error,
+func ReadTuple2[T0, T1 any](r IndexReader, f0 func(IndexReader) (T0, error), f1 func(IndexReader) (T1, error)) (*Tuple2[T0, T1], error,
 ) {
 	v0, err := f0(r)
 	if err != nil {
@@ -41,7 +41,7 @@ type Tuple3[T0, T1, T2 any] struct {
 	V2 T2
 }
 
-func ReadTuple3[T0, T1, T2 any](r ByteReader, f0 func(ByteReader) (T0, error), f1 func(ByteReader) (T1, error), f2 func(ByteReader) (T2, error)) (*Tuple3[T0, T1, T2], error,
+func ReadTuple3[T0, T1, T2 any](r IndexReader, f0 func(IndexReader) (T0, error), f1 func(IndexReader) (T1, error), f2 func(IndexReader) (T2, error)) (*Tuple3[T0, T1, T2], error,
 ) {
 	v0, err := f0(r)
 	if err != nil {

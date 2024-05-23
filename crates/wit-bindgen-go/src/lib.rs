@@ -49,11 +49,18 @@ struct Deps {
 }
 
 impl Deps {
+    fn atomic(&mut self) -> &'static str {
+        self.map
+            .insert("atomic".to_string(), "sync/atomic".to_string());
+        "atomic"
+    }
+
     fn binary(&mut self) -> &'static str {
         self.map
             .insert("binary".to_string(), "encoding/binary".to_string());
         "binary"
     }
+
     fn bytes(&mut self) -> &'static str {
         self.map.insert("bytes".to_string(), "bytes".to_string());
         "bytes"
@@ -75,14 +82,6 @@ impl Deps {
         "fmt"
     }
 
-    fn errgroup(&mut self) -> &'static str {
-        self.map.insert(
-            "errgroup".to_string(),
-            "golang.org/x/sync/errgroup".to_string(),
-        );
-        "errgroup"
-    }
-
     fn io(&mut self) -> &'static str {
         self.map.insert("io".to_string(), "io".to_string());
         "io"
@@ -102,6 +101,11 @@ impl Deps {
         self.map
             .insert("strings".to_string(), "strings".to_string());
         "strings"
+    }
+
+    fn sync(&mut self) -> &'static str {
+        self.map.insert("sync".to_string(), "sync".to_string());
+        "sync"
     }
 
     fn utf8(&mut self) -> &'static str {
@@ -129,6 +133,9 @@ impl Deps {
 
 impl Display for Deps {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.map.is_empty() {
+            return Ok(());
+        }
         writeln!(f, "import (")?;
         for (k, v) in &self.map {
             writeln!(f, r#"{k} "{v}""#)?;
@@ -236,28 +243,22 @@ impl GoWrpc {
 
     /// Generates imports and a `Serve` function for the world
     fn finish_serve_function(&mut self) {
-        let mut traits: Vec<String> = self
-            .export_paths
-            .iter()
-            .map(|path| {
-                if path.is_empty() {
-                    "Handler".to_string()
-                } else {
-                    format!("{path}.Handler")
-                }
-            })
-            .collect();
-        let bound = match traits.len() {
-            0 => return,
-            1 => traits.pop().unwrap(),
-            _ => traits.join("; "),
-        };
-        uwriteln!(
-            self.src,
-            r#"
-func Serve(c {wrpc}.Client, h interface{{ {bound} }}) (stop func() error, err error) {{"#,
-            wrpc = self.deps.wrpc()
-        );
+        let interfaces = self.export_paths.iter().map(|path| {
+            if path.is_empty() {
+                "Handler".to_string()
+            } else {
+                format!("{path}.Handler")
+            }
+        });
+        if interfaces.len() == 0 {
+            return;
+        }
+        let wrpc = self.deps.wrpc();
+        uwrite!(self.src, "func Serve(s {wrpc}.Server",);
+        for (i, bound) in interfaces.enumerate() {
+            uwrite!(self.src, ", h{i} {bound}");
+        }
+        self.src.push_str(") (stop func() error, err error) {\n");
         uwriteln!(
             self.src,
             "stops := make([]func() error, 0, {})",
@@ -281,7 +282,7 @@ func Serve(c {wrpc}.Client, h interface{{ {bound} }}) (stop func() error, err er
                 self.src.push_str(path);
                 self.src.push_str(".");
             }
-            self.src.push_str("ServeInterface(c, h)\n");
+            uwriteln!(self.src, "ServeInterface(s, h{i})");
             self.src.push_str("if err != nil { return }\n");
             uwriteln!(self.src, "stops = append(stops, stop{i})");
         }
@@ -379,6 +380,7 @@ impl WorldGenerator for GoWrpc {
         gen.gen.name_interface(resolve, id, name, false);
         gen.types(id);
 
+        let identifier = Identifier::Interface(id, name);
         let interface = &resolve.interfaces[id];
         let name = match name {
             WorldKey::Name(s) => s.to_string(),
@@ -393,7 +395,11 @@ impl WorldGenerator for GoWrpc {
         } else {
             name
         };
-        gen.generate_imports(&instance, resolve.interfaces[id].functions.values());
+        gen.generate_imports(
+            identifier,
+            &instance,
+            resolve.interfaces[id].functions.values(),
+        );
 
         gen.finish_append_submodule(&snake, module_path);
     }
@@ -416,7 +422,11 @@ impl WorldGenerator for GoWrpc {
         } else {
             name.to_string()
         };
-        gen.generate_imports(&instance, funcs.iter().map(|(_, func)| *func));
+        gen.generate_imports(
+            Identifier::World(world),
+            &instance,
+            funcs.iter().map(|(_, func)| *func),
+        );
 
         let src = gen.finish();
         for (k, v) in gen.deps.map {
@@ -560,13 +570,6 @@ enum Identifier<'a> {
     Interface(InterfaceId, &'a WorldKey),
 }
 
-#[derive(Default)]
-struct FnSig {
-    use_item_name: bool,
-    self_arg: Option<String>,
-    self_is_first_param: bool,
-}
-
 #[must_use]
 pub fn to_package_ident(name: &str) -> String {
     match name {
@@ -626,6 +629,7 @@ pub fn to_go_ident(name: &str) -> String {
         "if" => "if_".into(),
         "import" => "import_".into(),
         "interface" => "interface_".into(),
+        "len" => "len_".into(),
         "map" => "map_".into(),
         "package" => "package_".into(),
         "range" => "range_".into(),

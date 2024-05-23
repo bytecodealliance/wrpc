@@ -1,0 +1,5 @@
+package wrpc-examples:http-outgoing-server;
+
+world server {
+    export wrpc:http/outgoing-handler@0.1.0;
+}

@@ -8,7 +8,7 @@ import (
 	"os"
 
 	"github.com/nats-io/nats.go"
-	"github.com/wrpc/wrpc/examples/go/hello-server/bindings/wrpc_examples/hello/handler"
+	"github.com/wrpc/wrpc/examples/go/hello-client/bindings/wrpc_examples/hello/handler"
 	wrpcnats "github.com/wrpc/wrpc/go/nats"
 )
 
@@ -30,11 +30,14 @@ func run() (err error) {
 
 	for _, prefix := range os.Args[1:] {
 		wrpc := wrpcnats.NewClient(nc, prefix)
-		greeting, err := handler.Hello(context.Background(), wrpc)
+		greeting, cleanup, err := handler.Hello(context.Background(), wrpc)
 		if err != nil {
 			return fmt.Errorf("failed to call `wrpc-examples:hello/handler.hello`: %w", err)
 		}
 		fmt.Printf("%s: %s\n", prefix, greeting)
+		if err := cleanup(); err != nil {
+			return fmt.Errorf("failed to shutdown `wrpc-examples:hello/handler.hello` invocation: %w", err)
+		}
 	}
 	return nil
 }

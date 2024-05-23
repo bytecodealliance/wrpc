@@ -69,7 +69,7 @@ func ReadByteList(r ByteReader) ([]byte, error) {
 }
 
 // ReadList reads a list from `r` and returns it
-func ReadList[T any](r ByteReader, f func(ByteReader) (T, error)) ([]T, error) {
+func ReadList[T any](r IndexReader, f func(IndexReader) (T, error)) ([]T, error) {
 	slog.Debug("reading list length")
 	n, err := ReadUint32(r)
 	if err != nil {
