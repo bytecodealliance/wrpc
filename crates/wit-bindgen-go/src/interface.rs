@@ -1,44 +1,19 @@
+use std::collections::BTreeMap;
+use std::fmt::Write as _;
+use std::mem;
+
+use heck::ToUpperCamelCase;
+use wit_bindgen_core::wit_parser::{
+    Case, Docs, Enum, EnumCase, Field, Flag, Flags, Function, FunctionKind, Handle, Int,
+    InterfaceId, Record, Resolve, Result_, Stream, Tuple, Type, TypeDefKind, TypeId, TypeOwner,
+    Variant, World, WorldItem, WorldKey,
+};
+use wit_bindgen_core::{uwrite, uwriteln, Source, TypeInfo};
+use wrpc_introspect::{async_paths_ty, flag_repr, is_list_of, is_ty, rpc_func_name};
+
 use crate::{
     to_go_ident, to_package_ident, to_upper_camel_case, Deps, GoWrpc, Identifier, InterfaceName,
 };
-use heck::ToUpperCamelCase;
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
-use std::fmt::Write as _;
-use std::mem;
-use wit_bindgen_core::wit_parser::WorldItem;
-use wit_bindgen_core::{
-    uwrite, uwriteln,
-    wit_parser::{
-        Case, Docs, Enum, EnumCase, Field, Flag, Flags, Function, FunctionKind, Handle, Int,
-        InterfaceId, Record, Resolve, Result_, Stream, Tuple, Type, TypeDefKind, TypeId, TypeOwner,
-        Variant, World, WorldKey,
-    },
-    Source, TypeInfo,
-};
-
-fn flag_repr(ty: &Flags) -> Int {
-    match ty.flags.len() {
-        ..=8 => Int::U8,
-        9..=16 => Int::U16,
-        17..=32 => Int::U32,
-        33.. => Int::U64,
-    }
-}
-
-fn rpc_func_name(func: &Function) -> &str {
-    match &func.kind {
-        FunctionKind::Constructor(..) => func
-            .name
-            .strip_prefix("[constructor]")
-            .expect("failed to strip `[constructor]` prefix"),
-        FunctionKind::Static(..) => func
-            .name
-            .strip_prefix("[static]")
-            .expect("failed to strip `[static]` prefix"),
-        FunctionKind::Method(..) => func.item_name(),
-        FunctionKind::Freestanding => &func.name,
-    }
-}
 
 fn go_func_name(func: &Function) -> String {
     match &func.kind {
@@ -510,7 +485,7 @@ impl InterfaceGenerator<'_> {
     }
 
     fn print_read_list(&mut self, ty: &Type, reader: &str, path: &str) {
-        if self.is_ty(Type::U8, ty) {
+        if is_ty(self.resolve, Type::U8, ty) {
             self.print_read_byte_list(reader);
             return;
         }
@@ -919,7 +894,7 @@ impl InterfaceGenerator<'_> {
 
     fn print_read_future(&mut self, ty: &Option<Type>, reader: &str, path: &str) {
         match ty {
-            Some(ty) if self.is_list_of(Type::U8, ty) => {
+            Some(ty) if is_list_of(self.resolve, Type::U8, ty) => {
                 let bytes = self.deps.bytes();
                 let fmt = self.deps.fmt();
                 let slog = self.deps.slog();
@@ -1041,7 +1016,7 @@ impl InterfaceGenerator<'_> {
 
     fn print_read_stream(&mut self, Stream { element, .. }: &Stream, reader: &str, path: &str) {
         match element {
-            Some(ty) if self.is_ty(Type::U8, ty) => {
+            Some(ty) if is_ty(self.resolve, Type::U8, ty) => {
                 let bytes = self.deps.bytes();
                 let fmt = self.deps.fmt();
                 let slog = self.deps.slog();
@@ -1938,7 +1913,7 @@ impl InterfaceGenerator<'_> {
 
     fn print_write_future(&mut self, ty: &Option<Type>, name: &str, writer: &str) {
         match ty {
-            Some(ty) if self.is_list_of(Type::U8, ty) => {
+            Some(ty) if is_list_of(self.resolve, Type::U8, ty) => {
                 let bytes = self.deps.bytes();
                 let fmt = self.deps.fmt();
                 let io = self.deps.io();
@@ -2107,7 +2082,7 @@ impl InterfaceGenerator<'_> {
 
     fn print_write_stream(&mut self, Stream { element, .. }: &Stream, name: &str, writer: &str) {
         match element {
-            Some(ty) if self.is_ty(Type::U8, ty) => {
+            Some(ty) if is_ty(self.resolve, Type::U8, ty) => {
                 let bytes = self.deps.bytes();
                 let fmt = self.deps.fmt();
                 let io = self.deps.io();
@@ -2557,166 +2532,6 @@ impl InterfaceGenerator<'_> {
         }
     }
 
-    fn is_ty(&self, expected: Type, ty: &Type) -> bool {
-        let mut ty = *ty;
-        loop {
-            if ty == expected {
-                return true;
-            }
-            if let Type::Id(id) = ty {
-                if let TypeDefKind::Type(t) = self.resolve.types[id].kind {
-                    ty = t;
-                    continue;
-                }
-            }
-            return false;
-        }
-    }
-
-    fn is_list_of(&self, expected: Type, ty: &Type) -> bool {
-        let mut ty = *ty;
-        loop {
-            if let Type::Id(id) = ty {
-                match self.resolve.types[id].kind {
-                    TypeDefKind::Type(t) => {
-                        ty = t;
-                        continue;
-                    }
-                    TypeDefKind::List(t) => return self.is_ty(expected, &t),
-                    _ => return false,
-                }
-            }
-            return false;
-        }
-    }
-
-    fn async_paths_ty(&self, ty: &Type) -> (BTreeSet<VecDeque<Option<u32>>>, bool) {
-        if let Type::Id(ty) = ty {
-            self.async_paths_tyid(*ty)
-        } else {
-            (BTreeSet::default(), false)
-        }
-    }
-
-    fn async_paths_tyid(&self, id: TypeId) -> (BTreeSet<VecDeque<Option<u32>>>, bool) {
-        match &self.resolve.types[id].kind {
-            TypeDefKind::List(ty) => {
-                let mut paths = BTreeSet::default();
-                let (nested, fut) = self.async_paths_ty(ty);
-                for mut path in nested {
-                    path.push_front(None);
-                    paths.insert(path);
-                }
-                if fut {
-                    paths.insert(vec![None].into());
-                }
-                (paths, false)
-            }
-            TypeDefKind::Option(ty) => self.async_paths_ty(ty),
-            TypeDefKind::Result(ty) => {
-                let mut paths = BTreeSet::default();
-                let mut is_fut = false;
-                if let Some(ty) = ty.ok.as_ref() {
-                    let (nested, fut) = self.async_paths_ty(ty);
-                    for path in nested {
-                        paths.insert(path);
-                    }
-                    if fut {
-                        is_fut = true;
-                    }
-                }
-                if let Some(ty) = ty.err.as_ref() {
-                    let (nested, fut) = self.async_paths_ty(ty);
-                    for path in nested {
-                        paths.insert(path);
-                    }
-                    if fut {
-                        is_fut = true;
-                    }
-                }
-                (paths, is_fut)
-            }
-            TypeDefKind::Variant(ty) => {
-                let mut paths = BTreeSet::default();
-                let mut is_fut = false;
-                for Case { ty, .. } in &ty.cases {
-                    if let Some(ty) = ty {
-                        let (nested, fut) = self.async_paths_ty(ty);
-                        for path in nested {
-                            paths.insert(path);
-                        }
-                        if fut {
-                            is_fut = true;
-                        }
-                    }
-                }
-                (paths, is_fut)
-            }
-            TypeDefKind::Tuple(ty) => {
-                let mut paths = BTreeSet::default();
-                for (i, ty) in ty.types.iter().enumerate() {
-                    let (nested, fut) = self.async_paths_ty(ty);
-                    for mut path in nested {
-                        path.push_front(Some(i.try_into().unwrap()));
-                        paths.insert(path);
-                    }
-                    if fut {
-                        let path = vec![Some(i.try_into().unwrap())].into();
-                        paths.insert(path);
-                    }
-                }
-                (paths, false)
-            }
-            TypeDefKind::Record(Record { fields }) => {
-                let mut paths = BTreeSet::default();
-                for (i, Field { ty, .. }) in fields.iter().enumerate() {
-                    let (nested, fut) = self.async_paths_ty(ty);
-                    for mut path in nested {
-                        path.push_front(Some(i.try_into().unwrap()));
-                        paths.insert(path);
-                    }
-                    if fut {
-                        let path = vec![Some(i.try_into().unwrap())].into();
-                        paths.insert(path);
-                    }
-                }
-                (paths, false)
-            }
-            TypeDefKind::Future(ty) => {
-                let mut paths = BTreeSet::default();
-                if let Some(ty) = ty {
-                    let (nested, _) = self.async_paths_ty(ty);
-                    for path in nested {
-                        paths.insert(path);
-                    }
-                }
-                (paths, true)
-            }
-            TypeDefKind::Stream(Stream { element, .. }) => {
-                let mut paths = BTreeSet::new();
-                if let Some(ty) = element {
-                    let (nested, fut) = self.async_paths_ty(ty);
-                    for mut path in nested {
-                        path.push_front(None);
-                        paths.insert(path);
-                    }
-                    if fut {
-                        paths.insert(vec![None].into());
-                    }
-                }
-                (paths.into_iter().collect(), true)
-            }
-            TypeDefKind::Type(ty) => self.async_paths_ty(ty),
-            TypeDefKind::Resource
-            | TypeDefKind::Flags(..)
-            | TypeDefKind::Enum(..)
-            | TypeDefKind::Handle(Handle::Own(..) | Handle::Borrow(..)) => {
-                (BTreeSet::default(), false)
-            }
-            TypeDefKind::Unknown => unreachable!(),
-        }
-    }
-
     pub(super) fn generate_exports<'a>(
         &mut self,
         identifier: Identifier<'a>,
@@ -3044,7 +2859,7 @@ impl InterfaceGenerator<'_> {
                      }}, "#,
                     );
                     for (i, (_, ty)) in func.params.iter().enumerate() {
-                        let (nested, fut) = self.async_paths_ty(ty);
+                        let (nested, fut) = async_paths_ty(self.resolve, ty);
                         for path in nested {
                             self.push_str(wrpc);
                             self.push_str(".NewSubscribePath().Index(");
@@ -3164,7 +2979,7 @@ impl InterfaceGenerator<'_> {
              }}, "#,
             );
             for (i, (_, ty)) in func.params.iter().enumerate() {
-                let (nested, fut) = self.async_paths_ty(ty);
+                let (nested, fut) = async_paths_ty(self.resolve, ty);
                 for path in nested {
                     self.push_str(wrpc);
                     self.push_str(".NewSubscribePath().Index(");
@@ -3333,7 +3148,7 @@ impl InterfaceGenerator<'_> {
             self.src.push_str("return nil\n");
             self.src.push_str("},");
             for (i, ty) in func.results.iter_types().enumerate() {
-                let (nested, fut) = self.async_paths_ty(ty);
+                let (nested, fut) = async_paths_ty(self.resolve, ty);
                 for path in nested {
                     self.push_str(wrpc);
                     self.push_str(".NewSubscribePath().Index(");
@@ -3691,7 +3506,7 @@ impl InterfaceGenerator<'_> {
         let wrpc = self.deps.wrpc();
         self.push_str(wrpc);
         match element {
-            Some(ty) if self.is_ty(Type::U8, ty) => {
+            Some(ty) if is_ty(self.resolve, Type::U8, ty) => {
                 self.push_str(".ReadCompleter");
             }
             Some(ty) => {
