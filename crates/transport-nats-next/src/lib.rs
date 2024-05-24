@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, ensure, Context as _};
 use async_nats::client::Publisher;
-use async_nats::{HeaderMap, Message, ServerInfo, Subject, Subscriber};
+use async_nats::{HeaderMap, Message, ServerInfo, StatusCode, Subject, Subscriber};
 use bytes::{Buf as _, Bytes, BytesMut};
 use futures::sink::SinkExt as _;
 use futures::{Stream, StreamExt};
@@ -475,6 +475,30 @@ impl ParamWriter {
                 trace!("polling for handshake response");
                 match sub.poll_next_unpin(cx) {
                     Poll::Ready(Some(Message {
+                        status: Some(StatusCode::NO_RESPONDERS),
+                        ..
+                    })) => Poll::Ready(Err(std::io::ErrorKind::NotConnected.into())),
+                    Poll::Ready(Some(Message {
+                        status: Some(StatusCode::TIMEOUT),
+                        ..
+                    })) => Poll::Ready(Err(std::io::ErrorKind::TimedOut.into())),
+                    Poll::Ready(Some(Message {
+                        status: Some(StatusCode::REQUEST_TERMINATED),
+                        ..
+                    })) => Poll::Ready(Err(std::io::ErrorKind::UnexpectedEof.into())),
+                    Poll::Ready(Some(Message {
+                        status: Some(code),
+                        description,
+                        ..
+                    })) if !code.is_success() => Poll::Ready(Err(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        if let Some(description) = description {
+                            format!("received a response with code `{code}` ({description})")
+                        } else {
+                            format!("received a response with code `{code}`")
+                        },
+                    ))),
+                    Poll::Ready(Some(Message {
                         reply: Some(tx), ..
                     })) => {
                         let Self::Handshaking {
@@ -518,13 +542,10 @@ impl ParamWriter {
                             self.poll_active(cx)
                         }
                     }
-                    Poll::Ready(Some(..)) => {
-                        *self = Self::Corrupted;
-                        Poll::Ready(Err(std::io::Error::new(
-                            std::io::ErrorKind::InvalidInput,
-                            "peer did not specify a reply subject",
-                        )))
-                    }
+                    Poll::Ready(Some(..)) => Poll::Ready(Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        "peer did not specify a reply subject",
+                    ))),
                     Poll::Ready(None) => {
                         *self = Self::Corrupted;
                         Poll::Ready(Err(std::io::Error::from(std::io::ErrorKind::BrokenPipe)))
@@ -832,11 +853,13 @@ impl<O: AsyncWrite + Send> wrpc_transport_next::Session for Session<O> {
                     buf.clear();
                 }
             }
+            trace!(?buf, "writing error string");
             pin!(self.outgoing)
                 .write_all(&buf)
                 .await
                 .context("failed to write error string")?;
         }
+        trace!("unsubscribing from error subject");
         if let Err(err) = self.incoming.unsubscribe().await {
             warn!(?err, "failed to unsubscribe from error subject");
         }
@@ -927,6 +950,7 @@ impl wrpc_transport_next::Invoke for Client {
                         .saturating_sub(b"\r\n".len());
                 }
             }
+            trace!("publishing handshake");
             self.nats
                 .publish_with_reply_and_headers(
                     param_tx.clone(),
@@ -935,8 +959,8 @@ impl wrpc_transport_next::Invoke for Client {
                     params.split_to(max_payload.min(params.len())),
                 )
                 .await
-                .context("failed to send handshake")?;
         } else {
+            trace!("publishing handshake");
             self.nats
                 .publish_with_reply(
                     param_tx.clone(),
@@ -944,8 +968,8 @@ impl wrpc_transport_next::Invoke for Client {
                     params.split_to(max_payload.min(params.len())),
                 )
                 .await
-                .context("failed to send handshake")?;
-        };
+        }
+        .context("failed to send handshake")?;
         let (error_tx_tx, error_tx_rx) = oneshot::channel();
         Ok(wrpc_transport_next::Invocation {
             outgoing: ParamWriter::new(

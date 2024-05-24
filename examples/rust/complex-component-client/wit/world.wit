@@ -1,0 +1,5 @@
+package wrpc-examples:complex-component-client;
+
+world client {
+    include wrpc-examples:complex/client;
+}
