@@ -1,200 +1,64 @@
-use core::iter::zip;
+use core::{iter::zip, pin::pin};
 
 use std::sync::Arc;
 
-use anyhow::Context as _;
+use anyhow::{anyhow, bail, Context as _};
+use tokio::io::AsyncWriteExt as _;
+use tokio::try_join;
+use tokio_util::bytes::BytesMut;
+use tokio_util::codec::Encoder;
 use tracing::{error, instrument, trace, warn};
-use wasmtime::component::{types, Linker, Resource};
-use wasmtime_wasi::async_trait;
+use wasmtime::component::{types, Linker, Val};
+use wasmtime::AsContextMut as _;
 use wasmtime_wasi::{ResourceTable, WasiCtx, WasiView};
-use wrpc_runtime_wasmtime::{from_wrpc_value, to_wrpc_value};
-use wrpc_types::DynamicFunction;
+use wit_parser::FunctionKind;
+use wrpc_introspect::rpc_func_name;
+use wrpc_runtime_wasmtime::{read_value, RemoteResource, ValEncoder};
+use wrpc_transport::{Invocation, Session};
+use wrpc_transport_next as wrpc_transport;
 
-pub mod wasmtime_bindings {
-    mod keyvalue {
-        pub type Bucket = std::sync::Arc<String>;
-    }
-
-    wasmtime::component::bindgen!({
-        world: "interfaces",
-        async: true,
-        tracing: true,
-        trappable_imports: true,
-        with: {
-           "wasi:keyvalue/store/bucket": keyvalue::Bucket,
-        },
-    });
-}
-
-pub mod wrpc_bindings {
-    wit_bindgen_wrpc::generate!("interfaces-wrpc");
-}
-
-pub struct Ctx<C> {
-    pub ctx: WasiCtx,
+pub struct Ctx<C: wrpc_transport::Invoke<Error = wasmtime::Error>> {
     pub table: ResourceTable,
+    pub wasi: WasiCtx,
     pub wrpc: C,
 }
 
-impl<C: Send> WasiView for Ctx<C> {
+pub trait WrpcView<C: wrpc_transport::Invoke<Error = wasmtime::Error>>: Send {
+    fn client(&self) -> &C;
+}
+
+impl<C: wrpc_transport::Invoke<Error = wasmtime::Error>> WrpcView<C> for Ctx<C> {
+    fn client(&self) -> &C {
+        &self.wrpc
+    }
+}
+
+impl<C: wrpc_transport::Invoke<Error = wasmtime::Error>> WasiView for Ctx<C> {
     fn ctx(&mut self) -> &mut WasiCtx {
-        &mut self.ctx
+        &mut self.wasi
     }
     fn table(&mut self) -> &mut ResourceTable {
         &mut self.table
     }
 }
 
-type Result<T, E = wasmtime_bindings::wasi::keyvalue::store::Error> = core::result::Result<T, E>;
-
-trait FromWrpc<T> {
-    fn from_wrpc(v: T) -> Self;
-}
-
-impl FromWrpc<wrpc_bindings::wrpc::keyvalue::store::Error>
-    for wasmtime_bindings::wasi::keyvalue::store::Error
-{
-    fn from_wrpc(v: wrpc_bindings::wrpc::keyvalue::store::Error) -> Self {
-        match v {
-            wrpc_bindings::wrpc::keyvalue::store::Error::NoSuchStore => Self::NoSuchStore,
-            wrpc_bindings::wrpc::keyvalue::store::Error::AccessDenied => Self::AccessDenied,
-            wrpc_bindings::wrpc::keyvalue::store::Error::Other(s) => Self::Other(s),
-        }
-    }
-}
-
-impl FromWrpc<wrpc_bindings::wrpc::keyvalue::store::KeyResponse>
-    for wasmtime_bindings::wasi::keyvalue::store::KeyResponse
-{
-    fn from_wrpc(
-        wrpc_bindings::wrpc::keyvalue::store::KeyResponse{ keys, cursor }: wrpc_bindings::wrpc::keyvalue::store::KeyResponse,
-    ) -> Self {
-        Self { keys, cursor }
-    }
-}
-
-impl<WT, WE, T, E> FromWrpc<Result<WT, WE>> for core::result::Result<T, E>
-where
-    T: FromWrpc<WT>,
-    E: FromWrpc<WE>,
-{
-    fn from_wrpc(v: Result<WT, WE>) -> Self {
-        match v {
-            Ok(v) => Ok(T::from_wrpc(v)),
-            Err(v) => Err(E::from_wrpc(v)),
-        }
-    }
-}
-
-#[async_trait]
-impl<C: wrpc_transport::Client + Send> wasmtime_bindings::wasi::keyvalue::store::Host for Ctx<C> {
-    #[instrument(skip(self))]
-    async fn open(
-        &mut self,
-        name: String,
-    ) -> anyhow::Result<Result<Resource<wasmtime_bindings::wasi::keyvalue::store::Bucket>>> {
-        let bucket = self
-            .table
-            .push(Arc::new(name))
-            .context("failed to open bucket")?;
-        Ok(Ok(bucket))
-    }
-}
-
-#[async_trait]
-impl<C: wrpc_transport::Client + Send> wasmtime_bindings::wasi::keyvalue::store::HostBucket
-    for Ctx<C>
-{
-    #[instrument(skip(self))]
-    async fn get(
-        &mut self,
-        bucket: Resource<wasmtime_bindings::wasi::keyvalue::store::Bucket>,
-        key: String,
-    ) -> anyhow::Result<Result<Option<Vec<u8>>>> {
-        let bucket = self.table.get(&bucket).context("failed to get bucket")?;
-        let v = wrpc_bindings::wrpc::keyvalue::store::get(&self.wrpc, bucket, &key)
-            .await
-            .context("failed to invoke `wrpc:keyvalue/store.get`")?;
-        Ok(v.map_err(FromWrpc::from_wrpc))
-    }
-
-    #[instrument(skip(self))]
-    async fn set(
-        &mut self,
-        bucket: Resource<wasmtime_bindings::wasi::keyvalue::store::Bucket>,
-        key: String,
-        value: Vec<u8>,
-    ) -> anyhow::Result<Result<()>> {
-        let bucket = self.table.get(&bucket).context("failed to get bucket")?;
-        let v = wrpc_bindings::wrpc::keyvalue::store::set(&self.wrpc, bucket, &key, &value)
-            .await
-            .context("failed to invoke `wrpc:keyvalue/store.set`")?;
-        Ok(v.map_err(FromWrpc::from_wrpc))
-    }
-
-    #[instrument(skip(self))]
-    async fn delete(
-        &mut self,
-        bucket: Resource<wasmtime_bindings::wasi::keyvalue::store::Bucket>,
-        key: String,
-    ) -> anyhow::Result<Result<()>> {
-        let bucket = self.table.get(&bucket).context("failed to get bucket")?;
-        let v = wrpc_bindings::wrpc::keyvalue::store::delete(&self.wrpc, bucket, &key)
-            .await
-            .context("failed to invoke `wrpc:keyvalue/store.delete`")?;
-        Ok(v.map_err(FromWrpc::from_wrpc))
-    }
-
-    #[instrument(skip(self))]
-    async fn exists(
-        &mut self,
-        bucket: Resource<wasmtime_bindings::wasi::keyvalue::store::Bucket>,
-        key: String,
-    ) -> anyhow::Result<Result<bool>> {
-        let bucket = self.table.get(&bucket).context("failed to get bucket")?;
-        let v = wrpc_bindings::wrpc::keyvalue::store::exists(&self.wrpc, bucket, &key)
-            .await
-            .context("failed to invoke `wrpc:keyvalue/store.delete`")?;
-        Ok(v.map_err(FromWrpc::from_wrpc))
-    }
-
-    #[instrument(skip(self))]
-    async fn list_keys(
-        &mut self,
-        bucket: Resource<wasmtime_bindings::wasi::keyvalue::store::Bucket>,
-        cursor: Option<u64>,
-    ) -> anyhow::Result<Result<wasmtime_bindings::wasi::keyvalue::store::KeyResponse>> {
-        let bucket = self.table.get(&bucket).context("failed to get bucket")?;
-        let keys = wrpc_bindings::wrpc::keyvalue::store::list_keys(&self.wrpc, bucket, cursor)
-            .await
-            .context("failed to invoke `wrpc:keyvalue/store.list-keys`")?;
-        Ok(FromWrpc::from_wrpc(keys))
-    }
-
-    #[instrument(skip(self))]
-    fn drop(
-        &mut self,
-        bucket: Resource<wasmtime_bindings::wasi::keyvalue::store::Bucket>,
-    ) -> anyhow::Result<()> {
-        self.table
-            .delete(bucket)
-            .context("failed to delete bucket")?;
-        Ok(())
-    }
-}
-
 /// Polyfills all missing imports
 #[instrument(level = "trace", skip_all)]
-pub fn polyfill<'a, T, C>(
+pub fn polyfill<'a, T, C, V>(
     resolve: &wit_parser::Resolve,
     imports: T,
     engine: &wasmtime::Engine,
     ty: &types::Component,
-    linker: &mut Linker<Ctx<C>>,
+    linker: &mut Linker<V>,
+    cx: C::Context,
 ) where
     T: IntoIterator<Item = (&'a wit_parser::WorldKey, &'a wit_parser::WorldItem)>,
     T::IntoIter: ExactSizeIterator,
-    C: wrpc_transport::Client + Send,
+    V: WrpcView<C> + WasiView,
+    C: wrpc_transport::Invoke<Error = wasmtime::Error>,
+    C::Context: Clone + 'static,
+    C::Incoming: Sized,
+    C::Session: Session<TransportError = wasmtime::Error>,
 {
     let imports = imports.into_iter();
     for (wk, item) in imports {
@@ -268,17 +132,6 @@ pub fn polyfill<'a, T, C>(
                 func_name,
                 "polyfill component function import"
             );
-            let ty = match DynamicFunction::resolve(resolve, ty) {
-                Ok(ty) => ty,
-                Err(err) => {
-                    error!(?err, "failed to resolve polyfilled function type");
-                    continue;
-                }
-            };
-            let result_ty = match ty {
-                DynamicFunction::Method { results, .. } => Arc::clone(&results),
-                DynamicFunction::Static { results, .. } => Arc::clone(&results),
-            };
             let Some(types::ComponentItem::ComponentFunc(func)) =
                 instance.get_export(engine, func_name)
             else {
@@ -289,38 +142,104 @@ pub fn polyfill<'a, T, C>(
                 );
                 continue;
             };
+            let cx = cx.clone();
             let instance_name = Arc::clone(&instance_name);
             let func_name = Arc::new(func_name.to_string());
-            if let Err(err) = linker.func_new_async(
-                Arc::clone(&func_name).as_str(),
-                move |mut store, params, results| {
-                    let instance_name = Arc::clone(&instance_name);
-                    let func_name = Arc::clone(&func_name);
-                    let result_ty = Arc::clone(&result_ty);
-                    let func = func.clone();
-                    Box::new(async move {
-                        let params: Vec<_> = zip(params, func.params())
-                            .map(|(val, ty)| to_wrpc_value(&mut store, val, &ty))
-                            .collect::<anyhow::Result<_>>()
-                            .context("failed to convert wasmtime values to wRPC values")?;
-                        let (result_values, tx) = store
-                            .data()
-                            .wrpc
-                            .invoke_dynamic(&instance_name, &func_name, params, &result_ty)
-                            .await
-                            .with_context(|| {
-                                format!("failed to invoke `{instance_name}.{func_name}` polyfill via wRPC")
-                            })?;
-                        for (i, (val, ty)) in zip(result_values, func.results()).enumerate() {
-                            let val = from_wrpc_value(&mut store, val, &ty)?;
-                            let result = results.get_mut(i).context("invalid result vector")?;
-                            *result = val;
-                        }
-                        tx.await.context("failed to transmit parameters")?;
-                        Ok(())
-                    })
-                },
-            ) {
+            let rpc_name = Arc::new(rpc_func_name(ty).to_string());
+            if let Err(err) = match ty.kind {
+                FunctionKind::Method(..) => linker.func_new_async(
+                    Arc::clone(&func_name).as_str(),
+                    move |mut store, params, results| {
+                        let cx = cx.clone();
+                        let func = func.clone();
+                        let rpc_name = Arc::clone(&rpc_name);
+                        let func_name = Arc::clone(&func_name);
+                        Box::new(async move {
+                            let (this, params) = params.split_first().context("method receiver missing")?;
+                            let Val::Resource(this) = this else {
+                                bail!("first method parameter is not a resource")
+                            };
+                            let this = this
+                                .try_into_resource(&mut store)
+                                .context("resource type mismatch")?;
+                            let mut buf = BytesMut::default();
+                            for (v, ref ty) in zip(params, func.params()) {
+                                ValEncoder::new(store.as_context_mut(), ty).encode(v, &mut buf).context("failed to encode parameter")?;
+                            }
+                            let RemoteResource(this) = store
+                                .data_mut()
+                                .table()
+                                .get(&this)
+                                .context("failed to get remote resource")?;
+                            let this = this.to_string();
+                            let Invocation { outgoing, incoming, session } = store
+                                .data()
+                                .client()
+                                .invoke(cx, &this, &rpc_name, buf.freeze(), &[])
+                                .await
+                                .with_context(|| {
+                                    format!("failed to invoke `{this}.{func_name}` polyfill via wRPC")
+                                })?;
+                            try_join!(
+                                async {
+                                    pin!(outgoing).shutdown().await.context("failed to shutdown outgoing stream")
+                                },
+                                async {
+                                    let mut incoming = pin!(incoming);
+                                    for (v, ref ty) in zip(results, func.results()) {
+                                        read_value(&mut store, &mut incoming, v, ty).await.context("failed to decode result value")?;
+                                    }
+                                    Ok(())
+                                },
+                            )?;
+                            match session.finish(Ok(())).await? {
+                                Ok(()) => Ok(()),
+                                Err(err) => bail!(anyhow!("{err}").context("session failed"))
+                            }
+                        })
+                    },
+                ),
+                FunctionKind::Freestanding | FunctionKind::Static(_) | FunctionKind::Constructor(..) => linker.func_new_async(
+                    Arc::clone(&func_name).as_str(),
+                    move |mut store, params, results| {
+                        let cx = cx.clone();
+                        let instance_name = Arc::clone(&instance_name);
+                        let func = func.clone();
+                        let rpc_name = Arc::clone(&rpc_name);
+                        let func_name = Arc::clone(&func_name);
+                        Box::new(async move {
+                            let mut buf = BytesMut::default();
+                            for (v, ref ty) in zip(params, func.params()) {
+                                ValEncoder::new(store.as_context_mut(), ty).encode(v, &mut buf).context("failed to encode parameter")?;
+                            }
+                            let Invocation { outgoing, incoming, session } = store
+                                .data()
+                                .client()
+                                .invoke(cx, &instance_name, &rpc_name, buf.freeze(), &[])
+                                .await
+                                .with_context(|| {
+                                    format!("failed to invoke `{instance_name}.{func_name}` polyfill via wRPC")
+                                })?;
+                            try_join!(
+                                async {
+                                    pin!(outgoing).shutdown().await.context("failed to shutdown outgoing stream")
+                                },
+                                async {
+                                    let mut incoming = pin!(incoming);
+                                    for (v, ref ty) in zip(results, func.results()) {
+                                        read_value(&mut store, &mut incoming, v, ty).await.context("failed to decode result value")?;
+                                    }
+                                    Ok(())
+                                },
+                            )?;
+                            match session.finish(Ok(())).await? {
+                                Ok(()) => Ok(()),
+                                Err(err) => bail!(anyhow!("{err}").context("session failed"))
+                            }
+                        })
+                    },
+                ),
+            } {
                 error!(?err, "failed to polyfill component function import");
             }
         }

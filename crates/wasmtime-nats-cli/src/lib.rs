@@ -10,6 +10,7 @@ use wasmtime::{
 };
 use wasmtime_wasi::bindings::Command;
 use wasmtime_wasi::{ResourceTable, WasiCtxBuilder};
+use wrpc_transport_nats_next as wrpc_transport_nats;
 
 mod runtime;
 use runtime::{polyfill, Ctx};
@@ -101,9 +102,6 @@ pub async fn run() -> anyhow::Result<()> {
     let component = Component::new(&engine, &wasm).context("failed to compile component")?;
 
     let mut linker = Linker::<Ctx<wrpc_transport_nats::Client>>::new(&engine);
-    runtime::wasmtime_bindings::Interfaces::add_to_linker(&mut linker, |ctx| ctx)
-        .context("failed to link `wrpc:runtime/interfaces` interface")?;
-
     wasmtime_wasi::add_to_linker_async(&mut linker).context("failed to link WASI")?;
 
     let (resolve, world) =
@@ -126,6 +124,7 @@ pub async fn run() -> anyhow::Result<()> {
         &engine,
         &component.component_type(),
         &mut linker,
+        None,
     );
 
     let pre = linker
@@ -135,7 +134,7 @@ pub async fn run() -> anyhow::Result<()> {
     let mut store = Store::new(
         &engine,
         Ctx {
-            ctx: WasiCtxBuilder::new()
+            wasi: WasiCtxBuilder::new()
                 .inherit_env()
                 .inherit_stdio()
                 .inherit_network()

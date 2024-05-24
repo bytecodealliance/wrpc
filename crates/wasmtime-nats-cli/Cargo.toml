@@ -27,6 +27,7 @@ hyper = { workspace = true, features = ["server"] }
 hyper-util = { workspace = true, features = ["server-auto", "tokio"] }
 reqwest = { workspace = true }
 tokio = { workspace = true, features = ["fs"] }
+tokio-util = { workspace = true, features = ["codec"] }
 tracing = { workspace = true, features = ["attributes"] }
 tracing-subscriber = { workspace = true, features = [
     "ansi",
@@ -51,17 +52,12 @@ wasmtime = { workspace = true, features = [
 ] }
 wasmtime-wasi = { workspace = true }
 wasmtime-wasi-http = { workspace = true }
+wasm-tokio = { workspace = true }
 wit-bindgen-wrpc = { workspace = true }
 wit-component = { workspace = true }
 wit-parser = { workspace = true }
 wrpc-cli = { workspace = true, features = ["nats"] }
-wrpc-transport = { workspace = true }
-wrpc-transport-nats = { workspace = true }
-wrpc-types = { workspace = true }
-wrpc-interface-http = { workspace = true, features = [
-    "http",
-    "http-body",
-    "hyper",
-    "wasmtime-wasi-http",
-] }
+wrpc-introspect = { workspace = true }
+wrpc-transport-nats-next = { workspace = true }
+wrpc-transport-next = { workspace = true }
 wrpc-runtime-wasmtime = { workspace = true }

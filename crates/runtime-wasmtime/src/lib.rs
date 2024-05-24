@@ -7,20 +7,28 @@ use core::mem;
 use core::pin::{pin, Pin};
 use core::task::{Context, Poll};
 
+use std::collections::HashSet;
 use std::error::Error;
 
 use anyhow::{anyhow, bail, ensure, Context as _};
 use async_trait::async_trait;
-use bytes::{BufMut as _, Bytes, BytesMut};
+use bytes::{Buf as _, BufMut as _, Bytes};
 use futures::{Stream, StreamExt as _};
+use tokio::io::{AsyncRead, AsyncReadExt as _};
+use tokio_util::bytes::{BufMut as _, BytesMut};
+use tokio_util::codec::Encoder;
 use tracing::{instrument, warn};
+use wasm_tokio::cm::{AsyncReadValue as _, CharEncoder};
+use wasm_tokio::{AsyncReadCore as _, CoreStringEncoder, Leb128Encoder};
 use wasmtime::component::types::{Case, Field};
 use wasmtime::component::{ResourceType, Type, Val};
-use wasmtime::AsContextMut;
+use wasmtime::{AsContextMut, StoreContextMut};
 use wasmtime_wasi::{
     FileInputStream, HostInputStream, InputStream, Pollable, StreamError, StreamResult, Subscribe,
     WasiView,
 };
+
+pub struct RemoteResource(pub String);
 
 pub struct OutgoingHostInputStream(Box<dyn HostInputStream>);
 
@@ -462,5 +470,536 @@ pub fn from_wrpc_value<T: WasiView>(
             bail!("resources not supported yet")
         }
         _ => bail!("type mismatch"),
+    }
+}
+
+pub struct ValEncoder<'a, T> {
+    pub store: StoreContextMut<'a, T>,
+    pub ty: &'a Type,
+}
+
+impl<T> ValEncoder<'_, T> {
+    #[must_use]
+    pub fn new<'a>(store: StoreContextMut<'a, T>, ty: &'a Type) -> ValEncoder<'a, T> {
+        ValEncoder { store, ty }
+    }
+
+    pub fn with_type<'a>(&'a mut self, ty: &'a Type) -> ValEncoder<'a, T> {
+        ValEncoder {
+            store: self.store.as_context_mut(),
+            ty,
+        }
+    }
+}
+
+impl<T> Encoder<&Val> for ValEncoder<'_, T>
+where
+    T: WasiView,
+{
+    type Error = wasmtime::Error;
+
+    fn encode(&mut self, v: &Val, dst: &mut BytesMut) -> Result<(), Self::Error> {
+        match (v, self.ty) {
+            (Val::Bool(v), Type::Bool) => {
+                dst.put_u8((*v).into());
+                Ok(())
+            }
+            (Val::S8(v), Type::S8) => {
+                dst.put_i8(*v);
+                Ok(())
+            }
+            (Val::U8(v), Type::U8) => {
+                dst.put_u8(*v);
+                Ok(())
+            }
+            (Val::S16(v), Type::S16) => bail!("not supported yet"),
+            (Val::U16(v), Type::U16) => Leb128Encoder
+                .encode(*v, dst)
+                .context("failed to encode u16"),
+            (Val::S32(v), Type::S32) => bail!("not supported yet"),
+            (Val::U32(v), Type::U32) => Leb128Encoder
+                .encode(*v, dst)
+                .context("failed to encode u32"),
+            (Val::S64(v), Type::S64) => bail!("not supported yet"),
+            (Val::U64(v), Type::U64) => Leb128Encoder
+                .encode(*v, dst)
+                .context("failed to encode u64"),
+            (Val::Float32(v), Type::Float32) => {
+                dst.put_f32_le(*v);
+                Ok(())
+            }
+            (Val::Float64(v), Type::Float64) => {
+                dst.put_f64_le(*v);
+                Ok(())
+            }
+            (Val::Char(v), Type::Char) => {
+                CharEncoder.encode(*v, dst).context("failed to encode char")
+            }
+            (Val::String(v), Type::String) => CoreStringEncoder
+                .encode(v.as_str(), dst)
+                .context("failed to encode string"),
+            (Val::List(vs), Type::List(ty)) => {
+                let ty = ty.ty();
+                let n = u32::try_from(vs.len()).context("list length does not fit in u32")?;
+                dst.reserve(5 + vs.len());
+                Leb128Encoder
+                    .encode(n, dst)
+                    .context("failed to encode list length")?;
+                for v in vs {
+                    self.with_type(&ty)
+                        .encode(v, dst)
+                        .context("failed to encode list element")?;
+                }
+                Ok(())
+            }
+            (Val::Record(vs), Type::Record(ty)) => {
+                dst.reserve(vs.len());
+                for ((name, v), Field { ref ty, .. }) in zip(vs, ty.fields()) {
+                    self.with_type(ty)
+                        .encode(v, dst)
+                        .with_context(|| format!("failed to encode `{name}` field"))?;
+                }
+                Ok(())
+            }
+            (Val::Tuple(vs), Type::Tuple(ty)) => {
+                dst.reserve(vs.len());
+                for (v, ref ty) in zip(vs, ty.types()) {
+                    self.with_type(ty)
+                        .encode(v, dst)
+                        .context("failed to encode tuple element")?;
+                }
+                Ok(())
+            }
+            (Val::Variant(discriminant, v), Type::Variant(ty)) => {
+                let cases = ty.cases();
+                let ty = match cases.len() {
+                    ..=0x0000_00ff => {
+                        let (discriminant, ty) = zip(0.., cases)
+                            .find_map(|(i, Case { name, ty })| {
+                                (name == discriminant).then_some((i, ty))
+                            })
+                            .context("unknown variant discriminant")?;
+                        dst.reserve(1 + usize::from(v.is_some()));
+                        dst.put_u8(discriminant);
+                        ty
+                    }
+                    0x0000_0100..=0x0000_ffff => {
+                        let (discriminant, ty) = zip(0.., cases)
+                            .find_map(|(i, Case { name, ty })| {
+                                (name == discriminant).then_some((i, ty))
+                            })
+                            .context("unknown variant discriminant")?;
+                        dst.reserve(2 + usize::from(v.is_some()));
+                        dst.put_u16_le(discriminant);
+                        ty
+                    }
+                    0x0001_0000..=0xffff_ffff => {
+                        let (discriminant, ty) = zip(0.., cases)
+                            .find_map(|(i, Case { name, ty })| {
+                                (name == discriminant).then_some((i, ty))
+                            })
+                            .context("unknown variant discriminant")?;
+                        dst.reserve(4 + usize::from(v.is_some()));
+                        dst.put_u32_le(discriminant);
+                        ty
+                    }
+                    0x1_0000_0000.. => bail!("case count does not fit in u32"),
+                };
+                if let Some(v) = v {
+                    let ty = ty.context("type missing for variant")?;
+                    self.with_type(&ty)
+                        .encode(v, dst)
+                        .context("failed to encode variant value")
+                } else {
+                    Ok(())
+                }
+            }
+            (Val::Enum(discriminant), Type::Enum(ty)) => {
+                let names = ty.names();
+                match names.len() {
+                    ..=0x0000_00ff => {
+                        let discriminant = zip(0.., names)
+                            .find_map(|(i, name)| (name == discriminant).then_some(i))
+                            .context("unknown enum discriminant")?;
+                        dst.reserve(1);
+                        dst.put_u8(discriminant);
+                    }
+                    0x0000_0100..=0x0000_ffff => {
+                        let discriminant = zip(0.., names)
+                            .find_map(|(i, name)| (name == discriminant).then_some(i))
+                            .context("unknown enum discriminant")?;
+                        dst.reserve(2);
+                        dst.put_u16(discriminant);
+                    }
+                    0x0001_0000..=0xffff_ffff => {
+                        let discriminant = zip(0.., names)
+                            .find_map(|(i, name)| (name == discriminant).then_some(i))
+                            .context("unknown enum discriminant")?;
+                        dst.reserve(4);
+                        dst.put_u32(discriminant);
+                    }
+                    0x1_0000_0000.. => bail!("name count does not fit in u32"),
+                }
+                Ok(())
+            }
+            (Val::Option(None), Type::Option(_)) => {
+                dst.put_u8(0);
+                Ok(())
+            }
+            (Val::Option(Some(v)), Type::Option(ty)) => {
+                dst.reserve(2);
+                dst.put_u8(1);
+                self.with_type(&ty.ty()).encode(v, dst)
+            }
+            (Val::Result(v), Type::Result(ty)) => match v {
+                Ok(v) => match (v, ty.ok()) {
+                    (Some(v), Some(ty)) => {
+                        dst.reserve(2);
+                        dst.put_u8(0);
+                        self.with_type(&ty).encode(v, dst)
+                    }
+                    (Some(_v), None) => bail!("`result::ok` value of unknown type"),
+                    (None, Some(_ty)) => bail!("`result::ok` value missing"),
+                    (None, None) => {
+                        dst.put_u8(0);
+                        Ok(())
+                    }
+                },
+                Err(v) => match (v, ty.err()) {
+                    (Some(v), Some(ty)) => {
+                        dst.reserve(2);
+                        dst.put_u8(1);
+                        self.with_type(&ty).encode(v, dst)
+                    }
+                    (Some(_v), None) => bail!("`result::err` value of unknown type"),
+                    (None, Some(_ty)) => bail!("`result::err` value missing"),
+                    (None, None) => {
+                        dst.put_u8(1);
+                        Ok(())
+                    }
+                },
+            },
+            (Val::Flags(vs), Type::Flags(ty)) => {
+                let names = ty.names();
+                let vs: HashSet<&str> = vs.iter().map(String::as_str).collect();
+                match names.len() {
+                    ..=8 => {
+                        dst.reserve(1);
+                        let mut v = 0;
+                        for (i, name) in zip(0u8.., names) {
+                            if vs.contains(name) {
+                                v |= 1 << i;
+                            }
+                        }
+                        dst.put_u8(v);
+                    }
+                    9..=16 => {
+                        dst.reserve(2);
+                        let mut v = 0;
+                        for (i, name) in zip(0u8.., names) {
+                            if vs.contains(name) {
+                                v |= 1 << i;
+                            }
+                        }
+                        dst.put_u16_le(v);
+                    }
+                    17..=32 => {
+                        dst.reserve(4);
+                        let mut v = 0;
+                        for (i, name) in zip(0u8.., names) {
+                            if vs.contains(name) {
+                                v |= 1 << i;
+                            }
+                        }
+                        dst.put_u32_le(v);
+                    }
+                    33..=64 => {
+                        dst.reserve(8);
+                        let mut v = 0;
+                        for (i, name) in zip(0u8.., names) {
+                            if vs.contains(name) {
+                                v |= 1 << i;
+                            }
+                        }
+                        dst.put_u64_le(v);
+                    }
+                    65..=128 => {
+                        dst.reserve(16);
+                        let mut v = 0;
+                        for (i, name) in zip(0u8.., names) {
+                            if vs.contains(name) {
+                                v |= 1 << i;
+                            }
+                        }
+                        dst.put_u128_le(v);
+                    }
+                    129.. => bail!("flag count does not fit in u128"),
+                }
+                Ok(())
+            }
+            (Val::Resource(resource), Type::Own(_) | Type::Borrow(_)) => {
+                if resource.ty() == ResourceType::host::<RemoteResource>() {
+                    let resource = resource
+                        .try_into_resource(&mut self.store)
+                        .context("resource type mismatch")?;
+                    let table = self.store.data_mut().table();
+                    if resource.owned() {
+                        let RemoteResource(id) = table
+                            .delete(resource)
+                            .context("failed to delete remote resource")?;
+                        CoreStringEncoder
+                            .encode(id, dst)
+                            .context("failed to encode resource ID")
+                    } else {
+                        let RemoteResource(id) = table
+                            .get(&resource)
+                            .context("failed to get remote resource")?;
+                        CoreStringEncoder
+                            .encode(id.as_str(), dst)
+                            .context("failed to encode resource ID")
+                    }
+                } else {
+                    bail!("encoding host resources not supported yet")
+                }
+            }
+            _ => bail!("value type mismatch"),
+        }
+    }
+}
+
+pub async fn read_value<T: WasiView>(
+    store: &mut impl AsContextMut<Data = T>,
+    r: &mut (impl AsyncRead + Unpin),
+    val: &mut Val,
+    ty: &Type,
+) -> std::io::Result<()> {
+    match ty {
+        Type::Bool => {
+            let v = r.read_bool().await?;
+            *val = Val::Bool(v);
+            Ok(())
+        }
+        Type::S8 => {
+            let v = r.read_i8().await?;
+            *val = Val::S8(v);
+            Ok(())
+        }
+        Type::U8 => {
+            let v = r.read_u8().await?;
+            *val = Val::U8(v);
+            Ok(())
+        }
+        Type::S16 => todo!(),
+        Type::U16 => {
+            let v = r.read_u16_leb128().await?;
+            *val = Val::U16(v);
+            Ok(())
+        }
+        Type::S32 => todo!(),
+        Type::U32 => {
+            let v = r.read_u32_leb128().await?;
+            *val = Val::U32(v);
+            Ok(())
+        }
+        Type::S64 => todo!(),
+        Type::U64 => {
+            let v = r.read_u64_leb128().await?;
+            *val = Val::U64(v);
+            Ok(())
+        }
+        Type::Float32 => {
+            let v = r.read_f32_le().await?;
+            *val = Val::Float32(v);
+            Ok(())
+        }
+        Type::Float64 => {
+            let v = r.read_f64_le().await?;
+            *val = Val::Float64(v);
+            Ok(())
+        }
+        Type::Char => {
+            let v = r.read_char().await?;
+            *val = Val::Char(v);
+            Ok(())
+        }
+        Type::String => {
+            let mut s = String::default();
+            r.read_core_string(&mut s).await?;
+            *val = Val::String(s);
+            Ok(())
+        }
+        Type::List(ty) => {
+            let n = r.read_u32_leb128().await?;
+            let n = n
+                .try_into()
+                .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
+            let mut vs = Vec::with_capacity(n);
+            let ty = ty.ty();
+            for _ in 0..n {
+                let mut v = Val::Bool(false);
+                Box::pin(read_value(store, r, &mut v, &ty)).await?;
+                vs.push(v);
+            }
+            *val = Val::List(vs);
+            Ok(())
+        }
+        Type::Record(ty) => {
+            let fields = ty.fields();
+            let mut vs = Vec::with_capacity(fields.len());
+            for Field { name, ty } in fields {
+                let mut v = Val::Bool(false);
+                Box::pin(read_value(store, r, &mut v, &ty)).await?;
+                vs.push((name.to_string(), v));
+            }
+            *val = Val::Record(vs);
+            Ok(())
+        }
+        Type::Tuple(ty) => {
+            let types = ty.types();
+            let mut vs = Vec::with_capacity(types.len());
+            for ty in types {
+                let mut v = Val::Bool(false);
+                Box::pin(read_value(store, r, &mut v, &ty)).await?;
+                vs.push(v);
+            }
+            *val = Val::Tuple(vs);
+            Ok(())
+        }
+        Type::Variant(ty) => {
+            let mut cases = ty.cases();
+            let discriminant = match cases.len() {
+                ..=0x0000_00ff => r.read_u8().await.map(Into::into)?,
+                0x0000_0100..=0x0000_ffff => r.read_u16_le().await.map(Into::into)?,
+                0x0001_0000..=0xffff_ffff => {
+                    let discriminant = r.read_u32_le().await?;
+                    discriminant
+                        .try_into()
+                        .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?
+                }
+                0x1_0000_0000.. => {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        "case count does not fit in u32".to_string(),
+                    ))
+                }
+            };
+            let Case { name, ty } = cases.nth(discriminant).ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!("unknown variant discriminant `{discriminant}`"),
+                )
+            })?;
+            let name = name.to_string();
+            if let Some(ty) = ty {
+                let mut v = Val::Bool(false);
+                Box::pin(read_value(store, r, &mut v, &ty)).await?;
+                *val = Val::Variant(name, Some(Box::new(v)));
+            } else {
+                *val = Val::Variant(name, None);
+            }
+            Ok(())
+        }
+        Type::Enum(ty) => {
+            let mut names = ty.names();
+            let discriminant = match names.len() {
+                ..=0x0000_00ff => r.read_u8().await.map(Into::into)?,
+                0x0000_0100..=0x0000_ffff => r.read_u16_le().await.map(Into::into)?,
+                0x0001_0000..=0xffff_ffff => {
+                    let discriminant = r.read_u32_le().await?;
+                    discriminant
+                        .try_into()
+                        .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?
+                }
+                0x1_0000_0000.. => {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        "case count does not fit in u32".to_string(),
+                    ))
+                }
+            };
+            let name = names.nth(discriminant).ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!("unknown enum discriminant `{discriminant}`"),
+                )
+            })?;
+            *val = Val::Enum(name.to_string());
+            Ok(())
+        }
+        Type::Option(ty) => {
+            let ok = r.read_option_status().await?;
+            if ok {
+                let mut v = Val::Bool(false);
+                Box::pin(read_value(store, r, &mut v, &ty.ty())).await?;
+                *val = Val::Option(Some(Box::new(v)));
+            } else {
+                *val = Val::Option(None);
+            }
+            Ok(())
+        }
+        Type::Result(ty) => {
+            let ok = r.read_result_status().await?;
+            if ok {
+                if let Some(ty) = ty.ok() {
+                    let mut v = Val::Bool(false);
+                    Box::pin(read_value(store, r, &mut v, &ty)).await?;
+                    *val = Val::Result(Ok(Some(Box::new(v))));
+                } else {
+                    *val = Val::Result(Ok(None));
+                }
+            } else if let Some(ty) = ty.err() {
+                let mut v = Val::Bool(false);
+                Box::pin(read_value(store, r, &mut v, &ty)).await?;
+                *val = Val::Result(Err(Some(Box::new(v))));
+            } else {
+                *val = Val::Result(Err(None));
+            }
+            Ok(())
+        }
+        Type::Flags(ty) => {
+            let names = ty.names();
+            let flags = match names.len() {
+                ..=8 => r.read_u8().await.map(Into::into)?,
+                9..=16 => r.read_u16_le().await.map(Into::into)?,
+                17..=32 => r.read_u32_le().await.map(Into::into)?,
+                33..=64 => r.read_u64_le().await.map(Into::into)?,
+                65..=128 => r.read_u128_le().await?,
+                129.. => {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        "flag count does not fit in u128".to_string(),
+                    ))
+                }
+            };
+            let mut vs = Vec::with_capacity(flags.count_ones().try_into().unwrap_or(usize::MAX));
+            for (i, name) in zip(0.., names) {
+                if flags & (1 << i) > 0 {
+                    vs.push(name.to_string());
+                }
+            }
+            *val = Val::Flags(vs);
+            Ok(())
+        }
+        Type::Own(ty) | Type::Borrow(ty) => {
+            if *ty == ResourceType::host::<RemoteResource>() {
+                let mut store = store.as_context_mut();
+                let mut s = String::default();
+                r.read_core_string(&mut s).await?;
+                let table = store.data_mut().table();
+                let resource = table
+                    .push(RemoteResource(s))
+                    .map_err(|err| std::io::Error::new(std::io::ErrorKind::OutOfMemory, err))?;
+                let resource = resource
+                    .try_into_resource_any(store)
+                    .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))?;
+                *val = Val::Resource(resource);
+                Ok(())
+            } else {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::Unsupported,
+                    "unsupported resource type",
+                ))
+            }
+        }
     }
 }
