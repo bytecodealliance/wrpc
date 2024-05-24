@@ -2846,9 +2846,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-tokio"
-version = "0.1.7"
+version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5dcb2dec2043f918d8530fc4783064b4c656d4dc4a97c350dfe27b1391547b1a"
+checksum = "84a41fa444bdb986b4281291ec4fe66bf012b9048ca430911ec2d6c1ba5a8c23"
 dependencies = [
  "tokio",
  "tokio-util",
@@ -3718,7 +3718,10 @@ dependencies = [
  "async-trait",
  "bytes",
  "futures",
+ "tokio",
+ "tokio-util",
  "tracing",
+ "wasm-tokio",
  "wasmtime",
  "wasmtime-wasi",
  "wrpc-transport",
@@ -3758,7 +3761,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc-transport-nats-next"
-version = "0.21.0"
+version = "0.22.0"
 dependencies = [
  "anyhow",
  "async-nats",
@@ -3814,9 +3817,11 @@ dependencies = [
  "hyper-util",
  "reqwest",
  "tokio",
+ "tokio-util",
  "tracing",
  "tracing-subscriber",
  "url",
+ "wasm-tokio",
  "wasmcloud-component-adapters",
  "wasmparser 0.208.1",
  "wasmtime",
@@ -3826,11 +3831,10 @@ dependencies = [
  "wit-component",
  "wit-parser 0.208.1",
  "wrpc-cli",
- "wrpc-interface-http",
+ "wrpc-introspect",
  "wrpc-runtime-wasmtime",
- "wrpc-transport",
- "wrpc-transport-nats",
- "wrpc-types",
+ "wrpc-transport-nats-next",
+ "wrpc-transport-next",
 ]
 
 [[package]]

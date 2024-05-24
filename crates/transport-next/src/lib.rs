@@ -1,6 +1,8 @@
+use core::fmt::Display;
 use core::future::Future;
 use core::str::FromStr;
 
+use bytes::Bytes;
 use futures::Stream;
 use tokio::io::{AsyncRead, AsyncWrite};
 
@@ -11,13 +13,13 @@ pub trait Index<T> {
 }
 
 pub trait Session {
-    type Error: FromStr + ToString;
-    type TransportError;
+    type Error: FromStr + Display + Sync + Send;
+    type TransportError: Sync + Send;
 
     fn finish(
         self,
         res: Result<(), Self::Error>,
-    ) -> impl Future<Output = Result<Result<(), Self::Error>, Self::TransportError>>;
+    ) -> impl Future<Output = Result<Result<(), Self::Error>, Self::TransportError>> + Send;
 }
 
 pub struct Invocation<O, I, S> {
@@ -26,13 +28,13 @@ pub struct Invocation<O, I, S> {
     pub session: S,
 }
 
-pub trait Invoke {
-    type Error;
-    type Context;
-    type Session: Session;
-    type Outgoing: AsyncWrite + Index<Self::NestedOutgoing>;
-    type NestedOutgoing: AsyncWrite + Index<Self::NestedOutgoing>;
-    type Incoming: AsyncRead + Index<Self::Incoming>;
+pub trait Invoke: Sync + Send {
+    type Error: Sync + Send;
+    type Context: Sync + Send;
+    type Session: Session + Sync + Send;
+    type Outgoing: AsyncWrite + Index<Self::NestedOutgoing> + Sync + Send;
+    type NestedOutgoing: AsyncWrite + Index<Self::NestedOutgoing> + Sync + Send;
+    type Incoming: AsyncRead + Index<Self::Incoming> + Sync + Send;
 
     /// Invoke function `func` on instance `instance`
     fn invoke(
@@ -40,18 +42,19 @@ pub trait Invoke {
         cx: Self::Context,
         instance: &str,
         func: &str,
+        params: Bytes,
         paths: &[&[Option<usize>]],
     ) -> impl Future<
         Output = Result<Invocation<Self::Outgoing, Self::Incoming, Self::Session>, Self::Error>,
-    >;
+    > + Send;
 }
 
 pub trait Serve {
-    type Error;
-    type Context;
-    type Session: Session;
-    type Outgoing: AsyncWrite + Index<Self::Outgoing>;
-    type Incoming: AsyncRead + Index<Self::Incoming>;
+    type Error: Sync + Send;
+    type Context: Sync + Send;
+    type Session: Session + Sync + Send;
+    type Outgoing: AsyncWrite + Index<Self::Outgoing> + Sync + Send;
+    type Incoming: AsyncRead + Index<Self::Incoming> + Sync + Send;
 
     /// Serve function `func` from instance `instance`
     fn serve(
@@ -72,5 +75,5 @@ pub trait Serve {
             >,
             Self::Error,
         >,
-    >;
+    > + Send;
 }

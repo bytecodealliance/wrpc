@@ -15,7 +15,10 @@ anyhow = { workspace = true, features = ["std"] }
 async-trait = { workspace = true }
 bytes = { workspace = true }
 futures = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true, features = ["codec"] }
 tracing = { workspace = true, features = ["attributes"] }
+wasm-tokio = { workspace = true }
 wasmtime = { workspace = true }
 wasmtime-wasi = { workspace = true }
 wrpc-transport = { workspace = true }
