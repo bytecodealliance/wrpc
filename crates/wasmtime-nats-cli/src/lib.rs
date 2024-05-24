@@ -8,12 +8,11 @@ use wasmtime::{
     component::{Component, Linker},
     Store,
 };
-use wasmtime_wasi::bindings::Command;
+use wasmtime_wasi::{bindings::Command, WasiCtx, WasiView};
 use wasmtime_wasi::{ResourceTable, WasiCtxBuilder};
+use wrpc_runtime_wasmtime::{polyfill, WrpcView};
 use wrpc_transport_nats_next as wrpc_transport_nats;
-
-mod runtime;
-use runtime::{polyfill, Ctx};
+use wrpc_transport_next::Invoke;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -32,6 +31,27 @@ struct Args {
 pub enum Workload {
     Url(Url),
     Binary(Vec<u8>),
+}
+
+pub struct Ctx<C: Invoke<Error = wasmtime::Error>> {
+    pub table: ResourceTable,
+    pub wasi: WasiCtx,
+    pub wrpc: C,
+}
+
+impl<C: Invoke<Error = wasmtime::Error>> WrpcView<C> for Ctx<C> {
+    fn client(&self) -> &C {
+        &self.wrpc
+    }
+}
+
+impl<C: Invoke<Error = wasmtime::Error>> WasiView for Ctx<C> {
+    fn ctx(&mut self) -> &mut WasiCtx {
+        &mut self.wasi
+    }
+    fn table(&mut self) -> &mut ResourceTable {
+        &mut self.table
+    }
 }
 
 #[instrument(level = "trace", ret)]

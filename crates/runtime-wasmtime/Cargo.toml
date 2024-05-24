@@ -21,4 +21,7 @@ tracing = { workspace = true, features = ["attributes"] }
 wasm-tokio = { workspace = true }
 wasmtime = { workspace = true }
 wasmtime-wasi = { workspace = true }
+wit-parser = { workspace = true }
+wrpc-introspect = { workspace = true }
 wrpc-transport = { workspace = true }
+wrpc-transport-next = { workspace = true }
