@@ -1,3 +1,5 @@
+#![allow(clippy::type_complexity)]
+
 use core::borrow::Borrow;
 use core::convert::Infallible;
 use core::future::Future;
