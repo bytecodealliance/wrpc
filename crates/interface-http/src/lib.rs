@@ -5,7 +5,7 @@ use core::time::Duration;
 use anyhow::{bail, Context as _};
 use async_trait::async_trait;
 use bytes::{Buf, BufMut, Bytes};
-use futures::{stream, Stream, StreamExt as _};
+use futures::{Stream, StreamExt as _};
 use tokio::try_join;
 use tracing::instrument;
 use wrpc_transport::{
@@ -1406,9 +1406,9 @@ pub fn try_wasmtime_to_outgoing_request(
         )
     } else {
         (
-            Box::pin(stream::empty()) as Pin<Box<dyn Stream<Item = _> + Send + 'static>>,
+            Box::pin(futures::stream::empty()) as Pin<Box<dyn Stream<Item = _> + Send + 'static>>,
             Box::pin(async { None }) as Pin<Box<dyn Future<Output = _> + Send + 'static>>,
-            Box::pin(stream::empty()) as Pin<Box<dyn Stream<Item = _> + Send>>,
+            Box::pin(futures::stream::empty()) as Pin<Box<dyn Stream<Item = _> + Send>>,
         )
     };
     Ok((
