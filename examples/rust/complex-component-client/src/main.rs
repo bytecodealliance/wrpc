@@ -6,7 +6,7 @@ mod bindings {
 }
 
 fn main() {
-    let foo = resources::Foo::new();
-    println!("foo.bar: {}", foo.bar());
-    println!("resources.bar: {}", resources::bar(&foo));
+    let resource = resources::Foo::new();
+    println!("foo.bar: {}", resource.bar());
+    println!("resources.bar: {}", resources::bar(&resource));
 }
