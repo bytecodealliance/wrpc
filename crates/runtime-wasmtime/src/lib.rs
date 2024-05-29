@@ -553,14 +553,17 @@ where
     fn encode(&mut self, v: &Val, dst: &mut BytesMut) -> Result<(), Self::Error> {
         match (v, self.ty) {
             (Val::Bool(v), Type::Bool) => {
+                dst.reserve(1);
                 dst.put_u8((*v).into());
                 Ok(())
             }
             (Val::S8(v), Type::S8) => {
+                dst.reserve(1);
                 dst.put_i8(*v);
                 Ok(())
             }
             (Val::U8(v), Type::U8) => {
+                dst.reserve(1);
                 dst.put_u8(*v);
                 Ok(())
             }
@@ -583,10 +586,12 @@ where
                 .encode(*v, dst)
                 .context("failed to encode u64"),
             (Val::Float32(v), Type::Float32) => {
+                dst.reserve(4);
                 dst.put_f32_le(*v);
                 Ok(())
             }
             (Val::Float64(v), Type::Float64) => {
+                dst.reserve(8);
                 dst.put_f64_le(*v);
                 Ok(())
             }
@@ -698,6 +703,7 @@ where
                 Ok(())
             }
             (Val::Option(None), Type::Option(_)) => {
+                dst.reserve(1);
                 dst.put_u8(0);
                 Ok(())
             }
@@ -716,6 +722,7 @@ where
                     (Some(_v), None) => bail!("`result::ok` value of unknown type"),
                     (None, Some(_ty)) => bail!("`result::ok` value missing"),
                     (None, None) => {
+                        dst.reserve(1);
                         dst.put_u8(0);
                         Ok(())
                     }
@@ -729,6 +736,7 @@ where
                     (Some(_v), None) => bail!("`result::err` value of unknown type"),
                     (None, Some(_ty)) => bail!("`result::err` value missing"),
                     (None, None) => {
+                        dst.reserve(1);
                         dst.put_u8(1);
                         Ok(())
                     }
