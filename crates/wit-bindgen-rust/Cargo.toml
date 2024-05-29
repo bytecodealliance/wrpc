@@ -25,11 +25,11 @@ anyhow = { workspace = true }
 clap = { workspace = true, features = ["derive", "std"], optional = true }
 heck = { workspace = true }
 wit-bindgen-core = { workspace = true }
-ulid ={ workspace = true, features = ["std"] }
 
 [dev-dependencies]
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 test-helpers = { workspace = true }
+uuid = { workspace = true, features = ["std", "v7", "fast-rng"] }
 wit-bindgen-wrpc = { path = "../wit-bindgen" }
 wrpc-transport = { workspace = true }

@@ -366,7 +366,7 @@ fn {method_name}(
                         self.src,
                         r#"let resource_table_ref = handler.table();
                         let resource_table = resource_table_ref.lock().await;
-                        let resource: &<T as Handler<Ctx>>::{resource_name} = resource_table.get(&params.0.id).unwrap().downcast_ref().unwrap();
+                        let resource: &<T as Handler<Ctx>>::{resource_name} = resource_table.get(&params.0.0).unwrap().downcast_ref().unwrap();
                         match resource.{method_name}(context, "#,
                         resource_name = self.get_type_name(id).to_upper_camel_case(),
                         method_name = to_rust_ident(func.item_name())
@@ -404,7 +404,7 @@ fn {method_name}(
                         r#").await {{
                             Ok(res) => {{
                                 let resource = {resource_name}::new();
-                                let id = resource.id.clone();
+                                let id = resource.0.clone();
 
                                 let resource_table_ref = handler.table();
                                 let mut resource_table = resource_table_ref.lock().await;
@@ -429,7 +429,7 @@ fn {method_name}(
                         uwrite!(self.src, "let (");
 
                         for Function { name, .. } in &methods {
-                            uwrite!(self.src, "{name},", name = to_rust_ident(&name),);
+                            uwrite!(self.src, "{name},", name = to_rust_ident(name),);
                         }
                         uwrite!(
                             self.src,
@@ -2660,21 +2660,17 @@ impl<'a> {wrpc_transport}::Receive<'a> for {camel} {{
                 r#"
 #[derive(Debug)]
 #[repr(transparent)]
-pub struct {camel} {{
-    id: String,
-}}
+pub struct {camel}(String);
 
 impl {camel} {{
     /// Creates a new resource from the specified representation.
-    pub fn new() -> Self {{ Self {{ id: ulid::Ulid::new().into() }} }}
+    pub fn new() -> Self {{ Self(uuid::Uuid::now_v7().into())}}
 }}
 
 /// A borrowed version of [`{camel}`] which represents a borrowed value
 #[derive(Debug)]
 #[repr(transparent)]
-pub struct {camel}Borrow {{
-    id: String,
-}}
+pub struct {camel}Borrow(String);
 
 #[{async_trait}::async_trait]
 #[automatically_derived]
@@ -2682,7 +2678,7 @@ impl {wrpc_transport}::Encode for {camel}Borrow {{
      async fn encode(self, payload: &mut (impl {bytes}::BufMut + Send)) -> {anyhow}::Result<Option<{wrpc_transport}::AsyncValue>> {{
         let span = {tracing}::trace_span!("encode");
         let _enter = span.enter();
-        self.id.encode(payload).await
+        self.0.encode(payload).await
      }}
 }}
 
@@ -2692,7 +2688,7 @@ impl {wrpc_transport}::Encode for &{camel}Borrow {{
      async fn encode(self, payload: &mut (impl {bytes}::BufMut + Send)) -> {anyhow}::Result<Option<{wrpc_transport}::AsyncValue>> {{
         let span = {tracing}::trace_span!("encode");
         let _enter = span.enter();
-        self.id.as_str().encode(payload).await
+        self.0.as_str().encode(payload).await
      }}
 }}
 
@@ -2716,7 +2712,7 @@ impl<'a> {wrpc_transport}::Receive<'a> for {camel}Borrow {{
         let span = {tracing}::trace_span!("receive");
         let _enter = span.enter();
         let (subject, payload) = {wrpc_transport}::Receive::receive(payload, rx, sub).await?;
-        Ok((Self {{ id: subject }}, payload))
+        Ok((Self(subject), payload))
      }}
 }}
 
@@ -2726,7 +2722,7 @@ impl {wrpc_transport}::Encode for {camel} {{
      async fn encode(self, payload: &mut (impl {bytes}::BufMut + Send)) -> {anyhow}::Result<Option<{wrpc_transport}::AsyncValue>> {{
         let span = {tracing}::trace_span!("encode");
         let _enter = span.enter();
-        self.id.encode(payload).await
+        self.0.encode(payload).await
      }}
 }}
 
@@ -2736,7 +2732,7 @@ impl {wrpc_transport}::Encode for &{camel} {{
      async fn encode(self, payload: &mut (impl {bytes}::BufMut + Send)) -> {anyhow}::Result<Option<{wrpc_transport}::AsyncValue>> {{
         let span = {tracing}::trace_span!("encode");
         let _enter = span.enter();
-        self.id.as_str().encode(payload).await
+        self.0.as_str().encode(payload).await
      }}
 }}
 
@@ -2760,7 +2756,7 @@ impl<'a> {wrpc_transport}::Receive<'a> for {camel} {{
         let span = {tracing}::trace_span!("receive");
         let _enter = span.enter();
         let (subject, payload) = {wrpc_transport}::Receive::receive(payload, rx, sub).await?;
-        Ok((Self {{ id: subject }}, payload))
+        Ok((Self(subject), payload))
      }}
 }}
 "#,

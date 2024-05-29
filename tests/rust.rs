@@ -162,7 +162,7 @@ async fn rust_bindgen() -> anyhow::Result<()> {
                     async fn new(_cx: Option<async_nats::HeaderMap>, count: u32) -> anyhow::Result<Self> {
                         Ok(Self(Mutex::new(count)))
                     }
-            
+
                     async fn get_count(&self, _cx: Option<async_nats::HeaderMap>) -> anyhow::Result<u32> {
                         Ok(*self.0.lock().await)
                     }
@@ -1419,7 +1419,7 @@ async fn rust_keyvalue() -> anyhow::Result<()> {
                         Ok(Ok(4242))
                     }
                 }
-                
+
                 let fut = bindings::serve(client.clone().into(), Handler, shutdown.notified());
 
                 started.notify_one();
