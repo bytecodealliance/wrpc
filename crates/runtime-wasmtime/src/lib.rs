@@ -517,15 +517,21 @@ where
                 dst.put_u8(*v);
                 Ok(())
             }
-            (Val::S16(v), Type::S16) => bail!("not supported yet"),
+            (Val::S16(v), Type::S16) => Leb128Encoder
+                .encode(*v, dst)
+                .context("failed to encode s16"),
             (Val::U16(v), Type::U16) => Leb128Encoder
                 .encode(*v, dst)
                 .context("failed to encode u16"),
-            (Val::S32(v), Type::S32) => bail!("not supported yet"),
+            (Val::S32(v), Type::S32) => Leb128Encoder
+                .encode(*v, dst)
+                .context("failed to encode s32"),
             (Val::U32(v), Type::U32) => Leb128Encoder
                 .encode(*v, dst)
                 .context("failed to encode u32"),
-            (Val::S64(v), Type::S64) => bail!("not supported yet"),
+            (Val::S64(v), Type::S64) => Leb128Encoder
+                .encode(*v, dst)
+                .context("failed to encode s64"),
             (Val::U64(v), Type::U64) => Leb128Encoder
                 .encode(*v, dst)
                 .context("failed to encode u64"),
@@ -794,19 +800,31 @@ pub async fn read_value<T: WasiView>(
             *val = Val::U8(v);
             Ok(())
         }
-        Type::S16 => todo!(),
+        Type::S16 => {
+            let v = r.read_i16_leb128().await?;
+            *val = Val::S16(v);
+            Ok(())
+        }
         Type::U16 => {
             let v = r.read_u16_leb128().await?;
             *val = Val::U16(v);
             Ok(())
         }
-        Type::S32 => todo!(),
+        Type::S32 => {
+            let v = r.read_i32_leb128().await?;
+            *val = Val::S32(v);
+            Ok(())
+        },
         Type::U32 => {
             let v = r.read_u32_leb128().await?;
             *val = Val::U32(v);
             Ok(())
         }
-        Type::S64 => todo!(),
+        Type::S64 => {
+            let v = r.read_i64_leb128().await?;
+            *val = Val::S64(v);
+            Ok(())
+        },
         Type::U64 => {
             let v = r.read_u64_leb128().await?;
             *val = Val::U64(v);
