@@ -497,6 +497,53 @@ impl<T> ValEncoder<'_, T> {
     }
 }
 
+fn find_enum_discriminant<'a, T>(
+    iter: impl IntoIterator<Item = T>,
+    names: impl IntoIterator<Item = &'a str>,
+    discriminant: &str,
+) -> anyhow::Result<T> {
+    zip(iter, names)
+        .find_map(|(i, name)| (name == discriminant).then_some(i))
+        .context("unknown enum discriminant")
+}
+
+fn find_variant_discriminant<'a, T>(
+    iter: impl IntoIterator<Item = T>,
+    cases: impl IntoIterator<Item = Case<'a>>,
+    discriminant: &str,
+) -> anyhow::Result<(T, Option<Type>)> {
+    zip(iter, cases)
+        .find_map(|(i, Case { name, ty })| (name == discriminant).then_some((i, ty)))
+        .context("unknown variant discriminant")
+}
+
+async fn read_discriminant(
+    cases: usize,
+    r: &mut (impl AsyncRead + Unpin),
+) -> std::io::Result<usize> {
+    match cases {
+        ..=0x0000_00ff => r.read_u8().await.map(Into::into),
+        0x0000_0100..=0x0000_ffff => r.read_u16_le().await.map(Into::into),
+        0x0001_0000..=0x00ff_ffff => {
+            let mut buf = 0usize.to_le_bytes();
+            r.read_exact(&mut buf[..3]).await?;
+            Ok(usize::from_le_bytes(buf))
+        }
+        0x0100_0000..=0xffff_ffff => {
+            let discriminant = r.read_u32_le().await?;
+            discriminant
+                .try_into()
+                .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))
+        }
+        0x1_0000_0000.. => {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "case count does not fit in u32".to_string(),
+            ))
+        }
+    }
+}
+
 impl<T> Encoder<&Val> for ValEncoder<'_, T>
 where
     T: WasiView,
@@ -585,31 +632,29 @@ where
                 let cases = ty.cases();
                 let ty = match cases.len() {
                     ..=0x0000_00ff => {
-                        let (discriminant, ty) = zip(0.., cases)
-                            .find_map(|(i, Case { name, ty })| {
-                                (name == discriminant).then_some((i, ty))
-                            })
-                            .context("unknown variant discriminant")?;
+                        let (discriminant, ty) =
+                            find_variant_discriminant(0.., cases, discriminant)?;
                         dst.reserve(1 + usize::from(v.is_some()));
                         dst.put_u8(discriminant);
                         ty
                     }
                     0x0000_0100..=0x0000_ffff => {
-                        let (discriminant, ty) = zip(0.., cases)
-                            .find_map(|(i, Case { name, ty })| {
-                                (name == discriminant).then_some((i, ty))
-                            })
-                            .context("unknown variant discriminant")?;
+                        let (discriminant, ty) =
+                            find_variant_discriminant(0.., cases, discriminant)?;
                         dst.reserve(2 + usize::from(v.is_some()));
                         dst.put_u16_le(discriminant);
                         ty
                     }
-                    0x0001_0000..=0xffff_ffff => {
-                        let (discriminant, ty) = zip(0.., cases)
-                            .find_map(|(i, Case { name, ty })| {
-                                (name == discriminant).then_some((i, ty))
-                            })
-                            .context("unknown variant discriminant")?;
+                    0x0001_0000..=0x00ff_ffff => {
+                        let (discriminant, ty) =
+                            find_variant_discriminant(0.., cases, discriminant)?;
+                        dst.reserve(3 + usize::from(v.is_some()));
+                        dst.put_slice(&u32::to_le_bytes(discriminant)[..3]);
+                        ty
+                    }
+                    0x0100_0000..=0xffff_ffff => {
+                        let (discriminant, ty) =
+                            find_variant_discriminant(0.., cases, discriminant)?;
                         dst.reserve(4 + usize::from(v.is_some()));
                         dst.put_u32_le(discriminant);
                         ty
@@ -629,25 +674,24 @@ where
                 let names = ty.names();
                 match names.len() {
                     ..=0x0000_00ff => {
-                        let discriminant = zip(0.., names)
-                            .find_map(|(i, name)| (name == discriminant).then_some(i))
-                            .context("unknown enum discriminant")?;
+                        let discriminant = find_enum_discriminant(0.., names, discriminant)?;
                         dst.reserve(1);
                         dst.put_u8(discriminant);
                     }
                     0x0000_0100..=0x0000_ffff => {
-                        let discriminant = zip(0.., names)
-                            .find_map(|(i, name)| (name == discriminant).then_some(i))
-                            .context("unknown enum discriminant")?;
+                        let discriminant = find_enum_discriminant(0.., names, discriminant)?;
                         dst.reserve(2);
-                        dst.put_u16(discriminant);
+                        dst.put_u16_le(discriminant);
                     }
-                    0x0001_0000..=0xffff_ffff => {
-                        let discriminant = zip(0.., names)
-                            .find_map(|(i, name)| (name == discriminant).then_some(i))
-                            .context("unknown enum discriminant")?;
+                    0x0001_0000..=0x00ff_ffff => {
+                        let discriminant = find_enum_discriminant(0.., names, discriminant)?;
+                        dst.reserve(3);
+                        dst.put_slice(&u32::to_le_bytes(discriminant)[..3]);
+                    }
+                    0x0100_0000..=0xffff_ffff => {
+                        let discriminant = find_enum_discriminant(0.., names, discriminant)?;
                         dst.reserve(4);
-                        dst.put_u32(discriminant);
+                        dst.put_u32_le(discriminant);
                     }
                     0x1_0000_0000.. => bail!("name count does not fit in u32"),
                 }
@@ -744,7 +788,7 @@ where
                         }
                         dst.put_u128_le(v);
                     }
-                    129.. => bail!("flag count does not fit in u128"),
+                    129.. => bail!("flags do not fit in u128"),
                 }
                 Ok(())
             }
@@ -814,7 +858,7 @@ pub async fn read_value<T: WasiView>(
             let v = r.read_i32_leb128().await?;
             *val = Val::S32(v);
             Ok(())
-        },
+        }
         Type::U32 => {
             let v = r.read_u32_leb128().await?;
             *val = Val::U32(v);
@@ -824,7 +868,7 @@ pub async fn read_value<T: WasiView>(
             let v = r.read_i64_leb128().await?;
             *val = Val::S64(v);
             Ok(())
-        },
+        }
         Type::U64 => {
             let v = r.read_u64_leb128().await?;
             *val = Val::U64(v);
@@ -890,22 +934,7 @@ pub async fn read_value<T: WasiView>(
         }
         Type::Variant(ty) => {
             let mut cases = ty.cases();
-            let discriminant = match cases.len() {
-                ..=0x0000_00ff => r.read_u8().await.map(Into::into)?,
-                0x0000_0100..=0x0000_ffff => r.read_u16_le().await.map(Into::into)?,
-                0x0001_0000..=0xffff_ffff => {
-                    let discriminant = r.read_u32_le().await?;
-                    discriminant
-                        .try_into()
-                        .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?
-                }
-                0x1_0000_0000.. => {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::InvalidInput,
-                        "case count does not fit in u32".to_string(),
-                    ))
-                }
-            };
+            let discriminant = read_discriminant(cases.len(), r).await?;
             let Case { name, ty } = cases.nth(discriminant).ok_or_else(|| {
                 std::io::Error::new(
                     std::io::ErrorKind::InvalidInput,
@@ -924,22 +953,7 @@ pub async fn read_value<T: WasiView>(
         }
         Type::Enum(ty) => {
             let mut names = ty.names();
-            let discriminant = match names.len() {
-                ..=0x0000_00ff => r.read_u8().await.map(Into::into)?,
-                0x0000_0100..=0x0000_ffff => r.read_u16_le().await.map(Into::into)?,
-                0x0001_0000..=0xffff_ffff => {
-                    let discriminant = r.read_u32_le().await?;
-                    discriminant
-                        .try_into()
-                        .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?
-                }
-                0x1_0000_0000.. => {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::InvalidInput,
-                        "case count does not fit in u32".to_string(),
-                    ))
-                }
-            };
+            let discriminant = read_discriminant(names.len(), r).await?;
             let name = names.nth(discriminant).ok_or_else(|| {
                 std::io::Error::new(
                     std::io::ErrorKind::InvalidInput,
@@ -990,7 +1004,7 @@ pub async fn read_value<T: WasiView>(
                 129.. => {
                     return Err(std::io::Error::new(
                         std::io::ErrorKind::InvalidInput,
-                        "flag count does not fit in u128".to_string(),
+                        "flags do not fit in u128".to_string(),
                     ))
                 }
             };
