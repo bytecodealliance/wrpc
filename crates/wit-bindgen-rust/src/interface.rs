@@ -373,10 +373,46 @@ fn {method_name}(
                     )
                 }
                 FunctionKind::Static(id) => {
+                    // dereference arguments that are resource handles
+                    let resource_name = self.get_type_name(id).to_upper_camel_case();
+
+                    uwrite!(self.src, "let params = (");
+
+                    for (i, (_, ty)) in params.iter().enumerate() {
+                        if let Type::Id(typedef) = ty {
+                            if let TypeDefKind::Handle(Handle::Own(ty_id)) =
+                                self.resolve.types[*typedef].kind
+                            {
+                                if ty_id == *id {
+                                    uwrite!(
+                                        self.src,
+                                        r#"{{
+                                            let resource_table_ref = handler.table();
+                                            let mut resource_table = resource_table_ref.lock().await;
+
+                                            {tracing}::debug!("dropping resource {resource_snake} {{}}", &params.{i}.0);
+
+                                            *resource_table.remove(&params.{i}.0).unwrap().downcast().unwrap()
+                                        }},
+                                        "#,
+                                        tracing = self.gen.tracing_path(),
+                                        resource_snake = resource_name.to_snake_case(),
+                                    );
+                                    continue;
+                                }
+                            }
+                        }
+
+                        self.src.push_str("params.");
+                        self.src.push_str(&i.to_string());
+                        self.src.push_str(",");
+                    }
+
+                    self.src.push_str(");\n");
+
                     uwrite!(
                         self.src,
                         "match <T as Handler<Ctx>>::{resource_name}::{method_name}(context, ",
-                        resource_name = self.get_type_name(id).to_upper_camel_case(),
                         method_name = to_rust_ident(func.item_name())
                     );
                 }
@@ -560,7 +596,11 @@ fn {method_name}(
                                         
                                         let resource_table_ref = handler.table();
                                         let mut resource_table = resource_table_ref.lock().await;
-                                        let _: Box<<T as Handler<Ctx>>::{resource_name}> = resource_table.remove(&id).unwrap().downcast().unwrap();
+
+                                        let dropped_resource = resource_table.remove(&id);
+                                        if let Some(resource) = dropped_resource {{
+                                            let _: Box<<T as Handler<Ctx>>::{resource_name}> = resource.downcast().unwrap();
+                                        }}
     
                                         return;
                                     }},
@@ -1154,6 +1194,20 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
                     continue;
                 }
             }
+            if let FunctionKind::Static(id) = &func.kind {
+                if let Type::Id(typedef) = param {
+                    if let TypeDefKind::Handle(Handle::Own(ty_id)) =
+                        self.resolve.types[*typedef].kind
+                    {
+                        if ty_id == *id {
+                            params.push(to_rust_ident(name));
+                            self.push_str(&format!("{}: Self,", to_rust_ident(name)));
+                            continue;
+                        }
+                    }
+                }
+            }
+
             let name = to_rust_ident(name);
             self.push_str(&name);
             self.push_str(": ");

@@ -125,6 +125,7 @@ async fn rust_bindgen() -> anyhow::Result<()> {
                                 constructor(initial: u32);
                                 get-count: func() -> u32;
                                 increment-by: func(num: u32);
+                                sum: static func(a: counter, b: counter) -> u32;
                             }
                         }
 
@@ -172,6 +173,12 @@ async fn rust_bindgen() -> anyhow::Result<()> {
                         *count += num;
 
                         Ok(())
+                    }
+
+                    async fn sum(_cx: Option<async_nats::HeaderMap>, a: Self, b: Self) -> anyhow::Result<u32> {
+                        let sum = *a.0.lock().await + *b.0.lock().await;
+
+                        Ok(sum)
                     }
                 }
 
@@ -254,6 +261,7 @@ async fn rust_bindgen() -> anyhow::Result<()> {
                                 constructor(initial: u32);
                                 get-count: func() -> u32;
                                 increment-by: func(num: u32);
+                                sum: static func(a: counter, b: counter) -> u32;
                             }
                         }
 
@@ -330,7 +338,18 @@ async fn rust_bindgen() -> anyhow::Result<()> {
                             .await
                             .context("failed to call `wrpc-test:integration/shared.[method]counter-get-count`")?;
                         assert_eq!(count, 3);
-                        counter.drop(self.0.as_ref()).await.unwrap();
+                        counter.drop(self.0.as_ref()).await.context("failed to drop `wrpc-test:integration/shared.counter`")?;
+
+                        let a = wrpc_test::integration::shared::Counter::new(self.0.as_ref(), 3)
+                            .await
+                            .context("failed to call `wrpc-test:integration/shared.[constructor]counter`")?;
+                        let b = wrpc_test::integration::shared::Counter::new(self.0.as_ref(), 2)
+                            .await
+                            .context("failed to call `wrpc-test:integration/shared.[constructor]counter`")?;
+                        let sum = wrpc_test::integration::shared::Counter::sum(self.0.as_ref(), a, b)
+                            .await
+                            .context("failed to call `wrpc-test:integration/shared.[static]counter-sum`")?;
+                        assert_eq!(sum, 5);
 
                         Ok("bar".to_string())
                     }

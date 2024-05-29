@@ -283,19 +283,11 @@ mod owned_resource_deref_mut {
             Ok(self.data)
         }
 
-        async fn consume(
-            cx: Ctx,
-            self_: self::exports::my::inline::foo::Bar,
-        ) -> anyhow::Result<u32> {
-            todo!("there needs to be a way for resource arguments other than `self` to be mapped to their host implementation")
+        async fn consume(cx: Ctx, self_: Self) -> anyhow::Result<u32> {
+            let mut me = self_;
+            me.data += 1;
 
-            //let me = this.get::<Ctx, MyResource>();
-            //let prior_data: &u32 = &me.data;
-            //let new_data = prior_data + 1;
-            //let me = this.get_mut::<Ctx, MyResource>();
-            //let mutable_data: &mut u32 = &mut me.data;
-            //*mutable_data = new_data;
-            //Ok(me.data)
+            Ok(me.data)
         }
     }
 
