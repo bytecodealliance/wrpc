@@ -330,6 +330,8 @@ async fn rust_bindgen() -> anyhow::Result<()> {
                             .await
                             .context("failed to call `wrpc-test:integration/shared.[method]counter-get-count`")?;
                         assert_eq!(count, 3);
+                        counter.drop(self.0.as_ref()).await.unwrap();
+
                         Ok("bar".to_string())
                     }
                 }

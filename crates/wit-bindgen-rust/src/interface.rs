@@ -397,6 +397,8 @@ fn {method_name}(
             // handle function call return value
             match kind {
                 FunctionKind::Constructor(id) => {
+                    let resource_name = self.get_type_name(id).to_upper_camel_case();
+
                     uwrite!(
                         self.src,
                         r#").await {{
@@ -407,7 +409,6 @@ fn {method_name}(
                                 let resource_table_ref = handler.table();
                                 let mut resource_table = resource_table_ref.lock().await;
                                 resource_table.insert(id.clone(), Box::new(res));"#,
-                        resource_name = self.get_type_name(id).to_upper_camel_case(),
                     );
 
                     // serve resource methods
@@ -432,18 +433,24 @@ fn {method_name}(
                         }
                         uwrite!(
                             self.src,
-                            ") = match {tokio}::try_join!(",
+                            "drop) = match {tokio}::try_join!(",
                             tokio = self.gen.tokio_path()
                         );
 
                         for Function { name, .. } in &methods {
                             uwrite!(
                                 self.src,
-                                r#"async {{ wrpc.serve_static({instance}, "{name}").await.context(format!("failed to serve `{{}}.{name}`", {instance})) }}.instrument({tracing}::trace_span!("serve_interface")),"#,
+                                r#"async {{ wrpc.serve_static({instance}, "{name}").await.context(format!("failed to serve `{{}}.{name}`", {instance})) }}.instrument({tracing}::trace_span!("serve_resource")),"#,
                                 tracing = self.gen.tracing_path(),
                                 instance = "&id",
                             );
                         }
+                        uwrite!(
+                            self.src,
+                            r#"async {{ wrpc.serve_static({instance}, "drop").await.context(format!("failed to serve `{{}}.drop`", {instance})) }}.instrument({tracing}::trace_span!("serve_resource")),"#,
+                            tracing = self.gen.tracing_path(),
+                            instance = "&id"
+                        );
 
                         // return an error if we can't serve resource methods
                         uwriteln!(
@@ -479,6 +486,8 @@ fn {method_name}(
                                 name = to_rust_ident(&name)
                             );
                         }
+                        uwrite!(self.src, "let mut drop = ::core::pin::pin!(drop);\n",);
+
                         self.push_str("'outer: loop {\n");
                         uwriteln!(
                             self.src,
@@ -522,6 +531,45 @@ fn {method_name}(
                             self.push_str("}\n");
                             self.push_str("},\n");
                         }
+
+                        uwriteln!(
+                            self.src,
+                            r#"invocation = drop.next() => {{
+                                match invocation {{
+                                    Some(Ok(invocation)) => {{
+                                        use {wrpc_transport}::Transmitter as _;
+                                        let {wrpc_transport}::AcceptedInvocation {{
+                                            params, transmitter, result_subject, ..
+                                        }}: {wrpc_transport}::AcceptedInvocation<Ctx,({resource_name},),_> = invocation;
+
+                                        {tracing}::debug!("dropping resource {resource_snake} {{id}}");
+    
+                                        let resource_table_ref = handler.table();
+                                        let mut resource_table = resource_table_ref.lock().await;
+                                        let _: Box<<T as Handler<Ctx>>::{resource_name}> = resource_table.remove(&id).unwrap().downcast().unwrap();
+
+                                        if let Err(err) = transmitter.transmit_static(result_subject, ()).await {{
+                                            {tracing}::error!(?err, "failed to transmit result");
+                                        }}
+    
+                                        return;
+                                    }},Some(Err(err)) => {{
+                                        {tracing}::error!("failed to accept `{{}}.drop` invocation", &id);
+                                    }},None => {{
+                                        {tracing}::warn!("`{{}}.drop` stream unexpectedly finished, dropping", &id);
+                                        
+                                        let resource_table_ref = handler.table();
+                                        let mut resource_table = resource_table_ref.lock().await;
+                                        let _: Box<<T as Handler<Ctx>>::{resource_name}> = resource_table.remove(&id).unwrap().downcast().unwrap();
+    
+                                        return;
+                                    }},
+                                }}
+                            }}"#,
+                            resource_snake = resource_name.to_snake_case(),
+                            tracing = self.gen.tracing_path(),
+                            wrpc_transport = self.gen.wrpc_transport_path(),
+                        );
 
                         self.push_str("}\n");
                         self.push_str("}\n");
@@ -745,8 +793,36 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
     pub fn generate_imports<'a>(
         &mut self,
         instance: &str,
-        funcs: impl Iterator<Item = &'a Function>,
+        funcs: impl Iterator<Item = &'a Function> + Clone,
     ) {
+        let mut resources: Vec<String> = funcs
+            .clone()
+            .filter_map(|func| match func.kind {
+                FunctionKind::Method(id) => Some(self.get_type_name(&id).to_string()),
+                _ => None,
+            })
+            .collect();
+
+        // remove duplicate resource names
+        resources.sort_unstable();
+        resources.dedup();
+
+        for resource_name in resources {
+            uwriteln!(
+                self.src,
+                r#"impl {resource_camel} {{
+                    #[allow(clippy::all)]
+                    pub async fn drop(self,wrpc__: &impl ::wit_bindgen_wrpc::wrpc_transport::Client,) ->  ::wit_bindgen_wrpc::anyhow::Result<()> {{
+                        use::wit_bindgen_wrpc::anyhow::Context as _;
+                        let wrpc__ = wrpc__.invoke_static(&self.0.clone(),"drop", self).await.context("failed to invoke `drop`")?;
+                        wrpc__.1.await.context("failed to transmit parameters")?;
+                        Ok(wrpc__.0)
+                    }}
+                }}"#,
+                resource_camel = resource_name.to_upper_camel_case()
+            );
+        }
+
         for func in funcs {
             self.generate_guest_import(instance, func);
         }
