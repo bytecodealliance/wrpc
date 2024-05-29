@@ -70,12 +70,14 @@ mod strings {
     });
 
     #[allow(dead_code)]
-    async fn test(wrpc: &impl wit_bindgen_wrpc::wrpc_transport::Client) -> anyhow::Result<()> {
+    async fn test(
+        wrpc: std::sync::Arc<impl wrpc_transport::Client + Send + 'static>,
+    ) -> anyhow::Result<()> {
         // Test the argument is `&str`.
-        cat::foo(wrpc, "hello").await?;
+        cat::foo(wrpc.as_ref(), "hello").await?;
 
         // Test the return type is `String`.
-        let _t: String = cat::bar(wrpc).await?;
+        let _t: String = cat::bar(wrpc.as_ref()).await?;
 
         Ok(())
     }
@@ -111,12 +113,14 @@ mod raw_strings {
     });
 
     #[allow(dead_code)]
-    async fn test(wrpc: &impl wit_bindgen_wrpc::wrpc_transport::Client) -> anyhow::Result<()> {
+    async fn test(
+        wrpc: std::sync::Arc<impl wrpc_transport::Client + Send + 'static>,
+    ) -> anyhow::Result<()> {
         // Test the argument is `&[u8]`.
-        cat::foo(wrpc, b"hello").await?;
+        cat::foo(wrpc.as_ref(), b"hello").await?;
 
         // Test the return type is `Vec<u8>`.
-        let _t: Vec<u8> = cat::bar(wrpc).await?;
+        let _t: Vec<u8> = cat::bar(wrpc.as_ref()).await?;
 
         Ok(())
     }
@@ -146,7 +150,7 @@ mod skip {
         }
     }
 
-    async fn serve_exports(wrpc: &impl wrpc_transport::Client) {
+    async fn serve_exports(wrpc: std::sync::Arc<impl wrpc_transport::Client + Send + 'static>) {
         serve(wrpc, Component, async {}).await.unwrap();
     }
 }
@@ -208,7 +212,7 @@ mod symbol_does_not_conflict {
         }
     }
 
-    async fn serve_exports(wrpc: &impl wrpc_transport::Client) {
+    async fn serve_exports(wrpc: std::sync::Arc<impl wrpc_transport::Client + Send + 'static>) {
         serve(wrpc, Component, async {}).await.unwrap();
     }
 }
@@ -234,7 +238,7 @@ mod alternative_bitflags_path {
     #[derive(Clone)]
     struct Component;
 
-    async fn serve_exports(wrpc: &impl wrpc_transport::Client) {
+    async fn serve_exports(wrpc: std::sync::Arc<impl wrpc_transport::Client + Send + 'static>) {
         serve(wrpc, Component, async {}).await.unwrap();
     }
 
@@ -246,6 +250,8 @@ mod alternative_bitflags_path {
 }
 
 mod owned_resource_deref_mut {
+    use exports::my::inline::foo::ResourceTable;
+
     wit_bindgen_wrpc::generate!({
         inline: "
             package my:inline;
@@ -295,17 +301,13 @@ mod owned_resource_deref_mut {
 
     #[derive(Clone)]
     struct Component {
-        table: std::sync::Arc<
-            tokio::sync::Mutex<std::collections::HashMap<String, Box<dyn std::any::Any + Send>>>,
-        >,
+        table: ResourceTable,
     }
 
     impl Component {
         fn new() -> Self {
             Self {
-                table: std::sync::Arc::new(tokio::sync::Mutex::new(
-                    std::collections::HashMap::new(),
-                )),
+                table: ResourceTable::default(),
             }
         }
     }
@@ -313,21 +315,19 @@ mod owned_resource_deref_mut {
     impl<Ctx: Send> exports::my::inline::foo::Handler<Ctx> for Component {
         type Bar = MyResource;
 
-        fn table(
-            &self,
-        ) -> std::sync::Arc<
-            tokio::sync::Mutex<std::collections::HashMap<String, Box<dyn std::any::Any + Send>>>,
-        > {
+        fn table(&self) -> ResourceTable {
             self.table.clone()
         }
     }
 
-    async fn serve_exports(wrpc: &impl wrpc_transport::Client) {
+    async fn serve_exports(wrpc: std::sync::Arc<impl wrpc_transport::Client + Send + 'static>) {
         serve(wrpc, Component::new(), async {}).await.unwrap();
     }
 }
 
 mod package_with_versions {
+    use exports::my::inline::foo::ResourceTable;
+
     wit_bindgen_wrpc::generate!({
         inline: "
             package my:inline@0.0.0;
@@ -354,17 +354,13 @@ mod package_with_versions {
 
     #[derive(Clone)]
     struct Component {
-        table: std::sync::Arc<
-            tokio::sync::Mutex<std::collections::HashMap<String, Box<dyn std::any::Any + Send>>>,
-        >,
+        table: ResourceTable,
     }
 
     impl Component {
         fn new() -> Self {
             Self {
-                table: std::sync::Arc::new(tokio::sync::Mutex::new(
-                    std::collections::HashMap::new(),
-                )),
+                table: ResourceTable::default(),
             }
         }
     }
@@ -372,16 +368,12 @@ mod package_with_versions {
     impl<Ctx: Send> exports::my::inline::foo::Handler<Ctx> for Component {
         type Bar = MyResource;
 
-        fn table(
-            &self,
-        ) -> std::sync::Arc<
-            tokio::sync::Mutex<std::collections::HashMap<String, Box<dyn std::any::Any + Send>>>,
-        > {
+        fn table(&self) -> ResourceTable {
             self.table.clone()
         }
     }
 
-    async fn serve_exports(wrpc: &impl wrpc_transport::Client) {
+    async fn serve_exports(wrpc: std::sync::Arc<impl wrpc_transport::Client + Send + 'static>) {
         serve(wrpc, Component::new(), async {}).await.unwrap();
     }
 }
@@ -432,7 +424,7 @@ mod custom_derives {
         }
     }
 
-    async fn serve_exports(wrpc: &impl wrpc_transport::Client) {
+    async fn serve_exports(wrpc: std::sync::Arc<impl wrpc_transport::Client + Send + 'static>) {
         serve(wrpc, Component, async {}).await.unwrap();
     }
 }
@@ -483,11 +475,13 @@ mod with {
     }
 
     #[allow(dead_code)]
-    async fn test(wrpc: &impl wit_bindgen_wrpc::wrpc_transport::Client) -> anyhow::Result<()> {
+    async fn test(
+        wrpc: std::sync::Arc<impl wrpc_transport::Client + Send + 'static>,
+    ) -> anyhow::Result<()> {
         let msg = other::my::inline::foo::Msg {
             field: "hello".to_string(),
         };
-        my::inline::bar::bar(wrpc, &msg).await?;
+        my::inline::bar::bar(wrpc.as_ref(), &msg).await?;
         Ok(())
     }
 }
@@ -594,7 +588,9 @@ mod interface_export_example {
         }
     }
 
-    async fn serve_exports(wrpc: &impl wrpc_transport::Client) -> anyhow::Result<()> {
+    async fn serve_exports(
+        wrpc: std::sync::Arc<impl wrpc_transport::Client + Send + 'static>,
+    ) -> anyhow::Result<()> {
         serve(wrpc, MyComponent, async {}).await
     }
 }
@@ -604,45 +600,41 @@ mod resource_example {
     use std::sync::RwLock;
 
     wit_bindgen_wrpc::generate!({
-     inline: r#"
-         package my:test;
+        inline: r#"
+            package my:test;
 
-         interface logging {
-             enum level {
-                 debug,
-                 info,
-                 error,
-             }
+            interface logging {
+                enum level {
+                    debug,
+                    info,
+                    error,
+                }
 
-             resource logger {
-                 constructor(level: level);
-                 log: func(level: level, msg: string);
-                 level: func() -> level;
-                 set-level: func(level: level);
-             }
-         }
+                resource logger {
+                    constructor(level: level);
+                    log: func(level: level, msg: string);
+                    level: func() -> level;
+                    set-level: func(level: level);
+                }
+            }
 
-         world my-world {
-             export logging;
-         }
-     "#,
+            world my-world {
+                export logging;
+            }
+        "#,
     });
 
-    use exports::my::test::logging::{Handler, HandlerLogger, Level};
+    use exports::my::test::logging::{Handler, HandlerLogger, Level, ResourceTable};
 
     #[derive(Clone)]
     struct MyComponent {
-        table: std::sync::Arc<
-            tokio::sync::Mutex<std::collections::HashMap<String, Box<dyn std::any::Any + Send>>>,
-        >,
+        table: ResourceTable,
     }
 
     impl MyComponent {
         fn new() -> Self {
             Self {
-                table: std::sync::Arc::new(tokio::sync::Mutex::new(
-                    std::collections::HashMap::new(),
-                )),
+                table: ResourceTable::default(),
             }
         }
     }
@@ -652,11 +644,7 @@ mod resource_example {
     impl<Ctx: Send> Handler<Ctx> for MyComponent {
         type Logger = MyLogger;
 
-        fn table(
-            &self,
-        ) -> std::sync::Arc<
-            tokio::sync::Mutex<std::collections::HashMap<String, Box<dyn std::any::Any + Send>>>,
-        > {
+        fn table(&self) -> ResourceTable {
             self.table.clone()
         }
     }
@@ -692,7 +680,9 @@ mod resource_example {
         }
     }
 
-    async fn serve_exports(wrpc: &impl wrpc_transport::Client) -> anyhow::Result<()> {
+    async fn serve_exports(
+        wrpc: std::sync::Arc<impl wrpc_transport::Client + Send + 'static>,
+    ) -> anyhow::Result<()> {
         serve(wrpc, MyComponent::new(), async {}).await
     }
 }

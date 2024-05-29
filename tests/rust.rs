@@ -3,8 +3,6 @@ use core::pin::pin;
 use core::str;
 use core::time::Duration;
 
-use std::any::Any;
-use std::collections::HashMap;
 use std::net::Ipv4Addr;
 use std::sync::Arc;
 
@@ -143,7 +141,7 @@ async fn rust_bindgen() -> anyhow::Result<()> {
                 #[derive(Clone, Default)]
                 struct Component {
                     inner: Arc<RwLock<Option<String>>>,
-                    table: Arc<Mutex<HashMap<String, Box<dyn Any + Send>>>>,
+                    table: ResourceTable,
                 }
 
                 impl Handler<Option<async_nats::HeaderMap>> for Component {
@@ -182,9 +180,7 @@ async fn rust_bindgen() -> anyhow::Result<()> {
 
                     fn table(
                         &self,
-                    ) -> std::sync::Arc<
-                        tokio::sync::Mutex<std::collections::HashMap<String, Box<dyn std::any::Any + Send>>>,
-                    > {
+                    ) -> ResourceTable {
                         self.table.clone()
                     }
 
@@ -234,7 +230,7 @@ async fn rust_bindgen() -> anyhow::Result<()> {
                     }
                 }
 
-                serve(client.as_ref(), Component::default(), shutdown_rx.clone())
+                serve(client.clone(), Component::default(), shutdown_rx.clone())
                     .await
                     .context("failed to serve `wrpc-test:integration/test`")
             },
@@ -339,7 +335,7 @@ async fn rust_bindgen() -> anyhow::Result<()> {
                 }
 
                 serve(
-                    client.as_ref(),
+                    client.clone(),
                     Component(Arc::clone(&client)),
                     shutdown_rx.clone(),
                 )
@@ -1421,8 +1417,8 @@ async fn rust_keyvalue() -> anyhow::Result<()> {
                         Ok(Ok(4242))
                     }
                 }
-
-                let fut = bindings::serve(&client, Handler, shutdown.notified());
+                
+                let fut = bindings::serve(client.clone().into(), Handler, shutdown.notified());
 
                 started.notify_one();
 

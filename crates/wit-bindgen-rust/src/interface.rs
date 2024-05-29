@@ -226,6 +226,18 @@ impl InterfaceGenerator<'_> {
 
         let (name, methods) = traits.remove(&None).unwrap();
         if !methods.is_empty() || !traits.is_empty() {
+            // use BTreeMap in no_std since HashMap requires std
+            if self.gen.opts.std_feature {
+                uwriteln!(self.src, "pub type ResourceTable = {alloc}::sync::Arc<{tokio}::sync::Mutex<{alloc}::collections::BTreeMap<{alloc}::string::String, {alloc}::boxed::Box<dyn ::core::any::Any + Send>>>>;",
+                    alloc = self.gen.alloc_path(),
+                    tokio = self.gen.tokio_path(),
+                );
+            } else {
+                uwriteln!(self.src, "pub type ResourceTable = std::sync::Arc<{tokio}::sync::Mutex<std::collections::HashMap<String, Box<dyn std::any::Any + Send>>>>;",
+                    tokio = self.gen.tokio_path(),
+                );
+            }
+
             self.generate_interface_trait(
                 &name,
                 &methods,
@@ -240,7 +252,7 @@ impl InterfaceGenerator<'_> {
             for method in methods {
                 self.src.push_str(method);
             }
-            // TODO: Add drop method here
+
             uwriteln!(self.src, "}}");
         }
 
@@ -250,15 +262,16 @@ impl InterfaceGenerator<'_> {
 
         uwriteln!(
             self.src,
-            "pub trait Server<Ctx, Tx: {wrpc_transport}::Transmitter> {{\n",
-            wrpc_transport = self.gen.wrpc_transport_path()
+            "pub trait Server<Ctx, Tx: {wrpc_transport}::Transmitter, U: {wrpc_transport}::Client<Context = Ctx>> {{\n",
+            wrpc_transport = self.gen.wrpc_transport_path(),
         );
         for Function { params, name, .. } in &funcs_to_export {
             uwrite!(
                 self.src,
-                r#"fn serve_{}(&self, invocation: {wrpc_transport}::AcceptedInvocation<Ctx, ("#,
+                r#"fn serve_{}(&self, wrpc: {alloc}::sync::Arc<U>, invocation: {wrpc_transport}::AcceptedInvocation<Ctx, ("#,
                 name.to_snake_case(),
-                wrpc_transport = self.gen.wrpc_transport_path()
+                wrpc_transport = self.gen.wrpc_transport_path(),
+                alloc = self.gen.alloc_path(),
             );
             for (_, ty) in params {
                 self.print_ty(ty, TypeMode::owned());
@@ -272,24 +285,27 @@ impl InterfaceGenerator<'_> {
 }}
 
 #[automatically_derived]
-impl <Ctx, T, Tx> Server<Ctx, Tx> for T
+impl <Ctx, T, Tx, U> Server<Ctx, Tx, U> for T
     where
         Ctx: Send + 'static,
         T: Handler<Ctx> + Send + Sync + Clone + 'static,
         Tx: {wrpc_transport}::Transmitter + Send + 'static,
+        U: {wrpc_transport}::Client<Context = Ctx> + Send + 'static,
     {{"#,
             wrpc_transport = self.gen.wrpc_transport_path()
         );
-        for Function {
-            kind, params, name, ..
-        } in &funcs_to_export
-        {
+        for func in funcs_to_export.iter() {
+            let Function {
+                kind, params, name, ..
+            } = func;
+
             let method_name = format!("serve_{name}", name = name.to_snake_case());
             uwrite!(
                 self.src,
                 r#"
 fn {method_name}(
     &self,
+    wrpc: {alloc}::sync::Arc<U>,
     {wrpc_transport}::AcceptedInvocation{{
         context,
         params,
@@ -299,7 +315,8 @@ fn {method_name}(
     }}: {wrpc_transport}::AcceptedInvocation<
         Ctx,
         ("#,
-                wrpc_transport = self.gen.wrpc_transport_path()
+                wrpc_transport = self.gen.wrpc_transport_path(),
+                alloc = self.gen.alloc_path(),
             );
             for (_, ty) in params {
                 self.print_ty(ty, TypeMode::owned());
@@ -310,11 +327,15 @@ fn {method_name}(
                 self.src,
                 r#"),
         Tx>) {{
+            use {anyhow}::Context as _;
+            use {futures}::StreamExt as _;
             use {tracing}::Instrument as _;
             let span = {tracing}::trace_span!("{method_name}");
             let _enter = span.enter();
             let handler = self.clone();
                 {tokio}::spawn(async move {{"#,
+                anyhow = self.gen.anyhow_path(),
+                futures = self.gen.futures_path(),
                 tokio = self.gen.tokio_path(),
                 tracing = self.gen.tracing_path()
             );
@@ -341,42 +362,22 @@ fn {method_name}(
                     )
                 }
                 FunctionKind::Method(id) => {
-                    let resource_name = self.resolve.types[*id]
-                        .name
-                        .as_ref()
-                        .unwrap()
-                        .to_upper_camel_case();
-                    let method_name = name
-                        .to_snake_case()
-                        .replace("method_", "")
-                        .replace(&format!("{}_", resource_name.to_snake_case()), "");
-
                     uwrite!(
                         self.src,
                         r#"let resource_table_ref = handler.table();
                         let resource_table = resource_table_ref.lock().await;
                         let resource: &<T as Handler<Ctx>>::{resource_name} = resource_table.get(&params.0.id).unwrap().downcast_ref().unwrap();
                         match resource.{method_name}(context, "#,
-                        method_name = to_rust_ident(&method_name)
+                        resource_name = self.get_type_name(id).to_upper_camel_case(),
+                        method_name = to_rust_ident(func.item_name())
                     )
                 }
-                // TODO: Resolve the resource arguments to static functions to resource instances correctly,
-                // or provide another way for them to be accessed
                 FunctionKind::Static(id) => {
-                    let resource_name = self.resolve.types[*id]
-                        .name
-                        .as_ref()
-                        .unwrap()
-                        .to_upper_camel_case();
-                    let method_name = name
-                        .to_snake_case()
-                        .replace("static_", "")
-                        .replace(&format!("{}_", resource_name.to_snake_case()), "");
-
                     uwrite!(
                         self.src,
                         "match <T as Handler<Ctx>>::{resource_name}::{method_name}(context, ",
-                        method_name = to_rust_ident(&method_name)
+                        resource_name = self.get_type_name(id).to_upper_camel_case(),
+                        method_name = to_rust_ident(func.item_name())
                     );
                 }
             }
@@ -396,26 +397,153 @@ fn {method_name}(
             // handle function call return value
             match kind {
                 FunctionKind::Constructor(id) => {
-                    let resource_name = self.resolve.types[*id]
-                        .name
-                        .as_ref()
-                        .unwrap()
-                        .to_upper_camel_case();
-
                     uwrite!(
                         self.src,
                         r#").await {{
                             Ok(res) => {{
                                 let resource = {resource_name}::new();
+                                let id = resource.id.clone();
 
                                 let resource_table_ref = handler.table();
                                 let mut resource_table = resource_table_ref.lock().await;
-                                resource_table.insert(resource.id.clone(), Box::new(res));
+                                resource_table.insert(id.clone(), Box::new(res));"#,
+                        resource_name = self.get_type_name(id).to_upper_camel_case(),
+                    );
 
-                                if let Err(err) = transmitter.transmit_static(result_subject, resource).await {{
-                                    {tracing}::error!(?err, "failed to transmit result")
+                    // serve resource methods
+                    let methods: Vec<_> = funcs_to_export
+                        .iter()
+                        .filter(|func| match func.kind {
+                            FunctionKind::Method(method_id) => method_id == *id,
+                            _ => false,
+                        })
+                        .collect();
+
+                    if !methods.is_empty() {
+                        uwriteln!(
+                            self.src,
+                            "{tokio}::spawn( async move {{",
+                            tokio = self.gen.tokio_path()
+                        );
+                        uwrite!(self.src, "let (");
+
+                        for Function { name, .. } in &methods {
+                            uwrite!(self.src, "{name},", name = to_rust_ident(&name),);
+                        }
+                        uwrite!(
+                            self.src,
+                            ") = match {tokio}::try_join!(",
+                            tokio = self.gen.tokio_path()
+                        );
+
+                        for Function { name, .. } in &methods {
+                            uwrite!(
+                                self.src,
+                                r#"async {{ wrpc.serve_static({instance}, "{name}").await.context(format!("failed to serve `{{}}.{name}`", {instance})) }}.instrument({tracing}::trace_span!("serve_interface")),"#,
+                                tracing = self.gen.tracing_path(),
+                                instance = "&id",
+                            );
+                        }
+
+                        // return an error if we can't serve resource methods
+                        uwriteln!(
+                            self.src,
+                            r#") {{
+                                Ok(invocations) => invocations,
+                                Err(err) => {{
+                                    if let Err(err) = transmitter.transmit_static(error_subject, err).await {{
+                                        {tracing}::error!(?err, "failed to transmit error");
+                                    }}
+
+                                    return;
                                 }}
-                            }}
+                            }};
+                            "#,
+                            tracing = self.gen.tracing_path(),
+                        );
+
+                        // return resource handle before handling method invocations
+                        uwriteln!(
+                            self.src,
+                            r#"if let Err(err) = transmitter.transmit_static(result_subject, resource).await {{
+                                {tracing}::error!(?err, "failed to transmit result")
+                            }}"#,
+                            tracing = self.gen.tracing_path(),
+                        );
+
+                        for Function { name, .. } in &methods {
+                            let name = to_rust_ident(name);
+                            uwrite!(
+                                self.src,
+                                "let mut {name} = ::core::pin::pin!({name});\n",
+                                name = to_rust_ident(&name)
+                            );
+                        }
+                        self.push_str("'outer: loop {\n");
+                        uwriteln!(
+                            self.src,
+                            "{tokio}::select! {{",
+                            tokio = self.gen.tokio_path()
+                        );
+
+                        for Function { name, .. } in &methods {
+                            uwriteln!(
+                                self.src,
+                                "invocation = {name}.next() => {{",
+                                name = to_rust_ident(name)
+                            );
+                            self.push_str("match invocation {\n");
+                            self.push_str("Some(Ok(invocation)) => {\n");
+
+                            uwriteln!(self.src, "<T as Server<Ctx, <<U as {wrpc_transport}::Client>::Acceptor as {wrpc_transport}::Acceptor>::Transmitter, U>>::serve_{name}(&handler, wrpc.clone(), invocation)",
+                                wrpc_transport = self.gen.wrpc_transport_path(),
+                                name = to_rust_ident(name)
+                            );
+
+                            self.push_str("},\n");
+                            self.push_str("Some(Err(err)) => {\n");
+                            uwriteln!(
+                                self.src,
+                                r#"{tracing}::error!("failed to accept `{{}}.{name}` invocation", {instance});"#,
+                                tracing = self.gen.tracing_path(),
+                                instance = "&id",
+                            );
+                            self.push_str("},\n");
+                            self.push_str("None => {\n");
+                            uwriteln!(
+                                self.src,
+                                r#"{tracing}::warn!("`{{}}.{name}` stream unexpectedly finished, resubscribe", {instance});"#,
+                                tracing = self.gen.tracing_path(),
+                                instance = "&id",
+                            );
+
+                            self.push_str("continue 'outer\n");
+                            self.push_str("},\n");
+                            self.push_str("}\n");
+                            self.push_str("},\n");
+                        }
+
+                        self.push_str("}\n");
+                        self.push_str("}\n");
+
+                        self.push_str("});\n")
+                    } else {
+                        // if there are no methods, just return the resource handle
+                        uwriteln!(
+                            self.src,
+                            r#"if let Err(err) = transmitter.transmit_static(result_subject, resource).await {{
+                                {tracing}::error!(?err, "failed to transmit result")
+                            }}"#,
+                            tracing = self.gen.tracing_path(),
+                        );
+                    }
+
+                    self.push_str("}");
+
+                    // handle any errors encountered constructing the resource or spawning the method serving tasks
+                    uwrite!(
+                        self.src,
+                        r#"
                             Err(err) => {{
                                 if let Err(err) = transmitter.transmit_static(error_subject, err).await {{
                                     {tracing}::error!(?err, "failed to transmit error")
@@ -449,13 +577,20 @@ fn {method_name}(
 
             self.push_str("}\n");
         }
+
+        // methods are served seperately by resources
+        let funcs_to_serve: Vec<_> = funcs_to_export
+            .iter()
+            .filter(|func| !matches!(&func.kind, FunctionKind::Method(..)))
+            .collect();
+
         self.push_str("}\n");
         uwrite!(
             self.src,
             r#"
 pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
-    wrpc: &T,
-    server: impl Server<T::Context, <T::Acceptor as {wrpc_transport}::Acceptor>::Transmitter> + Clone,
+    wrpc: {alloc}::sync::Arc<T>,
+    server: impl Server<T::Context, <T::Acceptor as {wrpc_transport}::Acceptor>::Transmitter, T> + Clone,
     shutdown: impl ::core::future::Future<Output = U>,
 ) -> {anyhow}::Result<U> {{
     use {anyhow}::Context as _;
@@ -467,9 +602,10 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
             anyhow = self.gen.anyhow_path(),
             futures = self.gen.futures_path(),
             tracing = self.gen.tracing_path(),
-            wrpc_transport = self.gen.wrpc_transport_path()
+            wrpc_transport = self.gen.wrpc_transport_path(),
+            alloc = self.gen.alloc_path(),
         );
-        for Function { name, .. } in &funcs_to_export {
+        for Function { name, .. } in &funcs_to_serve {
             uwrite!(self.src, "{},", to_rust_ident(name));
         }
         uwrite!(
@@ -505,7 +641,7 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
                 }
             }
         };
-        for Function { name, .. } in &funcs_to_export {
+        for Function { name, .. } in &funcs_to_serve {
             uwrite!(
                 self.src,
                 r#"async {{ wrpc.serve_static("{instance}", "{name}").await.context("failed to serve `{instance}.{name}`") }}.instrument({tracing}::trace_span!("serve_interface")),"#,
@@ -513,7 +649,7 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
             );
         }
         self.push_str(")?;\n");
-        for Function { name, .. } in &funcs_to_export {
+        for Function { name, .. } in &funcs_to_serve {
             let name = to_rust_ident(name);
             uwrite!(self.src, "let mut {name} = ::core::pin::pin!({name});\n",);
         }
@@ -525,7 +661,7 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
             tokio = self.gen.tokio_path()
         );
 
-        for Function { name, .. } in &funcs_to_export {
+        for Function { name, .. } in &funcs_to_serve {
             uwriteln!(
                 self.src,
                 "invocation = {}.next() => {{",
@@ -535,7 +671,7 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
             self.push_str("Some(Ok(invocation)) => {\n");
             uwriteln!(
                 self.src,
-                "server.serve_{}(invocation)",
+                "server.serve_{}(wrpc.clone(), invocation)",
                 name.to_snake_case()
             );
             self.push_str("},\n");
@@ -572,6 +708,10 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
         true
     }
 
+    fn get_type_name(&self, id: &TypeId) -> &str {
+        self.resolve.types[*id].name.as_ref().unwrap()
+    }
+
     fn generate_interface_trait<'a>(
         &mut self,
         trait_name: &str,
@@ -585,7 +725,7 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
         for (id, trait_name) in resource_traits {
             // resource table method
             if !has_resources {
-                uwriteln!(self.src, "fn table(&self) -> std::sync::Arc<tokio::sync::Mutex<std::collections::HashMap<String, Box<dyn std::any::Any + Send>>>>;");
+                uwriteln!(self.src, "fn table(&self) -> ResourceTable;",);
                 has_resources = true;
             }
 
@@ -696,13 +836,12 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
         match func.kind {
             FunctionKind::Freestanding
             | FunctionKind::Static(..)
-            | FunctionKind::Constructor(..)
-            | FunctionKind::Method(..) => {
+            | FunctionKind::Constructor(..) => {
                 uwrite!(self.src, r#""{instance}""#);
-            } // TODO: Refactor to pass the resource identifier via instance
-              // FunctionKind::Method(..) => {
-              // self.src.push_str("&self.0");
-              // }
+            }
+            FunctionKind::Method(..) => {
+                self.src.push_str("&self.0");
+            }
         }
         self.src.push_str(r#", ""#);
         self.src.push_str(&func.name);
@@ -766,6 +905,18 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
                     let trait_name = format!("{path}::Handler{camel}");
                     self.generate_stub_impl(&trait_name, "", &resource_methods);
                 }
+
+                if has_resources {
+                    uwriteln!(
+                        extra_trait_items,
+                        r#"
+                        fn table(&self) -> {path}::ResourceTable {{
+                            unreachable!()
+                        }}
+                        "#,
+                    );
+                }
+
                 format!("{path}::Handler")
             }
             None => {
@@ -773,17 +924,6 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
                 "Handler".to_string()
             }
         };
-
-        if has_resources {
-            uwriteln!(
-                extra_trait_items,
-                r#"
-                fn table(&self) -> std::sync::Arc<tokio::sync::Mutex<std::collections::HashMap<String, Box<dyn std::any::Any + Send>>>> {{
-                    unreachable!()
-                }}
-                "#
-            );
-        }
 
         if !root_methods.is_empty() || !extra_trait_items.is_empty() {
             self.generate_stub_impl(&guest_trait, &extra_trait_items, &root_methods);

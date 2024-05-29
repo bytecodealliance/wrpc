@@ -114,7 +114,7 @@ mod skip {
         }
     }
 
-    async fn serve_exports(wrpc: &impl wrpc_transport::Client) {
+    async fn serve_exports(wrpc: alloc::sync::Arc<impl wrpc_transport::Client + Send + 'static>) {
         serve(wrpc, Component, async {}).await.unwrap();
     }
 }

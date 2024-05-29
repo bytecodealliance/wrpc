@@ -3575,7 +3575,6 @@ dependencies = [
  "serde",
  "serde_json",
  "test-helpers",
- "tokio",
  "ulid",
  "wit-bindgen-core",
  "wit-bindgen-wrpc",

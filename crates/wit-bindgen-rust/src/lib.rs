@@ -259,6 +259,14 @@ impl RustWrpc {
             .unwrap_or("::wit_bindgen_wrpc::async_trait")
     }
 
+    fn alloc_path(&self) -> &str {
+        if self.opts.std_feature {
+            "alloc"
+        } else {
+            "std"
+        }
+    }
+
     fn bitflags_path(&self) -> &str {
         self.opts
             .bitflags_path
@@ -340,7 +348,7 @@ impl RustWrpc {
     /// are woven together in this single invocation.
     fn finish_serve_function(&mut self) {
         let name = format!(
-            "Server<T::Context, <T::Acceptor as {wrpc_transport}::Acceptor>::Transmitter>",
+            "Server<T::Context, <T::Acceptor as {wrpc_transport}::Acceptor>::Transmitter, T>",
             wrpc_transport = self.wrpc_transport_path()
         );
         let mut traits: Vec<String> = self
@@ -363,11 +371,12 @@ impl RustWrpc {
         let futures = self.futures_path().to_string();
         let tokio = self.tokio_path().to_string();
         let wrpc_transport = self.wrpc_transport_path().to_string();
+        let alloc = self.alloc_path().to_string();
         uwriteln!(
             self.src,
             r#"
-pub async fn serve<T: {wrpc_transport}::Client>(
-    wrpc: &T,
+pub async fn serve<T: {wrpc_transport}::Client + Send + 'static>(
+    wrpc: {alloc}::sync::Arc<T>,
     server: impl {bound} + Clone,
     shutdown: impl ::core::future::Future<Output = ()>,
 ) -> {anyhow}::Result<()> {{
@@ -382,7 +391,7 @@ pub async fn serve<T: {wrpc_transport}::Client>(
                 self.src.push_str("::");
             }
             self.src
-                .push_str("serve_interface(wrpc, server.clone(), shutdown.clone()),");
+                .push_str("serve_interface(wrpc.clone(), server.clone(), shutdown.clone()),");
         }
 
         self.src.push_str(")?;\n");
