@@ -4,7 +4,7 @@ use core::fmt::{self, Display};
 use core::future::Future;
 use core::iter::zip;
 use core::mem;
-use core::ops::{BitOr, BitOrAssign, Shl};
+use core::ops::{BitOrAssign, Shl};
 use core::pin::{pin, Pin};
 use core::task::{Context, Poll};
 
@@ -850,12 +850,10 @@ async fn read_discriminant(
                 .try_into()
                 .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))
         }
-        0x1_0000_0000.. => {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "case count does not fit in u32".to_string(),
-            ))
-        }
+        0x1_0000_0000.. => Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "case count does not fit in u32".to_string(),
+        )),
     }
 }
 
@@ -1186,7 +1184,7 @@ pub fn polyfill<'a, T, C, V>(
             if let Err(err) =
                 linker.resource(name, ResourceType::host::<RemoteResource>(), |_, _| Ok(()))
             {
-                error!(?err, "failed to polyfill imported resource type")
+                error!(?err, "failed to polyfill imported resource type");
             }
         }
         let instance_name = Arc::new(instance_name);
