@@ -4,6 +4,7 @@ use core::fmt::{self, Display};
 use core::future::Future;
 use core::iter::zip;
 use core::mem;
+use core::ops::{BitOr, BitOrAssign, Shl};
 use core::pin::{pin, Pin};
 use core::task::{Context, Poll};
 
@@ -517,31 +518,18 @@ fn find_variant_discriminant<'a, T>(
         .context("unknown variant discriminant")
 }
 
-async fn read_discriminant(
-    cases: usize,
-    r: &mut (impl AsyncRead + Unpin),
-) -> std::io::Result<usize> {
-    match cases {
-        ..=0x0000_00ff => r.read_u8().await.map(Into::into),
-        0x0000_0100..=0x0000_ffff => r.read_u16_le().await.map(Into::into),
-        0x0001_0000..=0x00ff_ffff => {
-            let mut buf = 0usize.to_le_bytes();
-            r.read_exact(&mut buf[..3]).await?;
-            Ok(usize::from_le_bytes(buf))
-        }
-        0x0100_0000..=0xffff_ffff => {
-            let discriminant = r.read_u32_le().await?;
-            discriminant
-                .try_into()
-                .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))
-        }
-        0x1_0000_0000.. => {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "case count does not fit in u32".to_string(),
-            ))
+fn flag_bits<'a, T: BitOrAssign + Shl<u8, Output = T> + From<u8>>(
+    names: impl IntoIterator<Item = &'a str>,
+    flags: impl IntoIterator<Item = &'a str>,
+) -> T {
+    let mut v = T::from(0);
+    let flags: HashSet<&str> = flags.into_iter().collect();
+    for (i, name) in zip(0u8.., names) {
+        if flags.contains(name) {
+            v |= T::from(1) << i;
         }
     }
+    v
 }
 
 impl<T> Encoder<&Val> for ValEncoder<'_, T>
@@ -744,57 +732,71 @@ where
             },
             (Val::Flags(vs), Type::Flags(ty)) => {
                 let names = ty.names();
-                let vs: HashSet<&str> = vs.iter().map(String::as_str).collect();
+                let vs = vs.iter().map(String::as_str);
                 match names.len() {
                     ..=8 => {
                         dst.reserve(1);
-                        let mut v = 0;
-                        for (i, name) in zip(0u8.., names) {
-                            if vs.contains(name) {
-                                v |= 1 << i;
-                            }
-                        }
-                        dst.put_u8(v);
+                        dst.put_u8(flag_bits(names, vs));
                     }
                     9..=16 => {
                         dst.reserve(2);
-                        let mut v = 0;
-                        for (i, name) in zip(0u8.., names) {
-                            if vs.contains(name) {
-                                v |= 1 << i;
-                            }
-                        }
-                        dst.put_u16_le(v);
+                        dst.put_u16_le(flag_bits(names, vs));
                     }
-                    17..=32 => {
+                    17..=24 => {
+                        dst.reserve(3);
+                        dst.put_slice(&u32::to_le_bytes(flag_bits(names, vs))[..3]);
+                    }
+                    25..=32 => {
                         dst.reserve(4);
-                        let mut v = 0;
-                        for (i, name) in zip(0u8.., names) {
-                            if vs.contains(name) {
-                                v |= 1 << i;
-                            }
-                        }
-                        dst.put_u32_le(v);
+                        dst.put_u32_le(flag_bits(names, vs));
                     }
-                    33..=64 => {
+                    33..=40 => {
+                        dst.reserve(5);
+                        dst.put_slice(&u64::to_le_bytes(flag_bits(names, vs))[..5]);
+                    }
+                    41..=48 => {
+                        dst.reserve(6);
+                        dst.put_slice(&u64::to_le_bytes(flag_bits(names, vs))[..6]);
+                    }
+                    49..=56 => {
+                        dst.reserve(7);
+                        dst.put_slice(&u64::to_le_bytes(flag_bits(names, vs))[..7]);
+                    }
+                    57..=64 => {
                         dst.reserve(8);
-                        let mut v = 0;
-                        for (i, name) in zip(0u8.., names) {
-                            if vs.contains(name) {
-                                v |= 1 << i;
-                            }
-                        }
-                        dst.put_u64_le(v);
+                        dst.put_u64_le(flag_bits(names, vs));
                     }
-                    65..=128 => {
+                    65..=72 => {
+                        dst.reserve(9);
+                        dst.put_slice(&u128::to_le_bytes(flag_bits(names, vs))[..9]);
+                    }
+                    73..=80 => {
+                        dst.reserve(10);
+                        dst.put_slice(&u128::to_le_bytes(flag_bits(names, vs))[..10]);
+                    }
+                    81..=88 => {
+                        dst.reserve(11);
+                        dst.put_slice(&u128::to_le_bytes(flag_bits(names, vs))[..11]);
+                    }
+                    89..=96 => {
+                        dst.reserve(12);
+                        dst.put_slice(&u128::to_le_bytes(flag_bits(names, vs))[..12]);
+                    }
+                    97..=104 => {
+                        dst.reserve(13);
+                        dst.put_slice(&u128::to_le_bytes(flag_bits(names, vs))[..13]);
+                    }
+                    105..=112 => {
+                        dst.reserve(14);
+                        dst.put_slice(&u128::to_le_bytes(flag_bits(names, vs))[..14]);
+                    }
+                    113..=120 => {
+                        dst.reserve(15);
+                        dst.put_slice(&u128::to_le_bytes(flag_bits(names, vs))[..15]);
+                    }
+                    121..=128 => {
                         dst.reserve(16);
-                        let mut v = 0;
-                        for (i, name) in zip(0u8.., names) {
-                            if vs.contains(name) {
-                                v |= 1 << i;
-                            }
-                        }
-                        dst.put_u128_le(v);
+                        dst.put_u128_le(flag_bits(names, vs));
                     }
                     129.. => bail!("flags do not fit in u128"),
                 }
@@ -828,6 +830,40 @@ where
             _ => bail!("value type mismatch"),
         }
     }
+}
+
+async fn read_discriminant(
+    cases: usize,
+    r: &mut (impl AsyncRead + Unpin),
+) -> std::io::Result<usize> {
+    match cases {
+        ..=0x0000_00ff => r.read_u8().await.map(Into::into),
+        0x0000_0100..=0x0000_ffff => r.read_u16_le().await.map(Into::into),
+        0x0001_0000..=0x00ff_ffff => {
+            let mut buf = 0usize.to_le_bytes();
+            r.read_exact(&mut buf[..3]).await?;
+            Ok(usize::from_le_bytes(buf))
+        }
+        0x0100_0000..=0xffff_ffff => {
+            let discriminant = r.read_u32_le().await?;
+            discriminant
+                .try_into()
+                .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))
+        }
+        0x1_0000_0000.. => {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "case count does not fit in u32".to_string(),
+            ))
+        }
+    }
+}
+
+#[inline]
+async fn read_flags(n: usize, r: &mut (impl AsyncRead + Unpin)) -> std::io::Result<u128> {
+    let mut buf = 0u128.to_le_bytes();
+    r.read_exact(&mut buf[..n]).await?;
+    Ok(u128::from_le_bytes(buf))
 }
 
 pub async fn read_value<T: WasiView>(
@@ -1004,11 +1040,22 @@ pub async fn read_value<T: WasiView>(
         Type::Flags(ty) => {
             let names = ty.names();
             let flags = match names.len() {
-                ..=8 => r.read_u8().await.map(Into::into)?,
-                9..=16 => r.read_u16_le().await.map(Into::into)?,
-                17..=32 => r.read_u32_le().await.map(Into::into)?,
-                33..=64 => r.read_u64_le().await.map(Into::into)?,
-                65..=128 => r.read_u128_le().await?,
+                ..=8 => read_flags(1, r).await?,
+                9..=16 => read_flags(2, r).await?,
+                17..=24 => read_flags(3, r).await?,
+                25..=32 => read_flags(4, r).await?,
+                33..=40 => read_flags(5, r).await?,
+                41..=48 => read_flags(6, r).await?,
+                49..=56 => read_flags(7, r).await?,
+                57..=64 => read_flags(8, r).await?,
+                65..=72 => read_flags(9, r).await?,
+                73..=80 => read_flags(10, r).await?,
+                81..=88 => read_flags(11, r).await?,
+                89..=96 => read_flags(12, r).await?,
+                97..=104 => read_flags(13, r).await?,
+                105..=112 => read_flags(14, r).await?,
+                113..=120 => read_flags(15, r).await?,
+                121..=128 => r.read_u128_le().await?,
                 129.. => {
                     return Err(std::io::Error::new(
                         std::io::ErrorKind::InvalidInput,
