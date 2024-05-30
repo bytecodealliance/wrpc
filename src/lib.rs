@@ -15,6 +15,5 @@ pub mod interfaces {
 }
 
 pub use wit_bindgen_wrpc::generate;
-pub use wrpc_types as types;
 
 pub use transport::{Index, Invoke, Serve};
