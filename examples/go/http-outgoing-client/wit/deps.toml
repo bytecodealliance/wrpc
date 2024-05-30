@@ -1,2 +1,0 @@
-http = "../../../../crates/interface-http/wit/deps/http"
-wrpc-http = "../../../../crates/interface-http/wit"

@@ -1,5 +1,0 @@
-package wrpc-examples:http-outgoing-server;
-
-world client {
-    import wrpc:http/outgoing-handler@0.1.0;
-}

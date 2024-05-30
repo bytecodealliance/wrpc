@@ -1,5 +1,0 @@
-package wrpc-examples:http-outgoing-rust-client;
-
-world client {
-    include wrpc:http/outgoing-handler;
-}
