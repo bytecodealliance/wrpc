@@ -16,4 +16,4 @@ async-trait = { workspace = true }
 bytes = { workspace = true }
 futures = { workspace = true, features = ["async-await"] }
 tracing = { workspace = true, features = ["attributes"] }
-wrpc-transport = { workspace = true }
+wrpc-transport-legacy = { workspace = true }

@@ -17,17 +17,19 @@ use tokio::sync::{oneshot, Notify, RwLock};
 use tokio::time::sleep;
 use tokio::try_join;
 use tracing::{info, instrument};
-use wrpc::{DynamicFunctionType, ResourceType, Transmitter as _, Type, Value};
 use wrpc_interface_blobstore::{ContainerMetadata, ObjectId, ObjectMetadata};
 use wrpc_interface_http::{ErrorCode, Method, Request, RequestOptions, Response, Scheme};
-use wrpc_transport::{AcceptedInvocation, Client as _, DynamicTuple};
+use wrpc_transport_legacy::{
+    AcceptedInvocation, Client as _, DynamicTuple, Transmitter as _, Value,
+};
+use wrpc_types::{DynamicFunction as DynamicFunctionType, Resource as ResourceType, Type};
 
 mod common;
 use common::{init, start_nats, with_nats};
 
 #[instrument(skip(client, ty, params, results))]
 async fn loopback_dynamic(
-    client: &impl wrpc::Client,
+    client: &impl wrpc_transport_legacy::Client,
     name: &str,
     ty: DynamicFunctionType,
     params: Vec<Value>,
@@ -98,7 +100,7 @@ async fn rust_bindgen() -> anyhow::Result<()> {
     init().await;
 
     with_nats(|_, nats_client| async {
-        let client = wrpc::transport::nats::Client::new(nats_client, "test-prefix".to_string());
+        let client = wrpc_transport_nats_legacy::Client::new(nats_client, "test-prefix".to_string());
         let client = Arc::new(client);
 
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
@@ -229,7 +231,7 @@ async fn rust_bindgen() -> anyhow::Result<()> {
                 });
 
                 #[derive(Clone)]
-                struct Component(Arc<wrpc_transport_nats::Client>);
+                struct Component(Arc<wrpc_transport_nats_legacy::Client>);
 
                 // TODO: Remove the need for this
                 sleep(Duration::from_secs(1)).await;
@@ -315,7 +317,7 @@ async fn rust_dynamic() -> anyhow::Result<()> {
     init().await;
 
     with_nats(|_, nats_client| async {
-        let client = wrpc::transport::nats::Client::new(nats_client, "test-prefix".to_string());
+        let client = wrpc_transport_nats_legacy::Client::new(nats_client, "test-prefix".to_string());
         let client = Arc::new(client);
 
         let (params, results) = loopback_dynamic(
@@ -1266,7 +1268,8 @@ async fn rust_keyvalue() -> anyhow::Result<()> {
     init().await;
 
     with_nats(|_, nats_client| async {
-        let client = wrpc::transport::nats::Client::new(nats_client, "test-prefix".to_string());
+        let client =
+            wrpc_transport_nats_legacy::Client::new(nats_client, "test-prefix".to_string());
 
         let shutdown = Notify::new();
         let started = Notify::new();
@@ -1439,7 +1442,7 @@ async fn rust_interfaces() -> anyhow::Result<()> {
 
     let (_port, nats_client, nats_server, stop_tx) = start_nats().await?;
 
-    let client = wrpc::transport::nats::Client::new(nats_client, "test-prefix".to_string());
+    let client = wrpc_transport_nats_legacy::Client::new(nats_client, "test-prefix".to_string());
     let client = Arc::new(client);
 
     {

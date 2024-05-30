@@ -146,7 +146,7 @@ mod skip {
         }
     }
 
-    async fn serve_exports(wrpc: &impl wrpc_transport::Client) {
+    async fn serve_exports(wrpc: &impl wrpc_transport_legacy::Client) {
         serve(wrpc, Component, async {}).await.unwrap();
     }
 }
@@ -208,7 +208,7 @@ mod symbol_does_not_conflict {
         }
     }
 
-    async fn serve_exports(wrpc: &impl wrpc_transport::Client) {
+    async fn serve_exports(wrpc: &impl wrpc_transport_legacy::Client) {
         serve(wrpc, Component, async {}).await.unwrap();
     }
 }
@@ -234,7 +234,7 @@ mod alternative_bitflags_path {
     #[derive(Clone)]
     struct Component;
 
-    async fn serve_exports(wrpc: &impl wrpc_transport::Client) {
+    async fn serve_exports(wrpc: &impl wrpc_transport_legacy::Client) {
         serve(wrpc, Component, async {}).await.unwrap();
     }
 
@@ -296,7 +296,7 @@ mod owned_resource_deref_mut {
         type Bar = MyResource;
     }
 
-    async fn serve_exports(wrpc: &impl wrpc_transport::Client) {
+    async fn serve_exports(wrpc: &impl wrpc_transport_legacy::Client) {
         // TODO: Support resources
         //serve(wrpc, Component, async {}).await.unwrap();
     }
@@ -334,7 +334,7 @@ mod package_with_versions {
         type Bar = MyResource;
     }
 
-    async fn serve_exports(wrpc: &impl wrpc_transport::Client) {
+    async fn serve_exports(wrpc: &impl wrpc_transport_legacy::Client) {
         // TODO: Support resources
         //serve(wrpc, Component, async {}).await.unwrap();
     }
@@ -386,7 +386,7 @@ mod custom_derives {
         }
     }
 
-    async fn serve_exports(wrpc: &impl wrpc_transport::Client) {
+    async fn serve_exports(wrpc: &impl wrpc_transport_legacy::Client) {
         serve(wrpc, Component, async {}).await.unwrap();
     }
 }
@@ -548,7 +548,7 @@ mod interface_export_example {
         }
     }
 
-    async fn serve_exports(wrpc: &impl wrpc_transport::Client) -> anyhow::Result<()> {
+    async fn serve_exports(wrpc: &impl wrpc_transport_legacy::Client) -> anyhow::Result<()> {
         serve(wrpc, MyComponent, async {}).await
     }
 }
@@ -624,7 +624,7 @@ mod resource_example {
         }
     }
 
-    async fn serve_exports(wrpc: &impl wrpc_transport::Client) -> anyhow::Result<()> {
+    async fn serve_exports(wrpc: &impl wrpc_transport_legacy::Client) -> anyhow::Result<()> {
         // TODO: Support resources
         //serve(wrpc, MyComponent, async {}).await
         anyhow::bail!("resources not supported yet")

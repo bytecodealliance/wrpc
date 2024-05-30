@@ -32,4 +32,4 @@ tracing-subscriber = { workspace = true, features = [
     "tracing-log",
 ] }
 wrpc-interface-http = { workspace = true, features = ["http"] }
-wrpc-transport-nats = { workspace = true }
+wrpc-transport-nats-legacy = { workspace = true }

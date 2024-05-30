@@ -17,8 +17,4 @@ pub mod interfaces {
 pub use wit_bindgen_wrpc::generate;
 pub use wrpc_types as types;
 
-pub use transport::{Client, Transmitter, Value, PROTOCOL};
-pub use types::{
-    function_exports, DynamicFunction as DynamicFunctionType,
-    DynamicResource as DynamicResourceType, Resource as ResourceType, Type,
-};
+pub use transport::{Index, Invoke, Serve};

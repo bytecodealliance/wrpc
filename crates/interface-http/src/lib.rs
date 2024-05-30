@@ -8,9 +8,9 @@ use bytes::{Buf, BufMut, Bytes};
 use futures::{Stream, StreamExt as _};
 use tokio::try_join;
 use tracing::instrument;
-use wrpc_transport::{
-    encode_discriminant, receive_discriminant, Acceptor, AsyncSubscription, AsyncValue, Encode,
-    IncomingInputStream, Receive, Subject as _, Subscribe, Subscriber, Value,
+use wrpc_transport_legacy::{
+    self as wrpc_transport, encode_discriminant, receive_discriminant, Acceptor, AsyncSubscription,
+    AsyncValue, Encode, IncomingInputStream, Receive, Subject as _, Subscribe, Subscriber, Value,
 };
 
 pub type Fields = Vec<(String, Vec<Bytes>)>;

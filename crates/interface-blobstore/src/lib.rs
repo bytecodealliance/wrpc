@@ -7,9 +7,9 @@ use async_trait::async_trait;
 use bytes::{Buf, BufMut, Bytes};
 use futures::{try_join, Stream, StreamExt as _};
 use tracing::instrument;
-use wrpc_transport::{
-    Acceptor, AsyncSubscription, AsyncValue, Encode, IncomingInputStream, ListIter, Receive,
-    Subscribe, Value,
+use wrpc_transport_legacy::{
+    self as wrpc_transport, Acceptor, AsyncSubscription, AsyncValue, Encode, IncomingInputStream,
+    ListIter, Receive, Subscribe, Value,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]

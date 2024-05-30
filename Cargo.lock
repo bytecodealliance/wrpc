@@ -994,7 +994,7 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "wit-bindgen-wrpc",
- "wrpc-transport-nats",
+ "wrpc-transport-nats-legacy",
 ]
 
 [[package]]
@@ -1008,7 +1008,7 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "wit-bindgen-wrpc",
- "wrpc-transport-nats",
+ "wrpc-transport-nats-legacy",
 ]
 
 [[package]]
@@ -1086,7 +1086,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "wrpc-interface-http",
- "wrpc-transport-nats",
+ "wrpc-transport-nats-legacy",
 ]
 
 [[package]]
@@ -1107,8 +1107,8 @@ dependencies = [
  "tracing-subscriber",
  "webpki-roots 0.26.1",
  "wrpc-interface-http",
- "wrpc-transport",
- "wrpc-transport-nats",
+ "wrpc-transport-legacy",
+ "wrpc-transport-nats-legacy",
 ]
 
 [[package]]
@@ -3540,7 +3540,7 @@ dependencies = [
  "tokio",
  "tracing",
  "wit-bindgen-wrpc-rust-macro",
- "wrpc-transport",
+ "wrpc-transport-legacy",
 ]
 
 [[package]]
@@ -3567,7 +3567,7 @@ dependencies = [
  "test-helpers",
  "wit-bindgen-core",
  "wit-bindgen-wrpc",
- "wrpc-transport",
+ "wrpc-transport-legacy",
 ]
 
 [[package]]
@@ -3664,7 +3664,9 @@ dependencies = [
  "wrpc-interface-http",
  "wrpc-runtime-wasmtime",
  "wrpc-transport",
+ "wrpc-transport-legacy",
  "wrpc-transport-nats",
+ "wrpc-transport-nats-legacy",
  "wrpc-types",
  "wrpc-wasmtime-nats-cli",
 ]
@@ -3688,7 +3690,7 @@ dependencies = [
  "bytes",
  "futures",
  "tracing",
- "wrpc-transport",
+ "wrpc-transport-legacy",
 ]
 
 [[package]]
@@ -3707,7 +3709,7 @@ dependencies = [
  "tokio-stream",
  "tracing",
  "wasmtime-wasi-http",
- "wrpc-transport",
+ "wrpc-transport-legacy",
 ]
 
 [[package]]
@@ -3734,11 +3736,26 @@ dependencies = [
  "wit-parser 0.208.1",
  "wrpc-introspect",
  "wrpc-transport",
- "wrpc-transport-next",
 ]
 
 [[package]]
 name = "wrpc-transport"
+version = "0.25.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bytes",
+ "futures",
+ "leb128",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "wasm-tokio",
+ "wrpc-types",
+]
+
+[[package]]
+name = "wrpc-transport-legacy"
 version = "0.24.3"
 dependencies = [
  "anyhow",
@@ -3757,6 +3774,21 @@ dependencies = [
 
 [[package]]
 name = "wrpc-transport-nats"
+version = "0.22.0"
+dependencies = [
+ "anyhow",
+ "async-nats",
+ "bytes",
+ "futures",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "wasm-tokio",
+ "wrpc-transport",
+]
+
+[[package]]
+name = "wrpc-transport-nats-legacy"
 version = "0.21.0"
 dependencies = [
  "anyhow",
@@ -3766,42 +3798,7 @@ dependencies = [
  "tokio",
  "tower",
  "tracing",
- "wrpc-transport",
-]
-
-[[package]]
-name = "wrpc-transport-nats-next"
-version = "0.22.0"
-dependencies = [
- "anyhow",
- "async-nats",
- "bytes",
- "futures",
- "tokio",
- "tokio-util",
- "tower",
- "tracing",
- "wasm-tokio",
- "wrpc-transport-next",
-]
-
-[[package]]
-name = "wrpc-transport-next"
-version = "0.25.0"
-dependencies = [
- "anyhow",
- "async-nats",
- "async-trait",
- "bytes",
- "futures",
- "leb128",
- "tokio",
- "tokio-stream",
- "tower",
- "tracing",
- "tracing-subscriber",
- "wasm-tokio",
- "wrpc-types",
+ "wrpc-transport-legacy",
 ]
 
 [[package]]
@@ -3843,8 +3840,8 @@ dependencies = [
  "wrpc-cli",
  "wrpc-introspect",
  "wrpc-runtime-wasmtime",
- "wrpc-transport-nats-next",
- "wrpc-transport-next",
+ "wrpc-transport",
+ "wrpc-transport-nats",
 ]
 
 [[package]]

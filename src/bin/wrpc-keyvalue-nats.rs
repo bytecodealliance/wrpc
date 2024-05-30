@@ -52,7 +52,7 @@ async fn main() -> anyhow::Result<()> {
     let nats = wrpc_cli::nats::connect(nats)
         .await
         .context("failed to connect to NATS.io")?;
-    let wrpc = wrpc_transport_nats::Client::new(nats, prefix);
+    let wrpc = wrpc_transport_nats_legacy::Client::new(nats, prefix);
     match operation {
         Operation::StoreGet { bucket, key } => {
             if let Some(v) = bindings::wrpc::keyvalue::store::get(&wrpc, &bucket, &key)
