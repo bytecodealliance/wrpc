@@ -11,8 +11,7 @@ use wasmtime::{
 use wasmtime_wasi::{bindings::Command, WasiCtx, WasiView};
 use wasmtime_wasi::{ResourceTable, WasiCtxBuilder};
 use wrpc_runtime_wasmtime::{polyfill, WrpcView};
-use wrpc_transport_nats_next as wrpc_transport_nats;
-use wrpc_transport_next::Invoke;
+use wrpc_transport::Invoke;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]

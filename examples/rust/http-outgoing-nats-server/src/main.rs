@@ -13,7 +13,7 @@ use wrpc_interface_http::{
     try_http_to_outgoing_response, IncomingBody, IncomingFields, IncomingRequestHttp,
     RequestOptions,
 };
-use wrpc_transport::{AcceptedInvocation, IncomingInputStream, Transmitter};
+use wrpc_transport_legacy::{AcceptedInvocation, IncomingInputStream, Transmitter};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -105,7 +105,7 @@ async fn main() -> anyhow::Result<()> {
     let nats = connect(nats)
         .await
         .context("failed to connect to NATS.io")?;
-    let wrpc = wrpc_transport_nats::Client::new(nats.clone(), prefix);
+    let wrpc = wrpc_transport_nats_legacy::Client::new(nats.clone(), prefix);
 
     let client = Arc::new(client);
     let mut shutdown = pin!(async { signal::ctrl_c().await.expect("failed to listen for ^C") });

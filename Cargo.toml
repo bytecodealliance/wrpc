@@ -37,7 +37,12 @@ bin = [
     "wit-bindgen-wrpc-go/clap",
     "wit-bindgen-wrpc-rust/clap",
 ]
-nats = ["dep:async-nats", "dep:wrpc-transport-nats", "wrpc-cli/nats"]
+nats = [
+    "dep:async-nats",
+    "dep:wrpc-transport-nats",
+    "wrpc-cli/nats",
+    "dep:wrpc-transport-nats-legacy", # TODO: Remove
+]
 wasmtime = ["dep:wrpc-runtime-wasmtime"]
 
 [[bin]]
@@ -81,6 +86,9 @@ wrpc-transport-nats = { workspace = true, optional = true }
 wrpc-types = { workspace = true }
 wrpc-wasmtime-nats-cli = { workspace = true, optional = true }
 
+# TODO: Remove
+wrpc-transport-nats-legacy = { workspace = true, optional = true }
+
 [dev-dependencies]
 anyhow = { workspace = true }
 async-nats = { workspace = true }
@@ -99,6 +107,9 @@ wrpc-interface-http = { workspace = true, features = [
     "hyper",
     "wasmtime-wasi-http",
 ] }
+
+# TODO: Remove
+wrpc-transport-legacy = { workspace = true }
 
 [workspace.dependencies]
 anyhow = { version = "1", default-features = false }
@@ -152,9 +163,11 @@ wrpc-interface-blobstore = { version = "0.16", path = "./crates/interface-blobst
 wrpc-interface-http = { version = "0.23", path = "./crates/interface-http", default-features = false }
 wrpc-introspect = { version = "0.2", default-features = false, path = "./crates/introspect" }
 wrpc-runtime-wasmtime = { version = "0.17", path = "./crates/runtime-wasmtime", default-features = false }
-wrpc-transport = { version = "0.24.3", path = "./crates/transport", default-features = false }
-wrpc-transport-nats = { version = "0.21", path = "./crates/transport-nats", default-features = false }
-wrpc-transport-nats-next = { version = "0.22", path = "./crates/transport-nats-next", default-features = false }
-wrpc-transport-next = { version = "0.25", path = "./crates/transport-next", default-features = false }
+wrpc-transport = { version = "0.25", path = "./crates/transport", default-features = false }
+wrpc-transport-nats = { version = "0.22", path = "./crates/transport-nats", default-features = false }
 wrpc-types = { version = "0.6", path = "./crates/types", default-features = false }
 wrpc-wasmtime-nats-cli = { version = "0.2", path = "./crates/wasmtime-nats-cli", default-features = false }
+
+# TODO: Remove
+wrpc-transport-legacy = { version = "0.24.3", path = "./crates/transport-legacy", default-features = false }
+wrpc-transport-nats-legacy = { version = "0.21", path = "./crates/transport-nats-legacy", default-features = false }

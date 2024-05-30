@@ -51,7 +51,7 @@ async fn main() -> anyhow::Result<()> {
     let nats = connect(nats)
         .await
         .context("failed to connect to NATS.io")?;
-    let wrpc = wrpc_transport_nats::Client::new(nats.clone(), prefix);
+    let wrpc = wrpc_transport_nats_legacy::Client::new(nats.clone(), prefix);
     let path = url.path();
     let (res, tx) = wrpc
         .invoke_handle(

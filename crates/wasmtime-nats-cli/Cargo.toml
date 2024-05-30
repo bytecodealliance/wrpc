@@ -58,6 +58,6 @@ wit-component = { workspace = true }
 wit-parser = { workspace = true }
 wrpc-cli = { workspace = true, features = ["nats"] }
 wrpc-introspect = { workspace = true }
-wrpc-transport-nats-next = { workspace = true }
-wrpc-transport-next = { workspace = true }
+wrpc-transport-nats = { workspace = true }
+wrpc-transport = { workspace = true }
 wrpc-runtime-wasmtime = { workspace = true }

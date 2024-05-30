@@ -154,7 +154,7 @@
 ///     ",
 /// });
 ///
-/// async fn test(wrpc: &impl wrpc_transport::Client) -> anyhow::Result<()> {
+/// async fn test(wrpc: &impl wrpc_transport_legacy::Client) -> anyhow::Result<()> {
 ///     let current_temp = what_temperature_is_it(wrpc).await?;
 ///     println!("current temp in fahrenheit is {}", current_temp.degrees);
 ///     let in_celsius: Celsius = convert_to_celsius(wrpc, current_temp).await?;
@@ -200,7 +200,7 @@
 /// // interface name.
 /// use my::test::logging::Level;
 ///
-/// async fn test(wrpc: &impl wrpc_transport::Client) -> anyhow::Result<()> {
+/// async fn test(wrpc: &impl wrpc_transport_legacy::Client) -> anyhow::Result<()> {
 ///     let current_level = global_logger::get_current_level(wrpc).await?;
 ///     println!("current logging level is {current_level:?}");
 ///     global_logger::set_current_level(wrpc, Level::Error).await?;
@@ -251,7 +251,7 @@
 ///
 /// use my::test::logger::Level;
 ///
-/// async fn test(wrpc: &impl wrpc_transport::Client) -> anyhow::Result<()> {
+/// async fn test(wrpc: &impl wrpc_transport_legacy::Client) -> anyhow::Result<()> {
 ///     let logger = get_global_logger(wrpc).await?;
 ///     logger.log(wrpc, Level::Debug, "This is a global message");
 ///
@@ -299,7 +299,7 @@
 ///     async fn hello(&self, cx: Ctx) -> anyhow::Result<()> { Ok(()) }
 /// }
 ///
-/// async fn serve_exports(wrpc: &impl wrpc_transport::Client) -> anyhow::Result<()> {
+/// async fn serve_exports(wrpc: &impl wrpc_transport_legacy::Client) -> anyhow::Result<()> {
 ///     serve(wrpc, MyComponent, async {}).await
 /// }
 /// ```
@@ -358,7 +358,7 @@
 ///     async fn func_in_b(&self, cx: Ctx) -> anyhow::Result<()> { Ok(()) }
 /// }
 ///
-/// async fn serve_exports(wrpc: &impl wrpc_transport::Client) -> anyhow::Result<()> {
+/// async fn serve_exports(wrpc: &impl wrpc_transport_legacy::Client) -> anyhow::Result<()> {
 ///     serve(wrpc, MyComponent, async {}).await
 /// }
 /// ```
@@ -403,7 +403,7 @@
 ///     }
 /// }
 ///
-/// async fn serve_exports(wrpc: &impl wrpc_transport::Client) -> anyhow::Result<()> {
+/// async fn serve_exports(wrpc: &impl wrpc_transport_legacy::Client) -> anyhow::Result<()> {
 ///     bindings::serve(wrpc, MyComponent, async {}).await
 /// }
 /// ```
@@ -499,7 +499,7 @@
 ///     }
 /// }
 ///
-/// async fn serve_exports(wrpc: &impl wrpc_transport::Client) -> anyhow::Result<()> {
+/// async fn serve_exports(wrpc: &impl wrpc_transport_legacy::Client) -> anyhow::Result<()> {
 ///     // Eventually this will be supported:
 ///     //bindings::serve(wrpc, MyComponent, async {}).await
 ///     anyhow::bail!("resources not supported yet")
@@ -546,7 +546,7 @@
 ///     // ...
 /// }
 ///
-/// async fn serve_exports(wrpc: &impl wrpc_transport::Client) -> anyhow::Result<()> {
+/// async fn serve_exports(wrpc: &impl wrpc_transport_legacy::Client) -> anyhow::Result<()> {
 ///     serve(wrpc, MyComponent, async {}).await
 /// }
 /// ```
@@ -586,7 +586,7 @@
 /// #
 ///
 ///
-/// async fn serve_exports(wrpc: &impl wrpc_transport::Client) -> anyhow::Result<()> {
+/// async fn serve_exports(wrpc: &impl wrpc_transport_legacy::Client) -> anyhow::Result<()> {
 ///     serve(wrpc, MyComponent, async {}).await
 /// }
 /// ```
@@ -622,7 +622,7 @@
 /// #
 /// ;
 /// #
-/// async fn serve_exports(wrpc: &impl wrpc_transport::Client) -> anyhow::Result<()> {
+/// async fn serve_exports(wrpc: &impl wrpc_transport_legacy::Client) -> anyhow::Result<()> {
 ///     bindings::serve(wrpc, MyComponent, async {}).await
 /// }
 /// ```
@@ -794,4 +794,4 @@ pub use bytes;
 pub use futures;
 pub use tokio;
 pub use tracing;
-pub use wrpc_transport;
+pub use wrpc_transport_legacy as wrpc_transport;

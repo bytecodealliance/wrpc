@@ -1,11 +1,13 @@
 [package]
-name = "wrpc-transport-nats-next"
-version = "0.22.0"
-description = "wRPC NATS transport"
+name = "wrpc-transport-nats-legacy"
+version = "0.21.0"
+description = "wRPC NATS transport (deprecated)"
+publish = false
 
 authors.workspace = true
 categories.workspace = true
 edition.workspace = true
+homepage.workspace = true
 license.workspace = true
 repository.workspace = true
 
@@ -13,10 +15,8 @@ repository.workspace = true
 anyhow = { workspace = true, features = ["std"] }
 async-nats = { workspace = true, features = ["ring"] }
 bytes = { workspace = true }
-futures = { workspace = true, features = ["async-await"] }
-tokio = { workspace = true, features = ["io-util"] }
-tokio-util = { workspace = true, features = ["codec", "io"] }
+futures = { workspace = true }
+tokio = { workspace = true }
 tower = { workspace = true }
 tracing = { workspace = true, features = ["attributes"] }
-wasm-tokio = { workspace = true }
-wrpc-transport-next = { workspace = true }
+wrpc-transport-legacy = { workspace = true }

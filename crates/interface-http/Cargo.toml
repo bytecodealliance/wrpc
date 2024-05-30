@@ -29,4 +29,4 @@ tokio = { workspace = true }
 tokio-stream = { workspace = true, optional = true }
 tracing = { workspace = true, features = ["attributes"] }
 wasmtime-wasi-http = { workspace = true, optional = true }
-wrpc-transport = { workspace = true }
+wrpc-transport-legacy = { workspace = true }

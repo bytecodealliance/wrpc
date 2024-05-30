@@ -31,5 +31,5 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["ansi", "fmt"] }
 webpki-roots = { workspace = true }
 wrpc-interface-http = { workspace = true, features = ["http-body"] }
-wrpc-transport = { workspace = true }
-wrpc-transport-nats = { workspace = true }
+wrpc-transport-legacy = { workspace = true }
+wrpc-transport-nats-legacy = { workspace = true }
