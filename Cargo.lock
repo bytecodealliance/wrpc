@@ -3667,7 +3667,6 @@ dependencies = [
  "wrpc-transport-legacy",
  "wrpc-transport-nats",
  "wrpc-transport-nats-legacy",
- "wrpc-types",
  "wrpc-wasmtime-nats-cli",
 ]
 
@@ -3751,7 +3750,6 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "wasm-tokio",
- "wrpc-types",
 ]
 
 [[package]]
@@ -3769,7 +3767,6 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "wasm-tokio",
- "wrpc-types",
 ]
 
 [[package]]
@@ -3799,17 +3796,6 @@ dependencies = [
  "tower",
  "tracing",
  "wrpc-transport-legacy",
-]
-
-[[package]]
-name = "wrpc-types"
-version = "0.6.0"
-dependencies = [
- "anyhow",
- "serde",
- "serde_json",
- "tracing",
- "wit-parser 0.208.1",
 ]
 
 [[package]]

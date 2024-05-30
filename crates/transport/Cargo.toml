@@ -18,7 +18,6 @@ leb128 = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true, features = ["attributes"] }
 wasm-tokio = { workspace = true }
-wrpc-types = { workspace = true }
 
 [dev-dependencies]
 tracing-subscriber = { workspace = true, features = [

@@ -83,7 +83,6 @@ wrpc-interface-http = { workspace = true }
 wrpc-runtime-wasmtime = { workspace = true, optional = true }
 wrpc-transport = { workspace = true }
 wrpc-transport-nats = { workspace = true, optional = true }
-wrpc-types = { workspace = true }
 wrpc-wasmtime-nats-cli = { workspace = true, optional = true }
 
 # TODO: Remove
@@ -165,7 +164,6 @@ wrpc-introspect = { version = "0.2", default-features = false, path = "./crates/
 wrpc-runtime-wasmtime = { version = "0.17", path = "./crates/runtime-wasmtime", default-features = false }
 wrpc-transport = { version = "0.25", path = "./crates/transport", default-features = false }
 wrpc-transport-nats = { version = "0.22", path = "./crates/transport-nats", default-features = false }
-wrpc-types = { version = "0.6", path = "./crates/types", default-features = false }
 wrpc-wasmtime-nats-cli = { version = "0.2", path = "./crates/wasmtime-nats-cli", default-features = false }
 
 # TODO: Remove
