@@ -9,11 +9,6 @@ pub mod runtime {
     pub use wrpc_runtime_wasmtime as wasmtime;
 }
 
-pub mod interfaces {
-    pub use wrpc_interface_blobstore as blobstore;
-    pub use wrpc_interface_http as http;
-}
-
 pub use wit_bindgen_wrpc::generate;
 
 pub use transport::{Index, Invoke, Serve};

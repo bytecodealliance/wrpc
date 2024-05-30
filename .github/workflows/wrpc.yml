@@ -7,18 +7,12 @@ on:
     branches:
       - main
     tags:
-      - 'interface-blobstore-v[0-9].[0-9]+.[0-9]+'
-      - 'interface-blobstore-v[0-9].[0-9]+.[0-9]+-*'
-      - 'interface-http-v[0-9].[0-9]+.[0-9]+'
-      - 'interface-http-v[0-9].[0-9]+.[0-9]+-*'
       - 'runtime-wasmtime-v[0-9].[0-9]+.[0-9]+'
       - 'runtime-wasmtime-v[0-9].[0-9]+.[0-9]+-*'
       - 'transport-nats-v[0-9].[0-9]+.[0-9]+'
       - 'transport-nats-v[0-9].[0-9]+.[0-9]+-*'
       - 'transport-v[0-9].[0-9]+.[0-9]+'
       - 'transport-v[0-9].[0-9]+.[0-9]+-*'
-      - 'types-v[0-9].[0-9]+.[0-9]+'
-      - 'types-v[0-9].[0-9]+.[0-9]+-*'
       - 'v[0-9].[0-9]+.[0-9]+'
       - 'v[0-9].[0-9]+.[0-9]+-*'
   workflow_dispatch:
@@ -310,18 +304,13 @@ jobs:
           generate_release_notes: true
           files: |
             ./wit-bindgen-wrpc/*
-            ./wrpc-keyvalue-nats/*
             ./wrpc-wasmtime-nats/*
 
   crates:
     strategy:
       matrix:
         include:
-          - crate: interface-blobstore
-            workspace-dependencies: true
-
-          - crate: interface-http
-            workspace-dependencies: true
+          - crate: introspect
 
           - crate: runtime-wasmtime
             workspace-dependencies: true
@@ -331,8 +320,6 @@ jobs:
 
           - crate: transport-nats
             workspace-dependencies: true
-
-          - crate: types
 
     name: publish ${{ matrix.crate }} to crates.io
     needs: cargo

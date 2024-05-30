@@ -23,8 +23,6 @@ clap = { workspace = true, features = [
     "usage",
 ] }
 futures = { workspace = true }
-hyper = { workspace = true, features = ["server"] }
-hyper-util = { workspace = true, features = ["server-auto", "tokio"] }
 reqwest = { workspace = true }
 tokio = { workspace = true, features = ["fs"] }
 tokio-util = { workspace = true, features = ["codec"] }
@@ -51,7 +49,6 @@ wasmtime = { workspace = true, features = [
     "wat",
 ] }
 wasmtime-wasi = { workspace = true }
-wasmtime-wasi-http = { workspace = true }
 wasm-tokio = { workspace = true }
 wit-bindgen-wrpc = { workspace = true }
 wit-component = { workspace = true }
