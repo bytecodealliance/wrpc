@@ -10,6 +10,7 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, bail, Context as _};
 use bytes::{BufMut as _, BytesMut};
+use futures::future::try_join_all;
 use futures::stream::FuturesUnordered;
 use futures::TryStreamExt as _;
 use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _};
@@ -27,7 +28,6 @@ use wasmtime::component::{Linker, ResourceType, Type, Val};
 use wasmtime::{AsContextMut, StoreContextMut};
 use wasmtime_wasi::pipe::AsyncReadStream;
 use wasmtime_wasi::{InputStream, StreamError, WasiView};
-use wit_parser::FunctionKind;
 use wrpc_introspect::rpc_func_name;
 use wrpc_transport::{Index as _, Invocation, Invoke, Session};
 
@@ -272,22 +272,22 @@ where
                     ..=0x0000_00ff => {
                         let discriminant = find_enum_discriminant(0u8.., names, discriminant)?;
                         dst.reserve(2);
-                        Leb128Encoder.encode(discriminant, dst)?
+                        Leb128Encoder.encode(discriminant, dst)?;
                     }
                     0x0000_0100..=0x0000_ffff => {
                         let discriminant = find_enum_discriminant(0u16.., names, discriminant)?;
                         dst.reserve(3);
-                        Leb128Encoder.encode(discriminant, dst)?
+                        Leb128Encoder.encode(discriminant, dst)?;
                     }
                     0x0001_0000..=0x00ff_ffff => {
                         let discriminant = find_enum_discriminant(0u32.., names, discriminant)?;
                         dst.reserve(4);
-                        Leb128Encoder.encode(discriminant, dst)?
+                        Leb128Encoder.encode(discriminant, dst)?;
                     }
                     0x0100_0000..=0xffff_ffff => {
                         let discriminant = find_enum_discriminant(0u32.., names, discriminant)?;
                         dst.reserve(5);
-                        Leb128Encoder.encode(discriminant, dst)?
+                        Leb128Encoder.encode(discriminant, dst)?;
                     }
                     0x1_0000_0000.. => bail!("name count does not fit in u32"),
                 }
@@ -420,7 +420,20 @@ where
                         dst.reserve(16);
                         dst.put_u128_le(flag_bits(names, vs));
                     }
-                    129.. => bail!("flags do not fit in u128"),
+                    bits @ 129.. => {
+                        let mut cap = bits / 8;
+                        if bits % 8 != 0 {
+                            cap = cap.saturating_add(1);
+                        }
+                        let mut buf = vec![0; cap];
+                        let flags: HashSet<&str> = vs.into_iter().collect();
+                        for (i, name) in names.enumerate() {
+                            if flags.contains(name) {
+                                buf[i / 8] |= 1 << (i % 8);
+                            }
+                        }
+                        dst.extend_from_slice(&buf);
+                    }
                 }
                 Ok(())
             }
@@ -722,11 +735,27 @@ where
                 105..=112 => read_flags(14, r).await?,
                 113..=120 => read_flags(15, r).await?,
                 121..=128 => r.read_u128_le().await?,
-                129.. => {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::InvalidInput,
-                        "flags do not fit in u128".to_string(),
-                    ))
+                bits @ 129.. => {
+                    let mut cap = bits / 8;
+                    if bits % 8 != 0 {
+                        cap = cap.saturating_add(1);
+                    }
+                    let mut buf = vec![0; cap];
+                    r.read_exact(&mut buf).await?;
+                    let mut vs = Vec::with_capacity(
+                        buf.iter()
+                            .map(|b| b.count_ones())
+                            .sum::<u32>()
+                            .try_into()
+                            .unwrap_or(usize::MAX),
+                    );
+                    for (i, name) in names.enumerate() {
+                        if buf[i / 8] & (1 << (i % 8)) != 0 {
+                            vs.push(name.to_string());
+                        }
+                    }
+                    *val = Val::Flags(vs);
+                    return Ok(());
                 }
             };
             let mut vs = Vec::with_capacity(flags.count_ones().try_into().unwrap_or(usize::MAX));
