@@ -1203,6 +1203,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "884e2677b40cc8c339eaefcb701c32ef1fd2493d71118dc0ca4b6a736c93bd67"
 
 [[package]]
+name = "leb128-tokio"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "47a57548d0fcd8bf0c9c601af2a3fdd05dac4829b82ae872e893df31f523e8ae"
+dependencies = [
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
 name = "libc"
 version = "0.2.154"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2523,6 +2533,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "utf8-tokio"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "29f6ede684629efe08c9538958d0f80a4a7475dd49f41fb102b799882098e55a"
+dependencies = [
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
 name = "utf8parse"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2678,12 +2698,14 @@ dependencies = [
 
 [[package]]
 name = "wasm-tokio"
-version = "0.1.11"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1fccf07b746992fc4b8922dfe0feff98ff3aed34f4627cb96ccc3a279381dec1"
+checksum = "15db3d053fd102fa738502799dd19d0c3e7645b290004dabbdc2f86830d1344c"
 dependencies = [
+ "leb128-tokio",
  "tokio",
  "tokio-util",
+ "utf8-tokio",
 ]
 
 [[package]]

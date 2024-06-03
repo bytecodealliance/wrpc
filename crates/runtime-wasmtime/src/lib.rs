@@ -1,6 +1,5 @@
 #![allow(clippy::type_complexity)] // TODO: https://github.com/wrpc/wrpc/issues/2
 
-use core::fmt::{self, Display};
 use core::future::Future;
 use core::iter::zip;
 use core::ops::{BitOrAssign, Shl};
@@ -18,8 +17,11 @@ use tokio::try_join;
 use tokio_util::codec::Encoder;
 use tracing::{error, trace};
 use tracing::{instrument, warn};
-use wasm_tokio::cm::{AsyncReadValue as _, CharEncoder};
-use wasm_tokio::{AsyncReadCore as _, CoreStringEncoder, Leb128Encoder};
+use wasm_tokio::cm::AsyncReadValue as _;
+use wasm_tokio::{
+    AsyncReadCore as _, AsyncReadLeb128 as _, AsyncReadUtf8 as _, CoreStringEncoder, Leb128Encoder,
+    Utf8Encoder,
+};
 use wasmtime::component::types::{self, Case, Field};
 use wasmtime::component::{Linker, ResourceType, Type, Val};
 use wasmtime::{AsContextMut, StoreContextMut};
@@ -168,7 +170,7 @@ where
                 Ok(())
             }
             (Val::Char(v), Type::Char) => {
-                CharEncoder.encode(*v, dst).context("failed to encode char")
+                Utf8Encoder.encode(*v, dst).context("failed to encode char")
             }
             (Val::String(v), Type::String) => CoreStringEncoder
                 .encode(v.as_str(), dst)
@@ -582,7 +584,7 @@ where
             Ok(())
         }
         Type::Char => {
-            let v = r.read_char().await?;
+            let v = r.read_char_utf8().await?;
             *val = Val::Char(v);
             Ok(())
         }
