@@ -929,138 +929,65 @@ pub fn polyfill<'a, T, C, V>(
             let instance_name = Arc::clone(&instance_name);
             let func_name = Arc::new(func_name.to_string());
             let rpc_name = Arc::new(rpc_func_name(ty).to_string());
-            if let Err(err) = match ty.kind {
-                FunctionKind::Method(..) => linker.func_new_async(
-                    Arc::clone(&func_name).as_str(),
-                    move |mut store, params, results| {
-                        let cx = cx.clone();
-                        let func = func.clone();
-                        let rpc_name = Arc::clone(&rpc_name);
-                        let func_name = Arc::clone(&func_name);
-                        Box::new(async move {
-                            let (this, params) = params.split_first().context("method receiver missing")?;
-                            let Val::Resource(this) = this else {
-                                bail!("first method parameter is not a resource")
-                            };
-                            let this = this
-                                .try_into_resource(&mut store)
-                                .context("resource type mismatch")?;
-                            let mut buf = BytesMut::default();
-                            let mut deferred = Vec::with_capacity(params.len());
-                            for (v, ref ty) in zip(params, func.params()) {
-                                let mut enc = ValEncoder::new(store.as_context_mut(), ty);
-                                enc.encode(v, &mut buf).context("failed to encode parameter")?;
-                                deferred.push(enc.deferred);
-                            }
-                            let RemoteResource(this) = store
-                                .data_mut()
-                                .table()
-                                .get(&this)
-                                .context("failed to get remote resource")?;
-                            let this = this.to_string();
-                            let Invocation { outgoing, incoming, session } = store
-                                .data()
-                                .client()
-                                .invoke(cx, &this, &rpc_name, buf.freeze(), &[])
+            if let Err(err) = linker.func_new_async(
+                Arc::clone(&func_name).as_str(),
+                move |mut store, params, results| {
+                    let cx = cx.clone();
+                    let instance_name = Arc::clone(&instance_name);
+                    let func = func.clone();
+                    let rpc_name = Arc::clone(&rpc_name);
+                    let func_name = Arc::clone(&func_name);
+                    Box::new(async move {
+                        let mut buf = BytesMut::default();
+                        let mut deferred = vec![];
+                        for (v, ref ty) in zip(params, func.params()) {
+                            let mut enc = ValEncoder::new(store.as_context_mut(), ty);
+                            enc.encode(v, &mut buf).context("failed to encode parameter")?;
+                            deferred.push(enc.deferred);
+                        }
+                        let Invocation { outgoing, incoming, session } = store
+                            .data()
+                            .client()
+                            .invoke(cx, &instance_name, &rpc_name, buf.freeze(), &[])
+                            .await
+                            .map_err(Into::into)
+                            .with_context(|| {
+                                format!("failed to invoke `{instance_name}.{func_name}` polyfill via wRPC")
+                            })?;
+                        try_join!(
+                            async {
+                                try_join_all(
+                                    zip(0.., deferred)
+                                        .filter_map(|(i, f)| f.map(|f| (outgoing.index(&[i]), f)))
+                                        .map(|(w, f)| async move {
+                                            let w = w.map_err(Into::into)?;
+                                            f(w).await
+                                        }),
+                                )
                                 .await
-                                .map_err(Into::into)
-                                .with_context(|| {
-                                    format!("failed to invoke `{this}.{func_name}` polyfill via wRPC")
-                                })?;
-                            try_join!(
-                                async {
-                                    futures::future::try_join_all(
-                                        zip(0.., deferred)
-                                            .filter_map(|(i, f)| f.map(|f| (outgoing.index(&[i]), f)))
-                                            .map(|(w, f)| async move {
-                                                let w = w.map_err(Into::into)?;
-                                                f(w).await
-                                            }),
-                                    )
+                                .context("failed to write asynchronous parameters")?;
+                                pin!(outgoing)
+                                    .shutdown()
                                     .await
-                                    .context("failed to write asynchronous parameters")?;
-                                    pin!(outgoing)
-                                        .shutdown()
+                                    .context("failed to shutdown outgoing stream")
+                            },
+                            async {
+                                let mut incoming = pin!(incoming);
+                                for (i, (v, ref ty)) in zip(results, func.results()).enumerate() {
+                                    read_value(&mut store, &mut incoming, v, ty, &[i])
                                         .await
-                                        .context("failed to shutdown outgoing stream")
-                                },
-                                async {
-                                    let mut incoming = pin!(incoming);
-                                    for (i, (v, ref ty)) in zip(results, func.results()).enumerate() {
-                                        read_value(&mut store, &mut incoming, v, ty, &[i])
-                                            .await
-                                            .context("failed to decode result value")?;
-                                    }
-                                    Ok(())
-                                },
-                            )?;
-                            match session.finish(Ok(())).await.map_err(Into::into)? {
-                                Ok(()) => Ok(()),
-                                Err(err) => bail!(anyhow!("{err}").context("session failed"))
-                            }
-                        })
-                    },
-                ),
-                FunctionKind::Freestanding | FunctionKind::Static(_) | FunctionKind::Constructor(..) => linker.func_new_async(
-                    Arc::clone(&func_name).as_str(),
-                    move |mut store, params, results| {
-                        let cx = cx.clone();
-                        let instance_name = Arc::clone(&instance_name);
-                        let func = func.clone();
-                        let rpc_name = Arc::clone(&rpc_name);
-                        let func_name = Arc::clone(&func_name);
-                        Box::new(async move {
-                            let mut buf = BytesMut::default();
-                            let mut deferred = vec![];
-                            for (v, ref ty) in zip(params, func.params()) {
-                                let mut enc = ValEncoder::new(store.as_context_mut(), ty);
-                                enc.encode(v, &mut buf).context("failed to encode parameter")?;
-                                deferred.push(enc.deferred);
-                            }
-                            let Invocation { outgoing, incoming, session } = store
-                                .data()
-                                .client()
-                                .invoke(cx, &instance_name, &rpc_name, buf.freeze(), &[])
-                                .await
-                                .map_err(Into::into)
-                                .with_context(|| {
-                                    format!("failed to invoke `{instance_name}.{func_name}` polyfill via wRPC")
-                                })?;
-                            try_join!(
-                                async {
-                                    futures::future::try_join_all(
-                                        zip(0.., deferred)
-                                            .filter_map(|(i, f)| f.map(|f| (outgoing.index(&[i]), f)))
-                                            .map(|(w, f)| async move {
-                                                let w = w.map_err(Into::into)?;
-                                                f(w).await
-                                            }),
-                                    )
-                                    .await
-                                    .context("failed to write asynchronous parameters")?;
-                                    pin!(outgoing)
-                                        .shutdown()
-                                        .await
-                                        .context("failed to shutdown outgoing stream")
-                                },
-                                async {
-                                    let mut incoming = pin!(incoming);
-                                    for (i, (v, ref ty)) in zip(results, func.results()).enumerate() {
-                                        read_value(&mut store, &mut incoming, v, ty, &[i])
-                                            .await
-                                            .context("failed to decode result value")?;
-                                    }
-                                    Ok(())
-                                },
-                            )?;
-                            match session.finish(Ok(())).await.map_err(Into::into)? {
-                                Ok(()) => Ok(()),
-                                Err(err) => bail!(anyhow!("{err}").context("session failed"))
-                            }
-                        })
-                    },
-                ),
-            } {
+                                        .context("failed to decode result value")?;
+                                }
+                                Ok(())
+                            },
+                        )?;
+                        match session.finish(Ok(())).await.map_err(Into::into)? {
+                            Ok(()) => Ok(()),
+                            Err(err) => bail!(anyhow!("{err}").context("session failed"))
+                        }
+                    })
+                },
+            ) {
                 error!(?err, "failed to polyfill component function import");
             }
         }
