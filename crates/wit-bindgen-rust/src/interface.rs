@@ -162,6 +162,7 @@ impl InterfaceGenerator<'_> {
             };
             funcs_to_export.push(func);
             let (_, methods) = traits.get_mut(&resource).unwrap();
+            // let (_, methods) = traits.get_mut(&None).unwrap();
 
             let prev = mem::take(&mut self.src);
             let mut sig = FnSig {
@@ -170,55 +171,54 @@ impl InterfaceGenerator<'_> {
                 definition: true,
                 ..Default::default()
             };
-            if let FunctionKind::Method(_) | FunctionKind::Freestanding = &func.kind {
-                sig.self_arg = Some("&self".into());
-                sig.self_is_first_param = true;
-            }
+            // if let FunctionKind::Method(_) | FunctionKind::Freestanding = &func.kind {
+            sig.self_arg = Some("&self".into());
+            sig.self_is_first_param = true;
+            // }
             self.print_docs_and_params(func, true, &sig);
-            if let FunctionKind::Constructor(_) = &func.kind {
-                uwrite!(
-                self.src,
-                " -> impl ::core::future::Future<Output = {}::Result<Self>> + Send where Self: Sized",
-                self.gen.anyhow_path()
-            );
-            } else {
-                match func.results.len() {
-                    0 => {
-                        uwrite!(
-                            self.src,
-                            " -> impl ::core::future::Future<Output = {}::Result<()>> + Send",
-                            self.gen.anyhow_path()
-                        );
-                    }
-                    1 => {
-                        uwrite!(
-                            self.src,
-                            " -> impl ::core::future::Future<Output = {}::Result<",
-                            self.gen.anyhow_path()
-                        );
-                        let ty = func.results.iter_types().next().unwrap();
+            // if let FunctionKind::Constructor(_) = &func.kind {
+            //     uwrite!(
+            //     self.src,
+            //     " -> impl ::core::future::Future<Output = {}::Result<Self>> + Send where Self: Sized",
+            //     self.gen.anyhow_path()
+            // );
+            // } else {
+            match func.results.len() {
+                0 => {
+                    uwrite!(
+                        self.src,
+                        " -> impl ::core::future::Future<Output = {}::Result<()>> + Send",
+                        self.gen.anyhow_path()
+                    );
+                }
+                1 => {
+                    uwrite!(
+                        self.src,
+                        " -> impl ::core::future::Future<Output = {}::Result<",
+                        self.gen.anyhow_path()
+                    );
+                    let ty = func.results.iter_types().next().unwrap();
+                    let mode = self.type_mode_for(ty, TypeOwnershipStyle::Owned, "'INVALID");
+                    assert!(mode.lifetime.is_none());
+                    self.print_ty(ty, mode);
+                    self.push_str(">> + Send");
+                }
+                _ => {
+                    uwrite!(
+                        self.src,
+                        " -> impl ::core::future::Future<Output = {}::Result<(",
+                        self.gen.anyhow_path()
+                    );
+                    for ty in func.results.iter_types() {
                         let mode = self.type_mode_for(ty, TypeOwnershipStyle::Owned, "'INVALID");
                         assert!(mode.lifetime.is_none());
                         self.print_ty(ty, mode);
-                        self.push_str(">> + Send");
+                        self.push_str(", ");
                     }
-                    _ => {
-                        uwrite!(
-                            self.src,
-                            " -> impl ::core::future::Future<Output = {}::Result<(",
-                            self.gen.anyhow_path()
-                        );
-                        for ty in func.results.iter_types() {
-                            let mode =
-                                self.type_mode_for(ty, TypeOwnershipStyle::Owned, "'INVALID");
-                            assert!(mode.lifetime.is_none());
-                            self.print_ty(ty, mode);
-                            self.push_str(", ");
-                        }
-                        self.push_str(")>> + Send");
-                    }
+                    self.push_str(")>> + Send");
                 }
             }
+            // }
             self.src.push_str(";\n");
             let trait_method = mem::replace(&mut self.src, prev);
             methods.push(trait_method);
@@ -243,10 +243,7 @@ impl InterfaceGenerator<'_> {
             uwriteln!(self.src, "}}");
         }
 
-        if !funcs_to_export
-            .iter()
-            .any(|Function { kind, .. }| matches!(kind, FunctionKind::Freestanding))
-        {
+        if funcs_to_export.is_empty() {
             return false;
         }
 
@@ -259,9 +256,9 @@ impl InterfaceGenerator<'_> {
             kind, params, name, ..
         } in &funcs_to_export
         {
-            if !matches!(kind, FunctionKind::Freestanding) {
-                continue;
-            }
+            // if !matches!(kind, FunctionKind::Freestanding) {
+            //     continue;
+            // }
             uwrite!(
                 self.src,
                 r#"fn serve_{}(&self, invocation: {wrpc_transport}::AcceptedInvocation<Ctx, ("#,
@@ -274,6 +271,12 @@ impl InterfaceGenerator<'_> {
             }
             uwriteln!(self.src, r#"), Tx>);"#,);
         }
+
+        let trait_names: Vec<_> = traits
+            .values()
+            .map(|(name, _)| format!("{name}<Ctx> + "))
+            .collect();
+
         uwrite!(
             self.src,
             r#"
@@ -283,18 +286,22 @@ impl InterfaceGenerator<'_> {
 impl <Ctx, T, Tx> Server<Ctx, Tx> for T
     where
         Ctx: Send + 'static,
-        T: Handler<Ctx> + Send + Sync + Clone + 'static,
+        T: Handler<Ctx> + {resource_traits} Send + Sync + Clone + 'static,
         Tx: {wrpc_transport}::Transmitter + Send + 'static,
     {{"#,
-            wrpc_transport = self.gen.wrpc_transport_path()
+            wrpc_transport = self.gen.wrpc_transport_path(),
+            resource_traits = trait_names.join("")
         );
-        for Function {
-            kind, params, name, ..
-        } in &funcs_to_export
-        {
-            if !matches!(kind, FunctionKind::Freestanding) {
-                continue;
-            }
+
+        eprintln!("OUTPUT {:#?}: {}", trait_names, self.src.to_string());
+        for func in &funcs_to_export {
+            let Function {
+                kind, params, name, ..
+            } = func;
+
+            // if !matches!(kind, FunctionKind::Freestanding) {
+            //     continue;
+            // }
             let method_name = format!("serve_{name}", name = name.to_snake_case());
             uwrite!(
                 self.src,
@@ -316,6 +323,29 @@ fn {method_name}(
                 self.print_ty(ty, TypeMode::owned());
                 self.push_str(",");
             }
+
+            let (handler_name, func_name) = match kind {
+                FunctionKind::Freestanding => ("Handler".to_string(), name.as_str()),
+                FunctionKind::Method(id) => {
+                    let resource_name = self.resolve.types[*id].name.as_ref().unwrap();
+                    let handler = format!("Handler{}", resource_name.to_upper_camel_case());
+
+                    (handler, func.item_name())
+                }
+                FunctionKind::Static(id) => {
+                    let resource_name = self.resolve.types[*id].name.as_ref().unwrap();
+                    let handler = format!("Handler{}", resource_name.to_upper_camel_case());
+
+                    (handler, func.item_name())
+                }
+                FunctionKind::Constructor(id) => {
+                    let resource_name = self.resolve.types[*id].name.as_ref().unwrap();
+                    let handler = format!("Handler{}", resource_name.to_upper_camel_case());
+
+                    (handler, "new")
+                }
+            };
+
             uwrite!(
                 self.src,
                 r#"),
@@ -325,8 +355,8 @@ fn {method_name}(
             let _enter = span.enter();
             let handler = self.clone();
             {tokio}::spawn(async move {{
-                match handler.{name}(context, "#,
-                name = to_rust_ident(name),
+                match {handler_name}::{name}(&handler, context, "#,
+                name = to_rust_ident(func_name),
                 tokio = self.gen.tokio_path(),
                 tracing = self.gen.tracing_path(),
             );
@@ -375,9 +405,9 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
             wrpc_transport = self.gen.wrpc_transport_path()
         );
         for Function { kind, name, .. } in &funcs_to_export {
-            if !matches!(kind, FunctionKind::Freestanding) {
-                continue;
-            }
+            // if !matches!(kind, FunctionKind::Freestanding) {
+            //     continue;
+            // }
             uwrite!(self.src, "{},", to_rust_ident(name));
         }
         uwrite!(
@@ -414,9 +444,9 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
             }
         };
         for Function { kind, name, .. } in &funcs_to_export {
-            if !matches!(kind, FunctionKind::Freestanding) {
-                continue;
-            }
+            // if !matches!(kind, FunctionKind::Freestanding) {
+            //     continue;
+            // }
             uwrite!(
                 self.src,
                 r#"async {{ wrpc.serve_static("{instance}", "{name}").await.context("failed to serve `{instance}.{name}`") }}.instrument({tracing}::trace_span!("serve_interface")),"#,
@@ -425,9 +455,9 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
         }
         self.push_str(")?;\n");
         for Function { kind, name, .. } in &funcs_to_export {
-            if !matches!(kind, FunctionKind::Freestanding) {
-                continue;
-            }
+            // if !matches!(kind, FunctionKind::Freestanding) {
+            //     continue;
+            // }
             let name = to_rust_ident(name);
             uwrite!(self.src, "let mut {name} = ::core::pin::pin!({name});\n",);
         }
@@ -440,9 +470,9 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
         );
 
         for Function { kind, name, .. } in &funcs_to_export {
-            if !matches!(kind, FunctionKind::Freestanding) {
-                continue;
-            }
+            // if !matches!(kind, FunctionKind::Freestanding) {
+            //     continue;
+            // }
             uwriteln!(
                 self.src,
                 "invocation = {}.next() => {{",
@@ -604,12 +634,12 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
         match func.kind {
             FunctionKind::Freestanding
             | FunctionKind::Static(..)
-            | FunctionKind::Constructor(..) => {
+            | FunctionKind::Constructor(..)
+            | FunctionKind::Method(..) => {
                 uwrite!(self.src, r#""{instance}""#);
-            }
-            FunctionKind::Method(..) => {
-                self.src.push_str("&self.0");
-            }
+            } // FunctionKind::Method(..) => {
+              //     self.src.push_str("&self.0");
+              // }
         }
         self.src.push_str(r#", ""#);
         self.src.push_str(&func.name);
@@ -764,15 +794,17 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
 
     fn print_signature(&mut self, func: &Function, params_owned: bool, sig: &FnSig) -> Vec<String> {
         let params = self.print_docs_and_params(func, params_owned, sig);
-        if let FunctionKind::Constructor(_) = &func.kind {
-            uwrite!(
-                self.src,
-                " -> {anyhow}::Result<Self> where Self: Sized",
-                anyhow = self.gen.anyhow_path()
-            );
-        } else {
-            self.print_results(&func.results);
-        }
+        // if let FunctionKind::Constructor(_) = &func.kind {
+        //     uwrite!(
+        //         self.src,
+        //         " -> {anyhow}::Result<Self> where Self: Sized",
+        //         anyhow = self.gen.anyhow_path()
+        //     );
+        // } else {
+        //     self.print_results(&func.results);
+        // }
+        self.print_results(&func.results);
+
         params
     }
 
@@ -804,6 +836,8 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
         } else {
             &func.name
         };
+        // let func_name = &func.name;
+
         self.push_str(&to_rust_ident(func_name));
         self.push_str("(");
         if self.in_import {
@@ -824,12 +858,12 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
         }
         let mut params = Vec::new();
         for (i, (name, param)) in func.params.iter().enumerate() {
-            if let FunctionKind::Method(..) = &func.kind {
-                if i == 0 && sig.self_is_first_param {
-                    params.push("self".to_string());
-                    continue;
-                }
-            }
+            // if let FunctionKind::Method(..) = &func.kind {
+            //     if i == 0 && sig.self_is_first_param {
+            //         params.push("self".to_string());
+            //         continue;
+            //     }
+            // }
             let name = to_rust_ident(name);
             self.push_str(&name);
             self.push_str(": ");
@@ -2270,6 +2304,18 @@ impl<'a> wit_bindgen_core::InterfaceGenerator<'a> for InterfaceGenerator<'a> {
     fn type_resource(&mut self, _id: TypeId, name: &str, docs: &Docs) {
         self.rustdoc(docs);
         let camel = to_upper_camel_case(name);
+
+        uwriteln!(
+            self.src,
+            r#"
+// #[derive(Debug)]
+pub type {camel} = Vec<u8>;
+
+// #[derive(Debug)]
+pub type {camel}Borrow = Vec<u8>;
+        "#
+        );
+        return;
 
         let anyhow = self.gen.anyhow_path();
         let async_trait = self.gen.async_trait_path();
