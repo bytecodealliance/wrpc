@@ -264,21 +264,21 @@ mod owned_resource_deref_mut {
         ",
     });
 
-    pub struct MyResource {
-        data: u32,
-    }
+    // pub struct MyResource {
+    //     data: u32,
+    // }
 
-    impl<Ctx: Send> exports::my::inline::foo::HandlerBar<Ctx> for MyResource {
-        async fn new(cx: Ctx, data: u32) -> anyhow::Result<Self> {
-            Ok(Self { data })
+    impl<Ctx: Send> exports::my::inline::foo::HandlerBar<Ctx> for Component {
+        async fn new(&self, cx: Ctx, data: u32) -> anyhow::Result<Vec<u8>> {
+            todo!();
         }
 
-        async fn get_data(&self, cx: Ctx) -> anyhow::Result<u32> {
-            Ok(self.data)
+        async fn get_data(&self, cx: Ctx, self_: Vec<u8>) -> anyhow::Result<u32> {
+            todo!();
         }
 
-        async fn consume(cx: Ctx, mut _this: exports::my::inline::foo::Bar) -> anyhow::Result<u32> {
-            todo!("resources not supported at this time")
+        async fn consume(&self, cx: Ctx, mut _this: Vec<u8>) -> anyhow::Result<u32> {
+            todo!();
             //let me = this.get::<Ctx, MyResource>();
             //let prior_data: &u32 = &me.data;
             //let new_data = prior_data + 1;
@@ -293,12 +293,12 @@ mod owned_resource_deref_mut {
     struct Component;
 
     impl<Ctx: Send> exports::my::inline::foo::Handler<Ctx> for Component {
-        type Bar = MyResource;
+        type Bar = Self;
     }
 
     async fn serve_exports(wrpc: &impl wrpc_transport_legacy::Client) {
         // TODO: Support resources
-        //serve(wrpc, Component, async {}).await.unwrap();
+        serve(wrpc, Component, async {}).await.unwrap();
     }
 }
 
@@ -319,11 +319,11 @@ mod package_with_versions {
         ",
     });
 
-    pub struct MyResource;
+    // pub struct MyResource;
 
-    impl<Ctx: Send> exports::my::inline::foo::HandlerBar<Ctx> for MyResource {
-        async fn new(cx: Ctx) -> anyhow::Result<Self> {
-            anyhow::bail!("not supported yet")
+    impl<Ctx: Send> exports::my::inline::foo::HandlerBar<Ctx> for Component {
+        async fn new(&self, cx: Ctx) -> anyhow::Result<Vec<u8>> {
+            todo!();
         }
     }
 
@@ -331,7 +331,7 @@ mod package_with_versions {
     struct Component;
 
     impl<Ctx: Send> exports::my::inline::foo::Handler<Ctx> for Component {
-        type Bar = MyResource;
+        type Bar = Self;
     }
 
     async fn serve_exports(wrpc: &impl wrpc_transport_legacy::Client) {
@@ -599,26 +599,37 @@ mod resource_example {
     }
 
     impl<Ctx: Send> HandlerLogger<Ctx> for MyLogger {
-        async fn new(cx: Ctx, level: Level) -> anyhow::Result<MyLogger> {
-            Ok(MyLogger {
-                level: RwLock::new(level),
-                contents: RwLock::new(String::new()),
-            })
+        async fn new(&self, cx: Ctx, level: Level) -> anyhow::Result<Vec<u8>> {
+            todo!();
+
+            // Ok(MyLogger {
+            //     level: RwLock::new(level),
+            //     contents: RwLock::new(String::new()),
+            // })
         }
 
-        async fn log(&self, cx: Ctx, level: Level, msg: String) -> anyhow::Result<()> {
-            if level as u32 <= *self.level.read().unwrap() as u32 {
-                self.contents.write().unwrap().push_str(&msg);
-                self.contents.write().unwrap().push('\n');
-            }
-            Ok(())
+        async fn log(
+            &self,
+            cx: Ctx,
+            self_: Vec<u8>,
+            level: Level,
+            msg: String,
+        ) -> anyhow::Result<()> {
+            todo!();
+
+            // if level as u32 <= *self.level.read().unwrap() as u32 {
+            //     self.contents.write().unwrap().push_str(&msg);
+            //     self.contents.write().unwrap().push('\n');
+            // }
+            // Ok(())
         }
 
-        async fn level(&self, cx: Ctx) -> anyhow::Result<Level> {
-            Ok(*self.level.read().unwrap())
+        async fn level(&self, cx: Ctx, self_: Vec<u8>) -> anyhow::Result<Level> {
+            todo!();
+            // Ok(*self.level.read().unwrap())
         }
 
-        async fn set_level(&self, cx: Ctx, level: Level) -> anyhow::Result<()> {
+        async fn set_level(&self, cx: Ctx, self_: Vec<u8>, level: Level) -> anyhow::Result<()> {
             *self.level.write().unwrap() = level;
             Ok(())
         }
