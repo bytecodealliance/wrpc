@@ -80,6 +80,7 @@ fn find_variant_discriminant<'a, T>(
         .context("unknown variant discriminant")
 }
 
+#[inline]
 fn flag_bits<'a, T: BitOrAssign + Shl<u8, Output = T> + From<u8>>(
     names: impl IntoIterator<Item = &'a str>,
     flags: impl IntoIterator<Item = &'a str>,
