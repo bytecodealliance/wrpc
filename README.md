@@ -1,7 +1,23 @@
-# wRPC
+<div align="center">
+  <h1><code>wRPC</code></h1>
 
-`wRPC` is a [component]-native transport-agnostic RPC protocol and framework based on [WebAssembly Interface Types (WIT)].
-If facilitates execution of arbitrary functionality defined in [WIT] over network or other means of communication.
+  <p>
+    <strong>
+    <a href="https://component-model.bytecodealliance.org/">Component-native</a>
+    transport-agnostic RPC protocol and framework based on
+    <a href="https://component-model.bytecodealliance.org/design/wit.html">WebAssembly Interface Types (WIT)</a>
+    </strong>
+  </p>
+
+  <p>
+    <a href="https://github.com/wrpc/wrpc/actions?query=workflow%3Awrpc"><img src="https://github.com/wrpc/wrpc/actions/workflows/wrpc.yml/badge.svg" alt="build status" /></a>
+    <a href="https://docs.rs/wrpc"><img src="https://docs.rs/wrpc/badge.svg" alt="Documentation Status" /></a>
+  </p>
+</div>
+
+## About
+
+wRPC facilitates execution of arbitrary functionality defined in [WIT] over network or other means of communication.
 
 Main use cases for wRPC are:
 - out-of-tree WebAssembly runtime plugins
