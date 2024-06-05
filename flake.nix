@@ -70,6 +70,7 @@
           "flake.nix"
           "LICENSE"
           "README.md"
+          "SECURITY.md"
         ];
 
         doCheck = false; # testing is performed in checks via `nextest`
