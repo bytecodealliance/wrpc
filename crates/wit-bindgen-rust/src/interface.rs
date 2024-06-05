@@ -226,13 +226,7 @@ impl InterfaceGenerator<'_> {
 
         let (name, methods) = traits.remove(&None).unwrap();
         if !methods.is_empty() || !traits.is_empty() {
-            self.generate_interface_trait(
-                &name,
-                &methods,
-                traits.iter().map(|(resource, (trait_name, _methods))| {
-                    (resource.unwrap(), trait_name.as_str())
-                }),
-            );
+            self.generate_interface_trait(&name, &methods);
         }
 
         for (trait_name, methods) in traits.values() {
@@ -497,21 +491,8 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
         true
     }
 
-    fn generate_interface_trait<'a>(
-        &mut self,
-        trait_name: &str,
-        methods: &[Source],
-        resource_traits: impl Iterator<Item = (TypeId, &'a str)>,
-    ) {
+    fn generate_interface_trait<'a>(&mut self, trait_name: &str, methods: &[Source]) {
         uwriteln!(self.src, "pub trait {trait_name}<Ctx> {{");
-        for (id, trait_name) in resource_traits {
-            let name = self.resolve.types[id]
-                .name
-                .as_ref()
-                .unwrap()
-                .to_upper_camel_case();
-            uwriteln!(self.src, "type {name}: {trait_name}<Ctx>;");
-        }
         for method in methods {
             self.src.push_str(method);
         }
@@ -658,7 +639,7 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
 
         let root_methods = funcs.remove(&None).unwrap_or(Vec::new());
 
-        let mut extra_trait_items = String::new();
+        let extra_trait_items = String::new();
         let guest_trait = match interface {
             Some((id, _)) => {
                 let path = self.path_to_interface(id).unwrap();
@@ -668,7 +649,6 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
                         _ => continue,
                     }
                     let camel = name.to_upper_camel_case();
-                    uwriteln!(extra_trait_items, "type {camel} = Stub;");
 
                     let resource_methods = funcs.remove(&Some(*id)).unwrap_or(Vec::new());
                     let trait_name = format!("{path}::Handler{camel}");

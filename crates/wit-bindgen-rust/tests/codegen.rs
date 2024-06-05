@@ -295,9 +295,7 @@ mod owned_resource_deref_mut {
     #[derive(Clone)]
     struct Component;
 
-    impl<Ctx: Send> exports::my::inline::foo::Handler<Ctx> for Component {
-        type Bar = Self;
-    }
+    impl<Ctx: Send> exports::my::inline::foo::Handler<Ctx> for Component {}
 
     async fn serve_exports(wrpc: &impl wrpc_transport_legacy::Client) {
         // TODO: Support resources
@@ -336,9 +334,7 @@ mod package_with_versions {
     #[derive(Clone)]
     struct Component;
 
-    impl<Ctx: Send> exports::my::inline::foo::Handler<Ctx> for Component {
-        type Bar = Self;
-    }
+    impl<Ctx: Send> exports::my::inline::foo::Handler<Ctx> for Component {}
 
     async fn serve_exports(wrpc: &impl wrpc_transport_legacy::Client) {
         // TODO: Support resources
@@ -596,9 +592,7 @@ mod resource_example {
 
     // Note that the `logging` interface has no methods of its own but a trait
     // is required to be implemented here to specify the type of `Logger`.
-    impl<Ctx: Send> Handler<Ctx> for MyComponent {
-        type Logger = MyLogger;
-    }
+    impl<Ctx: Send> Handler<Ctx> for MyComponent {}
 
     struct MyLogger {
         level: RwLock<Level>,
