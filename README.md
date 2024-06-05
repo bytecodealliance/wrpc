@@ -9,6 +9,8 @@
     </strong>
   </p>
 
+  <strong>A <a href="https://bytecodealliance.org/">Bytecode Alliance</a> hosted project</strong>
+
   <p>
     <a href="https://github.com/wrpc/wrpc/actions?query=workflow%3Awrpc"><img src="https://github.com/wrpc/wrpc/actions/workflows/wrpc.yml/badge.svg" alt="build status" /></a>
     <a href="https://docs.rs/wrpc"><img src="https://docs.rs/wrpc/badge.svg" alt="Documentation Status" /></a>
