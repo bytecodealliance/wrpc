@@ -64,6 +64,7 @@
           ".envrc"
           ".github"
           ".gitignore"
+          "ADOPTERS.md"
           "CODE_OF_CONDUCT.md"
           "CONTRIBUTING.md"
           "flake.nix"
