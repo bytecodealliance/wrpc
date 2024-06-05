@@ -162,7 +162,6 @@ impl InterfaceGenerator<'_> {
             };
             funcs_to_export.push(func);
             let (_, methods) = traits.get_mut(&resource).unwrap();
-            // let (_, methods) = traits.get_mut(&None).unwrap();
 
             let prev = mem::take(&mut self.src);
             let mut sig = FnSig {
