@@ -2266,6 +2266,8 @@ impl<'a> wit_bindgen_core::InterfaceGenerator<'a> for InterfaceGenerator<'a> {
     }
 
     fn type_resource(&mut self, _id: TypeId, name: &str, docs: &Docs) {
+        // TODO: Refactor the resource handle unit structs to not have the "Rep" suffix
+
         self.rustdoc(docs);
         let camel = to_upper_camel_case(name);
 
@@ -2277,6 +2279,7 @@ impl<'a> wit_bindgen_core::InterfaceGenerator<'a> for InterfaceGenerator<'a> {
         let tracing = self.gen.tracing_path();
 
         if self.in_import {
+            // TODO: Refactor to use extension traits for Resource{Own,Borrow} instead defining a wrapper struct
             uwriteln!(
                 self.src,
                 r#"
