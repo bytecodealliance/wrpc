@@ -210,7 +210,6 @@ impl InterfaceGenerator<'_> {
                     self.push_str(")>> + Send");
                 }
             }
-            // }
             self.src.push_str(";\n");
             let trait_method = mem::replace(&mut self.src, prev);
             methods.push(trait_method);
@@ -593,14 +592,7 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
         let anyhow = self.gen.anyhow_path();
         uwriteln!(self.src, "use {anyhow}::Context as _;");
         self.src.push_str("let wrpc__ = wrpc__.invoke_static(");
-        match func.kind {
-            FunctionKind::Freestanding
-            | FunctionKind::Static(..)
-            | FunctionKind::Constructor(..)
-            | FunctionKind::Method(..) => {
-                uwrite!(self.src, r#""{instance}""#);
-            }
-        }
+        uwrite!(self.src, r#""{instance}""#);
         self.src.push_str(r#", ""#);
         self.src.push_str(&func.name);
         self.src.push_str(r#"", "#);
