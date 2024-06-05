@@ -157,7 +157,7 @@ async fn rust_bindgen() -> anyhow::Result<()> {
 
                         let index_bytes: [u8; 8] = handle_blob[0..8].try_into().context("failed to decode counter resource hanlde")?;
                         let index = usize::from_ne_bytes(index_bytes);
-                        
+
                         let mut counts = self.counts.write().await;
                         let count = *counts.get(index).context("counter resource entry not found")?;
 
@@ -174,7 +174,7 @@ async fn rust_bindgen() -> anyhow::Result<()> {
 
                         let index_bytes: [u8; 8] = handle_blob[0..8].try_into().context("failed to decode counter resource hanlde")?;
                         let index = usize::from_ne_bytes(index_bytes);
-                        
+
                         let counts = self.counts.read().await;
                         let count = counts.get(index).context("counter resource entry not found")?;
 
@@ -186,7 +186,7 @@ async fn rust_bindgen() -> anyhow::Result<()> {
 
                         let index_bytes: [u8; 8] = handle_blob[0..8].try_into().context("failed to decode counter resource handle")?;
                         let index = usize::from_ne_bytes(index_bytes);
-                        
+
                         let mut counts = self.counts.write().await;
                         let count = counts.get_mut(index).context("counter resource entry not found")?;
 
@@ -204,7 +204,7 @@ async fn rust_bindgen() -> anyhow::Result<()> {
 
                         let a_index = usize::from_ne_bytes(a_index_bytes);
                         let b_index = usize::from_ne_bytes(b_index_bytes);
-                        
+
                         let counts = self.counts.write().await;
                         let a_count = counts.get(a_index).context("counter resource entry not found")?;
                         let b_count = counts.get(b_index).context("counter resource entry not found")?;
