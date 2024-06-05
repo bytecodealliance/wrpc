@@ -591,7 +591,7 @@ mod resource_example {
         contents: RwLock<String>,
     }
 
-    impl<Ctx: Send> HandlerLogger<Ctx> for MyLogger {
+    impl<Ctx: Send> HandlerLogger<Ctx> for MyComponent {
         async fn new(&self, cx: Ctx, level: Level) -> anyhow::Result<ResourceOwn<LoggerRep>> {
             todo!();
 
@@ -628,15 +628,15 @@ mod resource_example {
             self_: ResourceBorrow<LoggerRep>,
             level: Level,
         ) -> anyhow::Result<()> {
-            *self.level.write().unwrap() = level;
-            Ok(())
+            todo!();
+
+            // *self.level.write().unwrap() = level;
+            // Ok(())
         }
     }
 
     async fn serve_exports(wrpc: &impl wrpc_transport_legacy::Client) -> anyhow::Result<()> {
-        // TODO: Support resources
-        //serve(wrpc, MyComponent, async {}).await
-        anyhow::bail!("resources not supported yet")
+        serve(wrpc, MyComponent, async {}).await
     }
 }
 
@@ -647,7 +647,7 @@ mod example_4 {
         package example:exported-resources;
 
         world import-some-resources {
-            import logging;
+            export logging;
         }
 
         interface logging {
