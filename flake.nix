@@ -64,6 +64,8 @@
           ".envrc"
           ".github"
           ".gitignore"
+          "CODE_OF_CONDUCT.md"
+          "CONTRIBUTING.md"
           "flake.nix"
           "LICENSE"
           "README.md"
