@@ -171,18 +171,10 @@ impl InterfaceGenerator<'_> {
                 definition: true,
                 ..Default::default()
             };
-            // if let FunctionKind::Method(_) | FunctionKind::Freestanding = &func.kind {
             sig.self_arg = Some("&self".into());
-            sig.self_is_first_param = true;
-            // }
+            sig.self_is_first_param = false;
+
             self.print_docs_and_params(func, true, &sig);
-            // if let FunctionKind::Constructor(_) = &func.kind {
-            //     uwrite!(
-            //     self.src,
-            //     " -> impl ::core::future::Future<Output = {}::Result<Self>> + Send where Self: Sized",
-            //     self.gen.anyhow_path()
-            // );
-            // } else {
             match func.results.len() {
                 0 => {
                     uwrite!(
@@ -572,7 +564,7 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
 
         let mut sig = FnSig::default();
         match func.kind {
-            FunctionKind::Method(id) | FunctionKind::Static(id) | FunctionKind::Constructor(id) => {
+            FunctionKind::Method(id) => {
                 let name = self.resolve.types[id].name.as_ref().unwrap();
                 let name = to_upper_camel_case(name);
                 uwriteln!(self.src, "impl {name} {{");
@@ -581,10 +573,22 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
                 sig.self_arg = Some("&self".into());
                 sig.self_is_first_param = true;
             }
+            FunctionKind::Static(id) | FunctionKind::Constructor(id) => {
+                let name = self.resolve.types[id].name.as_ref().unwrap();
+                let name = to_upper_camel_case(name);
+                uwriteln!(self.src, "impl {name} {{");
+
+                sig.use_item_name = true;
+            }
             FunctionKind::Freestanding => {}
         }
         self.src.push_str("#[allow(clippy::all)]\n");
-        let params = self.print_signature(func, false, &sig);
+
+        let mut params = self.print_signature(func, false, &sig);
+        if sig.self_is_first_param {
+            params.insert(0, "self.handle.as_ref()".to_string());
+        }
+
         self.src.push_str("{\n");
         let anyhow = self.gen.anyhow_path();
         uwriteln!(self.src, "use {anyhow}::Context as _;");
@@ -600,6 +604,7 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
         self.src.push_str(r#", ""#);
         self.src.push_str(&func.name);
         self.src.push_str(r#"", "#);
+
         match &params[..] {
             [] => self.src.push_str("()"),
             [p] => self.src.push_str(p),
@@ -686,7 +691,7 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
                 ..Default::default()
             };
             sig.self_arg = Some("&self".into());
-            sig.self_is_first_param = true;
+            sig.self_is_first_param = false;
 
             self.print_signature(func, true, &sig);
             self.src.push_str("{ unreachable!() }\n");
@@ -789,6 +794,7 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
                 self.push_str(arg);
                 self.push_str(",");
             }
+
             self.push_str("wrpc__: &impl ");
             let wrpc_transport = self.gen.wrpc_transport_path().to_string();
             self.push_str(&wrpc_transport);
@@ -801,7 +807,11 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
             self.push_str("cx: Ctx,");
         }
         let mut params = Vec::new();
-        for (name, param) in func.params.iter() {
+        for (i, (name, param)) in func.params.iter().enumerate() {
+            if i == 0 && sig.self_is_first_param {
+                continue;
+            }
+
             let name = to_rust_ident(name);
             self.push_str(&name);
             self.push_str(": ");
@@ -2309,7 +2319,7 @@ impl {wrpc_transport}::Encode for &{camel} {{
         let span = {tracing}::trace_span!("encode");
         let _enter = span.enter();
 
-        let data: Vec<u8> = self.handle.clone().into();
+        let data: Vec<u8> = self.handle.as_ref().into();
         data.encode(payload).await
      }}
 }}
@@ -2355,7 +2365,7 @@ impl {wrpc_transport}::Encode for &{camel}Borrow {{
         let span = {tracing}::trace_span!("encode");
         let _enter = span.enter();
 
-        let data: Vec<u8> = self.handle.clone().into();
+        let data: Vec<u8> = self.handle.as_ref().into();
         data.encode(payload).await
      }}
 }}
