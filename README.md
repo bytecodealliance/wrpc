@@ -25,7 +25,7 @@ Main use cases for wRPC are:
 
 Even though wRPC is designed for Wasm components first and foremost, it is fully usable outside of WebAssembly context and can serve as a general-purpose RPC framework.
 
-wRPC uses component model value encoding (fully defined and pending spec merge at https://github.com/WebAssembly/component-model/pull/336) on the wire.
+wRPC uses [component model value definiton encoding] on the wire.
 
 wRPC supports both dynamic (based on e.g. runtime WebAssembly component type introspection) and static use cases.
 
@@ -102,3 +102,4 @@ This repository contains (for all supported languages):
 [component]: https://component-model.bytecodealliance.org/
 [WebAssembly Interface Types (WIT)]: https://component-model.bytecodealliance.org/design/wit.html
 [WIT]: https://component-model.bytecodealliance.org/design/wit.html
+[component model value definiton encoding]: https://github.com/WebAssembly/component-model/blob/8ba643f3a17eced576d8d7d4b3f6c76b4e4347d7/design/mvp/Binary.md#-value-definitions
