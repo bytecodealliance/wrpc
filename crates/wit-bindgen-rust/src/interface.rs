@@ -252,13 +252,7 @@ impl InterfaceGenerator<'_> {
             "pub trait Server<Ctx, Tx: {wrpc_transport}::Transmitter> {{\n",
             wrpc_transport = self.gen.wrpc_transport_path()
         );
-        for Function {
-            kind, params, name, ..
-        } in &funcs_to_export
-        {
-            // if !matches!(kind, FunctionKind::Freestanding) {
-            //     continue;
-            // }
+        for Function { params, name, .. } in &funcs_to_export {
             uwrite!(
                 self.src,
                 r#"fn serve_{}(&self, invocation: {wrpc_transport}::AcceptedInvocation<Ctx, ("#,
@@ -293,15 +287,11 @@ impl <Ctx, T, Tx> Server<Ctx, Tx> for T
             resource_traits = trait_names.join("")
         );
 
-        eprintln!("OUTPUT {:#?}: {}", trait_names, self.src.to_string());
         for func in &funcs_to_export {
             let Function {
                 kind, params, name, ..
             } = func;
 
-            // if !matches!(kind, FunctionKind::Freestanding) {
-            //     continue;
-            // }
             let method_name = format!("serve_{name}", name = name.to_snake_case());
             uwrite!(
                 self.src,
@@ -404,10 +394,7 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
             tracing = self.gen.tracing_path(),
             wrpc_transport = self.gen.wrpc_transport_path()
         );
-        for Function { kind, name, .. } in &funcs_to_export {
-            // if !matches!(kind, FunctionKind::Freestanding) {
-            //     continue;
-            // }
+        for Function { name, .. } in &funcs_to_export {
             uwrite!(self.src, "{},", to_rust_ident(name));
         }
         uwrite!(
@@ -443,10 +430,7 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
                 }
             }
         };
-        for Function { kind, name, .. } in &funcs_to_export {
-            // if !matches!(kind, FunctionKind::Freestanding) {
-            //     continue;
-            // }
+        for Function { name, .. } in &funcs_to_export {
             uwrite!(
                 self.src,
                 r#"async {{ wrpc.serve_static("{instance}", "{name}").await.context("failed to serve `{instance}.{name}`") }}.instrument({tracing}::trace_span!("serve_interface")),"#,
@@ -454,10 +438,7 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
             );
         }
         self.push_str(")?;\n");
-        for Function { kind, name, .. } in &funcs_to_export {
-            // if !matches!(kind, FunctionKind::Freestanding) {
-            //     continue;
-            // }
+        for Function { name, .. } in &funcs_to_export {
             let name = to_rust_ident(name);
             uwrite!(self.src, "let mut {name} = ::core::pin::pin!({name});\n",);
         }
@@ -469,10 +450,7 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
             tokio = self.gen.tokio_path()
         );
 
-        for Function { kind, name, .. } in &funcs_to_export {
-            // if !matches!(kind, FunctionKind::Freestanding) {
-            //     continue;
-            // }
+        for Function { name, .. } in &funcs_to_export {
             uwriteln!(
                 self.src,
                 "invocation = {}.next() => {{",
@@ -613,17 +591,16 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
 
         let mut sig = FnSig::default();
         match func.kind {
-            FunctionKind::Freestanding => {}
             FunctionKind::Method(id) | FunctionKind::Static(id) | FunctionKind::Constructor(id) => {
                 let name = self.resolve.types[id].name.as_ref().unwrap();
                 let name = to_upper_camel_case(name);
                 uwriteln!(self.src, "impl {name} {{");
+
                 sig.use_item_name = true;
-                if let FunctionKind::Method(_) = &func.kind {
-                    sig.self_arg = Some("&self".into());
-                    sig.self_is_first_param = true;
-                }
+                sig.self_arg = Some("&self".into());
+                sig.self_is_first_param = true;
             }
+            FunctionKind::Freestanding => {}
         }
         self.src.push_str("#[allow(clippy::all)]\n");
         let params = self.print_signature(func, false, &sig);
@@ -637,9 +614,7 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
             | FunctionKind::Constructor(..)
             | FunctionKind::Method(..) => {
                 uwrite!(self.src, r#""{instance}""#);
-            } // FunctionKind::Method(..) => {
-              //     self.src.push_str("&self.0");
-              // }
+            }
         }
         self.src.push_str(r#", ""#);
         self.src.push_str(&func.name);
@@ -730,10 +705,9 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
                 private: true,
                 ..Default::default()
             };
-            if let FunctionKind::Method(_) | FunctionKind::Freestanding = &func.kind {
-                sig.self_arg = Some("&self".into());
-                sig.self_is_first_param = true;
-            }
+            sig.self_arg = Some("&self".into());
+            sig.self_is_first_param = true;
+
             self.print_signature(func, true, &sig);
             self.src.push_str("{ unreachable!() }\n");
         }
@@ -794,15 +768,6 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
 
     fn print_signature(&mut self, func: &Function, params_owned: bool, sig: &FnSig) -> Vec<String> {
         let params = self.print_docs_and_params(func, params_owned, sig);
-        // if let FunctionKind::Constructor(_) = &func.kind {
-        //     uwrite!(
-        //         self.src,
-        //         " -> {anyhow}::Result<Self> where Self: Sized",
-        //         anyhow = self.gen.anyhow_path()
-        //     );
-        // } else {
-        //     self.print_results(&func.results);
-        // }
         self.print_results(&func.results);
 
         params
@@ -836,7 +801,6 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
         } else {
             &func.name
         };
-        // let func_name = &func.name;
 
         self.push_str(&to_rust_ident(func_name));
         self.push_str("(");
@@ -857,13 +821,7 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
             self.push_str("cx: Ctx,");
         }
         let mut params = Vec::new();
-        for (i, (name, param)) in func.params.iter().enumerate() {
-            // if let FunctionKind::Method(..) = &func.kind {
-            //     if i == 0 && sig.self_is_first_param {
-            //         params.push("self".to_string());
-            //         continue;
-            //     }
-            // }
+        for (name, param) in func.params.iter() {
             let name = to_rust_ident(name);
             self.push_str(&name);
             self.push_str(": ");
@@ -1230,6 +1188,16 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
                 },
             );
             self.push_str(&name);
+
+            if let TypeDefKind::Resource = ty.kind {
+                match mode.style {
+                    TypeOwnershipStyle::Owned => {}
+                    TypeOwnershipStyle::OnlyTopBorrowed | TypeOwnershipStyle::Borrowed => {
+                        self.push_str("Borrow")
+                    }
+                };
+            }
+
             return;
         }
 
@@ -2162,23 +2130,38 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
     }
 
     fn print_typedef_alias(&mut self, id: TypeId, ty: &Type, docs: &Docs) {
-        for (name, mode) in self.modes_of(id) {
+        if self.is_exported_resource(id) {
+            let Type::Id(resource_id) = ty else {
+                unreachable!()
+            };
+            let resource_name = self.type_path(*resource_id, true);
+
+            // owned resource
             self.rustdoc(docs);
+            let name = self.resolve.types[id].name.as_ref().unwrap();
+            let name = name.to_upper_camel_case();
             self.push_str(&format!("pub type {name}"));
             self.push_str(" = ");
-            self.print_ty(ty, mode);
+            self.push_str(&resource_name);
             self.push_str(";\n");
-        }
 
-        if self.is_exported_resource(id) {
+            // borrowed resource
             self.rustdoc(docs);
             let name = self.resolve.types[id].name.as_ref().unwrap();
             let name = name.to_upper_camel_case();
             self.push_str(&format!("pub type {name}Borrow"));
             self.push_str(" = ");
-            self.print_ty(ty, TypeMode::owned());
+            self.push_str(&resource_name);
             self.push_str("Borrow");
             self.push_str(";\n");
+        } else {
+            for (name, mode) in self.modes_of(id) {
+                self.rustdoc(docs);
+                self.push_str(&format!("pub type {name}"));
+                self.push_str(" = ");
+                self.print_ty(ty, mode);
+                self.push_str(";\n");
+            }
         }
     }
 
@@ -2305,31 +2288,29 @@ impl<'a> wit_bindgen_core::InterfaceGenerator<'a> for InterfaceGenerator<'a> {
         self.rustdoc(docs);
         let camel = to_upper_camel_case(name);
 
-        uwriteln!(
-            self.src,
-            r#"
-// #[derive(Debug)]
-pub type {camel} = Vec<u8>;
-
-// #[derive(Debug)]
-pub type {camel}Borrow = Vec<u8>;
-        "#
-        );
-        return;
-
+        let wrpc_transport = self.gen.wrpc_transport_path();
         let anyhow = self.gen.anyhow_path();
         let async_trait = self.gen.async_trait_path();
         let bytes = self.gen.bytes_path();
         let futures = self.gen.futures_path();
         let tracing = self.gen.tracing_path();
-        let wrpc_transport = self.gen.wrpc_transport_path();
 
         if self.in_import {
             uwriteln!(
                 self.src,
                 r#"
+#[derive(Debug, Clone, Copy)]
+pub struct {camel}Rep;
+
 #[derive(Debug)]
-pub struct {camel}(String);
+pub struct {camel} {{
+    pub handle: {wrpc_transport}::ResourceOwn<{camel}Rep>
+}}
+
+#[derive(Debug)]
+pub struct {camel}Borrow {{
+    pub handle: {wrpc_transport}::ResourceBorrow<{camel}Rep>
+}}
 
 #[{async_trait}::async_trait]
 #[automatically_derived]
@@ -2337,7 +2318,7 @@ impl {wrpc_transport}::Encode for {camel} {{
      async fn encode(self, payload: &mut (impl {bytes}::BufMut + Send)) -> {anyhow}::Result<Option<{wrpc_transport}::AsyncValue>> {{
         let span = {tracing}::trace_span!("encode");
         let _enter = span.enter();
-        self.0.encode(payload).await
+        self.handle.encode(payload).await
      }}
 }}
 
@@ -2347,7 +2328,9 @@ impl {wrpc_transport}::Encode for &{camel} {{
      async fn encode(self, payload: &mut (impl {bytes}::BufMut + Send)) -> {anyhow}::Result<Option<{wrpc_transport}::AsyncValue>> {{
         let span = {tracing}::trace_span!("encode");
         let _enter = span.enter();
-        self.0.as_str().encode(payload).await
+
+        let data: Vec<u8> = self.handle.clone().into();
+        data.encode(payload).await
      }}
 }}
 
@@ -2359,7 +2342,7 @@ impl {wrpc_transport}::Subscribe for &{camel} {{}}
 
 #[{async_trait}::async_trait]
 #[automatically_derived]
-impl<'a> {wrpc_transport}::Receive<'a> for {camel} {{
+impl<'a> {wrpc_transport}::Receive<'a> for {camel}{{
      async fn receive<T>(
         payload: impl {bytes}::Buf + Send + 'a,
         rx: &mut (impl {futures}::Stream<Item={anyhow}::Result<{bytes}::Bytes>> + Send + Sync + Unpin),
@@ -2371,28 +2354,9 @@ impl<'a> {wrpc_transport}::Receive<'a> for {camel} {{
         let span = {tracing}::trace_span!("receive");
         let _enter = span.enter();
         let (subject, payload) = {wrpc_transport}::Receive::receive(payload, rx, sub).await?;
-        Ok((Self(subject), payload))
+        Ok((Self {{ handle: subject }}, payload))
      }}
 }}
-"#
-            );
-        } else {
-            uwriteln!(
-                self.src,
-                r#"
-#[derive(Debug)]
-#[repr(transparent)]
-pub struct {camel};
-
-impl {camel} {{
-    /// Creates a new resource from the specified representation.
-    pub fn new() -> Self {{ Self {{ }} }}
-}}
-
-/// A borrowed version of [`{camel}`] which represents a borrowed value
-#[derive(Debug)]
-#[repr(transparent)]
-pub struct {camel}Borrow;
 
 #[{async_trait}::async_trait]
 #[automatically_derived]
@@ -2400,7 +2364,7 @@ impl {wrpc_transport}::Encode for {camel}Borrow {{
      async fn encode(self, payload: &mut (impl {bytes}::BufMut + Send)) -> {anyhow}::Result<Option<{wrpc_transport}::AsyncValue>> {{
         let span = {tracing}::trace_span!("encode");
         let _enter = span.enter();
-        {anyhow}::bail!("exported resources not supported yet")
+        self.handle.encode(payload).await
      }}
 }}
 
@@ -2410,7 +2374,9 @@ impl {wrpc_transport}::Encode for &{camel}Borrow {{
      async fn encode(self, payload: &mut (impl {bytes}::BufMut + Send)) -> {anyhow}::Result<Option<{wrpc_transport}::AsyncValue>> {{
         let span = {tracing}::trace_span!("encode");
         let _enter = span.enter();
-        {anyhow}::bail!("exported resources not supported yet")
+
+        let data: Vec<u8> = self.handle.clone().into();
+        data.encode(payload).await
      }}
 }}
 
@@ -2422,7 +2388,7 @@ impl {wrpc_transport}::Subscribe for &{camel}Borrow {{}}
 
 #[{async_trait}::async_trait]
 #[automatically_derived]
-impl<'a> {wrpc_transport}::Receive<'a> for {camel}Borrow {{
+impl<'a> {wrpc_transport}::Receive<'a> for {camel}Borrow{{
      async fn receive<T>(
         payload: impl {bytes}::Buf + Send + 'a,
         rx: &mut (impl {futures}::Stream<Item={anyhow}::Result<{bytes}::Bytes>> + Send + Sync + Unpin),
@@ -2433,53 +2399,23 @@ impl<'a> {wrpc_transport}::Receive<'a> for {camel}Borrow {{
      {{
         let span = {tracing}::trace_span!("receive");
         let _enter = span.enter();
-        {anyhow}::bail!("exported resources not supported yet")
+        let (subject, payload) = {wrpc_transport}::Receive::receive(payload, rx, sub).await?;
+        Ok((Self {{ handle: subject }}, payload))
      }}
 }}
+"#
+            );
+        } else {
+            uwriteln!(
+                self.src,
+                r#"
+                #[derive(Debug, Clone, Copy)]
+                pub struct {camel}Rep;
 
-#[{async_trait}::async_trait]
-#[automatically_derived]
-impl {wrpc_transport}::Encode for {camel} {{
-     async fn encode(self, payload: &mut (impl {bytes}::BufMut + Send)) -> {anyhow}::Result<Option<{wrpc_transport}::AsyncValue>> {{
-        let span = {tracing}::trace_span!("encode");
-        let _enter = span.enter();
-        {anyhow}::bail!("exported resources not supported yet")
-     }}
-}}
+                pub type {camel} = {wrpc_transport}::ResourceOwn<{camel}Rep>;
 
-#[{async_trait}::async_trait]
-#[automatically_derived]
-impl {wrpc_transport}::Encode for &{camel} {{
-     async fn encode(self, payload: &mut (impl {bytes}::BufMut + Send)) -> {anyhow}::Result<Option<{wrpc_transport}::AsyncValue>> {{
-        let span = {tracing}::trace_span!("encode");
-        let _enter = span.enter();
-        {anyhow}::bail!("exported resources not supported yet")
-     }}
-}}
-
-#[automatically_derived]
-impl {wrpc_transport}::Subscribe for {camel} {{}}
-
-#[automatically_derived]
-impl {wrpc_transport}::Subscribe for &{camel} {{}}
-
-#[{async_trait}::async_trait]
-#[automatically_derived]
-impl<'a> {wrpc_transport}::Receive<'a> for {camel} {{
-     async fn receive<T>(
-        payload: impl {bytes}::Buf + Send + 'a,
-        rx: &mut (impl {futures}::Stream<Item={anyhow}::Result<{bytes}::Bytes>> + Send + Sync + Unpin),
-        sub: Option<{wrpc_transport}::AsyncSubscription<T>>,
-     ) -> {anyhow}::Result<(Self, Box<dyn {bytes}::buf::Buf + Send + 'a>)>
-     where
-         T: {futures}::Stream<Item={anyhow}::Result<{bytes}::Bytes>> + Send + Sync + 'static
-     {{
-        let span = {tracing}::trace_span!("receive");
-        let _enter = span.enter();
-        {anyhow}::bail!("exported resources not supported yet")
-     }}
-}}
-"#,
+                pub type {camel}Borrow = {wrpc_transport}::ResourceBorrow<{camel}Rep>;
+                "#
             );
         }
     }

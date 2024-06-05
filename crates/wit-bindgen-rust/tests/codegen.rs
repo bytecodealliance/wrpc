@@ -246,7 +246,7 @@ mod alternative_bitflags_path {
 }
 
 mod owned_resource_deref_mut {
-    use exports::my::inline::foo::Bar;
+    use exports::my::inline::foo::BarRep;
     use wrpc_transport_legacy::{ResourceBorrow, ResourceOwn};
 
     wit_bindgen_wrpc::generate!({
@@ -272,15 +272,15 @@ mod owned_resource_deref_mut {
     // }
 
     impl<Ctx: Send> exports::my::inline::foo::HandlerBar<Ctx> for Component {
-        async fn new(&self, cx: Ctx, data: u32) -> anyhow::Result<ResourceOwn<Bar>> {
+        async fn new(&self, cx: Ctx, data: u32) -> anyhow::Result<ResourceOwn<BarRep>> {
             todo!();
         }
 
-        async fn get_data(&self, cx: Ctx, self_: ResourceBorrow<Bar>) -> anyhow::Result<u32> {
+        async fn get_data(&self, cx: Ctx, self_: ResourceBorrow<BarRep>) -> anyhow::Result<u32> {
             todo!();
         }
 
-        async fn consume(&self, cx: Ctx, mut _this: ResourceOwn<Bar>) -> anyhow::Result<u32> {
+        async fn consume(&self, cx: Ctx, mut _this: ResourceOwn<BarRep>) -> anyhow::Result<u32> {
             todo!();
             //let me = this.get::<Ctx, MyResource>();
             //let prior_data: &u32 = &me.data;
@@ -306,7 +306,7 @@ mod owned_resource_deref_mut {
 }
 
 mod package_with_versions {
-    use exports::my::inline::foo::Bar;
+    use exports::my::inline::foo::BarRep;
     use wrpc_transport_legacy::ResourceOwn;
 
     wit_bindgen_wrpc::generate!({
@@ -328,7 +328,7 @@ mod package_with_versions {
     // pub struct MyResource;
 
     impl<Ctx: Send> exports::my::inline::foo::HandlerBar<Ctx> for Component {
-        async fn new(&self, cx: Ctx) -> anyhow::Result<ResourceOwn<Bar>> {
+        async fn new(&self, cx: Ctx) -> anyhow::Result<ResourceOwn<BarRep>> {
             todo!();
         }
     }
@@ -487,7 +487,7 @@ mod with_and_resources {
 
                 world dummy {
                     use foo.{a};
-                    import bar: func(m: a);
+                    // import bar: func(m: a);
                 }
             ",
         });
@@ -588,7 +588,7 @@ mod resource_example {
      "#,
     });
 
-    use exports::my::test::logging::{Handler, HandlerLogger, Level, Logger};
+    use exports::my::test::logging::{Handler, HandlerLogger, Level, Logger, LoggerRep};
     use wrpc_transport_legacy::{ResourceBorrow, ResourceOwn};
 
     #[derive(Clone)]
@@ -606,7 +606,7 @@ mod resource_example {
     }
 
     impl<Ctx: Send> HandlerLogger<Ctx> for MyLogger {
-        async fn new(&self, cx: Ctx, level: Level) -> anyhow::Result<ResourceOwn<Logger>> {
+        async fn new(&self, cx: Ctx, level: Level) -> anyhow::Result<ResourceOwn<LoggerRep>> {
             todo!();
 
             // Ok(MyLogger {
@@ -618,7 +618,7 @@ mod resource_example {
         async fn log(
             &self,
             cx: Ctx,
-            self_: ResourceBorrow<Logger>,
+            self_: ResourceBorrow<LoggerRep>,
             level: Level,
             msg: String,
         ) -> anyhow::Result<()> {
@@ -631,7 +631,7 @@ mod resource_example {
             // Ok(())
         }
 
-        async fn level(&self, cx: Ctx, self_: ResourceBorrow<Logger>) -> anyhow::Result<Level> {
+        async fn level(&self, cx: Ctx, self_: ResourceBorrow<LoggerRep>) -> anyhow::Result<Level> {
             todo!();
             // Ok(*self.level.read().unwrap())
         }
@@ -639,7 +639,7 @@ mod resource_example {
         async fn set_level(
             &self,
             cx: Ctx,
-            self_: ResourceBorrow<Logger>,
+            self_: ResourceBorrow<LoggerRep>,
             level: Level,
         ) -> anyhow::Result<()> {
             *self.level.write().unwrap() = level;
