@@ -11,6 +11,7 @@ use tokio::try_join;
 
 mod common;
 use common::{init, with_nats};
+use wrpc_transport_legacy::{ResourceBorrow, ResourceOwn};
 
 // TODO: Migrate
 //#[instrument(skip(client, ty, params, results))]
@@ -108,6 +109,16 @@ async fn rust_bindgen() -> anyhow::Result<()> {
                             fallible: func() -> result<bool, string>;
                             numbers: func() -> tuple<u8, u16, u32, u64, s8, s16, s32, s64, f32, f64>;
                             with-flags: func() -> abc;
+
+                            resource counter {
+                                constructor(initial: u32);
+                                clone-counter: func() -> counter;
+
+                                get-count: func() -> u32;
+                                increment-by: func(num: u32);
+
+                                sum: static func(a: borrow<counter>, b: borrow<counter>) -> u32;
+                            }
                         }
 
                         world test {
@@ -120,8 +131,87 @@ async fn rust_bindgen() -> anyhow::Result<()> {
                         }"
                 });
 
+                use exports::wrpc_test::integration::shared::CounterRep;
+
+
                 #[derive(Clone, Default)]
-                struct Component(Arc<RwLock<Option<String>>>);
+                struct Component {
+                    inner: Arc<RwLock<Option<String>>>,
+                    counts: Arc<RwLock<Vec<u32>>>,
+                }
+
+                impl exports::wrpc_test::integration::shared::HandlerCounter<Option<async_nats::HeaderMap>> for Component {
+                    async fn new(&self, _cx: Option<async_nats::HeaderMap>, initial: u32) -> anyhow::Result<ResourceOwn<CounterRep>> {
+                        let mut counts = self.counts.write().await;
+                        counts.push(initial);
+
+                        let index = counts.len() - 1;
+                        let handle_blob: Vec<u8> = index.to_ne_bytes().to_vec();
+                        let handle = ResourceOwn::from(handle_blob);
+
+                        Ok(handle)
+                    }
+
+                    async fn clone_counter(&self, _cx: Option<async_nats::HeaderMap>, self_: ResourceBorrow<CounterRep>) -> anyhow::Result<ResourceOwn<CounterRep>> {
+                        let handle_blob: Vec<u8> = self_.into();
+
+                        let index_bytes: [u8; 8] = handle_blob[0..8].try_into().context("failed to decode counter resource hanlde")?;
+                        let index = usize::from_ne_bytes(index_bytes);
+                        
+                        let mut counts = self.counts.write().await;
+                        let count = *counts.get(index).context("counter resource entry not found")?;
+
+                        counts.push(count);
+                        let index = counts.len() - 1;
+                        let handle_blob: Vec<u8> = index.to_ne_bytes().to_vec();
+                        let handle = ResourceOwn::from(handle_blob);
+
+                        Ok(handle)
+                    }
+
+                    async fn get_count(&self, _cx: Option<async_nats::HeaderMap>, self_: ResourceBorrow<CounterRep>) -> anyhow::Result<u32> {
+                        let handle_blob: Vec<u8> = self_.into();
+
+                        let index_bytes: [u8; 8] = handle_blob[0..8].try_into().context("failed to decode counter resource hanlde")?;
+                        let index = usize::from_ne_bytes(index_bytes);
+                        
+                        let counts = self.counts.read().await;
+                        let count = counts.get(index).context("counter resource entry not found")?;
+
+                        Ok(*count)
+                    }
+
+                    async fn increment_by(&self, _cx: Option<async_nats::HeaderMap>, self_: ResourceBorrow<CounterRep>, num: u32) -> anyhow::Result<()> {
+                        let handle_blob: Vec<u8> = self_.into();
+
+                        let index_bytes: [u8; 8] = handle_blob[0..8].try_into().context("failed to decode counter resource handle")?;
+                        let index = usize::from_ne_bytes(index_bytes);
+                        
+                        let mut counts = self.counts.write().await;
+                        let count = counts.get_mut(index).context("counter resource entry not found")?;
+
+                        *count += num;
+
+                        Ok(())
+                    }
+
+                    async fn sum(&self, _cx: Option<async_nats::HeaderMap>, a: ResourceBorrow<CounterRep>, b: ResourceBorrow<CounterRep>) -> anyhow::Result<u32> {
+                        let a_handle_blob: Vec<u8> = a.into();
+                        let b_handle_blob: Vec<u8> = b.into();
+
+                        let a_index_bytes: [u8; 8] = a_handle_blob[0..8].try_into().context("failed to decode counter resource handle")?;
+                        let b_index_bytes: [u8; 8] = b_handle_blob[0..8].try_into().context("failed to decode counter resource handle")?;
+
+                        let a_index = usize::from_ne_bytes(a_index_bytes);
+                        let b_index = usize::from_ne_bytes(b_index_bytes);
+                        
+                        let counts = self.counts.write().await;
+                        let a_count = counts.get(a_index).context("counter resource entry not found")?;
+                        let b_count = counts.get(b_index).context("counter resource entry not found")?;
+
+                        Ok(*a_count + *b_count)
+                    }
+                }
 
                 impl Handler<Option<async_nats::HeaderMap>> for Component {
                     async fn f(
@@ -129,7 +219,7 @@ async fn rust_bindgen() -> anyhow::Result<()> {
                         _cx: Option<async_nats::HeaderMap>,
                         x: String,
                     ) -> anyhow::Result<u32> {
-                        let stored = self.0.read().await.as_ref().unwrap().to_string();
+                        let stored = self.inner.read().await.as_ref().unwrap().to_string();
                         assert_eq!(stored, x);
                         Ok(42)
                     }
@@ -176,7 +266,7 @@ async fn rust_bindgen() -> anyhow::Result<()> {
                         _cx: Option<async_nats::HeaderMap>,
                         x: String,
                     ) -> anyhow::Result<()> {
-                        let old = self.0.write().await.replace(x);
+                        let old = self.inner.write().await.replace(x);
                         assert!(old.is_none());
                         Ok(())
                     }
@@ -201,6 +291,16 @@ async fn rust_bindgen() -> anyhow::Result<()> {
                             fallible: func() -> result<bool, string>;
                             numbers: func() -> tuple<u8, u16, u32, u64, s8, s16, s32, s64, f32, f64>;
                             with-flags: func() -> abc;
+
+                            resource counter {
+                                constructor(initial: u32);
+                                clone-counter: func() -> counter;
+
+                                get-count: func() -> u32;
+                                increment-by: func(num: u32);
+
+                                sum: static func(a: borrow<counter>, b: borrow<counter>) -> u32;
+                            }
                         }
 
                         world test {
@@ -259,6 +359,32 @@ async fn rust_bindgen() -> anyhow::Result<()> {
                             .await
                             .context("failed to call `wrpc-test:integration/shared.with-flags`")?;
                         assert_eq!(v, Abc::A | Abc::C);
+
+                        let counter = wrpc_test::integration::shared::Counter::new(self.0.as_ref(), 0)
+                            .await
+                            .context("failed to call `wrpc-test:integration/shared.[constructor]counter`")?;
+                        counter.increment_by(self.0.as_ref(), 1)
+                            .await
+                            .context("failed to call `wrpc-test:integration/shared.[method]counter-increment-by`")?;
+                        let count = counter.get_count(self.0.as_ref())
+                            .await
+                            .context("failed to call `wrpc-test:integration/shared.[method]counter-get-count`")?;
+                        assert_eq!(count, 1);
+                        counter.increment_by(self.0.as_ref(), 2)
+                            .await
+                            .context("failed to call `wrpc-test:integration/shared.[method]counter-increment-by`")?;
+                        let count = counter.get_count(self.0.as_ref())
+                            .await
+                            .context("failed to call `wrpc-test:integration/shared.[method]counter-get-count`")?;
+                        assert_eq!(count, 3);
+                        let second_counter = counter.clone_counter(self.0.as_ref())
+                            .await
+                            .context("failed to call `wrpc-test:integration/shared.[method]counter-clone-counter`")?;
+                        let sum = wrpc_test::integration::shared::Counter::sum(self.0.as_ref(), counter, second_counter).
+                            await
+                            .context("failed to call `wrpc-test:integration/shared.[static]counter-sum")?;
+                        assert_eq!(sum, 6);
+
                         Ok("bar".to_string())
                     }
                 }

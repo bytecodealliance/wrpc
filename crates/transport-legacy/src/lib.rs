@@ -2731,19 +2731,19 @@ impl Encode for Value {
 }
 
 // Resource Handles
-#[derive(Debug, Clone)]
-pub struct ResourceOwn<T: Clone + Send + Sync> {
+#[derive(Debug)]
+pub struct ResourceOwn<T: Send + Sync> {
     data: Vec<u8>,
     _ty: PhantomData<T>,
 }
 
-impl<T: Clone + Send + Sync> AsRef<[u8]> for ResourceOwn<T> {
+impl<T: Send + Sync> AsRef<[u8]> for ResourceOwn<T> {
     fn as_ref(&self) -> &[u8] {
         &self.data
     }
 }
 
-impl<T: Clone + Send + Sync> From<Vec<u8>> for ResourceOwn<T> {
+impl<T: Send + Sync> From<Vec<u8>> for ResourceOwn<T> {
     fn from(value: Vec<u8>) -> Self {
         Self {
             data: value,
@@ -2752,14 +2752,14 @@ impl<T: Clone + Send + Sync> From<Vec<u8>> for ResourceOwn<T> {
     }
 }
 
-impl<T: Clone + Send + Sync> From<ResourceOwn<T>> for Vec<u8> {
+impl<T: Send + Sync> From<ResourceOwn<T>> for Vec<u8> {
     fn from(value: ResourceOwn<T>) -> Self {
         value.data
     }
 }
 
 #[async_trait]
-impl<T: Clone + Send + Sync> Encode for ResourceOwn<T> {
+impl<T: Send + Sync> Encode for ResourceOwn<T> {
     async fn encode(
         self,
         payload: &mut (impl bytes::BufMut + Send),
@@ -2769,7 +2769,7 @@ impl<T: Clone + Send + Sync> Encode for ResourceOwn<T> {
 }
 
 #[async_trait]
-impl<T: Clone + Send + Sync> Encode for &ResourceOwn<T> {
+impl<T: Send + Sync> Encode for &ResourceOwn<T> {
     async fn encode(
         self,
         payload: &mut (impl bytes::BufMut + Send),
@@ -2779,7 +2779,7 @@ impl<T: Clone + Send + Sync> Encode for &ResourceOwn<T> {
 }
 
 #[async_trait]
-impl<'a, T: Clone + Send + Sync> Receive<'a> for ResourceOwn<T> {
+impl<'a, T: Send + Sync> Receive<'a> for ResourceOwn<T> {
     #[instrument(level = "trace", skip_all, fields(ty = "resource"))]
     async fn receive<S>(
         payload: impl Buf + Send + 'a,
@@ -2794,21 +2794,21 @@ impl<'a, T: Clone + Send + Sync> Receive<'a> for ResourceOwn<T> {
     }
 }
 
-impl<T: Clone + Send + Sync> Subscribe for ResourceOwn<T> {}
+impl<T: Send + Sync> Subscribe for ResourceOwn<T> {}
 
-#[derive(Debug, Clone)]
-pub struct ResourceBorrow<T: Clone + Send + Sync> {
+#[derive(Debug)]
+pub struct ResourceBorrow<T: Send + Sync> {
     data: Vec<u8>,
     _ty: PhantomData<T>,
 }
 
-impl<T: Clone + Send + Sync> AsRef<[u8]> for ResourceBorrow<T> {
+impl<T: Send + Sync> AsRef<[u8]> for ResourceBorrow<T> {
     fn as_ref(&self) -> &[u8] {
         &self.data
     }
 }
 
-impl<T: Clone + Send + Sync> From<Vec<u8>> for ResourceBorrow<T> {
+impl<T: Send + Sync> From<Vec<u8>> for ResourceBorrow<T> {
     fn from(value: Vec<u8>) -> Self {
         Self {
             data: value,
@@ -2817,14 +2817,14 @@ impl<T: Clone + Send + Sync> From<Vec<u8>> for ResourceBorrow<T> {
     }
 }
 
-impl<T: Clone + Send + Sync> From<ResourceBorrow<T>> for Vec<u8> {
+impl<T: Send + Sync> From<ResourceBorrow<T>> for Vec<u8> {
     fn from(value: ResourceBorrow<T>) -> Self {
         value.data
     }
 }
 
 #[async_trait]
-impl<T: Clone + Send + Sync> Encode for ResourceBorrow<T> {
+impl<T: Send + Sync> Encode for ResourceBorrow<T> {
     async fn encode(
         self,
         payload: &mut (impl bytes::BufMut + Send),
@@ -2834,7 +2834,7 @@ impl<T: Clone + Send + Sync> Encode for ResourceBorrow<T> {
 }
 
 #[async_trait]
-impl<T: Clone + Send + Sync> Encode for &ResourceBorrow<T> {
+impl<T: Send + Sync> Encode for &ResourceBorrow<T> {
     async fn encode(
         self,
         payload: &mut (impl bytes::BufMut + Send),
@@ -2844,7 +2844,7 @@ impl<T: Clone + Send + Sync> Encode for &ResourceBorrow<T> {
 }
 
 #[async_trait]
-impl<'a, T: Clone + Send + Sync> Receive<'a> for ResourceBorrow<T> {
+impl<'a, T: Send + Sync> Receive<'a> for ResourceBorrow<T> {
     #[instrument(level = "trace", skip_all, fields(ty = "resource"))]
     async fn receive<S>(
         payload: impl Buf + Send + 'a,
@@ -2859,7 +2859,7 @@ impl<'a, T: Clone + Send + Sync> Receive<'a> for ResourceBorrow<T> {
     }
 }
 
-impl<T: Clone + Send + Sync> Subscribe for ResourceBorrow<T> {}
+impl<T: Send + Sync> Subscribe for ResourceBorrow<T> {}
 
 pub trait Acceptor {
     type Subject;

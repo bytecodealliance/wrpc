@@ -267,9 +267,9 @@ mod owned_resource_deref_mut {
         ",
     });
 
-    // pub struct MyResource {
-    //     data: u32,
-    // }
+    pub struct MyResource {
+        data: u32,
+    }
 
     impl<Ctx: Send> exports::my::inline::foo::HandlerBar<Ctx> for Component {
         async fn new(&self, cx: Ctx, data: u32) -> anyhow::Result<ResourceOwn<BarRep>> {
@@ -282,13 +282,6 @@ mod owned_resource_deref_mut {
 
         async fn consume(&self, cx: Ctx, mut _this: ResourceOwn<BarRep>) -> anyhow::Result<u32> {
             todo!();
-            //let me = this.get::<Ctx, MyResource>();
-            //let prior_data: &u32 = &me.data;
-            //let new_data = prior_data + 1;
-            //let me = this.get_mut::<Ctx, MyResource>();
-            //let mutable_data: &mut u32 = &mut me.data;
-            //*mutable_data = new_data;
-            //Ok(me.data)
         }
     }
 
@@ -323,7 +316,7 @@ mod package_with_versions {
         ",
     });
 
-    // pub struct MyResource;
+    pub struct MyResource;
 
     impl<Ctx: Send> exports::my::inline::foo::HandlerBar<Ctx> for Component {
         async fn new(&self, cx: Ctx) -> anyhow::Result<ResourceOwn<BarRep>> {
@@ -337,8 +330,7 @@ mod package_with_versions {
     impl<Ctx: Send> exports::my::inline::foo::Handler<Ctx> for Component {}
 
     async fn serve_exports(wrpc: &impl wrpc_transport_legacy::Client) {
-        // TODO: Support resources
-        //serve(wrpc, Component, async {}).await.unwrap();
+        serve(wrpc, Component, async {}).await.unwrap();
     }
 }
 
@@ -483,7 +475,7 @@ mod with_and_resources {
 
                 world dummy {
                     use foo.{a};
-                    // import bar: func(m: a);
+                    import bar: func(m: a);
                 }
             ",
         });
@@ -655,7 +647,7 @@ mod example_4 {
         package example:exported-resources;
 
         world import-some-resources {
-            export logging;
+            import logging;
         }
 
         interface logging {
