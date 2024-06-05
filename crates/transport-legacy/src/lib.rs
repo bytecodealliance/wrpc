@@ -2774,7 +2774,7 @@ impl<T: Send + Sync> Encode for &ResourceOwn<T> {
         self,
         payload: &mut (impl bytes::BufMut + Send),
     ) -> anyhow::Result<Option<AsyncValue>> {
-        self.data.clone().encode(payload).await
+        self.data.as_slice().encode(payload).await
     }
 }
 
@@ -2839,7 +2839,7 @@ impl<T: Send + Sync> Encode for &ResourceBorrow<T> {
         self,
         payload: &mut (impl bytes::BufMut + Send),
     ) -> anyhow::Result<Option<AsyncValue>> {
-        self.data.clone().encode(payload).await
+        self.data.as_slice().encode(payload).await
     }
 }
 
