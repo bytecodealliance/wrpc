@@ -482,7 +482,7 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
         true
     }
 
-    fn generate_interface_trait<'a>(&mut self, trait_name: &str, methods: &[Source]) {
+    fn generate_interface_trait(&mut self, trait_name: &str, methods: &[Source]) {
         uwriteln!(self.src, "pub trait {trait_name}<Ctx> {{");
         for method in methods {
             self.src.push_str(method);
