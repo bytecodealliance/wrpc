@@ -6,6 +6,11 @@ use bytes::Bytes;
 use futures::Stream;
 use tokio::io::{AsyncRead, AsyncWrite};
 
+#[cfg(feature = "frame")]
+pub mod frame;
+#[cfg(feature = "frame")]
+pub use frame::{Decoder as FrameDecoder, Encoder as FrameEncoder, FrameRef};
+
 /// `Index` implementations are capable of multiplexing underlying connections using a particular
 /// structural `path`
 pub trait Index<T> {

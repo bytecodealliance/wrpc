@@ -9,19 +9,25 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+default = ["frame"]
+frame = [
+    "dep:tokio-util",
+    "dep:tracing",
+    "dep:wasm-tokio",
+    "tokio-util/codec",
+    "tracing/attributes",
+]
+
 [dependencies]
-anyhow = { workspace = true, features = ["std"] }
 async-trait = { workspace = true }
 bytes = { workspace = true }
 futures = { workspace = true }
-leb128 = { workspace = true }
 tokio = { workspace = true }
-tracing = { workspace = true, features = ["attributes"] }
-wasm-tokio = { workspace = true }
+tokio-util = { workspace = true, optional = true }
+tracing = { workspace = true, optional = true }
+wasm-tokio = { workspace = true, optional = true }
 
 [dev-dependencies]
-tracing-subscriber = { workspace = true, features = [
-    "ansi",
-    "env-filter",
-    "fmt",
-] }
+test-log = { workspace = true, features = ["color", "log", "trace"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
