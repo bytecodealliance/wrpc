@@ -103,13 +103,18 @@ clap = { version = "4", default-features = false }
 futures = { version = "0.3", default-features = false }
 heck = { version = "0.5", default-features = false }
 leb128 = { version = "0.2", default-features = false }
+pin-project-lite = { version = "0.2", default-features = false }
 proc-macro2 = { version = "1", default-features = false }
+quinn = { version = "0.11", default-features = false }
 quote = { version = "1", default-features = false }
+rcgen = { version = "0.13", default-features = false }
 reqwest = { version = "0.11", default-features = false }
+rustls = { version = "0.23", default-features = false }
 serde = { version = "1", default-features = false }
 serde_json = { version = "1", default-features = false }
 syn = { version = "2", default-features = false, features = ["printing"] }
 test-helpers = { default-features = false, path = "./crates/test-helpers" }
+test-log = { version = "0.2", default-features = false }
 tokio = { version = "1", default-features = false }
 tokio-stream = { version = "0.1", default-features = false }
 tokio-util = { version = "0.7", default-features = false }
