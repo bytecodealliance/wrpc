@@ -20,8 +20,8 @@ use tracing::{error, trace};
 use tracing::{instrument, warn};
 use wasm_tokio::cm::AsyncReadValue as _;
 use wasm_tokio::{
-    AsyncReadCore as _, AsyncReadLeb128 as _, AsyncReadUtf8 as _, CoreStringEncoder, Leb128Encoder,
-    Utf8Encoder,
+    AsyncReadCore as _, AsyncReadLeb128 as _, AsyncReadUtf8 as _, CoreNameEncoder, Leb128Encoder,
+    Utf8Codec,
 };
 use wasmtime::component::types::{self, Case, Field};
 use wasmtime::component::{Linker, ResourceType, Type, Val};
@@ -171,9 +171,9 @@ where
                 Ok(())
             }
             (Val::Char(v), Type::Char) => {
-                Utf8Encoder.encode(*v, dst).context("failed to encode char")
+                Utf8Codec.encode(*v, dst).context("failed to encode char")
             }
-            (Val::String(v), Type::String) => CoreStringEncoder
+            (Val::String(v), Type::String) => CoreNameEncoder
                 .encode(v.as_str(), dst)
                 .context("failed to encode string"),
             (Val::List(vs), Type::List(ty)) => {
@@ -502,14 +502,14 @@ where
                         let RemoteResource(id) = table
                             .delete(resource)
                             .context("failed to delete remote resource")?;
-                        CoreStringEncoder
+                        CoreNameEncoder
                             .encode(id, dst)
                             .context("failed to encode resource ID")
                     } else {
                         let RemoteResource(id) = table
                             .get(&resource)
                             .context("failed to get remote resource")?;
-                        CoreStringEncoder
+                        CoreNameEncoder
                             .encode(id.as_str(), dst)
                             .context("failed to encode resource ID")
                     }
@@ -604,7 +604,7 @@ where
         }
         Type::String => {
             let mut s = String::default();
-            r.read_core_string(&mut s).await?;
+            r.read_core_name(&mut s).await?;
             *val = Val::String(s);
             Ok(())
         }
@@ -787,7 +787,7 @@ where
             } else {
                 let mut store = store.as_context_mut();
                 let mut s = String::default();
-                r.read_core_string(&mut s).await?;
+                r.read_core_name(&mut s).await?;
                 let table = store.data_mut().table();
                 let resource = table
                     .push(RemoteResource(s))
