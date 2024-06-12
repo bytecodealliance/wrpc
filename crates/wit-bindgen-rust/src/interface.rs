@@ -1174,7 +1174,7 @@ pub async fn serve_interface<T: {wrpc_transport}::Client, U>(
                 match mode.style {
                     TypeOwnershipStyle::Owned => {}
                     TypeOwnershipStyle::OnlyTopBorrowed | TypeOwnershipStyle::Borrowed => {
-                        self.push_str("Borrow")
+                        self.push_str("Borrow");
                     }
                 };
             }

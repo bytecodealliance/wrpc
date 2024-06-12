@@ -21,7 +21,7 @@ use tokio::try_join;
 use tokio_util::codec::Encoder;
 use tokio_util::io::StreamReader;
 use tracing::{instrument, trace, warn};
-use wasm_tokio::{AsyncReadCore as _, CoreStringEncoder};
+use wasm_tokio::{AsyncReadCore as _, CoreNameEncoder};
 use wrpc_transport::Index as _;
 
 pub const PROTOCOL: &str = "wrpc.0.0.1";
@@ -219,14 +219,14 @@ impl SubscriberTree {
         };
         match self {
             Self::Empty | Self::Leaf(..) => None,
+            Self::IndexNode { ref mut nested, .. } => nested
+                .get_mut(*i)
+                .and_then(|nested| nested.as_mut().and_then(|nested| nested.take(path))),
             Self::WildcardNode { .. } => None,
             // TODO: Demux the subscription
             //Self::WildcardNode { ref mut nested, .. } => {
             //    nested.as_mut().and_then(|nested| nested.take(path))
             //}
-            Self::IndexNode { ref mut nested, .. } => nested
-                .get_mut(*i)
-                .and_then(|nested| nested.as_mut().and_then(|nested| nested.take(path))),
         }
     }
 
@@ -852,10 +852,10 @@ impl<O: AsyncWrite + Send> wrpc_transport::Session for Session<O> {
     ) -> Result<Result<(), Self::Error>, Self::TransportError> {
         if let Err(err) = res {
             let mut buf = BytesMut::with_capacity(5 + err.len());
-            if let Err(err) = CoreStringEncoder.encode(err, &mut buf) {
+            if let Err(err) = CoreNameEncoder.encode(err, &mut buf) {
                 warn!(?err, "failed to encode error");
                 buf.clear();
-                if let Err(err) = CoreStringEncoder.encode(err.to_string(), &mut buf) {
+                if let Err(err) = CoreNameEncoder.encode(err.to_string(), &mut buf) {
                     warn!(?err, "failed to encode encoding error");
                     buf.clear();
                 }
@@ -875,7 +875,7 @@ impl<O: AsyncWrite + Send> wrpc_transport::Session for Session<O> {
         if (incoming.as_mut().peek().await).is_some() {
             let mut err = String::new();
             StreamReader::new(incoming)
-                .read_core_string(&mut err)
+                .read_core_name(&mut err)
                 .await
                 .context("failed to read error string")?;
             Ok(Err(err))
