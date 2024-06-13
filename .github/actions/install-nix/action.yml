@@ -17,5 +17,5 @@ runs:
   - uses: cachix/cachix-action@v15
     continue-on-error: true
     with:
-      name: wrpc
+      name: bytecodealliance
       authToken: '${{ inputs.cachixAuthToken }}'
