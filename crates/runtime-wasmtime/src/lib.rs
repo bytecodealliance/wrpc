@@ -823,9 +823,8 @@ pub fn polyfill<'a, T, C, V>(
     C::Error: Into<wasmtime::Error>,
     C::Context: Clone + 'static,
     <C::Session as Session>::TransportError: Into<wasmtime::Error>,
-    <C::Outgoing as wrpc_transport::Index<C::NestedOutgoing>>::Error: Into<wasmtime::Error>,
-    C::NestedOutgoing: 'static,
-    <C::NestedOutgoing as wrpc_transport::Index<C::NestedOutgoing>>::Error: Into<wasmtime::Error>,
+    <C::Outgoing as wrpc_transport::Index<C::Outgoing>>::Error: Into<wasmtime::Error>,
+    C::Outgoing: 'static,
     C::Incoming: Unpin + Sized + 'static,
     <C::Incoming as wrpc_transport::Index<C::Incoming>>::Error:
         Into<Box<dyn std::error::Error + Send + Sync>>,
