@@ -15,7 +15,7 @@ use async_nats::{HeaderMap, Message, ServerInfo, StatusCode, Subject, Subscriber
 use bytes::{Buf as _, Bytes, BytesMut};
 use futures::sink::SinkExt as _;
 use futures::{Stream, StreamExt};
-use tokio::io::{AsyncWrite, AsyncWriteExt as _};
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt as _, ReadBuf};
 use tokio::sync::oneshot;
 use tokio::try_join;
 use tokio_util::codec::Encoder;
@@ -313,11 +313,11 @@ pub struct Reader {
     nested: Arc<std::sync::Mutex<SubscriberTree>>,
 }
 
-impl wrpc_transport::Index<Reader> for Reader {
+impl wrpc_transport::Index<Self> for Reader {
     type Error = anyhow::Error;
 
     #[instrument(level = "trace", skip_all)]
-    fn index(&self, path: &[usize]) -> anyhow::Result<Reader> {
+    fn index(&self, path: &[usize]) -> anyhow::Result<Self> {
         let mut nested = self
             .nested
             .lock()
@@ -331,12 +331,12 @@ impl wrpc_transport::Index<Reader> for Reader {
     }
 }
 
-impl tokio::io::AsyncRead for Reader {
+impl AsyncRead for Reader {
     #[instrument(level = "trace", skip_all)]
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-        buf: &mut tokio::io::ReadBuf<'_>,
+        buf: &mut ReadBuf<'_>,
     ) -> Poll<std::io::Result<()>> {
         let cap = buf.remaining();
         if cap == 0 {
@@ -384,11 +384,11 @@ impl SubjectWriter {
     }
 }
 
-impl wrpc_transport::Index<SubjectWriter> for SubjectWriter {
+impl wrpc_transport::Index<Self> for SubjectWriter {
     type Error = Infallible;
 
     #[instrument(level = "trace", skip_all)]
-    fn index(&self, path: &[usize]) -> Result<SubjectWriter, Self::Error> {
+    fn index(&self, path: &[usize]) -> Result<Self, Self::Error> {
         Ok(Self {
             nats: Arc::clone(&self.nats),
             tx: index_path(self.tx.as_str(), path).into(),
@@ -397,7 +397,7 @@ impl wrpc_transport::Index<SubjectWriter> for SubjectWriter {
     }
 }
 
-impl tokio::io::AsyncWrite for SubjectWriter {
+impl AsyncWrite for SubjectWriter {
     #[instrument(level = "trace", skip_all)]
     fn poll_write(
         mut self: Pin<&mut Self>,
@@ -439,7 +439,7 @@ impl tokio::io::AsyncWrite for SubjectWriter {
 }
 
 #[derive(Debug, Default)]
-pub enum ParamWriter {
+pub enum RootParamWriter {
     #[default]
     Corrupted,
     Handshaking {
@@ -456,7 +456,7 @@ pub enum ParamWriter {
     Active(SubjectWriter),
 }
 
-impl ParamWriter {
+impl RootParamWriter {
     fn new(
         tx: SubjectWriter,
         sub: Subscriber,
@@ -473,7 +473,7 @@ impl ParamWriter {
     }
 }
 
-impl ParamWriter {
+impl RootParamWriter {
     #[instrument(level = "trace", skip_all)]
     fn poll_active(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
         match &mut *self {
@@ -584,7 +584,7 @@ impl ParamWriter {
     }
 }
 
-impl wrpc_transport::Index<IndexedParamWriter> for ParamWriter {
+impl wrpc_transport::Index<IndexedParamWriter> for RootParamWriter {
     type Error = std::io::Error;
 
     #[instrument(level = "trace", skip_all)]
@@ -610,7 +610,7 @@ impl wrpc_transport::Index<IndexedParamWriter> for ParamWriter {
     }
 }
 
-impl tokio::io::AsyncWrite for ParamWriter {
+impl AsyncWrite for RootParamWriter {
     #[instrument(level = "trace", skip_all)]
     fn poll_write(
         mut self: Pin<&mut Self>,
@@ -730,7 +730,7 @@ impl wrpc_transport::Index<Self> for IndexedParamWriter {
     }
 }
 
-impl tokio::io::AsyncWrite for IndexedParamWriter {
+impl AsyncWrite for IndexedParamWriter {
     #[instrument(level = "trace", skip_all)]
     fn poll_write(
         mut self: Pin<&mut Self>,
@@ -778,13 +778,57 @@ impl tokio::io::AsyncWrite for IndexedParamWriter {
     }
 }
 
+pub enum ParamWriter {
+    Root(RootParamWriter),
+    Nested(IndexedParamWriter),
+}
+
+impl wrpc_transport::Index<Self> for ParamWriter {
+    type Error = std::io::Error;
+
+    fn index(&self, path: &[usize]) -> Result<Self, Self::Error> {
+        match self {
+            ParamWriter::Root(w) => w.index(path),
+            ParamWriter::Nested(w) => w.index(path),
+        }
+        .map(Self::Nested)
+    }
+}
+
+impl AsyncWrite for ParamWriter {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        match &mut *self {
+            ParamWriter::Root(w) => pin!(w).poll_write(cx, buf),
+            ParamWriter::Nested(w) => pin!(w).poll_write(cx, buf),
+        }
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        match &mut *self {
+            ParamWriter::Root(w) => pin!(w).poll_flush(cx),
+            ParamWriter::Nested(w) => pin!(w).poll_flush(cx),
+        }
+    }
+
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        match &mut *self {
+            ParamWriter::Root(w) => pin!(w).poll_shutdown(cx),
+            ParamWriter::Nested(w) => pin!(w).poll_shutdown(cx),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum ClientErrorWriter {
     Handshaking(oneshot::Receiver<SubjectWriter>),
     Active(SubjectWriter),
 }
 
-impl tokio::io::AsyncWrite for ClientErrorWriter {
+impl AsyncWrite for ClientErrorWriter {
     #[instrument(level = "trace", skip_all)]
     fn poll_write(
         mut self: Pin<&mut Self>,
@@ -890,7 +934,6 @@ impl wrpc_transport::Invoke for Client {
     type Context = Option<HeaderMap>;
     type Session = Session<ClientErrorWriter>;
     type Outgoing = ParamWriter;
-    type NestedOutgoing = IndexedParamWriter;
     type Incoming = Reader;
 
     #[instrument(level = "trace", skip(self))]
@@ -979,7 +1022,7 @@ impl wrpc_transport::Invoke for Client {
         .context("failed to send handshake")?;
         let (error_tx_tx, error_tx_rx) = oneshot::channel();
         Ok(wrpc_transport::Invocation {
-            outgoing: ParamWriter::new(
+            outgoing: ParamWriter::Root(RootParamWriter::new(
                 SubjectWriter::new(
                     Arc::clone(&self.nats),
                     param_tx.clone(),
@@ -988,7 +1031,7 @@ impl wrpc_transport::Invoke for Client {
                 handshake_rx,
                 error_tx_tx,
                 params,
-            ),
+            )),
             incoming: Reader {
                 buffer: Bytes::default(),
                 incoming: result_rx,

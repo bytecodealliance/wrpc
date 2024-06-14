@@ -741,7 +741,6 @@ impl wrpc_transport::Invoke for Client {
     type Context = ();
     type Session = Session;
     type Outgoing = Outgoing;
-    type NestedOutgoing = Outgoing;
     type Incoming = Incoming;
 
     #[instrument(level = "trace", skip(self))]

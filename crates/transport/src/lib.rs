@@ -62,10 +62,7 @@ pub trait Invoke: Sync + Send {
     type Session: Session + Sync + Send;
 
     /// Outgoing multiplexed byte stream
-    type Outgoing: AsyncWrite + Index<Self::NestedOutgoing> + Sync + Send;
-
-    /// Outgoing multiplexed byte stream, nested at a particular path
-    type NestedOutgoing: AsyncWrite + Index<Self::NestedOutgoing> + Sync + Send;
+    type Outgoing: AsyncWrite + Index<Self::Outgoing> + Sync + Send;
 
     /// Incoming multiplexed byte stream
     type Incoming: AsyncRead + Index<Self::Incoming> + Sync + Send;
