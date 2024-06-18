@@ -3880,7 +3880,7 @@ checksum = "1e9df38ee2d2c3c5948ea468a8406ff0db0b29ae1ffde1bcf20ef305bcc95c51"
 
 [[package]]
 name = "wrpc"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "async-nats",
@@ -3947,7 +3947,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc-transport"
-version = "0.25.1"
+version = "0.26.0"
 dependencies = [
  "anyhow",
  "async-trait",
