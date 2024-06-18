@@ -4,23 +4,19 @@ use core::future::Future;
 
 use std::net::Ipv6Addr;
 use std::process::ExitStatus;
+use std::sync::Arc;
 
 use anyhow::Context;
+use quinn::crypto::rustls::QuicClientConfig;
+use quinn::{ClientConfig, EndpointConfig, ServerConfig, TokioRuntime};
+use rcgen::{generate_simple_self_signed, CertifiedKey};
+use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
+use rustls::version::TLS13;
 use tokio::net::TcpListener;
 use tokio::process::Command;
 use tokio::sync::{mpsc, oneshot, OnceCell};
 use tokio::task::JoinHandle;
 use tokio::{select, spawn};
-
-static INIT: OnceCell<()> = OnceCell::const_new();
-
-async fn init_log() {
-    wrpc_cli::tracing::init();
-}
-
-pub async fn init() {
-    INIT.get_or_init(init_log).await;
-}
 
 async fn free_port() -> anyhow::Result<u16> {
     TcpListener::bind((Ipv6Addr::LOCALHOST, 0))
@@ -87,4 +83,72 @@ where
         .context("failed to await NATS.io server stop")?
         .context("NATS.io server failed to stop")?;
     Ok(res)
+}
+
+pub async fn with_quic<T, Fut>(
+    names: &[&str],
+    f: impl FnOnce(u16, quinn::Endpoint, quinn::Endpoint) -> Fut,
+) -> anyhow::Result<T>
+where
+    Fut: Future<Output = anyhow::Result<T>>,
+{
+    let CertifiedKey {
+        cert: srv_crt,
+        key_pair: srv_key,
+    } = generate_simple_self_signed(
+        names
+            .iter()
+            .map(|name| format!("{name}.server.wrpc"))
+            .collect::<Vec<_>>(),
+    )
+    .context("failed to generate server certificate")?;
+    let CertifiedKey {
+        cert: clt_crt,
+        key_pair: clt_key,
+    } = generate_simple_self_signed(
+        names
+            .iter()
+            .map(|name| format!("{name}.client.wrpc"))
+            .collect::<Vec<_>>(),
+    )
+    .context("failed to generate client certificate")?;
+    let srv_crt = CertificateDer::from(srv_crt);
+
+    let mut ca = rustls::RootCertStore::empty();
+    ca.add(srv_crt.clone())?;
+    let clt_cnf = rustls::ClientConfig::builder_with_protocol_versions(&[&TLS13])
+        .with_root_certificates(ca)
+        .with_client_auth_cert(
+            vec![clt_crt.into()],
+            PrivatePkcs8KeyDer::from(clt_key.serialize_der()).into(),
+        )
+        .context("failed to create client config")?;
+    let clt_cnf: QuicClientConfig = clt_cnf
+        .try_into()
+        .context("failed to convert rustls client config to QUIC client config")?;
+    let srv_cnf = ServerConfig::with_single_cert(
+        vec![srv_crt],
+        PrivatePkcs8KeyDer::from(srv_key.serialize_der()).into(),
+    )
+    .expect("failed to create server config");
+
+    let mut clt_ep = quinn::Endpoint::client((Ipv6Addr::LOCALHOST, 0).into())
+        .context("failed to create client endpoint")?;
+    clt_ep.set_default_client_config(ClientConfig::new(Arc::new(clt_cnf)));
+
+    let srv_sock = std::net::UdpSocket::bind((Ipv6Addr::LOCALHOST, 0))
+        .context("failed to open a UDP socket")?;
+    let srv_addr = srv_sock
+        .local_addr()
+        .context("failed to query server address")?;
+    let srv_ep = quinn::Endpoint::new(
+        EndpointConfig::default(),
+        Some(srv_cnf),
+        srv_sock,
+        Arc::new(TokioRuntime),
+    )
+    .context("failed to create server endpoint")?;
+    f(srv_addr.port(), clt_ep, srv_ep)
+        .await
+        .context("closure failed")
 }

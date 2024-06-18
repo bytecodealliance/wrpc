@@ -373,9 +373,7 @@ pin_project! {
 }
 
 impl wrpc_transport::Index<Self> for Incoming {
-    type Error = std::io::Error;
-
-    fn index(&self, path: &[usize]) -> Result<Self, Self::Error> {
+    fn index(&self, path: &[usize]) -> anyhow::Result<Self> {
         match self {
             Self::Accepting {
                 index, path: base, ..
@@ -460,9 +458,7 @@ pin_project! {
 }
 
 impl wrpc_transport::Index<Self> for Outgoing {
-    type Error = std::io::Error;
-
-    fn index(&self, path: &[usize]) -> Result<Self, Self::Error> {
+    fn index(&self, path: &[usize]) -> anyhow::Result<Self> {
         let mut header = BytesMut::with_capacity(path.len().saturating_add(5));
         let depth = path.len();
         let n = u32::try_from(depth)
@@ -577,14 +573,8 @@ impl Session {
 }
 
 impl wrpc_transport::Session for Session {
-    type Error = String;
-    type TransportError = anyhow::Error;
-
     #[instrument(level = "trace", skip_all)]
-    async fn finish(
-        mut self,
-        res: Result<(), Self::Error>,
-    ) -> Result<Result<(), Self::Error>, Self::TransportError> {
+    async fn finish(mut self, res: Result<(), &str>) -> anyhow::Result<Result<(), String>> {
         if let Err(err) = res {
             let mut buf = BytesMut::with_capacity(6 + err.len());
             buf.put_u8(0x01);
@@ -737,7 +727,6 @@ async fn demux_connection(
 }
 
 impl wrpc_transport::Invoke for Client {
-    type Error = anyhow::Error;
     type Context = ();
     type Session = Session;
     type Outgoing = Outgoing;
@@ -751,7 +740,7 @@ impl wrpc_transport::Invoke for Client {
         func: &str,
         params: Bytes,
         paths: &[&[Option<usize>]],
-    ) -> Result<Invocation, Self::Error> {
+    ) -> anyhow::Result<Invocation> {
         let san = san(instance, func);
         trace!(?san, "establishing connection");
         let conn = self
@@ -889,7 +878,6 @@ async fn serve_connection(
 }
 
 impl wrpc_transport::Serve for Server {
-    type Error = anyhow::Error;
     type Context = ();
     type Session = Session;
     type Outgoing = Outgoing;
@@ -901,8 +889,7 @@ impl wrpc_transport::Serve for Server {
         instance: &str,
         func: &str,
         paths: &[&[Option<usize>]],
-    ) -> Result<impl Stream<Item = Result<(Self::Context, Invocation), Self::Error>>, Self::Error>
-    {
+    ) -> anyhow::Result<impl Stream<Item = anyhow::Result<(Self::Context, Invocation)>>> {
         let san = san(instance, func);
         let (tx, rx) = mpsc::channel(1024);
         let mut handlers = self.0.lock().await;

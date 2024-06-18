@@ -1,17 +1,22 @@
+mod common;
+
+use core::net::Ipv6Addr;
+use core::pin::pin;
 use core::str;
 use core::time::Duration;
 
 use std::sync::Arc;
 
 use anyhow::Context;
-use futures::FutureExt as _;
+use futures::{FutureExt as _, TryStreamExt as _};
 use tokio::sync::{oneshot, RwLock};
 use tokio::time::sleep;
-use tokio::try_join;
-
-mod common;
-use common::{init, with_nats};
+use tokio::{join, try_join};
+use tracing::instrument;
+use wrpc_transport::{Invoke as _, Serve as _};
 use wrpc_transport_legacy::{ResourceBorrow, ResourceOwn};
+
+use common::{with_nats, with_quic};
 
 // TODO: Migrate
 //#[instrument(skip(client, ty, params, results))]
@@ -82,10 +87,9 @@ use wrpc_transport_legacy::{ResourceBorrow, ResourceOwn};
 //    }
 //}
 
-#[tokio::test(flavor = "multi_thread")]
+#[instrument(ret)]
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn rust_bindgen() -> anyhow::Result<()> {
-    init().await;
-
     with_nats(|_, nats_client| async {
         let client = wrpc_transport_nats_legacy::Client::new(nats_client, "test-prefix".to_string());
         let client = Arc::new(client);
@@ -424,954 +428,1070 @@ async fn rust_bindgen() -> anyhow::Result<()> {
     }).await
 }
 
-// TODO: Migrate
-//#[tokio::test(flavor = "multi_thread")]
-//async fn rust_dynamic() -> anyhow::Result<()> {
-//    init().await;
-//
-//    with_nats(|_, nats_client| async {
-//        let client = wrpc_transport_nats_legacy::Client::new(nats_client, "test-prefix".to_string());
-//        let client = Arc::new(client);
-//
-//        let (params, results) = loopback_dynamic(
-//            client.as_ref(),
-//            "unit_unit",
-//            DynamicFunctionType::Static {
-//                params: vec![].into(),
-//                results: vec![].into(),
-//            },
-//            vec![],
-//            vec![],
-//        )
-//        .await
-//        .context("failed to invoke `unit_unit`")?;
-//        assert!(params.is_empty());
-//        assert!(results.is_empty());
-//
-//        let flat_types = vec![
-//            Type::Bool,
-//            Type::U8,
-//            Type::U16,
-//            Type::U32,
-//            Type::U64,
-//            Type::S8,
-//            Type::S16,
-//            Type::S32,
-//            Type::S64,
-//            Type::F32,
-//            Type::F64,
-//            Type::Char,
-//            Type::String,
-//            Type::Enum,
-//            Type::Flags,
-//        ]
-//        .into();
-//
-//        let flat_variant_type = vec![None, Some(Type::Bool)].into();
-//
-//        let sync_tuple_type = vec![
-//            Type::Bool,
-//            Type::U8,
-//            Type::U16,
-//            Type::U32,
-//            Type::U64,
-//            Type::S8,
-//            Type::S16,
-//            Type::S32,
-//            Type::S64,
-//            Type::F32,
-//            Type::F64,
-//            Type::Char,
-//            Type::String,
-//            Type::List(Arc::new(Type::U64)),
-//            Type::List(Arc::new(Type::Bool)),
-//            Type::Record(Arc::clone(&flat_types)),
-//            Type::Tuple(Arc::clone(&flat_types)),
-//            Type::Variant(Arc::clone(&flat_variant_type)),
-//            Type::Variant(Arc::clone(&flat_variant_type)),
-//            Type::Enum,
-//            Type::Option(Arc::new(Type::Bool)),
-//            Type::Result {
-//                ok: Some(Arc::new(Type::Bool)),
-//                err: Some(Arc::new(Type::Bool)),
-//            },
-//            Type::Flags,
-//        ]
-//        .into();
-//
-//        let (params, results) = loopback_dynamic(
-//            client.as_ref(),
-//            "sync",
-//            DynamicFunctionType::Static {
-//                params: Arc::clone(&sync_tuple_type),
-//                results: sync_tuple_type,
-//            },
-//            vec![
-//                Value::Bool(true),
-//                Value::U8(0xfe),
-//                Value::U16(0xfeff),
-//                Value::U32(0xfeff_ffff),
-//                Value::U64(0xfeff_ffff_ffff_ffff),
-//                Value::S8(0x7e),
-//                Value::S16(0x7eff),
-//                Value::S32(0x7eff_ffff),
-//                Value::S64(0x7eff_ffff_ffff_ffff),
-//                Value::F32(0.42),
-//                Value::F64(0.4242),
-//                Value::Char('a'),
-//                Value::String("test".into()),
-//                Value::List(vec![]),
-//                Value::List(vec![
-//                    Value::Bool(true),
-//                    Value::Bool(false),
-//                    Value::Bool(true),
-//                ]),
-//                Value::Record(vec![
-//                    Value::Bool(true),
-//                    Value::U8(0xfe),
-//                    Value::U16(0xfeff),
-//                    Value::U32(0xfeff_ffff),
-//                    Value::U64(0xfeff_ffff_ffff_ffff),
-//                    Value::S8(0x7e),
-//                    Value::S16(0x7eff),
-//                    Value::S32(0x7eff_ffff),
-//                    Value::S64(0x7eff_ffff_ffff_ffff),
-//                    Value::F32(0.42),
-//                    Value::F64(0.4242),
-//                    Value::Char('a'),
-//                    Value::String("test".into()),
-//                    Value::Enum(0xfeff),
-//                    Value::Flags(0xdead_beef),
-//                ]),
-//                Value::Tuple(vec![
-//                    Value::Bool(true),
-//                    Value::U8(0xfe),
-//                    Value::U16(0xfeff),
-//                    Value::U32(0xfeff_ffff),
-//                    Value::U64(0xfeff_ffff_ffff_ffff),
-//                    Value::S8(0x7e),
-//                    Value::S16(0x7eff),
-//                    Value::S32(0x7eff_ffff),
-//                    Value::S64(0x7eff_ffff_ffff_ffff),
-//                    Value::F32(0.42),
-//                    Value::F64(0.4242),
-//                    Value::Char('a'),
-//                    Value::String("test".into()),
-//                    Value::Enum(0xfeff),
-//                    Value::Flags(0xdead_beef),
-//                ]),
-//                Value::Variant {
-//                    discriminant: 0,
-//                    nested: None,
-//                },
-//                Value::Variant {
-//                    discriminant: 1,
-//                    nested: Some(Box::new(Value::Bool(true))),
-//                },
-//                Value::Enum(0xfeff),
-//                Value::Option(Some(Box::new(Value::Bool(true)))),
-//                Value::Result(Ok(Some(Box::new(Value::Bool(true))))),
-//                Value::Flags(0xdead_beef),
-//            ],
-//            vec![
-//                Value::Bool(true),
-//                Value::U8(0xfe),
-//                Value::U16(0xfeff),
-//                Value::U32(0xfeff_ffff),
-//                Value::U64(0xfeff_ffff_ffff_ffff),
-//                Value::S8(0x7e),
-//                Value::S16(0x7eff),
-//                Value::S32(0x7eff_ffff),
-//                Value::S64(0x7eff_ffff_ffff_ffff),
-//                Value::F32(0.42),
-//                Value::F64(0.4242),
-//                Value::Char('a'),
-//                Value::String("test".into()),
-//                Value::List(vec![]),
-//                Value::List(vec![
-//                    Value::Bool(true),
-//                    Value::Bool(false),
-//                    Value::Bool(true),
-//                ]),
-//                Value::Record(vec![
-//                    Value::Bool(true),
-//                    Value::U8(0xfe),
-//                    Value::U16(0xfeff),
-//                    Value::U32(0xfeff_ffff),
-//                    Value::U64(0xfeff_ffff_ffff_ffff),
-//                    Value::S8(0x7e),
-//                    Value::S16(0x7eff),
-//                    Value::S32(0x7eff_ffff),
-//                    Value::S64(0x7eff_ffff_ffff_ffff),
-//                    Value::F32(0.42),
-//                    Value::F64(0.4242),
-//                    Value::Char('a'),
-//                    Value::String("test".into()),
-//                    Value::Enum(0xfeff),
-//                    Value::Flags(0xdead_beef),
-//                ]),
-//                Value::Tuple(vec![
-//                    Value::Bool(true),
-//                    Value::U8(0xfe),
-//                    Value::U16(0xfeff),
-//                    Value::U32(0xfeff_ffff),
-//                    Value::U64(0xfeff_ffff_ffff_ffff),
-//                    Value::S8(0x7e),
-//                    Value::S16(0x7eff),
-//                    Value::S32(0x7eff_ffff),
-//                    Value::S64(0x7eff_ffff_ffff_ffff),
-//                    Value::F32(0.42),
-//                    Value::F64(0.4242),
-//                    Value::Char('a'),
-//                    Value::String("test".into()),
-//                    Value::Enum(0xfeff),
-//                    Value::Flags(0xdead_beef),
-//                ]),
-//                Value::Variant {
-//                    discriminant: 0,
-//                    nested: None,
-//                },
-//                Value::Variant {
-//                    discriminant: 1,
-//                    nested: Some(Box::new(Value::Bool(true))),
-//                },
-//                Value::Enum(0xfeff),
-//                Value::Option(Some(Box::new(Value::Bool(true)))),
-//                Value::Result(Ok(Some(Box::new(Value::Bool(true))))),
-//                Value::Flags(0xdead_beef),
-//            ],
-//        )
-//        .await
-//        .context("failed to invoke `sync`")?;
-//        let mut values = zip(params, results);
-//        assert!(matches!(
-//            values.next().unwrap(),
-//            (Value::Bool(true), Value::Bool(true))
-//        ));
-//        assert!(matches!(
-//            values.next().unwrap(),
-//            (Value::U8(0xfe), Value::U8(0xfe))
-//        ));
-//        assert!(matches!(
-//            values.next().unwrap(),
-//            (Value::U16(0xfeff), Value::U16(0xfeff))
-//        ));
-//        assert!(matches!(
-//            values.next().unwrap(),
-//            (Value::U32(0xfeff_ffff), Value::U32(0xfeff_ffff))
-//        ));
-//        assert!(matches!(
-//            values.next().unwrap(),
-//            (
-//                Value::U64(0xfeff_ffff_ffff_ffff),
-//                Value::U64(0xfeff_ffff_ffff_ffff)
-//            )
-//        ));
-//        assert!(matches!(
-//            values.next().unwrap(),
-//            (Value::S8(0x7e), Value::S8(0x7e))
-//        ));
-//        assert!(matches!(
-//            values.next().unwrap(),
-//            (Value::S16(0x7eff), Value::S16(0x7eff))
-//        ));
-//        assert!(matches!(
-//            values.next().unwrap(),
-//            (Value::S32(0x7eff_ffff), Value::S32(0x7eff_ffff))
-//        ));
-//        assert!(matches!(
-//            values.next().unwrap(),
-//            (
-//                Value::S64(0x7eff_ffff_ffff_ffff),
-//                Value::S64(0x7eff_ffff_ffff_ffff)
-//            )
-//        ));
-//        assert!(matches!(
-//            values.next().unwrap(),
-//            (Value::F32(p), Value::F32(r)) if p == 0.42 && r == 0.42
-//        ));
-//        assert!(matches!(
-//            values.next().unwrap(),
-//            (Value::F64(p), Value::F64(r)) if p == 0.4242 && r == 0.4242
-//        ));
-//        assert!(matches!(
-//            values.next().unwrap(),
-//            (Value::Char('a'), Value::Char('a'))
-//        ));
-//        assert!(matches!(
-//            values.next().unwrap(),
-//            (Value::String(p), Value::String(r)) if p == "test" && r == "test"
-//        ));
-//        assert!(matches!(
-//            values.next().unwrap(),
-//            (Value::List(p), Value::List(r)) if p.is_empty() && r.is_empty()
-//        ));
-//        let (Value::List(p), Value::List(r)) = values.next().unwrap() else {
-//            bail!("list type mismatch")
-//        };
-//        {
-//            let mut values = zip(p, r);
-//            assert!(matches!(
-//                values.next().unwrap(),
-//                (Value::Bool(true), Value::Bool(true))
-//            ));
-//            assert!(matches!(
-//                values.next().unwrap(),
-//                (Value::Bool(false), Value::Bool(false))
-//            ));
-//            assert!(matches!(
-//                values.next().unwrap(),
-//                (Value::Bool(true), Value::Bool(true))
-//            ));
-//        }
-//        let (Value::Record(p), Value::Record(r)) = values.next().unwrap() else {
-//            bail!("record type mismatch")
-//        };
-//        {
-//            let mut values = zip(p, r);
-//            assert!(matches!(
-//                values.next().unwrap(),
-//                (Value::Bool(true), Value::Bool(true))
-//            ));
-//            assert!(matches!(
-//                values.next().unwrap(),
-//                (Value::U8(0xfe), Value::U8(0xfe))
-//            ));
-//            assert!(matches!(
-//                values.next().unwrap(),
-//                (Value::U16(0xfeff), Value::U16(0xfeff))
-//            ));
-//            assert!(matches!(
-//                values.next().unwrap(),
-//                (Value::U32(0xfeff_ffff), Value::U32(0xfeff_ffff))
-//            ));
-//            assert!(matches!(
-//                values.next().unwrap(),
-//                (
-//                    Value::U64(0xfeff_ffff_ffff_ffff),
-//                    Value::U64(0xfeff_ffff_ffff_ffff)
-//                )
-//            ));
-//            assert!(matches!(
-//                values.next().unwrap(),
-//                (Value::S8(0x7e), Value::S8(0x7e))
-//            ));
-//            assert!(matches!(
-//                values.next().unwrap(),
-//                (Value::S16(0x7eff), Value::S16(0x7eff))
-//            ));
-//            assert!(matches!(
-//                values.next().unwrap(),
-//                (Value::S32(0x7eff_ffff), Value::S32(0x7eff_ffff))
-//            ));
-//            assert!(matches!(
-//                values.next().unwrap(),
-//                (
-//                    Value::S64(0x7eff_ffff_ffff_ffff),
-//                    Value::S64(0x7eff_ffff_ffff_ffff)
-//                )
-//            ));
-//            assert!(matches!(
-//                values.next().unwrap(),
-//                (Value::F32(p), Value::F32(r)) if p == 0.42 && r == 0.42
-//            ));
-//            assert!(matches!(
-//                values.next().unwrap(),
-//                (Value::F64(p), Value::F64(r)) if p == 0.4242 && r == 0.4242
-//            ));
-//            assert!(matches!(
-//                values.next().unwrap(),
-//                (Value::Char('a'), Value::Char('a'))
-//            ));
-//            assert!(matches!(
-//                values.next().unwrap(),
-//                (Value::String(p), Value::String(r)) if p == "test" && r == "test"
-//            ));
-//            assert!(matches!(
-//                values.next().unwrap(),
-//                (Value::Enum(0xfeff), Value::Enum(0xfeff))
-//            ));
-//            assert!(matches!(
-//                values.next().unwrap(),
-//                (Value::Flags(0xdead_beef), Value::Flags(0xdead_beef))
-//            ));
-//        }
-//        let (Value::Tuple(p), Value::Tuple(r)) = values.next().unwrap() else {
-//            bail!("tuple type mismatch")
-//        };
-//        {
-//            let mut values = zip(p, r);
-//            assert!(matches!(
-//                values.next().unwrap(),
-//                (Value::Bool(true), Value::Bool(true))
-//            ));
-//            assert!(matches!(
-//                values.next().unwrap(),
-//                (Value::U8(0xfe), Value::U8(0xfe))
-//            ));
-//            assert!(matches!(
-//                values.next().unwrap(),
-//                (Value::U16(0xfeff), Value::U16(0xfeff))
-//            ));
-//            assert!(matches!(
-//                values.next().unwrap(),
-//                (Value::U32(0xfeff_ffff), Value::U32(0xfeff_ffff))
-//            ));
-//            assert!(matches!(
-//                values.next().unwrap(),
-//                (
-//                    Value::U64(0xfeff_ffff_ffff_ffff),
-//                    Value::U64(0xfeff_ffff_ffff_ffff)
-//                )
-//            ));
-//            assert!(matches!(
-//                values.next().unwrap(),
-//                (Value::S8(0x7e), Value::S8(0x7e))
-//            ));
-//            assert!(matches!(
-//                values.next().unwrap(),
-//                (Value::S16(0x7eff), Value::S16(0x7eff))
-//            ));
-//            assert!(matches!(
-//                values.next().unwrap(),
-//                (Value::S32(0x7eff_ffff), Value::S32(0x7eff_ffff))
-//            ));
-//            assert!(matches!(
-//                values.next().unwrap(),
-//                (
-//                    Value::S64(0x7eff_ffff_ffff_ffff),
-//                    Value::S64(0x7eff_ffff_ffff_ffff)
-//                )
-//            ));
-//            assert!(matches!(
-//                values.next().unwrap(),
-//                (Value::F32(p), Value::F32(r)) if p == 0.42 && r == 0.42
-//            ));
-//            assert!(matches!(
-//                values.next().unwrap(),
-//                (Value::F64(p), Value::F64(r)) if p == 0.4242 && r == 0.4242
-//            ));
-//            assert!(matches!(
-//                values.next().unwrap(),
-//                (Value::Char('a'), Value::Char('a'))
-//            ));
-//            assert!(matches!(
-//                values.next().unwrap(),
-//                (Value::String(p), Value::String(r)) if p == "test" && r == "test"
-//            ));
-//            assert!(matches!(
-//                values.next().unwrap(),
-//                (Value::Enum(0xfeff), Value::Enum(0xfeff))
-//            ));
-//            assert!(matches!(
-//                values.next().unwrap(),
-//                (Value::Flags(0xdead_beef), Value::Flags(0xdead_beef))
-//            ));
-//        }
-//        assert!(matches!(
-//            values.next().unwrap(),
-//            (
-//                Value::Variant {
-//                    discriminant: 0,
-//                    nested: None,
-//                },
-//                Value::Variant {
-//                    discriminant: 0,
-//                    nested: None,
-//                }
-//            )
-//        ));
-//        assert!(matches!(
-//            values.next().unwrap(),
-//            (
-//                Value::Variant {
-//                    discriminant: 1,
-//                    nested: p,
-//                },
-//                Value::Variant {
-//                    discriminant: 1,
-//                    nested: r,
-//                }
-//            ) if matches!((p.as_deref(), r.as_deref()), (Some(Value::Bool(true)), Some(Value::Bool(true))))
-//        ));
-//        assert!(matches!(
-//            values.next().unwrap(),
-//            (Value::Enum(0xfeff), Value::Enum(0xfeff))
-//        ));
-//        assert!(matches!(
-//            values.next().unwrap(),
-//            (Value::Option(p), Value::Option(r)) if matches!((p.as_deref(), r.as_deref()), (Some(Value::Bool(true)), Some(Value::Bool(true))))
-//        ));
-//        assert!(matches!(
-//            values.next().unwrap(),
-//            (Value::Result(Ok(p)), Value::Result(Ok(r))) if matches!((p.as_deref(), r.as_deref()), (Some(Value::Bool(true)), Some(Value::Bool(true))))
-//        ));
-//        assert!(matches!(
-//            values.next().unwrap(),
-//            (Value::Flags(0xdead_beef), Value::Flags(0xdead_beef))
-//        ));
-//
-//        let async_tuple_type = vec![
-//            Type::Future(None),
-//            Type::Future(Some(Arc::new(Type::Bool))),
-//            Type::Future(Some(Arc::new(Type::Future(None)))),
-//            Type::Future(Some(Arc::new(Type::Future(Some(Arc::new(Type::Future(
-//                Some(Arc::new(Type::Bool)),
-//            ))))))),
-//            Type::Future(Some(Arc::new(Type::Stream(Some(Arc::new(Type::U8)))))),
-//            Type::Stream(None),
-//            Type::Stream(Some(Arc::new(Type::U8))),
-//            Type::Resource(ResourceType::Pollable),
-//            Type::Resource(ResourceType::InputStream),
-//            Type::Tuple(
-//                vec![
-//                    Type::Future(None),
-//                    Type::Future(Some(Arc::new(Type::Bool))),
-//                    Type::Future(Some(Arc::new(Type::Future(None)))),
-//                    Type::Resource(ResourceType::InputStream),
-//                ]
-//                .into(),
-//            ),
-//            Type::Record(
-//                vec![
-//                    Type::Future(None),
-//                    Type::Future(Some(Arc::new(Type::Bool))),
-//                    Type::Future(Some(Arc::new(Type::Future(None)))),
-//                    Type::Resource(ResourceType::InputStream),
-//                ]
-//                .into(),
-//            ),
-//        ]
-//        .into();
-//
-//        let (params, results) = loopback_dynamic(
-//            client.as_ref(),
-//            "async",
-//            DynamicFunctionType::Static {
-//                params: Arc::clone(&async_tuple_type),
-//                results: async_tuple_type,
-//            },
-//            vec![
-//                Value::Future(Box::pin(async { Ok(None) })),
-//                Value::Future(Box::pin(async {
-//                    sleep(Duration::from_nanos(42)).await;
-//                    Ok(Some(Value::Bool(true)))
-//                })),
-//                Value::Future(Box::pin(async {
-//                    Ok(Some(Value::Future(Box::pin(async { Ok(None) }))))
-//                })),
-//                Value::Future(Box::pin(async {
-//                    sleep(Duration::from_nanos(42)).await;
-//                    Ok(Some(Value::Future(Box::pin(async {
-//                        sleep(Duration::from_nanos(42)).await;
-//                        Ok(Some(Value::Future(Box::pin(async {
-//                            sleep(Duration::from_nanos(42)).await;
-//                            Ok(Some(Value::Bool(true)))
-//                        }))))
-//                    }))))
-//                })),
-//                Value::Future(Box::pin(async {
-//                    sleep(Duration::from_nanos(42)).await;
-//                    Ok(Some(Value::Stream(Box::pin(stream::iter([
-//                        Ok(vec![Some(Value::U8(0x42))]),
-//                        Ok(vec![Some(Value::U8(0xff))]),
-//                    ])))))
-//                })),
-//                Value::Stream(Box::pin(stream::iter([Ok(vec![None, None, None, None])]))),
-//                Value::Stream(Box::pin(stream::iter([Ok(vec![
-//                    Some(Value::U8(0x42)),
-//                    Some(Value::U8(0xff)),
-//                ])]))),
-//                Value::Future(Box::pin(async { Ok(None) })),
-//                Value::Stream(Box::pin(
-//                    stream::iter([
-//                        Ok(vec![Some(Value::U8(0x42))]),
-//                        Ok(vec![Some(Value::U8(0xff))]),
-//                    ])
-//                    .then(|item| async {
-//                        sleep(Duration::from_nanos(42)).await;
-//                        item
-//                    }),
-//                )),
-//                Value::Tuple(vec![
-//                    Value::Future(Box::pin(async { Ok(None) })),
-//                    Value::Future(Box::pin(async {
-//                        sleep(Duration::from_nanos(42)).await;
-//                        Ok(Some(Value::Bool(true)))
-//                    })),
-//                    Value::Future(Box::pin(async {
-//                        Ok(Some(Value::Future(Box::pin(async { Ok(None) }))))
-//                    })),
-//                    Value::Stream(Box::pin(
-//                        stream::iter([
-//                            Ok(vec![Some(Value::U8(0x42))]),
-//                            Ok(vec![Some(Value::U8(0xff))]),
-//                        ])
-//                        .then(|item| async {
-//                            sleep(Duration::from_nanos(42)).await;
-//                            item
-//                        }),
-//                    )),
-//                ]),
-//                Value::Record(vec![
-//                    Value::Future(Box::pin(async { Ok(None) })),
-//                    Value::Future(Box::pin(async {
-//                        sleep(Duration::from_nanos(42)).await;
-//                        Ok(Some(Value::Bool(true)))
-//                    })),
-//                    Value::Future(Box::pin(async {
-//                        Ok(Some(Value::Future(Box::pin(async { Ok(None) }))))
-//                    })),
-//                    Value::Stream(Box::pin(
-//                        stream::iter([
-//                            Ok(vec![Some(Value::U8(0x42))]),
-//                            Ok(vec![Some(Value::U8(0xff))]),
-//                        ])
-//                        .then(|item| async {
-//                            sleep(Duration::from_nanos(42)).await;
-//                            item
-//                        }),
-//                    )),
-//                ]),
-//            ],
-//            vec![
-//                Value::Future(Box::pin(async { Ok(None) })),
-//                Value::Future(Box::pin(async {
-//                    sleep(Duration::from_nanos(42)).await;
-//                    Ok(Some(Value::Bool(true)))
-//                })),
-//                Value::Future(Box::pin(async {
-//                    Ok(Some(Value::Future(Box::pin(async { Ok(None) }))))
-//                })),
-//                Value::Future(Box::pin(async {
-//                    sleep(Duration::from_nanos(42)).await;
-//                    Ok(Some(Value::Future(Box::pin(async {
-//                        sleep(Duration::from_nanos(42)).await;
-//                        Ok(Some(Value::Future(Box::pin(async {
-//                            sleep(Duration::from_nanos(42)).await;
-//                            Ok(Some(Value::Bool(true)))
-//                        }))))
-//                    }))))
-//                })),
-//                Value::Future(Box::pin(async {
-//                    sleep(Duration::from_nanos(42)).await;
-//                    Ok(Some(Value::Stream(Box::pin(stream::iter([
-//                        Ok(vec![Some(Value::U8(0x42))]),
-//                        Ok(vec![Some(Value::U8(0xff))]),
-//                    ])))))
-//                })),
-//                Value::Stream(Box::pin(stream::iter([Ok(vec![None, None, None, None])]))),
-//                Value::Stream(Box::pin(stream::iter([Ok(vec![
-//                    Some(Value::U8(0x42)),
-//                    Some(Value::U8(0xff)),
-//                ])]))),
-//                Value::Future(Box::pin(async { Ok(None) })),
-//                Value::Stream(Box::pin(
-//                    stream::iter([
-//                        Ok(vec![Some(Value::U8(0x42))]),
-//                        Ok(vec![Some(Value::U8(0xff))]),
-//                    ])
-//                    .then(|item| async {
-//                        sleep(Duration::from_nanos(42)).await;
-//                        item
-//                    }),
-//                )),
-//                Value::Tuple(vec![
-//                    Value::Future(Box::pin(async { Ok(None) })),
-//                    Value::Future(Box::pin(async {
-//                        sleep(Duration::from_nanos(42)).await;
-//                        Ok(Some(Value::Bool(true)))
-//                    })),
-//                    Value::Future(Box::pin(async {
-//                        Ok(Some(Value::Future(Box::pin(async { Ok(None) }))))
-//                    })),
-//                    Value::Stream(Box::pin(
-//                        stream::iter([
-//                            Ok(vec![Some(Value::U8(0x42))]),
-//                            Ok(vec![Some(Value::U8(0xff))]),
-//                        ])
-//                        .then(|item| async {
-//                            sleep(Duration::from_nanos(42)).await;
-//                            item
-//                        }),
-//                    )),
-//                ]),
-//                Value::Record(vec![
-//                    Value::Future(Box::pin(async { Ok(None) })),
-//                    Value::Future(Box::pin(async {
-//                        sleep(Duration::from_nanos(42)).await;
-//                        Ok(Some(Value::Bool(true)))
-//                    })),
-//                    Value::Future(Box::pin(async {
-//                        Ok(Some(Value::Future(Box::pin(async { Ok(None) }))))
-//                    })),
-//                    Value::Stream(Box::pin(
-//                        stream::iter([
-//                            Ok(vec![Some(Value::U8(0x42))]),
-//                            Ok(vec![Some(Value::U8(0xff))]),
-//                        ])
-//                        .then(|item| async {
-//                            sleep(Duration::from_nanos(42)).await;
-//                            item
-//                        }),
-//                    )),
-//                ]),
-//            ],
-//        )
-//        .await
-//        .context("failed to invoke `async`")?;
-//
-//        let mut values = zip(params, results);
-//        let (Value::Future(p), Value::Future(r)) = values.next().unwrap() else {
-//            bail!("future type mismatch")
-//        };
-//        assert!(matches!((p.await, r.await), (Ok(None), Ok(None))));
-//
-//        let (Value::Future(p), Value::Future(r)) = values.next().unwrap() else {
-//            bail!("future type mismatch")
-//        };
-//        assert!(matches!(
-//            (p.await, r.await),
-//            (Ok(Some(Value::Bool(true))), Ok(Some(Value::Bool(true))))
-//        ));
-//
-//        let (Value::Future(p), Value::Future(r)) = values.next().unwrap() else {
-//            bail!("future type mismatch")
-//        };
-//        let (Ok(Some(Value::Future(p))), Ok(Some(Value::Future(r)))) = (p.await, r.await) else {
-//            bail!("future type mismatch")
-//        };
-//        assert!(matches!((p.await, r.await), (Ok(None), Ok(None))));
-//
-//        let (Value::Future(p), Value::Future(r)) = values.next().unwrap() else {
-//            bail!("future type mismatch")
-//        };
-//        let (Ok(Some(Value::Future(p))), Ok(Some(Value::Future(r)))) = (p.await, r.await) else {
-//            bail!("future type mismatch")
-//        };
-//        let (Ok(Some(Value::Future(p))), Ok(Some(Value::Future(r)))) = (p.await, r.await) else {
-//            bail!("future type mismatch")
-//        };
-//        assert!(matches!(
-//            (p.await, r.await),
-//            (Ok(Some(Value::Bool(true))), Ok(Some(Value::Bool(true))))
-//        ));
-//
-//        let (Value::Future(p), Value::Future(r)) = values.next().unwrap() else {
-//            bail!("future type mismatch")
-//        };
-//        let (Ok(Some(Value::Stream(mut p))), Ok(Some(Value::Stream(mut r)))) = (p.await, r.await)
-//        else {
-//            bail!("stream type mismatch")
-//        };
-//        assert!(matches!(
-//            (
-//                p.try_next().await.unwrap().as_deref().unwrap(),
-//                r.try_next().await.unwrap().as_deref().unwrap(),
-//            ),
-//            ([Some(Value::U8(0x42))], [Some(Value::U8(0x42))])
-//        ));
-//        assert!(matches!(
-//            (
-//                p.try_next().await.unwrap().as_deref().unwrap(),
-//                r.try_next().await.unwrap().as_deref().unwrap(),
-//            ),
-//            ([Some(Value::U8(0xff))], [Some(Value::U8(0xff))])
-//        ));
-//        assert!(matches!(
-//            (p.try_next().await.unwrap(), r.try_next().await.unwrap()),
-//            (None, None)
-//        ));
-//
-//        let (Value::Stream(mut p), Value::Stream(mut r)) = values.next().unwrap() else {
-//            bail!("stream type mismatch")
-//        };
-//        assert!(matches!(
-//            (
-//                p.try_next().await.unwrap().as_deref().unwrap(),
-//                r.try_next().await.unwrap().as_deref().unwrap(),
-//            ),
-//            ([None, None, None, None], [None, None, None, None])
-//        ));
-//        assert!(matches!(
-//            (p.try_next().await.unwrap(), r.try_next().await.unwrap()),
-//            (None, None)
-//        ));
-//
-//        let (Value::Stream(mut p), Value::Stream(mut r)) = values.next().unwrap() else {
-//            bail!("stream type mismatch")
-//        };
-//        assert!(matches!(
-//            (
-//                p.try_next().await.unwrap().as_deref().unwrap(),
-//                r.try_next().await.unwrap().as_deref().unwrap(),
-//            ),
-//            (
-//                [Some(Value::U8(0x42)), Some(Value::U8(0xff))],
-//                [Some(Value::U8(0x42)), Some(Value::U8(0xff))]
-//            )
-//        ));
-//        assert!(matches!(
-//            (p.try_next().await.unwrap(), r.try_next().await.unwrap()),
-//            (None, None)
-//        ));
-//
-//        let (Value::Future(p), Value::Future(r)) = values.next().unwrap() else {
-//            bail!("future type mismatch")
-//        };
-//        assert!(matches!((p.await, r.await), (Ok(None), Ok(None))));
-//
-//        let (Value::Stream(mut p), Value::Stream(mut r)) = values.next().unwrap() else {
-//            bail!("stream type mismatch")
-//        };
-//        assert!(matches!(
-//            (
-//                p.try_next().await.unwrap().as_deref().unwrap(),
-//                r.try_next().await.unwrap().as_deref().unwrap(),
-//            ),
-//            ([Some(Value::U8(0x42))], [Some(Value::U8(0x42))])
-//        ));
-//        assert!(matches!(
-//            (
-//                p.try_next().await.unwrap().as_deref().unwrap(),
-//                r.try_next().await.unwrap().as_deref().unwrap(),
-//            ),
-//            ([Some(Value::U8(0xff))], [Some(Value::U8(0xff))])
-//        ));
-//        assert!(matches!(
-//            (p.try_next().await.unwrap(), r.try_next().await.unwrap()),
-//            (None, None)
-//        ));
-//
-//        let (Value::Tuple(p), Value::Tuple(r)) = values.next().unwrap() else {
-//            bail!("tuple type mismatch")
-//        };
-//        {
-//            let mut values = zip(p, r);
-//            let (Value::Future(p), Value::Future(r)) = values.next().unwrap() else {
-//                bail!("future type mismatch")
-//            };
-//            assert!(matches!((p.await, r.await), (Ok(None), Ok(None))));
-//
-//            let (Value::Future(p), Value::Future(r)) = values.next().unwrap() else {
-//                bail!("future type mismatch")
-//            };
-//            assert!(matches!(
-//                (p.await, r.await),
-//                (Ok(Some(Value::Bool(true))), Ok(Some(Value::Bool(true))))
-//            ));
-//
-//            let (Value::Future(p), Value::Future(r)) = values.next().unwrap() else {
-//                bail!("future type mismatch")
-//            };
-//            let (Ok(Some(Value::Future(p))), Ok(Some(Value::Future(r)))) = (p.await, r.await) else {
-//                bail!("future type mismatch")
-//            };
-//            assert!(matches!((p.await, r.await), (Ok(None), Ok(None))));
-//
-//            let (Value::Stream(mut p), Value::Stream(mut r)) = values.next().unwrap() else {
-//                bail!("stream type mismatch")
-//            };
-//            assert!(matches!(
-//                (
-//                    p.try_next().await.unwrap().as_deref().unwrap(),
-//                    r.try_next().await.unwrap().as_deref().unwrap(),
-//                ),
-//                ([Some(Value::U8(0x42))], [Some(Value::U8(0x42))])
-//            ));
-//            assert!(matches!(
-//                (
-//                    p.try_next().await.unwrap().as_deref().unwrap(),
-//                    r.try_next().await.unwrap().as_deref().unwrap(),
-//                ),
-//                ([Some(Value::U8(0xff))], [Some(Value::U8(0xff))])
-//            ));
-//            assert!(matches!(
-//                (p.try_next().await.unwrap(), r.try_next().await.unwrap()),
-//                (None, None)
-//            ));
-//        }
-//
-//        let (Value::Record(p), Value::Record(r)) = values.next().unwrap() else {
-//            bail!("record type mismatch")
-//        };
-//        {
-//            let mut values = zip(p, r);
-//            let (Value::Future(p), Value::Future(r)) = values.next().unwrap() else {
-//                bail!("future type mismatch")
-//            };
-//            assert!(matches!((p.await, r.await), (Ok(None), Ok(None))));
-//
-//            let (Value::Future(p), Value::Future(r)) = values.next().unwrap() else {
-//                bail!("future type mismatch")
-//            };
-//            assert!(matches!(
-//                (p.await, r.await),
-//                (Ok(Some(Value::Bool(true))), Ok(Some(Value::Bool(true))))
-//            ));
-//
-//            let (Value::Future(p), Value::Future(r)) = values.next().unwrap() else {
-//                bail!("future type mismatch")
-//            };
-//            let (Ok(Some(Value::Future(p))), Ok(Some(Value::Future(r)))) = (p.await, r.await) else {
-//                bail!("future type mismatch")
-//            };
-//            assert!(matches!((p.await, r.await), (Ok(None), Ok(None))));
-//
-//            let (Value::Stream(mut p), Value::Stream(mut r)) = values.next().unwrap() else {
-//                bail!("stream type mismatch")
-//            };
-//            assert!(matches!(
-//                (
-//                    p.try_next().await.unwrap().as_deref().unwrap(),
-//                    r.try_next().await.unwrap().as_deref().unwrap(),
-//                ),
-//                ([Some(Value::U8(0x42))], [Some(Value::U8(0x42))])
-//            ));
-//            assert!(matches!(
-//                (
-//                    p.try_next().await.unwrap().as_deref().unwrap(),
-//                    r.try_next().await.unwrap().as_deref().unwrap(),
-//                ),
-//                ([Some(Value::U8(0xff))], [Some(Value::U8(0xff))])
-//            ));
-//            assert!(matches!(
-//                (p.try_next().await.unwrap(), r.try_next().await.unwrap()),
-//                (None, None)
-//            ));
-//        }
-//
-//        let unit_invocations = client
-//            .serve_static::<()>("wrpc:wrpc/test-static", "unit_unit")
-//            .await
-//            .context("failed to serve")?;
-//        try_join!(
-//            async {
-//                let AcceptedInvocation {
-//                    params: (),
-//                    result_subject,
-//                    transmitter,
-//                    ..
-//                } = pin!(unit_invocations)
-//                    .try_next()
-//                    .await
-//                    .context("failed to receive invocation")?
-//                    .context("unexpected end of stream")?;
-//                transmitter
-//                    .transmit_static(result_subject, ())
-//                    .await
-//                    .context("failed to transmit response")?;
-//                anyhow::Ok(())
-//            },
-//            async {
-//                let ((), tx) = client
-//                    .invoke_static("wrpc:wrpc/test-static", "unit_unit", ())
-//                    .await
-//                    .context("failed to invoke")?;
-//                tx.await.context("failed to transmit parameters")?;
-//                Ok(())
-//            }
-//        )?;
-//        Ok(())
-//    }).await
-//}
+#[instrument(ret)]
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+async fn rust_dynamic() -> anyhow::Result<()> {
+    with_quic(&["bar.foo"], |port, clt_ep, srv_ep| async move {
+        let clt = wrpc_transport_quic::Client::new(clt_ep, (Ipv6Addr::LOCALHOST, port));
+        let srv = wrpc_transport_quic::Server::default();
+
+        let foo_bar_inv = srv
+            .serve_values::<(
+                (bool, u8, u16, u32, u64, i8, i16, i32, i64, f32, f64, char),
+                String,
+            ), (
+                (bool, u8, u16, u32, u64, i8, i16, i32, i64, f32, f64, char),
+                &str,
+            )>("foo", "bar", &[])
+            .await
+            .context("failed to serve `foo.bar`")?;
+        let mut foo_bar_inv = pin!(foo_bar_inv);
+        join!(
+            async {
+                let ok = srv
+                    .accept(&srv_ep)
+                    .await
+                    .expect("failed to accept client connection");
+                assert!(ok);
+                let ((), ((a, b, c, d, e, f, g, h, i, j, k, l), m), rx, tx) = foo_bar_inv
+                    .try_next()
+                    .await
+                    .expect("failed to accept invocation")
+                    .expect("unexpected end of stream");
+                assert!(rx.is_none());
+                assert!(a);
+                assert_eq!(b, 0xfe);
+                assert_eq!(c, 0xfeff);
+                assert_eq!(d, 0xfeff_ffff);
+                assert_eq!(e, 0xfeff_ffff_ffff_ffff);
+                assert_eq!(f, 0x7e);
+                assert_eq!(g, 0x7eff);
+                assert_eq!(h, 0x7eff_ffff);
+                assert_eq!(i, 0x7eff_ffff_ffff_ffff);
+                assert_eq!(j, 0.42);
+                assert_eq!(k, 0.4242);
+                assert_eq!(l, 'a');
+                assert_eq!(m, "test");
+                tx(Ok((
+                    (
+                        true,
+                        0xfe,
+                        0xfeff,
+                        0xfeff_ffff,
+                        0xfeff_ffff_ffff_ffff,
+                        0x7e,
+                        0x7eff,
+                        0x7eff_ffff,
+                        0x7eff_ffff_ffff_ffff,
+                        0.42,
+                        0.4242,
+                        'a',
+                    ),
+                    "test",
+                )))
+                .await
+                .expect("failed to send response")
+                .expect("session failed");
+            },
+            async {
+                let (((a, b, c, d, e, f, g, h, i, j, k, l), m), rx) = clt
+                    .invoke_values::<(
+                        (bool, u8, u16, u32, u64, i8, i16, i32, i64, f32, f64, char),
+                        &str,
+                    ), (
+                        (bool, u8, u16, u32, u64, i8, i16, i32, i64, f32, f64, char),
+                        String,
+                    )>(
+                        (),
+                        "foo",
+                        "bar",
+                        (
+                            (
+                                true,
+                                0xfe,
+                                0xfeff,
+                                0xfeff_ffff,
+                                0xfeff_ffff_ffff_ffff,
+                                0x7e,
+                                0x7eff,
+                                0x7eff_ffff,
+                                0x7eff_ffff_ffff_ffff,
+                                0.42,
+                                0.4242,
+                                'a',
+                            ),
+                            "test",
+                        ),
+                        &[],
+                    )
+                    .await
+                    .expect("failed to invoke `foo.bar`");
+                assert!(a);
+                assert_eq!(b, 0xfe);
+                assert_eq!(c, 0xfeff);
+                assert_eq!(d, 0xfeff_ffff);
+                assert_eq!(e, 0xfeff_ffff_ffff_ffff);
+                assert_eq!(f, 0x7e);
+                assert_eq!(g, 0x7eff);
+                assert_eq!(h, 0x7eff_ffff);
+                assert_eq!(i, 0x7eff_ffff_ffff_ffff);
+                assert_eq!(j, 0.42);
+                assert_eq!(k, 0.4242);
+                assert_eq!(l, 'a');
+                assert_eq!(m, "test");
+                rx.await
+                    .expect("failed to complete exchange")
+                    .expect("session failed");
+            }
+        );
+
+        Ok(())
+    })
+    .await
+    // TODO: migrate the whole test suite
+    //    with_nats(|_, nats_client| async {
+    //        let client = wrpc_transport_nats_legacy::Client::new(nats_client, "test-prefix".to_string());
+    //        let client = Arc::new(client);
+    //
+    //        let (params, results) = loopback_dynamic(
+    //            client.as_ref(),
+    //            "unit_unit",
+    //            DynamicFunctionType::Static {
+    //                params: vec![].into(),
+    //                results: vec![].into(),
+    //            },
+    //            vec![],
+    //            vec![],
+    //        )
+    //        .await
+    //        .context("failed to invoke `unit_unit`")?;
+    //        assert!(params.is_empty());
+    //        assert!(results.is_empty());
+    //
+    //        let flat_types = vec![
+    //            Type::Bool,
+    //            Type::U8,
+    //            Type::U16,
+    //            Type::U32,
+    //            Type::U64,
+    //            Type::S8,
+    //            Type::S16,
+    //            Type::S32,
+    //            Type::S64,
+    //            Type::F32,
+    //            Type::F64,
+    //            Type::Char,
+    //            Type::String,
+    //            Type::Enum,
+    //            Type::Flags,
+    //        ]
+    //        .into();
+    //
+    //        let flat_variant_type = vec![None, Some(Type::Bool)].into();
+    //
+    //        let sync_tuple_type = vec![
+    //            Type::Bool,
+    //            Type::U8,
+    //            Type::U16,
+    //            Type::U32,
+    //            Type::U64,
+    //            Type::S8,
+    //            Type::S16,
+    //            Type::S32,
+    //            Type::S64,
+    //            Type::F32,
+    //            Type::F64,
+    //            Type::Char,
+    //            Type::String,
+    //            Type::List(Arc::new(Type::U64)),
+    //            Type::List(Arc::new(Type::Bool)),
+    //            Type::Record(Arc::clone(&flat_types)),
+    //            Type::Tuple(Arc::clone(&flat_types)),
+    //            Type::Variant(Arc::clone(&flat_variant_type)),
+    //            Type::Variant(Arc::clone(&flat_variant_type)),
+    //            Type::Enum,
+    //            Type::Option(Arc::new(Type::Bool)),
+    //            Type::Result {
+    //                ok: Some(Arc::new(Type::Bool)),
+    //                err: Some(Arc::new(Type::Bool)),
+    //            },
+    //            Type::Flags,
+    //        ]
+    //        .into();
+    //
+    //        let (params, results) = loopback_dynamic(
+    //            client.as_ref(),
+    //            "sync",
+    //            DynamicFunctionType::Static {
+    //                params: Arc::clone(&sync_tuple_type),
+    //                results: sync_tuple_type,
+    //            },
+    //            vec![
+    //                Value::Bool(true),
+    //                Value::U8(0xfe),
+    //                Value::U16(0xfeff),
+    //                Value::U32(0xfeff_ffff),
+    //                Value::U64(0xfeff_ffff_ffff_ffff),
+    //                Value::S8(0x7e),
+    //                Value::S16(0x7eff),
+    //                Value::S32(0x7eff_ffff),
+    //                Value::S64(0x7eff_ffff_ffff_ffff),
+    //                Value::F32(0.42),
+    //                Value::F64(0.4242),
+    //                Value::Char('a'),
+    //                Value::String("test".into()),
+    //                Value::List(vec![]),
+    //                Value::List(vec![
+    //                    Value::Bool(true),
+    //                    Value::Bool(false),
+    //                    Value::Bool(true),
+    //                ]),
+    //                Value::Record(vec![
+    //                    Value::Bool(true),
+    //                    Value::U8(0xfe),
+    //                    Value::U16(0xfeff),
+    //                    Value::U32(0xfeff_ffff),
+    //                    Value::U64(0xfeff_ffff_ffff_ffff),
+    //                    Value::S8(0x7e),
+    //                    Value::S16(0x7eff),
+    //                    Value::S32(0x7eff_ffff),
+    //                    Value::S64(0x7eff_ffff_ffff_ffff),
+    //                    Value::F32(0.42),
+    //                    Value::F64(0.4242),
+    //                    Value::Char('a'),
+    //                    Value::String("test".into()),
+    //                    Value::Enum(0xfeff),
+    //                    Value::Flags(0xdead_beef),
+    //                ]),
+    //                Value::Tuple(vec![
+    //                    Value::Bool(true),
+    //                    Value::U8(0xfe),
+    //                    Value::U16(0xfeff),
+    //                    Value::U32(0xfeff_ffff),
+    //                    Value::U64(0xfeff_ffff_ffff_ffff),
+    //                    Value::S8(0x7e),
+    //                    Value::S16(0x7eff),
+    //                    Value::S32(0x7eff_ffff),
+    //                    Value::S64(0x7eff_ffff_ffff_ffff),
+    //                    Value::F32(0.42),
+    //                    Value::F64(0.4242),
+    //                    Value::Char('a'),
+    //                    Value::String("test".into()),
+    //                    Value::Enum(0xfeff),
+    //                    Value::Flags(0xdead_beef),
+    //                ]),
+    //                Value::Variant {
+    //                    discriminant: 0,
+    //                    nested: None,
+    //                },
+    //                Value::Variant {
+    //                    discriminant: 1,
+    //                    nested: Some(Box::new(Value::Bool(true))),
+    //                },
+    //                Value::Enum(0xfeff),
+    //                Value::Option(Some(Box::new(Value::Bool(true)))),
+    //                Value::Result(Ok(Some(Box::new(Value::Bool(true))))),
+    //                Value::Flags(0xdead_beef),
+    //            ],
+    //            vec![
+    //                Value::Bool(true),
+    //                Value::U8(0xfe),
+    //                Value::U16(0xfeff),
+    //                Value::U32(0xfeff_ffff),
+    //                Value::U64(0xfeff_ffff_ffff_ffff),
+    //                Value::S8(0x7e),
+    //                Value::S16(0x7eff),
+    //                Value::S32(0x7eff_ffff),
+    //                Value::S64(0x7eff_ffff_ffff_ffff),
+    //                Value::F32(0.42),
+    //                Value::F64(0.4242),
+    //                Value::Char('a'),
+    //                Value::String("test".into()),
+    //                Value::List(vec![]),
+    //                Value::List(vec![
+    //                    Value::Bool(true),
+    //                    Value::Bool(false),
+    //                    Value::Bool(true),
+    //                ]),
+    //                Value::Record(vec![
+    //                    Value::Bool(true),
+    //                    Value::U8(0xfe),
+    //                    Value::U16(0xfeff),
+    //                    Value::U32(0xfeff_ffff),
+    //                    Value::U64(0xfeff_ffff_ffff_ffff),
+    //                    Value::S8(0x7e),
+    //                    Value::S16(0x7eff),
+    //                    Value::S32(0x7eff_ffff),
+    //                    Value::S64(0x7eff_ffff_ffff_ffff),
+    //                    Value::F32(0.42),
+    //                    Value::F64(0.4242),
+    //                    Value::Char('a'),
+    //                    Value::String("test".into()),
+    //                    Value::Enum(0xfeff),
+    //                    Value::Flags(0xdead_beef),
+    //                ]),
+    //                Value::Tuple(vec![
+    //                    Value::Bool(true),
+    //                    Value::U8(0xfe),
+    //                    Value::U16(0xfeff),
+    //                    Value::U32(0xfeff_ffff),
+    //                    Value::U64(0xfeff_ffff_ffff_ffff),
+    //                    Value::S8(0x7e),
+    //                    Value::S16(0x7eff),
+    //                    Value::S32(0x7eff_ffff),
+    //                    Value::S64(0x7eff_ffff_ffff_ffff),
+    //                    Value::F32(0.42),
+    //                    Value::F64(0.4242),
+    //                    Value::Char('a'),
+    //                    Value::String("test".into()),
+    //                    Value::Enum(0xfeff),
+    //                    Value::Flags(0xdead_beef),
+    //                ]),
+    //                Value::Variant {
+    //                    discriminant: 0,
+    //                    nested: None,
+    //                },
+    //                Value::Variant {
+    //                    discriminant: 1,
+    //                    nested: Some(Box::new(Value::Bool(true))),
+    //                },
+    //                Value::Enum(0xfeff),
+    //                Value::Option(Some(Box::new(Value::Bool(true)))),
+    //                Value::Result(Ok(Some(Box::new(Value::Bool(true))))),
+    //                Value::Flags(0xdead_beef),
+    //            ],
+    //        )
+    //        .await
+    //        .context("failed to invoke `sync`")?;
+    //        let mut values = zip(params, results);
+    //        assert!(matches!(
+    //            values.next().unwrap(),
+    //            (Value::Bool(true), Value::Bool(true))
+    //        ));
+    //        assert!(matches!(
+    //            values.next().unwrap(),
+    //            (Value::U8(0xfe), Value::U8(0xfe))
+    //        ));
+    //        assert!(matches!(
+    //            values.next().unwrap(),
+    //            (Value::U16(0xfeff), Value::U16(0xfeff))
+    //        ));
+    //        assert!(matches!(
+    //            values.next().unwrap(),
+    //            (Value::U32(0xfeff_ffff), Value::U32(0xfeff_ffff))
+    //        ));
+    //        assert!(matches!(
+    //            values.next().unwrap(),
+    //            (
+    //                Value::U64(0xfeff_ffff_ffff_ffff),
+    //                Value::U64(0xfeff_ffff_ffff_ffff)
+    //            )
+    //        ));
+    //        assert!(matches!(
+    //            values.next().unwrap(),
+    //            (Value::S8(0x7e), Value::S8(0x7e))
+    //        ));
+    //        assert!(matches!(
+    //            values.next().unwrap(),
+    //            (Value::S16(0x7eff), Value::S16(0x7eff))
+    //        ));
+    //        assert!(matches!(
+    //            values.next().unwrap(),
+    //            (Value::S32(0x7eff_ffff), Value::S32(0x7eff_ffff))
+    //        ));
+    //        assert!(matches!(
+    //            values.next().unwrap(),
+    //            (
+    //                Value::S64(0x7eff_ffff_ffff_ffff),
+    //                Value::S64(0x7eff_ffff_ffff_ffff)
+    //            )
+    //        ));
+    //        assert!(matches!(
+    //            values.next().unwrap(),
+    //            (Value::F32(p), Value::F32(r)) if p == 0.42 && r == 0.42
+    //        ));
+    //        assert!(matches!(
+    //            values.next().unwrap(),
+    //            (Value::F64(p), Value::F64(r)) if p == 0.4242 && r == 0.4242
+    //        ));
+    //        assert!(matches!(
+    //            values.next().unwrap(),
+    //            (Value::Char('a'), Value::Char('a'))
+    //        ));
+    //        assert!(matches!(
+    //            values.next().unwrap(),
+    //            (Value::String(p), Value::String(r)) if p == "test" && r == "test"
+    //        ));
+    //        assert!(matches!(
+    //            values.next().unwrap(),
+    //            (Value::List(p), Value::List(r)) if p.is_empty() && r.is_empty()
+    //        ));
+    //        let (Value::List(p), Value::List(r)) = values.next().unwrap() else {
+    //            bail!("list type mismatch")
+    //        };
+    //        {
+    //            let mut values = zip(p, r);
+    //            assert!(matches!(
+    //                values.next().unwrap(),
+    //                (Value::Bool(true), Value::Bool(true))
+    //            ));
+    //            assert!(matches!(
+    //                values.next().unwrap(),
+    //                (Value::Bool(false), Value::Bool(false))
+    //            ));
+    //            assert!(matches!(
+    //                values.next().unwrap(),
+    //                (Value::Bool(true), Value::Bool(true))
+    //            ));
+    //        }
+    //        let (Value::Record(p), Value::Record(r)) = values.next().unwrap() else {
+    //            bail!("record type mismatch")
+    //        };
+    //        {
+    //            let mut values = zip(p, r);
+    //            assert!(matches!(
+    //                values.next().unwrap(),
+    //                (Value::Bool(true), Value::Bool(true))
+    //            ));
+    //            assert!(matches!(
+    //                values.next().unwrap(),
+    //                (Value::U8(0xfe), Value::U8(0xfe))
+    //            ));
+    //            assert!(matches!(
+    //                values.next().unwrap(),
+    //                (Value::U16(0xfeff), Value::U16(0xfeff))
+    //            ));
+    //            assert!(matches!(
+    //                values.next().unwrap(),
+    //                (Value::U32(0xfeff_ffff), Value::U32(0xfeff_ffff))
+    //            ));
+    //            assert!(matches!(
+    //                values.next().unwrap(),
+    //                (
+    //                    Value::U64(0xfeff_ffff_ffff_ffff),
+    //                    Value::U64(0xfeff_ffff_ffff_ffff)
+    //                )
+    //            ));
+    //            assert!(matches!(
+    //                values.next().unwrap(),
+    //                (Value::S8(0x7e), Value::S8(0x7e))
+    //            ));
+    //            assert!(matches!(
+    //                values.next().unwrap(),
+    //                (Value::S16(0x7eff), Value::S16(0x7eff))
+    //            ));
+    //            assert!(matches!(
+    //                values.next().unwrap(),
+    //                (Value::S32(0x7eff_ffff), Value::S32(0x7eff_ffff))
+    //            ));
+    //            assert!(matches!(
+    //                values.next().unwrap(),
+    //                (
+    //                    Value::S64(0x7eff_ffff_ffff_ffff),
+    //                    Value::S64(0x7eff_ffff_ffff_ffff)
+    //                )
+    //            ));
+    //            assert!(matches!(
+    //                values.next().unwrap(),
+    //                (Value::F32(p), Value::F32(r)) if p == 0.42 && r == 0.42
+    //            ));
+    //            assert!(matches!(
+    //                values.next().unwrap(),
+    //                (Value::F64(p), Value::F64(r)) if p == 0.4242 && r == 0.4242
+    //            ));
+    //            assert!(matches!(
+    //                values.next().unwrap(),
+    //                (Value::Char('a'), Value::Char('a'))
+    //            ));
+    //            assert!(matches!(
+    //                values.next().unwrap(),
+    //                (Value::String(p), Value::String(r)) if p == "test" && r == "test"
+    //            ));
+    //            assert!(matches!(
+    //                values.next().unwrap(),
+    //                (Value::Enum(0xfeff), Value::Enum(0xfeff))
+    //            ));
+    //            assert!(matches!(
+    //                values.next().unwrap(),
+    //                (Value::Flags(0xdead_beef), Value::Flags(0xdead_beef))
+    //            ));
+    //        }
+    //        let (Value::Tuple(p), Value::Tuple(r)) = values.next().unwrap() else {
+    //            bail!("tuple type mismatch")
+    //        };
+    //        {
+    //            let mut values = zip(p, r);
+    //            assert!(matches!(
+    //                values.next().unwrap(),
+    //                (Value::Bool(true), Value::Bool(true))
+    //            ));
+    //            assert!(matches!(
+    //                values.next().unwrap(),
+    //                (Value::U8(0xfe), Value::U8(0xfe))
+    //            ));
+    //            assert!(matches!(
+    //                values.next().unwrap(),
+    //                (Value::U16(0xfeff), Value::U16(0xfeff))
+    //            ));
+    //            assert!(matches!(
+    //                values.next().unwrap(),
+    //                (Value::U32(0xfeff_ffff), Value::U32(0xfeff_ffff))
+    //            ));
+    //            assert!(matches!(
+    //                values.next().unwrap(),
+    //                (
+    //                    Value::U64(0xfeff_ffff_ffff_ffff),
+    //                    Value::U64(0xfeff_ffff_ffff_ffff)
+    //                )
+    //            ));
+    //            assert!(matches!(
+    //                values.next().unwrap(),
+    //                (Value::S8(0x7e), Value::S8(0x7e))
+    //            ));
+    //            assert!(matches!(
+    //                values.next().unwrap(),
+    //                (Value::S16(0x7eff), Value::S16(0x7eff))
+    //            ));
+    //            assert!(matches!(
+    //                values.next().unwrap(),
+    //                (Value::S32(0x7eff_ffff), Value::S32(0x7eff_ffff))
+    //            ));
+    //            assert!(matches!(
+    //                values.next().unwrap(),
+    //                (
+    //                    Value::S64(0x7eff_ffff_ffff_ffff),
+    //                    Value::S64(0x7eff_ffff_ffff_ffff)
+    //                )
+    //            ));
+    //            assert!(matches!(
+    //                values.next().unwrap(),
+    //                (Value::F32(p), Value::F32(r)) if p == 0.42 && r == 0.42
+    //            ));
+    //            assert!(matches!(
+    //                values.next().unwrap(),
+    //                (Value::F64(p), Value::F64(r)) if p == 0.4242 && r == 0.4242
+    //            ));
+    //            assert!(matches!(
+    //                values.next().unwrap(),
+    //                (Value::Char('a'), Value::Char('a'))
+    //            ));
+    //            assert!(matches!(
+    //                values.next().unwrap(),
+    //                (Value::String(p), Value::String(r)) if p == "test" && r == "test"
+    //            ));
+    //            assert!(matches!(
+    //                values.next().unwrap(),
+    //                (Value::Enum(0xfeff), Value::Enum(0xfeff))
+    //            ));
+    //            assert!(matches!(
+    //                values.next().unwrap(),
+    //                (Value::Flags(0xdead_beef), Value::Flags(0xdead_beef))
+    //            ));
+    //        }
+    //        assert!(matches!(
+    //            values.next().unwrap(),
+    //            (
+    //                Value::Variant {
+    //                    discriminant: 0,
+    //                    nested: None,
+    //                },
+    //                Value::Variant {
+    //                    discriminant: 0,
+    //                    nested: None,
+    //                }
+    //            )
+    //        ));
+    //        assert!(matches!(
+    //            values.next().unwrap(),
+    //            (
+    //                Value::Variant {
+    //                    discriminant: 1,
+    //                    nested: p,
+    //                },
+    //                Value::Variant {
+    //                    discriminant: 1,
+    //                    nested: r,
+    //                }
+    //            ) if matches!((p.as_deref(), r.as_deref()), (Some(Value::Bool(true)), Some(Value::Bool(true))))
+    //        ));
+    //        assert!(matches!(
+    //            values.next().unwrap(),
+    //            (Value::Enum(0xfeff), Value::Enum(0xfeff))
+    //        ));
+    //        assert!(matches!(
+    //            values.next().unwrap(),
+    //            (Value::Option(p), Value::Option(r)) if matches!((p.as_deref(), r.as_deref()), (Some(Value::Bool(true)), Some(Value::Bool(true))))
+    //        ));
+    //        assert!(matches!(
+    //            values.next().unwrap(),
+    //            (Value::Result(Ok(p)), Value::Result(Ok(r))) if matches!((p.as_deref(), r.as_deref()), (Some(Value::Bool(true)), Some(Value::Bool(true))))
+    //        ));
+    //        assert!(matches!(
+    //            values.next().unwrap(),
+    //            (Value::Flags(0xdead_beef), Value::Flags(0xdead_beef))
+    //        ));
+    //
+    //        let async_tuple_type = vec![
+    //            Type::Future(None),
+    //            Type::Future(Some(Arc::new(Type::Bool))),
+    //            Type::Future(Some(Arc::new(Type::Future(None)))),
+    //            Type::Future(Some(Arc::new(Type::Future(Some(Arc::new(Type::Future(
+    //                Some(Arc::new(Type::Bool)),
+    //            ))))))),
+    //            Type::Future(Some(Arc::new(Type::Stream(Some(Arc::new(Type::U8)))))),
+    //            Type::Stream(None),
+    //            Type::Stream(Some(Arc::new(Type::U8))),
+    //            Type::Resource(ResourceType::Pollable),
+    //            Type::Resource(ResourceType::InputStream),
+    //            Type::Tuple(
+    //                vec![
+    //                    Type::Future(None),
+    //                    Type::Future(Some(Arc::new(Type::Bool))),
+    //                    Type::Future(Some(Arc::new(Type::Future(None)))),
+    //                    Type::Resource(ResourceType::InputStream),
+    //                ]
+    //                .into(),
+    //            ),
+    //            Type::Record(
+    //                vec![
+    //                    Type::Future(None),
+    //                    Type::Future(Some(Arc::new(Type::Bool))),
+    //                    Type::Future(Some(Arc::new(Type::Future(None)))),
+    //                    Type::Resource(ResourceType::InputStream),
+    //                ]
+    //                .into(),
+    //            ),
+    //        ]
+    //        .into();
+    //
+    //        let (params, results) = loopback_dynamic(
+    //            client.as_ref(),
+    //            "async",
+    //            DynamicFunctionType::Static {
+    //                params: Arc::clone(&async_tuple_type),
+    //                results: async_tuple_type,
+    //            },
+    //            vec![
+    //                Value::Future(Box::pin(async { Ok(None) })),
+    //                Value::Future(Box::pin(async {
+    //                    sleep(Duration::from_nanos(42)).await;
+    //                    Ok(Some(Value::Bool(true)))
+    //                })),
+    //                Value::Future(Box::pin(async {
+    //                    Ok(Some(Value::Future(Box::pin(async { Ok(None) }))))
+    //                })),
+    //                Value::Future(Box::pin(async {
+    //                    sleep(Duration::from_nanos(42)).await;
+    //                    Ok(Some(Value::Future(Box::pin(async {
+    //                        sleep(Duration::from_nanos(42)).await;
+    //                        Ok(Some(Value::Future(Box::pin(async {
+    //                            sleep(Duration::from_nanos(42)).await;
+    //                            Ok(Some(Value::Bool(true)))
+    //                        }))))
+    //                    }))))
+    //                })),
+    //                Value::Future(Box::pin(async {
+    //                    sleep(Duration::from_nanos(42)).await;
+    //                    Ok(Some(Value::Stream(Box::pin(stream::iter([
+    //                        Ok(vec![Some(Value::U8(0x42))]),
+    //                        Ok(vec![Some(Value::U8(0xff))]),
+    //                    ])))))
+    //                })),
+    //                Value::Stream(Box::pin(stream::iter([Ok(vec![None, None, None, None])]))),
+    //                Value::Stream(Box::pin(stream::iter([Ok(vec![
+    //                    Some(Value::U8(0x42)),
+    //                    Some(Value::U8(0xff)),
+    //                ])]))),
+    //                Value::Future(Box::pin(async { Ok(None) })),
+    //                Value::Stream(Box::pin(
+    //                    stream::iter([
+    //                        Ok(vec![Some(Value::U8(0x42))]),
+    //                        Ok(vec![Some(Value::U8(0xff))]),
+    //                    ])
+    //                    .then(|item| async {
+    //                        sleep(Duration::from_nanos(42)).await;
+    //                        item
+    //                    }),
+    //                )),
+    //                Value::Tuple(vec![
+    //                    Value::Future(Box::pin(async { Ok(None) })),
+    //                    Value::Future(Box::pin(async {
+    //                        sleep(Duration::from_nanos(42)).await;
+    //                        Ok(Some(Value::Bool(true)))
+    //                    })),
+    //                    Value::Future(Box::pin(async {
+    //                        Ok(Some(Value::Future(Box::pin(async { Ok(None) }))))
+    //                    })),
+    //                    Value::Stream(Box::pin(
+    //                        stream::iter([
+    //                            Ok(vec![Some(Value::U8(0x42))]),
+    //                            Ok(vec![Some(Value::U8(0xff))]),
+    //                        ])
+    //                        .then(|item| async {
+    //                            sleep(Duration::from_nanos(42)).await;
+    //                            item
+    //                        }),
+    //                    )),
+    //                ]),
+    //                Value::Record(vec![
+    //                    Value::Future(Box::pin(async { Ok(None) })),
+    //                    Value::Future(Box::pin(async {
+    //                        sleep(Duration::from_nanos(42)).await;
+    //                        Ok(Some(Value::Bool(true)))
+    //                    })),
+    //                    Value::Future(Box::pin(async {
+    //                        Ok(Some(Value::Future(Box::pin(async { Ok(None) }))))
+    //                    })),
+    //                    Value::Stream(Box::pin(
+    //                        stream::iter([
+    //                            Ok(vec![Some(Value::U8(0x42))]),
+    //                            Ok(vec![Some(Value::U8(0xff))]),
+    //                        ])
+    //                        .then(|item| async {
+    //                            sleep(Duration::from_nanos(42)).await;
+    //                            item
+    //                        }),
+    //                    )),
+    //                ]),
+    //            ],
+    //            vec![
+    //                Value::Future(Box::pin(async { Ok(None) })),
+    //                Value::Future(Box::pin(async {
+    //                    sleep(Duration::from_nanos(42)).await;
+    //                    Ok(Some(Value::Bool(true)))
+    //                })),
+    //                Value::Future(Box::pin(async {
+    //                    Ok(Some(Value::Future(Box::pin(async { Ok(None) }))))
+    //                })),
+    //                Value::Future(Box::pin(async {
+    //                    sleep(Duration::from_nanos(42)).await;
+    //                    Ok(Some(Value::Future(Box::pin(async {
+    //                        sleep(Duration::from_nanos(42)).await;
+    //                        Ok(Some(Value::Future(Box::pin(async {
+    //                            sleep(Duration::from_nanos(42)).await;
+    //                            Ok(Some(Value::Bool(true)))
+    //                        }))))
+    //                    }))))
+    //                })),
+    //                Value::Future(Box::pin(async {
+    //                    sleep(Duration::from_nanos(42)).await;
+    //                    Ok(Some(Value::Stream(Box::pin(stream::iter([
+    //                        Ok(vec![Some(Value::U8(0x42))]),
+    //                        Ok(vec![Some(Value::U8(0xff))]),
+    //                    ])))))
+    //                })),
+    //                Value::Stream(Box::pin(stream::iter([Ok(vec![None, None, None, None])]))),
+    //                Value::Stream(Box::pin(stream::iter([Ok(vec![
+    //                    Some(Value::U8(0x42)),
+    //                    Some(Value::U8(0xff)),
+    //                ])]))),
+    //                Value::Future(Box::pin(async { Ok(None) })),
+    //                Value::Stream(Box::pin(
+    //                    stream::iter([
+    //                        Ok(vec![Some(Value::U8(0x42))]),
+    //                        Ok(vec![Some(Value::U8(0xff))]),
+    //                    ])
+    //                    .then(|item| async {
+    //                        sleep(Duration::from_nanos(42)).await;
+    //                        item
+    //                    }),
+    //                )),
+    //                Value::Tuple(vec![
+    //                    Value::Future(Box::pin(async { Ok(None) })),
+    //                    Value::Future(Box::pin(async {
+    //                        sleep(Duration::from_nanos(42)).await;
+    //                        Ok(Some(Value::Bool(true)))
+    //                    })),
+    //                    Value::Future(Box::pin(async {
+    //                        Ok(Some(Value::Future(Box::pin(async { Ok(None) }))))
+    //                    })),
+    //                    Value::Stream(Box::pin(
+    //                        stream::iter([
+    //                            Ok(vec![Some(Value::U8(0x42))]),
+    //                            Ok(vec![Some(Value::U8(0xff))]),
+    //                        ])
+    //                        .then(|item| async {
+    //                            sleep(Duration::from_nanos(42)).await;
+    //                            item
+    //                        }),
+    //                    )),
+    //                ]),
+    //                Value::Record(vec![
+    //                    Value::Future(Box::pin(async { Ok(None) })),
+    //                    Value::Future(Box::pin(async {
+    //                        sleep(Duration::from_nanos(42)).await;
+    //                        Ok(Some(Value::Bool(true)))
+    //                    })),
+    //                    Value::Future(Box::pin(async {
+    //                        Ok(Some(Value::Future(Box::pin(async { Ok(None) }))))
+    //                    })),
+    //                    Value::Stream(Box::pin(
+    //                        stream::iter([
+    //                            Ok(vec![Some(Value::U8(0x42))]),
+    //                            Ok(vec![Some(Value::U8(0xff))]),
+    //                        ])
+    //                        .then(|item| async {
+    //                            sleep(Duration::from_nanos(42)).await;
+    //                            item
+    //                        }),
+    //                    )),
+    //                ]),
+    //            ],
+    //        )
+    //        .await
+    //        .context("failed to invoke `async`")?;
+    //
+    //        let mut values = zip(params, results);
+    //        let (Value::Future(p), Value::Future(r)) = values.next().unwrap() else {
+    //            bail!("future type mismatch")
+    //        };
+    //        assert!(matches!((p.await, r.await), (Ok(None), Ok(None))));
+    //
+    //        let (Value::Future(p), Value::Future(r)) = values.next().unwrap() else {
+    //            bail!("future type mismatch")
+    //        };
+    //        assert!(matches!(
+    //            (p.await, r.await),
+    //            (Ok(Some(Value::Bool(true))), Ok(Some(Value::Bool(true))))
+    //        ));
+    //
+    //        let (Value::Future(p), Value::Future(r)) = values.next().unwrap() else {
+    //            bail!("future type mismatch")
+    //        };
+    //        let (Ok(Some(Value::Future(p))), Ok(Some(Value::Future(r)))) = (p.await, r.await) else {
+    //            bail!("future type mismatch")
+    //        };
+    //        assert!(matches!((p.await, r.await), (Ok(None), Ok(None))));
+    //
+    //        let (Value::Future(p), Value::Future(r)) = values.next().unwrap() else {
+    //            bail!("future type mismatch")
+    //        };
+    //        let (Ok(Some(Value::Future(p))), Ok(Some(Value::Future(r)))) = (p.await, r.await) else {
+    //            bail!("future type mismatch")
+    //        };
+    //        let (Ok(Some(Value::Future(p))), Ok(Some(Value::Future(r)))) = (p.await, r.await) else {
+    //            bail!("future type mismatch")
+    //        };
+    //        assert!(matches!(
+    //            (p.await, r.await),
+    //            (Ok(Some(Value::Bool(true))), Ok(Some(Value::Bool(true))))
+    //        ));
+    //
+    //        let (Value::Future(p), Value::Future(r)) = values.next().unwrap() else {
+    //            bail!("future type mismatch")
+    //        };
+    //        let (Ok(Some(Value::Stream(mut p))), Ok(Some(Value::Stream(mut r)))) = (p.await, r.await)
+    //        else {
+    //            bail!("stream type mismatch")
+    //        };
+    //        assert!(matches!(
+    //            (
+    //                p.try_next().await.unwrap().as_deref().unwrap(),
+    //                r.try_next().await.unwrap().as_deref().unwrap(),
+    //            ),
+    //            ([Some(Value::U8(0x42))], [Some(Value::U8(0x42))])
+    //        ));
+    //        assert!(matches!(
+    //            (
+    //                p.try_next().await.unwrap().as_deref().unwrap(),
+    //                r.try_next().await.unwrap().as_deref().unwrap(),
+    //            ),
+    //            ([Some(Value::U8(0xff))], [Some(Value::U8(0xff))])
+    //        ));
+    //        assert!(matches!(
+    //            (p.try_next().await.unwrap(), r.try_next().await.unwrap()),
+    //            (None, None)
+    //        ));
+    //
+    //        let (Value::Stream(mut p), Value::Stream(mut r)) = values.next().unwrap() else {
+    //            bail!("stream type mismatch")
+    //        };
+    //        assert!(matches!(
+    //            (
+    //                p.try_next().await.unwrap().as_deref().unwrap(),
+    //                r.try_next().await.unwrap().as_deref().unwrap(),
+    //            ),
+    //            ([None, None, None, None], [None, None, None, None])
+    //        ));
+    //        assert!(matches!(
+    //            (p.try_next().await.unwrap(), r.try_next().await.unwrap()),
+    //            (None, None)
+    //        ));
+    //
+    //        let (Value::Stream(mut p), Value::Stream(mut r)) = values.next().unwrap() else {
+    //            bail!("stream type mismatch")
+    //        };
+    //        assert!(matches!(
+    //            (
+    //                p.try_next().await.unwrap().as_deref().unwrap(),
+    //                r.try_next().await.unwrap().as_deref().unwrap(),
+    //            ),
+    //            (
+    //                [Some(Value::U8(0x42)), Some(Value::U8(0xff))],
+    //                [Some(Value::U8(0x42)), Some(Value::U8(0xff))]
+    //            )
+    //        ));
+    //        assert!(matches!(
+    //            (p.try_next().await.unwrap(), r.try_next().await.unwrap()),
+    //            (None, None)
+    //        ));
+    //
+    //        let (Value::Future(p), Value::Future(r)) = values.next().unwrap() else {
+    //            bail!("future type mismatch")
+    //        };
+    //        assert!(matches!((p.await, r.await), (Ok(None), Ok(None))));
+    //
+    //        let (Value::Stream(mut p), Value::Stream(mut r)) = values.next().unwrap() else {
+    //            bail!("stream type mismatch")
+    //        };
+    //        assert!(matches!(
+    //            (
+    //                p.try_next().await.unwrap().as_deref().unwrap(),
+    //                r.try_next().await.unwrap().as_deref().unwrap(),
+    //            ),
+    //            ([Some(Value::U8(0x42))], [Some(Value::U8(0x42))])
+    //        ));
+    //        assert!(matches!(
+    //            (
+    //                p.try_next().await.unwrap().as_deref().unwrap(),
+    //                r.try_next().await.unwrap().as_deref().unwrap(),
+    //            ),
+    //            ([Some(Value::U8(0xff))], [Some(Value::U8(0xff))])
+    //        ));
+    //        assert!(matches!(
+    //            (p.try_next().await.unwrap(), r.try_next().await.unwrap()),
+    //            (None, None)
+    //        ));
+    //
+    //        let (Value::Tuple(p), Value::Tuple(r)) = values.next().unwrap() else {
+    //            bail!("tuple type mismatch")
+    //        };
+    //        {
+    //            let mut values = zip(p, r);
+    //            let (Value::Future(p), Value::Future(r)) = values.next().unwrap() else {
+    //                bail!("future type mismatch")
+    //            };
+    //            assert!(matches!((p.await, r.await), (Ok(None), Ok(None))));
+    //
+    //            let (Value::Future(p), Value::Future(r)) = values.next().unwrap() else {
+    //                bail!("future type mismatch")
+    //            };
+    //            assert!(matches!(
+    //                (p.await, r.await),
+    //                (Ok(Some(Value::Bool(true))), Ok(Some(Value::Bool(true))))
+    //            ));
+    //
+    //            let (Value::Future(p), Value::Future(r)) = values.next().unwrap() else {
+    //                bail!("future type mismatch")
+    //            };
+    //            let (Ok(Some(Value::Future(p))), Ok(Some(Value::Future(r)))) = (p.await, r.await) else {
+    //                bail!("future type mismatch")
+    //            };
+    //            assert!(matches!((p.await, r.await), (Ok(None), Ok(None))));
+    //
+    //            let (Value::Stream(mut p), Value::Stream(mut r)) = values.next().unwrap() else {
+    //                bail!("stream type mismatch")
+    //            };
+    //            assert!(matches!(
+    //                (
+    //                    p.try_next().await.unwrap().as_deref().unwrap(),
+    //                    r.try_next().await.unwrap().as_deref().unwrap(),
+    //                ),
+    //                ([Some(Value::U8(0x42))], [Some(Value::U8(0x42))])
+    //            ));
+    //            assert!(matches!(
+    //                (
+    //                    p.try_next().await.unwrap().as_deref().unwrap(),
+    //                    r.try_next().await.unwrap().as_deref().unwrap(),
+    //                ),
+    //                ([Some(Value::U8(0xff))], [Some(Value::U8(0xff))])
+    //            ));
+    //            assert!(matches!(
+    //                (p.try_next().await.unwrap(), r.try_next().await.unwrap()),
+    //                (None, None)
+    //            ));
+    //        }
+    //
+    //        let (Value::Record(p), Value::Record(r)) = values.next().unwrap() else {
+    //            bail!("record type mismatch")
+    //        };
+    //        {
+    //            let mut values = zip(p, r);
+    //            let (Value::Future(p), Value::Future(r)) = values.next().unwrap() else {
+    //                bail!("future type mismatch")
+    //            };
+    //            assert!(matches!((p.await, r.await), (Ok(None), Ok(None))));
+    //
+    //            let (Value::Future(p), Value::Future(r)) = values.next().unwrap() else {
+    //                bail!("future type mismatch")
+    //            };
+    //            assert!(matches!(
+    //                (p.await, r.await),
+    //                (Ok(Some(Value::Bool(true))), Ok(Some(Value::Bool(true))))
+    //            ));
+    //
+    //            let (Value::Future(p), Value::Future(r)) = values.next().unwrap() else {
+    //                bail!("future type mismatch")
+    //            };
+    //            let (Ok(Some(Value::Future(p))), Ok(Some(Value::Future(r)))) = (p.await, r.await) else {
+    //                bail!("future type mismatch")
+    //            };
+    //            assert!(matches!((p.await, r.await), (Ok(None), Ok(None))));
+    //
+    //            let (Value::Stream(mut p), Value::Stream(mut r)) = values.next().unwrap() else {
+    //                bail!("stream type mismatch")
+    //            };
+    //            assert!(matches!(
+    //                (
+    //                    p.try_next().await.unwrap().as_deref().unwrap(),
+    //                    r.try_next().await.unwrap().as_deref().unwrap(),
+    //                ),
+    //                ([Some(Value::U8(0x42))], [Some(Value::U8(0x42))])
+    //            ));
+    //            assert!(matches!(
+    //                (
+    //                    p.try_next().await.unwrap().as_deref().unwrap(),
+    //                    r.try_next().await.unwrap().as_deref().unwrap(),
+    //                ),
+    //                ([Some(Value::U8(0xff))], [Some(Value::U8(0xff))])
+    //            ));
+    //            assert!(matches!(
+    //                (p.try_next().await.unwrap(), r.try_next().await.unwrap()),
+    //                (None, None)
+    //            ));
+    //        }
+    //
+    //        let unit_invocations = client
+    //            .serve_static::<()>("wrpc:wrpc/test-static", "unit_unit")
+    //            .await
+    //            .context("failed to serve")?;
+    //        try_join!(
+    //            async {
+    //                let AcceptedInvocation {
+    //                    params: (),
+    //                    result_subject,
+    //                    transmitter,
+    //                    ..
+    //                } = pin!(unit_invocations)
+    //                    .try_next()
+    //                    .await
+    //                    .context("failed to receive invocation")?
+    //                    .context("unexpected end of stream")?;
+    //                transmitter
+    //                    .transmit_static(result_subject, ())
+    //                    .await
+    //                    .context("failed to transmit response")?;
+    //                anyhow::Ok(())
+    //            },
+    //            async {
+    //                let ((), tx) = client
+    //                    .invoke_static("wrpc:wrpc/test-static", "unit_unit", ())
+    //                    .await
+    //                    .context("failed to invoke")?;
+    //                tx.await.context("failed to transmit parameters")?;
+    //                Ok(())
+    //            }
+    //        )?;
+    //        Ok(())
+    //    }).await
+}

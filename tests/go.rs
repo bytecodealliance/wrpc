@@ -5,14 +5,12 @@ use tokio::process::Command;
 use tokio::{fs, time::sleep};
 
 mod common;
-use common::{init, with_nats};
+use common::with_nats;
 use tracing::{info, instrument};
 
 #[instrument(ret)]
-#[tokio::test(flavor = "multi_thread")]
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn go_bindgen() -> anyhow::Result<()> {
-    init().await;
-
     if let Err(err) = fs::remove_dir_all("tests/go/bindings").await {
         match err.kind() {
             std::io::ErrorKind::NotFound => {}
@@ -211,10 +209,9 @@ async fn go_bindgen() -> anyhow::Result<()> {
     .await
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[instrument(ret)]
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn go() -> anyhow::Result<()> {
-    init().await;
-
     let status = Command::new("go")
         .current_dir("go")
         .args(["test", "-v", "./..."])

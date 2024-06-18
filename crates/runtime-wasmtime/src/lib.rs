@@ -98,7 +98,6 @@ fn flag_bits<'a, T: BitOrAssign + Shl<u8, Output = T> + From<u8>>(
 async fn write_deferred<W, I>(w: W, deferred: I) -> wasmtime::Result<()>
 where
     W: wrpc_transport::Index<W> + Sync + Send + 'static,
-    W::Error: Into<wasmtime::Error>,
     I: IntoIterator,
     I::IntoIter: ExactSizeIterator<
         Item = Option<
@@ -109,7 +108,7 @@ where
     let futs: FuturesUnordered<_> = zip(0.., deferred)
         .filter_map(|(i, f)| f.map(|f| (w.index(&[i]), f)))
         .map(|(w, f)| async move {
-            let w = w.map_err(Into::into)?;
+            let w = w?;
             f(w).await
         })
         .collect();
@@ -121,7 +120,6 @@ impl<T, W> Encoder<&Val> for ValEncoder<'_, T, W>
 where
     T: WasiView,
     W: AsyncWrite + wrpc_transport::Index<W> + Sync + Send + 'static,
-    W::Error: Into<wasmtime::Error>,
 {
     type Error = wasmtime::Error;
 
@@ -539,7 +537,6 @@ pub async fn read_value<T, R>(
 where
     T: WasiView,
     R: AsyncRead + wrpc_transport::Index<R> + Send + Unpin + 'static,
-    R::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
 {
     match ty {
         Type::Bool => {
@@ -820,14 +817,9 @@ pub fn polyfill<'a, T, C, V>(
     T::IntoIter: ExactSizeIterator,
     V: WrpcView<C> + WasiView,
     C: Invoke,
-    C::Error: Into<wasmtime::Error>,
     C::Context: Clone + 'static,
-    <C::Session as Session>::TransportError: Into<wasmtime::Error>,
-    <C::Outgoing as wrpc_transport::Index<C::Outgoing>>::Error: Into<wasmtime::Error>,
     C::Outgoing: 'static,
     C::Incoming: Unpin + Sized + 'static,
-    <C::Incoming as wrpc_transport::Index<C::Incoming>>::Error:
-        Into<Box<dyn std::error::Error + Send + Sync>>,
 {
     let imports = imports.into_iter();
     for (wk, item) in imports {
@@ -950,7 +942,6 @@ pub fn polyfill<'a, T, C, V>(
                             .client()
                             .invoke(cx, &instance_name, &rpc_name, buf.freeze(), &[])
                             .await
-                            .map_err(Into::into)
                             .with_context(|| {
                                 format!("failed to invoke `{instance_name}.{func_name}` polyfill via wRPC")
                             })?;
@@ -960,7 +951,7 @@ pub fn polyfill<'a, T, C, V>(
                                     zip(0.., deferred)
                                         .filter_map(|(i, f)| f.map(|f| (outgoing.index(&[i]), f)))
                                         .map(|(w, f)| async move {
-                                            let w = w.map_err(Into::into)?;
+                                            let w = w?;
                                             f(w).await
                                         }),
                                 )
@@ -981,7 +972,7 @@ pub fn polyfill<'a, T, C, V>(
                                 Ok(())
                             },
                         )?;
-                        match session.finish(Ok(())).await.map_err(Into::into)? {
+                        match session.finish(Ok(())).await? {
                             Ok(()) => Ok(()),
                             Err(err) => bail!(anyhow!("{err}").context("session failed"))
                         }

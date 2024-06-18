@@ -1,6 +1,6 @@
 #![allow(clippy::type_complexity)]
+
 use core::borrow::Borrow;
-use core::convert::Infallible;
 use core::future::Future;
 use core::iter::zip;
 use core::pin::{pin, Pin};
@@ -314,9 +314,7 @@ pub struct Reader {
 }
 
 impl wrpc_transport::Index<Self> for Reader {
-    type Error = anyhow::Error;
-
-    #[instrument(level = "trace", skip_all)]
+    #[instrument(level = "trace", skip(self))]
     fn index(&self, path: &[usize]) -> anyhow::Result<Self> {
         let mut nested = self
             .nested
@@ -385,10 +383,8 @@ impl SubjectWriter {
 }
 
 impl wrpc_transport::Index<Self> for SubjectWriter {
-    type Error = Infallible;
-
-    #[instrument(level = "trace", skip_all)]
-    fn index(&self, path: &[usize]) -> Result<Self, Self::Error> {
+    #[instrument(level = "trace", skip(self))]
+    fn index(&self, path: &[usize]) -> anyhow::Result<Self> {
         Ok(Self {
             nats: Arc::clone(&self.nats),
             tx: index_path(self.tx.as_str(), path).into(),
@@ -585,12 +581,10 @@ impl RootParamWriter {
 }
 
 impl wrpc_transport::Index<IndexedParamWriter> for RootParamWriter {
-    type Error = std::io::Error;
-
-    #[instrument(level = "trace", skip_all)]
-    fn index(&self, path: &[usize]) -> std::io::Result<IndexedParamWriter> {
+    #[instrument(level = "trace", skip(self))]
+    fn index(&self, path: &[usize]) -> anyhow::Result<IndexedParamWriter> {
         match self {
-            Self::Corrupted => Err(corrupted_memory_error()),
+            Self::Corrupted => Err(anyhow!(corrupted_memory_error())),
             Self::Handshaking { indexed, .. } => {
                 let (tx_tx, tx_rx) = oneshot::channel();
                 let mut indexed = indexed.lock().map_err(|err| {
@@ -602,10 +596,9 @@ impl wrpc_transport::Index<IndexedParamWriter> for RootParamWriter {
                     indexed: std::sync::Mutex::default(),
                 })
             }
-            Self::Draining { tx, .. } | Self::Active(tx) => tx
-                .index(path)
-                .map(IndexedParamWriter::Active)
-                .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err)),
+            Self::Draining { tx, .. } | Self::Active(tx) => {
+                tx.index(path).map(IndexedParamWriter::Active)
+            }
         }
     }
 }
@@ -705,12 +698,10 @@ impl IndexedParamWriter {
 }
 
 impl wrpc_transport::Index<Self> for IndexedParamWriter {
-    type Error = std::io::Error;
-
     #[instrument(level = "trace", skip_all)]
-    fn index(&self, path: &[usize]) -> std::io::Result<Self> {
+    fn index(&self, path: &[usize]) -> anyhow::Result<Self> {
         match self {
-            Self::Corrupted => Err(corrupted_memory_error()),
+            Self::Corrupted => Err(anyhow!(corrupted_memory_error())),
             Self::Handshaking { indexed, .. } => {
                 let (tx_tx, tx_rx) = oneshot::channel();
                 let mut indexed = indexed.lock().map_err(|err| {
@@ -722,10 +713,7 @@ impl wrpc_transport::Index<Self> for IndexedParamWriter {
                     indexed: std::sync::Mutex::default(),
                 })
             }
-            Self::Active(tx) => tx
-                .index(path)
-                .map(Self::Active)
-                .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err)),
+            Self::Active(tx) => tx.index(path).map(Self::Active),
         }
     }
 }
@@ -784,9 +772,7 @@ pub enum ParamWriter {
 }
 
 impl wrpc_transport::Index<Self> for ParamWriter {
-    type Error = std::io::Error;
-
-    fn index(&self, path: &[usize]) -> Result<Self, Self::Error> {
+    fn index(&self, path: &[usize]) -> anyhow::Result<Self> {
         match self {
             ParamWriter::Root(w) => w.index(path),
             ParamWriter::Nested(w) => w.index(path),
@@ -885,15 +871,9 @@ pub struct Session<O> {
     incoming: Subscriber,
 }
 
-impl<O: AsyncWrite + Send> wrpc_transport::Session for Session<O> {
-    type Error = String;
-    type TransportError = anyhow::Error;
-
+impl<O: AsyncWrite + Send + Sync> wrpc_transport::Session for Session<O> {
     #[instrument(level = "trace", skip_all)]
-    async fn finish(
-        mut self,
-        res: Result<(), Self::Error>,
-    ) -> Result<Result<(), Self::Error>, Self::TransportError> {
+    async fn finish(mut self, res: Result<(), &str>) -> anyhow::Result<Result<(), String>> {
         if let Err(err) = res {
             let mut buf = BytesMut::with_capacity(5 + err.len());
             if let Err(err) = CoreNameEncoder.encode(err, &mut buf) {
@@ -930,7 +910,6 @@ impl<O: AsyncWrite + Send> wrpc_transport::Session for Session<O> {
 }
 
 impl wrpc_transport::Invoke for Client {
-    type Error = anyhow::Error;
     type Context = Option<HeaderMap>;
     type Session = Session<ClientErrorWriter>;
     type Outgoing = ParamWriter;
@@ -944,10 +923,8 @@ impl wrpc_transport::Invoke for Client {
         func: &str,
         mut params: Bytes,
         paths: &[&[Option<usize>]],
-    ) -> Result<
-        wrpc_transport::Invocation<Self::Outgoing, Self::Incoming, Self::Session>,
-        Self::Error,
-    > {
+    ) -> anyhow::Result<wrpc_transport::Invocation<Self::Outgoing, Self::Incoming, Self::Session>>
+    {
         let rx = Subject::from(self.nats.new_inbox());
         let (result_rx, error_rx, handshake_rx, nested) = try_join!(
             async {
@@ -1046,7 +1023,6 @@ impl wrpc_transport::Invoke for Client {
 }
 
 impl wrpc_transport::Serve for Client {
-    type Error = anyhow::Error;
     type Context = Option<HeaderMap>;
     type Session = Session<SubjectWriter>;
     type Outgoing = SubjectWriter;
@@ -1058,17 +1034,13 @@ impl wrpc_transport::Serve for Client {
         instance: &str,
         func: &str,
         paths: &[&[Option<usize>]],
-    ) -> Result<
+    ) -> anyhow::Result<
         impl Stream<
-            Item = Result<
-                (
-                    Self::Context,
-                    wrpc_transport::Invocation<Self::Outgoing, Self::Incoming, Self::Session>,
-                ),
-                Self::Error,
-            >,
+            Item = anyhow::Result<(
+                Self::Context,
+                wrpc_transport::Invocation<Self::Outgoing, Self::Incoming, Self::Session>,
+            )>,
         >,
-        Self::Error,
     > {
         let sub = self
             .nats
