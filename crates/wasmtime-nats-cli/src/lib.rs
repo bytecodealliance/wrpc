@@ -32,19 +32,19 @@ pub enum Workload {
     Binary(Vec<u8>),
 }
 
-pub struct Ctx<C: Invoke<Error = wasmtime::Error>> {
+pub struct Ctx<C: Invoke> {
     pub table: ResourceTable,
     pub wasi: WasiCtx,
     pub wrpc: C,
 }
 
-impl<C: Invoke<Error = wasmtime::Error>> WrpcView<C> for Ctx<C> {
+impl<C: Invoke> WrpcView<C> for Ctx<C> {
     fn client(&self) -> &C {
         &self.wrpc
     }
 }
 
-impl<C: Invoke<Error = wasmtime::Error>> WasiView for Ctx<C> {
+impl<C: Invoke> WasiView for Ctx<C> {
     fn ctx(&mut self) -> &mut WasiCtx {
         &mut self.wasi
     }

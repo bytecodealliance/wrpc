@@ -3094,9 +3094,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-tokio"
-version = "0.5.5"
+version = "0.5.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "715797300b1916d6c41369a0cbd62018a16f097b9aa23d1ed2d51b82e82dca19"
+checksum = "636f6a4dbe091857a76e50cd802b853a6b8c7a56f0c93a31c54769c032ee2af9"
 dependencies = [
  "leb128-tokio",
  "tokio",
@@ -3887,8 +3887,12 @@ dependencies = [
  "bytes",
  "clap",
  "futures",
+ "quinn",
+ "rcgen",
+ "rustls 0.23.10",
  "serde",
  "serde_json",
+ "test-log",
  "tokio",
  "tracing",
  "wit-bindgen-core",
@@ -3901,6 +3905,7 @@ dependencies = [
  "wrpc-transport-legacy",
  "wrpc-transport-nats",
  "wrpc-transport-nats-legacy",
+ "wrpc-transport-quic",
  "wrpc-wasmtime-nats-cli",
 ]
 
@@ -3944,11 +3949,13 @@ dependencies = [
 name = "wrpc-transport"
 version = "0.25.1"
 dependencies = [
+ "anyhow",
  "async-trait",
  "bytes",
  "futures",
  "test-log",
  "tokio",
+ "tokio-stream",
  "tokio-util",
  "tracing",
  "wasm-tokio",

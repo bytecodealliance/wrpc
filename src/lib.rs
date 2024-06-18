@@ -1,7 +1,11 @@
 pub mod transport {
     pub use wrpc_transport::*;
+
     #[cfg(feature = "nats")]
     pub use wrpc_transport_nats as nats;
+
+    #[cfg(feature = "quic")]
+    pub use wrpc_transport_quic as quic;
 }
 
 pub mod runtime {
