@@ -66,7 +66,7 @@ async fn loopback() -> anyhow::Result<()> {
     let clt = Client::new(clt_ep, (Ipv4Addr::LOCALHOST, srv_addr.port()));
     let srv = Server::default();
     let invocations = srv
-        .serve("foo", "bar", &[&[Some(42), Some(0)]])
+        .serve("foo", "bar", [[Some(42), Some(0)]])
         .await
         .context("failed to serve `foo.bar`")?;
     let mut invocations = pin!(invocations);

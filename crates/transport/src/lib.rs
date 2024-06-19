@@ -62,10 +62,10 @@ pub trait Invoke: Send + Sync {
     type Session: Session + Send + Sync;
 
     /// Outgoing multiplexed byte stream
-    type Outgoing: AsyncWrite + Index<Self::Outgoing> + Send + Sync;
+    type Outgoing: AsyncWrite + Index<Self::Outgoing> + Send + Sync + 'static;
 
     /// Incoming multiplexed byte stream
-    type Incoming: AsyncRead + Index<Self::Incoming> + Send + Sync;
+    type Incoming: AsyncRead + Index<Self::Incoming> + Send + Sync + Unpin;
 
     /// Invoke function `func` on instance `instance`
     fn invoke(
@@ -74,7 +74,7 @@ pub trait Invoke: Send + Sync {
         instance: &str,
         func: &str,
         params: Bytes,
-        paths: &[&[Option<usize>]],
+        paths: &[impl AsRef<[Option<usize>]> + Send + Sync],
     ) -> impl Future<
         Output = anyhow::Result<Invocation<Self::Outgoing, Self::Incoming, Self::Session>>,
     > + Send;
@@ -86,7 +86,7 @@ pub trait Invoke: Send + Sync {
         instance: &str,
         func: &str,
         params: Params,
-        paths: &[&[Option<usize>]],
+        paths: &[impl AsRef<[Option<usize>]> + Send + Sync],
     ) -> impl Future<
         Output = anyhow::Result<(
             Returns,
@@ -94,8 +94,6 @@ pub trait Invoke: Send + Sync {
         )>,
     > + Send
     where
-        Self::Outgoing: 'static,
-        Self::Incoming: Unpin,
         ValueEncoder<Self::Outgoing>: tokio_util::codec::Encoder<Params>,
         ValueDecoder<Self::Incoming, Returns>: tokio_util::codec::Decoder<Item = Returns>,
         Params: Send,
@@ -158,63 +156,66 @@ pub trait Invoke: Send + Sync {
 }
 
 /// Server-side handle to a wRPC transport
-pub trait Serve {
+pub trait Serve: Send + Sync {
     /// Transport-specific invocation context
-    type Context: Send + Sync;
+    type Context: Send + Sync + 'static;
 
     /// Transport-specific session used for lifetime tracking and error reporting
-    type Session: Session + Send + Sync;
+    type Session: Session + Send + Sync + 'static;
 
     /// Outgoing multiplexed byte stream
-    type Outgoing: AsyncWrite + Index<Self::Outgoing> + Send + Sync;
+    type Outgoing: AsyncWrite + Index<Self::Outgoing> + Send + Sync + Unpin + 'static;
 
     /// Incoming multiplexed byte stream
-    type Incoming: AsyncRead + Index<Self::Incoming> + Send + Sync;
+    type Incoming: AsyncRead + Index<Self::Incoming> + Send + Sync + Unpin + 'static;
 
     /// Serve function `func` from instance `instance`
-    fn serve(
+    fn serve<P: AsRef<[Option<usize>]> + Send + Sync + 'static>(
         &self,
         instance: &str,
         func: &str,
-        paths: &[&[Option<usize>]],
+        paths: impl Into<Arc<[P]>> + Send + Sync + 'static,
     ) -> impl Future<
         Output = anyhow::Result<
             impl Stream<
-                Item = anyhow::Result<(
-                    Self::Context,
-                    Invocation<Self::Outgoing, Self::Incoming, Self::Session>,
-                )>,
-            >,
+                    Item = anyhow::Result<(
+                        Self::Context,
+                        Invocation<Self::Outgoing, Self::Incoming, Self::Session>,
+                    )>,
+                > + Send
+                + 'static,
         >,
     > + Send;
 
     /// Serve function `func` from instance `instance` using typed `Params` and `Returns`
-    fn serve_values<Params, Returns>(
+    fn serve_values<P, Params, Returns>(
         &self,
         instance: &str,
         func: &str,
-        paths: &[&[Option<usize>]],
+        paths: impl Into<Arc<[P]>> + Send + Sync + 'static,
     ) -> impl Future<
         Output = anyhow::Result<
             impl Stream<
-                Item = anyhow::Result<(
-                    Self::Context,
-                    Params,
-                    Option<impl Future<Output = std::io::Result<()>> + Sync + Send + Unpin>,
-                    impl FnOnce(
-                        Result<Returns, Arc<str>>,
-                    ) -> Pin<
-                        Box<dyn Future<Output = anyhow::Result<Result<(), String>>> + Sync + Send>,
-                    >,
-                )>,
-            >,
+                    Item = anyhow::Result<(
+                        Self::Context,
+                        Params,
+                        Option<impl Future<Output = std::io::Result<()>> + Sync + Send + Unpin>,
+                        impl FnOnce(
+                            Result<Returns, Arc<str>>,
+                        ) -> Pin<
+                            Box<
+                                dyn Future<Output = anyhow::Result<Result<(), String>>>
+                                    + Sync
+                                    + Send,
+                            >,
+                        >,
+                    )>,
+                > + Send
+                + 'static,
         >,
     > + Send
     where
-        Self: Sync,
-        Self::Incoming: Unpin,
-        Self::Outgoing: Unpin + 'static,
-        Self::Session: 'static,
+        P: AsRef<[Option<usize>]> + Send + Sync + 'static,
         Params: Decode,
         Returns: Send + Sync + 'static,
         ValueEncoder<Self::Outgoing>: tokio_util::codec::Encoder<Returns>,
@@ -286,5 +287,50 @@ pub trait Serve {
                 },
             ))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use futures::{stream, StreamExt as _};
+
+    use super::*;
+
+    #[allow(unused)]
+    async fn call_invoke<T: Invoke>(
+        cx: T::Context,
+        i: &T,
+        paths: Arc<[Arc<[Option<usize>]>]>,
+    ) -> anyhow::Result<Invocation<T::Outgoing, T::Incoming, T::Session>> {
+        i.invoke(cx, "foo", "bar", Bytes::default(), &paths).await
+    }
+
+    #[allow(unused)]
+    async fn call_serve<T: Serve>(
+        s: &T,
+    ) -> anyhow::Result<Vec<(T::Context, Invocation<T::Outgoing, T::Incoming, T::Session>)>> {
+        let st = stream::empty()
+            .chain(s.serve("foo", "bar", [[Some(42), None]]).await.unwrap())
+            .chain(s.serve("foo", "bar", vec![[Some(42), None]]).await.unwrap())
+            .chain(s.serve("foo", "bar", [vec![Some(42), None]]).await.unwrap())
+            .chain({
+                let paths: Arc<[Arc<[Option<usize>]>]> = Arc::from([Arc::from([Some(42), None])]);
+                s.serve("foo", "bar", paths).await.unwrap()
+            })
+            .chain({
+                let paths: Arc<[_]> = Arc::from(vec![vec![Some(42), None]]);
+                s.serve("foo", "bar", paths).await.unwrap()
+            })
+            .chain({
+                let paths: Arc<[_]> = Arc::from([vec![Some(42), None]]);
+                s.serve("foo", "bar", paths).await.unwrap()
+            })
+            .chain({
+                let paths: Arc<[_]> = Arc::from([[Some(42), None]]);
+                s.serve("foo", "bar", paths).await.unwrap()
+            });
+        tokio::spawn(async move { st.try_collect().await })
+            .await
+            .unwrap()
     }
 }

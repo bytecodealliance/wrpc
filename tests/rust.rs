@@ -436,13 +436,13 @@ async fn rust_dynamic() -> anyhow::Result<()> {
         let srv = wrpc_transport_quic::Server::default();
 
         let foo_bar_inv = srv
-            .serve_values::<(
+            .serve_values::<[_; 0], (
                 (bool, u8, u16, u32, u64, i8, i16, i32, i64, f32, f64, char),
                 String,
             ), (
                 (bool, u8, u16, u32, u64, i8, i16, i32, i64, f32, f64, char),
                 &str,
-            )>("foo", "bar", &[])
+            )>("foo", "bar", [])
             .await
             .context("failed to serve `foo.bar`")?;
         let mut foo_bar_inv = pin!(foo_bar_inv);
@@ -522,7 +522,7 @@ async fn rust_dynamic() -> anyhow::Result<()> {
                             ),
                             "test",
                         ),
-                        &[],
+                        &[[]; 0],
                     )
                     .await
                     .expect("failed to invoke `foo.bar`");

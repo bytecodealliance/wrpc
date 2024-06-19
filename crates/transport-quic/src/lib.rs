@@ -1,4 +1,3 @@
-use core::borrow::Borrow;
 use core::fmt::Display;
 use core::future::Future as _;
 use core::net::SocketAddr;
@@ -116,12 +115,12 @@ impl<'a> From<(&'a [Option<usize>], oneshot::Sender<RecvStream>)> for IndexTree 
     }
 }
 
-impl<'a, P: Borrow<&'a [Option<usize>]>> FromIterator<P> for IndexTree {
+impl<P: AsRef<[Option<usize>]>> FromIterator<P> for IndexTree {
     fn from_iter<T: IntoIterator<Item = P>>(iter: T) -> Self {
         let mut root = Self::Empty;
         for path in iter {
             let (tx, rx) = oneshot::channel();
-            if !root.insert(path.borrow(), Some(tx), Some(rx)) {
+            if !root.insert(path.as_ref(), Some(tx), Some(rx)) {
                 return Self::Empty;
             }
         }
@@ -732,14 +731,14 @@ impl wrpc_transport::Invoke for Client {
     type Outgoing = Outgoing;
     type Incoming = Incoming;
 
-    #[instrument(level = "trace", skip(self))]
+    #[instrument(level = "trace", skip(self, paths))]
     async fn invoke(
         &self,
         cx: Self::Context,
         instance: &str,
         func: &str,
         params: Bytes,
-        paths: &[&[Option<usize>]],
+        paths: &[impl AsRef<[Option<usize>]> + Send + Sync],
     ) -> anyhow::Result<Invocation> {
         let san = san(instance, func);
         trace!(?san, "establishing connection");
@@ -812,7 +811,7 @@ impl wrpc_transport::Invoke for Client {
 #[instrument(level = "trace", skip_all)]
 async fn serve_connection(
     conn: Connection,
-    paths: &[&[Option<usize>]],
+    paths: &[impl AsRef<[Option<usize>]>],
 ) -> anyhow::Result<Invocation> {
     let ((ret_tx, param_rx), res_rx, res_tx) = try_join!(
         async {
@@ -883,13 +882,14 @@ impl wrpc_transport::Serve for Server {
     type Outgoing = Outgoing;
     type Incoming = Incoming;
 
-    #[instrument(level = "trace", skip(self))]
-    async fn serve(
+    #[instrument(level = "trace", skip(self, paths))]
+    async fn serve<P: AsRef<[Option<usize>]> + Send + Sync + 'static>(
         &self,
         instance: &str,
         func: &str,
-        paths: &[&[Option<usize>]],
-    ) -> anyhow::Result<impl Stream<Item = anyhow::Result<(Self::Context, Invocation)>>> {
+        paths: impl Into<Arc<[P]>> + Send + Sync + 'static,
+    ) -> anyhow::Result<impl Stream<Item = anyhow::Result<(Self::Context, Invocation)>> + 'static>
+    {
         let san = san(instance, func);
         let (tx, rx) = mpsc::channel(1024);
         let mut handlers = self.0.lock().await;
@@ -902,9 +902,11 @@ impl wrpc_transport::Serve for Server {
             }
         }
         let span = tracing::Span::current();
+        let paths = paths.into();
         Ok(ReceiverStream::new(rx).then(move |conn| {
+            let paths = Arc::clone(&paths);
             async move {
-                let invocation = serve_connection(conn, paths).await?;
+                let invocation = serve_connection(conn, &paths).await?;
                 Ok(((), invocation))
             }
             .instrument(span.clone())

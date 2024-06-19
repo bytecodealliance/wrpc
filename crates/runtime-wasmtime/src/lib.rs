@@ -940,7 +940,7 @@ pub fn polyfill<'a, T, C, V>(
                         let Invocation { outgoing, incoming, session } = store
                             .data()
                             .client()
-                            .invoke(cx, &instance_name, &rpc_name, buf.freeze(), &[])
+                            .invoke(cx, &instance_name, &rpc_name, buf.freeze(), &[[]; 0])
                             .await
                             .with_context(|| {
                                 format!("failed to invoke `{instance_name}.{func_name}` polyfill via wRPC")
