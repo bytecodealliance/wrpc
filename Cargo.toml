@@ -134,7 +134,7 @@ tower = { version = "0.4", default-features = false }
 tracing = { version = "0.1", default-features = false }
 tracing-subscriber = { version = "0.3", default-features = false }
 url = { version = "2", default-features = false }
-wasm-tokio = { version = "0.5.7", default-features = false }
+wasm-tokio = { version = "0.5.8", default-features = false }
 wasmcloud-component-adapters = { version = "0.9", default-features = false }
 wasmparser = { version = "0.208", default-features = false }
 wasmtime = { version = "21", default-features = false }
