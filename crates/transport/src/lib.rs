@@ -18,6 +18,7 @@ pub mod frame;
 pub use frame::{Decoder as FrameDecoder, Encoder as FrameEncoder, FrameRef};
 
 mod value;
+use tracing::{debug, instrument, trace, Instrument as _};
 pub use value::*;
 
 /// `Index` implementations are capable of multiplexing underlying connections using a particular
@@ -65,7 +66,7 @@ pub trait Invoke: Send + Sync {
     type Outgoing: AsyncWrite + Index<Self::Outgoing> + Send + Sync + 'static;
 
     /// Incoming multiplexed byte stream
-    type Incoming: AsyncRead + Index<Self::Incoming> + Send + Sync + Unpin;
+    type Incoming: AsyncRead + Index<Self::Incoming> + Send + Sync + Unpin + 'static;
 
     /// Invoke function `func` on instance `instance`
     fn invoke(
@@ -80,6 +81,7 @@ pub trait Invoke: Send + Sync {
     > + Send;
 
     /// Invoke function `func` on instance `instance` using typed `Params` and `Returns`
+    #[instrument(level = "trace", skip(self, cx, params, paths))]
     fn invoke_values<Params, Returns>(
         &self,
         cx: Self::Context,
@@ -94,20 +96,20 @@ pub trait Invoke: Send + Sync {
         )>,
     > + Send
     where
-        ValueEncoder<Self::Outgoing>: tokio_util::codec::Encoder<Params>,
-        ValueDecoder<Self::Incoming, Returns>: tokio_util::codec::Decoder<Item = Returns>,
-        Params: Send,
-        Returns: Decode,
-        <ValueEncoder<Self::Outgoing> as tokio_util::codec::Encoder<Params>>::Error:
+        Params: Encode<Self::Outgoing> + Send,
+        Returns: Decode<Self::Incoming>,
+        <Params::Encoder as tokio_util::codec::Encoder<Params>>::Error:
             std::error::Error + Send + Sync + 'static,
-        <ValueDecoder<Self::Incoming, Returns> as tokio_util::codec::Decoder>::Error:
+        <Returns::Decoder as tokio_util::codec::Decoder>::Error:
             std::error::Error + Send + Sync + 'static,
     {
         async {
             let mut buf = BytesMut::default();
-            let mut enc = ValueEncoder::<Self::Outgoing>::default();
+            let mut enc = Params::Encoder::default();
+            trace!("encoding parameters");
             enc.encode(params, &mut buf)
                 .context("failed to encode parameters")?;
+            debug!("invoking function");
             let Invocation {
                 outgoing,
                 incoming,
@@ -116,19 +118,24 @@ pub trait Invoke: Send + Sync {
                 .invoke(cx, instance, func, buf.freeze(), paths)
                 .await
                 .context("failed to invoke function")?;
-            let tx = tokio::spawn(async {
-                enc.write_deferred(outgoing)
-                    .await
-                    .context("failed to write async values")
+            let tx = enc.take_deferred().map(|tx| {
+                tokio::spawn(
+                    async {
+                        trace!("writing async parameters");
+                        tx(outgoing.into(), Vec::with_capacity(8))
+                            .await
+                            .context("failed to write async parameters")
+                    }
+                    .in_current_span(),
+                )
             });
-            let mut dec = FramedRead::new(
-                incoming,
-                ValueDecoder::<Self::Incoming, Returns>::new(Vec::default()),
-            );
+
+            let mut dec = FramedRead::new(incoming, Returns::Decoder::default());
+            debug!("receiving sync returns");
             let Some(returns) = dec
                 .try_next()
                 .await
-                .context("failed to decode return values")?
+                .context("failed to receive sync returns")?
             else {
                 bail!("incomplete returns")
             };
@@ -137,15 +144,23 @@ pub trait Invoke: Send + Sync {
                 if let Some(rx) = rx {
                     try_join!(
                         async {
-                            rx(dec.into_inner())
+                            debug!("receiving async returns");
+                            rx(dec.into_inner().into(), Vec::with_capacity(8))
                                 .await
-                                .context("reading async return values failed")
+                                .context("receiving async returns failed")
                         },
-                        async { tx.await.context("writing async parameters failed")? }
+                        async {
+                            if let Some(tx) = tx {
+                                tx.await.context("writing async parameters failed")?
+                            } else {
+                                Ok(())
+                            }
+                        }
                     )?;
-                } else {
+                } else if let Some(tx) = tx {
                     tx.await.context("writing async parameters failed")??;
                 };
+                debug!("finishing session");
                 session
                     .finish(Ok(()))
                     .await
@@ -156,7 +171,7 @@ pub trait Invoke: Send + Sync {
 }
 
 /// Server-side handle to a wRPC transport
-pub trait Serve: Send + Sync {
+pub trait Serve: Sync {
     /// Transport-specific invocation context
     type Context: Send + Sync + 'static;
 
@@ -188,6 +203,7 @@ pub trait Serve: Send + Sync {
     > + Send;
 
     /// Serve function `func` from instance `instance` using typed `Params` and `Returns`
+    #[instrument(level = "trace", skip(self, paths))]
     fn serve_values<P, Params, Returns>(
         &self,
         instance: &str,
@@ -199,7 +215,9 @@ pub trait Serve: Send + Sync {
                     Item = anyhow::Result<(
                         Self::Context,
                         Params,
-                        Option<impl Future<Output = std::io::Result<()>> + Sync + Send + Unpin>,
+                        Option<
+                            impl Future<Output = std::io::Result<()>> + Sync + Send + Unpin + 'static,
+                        >,
                         impl FnOnce(
                             Result<Returns, Arc<str>>,
                         ) -> Pin<
@@ -216,13 +234,11 @@ pub trait Serve: Send + Sync {
     > + Send
     where
         P: AsRef<[Option<usize>]> + Send + Sync + 'static,
-        Params: Decode,
-        Returns: Send + Sync + 'static,
-        ValueEncoder<Self::Outgoing>: tokio_util::codec::Encoder<Returns>,
-        ValueDecoder<Self::Incoming, Params>: tokio_util::codec::Decoder<Item = Params>,
-        <ValueEncoder<Self::Outgoing> as tokio_util::codec::Encoder<Returns>>::Error:
+        Params: Decode<Self::Incoming> + Send + Sync + 'static,
+        Returns: Encode<Self::Outgoing> + Send + Sync + 'static,
+        <Params::Decoder as tokio_util::codec::Decoder>::Error:
             std::error::Error + Send + Sync + 'static,
-        <ValueDecoder<Self::Incoming, Params> as tokio_util::codec::Decoder>::Error:
+        <Returns::Encoder as tokio_util::codec::Encoder<Returns>>::Error:
             std::error::Error + Send + Sync + 'static,
     {
         async {
@@ -235,55 +251,59 @@ pub trait Serve: Send + Sync {
                         incoming,
                         session,
                     },
-                )| async {
-                    let mut dec = FramedRead::new(
-                        incoming,
-                        ValueDecoder::<Self::Incoming, Params>::new(Vec::default()),
-                    );
-                    let Some(params) = dec
-                        .try_next()
-                        .await
-                        .context("failed to decode parameters")?
-                    else {
-                        bail!("incomplete parameters")
-                    };
-                    let rx = dec.decoder_mut().take_deferred();
-                    Ok((
-                        cx,
-                        params,
-                        rx.map(|f| f(dec.into_inner())),
-                        |returns: Result<_, Arc<str>>| {
-                            Box::pin(async move {
-                                match returns {
-                                    Ok(returns) => {
-                                        let mut enc = FramedWrite::<
-                                            Self::Outgoing,
-                                            ValueEncoder<Self::Outgoing>,
-                                        >::new(
-                                            outgoing,
-                                            ValueEncoder::<Self::Outgoing>::default(),
-                                        );
-                                        enc.send(returns)
-                                            .await
-                                            .context("failed to write return values")?;
-                                        if let Some(tx) = enc.encoder_mut().take_deferred() {
-                                            tx(enc.into_inner())
+                )| {
+                    async {
+                        let mut dec = FramedRead::new(incoming, Params::Decoder::default());
+                        debug!("receiving sync parameters");
+                        let Some(params) = dec
+                            .try_next()
+                            .await
+                            .context("failed to receive sync parameters")?
+                        else {
+                            bail!("incomplete sync parameters")
+                        };
+                        trace!("received sync parameters");
+                        let rx = dec.decoder_mut().take_deferred();
+                        Ok((
+                            cx,
+                            params,
+                            rx.map(|f| f(dec.into_inner().into(), Vec::with_capacity(8))),
+                            |returns: Result<_, Arc<str>>| {
+                                Box::pin(async move {
+                                    match returns {
+                                        Ok(returns) => {
+                                            let mut enc = FramedWrite::new(
+                                                outgoing,
+                                                Returns::Encoder::default(),
+                                            );
+                                            debug!("transmitting sync returns");
+                                            enc.send(returns).await.context(
+                                                "failed to transmit synchronous returns",
+                                            )?;
+                                            if let Some(tx) = enc.encoder_mut().take_deferred() {
+                                                debug!("transmitting async returns");
+                                                tx(enc.into_inner().into(), Vec::with_capacity(8))
+                                                    .await
+                                                    .context("failed to write async returns")?;
+                                            }
+                                            debug!("finishing session with success");
+                                            session
+                                                .finish(Ok(()))
                                                 .await
-                                                .context("failed to write async return values")?;
+                                                .context("failed to finish session")
                                         }
-                                        session
-                                            .finish(Ok(()))
-                                            .await
-                                            .context("failed to finish session")
+                                        Err(err) => {
+                                            debug!(?err, "finishing session with an error");
+                                            session
+                                                .finish(Err(&err))
+                                                .await
+                                                .context("failed to finish session")
+                                        }
                                     }
-                                    Err(err) => session
-                                        .finish(Err(&err))
-                                        .await
-                                        .context("failed to finish session"),
-                                }
-                            }) as Pin<_>
-                        },
-                    ))
+                                }) as Pin<_>
+                            },
+                        ))
+                    }
                 },
             ))
         }
