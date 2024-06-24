@@ -1,5 +1,14 @@
 #![allow(clippy::type_complexity)]
 
+#[cfg(feature = "frame")]
+pub mod frame;
+
+mod value;
+
+#[cfg(feature = "frame")]
+pub use frame::{Decoder as FrameDecoder, Encoder as FrameEncoder, FrameRef};
+pub use value::*;
+
 use core::future::Future;
 use core::pin::Pin;
 
@@ -11,15 +20,7 @@ use futures::{SinkExt as _, Stream, TryStreamExt as _};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::try_join;
 use tokio_util::codec::{Encoder as _, FramedRead, FramedWrite};
-
-#[cfg(feature = "frame")]
-pub mod frame;
-#[cfg(feature = "frame")]
-pub use frame::{Decoder as FrameDecoder, Encoder as FrameEncoder, FrameRef};
-
-mod value;
 use tracing::{debug, instrument, trace, Instrument as _};
-pub use value::*;
 
 /// `Index` implementations are capable of multiplexing underlying connections using a particular
 /// structural `path`

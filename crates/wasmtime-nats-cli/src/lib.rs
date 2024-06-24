@@ -1,16 +1,14 @@
 use anyhow::{anyhow, bail, Context as _};
 use clap::Parser;
 use tokio::fs;
-use tracing::instrument;
+use tracing::{error, instrument, trace};
 use url::Url;
 use wasmcloud_component_adapters::WASI_PREVIEW1_COMMAND_COMPONENT_ADAPTER;
-use wasmtime::{
-    component::{Component, Linker},
-    Store,
-};
+use wasmtime::component::{types, Component, Linker};
+use wasmtime::Store;
 use wasmtime_wasi::{bindings::Command, WasiCtx, WasiView};
 use wasmtime_wasi::{ResourceTable, WasiCtxBuilder};
-use wrpc_runtime_wasmtime::{polyfill, WrpcView};
+use wrpc_runtime_wasmtime::{link_instance, WrpcView};
 use wrpc_transport::Invoke;
 
 #[derive(Parser, Debug)]
@@ -137,14 +135,67 @@ pub async fn run() -> anyhow::Result<()> {
         .find_map(|(id, w)| (id == world).then_some(w))
         .context("component world missing")?;
 
-    polyfill(
-        &resolve,
-        imports,
-        &engine,
-        &component.component_type(),
-        &mut linker,
-        None,
-    );
+    let ty = component.component_type();
+    for (wk, _) in imports {
+        let instance_name = resolve.name_world_key(wk);
+        // Avoid polyfilling instances, for which static bindings are linked
+        match instance_name.as_ref() {
+            "wasi:cli/environment@0.2.0"
+            | "wasi:cli/exit@0.2.0"
+            | "wasi:cli/stderr@0.2.0"
+            | "wasi:cli/stdin@0.2.0"
+            | "wasi:cli/stdout@0.2.0"
+            | "wasi:cli/terminal-input@0.2.0"
+            | "wasi:cli/terminal-output@0.2.0"
+            | "wasi:cli/terminal-stderr@0.2.0"
+            | "wasi:cli/terminal-stdin@0.2.0"
+            | "wasi:cli/terminal-stdout@0.2.0"
+            | "wasi:clocks/monotonic-clock@0.2.0"
+            | "wasi:clocks/wall-clock@0.2.0"
+            | "wasi:filesystem/preopens@0.2.0"
+            | "wasi:filesystem/types@0.2.0"
+            | "wasi:http/incoming-handler@0.2.0"
+            | "wasi:http/outgoing-handler@0.2.0"
+            | "wasi:http/types@0.2.0"
+            | "wasi:io/error@0.2.0"
+            | "wasi:io/poll@0.2.0"
+            | "wasi:io/streams@0.2.0"
+            | "wasi:keyvalue/store@0.2.0-draft"
+            | "wasi:random/random@0.2.0"
+            | "wasi:sockets/instance-network@0.2.0"
+            | "wasi:sockets/network@0.2.0"
+            | "wasi:sockets/tcp-create-socket@0.2.0"
+            | "wasi:sockets/tcp@0.2.0"
+            | "wasi:sockets/udp-create-socket@0.2.0"
+            | "wasi:sockets/udp@0.2.0" => continue,
+            _ => {}
+        }
+        let Some(types::ComponentItem::ComponentInstance(instance)) =
+            ty.get_import(&engine, &instance_name)
+        else {
+            trace!(
+                instance_name,
+                "component does not import the parsed instance"
+            );
+            continue;
+        };
+
+        let mut linker = linker.root();
+        let mut linker = match linker.instance(&instance_name) {
+            Ok(linker) => linker,
+            Err(err) => {
+                error!(
+                    ?err,
+                    ?instance_name,
+                    "failed to instantiate interface from root"
+                );
+                continue;
+            }
+        };
+        if let Err(err) = link_instance(&engine, &mut linker, instance, instance_name, None) {
+            error!(?err, "failed to polyfill instance");
+        }
+    }
 
     let pre = linker
         .instantiate_pre(&component)

@@ -16,7 +16,7 @@ async-trait = { workspace = true }
 bytes = { workspace = true }
 futures = { workspace = true, features = ["alloc"] }
 tokio = { workspace = true, features = ["macros"] }
-tokio-util = { workspace = true, features = ["codec"] }
+tokio-util = { workspace = true, features = ["codec", "compat"] }
 tracing = { workspace = true, features = ["attributes"] }
 wasm-tokio = { workspace = true }
 wasmtime = { workspace = true }
