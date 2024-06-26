@@ -94,3 +94,20 @@ world resources-client {
         bar: func(v: borrow<foo>) -> u64;
     }
 }
+
+interface get-types {
+    flags feature-flags {
+        show-a,
+        show-b,
+        show-c,
+        show-d,
+        show-e,
+        show-f,
+    }
+
+    get-features: func() -> feature-flags;
+}
+
+world types {
+    import get-types;
+}
