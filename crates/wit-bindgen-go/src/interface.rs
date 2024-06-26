@@ -217,17 +217,20 @@ impl InterfaceGenerator<'_> {
         let fmt = self.deps.fmt();
         let io = self.deps.io();
         let slog = self.deps.slog();
+        let errors = self.deps.errors();
         uwrite!(
             self.src,
             r#"func(r {io}.ByteReader) (int16, error) {{
     var (
-        b      byte
-        err    error
-        result int16
-        shift  uint16
-        length uint32
+        b          byte
+        err        error
+        result     int16
+        shift      uint16
+        length     uint32
+        endReached bool
     )
-    for {{
+    const lenCeiling = 3
+    for i := 0; i < lenCeiling; i++ {{
         {slog}.Debug("reading s16 byte")
         b, err = r.ReadByte()
         if err != nil {{
@@ -238,8 +241,12 @@ impl InterfaceGenerator<'_> {
         result |= (int16(b) & 0x7f) << shift
         shift += 7
         if b&0x80 == 0 {{
+            endReached = true
             break
         }}
+    }}
+    if !endReached {{
+        return 0, {errors}.New("cannot decode s16 past the length limit")
     }}
     if (shift < 8*uint16(length)) && (b&0x40 > 0) {{
         result |= -(1 << shift)
@@ -253,17 +260,20 @@ impl InterfaceGenerator<'_> {
         let fmt = self.deps.fmt();
         let io = self.deps.io();
         let slog = self.deps.slog();
+        let errors = self.deps.errors();
         uwrite!(
             self.src,
             r#"func(r {io}.ByteReader) (int32, error) {{
     var (
-        b      byte
-        err    error
-        result int32
-        shift  uint32
-        length uint32
+        b          byte
+        err        error
+        result     int32
+        shift      uint32
+        length     uint32
+        endReached bool
     )
-    for {{
+    const lenCeiling = 5
+    for i := 0; i < lenCeiling; i++ {{
         {slog}.Debug("reading s32 byte")
         b, err = r.ReadByte()
         if err != nil {{
@@ -274,8 +284,12 @@ impl InterfaceGenerator<'_> {
         result |= (int32(b) & 0x7f) << shift
         shift += 7
         if b&0x80 == 0 {{
+            endReached = true
             break
         }}
+    }}
+    if !endReached {{
+        return 0, {errors}.New("cannot decode s32 past the length limit")
     }}
     if (shift < 8*uint32(length)) && (b&0x40 > 0) {{
         result |= -(1 << shift)
@@ -289,17 +303,20 @@ impl InterfaceGenerator<'_> {
         let fmt = self.deps.fmt();
         let io = self.deps.io();
         let slog = self.deps.slog();
+        let errors = self.deps.errors();
         uwrite!(
             self.src,
             r#"func(r {io}.ByteReader) (int64, error) {{
     var (
-        b      byte
-        err    error
-        result int64
-        shift  uint64
-        length uint32
+        b          byte
+        err        error
+        result     int64
+        shift      uint64
+        length     uint32
+        endReached bool
     )
-    for {{
+    const lenCeiling = 10
+    for i := 0; i < lenCeiling; i++ {{
         {slog}.Debug("reading s64 byte")
         b, err = r.ReadByte()
         if err != nil {{
@@ -310,8 +327,12 @@ impl InterfaceGenerator<'_> {
         result |= (int64(b) & 0x7f) << shift
         shift += 7
         if b&0x80 == 0 {{
+            endReached = true
             break
         }}
+    }}
+    if !endReached {{
+        return 0, {errors}.New("cannot decode s64 past the length limit")
     }}
     if (shift < 8*uint64(length)) && (b&0x40 > 0) {{
         result |= -(1 << shift)
