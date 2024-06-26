@@ -1016,13 +1016,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "hello-component-server"
-version = "0.1.0"
-dependencies = [
- "wit-bindgen",
-]
-
-[[package]]
 name = "hello-nats-client"
 version = "0.1.0"
 dependencies = [
@@ -2940,9 +2933,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-tokio"
-version = "0.5.8"
+version = "0.5.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "452450b354461b52144e0f4920ce2d425446fb791c7dfb7a90bcefaccbe29a35"
+checksum = "d557d6a70267be2b3fd67e9fc71d0d6205b1348f98170c0cccb64580ca1a6109"
 dependencies = [
  "leb128-tokio",
  "tokio",
