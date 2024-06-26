@@ -6,10 +6,9 @@ use std::fmt::{self, Write as _};
 use std::io::{Read, Write};
 use std::mem;
 use std::process::{Command, Stdio};
-use std::str::FromStr;
 use wit_bindgen_core::wit_parser::{
-    Flags, FlagsRepr, Function, FunctionKind, Int, InterfaceId, PackageId, Resolve, SizeAlign,
-    TypeId, World, WorldId, WorldKey,
+    Flags, FlagsRepr, Function, Int, InterfaceId, PackageId, Resolve, SizeAlign, TypeId, World,
+    WorldId, WorldKey,
 };
 use wit_bindgen_core::{uwriteln, Files, InterfaceGenerator as _, Source, Types, WorldGenerator};
 
@@ -33,8 +32,6 @@ struct RustWrpc {
     export_modules: Vec<(String, Vec<String>)>,
     skip: HashSet<String>,
     interface_names: HashMap<InterfaceId, InterfaceName>,
-    /// Each imported and exported interface is stored in this map. Value indicates if last use was import.
-    interface_last_seen_as_import: HashMap<InterfaceId, bool>,
     import_funcs_called: bool,
     with_name_counter: usize,
     // Track the with options that were used. Remapped interfaces provided via `with`
@@ -66,55 +63,15 @@ pub struct Opts {
     #[cfg_attr(feature = "clap", arg(long))]
     pub std_feature: bool,
 
-    /// If true, code generation should pass borrowed string arguments as
-    /// `&[u8]` instead of `&str`. Strings are still required to be valid
-    /// UTF-8, but this avoids the need for Rust code to do its own UTF-8
-    /// validation if it doesn't already have a `&str`.
-    #[cfg_attr(feature = "clap", arg(long))]
-    pub raw_strings: bool,
-
     /// Names of functions to skip generating bindings for.
     #[cfg_attr(feature = "clap", arg(long))]
     pub skip: Vec<String>,
-
-    /// If true, generate stub implementations for any exported functions,
-    /// interfaces, and/or resources.
-    #[cfg_attr(feature = "clap", arg(long))]
-    pub stubs: bool,
-
-    /// Optionally prefix any export names with the specified value.
-    ///
-    /// This is useful to avoid name conflicts when testing.
-    #[cfg_attr(feature = "clap", arg(long))]
-    pub export_prefix: Option<String>,
-
-    /// Whether to generate owning or borrowing type definitions.
-    ///
-    /// Valid values include:
-    ///
-    /// - `owning`: Generated types will be composed entirely of owning fields,
-    /// regardless of whether they are used as parameters to imports or not.
-    ///
-    /// - `borrowing`: Generated types used as parameters to imports will be
-    /// "deeply borrowing", i.e. contain references rather than owned values
-    /// when applicable.
-    ///
-    /// - `borrowing-duplicate-if-necessary`: As above, but generating distinct
-    /// types for borrowing and owning, if necessary.
-    #[cfg_attr(feature = "clap", arg(long, default_value_t = Ownership::Owning))]
-    pub ownership: Ownership,
 
     /// The optional path to the `anyhow` crate to use.
     ///
     /// This defaults to `wit_bindgen_wrpc::anyhow`.
     #[cfg_attr(feature = "clap", arg(long))]
     pub anyhow_path: Option<String>,
-
-    /// The optional path to the `async_trait` crate to use.
-    ///
-    /// This defaults to `wit_bindgen_wrpc::async_trait`.
-    #[cfg_attr(feature = "clap", arg(long))]
-    pub async_trait_path: Option<String>,
 
     /// The optional path to the bitflags crate to use.
     ///
@@ -140,11 +97,23 @@ pub struct Opts {
     #[cfg_attr(feature = "clap", arg(long))]
     pub tokio_path: Option<String>,
 
+    /// The optional path to the `tokio-util` crate to use.
+    ///
+    /// This defaults to `wit_bindgen_wrpc::tokio_util`.
+    #[cfg_attr(feature = "clap", arg(long))]
+    pub tokio_util_path: Option<String>,
+
     /// The optional path to the `tracing` crate to use.
     ///
     /// This defaults to `wit_bindgen_wrpc::tracing`.
     #[cfg_attr(feature = "clap", arg(long))]
     pub tracing_path: Option<String>,
+
+    /// The optional path to the `wasm-tokio` crate to use.
+    ///
+    /// This defaults to `wit_bindgen_wrpc::wasm_tokio`.
+    #[cfg_attr(feature = "clap", arg(long))]
+    pub wasm_tokio_path: Option<String>,
 
     /// The optional path to the `wrpc-transport` crate to use.
     ///
@@ -252,13 +221,6 @@ impl RustWrpc {
             .unwrap_or("::wit_bindgen_wrpc::anyhow")
     }
 
-    fn async_trait_path(&self) -> &str {
-        self.opts
-            .async_trait_path
-            .as_deref()
-            .unwrap_or("::wit_bindgen_wrpc::async_trait")
-    }
-
     fn bitflags_path(&self) -> &str {
         self.opts
             .bitflags_path
@@ -287,11 +249,25 @@ impl RustWrpc {
             .unwrap_or("::wit_bindgen_wrpc::tokio")
     }
 
+    fn tokio_util_path(&self) -> &str {
+        self.opts
+            .tokio_util_path
+            .as_deref()
+            .unwrap_or("::wit_bindgen_wrpc::tokio_util")
+    }
+
     fn tracing_path(&self) -> &str {
         self.opts
             .tracing_path
             .as_deref()
             .unwrap_or("::wit_bindgen_wrpc::tracing")
+    }
+
+    fn wasm_tokio_path(&self) -> &str {
+        self.opts
+            .wasm_tokio_path
+            .as_deref()
+            .unwrap_or("::wit_bindgen_wrpc::wasm_tokio")
     }
 
     fn wrpc_transport_path(&self) -> &str {
@@ -339,18 +315,15 @@ impl RustWrpc {
     /// other macros collected in `self.export_paths` prior. All these macros
     /// are woven together in this single invocation.
     fn finish_serve_function(&mut self) {
-        let name = format!(
-            "Server<T::Context, <T::Acceptor as {wrpc_transport}::Acceptor>::Transmitter>",
-            wrpc_transport = self.wrpc_transport_path()
-        );
+        const ROOT: &str = "Handler<T::Context>";
         let mut traits: Vec<String> = self
             .export_paths
             .iter()
             .map(|path| {
                 if path.is_empty() {
-                    name.to_string()
+                    ROOT.to_string()
                 } else {
-                    format!("{path}::{name}")
+                    format!("{path}::{ROOT}")
                 }
             })
             .collect();
@@ -366,28 +339,30 @@ impl RustWrpc {
         uwriteln!(
             self.src,
             r#"
-pub async fn serve<T: {wrpc_transport}::Client>(
+pub async fn serve<T: {wrpc_transport}::Serve>(
     wrpc: &T,
-    server: impl {bound} + Clone,
+    handler: impl {bound} + Send + Sync + Clone + 'static,
     shutdown: impl ::core::future::Future<Output = ()>,
 ) -> {anyhow}::Result<()> {{
     use {futures}::FutureExt as _;
     let shutdown = shutdown.shared();
     {tokio}::try_join!("#
         );
-
         for path in &self.export_paths {
             if !path.is_empty() {
                 self.src.push_str(path);
                 self.src.push_str("::");
             }
             self.src
-                .push_str("serve_interface(wrpc, server.clone(), shutdown.clone()),");
+                .push_str("serve_interface(wrpc, handler.clone(), shutdown.clone()),");
         }
-
-        self.src.push_str(")?;\n");
-        self.src.push_str("Ok(())\n");
-        self.src.push_str("}\n");
+        uwriteln!(
+            self.src,
+            r#"
+    )?;
+    Ok(())
+}}"#
+        );
     }
 }
 
@@ -441,17 +416,8 @@ impl WorldGenerator for RustWrpc {
         // Render some generator options to assist with debugging and/or to help
         // recreate it if the original generation command is lost.
         uwriteln!(self.src, "// Options used:");
-        if self.opts.std_feature {
-            uwriteln!(self.src, "//   * std_feature");
-        }
-        if self.opts.raw_strings {
-            uwriteln!(self.src, "//   * raw_strings");
-        }
         if !self.opts.skip.is_empty() {
             uwriteln!(self.src, "//   * skip: {:?}", self.opts.skip);
-        }
-        if !matches!(self.opts.ownership, Ownership::Owning) {
-            uwriteln!(self.src, "//   * ownership: {:?}", self.opts.ownership);
         }
         if !self.opts.additional_derive_attributes.is_empty() {
             uwriteln!(
@@ -478,7 +444,6 @@ impl WorldGenerator for RustWrpc {
         id: InterfaceId,
         _files: &mut Files,
     ) {
-        self.interface_last_seen_as_import.insert(id, true);
         let mut gen = self.interface(Identifier::Interface(id, name), resolve, true);
         let (snake, module_path) = gen.start_append_submodule(name);
         if gen.gen.name_interface(resolve, id, name, false) {
@@ -536,7 +501,6 @@ impl WorldGenerator for RustWrpc {
         id: InterfaceId,
         _files: &mut Files,
     ) -> Result<()> {
-        self.interface_last_seen_as_import.insert(id, false);
         let mut gen = self.interface(Identifier::Interface(id, name), resolve, false);
         let (snake, module_path) = gen.start_append_submodule(name);
         if gen.gen.name_interface(resolve, id, name, true) {
@@ -551,14 +515,6 @@ impl WorldGenerator for RustWrpc {
         if exports {
             self.export_paths
                 .push(self.interface_names[&id].path.clone());
-        }
-
-        if self.opts.stubs {
-            let world_id = self.world.unwrap();
-            let mut gen = self.interface(Identifier::World(world_id), resolve, false);
-            gen.generate_stub(Some((id, name)), resolve.interfaces[id].functions.values());
-            let stub = gen.finish();
-            self.src.push_str(&stub);
         }
         Ok(())
     }
@@ -576,13 +532,6 @@ impl WorldGenerator for RustWrpc {
         self.src.push_str(&src);
         if exports {
             self.export_paths.push(String::new());
-        }
-
-        if self.opts.stubs {
-            let mut gen = self.interface(Identifier::World(world), resolve, false);
-            gen.generate_stub(None, funcs.iter().map(|f| f.1));
-            let stub = gen.finish();
-            self.src.push_str(&stub);
         }
         Ok(())
     }
@@ -620,10 +569,6 @@ impl WorldGenerator for RustWrpc {
         self.emit_modules(exports);
 
         self.finish_serve_function();
-
-        if self.opts.stubs {
-            self.src.push_str("\n#[derive(Debug)]\npub struct Stub;\n");
-        }
 
         let mut src = mem::take(&mut self.src);
         if self.opts.rustfmt {
@@ -695,77 +640,8 @@ enum Identifier<'a> {
     Interface(InterfaceId, &'a WorldKey),
 }
 
-fn group_by_resource<'a>(
-    funcs: impl Iterator<Item = &'a Function>,
-) -> BTreeMap<Option<TypeId>, Vec<&'a Function>> {
-    let mut by_resource = BTreeMap::<_, Vec<_>>::new();
-    for func in funcs {
-        match &func.kind {
-            FunctionKind::Freestanding => by_resource.entry(None).or_default().push(func),
-            FunctionKind::Method(ty) | FunctionKind::Static(ty) | FunctionKind::Constructor(ty) => {
-                by_resource.entry(Some(*ty)).or_default().push(func);
-            }
-        }
-    }
-    by_resource
-}
-
-#[derive(Default, Debug, Clone, Copy)]
-pub enum Ownership {
-    /// Generated types will be composed entirely of owning fields, regardless
-    /// of whether they are used as parameters to imports or not.
-    #[default]
-    Owning,
-
-    /// Generated types used as parameters to imports will be "deeply
-    /// borrowing", i.e. contain references rather than owned values when
-    /// applicable.
-    Borrowing {
-        /// Whether or not to generate "duplicate" type definitions for a single
-        /// WIT type if necessary, for example if it's used as both an import
-        /// and an export, or if it's used both as a parameter to an import and
-        /// a return value from an import.
-        duplicate_if_necessary: bool,
-    },
-}
-
-impl FromStr for Ownership {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "owning" => Ok(Self::Owning),
-            "borrowing" => Ok(Self::Borrowing {
-                duplicate_if_necessary: false,
-            }),
-            "borrowing-duplicate-if-necessary" => Ok(Self::Borrowing {
-                duplicate_if_necessary: true,
-            }),
-            _ => Err(format!(
-                "unrecognized ownership: `{s}`; \
-                 expected `owning`, `borrowing`, or `borrowing-duplicate-if-necessary`"
-            )),
-        }
-    }
-}
-
-impl fmt::Display for Ownership {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.write_str(match self {
-            Ownership::Owning => "owning",
-            Ownership::Borrowing {
-                duplicate_if_necessary: false,
-            } => "borrowing",
-            Ownership::Borrowing {
-                duplicate_if_necessary: true,
-            } => "borrowing-duplicate-if-necessary",
-        })
-    }
-}
-
 #[derive(Default)]
 struct FnSig {
-    definition: bool,
     private: bool,
     use_item_name: bool,
     self_arg: Option<String>,
@@ -797,6 +673,7 @@ pub fn to_rust_ident(name: &str) -> String {
         "mod" => "mod_".into(),
         "move" => "move_".into(),
         "mut" => "mut_".into(),
+        "new" => "new_".into(),
         "pub" => "pub_".into(),
         "ref" => "ref_".into(),
         "return" => "return_".into(),

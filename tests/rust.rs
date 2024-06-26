@@ -10,13 +10,13 @@ use core::time::Duration;
 use std::sync::Arc;
 
 use anyhow::Context;
+use bytes::Bytes;
 use futures::{stream, FutureExt as _, Stream, StreamExt as _, TryStreamExt as _};
 use tokio::sync::{oneshot, RwLock};
 use tokio::time::sleep;
-use tokio::{join, spawn, try_join};
+use tokio::{join, select, spawn, try_join};
 use tracing::{info, info_span, instrument, Instrument};
-use wrpc_transport::{Invoke as _, Serve as _};
-use wrpc_transport_legacy::{ResourceBorrow, ResourceOwn};
+use wrpc_transport::{Invoke as _, ResourceBorrow, ResourceOwn, Serve as _};
 
 use common::{with_nats, with_quic};
 
@@ -89,20 +89,18 @@ use common::{with_nats, with_quic};
 //    }
 //}
 
-#[instrument(ret)]
-#[test_log::test(tokio::test(flavor = "multi_thread"))]
-async fn rust_bindgen() -> anyhow::Result<()> {
-    with_nats(|_, nats_client| async {
-        let client = wrpc_transport_nats_legacy::Client::new(nats_client, "test-prefix".to_string());
-        let client = Arc::new(client);
-
-        let (shutdown_tx, shutdown_rx) = oneshot::channel();
-        let shutdown_rx =
-            async move { shutdown_rx.await.expect("shutdown sender dropped") }.shared();
-        try_join!(
-            async {
-                wrpc::generate!({
-                    inline: "
+async fn assert_bindgen<C, I, S>(i: Arc<I>, s: Arc<S>) -> anyhow::Result<()>
+where
+    C: Send + Sync + Default,
+    I: wrpc::Invoke<Context = C>,
+    S: wrpc::Serve<Context = C>,
+{
+    let (shutdown_tx, shutdown_rx) = oneshot::channel();
+    let shutdown_rx = async move { shutdown_rx.await.expect("shutdown sender dropped") }.shared();
+    try_join!(
+        async {
+            wrpc::generate!({
+                inline: "
                         package wrpc-test:integration;
 
                         interface shared {
@@ -135,156 +133,183 @@ async fn rust_bindgen() -> anyhow::Result<()> {
                                 foo: func(x: string);
                             }
                         }"
-                });
+            });
 
-                use exports::wrpc_test::integration::shared::CounterRep;
+            use exports::wrpc_test::integration::shared::Counter;
 
+            #[derive(Clone, Default)]
+            struct Component {
+                inner: Arc<RwLock<Option<String>>>,
+                counts: Arc<RwLock<Vec<u32>>>,
+            }
 
-                #[derive(Clone, Default)]
-                struct Component {
-                    inner: Arc<RwLock<Option<String>>>,
-                    counts: Arc<RwLock<Vec<u32>>>,
+            impl<C: Send + Sync> exports::wrpc_test::integration::shared::HandlerCounter<C> for Component {
+                async fn new(&self, _cx: C, initial: u32) -> anyhow::Result<ResourceOwn<Counter>> {
+                    let mut counts = self.counts.write().await;
+                    counts.push(initial);
+
+                    let index = counts.len() - 1;
+                    let handle_blob: Bytes = index.to_ne_bytes().to_vec().into();
+                    let handle = ResourceOwn::from(handle_blob);
+
+                    Ok(handle)
                 }
 
-                impl exports::wrpc_test::integration::shared::HandlerCounter<Option<async_nats::HeaderMap>> for Component {
-                    async fn new(&self, _cx: Option<async_nats::HeaderMap>, initial: u32) -> anyhow::Result<ResourceOwn<CounterRep>> {
-                        let mut counts = self.counts.write().await;
-                        counts.push(initial);
+                async fn clone_counter(
+                    &self,
+                    _cx: C,
+                    self_: ResourceBorrow<Counter>,
+                ) -> anyhow::Result<ResourceOwn<Counter>> {
+                    let handle_blob: Bytes = self_.into();
 
-                        let index = counts.len() - 1;
-                        let handle_blob: Vec<u8> = index.to_ne_bytes().to_vec();
-                        let handle = ResourceOwn::from(handle_blob);
+                    let index_bytes: [u8; 8] = handle_blob[0..8]
+                        .try_into()
+                        .context("failed to decode counter resource hanlde")?;
+                    let index = usize::from_ne_bytes(index_bytes);
 
-                        Ok(handle)
-                    }
+                    let mut counts = self.counts.write().await;
+                    let count = *counts
+                        .get(index)
+                        .context("counter resource entry not found")?;
 
-                    async fn clone_counter(&self, _cx: Option<async_nats::HeaderMap>, self_: ResourceBorrow<CounterRep>) -> anyhow::Result<ResourceOwn<CounterRep>> {
-                        let handle_blob: Vec<u8> = self_.into();
+                    counts.push(count);
+                    let index = counts.len() - 1;
+                    let handle_blob: Bytes = index.to_ne_bytes().to_vec().into();
+                    let handle = ResourceOwn::from(handle_blob);
 
-                        let index_bytes: [u8; 8] = handle_blob[0..8].try_into().context("failed to decode counter resource hanlde")?;
-                        let index = usize::from_ne_bytes(index_bytes);
-
-                        let mut counts = self.counts.write().await;
-                        let count = *counts.get(index).context("counter resource entry not found")?;
-
-                        counts.push(count);
-                        let index = counts.len() - 1;
-                        let handle_blob: Vec<u8> = index.to_ne_bytes().to_vec();
-                        let handle = ResourceOwn::from(handle_blob);
-
-                        Ok(handle)
-                    }
-
-                    async fn get_count(&self, _cx: Option<async_nats::HeaderMap>, self_: ResourceBorrow<CounterRep>) -> anyhow::Result<u32> {
-                        let handle_blob: Vec<u8> = self_.into();
-
-                        let index_bytes: [u8; 8] = handle_blob[0..8].try_into().context("failed to decode counter resource hanlde")?;
-                        let index = usize::from_ne_bytes(index_bytes);
-
-                        let counts = self.counts.read().await;
-                        let count = counts.get(index).context("counter resource entry not found")?;
-
-                        Ok(*count)
-                    }
-
-                    async fn increment_by(&self, _cx: Option<async_nats::HeaderMap>, self_: ResourceBorrow<CounterRep>, num: u32) -> anyhow::Result<()> {
-                        let handle_blob: Vec<u8> = self_.into();
-
-                        let index_bytes: [u8; 8] = handle_blob[0..8].try_into().context("failed to decode counter resource handle")?;
-                        let index = usize::from_ne_bytes(index_bytes);
-
-                        let mut counts = self.counts.write().await;
-                        let count = counts.get_mut(index).context("counter resource entry not found")?;
-
-                        *count += num;
-
-                        Ok(())
-                    }
-
-                    async fn sum(&self, _cx: Option<async_nats::HeaderMap>, a: ResourceBorrow<CounterRep>, b: ResourceBorrow<CounterRep>) -> anyhow::Result<u32> {
-                        let a_handle_blob: Vec<u8> = a.into();
-                        let b_handle_blob: Vec<u8> = b.into();
-
-                        let a_index_bytes: [u8; 8] = a_handle_blob[0..8].try_into().context("failed to decode counter resource handle")?;
-                        let b_index_bytes: [u8; 8] = b_handle_blob[0..8].try_into().context("failed to decode counter resource handle")?;
-
-                        let a_index = usize::from_ne_bytes(a_index_bytes);
-                        let b_index = usize::from_ne_bytes(b_index_bytes);
-
-                        let counts = self.counts.write().await;
-                        let a_count = counts.get(a_index).context("counter resource entry not found")?;
-                        let b_count = counts.get(b_index).context("counter resource entry not found")?;
-
-                        Ok(*a_count + *b_count)
-                    }
+                    Ok(handle)
                 }
 
-                impl Handler<Option<async_nats::HeaderMap>> for Component {
-                    async fn f(
-                        &self,
-                        _cx: Option<async_nats::HeaderMap>,
-                        x: String,
-                    ) -> anyhow::Result<u32> {
-                        let stored = self.inner.read().await.as_ref().unwrap().to_string();
-                        assert_eq!(stored, x);
-                        Ok(42)
-                    }
+                async fn get_count(
+                    &self,
+                    _cx: C,
+                    self_: ResourceBorrow<Counter>,
+                ) -> anyhow::Result<u32> {
+                    let handle_blob: Bytes = self_.into();
+
+                    let index_bytes: [u8; 8] = handle_blob[0..8]
+                        .try_into()
+                        .context("failed to decode counter resource hanlde")?;
+                    let index = usize::from_ne_bytes(index_bytes);
+
+                    let counts = self.counts.read().await;
+                    let count = counts
+                        .get(index)
+                        .context("counter resource entry not found")?;
+
+                    Ok(*count)
                 }
 
-                impl exports::wrpc_test::integration::shared::Handler<Option<async_nats::HeaderMap>> for Component {
-                    async fn fallible(
-                        &self,
-                        _cx: Option<async_nats::HeaderMap>,
-                    ) -> anyhow::Result<Result<bool, String>> {
-                        Ok(Ok(true))
-                    }
+                async fn increment_by(
+                    &self,
+                    _cx: C,
+                    self_: ResourceBorrow<Counter>,
+                    num: u32,
+                ) -> anyhow::Result<()> {
+                    let handle_blob: Bytes = self_.into();
 
-                    async fn numbers(
-                        &self,
-                        _cx: Option<async_nats::HeaderMap>,
-                    ) -> anyhow::Result<(u8, u16, u32, u64, i8, i16, i32, i64, f32, f64)> {
-                        Ok((
-                            0xfe,
-                            0xfeff,
-                            0xfeff_ffff,
-                            0xfeff_ffff_ffff_ffff,
-                            0x7e,
-                            0x7eff,
-                            0x7eff_ffff,
-                            0x7eff_ffff_ffff_ffff,
-                            0.42,
-                            0.4242,
-                        ))
-                    }
+                    let index_bytes: [u8; 8] = handle_blob[0..8]
+                        .try_into()
+                        .context("failed to decode counter resource handle")?;
+                    let index = usize::from_ne_bytes(index_bytes);
 
-                    async fn with_flags(
-                        &self,
-                        _cx: Option<async_nats::HeaderMap>,
-                    ) -> anyhow::Result<exports::wrpc_test::integration::shared::Abc> {
-                        use exports::wrpc_test::integration::shared::Abc;
-                        Ok(Abc::A | Abc::C)
-                    }
+                    let mut counts = self.counts.write().await;
+                    let count = counts
+                        .get_mut(index)
+                        .context("counter resource entry not found")?;
+
+                    *count += num;
+
+                    Ok(())
                 }
 
-                impl exports::foo::Handler<Option<async_nats::HeaderMap>> for Component {
-                    async fn foo(
-                        &self,
-                        _cx: Option<async_nats::HeaderMap>,
-                        x: String,
-                    ) -> anyhow::Result<()> {
-                        let old = self.inner.write().await.replace(x);
-                        assert!(old.is_none());
-                        Ok(())
-                    }
+                async fn sum(
+                    &self,
+                    _cx: C,
+                    a: ResourceBorrow<Counter>,
+                    b: ResourceBorrow<Counter>,
+                ) -> anyhow::Result<u32> {
+                    let a_handle_blob: Bytes = a.into();
+                    let b_handle_blob: Bytes = b.into();
+
+                    let a_index_bytes: [u8; 8] = a_handle_blob[0..8]
+                        .try_into()
+                        .context("failed to decode counter resource handle")?;
+                    let b_index_bytes: [u8; 8] = b_handle_blob[0..8]
+                        .try_into()
+                        .context("failed to decode counter resource handle")?;
+
+                    let a_index = usize::from_ne_bytes(a_index_bytes);
+                    let b_index = usize::from_ne_bytes(b_index_bytes);
+
+                    let counts = self.counts.write().await;
+                    let a_count = counts
+                        .get(a_index)
+                        .context("counter resource entry not found")?;
+                    let b_count = counts
+                        .get(b_index)
+                        .context("counter resource entry not found")?;
+
+                    Ok(*a_count + *b_count)
+                }
+            }
+
+            impl<C: Send + Sync> Handler<C> for Component {
+                async fn f(&self, _cx: C, x: String) -> anyhow::Result<u32> {
+                    let stored = self.inner.read().await.as_ref().unwrap().to_string();
+                    assert_eq!(stored, x);
+                    Ok(42)
+                }
+            }
+
+            impl<C: Send + Sync> exports::wrpc_test::integration::shared::Handler<C> for Component {
+                async fn fallible(&self, _cx: C) -> anyhow::Result<Result<bool, String>> {
+                    Ok(Ok(true))
                 }
 
-                serve(client.as_ref(), Component::default(), shutdown_rx.clone())
-                    .await
-                    .context("failed to serve `wrpc-test:integration/test`")
-            },
-            async {
-                wrpc::generate!({
-                    inline: "
+                async fn numbers(
+                    &self,
+                    _cx: C,
+                ) -> anyhow::Result<(u8, u16, u32, u64, i8, i16, i32, i64, f32, f64)>
+                {
+                    Ok((
+                        0xfe,
+                        0xfeff,
+                        0xfeff_ffff,
+                        0xfeff_ffff_ffff_ffff,
+                        0x7e,
+                        0x7eff,
+                        0x7eff_ffff,
+                        0x7eff_ffff_ffff_ffff,
+                        0.42,
+                        0.4242,
+                    ))
+                }
+
+                async fn with_flags(
+                    &self,
+                    _cx: C,
+                ) -> anyhow::Result<exports::wrpc_test::integration::shared::Abc> {
+                    use exports::wrpc_test::integration::shared::Abc;
+                    Ok(Abc::A | Abc::C)
+                }
+            }
+
+            impl<C: Send + Sync> exports::foo::Handler<C> for Component {
+                async fn foo(&self, _cx: C, x: String) -> anyhow::Result<()> {
+                    let old = self.inner.write().await.replace(x);
+                    assert!(old.is_none());
+                    Ok(())
+                }
+            }
+
+            serve(s.as_ref(), Component::default(), shutdown_rx.clone())
+                .await
+                .context("failed to serve `wrpc-test:integration/test`")
+        },
+        async {
+            wrpc::generate!({
+                inline: "
                         package wrpc-test:integration;
 
                         interface shared {
@@ -320,36 +345,51 @@ async fn rust_bindgen() -> anyhow::Result<()> {
                                 bar: func() -> string;
                             }
                         }"
-                });
+            });
 
-                #[derive(Clone)]
-                struct Component(Arc<wrpc_transport_nats_legacy::Client>);
+            struct Component<T>(Arc<T>);
 
-                // TODO: Remove the need for this
-                sleep(Duration::from_secs(1)).await;
+            impl<T> Clone for Component<T> {
+                fn clone(&self) -> Self {
+                    Self(Arc::clone(&self.0))
+                }
+            }
 
-                impl exports::bar::Handler<Option<async_nats::HeaderMap>> for Component {
-                    async fn bar(
-                        &self,
-                        _cx: Option<async_nats::HeaderMap>,
-                    ) -> anyhow::Result<String> {
-                        use wrpc_test::integration::shared::Abc;
+            // TODO: Remove the need for this
+            sleep(Duration::from_secs(1)).await;
 
-                        foo::foo(self.0.as_ref(), "foo")
-                            .await
-                            .context("failed to call `wrpc-test:integration/test.foo.foo`")?;
-                        let v = f(self.0.as_ref(), "foo")
-                            .await
-                            .context("failed to call `wrpc-test:integration/test.f`")?;
-                        assert_eq!(v, 42);
-                        let v = wrpc_test::integration::shared::fallible(self.0.as_ref())
-                            .await
-                            .context("failed to call `wrpc-test:integration/shared.fallible`")?;
-                        assert_eq!(v, Ok(true));
-                        let v = wrpc_test::integration::shared::numbers(self.0.as_ref())
-                            .await
-                            .context("failed to call `wrpc-test:integration/shared.numbers`")?;
-                        assert_eq!(v, (
+            impl<C, T> exports::bar::Handler<C> for Component<T>
+            where
+                C: Send + Sync + Default,
+                T: wrpc::Invoke<Context = C>,
+            {
+                async fn bar(&self, _cx: C) -> anyhow::Result<String> {
+                    use wrpc_test::integration::shared::Abc;
+
+                    info!("calling `wrpc-test:integration/test.foo.f`");
+                    foo::foo(self.0.as_ref(), C::default(), "foo")
+                        .await
+                        .context("failed to call `wrpc-test:integration/test.foo.foo`")?;
+
+                    info!("calling `wrpc-test:integration/test.f`");
+                    let v = f(self.0.as_ref(), C::default(), "foo")
+                        .await
+                        .context("failed to call `wrpc-test:integration/test.f`")?;
+                    assert_eq!(v, 42);
+
+                    info!("calling `wrpc-test:integration/shared.fallible`");
+                    let v = wrpc_test::integration::shared::fallible(self.0.as_ref(), C::default())
+                        .await
+                        .context("failed to call `wrpc-test:integration/shared.fallible`")?;
+                    assert_eq!(v, Ok(true));
+
+                    info!("calling `wrpc-test:integration/shared.numbers`");
+                    let v = wrpc_test::integration::shared::numbers(self.0.as_ref(), C::default())
+                        .await
+                        .context("failed to call `wrpc-test:integration/shared.numbers`")?;
+                    assert_eq!(
+                        v,
+                        (
                             0xfe,
                             0xfeff,
                             0xfeff_ffff,
@@ -360,52 +400,83 @@ async fn rust_bindgen() -> anyhow::Result<()> {
                             0x7eff_ffff_ffff_ffff,
                             0.42,
                             0.4242,
-                        ));
-                        let v = wrpc_test::integration::shared::with_flags(self.0.as_ref())
+                        )
+                    );
+
+                    info!("calling `wrpc-test:integration/shared.with-flags`");
+                    let v =
+                        wrpc_test::integration::shared::with_flags(self.0.as_ref(), C::default())
                             .await
                             .context("failed to call `wrpc-test:integration/shared.with-flags`")?;
-                        assert_eq!(v, Abc::A | Abc::C);
+                    assert_eq!(v, Abc::A | Abc::C);
 
-                        let counter = wrpc_test::integration::shared::Counter::new(self.0.as_ref(), 0)
-                            .await
-                            .context("failed to call `wrpc-test:integration/shared.[constructor]counter`")?;
-                        counter.increment_by(self.0.as_ref(), 1)
+                    let counter = wrpc_test::integration::shared::Counter::new(
+                        self.0.as_ref(),
+                        C::default(),
+                        0,
+                    )
+                    .await
+                    .context(
+                        "failed to call `wrpc-test:integration/shared.[constructor]counter`",
+                    )?;
+                    let counter_borrow = counter.as_borrow();
+
+                    wrpc_test::integration::shared::Counter::increment_by(self.0.as_ref(), C::default(), &counter_borrow, 1)
                             .await
                             .context("failed to call `wrpc-test:integration/shared.[method]counter-increment-by`")?;
-                        let count = counter.get_count(self.0.as_ref())
-                            .await
-                            .context("failed to call `wrpc-test:integration/shared.[method]counter-get-count`")?;
-                        assert_eq!(count, 1);
-                        counter.increment_by(self.0.as_ref(), 2)
+
+                    let count = wrpc_test::integration::shared::Counter::get_count(
+                        self.0.as_ref(),
+                        C::default(),
+                        &counter_borrow,
+                    )
+                    .await
+                    .context(
+                        "failed to call `wrpc-test:integration/shared.[method]counter-get-count`",
+                    )?;
+                    assert_eq!(count, 1);
+
+                    wrpc_test::integration::shared::Counter::increment_by(self.0.as_ref(), C::default(), &counter_borrow, 2)
                             .await
                             .context("failed to call `wrpc-test:integration/shared.[method]counter-increment-by`")?;
-                        let count = counter.get_count(self.0.as_ref())
-                            .await
-                            .context("failed to call `wrpc-test:integration/shared.[method]counter-get-count`")?;
-                        assert_eq!(count, 3);
-                        let second_counter = counter.clone_counter(self.0.as_ref())
+
+                    let count = wrpc_test::integration::shared::Counter::get_count(
+                        self.0.as_ref(),
+                        C::default(),
+                        &counter_borrow,
+                    )
+                    .await
+                    .context(
+                        "failed to call `wrpc-test:integration/shared.[method]counter-get-count`",
+                    )?;
+                    assert_eq!(count, 3);
+
+                    let second_counter = wrpc_test::integration::shared::Counter::clone_counter(self.0.as_ref(), C::default(), &counter_borrow)
                             .await
                             .context("failed to call `wrpc-test:integration/shared.[method]counter-clone-counter`")?;
-                        let sum = wrpc_test::integration::shared::Counter::sum(self.0.as_ref(), counter, second_counter).
-                            await
-                            .context("failed to call `wrpc-test:integration/shared.[static]counter-sum")?;
-                        assert_eq!(sum, 6);
 
-                        Ok("bar".to_string())
-                    }
+                    let second_counter_borrow = second_counter.as_borrow();
+                    let sum = wrpc_test::integration::shared::Counter::sum(
+                        self.0.as_ref(),
+                        C::default(),
+                        &counter_borrow,
+                        &second_counter_borrow,
+                    )
+                    .await
+                    .context("failed to call `wrpc-test:integration/shared.[static]counter-sum")?;
+                    assert_eq!(sum, 6);
+
+                    Ok("bar".to_string())
                 }
+            }
 
-                serve(
-                    client.as_ref(),
-                    Component(Arc::clone(&client)),
-                    shutdown_rx.clone(),
-                )
+            serve(s.as_ref(), Component(Arc::clone(&i)), shutdown_rx.clone())
                 .await
                 .context("failed to serve `wrpc-test:integration/test`")
-            },
-            async {
-                wrpc::generate!({
-                    inline: "
+        },
+        async {
+            wrpc::generate!({
+                inline: "
                         package wrpc-test:integration;
 
                         world test {
@@ -413,21 +484,63 @@ async fn rust_bindgen() -> anyhow::Result<()> {
                                 bar: func() -> string;
                             }
                         }"
-                });
+            });
 
-                // TODO: Remove the need for this
-                sleep(Duration::from_secs(2)).await;
+            // TODO: Remove the need for this
+            sleep(Duration::from_secs(2)).await;
 
-                let v = bar::bar(client.as_ref())
-                    .await
-                    .context("failed to call `wrpc-test:integration/test.bar.bar`")?;
-                assert_eq!(v, "bar");
-                shutdown_tx.send(()).expect("failed to send shutdown");
-                Ok(())
-            },
-        )?;
-        Ok(())
-    }).await
+            let v = bar::bar(i.as_ref(), C::default())
+                .await
+                .context("failed to call `wrpc-test:integration/test.bar.bar`")?;
+            assert_eq!(v, "bar");
+            shutdown_tx.send(()).expect("failed to send shutdown");
+            Ok(())
+        },
+    )?;
+    Ok(())
+}
+
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+async fn rust_bindgen_nats() -> anyhow::Result<()> {
+    with_nats(|_, nats_client| async {
+        let client = wrpc_transport_nats::Client::new(nats_client, "test-prefix".to_string());
+        let client = Arc::new(client);
+        assert_bindgen(Arc::clone(&client), client).await
+    })
+    .await
+}
+
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+async fn rust_bindgen_quic() -> anyhow::Result<()> {
+    with_quic(
+        &[
+            "*.wrpc-test_integration__bar",
+            "*.wrpc-test_integration__foo",
+            "*.wrpc-test_integration__shared",
+            "*.wrpc-test_integration__test",
+            "*.counter.wrpc-test_integration__shared",
+        ],
+        |port, clt_ep, srv_ep| async move {
+            let clt = wrpc_transport_quic::Client::new(clt_ep, (Ipv6Addr::LOCALHOST, port));
+            let srv = wrpc_transport_quic::Server::default();
+
+            let srv = Arc::new(srv);
+            let mut fut = pin!(assert_bindgen(Arc::new(clt), Arc::clone(&srv)));
+            loop {
+                select! {
+                    res = &mut fut => {
+                        return res
+                    }
+                    res = srv.accept(&srv_ep) => {
+                        let ok = res.expect("failed to accept connection");
+                        assert!(ok);
+                        continue
+                    }
+                }
+            }
+        },
+    )
+    .await
 }
 
 #[instrument(ret)]
@@ -485,7 +598,7 @@ async fn rust_dynamic() -> anyhow::Result<()> {
                     assert_eq!(m, "test");
                     assert_eq!(n, [[b"foo"]]);
                     info!("transmitting `test.sync` returns");
-                    tx(Ok((
+                    tx((
                         (
                             true,
                             0xfe_u8,
@@ -502,16 +615,15 @@ async fn rust_dynamic() -> anyhow::Result<()> {
                         ),
                         "test",
                         vec![vec!["foo".as_bytes()]],
-                    )))
+                    ))
                     .await
-                    .expect("failed to send response")
-                    .expect("session failed");
+                    .expect("failed to send response");
                 }
                 .instrument(info_span!("server")),
                 async {
                     info!("invoking `test.sync`");
-                    let (returns, rx) = clt
-                        .invoke_values(
+                    let returns = clt
+                        .invoke_values_blocking(
                             (),
                             "test",
                             "sync",
@@ -557,9 +669,6 @@ async fn rust_dynamic() -> anyhow::Result<()> {
                     assert_eq!(m, "test");
                     assert_eq!(n, [[b"foo"]]);
                     info!("finishing `test.sync` session");
-                    rx.await
-                        .expect("failed to complete exchange")
-                        .expect("session failed");
                 }
                 .instrument(info_span!("client")),
             );
@@ -596,10 +705,7 @@ async fn rust_dynamic() -> anyhow::Result<()> {
                             .expect("failed to perform async I/O");
                     }
                     info!("transmitting `test.async` returns");
-                    tx(Ok((a, b)))
-                        .await
-                        .expect("failed to send response")
-                        .expect("session failed");
+                    tx((a, b)).await.expect("failed to send response");
                 }
                 .instrument(info_span!("server")),
                 async {
@@ -608,7 +714,7 @@ async fn rust_dynamic() -> anyhow::Result<()> {
                     let b: Pin<Box<dyn Stream<Item = &str> + Send + Sync>> =
                         Box::pin(stream::iter(["foo", "bar"]));
                     info!("invoking `test.async`");
-                    let (returns, rx) = clt
+                    let (returns, io) = clt
                         .invoke_values((), "test", "async", (a, b), &[[Some(0)], [Some(1)]])
                         .await
                         .expect("failed to invoke `test.async`");
@@ -623,9 +729,9 @@ async fn rust_dynamic() -> anyhow::Result<()> {
                             assert_eq!(b.collect::<Vec<_>>().await, ["foo", "bar"]);
                         },
                         async {
-                            rx.await
-                                .expect("failed to complete exchange")
-                                .expect("session failed");
+                            if let Some(io) = io {
+                                io.await.expect("failed to complete async I/O");
+                            }
                         }
                     );
                 }

@@ -9,29 +9,34 @@ use std::collections::{hash_map, HashMap};
 use std::sync::Arc;
 
 use anyhow::{bail, ensure, Context as _};
-use bytes::{Buf as _, BufMut as _, Bytes, BytesMut};
+use bytes::{Buf as _, Bytes, BytesMut};
 use futures::{Stream, StreamExt};
 use pin_project_lite::pin_project;
 use quinn::crypto::rustls::HandshakeData;
 use quinn::{Connection, ConnectionError, Endpoint, RecvStream, SendStream, VarInt};
-use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _};
+use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite};
+use tokio::spawn;
 use tokio::sync::{mpsc, oneshot, Mutex};
-use tokio::task::JoinHandle;
-use tokio::{spawn, try_join};
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::codec::Encoder;
-use tracing::{debug, instrument, trace, warn, Instrument as _};
-use wasm_tokio::cm::AsyncReadValue as _;
-use wasm_tokio::{AsyncReadCore as _, AsyncReadLeb128 as _, CoreNameEncoder, Leb128Encoder};
+use tracing::{instrument, trace, warn, Instrument as _, Span};
+use wasm_tokio::{AsyncReadLeb128 as _, Leb128Encoder};
 
 pub const PROTOCOL: u8 = 0;
 
-/// QUIC invocation
-pub type Invocation = wrpc_transport::Invocation<Outgoing, Incoming, Session>;
-
 fn san(instance: &str, func: &str) -> String {
-    let instance = instance.replace(':', "_").replace('/', "__");
-    format!("{func}.{instance}.server.wrpc")
+    let mut s = String::with_capacity(
+        13_usize // ".server.wrpc" + '.'
+            .saturating_add(instance.len())
+            .saturating_add(func.len()),
+    );
+    for p in func.split('.').rev() {
+        s.push_str(p);
+    }
+    s.push('.');
+    s.push_str(&instance.replace(':', "_").replace('/', "__"));
+    s.push_str(".server.wrpc");
+    s
 }
 
 #[derive(Default)]
@@ -373,6 +378,7 @@ pin_project! {
 }
 
 impl wrpc_transport::Index<Self> for Incoming {
+    #[instrument(level = "trace", skip(self))]
     fn index(&self, path: &[usize]) -> anyhow::Result<Self> {
         match self {
             Self::Accepting {
@@ -419,7 +425,7 @@ impl AsyncRead for Incoming {
                 path,
                 mut rx,
             } => {
-                trace!("polling channel");
+                trace!(?path, "polling channel");
                 let rx = ready!(rx.as_mut().poll(cx))
                     .map_err(|err| std::io::Error::new(std::io::ErrorKind::BrokenPipe, err))?;
                 *self = Self::Active {
@@ -429,9 +435,11 @@ impl AsyncRead for Incoming {
                 };
                 self.poll_read(cx, buf)
             }
-            IncomingProj::Active { rx, .. } => {
-                trace!("reading buffer");
-                AsyncRead::poll_read(rx, cx, buf)
+            IncomingProj::Active { rx, path, .. } => {
+                trace!(?path, "reading buffer");
+                ready!(AsyncRead::poll_read(rx, cx, buf))?;
+                trace!(buf = ?buf.filled(), "read from buffer");
+                Poll::Ready(Ok(()))
             }
         }
     }
@@ -458,6 +466,7 @@ pin_project! {
 }
 
 impl wrpc_transport::Index<Self> for Outgoing {
+    #[instrument(level = "trace", skip(self))]
     fn index(&self, path: &[usize]) -> anyhow::Result<Self> {
         let mut header = BytesMut::with_capacity(path.len().saturating_add(5));
         let depth = path.len();
@@ -486,13 +495,29 @@ impl wrpc_transport::Index<Self> for Outgoing {
     }
 }
 
-impl AsyncWrite for Outgoing {
-    #[instrument(level = "trace", skip_all, ret, fields(buf = format!("{buf:02x?}")))]
-    fn poll_write(
+fn poll_write_header(
+    cx: &mut Context<'_>,
+    tx: &mut Pin<&mut SendStream>,
+    header: &mut Bytes,
+) -> Poll<std::io::Result<()>> {
+    while !header.is_empty() {
+        trace!(header = format!("{header:02x?}"), "writing header");
+        let n = ready!(AsyncWrite::poll_write(tx.as_mut(), cx, header))?;
+        if n < header.len() {
+            header.advance(n);
+        } else {
+            *header = Bytes::default();
+        }
+    }
+    Poll::Ready(Ok(()))
+}
+
+impl Outgoing {
+    #[instrument(level = "trace", skip_all, ret)]
+    fn poll_flush_header(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-        buf: &[u8],
-    ) -> Poll<std::io::Result<usize>> {
+    ) -> Poll<std::io::Result<()>> {
         match self.as_mut().project() {
             OutgoingProj::Opening { path, conn, header } => {
                 trace!(?path, "opening connection");
@@ -503,24 +528,31 @@ impl AsyncWrite for Outgoing {
                     conn: conn.clone(),
                     tx,
                 };
-                self.poll_write(cx, buf)
+                self.poll_flush_header(cx)
             }
             OutgoingProj::Active {
-                mut tx,
-                header,
-                path,
-                ..
-            } => {
-                while !header.is_empty() {
-                    trace!(header = format!("{header:02x?}"), "writing header");
-                    let n = ready!(AsyncWrite::poll_write(tx.as_mut(), cx, header))?;
-                    if n < header.len() {
-                        header.advance(n);
-                    } else {
-                        *header = Bytes::default();
-                    }
-                }
-                trace!(?path, "writing buffer");
+                ref mut tx, header, ..
+            } => poll_write_header(cx, tx, header),
+        }
+    }
+}
+
+fn corrupted_memory_error() -> std::io::Error {
+    std::io::Error::new(std::io::ErrorKind::Other, "corrupted memory state")
+}
+
+impl AsyncWrite for Outgoing {
+    #[instrument(level = "trace", skip_all, ret, fields(buf = format!("{buf:02x?}")))]
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        ready!(self.as_mut().poll_flush_header(cx))?;
+        match self.as_mut().project() {
+            OutgoingProj::Opening { .. } => Poll::Ready(Err(corrupted_memory_error())),
+            OutgoingProj::Active { tx, .. } => {
+                trace!("writing buffer");
                 AsyncWrite::poll_write(tx, cx, buf)
             }
         }
@@ -528,8 +560,9 @@ impl AsyncWrite for Outgoing {
 
     #[instrument(level = "trace", skip_all, ret)]
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        ready!(self.as_mut().poll_flush_header(cx))?;
         match self.as_mut().project() {
-            OutgoingProj::Opening { .. } => Poll::Ready(Ok(())),
+            OutgoingProj::Opening { .. } => Poll::Ready(Err(corrupted_memory_error())),
             OutgoingProj::Active { tx, .. } => {
                 trace!("flushing stream");
                 tx.poll_flush(cx)
@@ -539,8 +572,9 @@ impl AsyncWrite for Outgoing {
 
     #[instrument(level = "trace", skip_all, ret)]
     fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        ready!(self.as_mut().poll_flush_header(cx))?;
         match self.as_mut().project() {
-            OutgoingProj::Opening { .. } => Poll::Ready(Ok(())),
+            OutgoingProj::Opening { .. } => Poll::Ready(Err(corrupted_memory_error())),
             OutgoingProj::Active { tx, .. } => {
                 trace!("shutting down stream");
                 tx.poll_shutdown(cx)
@@ -549,131 +583,13 @@ impl AsyncWrite for Outgoing {
     }
 }
 
-pub struct Session {
-    conn: Connection,
-    incoming: RecvStream,
-    outgoing: SendStream,
-    reader: JoinHandle<std::io::Result<()>>,
-}
-
-impl Session {
-    pub fn new(
-        conn: Connection,
-        incoming: RecvStream,
-        outgoing: SendStream,
-        index: Arc<std::sync::Mutex<IndexTree>>,
-    ) -> Self {
-        Self {
-            conn: conn.clone(),
-            incoming,
-            outgoing,
-            reader: spawn(demux_connection(index, conn).in_current_span()),
-        }
-    }
-}
-
-impl wrpc_transport::Session for Session {
-    #[instrument(level = "trace", skip_all, ret)]
-    async fn finish(mut self, res: Result<(), &str>) -> anyhow::Result<Result<(), String>> {
-        if let Err(err) = res {
-            let mut buf = BytesMut::with_capacity(6 + err.len());
-            buf.put_u8(0x01);
-            let mut err_buf = buf.split_off(1);
-            if let Err(err) = CoreNameEncoder.encode(err, &mut err_buf) {
-                warn!(?err, "failed to encode error");
-                err_buf.clear();
-                if let Err(err) = CoreNameEncoder.encode(err.to_string(), &mut err_buf) {
-                    warn!(?err, "failed to encode encoding error");
-                    err_buf.clear();
-                }
-            }
-            buf.unsplit(err_buf);
-            trace!(?buf, "writing error string");
-            self.outgoing
-                .write_all(&buf)
-                .await
-                .context("failed to write `result::error`")?;
-        } else {
-            self.outgoing
-                .write_u8(0x00)
-                .await
-                .context("failed to write `result::ok`")?;
-        }
-        let ok = self
-            .incoming
-            .read_result_status()
-            .await
-            .context("failed to read result status")?;
-        let res = if ok {
-            Ok(())
-        } else {
-            let mut err = String::new();
-            self.incoming
-                .read_core_name(&mut err)
-                .await
-                .context("failed to read `result::error` string value")?;
-            Err(err)
-        };
-        self.outgoing
-            .finish()
-            .context("failed to finish outgoing result stream")?;
-        self.incoming
-            .stop(VarInt::default())
-            .context("failed to stop incoming result stream")?;
-        let (outgoing, incoming) = try_join!(
-            async {
-                self.outgoing
-                    .stopped()
-                    .await
-                    .context("outgoing stream processing failed")
-            },
-            async {
-                self.incoming
-                    .received_reset()
-                    .await
-                    .context("incoming stream processing failed")
-            }
-        )?;
-        if let Some(code) = outgoing {
-            if code != VarInt::default() {
-                bail!("outgoing stream processing failed with code: {code}")
-            }
-        }
-        if let Some(code) = incoming {
-            if code != VarInt::default() {
-                bail!("incoming stream processing failed with code: {code}")
-            }
-        }
-        self.conn.close(VarInt::default(), &[]);
-        let err = self.conn.closed().await;
-        match err {
-            ConnectionError::ApplicationClosed(ref e) => {
-                if e.error_code != VarInt::default() {
-                    bail!(err)
-                }
-            }
-            ConnectionError::LocallyClosed => {}
-            ConnectionError::VersionMismatch
-            | ConnectionError::TransportError(_)
-            | ConnectionError::ConnectionClosed(_)
-            | ConnectionError::Reset
-            | ConnectionError::TimedOut
-            | ConnectionError::CidsExhausted => return Err(err.into()),
-        }
-        self.reader
-            .await
-            .context("failed to stop frame reader")?
-            .context("frame reader failed")?;
-        Ok(res)
-    }
-}
-
 async fn demux_connection(
     index: Arc<std::sync::Mutex<IndexTree>>,
     conn: Connection,
 ) -> std::io::Result<()> {
     loop {
-        // TODO
+        // TODO: Figure out how to tie the lifetime of this Tokio task to all streams and explicitly close
+        // connection once no streams are used
         trace!("accepting async stream");
         let mut rx = match conn.accept_uni().await {
             Ok(rx) => rx,
@@ -728,7 +644,6 @@ async fn demux_connection(
 
 impl wrpc_transport::Invoke for Client {
     type Context = ();
-    type Session = Session;
     type Outgoing = Outgoing;
     type Incoming = Incoming;
 
@@ -740,7 +655,7 @@ impl wrpc_transport::Invoke for Client {
         func: &str,
         params: Bytes,
         paths: &[impl AsRef<[Option<usize>]> + Send + Sync],
-    ) -> anyhow::Result<Invocation> {
+    ) -> anyhow::Result<(Self::Outgoing, Self::Incoming)> {
         let san = san(instance, func);
         trace!(?san, "establishing connection");
         let conn = self
@@ -749,63 +664,31 @@ impl wrpc_transport::Invoke for Client {
             .context("failed to connect to endpoint")?;
         let conn = conn.await.context("failed to establish connection")?;
 
-        let ((mut param_tx, ret_rx), res_rx, res_tx) = try_join!(
-            async {
-                trace!("opening parameter stream");
-                conn.open_bi()
-                    .await
-                    .context("failed to open parameter stream")
-            },
-            async {
-                trace!("accepting server result stream");
-                let mut rx = conn
-                    .accept_uni()
-                    .await
-                    .context("failed to accept server result stream")?;
-                trace!("reading server result stream header");
-                let x = rx
-                    .read_u8()
-                    .await
-                    .context("failed to read server result stream header")?;
-                ensure!(x == PROTOCOL);
-                Ok(rx)
-            },
-            async {
-                trace!("opening client result stream");
-                let mut tx = conn
-                    .open_uni()
-                    .await
-                    .context("failed to open client result stream")?;
-                debug!("writing client result stream header");
-                tx.write_u8(PROTOCOL)
-                    .await
-                    .context("failed to write client result stream header")?;
-                Ok(tx)
-            },
-        )?;
-        res_tx
-            .set_priority(1)
-            .context("failed to set result stream priority")?;
+        trace!("opening parameter stream");
+        let (mut param_tx, ret_rx) = conn
+            .open_bi()
+            .await
+            .context("failed to open parameter stream")?;
         let index = Arc::new(std::sync::Mutex::new(paths.iter().collect()));
+        spawn(demux_connection(Arc::clone(&index), conn.clone()).in_current_span());
         trace!("writing parameters");
         param_tx
             .write_all_chunks(&mut [Bytes::from_static(&[PROTOCOL]), params])
             .await
             .context("failed to write parameters")?;
-        Ok(Invocation {
-            outgoing: Outgoing::Active {
+        Ok((
+            Outgoing::Active {
                 header: Bytes::default(),
                 path: Arc::from([]),
                 conn: conn.clone(),
                 tx: param_tx,
             },
-            incoming: Incoming::Active {
+            Incoming::Active {
                 index: Arc::clone(&index),
                 path: Arc::from([]),
                 rx: ret_rx,
             },
-            session: Session::new(conn, res_rx, res_tx, index),
-        })
+        ))
     }
 }
 
@@ -813,73 +696,37 @@ impl wrpc_transport::Invoke for Client {
 async fn serve_connection(
     conn: Connection,
     paths: &[impl AsRef<[Option<usize>]>],
-) -> anyhow::Result<Invocation> {
-    let ((ret_tx, param_rx), res_rx, res_tx) = try_join!(
-        async {
-            trace!("accepting parameter stream");
-            let (tx, mut rx) = conn
-                .accept_bi()
-                .await
-                .context("failed to accept parameter stream")?;
-            trace!("reading parameter stream header");
-            let x = rx
-                .read_u8()
-                .await
-                .context("failed to read parameter stream header")?;
-            ensure!(x == PROTOCOL);
-            Ok((tx, rx))
-        },
-        async {
-            trace!("accepting client result stream");
-            let mut rx = conn
-                .accept_uni()
-                .await
-                .context("failed to accept client result stream")?;
-            trace!("reading client result stream header");
-            let x = rx
-                .read_u8()
-                .await
-                .context("failed to read client result stream header")?;
-            ensure!(x == PROTOCOL);
-            Ok(rx)
-        },
-        async {
-            trace!("opening server result stream");
-            let mut tx = conn
-                .open_uni()
-                .await
-                .context("failed to open server result stream")?;
-            debug!("writing server result stream header");
-            tx.write_u8(PROTOCOL)
-                .await
-                .context("failed to write server result stream header")?;
-            Ok(tx)
-        }
-    )?;
-    res_tx
-        .set_priority(1)
-        .context("failed to set result stream priority")?;
-    debug!("writing server result stream header");
+) -> anyhow::Result<(Outgoing, Incoming)> {
+    trace!("accepting parameter stream");
+    let (ret_tx, mut param_rx) = conn
+        .accept_bi()
+        .await
+        .context("failed to accept parameter stream")?;
+    trace!("reading parameter stream header");
+    let x = param_rx
+        .read_u8()
+        .await
+        .context("failed to read parameter stream header")?;
+    ensure!(x == PROTOCOL);
     let index = Arc::new(std::sync::Mutex::new(paths.iter().collect()));
-    Ok(Invocation {
-        outgoing: Outgoing::Active {
+    spawn(demux_connection(Arc::clone(&index), conn.clone()).in_current_span());
+    Ok((
+        Outgoing::Active {
             header: Bytes::default(),
             path: Arc::from([]),
-            conn: conn.clone(),
+            conn,
             tx: ret_tx,
         },
-        incoming: Incoming::Active {
-            index: Arc::clone(&index),
+        Incoming::Active {
+            index,
             path: Arc::from([]),
             rx: param_rx,
         },
-        session: Session::new(conn, res_rx, res_tx, index),
-    })
+    ))
 }
 
 impl wrpc_transport::Serve for Server {
     type Context = ();
-    type Session = Session;
     type Outgoing = Outgoing;
     type Incoming = Incoming;
 
@@ -889,8 +736,9 @@ impl wrpc_transport::Serve for Server {
         instance: &str,
         func: &str,
         paths: impl Into<Arc<[P]>> + Send + Sync + 'static,
-    ) -> anyhow::Result<impl Stream<Item = anyhow::Result<(Self::Context, Invocation)>> + 'static>
-    {
+    ) -> anyhow::Result<
+        impl Stream<Item = anyhow::Result<(Self::Context, Self::Outgoing, Self::Incoming)>> + 'static,
+    > {
         let san = san(instance, func);
         let (tx, rx) = mpsc::channel(1024);
         let mut handlers = self.0.lock().await;
@@ -902,13 +750,13 @@ impl wrpc_transport::Serve for Server {
                 entry.insert(tx);
             }
         }
-        let span = tracing::Span::current();
         let paths = paths.into();
+        let span = Span::current();
         Ok(ReceiverStream::new(rx).then(move |conn| {
             let paths = Arc::clone(&paths);
             async move {
-                let invocation = serve_connection(conn, &paths).await?;
-                Ok(((), invocation))
+                let (tx, rx) = serve_connection(conn, &paths).await?;
+                Ok(((), tx, rx))
             }
             .instrument(span.clone())
         }))

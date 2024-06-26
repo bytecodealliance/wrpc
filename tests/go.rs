@@ -58,36 +58,36 @@ async fn go_bindgen() -> anyhow::Result<()> {
             .spawn()
             .context("failed to run `sync-server-nats`")?;
 
-        let client = wrpc_transport_nats_legacy::Client::new(nats_client, "go".to_string());
+        let client = wrpc_transport_nats::Client::new(nats_client, "go".to_string());
 
         // TODO: Remove the need for this
         sleep(Duration::from_secs(1)).await;
 
         info!("calling `wrpc-test:integration/sync-client.foo.f`");
-        let v = foo::f(&client, "f")
+        let v = foo::f(&client, None, "f")
             .await
             .context("failed to call `wrpc-test:integration/sync-client.foo.f`")?;
         ensure!(v == 42);
 
         info!("calling `wrpc-test:integration/sync-client.foo.foo`");
-        foo::foo(&client, "foo")
+        foo::foo(&client, None, "foo")
             .await
             .context("failed to call `wrpc-test:integration/sync-client.foo.foo`")?;
 
         info!("calling `wrpc-test:integration/sync.fallible`");
-        let res = sync::fallible(&client, true)
+        let res = sync::fallible(&client, None, true)
             .await
             .context("failed to call `wrpc-test:integration/sync.fallible`")?;
         ensure!(res == Ok(true));
 
         info!("calling `wrpc-test:integration/sync.fallible`");
-        let res = sync::fallible(&client, false)
+        let res = sync::fallible(&client, None, false)
             .await
             .context("failed to call `wrpc-test:integration/sync.fallible`")?;
         ensure!(res == Err("test".to_string()));
 
         info!("calling `wrpc-test:integration/sync.numbers`");
-        let (a, b, c, d, e, f, g, h, i, j) = sync::numbers(&client)
+        let (a, b, c, d, e, f, g, h, i, j) = sync::numbers(&client, None)
             .await
             .context("failed to call `wrpc-test:integration/sync.numbers`")?;
         ensure!(a == 1);
@@ -102,19 +102,19 @@ async fn go_bindgen() -> anyhow::Result<()> {
         ensure!(j == 10.);
 
         info!("calling `wrpc-test:integration/sync.with-flags`");
-        let v = sync::with_flags(&client, true, false, true)
+        let v = sync::with_flags(&client, None, true, false, true)
             .await
             .context("failed to call `wrpc-test:integration/sync.with-flags`")?;
         ensure!(v == Abc::A | Abc::C, "{v:?}");
 
         info!("calling `wrpc-test:integration/sync.with-variant-option`");
-        let v = sync::with_variant_option(&client, false)
+        let v = sync::with_variant_option(&client, None, false)
             .await
             .context("failed to call `wrpc-test:integration/sync.with-variant-option`")?;
         ensure!(v.is_none(), "{v:?}");
 
         info!("calling `wrpc-test:integration/sync.with-variant-option`");
-        let v = sync::with_variant_option(&client, true)
+        let v = sync::with_variant_option(&client, None, true)
             .await
             .context("failed to call `wrpc-test:integration/sync.with-variant-option`")?;
         ensure!(
@@ -127,7 +127,7 @@ async fn go_bindgen() -> anyhow::Result<()> {
         );
 
         info!("calling `wrpc-test:integration/sync.with-record`");
-        let v = sync::with_record(&client)
+        let v = sync::with_record(&client, None)
             .await
             .context("failed to call `wrpc-test:integration/sync.with-record`")?;
         ensure!(
@@ -140,13 +140,13 @@ async fn go_bindgen() -> anyhow::Result<()> {
         );
 
         info!("calling `wrpc-test:integration/sync.with-record-list`");
-        let v = sync::with_record_list(&client, 0)
+        let v = sync::with_record_list(&client, None, 0)
             .await
             .context("failed to call `wrpc-test:integration/sync.with-record-list`")?;
         ensure!(v.is_empty(), "{v:?}");
 
         info!("calling `wrpc-test:integration/sync.with-record-list`");
-        let v = sync::with_record_list(&client, 3)
+        let v = sync::with_record_list(&client, None, 3)
             .await
             .context("failed to call `wrpc-test:integration/sync.with-record-list`")?;
         ensure!(
@@ -171,7 +171,7 @@ async fn go_bindgen() -> anyhow::Result<()> {
         );
 
         info!("calling `wrpc-test:integration/sync.with-record-tuple`");
-        let v = sync::with_record_tuple(&client)
+        let v = sync::with_record_tuple(&client, None)
             .await
             .context("failed to call `wrpc-test:integration/sync.with-record-tuple`")?;
         ensure!(
@@ -191,7 +191,7 @@ async fn go_bindgen() -> anyhow::Result<()> {
         );
 
         info!("calling `wrpc-test:integration/sync.with-enum`");
-        let v = sync::with_enum(&client)
+        let v = sync::with_enum(&client, None)
             .await
             .context("failed to call `wrpc-test:integration/sync.with-enum-tuple`")?;
         ensure!(v == Foobar::Bar, "{v:?}",);
