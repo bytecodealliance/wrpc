@@ -18,8 +18,9 @@ use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::codec::{Encoder as _, FramedRead};
 use tracing::{instrument, trace};
 use wasm_tokio::cm::{
-    BoolCodec, F32Codec, F64Codec, PrimValEncoder, S16Codec, S32Codec, S64Codec, S8Codec,
-    TupleDecoder, TupleEncoder, U16Codec, U32Codec, U64Codec, U8Codec,
+    BoolCodec, F32Codec, F64Codec, OptionDecoder, OptionEncoder, PrimValEncoder, ResultDecoder,
+    ResultEncoder, S16Codec, S32Codec, S64Codec, S8Codec, TupleDecoder, TupleEncoder, U16Codec,
+    U32Codec, U64Codec, U8Codec,
 };
 use wasm_tokio::{
     CoreNameDecoder, CoreNameEncoder, CoreVecDecoder, CoreVecDecoderBytes, CoreVecEncoderBytes,
@@ -399,8 +400,123 @@ pub trait Encode<T>: Sized {
 }
 
 pub trait Decode<T>: Sized {
-    type Decoder: tokio_util::codec::Decoder<Item = Self> + Deferred<T> + Default + Send;
-    type ListDecoder: tokio_util::codec::Decoder<Item = Vec<Self>> + Default;
+    type Decoder: tokio_util::codec::Decoder<Item = Self> + Deferred<T> + Default + Send + 'static;
+    type ListDecoder: tokio_util::codec::Decoder<Item = Vec<Self>> + Default + 'static;
+}
+
+impl<T, W> Deferred<W> for OptionEncoder<T>
+where
+    T: Deferred<W>,
+{
+    fn take_deferred(&mut self) -> Option<DeferredFn<W>> {
+        self.0.take_deferred()
+    }
+}
+
+impl<T, W> Encode<W> for Option<T>
+where
+    T: Encode<W>,
+{
+    type Encoder = OptionEncoder<T::Encoder>;
+}
+
+impl<'a, T, W> Encode<W> for &'a Option<T>
+where
+    T: Encode<W>,
+    T::Encoder: tokio_util::codec::Encoder<&'a T>,
+{
+    type Encoder = OptionEncoder<T::Encoder>;
+}
+
+impl<T, W> Deferred<W> for OptionDecoder<T>
+where
+    T: Deferred<W> + Default,
+{
+    fn take_deferred(&mut self) -> Option<DeferredFn<W>> {
+        mem::take(self).into_inner().take_deferred()
+    }
+}
+
+impl<T, R> Decode<R> for Option<T>
+where
+    T: Decode<R>,
+{
+    type Decoder = OptionDecoder<T::Decoder>;
+    type ListDecoder = CoreVecDecoder<Self::Decoder>;
+}
+
+impl<O, E, W> Deferred<W> for ResultEncoder<O, E>
+where
+    O: Deferred<W>,
+    E: Deferred<W>,
+{
+    fn take_deferred(&mut self) -> Option<DeferredFn<W>> {
+        match (self.ok.take_deferred(), self.err.take_deferred()) {
+            (None, None) => None,
+            (Some(ok), None) => Some(ok),
+            (None, Some(err)) => Some(err),
+            (Some(ok), Some(_)) => {
+                if cfg!(debug_assertions) {
+                    panic!("both `result::ok` and `result::err` deferred function set")
+                }
+                Some(ok)
+            }
+        }
+    }
+}
+
+impl<O, E, W> Encode<W> for Result<O, E>
+where
+    O: Encode<W>,
+    E: Encode<W>,
+    std::io::Error: From<<O::Encoder as tokio_util::codec::Encoder<O>>::Error>,
+    std::io::Error: From<<E::Encoder as tokio_util::codec::Encoder<E>>::Error>,
+{
+    type Encoder = ResultEncoder<O::Encoder, E::Encoder>;
+}
+
+impl<'a, O, E, W> Encode<W> for &'a Result<O, E>
+where
+    O: Encode<W>,
+    O::Encoder: tokio_util::codec::Encoder<&'a O>,
+    E: Encode<W>,
+    E::Encoder: tokio_util::codec::Encoder<&'a E>,
+    std::io::Error: From<<O::Encoder as tokio_util::codec::Encoder<&'a O>>::Error>,
+    std::io::Error: From<<E::Encoder as tokio_util::codec::Encoder<&'a E>>::Error>,
+{
+    type Encoder = ResultEncoder<O::Encoder, E::Encoder>;
+}
+
+impl<O, E, W> Deferred<W> for ResultDecoder<O, E>
+where
+    O: Deferred<W> + Default,
+    E: Deferred<W> + Default,
+{
+    fn take_deferred(&mut self) -> Option<DeferredFn<W>> {
+        let (mut ok, mut err) = mem::take(self).into_inner();
+        match (ok.take_deferred(), err.take_deferred()) {
+            (None, None) => None,
+            (Some(ok), None) => Some(ok),
+            (None, Some(err)) => Some(err),
+            (Some(ok), Some(_)) => {
+                if cfg!(debug_assertions) {
+                    panic!("both `result::ok` and `result::err` deferred function set")
+                }
+                Some(ok)
+            }
+        }
+    }
+}
+
+impl<O, E, R> Decode<R> for Result<O, E>
+where
+    O: Decode<R>,
+    E: Decode<R>,
+    std::io::Error: From<<O::Decoder as tokio_util::codec::Decoder>::Error>,
+    std::io::Error: From<<E::Decoder as tokio_util::codec::Decoder>::Error>,
+{
+    type Decoder = ResultDecoder<O::Decoder, E::Decoder>;
+    type ListDecoder = CoreVecDecoder<Self::Decoder>;
 }
 
 pub struct ListEncoder<W> {
@@ -419,7 +535,7 @@ impl<W> Deferred<W> for ListEncoder<W> {
     }
 }
 
-impl<W, T> tokio_util::codec::Encoder<Vec<T>> for ListEncoder<W>
+impl<T, W> tokio_util::codec::Encoder<Vec<T>> for ListEncoder<W>
 where
     T: Encode<W>,
     W: crate::Index<W> + Send + Sync + 'static,
@@ -433,7 +549,22 @@ where
     }
 }
 
-impl<'a, W, T> tokio_util::codec::Encoder<&'a [T]> for ListEncoder<W>
+impl<'a, T, W> tokio_util::codec::Encoder<&'a Vec<T>> for ListEncoder<W>
+where
+    T: Encode<W>,
+    T::Encoder: tokio_util::codec::Encoder<&'a T>,
+    W: crate::Index<W> + Send + Sync + 'static,
+{
+    type Error = <T::Encoder as tokio_util::codec::Encoder<&'a T>>::Error;
+
+    fn encode(&mut self, items: &'a Vec<T>, dst: &mut BytesMut) -> Result<(), Self::Error> {
+        let mut enc = T::Encoder::default();
+        self.deferred = T::encode_list_ref(items, &mut enc, dst)?;
+        Ok(())
+    }
+}
+
+impl<'a, T, W> tokio_util::codec::Encoder<&'a [T]> for ListEncoder<W>
 where
     T: Encode<W>,
     T::Encoder: tokio_util::codec::Encoder<&'a T>,
@@ -451,6 +582,15 @@ where
 impl<T, W> Encode<W> for Vec<T>
 where
     T: Encode<W>,
+    W: crate::Index<W> + Send + Sync + 'static,
+{
+    type Encoder = ListEncoder<W>;
+}
+
+impl<'a, T, W> Encode<W> for &'a Vec<T>
+where
+    T: Encode<W>,
+    T::Encoder: tokio_util::codec::Encoder<&'a T>,
     W: crate::Index<W> + Send + Sync + 'static,
 {
     type Encoder = ListEncoder<W>;
@@ -553,7 +693,7 @@ where
 
 macro_rules! impl_copy_codec {
     ($t:ty, $c:tt) => {
-        impl<T> Encode<T> for $t {
+        impl<W> Encode<W> for $t {
             type Encoder = $c;
 
             #[instrument(level = "trace", skip(items))]
@@ -562,7 +702,7 @@ macro_rules! impl_copy_codec {
                 enc: &mut Self::Encoder,
                 dst: &mut BytesMut,
             ) -> Result<
-                Option<DeferredFn<T>>,
+                Option<DeferredFn<W>>,
                 <Self::Encoder as tokio_util::codec::Encoder<Self>>::Error,
             >
             where
@@ -583,7 +723,7 @@ macro_rules! impl_copy_codec {
                 enc: &mut Self::Encoder,
                 dst: &mut BytesMut,
             ) -> Result<
-                Option<DeferredFn<T>>,
+                Option<DeferredFn<W>>,
                 <Self::Encoder as tokio_util::codec::Encoder<&'a Self>>::Error,
             >
             where
@@ -599,7 +739,7 @@ macro_rules! impl_copy_codec {
             }
         }
 
-        impl<'b, T> Encode<T> for &'b $t {
+        impl<'b, W> Encode<W> for &'b $t {
             type Encoder = $c;
 
             #[instrument(level = "trace", skip(items))]
@@ -608,7 +748,7 @@ macro_rules! impl_copy_codec {
                 enc: &mut Self::Encoder,
                 dst: &mut BytesMut,
             ) -> Result<
-                Option<DeferredFn<T>>,
+                Option<DeferredFn<W>>,
                 <Self::Encoder as tokio_util::codec::Encoder<Self>>::Error,
             >
             where
@@ -629,7 +769,7 @@ macro_rules! impl_copy_codec {
                 enc: &mut Self::Encoder,
                 dst: &mut BytesMut,
             ) -> Result<
-                Option<DeferredFn<T>>,
+                Option<DeferredFn<W>>,
                 <Self::Encoder as tokio_util::codec::Encoder<&'a Self>>::Error,
             >
             where
@@ -646,7 +786,7 @@ macro_rules! impl_copy_codec {
             }
         }
 
-        impl<T> Decode<T> for $t {
+        impl<R> Decode<R> for $t {
             type Decoder = $c;
             type ListDecoder = CoreVecDecoder<Self::Decoder>;
         }
@@ -779,7 +919,7 @@ impl tokio_util::codec::Decoder for ListDecoderU8 {
     }
 }
 
-impl<T> Decode<T> for u8 {
+impl<R> Decode<R> for u8 {
     type Decoder = U8Codec;
     type ListDecoder = ListDecoderU8;
 }
@@ -788,7 +928,15 @@ impl<W> Encode<W> for &str {
     type Encoder = CoreNameEncoder;
 }
 
+impl<W> Encode<W> for &&str {
+    type Encoder = CoreNameEncoder;
+}
+
 impl<W> Encode<W> for String {
+    type Encoder = CoreNameEncoder;
+}
+
+impl<W> Encode<W> for &String {
     type Encoder = CoreNameEncoder;
 }
 
@@ -798,6 +946,10 @@ impl<R> Decode<R> for String {
 }
 
 impl<W> Encode<W> for Bytes {
+    type Encoder = CoreVecEncoderBytes;
+}
+
+impl<W> Encode<W> for &Bytes {
     type Encoder = CoreVecEncoderBytes;
 }
 
@@ -828,6 +980,14 @@ impl<T: ?Sized> tokio_util::codec::Encoder<&ResourceOwn<T>> for ResourceEncoder 
     }
 }
 
+impl<T: ?Sized, W> Encode<W> for ResourceOwn<T> {
+    type Encoder = ResourceEncoder;
+}
+
+impl<T: ?Sized, W> Encode<W> for &ResourceOwn<T> {
+    type Encoder = ResourceEncoder;
+}
+
 impl<T: ?Sized> tokio_util::codec::Encoder<ResourceBorrow<T>> for ResourceEncoder {
     type Error = std::io::Error;
 
@@ -844,6 +1004,14 @@ impl<T: ?Sized> tokio_util::codec::Encoder<&ResourceBorrow<T>> for ResourceEncod
     fn encode(&mut self, item: &ResourceBorrow<T>, dst: &mut BytesMut) -> std::io::Result<()> {
         CoreVecEncoderBytes.encode(&item.repr, dst)
     }
+}
+
+impl<T: ?Sized, W> Encode<W> for ResourceBorrow<T> {
+    type Encoder = ResourceEncoder;
+}
+
+impl<T: ?Sized, W> Encode<W> for &ResourceBorrow<T> {
+    type Encoder = ResourceEncoder;
 }
 
 #[derive(Debug)]
@@ -874,7 +1042,7 @@ impl<R, T: ?Sized> Deferred<R> for CoreVecDecoder<ResourceBorrowDecoder<T>> {
     }
 }
 
-impl<R, T: ?Sized + Send + Sync> Decode<R> for ResourceBorrow<T> {
+impl<R, T: ?Sized + Send + Sync + 'static> Decode<R> for ResourceBorrow<T> {
     type Decoder = ResourceBorrowDecoder<T>;
     type ListDecoder = CoreVecDecoder<Self::Decoder>;
 }
@@ -918,7 +1086,7 @@ impl<R, T: ?Sized> Deferred<R> for CoreVecDecoder<ResourceOwnDecoder<T>> {
     }
 }
 
-impl<R, T: ?Sized + Send + Sync> Decode<R> for ResourceOwn<T> {
+impl<R, T: ?Sized + Send + Sync + 'static> Decode<R> for ResourceOwn<T> {
     type Decoder = ResourceOwnDecoder<T>;
     type ListDecoder = CoreVecDecoder<Self::Decoder>;
 }
@@ -970,7 +1138,7 @@ impl<W> Encode<W> for () {
     type Encoder = UnitCodec;
 }
 
-impl<W> Decode<W> for () {
+impl<R> Decode<R> for () {
     type Decoder = UnitCodec;
     type ListDecoder = CoreVecDecoder<Self::Decoder>;
 }
@@ -980,7 +1148,7 @@ macro_rules! impl_tuple_codec {
         impl<W, $($ct),+> Deferred<W> for TupleEncoder::<($($ct),+,)>
         where
             W: crate::Index<W> + Send + Sync + 'static,
-            $($ct: Deferred<W> + Default),+
+            $($ct: Deferred<W> + Default + 'static),+
         {
             fn take_deferred(&mut self) -> Option<DeferredFn<W>> {
                 let Self(($(mut $cn),+,)) = mem::take(self);
@@ -999,7 +1167,19 @@ macro_rules! impl_tuple_codec {
             E: From<std::io::Error>,
             $(
                 $vt: Encode<W>,
-                $vt::Encoder: tokio_util::codec::Encoder<$vt, Error = E>,
+                $vt::Encoder: tokio_util::codec::Encoder<$vt, Error = E> + 'static,
+            )+
+        {
+            type Encoder = TupleEncoder::<($($vt::Encoder),+,)>;
+        }
+
+        impl<'a, W, E, $($vt),+> Encode<W> for &'a ($($vt),+,)
+        where
+            W: crate::Index<W> + Send + Sync + 'static,
+            E: From<std::io::Error>,
+            $(
+                $vt: Encode<W>,
+                $vt::Encoder: tokio_util::codec::Encoder<&'a $vt, Error = E> + 'static,
             )+
         {
             type Encoder = TupleEncoder::<($($vt::Encoder),+,)>;
@@ -1026,8 +1206,8 @@ macro_rules! impl_tuple_codec {
             R: crate::Index<R> + Send + Sync + 'static,
             E: From<std::io::Error>,
             $(
-                $vt: Decode<R> + Send + Sync,
-                $vt::Decoder: tokio_util::codec::Decoder<Error = E> + Send + Sync,
+                $vt: Decode<R> + Send + Sync + 'static,
+                $vt::Decoder: tokio_util::codec::Decoder<Error = E> + Send + Sync + 'static,
             )+
         {
             type Decoder = TupleDecoder::<($($vt::Decoder),+,), ($(Option<$vt>),+,)>;
@@ -1119,6 +1299,36 @@ impl_tuple_codec!(
     c0, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11;
     C0, C1, C2, C3, C4, C5, C6, C7, C8, C9, C10, C11
 );
+
+// TODO: Enable tuples over 12 elements. For that we'll likely have to implement a custom `Tuple`
+// type and codec, since Rust tuple type `Default` is only implemented for tuples up to 12 elements
+//impl_tuple_codec!(
+//    v0, v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12;
+//    V0, V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12;
+//    c0, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12;
+//    C0, C1, C2, C3, C4, C5, C6, C7, C8, C9, C10, C11, C12
+//);
+//
+//impl_tuple_codec!(
+//    v0, v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13;
+//    V0, V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13;
+//    c0, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13;
+//    C0, C1, C2, C3, C4, C5, C6, C7, C8, C9, C10, C11, C12, C13
+//);
+//
+//impl_tuple_codec!(
+//    v0, v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14;
+//    V0, V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14;
+//    c0, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14;
+//    C0, C1, C2, C3, C4, C5, C6, C7, C8, C9, C10, C11, C12, C13, C14
+//);
+//
+//impl_tuple_codec!(
+//    v0, v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15;
+//    V0, V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15;
+//    c0, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15;
+//    C0, C1, C2, C3, C4, C5, C6, C7, C8, C9, C10, C11, C12, C13, C14, C15
+//);
 
 pub struct FutureEncoder<W> {
     deferred: Option<DeferredFn<W>>,

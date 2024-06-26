@@ -61,7 +61,7 @@ pub trait Invoke: Send + Sync {
     type Context: Send + Sync;
 
     /// Transport-specific session used for lifetime tracking and error reporting
-    type Session: Session + Send + Sync;
+    type Session: Session + Send + Sync + 'static;
 
     /// Outgoing multiplexed byte stream
     type Outgoing: AsyncWrite + Index<Self::Outgoing> + Send + Sync + 'static;
@@ -93,7 +93,7 @@ pub trait Invoke: Send + Sync {
     ) -> impl Future<
         Output = anyhow::Result<(
             Returns,
-            impl Future<Output = anyhow::Result<Result<(), String>>>,
+            impl Future<Output = anyhow::Result<Result<(), String>>> + 'static,
         )>,
     > + Send
     where
