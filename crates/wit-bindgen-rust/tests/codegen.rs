@@ -9,7 +9,6 @@ mod codegen_tests {
             mod $id {
                 wit_bindgen_wrpc::generate!({
                     path: $test,
-                    stubs
                 });
 
                 // This empty module named 'core' is here to catch module path
@@ -24,11 +23,6 @@ mod codegen_tests {
                 mod borrowed {
                     wit_bindgen_wrpc::generate!({
                         path: $test,
-                        ownership: Borrowing {
-                            duplicate_if_necessary: false
-                        },
-                        stubs,
-                        export_prefix: "[borrowed]",
                     });
 
                     #[test]
@@ -38,11 +32,6 @@ mod codegen_tests {
                 mod duplicate {
                     wit_bindgen_wrpc::generate!({
                         path: $test,
-                        ownership: Borrowing {
-                            duplicate_if_necessary: true
-                        },
-                        stubs,
-                        export_prefix: "[duplicate]",
                     });
 
                     #[test]
@@ -70,53 +59,14 @@ mod strings {
     });
 
     #[allow(dead_code)]
-    async fn test(wrpc: &impl wit_bindgen_wrpc::wrpc_transport::Client) -> anyhow::Result<()> {
+    async fn test(
+        wrpc: &impl wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,
+    ) -> anyhow::Result<()> {
         // Test the argument is `&str`.
-        cat::foo(wrpc, "hello").await?;
+        cat::foo(wrpc, (), "hello").await?;
 
         // Test the return type is `String`.
-        let _t: String = cat::bar(wrpc).await?;
-
-        Ok(())
-    }
-}
-
-mod run_ctors_once_workaround {
-    wit_bindgen_wrpc::generate!({
-        inline: "
-            package my:strings;
-
-            world not-used-name {
-                export apply-the-workaround: func();
-            }
-        ",
-        stubs,
-    });
-}
-
-/// Like `strings` but with raw_strings`.
-mod raw_strings {
-    wit_bindgen_wrpc::generate!({
-        inline: "
-            package my:raw-strings;
-
-            world not-used-name {
-                import cat: interface {
-                    foo: func(x: string);
-                    bar: func() -> string;
-                }
-            }
-        ",
-        raw_strings,
-    });
-
-    #[allow(dead_code)]
-    async fn test(wrpc: &impl wit_bindgen_wrpc::wrpc_transport::Client) -> anyhow::Result<()> {
-        // Test the argument is `&[u8]`.
-        cat::foo(wrpc, b"hello").await?;
-
-        // Test the return type is `Vec<u8>`.
-        let _t: Vec<u8> = cat::bar(wrpc).await?;
+        let _t: String = cat::bar(wrpc, ()).await?;
 
         Ok(())
     }
@@ -146,7 +96,7 @@ mod skip {
         }
     }
 
-    async fn serve_exports(wrpc: &impl wrpc_transport_legacy::Client) {
+    async fn serve_exports(wrpc: &impl wrpc_transport::Serve) {
         serve(wrpc, Component, async {}).await.unwrap();
     }
 }
@@ -208,7 +158,7 @@ mod symbol_does_not_conflict {
         }
     }
 
-    async fn serve_exports(wrpc: &impl wrpc_transport_legacy::Client) {
+    async fn serve_exports(wrpc: &impl wrpc_transport::Serve) {
         serve(wrpc, Component, async {}).await.unwrap();
     }
 }
@@ -234,7 +184,7 @@ mod alternative_bitflags_path {
     #[derive(Clone)]
     struct Component;
 
-    async fn serve_exports(wrpc: &impl wrpc_transport_legacy::Client) {
+    async fn serve_exports(wrpc: &impl wrpc_transport::Serve) {
         serve(wrpc, Component, async {}).await.unwrap();
     }
 
@@ -246,8 +196,9 @@ mod alternative_bitflags_path {
 }
 
 mod owned_resource_deref_mut {
-    use exports::my::inline::foo::BarRep;
-    use wrpc_transport_legacy::{ResourceBorrow, ResourceOwn};
+    use exports::my::inline::foo::Bar;
+    use wit_bindgen_wrpc::bytes::Bytes;
+    use wrpc_transport::{ResourceBorrow, ResourceOwn};
 
     wit_bindgen_wrpc::generate!({
         inline: "
@@ -272,16 +223,16 @@ mod owned_resource_deref_mut {
     }
 
     impl<Ctx: Send> exports::my::inline::foo::HandlerBar<Ctx> for Component {
-        async fn new(&self, cx: Ctx, data: u32) -> anyhow::Result<ResourceOwn<BarRep>> {
-            todo!();
+        async fn new(&self, cx: Ctx, data: u32) -> anyhow::Result<ResourceOwn<Bar>> {
+            Ok(ResourceOwn::from(Bytes::default()))
         }
 
-        async fn get_data(&self, cx: Ctx, self_: ResourceBorrow<BarRep>) -> anyhow::Result<u32> {
-            todo!();
+        async fn get_data(&self, cx: Ctx, self_: ResourceBorrow<Bar>) -> anyhow::Result<u32> {
+            Ok(42)
         }
 
-        async fn consume(&self, cx: Ctx, mut _this: ResourceOwn<BarRep>) -> anyhow::Result<u32> {
-            todo!();
+        async fn consume(&self, cx: Ctx, mut _this: ResourceOwn<Bar>) -> anyhow::Result<u32> {
+            Ok(42)
         }
     }
 
@@ -290,15 +241,16 @@ mod owned_resource_deref_mut {
 
     impl<Ctx: Send> exports::my::inline::foo::Handler<Ctx> for Component {}
 
-    async fn serve_exports(wrpc: &impl wrpc_transport_legacy::Client) {
+    async fn serve_exports(wrpc: &impl wrpc_transport::Serve) {
         // TODO: Support resources
         serve(wrpc, Component, async {}).await.unwrap();
     }
 }
 
 mod package_with_versions {
-    use exports::my::inline::foo::BarRep;
-    use wrpc_transport_legacy::ResourceOwn;
+    use exports::my::inline::foo::Bar;
+    use wit_bindgen_wrpc::bytes::Bytes;
+    use wrpc_transport::ResourceOwn;
 
     wit_bindgen_wrpc::generate!({
         inline: "
@@ -319,8 +271,8 @@ mod package_with_versions {
     pub struct MyResource;
 
     impl<Ctx: Send> exports::my::inline::foo::HandlerBar<Ctx> for Component {
-        async fn new(&self, cx: Ctx) -> anyhow::Result<ResourceOwn<BarRep>> {
-            todo!();
+        async fn new(&self, cx: Ctx) -> anyhow::Result<ResourceOwn<Bar>> {
+            Ok(ResourceOwn::from(Bytes::default()))
         }
     }
 
@@ -329,7 +281,7 @@ mod package_with_versions {
 
     impl<Ctx: Send> exports::my::inline::foo::Handler<Ctx> for Component {}
 
-    async fn serve_exports(wrpc: &impl wrpc_transport_legacy::Client) {
+    async fn serve_exports(wrpc: &impl wrpc_transport::Serve) {
         serve(wrpc, Component, async {}).await.unwrap();
     }
 }
@@ -380,7 +332,7 @@ mod custom_derives {
         }
     }
 
-    async fn serve_exports(wrpc: &impl wrpc_transport_legacy::Client) {
+    async fn serve_exports(wrpc: &impl wrpc_transport::Serve) {
         serve(wrpc, Component, async {}).await.unwrap();
     }
 }
@@ -431,11 +383,13 @@ mod with {
     }
 
     #[allow(dead_code)]
-    async fn test(wrpc: &impl wit_bindgen_wrpc::wrpc_transport::Client) -> anyhow::Result<()> {
+    async fn test(
+        wrpc: &impl wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,
+    ) -> anyhow::Result<()> {
         let msg = other::my::inline::foo::Msg {
             field: "hello".to_string(),
         };
-        my::inline::bar::bar(wrpc, &msg).await?;
+        my::inline::bar::bar(wrpc, (), &msg).await?;
         Ok(())
     }
 }
@@ -542,7 +496,7 @@ mod interface_export_example {
         }
     }
 
-    async fn serve_exports(wrpc: &impl wrpc_transport_legacy::Client) -> anyhow::Result<()> {
+    async fn serve_exports(wrpc: &impl wrpc_transport::Serve) -> anyhow::Result<()> {
         serve(wrpc, MyComponent, async {}).await
     }
 }
@@ -576,8 +530,8 @@ mod resource_example {
      "#,
     });
 
-    use exports::my::test::logging::{Handler, HandlerLogger, Level, Logger, LoggerRep};
-    use wrpc_transport_legacy::{ResourceBorrow, ResourceOwn};
+    use exports::my::test::logging::{Handler, HandlerLogger, Level, Logger};
+    use wrpc_transport::{ResourceBorrow, ResourceOwn};
 
     #[derive(Clone)]
     struct MyComponent;
@@ -592,7 +546,7 @@ mod resource_example {
     }
 
     impl<Ctx: Send> HandlerLogger<Ctx> for MyComponent {
-        async fn new(&self, cx: Ctx, level: Level) -> anyhow::Result<ResourceOwn<LoggerRep>> {
+        async fn new(&self, cx: Ctx, level: Level) -> anyhow::Result<ResourceOwn<Logger>> {
             todo!();
 
             // Ok(MyLogger {
@@ -604,7 +558,7 @@ mod resource_example {
         async fn log(
             &self,
             cx: Ctx,
-            self_: ResourceBorrow<LoggerRep>,
+            self_: ResourceBorrow<Logger>,
             level: Level,
             msg: String,
         ) -> anyhow::Result<()> {
@@ -617,7 +571,7 @@ mod resource_example {
             // Ok(())
         }
 
-        async fn level(&self, cx: Ctx, self_: ResourceBorrow<LoggerRep>) -> anyhow::Result<Level> {
+        async fn level(&self, cx: Ctx, self_: ResourceBorrow<Logger>) -> anyhow::Result<Level> {
             todo!();
             // Ok(*self.level.read().unwrap())
         }
@@ -625,7 +579,7 @@ mod resource_example {
         async fn set_level(
             &self,
             cx: Ctx,
-            self_: ResourceBorrow<LoggerRep>,
+            self_: ResourceBorrow<Logger>,
             level: Level,
         ) -> anyhow::Result<()> {
             todo!();
@@ -635,7 +589,7 @@ mod resource_example {
         }
     }
 
-    async fn serve_exports(wrpc: &impl wrpc_transport_legacy::Client) -> anyhow::Result<()> {
+    async fn serve_exports(wrpc: &impl wrpc_transport::Serve) -> anyhow::Result<()> {
         serve(wrpc, MyComponent, async {}).await
     }
 }

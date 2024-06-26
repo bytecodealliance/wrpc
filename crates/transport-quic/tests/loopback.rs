@@ -13,7 +13,7 @@ use rustls::version::TLS13;
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::try_join;
 use tracing::info;
-use wrpc_transport::{Index as _, Invocation, Invoke as _, Serve as _, Session as _};
+use wrpc_transport::{Index as _, Invoke as _, Serve as _};
 use wrpc_transport_quic::{Client, Server};
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
@@ -72,11 +72,7 @@ async fn loopback() -> anyhow::Result<()> {
     let mut invocations = pin!(invocations);
     try_join!(
         async {
-            let Invocation {
-                mut outgoing,
-                mut incoming,
-                session,
-            } = clt
+            let (mut outgoing, mut incoming) = clt
                 .invoke((), "foo", "bar", "test".into(), &[&[Some(0), Some(42)]])
                 .await
                 .context("failed to invoke `foo.bar`")?;
@@ -133,12 +129,6 @@ async fn loopback() -> anyhow::Result<()> {
                     anyhow::Ok(())
                 },
             )?;
-            info!("finishing session");
-            let res = session
-                .finish(Ok(()))
-                .await
-                .context("failed to finish session")?;
-            assert_eq!(res, Ok(()));
             anyhow::Ok(())
         },
         async {
@@ -147,14 +137,7 @@ async fn loopback() -> anyhow::Result<()> {
                 .await
                 .context("failed to accept client connection")?;
             assert!(ok);
-            let (
-                (),
-                Invocation {
-                    mut outgoing,
-                    mut incoming,
-                    session,
-                },
-            ) = invocations
+            let ((), mut outgoing, mut incoming) = invocations
                 .next()
                 .await
                 .context("invocation stream unexpectedly finished")?
@@ -222,12 +205,6 @@ async fn loopback() -> anyhow::Result<()> {
                     anyhow::Ok(())
                 },
             )?;
-            info!("finishing session");
-            let res = session
-                .finish(Ok(()))
-                .await
-                .context("failed to finish session")?;
-            assert_eq!(res, Ok(()));
             Ok(())
         }
     )?;

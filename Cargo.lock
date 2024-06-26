@@ -1026,7 +1026,7 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "wit-bindgen-wrpc",
- "wrpc-transport-nats-legacy",
+ "wrpc-transport-nats",
 ]
 
 [[package]]
@@ -1040,7 +1040,7 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "wit-bindgen-wrpc",
- "wrpc-transport-nats-legacy",
+ "wrpc-transport-nats",
 ]
 
 [[package]]
@@ -1281,6 +1281,7 @@ checksum = "6a1f734b00871cae8f137d83d53cf4b5ee3f0d87224a87a4347dab4cde11a7a3"
 dependencies = [
  "tokio",
  "tokio-util",
+ "tracing",
 ]
 
 [[package]]
@@ -1538,26 +1539,6 @@ name = "percent-encoding"
 version = "2.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3148f5046208a5d56bcfc03053e3ca6334e51da8dfb19b6cdc8b306fae3283e"
-
-[[package]]
-name = "pin-project"
-version = "1.1.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b6bf43b791c5b9e34c3d182969b4abb522f9343702850a2e57f460d00d09b4b3"
-dependencies = [
- "pin-project-internal",
-]
-
-[[package]]
-name = "pin-project-internal"
-version = "1.1.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2f38a4412a78282e09a2cf38d195ea5420d15ba0602cb375210efbc877243965"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
-]
 
 [[package]]
 name = "pin-project-lite"
@@ -2588,26 +2569,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tower"
-version = "0.4.13"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b8fa9be0de6cf49e536ce1851f987bd21a43b771b09473c3549a6c853db37c1c"
-dependencies = [
- "futures-core",
- "futures-util",
- "pin-project",
- "pin-project-lite",
- "tower-layer",
- "tower-service",
-]
-
-[[package]]
-name = "tower-layer"
-version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c20c8dbed6283a09604c3e69b4b7eeb54e298b8a600d4d5ecb5ad39de609f1d0"
-
-[[package]]
 name = "tower-service"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2933,13 +2894,14 @@ dependencies = [
 
 [[package]]
 name = "wasm-tokio"
-version = "0.5.14"
+version = "0.5.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "558dff28aeb59badc20decfd57abd74ed97d35658e47d8fdd754cdf3001897c5"
+checksum = "118ad1454fb9bebfb5e0016623fda9e43f0c677ad0dd3c3fb99ec4ccf52f06dd"
 dependencies = [
  "leb128-tokio",
  "tokio",
  "tokio-util",
+ "tracing",
  "utf8-tokio",
 ]
 
@@ -3606,9 +3568,11 @@ dependencies = [
  "bytes",
  "futures",
  "tokio",
+ "tokio-util",
  "tracing",
+ "wasm-tokio",
  "wit-bindgen-wrpc-rust-macro",
- "wrpc-transport-legacy",
+ "wrpc-transport",
 ]
 
 [[package]]
@@ -3635,7 +3599,8 @@ dependencies = [
  "test-helpers",
  "wit-bindgen-core",
  "wit-bindgen-wrpc",
- "wrpc-transport-legacy",
+ "wrpc-introspect",
+ "wrpc-transport",
 ]
 
 [[package]]
@@ -3707,7 +3672,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc"
-version = "0.3.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-nats",
@@ -3729,9 +3694,7 @@ dependencies = [
  "wrpc-cli",
  "wrpc-runtime-wasmtime",
  "wrpc-transport",
- "wrpc-transport-legacy",
  "wrpc-transport-nats",
- "wrpc-transport-nats-legacy",
  "wrpc-transport-quic",
  "wrpc-wasmtime-nats-cli",
 ]
@@ -3789,23 +3752,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "wrpc-transport-legacy"
-version = "0.24.3"
-dependencies = [
- "anyhow",
- "async-trait",
- "bytes",
- "futures",
- "leb128",
- "tokio",
- "tokio-stream",
- "tower",
- "tracing",
- "tracing-subscriber",
- "wasm-tokio",
-]
-
-[[package]]
 name = "wrpc-transport-nats"
 version = "0.22.0"
 dependencies = [
@@ -3818,20 +3764,6 @@ dependencies = [
  "tracing",
  "wasm-tokio",
  "wrpc-transport",
-]
-
-[[package]]
-name = "wrpc-transport-nats-legacy"
-version = "0.21.0"
-dependencies = [
- "anyhow",
- "async-nats",
- "bytes",
- "futures",
- "tokio",
- "tower",
- "tracing",
- "wrpc-transport-legacy",
 ]
 
 [[package]]

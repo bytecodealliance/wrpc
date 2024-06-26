@@ -3,7 +3,7 @@
 use core::future::Future;
 use core::iter::zip;
 use core::pin::{pin, Pin};
-use core::task::{Context, Poll};
+use core::task::{ready, Context, Poll};
 use core::{mem, str};
 
 use std::sync::Arc;
@@ -11,25 +11,17 @@ use std::sync::Arc;
 use anyhow::{anyhow, ensure, Context as _};
 use async_nats::client::Publisher;
 use async_nats::{HeaderMap, Message, ServerInfo, StatusCode, Subject, Subscriber};
-use bytes::{Buf as _, Bytes, BytesMut};
+use bytes::{Buf as _, Bytes};
+use futures::future::try_join_all;
 use futures::sink::SinkExt as _;
 use futures::{Stream, StreamExt};
-use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt as _, ReadBuf};
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::sync::oneshot;
 use tokio::try_join;
-use tokio_util::codec::Encoder;
-use tokio_util::io::StreamReader;
 use tracing::{instrument, trace, warn};
-use wasm_tokio::{AsyncReadCore as _, CoreNameEncoder};
 use wrpc_transport::Index as _;
 
 pub const PROTOCOL: &str = "wrpc.0.0.1";
-
-#[must_use]
-#[inline]
-pub fn error_subject(prefix: &str) -> String {
-    format!("{prefix}.error")
-}
 
 #[must_use]
 #[inline]
@@ -329,7 +321,7 @@ impl wrpc_transport::Index<Self> for Reader {
 }
 
 impl AsyncRead for Reader {
-    #[instrument(level = "trace", skip_all)]
+    #[instrument(level = "trace", skip_all, ret)]
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -337,6 +329,7 @@ impl AsyncRead for Reader {
     ) -> Poll<std::io::Result<()>> {
         let cap = buf.remaining();
         if cap == 0 {
+            trace!("attempt to read empty buffer");
             return Poll::Ready(Ok(()));
         }
 
@@ -348,17 +341,24 @@ impl AsyncRead for Reader {
             }
             return Poll::Ready(Ok(()));
         }
+        trace!("polling for next message");
         match self.incoming.poll_next_unpin(cx) {
             Poll::Ready(Some(Message { mut payload, .. })) => {
+                trace!(?payload, "received message");
                 if payload.len() > cap {
+                    trace!(len = payload.len(), cap, "partially reading the message");
                     buf.put_slice(&payload.split_to(cap));
                     self.buffer = payload;
                 } else {
+                    trace!(len = payload.len(), cap, "filling the buffer with payload");
                     buf.put_slice(&payload);
                 }
                 Poll::Ready(Ok(()))
             }
-            Poll::Ready(None) => Poll::Ready(Ok(())),
+            Poll::Ready(None) => {
+                trace!("subscription finished");
+                Poll::Ready(Ok(()))
+            }
             Poll::Pending => Poll::Pending,
         }
     }
@@ -393,7 +393,7 @@ impl wrpc_transport::Index<Self> for SubjectWriter {
 }
 
 impl AsyncWrite for SubjectWriter {
-    #[instrument(level = "trace", skip_all)]
+    #[instrument(level = "trace", skip_all, ret, fields(buf = format!("{buf:02x?}")))]
     fn poll_write(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -406,6 +406,9 @@ impl AsyncWrite for SubjectWriter {
             Poll::Ready(Ok(())) => {}
         }
         let ServerInfo { max_payload, .. } = self.nats.server_info();
+        if max_payload == 0 {
+            return Poll::Ready(Err(std::io::ErrorKind::WriteZero.into()));
+        }
         if buf.len() > max_payload {
             (buf, _) = buf.split_at(max_payload);
         }
@@ -416,7 +419,7 @@ impl AsyncWrite for SubjectWriter {
         }
     }
 
-    #[instrument(level = "trace", skip_all)]
+    #[instrument(level = "trace", skip_all, ret)]
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
         trace!("flushing");
         self.publisher
@@ -424,8 +427,10 @@ impl AsyncWrite for SubjectWriter {
             .map_err(|_| std::io::ErrorKind::BrokenPipe.into())
     }
 
-    #[instrument(level = "trace", skip_all)]
+    #[instrument(level = "trace", skip_all, ret)]
     fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        trace!("writing empty buffer to shut down stream");
+        ready!(self.as_mut().poll_write(cx, &[]))?;
         trace!("closing");
         self.publisher
             .poll_close_unpin(cx)
@@ -441,7 +446,6 @@ pub enum RootParamWriter {
         tx: SubjectWriter,
         sub: Subscriber,
         indexed: std::sync::Mutex<Vec<(Vec<usize>, oneshot::Sender<SubjectWriter>)>>,
-        error: oneshot::Sender<SubjectWriter>,
         buffer: Bytes,
     },
     Draining {
@@ -452,24 +456,18 @@ pub enum RootParamWriter {
 }
 
 impl RootParamWriter {
-    fn new(
-        tx: SubjectWriter,
-        sub: Subscriber,
-        error: oneshot::Sender<SubjectWriter>,
-        buffer: Bytes,
-    ) -> Self {
+    fn new(tx: SubjectWriter, sub: Subscriber, buffer: Bytes) -> Self {
         Self::Handshaking {
             tx,
             sub,
             indexed: std::sync::Mutex::default(),
-            error,
             buffer,
         }
     }
 }
 
 impl RootParamWriter {
-    #[instrument(level = "trace", skip_all)]
+    #[instrument(level = "trace", skip_all, ret)]
     fn poll_active(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
         match &mut *self {
             Self::Corrupted => Poll::Ready(Err(corrupted_memory_error())),
@@ -506,7 +504,6 @@ impl RootParamWriter {
                         let Self::Handshaking {
                             tx: SubjectWriter { nats, .. },
                             indexed,
-                            error,
                             buffer,
                             ..
                         } = mem::take(&mut *self)
@@ -514,14 +511,6 @@ impl RootParamWriter {
                             return Poll::Ready(Err(corrupted_memory_error()));
                         };
                         let param_tx = Subject::from(param_subject(&tx));
-                        let error_tx = Subject::from(error_subject(&tx));
-                        error
-                            .send(SubjectWriter::new(
-                                Arc::clone(&nats),
-                                error_tx.clone(),
-                                nats.publish_sink(error_tx),
-                            ))
-                            .map_err(|_| std::io::Error::from(std::io::ErrorKind::BrokenPipe))?;
                         let param_pub = nats.publish_sink(param_tx.clone());
                         let tx = SubjectWriter::new(nats, param_tx, param_pub);
                         let indexed = indexed.into_inner().map_err(|err| {
@@ -603,7 +592,7 @@ impl wrpc_transport::Index<IndexedParamWriter> for RootParamWriter {
 }
 
 impl AsyncWrite for RootParamWriter {
-    #[instrument(level = "trace", skip_all)]
+    #[instrument(level = "trace", skip_all, ret, fields(buf = format!("{buf:02x?}")))]
     fn poll_write(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -621,7 +610,7 @@ impl AsyncWrite for RootParamWriter {
         }
     }
 
-    #[instrument(level = "trace", skip_all)]
+    #[instrument(level = "trace", skip_all, ret)]
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
         match self.as_mut().poll_active(cx)? {
             Poll::Ready(()) => {
@@ -635,7 +624,7 @@ impl AsyncWrite for RootParamWriter {
         }
     }
 
-    #[instrument(level = "trace", skip_all)]
+    #[instrument(level = "trace", skip_all, ret)]
     fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
         match self.as_mut().poll_active(cx)? {
             Poll::Ready(()) => {
@@ -662,7 +651,7 @@ pub enum IndexedParamWriter {
 }
 
 impl IndexedParamWriter {
-    #[instrument(level = "trace", skip_all)]
+    #[instrument(level = "trace", skip_all, ret)]
     fn poll_active(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
         match &mut *self {
             Self::Corrupted => Poll::Ready(Err(corrupted_memory_error())),
@@ -718,7 +707,7 @@ impl wrpc_transport::Index<Self> for IndexedParamWriter {
 }
 
 impl AsyncWrite for IndexedParamWriter {
-    #[instrument(level = "trace", skip_all)]
+    #[instrument(level = "trace", skip_all, ret, fields(buf = format!("{buf:02x?}")))]
     fn poll_write(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -736,7 +725,7 @@ impl AsyncWrite for IndexedParamWriter {
         }
     }
 
-    #[instrument(level = "trace", skip_all)]
+    #[instrument(level = "trace", skip_all, ret)]
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
         match self.as_mut().poll_active(cx)? {
             Poll::Ready(()) => {
@@ -750,7 +739,7 @@ impl AsyncWrite for IndexedParamWriter {
         }
     }
 
-    #[instrument(level = "trace", skip_all)]
+    #[instrument(level = "trace", skip_all, ret)]
     fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
         match self.as_mut().poll_active(cx)? {
             Poll::Ready(()) => {
@@ -781,6 +770,7 @@ impl wrpc_transport::Index<Self> for ParamWriter {
 }
 
 impl AsyncWrite for ParamWriter {
+    #[instrument(level = "trace", skip_all, ret, fields(buf = format!("{buf:02x?}")))]
     fn poll_write(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -792,6 +782,7 @@ impl AsyncWrite for ParamWriter {
         }
     }
 
+    #[instrument(level = "trace", skip_all, ret)]
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
         match &mut *self {
             ParamWriter::Root(w) => pin!(w).poll_flush(cx),
@@ -799,6 +790,7 @@ impl AsyncWrite for ParamWriter {
         }
     }
 
+    #[instrument(level = "trace", skip_all, ret)]
     fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
         match &mut *self {
             ParamWriter::Root(w) => pin!(w).poll_shutdown(cx),
@@ -807,114 +799,12 @@ impl AsyncWrite for ParamWriter {
     }
 }
 
-#[derive(Debug)]
-pub enum ClientErrorWriter {
-    Handshaking(oneshot::Receiver<SubjectWriter>),
-    Active(SubjectWriter),
-}
-
-impl AsyncWrite for ClientErrorWriter {
-    #[instrument(level = "trace", skip_all)]
-    fn poll_write(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &[u8],
-    ) -> Poll<std::io::Result<usize>> {
-        match &mut *self {
-            Self::Handshaking(rx) => match pin!(rx).poll(cx) {
-                Poll::Ready(Ok(tx)) => {
-                    *self = Self::Active(tx);
-                    self.poll_write(cx, buf)
-                }
-                Poll::Ready(Err(..)) => Poll::Ready(Err(std::io::ErrorKind::BrokenPipe.into())),
-                Poll::Pending => Poll::Pending,
-            },
-            Self::Active(tx) => pin!(tx).poll_write(cx, buf),
-        }
-    }
-
-    #[instrument(level = "trace", skip_all)]
-    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        match &mut *self {
-            Self::Handshaking(rx) => match pin!(rx).poll(cx) {
-                Poll::Ready(Ok(tx)) => {
-                    *self = Self::Active(tx);
-                    self.poll_flush(cx)
-                }
-                Poll::Ready(Err(..)) => Poll::Ready(Err(std::io::ErrorKind::BrokenPipe.into())),
-                Poll::Pending => Poll::Pending,
-            },
-            Self::Active(tx) => pin!(tx).poll_flush(cx),
-        }
-    }
-
-    #[instrument(level = "trace", skip_all)]
-    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        match &mut *self {
-            Self::Handshaking(rx) => match pin!(rx).poll(cx) {
-                Poll::Ready(Ok(tx)) => {
-                    *self = Self::Active(tx);
-                    self.poll_shutdown(cx)
-                }
-                Poll::Ready(Err(..)) => Poll::Ready(Err(std::io::ErrorKind::BrokenPipe.into())),
-                Poll::Pending => Poll::Pending,
-            },
-            Self::Active(tx) => pin!(tx).poll_shutdown(cx),
-        }
-    }
-}
-
-#[derive(Debug)]
-pub struct Session<O> {
-    outgoing: O,
-    incoming: Subscriber,
-}
-
-impl<O: AsyncWrite + Send + Sync> wrpc_transport::Session for Session<O> {
-    #[instrument(level = "trace", skip_all)]
-    async fn finish(mut self, res: Result<(), &str>) -> anyhow::Result<Result<(), String>> {
-        if let Err(err) = res {
-            let mut buf = BytesMut::with_capacity(5 + err.len());
-            if let Err(err) = CoreNameEncoder.encode(err, &mut buf) {
-                warn!(?err, "failed to encode error");
-                buf.clear();
-                if let Err(err) = CoreNameEncoder.encode(err.to_string(), &mut buf) {
-                    warn!(?err, "failed to encode encoding error");
-                    buf.clear();
-                }
-            }
-            trace!(?buf, "writing error string");
-            pin!(self.outgoing)
-                .write_all(&buf)
-                .await
-                .context("failed to write error string")?;
-        }
-        trace!("unsubscribing from error subject");
-        if let Err(err) = self.incoming.unsubscribe().await {
-            warn!(?err, "failed to unsubscribe from error subject");
-        }
-        let incoming = ByteSubscription(self.incoming).peekable();
-        let mut incoming = pin!(incoming);
-        if (incoming.as_mut().peek().await).is_some() {
-            let mut err = String::new();
-            StreamReader::new(incoming)
-                .read_core_name(&mut err)
-                .await
-                .context("failed to read error string")?;
-            Ok(Err(err))
-        } else {
-            Ok(Ok(()))
-        }
-    }
-}
-
 impl wrpc_transport::Invoke for Client {
     type Context = Option<HeaderMap>;
-    type Session = Session<ClientErrorWriter>;
     type Outgoing = ParamWriter;
     type Incoming = Reader;
 
-    #[instrument(level = "trace", skip(self, paths))]
+    #[instrument(level = "trace", skip(self, paths, params), fields(params = format!("{params:02x?}")))]
     async fn invoke(
         &self,
         cx: Self::Context,
@@ -922,21 +812,14 @@ impl wrpc_transport::Invoke for Client {
         func: &str,
         mut params: Bytes,
         paths: &[impl AsRef<[Option<usize>]> + Send + Sync],
-    ) -> anyhow::Result<wrpc_transport::Invocation<Self::Outgoing, Self::Incoming, Self::Session>>
-    {
+    ) -> anyhow::Result<(Self::Outgoing, Self::Incoming)> {
         let rx = Subject::from(self.nats.new_inbox());
-        let (result_rx, error_rx, handshake_rx, nested) = try_join!(
+        let (result_rx, handshake_rx, nested) = try_join!(
             async {
                 self.nats
                     .subscribe(Subject::from(result_subject(&rx)))
                     .await
                     .context("failed to subscribe on result subject")
-            },
-            async {
-                self.nats
-                    .subscribe(Subject::from(error_subject(&rx)))
-                    .await
-                    .context("failed to subscribe on error subject")
             },
             async {
                 self.nats
@@ -996,34 +879,78 @@ impl wrpc_transport::Invoke for Client {
                 .await
         }
         .context("failed to send handshake")?;
-        let (error_tx_tx, error_tx_rx) = oneshot::channel();
-        Ok(wrpc_transport::Invocation {
-            outgoing: ParamWriter::Root(RootParamWriter::new(
+        Ok((
+            ParamWriter::Root(RootParamWriter::new(
                 SubjectWriter::new(
                     Arc::clone(&self.nats),
                     param_tx.clone(),
                     self.nats.publish_sink(param_tx),
                 ),
                 handshake_rx,
-                error_tx_tx,
                 params,
             )),
-            incoming: Reader {
+            Reader {
                 buffer: Bytes::default(),
                 incoming: result_rx,
                 nested: Arc::new(std::sync::Mutex::new(nested)),
             },
-            session: Session {
-                outgoing: ClientErrorWriter::Handshaking(error_tx_rx),
-                incoming: error_rx,
-            },
-        })
+        ))
     }
+}
+
+#[instrument(level = "trace", skip_all)]
+async fn serve_connection(
+    nats: Arc<async_nats::Client>,
+    Message {
+        reply: tx,
+        payload,
+        headers,
+        ..
+    }: Message,
+    paths: &[impl AsRef<[Option<usize>]>],
+) -> anyhow::Result<(Option<HeaderMap>, SubjectWriter, Reader)> {
+    let tx = tx.context("peer did not specify a reply subject")?;
+    let rx = nats.new_inbox();
+    trace!("subscribing on subjects");
+    let (param_rx, nested) = try_join!(
+        async {
+            nats.subscribe(Subject::from(param_subject(&rx)))
+                .await
+                .context("failed to subscribe on parameter subject")
+        },
+        try_join_all(paths.iter().map(|path| async {
+            nats.subscribe(Subject::from(subscribe_path(&rx, path.as_ref())))
+                .await
+                .context("failed to subscribe on nested parameter subject")
+        }))
+    )?;
+    let nested: SubscriberTree = zip(paths.iter(), nested).collect();
+    ensure!(
+        paths.is_empty() == nested.is_empty(),
+        "failed to construct subscription tree"
+    );
+    trace!("publishing handshake response");
+    nats.publish_with_reply(tx.clone(), rx, Bytes::default())
+        .await
+        .context("failed to publish handshake accept")?;
+    let result_tx = Subject::from(result_subject(&tx));
+    Ok((
+        headers,
+        SubjectWriter::new(
+            Arc::clone(&nats),
+            result_tx.clone(),
+            nats.publish_sink(result_tx),
+        ),
+        Reader {
+            buffer: payload,
+            incoming: param_rx,
+            nested: Arc::new(std::sync::Mutex::new(nested)),
+        },
+    ))
 }
 
 impl wrpc_transport::Serve for Client {
     type Context = Option<HeaderMap>;
-    type Session = Session<SubjectWriter>;
     type Outgoing = SubjectWriter;
     type Incoming = Reader;
 
@@ -1034,12 +961,7 @@ impl wrpc_transport::Serve for Client {
         func: &str,
         paths: impl Into<Arc<[P]>> + Send + Sync + 'static,
     ) -> anyhow::Result<
-        impl Stream<
-                Item = anyhow::Result<(
-                    Self::Context,
-                    wrpc_transport::Invocation<Self::Outgoing, Self::Incoming, Self::Session>,
-                )>,
-            > + 'static,
+        impl Stream<Item = anyhow::Result<(Self::Context, Self::Outgoing, Self::Incoming)>> + 'static,
     > {
         let sub = self
             .nats
@@ -1047,70 +969,10 @@ impl wrpc_transport::Serve for Client {
             .await?;
         let paths = paths.into();
         let nats = Arc::clone(&self.nats);
-        Ok(sub.then(
-            move |Message {
-                      reply: tx,
-                      payload,
-                      headers,
-                      ..
-                  }| {
-                let nats = Arc::clone(&nats);
-                let paths = Arc::clone(&paths);
-                async move {
-                    let tx = tx.context("peer did not specify a reply subject")?;
-                    let rx = nats.new_inbox();
-                    let (param_rx, error_rx, nested) = try_join!(
-                        async {
-                            nats.subscribe(Subject::from(param_subject(&rx)))
-                                .await
-                                .context("failed to subscribe on parameter subject")
-                        },
-                        async {
-                            nats.subscribe(Subject::from(error_subject(&rx)))
-                                .await
-                                .context("failed to subscribe on error subject")
-                        },
-                        futures::future::try_join_all(paths.iter().map(|path| async {
-                            nats.subscribe(Subject::from(subscribe_path(&rx, path.as_ref())))
-                                .await
-                                .context("failed to subscribe on nested parameter subject")
-                        }))
-                    )?;
-                    let nested: SubscriberTree = zip(paths.iter(), nested).collect();
-                    ensure!(
-                        paths.is_empty() == nested.is_empty(),
-                        "failed to construct subscription tree"
-                    );
-                    nats.publish_with_reply(tx.clone(), rx, Bytes::default())
-                        .await
-                        .context("failed to publish handshake accept")?;
-                    let result_tx = Subject::from(result_subject(&tx));
-                    let error_tx = Subject::from(error_subject(&tx));
-                    Ok((
-                        headers,
-                        wrpc_transport::Invocation {
-                            outgoing: SubjectWriter::new(
-                                Arc::clone(&nats),
-                                result_tx.clone(),
-                                nats.publish_sink(result_tx),
-                            ),
-                            incoming: Reader {
-                                buffer: payload,
-                                incoming: param_rx,
-                                nested: Arc::new(std::sync::Mutex::new(nested)),
-                            },
-                            session: Session {
-                                outgoing: SubjectWriter::new(
-                                    Arc::clone(&nats),
-                                    error_tx.clone(),
-                                    nats.publish_sink(error_tx),
-                                ),
-                                incoming: error_rx,
-                            },
-                        },
-                    ))
-                }
-            },
-        ))
+        Ok(sub.then(move |msg| {
+            let nats = Arc::clone(&nats);
+            let paths = Arc::clone(&paths);
+            async move { serve_connection(nats, msg, &paths).await }
+        }))
     }
 }

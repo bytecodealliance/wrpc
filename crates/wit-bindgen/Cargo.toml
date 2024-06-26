@@ -21,7 +21,9 @@ async-trait = { workspace = true }
 bitflags = { workspace = true }
 bytes = { workspace = true }
 futures = { workspace = true }
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt"] }
+tokio-util = { workspace = true, features = ["codec"] }
 tracing = { workspace = true }
+wasm-tokio = { workspace = true }
 wit-bindgen-wrpc-rust-macro = { workspace = true }
-wrpc-transport-legacy = { workspace = true }
+wrpc-transport = { workspace = true }

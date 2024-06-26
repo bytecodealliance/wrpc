@@ -1,6 +1,6 @@
 [package]
 name = "wrpc"
-version = "0.3.0"
+version = "0.2.0"
 description = "WebAssembly component-native RPC framework based on WIT"
 
 authors.workspace = true
@@ -41,7 +41,6 @@ nats = [
     "dep:async-nats",
     "dep:wrpc-transport-nats",
     "wrpc-cli/nats",
-    "dep:wrpc-transport-nats-legacy", # TODO: Remove
 ]
 quic = ["dep:wrpc-transport-quic"]
 wasmtime = ["dep:wrpc-runtime-wasmtime"]
@@ -81,9 +80,6 @@ wrpc-transport-nats = { workspace = true, optional = true }
 wrpc-transport-quic = { workspace = true, optional = true }
 wrpc-wasmtime-nats-cli = { workspace = true, optional = true }
 
-# TODO: Remove
-wrpc-transport-nats-legacy = { workspace = true, optional = true }
-
 [dev-dependencies]
 anyhow = { workspace = true }
 async-nats = { workspace = true }
@@ -101,9 +97,6 @@ quinn = { workspace = true, features = [
     "rustls",
 ] }
 wrpc-cli = { workspace = true }
-
-# TODO: Remove
-wrpc-transport-legacy = { workspace = true }
 
 [workspace.dependencies]
 anyhow = { version = "1", default-features = false }
@@ -134,7 +127,7 @@ tower = { version = "0.4", default-features = false }
 tracing = { version = "0.1", default-features = false }
 tracing-subscriber = { version = "0.3", default-features = false }
 url = { version = "2", default-features = false }
-wasm-tokio = { version = "0.5.14", default-features = false }
+wasm-tokio = { version = "0.5.16", default-features = false }
 wasmcloud-component-adapters = { version = "0.9", default-features = false }
 wasmparser = { version = "0.208", default-features = false }
 wasmtime = { version = "21", default-features = false }
@@ -155,7 +148,3 @@ wrpc-transport = { version = "0.26", path = "./crates/transport", default-featur
 wrpc-transport-nats = { version = "0.22", path = "./crates/transport-nats", default-features = false }
 wrpc-transport-quic = { version = "0.1", path = "./crates/transport-quic", default-features = false }
 wrpc-wasmtime-nats-cli = { version = "0.2", path = "./crates/wasmtime-nats-cli", default-features = false }
-
-# TODO: Remove
-wrpc-transport-legacy = { version = "0.24.3", path = "./crates/transport-legacy", default-features = false }
-wrpc-transport-nats-legacy = { version = "0.21", path = "./crates/transport-nats-legacy", default-features = false }

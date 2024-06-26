@@ -7,7 +7,7 @@ use syn::parse::{Error, Parse, ParseStream, Result};
 use syn::punctuated::Punctuated;
 use syn::{braced, token, Token};
 use wit_bindgen_core::wit_parser::{PackageId, Resolve, UnresolvedPackage, WorldId};
-use wit_bindgen_wrpc_rust::{Opts, Ownership};
+use wit_bindgen_wrpc_rust::Opts;
 
 #[proc_macro]
 pub fn generate(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
@@ -81,14 +81,7 @@ impl Parse for Config {
                             None => Source::Inline(s.value(), None),
                         });
                     }
-                    Opt::UseStdFeature => opts.std_feature = true,
-                    Opt::RawStrings => opts.raw_strings = true,
-                    Opt::Ownership(ownership) => opts.ownership = ownership,
                     Opt::Skip(list) => opts.skip.extend(list.iter().map(syn::LitStr::value)),
-                    Opt::Stubs => {
-                        opts.stubs = true;
-                    }
-                    Opt::ExportPrefix(prefix) => opts.export_prefix = Some(prefix.value()),
                     Opt::AdditionalDerives(paths) => {
                         opts.additional_derive_attributes = paths
                             .into_iter()
@@ -101,9 +94,6 @@ impl Parse for Config {
                     }
                     Opt::AnyhowPath(path) => {
                         opts.anyhow_path = Some(path.into_token_stream().to_string());
-                    }
-                    Opt::AsyncTraitPath(path) => {
-                        opts.async_trait_path = Some(path.into_token_stream().to_string());
                     }
                     Opt::BitflagsPath(path) => {
                         opts.bitflags_path = Some(path.into_token_stream().to_string());
@@ -119,6 +109,9 @@ impl Parse for Config {
                     }
                     Opt::TracingPath(path) => {
                         opts.tracing_path = Some(path.into_token_stream().to_string());
+                    }
+                    Opt::WasmTokioPath(path) => {
+                        opts.wasm_tokio_path = Some(path.into_token_stream().to_string());
                     }
                     Opt::WrpcTransportPath(path) => {
                         opts.wrpc_transport_path = Some(path.into_token_stream().to_string());
@@ -222,26 +215,21 @@ impl Config {
 }
 
 mod kw {
-    syn::custom_keyword!(std_feature);
-    syn::custom_keyword!(raw_strings);
     syn::custom_keyword!(skip);
     syn::custom_keyword!(world);
     syn::custom_keyword!(path);
     syn::custom_keyword!(inline);
-    syn::custom_keyword!(ownership);
     syn::custom_keyword!(exports);
-    syn::custom_keyword!(stubs);
-    syn::custom_keyword!(export_prefix);
     syn::custom_keyword!(additional_derives);
     syn::custom_keyword!(with);
     syn::custom_keyword!(generate_unused_types);
     syn::custom_keyword!(anyhow_path);
-    syn::custom_keyword!(async_trait_path);
     syn::custom_keyword!(bitflags_path);
     syn::custom_keyword!(bytes_path);
     syn::custom_keyword!(futures_path);
     syn::custom_keyword!(tokio_path);
     syn::custom_keyword!(tracing_path);
+    syn::custom_keyword!(wasm_tokio_path);
     syn::custom_keyword!(wrpc_transport_path);
 }
 
@@ -249,23 +237,18 @@ enum Opt {
     World(syn::LitStr),
     Path(syn::LitStr),
     Inline(syn::LitStr),
-    UseStdFeature,
-    RawStrings,
     Skip(Vec<syn::LitStr>),
-    Ownership(Ownership),
-    Stubs,
-    ExportPrefix(syn::LitStr),
     // Parse as paths so we can take the concrete types/macro names rather than raw strings
     AdditionalDerives(Vec<syn::Path>),
     With(HashMap<String, String>),
     GenerateUnusedTypes(syn::LitBool),
     AnyhowPath(syn::Path),
-    AsyncTraitPath(syn::Path),
     BitflagsPath(syn::Path),
     BytesPath(syn::Path),
     FuturesPath(syn::Path),
     TokioPath(syn::Path),
     TracingPath(syn::Path),
+    WasmTokioPath(syn::Path),
     WrpcTransportPath(syn::Path),
 }
 
@@ -284,50 +267,6 @@ impl Parse for Opt {
             input.parse::<kw::world>()?;
             input.parse::<Token![:]>()?;
             Ok(Opt::World(input.parse()?))
-        } else if l.peek(kw::std_feature) {
-            input.parse::<kw::std_feature>()?;
-            Ok(Opt::UseStdFeature)
-        } else if l.peek(kw::raw_strings) {
-            input.parse::<kw::raw_strings>()?;
-            Ok(Opt::RawStrings)
-        } else if l.peek(kw::ownership) {
-            input.parse::<kw::ownership>()?;
-            input.parse::<Token![:]>()?;
-            let ownership = input.parse::<syn::Ident>()?;
-            Ok(Opt::Ownership(match ownership.to_string().as_str() {
-                "Owning" => Ownership::Owning,
-                "Borrowing" => Ownership::Borrowing {
-                    duplicate_if_necessary: {
-                        let contents;
-                        braced!(contents in input);
-                        let field = contents.parse::<syn::Ident>()?;
-                        match field.to_string().as_str() {
-                            "duplicate_if_necessary" => {
-                                contents.parse::<Token![:]>()?;
-                                contents.parse::<syn::LitBool>()?.value
-                            }
-                            name => {
-                                return Err(Error::new(
-                                    field.span(),
-                                    format!(
-                                        "unrecognized `Ownership::Borrowing` field: `{name}`; \
-                                         expected `duplicate_if_necessary`"
-                                    ),
-                                ));
-                            }
-                        }
-                    },
-                },
-                name => {
-                    return Err(Error::new(
-                        ownership.span(),
-                        format!(
-                            "unrecognized ownership: `{name}`; \
-                             expected `Owning` or `Borrowing`"
-                        ),
-                    ));
-                }
-            }))
         } else if l.peek(kw::skip) {
             input.parse::<kw::skip>()?;
             input.parse::<Token![:]>()?;
@@ -335,13 +274,6 @@ impl Parse for Opt {
             syn::bracketed!(contents in input);
             let list = Punctuated::<_, Token![,]>::parse_terminated(&contents)?;
             Ok(Opt::Skip(list.iter().cloned().collect()))
-        } else if l.peek(kw::stubs) {
-            input.parse::<kw::stubs>()?;
-            Ok(Opt::Stubs)
-        } else if l.peek(kw::export_prefix) {
-            input.parse::<kw::export_prefix>()?;
-            input.parse::<Token![:]>()?;
-            Ok(Opt::ExportPrefix(input.parse()?))
         } else if l.peek(kw::additional_derives) {
             input.parse::<kw::additional_derives>()?;
             input.parse::<Token![:]>()?;
@@ -365,10 +297,6 @@ impl Parse for Opt {
             input.parse::<kw::anyhow_path>()?;
             input.parse::<Token![:]>()?;
             Ok(Opt::AnyhowPath(input.parse()?))
-        } else if l.peek(kw::async_trait_path) {
-            input.parse::<kw::async_trait_path>()?;
-            input.parse::<Token![:]>()?;
-            Ok(Opt::AsyncTraitPath(input.parse()?))
         } else if l.peek(kw::bitflags_path) {
             input.parse::<kw::bitflags_path>()?;
             input.parse::<Token![:]>()?;
@@ -389,6 +317,10 @@ impl Parse for Opt {
             input.parse::<kw::tracing_path>()?;
             input.parse::<Token![:]>()?;
             Ok(Opt::TracingPath(input.parse()?))
+        } else if l.peek(kw::wasm_tokio_path) {
+            input.parse::<kw::wasm_tokio_path>()?;
+            input.parse::<Token![:]>()?;
+            Ok(Opt::WasmTokioPath(input.parse()?))
         } else if l.peek(kw::wrpc_transport_path) {
             input.parse::<kw::wrpc_transport_path>()?;
             input.parse::<Token![:]>()?;

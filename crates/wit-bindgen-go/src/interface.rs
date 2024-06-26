@@ -2539,7 +2539,7 @@ impl InterfaceGenerator<'_> {
     pub(super) fn generate_exports<'a>(
         &mut self,
         identifier: Identifier<'a>,
-        funcs: impl Clone + ExactSizeIterator<Item = &'a Function>,
+        funcs: impl Iterator<Item = &'a Function>,
     ) -> bool {
         let mut traits = BTreeMap::new();
         let mut methods = BTreeMap::new();
@@ -3380,24 +3380,6 @@ impl InterfaceGenerator<'_> {
         }
     }
 
-    fn print_tuple(&mut self, Tuple { types }: &Tuple, decl: bool) {
-        match types.as_slice() {
-            [] => self.push_str("struct{}"),
-            [ty] => self.print_opt_ty(ty, decl),
-            _ => {
-                let wrpc = self.deps.wrpc();
-                self.push_str(wrpc);
-                self.push_str(".Tuple");
-                uwrite!(self.src, "{}[", types.len());
-                for ty in types {
-                    self.print_opt_ty(ty, true);
-                    self.push_str(",");
-                }
-                self.push_str("]");
-            }
-        }
-    }
-
     fn print_opt_ptr(&mut self, ty: &Type, decl: bool) {
         if let Type::Id(id) = ty {
             let ty = &self.resolve.types[*id];
@@ -3497,11 +3479,34 @@ impl InterfaceGenerator<'_> {
         self.push_str("]");
     }
 
+    fn print_tuple(&mut self, Tuple { types }: &Tuple, decl: bool) {
+        match types.as_slice() {
+            [] => self.push_str("struct{}"),
+            [ty] => self.print_opt_ty(ty, decl),
+            _ => {
+                let wrpc = self.deps.wrpc();
+                self.push_str(wrpc);
+                self.push_str(".Tuple");
+                uwrite!(self.src, "{}[", types.len());
+                for ty in types {
+                    self.print_opt_ty(ty, true);
+                    self.push_str(",");
+                }
+                self.push_str("]");
+            }
+        }
+    }
+
+    fn print_list(&mut self, ty: &Type) {
+        self.push_str("[]");
+        self.print_opt_ty(ty, true);
+    }
+
     fn print_future(&mut self, ty: &Option<Type>) {
         let wrpc = self.deps.wrpc();
         self.push_str(wrpc);
         self.push_str(".ReceiveCompleter[");
-        let ty = ty.expect("futures with not element types are not supported");
+        let ty = ty.expect("futures with no element types are not supported");
         self.print_opt_ty(&ty, true);
         self.push_str("]");
     }
@@ -3564,11 +3569,6 @@ impl InterfaceGenerator<'_> {
             TypeDefKind::Type(t) => self.print_ty(t, decl),
             TypeDefKind::Unknown => unreachable!(),
         }
-    }
-
-    fn print_list(&mut self, ty: &Type) {
-        self.push_str("[]");
-        self.print_opt_ty(ty, true);
     }
 
     fn int_repr(&mut self, repr: Int) {
@@ -3718,8 +3718,7 @@ func (v *{name}) WriteToIndex(w {wrpc}.ByteWriter) (func({wrpc}.IndexWriter) err
     fn type_tuple(&mut self, id: TypeId, _name: &str, tuple: &Tuple, docs: &Docs) {
         if let Some(name) = self.name_of(id) {
             self.godoc(docs);
-            self.push_str(&format!("type {name}"));
-            self.push_str(" = ");
+            uwrite!(self.src, "type {name} = ");
             self.print_tuple(tuple, true);
             self.push_str("\n");
         }
@@ -4011,8 +4010,7 @@ func (v *{name}) WriteToIndex(w {wrpc}.ByteWriter) (func({wrpc}.IndexWriter) err
     fn type_option(&mut self, id: TypeId, _name: &str, payload: &Type, docs: &Docs) {
         if let Some(name) = self.name_of(id) {
             self.godoc(docs);
-            self.push_str(&format!("type {name}"));
-            self.push_str("=");
+            uwrite!(self.src, "type {name} = ");
             self.print_option(payload, true);
             self.push_str("\n");
         }
@@ -4021,8 +4019,7 @@ func (v *{name}) WriteToIndex(w {wrpc}.ByteWriter) (func({wrpc}.IndexWriter) err
     fn type_result(&mut self, id: TypeId, _name: &str, result: &Result_, docs: &Docs) {
         if let Some(name) = self.name_of(id) {
             self.godoc(docs);
-            self.push_str(&format!("type {name}"));
-            self.push_str("=");
+            uwrite!(self.src, "type {name} = ");
             self.print_result(result);
             self.push_str("\n");
         }
@@ -4100,8 +4097,7 @@ func (v *{name}) WriteToIndex(w {wrpc}.ByteWriter) (func({wrpc}.IndexWriter) err
     fn type_alias(&mut self, id: TypeId, _name: &str, ty: &Type, docs: &Docs) {
         if let Some(name) = self.name_of(id) {
             self.godoc(docs);
-            self.push_str(&format!("type {name}"));
-            self.push_str(" = ");
+            uwrite!(self.src, "type {name} = ");
             self.print_ty(ty, true);
             self.push_str("\n");
         }
@@ -4110,8 +4106,7 @@ func (v *{name}) WriteToIndex(w {wrpc}.ByteWriter) (func({wrpc}.IndexWriter) err
     fn type_list(&mut self, id: TypeId, _name: &str, ty: &Type, docs: &Docs) {
         if let Some(name) = self.name_of(id) {
             self.godoc(docs);
-            self.push_str(&format!("type {name}"));
-            self.push_str(" = ");
+            uwrite!(self.src, "type {name} = ");
             self.print_list(ty);
             self.push_str("\n");
         }
@@ -4119,9 +4114,7 @@ func (v *{name}) WriteToIndex(w {wrpc}.ByteWriter) (func({wrpc}.IndexWriter) err
 
     fn type_builtin(&mut self, _id: TypeId, name: &str, ty: &Type, docs: &Docs) {
         self.godoc(docs);
-        self.src
-            .push_str(&format!("type {}", name.to_upper_camel_case()));
-        self.src.push_str(" = ");
+        uwrite!(self.src, "type {} = ", name.to_upper_camel_case());
         self.print_ty(ty, true);
         self.src.push_str("\n");
     }

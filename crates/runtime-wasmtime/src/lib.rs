@@ -8,7 +8,7 @@ use core::pin::{pin, Pin};
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use anyhow::{anyhow, bail, Context as _};
+use anyhow::{bail, Context as _};
 use bytes::{BufMut as _, Bytes, BytesMut};
 use futures::future::try_join_all;
 use futures::stream::FuturesUnordered;
@@ -29,7 +29,7 @@ use wasmtime::component::{LinkerInstance, ResourceType, Type, Val};
 use wasmtime::{AsContextMut, Engine, StoreContextMut};
 use wasmtime_wasi::pipe::AsyncReadStream;
 use wasmtime_wasi::{InputStream, StreamError, WasiView};
-use wrpc_transport::{Index as _, Invocation, Invoke, ListDecoderU8, Session};
+use wrpc_transport::{Index as _, Invoke, ListDecoderU8};
 
 pub struct RemoteResource(pub Bytes);
 
@@ -468,7 +468,7 @@ where
                                                     w.write_all(&chunk).await?;
                                                 }
                                                 Err(StreamError::Closed) => {
-                                                    w.write_all(&[0x00]).await?
+                                                    w.write_all(&[0x00]).await?;
                                                 }
                                                 Err(err) => return Err(err.into()),
                                             }
@@ -494,7 +494,7 @@ where
                                                     w.write_all(&chunk).await?;
                                                 }
                                                 Err(StreamError::Closed) => {
-                                                    w.write_all(&[0x00]).await?
+                                                    w.write_all(&[0x00]).await?;
                                                 }
                                                 Err(err) => return Err(err.into()),
                                             }
@@ -946,11 +946,7 @@ where
                     .context("failed to encode parameter")?;
                 deferred.push(enc.deferred);
             }
-            let Invocation {
-                outgoing,
-                incoming,
-                session,
-            } = store
+            let (outgoing, incoming) = store
                 .data()
                 .client()
                 .invoke(cx, &instance, &name, buf.freeze(), &[[]])
@@ -985,10 +981,7 @@ where
                     Ok(())
                 },
             )?;
-            match session.finish(Ok(())).await? {
-                Ok(()) => Ok(()),
-                Err(err) => bail!(anyhow!("{err}").context("session failed")),
-            }
+            Ok(())
         })
     })
 }
