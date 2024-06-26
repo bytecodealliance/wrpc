@@ -9,7 +9,7 @@ use wit_bindgen_core::wit_parser::{
     Variant, World, WorldItem, WorldKey,
 };
 use wit_bindgen_core::{uwrite, uwriteln, Source, TypeInfo};
-use wrpc_introspect::{async_paths_ty, flag_repr, is_list_of, is_ty, rpc_func_name};
+use wrpc_introspect::{async_paths_ty, is_list_of, is_ty, rpc_func_name};
 
 use crate::{
     to_go_ident, to_package_ident, to_upper_camel_case, Deps, GoWrpc, Identifier, InterfaceName,
@@ -737,37 +737,20 @@ impl InterfaceGenerator<'_> {
         self.src.push_str(")");
     }
 
-    fn print_read_flags(&mut self, ty: &Flags, reader: &str, name: &str) {
-        let fmt = self.deps.fmt();
-        let io = self.deps.io();
-
-        let repr = flag_repr(ty);
+    fn print_read_flags(&mut self, reader: &str, name: &str) {
+        let wrpc = self.deps.wrpc();
 
         uwrite!(
             self.src,
-            r#"func(r {io}.ByteReader) (*{name}, error) {{
-    v := &{name}{{}}
-    n, err := "#
+            r#"func(r {wrpc}.IndexReader) (*{name}, error) {{
+    v := {name}{{}}
+    if err := v.ReadFromIndex(r); err != nil {{
+        return nil, err
+    }}
+    return &v, nil
+}}({reader})
+"#
         );
-        self.print_read_discriminant(repr, "r");
-        self.push_str("\n");
-        self.push_str("if err != nil {\n");
-        self.push_str("return nil, ");
-        self.push_str(fmt);
-        self.push_str(".Errorf(\"failed to read flag: %w\", err)\n");
-        self.push_str("}\n");
-        for (i, Flag { name, .. }) in ty.flags.iter().enumerate() {
-            if i > 64 {
-                break;
-            }
-            uwriteln!(self.src, "if n & (1 << {i}) > 0 {{");
-            self.push_str("v.");
-            self.push_str(&name.to_upper_camel_case());
-            self.push_str(" = true\n");
-            self.push_str("}\n");
-        }
-        self.push_str("return v, nil\n");
-        uwrite!(self.src, "}}({reader})");
     }
 
     fn print_read_enum(&mut self, ty: &Enum, reader: &str, name: &str) {
@@ -1328,8 +1311,8 @@ impl InterfaceGenerator<'_> {
             TypeDefKind::Resource => self.print_read_string(reader),
             TypeDefKind::Handle(Handle::Own(id)) => self.print_read_own(reader, *id),
             TypeDefKind::Handle(Handle::Borrow(id)) => self.print_read_borrow(reader, *id),
-            TypeDefKind::Flags(ty) => {
-                self.print_read_flags(ty, reader, &name.expect("flag missing a name"));
+            TypeDefKind::Flags(_ty) => {
+                self.print_read_flags(reader, &name.expect("flag missing a name"));
             }
             TypeDefKind::Tuple(ty) => self.print_read_tuple(ty, reader, path),
             TypeDefKind::Variant(ty) => {
@@ -3743,13 +3726,13 @@ func (v *{name}) WriteToIndex(w {wrpc}.ByteWriter) (func({wrpc}.IndexWriter) err
     }
 
     fn type_flags(&mut self, id: TypeId, _name: &str, ty: &Flags, docs: &Docs) {
-        let repr = flag_repr(ty);
-
         let info = self.info(id);
         if let Some(name) = self.name_of(id) {
             let strings = self.deps.strings();
             let wrpc = self.deps.wrpc();
+            let errors = self.deps.errors();
 
+            // Struct
             self.godoc(docs);
             uwriteln!(self.src, "type {name} struct {{");
             for Flag { name, docs } in &ty.flags {
@@ -3759,6 +3742,7 @@ func (v *{name}) WriteToIndex(w {wrpc}.ByteWriter) (func({wrpc}.IndexWriter) err
             }
             self.push_str("}\n");
 
+            // String()
             uwriteln!(self.src, "func (v *{name}) String() string {{");
             uwriteln!(self.src, "flags := make([]string, 0, {})", ty.flags.len());
             for Flag { name, .. } in &ty.flags {
@@ -3769,34 +3753,76 @@ func (v *{name}) WriteToIndex(w {wrpc}.ByteWriter) (func({wrpc}.IndexWriter) err
                 self.push_str("}\n");
             }
             uwriteln!(self.src, r#"return {strings}.Join(flags, " | ")"#);
-            self.push_str("}\n");
+            self.push_str("}\n\n");
+
+            // WriteToIndex()
+            let mut buf_len = ty.flags.len() / 8;
+            if ty.flags.len() % 8 > 0 {
+                buf_len += 1;
+            }
+
             uwriteln!(
                 self.src,
-                "func (v *{name}) WriteToIndex(w {wrpc}.ByteWriter) (func({wrpc}.IndexWriter) error, error) {{"
+                r#"func (v *{name}) WriteToIndex(w {wrpc}.ByteWriter) (func({wrpc}.IndexWriter) error, error) {{
+                    var p [{buf_len}]byte
+"#
             );
-            self.push_str("var n ");
-            self.int_repr(repr);
-            self.push_str("\n");
+
             for (i, Flag { name, .. }) in ty.flags.iter().enumerate() {
                 self.push_str("if v.");
                 self.push_str(&name.to_upper_camel_case());
-                self.push_str(" {\n");
-                if i <= 64 {
-                    uwriteln!(self.src, "n |= 1 << {i}");
-                } else {
-                    let errors = self.deps.errors();
-                    uwriteln!(
-                        self.src,
-                        r#"return nil, {errors}.New("encoding `{name}` flag value would overflow 64-bit integer, flags containing more than 64 members are not supported yet")"#
-                    );
-                }
-                self.push_str("}\n");
+                uwriteln!(
+                    self.src,
+                    r#"{{
+        p[{}] |= 1 << {}                
+    }}"#,
+                    i / 8,
+                    i % 8
+                );
             }
-            self.push_str("return nil, ");
-            self.print_write_discriminant(repr, "n", "w");
-            self.push_str("\n");
-            self.push_str("}\n");
+            uwriteln!(
+                self.src,
+                r#"
+    _, err := w.Write(p[:])
+    return nil, err
+}}
+                "#,
+            );
 
+            // ReadFromIndex()
+            uwrite!(
+                self.src,
+                r#"func (v *{name}) ReadFromIndex(r {wrpc}.IndexReader) error {{
+        var p [{buf_len}]byte
+        if _, err := r.Read(p[:]); err != nil {{
+            return err
+        }}
+    
+    "#
+            );
+
+            for (i, Flag { name, .. }) in ty.flags.iter().enumerate() {
+                uwriteln!(
+                    self.src,
+                    "v.{} = p[{}] & (1 << {}) > 0",
+                    name.to_upper_camel_case(),
+                    i / 8,
+                    i % 8
+                );
+            }
+
+            uwriteln!(
+                self.src,
+                r#"
+    if (p[{}] >> {}) > 0 {{
+        return {errors}.New("bit not associated with any flag is set")
+    }}"#,
+                buf_len - 1,
+                ty.flags.len() % 8,
+            );
+            self.push_str("return nil\n}\n");
+
+            // Error()
             if info.error {
                 uwriteln!(
                     self.src,
