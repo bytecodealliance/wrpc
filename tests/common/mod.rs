@@ -7,11 +7,6 @@ use std::process::ExitStatus;
 use std::sync::Arc;
 
 use anyhow::Context;
-use quinn::crypto::rustls::QuicClientConfig;
-use quinn::{ClientConfig, EndpointConfig, ServerConfig, TokioRuntime};
-use rcgen::{generate_simple_self_signed, CertifiedKey};
-use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
-use rustls::version::TLS13;
 use tokio::net::TcpListener;
 use tokio::process::Command;
 use tokio::sync::{mpsc, oneshot, OnceCell};
@@ -51,6 +46,7 @@ async fn spawn_server(
     Ok((child, stop_tx))
 }
 
+#[cfg(feature = "nats")]
 pub async fn start_nats() -> anyhow::Result<(
     u16,
     async_nats::Client,
@@ -69,6 +65,7 @@ pub async fn start_nats() -> anyhow::Result<(
     Ok((port, client, server, stop_tx))
 }
 
+#[cfg(feature = "nats")]
 pub async fn with_nats<T, Fut>(f: impl FnOnce(u16, async_nats::Client) -> Fut) -> anyhow::Result<T>
 where
     Fut: Future<Output = anyhow::Result<T>>,
@@ -85,6 +82,7 @@ where
     Ok(res)
 }
 
+#[cfg(feature = "quic")]
 pub async fn with_quic<T, Fut>(
     names: &[&str],
     f: impl FnOnce(u16, quinn::Endpoint, quinn::Endpoint) -> Fut,
@@ -92,6 +90,12 @@ pub async fn with_quic<T, Fut>(
 where
     Fut: Future<Output = anyhow::Result<T>>,
 {
+    use quinn::crypto::rustls::QuicClientConfig;
+    use quinn::{ClientConfig, EndpointConfig, ServerConfig, TokioRuntime};
+    use rcgen::{generate_simple_self_signed, CertifiedKey};
+    use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
+    use rustls::version::TLS13;
+
     let CertifiedKey {
         cert: srv_crt,
         key_pair: srv_key,
