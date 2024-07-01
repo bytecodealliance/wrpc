@@ -963,7 +963,6 @@ impl<'a> wit_bindgen_core::InterfaceGenerator<'a> for InterfaceGenerator<'a> {
             let bytes = self.gen.bytes_path().to_string();
             let tokio = self.gen.tokio_path().to_string();
             let tokio_util = self.gen.tokio_util_path().to_string();
-            let tracing = self.gen.tracing_path().to_string();
             let wrpc_transport = self.gen.wrpc_transport_path().to_string();
 
             uwriteln!(
@@ -1196,9 +1195,7 @@ mod {mod_name} {{
         type Item = super::{name};
         type Error = ::std::io::Error;
 
-        fn decode(&mut self, src: &mut {bytes}::BytesMut) -> Result<Option<Self::Item>, Self::Error> {{
-            let span = {tracing}::trace_span!("decode", ty = "{ty_name}");
-            let _enter = span.enter();"#
+        fn decode(&mut self, src: &mut {bytes}::BytesMut) -> Result<Option<Self::Item>, Self::Error> {{"#
             );
             for Field { name, .. } in fields {
                 let name = to_rust_ident(name);
@@ -1234,9 +1231,7 @@ mod {mod_name} {{
         type Error = ::std::io::Error;
 
         #[allow(unused_mut)]
-        fn encode(&mut self, item: {name}, mut dst: &mut {bytes}::BytesMut) -> ::std::io::Result<()> {{
-            let span = {tracing}::trace_span!("encode", ty = "{ty_name}");
-            let _enter = span.enter();"#
+        fn encode(&mut self, item: {name}, mut dst: &mut {bytes}::BytesMut) -> ::std::io::Result<()> {{"#
                 );
                 if !fields.is_empty() {
                     self.push_str("let ");
@@ -1325,7 +1320,6 @@ pub struct {}(());",
             let bitflags = self.gen.bitflags_path().to_string();
             let bytes = self.gen.bytes_path().to_string();
             let tokio_util = self.gen.tokio_util_path().to_string();
-            let tracing = self.gen.tracing_path().to_string();
             let wasm_tokio = self.gen.wasm_tokio_path().to_string();
             let wrpc_transport = self.gen.wrpc_transport_path().to_string();
 
@@ -1391,8 +1385,6 @@ mod {mod_name} {{
         type Error = ::std::io::Error;
 
         fn decode(&mut self, src: &mut {bytes}::BytesMut) -> Result<Option<Self::Item>, Self::Error> {{
-            let span = {tracing}::trace_span!("decode", ty = "{ty_name}");
-            let _enter = span.enter();
             let n = src.len();
             if n < {n} {{
                 src.reserve({n} - n);
@@ -1413,8 +1405,6 @@ mod {mod_name} {{
         type Error = ::std::io::Error;
 
         fn encode(&mut self, item: super::{name}, dst: &mut {bytes}::BytesMut) -> Result<(), Self::Error> {{
-            let span = {tracing}::trace_span!("encode", ty = "{ty_name}");
-            let _enter = span.enter();
             dst.extend_from_slice(&item.bits().to_le_bytes());
             Ok(())
         }}
@@ -1516,7 +1506,6 @@ mod {mod_name} {{
 
             let bytes = self.gen.bytes_path().to_string();
             let tokio_util = self.gen.tokio_util_path().to_string();
-            let tracing = self.gen.tracing_path().to_string();
             let wasm_tokio = self.gen.wasm_tokio_path().to_string();
             let wrpc_transport = self.gen.wrpc_transport_path().to_string();
 
@@ -1556,8 +1545,6 @@ mod {mod_name} {{
         type Error = ::std::io::Error;
 
         fn decode(&mut self, src: &mut {bytes}::BytesMut) -> Result<Option<Self::Item>, Self::Error> {{
-            let span = {tracing}::trace_span!("decode", ty = "{ty_name}");
-            let _enter = span.enter();
             let Some(disc) = {wasm_tokio}::Leb128DecoderU32.decode(src)? else {{
                 return Ok(None)
             }};
@@ -1579,8 +1566,6 @@ mod {mod_name} {{
         type Error = ::std::io::Error;
 
         fn encode(&mut self, item: super::{name}, dst: &mut {bytes}::BytesMut) -> Result<(), Self::Error> {{
-            let span = {tracing}::trace_span!("encode", ty = "{ty_name}");
-            let _enter = span.enter();
             {wasm_tokio}::Leb128Encoder.encode(match item {{"#
                 );
                 for (i, case) in cases.iter().enumerate() {
@@ -1673,8 +1658,6 @@ mod {mod_name} {{
         type Error = ::std::io::Error;
 
         fn encode(&mut self, item: {ty}, dst: &mut {bytes}::BytesMut) -> Result<(), Self::Error> {{
-            let span = {tracing}::trace_span!("encode", ty = "{ty_name}");
-            let _enter = span.enter();
             match item {{"#
                     );
                     for (
@@ -1803,8 +1786,6 @@ mod {mod_name} {{
         type Error = ::std::io::Error;
 
         fn decode(&mut self, src: &mut {bytes}::BytesMut) -> Result<Option<Self::Item>, Self::Error> {{
-            let span = {tracing}::trace_span!("decode", ty = "{ty_name}");
-            let _enter = span.enter();
             let state = if let Some(ref mut state) = self.0 {{
                 state
             }} else {{
@@ -1999,7 +1980,6 @@ mod {mod_name} {{
 
             let bytes = self.gen.bytes_path().to_string();
             let tokio_util = self.gen.tokio_util_path().to_string();
-            let tracing = self.gen.tracing_path().to_string();
             let wasm_tokio = self.gen.wasm_tokio_path().to_string();
             let wrpc_transport = self.gen.wrpc_transport_path().to_string();
 
@@ -2038,8 +2018,6 @@ mod {mod_name} {{
         type Error = ::std::io::Error;
 
         fn decode(&mut self, src: &mut {bytes}::BytesMut) -> Result<Option<Self::Item>, Self::Error> {{
-            let span = {tracing}::trace_span!("decode", ty = "{ty_name}");
-            let _enter = span.enter();
             let Some(disc) = {wasm_tokio}::Leb128DecoderU32.decode(src)? else {{
                 return Ok(None)
             }};
@@ -2061,8 +2039,6 @@ mod {mod_name} {{
         type Error = ::std::io::Error;
 
         fn encode(&mut self, item: super::{name}, dst: &mut {bytes}::BytesMut) -> Result<(), Self::Error> {{
-            let span = {tracing}::trace_span!("encode", ty = "{ty_name}");
-            let _enter = span.enter();
             {wasm_tokio}::Leb128Encoder.encode(match item {{"#
             );
             for (i, case) in enum_.cases.iter().enumerate() {
