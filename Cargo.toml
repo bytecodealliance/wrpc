@@ -82,7 +82,6 @@ wrpc-wasmtime-nats-cli = { workspace = true, optional = true }
 
 [dev-dependencies]
 anyhow = { workspace = true }
-async-nats = { workspace = true }
 bytes = { workspace = true }
 futures = { workspace = true, features = ["async-await"] }
 rcgen = { workspace = true, features = ["crypto", "ring", "zeroize"] }

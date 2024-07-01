@@ -1,16 +1,20 @@
-use core::time::Duration;
-
-use anyhow::{anyhow, bail, ensure, Context};
+use anyhow::{ensure, Context};
 use tokio::process::Command;
-use tokio::{fs, time::sleep};
+use tracing::instrument;
 
 mod common;
-use common::with_nats;
-use tracing::{info, instrument};
 
+#[cfg(feature = "nats")]
 #[instrument(ret)]
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn go_bindgen() -> anyhow::Result<()> {
+    use core::time::Duration;
+
+    use anyhow::{anyhow, bail};
+    use tokio::fs;
+    use tokio::time::sleep;
+    use tracing::info;
+
     if let Err(err) = fs::remove_dir_all("tests/go/bindings").await {
         match err.kind() {
             std::io::ErrorKind::NotFound => {}
@@ -36,7 +40,7 @@ async fn go_bindgen() -> anyhow::Result<()> {
         .context("failed to call `go test`")?;
     ensure!(status.success(), "`go test` failed");
 
-    with_nats(|port, nats_client| async move {
+    common::with_nats(|port, nats_client| async move {
         wrpc::generate!({
             world: "sync-client",
             path: "tests/wit",
