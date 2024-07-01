@@ -2,7 +2,11 @@ use crate::bindings::wrpc_examples::complex::resources;
 
 #[allow(clippy::missing_safety_doc)]
 mod bindings {
-    wit_bindgen::generate!();
+    wit_bindgen::generate!({
+       with: {
+           "wrpc-examples:complex/resources": generate
+       }
+    });
 }
 
 fn main() {

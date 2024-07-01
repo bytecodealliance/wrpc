@@ -6,8 +6,8 @@ use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
 use syn::parse::{Error, Parse, ParseStream, Result};
 use syn::punctuated::Punctuated;
 use syn::{braced, token, Token};
-use wit_bindgen_core::wit_parser::{PackageId, Resolve, UnresolvedPackage, WorldId};
-use wit_bindgen_wrpc_rust::Opts;
+use wit_bindgen_core::wit_parser::{PackageId, Resolve, UnresolvedPackageGroup, WorldId};
+use wit_bindgen_wrpc_rust::{Opts, WithOption};
 
 #[proc_macro]
 pub fn generate(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
@@ -46,6 +46,7 @@ impl Parse for Config {
         let mut opts = Opts::default();
         let mut world = None;
         let mut source = None;
+        let mut features = Vec::new();
 
         if input.peek(token::Brace) {
             let content;
@@ -89,6 +90,9 @@ impl Parse for Config {
                             .collect();
                     }
                     Opt::With(with) => opts.with.extend(with),
+                    Opt::GenerateAll => {
+                        opts.with.generate_by_default = true;
+                    }
                     Opt::GenerateUnusedTypes(enable) => {
                         opts.generate_unused_types = enable.value();
                     }
@@ -116,6 +120,9 @@ impl Parse for Config {
                     Opt::WrpcTransportPath(path) => {
                         opts.wrpc_transport_path = Some(path.into_token_stream().to_string());
                     }
+                    Opt::Features(f) => {
+                        features.extend(f.into_iter().map(|f| f.value()));
+                    }
                 }
             }
         } else {
@@ -124,10 +131,10 @@ impl Parse for Config {
                 source = Some(Source::Path(input.parse::<syn::LitStr>()?.value()));
             }
         }
-        let (resolve, pkg, files) =
-            parse_source(&source).map_err(|err| anyhow_to_syn(call_site, err))?;
+        let (resolve, pkgs, files) =
+            parse_source(&source, &features).map_err(|err| anyhow_to_syn(call_site, err))?;
         let world = resolve
-            .select_world(pkg, world.as_deref())
+            .select_world(&pkgs, world.as_deref())
             .map_err(|e| anyhow_to_syn(call_site, e))?;
         Ok(Config {
             opts,
@@ -139,12 +146,23 @@ impl Parse for Config {
 }
 
 /// Parse the source
-fn parse_source(source: &Option<Source>) -> anyhow::Result<(Resolve, PackageId, Vec<PathBuf>)> {
+fn parse_source(
+    source: &Option<Source>,
+    features: &[String],
+) -> anyhow::Result<(Resolve, Vec<PackageId>, Vec<PathBuf>)> {
     let mut resolve = Resolve::default();
+    resolve.features.extend(features.iter().cloned());
     let mut files = Vec::new();
     let root = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
     let mut parse = |path: &Path| -> anyhow::Result<_> {
-        let (pkg, sources) = resolve.push_path(path)?;
+        // Try to normalize the path to make the error message more understandable when
+        // the path is not correct. Fallback to the original path if normalization fails
+        // (probably return an error somewhere else).
+        let normalized_path = match std::fs::canonicalize(path) {
+            Ok(p) => p,
+            Err(_) => path.to_path_buf(),
+        };
+        let (pkg, sources) = resolve.push_path(normalized_path)?;
         files.extend(sources);
         Ok(pkg)
     };
@@ -153,7 +171,7 @@ fn parse_source(source: &Option<Source>) -> anyhow::Result<(Resolve, PackageId, 
             if let Some(p) = path {
                 parse(&root.join(p))?;
             }
-            resolve.push(UnresolvedPackage::parse("macro-input".as_ref(), s)?)?
+            resolve.push_group(UnresolvedPackageGroup::parse("macro-input", s)?)?
         }
         Some(Source::Path(s)) => parse(&root.join(s))?,
         None => parse(&root.join("wit"))?,
@@ -183,15 +201,12 @@ impl Config {
             let n = INVOCATION.fetch_add(1, Relaxed);
             let path = root.join(format!("{world_name}{n}.rs"));
 
-            std::fs::write(&path, &src).unwrap();
-
             // optimistically format the code but don't require success
-            drop(
-                std::process::Command::new("rustfmt")
-                    .arg(&path)
-                    .arg("--edition=2021")
-                    .output(),
-            );
+            let contents = match fmt(&src) {
+                Ok(formatted) => formatted,
+                Err(_) => src.clone(),
+            };
+            std::fs::write(&path, contents.as_bytes()).unwrap();
 
             src = format!("include!({path:?});");
         }
@@ -222,6 +237,7 @@ mod kw {
     syn::custom_keyword!(exports);
     syn::custom_keyword!(additional_derives);
     syn::custom_keyword!(with);
+    syn::custom_keyword!(generate_all);
     syn::custom_keyword!(generate_unused_types);
     syn::custom_keyword!(anyhow_path);
     syn::custom_keyword!(bitflags_path);
@@ -231,6 +247,7 @@ mod kw {
     syn::custom_keyword!(tracing_path);
     syn::custom_keyword!(wasm_tokio_path);
     syn::custom_keyword!(wrpc_transport_path);
+    syn::custom_keyword!(features);
 }
 
 enum Opt {
@@ -240,7 +257,8 @@ enum Opt {
     Skip(Vec<syn::LitStr>),
     // Parse as paths so we can take the concrete types/macro names rather than raw strings
     AdditionalDerives(Vec<syn::Path>),
-    With(HashMap<String, String>),
+    With(HashMap<String, WithOption>),
+    GenerateAll,
     GenerateUnusedTypes(syn::LitBool),
     AnyhowPath(syn::Path),
     BitflagsPath(syn::Path),
@@ -250,6 +268,7 @@ enum Opt {
     TracingPath(syn::Path),
     WasmTokioPath(syn::Path),
     WrpcTransportPath(syn::Path),
+    Features(Vec<syn::LitStr>),
 }
 
 impl Parse for Opt {
@@ -289,6 +308,9 @@ impl Parse for Opt {
             let fields: Punctuated<_, Token![,]> =
                 contents.parse_terminated(with_field_parse, Token![,])?;
             Ok(Opt::With(HashMap::from_iter(fields)))
+        } else if l.peek(kw::generate_all) {
+            input.parse::<kw::generate_all>()?;
+            Ok(Opt::GenerateAll)
         } else if l.peek(kw::generate_unused_types) {
             input.parse::<kw::generate_unused_types>()?;
             input.parse::<Token![:]>()?;
@@ -325,13 +347,20 @@ impl Parse for Opt {
             input.parse::<kw::wrpc_transport_path>()?;
             input.parse::<Token![:]>()?;
             Ok(Opt::WrpcTransportPath(input.parse()?))
+        } else if l.peek(kw::features) {
+            input.parse::<kw::features>()?;
+            input.parse::<Token![:]>()?;
+            let contents;
+            syn::bracketed!(contents in input);
+            let list = Punctuated::<_, Token![,]>::parse_terminated(&contents)?;
+            Ok(Opt::Features(list.into_iter().collect()))
         } else {
             Err(l.error())
         }
     }
 }
 
-fn with_field_parse(input: ParseStream<'_>) -> Result<(String, String)> {
+fn with_field_parse(input: ParseStream<'_>) -> Result<(String, WithOption)> {
     let interface = input.parse::<syn::LitStr>()?.value();
     input.parse::<Token![:]>()?;
     let start = input.span();
@@ -341,6 +370,10 @@ fn with_field_parse(input: ParseStream<'_>) -> Result<(String, String)> {
     let span = start
         .join(path.segments.last().unwrap().ident.span())
         .unwrap_or(start);
+
+    if path.is_ident("generate") {
+        return Ok((interface, WithOption::Generate));
+    }
 
     let mut buf = String::new();
     let append = |buf: &mut String, segment: syn::PathSegment| -> Result<()> {
@@ -371,5 +404,11 @@ fn with_field_parse(input: ParseStream<'_>) -> Result<(String, String)> {
         append(&mut buf, segment)?;
     }
 
-    Ok((interface, buf))
+    Ok((interface, WithOption::Path(buf)))
+}
+
+/// Format a valid Rust string
+fn fmt(input: &str) -> Result<String> {
+    let syntax_tree = syn::parse_file(input)?;
+    Ok(prettyplease::unparse(&syntax_tree))
 }

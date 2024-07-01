@@ -1,6 +1,10 @@
 #[allow(clippy::missing_safety_doc)]
 mod bindings {
-    wit_bindgen::generate!();
+    wit_bindgen::generate!({
+        with: {
+            "wrpc-examples:hello/handler": generate,
+        }
+    });
 }
 
 fn main() {

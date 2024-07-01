@@ -32,4 +32,9 @@ crate::generate!({
     wrpc_transport_path: wrpc_transport,
 
     path: "wasi-cli@0.2.0.wasm",
+
+    // specify that this interface dependency should be generated as well.
+    with: {
+        "wasi:cli/environment@0.2.0": generate,
+    }
 });

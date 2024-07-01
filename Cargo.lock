@@ -3615,6 +3615,7 @@ name = "wit-bindgen-wrpc-rust-macro"
 version = "0.4.0"
 dependencies = [
  "anyhow",
+ "prettyplease",
  "proc-macro2",
  "quote",
  "syn",

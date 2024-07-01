@@ -9,6 +9,7 @@ mod codegen_tests {
             mod $id {
                 wit_bindgen_wrpc::generate!({
                     path: $test,
+                    generate_all
                 });
 
                 // This empty module named 'core' is here to catch module path
@@ -23,6 +24,7 @@ mod codegen_tests {
                 mod borrowed {
                     wit_bindgen_wrpc::generate!({
                         path: $test,
+                        generate_all
                     });
 
                     #[test]
@@ -32,6 +34,7 @@ mod codegen_tests {
                 mod duplicate {
                     wit_bindgen_wrpc::generate!({
                         path: $test,
+                        generate_all
                     });
 
                     #[test]
@@ -465,6 +468,30 @@ mod generate_unused_types {
         ",
         generate_unused_types: true,
     });
+}
+
+#[allow(unused)]
+mod gated_features {
+    wit_bindgen_wrpc::generate!({
+        inline: r#"
+            package foo:bar;
+
+            world bindings {
+                @unstable(feature = x)
+                import x: func();
+                @unstable(feature = y)
+                import y: func();
+                @since(version = 1.2.3)
+                import z: func();
+            }
+        "#,
+        features: ["y"],
+    });
+
+    fn _foo(wrpc: &impl wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>) {
+        y(wrpc, ());
+        z(wrpc, ());
+    }
 }
 
 #[allow(unused)]

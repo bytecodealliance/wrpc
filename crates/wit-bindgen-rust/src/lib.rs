@@ -1,5 +1,6 @@
 use crate::interface::InterfaceGenerator;
 use anyhow::{bail, Result};
+use core::str::FromStr;
 use heck::{ToSnakeCase, ToUpperCamelCase};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::{self, Write as _};
@@ -8,7 +9,7 @@ use std::mem;
 use std::process::{Command, Stdio};
 use wit_bindgen_core::wit_parser::{
     Flags, FlagsRepr, Function, Int, InterfaceId, PackageId, Resolve, SizeAlign, TypeId, World,
-    WorldId, WorldKey,
+    WorldId, WorldItem, WorldKey,
 };
 use wit_bindgen_core::{uwriteln, Files, InterfaceGenerator as _, Source, Types, WorldGenerator};
 
@@ -34,21 +35,44 @@ struct RustWrpc {
     interface_names: HashMap<InterfaceId, InterfaceName>,
     import_funcs_called: bool,
     with_name_counter: usize,
-    // Track the with options that were used. Remapped interfaces provided via `with`
+    // Track which interfaces were generated. Remapped interfaces provided via `with`
     // are required to be used.
-    used_with_opts: HashSet<String>,
+    generated_interfaces: HashSet<String>,
     world: Option<WorldId>,
 
     export_paths: Vec<String>,
-    with: HashMap<String, String>,
+    with: GenerationConfiguration,
 }
 
-#[cfg(feature = "clap")]
-fn parse_with(s: &str) -> Result<(String, String), String> {
-    let (k, v) = s.split_once('=').ok_or_else(|| {
-        format!("expected string of form `<key>=<value>[,<key>=<value>...]`; got `{s}`")
-    })?;
-    Ok((k.to_string(), v.to_string()))
+#[derive(Default)]
+struct GenerationConfiguration {
+    map: HashMap<String, InterfaceGeneration>,
+    generate_by_default: bool,
+}
+
+impl GenerationConfiguration {
+    fn get(&self, key: &str) -> Option<&InterfaceGeneration> {
+        self.map.get(key).or_else(|| {
+            self.generate_by_default
+                .then_some(&InterfaceGeneration::Generate)
+        })
+    }
+
+    fn insert(&mut self, name: String, generate: InterfaceGeneration) {
+        self.map.insert(name, generate);
+    }
+
+    fn iter(&self) -> impl Iterator<Item = (&String, &InterfaceGeneration)> {
+        self.map.iter()
+    }
+}
+
+/// How an interface should be generated.
+enum InterfaceGeneration {
+    /// Remapped to some other type
+    Remap(String),
+    /// Generate the interface
+    Generate,
 }
 
 #[derive(Default, Debug, Clone)]
@@ -133,8 +157,8 @@ pub struct Opts {
     /// Argument must be of the form `k=v` and this option can be passed
     /// multiple times or one option can be comma separated, for example
     /// `k1=v1,k2=v2`.
-    #[cfg_attr(feature = "clap", arg(long, value_parser = parse_with, value_delimiter = ','))]
-    pub with: Vec<(String, String)>,
+    #[cfg_attr(feature = "clap", arg(long, value_parser = clap::value_parser!(WithGeneration), value_delimiter = ','))]
+    pub with: WithGeneration,
 
     /// Add the specified suffix to the name of the custome section containing
     /// the component type.
@@ -283,30 +307,39 @@ impl RustWrpc {
         id: InterfaceId,
         name: &WorldKey,
         is_export: bool,
-    ) -> bool {
+    ) -> Result<bool> {
         let with_name = resolve.name_world_key(name);
-        let entry = if let Some(remapped_path) = self.with.get(&with_name) {
-            let name = format!("__with_name{}", self.with_name_counter);
-            self.used_with_opts.insert(with_name);
-            self.with_name_counter += 1;
-            uwriteln!(self.src, "use {remapped_path} as {name};");
-            InterfaceName {
-                remapped: true,
-                path: name,
+        let Some(remapping) = self.with.get(&with_name) else {
+            bail!("no remapping found for {with_name:?} - use the `generate!` macro's `with` option to force the interface to be generated or specify where it is already defined:
+```
+with: {{\n\t{with_name:?}: generate\n}}
+```")
+        };
+        self.generated_interfaces.insert(with_name);
+        let entry = match remapping {
+            InterfaceGeneration::Remap(remapped_path) => {
+                let name = format!("__with_name{}", self.with_name_counter);
+                self.with_name_counter += 1;
+                uwriteln!(self.src, "use {remapped_path} as {name};");
+                InterfaceName {
+                    remapped: true,
+                    path: name,
+                }
             }
-        } else {
-            let path = compute_module_path(name, resolve, is_export).join("::");
+            InterfaceGeneration::Generate => {
+                let path = compute_module_path(name, resolve, is_export).join("::");
 
-            InterfaceName {
-                remapped: false,
-                path,
+                InterfaceName {
+                    remapped: false,
+                    path,
+                }
             }
         };
 
         let remapped = entry.remapped;
         self.interface_names.insert(id, entry);
 
-        remapped
+        Ok(remapped)
     }
 
     /// Generates a `serve` function for the `world_id` specified.
@@ -426,15 +459,28 @@ impl WorldGenerator for RustWrpc {
                 self.opts.additional_derive_attributes
             );
         }
-        for (k, v) in &self.opts.with {
+        for (k, v) in self.opts.with.iter() {
             uwriteln!(self.src, "//   * with {k:?} = {v:?}");
         }
         self.types.analyze(resolve);
         self.world = Some(world);
 
-        for (k, v) in &self.opts.with {
-            self.with.insert(k.clone(), v.clone());
+        let world = &resolve.worlds[world];
+        // Specify that all imports local to the world's package should be generated
+        for (key, item) in world.imports.iter().chain(world.exports.iter()) {
+            if let WorldItem::Interface { id, .. } = item {
+                if resolve.interfaces[*id].package == world.package {
+                    let name = resolve.name_world_key(key);
+                    if self.with.get(&name).is_none() {
+                        self.with.insert(name, InterfaceGeneration::Generate);
+                    }
+                }
+            }
         }
+        for (k, v) in self.opts.with.iter() {
+            self.with.insert(k.clone(), v.clone().into());
+        }
+        self.with.generate_by_default = self.opts.with.generate_by_default;
     }
 
     fn import_interface(
@@ -443,11 +489,11 @@ impl WorldGenerator for RustWrpc {
         name: &WorldKey,
         id: InterfaceId,
         _files: &mut Files,
-    ) {
+    ) -> Result<()> {
         let mut gen = self.interface(Identifier::Interface(id, name), resolve, true);
         let (snake, module_path) = gen.start_append_submodule(name);
-        if gen.gen.name_interface(resolve, id, name, false) {
-            return;
+        if gen.gen.name_interface(resolve, id, name, false)? {
+            return Ok(());
         }
         gen.types(id);
 
@@ -468,6 +514,8 @@ impl WorldGenerator for RustWrpc {
         gen.generate_imports(&instance, resolve.interfaces[id].functions.values());
 
         gen.finish_append_submodule(&snake, module_path);
+
+        Ok(())
     }
 
     fn import_funcs(
@@ -503,7 +551,7 @@ impl WorldGenerator for RustWrpc {
     ) -> Result<()> {
         let mut gen = self.interface(Identifier::Interface(id, name), resolve, false);
         let (snake, module_path) = gen.start_append_submodule(name);
-        if gen.gen.name_interface(resolve, id, name, true) {
+        if gen.gen.name_interface(resolve, id, name, true)? {
             return Ok(());
         }
         gen.types(id);
@@ -598,10 +646,15 @@ impl WorldGenerator for RustWrpc {
         let module_name = name.to_snake_case();
         files.push(&format!("{module_name}.rs"), src.as_bytes());
 
-        let remapping_keys = self.with.keys().cloned().collect::<HashSet<String>>();
+        let remapped_keys = self
+            .with
+            .iter()
+            .map(|(k, _)| k)
+            .cloned()
+            .collect::<HashSet<String>>();
 
-        let mut unused_keys = remapping_keys
-            .difference(&self.used_with_opts)
+        let mut unused_keys = remapped_keys
+            .difference(&self.generated_interfaces)
             .collect::<Vec<&String>>();
 
         unused_keys.sort();
@@ -638,6 +691,76 @@ fn compute_module_path(name: &WorldKey, resolve: &Resolve, is_export: bool) -> V
 enum Identifier<'a> {
     World(WorldId),
     Interface(InterfaceId, &'a WorldKey),
+}
+
+/// Configuration for how interfaces are generated.
+#[derive(Debug, Clone, Default)]
+pub struct WithGeneration {
+    /// How interface should be generated
+    with: HashMap<String, WithOption>,
+    /// Whether to generate interfaces not present in the `with` map
+    pub generate_by_default: bool,
+}
+
+impl WithGeneration {
+    fn iter(&self) -> impl Iterator<Item = (&String, &WithOption)> {
+        self.with.iter()
+    }
+
+    pub fn extend(&mut self, with: HashMap<String, WithOption>) {
+        self.with.extend(with);
+    }
+}
+
+impl FromStr for WithGeneration {
+    type Err = String;
+
+    fn from_str(s: &str) -> std::prelude::v1::Result<Self, Self::Err> {
+        let with = s
+            .trim()
+            .split(',')
+            .map(|s| {
+                let (k, v) = s.trim().split_once('=').ok_or_else(|| {
+                    format!("expected string of form `<key>=<value>[,<key>=<value>...]`; got `{s}`")
+                })?;
+                let k = k.trim().to_string();
+                let v = match v.trim() {
+                    "generate" => WithOption::Generate,
+                    v => WithOption::Path(v.to_string()),
+                };
+                Ok((k, v))
+            })
+            .collect::<Result<HashMap<_, _>, Self::Err>>()?;
+        Ok(WithGeneration {
+            with,
+            generate_by_default: false,
+        })
+    }
+}
+
+/// Options for with "with" remappings.
+#[derive(Debug, Clone)]
+pub enum WithOption {
+    Path(String),
+    Generate,
+}
+
+impl std::fmt::Display for WithOption {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            WithOption::Path(p) => f.write_fmt(format_args!("\"{p}\"")),
+            WithOption::Generate => f.write_str("generate"),
+        }
+    }
+}
+
+impl From<WithOption> for InterfaceGeneration {
+    fn from(opt: WithOption) -> Self {
+        match opt {
+            WithOption::Path(p) => InterfaceGeneration::Remap(p),
+            WithOption::Generate => InterfaceGeneration::Generate,
+        }
+    }
 }
 
 #[derive(Default)]

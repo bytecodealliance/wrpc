@@ -1,6 +1,10 @@
 #[allow(clippy::missing_safety_doc)]
 mod bindings {
-    wit_bindgen::generate!();
+    wit_bindgen::generate!({
+       with: {
+           "wasi:keyvalue/store@0.2.0-draft": generate
+       }
+    });
 }
 
 use anyhow::{ensure, Context as _};

@@ -4,7 +4,11 @@ use tokio::signal;
 use url::Url;
 
 mod bindings {
-    wit_bindgen_wrpc::generate!();
+    wit_bindgen_wrpc::generate!({
+        with: {
+            "wrpc-examples:hello/handler": generate,
+        }
+    });
 }
 
 #[derive(Parser, Debug)]

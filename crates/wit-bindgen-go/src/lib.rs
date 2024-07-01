@@ -373,7 +373,7 @@ impl WorldGenerator for GoWrpc {
         name: &WorldKey,
         id: InterfaceId,
         _files: &mut Files,
-    ) {
+    ) -> anyhow::Result<()> {
         self.interface_last_seen_as_import.insert(id, true);
         let mut gen = self.interface(Identifier::Interface(id, name), resolve, true);
         let (snake, module_path) = gen.start_append_submodule(name);
@@ -402,6 +402,7 @@ impl WorldGenerator for GoWrpc {
         );
 
         gen.finish_append_submodule(&snake, module_path);
+        Ok(())
     }
 
     fn import_funcs(

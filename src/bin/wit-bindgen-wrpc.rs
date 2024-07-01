@@ -37,14 +37,24 @@ struct Common {
     #[clap(long = "out-dir")]
     out_dir: Option<PathBuf>,
 
-    /// WIT document to generate bindings for.
-    #[clap(value_name = "DOCUMENT", index = 1)]
+    /// Location of WIT file(s) to generate bindings for.
+    ///
+    /// This path can be either a directory containing `*.wit` files, a `*.wit`
+    /// file itself, or a `*.wasm` file which is a wasm-encoded WIT package.
+    /// Most of the time it's likely to be a directory containing `*.wit` files
+    /// with an optional `deps` folder inside of it.
+    #[clap(value_name = "WIT", index = 1)]
     wit: PathBuf,
 
-    /// World within the WIT document specified to generate bindings for.
+    /// Optionally specified world that bindings are generated for.
     ///
-    /// This can either be `foo` which is the default world in document `foo` or
-    /// it's `foo.bar` which is the world named `bar` within document `foo`.
+    /// Bindings are always generated for a world but this option can be omitted
+    /// when the WIT package pointed to by the `WIT` option only has a single
+    /// world. If there's more than one world in the package then this option
+    /// must be specified to name the world that bindings are generated for.
+    /// This option can also use the fully qualified syntax such as
+    /// `wasi:http/proxy` to select a world from a dependency of the main WIT
+    /// package.
     #[clap(short, long)]
     world: Option<String>,
 
@@ -52,6 +62,13 @@ struct Common {
     /// they're up-to-date with the source files.
     #[clap(long)]
     check: bool,
+
+    /// Comma-separated list of features that should be enabled when processing
+    /// WIT files.
+    ///
+    /// This enables using `@unstable` annotations in WIT files.
+    #[clap(long)]
+    features: Vec<String>,
 }
 
 fn main() -> Result<()> {
@@ -110,8 +127,17 @@ fn gen_world(
     files: &mut Files,
 ) -> Result<()> {
     let mut resolve = Resolve::default();
-    let (pkg, _files) = resolve.push_path(&opts.wit)?;
-    let world = resolve.select_world(pkg, opts.world.as_deref())?;
+    for features in opts.features.iter() {
+        for feature in features
+            .split(',')
+            .flat_map(|s| s.split_whitespace())
+            .filter(|f| !f.is_empty())
+        {
+            resolve.features.insert(feature.to_string());
+        }
+    }
+    let (pkgs, _files) = resolve.push_path(&opts.wit)?;
+    let world = resolve.select_world(&pkgs, opts.world.as_deref())?;
     generator.generate(&resolve, world, files)?;
 
     Ok(())

@@ -124,7 +124,7 @@ pub async fn run() -> anyhow::Result<()> {
     let (resolve, world) =
         match wit_component::decode(&wasm).context("failed to decode WIT component")? {
             wit_component::DecodedWasm::Component(resolve, world) => (resolve, world),
-            wit_component::DecodedWasm::WitPackage(..) => {
+            wit_component::DecodedWasm::WitPackages(..) => {
                 bail!("binary-encoded WIT packages not currently supported")
             }
         };
