@@ -124,9 +124,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7d5a26814d8dcb93b0e5a0ff3c6d80a8843bafb21b39e8e18a6f05471870e110"
 
 [[package]]
-name = "async-nats"
+name = "async-nats-wrpc"
 version = "0.35.1"
-source = "git+https://github.com/rvolosatovs/nats.rs?branch=feat/command-sender#5354f827071197d9771ab4ce8083237ad526bd5a"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3b90420a99c2fa8e337a0420f4fd684ac464b5a5d3c42fbbccc6261d7ed25bcc"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -1021,7 +1022,7 @@ name = "hello-nats-client"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-nats",
+ "async-nats-wrpc",
  "clap",
  "tokio",
  "tracing-subscriber",
@@ -1035,7 +1036,7 @@ name = "hello-nats-server"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-nats",
+ "async-nats-wrpc",
  "clap",
  "tokio",
  "tracing-subscriber",
@@ -3683,7 +3684,7 @@ name = "wrpc"
 version = "0.2.0"
 dependencies = [
  "anyhow",
- "async-nats",
+ "async-nats-wrpc",
  "bytes",
  "clap",
  "futures",
@@ -3712,7 +3713,7 @@ name = "wrpc-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-nats",
+ "async-nats-wrpc",
  "tokio",
  "tracing-subscriber",
 ]
@@ -3764,7 +3765,7 @@ name = "wrpc-transport-nats"
 version = "0.22.0"
 dependencies = [
  "anyhow",
- "async-nats",
+ "async-nats-wrpc",
  "bytes",
  "futures",
  "tokio",
@@ -3799,7 +3800,7 @@ name = "wrpc-wasmtime-nats-cli"
 version = "0.2.0"
 dependencies = [
  "anyhow",
- "async-nats",
+ "async-nats-wrpc",
  "clap",
  "futures",
  "reqwest",
