@@ -3719,7 +3719,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc-introspect"
-version = "0.2.0"
+version = "0.1.0"
 dependencies = [
  "wit-parser 0.212.0",
 ]
