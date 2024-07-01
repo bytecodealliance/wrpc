@@ -15,7 +15,6 @@ frame = []
 
 [dependencies]
 anyhow = { workspace = true, features = ["std"] }
-async-trait = { workspace = true }
 bytes = { workspace = true }
 futures = { workspace = true, features = ["std"] }
 tokio = { workspace = true }

@@ -800,7 +800,6 @@ pub use wit_bindgen_wrpc_rust_macro::generate;
 pub mod examples;
 
 pub use anyhow;
-pub use async_trait;
 pub use bitflags;
 pub use bytes;
 pub use futures;
