@@ -2922,15 +2922,6 @@ dependencies = [
 
 [[package]]
 name = "wasmparser"
-version = "0.208.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dd921789c9dcc495f589cb37d200155dee65b4a4beeb853323b5e24e0a5f9c58"
-dependencies = [
- "bitflags 2.6.0",
-]
-
-[[package]]
-name = "wasmparser"
 version = "0.209.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "07035cc9a9b41e62d3bb3a3815a66ab87c993c06fe1cf6b2a3f2a18499d937db"
@@ -3571,7 +3562,6 @@ name = "wit-bindgen-wrpc"
 version = "0.4.0"
 dependencies = [
  "anyhow",
- "async-trait",
  "bitflags 2.6.0",
  "bytes",
  "futures",
@@ -3585,7 +3575,7 @@ dependencies = [
 
 [[package]]
 name = "wit-bindgen-wrpc-go"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -3730,7 +3720,6 @@ name = "wrpc-runtime-wasmtime"
 version = "0.17.0"
 dependencies = [
  "anyhow",
- "async-trait",
  "bytes",
  "futures",
  "tokio",
@@ -3749,7 +3738,6 @@ name = "wrpc-transport"
 version = "0.26.0"
 dependencies = [
  "anyhow",
- "async-trait",
  "bytes",
  "futures",
  "test-log",
@@ -3811,7 +3799,7 @@ dependencies = [
  "url",
  "wasm-tokio",
  "wasmcloud-component-adapters",
- "wasmparser 0.208.1",
+ "wasmparser 0.212.0",
  "wasmtime",
  "wasmtime-wasi",
  "wit-bindgen-wrpc",
