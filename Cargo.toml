@@ -37,11 +37,7 @@ bin = [
     "wit-bindgen-wrpc-go/clap",
     "wit-bindgen-wrpc-rust/clap",
 ]
-nats = [
-    "dep:async-nats",
-    "dep:wrpc-transport-nats",
-    "wrpc-cli/nats",
-]
+nats = ["dep:async-nats", "dep:wrpc-transport-nats", "wrpc-cli/nats"]
 quic = ["dep:wrpc-transport-quic"]
 wasmtime = ["dep:wrpc-runtime-wasmtime"]
 
@@ -99,7 +95,7 @@ wrpc-cli = { workspace = true }
 
 [workspace.dependencies]
 anyhow = { version = "1", default-features = false }
-async-nats = { version = "0.35", git = "https://github.com/rvolosatovs/nats.rs", branch = "feat/command-sender", default-features = false }
+async-nats = { package = "async-nats-wrpc", version = "0.35.1", default-features = false }
 async-trait = { version = "0.1", default-features = false }
 bitflags = { version = "2", default-features = false }
 bytes = { version = "1", default-features = false }
