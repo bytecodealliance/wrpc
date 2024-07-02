@@ -62,7 +62,7 @@ async fn go_bindgen() -> anyhow::Result<()> {
             .spawn()
             .context("failed to run `sync-server-nats`")?;
 
-        let client = wrpc_transport_nats::Client::new(nats_client, "go".to_string());
+        let client = wrpc_transport_nats::Client::new(nats_client, "go", None);
 
         // TODO: Remove the need for this
         sleep(Duration::from_secs(1)).await;

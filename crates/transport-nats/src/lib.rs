@@ -98,13 +98,19 @@ fn corrupted_memory_error() -> std::io::Error {
 pub struct Client {
     nats: Arc<async_nats::Client>,
     prefix: Arc<str>,
+    queue_group: Option<Arc<str>>,
 }
 
 impl Client {
-    pub fn new(nats: impl Into<Arc<async_nats::Client>>, prefix: impl Into<Arc<str>>) -> Self {
+    pub fn new(
+        nats: impl Into<Arc<async_nats::Client>>,
+        prefix: impl Into<Arc<str>>,
+        queue_group: Option<Arc<str>>,
+    ) -> Self {
         Self {
             nats: nats.into(),
             prefix: prefix.into(),
+            queue_group,
         }
     }
 }
@@ -281,8 +287,9 @@ impl SubscriberTree {
                     true
                 }
                 (_, [Some(i), path @ ..]) => {
-                    if nested.len() < *i {
-                        nested.resize_with(i.saturating_add(1), Option::default);
+                    let cap = i.saturating_add(1);
+                    if nested.len() < cap {
+                        nested.resize_with(cap, Option::default);
                     }
                     let nested = &mut nested[*i];
                     if let Some(nested) = nested {
@@ -384,16 +391,18 @@ impl SubjectWriter {
 impl wrpc_transport::Index<Self> for SubjectWriter {
     #[instrument(level = "trace", skip(self))]
     fn index(&self, path: &[usize]) -> anyhow::Result<Self> {
+        let tx: Subject = index_path(self.tx.as_str(), path).into();
+        let publisher = self.nats.publish_sink(tx.clone());
         Ok(Self {
             nats: Arc::clone(&self.nats),
-            tx: index_path(self.tx.as_str(), path).into(),
-            publisher: self.publisher.clone(),
+            tx,
+            publisher,
         })
     }
 }
 
 impl AsyncWrite for SubjectWriter {
-    #[instrument(level = "trace", skip_all, ret, fields(buf = format!("{buf:02x?}")))]
+    #[instrument(level = "trace", skip_all, ret, fields(subject = ?self.tx, buf = format!("{buf:02x?}")))]
     fn poll_write(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -402,7 +411,12 @@ impl AsyncWrite for SubjectWriter {
         trace!("polling for readiness");
         match self.publisher.poll_ready_unpin(cx) {
             Poll::Pending => return Poll::Pending,
-            Poll::Ready(Err(..)) => return Poll::Ready(Err(std::io::ErrorKind::BrokenPipe.into())),
+            Poll::Ready(Err(err)) => {
+                return Poll::Ready(Err(std::io::Error::new(
+                    std::io::ErrorKind::BrokenPipe,
+                    err,
+                )))
+            }
             Poll::Ready(Ok(())) => {}
         }
         let ServerInfo { max_payload, .. } = self.nats.server_info();
@@ -415,11 +429,14 @@ impl AsyncWrite for SubjectWriter {
         trace!("starting send");
         match self.publisher.start_send_unpin(Bytes::copy_from_slice(buf)) {
             Ok(()) => Poll::Ready(Ok(buf.len())),
-            Err(..) => Poll::Ready(Err(std::io::ErrorKind::BrokenPipe.into())),
+            Err(err) => Poll::Ready(Err(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                err,
+            ))),
         }
     }
 
-    #[instrument(level = "trace", skip_all, ret)]
+    #[instrument(level = "trace", skip_all, ret, fields(subject = ?self.tx))]
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
         trace!("flushing");
         self.publisher
@@ -427,7 +444,7 @@ impl AsyncWrite for SubjectWriter {
             .map_err(|_| std::io::ErrorKind::BrokenPipe.into())
     }
 
-    #[instrument(level = "trace", skip_all, ret)]
+    #[instrument(level = "trace", skip_all, ret, fields(subject = ?self.tx))]
     fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
         trace!("writing empty buffer to shut down stream");
         ready!(self.as_mut().poll_write(cx, &[]))?;
@@ -814,10 +831,11 @@ impl wrpc_transport::Invoke for Client {
         paths: &[impl AsRef<[Option<usize>]> + Send + Sync],
     ) -> anyhow::Result<(Self::Outgoing, Self::Incoming)> {
         let rx = Subject::from(self.nats.new_inbox());
+        let result_rx = Subject::from(result_subject(&rx));
         let (result_rx, handshake_rx, nested) = try_join!(
             async {
                 self.nats
-                    .subscribe(Subject::from(result_subject(&rx)))
+                    .subscribe(result_rx.clone())
                     .await
                     .context("failed to subscribe on result subject")
             },
@@ -827,9 +845,9 @@ impl wrpc_transport::Invoke for Client {
                     .await
                     .context("failed to subscribe on handshake subject")
             },
-            futures::future::try_join_all(paths.iter().map(|path| async {
+            try_join_all(paths.iter().map(|path| async {
                 self.nats
-                    .subscribe(Subject::from(subscribe_path(&rx, path.as_ref())))
+                    .subscribe(Subject::from(subscribe_path(&result_rx, path.as_ref())))
                     .await
                     .context("failed to subscribe on nested result subject")
             }))
@@ -911,15 +929,16 @@ async fn serve_connection(
 ) -> anyhow::Result<(Option<HeaderMap>, SubjectWriter, Reader)> {
     let tx = tx.context("peer did not specify a reply subject")?;
     let rx = nats.new_inbox();
+    let param_rx = Subject::from(param_subject(&rx));
     trace!("subscribing on subjects");
     let (param_rx, nested) = try_join!(
         async {
-            nats.subscribe(Subject::from(param_subject(&rx)))
+            nats.subscribe(param_rx.clone())
                 .await
                 .context("failed to subscribe on parameter subject")
         },
         try_join_all(paths.iter().map(|path| async {
-            nats.subscribe(Subject::from(subscribe_path(&rx, path.as_ref())))
+            nats.subscribe(Subject::from(subscribe_path(&param_rx, path.as_ref())))
                 .await
                 .context("failed to subscribe on nested parameter subject")
         }))
@@ -963,10 +982,14 @@ impl wrpc_transport::Serve for Client {
     ) -> anyhow::Result<
         impl Stream<Item = anyhow::Result<(Self::Context, Self::Outgoing, Self::Incoming)>> + 'static,
     > {
-        let sub = self
-            .nats
-            .subscribe(invocation_subject(&self.prefix, instance, func))
-            .await?;
+        let subject = invocation_subject(&self.prefix, instance, func);
+        let sub = if let Some(group) = &self.queue_group {
+            self.nats
+                .queue_subscribe(subject, group.to_string())
+                .await?
+        } else {
+            self.nats.subscribe(subject).await?
+        };
         let paths = paths.into();
         let nats = Arc::clone(&self.nats);
         Ok(sub.then(move |msg| {

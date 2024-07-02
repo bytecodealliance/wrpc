@@ -17,7 +17,7 @@ use tokio::{join, select, spawn, try_join};
 use tracing::{info, info_span, instrument, Instrument};
 use wrpc_transport::{Invoke as _, ResourceBorrow, ResourceOwn, Serve as _};
 
-async fn assert_bindgen<C, I, S>(i: Arc<I>, s: Arc<S>) -> anyhow::Result<()>
+async fn assert_bindgen<C, I, S>(clt: Arc<I>, srv: Arc<S>) -> anyhow::Result<()>
 where
     C: Send + Sync + Default,
     I: wrpc::Invoke<Context = C>,
@@ -231,7 +231,7 @@ where
                 }
             }
 
-            serve(s.as_ref(), Component::default(), shutdown_rx.clone())
+            serve(srv.as_ref(), Component::default(), shutdown_rx.clone())
                 .await
                 .context("failed to serve `wrpc-test:integration/test`")
         },
@@ -398,9 +398,13 @@ where
                 }
             }
 
-            serve(s.as_ref(), Component(Arc::clone(&i)), shutdown_rx.clone())
-                .await
-                .context("failed to serve `wrpc-test:integration/test`")
+            serve(
+                srv.as_ref(),
+                Component(Arc::clone(&clt)),
+                shutdown_rx.clone(),
+            )
+            .await
+            .context("failed to serve `wrpc-test:integration/test`")
         },
         async {
             wrpc::generate!({
@@ -417,7 +421,7 @@ where
             // TODO: Remove the need for this
             sleep(Duration::from_secs(2)).await;
 
-            let v = bar::bar(i.as_ref(), C::default())
+            let v = bar::bar(clt.as_ref(), C::default())
                 .await
                 .context("failed to call `wrpc-test:integration/test.bar.bar`")?;
             assert_eq!(v, "bar");
@@ -428,13 +432,289 @@ where
     Ok(())
 }
 
+async fn assert_dynamic<C, I, S>(clt: Arc<I>, srv: Arc<S>) -> anyhow::Result<()>
+where
+    C: Send + Sync + Default,
+    I: wrpc::Invoke<Context = C>,
+    S: wrpc::Serve<Context = C>,
+{
+    use core::pin::pin;
+
+    use tokio::io::{AsyncRead, AsyncReadExt as _};
+
+    let async_inv = srv
+        .serve_values(
+            "test",
+            "async",
+            [[Some(0)], [Some(1)], [Some(2)], [Some(3)]],
+        )
+        .await
+        .context("failed to serve `test.async`")?;
+    let sync_inv = srv
+        .serve_values("test", "sync", [[]])
+        .await
+        .context("failed to serve `test.sync`")?;
+    let mut async_inv = pin!(async_inv);
+    let mut sync_inv = pin!(sync_inv);
+
+    join!(
+        async {
+            info!("receiving `test.sync` parameters");
+            let (_, params, rx, tx) = sync_inv
+                .try_next()
+                .await
+                .expect("failed to accept invocation")
+                .expect("unexpected end of stream");
+            let (a, b, c, d, e, f, g, h, i, j, k, l, m, n): (
+                bool,
+                u8,
+                u16,
+                u32,
+                u64,
+                i8,
+                i16,
+                i32,
+                i64,
+                f32,
+                f64,
+                char,
+                String,
+                Vec<Vec<Vec<u8>>>,
+            ) = params;
+            assert!(rx.is_none());
+            assert!(a);
+            assert_eq!(b, 0xfe);
+            assert_eq!(c, 0xfeff);
+            assert_eq!(d, 0xfeff_ffff);
+            assert_eq!(e, 0xfeff_ffff_ffff_ffff);
+            assert_eq!(f, 0x7e);
+            assert_eq!(g, 0x7eff);
+            assert_eq!(h, 0x7eff_ffff);
+            assert_eq!(i, 0x7eff_ffff_ffff_ffff);
+            assert_eq!(j, 0.42);
+            assert_eq!(k, 0.4242);
+            assert_eq!(l, 'a');
+            assert_eq!(m, "test");
+            assert_eq!(n, [[b"foo"]]);
+            info!("transmitting `test.sync` returns");
+            tx((
+                true,
+                0xfe_u8,
+                0xfeff_u16,
+                0xfeff_ffff_u32,
+                0xfeff_ffff_ffff_ffff_u64,
+                0x7e_i8,
+                0x7eff_i16,
+                0x7eff_ffff_i32,
+                0x7eff_ffff_ffff_ffff_i64,
+                0.42_f32,
+                0.4242_f64,
+                'a',
+                "test",
+                vec![vec!["foo".as_bytes()]],
+            ))
+            .await
+            .expect("failed to send response");
+        }
+        .instrument(info_span!("server")),
+        async {
+            info!("invoking `test.sync`");
+            let returns = clt
+                .invoke_values_blocking(
+                    C::default(),
+                    "test",
+                    "sync",
+                    (
+                        (
+                            true,
+                            0xfe_u8,
+                            0xfeff_u16,
+                            0xfeff_ffff_u32,
+                            0xfeff_ffff_ffff_ffff_u64,
+                            0x7e_i8,
+                            0x7eff_i16,
+                            0x7eff_ffff_i32,
+                            0x7eff_ffff_ffff_ffff_i64,
+                            0.42_f32,
+                            0.4242_f64,
+                            'a',
+                        ),
+                        "test",
+                        vec![vec!["foo".as_bytes()]],
+                    ),
+                    &[[]],
+                )
+                .await
+                .expect("failed to invoke `test.sync`");
+            let (a, b, c, d, e, f, g, h, i, j, k, l, m, n): (
+                bool,
+                u8,
+                u16,
+                u32,
+                u64,
+                i8,
+                i16,
+                i32,
+                i64,
+                f32,
+                f64,
+                char,
+                String,
+                Vec<Vec<Vec<u8>>>,
+            ) = returns;
+            assert!(a);
+            assert_eq!(b, 0xfe);
+            assert_eq!(c, 0xfeff);
+            assert_eq!(d, 0xfeff_ffff);
+            assert_eq!(e, 0xfeff_ffff_ffff_ffff);
+            assert_eq!(f, 0x7e);
+            assert_eq!(g, 0x7eff);
+            assert_eq!(h, 0x7eff_ffff);
+            assert_eq!(i, 0x7eff_ffff_ffff_ffff);
+            assert_eq!(j, 0.42);
+            assert_eq!(k, 0.4242);
+            assert_eq!(l, 'a');
+            assert_eq!(m, "test");
+            assert_eq!(n, [[b"foo"]]);
+            info!("finishing `test.sync` session");
+        }
+        .instrument(info_span!("client")),
+    );
+
+    join!(
+        async {
+            info!("receiving `test.async` parameters");
+            let (_, params, rx, tx) = async_inv
+                .try_next()
+                .await
+                .expect("failed to accept invocation")
+                .expect("unexpected end of stream");
+            let (a, b, mut c, d): (
+                Pin<Box<dyn Stream<Item = Vec<u32>> + Send + Sync>>,
+                Pin<Box<dyn Stream<Item = Vec<String>> + Send + Sync>>,
+                Pin<Box<dyn AsyncRead + Send + Sync>>,
+                Pin<Box<dyn Future<Output = Vec<u64>> + Send + Sync>>,
+            ) = params;
+            let io = rx.map(Instrument::in_current_span).map(spawn);
+            join!(
+                async {
+                    info!("receiving `a`");
+                    assert_eq!(a.collect::<Vec<_>>().await.concat(), [0xc0, 0xff, 0xee]);
+                },
+                async {
+                    info!("receiving `b`");
+                    assert_eq!(b.collect::<Vec<_>>().await.concat(), ["foo", "bar"]);
+                },
+                async {
+                    info!("receiving `c`");
+                    let mut buf = String::new();
+                    c.read_to_string(&mut buf)
+                        .await
+                        .expect("failed to read string from stream");
+                    assert_eq!(buf, "test");
+                },
+                async {
+                    info!("receiving `d`");
+                    assert_eq!(d.await, [1, 2, 3]);
+                },
+                async {
+                    if let Some(io) = io {
+                        info!("performing I/O");
+                        io.await.expect("failed to complete async I/O");
+                    }
+                }
+            );
+            let a: Pin<Box<dyn Stream<Item = Vec<u32>> + Send + Sync>> =
+                Box::pin(stream::iter([vec![0xc0, 0xff], vec![0xee]]));
+
+            let b: Pin<Box<dyn Stream<Item = Vec<&str>> + Send + Sync>> =
+                Box::pin(stream::iter([vec!["foo"], vec!["bar"]]));
+            let c: Pin<Box<dyn AsyncRead + Send + Sync>> = Box::pin(b"test".as_slice());
+            let d: Pin<Box<dyn Future<Output = Vec<u64>> + Send + Sync>> =
+                Box::pin(async { vec![1, 2, 3] });
+            info!("transmitting `test.async` returns");
+            tx((a, b, c, d)).await.expect("failed to send response");
+        }
+        .instrument(info_span!("server")),
+        async {
+            let a: Pin<Box<dyn Stream<Item = Vec<u32>> + Send + Sync>> =
+                Box::pin(stream::iter([vec![0xc0, 0xff, 0xee]]));
+            let b: Pin<Box<dyn Stream<Item = Vec<&str>> + Send + Sync>> =
+                Box::pin(stream::iter([vec!["foo", "bar"]]));
+            let c: Pin<Box<dyn AsyncRead + Send + Sync>> = Box::pin(b"test".as_slice());
+            let d: Pin<Box<dyn Future<Output = Vec<u64>> + Send + Sync>> =
+                Box::pin(async { vec![1, 2, 3] });
+            info!("invoking `test.async`");
+            let (returns, io) = clt
+                .invoke_values(
+                    C::default(),
+                    "test",
+                    "async",
+                    (a, b, c, d),
+                    &[[Some(0)], [Some(1)], [Some(2)], [Some(3)]],
+                )
+                .await
+                .expect("failed to invoke `test.async`");
+            let (a, b, mut c, d): (
+                Pin<Box<dyn Stream<Item = Vec<u32>> + Send + Sync>>,
+                Pin<Box<dyn Stream<Item = Vec<String>> + Send + Sync>>,
+                Pin<Box<dyn AsyncRead + Send + Sync>>,
+                Pin<Box<dyn Future<Output = Vec<u64>> + Send + Sync>>,
+            ) = returns;
+            info!("receiving `test.async` async values");
+            join!(
+                async {
+                    info!("receiving `a`");
+                    assert_eq!(a.collect::<Vec<_>>().await.concat(), [0xc0, 0xff, 0xee])
+                },
+                async {
+                    info!("receiving `b`");
+                    assert_eq!(b.collect::<Vec<_>>().await.concat(), ["foo", "bar"]);
+                },
+                async {
+                    info!("receiving `c`");
+                    let mut buf = String::new();
+                    c.read_to_string(&mut buf)
+                        .await
+                        .expect("failed to read string from stream");
+                    assert_eq!(buf, "test");
+                },
+                async {
+                    info!("receiving `d`");
+                    assert_eq!(d.await, [1, 2, 3]);
+                },
+                async {
+                    if let Some(io) = io {
+                        info!("performing I/O");
+                        io.await.expect("failed to complete async I/O");
+                    }
+                }
+            );
+        }
+        .instrument(info_span!("client")),
+    );
+    Ok(())
+}
+
 #[cfg(feature = "nats")]
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn rust_bindgen_nats() -> anyhow::Result<()> {
     common::with_nats(|_, nats_client| async {
-        let client = wrpc_transport_nats::Client::new(nats_client, "test-prefix".to_string());
+        let client =
+            wrpc_transport_nats::Client::new(nats_client, "test-prefix", Some("test-group".into()));
         let client = Arc::new(client);
         assert_bindgen(Arc::clone(&client), client).await
+    })
+    .await
+}
+
+#[cfg(feature = "nats")]
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+async fn rust_dynamic_nats() -> anyhow::Result<()> {
+    common::with_nats(|_, nats_client| async {
+        let client = wrpc_transport_nats::Client::new(nats_client, "test-prefix", None);
+        let client = Arc::new(client);
+        assert_dynamic(Arc::clone(&client), client).await
     })
     .await
 }
@@ -477,9 +757,8 @@ async fn rust_bindgen_quic() -> anyhow::Result<()> {
 }
 
 #[cfg(feature = "quic")]
-#[instrument(ret)]
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
-async fn rust_dynamic() -> anyhow::Result<()> {
+async fn rust_dynamic_quic() -> anyhow::Result<()> {
     use core::net::Ipv6Addr;
     use core::pin::pin;
 
@@ -489,211 +768,20 @@ async fn rust_dynamic() -> anyhow::Result<()> {
             let clt = wrpc_transport_quic::Client::new(clt_ep, (Ipv6Addr::LOCALHOST, port));
             let srv = wrpc_transport_quic::Server::default();
 
-            let async_inv = srv
-                .serve_values("test", "async", [[Some(0)], [Some(1)]])
-                .await
-                .context("failed to serve `test.async`")?;
-            let sync_inv = srv
-                .serve_values("test", "sync", [[]])
-                .await
-                .context("failed to serve `test.sync`")?;
-            let mut async_inv = pin!(async_inv);
-            let mut sync_inv = pin!(sync_inv);
-
-            join!(
-                async {
-                    info!("accepting `test.sync` connection");
-                    let ok = srv
-                        .accept(&srv_ep)
-                        .await
-                        .expect("failed to accept client connection");
-                    assert!(ok);
-                    info!("receiving `test.sync` parameters");
-                    let ((), params, rx, tx) = sync_inv
-                        .try_next()
-                        .await
-                        .expect("failed to accept invocation")
-                        .expect("unexpected end of stream");
-                    let (a, b, c, d, e, f, g, h, i, j, k, l, m, n): (
-                        bool,
-                        u8,
-                        u16,
-                        u32,
-                        u64,
-                        i8,
-                        i16,
-                        i32,
-                        i64,
-                        f32,
-                        f64,
-                        char,
-                        String,
-                        Vec<Vec<Vec<u8>>>,
-                    ) = params;
-                    assert!(rx.is_none());
-                    assert!(a);
-                    assert_eq!(b, 0xfe);
-                    assert_eq!(c, 0xfeff);
-                    assert_eq!(d, 0xfeff_ffff);
-                    assert_eq!(e, 0xfeff_ffff_ffff_ffff);
-                    assert_eq!(f, 0x7e);
-                    assert_eq!(g, 0x7eff);
-                    assert_eq!(h, 0x7eff_ffff);
-                    assert_eq!(i, 0x7eff_ffff_ffff_ffff);
-                    assert_eq!(j, 0.42);
-                    assert_eq!(k, 0.4242);
-                    assert_eq!(l, 'a');
-                    assert_eq!(m, "test");
-                    assert_eq!(n, [[b"foo"]]);
-                    info!("transmitting `test.sync` returns");
-                    tx((
-                        true,
-                        0xfe_u8,
-                        0xfeff_u16,
-                        0xfeff_ffff_u32,
-                        0xfeff_ffff_ffff_ffff_u64,
-                        0x7e_i8,
-                        0x7eff_i16,
-                        0x7eff_ffff_i32,
-                        0x7eff_ffff_ffff_ffff_i64,
-                        0.42_f32,
-                        0.4242_f64,
-                        'a',
-                        "test",
-                        vec![vec!["foo".as_bytes()]],
-                    ))
-                    .await
-                    .expect("failed to send response");
-                }
-                .instrument(info_span!("server")),
-                async {
-                    info!("invoking `test.sync`");
-                    let returns = clt
-                        .invoke_values_blocking(
-                            (),
-                            "test",
-                            "sync",
-                            (
-                                (
-                                    true,
-                                    0xfe_u8,
-                                    0xfeff_u16,
-                                    0xfeff_ffff_u32,
-                                    0xfeff_ffff_ffff_ffff_u64,
-                                    0x7e_i8,
-                                    0x7eff_i16,
-                                    0x7eff_ffff_i32,
-                                    0x7eff_ffff_ffff_ffff_i64,
-                                    0.42_f32,
-                                    0.4242_f64,
-                                    'a',
-                                ),
-                                "test",
-                                vec![vec!["foo".as_bytes()]],
-                            ),
-                            &[[]],
-                        )
-                        .await
-                        .expect("failed to invoke `test.sync`");
-                    let (a, b, c, d, e, f, g, h, i, j, k, l, m, n): (
-                        bool,
-                        u8,
-                        u16,
-                        u32,
-                        u64,
-                        i8,
-                        i16,
-                        i32,
-                        i64,
-                        f32,
-                        f64,
-                        char,
-                        String,
-                        Vec<Vec<Vec<u8>>>,
-                    ) = returns;
-                    assert!(a);
-                    assert_eq!(b, 0xfe);
-                    assert_eq!(c, 0xfeff);
-                    assert_eq!(d, 0xfeff_ffff);
-                    assert_eq!(e, 0xfeff_ffff_ffff_ffff);
-                    assert_eq!(f, 0x7e);
-                    assert_eq!(g, 0x7eff);
-                    assert_eq!(h, 0x7eff_ffff);
-                    assert_eq!(i, 0x7eff_ffff_ffff_ffff);
-                    assert_eq!(j, 0.42);
-                    assert_eq!(k, 0.4242);
-                    assert_eq!(l, 'a');
-                    assert_eq!(m, "test");
-                    assert_eq!(n, [[b"foo"]]);
-                    info!("finishing `test.sync` session");
-                }
-                .instrument(info_span!("client")),
-            );
-
-            join!(
-                async {
-                    info!("accepting `test.async` connection");
-                    let ok = srv
-                        .accept(&srv_ep)
-                        .await
-                        .expect("failed to accept client connection");
-                    assert!(ok);
-                    info!("receiving `test.async` parameters");
-                    let ((), params, rx, tx) = async_inv
-                        .try_next()
-                        .await
-                        .expect("failed to accept invocation")
-                        .expect("unexpected end of stream");
-                    let (a, b): (
-                        Pin<Box<dyn Stream<Item = u32> + Send + Sync>>,
-                        Pin<Box<dyn Stream<Item = String> + Send + Sync>>,
-                    ) = params;
-                    let rx = rx.map(Instrument::in_current_span).map(spawn);
-                    assert_eq!(a.collect::<Vec<_>>().await, [0xc0, 0xff, 0xee]);
-                    assert_eq!(b.collect::<Vec<_>>().await, ["foo", "bar"]);
-                    let a: Pin<Box<dyn Stream<Item = u32> + Send + Sync>> =
-                        Box::pin(stream::iter([0xc0, 0xff, 0xee]));
-
-                    let b: Pin<Box<dyn Stream<Item = &str> + Send + Sync>> =
-                        Box::pin(stream::iter(["foo", "bar"]));
-                    if let Some(rx) = rx {
-                        rx.await
-                            .expect("async receiver panicked")
-                            .expect("failed to perform async I/O");
+            let srv = Arc::new(srv);
+            let mut fut = pin!(assert_dynamic(Arc::new(clt), Arc::clone(&srv)));
+            loop {
+                select! {
+                    res = &mut fut => {
+                        return res
                     }
-                    info!("transmitting `test.async` returns");
-                    tx((a, b)).await.expect("failed to send response");
+                    res = srv.accept(&srv_ep) => {
+                        let ok = res.expect("failed to accept connection");
+                        assert!(ok);
+                        continue
+                    }
                 }
-                .instrument(info_span!("server")),
-                async {
-                    let a: Pin<Box<dyn Stream<Item = u32> + Send + Sync>> =
-                        Box::pin(stream::iter([0xc0, 0xff, 0xee]));
-                    let b: Pin<Box<dyn Stream<Item = &str> + Send + Sync>> =
-                        Box::pin(stream::iter(["foo", "bar"]));
-                    info!("invoking `test.async`");
-                    let (returns, io) = clt
-                        .invoke_values((), "test", "async", (a, b), &[[Some(0)], [Some(1)]])
-                        .await
-                        .expect("failed to invoke `test.async`");
-                    let (a, b): (
-                        Pin<Box<dyn Stream<Item = u32> + Send + Sync>>,
-                        Pin<Box<dyn Stream<Item = String> + Send + Sync>>,
-                    ) = returns;
-                    info!("receiving `test.async` async values");
-                    join!(
-                        async { assert_eq!(a.collect::<Vec<_>>().await, [0xc0, 0xff, 0xee]) },
-                        async {
-                            assert_eq!(b.collect::<Vec<_>>().await, ["foo", "bar"]);
-                        },
-                        async {
-                            if let Some(io) = io {
-                                io.await.expect("failed to complete async I/O");
-                            }
-                        }
-                    );
-                }
-                .instrument(info_span!("client")),
-            );
+            }
             Ok(())
         },
     )
