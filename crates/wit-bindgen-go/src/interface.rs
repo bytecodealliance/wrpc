@@ -6,7 +6,7 @@ use heck::ToUpperCamelCase;
 use wit_bindgen_core::wit_parser::{
     Case, Docs, Enum, EnumCase, Field, Flag, Flags, Function, FunctionKind, Handle, Int,
     InterfaceId, Record, Resolve, Result_, Stream, Tuple, Type, TypeDefKind, TypeId, TypeOwner,
-    Variant, World, WorldItem, WorldKey,
+    Variant, World, WorldKey,
 };
 use wit_bindgen_core::{uwrite, uwriteln, Source, TypeInfo};
 use wrpc_introspect::{async_paths_ty, is_list_of, is_ty, rpc_func_name};
@@ -2545,13 +2545,13 @@ impl InterfaceGenerator<'_> {
         let mut methods = BTreeMap::new();
         let mut funcs_to_export = vec![];
 
-        traits.insert(None, ("Handler".to_string(), (vec![], vec![])));
+        traits.insert(None, ("Handler".to_string(), vec![]));
 
         if let Identifier::Interface(id, ..) = identifier {
             for (name, id) in &self.resolve.interfaces[id].types {
                 if let TypeDefKind::Resource = self.resolve.types[*id].kind {
                     let camel = to_upper_camel_case(name);
-                    traits.insert(Some(*id), (camel, (vec![], vec![])));
+                    traits.insert(Some(*id), (camel, vec![]));
                     methods.insert(*id, vec![]);
                 }
             }
@@ -2569,7 +2569,7 @@ impl InterfaceGenerator<'_> {
                 funcs_to_export.push(func);
                 None
             };
-            let (_, (handler_methods, client_methods)) = traits.get_mut(&resource).unwrap();
+            let (_, handler_methods) = traits.get_mut(&resource).unwrap();
 
             let prev = mem::take(&mut self.src);
             self.print_docs_and_params(func, true);
@@ -2597,23 +2597,12 @@ impl InterfaceGenerator<'_> {
             self.push_str("\n");
             let trait_method = mem::replace(&mut self.src, prev);
             handler_methods.push(trait_method);
-
-            if matches!(func.kind, FunctionKind::Method(..)) {
-                let prev = mem::take(&mut self.src);
-                self.print_docs_and_params(func, true);
-                self.src.push_str(" (");
-                for ty in func.results.iter_types() {
-                    self.print_opt_ty(ty, true);
-                    self.src.push_str(", ");
-                }
-                self.push_str("func() error, error)\n");
-                let trait_method = mem::replace(&mut self.src, prev);
-                client_methods.push(trait_method);
-            }
         }
 
-        let (name, (interface_methods, _)) = traits.remove(&None).unwrap();
-        if interface_methods.is_empty() {
+        // TODO: The method serving should be propagated into the `ServeInterface`
+
+        let (name, interface_methods) = traits.remove(&None).unwrap();
+        if interface_methods.is_empty() && traits.is_empty() {
             return false;
         }
 
@@ -2623,14 +2612,9 @@ impl InterfaceGenerator<'_> {
         }
         uwriteln!(self.src, "}}");
 
-        for (trait_name, (handler_methods, client_methods)) in traits.values() {
+        for (trait_name, handler_methods) in traits.values() {
             uwriteln!(self.src, "type Handler{trait_name} interface {{");
             for method in handler_methods {
-                self.src.push_str(method);
-            }
-            uwriteln!(self.src, "}}");
-            uwriteln!(self.src, "type {trait_name} interface {{");
-            for method in client_methods {
                 self.src.push_str(method);
             }
             uwriteln!(self.src, "}}");
@@ -3017,51 +3001,13 @@ impl InterfaceGenerator<'_> {
 
     pub fn generate_imports<'a>(
         &mut self,
-        identifier: Identifier<'a>,
+        _identifier: Identifier<'a>,
         instance: &str,
         funcs: impl Iterator<Item = &'a Function>,
     ) {
-        let mut resources = BTreeMap::new();
-        match identifier {
-            Identifier::Interface(id, ..) => {
-                for (name, id) in &self.resolve.interfaces[id].types {
-                    if let TypeDefKind::Resource = self.resolve.types[*id].kind {
-                        let camel = to_upper_camel_case(name);
-                        resources.insert(*id, (camel, vec![]));
-                    }
-                }
-            }
-            Identifier::World(id) => {
-                for (wk, wi) in &self.resolve.worlds[id].imports {
-                    if let WorldItem::Type(id) = wi {
-                        if let TypeDefKind::Resource = self.resolve.types[*id].kind {
-                            let WorldKey::Name(name) = wk else {
-                                panic!("unnamed world resource")
-                            };
-                            let camel = to_upper_camel_case(name);
-                            resources.insert(*id, (camel, vec![]));
-                        }
-                    }
-                }
-            }
-        }
         for func in funcs {
             if self.gen.skip.contains(&func.name) {
                 return;
-            }
-
-            if let FunctionKind::Method(id) = &func.kind {
-                let (_, methods) = resources.get_mut(id).unwrap();
-                let prev = mem::take(&mut self.src);
-                self.print_docs_and_params(func, true);
-                self.src.push_str(" (");
-                for ty in func.results.iter_types() {
-                    self.print_opt_ty(ty, true);
-                    self.src.push_str(", ");
-                }
-                self.push_str("func() error, error)\n");
-                let trait_method = mem::replace(&mut self.src, prev);
-                methods.push(trait_method);
             }
 
             let fmt = self.deps.fmt();
@@ -3180,14 +3126,6 @@ impl InterfaceGenerator<'_> {
     }}"#,
                 func.name
             );
-        }
-
-        for (trait_name, methods) in resources.values() {
-            uwriteln!(self.src, "type {trait_name} interface {{");
-            for method in methods {
-                self.src.push_str(method);
-            }
-            uwriteln!(self.src, "}}");
         }
     }
 
@@ -3711,8 +3649,13 @@ func (v *{name}) WriteToIndex(w {wrpc}.ByteWriter) (func({wrpc}.IndexWriter) err
         }
     }
 
-    fn type_resource(&mut self, _id: TypeId, _name: &str, _docs: &Docs) {
-        // appropriate interfaces will be generated in imports and exports
+    fn type_resource(&mut self, _id: TypeId, name: &str, docs: &Docs) {
+        self.godoc(docs);
+        uwriteln!(
+            self.src,
+            "type {} interface {{}}",
+            to_upper_camel_case(name)
+        );
     }
 
     fn type_tuple(&mut self, id: TypeId, _name: &str, tuple: &Tuple, docs: &Docs) {
