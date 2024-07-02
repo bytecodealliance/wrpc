@@ -15,8 +15,8 @@ use pin_project_lite::pin_project;
 use quinn::crypto::rustls::HandshakeData;
 use quinn::{Connection, ConnectionError, Endpoint, RecvStream, SendStream, VarInt};
 use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite};
-use tokio::spawn;
 use tokio::sync::{mpsc, oneshot, Mutex};
+use tokio::task::JoinSet;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::codec::Encoder;
 use tracing::{instrument, trace, warn, Instrument as _, Span};
@@ -367,12 +367,14 @@ pin_project! {
             path: Arc<[usize]>,
             #[pin]
             rx: oneshot::Receiver<RecvStream>,
+            io: Arc<JoinSet<std::io::Result<()>>>,
         },
         Active {
             index: Arc<std::sync::Mutex<IndexTree>>,
             path: Arc<[usize]>,
             #[pin]
             rx: RecvStream,
+            io: Arc<JoinSet<std::io::Result<()>>>,
         },
     }
 }
@@ -382,10 +384,16 @@ impl wrpc_transport::Index<Self> for Incoming {
     fn index(&self, path: &[usize]) -> anyhow::Result<Self> {
         match self {
             Self::Accepting {
-                index, path: base, ..
+                index,
+                path: base,
+                io,
+                ..
             }
             | Self::Active {
-                index, path: base, ..
+                index,
+                path: base,
+                io,
+                ..
             } => {
                 let path = if base.is_empty() {
                     Arc::from(path)
@@ -406,6 +414,7 @@ impl wrpc_transport::Index<Self> for Incoming {
                     index: Arc::clone(index),
                     path,
                     rx,
+                    io: Arc::clone(io),
                 })
             }
         }
@@ -424,6 +433,7 @@ impl AsyncRead for Incoming {
                 index,
                 path,
                 mut rx,
+                io,
             } => {
                 trace!(?path, "polling channel");
                 let rx = ready!(rx.as_mut().poll(cx))
@@ -432,6 +442,7 @@ impl AsyncRead for Incoming {
                     index: Arc::clone(index),
                     path: Arc::clone(path),
                     rx,
+                    io: Arc::clone(io),
                 };
                 self.poll_read(cx, buf)
             }
@@ -453,6 +464,7 @@ pin_project! {
             path: Arc<[usize]>,
             #[pin]
             conn: Connection,
+            io: Arc<JoinSet<std::io::Result<()>>>,
         },
         Active {
             header: Bytes,
@@ -461,6 +473,7 @@ pin_project! {
             conn: Connection,
             #[pin]
             tx: SendStream,
+            io: Arc<JoinSet<std::io::Result<()>>>,
         },
     }
 }
@@ -482,14 +495,21 @@ impl wrpc_transport::Index<Self> for Outgoing {
         }
         match self {
             Self::Opening {
-                path: base, conn, ..
+                path: base,
+                conn,
+                io,
+                ..
             }
             | Self::Active {
-                path: base, conn, ..
+                path: base,
+                conn,
+                io,
+                ..
             } => Ok(Self::Opening {
                 header: header.freeze(),
                 path: Arc::from([base, path].concat()),
                 conn: conn.clone(),
+                io: Arc::clone(io),
             }),
         }
     }
@@ -519,7 +539,12 @@ impl Outgoing {
         cx: &mut Context<'_>,
     ) -> Poll<std::io::Result<()>> {
         match self.as_mut().project() {
-            OutgoingProj::Opening { path, conn, header } => {
+            OutgoingProj::Opening {
+                path,
+                conn,
+                header,
+                io,
+            } => {
                 trace!(?path, "opening connection");
                 let tx = ready!(pin!(conn.open_uni()).poll(cx)).map_err(std::io::Error::from)?;
                 *self = Self::Active {
@@ -527,6 +552,7 @@ impl Outgoing {
                     path: Arc::clone(path),
                     conn: conn.clone(),
                     tx,
+                    io: Arc::clone(io),
                 };
                 self.poll_flush_header(cx)
             }
@@ -670,7 +696,9 @@ impl wrpc_transport::Invoke for Client {
             .await
             .context("failed to open parameter stream")?;
         let index = Arc::new(std::sync::Mutex::new(paths.iter().collect()));
-        spawn(demux_connection(Arc::clone(&index), conn.clone()).in_current_span());
+        let mut io = JoinSet::new();
+        io.spawn(demux_connection(Arc::clone(&index), conn.clone()).in_current_span());
+        let io = Arc::new(io);
         trace!("writing parameters");
         param_tx
             .write_all_chunks(&mut [Bytes::from_static(&[PROTOCOL]), params])
@@ -682,11 +710,13 @@ impl wrpc_transport::Invoke for Client {
                 path: Arc::from([]),
                 conn: conn.clone(),
                 tx: param_tx,
+                io: Arc::clone(&io),
             },
             Incoming::Active {
                 index: Arc::clone(&index),
                 path: Arc::from([]),
                 rx: ret_rx,
+                io,
             },
         ))
     }
@@ -709,18 +739,22 @@ async fn serve_connection(
         .context("failed to read parameter stream header")?;
     ensure!(x == PROTOCOL);
     let index = Arc::new(std::sync::Mutex::new(paths.iter().collect()));
-    spawn(demux_connection(Arc::clone(&index), conn.clone()).in_current_span());
+    let mut io = JoinSet::new();
+    io.spawn(demux_connection(Arc::clone(&index), conn.clone()).in_current_span());
+    let io = Arc::new(io);
     Ok((
         Outgoing::Active {
             header: Bytes::default(),
             path: Arc::from([]),
             conn,
             tx: ret_tx,
+            io: Arc::clone(&io),
         },
         Incoming::Active {
             index,
             path: Arc::from([]),
             rx: param_rx,
+            io,
         },
     ))
 }

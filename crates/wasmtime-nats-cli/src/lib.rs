@@ -211,7 +211,7 @@ pub async fn run() -> anyhow::Result<()> {
                 .args(&["main.wasm"])
                 .build(),
             table: ResourceTable::new(),
-            wrpc: wrpc_transport_nats::Client::new(nats, prefix),
+            wrpc: wrpc_transport_nats::Client::new(nats, prefix, None),
         },
     );
     let (cmd, _) = Command::instantiate_pre(&mut store, &pre)

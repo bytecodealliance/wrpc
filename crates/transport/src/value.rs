@@ -7,15 +7,17 @@ use core::mem;
 use core::ops::{Deref, DerefMut};
 use core::pin::Pin;
 
-use bytes::{BufMut as _, Bytes, BytesMut};
+use bytes::{Buf as _, BufMut as _, Bytes, BytesMut};
 use futures::stream::{self, FuturesUnordered};
 use futures::{Stream, StreamExt as _, TryStreamExt as _};
 use std::sync::Arc;
-use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt as _};
-use tokio::select;
-use tokio::sync::mpsc;
+use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _};
+use tokio::sync::{mpsc, oneshot};
+use tokio::task::JoinSet;
+use tokio::{select, try_join};
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::codec::{Encoder as _, FramedRead};
+use tokio_util::io::StreamReader;
 use tracing::{instrument, trace};
 use wasm_tokio::cm::{
     BoolCodec, F32Codec, F64Codec, OptionDecoder, OptionEncoder, PrimValEncoder, ResultDecoder,
@@ -304,6 +306,7 @@ pub async fn handle_deferred<T, I>(
     w: Arc<T>,
     deferred: I,
     mut path: Vec<usize>,
+    idx: u64,
 ) -> std::io::Result<()>
 where
     I: IntoIterator<Item = Option<DeferredFn<T>>>,
@@ -340,6 +343,7 @@ pub trait Encode<T>: Sized {
         items: I,
         enc: &mut Self::Encoder,
         dst: &mut BytesMut,
+        idx: u64,
     ) -> Result<Option<DeferredFn<T>>, <Self::Encoder as tokio_util::codec::Encoder<Self>>::Error>
     where
         I: IntoIterator<Item = Self>,
@@ -354,8 +358,8 @@ pub trait Encode<T>: Sized {
             deferred.push(enc.take_deferred());
         }
         if deferred.iter().any(Option::is_some) {
-            Ok(Some(Box::new(|w, path| {
-                Box::pin(handle_deferred(w, deferred, path))
+            Ok(Some(Box::new(move |w, path| {
+                Box::pin(handle_deferred(w, deferred, path, idx))
             })))
         } else {
             Ok(None)
@@ -367,6 +371,7 @@ pub trait Encode<T>: Sized {
         items: I,
         enc: &mut Self::Encoder,
         dst: &mut BytesMut,
+        idx: u64,
     ) -> Result<Option<DeferredFn<T>>, <Self::Encoder as tokio_util::codec::Encoder<&'a Self>>::Error>
     where
         I: IntoIterator<Item = &'a Self>,
@@ -382,8 +387,8 @@ pub trait Encode<T>: Sized {
             deferred.push(enc.take_deferred());
         }
         if deferred.iter().any(Option::is_some) {
-            Ok(Some(Box::new(|w, path| {
-                Box::pin(handle_deferred(w, deferred, path))
+            Ok(Some(Box::new(move |w, path| {
+                Box::pin(handle_deferred(w, deferred, path, idx))
             })))
         } else {
             Ok(None)
@@ -403,7 +408,7 @@ pub trait Encode<T>: Sized {
             .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
         dst.reserve(5 + items.len());
         Leb128Encoder.encode(n, dst)?;
-        Self::encode_iter_own(items, enc, dst)
+        Self::encode_iter_own(items, enc, dst, 0)
     }
 
     #[instrument(level = "trace", skip(items, enc), fields(ty = "list"))]
@@ -420,7 +425,7 @@ pub trait Encode<T>: Sized {
             .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
         dst.reserve(5 + items.len());
         Leb128Encoder.encode(n, dst)?;
-        Self::encode_iter_ref(items, enc, dst)
+        Self::encode_iter_ref(items, enc, dst, 0)
     }
 }
 
@@ -670,17 +675,26 @@ where
     deferred: Vec<Option<DeferredFn<R>>>,
 }
 
+impl<T, R> ListDecoder<T, R>
+where
+    T: tokio_util::codec::Decoder,
+{
+    pub fn new(dec: T) -> Self {
+        Self {
+            dec,
+            ret: Vec::default(),
+            cap: 0,
+            deferred: vec![],
+        }
+    }
+}
+
 impl<T, R> Default for ListDecoder<T, R>
 where
     T: tokio_util::codec::Decoder + Default,
 {
     fn default() -> Self {
-        Self {
-            dec: T::default(),
-            ret: Vec::default(),
-            cap: 0,
-            deferred: vec![],
-        }
+        Self::new(T::default())
     }
 }
 
@@ -693,7 +707,7 @@ where
         let deferred = mem::take(&mut self.deferred);
         if deferred.iter().any(Option::is_some) {
             Some(Box::new(|r, path| {
-                Box::pin(handle_deferred(r, deferred, path))
+                Box::pin(handle_deferred(r, deferred, path, 0))
             }))
         } else {
             None
@@ -756,6 +770,7 @@ macro_rules! impl_copy_codec {
                 items: I,
                 enc: &mut Self::Encoder,
                 dst: &mut BytesMut,
+                _idx: u64,
             ) -> Result<
                 Option<DeferredFn<W>>,
                 <Self::Encoder as tokio_util::codec::Encoder<Self>>::Error,
@@ -777,6 +792,7 @@ macro_rules! impl_copy_codec {
                 items: I,
                 enc: &mut Self::Encoder,
                 dst: &mut BytesMut,
+                _idx: u64,
             ) -> Result<
                 Option<DeferredFn<W>>,
                 <Self::Encoder as tokio_util::codec::Encoder<&'a Self>>::Error,
@@ -802,6 +818,7 @@ macro_rules! impl_copy_codec {
                 items: I,
                 enc: &mut Self::Encoder,
                 dst: &mut BytesMut,
+                _idx: u64,
             ) -> Result<
                 Option<DeferredFn<W>>,
                 <Self::Encoder as tokio_util::codec::Encoder<Self>>::Error,
@@ -823,6 +840,7 @@ macro_rules! impl_copy_codec {
                 items: I,
                 enc: &mut Self::Encoder,
                 dst: &mut BytesMut,
+                _idx: u64,
             ) -> Result<
                 Option<DeferredFn<W>>,
                 <Self::Encoder as tokio_util::codec::Encoder<&'a Self>>::Error,
@@ -868,6 +886,7 @@ impl<T> Encode<T> for u8 {
         items: I,
         enc: &mut Self::Encoder,
         dst: &mut BytesMut,
+        _idx: u64,
     ) -> Result<Option<DeferredFn<T>>, <Self::Encoder as tokio_util::codec::Encoder<Self>>::Error>
     where
         I: IntoIterator<Item = Self>,
@@ -884,6 +903,7 @@ impl<T> Encode<T> for u8 {
         items: I,
         enc: &mut Self::Encoder,
         dst: &mut BytesMut,
+        _idx: u64,
     ) -> Result<Option<DeferredFn<T>>, <Self::Encoder as tokio_util::codec::Encoder<&'a Self>>::Error>
     where
         I: IntoIterator<Item = &'a Self>,
@@ -928,6 +948,7 @@ impl<'b, T> Encode<T> for &'b u8 {
         items: I,
         enc: &mut Self::Encoder,
         dst: &mut BytesMut,
+        _idx: u64,
     ) -> Result<Option<DeferredFn<T>>, <Self::Encoder as tokio_util::codec::Encoder<Self>>::Error>
     where
         I: IntoIterator<Item = Self>,
@@ -944,6 +965,7 @@ impl<'b, T> Encode<T> for &'b u8 {
         items: I,
         enc: &mut Self::Encoder,
         dst: &mut BytesMut,
+        _idx: u64,
     ) -> Result<Option<DeferredFn<T>>, <Self::Encoder as tokio_util::codec::Encoder<&'a Self>>::Error>
     where
         I: IntoIterator<Item = &'a Self>,
@@ -1219,7 +1241,7 @@ macro_rules! impl_tuple_codec {
                 let Self(($(mut $cn),+,)) = mem::take(self);
                 let deferred = [ $($cn.take_deferred()),+ ];
                 if deferred.iter().any(Option::is_some) {
-                    Some(Box::new(|r, path| Box::pin(handle_deferred(r, deferred, path))))
+                    Some(Box::new(|r, path| Box::pin(handle_deferred(r, deferred, path, 0))))
                 } else {
                     None
                 }
@@ -1270,7 +1292,7 @@ macro_rules! impl_tuple_codec {
                 let ($(mut $cn),+,) = mem::take(self).into_inner();
                 let deferred = [ $($cn.take_deferred()),+ ];
                 if deferred.iter().any(Option::is_some) {
-                    Some(Box::new(|r, path| Box::pin(handle_deferred(r, deferred, path))))
+                    Some(Box::new(|r, path| Box::pin(handle_deferred(r, deferred, path, 0))))
                 } else {
                     None
                 }
@@ -1425,6 +1447,12 @@ impl<W> Default for FutureEncoder<W> {
     }
 }
 
+impl<W> Deferred<W> for FutureEncoder<W> {
+    fn take_deferred(&mut self) -> Option<DeferredFn<W>> {
+        self.deferred.take()
+    }
+}
+
 impl<T, W, Fut> tokio_util::codec::Encoder<Fut> for FutureEncoder<W>
 where
     T: Encode<W>,
@@ -1446,16 +1474,126 @@ where
                 let mut enc = T::Encoder::default();
                 let mut buf = BytesMut::default();
                 enc.encode(item, &mut buf)?;
-                root.write_all(&buf).await?;
-                if let Some(f) = enc.take_deferred() {
-                    path.push(0);
-                    f(w, path).await?;
-                }
+                try_join!(root.write_all(&buf), async {
+                    if let Some(f) = enc.take_deferred() {
+                        path.push(0);
+                        f(w, path).await
+                    } else {
+                        Ok(())
+                    }
+                })?;
                 Ok(())
             })
         }));
         Ok(())
     }
+}
+
+impl<T, W> Encode<W> for Pin<Box<dyn Future<Output = T> + Send + Sync>>
+where
+    T: Encode<W> + 'static,
+    W: AsyncWrite + crate::Index<W> + Send + Sync + Unpin + 'static,
+    std::io::Error: From<<T::Encoder as tokio_util::codec::Encoder<T>>::Error>,
+{
+    type Encoder = FutureEncoder<W>;
+}
+
+pub struct FutureDecoder<T, R>
+where
+    T: Decode<R>,
+{
+    dec: OptionDecoder<T::Decoder>,
+    deferred: Option<DeferredFn<R>>,
+    _ty: PhantomData<T>,
+}
+
+impl<T, R> Default for FutureDecoder<T, R>
+where
+    T: Decode<R>,
+{
+    fn default() -> Self {
+        Self {
+            dec: OptionDecoder::default(),
+            deferred: None,
+            _ty: PhantomData,
+        }
+    }
+}
+
+impl<T, R> Deferred<R> for FutureDecoder<T, R>
+where
+    T: Decode<R>,
+{
+    fn take_deferred(&mut self) -> Option<DeferredFn<R>> {
+        self.deferred.take()
+    }
+}
+
+impl<T, R> tokio_util::codec::Decoder for FutureDecoder<T, R>
+where
+    T: Decode<R> + Send + Sync + 'static,
+    T::Decoder: Sync,
+    R: AsyncRead + crate::Index<R> + Send + Sync + Unpin + 'static,
+    std::io::Error: From<<T::Decoder as tokio_util::codec::Decoder>::Error>,
+{
+    type Item = Pin<Box<dyn Future<Output = T> + Send + Sync>>;
+    type Error = <T::Decoder as tokio_util::codec::Decoder>::Error;
+
+    #[instrument(level = "trace", skip(self), fields(ty = "future"))]
+    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+        let Some(item) = self.dec.decode(src)? else {
+            return Ok(None);
+        };
+        if let Some(item) = item {
+            self.deferred = self.dec.take_deferred();
+            return Ok(Some(Box::pin(async { item })));
+        }
+
+        // future is pending
+        let (tx, rx) = oneshot::channel();
+        let dec = mem::take(&mut self.dec).into_inner();
+        self.deferred = Some(Box::new(|r, mut path| {
+            Box::pin(async move {
+                let indexed = r.index(&path).map_err(std::io::Error::other)?;
+                let mut dec = FramedRead::new(indexed, dec);
+                trace!("receiving future element");
+                let Some(item) = dec.next().await else {
+                    return Err(std::io::ErrorKind::UnexpectedEof.into());
+                };
+                let item = item?;
+                try_join!(
+                    async {
+                        tx.send(item).map_err(|_| {
+                            std::io::Error::new(std::io::ErrorKind::BrokenPipe, "receiver closed")
+                        })
+                    },
+                    async {
+                        if let Some(rx) = dec.decoder_mut().take_deferred() {
+                            path.push(0);
+                            rx(r, path).await
+                        } else {
+                            Ok(())
+                        }
+                    }
+                )?;
+                Ok(())
+            })
+        }));
+        return Ok(Some(Box::pin(async {
+            rx.await.expect("future I/O dropped")
+        })));
+    }
+}
+
+impl<T, R> Decode<R> for Pin<Box<dyn Future<Output = T> + Send + Sync>>
+where
+    T: Decode<R> + Send + Sync + 'static,
+    T::Decoder: Sync,
+    R: AsyncRead + crate::Index<R> + Send + Sync + Unpin + 'static,
+    std::io::Error: From<<T::Decoder as tokio_util::codec::Decoder>::Error>,
+{
+    type Decoder = FutureDecoder<T, R>;
+    type ListDecoder = ListDecoder<Self::Decoder, R>;
 }
 
 pub struct StreamEncoder<W> {
@@ -1478,48 +1616,77 @@ impl<T, W, S> tokio_util::codec::Encoder<S> for StreamEncoder<W>
 where
     T: Encode<W> + Send + Sync + 'static,
     W: AsyncWrite + crate::Index<W> + Send + Sync + Unpin + 'static,
-    S: Stream<Item = T> + Send + Sync + Unpin + 'static,
+    S: Stream<Item = Vec<T>> + Send + Sync + Unpin + 'static,
     std::io::Error: From<<T::Encoder as tokio_util::codec::Encoder<T>>::Error>,
 {
     type Error = std::io::Error;
 
     #[instrument(level = "trace", skip(self, items), fields(ty = "stream"))]
-    fn encode(&mut self, items: S, dst: &mut BytesMut) -> std::io::Result<()> {
+    fn encode(&mut self, mut items: S, dst: &mut BytesMut) -> std::io::Result<()> {
         // TODO: Check if stream is resolved
         dst.reserve(1);
         dst.put_u8(0x00);
-        self.deferred = Some(Box::new(|w, mut path| {
+        self.deferred = Some(Box::new(|w, path| {
             Box::pin(async move {
                 let mut root = w.index(&path).map_err(std::io::Error::other)?;
                 let mut enc = T::Encoder::default();
                 let mut buf = BytesMut::default();
-                // TODO: Optimize by chunking items
-                let mut items = items.enumerate();
-                while let Some((i, item)) = items.next().await {
-                    buf.reserve(1);
-                    buf.put_u8(0x01); // chunk of length of 1
-                    trace!(i, "encoding stream item");
-                    enc.encode(item, &mut buf)?;
-                    trace!(i, buf = format!("{buf:02x?}"), "writing stream item");
-                    root.write_all(&buf).await?;
-                    buf.clear();
-                    if let Some(f) = enc.take_deferred() {
-                        path.push(i);
-                        // TODO: Do this concurrently with writing the stream
-                        trace!(?path, "writing deferred stream item");
-                        f(Arc::clone(&w), path.clone()).await?;
-                        path.pop();
+                let mut tasks = JoinSet::new();
+                let mut i = 0_u64;
+                loop {
+                    select! {
+                        chunk = items.next() => {
+                            let Some(chunk) = chunk else {
+                                trace!("writing stream end");
+                                buf.reserve(1);
+                                buf.put_u8(0x00);
+                                try_join!(
+                                    root.write_all(&buf),
+                                    async {
+                                        while let Some(res) = tasks.join_next().await {
+                                            trace!(?res, "receiver task finished");
+                                            res??;
+                                        }
+                                    Ok(())
+                                })?;
+                                return Ok(())
+                            };
+                            let n = u32::try_from(chunk.len()).map_err(|err| {
+                                std::io::Error::new(std::io::ErrorKind::InvalidInput, err)
+                            })?;
+                            let end = i.checked_add(n.into()).ok_or_else(|| {
+                                std::io::Error::new(
+                                    std::io::ErrorKind::InvalidInput,
+                                    "stream element index would overflow u64",
+                                )
+                            })?;
+                            trace!(n, "encoding chunk length");
+                            Leb128Encoder.encode(n, &mut buf)?;
+                            trace!(i, buf = format!("{buf:02x?}"), "writing stream chunk items");
+                            if let Some(deferred) = T::encode_iter_own(chunk, &mut enc, &mut buf, i)? {
+                                trace!("spawning transmit task");
+                                tasks.spawn(deferred(Arc::clone(&w), path.clone()));
+                            }
+                            i = end;
+                        }
+                        Some(res) = tasks.join_next() => {
+                            trace!(?res, "receiver task finished");
+                            res??;
+                        }
+                        res = root.write(&buf), if !buf.is_empty() => {
+                            let n = res?;
+                            trace!(?buf, n, "wrote bytes from buffer");
+                            buf.advance(n);
+                        }
                     }
                 }
-                trace!("writing stream end");
-                root.write_all(&[0x00]).await
             })
         }));
         Ok(())
     }
 }
 
-impl<T, W> Encode<W> for Pin<Box<dyn Stream<Item = T> + Send + Sync>>
+impl<T, W> Encode<W> for Pin<Box<dyn Stream<Item = Vec<T>> + Send + Sync>>
 where
     T: Encode<W> + Send + Sync + 'static,
     W: AsyncWrite + crate::Index<W> + Send + Sync + Unpin + 'static,
@@ -1528,43 +1695,243 @@ where
     type Encoder = StreamEncoder<W>;
 }
 
-pub struct StreamDecoder<T, R> {
-    dec: T,
-    deferred: Option<DeferredFn<R>>,
+pub struct StreamEncoderBytes<W> {
+    deferred: Option<DeferredFn<W>>,
 }
 
-impl<T: Default, R> Default for StreamDecoder<T, R> {
+impl<W> Default for StreamEncoderBytes<W> {
+    fn default() -> Self {
+        Self { deferred: None }
+    }
+}
+
+impl<W> Deferred<W> for StreamEncoderBytes<W> {
+    fn take_deferred(&mut self) -> Option<DeferredFn<W>> {
+        self.deferred.take()
+    }
+}
+
+impl<W, S> tokio_util::codec::Encoder<S> for StreamEncoderBytes<W>
+where
+    W: AsyncWrite + crate::Index<W> + Send + Sync + Unpin + 'static,
+    S: Stream<Item = Bytes> + Send + Sync + Unpin + 'static,
+{
+    type Error = std::io::Error;
+
+    #[instrument(level = "trace", skip(self, items), fields(ty = "stream<u8>"))]
+    fn encode(&mut self, mut items: S, dst: &mut BytesMut) -> std::io::Result<()> {
+        // TODO: Check if reader is resolved
+        dst.reserve(1);
+        dst.put_u8(0x00);
+        self.deferred = Some(Box::new(|w, path| {
+            Box::pin(async move {
+                let mut root = w.index(&path).map_err(std::io::Error::other)?;
+                let mut buf = BytesMut::default();
+                loop {
+                    select! {
+                        chunk = items.next() => {
+                            let Some(chunk) = chunk else {
+                                trace!("writing stream end");
+                                buf.reserve(1);
+                                buf.put_u8(0x00);
+                                return root.write_all(&buf).await
+                            };
+                            let n = u32::try_from(chunk.len()).map_err(|err| {
+                                std::io::Error::new(std::io::ErrorKind::InvalidInput, err)
+                            })?;
+                            trace!(n, "encoding chunk length");
+                            Leb128Encoder.encode(n, &mut buf)?;
+                            buf.extend_from_slice(&chunk);
+                        }
+                        res = root.write(&buf), if !buf.is_empty() => {
+                            let n = res?;
+                            buf.advance(n);
+                        }
+                    }
+                }
+            })
+        }));
+        Ok(())
+    }
+}
+
+impl<W> Encode<W> for Pin<Box<dyn Stream<Item = Bytes> + Send + Sync>>
+where
+    W: AsyncWrite + crate::Index<W> + Send + Sync + Unpin + 'static,
+{
+    type Encoder = StreamEncoderBytes<W>;
+}
+
+pub struct StreamEncoderRead<W> {
+    deferred: Option<DeferredFn<W>>,
+}
+
+impl<W> Default for StreamEncoderRead<W> {
+    fn default() -> Self {
+        Self { deferred: None }
+    }
+}
+
+impl<W> Deferred<W> for StreamEncoderRead<W> {
+    fn take_deferred(&mut self) -> Option<DeferredFn<W>> {
+        self.deferred.take()
+    }
+}
+
+impl<W, S> tokio_util::codec::Encoder<S> for StreamEncoderRead<W>
+where
+    W: AsyncWrite + crate::Index<W> + Send + Sync + Unpin + 'static,
+    S: AsyncRead + Send + Sync + Unpin + 'static,
+{
+    type Error = std::io::Error;
+
+    #[instrument(level = "trace", skip(self, items), fields(ty = "stream<u8>"))]
+    fn encode(&mut self, mut items: S, dst: &mut BytesMut) -> std::io::Result<()> {
+        // TODO: Check if reader is resolved
+        dst.reserve(1);
+        dst.put_u8(0x00);
+        self.deferred = Some(Box::new(|w, path| {
+            Box::pin(async move {
+                let mut root = w.index(&path).map_err(std::io::Error::other)?;
+                let mut buf = BytesMut::default();
+                let mut chunk = BytesMut::default();
+                loop {
+                    select! {
+                        res = items.read_buf(&mut chunk) => {
+                            let n = res?;
+                            if n == 0 {
+                                trace!("writing stream end");
+                                buf.reserve(1);
+                                buf.put_u8(0x00);
+                                return root.write_all(&buf).await
+                            }
+                            let n = u32::try_from(n).map_err(|err| {
+                                std::io::Error::new(std::io::ErrorKind::InvalidInput, err)
+                            })?;
+                            trace!(n, "encoding chunk length");
+                            Leb128Encoder.encode(n, &mut buf)?;
+                            buf.extend_from_slice(&chunk);
+                            chunk.clear();
+                        }
+                        res = root.write(&buf), if !buf.is_empty() => {
+                            let n = res?;
+                            buf.advance(n);
+                        }
+                    }
+                }
+            })
+        }));
+        Ok(())
+    }
+}
+
+impl<W> Encode<W> for Pin<Box<dyn AsyncRead + Send + Sync>>
+where
+    W: AsyncWrite + crate::Index<W> + Send + Sync + Unpin + 'static,
+{
+    type Encoder = StreamEncoderRead<W>;
+}
+
+impl<T, W> Encode<W> for std::io::Cursor<T>
+where
+    T: AsRef<[u8]> + Send + Sync + Unpin + 'static,
+    W: AsyncWrite + crate::Index<W> + Send + Sync + Unpin + 'static,
+{
+    type Encoder = StreamEncoderRead<W>;
+}
+
+impl<W> Encode<W> for tokio::io::Empty
+where
+    W: AsyncWrite + crate::Index<W> + Send + Sync + Unpin + 'static,
+{
+    type Encoder = StreamEncoderRead<W>;
+}
+
+impl<W> Encode<W> for tokio::io::Stdin
+where
+    W: AsyncWrite + crate::Index<W> + Send + Sync + Unpin + 'static,
+{
+    type Encoder = StreamEncoderRead<W>;
+}
+
+impl<W> Encode<W> for tokio::fs::File
+where
+    W: AsyncWrite + crate::Index<W> + Send + Sync + Unpin + 'static,
+{
+    type Encoder = StreamEncoderRead<W>;
+}
+
+impl<W> Encode<W> for tokio::net::TcpStream
+where
+    W: AsyncWrite + crate::Index<W> + Send + Sync + Unpin + 'static,
+{
+    type Encoder = StreamEncoderRead<W>;
+}
+
+#[cfg(unix)]
+impl<W> Encode<W> for tokio::net::UnixStream
+where
+    W: AsyncWrite + crate::Index<W> + Send + Sync + Unpin + 'static,
+{
+    type Encoder = StreamEncoderRead<W>;
+}
+
+#[cfg(unix)]
+impl<W> Encode<W> for tokio::net::unix::pipe::Receiver
+where
+    W: AsyncWrite + crate::Index<W> + Send + Sync + Unpin + 'static,
+{
+    type Encoder = StreamEncoderRead<W>;
+}
+
+pub struct StreamDecoder<T, R>
+where
+    T: Decode<R>,
+{
+    dec: T::ListDecoder,
+    deferred: Option<DeferredFn<R>>,
+    _ty: PhantomData<T>,
+}
+
+impl<T, R> Default for StreamDecoder<T, R>
+where
+    T: Decode<R>,
+{
     fn default() -> Self {
         Self {
-            dec: T::default(),
+            dec: T::ListDecoder::default(),
             deferred: None,
+            _ty: PhantomData,
         }
     }
 }
 
-impl<T, R> Deferred<R> for StreamDecoder<T, R> {
+impl<T, R> Deferred<R> for StreamDecoder<T, R>
+where
+    T: Decode<R>,
+{
     fn take_deferred(&mut self) -> Option<DeferredFn<R>> {
         self.deferred.take()
     }
 }
 
-#[instrument(level = "trace", skip(r, tx), ret)]
+#[instrument(level = "trace", skip(dec, r, tx), ret)]
 async fn handle_deferred_stream<C, T, R>(
+    dec: C,
     r: Arc<R>,
     mut path: Vec<usize>,
-    tx: mpsc::Sender<T>,
+    tx: mpsc::Sender<Vec<T>>,
 ) -> std::io::Result<()>
 where
-    C: tokio_util::codec::Decoder<Item = Vec<T>> + Deferred<R> + Send + Sync + Default,
-    C::Error: Send + Sync,
-    T: Send + Sync + 'static,
+    C: tokio_util::codec::Decoder<Item = T> + Deferred<R>,
     R: AsyncRead + crate::Index<R> + Send + Sync + Unpin + 'static,
     std::io::Error: From<C::Error>,
 {
+    let dec = ListDecoder::new(dec);
     let indexed = r.index(&path).map_err(std::io::Error::other)?;
-    let mut framed = FramedRead::new(indexed, C::default());
-    let mut deferred = FuturesUnordered::default();
-    let mut offset = 0usize;
+    let mut framed = FramedRead::new(indexed, dec);
+    let mut tasks = JoinSet::new();
+    let mut i = 0_usize;
     loop {
         trace!("receiving stream chunk");
         select! {
@@ -1572,80 +1939,224 @@ where
                 let chunk = chunk?;
                 if chunk.is_empty() {
                     trace!("received stream end");
-                    break;
+                    while let Some(res) = tasks.join_next().await {
+                        res??;
+                    }
+                    return Ok(())
                 }
-                trace!(offset, "received stream chunk");
-                if usize::MAX - chunk.len() < offset {
-                    return Err(std::io::Error::new(
+                let end = i.checked_add(chunk.len()).ok_or_else(|| {
+                    std::io::Error::new(
                         std::io::ErrorKind::InvalidInput,
                         "stream element index would overflow usize",
-                    ));
-                }
-                for (i, v) in zip(offset.., chunk) {
-                    trace!(i, "sending stream element");
-                    tx.send(v).await.map_err(|_| {
-                        std::io::Error::new(std::io::ErrorKind::BrokenPipe, "receiver closed")
-                    })?;
-                    if let Some(f) = framed.decoder_mut().take_deferred() {
+                    )
+                })?;
+                trace!(i, end, "received stream chunk");
+                tx.send(chunk).await.map_err(|_| {
+                    std::io::Error::new(std::io::ErrorKind::BrokenPipe, "receiver closed")
+                })?;
+                for (i, deferred) in zip(i.., mem::take(&mut framed.decoder_mut().deferred)) {
+                    if let Some(deferred) = deferred {
+                        trace!(i, "handling async read");
                         path.push(i);
                         let indexed = r.index(&path).map_err(std::io::Error::other)?;
-                        deferred.push(f(indexed.into(), path.clone()));
+                        trace!("spawning receive task");
+                        tasks.spawn(deferred(indexed.into(), path.clone()));
                         path.pop();
                     }
-                    offset += 1;
                 }
+                i = end;
             },
-            Some(rx) = deferred.next() => {
-                rx?;
+            Some(res) = tasks.join_next() => {
+                trace!(?res, "receiver task finished");
+                res??;
             }
         }
     }
-    trace!("draining stream");
-    while let Some(()) = deferred.try_next().await? {}
-    Ok(())
 }
 
-impl<C, T, R> tokio_util::codec::Decoder for StreamDecoder<C, R>
+impl<T, R> tokio_util::codec::Decoder for StreamDecoder<T, R>
 where
-    C: tokio_util::codec::Decoder<Item = Vec<T>> + Deferred<R> + Send + Sync + Default,
-    C::Error: Send + Sync,
-    T: Send + Sync + 'static,
+    T: Decode<R> + Send + Sync + 'static,
+    T::Decoder: Sync,
+    T::ListDecoder: Deferred<R>,
     R: AsyncRead + crate::Index<R> + Send + Sync + Unpin + 'static,
-    std::io::Error: From<C::Error>,
+    <T::Decoder as tokio_util::codec::Decoder>::Error: Send + Sync,
+    std::io::Error: From<<T::Decoder as tokio_util::codec::Decoder>::Error>,
 {
-    type Item = Pin<Box<dyn Stream<Item = T> + Send + Sync>>;
-    type Error = C::Error;
+    type Item = Pin<Box<dyn Stream<Item = Vec<T>> + Send + Sync>>;
+    type Error = <<T as Decode<R>>::ListDecoder as tokio_util::codec::Decoder>::Error;
 
     #[instrument(level = "trace", skip(self), fields(ty = "stream"))]
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
         let Some(chunk) = self.dec.decode(src)? else {
             return Ok(None);
         };
-        let mut dec = mem::take(&mut self.dec);
         if !chunk.is_empty() {
-            self.deferred = dec.take_deferred();
-            return Ok(Some(Box::pin(stream::iter(chunk))));
+            self.deferred = self.dec.take_deferred();
+            return Ok(Some(Box::pin(stream::iter([chunk]))));
         }
-        debug_assert!(dec.take_deferred().is_none());
 
         // stream is pending
         let (tx, rx) = mpsc::channel(128);
         self.deferred = Some(Box::new(|r, path| {
-            Box::pin(async move { handle_deferred_stream::<C, T, R>(r, path, tx).await })
+            Box::pin(
+                async move { handle_deferred_stream(T::Decoder::default(), r, path, tx).await },
+            )
         }));
         return Ok(Some(Box::pin(ReceiverStream::new(rx))));
     }
 }
 
-impl<T, R> Decode<R> for Pin<Box<dyn Stream<Item = T> + Send + Sync>>
+impl<T, R> Decode<R> for Pin<Box<dyn Stream<Item = Vec<T>> + Send + Sync>>
 where
     T: Decode<R> + Send + Sync + 'static,
-    T::ListDecoder: Deferred<R> + Send + Sync,
-    <T::ListDecoder as tokio_util::codec::Decoder>::Error: Send + Sync,
+    T::Decoder: Sync,
+    T::ListDecoder: Deferred<R> + Send,
     R: AsyncRead + crate::Index<R> + Send + Sync + Unpin + 'static,
-    std::io::Error: From<<T::ListDecoder as tokio_util::codec::Decoder>::Error>,
+    <T::Decoder as tokio_util::codec::Decoder>::Error: Send + Sync,
+    std::io::Error: From<<T::Decoder as tokio_util::codec::Decoder>::Error>,
 {
-    type Decoder = StreamDecoder<T::ListDecoder, R>;
+    type Decoder = StreamDecoder<T, R>;
+    type ListDecoder = ListDecoder<Self::Decoder, R>;
+}
+
+pub struct StreamDecoderBytes<R> {
+    dec: CoreVecDecoderBytes,
+    deferred: Option<DeferredFn<R>>,
+}
+
+impl<R> Default for StreamDecoderBytes<R> {
+    fn default() -> Self {
+        Self {
+            dec: CoreVecDecoderBytes::default(),
+            deferred: None,
+        }
+    }
+}
+
+impl<R> Deferred<R> for StreamDecoderBytes<R> {
+    fn take_deferred(&mut self) -> Option<DeferredFn<R>> {
+        self.deferred.take()
+    }
+}
+
+impl<R> tokio_util::codec::Decoder for StreamDecoderBytes<R>
+where
+    R: AsyncRead + crate::Index<R> + Send + Sync + Unpin + 'static,
+{
+    type Item = Pin<Box<dyn Stream<Item = Bytes> + Send + Sync>>;
+    type Error = std::io::Error;
+
+    #[instrument(level = "trace", skip(self), fields(ty = "stream<u8>"))]
+    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+        let Some(chunk) = self.dec.decode(src)? else {
+            return Ok(None);
+        };
+        if !chunk.is_empty() {
+            return Ok(Some(Box::pin(stream::iter([chunk]))));
+        }
+
+        // stream is pending
+        let (tx, rx) = mpsc::channel(128);
+        let dec = mem::take(&mut self.dec);
+        self.deferred = Some(Box::new(|r, path| {
+            Box::pin(async move {
+                let indexed = r.index(&path).map_err(std::io::Error::other)?;
+                let mut framed = FramedRead::new(indexed, dec);
+                trace!("receiving stream chunk");
+                while let Some(chunk) = framed.next().await {
+                    let chunk = chunk?;
+                    if chunk.is_empty() {
+                        trace!("received stream end");
+                        return Ok(());
+                    }
+                    trace!(?chunk, "received byte stream chunk");
+                    tx.send(chunk).await.map_err(|_| {
+                        std::io::Error::new(std::io::ErrorKind::BrokenPipe, "receiver closed")
+                    })?;
+                }
+                Ok(())
+            })
+        }));
+        return Ok(Some(Box::pin(ReceiverStream::new(rx))));
+    }
+}
+
+impl<R> Decode<R> for Pin<Box<dyn Stream<Item = Bytes> + Send + Sync>>
+where
+    R: AsyncRead + crate::Index<R> + Send + Sync + Unpin + 'static,
+{
+    type Decoder = StreamDecoderBytes<R>;
+    type ListDecoder = ListDecoder<Self::Decoder, R>;
+}
+
+pub struct StreamDecoderRead<R> {
+    dec: CoreVecDecoderBytes,
+    deferred: Option<DeferredFn<R>>,
+}
+
+impl<R> Default for StreamDecoderRead<R> {
+    fn default() -> Self {
+        Self {
+            dec: CoreVecDecoderBytes::default(),
+            deferred: None,
+        }
+    }
+}
+
+impl<R> Deferred<R> for StreamDecoderRead<R> {
+    fn take_deferred(&mut self) -> Option<DeferredFn<R>> {
+        self.deferred.take()
+    }
+}
+
+impl<R> tokio_util::codec::Decoder for StreamDecoderRead<R>
+where
+    R: AsyncRead + crate::Index<R> + Send + Sync + Unpin + 'static,
+{
+    type Item = Pin<Box<dyn AsyncRead + Send + Sync>>;
+    type Error = std::io::Error;
+
+    #[instrument(level = "trace", skip(self), fields(ty = "stream<u8>"))]
+    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+        let Some(chunk) = self.dec.decode(src)? else {
+            return Ok(None);
+        };
+        if !chunk.is_empty() {
+            return Ok(Some(Box::pin(std::io::Cursor::new(chunk))));
+        }
+
+        // stream is pending
+        let (tx, rx) = mpsc::channel(128);
+        let dec = mem::take(&mut self.dec);
+        self.deferred = Some(Box::new(|r, path| {
+            Box::pin(async move {
+                let indexed = r.index(&path).map_err(std::io::Error::other)?;
+                let mut framed = FramedRead::new(indexed, dec);
+                trace!("receiving stream chunk");
+                while let Some(chunk) = framed.next().await {
+                    let chunk = chunk?;
+                    if chunk.is_empty() {
+                        trace!("received stream end");
+                        return Ok(());
+                    }
+                    trace!(?chunk, "received byte stream chunk");
+                    tx.send(std::io::Result::Ok(chunk)).await.map_err(|_| {
+                        std::io::Error::new(std::io::ErrorKind::BrokenPipe, "receiver closed")
+                    })?;
+                }
+                Ok(())
+            })
+        }));
+        return Ok(Some(Box::pin(StreamReader::new(ReceiverStream::new(rx)))));
+    }
+}
+
+impl<R> Decode<R> for Pin<Box<dyn AsyncRead + Send + Sync>>
+where
+    R: AsyncRead + crate::Index<R> + Send + Sync + Unpin + 'static,
+{
+    type Decoder = StreamDecoderRead<R>;
     type ListDecoder = ListDecoder<Self::Decoder, R>;
 }
 

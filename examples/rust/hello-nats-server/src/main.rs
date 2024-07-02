@@ -48,7 +48,7 @@ async fn main() -> anyhow::Result<()> {
     .context("failed to connect to NATS.io server")?;
 
     bindings::serve(
-        &wrpc_transport_nats::Client::new(nats, prefix),
+        &wrpc_transport_nats::Client::new(nats, prefix, None),
         Server,
         async { signal::ctrl_c().await.expect("failed to listen for ^C") },
     )

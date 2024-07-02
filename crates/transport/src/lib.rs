@@ -10,7 +10,7 @@ pub use frame::{Decoder as FrameDecoder, Encoder as FrameEncoder, FrameRef};
 pub use value::*;
 
 use core::future::Future;
-use core::pin::Pin;
+use core::pin::{pin, Pin};
 
 use std::sync::Arc;
 
@@ -18,7 +18,7 @@ use anyhow::{bail, Context as _};
 use bytes::{Bytes, BytesMut};
 use futures::{SinkExt as _, Stream, TryStreamExt as _};
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt as _};
-use tokio::try_join;
+use tokio::{select, try_join};
 use tokio_util::codec::{Encoder as _, FramedRead, FramedWrite};
 use tracing::{debug, instrument, trace, Instrument as _, Span};
 
@@ -67,7 +67,7 @@ pub trait Invoke: Send + Sync + 'static {
     > + Send
     where
         Params: TupleEncode<Self::Outgoing> + Send,
-        Results: TupleDecode<Self::Incoming>,
+        Results: TupleDecode<Self::Incoming> + Send,
         <Params::Encoder as tokio_util::codec::Encoder<Params>>::Error:
             std::error::Error + Send + Sync + 'static,
         <Results::Decoder as tokio_util::codec::Decoder>::Error:
@@ -88,10 +88,10 @@ pub trait Invoke: Send + Sync + 'static {
                 .shutdown()
                 .await
                 .context("failed to shutdown synchronous parameter channel")?;
-            let tx = enc.take_deferred().map(|tx| {
+            let mut tx = enc.take_deferred().map(|tx| {
                 tokio::spawn(
                     async {
-                        trace!("writing async parameters");
+                        debug!("transmitting async parameters");
                         tx(outgoing.into(), Vec::with_capacity(8))
                             .await
                             .context("failed to write async parameters")
@@ -101,39 +101,53 @@ pub trait Invoke: Send + Sync + 'static {
             });
 
             let mut dec = FramedRead::new(incoming, Results::Decoder::default());
-            debug!("receiving sync returns");
-            let Some(returns) = dec
-                .try_next()
-                .await
-                .context("failed to receive sync returns")?
-            else {
-                bail!("incomplete returns")
+            let results = async {
+                debug!("receiving sync results");
+                dec.try_next()
+                    .await
+                    .context("failed to receive sync results")?
+                    .context("incomplete results")
             };
-            trace!("received sync returns");
+            let results = if let Some(mut fut) = tx.take() {
+                let mut results = pin!(results);
+                select! {
+                    res = &mut results => {
+                        tx = Some(fut);
+                        res?
+                    }
+                    res = &mut fut => {
+                        res??;
+                        results.await?
+                    }
+                }
+            } else {
+                results.await?
+            };
+            trace!("received sync results");
             let rx = dec.decoder_mut().take_deferred();
             Ok((
-                returns,
+                results,
                 (tx.is_some() || rx.is_some()).then_some(async {
                     match (tx, rx) {
                         (Some(tx), Some(rx)) => {
                             try_join!(
                                 async {
-                                    debug!("receiving async returns");
+                                    debug!("receiving async results");
                                     rx(dec.into_inner().into(), Vec::with_capacity(8))
                                         .await
-                                        .context("receiving async returns failed")
+                                        .context("receiving async results failed")
                                 },
-                                async { tx.await.context("writing async parameters failed")? }
+                                async { tx.await.context("transmitting async parameters failed")? }
                             )?;
                         }
                         (Some(tx), None) => {
-                            tx.await.context("writing async parameters failed")??;
+                            tx.await.context("transmitting async parameters failed")??;
                         }
                         (None, Some(rx)) => {
-                            debug!("receiving async returns");
+                            debug!("receiving async results");
                             rx(dec.into_inner().into(), Vec::with_capacity(8))
                                 .await
-                                .context("receiving async returns failed")?;
+                                .context("receiving async results failed")?;
                         }
                         _ => {}
                     }
@@ -144,7 +158,7 @@ pub trait Invoke: Send + Sync + 'static {
     }
 
     /// Invoke function `func` on instance `instance` using typed `Params` and `Results`
-    /// This is like [`Self::invoke_values`], but it only returns once all I/O is done
+    /// This is like [`Self::invoke_values`], but it only results once all I/O is done
     #[instrument(level = "trace", skip_all)]
     fn invoke_values_blocking<Params, Results>(
         &self,
@@ -254,15 +268,15 @@ pub trait Serve: Sync {
                         cx,
                         params,
                         rx.map(|f| f(dec.into_inner().into(), Vec::with_capacity(8))),
-                        move |returns| {
+                        move |results| {
                             Box::pin(
                                 async {
                                     let mut enc =
                                         FramedWrite::new(outgoing, Results::Encoder::default());
-                                    debug!("transmitting sync returns");
-                                    enc.send(returns)
+                                    debug!("transmitting sync results");
+                                    enc.send(results)
                                         .await
-                                        .context("failed to transmit synchronous returns")?;
+                                        .context("failed to transmit synchronous results")?;
                                     let tx = enc.encoder_mut().take_deferred();
                                     let mut outgoing = enc.into_inner();
                                     outgoing
@@ -270,10 +284,10 @@ pub trait Serve: Sync {
                                         .await
                                         .context("failed to shutdown synchronous return channel")?;
                                     if let Some(tx) = tx {
-                                        debug!("transmitting async returns");
+                                        debug!("transmitting async results");
                                         tx(outgoing.into(), Vec::with_capacity(8))
                                             .await
-                                            .context("failed to write async returns")?;
+                                            .context("failed to write async results")?;
                                     }
                                     Ok(())
                                 }
