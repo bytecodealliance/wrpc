@@ -700,8 +700,9 @@ impl wrpc_transport::Invoke for Client {
             .await
             .context("failed to open parameter stream")?;
         let index = Arc::new(std::sync::Mutex::new(paths.as_ref().iter().collect()));
-        let mut io = JoinSet::new();
-        io.spawn(demux_connection(Arc::clone(&index), conn.clone()).in_current_span());
+        let io = JoinSet::new();
+        // TODO: Use `io`
+        tokio::spawn(demux_connection(Arc::clone(&index), conn.clone()).in_current_span());
         let io = Arc::new(io);
         trace!("writing parameters");
         param_tx
@@ -743,8 +744,9 @@ async fn serve_connection(
         .context("failed to read parameter stream header")?;
     ensure!(x == PROTOCOL);
     let index = Arc::new(std::sync::Mutex::new(paths.iter().collect()));
-    let mut io = JoinSet::new();
-    io.spawn(demux_connection(Arc::clone(&index), conn.clone()).in_current_span());
+    let io = JoinSet::new();
+    // TODO: Use `io`
+    tokio::spawn(demux_connection(Arc::clone(&index), conn.clone()).in_current_span());
     let io = Arc::new(io);
     Ok((
         Outgoing::Active {
