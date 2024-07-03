@@ -53,8 +53,14 @@ where
                             }
                         }
 
+                        interface async {
+                            with-streams: func() -> (bytes: stream<u8>, lists: stream<list<string>>);
+                            with-future: func(s: stream<u8>) -> future<stream<u8>>;
+                        }
+
                         world test {
                             export shared;
+                            export async;
 
                             export f: func(x: string) -> u32;
                             export foo: interface {
@@ -223,6 +229,40 @@ where
                 }
             }
 
+            impl<C: Send + Sync> exports::wrpc_test::integration::async_::Handler<C> for Component {
+                async fn with_streams(
+                    &self,
+                    _cx: C,
+                ) -> anyhow::Result<(
+                    Pin<Box<dyn Stream<Item = Bytes> + Send + Sync>>,
+                    Pin<Box<dyn Stream<Item = Vec<Vec<String>>> + Send + Sync>>,
+                )> {
+                    Ok((
+                        Box::pin(stream::iter([Bytes::from("test")])),
+                        Box::pin(stream::iter([
+                            vec![vec!["foo".to_string()]],
+                            vec![vec!["bar".to_string(), "baz".to_string()]],
+                        ])),
+                    ))
+                }
+
+                async fn with_future(
+                    &self,
+                    _cx: C,
+                    s: Pin<Box<dyn Stream<Item = Bytes> + Send + Sync>>,
+                ) -> anyhow::Result<
+                    Pin<
+                        Box<
+                            dyn Future<Output = Pin<Box<dyn Stream<Item = Bytes> + Send + Sync>>>
+                                + Send
+                                + Sync,
+                        >,
+                    >,
+                > {
+                    Ok(Box::pin(async { s }))
+                }
+            }
+
             impl<C: Send + Sync> exports::foo::Handler<C> for Component {
                 async fn foo(&self, _cx: C, x: String) -> anyhow::Result<()> {
                     let old = self.inner.write().await.replace(x);
@@ -262,8 +302,14 @@ where
                             }
                         }
 
+                        interface async {
+                            with-streams: func() -> (bytes: stream<u8>, lists: stream<list<string>>);
+                            with-future: func(s: stream<u8>) -> future<stream<u8>>;
+                        }
+
                         world test {
                             import shared;
+                            import async;
 
                             import f: func(x: string) -> u32;
                             import foo: interface {
@@ -394,6 +440,52 @@ where
                     .context("failed to call `wrpc-test:integration/shared.[static]counter-sum")?;
                     assert_eq!(sum, 6);
 
+                    info!("calling `wrpc-test:integration/async.with-streams`");
+                    let (a, b, io) =
+                        wrpc_test::integration::async_::with_streams(self.0.as_ref(), C::default())
+                            .await
+                            .context("failed to call `wrpc-test:integration/async.with-streams`")?;
+                    join!(
+                        async {
+                            info!("receiving `a`");
+                            assert_eq!(a.collect::<Vec<Bytes>>().await.concat(), b"test");
+                        },
+                        async {
+                            info!("receiving `b`");
+                            assert_eq!(
+                                b.collect::<Vec<_>>().await.concat(),
+                                [["foo"].as_slice(), ["bar", "baz"].as_slice()]
+                            );
+                        },
+                        async {
+                            if let Some(io) = io {
+                                info!("performing I/O");
+                                io.await.expect("failed to complete async I/O");
+                            }
+                        }
+                    );
+
+                    info!("calling `wrpc-test:integration/async.with-future`");
+                    let (fut, io) = wrpc_test::integration::async_::with_future(
+                        self.0.as_ref(),
+                        C::default(),
+                        Box::pin(stream::iter(["foo".into(), "bar".into()])),
+                    )
+                    .await
+                    .context("failed to call `wrpc-test:integration/async.with-future`")?;
+                    join!(
+                        async {
+                            info!("receiving results");
+                            assert_eq!(fut.await.collect::<Vec<Bytes>>().await.concat(), b"foobar");
+                        },
+                        async {
+                            if let Some(io) = io {
+                                info!("performing I/O");
+                                io.await.expect("failed to complete async I/O");
+                            }
+                        }
+                    );
+
                     Ok("bar".to_string())
                 }
             }
@@ -446,12 +538,17 @@ where
         .serve_values(
             "test",
             "async",
-            [[Some(0)], [Some(1)], [Some(2)], [Some(3)]],
+            [
+                Box::from([Some(0)]),
+                Box::from([Some(1)]),
+                Box::from([Some(2)]),
+                Box::from([Some(3)]),
+            ],
         )
         .await
         .context("failed to serve `test.async`")?;
     let sync_inv = srv
-        .serve_values("test", "sync", [[]])
+        .serve_values("test", "sync", [Box::default(); 0])
         .await
         .context("failed to serve `test.sync`")?;
     let mut async_inv = pin!(async_inv);
@@ -542,7 +639,7 @@ where
                         "test",
                         vec![vec!["foo".as_bytes()]],
                     ),
-                    &[[]],
+                    &[[]; 0],
                 )
                 .await
                 .expect("failed to invoke `test.sync`");
@@ -727,6 +824,7 @@ async fn rust_bindgen_quic() -> anyhow::Result<()> {
 
     common::with_quic(
         &[
+            "*.wrpc-test_integration__async",
             "*.wrpc-test_integration__bar",
             "*.wrpc-test_integration__foo",
             "*.wrpc-test_integration__shared",

@@ -1847,6 +1847,7 @@ where
     type Encoder = StreamEncoderRead<W>;
 }
 
+#[cfg(feature = "io-std")]
 impl<W> Encode<W> for tokio::io::Stdin
 where
     W: AsyncWrite + crate::Index<W> + Send + Sync + Unpin + 'static,
@@ -1854,6 +1855,7 @@ where
     type Encoder = StreamEncoderRead<W>;
 }
 
+#[cfg(feature = "fs")]
 impl<W> Encode<W> for tokio::fs::File
 where
     W: AsyncWrite + crate::Index<W> + Send + Sync + Unpin + 'static,
@@ -1861,6 +1863,7 @@ where
     type Encoder = StreamEncoderRead<W>;
 }
 
+#[cfg(feature = "net")]
 impl<W> Encode<W> for tokio::net::TcpStream
 where
     W: AsyncWrite + crate::Index<W> + Send + Sync + Unpin + 'static,
@@ -1868,7 +1871,7 @@ where
     type Encoder = StreamEncoderRead<W>;
 }
 
-#[cfg(unix)]
+#[cfg(all(unix, feature = "net"))]
 impl<W> Encode<W> for tokio::net::UnixStream
 where
     W: AsyncWrite + crate::Index<W> + Send + Sync + Unpin + 'static,
@@ -1876,7 +1879,7 @@ where
     type Encoder = StreamEncoderRead<W>;
 }
 
-#[cfg(unix)]
+#[cfg(all(unix, feature = "net"))]
 impl<W> Encode<W> for tokio::net::unix::pipe::Receiver
 where
     W: AsyncWrite + crate::Index<W> + Send + Sync + Unpin + 'static,

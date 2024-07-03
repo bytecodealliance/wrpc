@@ -404,6 +404,7 @@ impl wrpc_transport::Index<Self> for Incoming {
                 let mut lock = index.lock().map_err(|err| {
                     std::io::Error::new(std::io::ErrorKind::Other, err.to_string())
                 })?;
+                trace!("taking index subscription");
                 let rx = lock.take_rx(&path).ok_or_else(|| {
                     std::io::Error::new(
                         std::io::ErrorKind::NotFound,
@@ -674,14 +675,17 @@ impl wrpc_transport::Invoke for Client {
     type Incoming = Incoming;
 
     #[instrument(level = "trace", skip(self, paths, params), fields(params = format!("{params:02x?}")))]
-    async fn invoke(
+    async fn invoke<P>(
         &self,
         cx: Self::Context,
         instance: &str,
         func: &str,
         params: Bytes,
-        paths: &[impl AsRef<[Option<usize>]> + Send + Sync],
-    ) -> anyhow::Result<(Self::Outgoing, Self::Incoming)> {
+        paths: impl AsRef<[P]> + Send,
+    ) -> anyhow::Result<(Self::Outgoing, Self::Incoming)>
+    where
+        P: AsRef<[Option<usize>]> + Send + Sync,
+    {
         let san = san(instance, func);
         trace!(?san, "establishing connection");
         let conn = self
@@ -695,7 +699,7 @@ impl wrpc_transport::Invoke for Client {
             .open_bi()
             .await
             .context("failed to open parameter stream")?;
-        let index = Arc::new(std::sync::Mutex::new(paths.iter().collect()));
+        let index = Arc::new(std::sync::Mutex::new(paths.as_ref().iter().collect()));
         let mut io = JoinSet::new();
         io.spawn(demux_connection(Arc::clone(&index), conn.clone()).in_current_span());
         let io = Arc::new(io);
@@ -765,11 +769,11 @@ impl wrpc_transport::Serve for Server {
     type Incoming = Incoming;
 
     #[instrument(level = "trace", skip(self, paths))]
-    async fn serve<P: AsRef<[Option<usize>]> + Send + Sync + 'static>(
+    async fn serve(
         &self,
         instance: &str,
         func: &str,
-        paths: impl Into<Arc<[P]>> + Send + Sync + 'static,
+        paths: impl Into<Arc<[Box<[Option<usize>]>]>> + Send,
     ) -> anyhow::Result<
         impl Stream<Item = anyhow::Result<(Self::Context, Self::Outgoing, Self::Incoming)>> + 'static,
     > {

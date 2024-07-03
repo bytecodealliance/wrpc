@@ -8,10 +8,12 @@ use std::io::{Read, Write};
 use std::mem;
 use std::process::{Command, Stdio};
 use wit_bindgen_core::wit_parser::{
-    Flags, FlagsRepr, Function, Int, InterfaceId, PackageId, Resolve, SizeAlign, TypeId, World,
-    WorldId, WorldItem, WorldKey,
+    Flags, FlagsRepr, Function, Int, InterfaceId, Resolve, SizeAlign, TypeId, World, WorldId,
+    WorldItem, WorldKey,
 };
-use wit_bindgen_core::{uwriteln, Files, InterfaceGenerator as _, Source, Types, WorldGenerator};
+use wit_bindgen_core::{
+    name_package_module, uwriteln, Files, InterfaceGenerator as _, Source, Types, WorldGenerator,
+};
 
 mod interface;
 
@@ -374,7 +376,7 @@ with: {{\n\t{with_name:?}: generate\n}}
             r#"
 pub async fn serve<T: {wrpc_transport}::Serve>(
     wrpc: &T,
-    handler: impl {bound} + Send + Sync + Clone + 'static,
+    handler: impl {bound} + ::core::marker::Send + ::core::marker::Sync + ::core::clone::Clone + 'static,
     shutdown: impl ::core::future::Future<Output = ()>,
 ) -> {anyhow}::Result<()> {{
     use {futures}::FutureExt as _;
@@ -397,49 +399,6 @@ pub async fn serve<T: {wrpc_transport}::Serve>(
 }}"#
         );
     }
-}
-
-/// If the package `id` is the only package with its namespace/name combo
-/// then pass through the name unmodified. If, however, there are multiple
-/// versions of this package then the package module is going to get version
-/// information.
-fn name_package_module(resolve: &Resolve, id: PackageId) -> String {
-    let pkg = &resolve.packages[id];
-    let versions_with_same_name = resolve
-        .packages
-        .iter()
-        .filter_map(|(_, p)| {
-            if p.name.namespace == pkg.name.namespace && p.name.name == pkg.name.name {
-                Some(&p.name.version)
-            } else {
-                None
-            }
-        })
-        .collect::<Vec<_>>();
-    let base = pkg.name.name.to_snake_case();
-    if versions_with_same_name.len() == 1 {
-        return base;
-    }
-
-    let version = match &pkg.name.version {
-        Some(version) => version,
-        // If this package didn't have a version then don't mangle its name
-        // and other packages with the same name but with versions present
-        // will have their names mangled.
-        None => return base,
-    };
-
-    // Here there's multiple packages with the same name that differ only in
-    // version, so the version needs to be mangled into the Rust module name
-    // that we're generating. This in theory could look at all of
-    // `versions_with_same_name` and produce a minimal diff, e.g. for 0.1.0
-    // and 0.2.0 this could generate "foo1" and "foo2", but for now
-    // a simpler path is chosen to generate "foo0_1_0" and "foo0_2_0".
-    let version = version
-        .to_string()
-        .replace(['.', '-', '+'], "_")
-        .to_snake_case();
-    format!("{base}{version}")
 }
 
 impl WorldGenerator for RustWrpc {
@@ -681,7 +640,7 @@ fn compute_module_path(name: &WorldKey, resolve: &Resolve, is_export: bool) -> V
             let pkg = iface.package.unwrap();
             let pkgname = resolve.packages[pkg].name.clone();
             path.push(to_rust_ident(&pkgname.namespace));
-            path.push(name_package_module(resolve, pkg));
+            path.push(to_rust_ident(&name_package_module(resolve, pkg)));
             path.push(to_rust_ident(iface.name.as_ref().unwrap()));
         }
     }
