@@ -18,7 +18,7 @@ use futures::{Stream, StreamExt};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::sync::oneshot;
 use tokio::try_join;
-use tracing::{instrument, trace, warn};
+use tracing::{debug, instrument, trace, warn};
 use wrpc_transport::Index as _;
 
 pub const PROTOCOL: &str = "wrpc.0.0.1";
@@ -314,11 +314,15 @@ pub struct Reader {
 impl wrpc_transport::Index<Self> for Reader {
     #[instrument(level = "trace", skip(self))]
     fn index(&self, path: &[usize]) -> anyhow::Result<Self> {
+        trace!("locking index tree");
         let mut nested = self
             .nested
             .lock()
             .map_err(|err| anyhow!(err.to_string()).context("failed to lock map"))?;
-        let incoming = nested.take(path).context("unknown subscription")?;
+        trace!("taking index subscription");
+        let incoming = nested
+            .take(path)
+            .with_context(|| format!("unknown subscription for path `{path:?}`"))?;
         Ok(Self {
             buffer: Bytes::default(),
             incoming,
@@ -391,7 +395,7 @@ impl SubjectWriter {
 impl wrpc_transport::Index<Self> for SubjectWriter {
     #[instrument(level = "trace", skip(self))]
     fn index(&self, path: &[usize]) -> anyhow::Result<Self> {
-        let tx: Subject = index_path(self.tx.as_str(), path).into();
+        let tx = Subject::from(index_path(self.tx.as_str(), path));
         let publisher = self.nats.publish_sink(tx.clone());
         Ok(Self {
             nats: Arc::clone(&self.nats),
@@ -402,7 +406,7 @@ impl wrpc_transport::Index<Self> for SubjectWriter {
 }
 
 impl AsyncWrite for SubjectWriter {
-    #[instrument(level = "trace", skip_all, ret, fields(subject = ?self.tx, buf = format!("{buf:02x?}")))]
+    #[instrument(level = "trace", skip_all, ret, fields(subject = self.tx.as_str(), buf = format!("{buf:02x?}")))]
     fn poll_write(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -436,7 +440,7 @@ impl AsyncWrite for SubjectWriter {
         }
     }
 
-    #[instrument(level = "trace", skip_all, ret, fields(subject = ?self.tx))]
+    #[instrument(level = "trace", skip_all, ret, fields(subject = self.tx.as_str()))]
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
         trace!("flushing");
         self.publisher
@@ -444,7 +448,7 @@ impl AsyncWrite for SubjectWriter {
             .map_err(|_| std::io::ErrorKind::BrokenPipe.into())
     }
 
-    #[instrument(level = "trace", skip_all, ret, fields(subject = ?self.tx))]
+    #[instrument(level = "trace", skip_all, ret, fields(subject = self.tx.as_str()))]
     fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
         trace!("writing empty buffer to shut down stream");
         ready!(self.as_mut().poll_write(cx, &[]))?;
@@ -822,16 +826,17 @@ impl wrpc_transport::Invoke for Client {
     type Incoming = Reader;
 
     #[instrument(level = "trace", skip(self, paths, params), fields(params = format!("{params:02x?}")))]
-    async fn invoke(
+    async fn invoke<P: AsRef<[Option<usize>]> + Send + Sync>(
         &self,
         cx: Self::Context,
         instance: &str,
         func: &str,
         mut params: Bytes,
-        paths: &[impl AsRef<[Option<usize>]> + Send + Sync],
+        paths: impl AsRef<[P]> + Send,
     ) -> anyhow::Result<(Self::Outgoing, Self::Incoming)> {
         let rx = Subject::from(self.nats.new_inbox());
         let result_rx = Subject::from(result_subject(&rx));
+        let paths = paths.as_ref();
         let (result_rx, handshake_rx, nested) = try_join!(
             async {
                 self.nats
@@ -930,15 +935,20 @@ async fn serve_connection(
     let tx = tx.context("peer did not specify a reply subject")?;
     let rx = nats.new_inbox();
     let param_rx = Subject::from(param_subject(&rx));
-    trace!("subscribing on subjects");
     let (param_rx, nested) = try_join!(
         async {
+            trace!(
+                subject = param_rx.as_str(),
+                "subscribing on parameter subject"
+            );
             nats.subscribe(param_rx.clone())
                 .await
                 .context("failed to subscribe on parameter subject")
         },
         try_join_all(paths.iter().map(|path| async {
-            nats.subscribe(Subject::from(subscribe_path(&param_rx, path.as_ref())))
+            let subject = subscribe_path(&param_rx, path.as_ref());
+            trace!(?subject, "subscribing on nested parameter subject");
+            nats.subscribe(Subject::from(subject))
                 .await
                 .context("failed to subscribe on nested parameter subject")
         }))
@@ -974,20 +984,22 @@ impl wrpc_transport::Serve for Client {
     type Incoming = Reader;
 
     #[instrument(level = "trace", skip(self, paths))]
-    async fn serve<P: AsRef<[Option<usize>]> + Send + Sync + 'static>(
+    async fn serve(
         &self,
         instance: &str,
         func: &str,
-        paths: impl Into<Arc<[P]>> + Send + Sync + 'static,
+        paths: impl Into<Arc<[Box<[Option<usize>]>]>> + Send,
     ) -> anyhow::Result<
         impl Stream<Item = anyhow::Result<(Self::Context, Self::Outgoing, Self::Incoming)>> + 'static,
     > {
         let subject = invocation_subject(&self.prefix, instance, func);
         let sub = if let Some(group) = &self.queue_group {
+            debug!(subject, ?group, "queue-subscribing on invocation subject");
             self.nats
                 .queue_subscribe(subject, group.to_string())
                 .await?
         } else {
+            debug!(subject, "subscribing on invocation subject");
             self.nats.subscribe(subject).await?
         };
         let paths = paths.into();

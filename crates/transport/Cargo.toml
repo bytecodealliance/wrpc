@@ -10,8 +10,11 @@ license.workspace = true
 repository.workspace = true
 
 [features]
-default = ["frame"]
+default = ["frame", "fs", "net", "io-std"]
 frame = []
+fs = ["tokio/fs"]
+net = ["tokio/net"]
+io-std = ["tokio/io-std"]
 
 [dependencies]
 anyhow = { workspace = true, features = ["std"] }
@@ -19,7 +22,7 @@ bytes = { workspace = true }
 futures = { workspace = true, features = ["std"] }
 tokio = { workspace = true }
 tokio-stream = { workspace = true }
-tokio-util = { workspace = true, features = ["codec"] }
+tokio-util = { workspace = true, features = ["codec", "io"] }
 tracing = { workspace = true, features = ["attributes"] }
 wasm-tokio = { workspace = true, features = ["tracing"] }
 

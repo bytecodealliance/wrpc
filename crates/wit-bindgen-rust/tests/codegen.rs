@@ -312,7 +312,7 @@ mod custom_derives {
 
         // Clone is included by default almost everywhere, so include it here to make sure it
         // doesn't conflict
-        additional_derives: [serde::Serialize, serde::Deserialize, Hash, Clone, PartialEq, Eq],
+        additional_derives: [serde::Serialize, serde::Deserialize, ::core::hash::Hash, core::clone::Clone, ::core::cmp::PartialEq, ::core::cmp::Eq],
     });
 
     use exports::my::inline::blah::Foo;
@@ -645,6 +645,45 @@ mod example_4 {
                 set-max-level: func(level: level);
 
                 log: func(level: level, msg: string);
+            }
+        }
+    "#,
+    });
+}
+
+#[allow(unused)]
+mod async_test {
+    wit_bindgen_wrpc::generate!({
+        inline: r#"
+        package wrpc-test:async;
+
+        world async {
+            import handler;
+            export handler;
+        }
+
+        interface handler {
+            use types.{request, response};
+
+            handle: func(request: request) -> result<response, string>;
+        }
+
+        interface types {
+            type fields = list<tuple<string, list<list<u8>>>>;
+
+            record request {
+                body: stream<u8>,
+                trailers: future<option<fields>>,
+                path-with-query: option<string>,
+                authority: option<string>,
+                headers: fields,
+            }
+
+            record response {
+                body: stream<u8>,
+                trailers: future<option<fields>>,
+                status: u16,
+                headers: fields,
             }
         }
     "#,

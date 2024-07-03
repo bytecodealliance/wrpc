@@ -12,7 +12,7 @@ use wit_bindgen_core::wit_parser::{
     WorldKey,
 };
 use wit_bindgen_core::{uwrite, uwriteln, Source, TypeInfo};
-use wrpc_introspect::rpc_func_name;
+use wrpc_introspect::{async_paths_ty, async_paths_tyid, is_ty, rpc_func_name};
 
 pub struct InterfaceGenerator<'a> {
     pub src: Source,
@@ -72,7 +72,7 @@ impl InterfaceGenerator<'_> {
                 0 => {
                     uwrite!(
                         self.src,
-                        " -> impl ::core::future::Future<Output = {}::Result<()>> + Send",
+                        " -> impl ::core::future::Future<Output = {}::Result<()>>",
                         self.gen.anyhow_path()
                     );
                 }
@@ -84,7 +84,7 @@ impl InterfaceGenerator<'_> {
                     );
                     let ty = func.results.iter_types().next().unwrap();
                     self.print_ty(ty, true, false);
-                    self.push_str(">> + Send");
+                    self.push_str(">>");
                 }
                 _ => {
                     uwrite!(
@@ -96,7 +96,7 @@ impl InterfaceGenerator<'_> {
                         self.print_ty(ty, true, false);
                         self.push_str(", ");
                     }
-                    self.push_str(")>> + Send");
+                    self.push_str(")>>");
                 }
             }
             self.src.push_str(";\n");
@@ -141,7 +141,7 @@ impl InterfaceGenerator<'_> {
             r#"
 pub async fn serve_interface<T: {wrpc_transport}::Serve, U>(
     wrpc: &T,
-    handler: impl Handler<T::Context> + {resource_traits} Send + Sync + Clone + 'static,
+    handler: impl Handler<T::Context> + {resource_traits} ::core::marker::Send + ::core::marker::Sync + ::core::clone::Clone + 'static,
     shutdown: impl ::core::future::Future<Output = U>,
 ) -> {anyhow}::Result<U> {{
     let ("#,
@@ -196,21 +196,64 @@ pub async fn serve_interface<T: {wrpc_transport}::Serve, U>(
             }
         };
         for func in &funcs_to_export {
-            uwriteln!(
+            let paths = func.results.iter_types().enumerate().fold(
+                BTreeSet::default(),
+                |mut paths, (i, ty)| {
+                    let (nested, fut) = async_paths_ty(self.resolve, ty);
+                    for path in nested {
+                        let mut s = String::with_capacity(3 + path.len() * 6);
+                        s.push_str(&format!("[Some({i})"));
+                        for i in path {
+                            if let Some(i) = i {
+                                s.push_str(&format!(", Some({i})"));
+                            } else {
+                                s.push_str(", None");
+                            }
+                        }
+                        s.push(']');
+                        paths.insert(s);
+                    }
+                    if fut {
+                        paths.insert(format!("[Some({i})]"));
+                    }
+                    paths
+                },
+            );
+            uwrite!(
                 self.src,
                 r#"
          async {{ 
              {anyhow}::Context::context(wrpc.serve_values(
                  "{instance}",
                  "{}",
-                 [[None; 0]], // TODO: set paths
+                 ::std::sync::Arc::from("#,
+                rpc_func_name(func),
+                anyhow = self.gen.anyhow_path(),
+            );
+            if paths.is_empty() {
+                self.src.push_str(
+                    r"{
+                    let paths: [::std::boxed::Box<[::core::option::Option<usize>]>; 0] = [];
+                    paths
+                }",
+                );
+            } else {
+                self.src.push_str("[");
+                for path in paths {
+                    self.src.push_str("::std::boxed::Box::from(");
+                    self.src.push_str(&path);
+                    self.src.push_str("), ");
+                }
+                self.src.push_str("]");
+            }
+            uwriteln!(
+                self.src,
+                r#")
              )
              .await,
              "failed to serve `{instance}.{}`")
          }},"#,
-                rpc_func_name(func),
                 func.name,
-                anyhow = self.gen.anyhow_path(),
             );
         }
         self.push_str(")?;\n");
@@ -307,7 +350,12 @@ pub async fn serve_interface<T: {wrpc_transport}::Serve, U>(
                 self.src,
                 r#"
                                 ).await {{
-                                    Ok(()) => continue,
+                                    Ok(()) => {{
+                                        if let Some(rx) = rx {{
+                                            rx.await??;
+                                        }}
+                                        continue;
+                                    }}
                                     Err(err) => {{
                                         if let Some(rx) = rx {{
                                             rx.abort();
@@ -446,77 +494,156 @@ pub async fn serve_interface<T: {wrpc_transport}::Serve, U>(
         }
         self.src.push_str("#[allow(clippy::all)]\n");
 
+        let async_params = func.params.iter().any(|(_, ty)| {
+            let (paths, fut) = async_paths_ty(self.resolve, ty);
+            fut || !paths.is_empty()
+        });
+        let paths = func.results.iter_types().enumerate().fold(
+            BTreeSet::default(),
+            |mut paths, (i, ty)| {
+                let (nested, fut) = async_paths_ty(self.resolve, ty);
+                for path in nested {
+                    let mut s = String::with_capacity(7 + path.len() * 6);
+                    s.push_str(&format!("[Some({i})"));
+                    for i in path {
+                        if let Some(i) = i {
+                            s.push_str(&format!(", Some({i})"));
+                        } else {
+                            s.push_str(", None");
+                        }
+                    }
+                    s.push(']');
+                    paths.insert(s);
+                }
+                if fut {
+                    paths.insert(format!("[Some({i})]"));
+                }
+                paths
+            },
+        );
+
+        let anyhow = self.gen.anyhow_path().to_string();
+
         let params = self.print_docs_and_params(func, &sig);
         match func.results.iter_types().collect::<Vec<_>>().as_slice() {
             [] => {
-                uwrite!(
-                    self.src,
-                    " -> impl ::core::future::Future<Output = {anyhow}::Result<()>> + Send + 'a",
-                    anyhow = self.gen.anyhow_path()
-                );
+                uwrite!(self.src, " -> {anyhow}::Result<()>",);
             }
             [ty] => {
-                uwrite!(
-                    self.src,
-                    " -> impl ::core::future::Future<Output = {anyhow}::Result<",
-                    anyhow = self.gen.anyhow_path()
-                );
+                uwrite!(self.src, " -> {anyhow}::Result<",);
+                if async_params || !paths.is_empty() {
+                    self.push_str("(");
+                }
                 self.print_ty(ty, true, false);
-                uwrite!(self.src, ">> + Send + 'a");
+                if async_params || !paths.is_empty() {
+                    uwrite!(
+                        self.src,
+                        ", ::core::option::Option<impl ::core::future::Future<Output = {anyhow}::Result<()>> + ::core::marker::Send + 'static + {wrpc_transport}::Captures<'a>>)",
+                        wrpc_transport = self.gen.wrpc_transport_path(),
+                    );
+                }
+                uwrite!(self.src, ">");
             }
             types => {
-                uwrite!(
-                    self.src,
-                    " -> impl ::core::future::Future<Output = {anyhow}::Result<(",
-                    anyhow = self.gen.anyhow_path()
-                );
+                uwrite!(self.src, " -> {anyhow}::Result<(",);
                 for ty in types {
                     self.print_ty(ty, true, false);
                     self.push_str(", ");
                 }
-                uwrite!(self.src, ")>> + Send + 'a");
-            }
-        }
-        self.src.push_str("{\n");
-        let anyhow = self.gen.anyhow_path().to_string();
-
-        uwrite!(
-            self.src,
-            r#"let wrpc__ = wrpc__.invoke_values_blocking(cx__,  "{instance}", "{}", ({params}), "#,
-            rpc_func_name(func),
-            params = {
-                let s = params.join(", ");
-                if params.len() == 1 {
-                    format!("{s},")
-                } else {
-                    s
+                if async_params || !paths.is_empty() {
+                    uwrite!(
+                        self.src,
+                        "::core::option::Option<impl ::core::future::Future<Output = {anyhow}::Result<()>> + ::core::marker::Send + 'static + {wrpc_transport}::Captures<'a>>",
+                        wrpc_transport = self.gen.wrpc_transport_path(),
+                    );
                 }
-            },
-        );
-        // TODO: Set async paths
-        self.src.push_str("&[[]]);\n");
-        uwriteln!(
-            self.src,
-            r#"async {{
-            let wrpc__ = {anyhow}::Context::context(wrpc__.await, "failed to invoke `{instance}.{}`")?;"#,
-            func.name,
-        );
-        if func.results.len() == 1 {
-            self.push_str("let (wrpc__,) = wrpc__;\n");
+                uwrite!(self.src, ")>");
+            }
+        };
+        self.src.push_str("{\n");
+
+        if func.results.len() == 0 || (!async_params && paths.is_empty()) {
+            uwrite!(
+                self.src,
+                r#"let wrpc__ = {anyhow}::Context::context(
+            wrpc__.invoke_values_blocking(cx__,  "{instance}", "{}", ({params}), "#,
+                rpc_func_name(func),
+                params = {
+                    let s = params.join(", ");
+                    if params.len() == 1 {
+                        format!("{s},")
+                    } else {
+                        s
+                    }
+                },
+            );
+            self.src.push_str("[");
+            if paths.is_empty() {
+                self.src.push_str("[None; 0]; 0");
+            } else {
+                for path in paths {
+                    self.src.push_str(&path);
+                    self.src.push_str(".as_slice(), ");
+                }
+            }
+            self.src.push_str("]).await,\n");
+            uwriteln!(
+                self.src,
+                r#"
+            "failed to invoke `{instance}.{}`")?;"#,
+                func.name,
+            );
+            if func.results.len() == 1 {
+                self.push_str("let (wrpc__,) = wrpc__;\n");
+            }
             self.push_str("Ok(wrpc__)\n");
         } else {
-            self.push_str("let (");
-            for i in 0..func.results.len() {
-                uwrite!(self.src, "r{i}__, ");
+            uwrite!(
+                self.src,
+                r#"let (wrpc__, io__) = {anyhow}::Context::context(
+            wrpc__.invoke_values(cx__,  "{instance}", "{}", ({params}), "#,
+                rpc_func_name(func),
+                params = {
+                    let s = params.join(", ");
+                    if params.len() == 1 {
+                        format!("{s},")
+                    } else {
+                        s
+                    }
+                },
+            );
+            self.src.push_str("[");
+            if paths.is_empty() {
+                self.src.push_str("[None; 0]; 0");
+            } else {
+                for path in paths {
+                    self.src.push_str(&path);
+                    self.src.push_str(".as_slice(), ");
+                }
             }
-            self.push_str(") = wrpc__;\n");
-            self.push_str("Ok((");
-            for i in 0..func.results.len() {
-                uwrite!(self.src, "r{i}__, ");
+            self.src.push_str("]).await,\n");
+            uwriteln!(
+                self.src,
+                r#"
+            "failed to invoke `{instance}.{}`")?;"#,
+                func.name,
+            );
+            if func.results.len() == 1 {
+                self.push_str("let (wrpc__,) = wrpc__;\n");
+                self.push_str("Ok((wrpc__, io__))\n");
+            } else {
+                self.push_str("let (");
+                for i in 0..func.results.len() {
+                    uwrite!(self.src, "r{i}__, ");
+                }
+                self.push_str(") = wrpc__;\n");
+                self.push_str("Ok((");
+                for i in 0..func.results.len() {
+                    uwrite!(self.src, "r{i}__, ");
+                }
+                self.push_str("io__))\n");
             }
-            self.push_str("))\n");
         }
-        self.push_str("}\n");
         self.push_str("}\n");
 
         match func.kind {
@@ -586,6 +713,9 @@ pub async fn serve_interface<T: {wrpc_transport}::Serve, U>(
 
         if !sig.private {
             self.push_str("pub ");
+        }
+        if self.in_import {
+            self.push_str("async ");
         }
         self.push_str("fn ");
         if sig.use_item_name {
@@ -701,7 +831,10 @@ pub async fn serve_interface<T: {wrpc_transport}::Serve, U>(
                     TypeDefKind::Stream(ty) => self.print_stream(ty, false),
                     TypeDefKind::Type(ty) => self.print_import_param_ty(ty),
                     _ => {
-                        self.push_str("&'a ");
+                        let (paths, fut) = async_paths_tyid(self.resolve, *id);
+                        if !fut && paths.is_empty() {
+                            self.push_str("&'a ");
+                        }
                         self.print_tyid(*id, true, false);
                     }
                 }
@@ -732,13 +865,13 @@ pub async fn serve_interface<T: {wrpc_transport}::Serve, U>(
     }
 
     fn print_option(&mut self, ty: &Type, owned: bool, submodule: bool) {
-        self.push_str("Option<");
+        self.push_str("::core::option::Option<");
         self.print_ty(ty, owned, submodule);
         self.push_str(">");
     }
 
     fn print_result(&mut self, ty: &Result_, owned: bool, submodule: bool) {
-        self.push_str("Result<");
+        self.push_str("::core::result::Result<");
         self.print_optional_ty(ty.ok.as_ref(), owned, submodule);
         self.push_str(",");
         self.print_optional_ty(ty.err.as_ref(), owned, submodule);
@@ -747,38 +880,44 @@ pub async fn serve_interface<T: {wrpc_transport}::Serve, U>(
 
     fn print_list(&mut self, ty: &Type, owned: bool, submodule: bool) {
         if owned {
-            self.push_str("Vec<");
-            self.print_ty(ty, true, submodule);
-            self.push_str(">");
+            if is_ty(self.resolve, Type::U8, ty) {
+                uwrite!(self.src, "{bytes}::Bytes", bytes = self.gen.bytes_path());
+            } else {
+                self.push_str("Vec<");
+                self.print_ty(ty, true, submodule);
+                self.push_str(">");
+            }
+        } else if is_ty(self.resolve, Type::U8, ty) {
+            uwrite!(self.src, "&{bytes}::Bytes", bytes = self.gen.bytes_path());
         } else {
-            self.push_str("&'a [");
+            self.push_str("&[");
             self.print_ty(ty, false, submodule);
             self.push_str("]");
         }
     }
 
     fn print_future(&mut self, ty: &Option<Type>, submodule: bool) {
-        self.push_str("Pin<Box<dyn Future<Output = ");
+        self.push_str("::core::pin::Pin<::std::boxed::Box<dyn ::core::future::Future<Output = ");
         if let Some(ty) = ty {
             self.print_ty(ty, true, submodule);
         } else {
             self.push_str("()");
         }
-        self.push_str("> + Send + Sync + 'static>>");
+        self.push_str("> + ::core::marker::Send + ::core::marker::Sync>>");
     }
 
     fn print_stream(&mut self, Stream { element, .. }: &Stream, submodule: bool) {
         uwrite!(
             self.src,
-            "Pin<Box<dyn {futures}::Stream<Output = ",
+            "::core::pin::Pin<::std::boxed::Box<dyn {futures}::Stream<Item = ",
             futures = self.gen.futures_path()
         );
         if let Some(ty) = element {
-            self.print_ty(ty, true, submodule);
+            self.print_list(ty, true, submodule);
         } else {
-            self.push_str("()");
+            self.push_str("Vec<()>");
         }
-        self.push_str("> + Send + Sync + 'static>>");
+        self.push_str("> + ::core::marker::Send + ::core::marker::Sync>>");
     }
 
     fn print_own(&mut self, id: TypeId, submodule: bool) {
@@ -854,13 +993,22 @@ pub async fn serve_interface<T: {wrpc_transport}::Serve, U>(
             self.push_str(name);
             self.push_str("::");
             self.push_str(&case_name);
+            let is_async = payload.is_some_and(|ty| async_paths_ty(self.resolve, ty).1);
             if payload.is_some() {
-                self.push_str("(e)");
+                if is_async {
+                    self.push_str("(_)");
+                } else {
+                    self.push_str("(e)");
+                }
             }
             self.push_str(" => {\n");
             self.push_str(&format!("f.debug_tuple(\"{name}::{case_name}\")"));
             if payload.is_some() {
-                self.push_str(".field(e)");
+                if is_async {
+                    self.push_str(r#".field(&"<async>")"#);
+                } else {
+                    self.push_str(".field(e)");
+                }
             }
             self.push_str(".finish()\n");
             self.push_str("}\n");
@@ -930,17 +1078,31 @@ impl<'a> wit_bindgen_core::InterfaceGenerator<'a> for InterfaceGenerator<'a> {
             .cloned()
             .collect();
         if let Some(name) = self.name_of(id) {
+            let (paths, _) = async_paths_tyid(self.resolve, id);
+
             self.rustdoc(docs);
             let mut derives = additional_derives.clone();
-            if info.is_copy() {
+            if info.is_copy() && paths.is_empty() {
                 self.push_str("#[repr(C)]\n");
-                derives.extend(
-                    ["Copy", "Clone"]
-                        .into_iter()
-                        .map(std::string::ToString::to_string),
-                );
-            } else if info.is_clone() {
-                derives.insert("Clone".to_string());
+                if !derives.contains("Clone")
+                    && !derives.contains("core :: clone :: Clone")
+                    && !derives.contains(":: core :: clone :: Clone")
+                {
+                    derives.insert("::core::clone::Clone".to_string());
+                }
+                if !derives.contains("Copy")
+                    && !derives.contains("core :: marker :: Copy")
+                    && !derives.contains(":: core :: marker :: Copy")
+                {
+                    derives.insert("::core::marker::Copy".to_string());
+                }
+            } else if info.is_clone()
+                && paths.is_empty()
+                && !derives.contains("Clone")
+                && !derives.contains("core :: clone :: Clone")
+                && !derives.contains(":: core :: clone :: Clone")
+            {
+                derives.insert("::core::clone::Clone".to_string());
             }
             if !derives.is_empty() {
                 self.push_str("#[derive(");
@@ -965,26 +1127,32 @@ impl<'a> wit_bindgen_core::InterfaceGenerator<'a> for InterfaceGenerator<'a> {
             let tokio_util = self.gen.tokio_util_path().to_string();
             let wrpc_transport = self.gen.wrpc_transport_path().to_string();
 
+            let (paths, _) = async_paths_tyid(self.resolve, id);
+            if paths.is_empty() {
+                uwriteln!(
+                    self.src,
+                    r"
+impl<W> {wrpc_transport}::Encode<W> for &self::{name}
+where
+    W: ::core::marker::Send + ::core::marker::Sync + {wrpc_transport}::Index<W> + {tokio}::io::AsyncWrite + ::core::marker::Unpin + 'static,
+{{
+    type Encoder = {mod_name}::Encoder<W>;
+}}",
+                );
+            }
             uwriteln!(
                 self.src,
                 r"
-impl<W> {wrpc_transport}::Encode<W> for self::{name} 
+impl<W> {wrpc_transport}::Encode<W> for self::{name}
 where
-    W: Send + Sync + {wrpc_transport}::Index<W> + 'static,
-{{
-    type Encoder = {mod_name}::Encoder<W>;
-}}
-
-impl<W> {wrpc_transport}::Encode<W> for &self::{name} 
-where
-    W: Send + Sync + {wrpc_transport}::Index<W> + 'static,
+    W: ::core::marker::Send + ::core::marker::Sync + {wrpc_transport}::Index<W> + {tokio}::io::AsyncWrite + ::core::marker::Unpin + 'static,
 {{
     type Encoder = {mod_name}::Encoder<W>;
 }}
 
 impl<R> {wrpc_transport}::Decode<R> for self::{name}
 where
-    R: Send + Sync + {wrpc_transport}::Index<R> + 'static,
+    R: ::core::marker::Send + ::core::marker::Sync + {wrpc_transport}::Index<R> + {tokio}::io::AsyncRead + ::core::marker::Unpin + 'static,
 {{
     type Decoder = {mod_name}::Decoder<R>;
     type ListDecoder = {wrpc_transport}::ListDecoder<Self::Decoder, R>;
@@ -993,7 +1161,7 @@ where
 mod {mod_name} {{
     pub struct Encoder<W> 
     where
-        W: Send + Sync + {wrpc_transport}::Index<W> + 'static,
+        W: ::core::marker::Send + ::core::marker::Sync + {wrpc_transport}::Index<W> + {tokio}::io::AsyncWrite + ::core::marker::Unpin + 'static,
     {{",
             );
 
@@ -1005,15 +1173,15 @@ mod {mod_name} {{
                     uwriteln!(self.src, " as {wrpc_transport}::Encode<W>>::Encoder,");
                 }
             } else {
-                uwriteln!(self.src, "_ty: core::marker::PhantomData<W>,");
+                uwriteln!(self.src, "_ty: ::core::marker::PhantomData<W>,");
             }
             uwriteln!(
                 self.src,
                 r"}}
     #[automatically_derived]
-    impl<W> Default for Encoder<W>
+    impl<W> ::core::default::Default for Encoder<W>
     where
-        W: Send + Sync + {wrpc_transport}::Index<W> + 'static,
+        W: ::core::marker::Send + ::core::marker::Sync + {wrpc_transport}::Index<W> + {tokio}::io::AsyncWrite + ::core::marker::Unpin + 'static,
     {{
         fn default() -> Self {{
             Self{{"
@@ -1021,10 +1189,10 @@ mod {mod_name} {{
             if !fields.is_empty() {
                 for Field { name, .. } in fields {
                     let name = to_rust_ident(name);
-                    uwriteln!(self.src, "{name}: Default::default(),");
+                    uwriteln!(self.src, "{name}: ::core::default::Default::default(),");
                 }
             } else {
-                uwriteln!(self.src, "_ty: core::marker::PhantomData,");
+                uwriteln!(self.src, "_ty: ::core::marker::PhantomData,");
             }
             uwriteln!(
                 self.src,
@@ -1035,9 +1203,9 @@ mod {mod_name} {{
     #[automatically_derived]
     impl<W> {wrpc_transport}::Deferred<W> for Encoder<W>
     where
-        W: Send + Sync + {wrpc_transport}::Index<W> + 'static,
+        W: ::core::marker::Send + ::core::marker::Sync + {wrpc_transport}::Index<W> + {tokio}::io::AsyncWrite + ::core::marker::Unpin + 'static,
     {{
-        fn take_deferred(&mut self) -> Option<{wrpc_transport}::DeferredFn<W>> {{"
+        fn take_deferred(&mut self) -> ::core::option::Option<{wrpc_transport}::DeferredFn<W>> {{"
             );
             if !fields.is_empty() {
                 for Field { name, .. } in fields {
@@ -1052,7 +1220,7 @@ mod {mod_name} {{
                 uwriteln!(
                     self.src,
                     r"{{
-            return Some(Box::new(|w, path| Box::pin(async move {{
+            return Some(::std::boxed::Box::new(|w, path| ::std::boxed::Box::pin(async move {{
                 {tokio}::try_join!(",
                 );
                 for (i, Field { name, .. }) in fields.iter().enumerate() {
@@ -1089,7 +1257,7 @@ mod {mod_name} {{
 
     pub struct Decoder<R>
     where
-        R: Send + Sync + {wrpc_transport}::Index<R> + 'static,
+        R: ::core::marker::Send + ::core::marker::Sync + {wrpc_transport}::Index<R> + {tokio}::io::AsyncRead + ::core::marker::Unpin + 'static,
     {{"
             );
 
@@ -1099,20 +1267,20 @@ mod {mod_name} {{
                     uwrite!(self.src, "c_{name}: <");
                     self.print_ty(ty, true, true);
                     uwriteln!(self.src, " as {wrpc_transport}::Decode<R>>::Decoder,");
-                    uwrite!(self.src, "v_{name}: Option<");
+                    uwrite!(self.src, "v_{name}: ::core::option::Option<");
                     self.print_ty(ty, true, true);
                     uwriteln!(self.src, ">,");
                 }
             } else {
-                uwriteln!(self.src, "_ty: core::marker::PhantomData<R>,");
+                uwriteln!(self.src, "_ty: ::core::marker::PhantomData<R>,");
             }
             uwriteln!(
                 self.src,
                 r"}}
     #[automatically_derived]
-    impl<R> Default for Decoder<R>
+    impl<R> ::core::default::Default for Decoder<R>
     where
-        R: Send + Sync + {wrpc_transport}::Index<R> + 'static,
+        R: ::core::marker::Send + ::core::marker::Sync + {wrpc_transport}::Index<R> + {tokio}::io::AsyncRead + ::core::marker::Unpin + 'static,
     {{
         fn default() -> Self {{
             Self{{"
@@ -1120,11 +1288,11 @@ mod {mod_name} {{
             if !fields.is_empty() {
                 for Field { name, .. } in fields {
                     let name = to_rust_ident(name);
-                    uwriteln!(self.src, "c_{name}: Default::default(),");
-                    uwriteln!(self.src, "v_{name}: Default::default(),");
+                    uwriteln!(self.src, "c_{name}: ::core::default::Default::default(),");
+                    uwriteln!(self.src, "v_{name}: ::core::default::Default::default(),");
                 }
             } else {
-                uwriteln!(self.src, "_ty: core::marker::PhantomData,");
+                uwriteln!(self.src, "_ty: ::core::marker::PhantomData,");
             }
             uwriteln!(
                 self.src,
@@ -1135,9 +1303,9 @@ mod {mod_name} {{
     #[automatically_derived]
     impl<R> {wrpc_transport}::Deferred<R> for Decoder<R>
     where
-        R: Send + Sync + {wrpc_transport}::Index<R> + 'static,
+        R: ::core::marker::Send + ::core::marker::Sync + {wrpc_transport}::Index<R> + {tokio}::io::AsyncRead + ::core::marker::Unpin + 'static,
     {{
-        fn take_deferred(&mut self) -> Option<{wrpc_transport}::DeferredFn<R>> {{"
+        fn take_deferred(&mut self) -> ::core::option::Option<{wrpc_transport}::DeferredFn<R>> {{"
             );
             if !fields.is_empty() {
                 for Field { name, .. } in fields {
@@ -1152,7 +1320,7 @@ mod {mod_name} {{
                 uwriteln!(
                     self.src,
                     r"{{
-            return Some(Box::new(|r, path| Box::pin(async move {{
+            return Some(::std::boxed::Box::new(|r, path| ::std::boxed::Box::pin(async move {{
                 {tokio}::try_join!(",
                 );
                 for (i, Field { name, .. }) in fields.iter().enumerate() {
@@ -1190,12 +1358,12 @@ mod {mod_name} {{
     #[automatically_derived]
     impl<R> {tokio_util}::codec::Decoder for Decoder<R> 
     where
-        R: Send + Sync + {wrpc_transport}::Index<R> + 'static,
+        R: ::core::marker::Send + ::core::marker::Sync + {wrpc_transport}::Index<R> + {tokio}::io::AsyncRead + ::core::marker::Unpin + 'static,
     {{
         type Item = super::{name};
         type Error = ::std::io::Error;
 
-        fn decode(&mut self, src: &mut {bytes}::BytesMut) -> Result<Option<Self::Item>, Self::Error> {{"#
+        fn decode(&mut self, src: &mut {bytes}::BytesMut) -> ::core::result::Result<::core::option::Option<Self::Item>, Self::Error> {{"#
             );
             for Field { name, .. } in fields {
                 let name = to_rust_ident(name);
@@ -1219,14 +1387,18 @@ mod {mod_name} {{
             self.push_str("}\n");
             self.push_str("}\n");
 
-            for name in [format!("super::{name}"), format!("&super::{name}")] {
+            let mut names = vec![format!("super::{name}")];
+            if paths.is_empty() {
+                names.push(format!("&super::{name}"));
+            }
+            for name in names {
                 uwriteln!(
                     self.src,
                     r#"
     #[automatically_derived]
     impl<W> {tokio_util}::codec::Encoder<{name}> for Encoder<W> 
     where
-        W: Send + Sync + {wrpc_transport}::Index<W> + 'static,
+        W: ::core::marker::Send + ::core::marker::Sync + {wrpc_transport}::Index<W> + {tokio}::io::AsyncWrite + ::core::marker::Unpin + 'static,
     {{
         type Error = ::std::io::Error;
 
@@ -1267,11 +1439,16 @@ mod {mod_name} {{
             );
             self.push_str(&format!("f.debug_struct(\"{name}\")"));
             for field in fields {
-                self.push_str(&format!(
-                    ".field(\"{}\", &self.{})",
-                    field.name,
-                    to_rust_ident(&field.name)
-                ));
+                let (_, fut) = async_paths_ty(self.resolve, &field.ty);
+                if fut {
+                    self.push_str(&format!(r#".field("{}", &"<async>")"#, field.name));
+                } else {
+                    self.push_str(&format!(
+                        ".field(\"{}\", &self.{})",
+                        field.name,
+                        to_rust_ident(&field.name)
+                    ));
+                }
             }
             self.push_str(".finish()\n");
             self.push_str("}\n");
@@ -1330,7 +1507,7 @@ pub struct {}(());",
             let repr = RustFlagsRepr::new(flags);
             uwriteln!(
                 self.src,
-                "#[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Clone, Copy)]"
+                "#[derive(::core::cmp::PartialEq, ::core::cmp::Eq, ::core::cmp::PartialOrd, ::core::cmp::Ord, ::core::hash::Hash, ::core::fmt::Debug, ::core::clone::Clone, ::core::marker::Copy)]"
             );
             uwriteln!(self.src, "pub struct {name}: {repr} {{");
 
@@ -1358,10 +1535,11 @@ impl<W> {wrpc_transport}::Encode<W> for &self::{name} {{
     type Encoder = {mod_name}::Codec;
 }}
 
-impl<R> {wrpc_transport}::Decode<R> for self::{name}
-where
-    R: Send + Sync + {wrpc_transport}::Index<R> + 'static,
-{{
+impl<W> {wrpc_transport}::Encode<W> for &&self::{name} {{
+    type Encoder = {mod_name}::Codec;
+}}
+
+impl<R> {wrpc_transport}::Decode<R> for self::{name} {{
     type Decoder = {mod_name}::Codec;
     type ListDecoder = {wrpc_transport}::SyncCodec<{wasm_tokio}::CoreVecDecoder<Self::Decoder>>;
 }}
@@ -1369,12 +1547,12 @@ where
 use {bitflags} as __{mod_name}__bitflags;
 
 mod {mod_name} {{
-    #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+    #[derive(::core::clone::Clone, ::core::marker::Copy, ::core::fmt::Debug, ::core::default::Default, ::core::cmp::PartialEq, ::core::cmp::Eq)]
     pub struct Codec;
 
     #[automatically_derived]
     impl<W> {wrpc_transport}::Deferred<W> for Codec {{
-        fn take_deferred(&mut self) -> Option<{wrpc_transport}::DeferredFn<W>> {{
+        fn take_deferred(&mut self) -> ::core::option::Option<{wrpc_transport}::DeferredFn<W>> {{
             None
         }}
     }}
@@ -1384,7 +1562,7 @@ mod {mod_name} {{
         type Item = super::{name};
         type Error = ::std::io::Error;
 
-        fn decode(&mut self, src: &mut {bytes}::BytesMut) -> Result<Option<Self::Item>, Self::Error> {{
+        fn decode(&mut self, src: &mut {bytes}::BytesMut) -> ::core::result::Result<::core::option::Option<Self::Item>, Self::Error> {{
             let n = src.len();
             if n < {n} {{
                 src.reserve({n} - n);
@@ -1404,7 +1582,7 @@ mod {mod_name} {{
     impl {tokio_util}::codec::Encoder<super::{name}> for Codec {{
         type Error = ::std::io::Error;
 
-        fn encode(&mut self, item: super::{name}, dst: &mut {bytes}::BytesMut) -> Result<(), Self::Error> {{
+        fn encode(&mut self, item: super::{name}, dst: &mut {bytes}::BytesMut) -> ::core::result::Result<(), Self::Error> {{
             dst.extend_from_slice(&item.bits().to_le_bytes());
             Ok(())
         }}
@@ -1414,7 +1592,7 @@ mod {mod_name} {{
     impl {tokio_util}::codec::Encoder<&super::{name}> for Codec {{
         type Error = ::std::io::Error;
 
-        fn encode(&mut self, item: &super::{name}, dst: &mut {bytes}::BytesMut) -> Result<(), Self::Error> {{
+        fn encode(&mut self, item: &super::{name}, dst: &mut {bytes}::BytesMut) -> ::core::result::Result<(), Self::Error> {{
             self.encode(*item, dst)
         }}
     }}
@@ -1423,7 +1601,7 @@ mod {mod_name} {{
     impl {tokio_util}::codec::Encoder<&&super::{name}> for Codec {{
         type Error = ::std::io::Error;
 
-        fn encode(&mut self, item: &&super::{name}, dst: &mut {bytes}::BytesMut) -> Result<(), Self::Error> {{
+        fn encode(&mut self, item: &&super::{name}, dst: &mut {bytes}::BytesMut) -> ::core::result::Result<(), Self::Error> {{
             self.encode(**item, dst)
         }}
     }}
@@ -1449,16 +1627,18 @@ mod {mod_name} {{
             .cloned()
             .collect();
         if let Some(name) = self.name_of(id) {
+            let (paths, _) = async_paths_tyid(self.resolve, id);
+
             self.rustdoc(docs);
             let mut derives = additional_derives.clone();
-            if info.is_copy() {
+            if info.is_copy() && paths.is_empty() {
                 derives.extend(
-                    ["Copy", "Clone"]
+                    ["::core::marker::Copy", "::core::clone::Clone"]
                         .into_iter()
                         .map(std::string::ToString::to_string),
                 );
-            } else if info.is_clone() {
-                derives.insert("Clone".to_string());
+            } else if info.is_clone() && paths.is_empty() {
+                derives.insert("::core::clone::Clone".to_string());
             }
             if !derives.is_empty() {
                 self.push_str("#[derive(");
@@ -1523,18 +1703,22 @@ impl<W> {wrpc_transport}::Encode<W> for &self::{name} {{
     type Encoder = {mod_name}::Codec;
 }}
 
+impl<W> {wrpc_transport}::Encode<W> for &&self::{name} {{
+    type Encoder = {mod_name}::Codec;
+}}
+
 impl<R> {wrpc_transport}::Decode<R> for self::{name} {{
     type Decoder = {mod_name}::Codec;
     type ListDecoder = {wrpc_transport}::SyncCodec<{wasm_tokio}::CoreVecDecoder<Self::Decoder>>;
 }}
 
 mod {mod_name} {{
-    #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+    #[derive(::core::clone::Clone, ::core::marker::Copy, ::core::fmt::Debug, ::core::default::Default, ::core::cmp::PartialEq, ::core::cmp::Eq)]
     pub struct Codec;
 
     #[automatically_derived]
     impl<W> {wrpc_transport}::Deferred<W> for Codec {{
-        fn take_deferred(&mut self) -> Option<{wrpc_transport}::DeferredFn<W>> {{
+        fn take_deferred(&mut self) -> ::core::option::Option<{wrpc_transport}::DeferredFn<W>> {{
             None
         }}
     }}
@@ -1544,7 +1728,7 @@ mod {mod_name} {{
         type Item = super::{name};
         type Error = ::std::io::Error;
 
-        fn decode(&mut self, src: &mut {bytes}::BytesMut) -> Result<Option<Self::Item>, Self::Error> {{
+        fn decode(&mut self, src: &mut {bytes}::BytesMut) -> ::core::result::Result<::core::option::Option<Self::Item>, Self::Error> {{
             let Some(disc) = {wasm_tokio}::Leb128DecoderU32.decode(src)? else {{
                 return Ok(None)
             }};
@@ -1565,7 +1749,7 @@ mod {mod_name} {{
     impl {tokio_util}::codec::Encoder<super::{name}> for Codec {{
         type Error = ::std::io::Error;
 
-        fn encode(&mut self, item: super::{name}, dst: &mut {bytes}::BytesMut) -> Result<(), Self::Error> {{
+        fn encode(&mut self, item: super::{name}, dst: &mut {bytes}::BytesMut) -> ::core::result::Result<(), Self::Error> {{
             {wasm_tokio}::Leb128Encoder.encode(match item {{"#
                 );
                 for (i, case) in cases.iter().enumerate() {
@@ -1583,7 +1767,7 @@ mod {mod_name} {{
     impl {tokio_util}::codec::Encoder<&super::{name}> for Codec {{
         type Error = ::std::io::Error;
 
-        fn encode(&mut self, item: &super::{name}, dst: &mut {bytes}::BytesMut) -> Result<(), Self::Error> {{
+        fn encode(&mut self, item: &super::{name}, dst: &mut {bytes}::BytesMut) -> ::core::result::Result<(), Self::Error> {{
             self.encode(*item, dst)
         }}
     }}
@@ -1592,43 +1776,60 @@ mod {mod_name} {{
     impl {tokio_util}::codec::Encoder<&&super::{name}> for Codec {{
         type Error = ::std::io::Error;
 
-        fn encode(&mut self, item: &&super::{name}, dst: &mut {bytes}::BytesMut) -> Result<(), Self::Error> {{
+        fn encode(&mut self, item: &&super::{name}, dst: &mut {bytes}::BytesMut) -> ::core::result::Result<(), Self::Error> {{
             self.encode(**item, dst)
         }}
     }}
 }}"#,
                 );
             } else {
-                uwrite!(
-                    self.src,
-                    r#"
-impl<W> {wrpc_transport}::Encode<W> for self::{name} 
+                let tokio = self.gen.tokio_path().to_string();
+
+                let (paths, _) = async_paths_tyid(self.resolve, id);
+                if paths.is_empty() {
+                    uwrite!(
+                        self.src,
+                        r#"
+impl<W> {wrpc_transport}::Encode<W> for &self::{name}
 where
-    W: Send + Sync + {wrpc_transport}::Index<W> + 'static,
+    W: ::core::marker::Send + ::core::marker::Sync + {wrpc_transport}::Index<W> + {tokio}::io::AsyncWrite + ::core::marker::Unpin + 'static,
 {{
     type Encoder = {mod_name}::Encoder<W>;
 }}
 
-impl<W> {wrpc_transport}::Encode<W> for &self::{name}
+impl<W> {wrpc_transport}::Encode<W> for &&self::{name}
 where
-    W: Send + Sync + {wrpc_transport}::Index<W> + 'static,
+    W: ::core::marker::Send + ::core::marker::Sync + {wrpc_transport}::Index<W> + {tokio}::io::AsyncWrite + ::core::marker::Unpin + 'static,
+{{
+    type Encoder = {mod_name}::Encoder<W>;
+}}
+"#
+                    );
+                }
+
+                uwrite!(
+                    self.src,
+                    r#"
+impl<W> {wrpc_transport}::Encode<W> for self::{name}
+where
+    W: ::core::marker::Send + ::core::marker::Sync + {wrpc_transport}::Index<W> + {tokio}::io::AsyncWrite + ::core::marker::Unpin + 'static,
 {{
     type Encoder = {mod_name}::Encoder<W>;
 }}
 
 impl<R> {wrpc_transport}::Decode<R> for self::{name}
 where
-    R: Send + Sync + {wrpc_transport}::Index<R> + 'static,
+    R: ::core::marker::Send + ::core::marker::Sync + {wrpc_transport}::Index<R> + {tokio}::io::AsyncRead + ::core::marker::Unpin + 'static,
 {{
     type Decoder = {mod_name}::Decoder<R>;
     type ListDecoder = {wrpc_transport}::ListDecoder<Self::Decoder, R>;
 }}
 
 mod {mod_name} {{
-    pub struct Encoder<W>(Option<{wrpc_transport}::DeferredFn<W>>);
+    pub struct Encoder<W>(::core::option::Option<{wrpc_transport}::DeferredFn<W>>);
 
     #[automatically_derived]
-    impl<W> Default for Encoder<W> {{
+    impl<W> ::core::default::Default for Encoder<W> {{
         fn default() -> Self {{ 
             Self(None)
         }}
@@ -1636,28 +1837,31 @@ mod {mod_name} {{
 
     #[automatically_derived]
     impl<W> {wrpc_transport}::Deferred<W> for Encoder<W> {{
-        fn take_deferred(&mut self) -> Option<{wrpc_transport}::DeferredFn<W>> {{
+        fn take_deferred(&mut self) -> ::core::option::Option<{wrpc_transport}::DeferredFn<W>> {{
             self.0.take()
         }}
     }}"#
                 );
 
-                for ty in [
-                    format!("super::{name}"),
-                    format!("&super::{name}"),
-                    format!("&&super::{name}"),
-                ] {
+                let mut names = vec![format!("super::{name}")];
+                if paths.is_empty() {
+                    names.extend_from_slice(&[
+                        format!("&super::{name}"),
+                        format!("&&super::{name}"),
+                    ]);
+                }
+                for ty in names {
                     uwrite!(
                         self.src,
                         r#"
     #[automatically_derived]
     impl<W> {tokio_util}::codec::Encoder<{ty}> for Encoder<W> 
     where
-        W: Send + Sync + {wrpc_transport}::Index<W> + 'static,
+        W: ::core::marker::Send + ::core::marker::Sync + {wrpc_transport}::Index<W> + {tokio}::io::AsyncWrite + ::core::marker::Unpin + 'static,
     {{
         type Error = ::std::io::Error;
 
-        fn encode(&mut self, item: {ty}, dst: &mut {bytes}::BytesMut) -> Result<(), Self::Error> {{
+        fn encode(&mut self, item: {ty}, dst: &mut {bytes}::BytesMut) -> ::core::result::Result<(), Self::Error> {{
             match item {{"#
                     );
                     for (
@@ -1676,7 +1880,7 @@ mod {mod_name} {{
                                 r"
                 super::{name}::{case}(payload) => {{
                     {wasm_tokio}::Leb128Encoder.encode({i}_u32, dst)?;
-                    self.0 = {wrpc_transport}::Encode::<W>::encode(payload, &mut Default::default(), dst)?;
+                    self.0 = {wrpc_transport}::Encode::<W>::encode(payload, &mut ::core::default::Default::default(), dst)?;
                     Ok(())
                 }},"
                             );
@@ -1702,7 +1906,7 @@ mod {mod_name} {{
                     r"
     pub enum PayloadDecoder<R>
     where
-        R: Send + Sync + {wrpc_transport}::Index<R> + 'static,
+        R: ::core::marker::Send + ::core::marker::Sync + {wrpc_transport}::Index<R> + {tokio}::io::AsyncRead + ::core::marker::Unpin + 'static,
     {{"
                 );
 
@@ -1730,14 +1934,14 @@ mod {mod_name} {{
     }}
 
     #[repr(transparent)]
-    pub struct Decoder<R>(Option<PayloadDecoder<R>>)
+    pub struct Decoder<R>(::core::option::Option<PayloadDecoder<R>>)
     where
-        R: Send + Sync + {wrpc_transport}::Index<R> + 'static;
+        R: ::core::marker::Send + ::core::marker::Sync + {wrpc_transport}::Index<R> + {tokio}::io::AsyncRead + ::core::marker::Unpin + 'static;
 
     #[automatically_derived]
-    impl<R> Default for Decoder<R> 
+    impl<R> ::core::default::Default for Decoder<R> 
     where
-        R: Send + Sync + {wrpc_transport}::Index<R> + 'static,
+        R: ::core::marker::Send + ::core::marker::Sync + {wrpc_transport}::Index<R> + {tokio}::io::AsyncRead + ::core::marker::Unpin + 'static,
     {{
         fn default() -> Self {{
             Self(None)
@@ -1747,9 +1951,9 @@ mod {mod_name} {{
     #[automatically_derived]
     impl<R> {wrpc_transport}::Deferred<R> for Decoder<R>
     where
-        R: Send + Sync + {wrpc_transport}::Index<R> + 'static,
+        R: ::core::marker::Send + ::core::marker::Sync + {wrpc_transport}::Index<R> + {tokio}::io::AsyncRead + ::core::marker::Unpin + 'static,
     {{
-        fn take_deferred(&mut self) -> Option<{wrpc_transport}::DeferredFn<R>> {{
+        fn take_deferred(&mut self) -> ::core::option::Option<{wrpc_transport}::DeferredFn<R>> {{
             match self.0 {{"#
                 );
                 for Case {
@@ -1780,12 +1984,12 @@ mod {mod_name} {{
     #[automatically_derived]
     impl<R> {tokio_util}::codec::Decoder for Decoder<R> 
     where
-        R: Send + Sync + {wrpc_transport}::Index<R> + 'static,
+        R: ::core::marker::Send + ::core::marker::Sync + {wrpc_transport}::Index<R> + {tokio}::io::AsyncRead + ::core::marker::Unpin + 'static,
     {{
         type Item = super::{name};
         type Error = ::std::io::Error;
 
-        fn decode(&mut self, src: &mut {bytes}::BytesMut) -> Result<Option<Self::Item>, Self::Error> {{
+        fn decode(&mut self, src: &mut {bytes}::BytesMut) -> ::core::result::Result<::core::option::Option<Self::Item>, Self::Error> {{
             let state = if let Some(ref mut state) = self.0 {{
                 state
             }} else {{
@@ -1808,7 +2012,7 @@ mod {mod_name} {{
                         uwriteln!(
                             self.src,
                             r"
-                        {i} => self.0.insert(PayloadDecoder::{case}(Default::default())),"
+                        {i} => self.0.insert(PayloadDecoder::{case}(::core::default::Default::default())),"
                         );
                     } else {
                         uwriteln!(self.src, "{i} => return Ok(Some(super::{name}::{case})),");
@@ -1889,9 +2093,14 @@ mod {mod_name} {{
                 .cloned()
                 .collect();
             derives.extend(
-                ["Clone", "Copy", "PartialEq", "Eq"]
-                    .into_iter()
-                    .map(std::string::ToString::to_string),
+                [
+                    ":: core :: clone :: Clone",
+                    ":: core :: marker :: Copy",
+                    ":: core :: cmp :: PartialEq",
+                    ":: core :: cmp :: Eq",
+                ]
+                .into_iter()
+                .map(std::string::ToString::to_string),
             );
             self.push_str("#[derive(");
             self.push_str(&derives.into_iter().collect::<Vec<_>>().join(", "));
@@ -2002,12 +2211,12 @@ impl<R> {wrpc_transport}::Decode<R> for self::{name} {{
 }}
 
 mod {mod_name} {{
-    #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+    #[derive(::core::clone::Clone, ::core::marker::Copy, ::core::fmt::Debug, ::core::default::Default, ::core::cmp::PartialEq, ::core::cmp::Eq)]
     pub struct Codec;
 
     #[automatically_derived]
     impl<W> {wrpc_transport}::Deferred<W> for Codec {{
-        fn take_deferred(&mut self) -> Option<{wrpc_transport}::DeferredFn<W>> {{
+        fn take_deferred(&mut self) -> ::core::option::Option<{wrpc_transport}::DeferredFn<W>> {{
             None
         }}
     }}
@@ -2017,7 +2226,7 @@ mod {mod_name} {{
         type Item = super::{name};
         type Error = ::std::io::Error;
 
-        fn decode(&mut self, src: &mut {bytes}::BytesMut) -> Result<Option<Self::Item>, Self::Error> {{
+        fn decode(&mut self, src: &mut {bytes}::BytesMut) -> ::core::result::Result<::core::option::Option<Self::Item>, Self::Error> {{
             let Some(disc) = {wasm_tokio}::Leb128DecoderU32.decode(src)? else {{
                 return Ok(None)
             }};
@@ -2038,7 +2247,7 @@ mod {mod_name} {{
     impl {tokio_util}::codec::Encoder<super::{name}> for Codec {{
         type Error = ::std::io::Error;
 
-        fn encode(&mut self, item: super::{name}, dst: &mut {bytes}::BytesMut) -> Result<(), Self::Error> {{
+        fn encode(&mut self, item: super::{name}, dst: &mut {bytes}::BytesMut) -> ::core::result::Result<(), Self::Error> {{
             {wasm_tokio}::Leb128Encoder.encode(match item {{"#
             );
             for (i, case) in enum_.cases.iter().enumerate() {
@@ -2056,7 +2265,7 @@ mod {mod_name} {{
     impl {tokio_util}::codec::Encoder<&super::{name}> for Codec {{
         type Error = ::std::io::Error;
 
-        fn encode(&mut self, item: &super::{name}, dst: &mut {bytes}::BytesMut) -> Result<(), Self::Error> {{
+        fn encode(&mut self, item: &super::{name}, dst: &mut {bytes}::BytesMut) -> ::core::result::Result<(), Self::Error> {{
             self.encode(*item, dst)
         }}
     }}
@@ -2065,7 +2274,7 @@ mod {mod_name} {{
     impl {tokio_util}::codec::Encoder<&&super::{name}> for Codec {{
         type Error = ::std::io::Error;
 
-        fn encode(&mut self, item: &&super::{name}, dst: &mut {bytes}::BytesMut) -> Result<(), Self::Error> {{
+        fn encode(&mut self, item: &&super::{name}, dst: &mut {bytes}::BytesMut) -> ::core::result::Result<(), Self::Error> {{
             self.encode(**item, dst)
         }}
     }}

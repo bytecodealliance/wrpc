@@ -44,7 +44,7 @@ async fn go_bindgen() -> anyhow::Result<()> {
         wrpc::generate!({
             world: "sync-client",
             path: "tests/wit",
-            additional_derives: [PartialEq],
+            additional_derives: [::core::cmp::PartialEq],
         });
 
         use wrpc_test::integration::sync;
