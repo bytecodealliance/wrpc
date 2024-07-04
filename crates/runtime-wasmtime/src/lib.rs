@@ -553,7 +553,7 @@ async fn read_flags(n: usize, r: &mut (impl AsyncRead + Unpin)) -> std::io::Resu
 
 /// Read encoded value of type [`Type`] from an [`AsyncRead`] into a [`Val`]
 #[instrument(level = "trace", skip_all, fields(ty, path))]
-async fn read_value<T, R>(
+pub async fn read_value<T, R>(
     store: &mut impl AsContextMut<Data = T>,
     r: &mut Pin<&mut R>,
     val: &mut Val,
