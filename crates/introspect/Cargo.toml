@@ -1,6 +1,7 @@
 [package]
 name = "wrpc-introspect"
 version = "0.1.0"
+description = "Component type introspection for wRPC"
 
 authors.workspace = true
 categories.workspace = true
