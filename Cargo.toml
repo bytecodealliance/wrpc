@@ -133,7 +133,7 @@ wit-bindgen-wrpc-rust = { version = "0.4", default-features = false, path = "./c
 wit-bindgen-wrpc-rust-macro = { version = "0.4", default-features = false, path = "./crates/wit-bindgen-rust-macro" }
 wit-component = { version = "0.212", default-features = false }
 wit-parser = { version = "0.212", default-features = false }
-wrpc-cli = { version = "0.1", path = "./crates/cli", default-features = false }
+wrpc-cli = { version = "0.2", path = "./crates/cli", default-features = false }
 wrpc-introspect = { version = "0.1", default-features = false, path = "./crates/introspect" }
 wrpc-runtime-wasmtime = { version = "0.17", path = "./crates/runtime-wasmtime", default-features = false }
 wrpc-transport = { version = "0.26", path = "./crates/transport", default-features = false }
