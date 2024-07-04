@@ -20,7 +20,7 @@ io-std = ["tokio/io-std"]
 anyhow = { workspace = true, features = ["std"] }
 bytes = { workspace = true }
 futures = { workspace = true, features = ["std"] }
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt"] }
 tokio-stream = { workspace = true }
 tokio-util = { workspace = true, features = ["codec", "io"] }
 tracing = { workspace = true, features = ["attributes"] }
