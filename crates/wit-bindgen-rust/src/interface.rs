@@ -326,9 +326,11 @@ pub async fn serve_interface<T: {wrpc_transport}::Serve, U>(
                 self.src,
                 r#"
                         let rx = rx.map({tracing}::Instrument::in_current_span).map({tokio}::spawn);
+                        {tracing}::trace!(instance = "{instance}", func = "{wit_name}", "calling handler");
                         match {trait_name}::{name}(&handler, cx"#,
                 tokio = self.gen.tokio_path(),
                 tracing = self.gen.tracing_path(),
+                wit_name = func.name,
             );
             for i in 0..func.params.len() {
                 uwrite!(self.src, ", p{i}");
@@ -352,8 +354,12 @@ pub async fn serve_interface<T: {wrpc_transport}::Serve, U>(
                                 ).await {{
                                     Ok(()) => {{
                                         if let Some(rx) = rx {{
-                                            if let Err(err) = rx.await? {{
-                                                {tracing}::warn!(?err, "failed to receive async `{instance}.{wit_name}` invocation parameters");
+                                            {tracing}::trace!(instance = "{instance}", func = "{wit_name}", "receiving async invocation parameters");
+                                            if let Err(err) = {anyhow}::Context::context(
+                                                rx.await,
+                                                "receipt of async `.{wit_name}` invocation parameters failed",
+                                            )? {{
+                                                {tracing}::warn!(?err, instance = "{instance}", func = "{wit_name}", "failed to receive async invocation parameters");
                                             }}
                                         }}
                                         continue;
@@ -362,7 +368,7 @@ pub async fn serve_interface<T: {wrpc_transport}::Serve, U>(
                                         if let Some(rx) = rx {{
                                             rx.abort();
                                         }}
-                                        {tracing}::warn!(?err, "failed to transmit `{instance}.{wit_name}` invocation results");
+                                        {tracing}::warn!(?err, instance = "{instance}", func = "{wit_name}", "failed to transmit invocation results");
                                     }}
                                 }}
                             }},
@@ -370,14 +376,15 @@ pub async fn serve_interface<T: {wrpc_transport}::Serve, U>(
                                 if let Some(rx) = rx {{
                                     rx.abort();
                                 }}
-                                {tracing}::warn!(?err, "failed to serve `{instance}.{wit_name}` invocation");
+                                {tracing}::warn!(?err, instance = "{instance}", func = "{wit_name}", "failed to serve invocation");
                             }}
                         }}
                     }},
                     Some(Err(err)) => {{
-                        {tracing}::error!("failed to accept invocation");
+                        {tracing}::error!(?err, instance = "{instance}", func = "{wit_name}", "failed to accept invocation");
                     }},
                     None => {{
+                        {tracing}::warn!(instance = "{instance}", func = "{wit_name}", "invocation stream unexpectedly finished");
                         {anyhow}::bail!("`{instance}.{wit_name}` stream unexpectedly finished")
                     }},
                 }}

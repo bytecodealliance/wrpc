@@ -127,10 +127,10 @@ wasmtime = { version = "22", default-features = false }
 wasmtime-wasi = { version = "22", default-features = false }
 wit-bindgen = { version = "0.27", default-features = false }
 wit-bindgen-core = { version = "0.27", default-features = false }
-wit-bindgen-wrpc = { version = "0.4.1", default-features = false, path = "./crates/wit-bindgen" }
+wit-bindgen-wrpc = { version = "0.4.2", default-features = false, path = "./crates/wit-bindgen" }
 wit-bindgen-wrpc-go = { version = "0.2", default-features = false, path = "./crates/wit-bindgen-go" }
-wit-bindgen-wrpc-rust = { version = "0.4.1", default-features = false, path = "./crates/wit-bindgen-rust" }
-wit-bindgen-wrpc-rust-macro = { version = "0.4", default-features = false, path = "./crates/wit-bindgen-rust-macro" }
+wit-bindgen-wrpc-rust = { version = "0.4.2", default-features = false, path = "./crates/wit-bindgen-rust" }
+wit-bindgen-wrpc-rust-macro = { version = "0.4.2", default-features = false, path = "./crates/wit-bindgen-rust-macro" }
 wit-component = { version = "0.212", default-features = false }
 wit-parser = { version = "0.212", default-features = false }
 wrpc-cli = { version = "0.2", path = "./crates/cli", default-features = false }
