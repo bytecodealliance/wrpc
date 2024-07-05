@@ -762,7 +762,7 @@ where
             join!(
                 async {
                     info!("receiving `a`");
-                    assert_eq!(a.collect::<Vec<_>>().await.concat(), [0xc0, 0xff, 0xee])
+                    assert_eq!(a.collect::<Vec<_>>().await.concat(), [0xc0, 0xff, 0xee]);
                 },
                 async {
                     info!("receiving `b`");
