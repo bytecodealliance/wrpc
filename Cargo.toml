@@ -1,6 +1,6 @@
 [package]
 name = "wrpc"
-version = "0.2.0"
+version = "0.2.1"
 description = "WebAssembly component-native RPC framework based on WIT"
 
 authors.workspace = true
@@ -109,6 +109,7 @@ quote = { version = "1", default-features = false }
 rcgen = { version = "0.13", default-features = false }
 reqwest = { version = "0.11", default-features = false }
 rustls = { version = "0.23", default-features = false }
+send-future = { version = "0.1", default-features = false }
 serde = { version = "1", default-features = false }
 serde_json = { version = "1", default-features = false }
 syn = { version = "2", default-features = false, features = ["printing"] }

@@ -2078,6 +2078,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "61697e0a1c7e512e84a621326239844a24d8207b4669b41bc18b32ea5cbf988b"
 
 [[package]]
+name = "send-future"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "224e328af6e080cddbab3c770b1cf50f0351ba0577091ef2410c3951d835ff87"
+
+[[package]]
 name = "serde"
 version = "1.0.203"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3671,7 +3677,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "async-nats-wrpc",
@@ -3735,11 +3741,12 @@ dependencies = [
 
 [[package]]
 name = "wrpc-transport"
-version = "0.26.1"
+version = "0.26.2"
 dependencies = [
  "anyhow",
  "bytes",
  "futures",
+ "send-future",
  "test-log",
  "tokio",
  "tokio-stream",

@@ -1,6 +1,6 @@
 [package]
 name = "wrpc-transport"
-version = "0.26.1"
+version = "0.26.2"
 description = "wRPC core transport functionality"
 
 authors.workspace = true
@@ -24,6 +24,7 @@ tokio = { workspace = true, features = ["macros", "rt"] }
 tokio-stream = { workspace = true }
 tokio-util = { workspace = true, features = ["codec", "io"] }
 tracing = { workspace = true, features = ["attributes"] }
+send-future = { workspace = true }
 wasm-tokio = { workspace = true, features = ["tracing"] }
 
 [dev-dependencies]
