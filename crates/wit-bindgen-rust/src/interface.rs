@@ -337,14 +337,14 @@ pub async fn serve_interface<T: {wrpc_transport}::Serve, U>(
                 self.src,
                 r#"
                         ).await {{
-                            Ok(returns) => {{
+                            Ok(results) => {{
                                 match tx("#,
             );
             if func.results.len() == 1 {
-                // wrap single-element returns into a tuple for correct indexing
-                self.push_str("(returns,)");
+                // wrap single-element results into a tuple for correct indexing
+                self.push_str("(results,)");
             } else {
-                self.push_str("returns");
+                self.push_str("results");
             }
             uwrite!(
                 self.src,
@@ -352,7 +352,9 @@ pub async fn serve_interface<T: {wrpc_transport}::Serve, U>(
                                 ).await {{
                                     Ok(()) => {{
                                         if let Some(rx) = rx {{
-                                            rx.await??;
+                                            if let Err(err) = rx.await? {{
+                                                {tracing}::warn!(?err, "failed to receive async `{instance}.{wit_name}` invocation parameters");
+                                            }}
                                         }}
                                         continue;
                                     }}
@@ -360,7 +362,7 @@ pub async fn serve_interface<T: {wrpc_transport}::Serve, U>(
                                         if let Some(rx) = rx {{
                                             rx.abort();
                                         }}
-                                        {tracing}::warn!(?err, "failed to send returns");
+                                        {tracing}::warn!(?err, "failed to transmit `{instance}.{wit_name}` invocation results");
                                     }}
                                 }}
                             }},
