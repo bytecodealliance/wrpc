@@ -536,10 +536,16 @@ pub async fn serve_interface<T: {wrpc_transport}::Serve, U>(
         let params = self.print_docs_and_params(func, &sig);
         match func.results.iter_types().collect::<Vec<_>>().as_slice() {
             [] => {
-                uwrite!(self.src, " -> {anyhow}::Result<()>",);
+                uwrite!(
+                    self.src,
+                    " -> impl ::core::future::Future<Output = {anyhow}::Result<()>> + Send + 'a"
+                );
             }
             [ty] => {
-                uwrite!(self.src, " -> {anyhow}::Result<",);
+                uwrite!(
+                    self.src,
+                    " -> impl ::core::future::Future<Output = {anyhow}::Result<"
+                );
                 if async_params || !paths.is_empty() {
                     self.push_str("(");
                 }
@@ -551,10 +557,13 @@ pub async fn serve_interface<T: {wrpc_transport}::Serve, U>(
                         wrpc_transport = self.gen.wrpc_transport_path(),
                     );
                 }
-                uwrite!(self.src, ">");
+                uwrite!(self.src, ">> + Send + 'a");
             }
             types => {
-                uwrite!(self.src, " -> {anyhow}::Result<(",);
+                uwrite!(
+                    self.src,
+                    " -> impl ::core::future::Future<Output = {anyhow}::Result<(",
+                );
                 for ty in types {
                     self.print_ty(ty, true, false);
                     self.push_str(", ");
@@ -566,17 +575,23 @@ pub async fn serve_interface<T: {wrpc_transport}::Serve, U>(
                         wrpc_transport = self.gen.wrpc_transport_path(),
                     );
                 }
-                uwrite!(self.src, ")>");
+                uwrite!(self.src, ")>> + Send + 'a");
             }
         };
-        self.src.push_str("{\n");
+        self.push_str(
+            r"
+        {
+        async move {",
+        );
 
         if func.results.len() == 0 || (!async_params && paths.is_empty()) {
             uwrite!(
                 self.src,
-                r#"let wrpc__ = {anyhow}::Context::context(
-            wrpc__.invoke_values_blocking(cx__,  "{instance}", "{}", ({params}), "#,
+                r#"
+                let wrpc__ = {anyhow}::Context::context(
+                    {wrpc_transport}::SendFuture::send(wrpc__.invoke_values_blocking(cx__,  "{instance}", "{}", ({params}), "#,
                 rpc_func_name(func),
+                wrpc_transport = self.gen.wrpc_transport_path(),
                 params = {
                     let s = params.join(", ");
                     if params.len() == 1 {
@@ -595,11 +610,11 @@ pub async fn serve_interface<T: {wrpc_transport}::Serve, U>(
                     self.src.push_str(".as_slice(), ");
                 }
             }
-            self.src.push_str("]).await,\n");
+            self.src.push_str("])).await,\n");
             uwriteln!(
                 self.src,
                 r#"
-            "failed to invoke `{instance}.{}`")?;"#,
+                    "failed to invoke `{instance}.{}`")?;"#,
                 func.name,
             );
             if func.results.len() == 1 {
@@ -609,9 +624,11 @@ pub async fn serve_interface<T: {wrpc_transport}::Serve, U>(
         } else {
             uwrite!(
                 self.src,
-                r#"let (wrpc__, io__) = {anyhow}::Context::context(
-            wrpc__.invoke_values(cx__,  "{instance}", "{}", ({params}), "#,
+                r#"
+                let (wrpc__, io__) = {anyhow}::Context::context(
+                    {wrpc_transport}::SendFuture::send(wrpc__.invoke_values(cx__,  "{instance}", "{}", ({params}), "#,
                 rpc_func_name(func),
+                wrpc_transport = self.gen.wrpc_transport_path(),
                 params = {
                     let s = params.join(", ");
                     if params.len() == 1 {
@@ -630,11 +647,11 @@ pub async fn serve_interface<T: {wrpc_transport}::Serve, U>(
                     self.src.push_str(".as_slice(), ");
                 }
             }
-            self.src.push_str("]).await,\n");
+            self.src.push_str("])).await,\n");
             uwriteln!(
                 self.src,
                 r#"
-            "failed to invoke `{instance}.{}`")?;"#,
+                    "failed to invoke `{instance}.{}`")?;"#,
                 func.name,
             );
             if func.results.len() == 1 {
@@ -653,7 +670,12 @@ pub async fn serve_interface<T: {wrpc_transport}::Serve, U>(
                 self.push_str("io__))\n");
             }
         }
-        self.push_str("}\n");
+        uwriteln!(
+            self.src,
+            r"
+            }}
+        }}"
+        );
 
         match func.kind {
             FunctionKind::Freestanding => {}
@@ -722,9 +744,6 @@ pub async fn serve_interface<T: {wrpc_transport}::Serve, U>(
 
         if !sig.private {
             self.push_str("pub ");
-        }
-        if self.in_import {
-            self.push_str("async ");
         }
         self.push_str("fn ");
         if sig.use_item_name {
