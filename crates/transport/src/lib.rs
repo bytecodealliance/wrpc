@@ -365,6 +365,7 @@ mod tests {
 
     use super::*;
 
+    #[allow(clippy::manual_async_fn)]
     fn invoke_values_send<T>() -> impl Future<
         Output = anyhow::Result<(
             Pin<
