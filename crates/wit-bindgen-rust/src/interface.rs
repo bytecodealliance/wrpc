@@ -810,7 +810,7 @@ pub async fn serve_interface<T: {wrpc_transport}::Serve, U>(
                 if owned {
                     self.push_str("String");
                 } else {
-                    self.push_str("&str");
+                    self.push_str("&'a str");
                 }
             }
         }
@@ -916,9 +916,13 @@ pub async fn serve_interface<T: {wrpc_transport}::Serve, U>(
                 self.push_str(">");
             }
         } else if is_ty(self.resolve, Type::U8, ty) {
-            uwrite!(self.src, "&{bytes}::Bytes", bytes = self.gen.bytes_path());
+            uwrite!(
+                self.src,
+                "&'a {bytes}::Bytes",
+                bytes = self.gen.bytes_path()
+            );
         } else {
-            self.push_str("&[");
+            self.push_str("&'a [");
             self.print_ty(ty, false, submodule);
             self.push_str("]");
         }

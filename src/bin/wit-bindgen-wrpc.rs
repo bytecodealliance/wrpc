@@ -127,7 +127,7 @@ fn gen_world(
     files: &mut Files,
 ) -> Result<()> {
     let mut resolve = Resolve::default();
-    for features in opts.features.iter() {
+    for features in &opts.features {
         for feature in features
             .split(',')
             .flat_map(|s| s.split_whitespace())

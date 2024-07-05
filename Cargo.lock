@@ -3565,7 +3565,7 @@ dependencies = [
 
 [[package]]
 name = "wit-bindgen-wrpc"
-version = "0.4.3"
+version = "0.4.4"
 dependencies = [
  "anyhow",
  "bitflags 2.6.0",
@@ -3593,7 +3593,7 @@ dependencies = [
 
 [[package]]
 name = "wit-bindgen-wrpc-rust"
-version = "0.4.3"
+version = "0.4.4"
 dependencies = [
  "anyhow",
  "clap",
@@ -3609,7 +3609,7 @@ dependencies = [
 
 [[package]]
 name = "wit-bindgen-wrpc-rust-macro"
-version = "0.4.3"
+version = "0.4.4"
 dependencies = [
  "anyhow",
  "prettyplease",
