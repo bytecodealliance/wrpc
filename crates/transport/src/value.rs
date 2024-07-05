@@ -1564,7 +1564,10 @@ where
                 try_join!(
                     async {
                         tx.send(item).map_err(|_| {
-                            std::io::Error::new(std::io::ErrorKind::BrokenPipe, "receiver closed")
+                            std::io::Error::new(
+                                std::io::ErrorKind::BrokenPipe,
+                                "future receiver closed",
+                            )
                         })
                     },
                     async {
@@ -1955,7 +1958,7 @@ where
                 })?;
                 trace!(i, end, "received stream chunk");
                 tx.send(chunk).await.map_err(|_| {
-                    std::io::Error::new(std::io::ErrorKind::BrokenPipe, "receiver closed")
+                    std::io::Error::new(std::io::ErrorKind::BrokenPipe, "stream receiver closed")
                 })?;
                 for (i, deferred) in zip(i.., mem::take(&mut framed.decoder_mut().deferred)) {
                     if let Some(deferred) = deferred {
@@ -2075,7 +2078,10 @@ where
                     }
                     trace!(?chunk, "received byte stream chunk");
                     tx.send(chunk).await.map_err(|_| {
-                        std::io::Error::new(std::io::ErrorKind::BrokenPipe, "receiver closed")
+                        std::io::Error::new(
+                            std::io::ErrorKind::BrokenPipe,
+                            "stream receiver closed",
+                        )
                     })?;
                 }
                 Ok(())
@@ -2145,7 +2151,10 @@ where
                     }
                     trace!(?chunk, "received byte stream chunk");
                     tx.send(std::io::Result::Ok(chunk)).await.map_err(|_| {
-                        std::io::Error::new(std::io::ErrorKind::BrokenPipe, "receiver closed")
+                        std::io::Error::new(
+                            std::io::ErrorKind::BrokenPipe,
+                            "stream receiver closed",
+                        )
                     })?;
                 }
                 Ok(())
