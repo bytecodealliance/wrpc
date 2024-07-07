@@ -105,3 +105,11 @@ This repository contains (for all supported languages):
 [WebAssembly Interface Types (WIT)]: https://component-model.bytecodealliance.org/design/wit.html
 [WIT]: https://component-model.bytecodealliance.org/design/wit.html
 [component model value definiton encoding]: https://github.com/WebAssembly/component-model/blob/8ba643f3a17eced576d8d7d4b3f6c76b4e4347d7/design/mvp/Binary.md#-value-definitions
+
+## Contributing
+
+[![GitHub repo Good Issues for newbies](https://img.shields.io/github/issues/wrpc/wrpc/good%20first%20issue?style=flat&logo=github&logoColor=green&label=Good%20First%20issues)](https://github.com/wrpc/wrpc/issues?q=is%3Aopen+is%3Aissue+label%3A%22good+first+issue%22) [![GitHub Help Wanted issues](https://img.shields.io/github/issues/wrpc/wrpc/help%20wanted?style=flat&logo=github&logoColor=b545d1&label=%22Help%20Wanted%22%20issues)](https://github.com/wrpc/wrpc/issues?q=is%3Aopen+is%3Aissue+label%3A%22help+wanted%22) [![GitHub Help Wanted PRs](https://img.shields.io/github/issues-pr/wrpc/wrpc/help%20wanted?style=flat&logo=github&logoColor=b545d1&label=%22Help%20Wanted%22%20PRs)](https://github.com/wrpc/wrpc/pulls?q=is%3Aopen+is%3Aissue+label%3A%22help+wanted%22) [![GitHub repo Issues](https://img.shields.io/github/issues/wrpc/wrpc?style=flat&logo=github&logoColor=red&label=Issues)](https://github.com/wrpc/wrpc/issues?q=is%3Aopen)
+
+👋 **Welcome, new contributors!**
+
+Whether you're a seasoned developer or just getting started, your contributions are valuable to us. Don't hesitate to jump in, explore the project, and make an impact. To start contributing, please check out our [Contribution Guidelines](CONTRIBUTING.md). 
