@@ -12,7 +12,7 @@ use anyhow::{bail, Context as _};
 use bytes::{BufMut as _, Bytes, BytesMut};
 use futures::future::try_join_all;
 use futures::stream::FuturesUnordered;
-use futures::TryStreamExt as _;
+use futures::{Stream, TryStreamExt as _};
 use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _};
 use tokio::try_join;
 use tokio_util::codec::{Encoder, FramedRead};
@@ -25,7 +25,7 @@ use wasm_tokio::{
     CoreVecEncoderBytes, Leb128Encoder, Utf8Codec,
 };
 use wasmtime::component::types::{self, Case, Field};
-use wasmtime::component::{LinkerInstance, ResourceType, Type, Val};
+use wasmtime::component::{Func, LinkerInstance, ResourceType, Type, Val};
 use wasmtime::{AsContextMut, Engine, StoreContextMut};
 use wasmtime_wasi::pipe::AsyncReadStream;
 use wasmtime_wasi::{InputStream, StreamError, WasiView};
@@ -123,6 +123,7 @@ where
 {
     type Error = wasmtime::Error;
 
+    #[allow(clippy::too_many_lines)]
     fn encode(&mut self, v: &Val, dst: &mut BytesMut) -> Result<(), Self::Error> {
         match (v, self.ty) {
             (Val::Bool(v), Type::Bool) => {
@@ -949,6 +950,7 @@ where
             let (outgoing, incoming) = store
                 .data()
                 .client()
+                // TODO: set paths
                 .invoke(cx, &instance, &name, buf.freeze(), &[[]])
                 .await
                 .with_context(|| {
@@ -984,4 +986,73 @@ where
             Ok(())
         })
     })
+}
+
+pub trait ServeExt: wrpc_transport::Serve {
+    fn serve_function<T>(
+        &self,
+        store: impl AsContextMut<Data = T> + Send + Clone + 'static,
+        func: Func,
+        instance: &str,
+        name: &str,
+    ) -> impl Future<
+        Output = anyhow::Result<impl Stream<Item = anyhow::Result<Self::Context>> + Send + 'static>,
+    > + Send
+    where
+        T: WasiView + 'static,
+    {
+        async move {
+            let params_ty: Arc<[_]> = Arc::from(func.params(&store));
+            let results_ty: Arc<[_]> = Arc::from(func.results(&store));
+            // TODO: set paths
+            let invocations = self.serve(instance, name, []).await?;
+
+            Ok(invocations.and_then(move |(cx, mut tx, rx)| {
+                let mut store = store.clone();
+                let params_ty = Arc::clone(&params_ty);
+                let results_ty = Arc::clone(&results_ty);
+                async move {
+                    let mut params = vec![Val::Bool(false); params_ty.len()];
+                    let mut rx = pin!(rx);
+                    for (i, (v, ty)) in zip(&mut params, params_ty.iter()).enumerate() {
+                        read_value(&mut store, &mut rx, v, ty, &[i])
+                            .await
+                            .with_context(|| format!("failed to decode parameter value {i}"))?;
+                    }
+                    let mut results = vec![Val::Bool(false); results_ty.len()];
+                    func.call_async(&mut store, &params, &mut results)
+                        .await
+                        .context("failed to call function")?;
+                    let mut buf = BytesMut::default();
+                    let mut deferred = vec![];
+                    for (i, (ref v, ty)) in zip(results, results_ty.iter()).enumerate() {
+                        let mut enc = ValEncoder::new(store.as_context_mut(), ty);
+                        enc.encode(v, &mut buf)
+                            .with_context(|| format!("failed to encode result value {i}"))?;
+                        deferred.push(enc.deferred);
+                    }
+                    debug!("transmitting results");
+                    tx.write_all(&buf)
+                        .await
+                        .context("failed to transmit results")?;
+                    tx.shutdown()
+                        .await
+                        .context("failed to shutdown outgoing stream")?;
+                    try_join_all(
+                        zip(0.., deferred)
+                            .filter_map(|(i, f)| f.map(|f| (tx.index(&[i]), f)))
+                            .map(|(w, f)| async move {
+                                let w = w?;
+                                f(w).await
+                            }),
+                    )
+                    .await?;
+                    func.post_return_async(&mut store)
+                        .await
+                        .context("failed to perform post-return cleanup")?;
+                    Ok(cx)
+                }
+            }))
+        }
+    }
 }
