@@ -998,7 +998,9 @@ pub trait ServeExt: wrpc_transport::Serve {
         instance: &str,
         name: &str,
     ) -> impl Future<
-        Output = anyhow::Result<impl Stream<Item = anyhow::Result<Self::Context>> + Send + 'static>,
+        Output = anyhow::Result<
+            impl Stream<Item = anyhow::Result<(Self::Context, anyhow::Result<()>)>> + Send + 'static,
+        >,
     > + Send
     where
         T: WasiView + 'static,
@@ -1019,46 +1021,55 @@ pub trait ServeExt: wrpc_transport::Serve {
                 let params_ty = Arc::clone(&params_ty);
                 let results_ty = Arc::clone(&results_ty);
                 async move {
-                    let mut store = store.lock().await;
-                    let mut params = vec![Val::Bool(false); params_ty.len()];
-                    let mut rx = pin!(rx);
-                    for (i, (v, ty)) in zip(&mut params, params_ty.iter()).enumerate() {
-                        read_value(&mut *store, &mut rx, v, ty, &[i])
-                            .await
-                            .with_context(|| format!("failed to decode parameter value {i}"))?;
-                    }
-                    let mut results = vec![Val::Bool(false); results_ty.len()];
-                    func.call_async(&mut *store, &params, &mut results)
-                        .await
-                        .context("failed to call function")?;
-                    let mut buf = BytesMut::default();
-                    let mut deferred = vec![];
-                    for (i, (ref v, ty)) in zip(results, results_ty.iter()).enumerate() {
-                        let mut enc = ValEncoder::new(store.as_context_mut(), ty);
-                        enc.encode(v, &mut buf)
-                            .with_context(|| format!("failed to encode result value {i}"))?;
-                        deferred.push(enc.deferred);
-                    }
-                    debug!("transmitting results");
-                    tx.write_all(&buf)
-                        .await
-                        .context("failed to transmit results")?;
-                    tx.shutdown()
-                        .await
-                        .context("failed to shutdown outgoing stream")?;
-                    try_join_all(
-                        zip(0.., deferred)
-                            .filter_map(|(i, f)| f.map(|f| (tx.index(&[i]), f)))
-                            .map(|(w, f)| async move {
-                                let w = w?;
-                                f(w).await
-                            }),
-                    )
-                    .await?;
-                    func.post_return_async(&mut *store)
-                        .await
-                        .context("failed to perform post-return cleanup")?;
-                    Ok(cx)
+                    Ok((
+                        cx,
+                        async move {
+                            let mut store = store.lock().await;
+                            let mut params = vec![Val::Bool(false); params_ty.len()];
+                            let mut rx = pin!(rx);
+                            for (i, (v, ty)) in zip(&mut params, params_ty.iter()).enumerate() {
+                                read_value(&mut *store, &mut rx, v, ty, &[i])
+                                    .await
+                                    .with_context(|| {
+                                        format!("failed to decode parameter value {i}")
+                                    })?;
+                            }
+                            let mut results = vec![Val::Bool(false); results_ty.len()];
+                            func.call_async(&mut *store, &params, &mut results)
+                                .await
+                                .context("failed to call function")?;
+                            let mut buf = BytesMut::default();
+                            let mut deferred = vec![];
+                            for (i, (ref v, ty)) in zip(results, results_ty.iter()).enumerate() {
+                                let mut enc = ValEncoder::new(store.as_context_mut(), ty);
+                                enc.encode(v, &mut buf).with_context(|| {
+                                    format!("failed to encode result value {i}")
+                                })?;
+                                deferred.push(enc.deferred);
+                            }
+                            debug!("transmitting results");
+                            tx.write_all(&buf)
+                                .await
+                                .context("failed to transmit results")?;
+                            tx.shutdown()
+                                .await
+                                .context("failed to shutdown outgoing stream")?;
+                            try_join_all(
+                                zip(0.., deferred)
+                                    .filter_map(|(i, f)| f.map(|f| (tx.index(&[i]), f)))
+                                    .map(|(w, f)| async move {
+                                        let w = w?;
+                                        f(w).await
+                                    }),
+                            )
+                            .await?;
+                            func.post_return_async(&mut *store)
+                                .await
+                                .context("failed to perform post-return cleanup")?;
+                            Ok(())
+                        }
+                        .await,
+                    ))
                 }
             }))
         }
@@ -1074,7 +1085,10 @@ pub trait ServeExt: wrpc_transport::Serve {
         name: &str,
     ) -> impl Future<
         Output = anyhow::Result<
-            impl Stream<Item = anyhow::Result<Self::Context>> + Unpin + Send + 'static,
+            impl Stream<Item = anyhow::Result<(Self::Context, anyhow::Result<()>)>>
+                + Unpin
+                + Send
+                + 'static,
         >,
     > + Send
     where
@@ -1173,7 +1187,9 @@ pub trait ServeExt: wrpc_transport::Serve {
         instance: InstancePre<T>,
         mut store: wasmtime::Store<T>,
     ) -> impl Future<
-        Output = anyhow::Result<impl Stream<Item = anyhow::Result<Self::Context>> + 'static>,
+        Output = anyhow::Result<
+            impl Stream<Item = anyhow::Result<(Self::Context, anyhow::Result<()>)>> + 'static,
+        >,
     > + Send
     where
         T: WasiView + 'static,
