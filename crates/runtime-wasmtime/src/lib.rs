@@ -1056,3 +1056,5 @@ pub trait ServeExt: wrpc_transport::Serve {
         }
     }
 }
+
+impl<T: wrpc_transport::Serve> ServeExt for T {}
