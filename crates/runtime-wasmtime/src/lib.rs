@@ -1067,7 +1067,6 @@ pub trait ServeExt: wrpc_transport::Serve {
     /// Serve [`types::ComponentItem`]
     fn serve_item<T>(
         &self,
-        engine: &Engine,
         instance: &Instance,
         ty: types::ComponentItem,
         store: impl Into<Arc<Mutex<wasmtime::Store<T>>>>,
@@ -1116,6 +1115,7 @@ pub trait ServeExt: wrpc_transport::Serve {
                 }
                 types::ComponentItem::ComponentInstance(ty) => {
                     let mut instance_store = store.lock().await;
+                    let engine = instance_store.engine().clone();
                     let mut instance = instance.exports(&mut *instance_store);
                     let mut instance = instance
                         .instance(name)
@@ -1123,7 +1123,7 @@ pub trait ServeExt: wrpc_transport::Serve {
                     let instance_name = name;
                     let mut invocations: SelectAll<Pin<Box<dyn Stream<Item = _> + Send>>> =
                         SelectAll::new();
-                    for (name, ty) in ty.exports(engine) {
+                    for (name, ty) in ty.exports(&engine) {
                         match ty {
                             types::ComponentItem::ComponentFunc(_) => {
                                 debug!(name, "serving instance function export");
@@ -1170,7 +1170,6 @@ pub trait ServeExt: wrpc_transport::Serve {
     /// Serve all exports of this [`InstancePre`]
     fn serve_exports<T>(
         &self,
-        engine: &Engine,
         instance: InstancePre<T>,
         mut store: wasmtime::Store<T>,
     ) -> impl Future<
@@ -1180,8 +1179,9 @@ pub trait ServeExt: wrpc_transport::Serve {
         T: WasiView + 'static,
     {
         async move {
+            let engine = store.engine().clone();
             let ty = instance.component().component_type();
-            let exports = ty.exports(engine);
+            let exports = ty.exports(&engine);
             let instance = instance
                 .instantiate_async(&mut store)
                 .await
@@ -1191,7 +1191,7 @@ pub trait ServeExt: wrpc_transport::Serve {
                 SelectAll::new();
             for (name, ty) in exports {
                 let s = self
-                    .serve_item(engine, &instance, ty, Arc::clone(&store), "", name)
+                    .serve_item(&instance, ty, Arc::clone(&store), "", name)
                     .await?;
                 invocations.push(Box::pin(s));
             }
