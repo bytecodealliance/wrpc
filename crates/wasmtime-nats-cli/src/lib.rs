@@ -1,22 +1,57 @@
+use core::pin::pin;
+use std::sync::Arc;
+
 use anyhow::{anyhow, bail, Context as _};
 use clap::Parser;
+use futures::StreamExt as _;
 use tokio::fs;
-use tracing::{error, instrument, trace};
+use tokio::task::JoinSet;
+use tracing::{error, info, instrument, trace, warn, Instrument as _};
 use url::Url;
-use wasmcloud_component_adapters::WASI_PREVIEW1_COMMAND_COMPONENT_ADAPTER;
-use wasmtime::component::{types, Component, Linker};
+use wasmcloud_component_adapters::{
+    WASI_PREVIEW1_COMMAND_COMPONENT_ADAPTER, WASI_PREVIEW1_REACTOR_COMPONENT_ADAPTER,
+};
+use wasmtime::component::{types, Component, InstancePre, Linker};
 use wasmtime::Store;
-use wasmtime_wasi::{bindings::Command, WasiCtx, WasiView};
 use wasmtime_wasi::{ResourceTable, WasiCtxBuilder};
-use wrpc_runtime_wasmtime::{link_instance, WrpcView};
+use wasmtime_wasi::{WasiCtx, WasiView};
+use wrpc_runtime_wasmtime::{link_instance, ServeExt as _, WrpcView};
 use wrpc_transport::Invoke;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
-struct Args {
+enum Command {
+    Run(RunArgs),
+    Serve(ServeArgs),
+}
+
+/// Run a command component
+#[derive(Parser, Debug)]
+struct RunArgs {
     /// NATS address to use
     #[arg(short, long, default_value = wrpc_cli::nats::DEFAULT_URL)]
     nats: String,
+
+    /// Target prefix to send invocations to
+    target: String,
+
+    /// Path or URL to Wasm command component
+    workload: String,
+}
+
+/// Serve a reactor component
+#[derive(Parser, Debug)]
+struct ServeArgs {
+    /// NATS address to use
+    #[arg(short, long, default_value = wrpc_cli::nats::DEFAULT_URL)]
+    nats: String,
+
+    /// NATS queue group to use
+    #[arg(short, long)]
+    group: Option<String>,
+
+    /// Target prefix to send invocations to
+    target: String,
 
     /// Prefix to listen on
     prefix: String,
@@ -51,19 +86,16 @@ impl<C: Invoke> WasiView for Ctx<C> {
     }
 }
 
-#[instrument(level = "trace", ret)]
-pub async fn run() -> anyhow::Result<()> {
-    wrpc_cli::tracing::init();
-
-    let Args {
-        nats,
-        prefix,
-        workload,
-    } = Args::parse();
-    let nats = wrpc_cli::nats::connect(nats)
-        .await
-        .context("failed to connect to NATS")?;
-
+#[instrument(level = "trace", skip(cx))]
+async fn instantiate_pre<C>(
+    adapter: &[u8],
+    cx: C::Context,
+    workload: &str,
+) -> anyhow::Result<(InstancePre<Ctx<C>>, wasmtime::Engine)>
+where
+    C: Invoke,
+    C::Context: Clone,
+{
     let engine = wasmtime::Engine::new(
         wasmtime::Config::new()
             .async_support(true)
@@ -77,7 +109,7 @@ pub async fn run() -> anyhow::Result<()> {
             .with_context(|| format!("failed to read relative path to workload `{workload}`"))
             .map(Workload::Binary)
     } else {
-        Url::parse(&workload)
+        Url::parse(workload)
             .with_context(|| format!("failed to parse Wasm URL `{workload}`"))
             .map(Workload::Url)
     }?;
@@ -105,10 +137,7 @@ pub async fn run() -> anyhow::Result<()> {
             .validate(true)
             .module(&wasm)
             .context("failed to set core component module")?
-            .adapter(
-                "wasi_snapshot_preview1",
-                WASI_PREVIEW1_COMMAND_COMPONENT_ADAPTER,
-            )
+            .adapter("wasi_snapshot_preview1", adapter)
             .context("failed to add WASI adapter")?
             .encode()
             .context("failed to encode a component")?
@@ -118,7 +147,7 @@ pub async fn run() -> anyhow::Result<()> {
 
     let component = Component::new(&engine, &wasm).context("failed to compile component")?;
 
-    let mut linker = Linker::<Ctx<wrpc_transport_nats::Client>>::new(&engine);
+    let mut linker = Linker::<Ctx<C>>::new(&engine);
     wasmtime_wasi::add_to_linker_async(&mut linker).context("failed to link WASI")?;
 
     let (resolve, world) =
@@ -160,7 +189,6 @@ pub async fn run() -> anyhow::Result<()> {
             | "wasi:io/error@0.2.0"
             | "wasi:io/poll@0.2.0"
             | "wasi:io/streams@0.2.0"
-            | "wasi:keyvalue/store@0.2.0-draft"
             | "wasi:random/random@0.2.0"
             | "wasi:sockets/instance-network@0.2.0"
             | "wasi:sockets/network@0.2.0"
@@ -192,7 +220,7 @@ pub async fn run() -> anyhow::Result<()> {
                 continue;
             }
         };
-        if let Err(err) = link_instance(&engine, &mut linker, instance, instance_name, None) {
+        if let Err(err) = link_instance(&engine, &mut linker, instance, instance_name, cx.clone()) {
             error!(?err, "failed to polyfill instance");
         }
     }
@@ -200,21 +228,45 @@ pub async fn run() -> anyhow::Result<()> {
     let pre = linker
         .instantiate_pre(&component)
         .context("failed to pre-instantiate component")?;
+    Ok((pre, engine))
+}
 
-    let mut store = Store::new(
-        &engine,
+fn new_store<C: Invoke>(engine: &wasmtime::Engine, wrpc: C, arg0: &str) -> wasmtime::Store<Ctx<C>> {
+    Store::new(
+        engine,
         Ctx {
             wasi: WasiCtxBuilder::new()
                 .inherit_env()
                 .inherit_stdio()
                 .inherit_network()
-                .args(&["main.wasm"])
+                .args(&[arg0])
                 .build(),
             table: ResourceTable::new(),
-            wrpc: wrpc_transport_nats::Client::new(nats, prefix, None),
+            wrpc,
         },
+    )
+}
+
+#[instrument(level = "trace", ret)]
+pub async fn handle_run(
+    RunArgs {
+        nats,
+        target,
+        ref workload,
+    }: RunArgs,
+) -> anyhow::Result<()> {
+    let nats = wrpc_cli::nats::connect(nats)
+        .await
+        .context("failed to connect to NATS")?;
+
+    let (pre, engine) =
+        instantiate_pre(WASI_PREVIEW1_COMMAND_COMPONENT_ADAPTER, None, workload).await?;
+    let mut store = new_store(
+        &engine,
+        wrpc_transport_nats::Client::new(nats, target, None),
+        "command.wasm",
     );
-    let (cmd, _) = Command::instantiate_pre(&mut store, &pre)
+    let (cmd, _) = wasmtime_wasi::bindings::Command::instantiate_pre(&mut store, &pre)
         .await
         .context("failed to instantiate `command`")?;
     cmd.wasi_cli_run()
@@ -222,4 +274,153 @@ pub async fn run() -> anyhow::Result<()> {
         .await
         .context("failed to run component")?
         .map_err(|()| anyhow!("component failed"))
+}
+
+#[instrument(level = "trace", ret)]
+pub async fn handle_serve(
+    ServeArgs {
+        nats,
+        prefix,
+        target,
+        group,
+        ref workload,
+    }: ServeArgs,
+) -> anyhow::Result<()> {
+    let nats = wrpc_cli::nats::connect(nats)
+        .await
+        .context("failed to connect to NATS")?;
+    let nats = Arc::new(nats);
+
+    let (pre, engine) =
+        instantiate_pre(WASI_PREVIEW1_REACTOR_COMPONENT_ADAPTER, None, workload).await?;
+
+    let mut handlers = JoinSet::new();
+    let clt = wrpc_transport_nats::Client::new(Arc::clone(&nats), target, None);
+    let srv = wrpc_transport_nats::Client::new(nats, prefix, group.map(Arc::from));
+    for (name, ty) in pre.component().component_type().exports(&engine) {
+        match (name, ty) {
+            (name, types::ComponentItem::ComponentFunc(ty)) => {
+                let clt = clt.clone();
+                let engine = engine.clone();
+                info!(?name, "serving root function");
+                let invocations = srv
+                    .serve_function(
+                        move || new_store(&engine, clt.clone(), "reactor.wasm"),
+                        pre.clone(),
+                        ty,
+                        "",
+                        name,
+                    )
+                    .await?;
+                handlers.spawn(async move {
+                    let mut invocations = pin!(invocations);
+                    while let Some(invocation) = invocations.next().await {
+                        match invocation {
+                            Ok((headers, Ok(()))) => {
+                                info!(?headers, "finished serving root function invocation");
+                            }
+                            Ok((headers, Err(err))) => {
+                                warn!(?headers, ?err, "failed to serve root function invocation");
+                            }
+                            Err(err) => {
+                                error!(?err, "failed to accept root function invocation");
+                            }
+                        }
+                    }
+                    ().in_current_span()
+                });
+            }
+            (_, types::ComponentItem::CoreFunc(_)) => {
+                bail!("serving root core function exports not supported yet")
+            }
+            (_, types::ComponentItem::Module(_)) => {
+                bail!("serving root module exports not supported yet");
+            }
+            (_, types::ComponentItem::Component(_)) => {
+                bail!("serving root component exports not supported yet");
+            }
+            (instance_name, types::ComponentItem::ComponentInstance(ty)) => {
+                for (name, ty) in ty.exports(&engine) {
+                    match ty {
+                        types::ComponentItem::ComponentFunc(ty) => {
+                            let clt = clt.clone();
+                            let engine = engine.clone();
+                            info!(?name, "serving instance function");
+                            let invocations = srv
+                                .serve_function(
+                                    move || new_store(&engine, clt.clone(), "reactor.wasm"),
+                                    pre.clone(),
+                                    ty,
+                                    instance_name,
+                                    name,
+                                )
+                                .await?;
+                            handlers.spawn(async move {
+                                let mut invocations = pin!(invocations);
+                                while let Some(invocation) = invocations.next().await {
+                                    match invocation {
+                                        Ok((headers, Ok(()))) => {
+                                            info!(
+                                                ?headers,
+                                                "finished serving instance function invocation"
+                                            );
+                                        }
+                                        Ok((headers, Err(err))) => {
+                                            warn!(
+                                                ?headers,
+                                                ?err,
+                                                "failed to serve instance function invocation"
+                                            );
+                                        }
+                                        Err(err) => {
+                                            error!(
+                                                ?err,
+                                                "failed to accept instance function invocation"
+                                            );
+                                        }
+                                    }
+                                }
+                                ().in_current_span()
+                            });
+                        }
+                        types::ComponentItem::CoreFunc(_) => {
+                            bail!("serving instance core function exports not supported yet")
+                        }
+                        types::ComponentItem::Module(_) => {
+                            bail!("serving instance module exports not supported yet")
+                        }
+                        types::ComponentItem::Component(_) => {
+                            bail!("serving instance component exports not supported yet")
+                        }
+                        types::ComponentItem::ComponentInstance(_) => {
+                            bail!("serving nested instance exports not supported yet")
+                        }
+                        types::ComponentItem::Type(_) => {}
+                        types::ComponentItem::Resource(_) => {
+                            bail!("serving instance resource exports not supported yet")
+                        }
+                    }
+                }
+            }
+            (_, types::ComponentItem::Type(_)) => {}
+            (_, types::ComponentItem::Resource(_)) => {
+                bail!("serving root resource exports not supported yet")
+            }
+        }
+    }
+    while let Some(res) = handlers.join_next().await {
+        if let Err(err) = res {
+            error!(?err, "handler failed");
+        }
+    }
+    Ok(())
+}
+
+#[instrument(level = "trace", ret)]
+pub async fn run() -> anyhow::Result<()> {
+    wrpc_cli::tracing::init();
+    match Command::parse() {
+        Command::Run(args) => handle_run(args).await,
+        Command::Serve(args) => handle_serve(args).await,
+    }
 }

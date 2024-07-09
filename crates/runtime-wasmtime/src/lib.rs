@@ -11,7 +11,7 @@ use std::sync::Arc;
 use anyhow::{bail, Context as _};
 use bytes::{BufMut as _, Bytes, BytesMut};
 use futures::future::try_join_all;
-use futures::stream::{self, FuturesUnordered, SelectAll};
+use futures::stream::FuturesUnordered;
 use futures::{Stream, TryStreamExt as _};
 use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _};
 use tokio::try_join;
@@ -1044,9 +1044,8 @@ pub trait ServeExt: wrpc_transport::Serve {
     /// Serve [`types::ComponentFunc`] from an [`InstancePre`] instantiating it on each call
     fn serve_function<T>(
         &self,
-        engine: Engine,
+        store: impl Fn() -> wasmtime::Store<T> + Send + 'static,
         instance_pre: InstancePre<T>,
-        data: T,
         ty: types::ComponentFunc,
         instance_name: &str,
         name: &str,
@@ -1056,7 +1055,7 @@ pub trait ServeExt: wrpc_transport::Serve {
         >,
     > + Send
     where
-        T: WasiView + Clone + 'static,
+        T: WasiView + 'static,
     {
         async move {
             debug!(instance = instance_name, name, "serving function export");
@@ -1067,18 +1066,16 @@ pub trait ServeExt: wrpc_transport::Serve {
             let params_ty: Arc<[_]> = ty.params().collect();
             let results_ty: Arc<[_]> = ty.results().collect();
             Ok(invocations.and_then(move |(cx, tx, rx)| {
-                let data = data.clone();
-                let engine = engine.clone();
                 let instance_name = Arc::clone(&instance_name);
                 let instance_pre = instance_pre.clone();
                 let name = Arc::clone(&name);
                 let params_ty = Arc::clone(&params_ty);
                 let results_ty = Arc::clone(&results_ty);
+                let mut store = store();
                 async move {
                     Ok((
                         cx,
                         async move {
-                            let mut store = wasmtime::Store::new(&engine, data);
                             let instance = instance_pre
                                 .instantiate_async(&mut store)
                                 .await
@@ -1113,127 +1110,6 @@ pub trait ServeExt: wrpc_transport::Serve {
                     ))
                 }
             }))
-        }
-    }
-
-    /// Serve [`types::ComponentItem`] from an [`InstancePre`] instantiating it on each call
-    fn serve_item<T>(
-        &self,
-        engine: &Engine,
-        instance_pre: &InstancePre<T>,
-        data: T,
-        ty: types::ComponentItem,
-        instance: &str,
-        name: &str,
-    ) -> impl Future<
-        Output = anyhow::Result<
-            impl Stream<Item = anyhow::Result<(Self::Context, anyhow::Result<()>)>>
-                + Unpin
-                + Send
-                + 'static,
-        >,
-    > + Send
-    where
-        T: WasiView + Clone + 'static,
-    {
-        async move {
-            match ty {
-                types::ComponentItem::ComponentFunc(ty) => {
-                    let s = self
-                        .serve_function(
-                            engine.clone(),
-                            instance_pre.clone(),
-                            data,
-                            ty,
-                            instance,
-                            name,
-                        )
-                        .await?;
-                    Ok(Box::pin(s) as Pin<Box<dyn Stream<Item = _> + Send>>)
-                }
-                types::ComponentItem::CoreFunc(_) => {
-                    bail!("serving core function exports not supported yet")
-                }
-                types::ComponentItem::Module(_) => {
-                    bail!("serving module exports not supported yet");
-                }
-                types::ComponentItem::Component(_) => {
-                    bail!("serving component exports not supported yet");
-                }
-                types::ComponentItem::ComponentInstance(ty) => {
-                    let mut invocations: SelectAll<Pin<Box<dyn Stream<Item = _> + Send>>> =
-                        SelectAll::new();
-                    for (name, ty) in ty.exports(engine) {
-                        match ty {
-                            types::ComponentItem::ComponentFunc(ty) => {
-                                let s = self
-                                    .serve_function(
-                                        engine.clone(),
-                                        instance_pre.clone(),
-                                        data.clone(),
-                                        ty,
-                                        instance,
-                                        name,
-                                    )
-                                    .await?;
-                                invocations.push(Box::pin(s));
-                            }
-                            types::ComponentItem::CoreFunc(_) => {
-                                bail!("serving instance core function exports not supported yet")
-                            }
-                            types::ComponentItem::Module(_) => {
-                                bail!("serving instance module exports not supported yet")
-                            }
-                            types::ComponentItem::Component(_) => {
-                                bail!("serving instance component exports not supported yet")
-                            }
-                            types::ComponentItem::ComponentInstance(_) => {
-                                bail!("serving nested instance exports not supported yet")
-                            }
-                            types::ComponentItem::Type(_) => {}
-                            types::ComponentItem::Resource(_) => {
-                                bail!("serving instance resource exports not supported yet")
-                            }
-                        }
-                    }
-                    Ok(Box::pin(invocations) as Pin<Box<dyn Stream<Item = _> + Send>>)
-                }
-                types::ComponentItem::Type(_) => {
-                    Ok(Box::pin(stream::empty()) as Pin<Box<dyn Stream<Item = _> + Send>>)
-                }
-                types::ComponentItem::Resource(_) => {
-                    bail!("serving root resource exports not supported yet")
-                }
-            }
-        }
-    }
-
-    /// Serve all exports of this [`InstancePre`] instantiating it on each call
-    fn serve_exports<T>(
-        &self,
-        engine: &Engine,
-        instance_pre: &InstancePre<T>,
-        data: T,
-    ) -> impl Future<
-        Output = anyhow::Result<
-            impl Stream<Item = anyhow::Result<(Self::Context, anyhow::Result<()>)>> + 'static,
-        >,
-    > + Send
-    where
-        T: WasiView + Clone + 'static,
-    {
-        async move {
-            let ty = instance_pre.component().component_type();
-            let exports = ty.exports(engine);
-            let mut invocations: SelectAll<Pin<Box<dyn Stream<Item = _> + Send>>> =
-                SelectAll::new();
-            for (name, ty) in exports {
-                let s = self
-                    .serve_item(engine, instance_pre, data.clone(), ty, "", name)
-                    .await?;
-                invocations.push(Box::pin(s));
-            }
-            Ok(invocations)
         }
     }
 }
