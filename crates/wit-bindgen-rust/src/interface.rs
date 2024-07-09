@@ -935,7 +935,7 @@ pub async fn serve_interface<T: {wrpc_transport}::Serve, U>(
         } else {
             self.push_str("()");
         }
-        self.push_str("> + ::core::marker::Send + ::core::marker::Sync>>");
+        self.push_str("> + ::core::marker::Send>>");
     }
 
     fn print_stream(&mut self, Stream { element, .. }: &Stream, submodule: bool) {
@@ -949,7 +949,7 @@ pub async fn serve_interface<T: {wrpc_transport}::Serve, U>(
         } else {
             self.push_str("Vec<()>");
         }
-        self.push_str("> + ::core::marker::Send + ::core::marker::Sync>>");
+        self.push_str("> + ::core::marker::Send>>");
     }
 
     fn print_own(&mut self, id: TypeId, submodule: bool) {

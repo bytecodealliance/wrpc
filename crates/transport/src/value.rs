@@ -156,12 +156,8 @@ impl<T: ?Sized> ResourceOwn<T> {
 }
 
 pub type DeferredFn<T> = Box<
-    dyn FnOnce(
-            Arc<T>,
-            Vec<usize>,
-        ) -> Pin<Box<dyn Future<Output = std::io::Result<()>> + Send + Sync>>
-        + Send
-        + Sync,
+    dyn FnOnce(Arc<T>, Vec<usize>) -> Pin<Box<dyn Future<Output = std::io::Result<()>> + Send>>
+        + Send,
 >;
 
 pub trait Deferred<T> {
@@ -325,7 +321,7 @@ where
 }
 
 pub trait Encode<T>: Sized {
-    type Encoder: tokio_util::codec::Encoder<Self> + Deferred<T> + Default + Send + Sync;
+    type Encoder: tokio_util::codec::Encoder<Self> + Deferred<T> + Default + Send;
 
     #[instrument(level = "trace", skip(self, enc))]
     fn encode(
@@ -752,9 +748,9 @@ where
 
 impl<T, R> Decode<R> for Vec<T>
 where
-    T: Decode<R> + Send + Sync,
+    T: Decode<R> + Send,
     T::ListDecoder: Deferred<R> + Send,
-    R: crate::Index<R> + Send + Sync + 'static,
+    R: crate::Index<R> + Send + 'static,
 {
     type Decoder = T::ListDecoder;
     type ListDecoder = ListDecoder<Self::Decoder, R>;
@@ -1119,7 +1115,7 @@ impl<R, T: ?Sized> Deferred<R> for CoreVecDecoder<ResourceBorrowDecoder<T>> {
     }
 }
 
-impl<R, T: ?Sized + Send + Sync + 'static> Decode<R> for ResourceBorrow<T> {
+impl<R, T: ?Sized + Send + 'static> Decode<R> for ResourceBorrow<T> {
     type Decoder = ResourceBorrowDecoder<T>;
     type ListDecoder = CoreVecDecoder<Self::Decoder>;
 }
@@ -1163,7 +1159,7 @@ impl<R, T: ?Sized> Deferred<R> for CoreVecDecoder<ResourceOwnDecoder<T>> {
     }
 }
 
-impl<R, T: ?Sized + Send + Sync + 'static> Decode<R> for ResourceOwn<T> {
+impl<R, T: ?Sized + Send + 'static> Decode<R> for ResourceOwn<T> {
     type Decoder = ResourceOwnDecoder<T>;
     type ListDecoder = CoreVecDecoder<Self::Decoder>;
 }
@@ -1304,8 +1300,8 @@ macro_rules! impl_tuple_codec {
             R: crate::Index<R> + Send + Sync + 'static,
             E: From<std::io::Error>,
             $(
-                $vt: Decode<R> + Send + Sync + 'static,
-                $vt::Decoder: tokio_util::codec::Decoder<Error = E> + Send + Sync + 'static,
+                $vt: Decode<R> + Send + 'static,
+                $vt::Decoder: tokio_util::codec::Decoder<Error = E> + Send + 'static,
             )+
         {
             type Decoder = TupleDecoder::<($($vt::Decoder),+,), ($(Option<$vt>),+,)>;
@@ -1317,8 +1313,8 @@ macro_rules! impl_tuple_codec {
             R: crate::Index<R> + Send + Sync + 'static,
             E: From<std::io::Error>,
             $(
-                $vt: Decode<R> + Send + Sync + 'static,
-                $vt::Decoder: tokio_util::codec::Decoder<Error = E> + Send + Sync + 'static,
+                $vt: Decode<R> + Send + 'static,
+                $vt::Decoder: tokio_util::codec::Decoder<Error = E> + Send + 'static,
             )+
         {
         }
@@ -1457,7 +1453,7 @@ impl<T, W, Fut> tokio_util::codec::Encoder<Fut> for FutureEncoder<W>
 where
     T: Encode<W>,
     W: AsyncWrite + crate::Index<W> + Send + Sync + Unpin + 'static,
-    Fut: Future<Output = T> + Send + Sync + 'static,
+    Fut: Future<Output = T> + Send + 'static,
     std::io::Error: From<<T::Encoder as tokio_util::codec::Encoder<T>>::Error>,
 {
     type Error = std::io::Error;
@@ -1489,7 +1485,7 @@ where
     }
 }
 
-impl<T, W> Encode<W> for Pin<Box<dyn Future<Output = T> + Send + Sync>>
+impl<T, W> Encode<W> for Pin<Box<dyn Future<Output = T> + Send>>
 where
     T: Encode<W> + 'static,
     W: AsyncWrite + crate::Index<W> + Send + Sync + Unpin + 'static,
@@ -1531,12 +1527,11 @@ where
 
 impl<T, R> tokio_util::codec::Decoder for FutureDecoder<T, R>
 where
-    T: Decode<R> + Send + Sync + 'static,
-    T::Decoder: Sync,
+    T: Decode<R> + Send + 'static,
     R: AsyncRead + crate::Index<R> + Send + Sync + Unpin + 'static,
     std::io::Error: From<<T::Decoder as tokio_util::codec::Decoder>::Error>,
 {
-    type Item = Pin<Box<dyn Future<Output = T> + Send + Sync>>;
+    type Item = Pin<Box<dyn Future<Output = T> + Send>>;
     type Error = <T::Decoder as tokio_util::codec::Decoder>::Error;
 
     #[instrument(level = "trace", skip(self), fields(ty = "future"))]
@@ -1588,10 +1583,9 @@ where
     }
 }
 
-impl<T, R> Decode<R> for Pin<Box<dyn Future<Output = T> + Send + Sync>>
+impl<T, R> Decode<R> for Pin<Box<dyn Future<Output = T> + Send>>
 where
-    T: Decode<R> + Send + Sync + 'static,
-    T::Decoder: Sync,
+    T: Decode<R> + Send + 'static,
     R: AsyncRead + crate::Index<R> + Send + Sync + Unpin + 'static,
     std::io::Error: From<<T::Decoder as tokio_util::codec::Decoder>::Error>,
 {
@@ -1617,9 +1611,9 @@ impl<W> Deferred<W> for StreamEncoder<W> {
 
 impl<T, W, S> tokio_util::codec::Encoder<S> for StreamEncoder<W>
 where
-    T: Encode<W> + Send + Sync + 'static,
+    T: Encode<W> + Send + 'static,
     W: AsyncWrite + crate::Index<W> + Send + Sync + Unpin + 'static,
-    S: Stream<Item = Vec<T>> + Send + Sync + Unpin + 'static,
+    S: Stream<Item = Vec<T>> + Send + Unpin + 'static,
     std::io::Error: From<<T::Encoder as tokio_util::codec::Encoder<T>>::Error>,
 {
     type Error = std::io::Error;
@@ -1689,9 +1683,9 @@ where
     }
 }
 
-impl<T, W> Encode<W> for Pin<Box<dyn Stream<Item = Vec<T>> + Send + Sync>>
+impl<T, W> Encode<W> for Pin<Box<dyn Stream<Item = Vec<T>> + Send>>
 where
-    T: Encode<W> + Send + Sync + 'static,
+    T: Encode<W> + Send + 'static,
     W: AsyncWrite + crate::Index<W> + Send + Sync + Unpin + 'static,
     std::io::Error: From<<T::Encoder as tokio_util::codec::Encoder<T>>::Error>,
 {
@@ -1717,7 +1711,7 @@ impl<W> Deferred<W> for StreamEncoderBytes<W> {
 impl<W, S> tokio_util::codec::Encoder<S> for StreamEncoderBytes<W>
 where
     W: AsyncWrite + crate::Index<W> + Send + Sync + Unpin + 'static,
-    S: Stream<Item = Bytes> + Send + Sync + Unpin + 'static,
+    S: Stream<Item = Bytes> + Send + Unpin + 'static,
 {
     type Error = std::io::Error;
 
@@ -1758,7 +1752,7 @@ where
     }
 }
 
-impl<W> Encode<W> for Pin<Box<dyn Stream<Item = Bytes> + Send + Sync>>
+impl<W> Encode<W> for Pin<Box<dyn Stream<Item = Bytes> + Send>>
 where
     W: AsyncWrite + crate::Index<W> + Send + Sync + Unpin + 'static,
 {
@@ -1784,7 +1778,7 @@ impl<W> Deferred<W> for StreamEncoderRead<W> {
 impl<W, S> tokio_util::codec::Encoder<S> for StreamEncoderRead<W>
 where
     W: AsyncWrite + crate::Index<W> + Send + Sync + Unpin + 'static,
-    S: AsyncRead + Send + Sync + Unpin + 'static,
+    S: AsyncRead + Send + Unpin + 'static,
 {
     type Error = std::io::Error;
 
@@ -1828,7 +1822,7 @@ where
     }
 }
 
-impl<W> Encode<W> for Pin<Box<dyn AsyncRead + Send + Sync>>
+impl<W> Encode<W> for Pin<Box<dyn AsyncRead + Send>>
 where
     W: AsyncWrite + crate::Index<W> + Send + Sync + Unpin + 'static,
 {
@@ -1837,7 +1831,7 @@ where
 
 impl<T, W> Encode<W> for std::io::Cursor<T>
 where
-    T: AsRef<[u8]> + Send + Sync + Unpin + 'static,
+    T: AsRef<[u8]> + Send + Unpin + 'static,
     W: AsyncWrite + crate::Index<W> + Send + Sync + Unpin + 'static,
 {
     type Encoder = StreamEncoderRead<W>;
@@ -1930,7 +1924,7 @@ async fn handle_deferred_stream<C, T, R>(
 ) -> std::io::Result<()>
 where
     C: tokio_util::codec::Decoder<Item = T> + Deferred<R>,
-    R: AsyncRead + crate::Index<R> + Send + Sync + Unpin + 'static,
+    R: AsyncRead + crate::Index<R> + Send + Unpin + 'static,
     std::io::Error: From<C::Error>,
 {
     let dec = ListDecoder::new(dec);
@@ -1982,14 +1976,13 @@ where
 
 impl<T, R> tokio_util::codec::Decoder for StreamDecoder<T, R>
 where
-    T: Decode<R> + Send + Sync + 'static,
-    T::Decoder: Sync,
+    T: Decode<R> + Send + 'static,
     T::ListDecoder: Deferred<R>,
     R: AsyncRead + crate::Index<R> + Send + Sync + Unpin + 'static,
-    <T::Decoder as tokio_util::codec::Decoder>::Error: Send + Sync,
+    <T::Decoder as tokio_util::codec::Decoder>::Error: Send,
     std::io::Error: From<<T::Decoder as tokio_util::codec::Decoder>::Error>,
 {
-    type Item = Pin<Box<dyn Stream<Item = Vec<T>> + Send + Sync>>;
+    type Item = Pin<Box<dyn Stream<Item = Vec<T>> + Send>>;
     type Error = <<T as Decode<R>>::ListDecoder as tokio_util::codec::Decoder>::Error;
 
     #[instrument(level = "trace", skip(self), fields(ty = "stream"))]
@@ -2013,13 +2006,12 @@ where
     }
 }
 
-impl<T, R> Decode<R> for Pin<Box<dyn Stream<Item = Vec<T>> + Send + Sync>>
+impl<T, R> Decode<R> for Pin<Box<dyn Stream<Item = Vec<T>> + Send>>
 where
-    T: Decode<R> + Send + Sync + 'static,
-    T::Decoder: Sync,
+    T: Decode<R> + Send + 'static,
     T::ListDecoder: Deferred<R> + Send,
     R: AsyncRead + crate::Index<R> + Send + Sync + Unpin + 'static,
-    <T::Decoder as tokio_util::codec::Decoder>::Error: Send + Sync,
+    <T::Decoder as tokio_util::codec::Decoder>::Error: Send,
     std::io::Error: From<<T::Decoder as tokio_util::codec::Decoder>::Error>,
 {
     type Decoder = StreamDecoder<T, R>;
@@ -2050,7 +2042,7 @@ impl<R> tokio_util::codec::Decoder for StreamDecoderBytes<R>
 where
     R: AsyncRead + crate::Index<R> + Send + Sync + Unpin + 'static,
 {
-    type Item = Pin<Box<dyn Stream<Item = Bytes> + Send + Sync>>;
+    type Item = Pin<Box<dyn Stream<Item = Bytes> + Send>>;
     type Error = std::io::Error;
 
     #[instrument(level = "trace", skip(self), fields(ty = "stream<u8>"))]
@@ -2091,7 +2083,7 @@ where
     }
 }
 
-impl<R> Decode<R> for Pin<Box<dyn Stream<Item = Bytes> + Send + Sync>>
+impl<R> Decode<R> for Pin<Box<dyn Stream<Item = Bytes> + Send>>
 where
     R: AsyncRead + crate::Index<R> + Send + Sync + Unpin + 'static,
 {
@@ -2123,7 +2115,7 @@ impl<R> tokio_util::codec::Decoder for StreamDecoderRead<R>
 where
     R: AsyncRead + crate::Index<R> + Send + Sync + Unpin + 'static,
 {
-    type Item = Pin<Box<dyn AsyncRead + Send + Sync>>;
+    type Item = Pin<Box<dyn AsyncRead + Send>>;
     type Error = std::io::Error;
 
     #[instrument(level = "trace", skip(self), fields(ty = "stream<u8>"))]
@@ -2164,7 +2156,7 @@ where
     }
 }
 
-impl<R> Decode<R> for Pin<Box<dyn AsyncRead + Send + Sync>>
+impl<R> Decode<R> for Pin<Box<dyn AsyncRead + Send>>
 where
     R: AsyncRead + crate::Index<R> + Send + Sync + Unpin + 'static,
 {

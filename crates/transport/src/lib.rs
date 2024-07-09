@@ -282,21 +282,16 @@ pub trait Serve: Sync {
                     Item = anyhow::Result<(
                         Self::Context,
                         Params,
-                        Option<
-                            impl Future<Output = std::io::Result<()>> + Sync + Send + Unpin + 'static,
-                        >,
-                        impl FnOnce(
-                            Results,
-                        )
-                            -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + Sync + Send>>,
+                        Option<impl Future<Output = std::io::Result<()>> + Send + Unpin + 'static>,
+                        impl FnOnce(Results) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send>>,
                     )>,
                 > + Send
                 + 'static,
         >,
     > + Send
     where
-        Params: TupleDecode<Self::Incoming> + Send + Sync + 'static,
-        Results: TupleEncode<Self::Outgoing> + Send + Sync + 'static,
+        Params: TupleDecode<Self::Incoming> + Send + 'static,
+        Results: TupleEncode<Self::Outgoing> + Send + 'static,
         <Params::Decoder as tokio_util::codec::Decoder>::Error:
             std::error::Error + Send + Sync + 'static,
         <Results::Encoder as tokio_util::codec::Encoder<Results>>::Error:
@@ -368,13 +363,7 @@ mod tests {
     #[allow(clippy::manual_async_fn)]
     fn invoke_values_send<T>() -> impl Future<
         Output = anyhow::Result<(
-            Pin<
-                Box<
-                    dyn Stream<Item = Vec<Pin<Box<dyn Future<Output = String> + Send + Sync>>>>
-                        + Send
-                        + Sync,
-                >,
-            >,
+            Pin<Box<dyn Stream<Item = Vec<Pin<Box<dyn Future<Output = String> + Send>>>> + Send>>,
         )>,
     > + Send
     where
@@ -404,8 +393,7 @@ mod tests {
         i.invoke(cx, "foo", "bar", Bytes::default(), &paths).await
     }
 
-    async fn call_invoke_async<T>(
-    ) -> anyhow::Result<(Pin<Box<dyn Stream<Item = Bytes> + Send + Sync>>,)>
+    async fn call_invoke_async<T>() -> anyhow::Result<(Pin<Box<dyn Stream<Item = Bytes> + Send>>,)>
     where
         T: Invoke<Context = ()> + Default,
     {
