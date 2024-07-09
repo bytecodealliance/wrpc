@@ -234,8 +234,8 @@ where
                     &self,
                     _cx: C,
                 ) -> anyhow::Result<(
-                    Pin<Box<dyn Stream<Item = Bytes> + Send + Sync>>,
-                    Pin<Box<dyn Stream<Item = Vec<Vec<String>>> + Send + Sync>>,
+                    Pin<Box<dyn Stream<Item = Bytes> + Send>>,
+                    Pin<Box<dyn Stream<Item = Vec<Vec<String>>> + Send>>,
                 )> {
                     Ok((
                         Box::pin(stream::iter([Bytes::from("test")])),
@@ -249,15 +249,9 @@ where
                 async fn with_future(
                     &self,
                     _cx: C,
-                    s: Pin<Box<dyn Stream<Item = Bytes> + Send + Sync>>,
+                    s: Pin<Box<dyn Stream<Item = Bytes> + Send>>,
                 ) -> anyhow::Result<
-                    Pin<
-                        Box<
-                            dyn Future<Output = Pin<Box<dyn Stream<Item = Bytes> + Send + Sync>>>
-                                + Send
-                                + Sync,
-                        >,
-                    >,
+                    Pin<Box<dyn Future<Output = Pin<Box<dyn Stream<Item = Bytes> + Send>>> + Send>>,
                 > {
                     Ok(Box::pin(async { s }))
                 }
@@ -687,10 +681,10 @@ where
                 .expect("failed to accept invocation")
                 .expect("unexpected end of stream");
             let (a, b, mut c, d): (
-                Pin<Box<dyn Stream<Item = Vec<u32>> + Send + Sync>>,
-                Pin<Box<dyn Stream<Item = Vec<String>> + Send + Sync>>,
-                Pin<Box<dyn AsyncRead + Send + Sync>>,
-                Pin<Box<dyn Future<Output = Vec<u64>> + Send + Sync>>,
+                Pin<Box<dyn Stream<Item = Vec<u32>> + Send>>,
+                Pin<Box<dyn Stream<Item = Vec<String>> + Send>>,
+                Pin<Box<dyn AsyncRead + Send>>,
+                Pin<Box<dyn Future<Output = Vec<u64>> + Send>>,
             ) = params;
             let io = rx.map(Instrument::in_current_span).map(spawn);
             join!(
@@ -721,25 +715,25 @@ where
                     }
                 }
             );
-            let a: Pin<Box<dyn Stream<Item = Vec<u32>> + Send + Sync>> =
+            let a: Pin<Box<dyn Stream<Item = Vec<u32>> + Send>> =
                 Box::pin(stream::iter([vec![0xc0, 0xff], vec![0xee]]));
 
-            let b: Pin<Box<dyn Stream<Item = Vec<&str>> + Send + Sync>> =
+            let b: Pin<Box<dyn Stream<Item = Vec<&str>> + Send>> =
                 Box::pin(stream::iter([vec!["foo"], vec!["bar"]]));
-            let c: Pin<Box<dyn AsyncRead + Send + Sync>> = Box::pin(b"test".as_slice());
-            let d: Pin<Box<dyn Future<Output = Vec<u64>> + Send + Sync>> =
+            let c: Pin<Box<dyn AsyncRead + Send>> = Box::pin(b"test".as_slice());
+            let d: Pin<Box<dyn Future<Output = Vec<u64>> + Send>> =
                 Box::pin(async { vec![1, 2, 3] });
             info!("transmitting `test.async` returns");
             tx((a, b, c, d)).await.expect("failed to send response");
         }
         .instrument(info_span!("server")),
         async {
-            let a: Pin<Box<dyn Stream<Item = Vec<u32>> + Send + Sync>> =
+            let a: Pin<Box<dyn Stream<Item = Vec<u32>> + Send>> =
                 Box::pin(stream::iter([vec![0xc0, 0xff, 0xee]]));
-            let b: Pin<Box<dyn Stream<Item = Vec<&str>> + Send + Sync>> =
+            let b: Pin<Box<dyn Stream<Item = Vec<&str>> + Send>> =
                 Box::pin(stream::iter([vec!["foo", "bar"]]));
-            let c: Pin<Box<dyn AsyncRead + Send + Sync>> = Box::pin(b"test".as_slice());
-            let d: Pin<Box<dyn Future<Output = Vec<u64>> + Send + Sync>> =
+            let c: Pin<Box<dyn AsyncRead + Send>> = Box::pin(b"test".as_slice());
+            let d: Pin<Box<dyn Future<Output = Vec<u64>> + Send>> =
                 Box::pin(async { vec![1, 2, 3] });
             info!("invoking `test.async`");
             let (returns, io) = clt
@@ -753,10 +747,10 @@ where
                 .await
                 .expect("failed to invoke `test.async`");
             let (a, b, mut c, d): (
-                Pin<Box<dyn Stream<Item = Vec<u32>> + Send + Sync>>,
-                Pin<Box<dyn Stream<Item = Vec<String>> + Send + Sync>>,
-                Pin<Box<dyn AsyncRead + Send + Sync>>,
-                Pin<Box<dyn Future<Output = Vec<u64>> + Send + Sync>>,
+                Pin<Box<dyn Stream<Item = Vec<u32>> + Send>>,
+                Pin<Box<dyn Stream<Item = Vec<String>> + Send>>,
+                Pin<Box<dyn AsyncRead + Send>>,
+                Pin<Box<dyn Future<Output = Vec<u64>> + Send>>,
             ) = returns;
             info!("receiving `test.async` async values");
             join!(
