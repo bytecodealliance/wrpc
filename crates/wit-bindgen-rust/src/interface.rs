@@ -197,9 +197,9 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve, U>(
             }
         };
         for func in &funcs_to_export {
-            let paths = func.results.iter_types().enumerate().fold(
+            let paths = func.params.iter().enumerate().fold(
                 BTreeSet::default(),
-                |mut paths, (i, ty)| {
+                |mut paths, (i, (_, ty))| {
                     let (nested, fut) = async_paths_ty(self.resolve, ty);
                     for path in nested {
                         let mut s = String::with_capacity(3 + path.len() * 6);

@@ -57,8 +57,12 @@ where
                         }
 
                         interface async {
+                            record something {
+                                foo: string,
+                            }
+
                             with-streams: func() -> (bytes: stream<u8>, lists: stream<list<string>>);
-                            with-future: func(s: stream<u8>) -> future<stream<u8>>;
+                            with-future: func(x: something, s: stream<u8>) -> future<stream<u8>>;
                         }
 
                         world test {
@@ -252,10 +256,12 @@ where
                 async fn with_future(
                     &self,
                     _cx: C,
+                    x: exports::wrpc_test::integration::async_::Something,
                     s: Pin<Box<dyn Stream<Item = Bytes> + Send>>,
                 ) -> anyhow::Result<
                     Pin<Box<dyn Future<Output = Pin<Box<dyn Stream<Item = Bytes> + Send>>> + Send>>,
                 > {
+                    assert_eq!(x.foo, "bar");
                     Ok(Box::pin(async { s }))
                 }
             }
@@ -304,8 +310,12 @@ where
                         }
 
                         interface async {
+                            record something {
+                                foo: string,
+                            }
+
                             with-streams: func() -> (bytes: stream<u8>, lists: stream<list<string>>);
-                            with-future: func(s: stream<u8>) -> future<stream<u8>>;
+                            with-future: func(x: something, s: stream<u8>) -> future<stream<u8>>;
                         }
 
                         world test {
@@ -470,6 +480,9 @@ where
                     let (fut, io) = wrpc_test::integration::async_::with_future(
                         self.0.as_ref(),
                         C::default(),
+                        &wrpc_test::integration::async_::Something {
+                            foo: "bar".to_string(),
+                        },
                         Box::pin(stream::iter(["foo".into(), "bar".into()])),
                     )
                     .await
