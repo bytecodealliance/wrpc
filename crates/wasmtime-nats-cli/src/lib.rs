@@ -94,7 +94,7 @@ async fn instantiate_pre<C>(
 ) -> anyhow::Result<(InstancePre<Ctx<C>>, wasmtime::Engine)>
 where
     C: Invoke,
-    C::Context: Clone,
+    C::Context: Clone + 'static,
 {
     let engine = wasmtime::Engine::new(
         wasmtime::Config::new()

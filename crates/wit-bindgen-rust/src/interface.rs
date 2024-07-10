@@ -223,12 +223,14 @@ pub async fn serve_interface<T: {wrpc_transport}::Serve, U>(
                 self.src,
                 r#"
          async {{ 
-             {anyhow}::Context::context(wrpc.serve_values(
+             {anyhow}::Context::context({wrpc_transport}::ServeExt::serve_values(
+                 wrpc,
                  "{instance}",
                  "{}",
                  ::std::sync::Arc::from("#,
                 rpc_func_name(func),
                 anyhow = self.gen.anyhow_path(),
+                wrpc_transport = self.gen.wrpc_transport_path(),
             );
             if paths.is_empty() {
                 self.src.push_str(
@@ -589,7 +591,7 @@ pub async fn serve_interface<T: {wrpc_transport}::Serve, U>(
                 self.src,
                 r#"
                 let wrpc__ = {anyhow}::Context::context(
-                    {wrpc_transport}::SendFuture::send(wrpc__.invoke_values_blocking(cx__,  "{instance}", "{}", ({params}), "#,
+                    {wrpc_transport}::SendFuture::send({wrpc_transport}::InvokeExt::invoke_values_blocking(wrpc__, cx__,  "{instance}", "{}", ({params}), "#,
                 rpc_func_name(func),
                 wrpc_transport = self.gen.wrpc_transport_path(),
                 params = {
@@ -626,7 +628,7 @@ pub async fn serve_interface<T: {wrpc_transport}::Serve, U>(
                 self.src,
                 r#"
                 let (wrpc__, io__) = {anyhow}::Context::context(
-                    {wrpc_transport}::SendFuture::send(wrpc__.invoke_values(cx__,  "{instance}", "{}", ({params}), "#,
+                    {wrpc_transport}::SendFuture::send({wrpc_transport}::InvokeExt::invoke_values(wrpc__, cx__,  "{instance}", "{}", ({params}), "#,
                 rpc_func_name(func),
                 wrpc_transport = self.gen.wrpc_transport_path(),
                 params = {

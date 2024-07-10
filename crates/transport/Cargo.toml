@@ -1,6 +1,6 @@
 [package]
 name = "wrpc-transport"
-version = "0.26.3"
+version = "0.26.4"
 description = "wRPC core transport functionality"
 
 authors.workspace = true
@@ -20,7 +20,7 @@ io-std = ["tokio/io-std"]
 anyhow = { workspace = true, features = ["std"] }
 bytes = { workspace = true }
 futures = { workspace = true, features = ["std"] }
-tokio = { workspace = true, features = ["macros", "rt"] }
+tokio = { workspace = true, features = ["macros", "rt", "time"] }
 tokio-stream = { workspace = true }
 tokio-util = { workspace = true, features = ["codec", "io"] }
 tracing = { workspace = true, features = ["attributes"] }
