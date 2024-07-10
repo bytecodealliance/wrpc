@@ -921,63 +921,6 @@ impl wrpc_transport::Invoke for Client {
     }
 }
 
-#[instrument(level = "trace", skip_all)]
-async fn serve_connection(
-    nats: Arc<async_nats::Client>,
-    Message {
-        reply: tx,
-        payload,
-        headers,
-        ..
-    }: Message,
-    paths: &[impl AsRef<[Option<usize>]>],
-) -> anyhow::Result<(Option<HeaderMap>, SubjectWriter, Reader)> {
-    let tx = tx.context("peer did not specify a reply subject")?;
-    let rx = nats.new_inbox();
-    let param_rx = Subject::from(param_subject(&rx));
-    let (param_rx, nested) = try_join!(
-        async {
-            trace!(
-                subject = param_rx.as_str(),
-                "subscribing on parameter subject"
-            );
-            nats.subscribe(param_rx.clone())
-                .await
-                .context("failed to subscribe on parameter subject")
-        },
-        try_join_all(paths.iter().map(|path| async {
-            let subject = subscribe_path(&param_rx, path.as_ref());
-            trace!(?subject, "subscribing on nested parameter subject");
-            nats.subscribe(Subject::from(subject))
-                .await
-                .context("failed to subscribe on nested parameter subject")
-        }))
-    )?;
-    let nested: SubscriberTree = zip(paths.iter(), nested).collect();
-    ensure!(
-        paths.is_empty() == nested.is_empty(),
-        "failed to construct subscription tree"
-    );
-    trace!("publishing handshake response");
-    nats.publish_with_reply(tx.clone(), rx, Bytes::default())
-        .await
-        .context("failed to publish handshake accept")?;
-    let result_tx = Subject::from(result_subject(&tx));
-    Ok((
-        headers,
-        SubjectWriter::new(
-            Arc::clone(&nats),
-            result_tx.clone(),
-            nats.publish_sink(result_tx),
-        ),
-        Reader {
-            buffer: payload,
-            incoming: param_rx,
-            nested: Arc::new(std::sync::Mutex::new(nested)),
-        },
-    ))
-}
-
 impl wrpc_transport::Serve for Client {
     type Context = Option<HeaderMap>;
     type Outgoing = SubjectWriter;
@@ -1004,10 +947,65 @@ impl wrpc_transport::Serve for Client {
         };
         let paths = paths.into();
         let nats = Arc::clone(&self.nats);
-        Ok(sub.then(move |msg| {
-            let nats = Arc::clone(&nats);
-            let paths = Arc::clone(&paths);
-            async move { serve_connection(nats, msg, &paths).await }
-        }))
+        Ok(sub.then(
+            // NOTE: instrumenting this function causes a stack overflow
+            move |Message {
+                      reply: tx,
+                      payload,
+                      headers,
+                      ..
+                  }: Message| {
+                {
+                    let nats = Arc::clone(&nats);
+                    let paths = Arc::clone(&paths);
+                    async move {
+                        let tx = tx.context("peer did not specify a reply subject")?;
+                        let rx = nats.new_inbox();
+                        let param_rx = Subject::from(param_subject(&rx));
+                        let (param_rx, nested) = try_join!(
+                            async {
+                                trace!(
+                                    subject = param_rx.as_str(),
+                                    "subscribing on parameter subject"
+                                );
+                                nats.subscribe(param_rx.clone())
+                                    .await
+                                    .context("failed to subscribe on parameter subject")
+                            },
+                            try_join_all(paths.iter().map(|path| async {
+                                let subject = subscribe_path(&param_rx, path.as_ref());
+                                trace!(?subject, "subscribing on nested parameter subject");
+                                nats.subscribe(Subject::from(subject))
+                                    .await
+                                    .context("failed to subscribe on nested parameter subject")
+                            }))
+                        )?;
+                        let nested: SubscriberTree = zip(paths.iter(), nested).collect();
+                        ensure!(
+                            paths.is_empty() == nested.is_empty(),
+                            "failed to construct subscription tree"
+                        );
+                        trace!("publishing handshake response");
+                        nats.publish_with_reply(tx.clone(), rx, Bytes::default())
+                            .await
+                            .context("failed to publish handshake accept")?;
+                        let result_tx = Subject::from(result_subject(&tx));
+                        Ok((
+                            headers,
+                            SubjectWriter::new(
+                                Arc::clone(&nats),
+                                result_tx.clone(),
+                                nats.publish_sink(result_tx),
+                            ),
+                            Reader {
+                                buffer: payload,
+                                incoming: param_rx,
+                                nested: Arc::new(std::sync::Mutex::new(nested)),
+                            },
+                        ))
+                    }
+                }
+            },
+        ))
     }
 }

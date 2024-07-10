@@ -15,12 +15,15 @@ use tokio::sync::{oneshot, RwLock};
 use tokio::time::sleep;
 use tokio::{join, select, spawn, try_join};
 use tracing::{info, info_span, instrument, Instrument};
-use wrpc_transport::{Invoke as _, ResourceBorrow, ResourceOwn, Serve as _};
+use wrpc_transport::{
+    Invoke as _, InvokeExt as _, ResourceBorrow, ResourceOwn, Serve as _, ServeExt as _,
+};
 
+#[instrument(skip_all, ret)]
 async fn assert_bindgen<C, I, S>(clt: Arc<I>, srv: Arc<S>) -> anyhow::Result<()>
 where
     C: Send + Sync + Default,
-    I: wrpc::Invoke<Context = C>,
+    I: wrpc::Invoke<Context = C> + 'static,
     S: wrpc::Serve<Context = C>,
 {
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
@@ -518,6 +521,7 @@ where
     Ok(())
 }
 
+#[instrument(skip_all, ret)]
 async fn assert_dynamic<C, I, S>(clt: Arc<I>, srv: Arc<S>) -> anyhow::Result<()>
 where
     C: Send + Sync + Default,
@@ -789,6 +793,7 @@ where
 
 #[cfg(feature = "nats")]
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
+#[instrument(ret)]
 async fn rust_bindgen_nats() -> anyhow::Result<()> {
     common::with_nats(|_, nats_client| async {
         let client =
@@ -801,6 +806,7 @@ async fn rust_bindgen_nats() -> anyhow::Result<()> {
 
 #[cfg(feature = "nats")]
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
+#[instrument(ret)]
 async fn rust_dynamic_nats() -> anyhow::Result<()> {
     common::with_nats(|_, nats_client| async {
         let client = wrpc_transport_nats::Client::new(nats_client, "test-prefix", None);
@@ -812,6 +818,7 @@ async fn rust_dynamic_nats() -> anyhow::Result<()> {
 
 #[cfg(feature = "quic")]
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
+#[instrument(ret)]
 async fn rust_bindgen_quic() -> anyhow::Result<()> {
     use core::net::Ipv6Addr;
     use core::pin::pin;
@@ -850,6 +857,7 @@ async fn rust_bindgen_quic() -> anyhow::Result<()> {
 
 #[cfg(feature = "quic")]
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
+#[instrument(ret)]
 async fn rust_dynamic_quic() -> anyhow::Result<()> {
     use core::net::Ipv6Addr;
     use core::pin::pin;
