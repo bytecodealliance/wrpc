@@ -143,7 +143,7 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve, U>(
     wrpc: &'a T,
     handler: impl Handler<T::Context> + {resource_traits} ::core::marker::Send + ::core::marker::Sync + ::core::clone::Clone + 'static,
     shutdown: impl ::core::future::Future<Output = U>,
-) -> impl ::core::future::Future<Output = {anyhow}::Result<U>> + wrpc_transport::Captures<'a> {{
+) -> impl ::core::future::Future<Output = {anyhow}::Result<U>> + {wrpc_transport}::Captures<'a> {{
     async move {{
         let ("#,
             anyhow = self.gen.anyhow_path(),
