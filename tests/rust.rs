@@ -24,7 +24,7 @@ async fn assert_bindgen<C, I, S>(clt: Arc<I>, srv: Arc<S>) -> anyhow::Result<()>
 where
     C: Send + Sync + Default,
     I: wrpc::Invoke<Context = C> + 'static,
-    S: wrpc::Serve<Context = C>,
+    S: wrpc::Serve<Context = C> + Send + 'static,
 {
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
     let shutdown_rx = async move { shutdown_rx.await.expect("shutdown sender dropped") }.shared();
@@ -268,9 +268,13 @@ where
                 }
             }
 
-            serve(srv.as_ref(), Component::default(), shutdown_rx.clone())
-                .await
-                .context("failed to serve `wrpc-test:integration/test`")
+            tokio::spawn({
+                let srv = Arc::clone(&srv);
+                let shutdown_rx = shutdown_rx.clone();
+                async move { serve(srv.as_ref(), Component::default(), shutdown_rx).await }
+            })
+            .await?
+            .context("failed to serve `wrpc-test:integration/test`")
         },
         async {
             wrpc::generate!({
