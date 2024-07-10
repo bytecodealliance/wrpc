@@ -84,7 +84,6 @@
         targets.wasm32-unknown-unknown = false;
         targets.wasm32-wasi = false;
 
-        clippy.allTargets = true;
         clippy.deny = ["warnings"];
         clippy.workspace = true;
 
