@@ -374,14 +374,15 @@ with: {{\n\t{with_name:?}: generate\n}}
         uwriteln!(
             self.src,
             r#"
-pub async fn serve<T: {wrpc_transport}::Serve>(
-    wrpc: &T,
+pub fn serve<'a, T: {wrpc_transport}::Serve>(
+    wrpc: &'a T,
     handler: impl {bound} + ::core::marker::Send + ::core::marker::Sync + ::core::clone::Clone + 'static,
     shutdown: impl ::core::future::Future<Output = ()>,
-) -> {anyhow}::Result<()> {{
+) -> impl ::core::future::Future<Output = {anyhow}::Result<()>> + {wrpc_transport}::Captures<'a> {{
     use {futures}::FutureExt as _;
     let shutdown = shutdown.shared();
-    {tokio}::try_join!("#
+    async move {{
+        {tokio}::try_join!("#
         );
         for path in &self.export_paths {
             if !path.is_empty() {
@@ -394,8 +395,9 @@ pub async fn serve<T: {wrpc_transport}::Serve>(
         uwriteln!(
             self.src,
             r#"
-    )?;
-    Ok(())
+        )?;
+        Ok(())
+    }}
 }}"#
         );
     }

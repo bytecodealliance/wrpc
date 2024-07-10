@@ -139,12 +139,13 @@ impl InterfaceGenerator<'_> {
         uwrite!(
             self.src,
             r#"
-pub async fn serve_interface<T: {wrpc_transport}::Serve, U>(
-    wrpc: &T,
+pub fn serve_interface<'a, T: {wrpc_transport}::Serve, U>(
+    wrpc: &'a T,
     handler: impl Handler<T::Context> + {resource_traits} ::core::marker::Send + ::core::marker::Sync + ::core::clone::Clone + 'static,
     shutdown: impl ::core::future::Future<Output = U>,
-) -> {anyhow}::Result<U> {{
-    let ("#,
+) -> impl ::core::future::Future<Output = {anyhow}::Result<U>> + wrpc_transport::Captures<'a> {{
+    async move {{
+        let ("#,
             anyhow = self.gen.anyhow_path(),
             resource_traits = trait_names.join(""),
             wrpc_transport = self.gen.wrpc_transport_path()
@@ -222,12 +223,12 @@ pub async fn serve_interface<T: {wrpc_transport}::Serve, U>(
             uwrite!(
                 self.src,
                 r#"
-         async {{ 
-             {anyhow}::Context::context({wrpc_transport}::ServeExt::serve_values(
-                 wrpc,
-                 "{instance}",
-                 "{}",
-                 ::std::sync::Arc::from("#,
+            async {{ 
+                {anyhow}::Context::context({wrpc_transport}::ServeExt::serve_values(
+                    wrpc,
+                    "{instance}",
+                    "{}",
+                    ::std::sync::Arc::from("#,
                 rpc_func_name(func),
                 anyhow = self.gen.anyhow_path(),
                 wrpc_transport = self.gen.wrpc_transport_path(),
@@ -235,9 +236,9 @@ pub async fn serve_interface<T: {wrpc_transport}::Serve, U>(
             if paths.is_empty() {
                 self.src.push_str(
                     r"{
-                    let paths: [::std::boxed::Box<[::core::option::Option<usize>]>; 0] = [];
-                    paths
-                }",
+                       let paths: [::std::boxed::Box<[::core::option::Option<usize>]>; 0] = [];
+                       paths
+                   }",
                 );
             } else {
                 self.src.push_str("[");
@@ -251,10 +252,10 @@ pub async fn serve_interface<T: {wrpc_transport}::Serve, U>(
             uwriteln!(
                 self.src,
                 r#")
-             )
-             .await,
-             "failed to serve `{instance}.{}`")
-         }},"#,
+                )
+                .await,
+                "failed to serve `{instance}.{}`")
+            }},"#,
                 func.name,
             );
         }
@@ -273,15 +274,15 @@ pub async fn serve_interface<T: {wrpc_transport}::Serve, U>(
             uwrite!(
                 self.src,
                 r"
-    let mut {name} = ::core::pin::pin!({name});",
+        let mut {name} = ::core::pin::pin!({name});",
             );
         }
         uwrite!(
             self.src,
             r"
-    let mut shutdown = ::core::pin::pin!(shutdown);
-    loop {{
-        {tokio}::select! {{",
+        let mut shutdown = ::core::pin::pin!(shutdown);
+        loop {{
+            {tokio}::select! {{",
             tokio = self.gen.tokio_path()
         );
         for func in &funcs_to_export {
@@ -289,9 +290,9 @@ pub async fn serve_interface<T: {wrpc_transport}::Serve, U>(
             uwrite!(
                 self.src,
                 r"
-            invocation = {futures}::StreamExt::next(&mut {}_{name}) => {{
-                match invocation {{
-                    Some(Ok((cx, (",
+                invocation = {futures}::StreamExt::next(&mut {}_{name}) => {{
+                    match invocation {{
+                        Some(Ok((cx, (",
                 match func.kind {
                     FunctionKind::Freestanding => "f",
                     FunctionKind::Method(_) => "m",
@@ -306,7 +307,7 @@ pub async fn serve_interface<T: {wrpc_transport}::Serve, U>(
             uwrite!(
                 self.src,
                 r"
-                    ), rx, tx))) => {{",
+                        ), rx, tx))) => {{",
             );
             let (trait_name, name) = match func.kind {
                 FunctionKind::Freestanding => ("Handler", name),
@@ -327,9 +328,9 @@ pub async fn serve_interface<T: {wrpc_transport}::Serve, U>(
             uwrite!(
                 self.src,
                 r#"
-                        let rx = rx.map({tracing}::Instrument::in_current_span).map({tokio}::spawn);
-                        {tracing}::trace!(instance = "{instance}", func = "{wit_name}", "calling handler");
-                        match {trait_name}::{name}(&handler, cx"#,
+                            let rx = rx.map({tracing}::Instrument::in_current_span).map({tokio}::spawn);
+                            {tracing}::trace!(instance = "{instance}", func = "{wit_name}", "calling handler");
+                            match {trait_name}::{name}(&handler, cx"#,
                 tokio = self.gen.tokio_path(),
                 tracing = self.gen.tracing_path(),
                 wit_name = func.name,
@@ -340,9 +341,9 @@ pub async fn serve_interface<T: {wrpc_transport}::Serve, U>(
             uwrite!(
                 self.src,
                 r#"
-                        ).await {{
-                            Ok(results) => {{
-                                match tx("#,
+                            ).await {{
+                                Ok(results) => {{
+                                    match tx("#,
             );
             if func.results.len() == 1 {
                 // wrap single-element results into a tuple for correct indexing
@@ -353,44 +354,44 @@ pub async fn serve_interface<T: {wrpc_transport}::Serve, U>(
             uwrite!(
                 self.src,
                 r#"
-                                ).await {{
-                                    Ok(()) => {{
-                                        if let Some(rx) = rx {{
-                                            {tracing}::trace!(instance = "{instance}", func = "{wit_name}", "receiving async invocation parameters");
-                                            if let Err(err) = {anyhow}::Context::context(
-                                                rx.await,
-                                                "receipt of async `.{wit_name}` invocation parameters failed",
-                                            )? {{
-                                                {tracing}::warn!(?err, instance = "{instance}", func = "{wit_name}", "failed to receive async invocation parameters");
+                                    ).await {{
+                                        Ok(()) => {{
+                                            if let Some(rx) = rx {{
+                                                {tracing}::trace!(instance = "{instance}", func = "{wit_name}", "receiving async invocation parameters");
+                                                if let Err(err) = {anyhow}::Context::context(
+                                                    rx.await,
+                                                    "receipt of async `.{wit_name}` invocation parameters failed",
+                                                )? {{
+                                                    {tracing}::warn!(?err, instance = "{instance}", func = "{wit_name}", "failed to receive async invocation parameters");
+                                                }}
                                             }}
+                                            continue;
                                         }}
-                                        continue;
-                                    }}
-                                    Err(err) => {{
-                                        if let Some(rx) = rx {{
-                                            rx.abort();
+                                        Err(err) => {{
+                                            if let Some(rx) = rx {{
+                                                rx.abort();
+                                            }}
+                                            {tracing}::warn!(?err, instance = "{instance}", func = "{wit_name}", "failed to transmit invocation results");
                                         }}
-                                        {tracing}::warn!(?err, instance = "{instance}", func = "{wit_name}", "failed to transmit invocation results");
                                     }}
+                                }},
+                                Err(err) => {{
+                                    if let Some(rx) = rx {{
+                                        rx.abort();
+                                    }}
+                                    {tracing}::warn!(?err, instance = "{instance}", func = "{wit_name}", "failed to serve invocation");
                                 }}
-                            }},
-                            Err(err) => {{
-                                if let Some(rx) = rx {{
-                                    rx.abort();
-                                }}
-                                {tracing}::warn!(?err, instance = "{instance}", func = "{wit_name}", "failed to serve invocation");
                             }}
-                        }}
-                    }},
-                    Some(Err(err)) => {{
-                        {tracing}::error!(?err, instance = "{instance}", func = "{wit_name}", "failed to accept invocation");
-                    }},
-                    None => {{
-                        {tracing}::warn!(instance = "{instance}", func = "{wit_name}", "invocation stream unexpectedly finished");
-                        {anyhow}::bail!("`{instance}.{wit_name}` stream unexpectedly finished")
-                    }},
-                }}
-            }},"#,
+                        }},
+                        Some(Err(err)) => {{
+                            {tracing}::error!(?err, instance = "{instance}", func = "{wit_name}", "failed to accept invocation");
+                        }},
+                        None => {{
+                            {tracing}::warn!(instance = "{instance}", func = "{wit_name}", "invocation stream unexpectedly finished");
+                            {anyhow}::bail!("`{instance}.{wit_name}` stream unexpectedly finished")
+                        }},
+                    }}
+                }},"#,
                 anyhow = self.gen.anyhow_path(),
                 tracing = self.gen.tracing_path(),
                 wit_name = func.name,
@@ -400,10 +401,11 @@ pub async fn serve_interface<T: {wrpc_transport}::Serve, U>(
         uwriteln!(
             self.src,
             r#"
-            v = &mut shutdown => {{
-                {tracing}::debug!("shutdown received");
-                return Ok(v)
-            }},
+                v = &mut shutdown => {{
+                    {tracing}::debug!("shutdown received");
+                    return Ok(v)
+                }},
+            }}
         }}
     }}
 }}"#,
