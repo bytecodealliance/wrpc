@@ -140,6 +140,7 @@ impl InterfaceGenerator<'_> {
         uwrite!(
             self.src,
             r#"
+#[allow(clippy::manual_async_fn)]
 pub fn serve_interface<'a, T: {wrpc_transport}::Serve>(
     wrpc: &'a T,
     handler: impl Handler<T::Context> + {resource_traits} ::core::marker::Send + ::core::marker::Sync + ::core::clone::Clone + 'static,

@@ -375,6 +375,7 @@ with: {{\n\t{with_name:?}: generate\n}}
         uwriteln!(
             self.src,
             r#"
+#[allow(clippy::manual_async_fn)]
 pub fn serve<'a, T: {wrpc_transport}::Serve>(
     wrpc: &'a T,
     handler: impl {bound} + ::core::marker::Send + ::core::marker::Sync + ::core::clone::Clone + 'static,
