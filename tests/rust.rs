@@ -274,13 +274,27 @@ where
                 }
             }
 
-            tokio::spawn({
-                let srv = Arc::clone(&srv);
-                let shutdown_rx = shutdown_rx.clone();
-                async move { serve(srv.as_ref(), Component::default(), shutdown_rx).await }
+            let srv = Arc::clone(&srv);
+            let shutdown_rx = shutdown_rx.clone();
+            tokio::spawn(async move {
+                let mut invocations = serve(srv.as_ref(), Component::default())
+                    .await
+                    .context("failed to serve `wrpc-test:integration/test`")?;
+                loop {
+                    let shutdown_rx = shutdown_rx.clone();
+                    select! {
+                        Some((instance, name, res)) = invocations.next() => {
+                            info!(instance, name, "finished serving invocation");
+                            res.expect("failed to serve invocation")
+                        }
+                        () = shutdown_rx => {
+                            info!("shutting down");
+                            return anyhow::Ok(())
+                        }
+                    }
+                }
             })
             .await?
-            .context("failed to serve `wrpc-test:integration/test`")
         },
         async {
             wrpc::generate!({
@@ -504,13 +518,26 @@ where
                 }
             }
 
-            serve(
-                srv.as_ref(),
-                Component(Arc::clone(&clt)),
-                shutdown_rx.clone(),
-            )
-            .await
-            .context("failed to serve `wrpc-test:integration/test`")
+            let mut invocations = serve(srv.as_ref(), Component(Arc::clone(&clt)))
+                .await
+                .context("failed to serve `wrpc-test:integration/async`")?;
+            let shutdown_rx = shutdown_rx.clone();
+            tokio::spawn(async move {
+                loop {
+                    let shutdown_rx = shutdown_rx.clone();
+                    select! {
+                        Some((instance, name, res)) = invocations.next() => {
+                            info!(instance, name, "finished serving invocation");
+                            res.expect("failed to serve invocation")
+                        }
+                        () = shutdown_rx => {
+                            info!("shutting down");
+                            return anyhow::Ok(())
+                        }
+                    }
+                }
+            })
+            .await?
         },
         async {
             wrpc::generate!({

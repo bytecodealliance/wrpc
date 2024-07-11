@@ -12,7 +12,8 @@ use wit_bindgen_core::wit_parser::{
     WorldItem, WorldKey,
 };
 use wit_bindgen_core::{
-    name_package_module, uwriteln, Files, InterfaceGenerator as _, Source, Types, WorldGenerator,
+    name_package_module, uwrite, uwriteln, Files, InterfaceGenerator as _, Source, Types,
+    WorldGenerator,
 };
 
 mod interface;
@@ -377,26 +378,36 @@ with: {{\n\t{with_name:?}: generate\n}}
 pub fn serve<'a, T: {wrpc_transport}::Serve>(
     wrpc: &'a T,
     handler: impl {bound} + ::core::marker::Send + ::core::marker::Sync + ::core::clone::Clone + 'static,
-    shutdown: impl ::core::future::Future<Output = ()>,
-) -> impl ::core::future::Future<Output = {anyhow}::Result<()>> + {wrpc_transport}::Captures<'a> {{
-    use {futures}::FutureExt as _;
-    let shutdown = shutdown.shared();
+) -> impl ::core::future::Future<Output = {anyhow}::Result<{futures}::stream::SelectAll<::core::pin::Pin<::std::boxed::Box<dyn {futures}::Stream<Item = (&'static str, &'static str, {anyhow}::Result<()>)> + ::core::marker::Send + 'static>>>>> + ::core::marker::Send + {wrpc_transport}::Captures<'a> {{
     async move {{
-        {tokio}::try_join!("#
+        let interfaces = {tokio}::try_join!("#
         );
         for path in &self.export_paths {
             if !path.is_empty() {
                 self.src.push_str(path);
                 self.src.push_str("::");
             }
-            self.src
-                .push_str("serve_interface(wrpc, handler.clone(), shutdown.clone()),");
+            self.src.push_str("serve_interface(wrpc, handler.clone()),");
         }
         uwriteln!(
             self.src,
             r#"
         )?;
-        Ok(())
+        let mut streams = {futures}::stream::SelectAll::new();"#
+        );
+        for i in 0..self.export_paths.len() {
+            uwrite!(
+                self.src,
+                r"
+        for s in interfaces.{i} {{
+            streams.push(s);
+        }}"
+            );
+        }
+        uwriteln!(
+            self.src,
+            r#"
+        Ok(streams)
     }}
 }}"#
         );

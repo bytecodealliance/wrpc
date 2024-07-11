@@ -54,9 +54,10 @@ pub trait ServeExt: Serve {
                         Option<impl Future<Output = std::io::Result<()>> + Send + Unpin + 'static>,
                         impl FnOnce(
                                 Results,
-                            )
-                                -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send>>
-                            + Send,
+                            ) -> Pin<
+                                Box<dyn Future<Output = anyhow::Result<()>> + Send + 'static>,
+                            > + Send
+                            + 'static,
                     )>,
                 > + Send
                 + 'static,
@@ -126,3 +127,86 @@ pub trait ServeExt: Serve {
 }
 
 impl<T: Serve> ServeExt for T {}
+
+#[allow(dead_code)]
+#[cfg(test)]
+mod tests {
+    use bytes::Bytes;
+    use futures::{stream, StreamExt as _, TryStreamExt as _};
+
+    use crate::Captures;
+
+    use super::*;
+
+    async fn call_serve<T: Serve>(
+        s: &T,
+    ) -> anyhow::Result<Vec<(T::Context, T::Outgoing, T::Incoming)>> {
+        let st = stream::empty()
+            .chain({
+                s.serve(
+                    "foo",
+                    "bar",
+                    [Box::from([Some(42), None]), Box::from([None])],
+                )
+                .await
+                .unwrap()
+            })
+            .chain({
+                s.serve(
+                    "foo",
+                    "bar",
+                    vec![Box::from([Some(42), None]), Box::from([None])],
+                )
+                .await
+                .unwrap()
+            })
+            .chain({
+                s.serve(
+                    "foo",
+                    "bar",
+                    [Box::from([Some(42), None]), Box::from([None])].as_slice(),
+                )
+                .await
+                .unwrap()
+            });
+        tokio::spawn(async move { st.try_collect().await })
+            .await
+            .unwrap()
+    }
+
+    fn serve_lifetime<T: Serve>(
+        s: &T,
+    ) -> impl Future<
+        Output = anyhow::Result<Pin<Box<dyn Stream<Item = anyhow::Result<T::Context>> + 'static>>>,
+    > + Captures<'_> {
+        let fut = s.serve(
+            "foo",
+            "bar",
+            [Box::from([Some(42), None]), Box::from([None])],
+        );
+        async move {
+            let st = fut.await.unwrap();
+            Ok(Box::pin(st.and_then(|(cx, _, _)| async { Ok(cx) }))
+                as Pin<Box<dyn Stream<Item = _>>>)
+        }
+    }
+
+    fn serve_values_lifetime<T: Serve>(
+        s: &T,
+    ) -> impl Future<
+        Output = anyhow::Result<Pin<Box<dyn Stream<Item = anyhow::Result<T::Context>> + 'static>>>,
+    > + crate::Captures<'_> {
+        let fut = s.serve_values::<(Bytes,), (Bytes,)>(
+            "foo",
+            "bar",
+            [Box::from([Some(42), None]), Box::from([None])],
+        );
+        async move {
+            let st = fut.await.unwrap();
+            Ok(Box::pin(st.and_then(|(cx, _, _, tx)| async {
+                tx((Bytes::from("test"),)).await.unwrap();
+                Ok(cx)
+            })) as Pin<Box<dyn Stream<Item = _>>>)
+        }
+    }
+}
