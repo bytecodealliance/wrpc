@@ -1,6 +1,10 @@
+use core::pin::pin;
+
 use anyhow::Context as _;
 use clap::Parser;
-use tokio::signal;
+use futures::StreamExt as _;
+use tokio::{select, signal};
+use tracing::{info, warn};
 use url::Url;
 
 mod bindings {
@@ -47,11 +51,29 @@ async fn main() -> anyhow::Result<()> {
     .await
     .context("failed to connect to NATS.io server")?;
 
-    bindings::serve(
+    // NOTE: This will conflate all invocation streams into a single stream via `futures::stream::SelectAll`,
+    // to customize this, iterate over the returned `invocations` and set up custom handling per stream
+    let mut invocations = bindings::serve(
         &wrpc_transport_nats::Client::new(nats, prefix, None),
         Server,
-        async { signal::ctrl_c().await.expect("failed to listen for ^C") },
     )
     .await
-    .context("failed to invoke `wrpc-examples.hello/handler.hello`")
+    .context("failed to serve `wrpc-examples.hello/handler.hello`")?;
+    let invocations = invocations.buffer_unordered(16); // handle at most 16 requests concurrently
+    let shutdown = signal::ctrl_c();
+    let mut shutdown = pin!(shutdown);
+    loop {
+        select! {
+            Some((instance, name, res)) = invocations.next() => {
+                if let Err(err) = res {
+                    warn!(?err, instance, name, "failed to handle invocation");
+                } else {
+                    info!(instance, name, "invocation handled")
+                }
+            }
+            res = &mut shutdown => {
+                return res.context("failed to listen for ^C")
+            }
+        }
+    }
 }
