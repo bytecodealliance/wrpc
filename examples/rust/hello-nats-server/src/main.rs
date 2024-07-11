@@ -3,7 +3,7 @@ use core::pin::pin;
 use anyhow::Context as _;
 use clap::Parser;
 use futures::stream::select_all;
-use futures::StreamExt as _;
+use futures::{StreamExt as _, TryStreamExt as _};
 use tokio::{select, signal};
 use tracing::{info, warn};
 use url::Url;
@@ -60,23 +60,20 @@ async fn main() -> anyhow::Result<()> {
     .context("failed to serve `wrpc-examples.hello/handler.hello`")?;
     // NOTE: This will conflate all invocation streams into a single stream via `futures::stream::SelectAll`,
     // to customize this, iterate over the returned `invocations` and set up custom handling per export
-    let mut invocations = select_all(
-        invocations
-            .into_iter()
-            .map(|(instance, name, invocations)| invocations.map(move |res| (instance, name, res))),
-    );
+    let mut invocations = select_all(invocations.into_iter().map(
+        |(instance, name, invocations)| {
+            invocations
+                .try_buffer_unordered(16) // handle up to 16 invocations concurrently
+                .map(move |res| (instance, name, res))
+        },
+    ));
     let shutdown = signal::ctrl_c();
     let mut shutdown = pin!(shutdown);
     loop {
         select! {
-            Some((instance, name, invocation)) = invocations.next() => {
-                match invocation {
-                    Ok(invocation) => {
-                        info!(instance, name, "invocation accepted, handling");
-                        if let Err(err) = invocation.await {
-                            warn!(?err, instance, name, "failed to handle invocation");
-                            continue
-                        }
+            Some((instance, name, res)) = invocations.next() => {
+                match res {
+                    Ok(()) => {
                         info!(instance, name, "invocation successfully handled");
                     }
                     Err(err) => {
