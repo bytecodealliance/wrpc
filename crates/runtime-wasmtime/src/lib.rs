@@ -848,7 +848,7 @@ pub trait WrpcView<C: Invoke>: Send {
 
 /// Polyfill [`types::ComponentItem`] in a [`LinkerInstance`] using [`wrpc_transport::Invoke`]
 #[instrument(level = "trace", skip_all)]
-pub fn link_item<'a, C, V>(
+pub fn link_item<C, V>(
     engine: &Engine,
     linker: &mut LinkerInstance<V>,
     ty: types::ComponentItem,
@@ -897,7 +897,7 @@ where
 
 /// Polyfill [`types::ComponentInstance`] in a [`LinkerInstance`] using [`wrpc_transport::Invoke`]
 #[instrument(level = "trace", skip_all)]
-pub fn link_instance<'a, C, V>(
+pub fn link_instance<C, V>(
     engine: &Engine,
     linker: &mut LinkerInstance<V>,
     ty: types::ComponentInstance,
@@ -919,7 +919,7 @@ where
 
 /// Polyfill [`types::ComponentFunc`] in a [`LinkerInstance`] using [`wrpc_transport::Invoke`]
 #[instrument(level = "trace", skip_all)]
-pub fn link_function<'a, C, V>(
+pub fn link_function<C, V>(
     linker: &mut LinkerInstance<V>,
     ty: types::ComponentFunc,
     instance: impl Into<Arc<str>>,
