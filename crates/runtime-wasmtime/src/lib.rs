@@ -1051,7 +1051,13 @@ pub trait ServeExt: wrpc_transport::Serve {
         name: &str,
     ) -> impl Future<
         Output = anyhow::Result<
-            impl Stream<Item = anyhow::Result<(Self::Context, anyhow::Result<()>)>> + Send + 'static,
+            impl Stream<
+                    Item = anyhow::Result<(
+                        Self::Context,
+                        Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + 'static>>,
+                    )>,
+                > + Send
+                + 'static,
         >,
     > + Send
     where
@@ -1065,50 +1071,47 @@ pub trait ServeExt: wrpc_transport::Serve {
             let name = Arc::<str>::from(name);
             let params_ty: Arc<[_]> = ty.params().collect();
             let results_ty: Arc<[_]> = ty.results().collect();
-            Ok(invocations.and_then(move |(cx, tx, rx)| {
+            Ok(invocations.map_ok(move |(cx, tx, rx)| {
                 let instance_name = Arc::clone(&instance_name);
                 let instance_pre = instance_pre.clone();
                 let name = Arc::clone(&name);
                 let params_ty = Arc::clone(&params_ty);
                 let results_ty = Arc::clone(&results_ty);
                 let mut store = store();
-                async move {
-                    Ok((
-                        cx,
-                        async move {
-                            let instance = instance_pre
-                                .instantiate_async(&mut store)
-                                .await
-                                .context("failed to instantiate component")?;
-                            let func = {
-                                let mut instance = instance.exports(&mut store);
-                                if instance_name.is_empty() {
-                                    instance.root()
-                                } else {
-                                    instance.instance(&instance_name).with_context(|| {
-                                        format!("instance export `{instance_name}` not found")
-                                    })?
-                                }
-                                .func(&name)
-                                .with_context(|| format!("function export`{name}` not found"))?
-                            };
-                            call(
-                                &mut store,
-                                rx,
-                                tx,
-                                params_ty.iter(),
-                                results_ty.iter(),
-                                func,
-                            )
-                            .await?;
-                            func.post_return_async(&mut store)
-                                .await
-                                .context("failed to perform post-return cleanup")?;
-                            Ok(())
-                        }
-                        .await,
-                    ))
-                }
+                (
+                    cx,
+                    Box::pin(async move {
+                        let instance = instance_pre
+                            .instantiate_async(&mut store)
+                            .await
+                            .context("failed to instantiate component")?;
+                        let func = {
+                            let mut instance = instance.exports(&mut store);
+                            if instance_name.is_empty() {
+                                instance.root()
+                            } else {
+                                instance.instance(&instance_name).with_context(|| {
+                                    format!("instance export `{instance_name}` not found")
+                                })?
+                            }
+                            .func(&name)
+                            .with_context(|| format!("function export`{name}` not found"))?
+                        };
+                        call(
+                            &mut store,
+                            rx,
+                            tx,
+                            params_ty.iter(),
+                            results_ty.iter(),
+                            func,
+                        )
+                        .await?;
+                        func.post_return_async(&mut store)
+                            .await
+                            .context("failed to perform post-return cleanup")?;
+                        Ok(())
+                    }) as Pin<Box<dyn Future<Output = _> + Send + 'static>>,
+                )
             }))
         }
     }

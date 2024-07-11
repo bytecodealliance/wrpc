@@ -316,11 +316,17 @@ pub async fn handle_serve(
                     let mut invocations = pin!(invocations);
                     while let Some(invocation) = invocations.next().await {
                         match invocation {
-                            Ok((headers, Ok(()))) => {
-                                info!(?headers, "finished serving root function invocation");
-                            }
-                            Ok((headers, Err(err))) => {
-                                warn!(?headers, ?err, "failed to serve root function invocation");
+                            Ok((headers, fut)) => {
+                                info!(?headers, "serving root function invocation");
+                                if let Err(err) = fut.await {
+                                    warn!(
+                                        ?headers,
+                                        ?err,
+                                        "failed to serve root function invocation"
+                                    );
+                                } else {
+                                    info!("successfully served root function invocation")
+                                }
                             }
                             Err(err) => {
                                 error!(?err, "failed to accept root function invocation");
@@ -359,18 +365,19 @@ pub async fn handle_serve(
                                 let mut invocations = pin!(invocations);
                                 while let Some(invocation) = invocations.next().await {
                                     match invocation {
-                                        Ok((headers, Ok(()))) => {
-                                            info!(
-                                                ?headers,
-                                                "finished serving instance function invocation"
-                                            );
-                                        }
-                                        Ok((headers, Err(err))) => {
-                                            warn!(
-                                                ?headers,
-                                                ?err,
-                                                "failed to serve instance function invocation"
-                                            );
+                                        Ok((headers, fut)) => {
+                                            info!(?headers, "serving instance function invocation");
+                                            if let Err(err) = fut.await {
+                                                warn!(
+                                                    ?headers,
+                                                    ?err,
+                                                    "failed to serve instance function invocation"
+                                                );
+                                            } else {
+                                                info!(
+                                                    "successfully served instance function invocation"
+                                                )
+                                            }
                                         }
                                         Err(err) => {
                                             error!(

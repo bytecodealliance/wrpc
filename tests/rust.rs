@@ -290,7 +290,7 @@ where
                     select! {
                         Some((instance, name, invocation)) = invocations.next() => {
                             info!(instance, name, "serving invocation");
-                            invocation.expect("failed to accept invocation").await.expect("failed to serve invocation")
+                            invocation.expect("failed to accept invocation").await.expect("failed to serve invocation");
                         }
                         () = shutdown_rx => {
                             info!("shutting down");
@@ -536,7 +536,7 @@ where
                     select! {
                         Some((instance, name, invocation)) = invocations.next() => {
                             info!(instance, name, "serving invocation");
-                            invocation.expect("failed to accept invocation").await.expect("failed to serve invocation")
+                            invocation.expect("failed to accept invocation").await.expect("failed to serve invocation");
                         }
                         () = shutdown_rx => {
                             info!("shutting down");
