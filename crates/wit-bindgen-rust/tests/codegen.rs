@@ -100,7 +100,16 @@ mod skip {
     }
 
     async fn serve_exports(wrpc: &impl wrpc_transport::Serve) {
-        serve(wrpc, Component, async {}).await.unwrap();
+        use wit_bindgen_wrpc::futures::stream::StreamExt as _;
+
+        let invocations = serve(wrpc, Component).await.unwrap();
+        let invocations = std::thread::spawn(|| invocations).join().unwrap();
+        invocations
+            .for_each(|(instance, name, res)| async move {
+                eprintln!("served {instance} {name}");
+                res.expect("failed to serve");
+            })
+            .await
     }
 }
 
@@ -162,7 +171,16 @@ mod symbol_does_not_conflict {
     }
 
     async fn serve_exports(wrpc: &impl wrpc_transport::Serve) {
-        serve(wrpc, Component, async {}).await.unwrap();
+        use wit_bindgen_wrpc::futures::stream::StreamExt as _;
+
+        let invocations = serve(wrpc, Component).await.unwrap();
+        let invocations = std::thread::spawn(|| invocations).join().unwrap();
+        invocations
+            .for_each(|(instance, name, res)| async move {
+                eprintln!("served {instance} {name}");
+                res.expect("failed to serve");
+            })
+            .await
     }
 }
 
@@ -188,7 +206,16 @@ mod alternative_bitflags_path {
     struct Component;
 
     async fn serve_exports(wrpc: &impl wrpc_transport::Serve) {
-        serve(wrpc, Component, async {}).await.unwrap();
+        use wit_bindgen_wrpc::futures::stream::StreamExt as _;
+
+        let invocations = serve(wrpc, Component).await.unwrap();
+        let invocations = std::thread::spawn(|| invocations).join().unwrap();
+        invocations
+            .for_each(|(instance, name, res)| async move {
+                eprintln!("served {instance} {name}");
+                res.expect("failed to serve");
+            })
+            .await
     }
 
     impl<Ctx: Send> Handler<Ctx> for Component {
@@ -245,8 +272,16 @@ mod owned_resource_deref_mut {
     impl<Ctx: Send> exports::my::inline::foo::Handler<Ctx> for Component {}
 
     async fn serve_exports(wrpc: &impl wrpc_transport::Serve) {
-        // TODO: Support resources
-        serve(wrpc, Component, async {}).await.unwrap();
+        use wit_bindgen_wrpc::futures::stream::StreamExt as _;
+
+        let invocations = serve(wrpc, Component).await.unwrap();
+        let invocations = std::thread::spawn(|| invocations).join().unwrap();
+        invocations
+            .for_each(|(instance, name, res)| async move {
+                eprintln!("served {instance} {name}");
+                res.expect("failed to serve");
+            })
+            .await
     }
 }
 
@@ -285,7 +320,16 @@ mod package_with_versions {
     impl<Ctx: Send> exports::my::inline::foo::Handler<Ctx> for Component {}
 
     async fn serve_exports(wrpc: &impl wrpc_transport::Serve) {
-        serve(wrpc, Component, async {}).await.unwrap();
+        use wit_bindgen_wrpc::futures::stream::StreamExt as _;
+
+        let invocations = serve(wrpc, Component).await.unwrap();
+        let invocations = std::thread::spawn(|| invocations).join().unwrap();
+        invocations
+            .for_each(|(instance, name, res)| async move {
+                eprintln!("served {instance} {name}");
+                res.expect("failed to serve");
+            })
+            .await
     }
 }
 
@@ -336,7 +380,16 @@ mod custom_derives {
     }
 
     async fn serve_exports(wrpc: &impl wrpc_transport::Serve) {
-        serve(wrpc, Component, async {}).await.unwrap();
+        use wit_bindgen_wrpc::futures::stream::StreamExt as _;
+
+        let invocations = serve(wrpc, Component).await.unwrap();
+        let invocations = std::thread::spawn(|| invocations).join().unwrap();
+        invocations
+            .for_each(|(instance, name, res)| async move {
+                eprintln!("served {instance} {name}");
+                res.expect("failed to serve");
+            })
+            .await
     }
 }
 
@@ -523,8 +576,17 @@ mod interface_export_example {
         }
     }
 
-    async fn serve_exports(wrpc: &impl wrpc_transport::Serve) -> anyhow::Result<()> {
-        serve(wrpc, MyComponent, async {}).await
+    async fn serve_exports(wrpc: &impl wrpc_transport::Serve) {
+        use wit_bindgen_wrpc::futures::stream::StreamExt as _;
+
+        let invocations = serve(wrpc, MyComponent).await.unwrap();
+        let invocations = std::thread::spawn(|| invocations).join().unwrap();
+        invocations
+            .for_each(|(instance, name, res)| async move {
+                eprintln!("served {instance} {name}");
+                res.expect("failed to serve");
+            })
+            .await
     }
 }
 
@@ -616,8 +678,17 @@ mod resource_example {
         }
     }
 
-    async fn serve_exports(wrpc: &impl wrpc_transport::Serve) -> anyhow::Result<()> {
-        serve(wrpc, MyComponent, async {}).await
+    async fn serve_exports(wrpc: &impl wrpc_transport::Serve) {
+        use wit_bindgen_wrpc::futures::stream::StreamExt as _;
+
+        let invocations = serve(wrpc, MyComponent).await.unwrap();
+        let invocations = std::thread::spawn(|| invocations).join().unwrap();
+        invocations
+            .for_each(|(instance, name, res)| async move {
+                eprintln!("served {instance} {name}");
+                res.expect("failed to serve");
+            })
+            .await
     }
 }
 
