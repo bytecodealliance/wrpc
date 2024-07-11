@@ -2,6 +2,7 @@ use core::pin::pin;
 
 use anyhow::Context as _;
 use clap::Parser;
+use futures::stream::select_all;
 use futures::StreamExt as _;
 use tokio::{select, signal};
 use tracing::{info, warn};
@@ -51,24 +52,36 @@ async fn main() -> anyhow::Result<()> {
     .await
     .context("failed to connect to NATS.io server")?;
 
-    // NOTE: This will conflate all invocation streams into a single stream via `futures::stream::SelectAll`,
-    // to customize this, iterate over the returned `invocations` and set up custom handling per stream
-    let mut invocations = bindings::serve(
+    let invocations = bindings::serve(
         &wrpc_transport_nats::Client::new(nats, prefix, None),
         Server,
     )
     .await
     .context("failed to serve `wrpc-examples.hello/handler.hello`")?;
-    let invocations = invocations.buffer_unordered(16); // handle at most 16 requests concurrently
+    // NOTE: This will conflate all invocation streams into a single stream via `futures::stream::SelectAll`,
+    // to customize this, iterate over the returned `invocations` and set up custom handling per export
+    let mut invocations = select_all(
+        invocations
+            .into_iter()
+            .map(|(instance, name, invocations)| invocations.map(move |res| (instance, name, res))),
+    );
     let shutdown = signal::ctrl_c();
     let mut shutdown = pin!(shutdown);
     loop {
         select! {
-            Some((instance, name, res)) = invocations.next() => {
-                if let Err(err) = res {
-                    warn!(?err, instance, name, "failed to handle invocation");
-                } else {
-                    info!(instance, name, "invocation handled")
+            Some((instance, name, invocation)) = invocations.next() => {
+                match invocation {
+                    Ok(invocation) => {
+                        info!(instance, name, "invocation accepted, handling");
+                        if let Err(err) = invocation.await {
+                            warn!(?err, instance, name, "failed to handle invocation");
+                            continue
+                        }
+                        info!(instance, name, "invocation successfully handled");
+                    }
+                    Err(err) => {
+                        warn!(?err, instance, name, "failed to accept invocation");
+                    }
                 }
             }
             res = &mut shutdown => {

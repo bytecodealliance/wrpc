@@ -136,13 +136,39 @@ impl InterfaceGenerator<'_> {
             .map(|(name, _)| format!("{name}<T::Context> + "))
             .collect();
 
+        let n = funcs_to_export.len();
         uwrite!(
             self.src,
             r#"
 pub fn serve_interface<'a, T: {wrpc_transport}::Serve>(
     wrpc: &'a T,
     handler: impl Handler<T::Context> + {resource_traits} ::core::marker::Send + ::core::marker::Sync + ::core::clone::Clone + 'static,
-) -> impl ::core::future::Future<Output = {anyhow}::Result<{futures}::stream::SelectAll<::core::pin::Pin<::std::boxed::Box<dyn {futures}::Stream<Item = (&'static str, &'static str, {anyhow}::Result<()>)> + ::core::marker::Send + 'static>>>>> + ::core::marker::Send + {wrpc_transport}::Captures<'a> {{
+) -> impl ::core::future::Future<
+        Output = {anyhow}::Result<
+            [
+                (
+                    &'static str,
+                    &'static str,
+                    ::core::pin::Pin<
+                        ::std::boxed::Box<
+                            dyn {futures}::Stream<
+                                Item = {anyhow}::Result<
+                                    ::core::pin::Pin<
+                                        ::std::boxed::Box<
+                                            dyn ::core::future::Future<
+                                                Output = {anyhow}::Result<()>
+                                            > + ::core::marker::Send + 'static
+                                        >
+                                    >
+                                >
+                            > + ::core::marker::Send + 'static
+                        >
+                    >
+                );
+                {n}
+            ] 
+        >
+    > + ::core::marker::Send + {wrpc_transport}::Captures<'a> {{
     async move {{
         let ("#,
             resource_traits = trait_names.join(""),
@@ -263,18 +289,21 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve>(
         uwrite!(
             self.src,
             r"
-        {anyhow}::Ok({futures}::stream::select_all([",
+        {anyhow}::Ok([",
             anyhow = self.gen.anyhow_path(),
-            futures = self.gen.futures_path()
         );
         for func in &funcs_to_export {
             let name = to_rust_ident(&func.name);
             uwrite!(
                 self.src,
-                r"
-                {{
+                r#"
+            {{
                 let handler = handler.clone();
-                ::std::boxed::Box::pin({futures}::StreamExt::map({futures}::TryStreamExt::and_then({}_{name}, move |(cx, (",
+                (
+                    "{instance}",
+                    "{wit_name}",
+                    ::std::boxed::Box::pin(
+                        {futures}::TryStreamExt::map_ok({}_{name}, move |(cx, ("#,
                 match func.kind {
                     FunctionKind::Freestanding => "f",
                     FunctionKind::Method(_) => "m",
@@ -282,15 +311,17 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve>(
                     FunctionKind::Static(_) => "s",
                 },
                 futures = self.gen.futures_path(),
+                wit_name = func.name,
             );
             for i in 0..func.params.len() {
                 uwrite!(self.src, "p{i}, ");
             }
             uwrite!(
                 self.src,
-                r"), rx, tx)| {{
-                    let handler = handler.clone();
-                    async move {{"
+                r"
+                        ), rx, tx)| {{
+                            let handler = handler.clone();
+                            ::std::boxed::Box::pin(async move {{"
             );
             let (trait_name, name) = match func.kind {
                 FunctionKind::Freestanding => ("Handler", name),
@@ -311,9 +342,9 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve>(
             uwrite!(
                 self.src,
                 r#"
-                        let rx = rx.map({tracing}::Instrument::in_current_span).map({tokio}::spawn);
-                        {tracing}::trace!(instance = "{instance}", func = "{wit_name}", "calling handler");
-                        match {trait_name}::{name}(&handler, cx"#,
+                                let rx = rx.map({tracing}::Instrument::in_current_span).map({tokio}::spawn);
+                                {tracing}::trace!(instance = "{instance}", func = "{wit_name}", "calling handler");
+                                match {trait_name}::{name}(&handler, cx"#,
                 tokio = self.gen.tokio_path(),
                 tracing = self.gen.tracing_path(),
                 wit_name = func.name,
@@ -323,9 +354,10 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve>(
             }
             uwrite!(
                 self.src,
-                r").await {{
-                            Ok(results) => {{
-                                match tx(",
+                r"
+                                ).await {{
+                                    Ok(results) => {{
+                                        match tx(",
             );
             if func.results.len() == 1 {
                 // wrap single-element results into a tuple for correct indexing
@@ -335,40 +367,65 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve>(
             }
             uwrite!(
                 self.src,
-                r#").await {{
-                                    Ok(()) => {{
-                                        if let Some(rx) = rx {{
-                                            {tracing}::trace!(instance = "{instance}", func = "{wit_name}", "receiving async invocation parameters");
-                                            let rx = {anyhow}::Context::context(
-                                                rx.await,
-                                                "`{instance}.{wit_name}` async parameter receipt task failed",
-                                            )?;
-                                            {anyhow}::Context::context(
-                                                rx,
-                                                "failed to receive `{instance}.{wit_name}` async parameters",
-                                            )
-                                        }} else {{
-                                            {anyhow}::Ok(())
+                r#"
+                                        ).await {{
+                                            Ok(()) => {{
+                                                if let Some(rx) = rx {{
+                                                    {tracing}::trace!(instance = "{instance}", func = "{wit_name}", "receiving async invocation parameters");
+                                                    let rx = {anyhow}::Context::context(
+                                                        rx.await,
+                                                        "`{instance}.{wit_name}` async parameter receipt task failed",
+                                                    )?;
+                                                    {anyhow}::Context::context(
+                                                        rx,
+                                                        "failed to receive `{instance}.{wit_name}` async parameters",
+                                                    )
+                                                }} else {{
+                                                    {anyhow}::Ok(())
+                                                }}
+                                            }},
+                                            Err(err) => {{
+                                                if let Some(rx) = rx {{
+                                                    rx.abort();
+                                                }}
+                                                {anyhow}::bail!("failed to transmit `{instance}.{wit_name}` invocation results")
+                                            }},
                                         }}
                                     }},
                                     Err(err) => {{
                                         if let Some(rx) = rx {{
                                             rx.abort();
                                         }}
-                                        {anyhow}::bail!("failed to transmit `{instance}.{wit_name}` invocation results")
+                                        {anyhow}::bail!("failed to serve `{instance}.{wit_name}` invocation")
                                     }},
                                 }}
-                            }},
-                            Err(err) => {{
-                                if let Some(rx) = rx {{
-                                    rx.abort();
-                                }}
-                                {anyhow}::bail!("failed to serve `{instance}.{wit_name}` invocation")
-                            }},
-                        }}
-                    }}
-                }}), |res| ("{instance}", "{wit_name}", res))) as ::core::pin::Pin<::std::boxed::Box<dyn {futures}::Stream<Item = (&'static str, &'static str, {anyhow}::Result<()>)> + ::core::marker::Send>>
-                }},"#,
+                            }})
+                            as ::core::pin::Pin<
+                                    ::std::boxed::Box<
+                                        dyn ::core::future::Future<
+                                            Output = {anyhow}::Result<()>
+                                    > + ::core::marker::Send + 'static
+                                >
+                            >
+                        }})
+                    )
+                    as ::core::pin::Pin<
+                        ::std::boxed::Box<
+                            dyn {futures}::Stream<
+                                Item = {anyhow}::Result<
+                                    ::core::pin::Pin<
+                                        ::std::boxed::Box<
+                                            dyn ::core::future::Future<
+                                                Output = {anyhow}::Result<()>
+                                            > + ::core::marker::Send + 'static
+                                        >
+                                    >
+                                >
+                            > + ::core::marker::Send + 'static
+                        >
+                    >
+                )
+            }},"#,
                 anyhow = self.gen.anyhow_path(),
                 futures = self.gen.futures_path(),
                 tracing = self.gen.tracing_path(),
@@ -379,7 +436,7 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve>(
         uwriteln!(
             self.src,
             r#"
-        ]))
+        ])
     }}
 }}"#,
         );

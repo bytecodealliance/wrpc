@@ -378,7 +378,31 @@ with: {{\n\t{with_name:?}: generate\n}}
 pub fn serve<'a, T: {wrpc_transport}::Serve>(
     wrpc: &'a T,
     handler: impl {bound} + ::core::marker::Send + ::core::marker::Sync + ::core::clone::Clone + 'static,
-) -> impl ::core::future::Future<Output = {anyhow}::Result<{futures}::stream::SelectAll<::core::pin::Pin<::std::boxed::Box<dyn {futures}::Stream<Item = (&'static str, &'static str, {anyhow}::Result<()>)> + ::core::marker::Send + 'static>>>>> + ::core::marker::Send + {wrpc_transport}::Captures<'a> {{
+) -> impl ::core::future::Future<
+        Output = {anyhow}::Result<
+            ::std::vec::Vec<
+                (
+                    &'static str,
+                    &'static str,
+                    ::core::pin::Pin<
+                        ::std::boxed::Box<
+                            dyn {futures}::Stream<
+                                Item = {anyhow}::Result<
+                                    ::core::pin::Pin<
+                                        ::std::boxed::Box<
+                                            dyn ::core::future::Future<
+                                                Output = {anyhow}::Result<()>
+                                            > + ::core::marker::Send + 'static
+                                        >
+                                    >
+                                >
+                            > + ::core::marker::Send + 'static
+                        >
+                    >
+                )
+            >
+        >
+    > + ::core::marker::Send + {wrpc_transport}::Captures<'a> {{
     async move {{
         let interfaces = {tokio}::try_join!("#
         );
@@ -393,7 +417,7 @@ pub fn serve<'a, T: {wrpc_transport}::Serve>(
             self.src,
             r#"
         )?;
-        let mut streams = {futures}::stream::SelectAll::new();"#
+        let mut streams = Vec::new();"#
         );
         for i in 0..self.export_paths.len() {
             uwrite!(
