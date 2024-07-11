@@ -346,9 +346,11 @@ impl AsyncRead for Reader {
 
         if !self.buffer.is_empty() {
             if self.buffer.len() > cap {
+                trace!(cap, len = self.buffer.len(), "reading part of buffer");
                 buf.put_slice(&self.buffer.split_to(cap));
             } else {
-                buf.put_slice(&self.buffer);
+                trace!(cap, len = self.buffer.len(), "reading full buffer");
+                buf.put_slice(&mem::take(&mut self.buffer));
             }
             return Poll::Ready(Ok(()));
         }
