@@ -280,12 +280,17 @@ where
                 let mut invocations = serve(srv.as_ref(), Component::default())
                     .await
                     .context("failed to serve `wrpc-test:integration/test`")?;
+                let mut invocations = stream::select_all(invocations.into_iter().map(
+                    |(instance, name, invocations)| {
+                        invocations.map(move |res| (instance, name, res))
+                    },
+                ));
                 loop {
                     let shutdown_rx = shutdown_rx.clone();
                     select! {
-                        Some((instance, name, res)) = invocations.next() => {
-                            info!(instance, name, "finished serving invocation");
-                            res.expect("failed to serve invocation")
+                        Some((instance, name, invocation)) = invocations.next() => {
+                            info!(instance, name, "serving invocation");
+                            invocation.expect("failed to accept invocation").await.expect("failed to serve invocation")
                         }
                         () = shutdown_rx => {
                             info!("shutting down");
@@ -521,14 +526,17 @@ where
             let mut invocations = serve(srv.as_ref(), Component(Arc::clone(&clt)))
                 .await
                 .context("failed to serve `wrpc-test:integration/async`")?;
+            let mut invocations = stream::select_all(invocations.into_iter().map(
+                |(instance, name, invocations)| invocations.map(move |res| (instance, name, res)),
+            ));
             let shutdown_rx = shutdown_rx.clone();
             tokio::spawn(async move {
                 loop {
                     let shutdown_rx = shutdown_rx.clone();
                     select! {
-                        Some((instance, name, res)) = invocations.next() => {
-                            info!(instance, name, "finished serving invocation");
-                            res.expect("failed to serve invocation")
+                        Some((instance, name, invocation)) = invocations.next() => {
+                            info!(instance, name, "serving invocation");
+                            invocation.expect("failed to accept invocation").await.expect("failed to serve invocation")
                         }
                         () = shutdown_rx => {
                             info!("shutting down");
