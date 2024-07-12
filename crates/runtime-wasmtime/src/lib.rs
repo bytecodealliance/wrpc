@@ -4,8 +4,9 @@ use core::future::Future;
 use core::iter::zip;
 use core::ops::{BitOrAssign, Shl};
 use core::pin::{pin, Pin};
+use core::time::Duration;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use anyhow::{bail, Context as _};
@@ -14,28 +15,48 @@ use futures::future::try_join_all;
 use futures::stream::FuturesUnordered;
 use futures::{Stream, TryStreamExt as _};
 use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _};
+use tokio::sync::Mutex;
+use tokio::time::Instant;
 use tokio::try_join;
 use tokio_util::codec::{Encoder, FramedRead};
 use tokio_util::compat::FuturesAsyncReadCompatExt as _;
-use tracing::{debug, trace};
-use tracing::{instrument, warn};
+use tracing::{debug, error, instrument, trace, warn, Instrument as _, Span};
+use uuid::Uuid;
 use wasm_tokio::cm::AsyncReadValue as _;
 use wasm_tokio::{
     AsyncReadCore as _, AsyncReadLeb128 as _, AsyncReadUtf8 as _, CoreNameEncoder,
     CoreVecEncoderBytes, Leb128Encoder, Utf8Codec,
 };
 use wasmtime::component::types::{self, Case, Field};
-use wasmtime::component::{Func, InstancePre, LinkerInstance, ResourceType, Type, Val};
+use wasmtime::component::{
+    Func, Instance, InstancePre, LinkerInstance, ResourceAny, ResourceType, Type, Val,
+};
 use wasmtime::{AsContextMut, Engine, StoreContextMut};
 use wasmtime_wasi::pipe::AsyncReadStream;
 use wasmtime_wasi::{InputStream, StreamError, WasiView};
-use wrpc_transport::{Index as _, Invoke, ListDecoderU8};
+use wrpc_transport::{Index as _, Invoke, InvokeExt as _, ListDecoderU8};
+
+// this returns the RPC name for a wasmtime function name.
+// Unfortunately, the [`types::ComponentFunc`] does not include the kind information and we want to
+// avoid (re-)parsing the WIT here.
+fn rpc_func_name(name: &str) -> &str {
+    if let Some(name) = name.strip_prefix("[constructor]") {
+        name
+    } else if let Some(name) = name.strip_prefix("[static]") {
+        name
+    } else if let Some(name) = name.strip_prefix("[method]") {
+        name
+    } else {
+        name
+    }
+}
 
 pub struct RemoteResource(pub Bytes);
 
 pub struct ValEncoder<'a, T, W> {
     pub store: StoreContextMut<'a, T>,
     pub ty: &'a Type,
+    pub resources: &'a [ResourceType],
     pub deferred: Option<
         Box<dyn FnOnce(W) -> Pin<Box<dyn Future<Output = wasmtime::Result<()>> + Send>> + Send>,
     >,
@@ -43,10 +64,15 @@ pub struct ValEncoder<'a, T, W> {
 
 impl<T, W> ValEncoder<'_, T, W> {
     #[must_use]
-    pub fn new<'a>(store: StoreContextMut<'a, T>, ty: &'a Type) -> ValEncoder<'a, T, W> {
+    pub fn new<'a>(
+        store: StoreContextMut<'a, T>,
+        ty: &'a Type,
+        resources: &'a [ResourceType],
+    ) -> ValEncoder<'a, T, W> {
         ValEncoder {
             store,
             ty,
+            resources,
             deferred: None,
         }
     }
@@ -55,6 +81,7 @@ impl<T, W> ValEncoder<'_, T, W> {
         ValEncoder {
             store: self.store.as_context_mut(),
             ty,
+            resources: self.resources,
             deferred: None,
         }
     }
@@ -118,12 +145,13 @@ where
 
 impl<T, W> Encoder<&Val> for ValEncoder<'_, T, W>
 where
-    T: WasiView,
+    T: WasiView + WrpcView,
     W: AsyncWrite + wrpc_transport::Index<W> + Sync + Send + 'static,
 {
     type Error = wasmtime::Error;
 
     #[allow(clippy::too_many_lines)]
+    #[instrument(level = "trace", skip(self))]
     fn encode(&mut self, v: &Val, dst: &mut BytesMut) -> Result<(), Self::Error> {
         match (v, self.ty) {
             (Val::Bool(v), Type::Bool) => {
@@ -536,6 +564,23 @@ where
                             .encode(buf, dst)
                             .context("failed to encode resource handle")
                     }
+                } else if self.resources.contains(ty) {
+                    let id = Uuid::now_v7();
+                    CoreVecEncoderBytes
+                        .encode(id.to_bytes_le().as_slice(), dst)
+                        .context("failed to encode resource handle")?;
+                    trace!(?id, "store shared resource");
+                    if self
+                        .store
+                        .data_mut()
+                        .shared_resources()
+                        .0
+                        .insert(id, *resource)
+                        .is_some()
+                    {
+                        error!(?id, "duplicate resource ID generated");
+                    }
+                    Ok(())
                 } else {
                     bail!("encoding host resources not supported yet")
                 }
@@ -557,12 +602,13 @@ async fn read_flags(n: usize, r: &mut (impl AsyncRead + Unpin)) -> std::io::Resu
 pub async fn read_value<T, R>(
     store: &mut impl AsContextMut<Data = T>,
     r: &mut Pin<&mut R>,
+    resources: &[ResourceType],
     val: &mut Val,
     ty: &Type,
     path: &[usize],
 ) -> std::io::Result<()>
 where
-    T: WasiView,
+    T: WasiView + WrpcView,
     R: AsyncRead + wrpc_transport::Index<R> + Send + Unpin + 'static,
 {
     match ty {
@@ -642,7 +688,7 @@ where
                 let mut v = Val::Bool(false);
                 path.push(i);
                 trace!(i, "reading list element value");
-                Box::pin(read_value(store, r, &mut v, &ty, &path)).await?;
+                Box::pin(read_value(store, r, resources, &mut v, &ty, &path)).await?;
                 path.pop();
                 vs.push(v);
             }
@@ -657,7 +703,7 @@ where
                 let mut v = Val::Bool(false);
                 path.push(i);
                 trace!(i, "reading struct field value");
-                Box::pin(read_value(store, r, &mut v, &ty, &path)).await?;
+                Box::pin(read_value(store, r, resources, &mut v, &ty, &path)).await?;
                 path.pop();
                 vs.push((name.to_string(), v));
             }
@@ -672,7 +718,7 @@ where
                 let mut v = Val::Bool(false);
                 path.push(i);
                 trace!(i, "reading tuple element value");
-                Box::pin(read_value(store, r, &mut v, &ty, &path)).await?;
+                Box::pin(read_value(store, r, resources, &mut v, &ty, &path)).await?;
                 path.pop();
                 vs.push(v);
             }
@@ -694,7 +740,7 @@ where
             if let Some(ty) = ty {
                 let mut v = Val::Bool(false);
                 trace!(variant = name, "reading nested variant value");
-                Box::pin(read_value(store, r, &mut v, &ty, path)).await?;
+                Box::pin(read_value(store, r, resources, &mut v, &ty, path)).await?;
                 *val = Val::Variant(name, Some(Box::new(v)));
             } else {
                 *val = Val::Variant(name, None);
@@ -720,7 +766,7 @@ where
             if ok {
                 let mut v = Val::Bool(false);
                 trace!("reading nested `option::some` value");
-                Box::pin(read_value(store, r, &mut v, &ty.ty(), path)).await?;
+                Box::pin(read_value(store, r, resources, &mut v, &ty.ty(), path)).await?;
                 *val = Val::Option(Some(Box::new(v)));
             } else {
                 *val = Val::Option(None);
@@ -733,7 +779,7 @@ where
                 if let Some(ty) = ty.ok() {
                     let mut v = Val::Bool(false);
                     trace!("reading nested `result::ok` value");
-                    Box::pin(read_value(store, r, &mut v, &ty, path)).await?;
+                    Box::pin(read_value(store, r, resources, &mut v, &ty, path)).await?;
                     *val = Val::Result(Ok(Some(Box::new(v))));
                 } else {
                     *val = Val::Result(Ok(None));
@@ -741,7 +787,7 @@ where
             } else if let Some(ty) = ty.err() {
                 let mut v = Val::Bool(false);
                 trace!("reading nested `result::err` value");
-                Box::pin(read_value(store, r, &mut v, &ty, path)).await?;
+                Box::pin(read_value(store, r, resources, &mut v, &ty, path)).await?;
                 *val = Val::Result(Err(Some(Box::new(v))));
             } else {
                 *val = Val::Result(Err(None));
@@ -821,6 +867,41 @@ where
                     .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))?;
                 *val = Val::Resource(v);
                 Ok(())
+            } else if resources.contains(ty) {
+                let mut store = store.as_context_mut();
+                let mut id = uuid::Bytes::default();
+                debug_assert_eq!(id.len(), 16);
+                let n = r.read_u8_leb128().await?;
+                if usize::from(n) != id.len() {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        format!(
+                            "invalid guest resource handle length {n}, expected {}",
+                            id.len()
+                        ),
+                    ));
+                }
+                let n = r.read_exact(&mut id).await?;
+                if n != id.len() {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        format!(
+                            "invalid amount of guest resource handle bytes read {n}, expected {}",
+                            id.len()
+                        ),
+                    ));
+                }
+
+                let id = Uuid::from_bytes_le(id);
+                trace!(?id, "lookup shared resource");
+                let resource = store
+                    .data_mut()
+                    .shared_resources()
+                    .0
+                    .get(&id)
+                    .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::NotFound))?;
+                *val = Val::Resource(*resource);
+                Ok(())
             } else {
                 let mut store = store.as_context_mut();
                 let n = r.read_u32_leb128().await?;
@@ -842,31 +923,48 @@ where
     }
 }
 
-pub trait WrpcView<C: Invoke>: Send {
-    fn client(&self) -> &C;
+/// A table of shared resources exported by the component
+#[derive(Debug, Default)]
+pub struct SharedResourceTable(HashMap<Uuid, ResourceAny>);
+
+pub trait WrpcView: Send {
+    type Invoke: Invoke;
+
+    /// Returns an [Invoke] implementation used to satisfy polyfilled imports
+    fn client(&self) -> &Self::Invoke;
+
+    /// Returns a table of shared exported resources
+    fn shared_resources(&mut self) -> &mut SharedResourceTable;
+
+    /// Optional invocation timeout, component will trap if invocation is not finished within the
+    /// returned [Duration]. If this method returns [None], then no timeout will be used.
+    fn timeout(&self) -> Option<Duration> {
+        None
+    }
 }
 
 /// Polyfill [`types::ComponentItem`] in a [`LinkerInstance`] using [`wrpc_transport::Invoke`]
 #[instrument(level = "trace", skip_all)]
-pub fn link_item<C, V>(
+pub fn link_item<V>(
     engine: &Engine,
     linker: &mut LinkerInstance<V>,
+    resources: impl Into<Arc<[ResourceType]>>,
     ty: types::ComponentItem,
     instance: impl Into<Arc<str>>,
     name: impl Into<Arc<str>>,
-    cx: C::Context,
+    cx: <V::Invoke as Invoke>::Context,
 ) -> wasmtime::Result<()>
 where
-    V: WrpcView<C> + WasiView,
-    C: Invoke,
-    C::Context: Clone + 'static,
+    V: WasiView + WrpcView,
+    <V::Invoke as Invoke>::Context: Clone + 'static,
 {
     let instance = instance.into();
+    let resources = resources.into();
     match ty {
         types::ComponentItem::ComponentFunc(ty) => {
             let name = name.into();
             debug!(?instance, ?name, "linking function");
-            link_function(linker, ty, instance, name, cx)?;
+            link_function(linker, Arc::clone(&resources), ty, instance, name, cx)?;
         }
         types::ComponentItem::CoreFunc(_) => {
             bail!("polyfilling core functions not supported yet")
@@ -875,7 +973,15 @@ where
         types::ComponentItem::Component(ty) => {
             for (name, ty) in ty.imports(engine) {
                 debug!(?instance, name, "linking component item");
-                link_item(engine, linker, ty, "", name, cx.clone())?;
+                link_item(
+                    engine,
+                    linker,
+                    Arc::clone(&resources),
+                    ty,
+                    "",
+                    name,
+                    cx.clone(),
+                )?;
             }
         }
         types::ComponentItem::ComponentInstance(ty) => {
@@ -884,11 +990,12 @@ where
                 .instance(&name)
                 .with_context(|| format!("failed to instantiate `{name}` in the linker"))?;
             debug!(?instance, ?name, "linking instance");
-            link_instance(engine, &mut linker, ty, name, cx)?;
+            link_instance(engine, &mut linker, resources, ty, name, cx)?;
         }
         types::ComponentItem::Type(_) => {}
         types::ComponentItem::Resource(_) => {
             let name = name.into();
+            debug!(?instance, ?name, "linking resource");
             linker.resource(&name, ResourceType::host::<RemoteResource>(), |_, _| Ok(()))?;
         }
     }
@@ -897,67 +1004,87 @@ where
 
 /// Polyfill [`types::ComponentInstance`] in a [`LinkerInstance`] using [`wrpc_transport::Invoke`]
 #[instrument(level = "trace", skip_all)]
-pub fn link_instance<C, V>(
+pub fn link_instance<V>(
     engine: &Engine,
     linker: &mut LinkerInstance<V>,
+    resources: impl Into<Arc<[ResourceType]>>,
     ty: types::ComponentInstance,
     name: impl Into<Arc<str>>,
-    cx: C::Context,
+    cx: <V::Invoke as Invoke>::Context,
 ) -> wasmtime::Result<()>
 where
-    V: WrpcView<C> + WasiView,
-    C: Invoke,
-    C::Context: Clone + 'static,
+    V: WrpcView + WasiView,
+    <V::Invoke as Invoke>::Context: Clone + 'static,
 {
     let instance = name.into();
+    let resources = resources.into();
     for (name, ty) in ty.exports(engine) {
         debug!(name, "linking instance item");
-        link_item(engine, linker, ty, Arc::clone(&instance), name, cx.clone())?;
+        link_item(
+            engine,
+            linker,
+            Arc::clone(&resources),
+            ty,
+            Arc::clone(&instance),
+            name,
+            cx.clone(),
+        )?;
     }
     Ok(())
 }
 
 /// Polyfill [`types::ComponentFunc`] in a [`LinkerInstance`] using [`wrpc_transport::Invoke`]
 #[instrument(level = "trace", skip_all)]
-pub fn link_function<C, V>(
+pub fn link_function<V>(
     linker: &mut LinkerInstance<V>,
+    resources: impl Into<Arc<[ResourceType]>>,
     ty: types::ComponentFunc,
     instance: impl Into<Arc<str>>,
     name: impl Into<Arc<str>>,
-    cx: C::Context,
+    cx: <V::Invoke as Invoke>::Context,
 ) -> wasmtime::Result<()>
 where
-    V: WrpcView<C> + WasiView,
-    C: Invoke,
-    C::Context: Clone + 'static,
+    V: WrpcView + WasiView,
+    <V::Invoke as Invoke>::Context: Clone + 'static,
 {
+    let span = Span::current();
     let instance = instance.into();
     let name = name.into();
+    let resources = resources.into();
     linker.func_new_async(&Arc::clone(&name), move |mut store, params, results| {
         let cx = cx.clone();
         let ty = ty.clone();
         let instance = Arc::clone(&instance);
         let name = Arc::clone(&name);
-        Box::new(async move {
-            let mut buf = BytesMut::default();
-            let mut deferred = vec![];
-            for (v, ref ty) in zip(params, ty.params()) {
-                let mut enc = ValEncoder::new(store.as_context_mut(), ty);
-                enc.encode(v, &mut buf)
-                    .context("failed to encode parameter")?;
-                deferred.push(enc.deferred);
-            }
-            let (outgoing, incoming) = store
-                .data()
-                .client()
+        let resources = Arc::clone(&resources);
+        Box::new(
+            async move {
+                let mut buf = BytesMut::default();
+                let mut deferred = vec![];
+                for (v, ref ty) in zip(params, ty.params()) {
+                    let mut enc = ValEncoder::new(store.as_context_mut(), ty, &resources);
+                    enc.encode(v, &mut buf)
+                        .context("failed to encode parameter")?;
+                    deferred.push(enc.deferred);
+                }
+                let clt = store.data().client();
+                let timeout = store.data().timeout();
+                let buf = buf.freeze();
                 // TODO: set paths
-                .invoke(cx, &instance, &name, buf.freeze(), &[[]])
-                .await
+                let paths = &[[]; 0];
+                let rpc_name = rpc_func_name(&name);
+                let start = Instant::now();
+                let (outgoing, incoming) = if let Some(timeout) = timeout {
+                    clt.timeout(timeout)
+                        .invoke(cx, &instance, rpc_name, buf, paths)
+                        .await
+                } else {
+                    clt.invoke(cx, &instance, rpc_name, buf, paths).await
+                }
                 .with_context(|| {
                     format!("failed to invoke `{instance}.{name}` polyfill via wRPC")
                 })?;
-            try_join!(
-                async {
+                let tx = async {
                     try_join_all(
                         zip(0.., deferred)
                             .filter_map(|(i, f)| f.map(|f| (outgoing.index(&[i]), f)))
@@ -972,19 +1099,38 @@ where
                         .shutdown()
                         .await
                         .context("failed to shutdown outgoing stream")
-                },
-                async {
+                };
+                let rx = async {
                     let mut incoming = pin!(incoming);
                     for (i, (v, ref ty)) in zip(results, ty.results()).enumerate() {
-                        read_value(&mut store, &mut incoming, v, ty, &[i])
+                        read_value(&mut store, &mut incoming, &resources, v, ty, &[i])
                             .await
                             .with_context(|| format!("failed to decode return value {i}"))?;
                     }
                     Ok(())
-                },
-            )?;
-            Ok(())
-        })
+                };
+                if let Some(timeout) = timeout {
+                    let timeout =
+                        timeout.saturating_sub(Instant::now().saturating_duration_since(start));
+                    try_join!(
+                        async {
+                            tokio::time::timeout(timeout, tx)
+                                .await
+                                .context("data transmission timed out")?
+                        },
+                        async {
+                            tokio::time::timeout(timeout, rx)
+                                .await
+                                .context("data receipt timed out")?
+                        },
+                    )?;
+                } else {
+                    try_join!(tx, rx)?;
+                }
+                Ok(())
+            }
+            .instrument(span.clone()),
+        )
     })
 }
 
@@ -995,17 +1141,18 @@ pub async fn call<C, I, O>(
     params_ty: impl ExactSizeIterator<Item = &Type>,
     results_ty: impl ExactSizeIterator<Item = &Type>,
     func: Func,
+    guest_resources: &[ResourceType],
 ) -> anyhow::Result<()>
 where
     I: AsyncRead + wrpc_transport::Index<I> + Send + Sync + Unpin + 'static,
     O: AsyncWrite + wrpc_transport::Index<O> + Send + Sync + Unpin + 'static,
     C: AsContextMut,
-    C::Data: WasiView,
+    C::Data: WasiView + WrpcView,
 {
     let mut params = vec![Val::Bool(false); params_ty.len()];
     let mut rx = pin!(rx);
     for (i, (v, ty)) in zip(&mut params, params_ty).enumerate() {
-        read_value(&mut store, &mut rx, v, ty, &[i])
+        read_value(&mut store, &mut rx, guest_resources, v, ty, &[i])
             .await
             .with_context(|| format!("failed to decode parameter value {i}"))?;
     }
@@ -1016,7 +1163,7 @@ where
     let mut buf = BytesMut::default();
     let mut deferred = vec![];
     for (i, (ref v, ty)) in zip(results, results_ty).enumerate() {
-        let mut enc = ValEncoder::new(store.as_context_mut(), ty);
+        let mut enc = ValEncoder::new(store.as_context_mut(), ty, guest_resources);
         enc.encode(v, &mut buf)
             .with_context(|| format!("failed to encode result value {i}"))?;
         deferred.push(enc.deferred);
@@ -1037,11 +1184,60 @@ where
             }),
     )
     .await?;
+    func.post_return_async(&mut store)
+        .await
+        .context("failed to perform post-return cleanup")?;
     Ok(())
 }
 
+/// Recursively iterates the component item type and collects all exported resource types
+#[instrument(level = "trace", skip_all)]
+pub fn collect_item_resources(
+    engine: &Engine,
+    ty: types::ComponentItem,
+    resources: &mut impl Extend<types::ResourceType>,
+) {
+    match ty {
+        types::ComponentItem::ComponentFunc(_)
+        | types::ComponentItem::CoreFunc(_)
+        | types::ComponentItem::Module(_)
+        | types::ComponentItem::Type(_) => {}
+        types::ComponentItem::Component(ty) => collect_component_resources(engine, &ty, resources),
+        types::ComponentItem::ComponentInstance(ty) => {
+            collect_instance_resources(engine, &ty, resources);
+        }
+        types::ComponentItem::Resource(ty) => resources.extend([ty]),
+    }
+}
+
+/// Recursively iterates the component type and collects all exported resource types
+#[instrument(level = "trace", skip_all)]
+pub fn collect_instance_resources(
+    engine: &Engine,
+    ty: &types::ComponentInstance,
+    resources: &mut impl Extend<types::ResourceType>,
+) {
+    for (_, ty) in ty.exports(engine) {
+        collect_item_resources(engine, ty, resources);
+    }
+}
+
+/// Recursively iterates the component type and collects all exported resource types
+#[instrument(level = "trace", skip_all)]
+pub fn collect_component_resources(
+    engine: &Engine,
+    ty: &types::Component,
+    resources: &mut impl Extend<types::ResourceType>,
+) {
+    for (_, ty) in ty.exports(engine) {
+        collect_item_resources(engine, ty, resources);
+    }
+}
+
 pub trait ServeExt: wrpc_transport::Serve {
-    /// Serve [`types::ComponentFunc`] from an [`InstancePre`] instantiating it on each call
+    /// Serve [`types::ComponentFunc`] from an [`InstancePre`] instantiating it on each call.
+    /// This serving method does not support guest-exported resources.
+    #[instrument(level = "trace", skip(self, store, instance_pre))]
     fn serve_function<T>(
         &self,
         store: impl Fn() -> wasmtime::Store<T> + Send + 'static,
@@ -1061,12 +1257,13 @@ pub trait ServeExt: wrpc_transport::Serve {
         >,
     > + Send
     where
-        T: WasiView + 'static,
+        T: WasiView + WrpcView + 'static,
     {
+        let span = Span::current();
         async move {
             debug!(instance = instance_name, name, "serving function export");
             // TODO: set paths
-            let invocations = self.serve(instance_name, name, []).await?;
+            let invocations = self.serve(instance_name, rpc_func_name(name), []).await?;
             let instance_name = Arc::<str>::from(instance_name);
             let name = Arc::<str>::from(name);
             let params_ty: Arc<[_]> = ty.params().collect();
@@ -1077,40 +1274,117 @@ pub trait ServeExt: wrpc_transport::Serve {
                 let name = Arc::clone(&name);
                 let params_ty = Arc::clone(&params_ty);
                 let results_ty = Arc::clone(&results_ty);
+
                 let mut store = store();
                 (
                     cx,
-                    Box::pin(async move {
-                        let instance = instance_pre
-                            .instantiate_async(&mut store)
-                            .await
-                            .context("failed to instantiate component")?;
-                        let func = {
-                            let mut instance = instance.exports(&mut store);
-                            if instance_name.is_empty() {
-                                instance.root()
-                            } else {
-                                instance.instance(&instance_name).with_context(|| {
-                                    format!("instance export `{instance_name}` not found")
-                                })?
+                    Box::pin(
+                        async move {
+                            let instance = instance_pre
+                                .instantiate_async(&mut store)
+                                .await
+                                .context("failed to instantiate component")?;
+                            let func = {
+                                let mut exports = instance.exports(&mut store);
+                                if instance_name.is_empty() {
+                                    exports.root()
+                                } else {
+                                    exports.instance(&instance_name).with_context(|| {
+                                        format!("instance export `{instance_name}` not found")
+                                    })?
+                                }
+                                .func(&name)
                             }
-                            .func(&name)
-                            .with_context(|| format!("function export`{name}` not found"))?
-                        };
-                        call(
-                            &mut store,
-                            rx,
-                            tx,
-                            params_ty.iter(),
-                            results_ty.iter(),
-                            func,
-                        )
-                        .await?;
-                        func.post_return_async(&mut store)
+                            .with_context(|| format!("function export`{name}` not found"))?;
+                            call(
+                                &mut store,
+                                rx,
+                                tx,
+                                params_ty.iter(),
+                                results_ty.iter(),
+                                func,
+                                &[],
+                            )
                             .await
-                            .context("failed to perform post-return cleanup")?;
-                        Ok(())
-                    }) as Pin<Box<dyn Future<Output = _> + Send + 'static>>,
+                        }
+                        .instrument(span.clone()),
+                    ) as Pin<Box<dyn Future<Output = _> + Send + 'static>>,
+                )
+            }))
+        }
+    }
+
+    /// Like [`Self::serve_function`], but with a shared `store` instance.
+    /// This is required to allow for serving functions, which operate on guest-exported resources.
+    #[instrument(level = "trace", skip(self, store, instance, guest_resources))]
+    fn serve_function_shared<T>(
+        &self,
+        store: Arc<Mutex<wasmtime::Store<T>>>,
+        instance: Instance,
+        guest_resources: impl Into<Arc<[ResourceType]>>,
+        ty: types::ComponentFunc,
+        instance_name: &str,
+        name: &str,
+    ) -> impl Future<
+        Output = anyhow::Result<
+            impl Stream<
+                    Item = anyhow::Result<(
+                        Self::Context,
+                        Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + 'static>>,
+                    )>,
+                > + Send
+                + 'static,
+        >,
+    > + Send
+    where
+        T: WasiView + WrpcView + 'static,
+    {
+        let span = Span::current();
+        let guest_resources = guest_resources.into();
+        async move {
+            let func = {
+                let mut store = store.lock().await;
+                let mut exports = instance.exports(&mut *store);
+                if instance_name.is_empty() {
+                    exports.root()
+                } else {
+                    exports
+                        .instance(instance_name)
+                        .with_context(|| format!("instance export `{instance_name}` not found"))?
+                }
+                .func(name)
+            }
+            .with_context(|| format!("function export`{name}` not found"))?;
+            debug!(instance = instance_name, name, "serving function export");
+            // TODO: set paths
+            let invocations = self.serve(instance_name, rpc_func_name(name), []).await?;
+            let params_ty: Arc<[_]> = ty.params().collect();
+            let results_ty: Arc<[_]> = ty.results().collect();
+            let guest_resources = Arc::clone(&guest_resources);
+            Ok(invocations.map_ok(move |(cx, tx, rx)| {
+                let params_ty = Arc::clone(&params_ty);
+                let results_ty = Arc::clone(&results_ty);
+                let guest_resources = Arc::clone(&guest_resources);
+                let store = Arc::clone(&store);
+                (
+                    cx,
+                    Box::pin(
+                        async move {
+                            let mut store = store.lock().await;
+                            call(
+                                &mut *store,
+                                rx,
+                                tx,
+                                params_ty.iter(),
+                                results_ty.iter(),
+                                func,
+                                &guest_resources,
+                            )
+                            .await?;
+                            Ok(())
+                        }
+                        .instrument(span.clone()),
+                    ) as Pin<Box<dyn Future<Output = _> + Send + 'static>>,
                 )
             }))
         }

@@ -75,6 +75,7 @@ pub trait Invoke: Send + Sync {
         P: AsRef<[Option<usize>]> + Send + Sync;
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Timeout<'a, T: ?Sized> {
     pub inner: &'a T,
     pub timeout: Duration,
@@ -85,6 +86,7 @@ impl<T: Invoke> Invoke for Timeout<'_, T> {
     type Outgoing = T::Outgoing;
     type Incoming = T::Incoming;
 
+    #[instrument(level = "trace", skip(self, cx, params, paths))]
     async fn invoke<P>(
         &self,
         cx: Self::Context,
@@ -102,6 +104,36 @@ impl<T: Invoke> Invoke for Timeout<'_, T> {
         )
         .await
         .context("invocation timed out")?
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TimeoutOwned<T> {
+    pub inner: T,
+    pub timeout: Duration,
+}
+
+impl<T: Invoke> Invoke for TimeoutOwned<T> {
+    type Context = T::Context;
+    type Outgoing = T::Outgoing;
+    type Incoming = T::Incoming;
+
+    #[instrument(level = "trace", skip(self, cx, params, paths))]
+    async fn invoke<P>(
+        &self,
+        cx: Self::Context,
+        instance: &str,
+        func: &str,
+        params: Bytes,
+        paths: impl AsRef<[P]> + Send,
+    ) -> anyhow::Result<(Self::Outgoing, Self::Incoming)>
+    where
+        P: AsRef<[Option<usize>]> + Send + Sync,
+    {
+        self.inner
+            .timeout(self.timeout)
+            .invoke(cx, instance, func, params, paths)
+            .await
     }
 }
 
@@ -250,8 +282,21 @@ pub trait InvokeExt: Invoke {
         }
     }
 
+    /// Returns a [`Timeout`], wrapping [Self] with an implementation of [Invoke], which will
+    /// error, if call to [Self::invoke] does not return within a supplied `timeout`
     fn timeout(&self, timeout: Duration) -> Timeout<'_, Self> {
         Timeout {
+            inner: self,
+            timeout,
+        }
+    }
+
+    /// This is like [`InvokeExt::timeout`], but moves [Self] and returns corresponding [`TimeoutOwned`]
+    fn timeout_owned(self, timeout: Duration) -> TimeoutOwned<Self>
+    where
+        Self: Sized,
+    {
+        TimeoutOwned {
             inner: self,
             timeout,
         }

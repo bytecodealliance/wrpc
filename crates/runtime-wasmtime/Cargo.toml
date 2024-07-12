@@ -1,6 +1,6 @@
 [package]
 name = "wrpc-runtime-wasmtime"
-version = "0.19.2"
+version = "0.19.3"
 description = "wRPC wasmtime integration"
 
 authors.workspace = true
@@ -17,6 +17,7 @@ futures = { workspace = true, features = ["alloc"] }
 tokio = { workspace = true, features = ["macros"] }
 tokio-util = { workspace = true, features = ["codec", "compat"] }
 tracing = { workspace = true, features = ["attributes"] }
+uuid = { workspace = true, features = ["std", "v7"] }
 wasm-tokio = { workspace = true }
 wasmtime = { workspace = true }
 wasmtime-wasi = { workspace = true }
