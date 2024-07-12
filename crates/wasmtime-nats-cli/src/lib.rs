@@ -1,22 +1,31 @@
+#![allow(clippy::type_complexity)]
+
 use core::pin::pin;
+use core::time::Duration;
+
 use std::sync::Arc;
 
 use anyhow::{anyhow, bail, Context as _};
 use clap::Parser;
 use futures::StreamExt as _;
 use tokio::fs;
+use tokio::sync::Mutex;
 use tokio::task::JoinSet;
-use tracing::{error, info, instrument, trace, warn, Instrument as _};
+use tracing::{error, info, instrument, warn, Instrument as _, Span};
 use url::Url;
 use wasmcloud_component_adapters::{
     WASI_PREVIEW1_COMMAND_COMPONENT_ADAPTER, WASI_PREVIEW1_REACTOR_COMPONENT_ADAPTER,
 };
-use wasmtime::component::{types, Component, InstancePre, Linker};
-use wasmtime::Store;
+use wasmtime::component::{types, Component, InstancePre, Linker, ResourceType};
+use wasmtime::{Engine, Store};
 use wasmtime_wasi::{ResourceTable, WasiCtxBuilder};
 use wasmtime_wasi::{WasiCtx, WasiView};
-use wrpc_runtime_wasmtime::{link_instance, ServeExt as _, WrpcView};
+use wrpc_runtime_wasmtime::{
+    collect_component_resources, link_item, ServeExt as _, SharedResourceTable, WrpcView,
+};
 use wrpc_transport::Invoke;
+
+const DEFAULT_TIMEOUT: &str = "10s";
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -32,6 +41,10 @@ struct RunArgs {
     #[arg(short, long, default_value = wrpc_cli::nats::DEFAULT_URL)]
     nats: String,
 
+    /// Invocation timeout
+    #[arg(long, default_value = DEFAULT_TIMEOUT)]
+    timeout: humantime::Duration,
+
     /// Target prefix to send invocations to
     target: String,
 
@@ -45,6 +58,10 @@ struct ServeArgs {
     /// NATS address to use
     #[arg(short, long, default_value = wrpc_cli::nats::DEFAULT_URL)]
     nats: String,
+
+    /// Invocation timeout
+    #[arg(long, default_value = DEFAULT_TIMEOUT)]
+    timeout: humantime::Duration,
 
     /// NATS queue group to use
     #[arg(short, long)]
@@ -69,11 +86,23 @@ pub struct Ctx<C: Invoke> {
     pub table: ResourceTable,
     pub wasi: WasiCtx,
     pub wrpc: C,
+    pub shared_resources: SharedResourceTable,
+    pub timeout: Duration,
 }
 
-impl<C: Invoke> WrpcView<C> for Ctx<C> {
-    fn client(&self) -> &C {
+impl<C: Invoke> WrpcView for Ctx<C> {
+    type Invoke = C;
+
+    fn client(&self) -> &Self::Invoke {
         &self.wrpc
+    }
+
+    fn shared_resources(&mut self) -> &mut SharedResourceTable {
+        &mut self.shared_resources
+    }
+
+    fn timeout(&self) -> Option<Duration> {
+        Some(self.timeout)
     }
 }
 
@@ -86,17 +115,17 @@ impl<C: Invoke> WasiView for Ctx<C> {
     }
 }
 
-#[instrument(level = "trace", skip(cx))]
+#[instrument(level = "trace", skip(adapter, cx))]
 async fn instantiate_pre<C>(
     adapter: &[u8],
     cx: C::Context,
     workload: &str,
-) -> anyhow::Result<(InstancePre<Ctx<C>>, wasmtime::Engine)>
+) -> anyhow::Result<(InstancePre<Ctx<C>>, Engine, Arc<[ResourceType]>)>
 where
     C: Invoke,
     C::Context: Clone + 'static,
 {
-    let engine = wasmtime::Engine::new(
+    let engine = Engine::new(
         wasmtime::Config::new()
             .async_support(true)
             .wasm_component_model(true),
@@ -145,30 +174,18 @@ where
         wasm
     };
 
-    let component = Component::new(&engine, &wasm).context("failed to compile component")?;
+    let component = Component::new(&engine, wasm).context("failed to compile component")?;
 
     let mut linker = Linker::<Ctx<C>>::new(&engine);
     wasmtime_wasi::add_to_linker_async(&mut linker).context("failed to link WASI")?;
 
-    let (resolve, world) =
-        match wit_component::decode(&wasm).context("failed to decode WIT component")? {
-            wit_component::DecodedWasm::Component(resolve, world) => (resolve, world),
-            wit_component::DecodedWasm::WitPackages(..) => {
-                bail!("binary-encoded WIT packages not currently supported")
-            }
-        };
-
-    let wit_parser::World { imports, .. } = resolve
-        .worlds
-        .iter()
-        .find_map(|(id, w)| (id == world).then_some(w))
-        .context("component world missing")?;
-
     let ty = component.component_type();
-    for (wk, _) in imports {
-        let instance_name = resolve.name_world_key(wk);
+    let mut resources = Vec::new();
+    collect_component_resources(&engine, &ty, &mut resources);
+    let resources = Arc::from(resources);
+    for (name, item) in ty.imports(&engine) {
         // Avoid polyfilling instances, for which static bindings are linked
-        match instance_name.as_ref() {
+        match name {
             "wasi:cli/environment@0.2.0"
             | "wasi:cli/exit@0.2.0"
             | "wasi:cli/stderr@0.2.0"
@@ -198,29 +215,15 @@ where
             | "wasi:sockets/udp@0.2.0" => continue,
             _ => {}
         }
-        let Some(types::ComponentItem::ComponentInstance(instance)) =
-            ty.get_import(&engine, &instance_name)
-        else {
-            trace!(
-                instance_name,
-                "component does not import the parsed instance"
-            );
-            continue;
-        };
-
-        let mut linker = linker.root();
-        let mut linker = match linker.instance(&instance_name) {
-            Ok(linker) => linker,
-            Err(err) => {
-                error!(
-                    ?err,
-                    ?instance_name,
-                    "failed to instantiate interface from root"
-                );
-                continue;
-            }
-        };
-        if let Err(err) = link_instance(&engine, &mut linker, instance, instance_name, cx.clone()) {
+        if let Err(err) = link_item(
+            &engine,
+            &mut linker.root(),
+            Arc::clone(&resources),
+            item,
+            "",
+            name,
+            cx.clone(),
+        ) {
             error!(?err, "failed to polyfill instance");
         }
     }
@@ -228,10 +231,15 @@ where
     let pre = linker
         .instantiate_pre(&component)
         .context("failed to pre-instantiate component")?;
-    Ok((pre, engine))
+    Ok((pre, engine, resources))
 }
 
-fn new_store<C: Invoke>(engine: &wasmtime::Engine, wrpc: C, arg0: &str) -> wasmtime::Store<Ctx<C>> {
+fn new_store<C: Invoke>(
+    engine: &Engine,
+    wrpc: C,
+    arg0: &str,
+    timeout: Duration,
+) -> wasmtime::Store<Ctx<C>> {
     Store::new(
         engine,
         Ctx {
@@ -242,7 +250,9 @@ fn new_store<C: Invoke>(engine: &wasmtime::Engine, wrpc: C, arg0: &str) -> wasmt
                 .args(&[arg0])
                 .build(),
             table: ResourceTable::new(),
+            shared_resources: SharedResourceTable::default(),
             wrpc,
+            timeout,
         },
     )
 }
@@ -251,6 +261,7 @@ fn new_store<C: Invoke>(engine: &wasmtime::Engine, wrpc: C, arg0: &str) -> wasmt
 pub async fn handle_run(
     RunArgs {
         nats,
+        timeout,
         target,
         ref workload,
     }: RunArgs,
@@ -259,12 +270,13 @@ pub async fn handle_run(
         .await
         .context("failed to connect to NATS")?;
 
-    let (pre, engine) =
+    let (pre, engine, _) =
         instantiate_pre(WASI_PREVIEW1_COMMAND_COMPONENT_ADAPTER, None, workload).await?;
     let mut store = new_store(
         &engine,
         wrpc_transport_nats::Client::new(nats, target, None),
         "command.wasm",
+        *timeout,
     );
     let (cmd, _) = wasmtime_wasi::bindings::Command::instantiate_pre(&mut store, &pre)
         .await
@@ -276,28 +288,159 @@ pub async fn handle_run(
         .map_err(|()| anyhow!("component failed"))
 }
 
-#[instrument(level = "trace", ret)]
-pub async fn handle_serve(
-    ServeArgs {
-        nats,
-        prefix,
-        target,
-        group,
-        ref workload,
-    }: ServeArgs,
+#[instrument(level = "trace", skip_all, ret)]
+pub async fn serve_shared(
+    handlers: &mut JoinSet<()>,
+    srv: wrpc_transport_nats::Client,
+    mut store: wasmtime::Store<Ctx<wrpc_transport_nats::Client>>,
+    pre: InstancePre<Ctx<wrpc_transport_nats::Client>>,
+    guest_resources: Arc<[ResourceType]>,
 ) -> anyhow::Result<()> {
-    let nats = wrpc_cli::nats::connect(nats)
+    let span = Span::current();
+    let instance = pre
+        .instantiate_async(&mut store)
         .await
-        .context("failed to connect to NATS")?;
-    let nats = Arc::new(nats);
-
-    let (pre, engine) =
-        instantiate_pre(WASI_PREVIEW1_REACTOR_COMPONENT_ADAPTER, None, workload).await?;
-
-    let mut handlers = JoinSet::new();
-    let clt = wrpc_transport_nats::Client::new(Arc::clone(&nats), target, None);
-    let srv = wrpc_transport_nats::Client::new(nats, prefix, group.map(Arc::from));
+        .context("failed to instantiate component")?;
+    let engine = store.engine().clone();
+    let store = Arc::new(Mutex::new(store));
     for (name, ty) in pre.component().component_type().exports(&engine) {
+        match (name, ty) {
+            (name, types::ComponentItem::ComponentFunc(ty)) => {
+                info!(?name, "serving root function");
+                let invocations = srv
+                    .serve_function_shared(
+                        Arc::clone(&store),
+                        instance,
+                        Arc::clone(&guest_resources),
+                        ty,
+                        "",
+                        name,
+                    )
+                    .await?;
+                handlers.spawn(
+                    async move {
+                        let mut invocations = pin!(invocations);
+                        while let Some(invocation) = invocations.next().await {
+                            match invocation {
+                                Ok((headers, fut)) => {
+                                    info!(?headers, "serving root function invocation");
+                                    if let Err(err) = fut.await {
+                                        warn!(
+                                            ?headers,
+                                            ?err,
+                                            "failed to serve root function invocation"
+                                        );
+                                    } else {
+                                        info!("successfully served root function invocation");
+                                    }
+                                }
+                                Err(err) => {
+                                    error!(?err, "failed to accept root function invocation");
+                                }
+                            }
+                        }
+                    }
+                    .instrument(span.clone()),
+                );
+            }
+            (_, types::ComponentItem::CoreFunc(_)) => {
+                warn!(name, "serving root core function exports not supported yet");
+            }
+            (_, types::ComponentItem::Module(_)) => {
+                warn!(name, "serving root module exports not supported yet");
+            }
+            (_, types::ComponentItem::Component(_)) => {
+                warn!(name, "serving root component exports not supported yet");
+            }
+            (instance_name, types::ComponentItem::ComponentInstance(ty)) => {
+                for (name, ty) in ty.exports(&engine) {
+                    match ty {
+                        types::ComponentItem::ComponentFunc(ty) => {
+                            info!(?name, "serving instance function");
+                            let invocations = srv
+                                .serve_function_shared(
+                                    Arc::clone(&store),
+                                    instance,
+                                    Arc::clone(&guest_resources),
+                                    ty,
+                                    instance_name,
+                                    name,
+                                )
+                                .await?;
+                            handlers.spawn(async move {
+                                let mut invocations = pin!(invocations);
+                                while let Some(invocation) = invocations.next().await {
+                                    match invocation {
+                                        Ok((headers, fut)) => {
+                                            info!(?headers, "serving instance function invocation");
+                                            if let Err(err) = fut.await {
+                                                warn!(
+                                                    ?headers,
+                                                    ?err,
+                                                    "failed to serve instance function invocation"
+                                                );
+                                            } else {
+                                                info!(
+                                                    "successfully served instance function invocation"
+                                                );
+                                            }
+                                        }
+                                        Err(err) => {
+                                            error!(
+                                                ?err,
+                                                "failed to accept instance function invocation"
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                            .instrument(span.clone()));
+                        }
+                        types::ComponentItem::CoreFunc(_) => {
+                            warn!(
+                                instance_name,
+                                name, "serving instance core function exports not supported yet"
+                            );
+                        }
+                        types::ComponentItem::Module(_) => {
+                            warn!(
+                                instance_name,
+                                name, "serving instance module exports not supported yet"
+                            );
+                        }
+                        types::ComponentItem::Component(_) => {
+                            warn!(
+                                instance_name,
+                                name, "serving instance component exports not supported yet"
+                            );
+                        }
+                        types::ComponentItem::ComponentInstance(_) => {
+                            warn!(
+                                instance_name,
+                                name, "serving nested instance exports not supported yet"
+                            );
+                        }
+                        types::ComponentItem::Type(_) | types::ComponentItem::Resource(_) => {}
+                    }
+                }
+            }
+            (_, types::ComponentItem::Type(_) | types::ComponentItem::Resource(_)) => {}
+        }
+    }
+    Ok(())
+}
+
+#[instrument(level = "trace", skip_all, ret)]
+pub async fn serve_stateless(
+    handlers: &mut JoinSet<()>,
+    srv: wrpc_transport_nats::Client,
+    clt: wrpc_transport_nats::Client,
+    pre: InstancePre<Ctx<wrpc_transport_nats::Client>>,
+    engine: &Engine,
+    timeout: Duration,
+) -> anyhow::Result<()> {
+    let span = Span::current();
+    for (name, ty) in pre.component().component_type().exports(engine) {
         match (name, ty) {
             (name, types::ComponentItem::ComponentFunc(ty)) => {
                 let clt = clt.clone();
@@ -305,48 +448,50 @@ pub async fn handle_serve(
                 info!(?name, "serving root function");
                 let invocations = srv
                     .serve_function(
-                        move || new_store(&engine, clt.clone(), "reactor.wasm"),
+                        move || new_store(&engine, clt.clone(), "reactor.wasm", timeout),
                         pre.clone(),
                         ty,
                         "",
                         name,
                     )
                     .await?;
-                handlers.spawn(async move {
-                    let mut invocations = pin!(invocations);
-                    while let Some(invocation) = invocations.next().await {
-                        match invocation {
-                            Ok((headers, fut)) => {
-                                info!(?headers, "serving root function invocation");
-                                if let Err(err) = fut.await {
-                                    warn!(
-                                        ?headers,
-                                        ?err,
-                                        "failed to serve root function invocation"
-                                    );
-                                } else {
-                                    info!("successfully served root function invocation")
+                handlers.spawn(
+                    async move {
+                        let mut invocations = pin!(invocations);
+                        while let Some(invocation) = invocations.next().await {
+                            match invocation {
+                                Ok((headers, fut)) => {
+                                    info!(?headers, "serving root function invocation");
+                                    if let Err(err) = fut.await {
+                                        warn!(
+                                            ?headers,
+                                            ?err,
+                                            "failed to serve root function invocation"
+                                        );
+                                    } else {
+                                        info!("successfully served root function invocation");
+                                    }
                                 }
-                            }
-                            Err(err) => {
-                                error!(?err, "failed to accept root function invocation");
+                                Err(err) => {
+                                    error!(?err, "failed to accept root function invocation");
+                                }
                             }
                         }
                     }
-                    ().in_current_span()
-                });
+                    .instrument(span.clone()),
+                );
             }
             (_, types::ComponentItem::CoreFunc(_)) => {
-                bail!("serving root core function exports not supported yet")
+                warn!(name, "serving root core function exports not supported yet");
             }
             (_, types::ComponentItem::Module(_)) => {
-                bail!("serving root module exports not supported yet");
+                warn!(name, "serving root module exports not supported yet");
             }
             (_, types::ComponentItem::Component(_)) => {
-                bail!("serving root component exports not supported yet");
+                warn!(name, "serving root component exports not supported yet");
             }
             (instance_name, types::ComponentItem::ComponentInstance(ty)) => {
-                for (name, ty) in ty.exports(&engine) {
+                for (name, ty) in ty.exports(engine) {
                     match ty {
                         types::ComponentItem::ComponentFunc(ty) => {
                             let clt = clt.clone();
@@ -354,7 +499,9 @@ pub async fn handle_serve(
                             info!(?name, "serving instance function");
                             let invocations = srv
                                 .serve_function(
-                                    move || new_store(&engine, clt.clone(), "reactor.wasm"),
+                                    move || {
+                                        new_store(&engine, clt.clone(), "reactor.wasm", timeout)
+                                    },
                                     pre.clone(),
                                     ty,
                                     instance_name,
@@ -376,7 +523,7 @@ pub async fn handle_serve(
                                             } else {
                                                 info!(
                                                     "successfully served instance function invocation"
-                                                )
+                                                );
                                             }
                                         }
                                         Err(err) => {
@@ -387,33 +534,75 @@ pub async fn handle_serve(
                                         }
                                     }
                                 }
-                                ().in_current_span()
-                            });
+                            }.instrument(span.clone()));
                         }
                         types::ComponentItem::CoreFunc(_) => {
-                            bail!("serving instance core function exports not supported yet")
+                            warn!(
+                                instance_name,
+                                name, "serving instance core function exports not supported yet"
+                            );
                         }
                         types::ComponentItem::Module(_) => {
-                            bail!("serving instance module exports not supported yet")
+                            warn!(
+                                instance_name,
+                                name, "serving instance module exports not supported yet"
+                            );
                         }
                         types::ComponentItem::Component(_) => {
-                            bail!("serving instance component exports not supported yet")
+                            warn!(
+                                instance_name,
+                                name, "serving instance component exports not supported yet"
+                            );
                         }
                         types::ComponentItem::ComponentInstance(_) => {
-                            bail!("serving nested instance exports not supported yet")
+                            warn!(
+                                instance_name,
+                                name, "serving nested instance exports not supported yet"
+                            );
                         }
-                        types::ComponentItem::Type(_) => {}
-                        types::ComponentItem::Resource(_) => {
-                            bail!("serving instance resource exports not supported yet")
-                        }
+                        types::ComponentItem::Type(_) | types::ComponentItem::Resource(_) => {}
                     }
                 }
             }
-            (_, types::ComponentItem::Type(_)) => {}
-            (_, types::ComponentItem::Resource(_)) => {
-                bail!("serving root resource exports not supported yet")
-            }
+            (_, types::ComponentItem::Type(_) | types::ComponentItem::Resource(_)) => {}
         }
+    }
+    Ok(())
+}
+
+#[instrument(level = "trace", ret)]
+pub async fn handle_serve(
+    ServeArgs {
+        nats,
+        timeout,
+        prefix,
+        target,
+        group,
+        ref workload,
+    }: ServeArgs,
+) -> anyhow::Result<()> {
+    let nats = wrpc_cli::nats::connect(nats)
+        .await
+        .context("failed to connect to NATS")?;
+    let nats = Arc::new(nats);
+
+    let (pre, engine, guest_resources) =
+        instantiate_pre(WASI_PREVIEW1_REACTOR_COMPONENT_ADAPTER, None, workload).await?;
+
+    let clt = wrpc_transport_nats::Client::new(Arc::clone(&nats), target, None);
+    let srv = wrpc_transport_nats::Client::new(nats, prefix, group.map(Arc::from));
+    let mut handlers = JoinSet::new();
+    if guest_resources.is_empty() {
+        serve_stateless(&mut handlers, srv, clt, pre, &engine, *timeout).await?;
+    } else {
+        serve_shared(
+            &mut handlers,
+            srv,
+            new_store(&engine, clt, "reactor.wasm", *timeout),
+            pre,
+            guest_resources,
+        )
+        .await?;
     }
     while let Some(res) = handlers.join_next().await {
         if let Err(err) = res {

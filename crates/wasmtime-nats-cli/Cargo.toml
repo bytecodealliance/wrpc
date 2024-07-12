@@ -1,6 +1,6 @@
 [package]
 name = "wrpc-wasmtime-nats-cli"
-version = "0.3.2"
+version = "0.3.3"
 description = "wRPC Wasmtime NATS CLI"
 
 authors.workspace = true
@@ -23,6 +23,7 @@ clap = { workspace = true, features = [
     "usage",
 ] }
 futures = { workspace = true }
+humantime = { workspace = true }
 reqwest = { workspace = true }
 tokio = { workspace = true, features = ["fs"] }
 tokio-util = { workspace = true, features = ["codec"] }

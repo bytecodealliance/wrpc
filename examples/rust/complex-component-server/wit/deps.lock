@@ -1,0 +1,4 @@
+[complex]
+path = "../../../wit/complex"
+sha256 = "d47aff89928fe5bb30ddc79a4bae79a5af6fa075e8694953567544fefa507048"
+sha512 = "2de2d6fccb3bde7f9c163890993b53191cc399fb16e28742dbd25f449fc1d8a2e0766a101d0cf4c252be07e2aa3c892daba876b009a0bd33e3c5dd5f74f790da"

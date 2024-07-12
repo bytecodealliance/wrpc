@@ -1,0 +1,5 @@
+package wrpc-examples:complex-component-server;
+
+world server {
+    include wrpc-examples:complex/server;
+}
