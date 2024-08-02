@@ -26,6 +26,7 @@ fn map_lock<'a, T, U>(
     f(lock).map_err(|err| store::Error::Other(err.to_string()))
 }
 
+#[derive(Clone, Default)]
 pub struct Bucket(Arc<RwLock<HashMap<String, Vec<u8>>>>);
 
 impl Bucket {
@@ -79,11 +80,10 @@ impl bindings::exports::wasi::keyvalue::store::Guest for Handler {
     type Bucket = Bucket;
 
     fn open(identifier: String) -> Result<store::Bucket> {
-        static STORE: OnceLock<Mutex<HashMap<String, Arc<RwLock<HashMap<String, Vec<u8>>>>>>> =
-            OnceLock::new();
-        let store = STORE.get_or_init(|| Mutex::default());
+        static STORE: OnceLock<Mutex<HashMap<String, Bucket>>> = OnceLock::new();
+        let store = STORE.get_or_init(Mutex::default);
         let mut store = store.lock().expect("failed to lock store");
-        let bucket = store.entry(identifier).or_default();
-        Ok(store::Bucket::new(Bucket(Arc::clone(&bucket))))
+        let bucket = store.entry(identifier).or_default().clone();
+        Ok(store::Bucket::new(bucket))
     }
 }
