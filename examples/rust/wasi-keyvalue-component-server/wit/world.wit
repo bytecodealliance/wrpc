@@ -1,0 +1,5 @@
+package wrpc-examples:wasi-keyvalue-component-server;
+
+world server {
+    export wasi:keyvalue/store@0.2.0-draft;
+}

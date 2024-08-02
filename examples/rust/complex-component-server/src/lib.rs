@@ -1,5 +1,3 @@
-use bindings::exports::wrpc_examples::complex::resources::FooBorrow;
-
 #[allow(clippy::missing_safety_doc)]
 mod bindings {
     use crate::Handler;
@@ -12,6 +10,8 @@ mod bindings {
 
     export!(Handler);
 }
+
+use bindings::exports::wrpc_examples::complex::resources::FooBorrow;
 
 pub struct Handler;
 
