@@ -1,6 +1,7 @@
 use core::any::TypeId;
 use core::fmt::{self, Debug};
 use core::future::Future;
+use core::hash::Hash;
 use core::iter::zip;
 use core::marker::PhantomData;
 use core::mem;
@@ -31,6 +32,7 @@ use wasm_tokio::{
     Leb128Encoder, Utf8Codec,
 };
 
+#[derive(Hash)]
 #[repr(transparent)]
 pub struct ResourceBorrow<T: ?Sized> {
     repr: Bytes,
@@ -61,6 +63,14 @@ impl<T: ?Sized> From<ResourceBorrow<T>> for Bytes {
     }
 }
 
+impl<T: ?Sized> PartialEq for ResourceBorrow<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.repr == other.repr
+    }
+}
+
+impl<T: ?Sized> Eq for ResourceBorrow<T> {}
+
 impl<T: ?Sized> AsRef<[u8]> for ResourceBorrow<T> {
     fn as_ref(&self) -> &[u8] {
         &self.repr
@@ -85,6 +95,7 @@ impl<T: ?Sized> ResourceBorrow<T> {
     }
 }
 
+#[derive(Hash)]
 #[repr(transparent)]
 pub struct ResourceOwn<T: ?Sized> {
     repr: Bytes,
@@ -123,6 +134,14 @@ impl<T: ?Sized> From<ResourceOwn<T>> for Bytes {
         repr
     }
 }
+
+impl<T: ?Sized> PartialEq for ResourceOwn<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.repr == other.repr
+    }
+}
+
+impl<T: ?Sized> Eq for ResourceOwn<T> {}
 
 impl<T: ?Sized> AsRef<[u8]> for ResourceOwn<T> {
     fn as_ref(&self) -> &[u8] {
