@@ -623,7 +623,7 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve>(
                 self.src,
                 r#"
                 let wrpc__ = {anyhow}::Context::context(
-                    {wrpc_transport}::SendFuture::send({wrpc_transport}::InvokeExt::invoke_values_blocking(wrpc__, cx__,  "{instance}", "{}", ({params}), "#,
+                    {wrpc_transport}::SendFuture::send({wrpc_transport}::InvokeExt::invoke_values_blocking(wrpc__, cx__, "{instance}", "{}", ({params}), "#,
                 rpc_func_name(func),
                 wrpc_transport = self.gen.wrpc_transport_path(),
                 params = {
@@ -660,7 +660,7 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve>(
                 self.src,
                 r#"
                 let (wrpc__, io__) = {anyhow}::Context::context(
-                    {wrpc_transport}::SendFuture::send({wrpc_transport}::InvokeExt::invoke_values(wrpc__, cx__,  "{instance}", "{}", ({params}), "#,
+                    {wrpc_transport}::SendFuture::send({wrpc_transport}::InvokeExt::invoke_values(wrpc__, cx__, "{instance}", "{}", ({params}), "#,
                 rpc_func_name(func),
                 wrpc_transport = self.gen.wrpc_transport_path(),
                 params = {
