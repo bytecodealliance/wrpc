@@ -2746,7 +2746,7 @@ impl InterfaceGenerator<'_> {
 ",
                 );
                 for (i, func) in methods[&id].iter().enumerate() {
-                    let name = &func.item_name();
+                    let name = rpc_func_name(func);
                     uwriteln!(
                         self.src,
                         r#"stop{i}, err := s.Serve(rx, "{name}", func(ctx {context}.Context, w {wrpc}.IndexWriter, r {wrpc}.IndexReadCloser) error {{"#,

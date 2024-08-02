@@ -26,7 +26,10 @@ pub fn rpc_func_name(func: &Function) -> &str {
             .name
             .strip_prefix("[static]")
             .expect("failed to strip `[static]` prefix"),
-        FunctionKind::Method(..) => func.item_name(),
+        FunctionKind::Method(..) => func
+            .name
+            .strip_prefix("[method]")
+            .expect("failed to strip `[method]` prefix"),
         FunctionKind::Freestanding => &func.name,
     }
 }
