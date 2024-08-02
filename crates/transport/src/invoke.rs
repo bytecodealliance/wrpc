@@ -283,7 +283,7 @@ pub trait InvokeExt: Invoke {
     }
 
     /// Returns a [`Timeout`], wrapping [Self] with an implementation of [Invoke], which will
-    /// error, if call to [Self::invoke] does not return within a supplied `timeout`
+    /// error, if call to [`Self::invoke`] does not return within a supplied `timeout`
     fn timeout(&self, timeout: Duration) -> Timeout<'_, Self> {
         Timeout {
             inner: self,
