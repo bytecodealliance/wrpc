@@ -121,14 +121,13 @@ async fn connect(url: Url) -> anyhow::Result<async_nats::Client> {
     Ok(client)
 }
 
+type Bucket = Arc<RwLock<HashMap<String, Bytes>>>;
+
 #[derive(Clone, Debug, Default)]
-pub struct Server(Arc<RwLock<HashMap<Bytes, Arc<RwLock<HashMap<String, Bytes>>>>>>);
+struct Server(Arc<RwLock<HashMap<Bytes, Bucket>>>);
 
 impl Server {
-    async fn bucket(
-        &self,
-        bucket: impl AsRef<[u8]>,
-    ) -> Result<Arc<RwLock<HashMap<String, Bytes>>>> {
+    async fn bucket(&self, bucket: impl AsRef<[u8]>) -> Result<Bucket> {
         debug!("looking up bucket");
         let store = self.0.read().await;
         store
@@ -139,7 +138,7 @@ impl Server {
 }
 
 impl bindings::exports::wasi::keyvalue::store::HandlerBucket<Option<HeaderMap>> for Server {
-    #[instrument(level = "trace", ret)]
+    #[instrument(level = "trace", skip(_cx), ret)]
     async fn get(
         &self,
         _cx: Option<HeaderMap>,
@@ -151,7 +150,7 @@ impl bindings::exports::wasi::keyvalue::store::HandlerBucket<Option<HeaderMap>> 
         Ok(Ok(bucket.get(&key).cloned()))
     }
 
-    #[instrument(level = "trace", ret)]
+    #[instrument(level = "trace", skip(_cx), ret)]
     async fn set(
         &self,
         _cx: Option<HeaderMap>,
@@ -165,7 +164,7 @@ impl bindings::exports::wasi::keyvalue::store::HandlerBucket<Option<HeaderMap>> 
         Ok(Ok(()))
     }
 
-    #[instrument(level = "trace", ret)]
+    #[instrument(level = "trace", skip(_cx), ret)]
     async fn delete(
         &self,
         _cx: Option<HeaderMap>,
@@ -178,7 +177,7 @@ impl bindings::exports::wasi::keyvalue::store::HandlerBucket<Option<HeaderMap>> 
         Ok(Ok(()))
     }
 
-    #[instrument(level = "trace", ret)]
+    #[instrument(level = "trace", skip(_cx), ret)]
     async fn exists(
         &self,
         _cx: Option<HeaderMap>,
@@ -190,7 +189,7 @@ impl bindings::exports::wasi::keyvalue::store::HandlerBucket<Option<HeaderMap>> 
         Ok(Ok(bucket.contains_key(&key)))
     }
 
-    #[instrument(level = "trace", ret)]
+    #[instrument(level = "trace", skip(_cx), ret)]
     async fn list_keys(
         &self,
         _cx: Option<HeaderMap>,
@@ -213,7 +212,7 @@ impl bindings::exports::wasi::keyvalue::store::HandlerBucket<Option<HeaderMap>> 
 
 impl bindings::exports::wasi::keyvalue::store::Handler<Option<HeaderMap>> for Server {
     // NOTE: Resource handle returned is just the `identifier` itself
-    #[instrument(level = "trace", ret)]
+    #[instrument(level = "trace", skip(_cx), ret)]
     async fn open(
         &self,
         _cx: Option<HeaderMap>,
