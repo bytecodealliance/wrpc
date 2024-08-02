@@ -13,8 +13,9 @@ use tokio::sync::Mutex;
 use tokio::task::JoinSet;
 use tracing::{error, info, instrument, warn, Instrument as _, Span};
 use url::Url;
-use wasmcloud_component_adapters::{
-    WASI_PREVIEW1_COMMAND_COMPONENT_ADAPTER, WASI_PREVIEW1_REACTOR_COMPONENT_ADAPTER,
+use wasi_preview1_component_adapter_provider::{
+    WASI_SNAPSHOT_PREVIEW1_ADAPTER_NAME, WASI_SNAPSHOT_PREVIEW1_COMMAND_ADAPTER,
+    WASI_SNAPSHOT_PREVIEW1_REACTOR_ADAPTER,
 };
 use wasmtime::component::{types, Component, InstancePre, Linker, ResourceType};
 use wasmtime::{Engine, Store};
@@ -166,7 +167,7 @@ where
             .validate(true)
             .module(&wasm)
             .context("failed to set core component module")?
-            .adapter("wasi_snapshot_preview1", adapter)
+            .adapter(WASI_SNAPSHOT_PREVIEW1_ADAPTER_NAME, adapter)
             .context("failed to add WASI adapter")?
             .encode()
             .context("failed to encode a component")?
@@ -271,7 +272,7 @@ pub async fn handle_run(
         .context("failed to connect to NATS")?;
 
     let (pre, engine, _) =
-        instantiate_pre(WASI_PREVIEW1_COMMAND_COMPONENT_ADAPTER, None, workload).await?;
+        instantiate_pre(WASI_SNAPSHOT_PREVIEW1_COMMAND_ADAPTER, None, workload).await?;
     let mut store = new_store(
         &engine,
         wrpc_transport_nats::Client::new(nats, target, None),
@@ -587,7 +588,7 @@ pub async fn handle_serve(
     let nats = Arc::new(nats);
 
     let (pre, engine, guest_resources) =
-        instantiate_pre(WASI_PREVIEW1_REACTOR_COMPONENT_ADAPTER, None, workload).await?;
+        instantiate_pre(WASI_SNAPSHOT_PREVIEW1_REACTOR_ADAPTER, None, workload).await?;
 
     let clt = wrpc_transport_nats::Client::new(Arc::clone(&nats), target, None);
     let srv = wrpc_transport_nats::Client::new(nats, prefix, group.map(Arc::from));

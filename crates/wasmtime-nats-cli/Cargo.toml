@@ -1,6 +1,6 @@
 [package]
 name = "wrpc-wasmtime-nats-cli"
-version = "0.3.4"
+version = "0.4.0"
 description = "wRPC Wasmtime NATS CLI"
 
 authors.workspace = true
@@ -34,7 +34,7 @@ tracing-subscriber = { workspace = true, features = [
     "fmt",
 ] }
 url = { workspace = true }
-wasmcloud-component-adapters = { workspace = true }
+wasi-preview1-component-adapter-provider = { workspace = true }
 wasmparser = { workspace = true }
 wasmtime = { workspace = true, features = [
     "addr2line",
