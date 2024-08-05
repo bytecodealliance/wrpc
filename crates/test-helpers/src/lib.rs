@@ -1,6 +1,4 @@
 pub use codegen_macro::*;
-#[cfg(feature = "runtime-macro")]
-pub use runtime_macro::*;
 
 use std::fs;
 use std::path::{Path, PathBuf};
