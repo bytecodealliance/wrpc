@@ -22,7 +22,6 @@
   inputs.nixify.url = "github:rvolosatovs/nixify";
   inputs.nixlib.url = "github:nix-community/nixpkgs.lib";
   inputs.nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
-  inputs.wasmcloud-component-adapters.url = "github:wasmcloud/wasmcloud-component-adapters";
   inputs.wit-deps.inputs.nixify.follows = "nixify";
   inputs.wit-deps.inputs.nixlib.follows = "nixlib";
   inputs.wit-deps.url = "github:bytecodealliance/wit-deps/v0.3.5";
@@ -31,7 +30,6 @@
     nixify,
     nixlib,
     nixpkgs-unstable,
-    wasmcloud-component-adapters,
     wit-deps,
     ...
   }:
@@ -111,9 +109,6 @@
               ++ optional darwin2darwin pkgs.xcbuild.xcrun;
           in
             {
-              WASI_PREVIEW1_COMMAND_COMPONENT_ADAPTER = wasmcloud-component-adapters.packages.${pkgs.stdenv.system}.wasi-preview1-command-component-adapter;
-              WASI_PREVIEW1_REACTOR_COMPONENT_ADAPTER = wasmcloud-component-adapters.packages.${pkgs.stdenv.system}.wasi-preview1-reactor-component-adapter;
-
               buildInputs =
                 buildInputs
                 ++ optional pkgs.stdenv.hostPlatform.isDarwin pkgs.libiconv;
