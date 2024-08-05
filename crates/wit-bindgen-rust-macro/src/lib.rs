@@ -131,10 +131,10 @@ impl Parse for Config {
                 source = Some(Source::Path(input.parse::<syn::LitStr>()?.value()));
             }
         }
-        let (resolve, pkgs, files) =
+        let (resolve, pkg, files) =
             parse_source(&source, &features).map_err(|err| anyhow_to_syn(call_site, err))?;
         let world = resolve
-            .select_world(&pkgs, world.as_deref())
+            .select_world(pkg, world.as_deref())
             .map_err(|e| anyhow_to_syn(call_site, e))?;
         Ok(Config {
             opts,
@@ -149,7 +149,7 @@ impl Parse for Config {
 fn parse_source(
     source: &Option<Source>,
     features: &[String],
-) -> anyhow::Result<(Resolve, Vec<PackageId>, Vec<PathBuf>)> {
+) -> anyhow::Result<(Resolve, PackageId, Vec<PathBuf>)> {
     let mut resolve = Resolve::default();
     resolve.features.extend(features.iter().cloned());
     let mut files = Vec::new();

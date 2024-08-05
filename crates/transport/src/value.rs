@@ -72,7 +72,7 @@ impl<T: ?Sized> Eq for ResourceBorrow<T> {}
 
 impl<T: ?Sized> Hash for ResourceBorrow<T> {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.repr.hash(state)
+        self.repr.hash(state);
     }
 }
 
@@ -149,7 +149,7 @@ impl<T: ?Sized> Eq for ResourceOwn<T> {}
 
 impl<T: ?Sized> Hash for ResourceOwn<T> {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.repr.hash(state)
+        self.repr.hash(state);
     }
 }
 
