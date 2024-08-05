@@ -492,7 +492,7 @@ dependencies = [
  "hashbrown 0.14.5",
  "log",
  "regalloc2",
- "rustc-hash",
+ "rustc-hash 1.1.0",
  "smallvec",
  "target-lexicon",
 ]
@@ -1593,16 +1593,17 @@ dependencies = [
 
 [[package]]
 name = "quinn"
-version = "0.11.2"
+version = "0.11.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e4ceeeeabace7857413798eb1ffa1e9c905a9946a57d81fb69b4b71c4d8eb3ad"
+checksum = "b22d8e7369034b9a7132bc2008cac12f2013c8132b45e0554e6e20e2617f2156"
 dependencies = [
  "bytes",
  "pin-project-lite",
  "quinn-proto",
  "quinn-udp",
- "rustc-hash",
+ "rustc-hash 2.0.0",
  "rustls",
+ "socket2",
  "thiserror",
  "tokio",
  "tracing",
@@ -1617,7 +1618,7 @@ dependencies = [
  "bytes",
  "rand",
  "ring",
- "rustc-hash",
+ "rustc-hash 1.1.0",
  "rustls",
  "rustls-platform-verifier",
  "slab",
@@ -1730,7 +1731,7 @@ checksum = "ad156d539c879b7a24a363a2016d77961786e71f48f2e2fc8302a92abd2429a6"
 dependencies = [
  "hashbrown 0.13.2",
  "log",
- "rustc-hash",
+ "rustc-hash 1.1.0",
  "slice-group-by",
  "smallvec",
 ]
@@ -1841,6 +1842,12 @@ name = "rustc-hash"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "08d43f7aa6b08d49f382cde6a7982047c3426db949b1424bc4b7ec9ae12c6ce2"
+
+[[package]]
+name = "rustc-hash"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "583034fd73374156e66797ed8e5b0d5690409c9226b22d87cb7f19821c05d152"
 
 [[package]]
 name = "rustc_version"
