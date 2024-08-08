@@ -151,6 +151,12 @@ func (w *paramWriter) publish(p []byte) (int, error) {
 		if err != nil {
 			return 0, fmt.Errorf("failed to subscribe on Rx subject: %w", err)
 		}
+		defer func() {
+			if err := sub.Unsubscribe(); err != nil {
+				slog.Error("failed to unsubscribe from Rx subject", "err", err)
+			}
+		}()
+
 		slog.DebugContext(w.ctx, "publishing handshake", "rx", m.Reply)
 		if err := w.nc.PublishMsg(m); err != nil {
 			return 0, fmt.Errorf("failed to send initial payload chunk: %w", err)
@@ -276,9 +282,10 @@ func (r *subReader) ReadByte() (byte, error) {
 
 type streamReader struct {
 	*subReader
-	err    *nats.Subscription
-	nest   map[string]*nats.Subscription
-	nestMu sync.Mutex
+	err            *nats.Subscription
+	nest           map[string]*nats.Subscription
+	nestMu         sync.Mutex
+	nestCloseFuncs []func() error
 }
 
 func (r *streamReader) Close() (err error) {
@@ -295,6 +302,21 @@ func (r *streamReader) Close() (err error) {
 			}
 		}
 	}()
+
+	for _, closeFunc := range r.nestCloseFuncs {
+		closeFunc := closeFunc
+		defer func() {
+			slog.Debug("closing indexedStreamReader subscription")
+			if sErr := closeFunc(); sErr != nil {
+				if err == nil {
+					err = fmt.Errorf("failed to unsubscribe indexedStreamReader: %w", sErr)
+				} else {
+					slog.Error("failed to unsubscribe indexedStreamReader", "err", sErr)
+				}
+			}
+		}()
+	}
+
 	for path, sub := range r.nest {
 		path := path
 		sub := sub
@@ -347,6 +369,8 @@ func (r *streamReader) Index(path ...uint32) (wrpc.IndexReader, error) {
 	if !ok {
 		return nil, errors.New("unknown subscription")
 	}
+	slog.Debug("Taking unsubscribe from indexedStreamReader", slog.String("path", s))
+	r.nestCloseFuncs = append(r.nestCloseFuncs, sub.Unsubscribe)
 	delete(r.nest, s)
 	return &indexedStreamReader{
 		r, sub, s, nil,
