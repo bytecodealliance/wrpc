@@ -151,6 +151,12 @@ func (w *paramWriter) publish(p []byte) (int, error) {
 		if err != nil {
 			return 0, fmt.Errorf("failed to subscribe on Rx subject: %w", err)
 		}
+		defer func() {
+			if err := sub.Unsubscribe(); err != nil {
+				slog.Error("failed to unsubscribe from Rx subject", "err", err)
+			}
+		}()
+
 		slog.DebugContext(w.ctx, "publishing handshake", "rx", m.Reply)
 		if err := w.nc.PublishMsg(m); err != nil {
 			return 0, fmt.Errorf("failed to send initial payload chunk: %w", err)
