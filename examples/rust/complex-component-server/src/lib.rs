@@ -11,7 +11,7 @@ mod bindings {
     export!(Handler);
 }
 
-use bindings::exports::wrpc_examples::complex::resources::FooBorrow;
+use bindings::exports::wrpc_examples::complex::resources::{FooBorrow, GuestFoo};
 
 pub struct Handler;
 
@@ -34,7 +34,8 @@ impl bindings::exports::wrpc_examples::complex::resources::GuestFoo for Foo {
 impl bindings::exports::wrpc_examples::complex::resources::Guest for Handler {
     type Foo = Foo;
 
-    fn bar(_: FooBorrow<'_>) -> String {
-        "bar".to_string()
+    fn bar(v: FooBorrow<'_>) -> String {
+        let v: &Foo = v.get();
+        v.bar()
     }
 }
