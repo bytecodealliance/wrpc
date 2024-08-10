@@ -1,7 +1,7 @@
 [package]
+description = "WebAssembly component-native RPC framework based on WIT"
 name = "wrpc"
 version = "0.5.0"
-description = "WebAssembly component-native RPC framework based on WIT"
 
 authors.workspace = true
 categories.workspace = true
@@ -80,10 +80,6 @@ wrpc-wasmtime-nats-cli = { workspace = true, optional = true }
 anyhow = { workspace = true }
 bytes = { workspace = true }
 futures = { workspace = true, features = ["async-await"] }
-rcgen = { workspace = true, features = ["crypto", "ring", "zeroize"] }
-rustls = { workspace = true, features = ["logging", "ring"] }
-test-log = { workspace = true, features = ["color", "log", "trace"] }
-tokio = { workspace = true, features = ["process", "rt-multi-thread"] }
 quinn = { workspace = true, features = [
     "log",
     "platform-verifier",
@@ -91,11 +87,16 @@ quinn = { workspace = true, features = [
     "runtime-tokio",
     "rustls",
 ] }
+rcgen = { workspace = true, features = ["crypto", "ring", "zeroize"] }
+rustls = { workspace = true, features = ["logging", "ring"] }
+test-log = { workspace = true, features = ["color", "log", "trace"] }
+tokio = { workspace = true, features = ["process", "rt-multi-thread"] }
 wrpc-cli = { workspace = true }
 
 [workspace.dependencies]
 anyhow = { version = "1", default-features = false }
 async-nats = { package = "async-nats-wrpc", version = "0.35.1", default-features = false }
+async-stream = { version = "0.3", default-features = false }
 bitflags = { version = "2", default-features = false }
 bytes = { version = "1", default-features = false }
 clap = { version = "4", default-features = false }
@@ -121,8 +122,8 @@ tokio-stream = { version = "0.1", default-features = false }
 tokio-util = { version = "0.7", default-features = false }
 tracing = { version = "0.1", default-features = false }
 tracing-subscriber = { version = "0.3", default-features = false }
-uuid = { version = "1", default-features = false }
 url = { version = "2", default-features = false }
+uuid = { version = "1", default-features = false }
 wasi-preview1-component-adapter-provider = { version = "23.0.2", default-features = false }
 wasm-tokio = { version = "0.5.16", default-features = false }
 wasmparser = { version = "0.214", default-features = false }

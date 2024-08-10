@@ -1,0 +1,5 @@
+package wrpc-examples:echo-stream-rust-client;
+
+world client {
+    include wrpc-examples:echo-stream/client;
+}
