@@ -19,6 +19,7 @@ struct Args {
     nats: Url,
 
     /// Prefixes to invoke `wrpc-examples:hello/handler.hello` on
+    #[arg(default_value = "rust")]
     prefixes: Vec<String>,
 }
 
