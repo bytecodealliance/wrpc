@@ -61,7 +61,7 @@ async fn main() -> anyhow::Result<()> {
         Server::default(),
     )
     .await
-    .context("failed to serve `wrpc-examples.hello/handler.hello`")?;
+    .context("failed to serve `wasi:keyvalue/store`")?;
     // NOTE: This will conflate all invocation streams into a single stream via `futures::stream::SelectAll`,
     // to customize this, iterate over the returned `invocations` and set up custom handling per export
     let mut invocations = select_all(invocations.into_iter().map(

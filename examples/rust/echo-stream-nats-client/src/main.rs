@@ -1,12 +1,14 @@
-use std::time::Duration;
+use core::time::Duration;
 
 use anyhow::Context as _;
 use async_stream::stream;
-use bindings::wrpc_examples::echo_stream::handler::Req;
 use clap::Parser;
-use tokio::{sync::mpsc, time::sleep};
+use futures::StreamExt as _;
+use tokio::sync::mpsc;
+use tokio::time::sleep;
+use tracing_subscriber::layer::SubscriberExt as _;
+use tracing_subscriber::util::SubscriberInitExt as _;
 use url::Url;
-use wit_bindgen_wrpc::futures::StreamExt;
 
 mod bindings {
     wit_bindgen_wrpc::generate!({
@@ -15,6 +17,8 @@ mod bindings {
         }
     });
 }
+
+use bindings::wrpc_examples::echo_stream::handler::{echo, Req};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -30,7 +34,13 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt().init();
+    tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .with(tracing_subscriber::fmt::layer().compact().without_time())
+        .init();
 
     let Args { nats, prefixes } = Args::parse();
 
@@ -45,7 +55,7 @@ async fn main() -> anyhow::Result<()> {
             }
         });
         let wrpc = wrpc_transport_nats::Client::new(nats.clone(), prefix.clone(), None);
-        let (mut output_stream, res) = bindings::wrpc_examples::echo_stream::handler::echo(
+        let (mut output_stream, res) = echo(
             &wrpc,
             None,
             Req {
