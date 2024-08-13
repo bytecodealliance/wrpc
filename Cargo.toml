@@ -123,7 +123,7 @@ tracing = { version = "0.1", default-features = false }
 tracing-subscriber = { version = "0.3", default-features = false }
 uuid = { version = "1", default-features = false }
 url = { version = "2", default-features = false }
-wasi-preview1-component-adapter-provider = { version = "23.0.1", default-features = false }
+wasi-preview1-component-adapter-provider = { version = "23.0.2", default-features = false }
 wasm-tokio = { version = "0.5.16", default-features = false }
 wasmparser = { version = "0.214", default-features = false }
 wasmtime = { version = "22", default-features = false }
