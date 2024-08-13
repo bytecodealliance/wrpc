@@ -21,8 +21,14 @@ clap = { workspace = true, features = [
     "suggestions",
     "usage",
 ] }
+futures = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread"] }
-tracing-subscriber = { workspace = true, features = ["ansi", "fmt"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = [
+    "ansi",
+    "env-filter",
+    "fmt",
+] }
 url = { workspace = true }
 wit-bindgen-wrpc = { workspace = true }
 wrpc-transport-nats = { workspace = true }

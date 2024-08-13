@@ -1,10 +1,10 @@
-use core::pin::pin;
+use core::pin::{pin, Pin};
 
 use anyhow::Context as _;
 use async_stream::stream;
 use clap::Parser;
 use futures::stream::select_all;
-use futures::{StreamExt as _, TryStreamExt as _};
+use futures::{Stream, StreamExt as _, TryStreamExt as _};
 use tokio::{select, signal};
 use tracing::{info, warn};
 use url::Url;
@@ -16,6 +16,8 @@ mod bindings {
         }
     });
 }
+
+use bindings::exports::wrpc_examples::echo_stream::handler::Req;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -38,14 +40,8 @@ impl bindings::exports::wrpc_examples::echo_stream::handler::Handler<Option<asyn
     async fn echo(
         &self,
         _cx: Option<async_nats::HeaderMap>,
-        r: bindings::exports::wrpc_examples::echo_stream::handler::Req,
-    ) -> wit_bindgen_wrpc::anyhow::Result<
-        ::core::pin::Pin<
-            ::std::boxed::Box<
-                dyn wit_bindgen_wrpc::futures::Stream<Item = Vec<u64>> + ::core::marker::Send,
-            >,
-        >,
-    > {
+        r: Req,
+    ) -> anyhow::Result<Pin<Box<dyn Stream<Item = Vec<u64>> + Send>>> {
         let mut input_stream = r.input;
         Ok(Box::pin(stream! {
             while let Some(item) = input_stream.next().await {
