@@ -13,7 +13,6 @@ repository.workspace = true
 anyhow = { workspace = true, features = ["std"] }
 async-nats = { workspace = true }
 bytes = { workspace = true }
-wit-bindgen = { workspace = true, features = ["realloc", "macros"] }
 clap = { workspace = true, features = [
     "color",
     "derive",
