@@ -24,7 +24,7 @@ struct Args {
     #[arg(short, long, default_value = "nats://127.0.0.1:4222")]
     nats: Url,
 
-    /// Prefix to serve `wrpc-examples:hello/handler.hello` on
+    /// Prefix to serve `wrpc-examples:echo-stream/handler.echo` on
     #[arg(default_value = "rust")]
     prefix: String,
 }
@@ -74,7 +74,7 @@ async fn main() -> anyhow::Result<()> {
         Server,
     )
     .await
-    .context("failed to serve `wrpc-examples.hello/handler.hello`")?;
+    .context("failed to serve `wrpc-examples:echo-stream/handler.echo`")?;
     // NOTE: This will conflate all invocation streams into a single stream via `futures::stream::SelectAll`,
     // to customize this, iterate over the returned `invocations` and set up custom handling per export
     let mut invocations = select_all(invocations.into_iter().map(

@@ -24,6 +24,7 @@ struct Args {
     nats: Url,
 
     /// Prefixes to invoke `wasi:keyvalue/store` functions on
+    #[arg(default_value = "rust")]
     prefixes: Vec<String>,
 }
 
