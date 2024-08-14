@@ -2,9 +2,10 @@ package wrpc-examples:echo-stream;
 
 interface handler {
     record req {
-        input: stream<u64>,
+        numbers: stream<u64>,
+        bytes: stream<u8>,
     }
-    echo: func(r: req) -> stream<u64>;
+    echo: func(r: req) -> (numbers: stream<u64>, bytes: stream<u8>);
 }
 
 world client {

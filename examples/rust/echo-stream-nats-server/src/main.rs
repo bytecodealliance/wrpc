@@ -1,7 +1,7 @@
 use core::pin::{pin, Pin};
 
 use anyhow::Context as _;
-use async_stream::stream;
+use bytes::Bytes;
 use clap::Parser;
 use futures::stream::select_all;
 use futures::{Stream, StreamExt as _, TryStreamExt as _};
@@ -40,15 +40,12 @@ impl bindings::exports::wrpc_examples::echo_stream::handler::Handler<Option<asyn
     async fn echo(
         &self,
         _cx: Option<async_nats::HeaderMap>,
-        r: Req,
-    ) -> anyhow::Result<Pin<Box<dyn Stream<Item = Vec<u64>> + Send>>> {
-        let mut input_stream = r.input;
-        Ok(Box::pin(stream! {
-            while let Some(item) = input_stream.next().await {
-                tracing::info!(?item, "received stream item");
-                yield item;
-            }
-        }))
+        Req { numbers, bytes }: Req,
+    ) -> anyhow::Result<(
+        Pin<Box<dyn Stream<Item = Vec<u64>> + Send>>,
+        Pin<Box<dyn Stream<Item = Bytes> + Send>>,
+    )> {
+        Ok((numbers, bytes))
     }
 }
 
