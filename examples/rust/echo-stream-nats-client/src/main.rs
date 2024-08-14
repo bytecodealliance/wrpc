@@ -2,10 +2,12 @@ use core::time::Duration;
 
 use anyhow::Context as _;
 use async_stream::stream;
+use bytes::Bytes;
 use clap::Parser;
 use futures::StreamExt as _;
-use tokio::sync::mpsc;
 use tokio::time::sleep;
+use tokio::{sync::mpsc, try_join};
+use tracing::debug;
 use tracing_subscriber::layer::SubscriberExt as _;
 use tracing_subscriber::util::SubscriberInitExt as _;
 use url::Url;
@@ -48,34 +50,44 @@ async fn main() -> anyhow::Result<()> {
         .await
         .context("failed to connect to NATS.io")?;
     for prefix in prefixes {
-        let input_stream = Box::pin(stream! {
+        let numbers = Box::pin(stream! {
             for i in 1..=10 {
                 yield vec![i];
                 sleep(Duration::from_secs(1)).await;
             }
         });
-        let wrpc = wrpc_transport_nats::Client::new(nats.clone(), prefix.clone(), None);
-        let (mut output_stream, res) = echo(
-            &wrpc,
-            None,
-            Req {
-                input: input_stream,
-            },
-        )
-        .await
-        .context("failed to invoke `wrpc-examples.hello/handler.hello`")?;
-        let task = tokio::spawn(async move {
-            match res {
-                Some(fut) => Some(fut.await),
-                None => None,
+        let bytes = Box::pin(stream! {
+            for i in 1..=10 {
+                yield Bytes::from(i.to_string());
+                sleep(Duration::from_secs(1)).await;
             }
         });
-        while let Some(item) = output_stream.next().await {
-            eprintln!("got {item:?}");
-        }
-        if let Some(res) = task.await? {
-            res?;
-        }
+        let wrpc = wrpc_transport_nats::Client::new(nats.clone(), prefix.clone(), None);
+        let (mut numbers, mut bytes, io) = echo(&wrpc, None, Req { numbers, bytes })
+            .await
+            .context("failed to invoke `wrpc-examples:echo-stream/handler.echo`")?;
+        try_join!(
+            async {
+                if let Some(io) = io {
+                    debug!("performing async I/O");
+                    io.await.context("failed to complete async I/O")
+                } else {
+                    Ok(())
+                }
+            },
+            async {
+                while let Some(item) = numbers.next().await {
+                    eprintln!("numbers: {item:?}");
+                }
+                Ok(())
+            },
+            async {
+                while let Some(item) = bytes.next().await {
+                    eprintln!("bytes: {item:?}");
+                }
+                Ok(())
+            }
+        )?;
     }
     Ok(())
 }
