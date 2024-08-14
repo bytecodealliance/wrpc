@@ -12,12 +12,12 @@ use url::Url;
 mod bindings {
     wit_bindgen_wrpc::generate!({
         with: {
-            "wrpc-examples:echo-stream/handler": generate,
+            "wrpc-examples:streams/handler": generate,
         }
     });
 }
 
-use bindings::exports::wrpc_examples::echo_stream::handler::Req;
+use bindings::exports::wrpc_examples::streams::handler::Req;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -26,7 +26,7 @@ struct Args {
     #[arg(short, long, default_value = "nats://127.0.0.1:4222")]
     nats: Url,
 
-    /// Prefix to serve `wrpc-examples:echo-stream/handler.echo` on
+    /// Prefix to serve `wrpc-examples:streams/handler.echo` on
     #[arg(default_value = "rust")]
     prefix: String,
 }
@@ -34,7 +34,7 @@ struct Args {
 #[derive(Clone, Copy)]
 struct Server;
 
-impl bindings::exports::wrpc_examples::echo_stream::handler::Handler<Option<async_nats::HeaderMap>>
+impl bindings::exports::wrpc_examples::streams::handler::Handler<Option<async_nats::HeaderMap>>
     for Server
 {
     async fn echo(
@@ -67,7 +67,7 @@ async fn main() -> anyhow::Result<()> {
         Server,
     )
     .await
-    .context("failed to serve `wrpc-examples:echo-stream/handler.echo`")?;
+    .context("failed to serve `wrpc-examples:streams/handler.echo`")?;
     // NOTE: This will conflate all invocation streams into a single stream via `futures::stream::SelectAll`,
     // to customize this, iterate over the returned `invocations` and set up custom handling per export
     let mut invocations = select_all(invocations.into_iter().map(

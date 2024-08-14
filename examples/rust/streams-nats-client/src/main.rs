@@ -15,12 +15,12 @@ use url::Url;
 mod bindings {
     wit_bindgen_wrpc::generate!({
         with: {
-            "wrpc-examples:echo-stream/handler": generate
+            "wrpc-examples:streams/handler": generate
         }
     });
 }
 
-use bindings::wrpc_examples::echo_stream::handler::{echo, Req};
+use bindings::wrpc_examples::streams::handler::{echo, Req};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -29,7 +29,7 @@ struct Args {
     #[arg(short, long, default_value = "nats://127.0.0.1:4222")]
     nats: Url,
 
-    /// Prefixes to invoke `wrpc-examples:echo-stream/handler.echo` on
+    /// Prefixes to invoke `wrpc-examples:streams/handler.echo` on
     #[arg(default_value = "rust")]
     prefixes: Vec<String>,
 }
@@ -65,7 +65,7 @@ async fn main() -> anyhow::Result<()> {
         let wrpc = wrpc_transport_nats::Client::new(nats.clone(), prefix.clone(), None);
         let (mut numbers, mut bytes, io) = echo(&wrpc, None, Req { numbers, bytes })
             .await
-            .context("failed to invoke `wrpc-examples:echo-stream/handler.echo`")?;
+            .context("failed to invoke `wrpc-examples:streams/handler.echo`")?;
         try_join!(
             async {
                 if let Some(io) = io {

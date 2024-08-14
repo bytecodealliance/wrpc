@@ -1,0 +1,5 @@
+package wrpc-examples:streams-rust-client;
+
+world client {
+    include wrpc-examples:streams/client;
+}

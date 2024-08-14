@@ -1,4 +1,4 @@
-package wrpc-examples:echo-stream;
+package wrpc-examples:streams;
 
 interface handler {
     record req {

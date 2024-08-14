@@ -1,4 +1,0 @@
-[echo-stream]
-path = "../../../wit/echo-stream"
-sha256 = "6df6dbb794ff3c4119013b6651edf60a9a547c8fb427dc4a8c9da990d99d8fbe"
-sha512 = "67532e1246624d569da216568ba4ab7fdf023666d96d12dc6e5a98652d4f716a6e6aa78ea5dcb749b5b089cea5a5c3a11d7e6caf076e401cf71e0843dafc67e7"
