@@ -727,42 +727,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "echo-stream-nats-client"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-nats-wrpc",
- "async-stream",
- "bytes",
- "clap",
- "futures",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "url",
- "wit-bindgen-wrpc",
- "wrpc-transport-nats",
-]
-
-[[package]]
-name = "echo-stream-nats-server"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-nats-wrpc",
- "async-stream",
- "bytes",
- "clap",
- "futures",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "url",
- "wit-bindgen-wrpc",
- "wrpc-transport-nats",
-]
-
-[[package]]
 name = "ed25519"
 version = "2.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2267,6 +2231,42 @@ name = "stable_deref_trait"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a8f112729512f8e442d81f95a8a7ddf2b7c6b8a1a6f509a95864142b30cab2d3"
+
+[[package]]
+name = "streams-nats-client"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-nats-wrpc",
+ "async-stream",
+ "bytes",
+ "clap",
+ "futures",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+ "wit-bindgen-wrpc",
+ "wrpc-transport-nats",
+]
+
+[[package]]
+name = "streams-nats-server"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-nats-wrpc",
+ "async-stream",
+ "bytes",
+ "clap",
+ "futures",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+ "wit-bindgen-wrpc",
+ "wrpc-transport-nats",
+]
 
 [[package]]
 name = "strsim"
