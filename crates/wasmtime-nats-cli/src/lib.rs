@@ -279,7 +279,9 @@ pub async fn handle_run(
         "command.wasm",
         *timeout,
     );
-    let (cmd, _) = wasmtime_wasi::bindings::Command::instantiate_pre(&mut store, &pre)
+    let cmd = wasmtime_wasi::bindings::CommandPre::new(pre)
+        .context("failed to construct `command` instance")?
+        .instantiate_async(&mut store)
         .await
         .context("failed to instantiate `command`")?;
     cmd.wasi_cli_run()

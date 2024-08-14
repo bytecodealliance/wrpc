@@ -1262,14 +1262,25 @@ pub trait ServeExt: wrpc_transport::Serve {
         let span = Span::current();
         async move {
             debug!(instance = instance_name, name, "serving function export");
+            let component_ty = instance_pre.component();
+            let idx = if instance_name.is_empty() {
+                None
+            } else {
+                let (_, idx) = component_ty
+                    .export_index(None, instance_name)
+                    .with_context(|| format!("export `{instance_name}` not found"))?;
+                Some(idx)
+            };
+            let (_, idx) = component_ty
+                .export_index(idx.as_ref(), name)
+                .with_context(|| format!("export `{name}` not found"))?;
+
             // TODO: set paths
             let invocations = self.serve(instance_name, rpc_func_name(name), []).await?;
-            let instance_name = Arc::<str>::from(instance_name);
             let name = Arc::<str>::from(name);
             let params_ty: Arc<[_]> = ty.params().collect();
             let results_ty: Arc<[_]> = ty.results().collect();
             Ok(invocations.map_ok(move |(cx, tx, rx)| {
-                let instance_name = Arc::clone(&instance_name);
                 let instance_pre = instance_pre.clone();
                 let name = Arc::clone(&name);
                 let params_ty = Arc::clone(&params_ty);
@@ -1284,18 +1295,9 @@ pub trait ServeExt: wrpc_transport::Serve {
                                 .instantiate_async(&mut store)
                                 .await
                                 .context("failed to instantiate component")?;
-                            let func = {
-                                let mut exports = instance.exports(&mut store);
-                                if instance_name.is_empty() {
-                                    exports.root()
-                                } else {
-                                    exports.instance(&instance_name).with_context(|| {
-                                        format!("instance export `{instance_name}` not found")
-                                    })?
-                                }
-                                .func(&name)
-                            }
-                            .with_context(|| format!("function export`{name}` not found"))?;
+                            let func = instance
+                                .get_func(&mut store, idx)
+                                .with_context(|| format!("function export `{name}` not found"))?;
                             call(
                                 &mut store,
                                 rx,
@@ -1344,17 +1346,20 @@ pub trait ServeExt: wrpc_transport::Serve {
         async move {
             let func = {
                 let mut store = store.lock().await;
-                let mut exports = instance.exports(&mut *store);
-                if instance_name.is_empty() {
-                    exports.root()
+                let idx = if instance_name.is_empty() {
+                    None
                 } else {
-                    exports
-                        .instance(instance_name)
-                        .with_context(|| format!("instance export `{instance_name}` not found"))?
-                }
-                .func(name)
+                    let idx = instance
+                        .get_export(store.as_context_mut(), None, instance_name)
+                        .with_context(|| format!("export `{instance_name}` not found"))?;
+                    Some(idx)
+                };
+                let idx = instance
+                    .get_export(store.as_context_mut(), idx.as_ref(), name)
+                    .with_context(|| format!("export `{name}` not found"))?;
+                instance.get_func(store.as_context_mut(), idx)
             }
-            .with_context(|| format!("function export`{name}` not found"))?;
+            .with_context(|| format!("function export `{name}` not found"))?;
             debug!(instance = instance_name, name, "serving function export");
             // TODO: set paths
             let invocations = self.serve(instance_name, rpc_func_name(name), []).await?;
