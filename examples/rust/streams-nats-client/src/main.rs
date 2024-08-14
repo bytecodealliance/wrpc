@@ -1,12 +1,12 @@
 use core::time::Duration;
 
 use anyhow::Context as _;
-use async_stream::stream;
 use bytes::Bytes;
 use clap::Parser;
-use futures::StreamExt as _;
-use tokio::time::sleep;
-use tokio::{sync::mpsc, try_join};
+use futures::{stream, StreamExt as _};
+use tokio::sync::mpsc;
+use tokio::{time, try_join};
+use tokio_stream::wrappers::IntervalStream;
 use tracing::debug;
 use tracing_subscriber::layer::SubscriberExt as _;
 use tracing_subscriber::util::SubscriberInitExt as _;
@@ -50,18 +50,23 @@ async fn main() -> anyhow::Result<()> {
         .await
         .context("failed to connect to NATS.io")?;
     for prefix in prefixes {
-        let numbers = Box::pin(stream! {
-            for i in 1..=10 {
-                yield vec![i];
-                sleep(Duration::from_secs(1)).await;
-            }
-        });
-        let bytes = Box::pin(stream! {
-            for i in 1..=10 {
-                yield Bytes::from(i.to_string());
-                sleep(Duration::from_secs(1)).await;
-            }
-        });
+        let numbers = Box::pin(
+            stream::iter(1..)
+                .take(10)
+                .zip(IntervalStream::new(time::interval(Duration::from_secs(1))))
+                .map(|(i, _)| i)
+                .ready_chunks(10),
+        );
+
+        // `stream<u8>` items are chunked using [`Bytes`]
+        let bytes = Box::pin(
+            stream::iter(b"foo bar baz")
+                .zip(IntervalStream::new(time::interval(Duration::from_secs(1))))
+                .map(|(i, _)| *i)
+                .ready_chunks(10)
+                .map(Bytes::from),
+        );
+
         let wrpc = wrpc_transport_nats::Client::new(nats.clone(), prefix.clone(), None);
         let (mut numbers, mut bytes, io) = echo(&wrpc, None, Req { numbers, bytes })
             .await

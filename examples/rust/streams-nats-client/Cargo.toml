@@ -11,7 +11,6 @@ repository.workspace = true
 [dependencies]
 anyhow = { workspace = true }
 async-nats = { workspace = true }
-async-stream = { workspace = true }
 bytes = { workspace = true }
 clap = { workspace = true, features = [
     "color",
@@ -24,6 +23,7 @@ clap = { workspace = true, features = [
 ] }
 futures = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread"] }
+tokio-stream = { workspace = true, features = ["time"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = [
     "ansi",
