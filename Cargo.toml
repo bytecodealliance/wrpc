@@ -96,7 +96,6 @@ wrpc-cli = { workspace = true }
 [workspace.dependencies]
 anyhow = { version = "1", default-features = false }
 async-nats = { package = "async-nats-wrpc", version = "0.35.1", default-features = false }
-async-stream = { version = "0.3", default-features = false }
 bitflags = { version = "2", default-features = false }
 bytes = { version = "1", default-features = false }
 clap = { version = "4", default-features = false }
