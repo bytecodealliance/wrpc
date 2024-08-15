@@ -22,3 +22,23 @@ updates:
   directory: "/.github/actions/install-nix"
   schedule:
     interval: "daily"
+
+- package-ecosystem: gomod
+  directory: /examples/go/complex-server
+  schedule:
+    interval: daily
+
+- package-ecosystem: gomod
+  directory: /examples/go/hello-client
+  schedule:
+    interval: daily
+
+- package-ecosystem: gomod
+  directory: /examples/go/hello-server
+  schedule:
+    interval: daily
+
+- package-ecosystem: gomod
+  directory: /tests/go
+  schedule:
+    interval: daily
