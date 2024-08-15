@@ -50,7 +50,7 @@ pub trait Invoke: Send + Sync {
     ///  = note: ...but it actually implements `AsRef<[&[Option<usize>]]>`
     /// ```
     ///
-    /// The fix is to call [`send`](SendFuture::send) provided by [`send_future::SendFuture`], re-exported by this crate, on the future before awaiting:
+    /// The fix is to call [`send`](send_future::SendFuture::send) provided by [`send_future::SendFuture`], re-exported by this crate, on the future before awaiting:
     /// ```
     /// use core::future::Future;
     /// use wrpc_transport::SendFuture as _;
@@ -283,7 +283,7 @@ pub trait InvokeExt: Invoke {
     }
 
     /// Returns a [`Timeout`], wrapping [Self] with an implementation of [Invoke], which will
-    /// error, if call to [`Self::invoke`] does not return within a supplied `timeout`
+    /// error, if call to [`Invoke::invoke`] does not return within a supplied `timeout`
     fn timeout(&self, timeout: Duration) -> Timeout<'_, Self> {
         Timeout {
             inner: self,
