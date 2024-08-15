@@ -668,6 +668,12 @@
 ///
 ///     // Path to parse WIT and its dependencies from. Defaults to the `wit`
 ///     // folder adjacent to your `Cargo.toml`.
+///     //
+///     // This parameter also supports the form of a list, such as:
+///     // ["../path/to/wit1", "../path/to/wit2"]
+///     // Usually used in testing, our test suite may want to generate code
+///     // from wit files located in multiple paths within a single mod, and we
+///     // don't want to copy these files again.
 ///     path: "../path/to/wit",
 ///
 ///     // Enables passing "inline WIT". If specified this is the default
@@ -687,7 +693,7 @@
 ///     // types may be able to implement these traits, such as resources.
 ///     //
 ///     // By default this set is empty.
-///     additional_derives: [PartialEq, Eq, Hash, Clone],
+///     additional_derives: [core::cmp::PartialEq, core::cmp::Eq, core::hash::Hash, core::clone::Clone],
 ///
 ///     // When generating bindings for interfaces that are not defined in the
 ///     // same package as `world`, this option can be used to either generate
@@ -715,69 +721,19 @@
 ///         "some:package/my-interface": generate,
 ///     },
 ///
+///     // Indicates that all interfaces not present in `with` should be assumed
+///     // to be marked with `generate`.
+///     generate_all,
+///
 ///     // An optional list of function names to skip generating bindings for.
 ///     // This is only applicable to imports and the name specified is the name
 ///     // of the function.
 ///     skip: ["foo", "bar", "baz"],
 ///
-///     // Configuration of how Rust types are generated.
-///     //
-///     // This option will change how WIT types are mapped to Rust types. There
-///     // are a number of ways this can be done depending on the context. For
-///     // example a Rust `&str` is suitable to pass to an imported function but
-///     // an exported function receives a `String`. These both represent the
-///     // WIT type `string`, however.
-///     //
-///     // Type generation becomes extra-significant when aggregates come into
-///     // play (such as a WIT `record` or `variant`), especially when the
-///     // aggregate is used both in an imported function and exported one.
-///     //
-///     // There are three modes of ownership, documented here, but only one
-///     // can be specified.
-///     //
-///     // The default mode is "Owning" meaning that all Rust types will by
-///     // default contain their owned containers. For example a `record` with
-///     // a `string` will map to a Rust `struct` containing a `String`. This
-///     // maximizes the chance that types can be shared between imports and
-///     // exports but can come at a cost where calling an import may require
-///     // more allocations than necessary.
-///     ownership: Owning,
-///
-///     // The second mode of ownership is "Borrowing". This mode then
-///     // additionally has a boolean flag indicating whether duplicate types
-///     // should be generated if necessary.
-///     //
-///     // This mode will prefer using borrowed values in Rust to represent WIT
-///     // values where possible. For example if the argument to an imported
-///     // function is a record-with-a-string then in Rust that will generate a
-///     // `struct` with a lifetime parameter storing `&'a str`.
-///     //
-///     // The `duplicate_if_necessary` flag will cause duplicate types to be
-///     // generated when a WIT type is used both in an import and export. In
-///     // this situation one will be called `FooParam` and one will be called
-///     // `FooResult` (where `foo` is the WIT name).
-///     //
-///     // It's generally recommended to not turn this on unless performance
-///     // requires it. Even if so, please feel free to open an issue on the
-///     // `wit-bindgen-wrpc` repository to help improve the default "Owning" use
-///     // case above if possible.
-///     ownership: Borrowing { duplicate_if_necessary: false },
-///
 ///     // Configure where the `bitflags` crate is located. By default this
 ///     // is `wit_bindgen_wrpc::bitflags` which already reexports `bitflags` for
 ///     // you.
-///     bitflags_path: path::to::bitflags,
-///
-///     // Indicates that instead of `&str` and `String` the `&[u8]` and
-///     // `Vec<u8>` types should be used. Only intended for cases where
-///     // compiled size is of the utmost concern as this can avoid pulling in
-///     // UTF-8 validation.
-///     raw_strings,
-///
-///     // Emits `#[cfg(feature = "std")]` around `impl Error for ... {}` blocks
-///     // for generated types. This is a niche option that is only here to
-///     // support the standard library itself depending on this crate one day.
-///     std_feature,
+///     bitflags_path: "path::to::bitflags",
 ///
 ///     // Whether to generate unused `record`, `enum`, `variant` types.
 ///     // By default, they will not be generated unless they are used as input

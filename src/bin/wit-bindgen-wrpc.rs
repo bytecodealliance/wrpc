@@ -1,4 +1,4 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, Context, Error, Result};
 use clap::Parser;
 use std::path::PathBuf;
 use std::str;
@@ -69,6 +69,12 @@ struct Common {
     /// This enables using `@unstable` annotations in WIT files.
     #[clap(long)]
     features: Vec<String>,
+
+    /// Whether or not to activate all WIT features when processing WIT files.
+    ///
+    /// This enables using `@unstable` annotations in WIT files.
+    #[clap(long)]
+    all_features: bool,
 }
 
 fn main() -> Result<()> {
@@ -78,7 +84,7 @@ fn main() -> Result<()> {
         Opt::Go { opts, args } => (opts.build(), args),
     };
 
-    gen_world(generator, &opt, &mut files)?;
+    gen_world(generator, &opt, &mut files).map_err(attach_with_context)?;
 
     for (name, contents) in files.iter() {
         let dst = match &opt.out_dir {
@@ -121,12 +127,25 @@ fn main() -> Result<()> {
     Ok(())
 }
 
+fn attach_with_context(err: Error) -> Error {
+    if let Some(e) = err.downcast_ref::<wit_bindgen_wrpc_rust::MissingWith>() {
+        let option = e.0.clone();
+        return err.context(format!(
+            "missing either `--generate-all` or `--with {option}=(...|generate)`"
+        ));
+    }
+    err
+}
+
 fn gen_world(
     mut generator: Box<dyn WorldGenerator>,
     opts: &Common,
     files: &mut Files,
 ) -> Result<()> {
-    let mut resolve = Resolve::default();
+    let mut resolve = Resolve {
+        all_features: opts.all_features,
+        ..Default::default()
+    };
     for features in &opts.features {
         for feature in features
             .split(',')

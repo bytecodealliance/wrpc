@@ -21,6 +21,8 @@ doctest = false
 anyhow = { workspace = true }
 clap = { workspace = true, features = ["derive", "std"], optional = true }
 heck = { workspace = true }
+prettyplease = { workspace = true }
+syn = { workspace = true, features = ["parsing"] }
 wit-bindgen-core = { workspace = true }
 wrpc-introspect = { workspace = true }
 
