@@ -28,6 +28,8 @@ crate::generate!({
     anyhow_path: "anyhow",
     bytes_path: "bytes",
     futures_path: "futures",
+    tokio_util_path: "tokio_util",
+    wasm_tokio_path: "wasm_tokio",
     wrpc_transport_path: "wrpc_transport",
 
     path: "wasi-cli@0.2.0.wasm",
