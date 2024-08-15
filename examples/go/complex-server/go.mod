@@ -4,7 +4,7 @@ go 1.22.2
 
 require (
 	github.com/google/uuid v1.6.0
-	github.com/nats-io/nats.go v1.35.0
+	github.com/nats-io/nats.go v1.37.0
 	github.com/wrpc/wrpc/go v0.0.0-unpublished
 )
 
