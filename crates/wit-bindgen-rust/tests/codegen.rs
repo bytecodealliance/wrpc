@@ -197,7 +197,7 @@ mod alternative_bitflags_path {
                 export get-flag: func() -> bar;
             }
         ",
-        bitflags_path: my_bitflags,
+        bitflags_path: "my_bitflags",
     });
 
     pub(crate) use wit_bindgen_wrpc::bitflags as my_bitflags;
@@ -527,7 +527,7 @@ mod generate_unused_types {
 mod gated_features {
     wit_bindgen_wrpc::generate!({
         inline: r#"
-            package foo:bar;
+            package foo:bar@1.2.3;
 
             world bindings {
                 @unstable(feature = x)
@@ -545,6 +545,65 @@ mod gated_features {
         y(wrpc, ());
         z(wrpc, ());
     }
+}
+
+#[allow(unused)]
+mod simple_with_option {
+    mod a {
+        wit_bindgen_wrpc::generate!({
+            inline: r#"
+                package foo:bar;
+
+                interface a {
+                    x: func();
+                }
+
+                package foo:baz {
+                    world w {
+                        import foo:bar/a;
+                    }
+                }
+            "#,
+            world: "foo:baz/w",
+            generate_all,
+        });
+    }
+
+    mod b {
+        wit_bindgen_wrpc::generate!({
+            inline: r#"
+                package foo:bar;
+
+                interface a {
+                    x: func();
+                }
+
+                package foo:baz {
+                    world w {
+                        import foo:bar/a;
+                    }
+                }
+            "#,
+            world: "foo:baz/w",
+            with: { "foo:bar/a": generate },
+        });
+    }
+}
+
+#[allow(unused)]
+mod multiple_paths {
+    wit_bindgen_wrpc::generate!({
+        inline: r#"
+        package test:paths;
+
+        world test {
+            import paths:path1/test;
+            export paths:path2/test;
+        }
+        "#,
+        path: ["tests/wit/path1", "tests/wit/path2"],
+        generate_all,
+    });
 }
 
 #[allow(unused)]

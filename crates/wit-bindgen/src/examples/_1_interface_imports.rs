@@ -25,10 +25,10 @@ crate::generate!({
 
     // provided to satisfy imports, since `wit_bindgen_wrpc` crate is not imported here.
     // not required for external use.
-    anyhow_path: anyhow,
-    bytes_path: bytes,
-    futures_path: futures,
-    wrpc_transport_path: wrpc_transport,
+    anyhow_path: "anyhow",
+    bytes_path: "bytes",
+    futures_path: "futures",
+    wrpc_transport_path: "wrpc_transport",
 
     path: "wasi-cli@0.2.0.wasm",
 

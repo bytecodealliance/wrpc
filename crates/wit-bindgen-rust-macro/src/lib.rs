@@ -5,7 +5,8 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
 use syn::parse::{Error, Parse, ParseStream, Result};
 use syn::punctuated::Punctuated;
-use syn::{braced, token, Token};
+use syn::spanned::Spanned;
+use syn::{braced, token, LitStr, Token};
 use wit_bindgen_core::wit_parser::{PackageId, Resolve, UnresolvedPackageGroup, WorldId};
 use wit_bindgen_wrpc_rust::{Opts, WithOption};
 
@@ -18,11 +19,26 @@ pub fn generate(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 }
 
 fn anyhow_to_syn(span: Span, err: anyhow::Error) -> Error {
+    let err = attach_with_context(err);
     let mut msg = err.to_string();
     for cause in err.chain().skip(1) {
         msg.push_str(&format!("\n\nCaused by:\n  {cause}"));
     }
     Error::new(span, msg)
+}
+
+fn attach_with_context(err: anyhow::Error) -> anyhow::Error {
+    if let Some(e) = err.downcast_ref::<wit_bindgen_wrpc_rust::MissingWith>() {
+        let option = e.0.clone();
+        return err.context(format!(
+            "missing one of:\n\
+            * `generate_all` option\n\
+            * `with: {{ \"{option}\": path::to::bindings, }}`\n\
+            * `with: {{ \"{option}\": generate, }}`\
+            "
+        ));
+    }
+    err
 }
 
 struct Config {
@@ -35,9 +51,9 @@ struct Config {
 /// The source of the wit package definition
 enum Source {
     /// A path to a wit directory
-    Path(String),
+    Paths(Vec<PathBuf>),
     /// Inline sources have an optional path to a directory of their dependencies
-    Inline(String, Option<PathBuf>),
+    Inline(String, Option<Vec<PathBuf>>),
 }
 
 impl Parse for Config {
@@ -54,15 +70,15 @@ impl Parse for Config {
             let fields = Punctuated::<Opt, Token![,]>::parse_terminated(&content)?;
             for field in fields.into_pairs() {
                 match field.into_value() {
-                    Opt::Path(s) => {
+                    Opt::Path(span, p) => {
+                        let paths = p.into_iter().map(|f| PathBuf::from(f.value())).collect();
+
                         source = Some(match source {
-                            Some(Source::Path(_) | Source::Inline(_, Some(_))) => {
-                                return Err(Error::new(s.span(), "cannot specify second source"));
+                            Some(Source::Paths(_) | Source::Inline(_, Some(_))) => {
+                                return Err(Error::new(span, "cannot specify second source"));
                             }
-                            Some(Source::Inline(i, None)) => {
-                                Source::Inline(i, Some(PathBuf::from(s.value())))
-                            }
-                            None => Source::Path(s.value()),
+                            Some(Source::Inline(i, None)) => Source::Inline(i, Some(paths)),
+                            None => Source::Paths(paths),
                         });
                     }
                     Opt::World(s) => {
@@ -76,13 +92,12 @@ impl Parse for Config {
                             Some(Source::Inline(_, _)) => {
                                 return Err(Error::new(s.span(), "cannot specify second source"));
                             }
-                            Some(Source::Path(p)) => {
-                                Source::Inline(s.value(), Some(PathBuf::from(p)))
-                            }
+                            Some(Source::Paths(p)) => Source::Inline(s.value(), Some(p)),
                             None => Source::Inline(s.value(), None),
                         });
                     }
                     Opt::Skip(list) => opts.skip.extend(list.iter().map(syn::LitStr::value)),
+                    Opt::BitflagsPath(path) => opts.bitflags_path = Some(path.value()),
                     Opt::AdditionalDerives(paths) => {
                         opts.additional_derive_attributes = paths
                             .into_iter()
@@ -91,50 +106,48 @@ impl Parse for Config {
                     }
                     Opt::With(with) => opts.with.extend(with),
                     Opt::GenerateAll => {
-                        opts.with.generate_by_default = true;
+                        opts.generate_all = true;
                     }
                     Opt::GenerateUnusedTypes(enable) => {
                         opts.generate_unused_types = enable.value();
                     }
-                    Opt::AnyhowPath(path) => {
-                        opts.anyhow_path = Some(path.into_token_stream().to_string());
-                    }
-                    Opt::BitflagsPath(path) => {
-                        opts.bitflags_path = Some(path.into_token_stream().to_string());
-                    }
-                    Opt::BytesPath(path) => {
-                        opts.bytes_path = Some(path.into_token_stream().to_string());
-                    }
-                    Opt::FuturesPath(path) => {
-                        opts.futures_path = Some(path.into_token_stream().to_string());
-                    }
-                    Opt::TokioPath(path) => {
-                        opts.tokio_path = Some(path.into_token_stream().to_string());
-                    }
-                    Opt::TracingPath(path) => {
-                        opts.tracing_path = Some(path.into_token_stream().to_string());
-                    }
-                    Opt::WasmTokioPath(path) => {
-                        opts.wasm_tokio_path = Some(path.into_token_stream().to_string());
-                    }
-                    Opt::WrpcTransportPath(path) => {
-                        opts.wrpc_transport_path = Some(path.into_token_stream().to_string());
-                    }
                     Opt::Features(f) => {
                         features.extend(f.into_iter().map(|f| f.value()));
+                    }
+                    Opt::AnyhowPath(path) => {
+                        opts.anyhow_path = Some(path.value());
+                    }
+                    Opt::BytesPath(path) => {
+                        opts.bytes_path = Some(path.value());
+                    }
+                    Opt::FuturesPath(path) => {
+                        opts.futures_path = Some(path.value());
+                    }
+                    Opt::TokioPath(path) => {
+                        opts.tokio_path = Some(path.value());
+                    }
+                    Opt::TracingPath(path) => {
+                        opts.tracing_path = Some(path.value());
+                    }
+                    Opt::WasmTokioPath(path) => {
+                        opts.wasm_tokio_path = Some(path.value());
+                    }
+                    Opt::WrpcTransportPath(path) => {
+                        opts.wrpc_transport_path = Some(path.value());
                     }
                 }
             }
         } else {
             world = input.parse::<Option<syn::LitStr>>()?.map(|s| s.value());
             if input.parse::<Option<syn::token::In>>()?.is_some() {
-                source = Some(Source::Path(input.parse::<syn::LitStr>()?.value()));
+                source = Some(Source::Paths(vec![PathBuf::from(
+                    input.parse::<syn::LitStr>()?.value(),
+                )]));
             }
         }
         let (resolve, pkgs, files) =
             parse_source(&source, &features).map_err(|err| anyhow_to_syn(call_site, err))?;
-        let world = resolve
-            .select_world(&pkgs, world.as_deref())
+        let world = select_world(&resolve, &pkgs, world.as_deref())
             .map_err(|e| anyhow_to_syn(call_site, e))?;
         Ok(Config {
             opts,
@@ -142,6 +155,40 @@ impl Parse for Config {
             world,
             files,
         })
+    }
+}
+
+fn select_world(
+    resolve: &Resolve,
+    pkgs: &[PackageId],
+    world: Option<&str>,
+) -> anyhow::Result<WorldId> {
+    if pkgs.len() == 1 {
+        resolve.select_world(pkgs[0], world)
+    } else {
+        assert!(!pkgs.is_empty());
+        if let Some(name) = world {
+            if !name.contains(':') {
+                anyhow::bail!(
+                    "with multiple packages a fully qualified \
+                     world name must be specified"
+                )
+            }
+
+            // This will ignore the package argument due to the fully
+            // qualified name being used.
+            resolve.select_world(pkgs[0], world)
+        } else {
+            let worlds = pkgs
+                .iter()
+                .filter_map(|p| resolve.select_world(*p, None).ok())
+                .collect::<Vec<_>>();
+            match &worlds[..] {
+                [] => anyhow::bail!("no packages have a world"),
+                [world] => Ok(*world),
+                _ => anyhow::bail!("multiple packages have a world, must specify which to use"),
+            }
+        }
     }
 }
 
@@ -153,31 +200,36 @@ fn parse_source(
     let mut resolve = Resolve::default();
     resolve.features.extend(features.iter().cloned());
     let mut files = Vec::new();
+    let mut pkgs = Vec::new();
     let root = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
-    let mut parse = |path: &Path| -> anyhow::Result<_> {
-        // Try to normalize the path to make the error message more understandable when
-        // the path is not correct. Fallback to the original path if normalization fails
-        // (probably return an error somewhere else).
-        let normalized_path = match std::fs::canonicalize(path) {
-            Ok(p) => p,
-            Err(_) => path.to_path_buf(),
-        };
-        let (pkg, sources) = resolve.push_path(normalized_path)?;
-        files.extend(sources);
-        Ok(pkg)
+    let mut parse = |paths: &[PathBuf]| -> anyhow::Result<()> {
+        for path in paths {
+            let p = root.join(path);
+            // Try to normalize the path to make the error message more understandable when
+            // the path is not correct. Fallback to the original path if normalization fails
+            // (probably return an error somewhere else).
+            let normalized_path = match std::fs::canonicalize(&p) {
+                Ok(p) => p,
+                Err(_) => p.clone(),
+            };
+            let (pkg, sources) = resolve.push_path(normalized_path)?;
+            pkgs.push(pkg);
+            files.extend(sources);
+        }
+        Ok(())
     };
-    let pkg = match source {
+    match source {
         Some(Source::Inline(s, path)) => {
             if let Some(p) = path {
-                parse(&root.join(p))?;
+                parse(p)?;
             }
-            resolve.push_group(UnresolvedPackageGroup::parse("macro-input", s)?)?
+            pkgs.push(resolve.push_group(UnresolvedPackageGroup::parse("macro-input", s)?)?);
         }
-        Some(Source::Path(s)) => parse(&root.join(s))?,
-        None => parse(&root.join("wit"))?,
+        Some(Source::Paths(p)) => parse(p)?,
+        None => parse(&[root.join("wit")])?,
     };
 
-    Ok((resolve, pkg, files))
+    Ok((resolve, pkgs, files))
 }
 
 impl Config {
@@ -186,7 +238,7 @@ impl Config {
         let mut generator = self.opts.build();
         generator
             .generate(&self.resolve, self.world, &mut files)
-            .map_err(|e| Error::new(Span::call_site(), e))?;
+            .map_err(|e| anyhow_to_syn(Span::call_site(), e))?;
         let (_, src) = files.iter().next().unwrap();
         let mut src = std::str::from_utf8(src).unwrap().to_string();
 
@@ -234,41 +286,41 @@ mod kw {
     syn::custom_keyword!(world);
     syn::custom_keyword!(path);
     syn::custom_keyword!(inline);
+    syn::custom_keyword!(bitflags_path);
     syn::custom_keyword!(exports);
     syn::custom_keyword!(additional_derives);
     syn::custom_keyword!(with);
     syn::custom_keyword!(generate_all);
     syn::custom_keyword!(generate_unused_types);
+    syn::custom_keyword!(features);
     syn::custom_keyword!(anyhow_path);
-    syn::custom_keyword!(bitflags_path);
     syn::custom_keyword!(bytes_path);
     syn::custom_keyword!(futures_path);
     syn::custom_keyword!(tokio_path);
     syn::custom_keyword!(tracing_path);
     syn::custom_keyword!(wasm_tokio_path);
     syn::custom_keyword!(wrpc_transport_path);
-    syn::custom_keyword!(features);
 }
 
 enum Opt {
     World(syn::LitStr),
-    Path(syn::LitStr),
+    Path(Span, Vec<syn::LitStr>),
     Inline(syn::LitStr),
     Skip(Vec<syn::LitStr>),
+    BitflagsPath(syn::LitStr),
     // Parse as paths so we can take the concrete types/macro names rather than raw strings
     AdditionalDerives(Vec<syn::Path>),
     With(HashMap<String, WithOption>),
     GenerateAll,
     GenerateUnusedTypes(syn::LitBool),
-    AnyhowPath(syn::Path),
-    BitflagsPath(syn::Path),
-    BytesPath(syn::Path),
-    FuturesPath(syn::Path),
-    TokioPath(syn::Path),
-    TracingPath(syn::Path),
-    WasmTokioPath(syn::Path),
-    WrpcTransportPath(syn::Path),
     Features(Vec<syn::LitStr>),
+    AnyhowPath(syn::LitStr),
+    BytesPath(syn::LitStr),
+    FuturesPath(syn::LitStr),
+    TokioPath(syn::LitStr),
+    TracingPath(syn::LitStr),
+    WasmTokioPath(syn::LitStr),
+    WrpcTransportPath(syn::LitStr),
 }
 
 impl Parse for Opt {
@@ -277,7 +329,18 @@ impl Parse for Opt {
         if l.peek(kw::path) {
             input.parse::<kw::path>()?;
             input.parse::<Token![:]>()?;
-            Ok(Opt::Path(input.parse()?))
+            // the `path` supports two forms:
+            // * path: "xxx"
+            // * path: ["aaa", "bbb"]
+            if input.peek(token::Bracket) {
+                let contents;
+                syn::bracketed!(contents in input);
+                let list = Punctuated::<_, Token![,]>::parse_terminated(&contents)?;
+                Ok(Opt::Path(list.span(), list.into_iter().collect()))
+            } else {
+                let path: LitStr = input.parse()?;
+                Ok(Opt::Path(path.span(), vec![path]))
+            }
         } else if l.peek(kw::inline) {
             input.parse::<kw::inline>()?;
             input.parse::<Token![:]>()?;
@@ -293,6 +356,10 @@ impl Parse for Opt {
             syn::bracketed!(contents in input);
             let list = Punctuated::<_, Token![,]>::parse_terminated(&contents)?;
             Ok(Opt::Skip(list.iter().cloned().collect()))
+        } else if l.peek(kw::bitflags_path) {
+            input.parse::<kw::bitflags_path>()?;
+            input.parse::<Token![:]>()?;
+            Ok(Opt::BitflagsPath(input.parse()?))
         } else if l.peek(kw::additional_derives) {
             input.parse::<kw::additional_derives>()?;
             input.parse::<Token![:]>()?;
@@ -315,14 +382,17 @@ impl Parse for Opt {
             input.parse::<kw::generate_unused_types>()?;
             input.parse::<Token![:]>()?;
             Ok(Opt::GenerateUnusedTypes(input.parse()?))
+        } else if l.peek(kw::features) {
+            input.parse::<kw::features>()?;
+            input.parse::<Token![:]>()?;
+            let contents;
+            syn::bracketed!(contents in input);
+            let list = Punctuated::<_, Token![,]>::parse_terminated(&contents)?;
+            Ok(Opt::Features(list.into_iter().collect()))
         } else if l.peek(kw::anyhow_path) {
             input.parse::<kw::anyhow_path>()?;
             input.parse::<Token![:]>()?;
             Ok(Opt::AnyhowPath(input.parse()?))
-        } else if l.peek(kw::bitflags_path) {
-            input.parse::<kw::bitflags_path>()?;
-            input.parse::<Token![:]>()?;
-            Ok(Opt::BitflagsPath(input.parse()?))
         } else if l.peek(kw::bytes_path) {
             input.parse::<kw::bytes_path>()?;
             input.parse::<Token![:]>()?;
@@ -347,13 +417,6 @@ impl Parse for Opt {
             input.parse::<kw::wrpc_transport_path>()?;
             input.parse::<Token![:]>()?;
             Ok(Opt::WrpcTransportPath(input.parse()?))
-        } else if l.peek(kw::features) {
-            input.parse::<kw::features>()?;
-            input.parse::<Token![:]>()?;
-            let contents;
-            syn::bracketed!(contents in input);
-            let list = Punctuated::<_, Token![,]>::parse_terminated(&contents)?;
-            Ok(Opt::Features(list.into_iter().collect()))
         } else {
             Err(l.error())
         }
