@@ -115,10 +115,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7d5a26814d8dcb93b0e5a0ff3c6d80a8843bafb21b39e8e18a6f05471870e110"
 
 [[package]]
-name = "async-nats-wrpc"
-version = "0.35.1"
+name = "async-nats"
+version = "0.36.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3b90420a99c2fa8e337a0420f4fd684ac464b5a5d3c42fbbccc6261d7ed25bcc"
+checksum = "f71e5a1bab60f46b0b005f4808b8ee83ef6d577608923de938403393c9a30cf8"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -1025,7 +1025,7 @@ name = "hello-nats-client"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-nats-wrpc",
+ "async-nats",
  "clap",
  "tokio",
  "tracing-subscriber",
@@ -1039,7 +1039,7 @@ name = "hello-nats-server"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-nats-wrpc",
+ "async-nats",
  "clap",
  "futures",
  "tokio",
@@ -2229,7 +2229,7 @@ name = "streams-nats-client"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-nats-wrpc",
+ "async-nats",
  "bytes",
  "clap",
  "futures",
@@ -2247,7 +2247,7 @@ name = "streams-nats-server"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-nats-wrpc",
+ "async-nats",
  "bytes",
  "clap",
  "futures",
@@ -2768,7 +2768,7 @@ name = "wasi-keyvalue-nats-client"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-nats-wrpc",
+ "async-nats",
  "bytes",
  "clap",
  "tokio",
@@ -2783,7 +2783,7 @@ name = "wasi-keyvalue-nats-server"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-nats-wrpc",
+ "async-nats",
  "bytes",
  "clap",
  "futures",
@@ -3640,7 +3640,7 @@ name = "wrpc"
 version = "0.9.0"
 dependencies = [
  "anyhow",
- "async-nats-wrpc",
+ "async-nats",
  "bytes",
  "clap",
  "futures",
@@ -3669,7 +3669,7 @@ name = "wrpc-cli"
 version = "0.2.1"
 dependencies = [
  "anyhow",
- "async-nats-wrpc",
+ "async-nats",
  "tokio",
  "tracing-subscriber",
 ]
@@ -3721,7 +3721,7 @@ name = "wrpc-transport-nats"
 version = "0.22.3"
 dependencies = [
  "anyhow",
- "async-nats-wrpc",
+ "async-nats",
  "bytes",
  "futures",
  "tokio",
@@ -3756,7 +3756,7 @@ name = "wrpc-wasmtime-nats-cli"
 version = "0.6.0"
 dependencies = [
  "anyhow",
- "async-nats-wrpc",
+ "async-nats",
  "clap",
  "futures",
  "humantime",
