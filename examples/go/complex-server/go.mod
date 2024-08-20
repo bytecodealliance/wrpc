@@ -3,9 +3,9 @@ module github.com/bytecodealliance/wrpc/examples/go/complex-server
 go 1.22.2
 
 require (
+	github.com/bytecodealliance/wrpc/go v0.0.0-unpublished
 	github.com/google/uuid v1.6.0
 	github.com/nats-io/nats.go v1.37.0
-	github.com/bytecodealliance/wrpc/go v0.0.0-unpublished
 )
 
 require (

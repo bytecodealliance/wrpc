@@ -3,8 +3,8 @@ module github.com/bytecodealliance/wrpc/examples/go/hello-server
 go 1.22.2
 
 require (
-	github.com/nats-io/nats.go v1.37.0
 	github.com/bytecodealliance/wrpc/go v0.0.0-unpublished
+	github.com/nats-io/nats.go v1.37.0
 )
 
 require (
