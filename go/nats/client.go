@@ -166,6 +166,13 @@ func (w *paramWriter) Index(path ...uint32) (wrpc.IndexWriter, error) {
 	return nil, errors.New("indexing not supported yet")
 }
 
+func (w *paramWriter) Close() error {
+	if err := w.nc.Publish(w.tx, nil); err != nil {
+		return fmt.Errorf("failed to send shutdown message: %w", err)
+	}
+	return nil
+}
+
 type resultWriter struct {
 	nc *nats.Conn
 	tx string
@@ -193,6 +200,13 @@ func (w *resultWriter) Write(p []byte) (int, error) {
 func (w *resultWriter) WriteByte(b byte) error {
 	if err := w.nc.Publish(w.tx, []byte{b}); err != nil {
 		return fmt.Errorf("failed to send byte: %w", err)
+	}
+	return nil
+}
+
+func (w *resultWriter) Close() error {
+	if err := w.nc.Publish(w.tx, nil); err != nil {
+		return fmt.Errorf("failed to send shutdown message: %w", err)
 	}
 	return nil
 }
