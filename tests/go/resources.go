@@ -1,4 +1,4 @@
-//go:generate $WIT_BINDGEN_WRPC go --world resources-server --out-dir bindings/resources_server --package github.com/wrpc/wrpc/tests/go/bindings/resources_server ../wit
+//go:generate $WIT_BINDGEN_WRPC go --world resources-server --out-dir bindings/resources_server --package github.com/bytecodealliance/wrpc/tests/go/bindings/resources_server ../wit
 
 package integration
 
@@ -8,8 +8,8 @@ import (
 	"sync"
 
 	"github.com/google/uuid"
-	wrpc "github.com/wrpc/wrpc/go"
-	"github.com/wrpc/wrpc/tests/go/bindings/resources_server/exports/wrpc_test/integration/resources"
+	wrpc "github.com/bytecodealliance/wrpc/go"
+	"github.com/bytecodealliance/wrpc/tests/go/bindings/resources_server/exports/wrpc_test/integration/resources"
 )
 
 type Foo struct {

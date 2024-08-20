@@ -10,8 +10,8 @@ import (
 	"syscall"
 
 	"github.com/nats-io/nats.go"
-	server "github.com/wrpc/wrpc/examples/go/hello-server/bindings"
-	wrpcnats "github.com/wrpc/wrpc/go/nats"
+	server "github.com/bytecodealliance/wrpc/examples/go/hello-server/bindings"
+	wrpcnats "github.com/bytecodealliance/wrpc/go/nats"
 )
 
 type Handler struct{}

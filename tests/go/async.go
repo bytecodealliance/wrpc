@@ -1,4 +1,4 @@
-//go:generate $WIT_BINDGEN_WRPC go --world async-server --out-dir bindings/async_server --package github.com/wrpc/wrpc/tests/go/bindings/async_server ../wit
+//go:generate $WIT_BINDGEN_WRPC go --world async-server --out-dir bindings/async_server --package github.com/bytecodealliance/wrpc/tests/go/bindings/async_server ../wit
 
 package integration
 
@@ -7,7 +7,7 @@ import (
 	"context"
 	"log/slog"
 
-	wrpc "github.com/wrpc/wrpc/go"
+	wrpc "github.com/bytecodealliance/wrpc/go"
 )
 
 type AsyncHandler struct{}

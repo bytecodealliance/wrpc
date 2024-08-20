@@ -8,8 +8,8 @@ import (
 	"os"
 
 	"github.com/nats-io/nats.go"
-	"github.com/wrpc/wrpc/examples/go/hello-client/bindings/wrpc_examples/hello/handler"
-	wrpcnats "github.com/wrpc/wrpc/go/nats"
+	"github.com/bytecodealliance/wrpc/examples/go/hello-client/bindings/wrpc_examples/hello/handler"
+	wrpcnats "github.com/bytecodealliance/wrpc/go/nats"
 )
 
 func run() (err error) {

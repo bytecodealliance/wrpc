@@ -1,11 +1,11 @@
-module github.com/wrpc/wrpc/examples/go/complex-server
+module github.com/bytecodealliance/wrpc/examples/go/complex-server
 
 go 1.22.2
 
 require (
 	github.com/google/uuid v1.6.0
 	github.com/nats-io/nats.go v1.37.0
-	github.com/wrpc/wrpc/go v0.0.0-unpublished
+	github.com/bytecodealliance/wrpc/go v0.0.0-unpublished
 )
 
 require (
@@ -16,4 +16,4 @@ require (
 	golang.org/x/sys v0.20.0 // indirect
 )
 
-replace github.com/wrpc/wrpc/go v0.0.0-unpublished => ../../../go
+replace github.com/bytecodealliance/wrpc/go v0.0.0-unpublished => ../../../go

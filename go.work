@@ -8,4 +8,4 @@ use (
 	./tests/go
 )
 
-replace github.com/wrpc/wrpc/go v0.0.0-unpublished => ./go
+replace github.com/bytecodealliance/wrpc/go v0.0.0-unpublished => ./go

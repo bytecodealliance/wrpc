@@ -9,9 +9,9 @@ import (
 	"syscall"
 
 	"github.com/nats-io/nats.go"
-	wrpcnats "github.com/wrpc/wrpc/go/nats"
-	integration "github.com/wrpc/wrpc/tests/go"
-	"github.com/wrpc/wrpc/tests/go/bindings/sync_server"
+	wrpcnats "github.com/bytecodealliance/wrpc/go/nats"
+	integration "github.com/bytecodealliance/wrpc/tests/go"
+	"github.com/bytecodealliance/wrpc/tests/go/bindings/sync_server"
 )
 
 func run(url string) error {
