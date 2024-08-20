@@ -1,7 +1,7 @@
 [package]
 description = "WebAssembly component-native RPC framework based on WIT"
 name = "wrpc"
-version = "0.6.1"
+version = "0.7.0"
 
 authors.workspace = true
 categories.workspace = true
@@ -131,7 +131,7 @@ wasmtime-wasi = { version = "23", default-features = false }
 wit-bindgen = { version = "0.30", default-features = false }
 wit-bindgen-core = { version = "0.30", default-features = false }
 wit-bindgen-wrpc = { version = "0.6.2", default-features = false, path = "./crates/wit-bindgen" }
-wit-bindgen-wrpc-go = { version = "0.4", default-features = false, path = "./crates/wit-bindgen-go" }
+wit-bindgen-wrpc-go = { version = "0.5", default-features = false, path = "./crates/wit-bindgen-go" }
 wit-bindgen-wrpc-rust = { version = "0.6.2", default-features = false, path = "./crates/wit-bindgen-rust" }
 wit-bindgen-wrpc-rust-macro = { version = "0.6.2", default-features = false, path = "./crates/wit-bindgen-rust-macro" }
 wit-component = { version = "0.215", default-features = false }
