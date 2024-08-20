@@ -8,10 +8,10 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/nats-io/nats.go"
 	wrpcnats "github.com/bytecodealliance/wrpc/go/nats"
 	integration "github.com/bytecodealliance/wrpc/tests/go"
 	"github.com/bytecodealliance/wrpc/tests/go/bindings/sync_server"
+	"github.com/nats-io/nats.go"
 )
 
 func run(url string) error {
