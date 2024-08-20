@@ -8,8 +8,8 @@ import (
 	"log/slog"
 	"sync"
 
-	"github.com/nats-io/nats.go"
 	wrpc "github.com/bytecodealliance/wrpc/go"
+	"github.com/nats-io/nats.go"
 )
 
 type headerKey struct{}

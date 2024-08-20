@@ -10,12 +10,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nats-io/nats.go"
 	wrpcnats "github.com/bytecodealliance/wrpc/go/nats"
 	integration "github.com/bytecodealliance/wrpc/tests/go"
 	"github.com/bytecodealliance/wrpc/tests/go/bindings/async_client/wrpc_test/integration/async"
 	"github.com/bytecodealliance/wrpc/tests/go/bindings/async_server"
 	"github.com/bytecodealliance/wrpc/tests/go/internal"
+	"github.com/nats-io/nats.go"
 )
 
 func TestAsync(t *testing.T) {

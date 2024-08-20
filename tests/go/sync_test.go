@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nats-io/nats.go"
 	wrpc "github.com/bytecodealliance/wrpc/go"
 	wrpcnats "github.com/bytecodealliance/wrpc/go/nats"
 	integration "github.com/bytecodealliance/wrpc/tests/go"
@@ -17,6 +16,7 @@ import (
 	"github.com/bytecodealliance/wrpc/tests/go/bindings/sync_client/wrpc_test/integration/sync"
 	"github.com/bytecodealliance/wrpc/tests/go/bindings/sync_server"
 	"github.com/bytecodealliance/wrpc/tests/go/internal"
+	"github.com/nats-io/nats.go"
 )
 
 func TestSync(t *testing.T) {

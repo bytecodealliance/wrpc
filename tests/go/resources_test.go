@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nats-io/nats.go"
 	wrpc "github.com/bytecodealliance/wrpc/go"
 	wrpcnats "github.com/bytecodealliance/wrpc/go/nats"
 	integration "github.com/bytecodealliance/wrpc/tests/go"
@@ -16,6 +15,7 @@ import (
 	"github.com/bytecodealliance/wrpc/tests/go/bindings/resources_client/wrpc_test/integration/resources"
 	"github.com/bytecodealliance/wrpc/tests/go/bindings/resources_server"
 	"github.com/bytecodealliance/wrpc/tests/go/internal"
+	"github.com/nats-io/nats.go"
 )
 
 func TestResources(t *testing.T) {
