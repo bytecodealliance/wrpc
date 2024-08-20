@@ -1,4 +1,4 @@
-#![allow(clippy::type_complexity)] // TODO: https://github.com/wrpc/wrpc/issues/2
+#![allow(clippy::type_complexity)] // TODO: https://github.com/bytecodealliance/wrpc/issues/2
 
 use core::future::Future;
 use core::iter::zip;

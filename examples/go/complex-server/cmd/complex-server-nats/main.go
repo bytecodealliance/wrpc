@@ -12,10 +12,10 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/nats-io/nats.go"
-	server "github.com/wrpc/wrpc/examples/go/complex-server/bindings"
-	"github.com/wrpc/wrpc/examples/go/complex-server/bindings/exports/wrpc_examples/complex/resources"
-	wrpc "github.com/wrpc/wrpc/go"
-	wrpcnats "github.com/wrpc/wrpc/go/nats"
+	server "github.com/bytecodealliance/wrpc/examples/go/complex-server/bindings"
+	"github.com/bytecodealliance/wrpc/examples/go/complex-server/bindings/exports/wrpc_examples/complex/resources"
+	wrpc "github.com/bytecodealliance/wrpc/go"
+	wrpcnats "github.com/bytecodealliance/wrpc/go/nats"
 )
 
 type Foo struct {

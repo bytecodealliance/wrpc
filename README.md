@@ -12,7 +12,7 @@
   <strong>A <a href="https://bytecodealliance.org/">Bytecode Alliance</a> hosted project</strong>
 
   <p>
-    <a href="https://github.com/wrpc/wrpc/actions?query=workflow%3Awrpc"><img src="https://github.com/wrpc/wrpc/actions/workflows/wrpc.yml/badge.svg" alt="build status" /></a>
+    <a href="https://github.com/bytecodealliance/wrpc/actions?query=workflow%3Awrpc"><img src="https://github.com/bytecodealliance/wrpc/actions/workflows/wrpc.yml/badge.svg" alt="build status" /></a>
     <a href="https://docs.rs/wrpc"><img src="https://docs.rs/wrpc/badge.svg" alt="Documentation Status" /></a>
   </p>
 </div>
@@ -108,7 +108,7 @@ This repository contains (for all supported languages):
 
 ## Contributing
 
-[![GitHub repo Good Issues for newbies](https://img.shields.io/github/issues/wrpc/wrpc/good%20first%20issue?style=flat&logo=github&logoColor=green&label=Good%20First%20issues)](https://github.com/wrpc/wrpc/issues?q=is%3Aopen+is%3Aissue+label%3A%22good+first+issue%22) [![GitHub Help Wanted issues](https://img.shields.io/github/issues/wrpc/wrpc/help%20wanted?style=flat&logo=github&logoColor=b545d1&label=%22Help%20Wanted%22%20issues)](https://github.com/wrpc/wrpc/issues?q=is%3Aopen+is%3Aissue+label%3A%22help+wanted%22) [![GitHub Help Wanted PRs](https://img.shields.io/github/issues-pr/wrpc/wrpc/help%20wanted?style=flat&logo=github&logoColor=b545d1&label=%22Help%20Wanted%22%20PRs)](https://github.com/wrpc/wrpc/pulls?q=is%3Aopen+is%3Aissue+label%3A%22help+wanted%22) [![GitHub repo Issues](https://img.shields.io/github/issues/wrpc/wrpc?style=flat&logo=github&logoColor=red&label=Issues)](https://github.com/wrpc/wrpc/issues?q=is%3Aopen)
+[![GitHub repo Good Issues for newbies](https://img.shields.io/github/bytecodealliance/issues/wrpc/good%20first%20issue?style=flat&logo=github&logoColor=green&label=Good%20First%20issues)](https://github.com/bytecodealliance/wrpc/issues?q=is%3Aopen+is%3Aissue+label%3A%22good+first+issue%22) [![GitHub Help Wanted issues](https://img.shields.io/github/bytecodealliance/issues/wrpc/help%20wanted?style=flat&logo=github&logoColor=b545d1&label=%22Help%20Wanted%22%20issues)](https://github.com/bytecodealliance/wrpc/issues?q=is%3Aopen+is%3Aissue+label%3A%22help+wanted%22) [![GitHub Help Wanted PRs](https://img.shields.io/github/issues-pr/bytecodealliance/wrpc/help%20wanted?style=flat&logo=github&logoColor=b545d1&label=%22Help%20Wanted%22%20PRs)](https://github.com/bytecodealliance/wrpc/pulls?q=is%3Aopen+is%3Aissue+label%3A%22help+wanted%22) [![GitHub repo Issues](https://img.shields.io/github/bytecodealliance/issues/wrpc?style=flat&logo=github&logoColor=red&label=Issues)](https://github.com/bytecodealliance/wrpc/issues?q=is%3Aopen)
 
 👋 **Welcome, new contributors!**
 

@@ -460,7 +460,7 @@ impl WorldGenerator for RustWrpc {
                 self.opts.additional_derive_attributes
             );
         }
-        for (k, v) in self.opts.with.iter() {
+        for (k, v) in &self.opts.with {
             uwriteln!(self.src, "//   * with {k:?} = {v:?}");
         }
         self.types.analyze(resolve);
@@ -478,7 +478,7 @@ impl WorldGenerator for RustWrpc {
                 }
             }
         }
-        for (k, v) in self.opts.with.iter() {
+        for (k, v) in &self.opts.with {
             self.with.insert(k.clone(), v.clone().into());
         }
         self.with.generate_by_default = self.opts.generate_all;

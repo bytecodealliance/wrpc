@@ -1,4 +1,4 @@
-module github.com/wrpc/wrpc/go
+module github.com/bytecodealliance/wrpc/go
 
 go 1.22.2
 

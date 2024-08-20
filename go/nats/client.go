@@ -9,7 +9,7 @@ import (
 	"sync"
 
 	"github.com/nats-io/nats.go"
-	wrpc "github.com/wrpc/wrpc/go"
+	wrpc "github.com/bytecodealliance/wrpc/go"
 )
 
 type headerKey struct{}

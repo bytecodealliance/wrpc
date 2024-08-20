@@ -49,9 +49,9 @@ use .",
 
 go 1.22.2
 
-require github.com/wrpc/wrpc/go v0.0.0-unpublished
+require github.com/bytecodealliance/wrpc/go v0.0.0-unpublished
 
-replace github.com/wrpc/wrpc/go v0.0.0-unpublished => {}",
+replace github.com/bytecodealliance/wrpc/go v0.0.0-unpublished => {}",
             root.join("go").display(),
         ),
     )
