@@ -29,6 +29,7 @@ interface sync {
     numbers: func() -> tuple<u8, u16, u32, u64, s8, s16, s32, s64, f32, f64>;
     with-flags: func(a: bool, b: bool, c: bool) -> abc;
     with-variant-option: func(ok: bool) -> option<var>;
+    with-variant-list: func() -> list<var>;
     with-record: func() -> rec;
     with-record-list: func(n: u8) -> list<rec>;
     with-record-tuple: func() -> tuple<rec, rec>;

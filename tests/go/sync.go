@@ -49,6 +49,26 @@ func (SyncHandler) WithFlags(ctx context.Context, a, b, c bool) (*sync.Abc, erro
 	return &sync.Abc{A: a, B: b, C: c}, nil
 }
 
+func (SyncHandler) WithVariantList(ctx context.Context) ([]*sync.Var, error) {
+	slog.DebugContext(ctx, "handling `with-variant-list`")
+	return []*sync.Var{
+		sync.NewVarEmpty(),
+		sync.NewVarVar(&sync.Rec{
+			Nested: &sync.RecNested{
+				Foo: "foo",
+			},
+		}),
+		sync.NewVarEmpty(),
+		sync.NewVarEmpty(),
+		sync.NewVarEmpty(),
+		sync.NewVarVar(&sync.Rec{
+			Nested: &sync.RecNested{
+				Foo: "bar",
+			},
+		}),
+	}, nil
+}
+
 func (SyncHandler) WithVariantOption(ctx context.Context, ok bool) (*sync.Var, error) {
 	slog.DebugContext(ctx, "handling `with-variant-option`", "ok", ok)
 	if ok {
