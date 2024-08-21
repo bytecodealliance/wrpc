@@ -79,12 +79,17 @@ func subscribe(conn *nats.Conn, prefix string, f func(context.Context, []byte), 
 }
 
 type Client struct {
-	conn   *nats.Conn
-	prefix string
+	conn       *nats.Conn
+	prefix     string
+	queueGroup *string
 }
 
 func NewClient(conn *nats.Conn, prefix string) *Client {
-	return &Client{conn, prefix}
+	return &Client{conn: conn, prefix: prefix, queueGroup: nil}
+}
+
+func NewClientWithQueueGroup(conn *nats.Conn, prefix string, queueGroup string) *Client {
+	return &Client{conn, prefix, &queueGroup}
 }
 
 type paramWriter struct {
@@ -350,7 +355,7 @@ func (c *Client) Invoke(ctx context.Context, instance string, name string, f fun
 }
 
 func (c *Client) Serve(instance string, name string, f func(context.Context, wrpc.IndexWriter, wrpc.IndexReadCloser) error, subs ...wrpc.SubscribePath) (stop func() error, err error) {
-	sub, err := c.conn.Subscribe(invocationSubject(c.prefix, instance, name), func(m *nats.Msg) {
+	serveFunction := func(m *nats.Msg) {
 		ctx := context.Background()
 		ctx = ContextWithHeader(ctx, m.Header)
 
@@ -413,7 +418,16 @@ func (c *Client) Serve(instance string, name string, f func(context.Context, wrp
 			return
 		}
 		slog.Debug("successfully finished serving invocation")
-	})
+	}
+	var sub *nats.Subscription
+	if c.queueGroup != nil {
+		slog.Debug("serving with queue group", "instance", instance, "name", name, "group", *c.queueGroup)
+		sub, err = c.conn.QueueSubscribe(invocationSubject(c.prefix, instance, name), *c.queueGroup, serveFunction)
+	} else {
+		slog.Debug("serving", "instance", instance, "name", name)
+		sub, err = c.conn.Subscribe(invocationSubject(c.prefix, instance, name), serveFunction)
+	}
+
 	if err != nil {
 		return nil, fmt.Errorf("failed to serve `%s` for instance `%s`: %w", name, instance, err)
 	}
