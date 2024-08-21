@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::mem;
 
@@ -34,7 +33,18 @@ fn go_func_name(func: &Function) -> String {
                 tail.to_upper_camel_case()
             )
         }
-        FunctionKind::Method(..) => to_upper_camel_case(func.item_name()),
+        FunctionKind::Method(..) => {
+            let name = func
+                .name
+                .strip_prefix("[method]")
+                .expect("failed to strip `[method]` prefix");
+            let (head, tail) = name.split_once('.').expect("failed to split on `.`");
+            format!(
+                "{}_{}",
+                head.to_upper_camel_case(),
+                tail.to_upper_camel_case()
+            )
+        }
         FunctionKind::Freestanding => to_upper_camel_case(&func.name),
     }
 }
@@ -2541,105 +2551,52 @@ impl InterfaceGenerator<'_> {
         identifier: Identifier<'a>,
         funcs: impl Iterator<Item = &'a Function>,
     ) -> bool {
-        let mut traits = BTreeMap::new();
-        let mut methods = BTreeMap::new();
+        let mut methods = vec![];
         let mut funcs_to_export = vec![];
-
-        traits.insert(None, ("Handler".to_string(), vec![]));
-
-        if let Identifier::Interface(id, ..) = identifier {
-            for (name, id) in &self.resolve.interfaces[id].types {
-                if let TypeDefKind::Resource = self.resolve.types[*id].kind {
-                    let camel = to_upper_camel_case(name);
-                    traits.insert(Some(*id), (camel, vec![]));
-                    methods.insert(*id, vec![]);
-                }
-            }
-        }
 
         for func in funcs {
             if self.gen.skip.contains(&func.name) {
                 continue;
             }
 
-            let resource = if let FunctionKind::Method(id) = func.kind {
-                methods.get_mut(&id).unwrap().push(func);
-                Some(id)
-            } else {
-                funcs_to_export.push(func);
-                None
-            };
-            let (_, handler_methods) = traits.get_mut(&resource).unwrap();
-
+            funcs_to_export.push(func);
             let prev = mem::take(&mut self.src);
-            self.print_docs_and_params(func, true);
-            if let FunctionKind::Constructor(id) = &func.kind {
-                let ty = &self.resolve.types[*id];
-                let Some(name) = &ty.name else {
-                    panic!("unnamed resources are not supported")
-                };
-                let context = self.deps.context();
-                let camel = name.to_upper_camel_case();
-                let name = self.type_path_with_name(*id, format!("Handler{camel}"));
-                self.push_str(" (");
-                self.push_str(&name);
-                self.push_str(", ");
-                self.push_str(context);
-                self.push_str(".Context, string, error)");
-            } else {
-                self.src.push_str(" (");
-                for ty in func.results.iter_types() {
-                    self.print_opt_ty(ty, true);
-                    self.src.push_str(", ");
-                }
-                self.push_str("error)");
+            self.print_docs_and_params(func);
+            self.src.push_str(" (");
+            for ty in func.results.iter_types() {
+                self.print_opt_ty(ty, true);
+                self.src.push_str(", ");
             }
-            self.push_str("\n");
+            self.push_str("error)\n");
             let trait_method = mem::replace(&mut self.src, prev);
-            handler_methods.push(trait_method);
+            methods.push(trait_method);
         }
 
-        // TODO: The method serving should be propagated into the `ServeInterface`
-
-        let (name, interface_methods) = traits.remove(&None).unwrap();
-        if interface_methods.is_empty() && traits.is_empty() {
+        if methods.is_empty() {
             return false;
         }
 
-        uwriteln!(self.src, "type {name} interface {{");
-        for method in &interface_methods {
+        uwriteln!(self.src, "type Handler interface {{");
+        for method in &methods {
             self.src.push_str(method);
         }
-        uwriteln!(self.src, "}}");
-
-        for (trait_name, handler_methods) in traits.values() {
-            uwriteln!(self.src, "type Handler{trait_name} interface {{");
-            for method in handler_methods {
-                self.src.push_str(method);
-            }
-            uwriteln!(self.src, "}}");
-        }
-
         uwriteln!(
             self.src,
-            "func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {{",
+            "
+}}
+
+func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {{
+    stops := make([]func() error, 0, {})
+    stop = func() error {{
+        for _, stop := range stops {{
+            if err := stop(); err != nil {{
+                return err
+            }}
+        }}
+        return nil
+    }}",
+            funcs_to_export.len(),
             wrpc = self.deps.wrpc(),
-        );
-        uwriteln!(
-            self.src,
-            r#"stops := make([]func() error, 0, {})"#,
-            funcs_to_export.len()
-        );
-        self.src.push_str(
-            r"stop = func() error {
-            for _, stop := range stops {
-                if err := stop(); err != nil {
-                    return err
-                }
-            }
-            return nil
-        }
-",
         );
         let instance = match identifier {
             Identifier::Interface(id, name) => {
@@ -2672,40 +2629,47 @@ impl InterfaceGenerator<'_> {
         for (i, func) in funcs_to_export.iter().enumerate() {
             let name = rpc_func_name(func);
 
-            let atomic = self.deps.atomic();
             let bytes = self.deps.bytes();
             let context = self.deps.context();
             let fmt = self.deps.fmt();
             let slog = self.deps.slog();
-            let sync = self.deps.sync();
             let wrpc = self.deps.wrpc();
-            uwriteln!(
+            uwrite!(
                 self.src,
-                r#"stop{i}, err := s.Serve("{instance}", "{name}", func(ctx {context}.Context, w {wrpc}.IndexWriter, r {wrpc}.IndexReadCloser) error {{"#,
+                r#"
+    stop{i}, err := s.Serve("{instance}", "{name}", func(ctx {context}.Context, w {wrpc}.IndexWriteCloser, r {wrpc}.IndexReadCloser) {{
+        defer func() {{
+            if err := w.Close(); err != nil {{
+                {slog}.DebugContext(ctx, "failed to close writer", "instance", "{instance}", "name", "{name}", "err", err)
+            }}
+        }}()"#,
             );
             for (i, (_, ty)) in func.params.iter().enumerate() {
                 uwrite!(
                     self.src,
-                    r#"{slog}.DebugContext(ctx, "reading parameter", "i", {i})
+                    r#"
+        {slog}.DebugContext(ctx, "reading parameter", "i", {i})
         p{i}, err := "#
                 );
                 self.print_read_ty(ty, "r", &format!("[]uint32{{ {i} }}"));
                 self.push_str("\n");
-                uwriteln!(
+                uwrite!(
                     self.src,
-                    r#"if err != nil {{ return {fmt}.Errorf("failed to read parameter {i}: %w", err) }}"#,
+                    r#"
+        if err != nil {{
+            {slog}.WarnContext(ctx, "failed to read parameter", "i", {i}, "instance", "{instance}", "name", "{name}", "err", err)
+            if err := r.Close(); err != nil {{
+                {slog}.ErrorContext(ctx, "failed to close reader", "instance", "{instance}", "name", "{name}", "err", err)
+            }}
+            return
+        }}"#,
                 );
             }
             uwriteln!(
                 self.src,
-                r#"{slog}.DebugContext(ctx, "calling `{instance}.{name}` handler")"#,
+                r#"
+        {slog}.DebugContext(ctx, "calling `{instance}.{name}` handler")"#,
             );
-            if let FunctionKind::Constructor(..) = func.kind {
-                self.push_str("ctx, cancel := ");
-                self.push_str(context);
-                self.push_str(".WithCancelCause(ctx)\n");
-                self.push_str("res, ctx, ");
-            }
             for (i, _) in func.results.iter_types().enumerate() {
                 uwrite!(self.src, "r{i}, ");
             }
@@ -2719,252 +2683,66 @@ impl InterfaceGenerator<'_> {
             for (i, _) in func.params.iter().enumerate() {
                 uwrite!(self.src, ", p{i}");
             }
-            self.push_str(")\n");
-            self.push_str("if err != nil {\n");
             uwriteln!(
                 self.src,
-                r#"return {fmt}.Errorf("failed to handle `{instance}.{name}` invocation: %w", err)"#,
-            );
-            self.push_str("}\n");
+                r#")
+        if cErr := r.Close(); cErr != nil {{
+            {slog}.ErrorContext(ctx, "failed to close reader", "instance", "{instance}", "name", "{name}", "err", err)
+        }}
+        if err != nil {{
+            {slog}.WarnContext(ctx, "failed to handle invocation", "instance", "{instance}", "name", "{name}", "err", err)
+            return
+        }}
 
-            if let FunctionKind::Constructor(id) = func.kind {
-                self.push_str("rx := string(r0)\n");
-                uwriteln!(
-                    self.src,
-                    r#"stops := make([]func() error, 0, {})"#,
-                    methods.len() + 1
-                );
-                self.src.push_str(
-                    r"stop := func() error {
-                        for _, stop := range stops {
-                            if err := stop(); err != nil {
-                                return err
-                            }
-                        }
-                        return nil
-                    }
-",
-                );
-                for (i, func) in methods[&id].iter().enumerate() {
-                    let name = rpc_func_name(func);
-                    uwriteln!(
-                        self.src,
-                        r#"stop{i}, err := s.Serve(rx, "{name}", func(ctx {context}.Context, w {wrpc}.IndexWriter, r {wrpc}.IndexReadCloser) error {{"#,
-                    );
-                    for (i, (_, ty)) in func.params.iter().enumerate().skip(1) {
-                        uwrite!(
-                            self.src,
-                            r#"{slog}.DebugContext(ctx, "reading method parameter", "i", {i})
-        p{i}, err := "#
-                        );
-                        self.print_read_ty(ty, "r", &format!("[]uint32{{ {i} }}"));
-                        self.push_str("\n");
-                        uwriteln!(
-                            self.src,
-                            r#"if err != nil {{ return {fmt}.Errorf("failed to read method parameter {i}: %w", err) }}"#,
-                        );
-                    }
-                    uwriteln!(
-                        self.src,
-                        r#"{slog}.DebugContext(ctx, "calling `{name}` handler", "resource", rx)"#,
-                    );
-                    for (i, _) in func.results.iter_types().enumerate() {
-                        uwrite!(self.src, "r{i}, ");
-                    }
-                    self.push_str("err ");
-                    if func.results.len() > 0 {
-                        self.push_str(":");
-                    }
-                    self.push_str("= res.");
-                    self.push_str(&go_func_name(func));
-                    self.push_str("(ctx");
-                    for (i, _) in func.params.iter().enumerate().skip(1) {
-                        uwrite!(self.src, ", p{i}");
-                    }
-                    self.push_str(")\n");
-                    self.push_str("if err != nil {\n");
-                    uwriteln!(
-                        self.src,
-                        r#"return {fmt}.Errorf("failed to handle `%s.{name}` invocation: %w", rx, err)"#,
-                    );
-                    self.push_str("}\n");
-                    uwriteln!(
-                        self.src,
-                        r"
-                    var buf {bytes}.Buffer
-                    writes := make(map[uint32]func({wrpc}.IndexWriter) error, {})",
-                        func.results.len()
-                    );
-                    for (i, ty) in func.results.iter_types().enumerate() {
-                        uwrite!(self.src, "write{i}, err :=");
-                        self.print_write_ty(ty, &format!("r{i}"), "&buf");
-                        self.push_str("\n");
-                        self.push_str("if err != nil {\n");
-                        uwriteln!(
-                            self.src,
-                            r#"return {fmt}.Errorf("failed to write result value {i}: %w", err)"#,
-                        );
-                        self.src.push_str("}\n");
-                        uwriteln!(
-                            self.src,
-                            r#"if write{i} != nil {{
-                            writes[{i}] = write{i}
-                        }}"#,
-                        );
-                    }
-                    uwrite!(
-                        self.src,
-                        r#"{slog}.DebugContext(ctx, "transmitting `{instance}.{name}` result")
-                        _, err = w.Write(buf.Bytes())
-                        if err != nil {{
-                            return {fmt}.Errorf("failed to write result: %w", err)
-                        }}
-                        if len(writes) > 0 {{
-                            var wg {sync}.WaitGroup
-                            var wgErr {atomic}.Value
-                            for index, write := range writes {{
-                                wg.Add(1)
-                                w, err := w.Index(index)
-                                if err != nil {{
-                                    return {fmt}.Errorf("failed to index writer: %w", err)
-                                }}
-                                write := write
-                                go func() {{
-                                    defer wg.Done()
-                                    if err := write(w); err != nil {{
-                                        wgErr.Store(err)
-                                    }}
-                                }}()
-                            }}
-                            wg.Wait()
-                            err := wgErr.Load()
-                            if err == nil {{
-                                return nil
-                            }}
-                            return err.(error)
-                        }}
-                        return nil
-                     }}, "#,
-                    );
-                    for (i, (_, ty)) in func.params.iter().enumerate() {
-                        let (nested, fut) = async_paths_ty(self.resolve, ty);
-                        for path in nested {
-                            self.push_str(wrpc);
-                            self.push_str(".NewSubscribePath().Index(");
-                            uwrite!(self.src, "{i})");
-                            for p in path {
-                                if let Some(p) = p {
-                                    uwrite!(self.src, ".Index({p})");
-                                } else {
-                                    self.push_str(".Wildcard()");
-                                }
-                            }
-                            self.push_str(", ");
-                        }
-                        if fut {
-                            uwrite!(self.src, "{wrpc}.NewSubscribePath().Index({i}), ");
-                        }
-                    }
-                    uwriteln!(
-                        self.src,
-                        r#")
-                     if err != nil {{
-                        err = {fmt}.Errorf("failed to serve `%s.{name}`: %w", rx, err)
-                        if sErr := stop(); sErr != nil {{
-                            {slog}.ErrorContext(ctx, "failed to stop serving resource methods", "err", err)
-                        }}
-                        cancel(err)
-                        return err
-                    }}
-                    stops = append(stops, stop{i})"#,
-                    );
-                }
-                uwriteln!(
-                    self.src,
-                    r#"stopDrop, err := s.Serve(rx, "drop", func(_ {context}.Context, w {wrpc}.IndexWriter, _ {wrpc}.IndexReadCloser) error {{ 
-                        defer cancel(nil)
-                        _, err := w.Write(nil)
-                        if err != nil {{
-                            return {fmt}.Errorf("failed to write empty result: %w", err)
-                        }}
-                        return nil
-                    }})
-                    if err != nil {{
-                        err = {fmt}.Errorf("failed to serve `%s.drop`: %w", rx, err)
-                        if sErr := stop(); sErr != nil {{
-                            {slog}.ErrorContext(ctx, "failed to stop serving resource methods", "err", sErr)
-                        }}
-                        cancel(err)
-                        return err
-                    }}
-                    stops = append(stops, stopDrop)
-                    go func() {{
-                        <-ctx.Done()
-                        if sErr := stop(); sErr != nil {{
-                            {slog}.ErrorContext(ctx, "failed to stop serving resource methods", "err", sErr)
-                        }}
-                        cancel(ctx.Err())
-                    }}()"#,
-                );
-            }
-
-            uwriteln!(
-                self.src,
-                r"
-            var buf {bytes}.Buffer
-            writes := make(map[uint32]func({wrpc}.IndexWriter) error, {})",
+        var buf {bytes}.Buffer
+        writes := make(map[uint32]func({wrpc}.IndexWriter) error, {})"#,
                 func.results.len()
             );
             for (i, ty) in func.results.iter_types().enumerate() {
-                uwrite!(self.src, "write{i}, err :=");
-                self.print_write_ty(ty, &format!("r{i}"), "&buf");
-                self.push_str("\n");
-                self.push_str("if err != nil {\n");
-                uwriteln!(
+                uwrite!(
                     self.src,
-                    r#"return {fmt}.Errorf("failed to write result value {i}: %w", err)"#,
+                    r#"
+        write{i}, err := "#
                 );
-                self.src.push_str("}\n");
-                uwriteln!(
+                self.print_write_ty(ty, &format!("r{i}"), "&buf");
+                uwrite!(
                     self.src,
-                    r#"if write{i} != nil {{
-                    writes[{i}] = write{i}
-                }}"#,
+                    r#"
+        if err != nil {{
+            {slog}.WarnContext(ctx, "failed to write result value", "i", {i}, "{instance}", "name", "{name}", "err", err)
+            return
+        }}
+        if write{i} != nil {{
+            writes[{i}] = write{i}
+        }}"#,
                 );
             }
             uwrite!(
                 self.src,
-                r#"{slog}.DebugContext(ctx, "transmitting `{instance}.{name}` result")
-                _, err = w.Write(buf.Bytes())
+                r#"
+        {slog}.DebugContext(ctx, "transmitting `{instance}.{name}` result")
+        _, err = w.Write(buf.Bytes())
+        if err != nil {{
+            {slog}.WarnContext(ctx, "failed to write result", "{instance}", "name", "{name}", "err", err)
+            return
+        }}
+        if len(writes) > 0 {{
+            for index, write := range writes {{
+                w, err := w.Index(index)
                 if err != nil {{
-                    return {fmt}.Errorf("failed to write result: %w", err)
+                    {slog}.ErrorContext(ctx, "failed to index writer", "index", index, "{instance}", "name", "{name}", "err", err)
+                    return
                 }}
-                if len(writes) > 0 {{
-                    var wg {sync}.WaitGroup
-                    var wgErr {atomic}.Value
-                    for index, write := range writes {{
-                        wg.Add(1)
-                        w, err := w.Index(index)
-                        if err != nil {{
-                            return {fmt}.Errorf("failed to index writer: %w", err)
-                        }}
-                        write := write
-                        go func() {{
-                            defer wg.Done()
-                            if err := write(w); err != nil {{
-                                wgErr.Store(err)
-                            }}
-                        }}()
+                index := index
+                write := write
+                go func() {{
+                    if err := write(w); err != nil {{
+                        {slog}.WarnContext(ctx, "failed to write nested result value", "index", index, "{instance}", "name", "{name}", "err", err)
                     }}
-                    wg.Wait()
-                    err := wgErr.Load()
-                    if err == nil {{
-                        return nil
-                    }}
-                    return err.(error)
-                }}
-                return nil
-             }}, "#,
+                }}()
+            }}
+        }}
+    }}, "#,
             );
             for (i, (_, ty)) in func.params.iter().enumerate() {
                 let (nested, fut) = async_paths_ty(self.resolve, ty);
@@ -3013,7 +2791,7 @@ impl InterfaceGenerator<'_> {
             let fmt = self.deps.fmt();
             let wrpc = self.deps.wrpc();
 
-            self.print_docs_and_params(func, false);
+            self.print_docs_and_params(func);
             if let FunctionKind::Constructor(id) = &func.kind {
                 self.push_str(" (r0__ ");
                 self.print_own(*id);
@@ -3027,25 +2805,17 @@ impl InterfaceGenerator<'_> {
                 }
             }
             self.push_str("close__ func() error, err__ error) ");
-            self.src.push_str("{\n");
-            self.src.push_str("if err__ = wrpc__.Invoke(ctx__, ");
-            match func.kind {
-                FunctionKind::Freestanding
-                | FunctionKind::Static(..)
-                | FunctionKind::Constructor(..) => {
-                    uwrite!(self.src, r#""{instance}", ""#);
-                }
-                FunctionKind::Method(..) => {
-                    self.src.push_str("string(self), \"");
-                }
-            }
+            uwrite!(
+                self.src,
+                r#"{{
+    if err__ = wrpc__.Invoke(ctx__, "{instance}", ""#
+            );
             self.src.push_str(rpc_func_name(func));
-            self.src.push_str("\", ");
             uwriteln!(
                 self.src,
-                "func(w__ {wrpc}.IndexWriter, r__ {wrpc}.IndexReadCloser) error {{"
+                r#"", func(w__ {wrpc}.IndexWriteCloser, r__ {wrpc}.IndexReadCloser) error {{
+        close__ = r__.Close"#
             );
-            self.push_str("close__ = r__.Close\n");
             if !func.params.is_empty() {
                 let bytes = self.deps.bytes();
                 uwriteln!(
@@ -3213,22 +2983,14 @@ impl InterfaceGenerator<'_> {
         // }
     }
 
-    fn print_docs_and_params(&mut self, func: &Function, interface: bool) {
+    fn print_docs_and_params(&mut self, func: &Function) {
         self.godoc(&func.docs);
         self.godoc_params(&func.params, "Parameters");
         // TODO: re-add this when docs are back
         // self.godoc_params(&func.results, "Return");
 
-        if !interface {
+        if self.in_import {
             self.push_str("func ");
-            if let FunctionKind::Method(..) = func.kind {
-                let name = func
-                    .name
-                    .strip_prefix("[method]")
-                    .expect("failed to strip `[method]` prefix");
-                let (head, _) = name.split_once('.').expect("failed to split on `.`");
-                self.push_str(&format!("{}_", head.to_upper_camel_case()));
-            }
         }
         if self.in_import && matches!(func.kind, FunctionKind::Constructor(..)) {
             self.push_str("New");
@@ -3240,12 +3002,7 @@ impl InterfaceGenerator<'_> {
             let wrpc = self.deps.wrpc();
             uwrite!(self.src, "wrpc__ {wrpc}.Invoker, ");
         }
-        for (i, (name, param)) in func.params.iter().enumerate() {
-            if let FunctionKind::Method(..) = &func.kind {
-                if i == 0 && interface {
-                    continue;
-                }
-            }
+        for (name, param) in &func.params {
             self.push_str(&to_go_ident(name));
             self.push_str(" ");
             self.print_opt_ty(param, true);

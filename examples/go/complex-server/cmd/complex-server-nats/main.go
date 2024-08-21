@@ -31,19 +31,18 @@ type ResourcesHandler struct {
 	sync.Map
 }
 
-func (h *ResourcesHandler) Foo(ctx context.Context) (resources.HandlerFoo, context.Context, string, error) {
+func (h *ResourcesHandler) Foo(ctx context.Context) (wrpc.Own[resources.Foo], error) {
 	id, err := uuid.NewV7()
 	if err != nil {
-		return nil, nil, "", fmt.Errorf("failed to generate UUIDv7: %w", err)
+		return "", fmt.Errorf("failed to generate UUIDv7: %w", err)
 	}
 	ctx, cancel := context.WithCancel(ctx)
-	v := Foo{id: id, cancel: cancel}
-	h.Store(id.String(), v)
+	h.Store(id.String(), Foo{id: id, cancel: cancel})
 	go func() {
 		<-ctx.Done()
 		h.Delete(id)
 	}()
-	return v, ctx, id.String(), nil
+	return wrpc.Own[resources.Foo](id.String()), nil
 }
 
 func (h *ResourcesHandler) Foo_Foo(ctx context.Context, v wrpc.Own[resources.Foo]) (string, error) {
@@ -54,6 +53,14 @@ func (h *ResourcesHandler) Foo_Foo(ctx context.Context, v wrpc.Own[resources.Foo
 	foo := stored.(Foo)
 	foo.cancel()
 	return "foo", nil
+}
+
+func (h *ResourcesHandler) Foo_Bar(ctx context.Context, v wrpc.Borrow[resources.Foo]) (string, error) {
+	stored, ok := h.Load(string(v))
+	if !ok {
+		return "", fmt.Errorf("unknown resource ID `%s`", string(v))
+	}
+	return stored.(Foo).Bar(ctx)
 }
 
 func (h *ResourcesHandler) Bar(ctx context.Context, v wrpc.Borrow[resources.Foo]) (string, error) {
