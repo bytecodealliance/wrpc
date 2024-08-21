@@ -130,6 +130,30 @@ async fn go_bindgen() -> anyhow::Result<()> {
             "{v:?}"
         );
 
+        info!("calling `wrpc-test:integration/sync.with-variant-list`");
+        let v = sync::with_variant_list(&client, None)
+            .await
+            .context("failed to call `wrpc-test:integration/sync.with-variant-list`")?;
+        ensure!(
+            v == [
+                Var::Empty,
+                Var::Var(Rec {
+                    nested: RecNested {
+                        foo: "foo".to_string()
+                    }
+                }),
+                Var::Empty,
+                Var::Empty,
+                Var::Empty,
+                Var::Var(Rec {
+                    nested: RecNested {
+                        foo: "bar".to_string()
+                    }
+                }),
+            ],
+            "{v:?}"
+        );
+
         info!("calling `wrpc-test:integration/sync.with-record`");
         let v = sync::with_record(&client, None)
             .await

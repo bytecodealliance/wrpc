@@ -185,6 +185,37 @@ func TestSync(t *testing.T) {
 		}
 	}
 	{
+		v, shutdown, err := sync.WithVariantList(ctx, client)
+		if err != nil {
+			t.Errorf("failed to call `wrpc-test:integration/sync.with-variant-list`: %s", err)
+			return
+		}
+		expected := []*sync.Var{
+			sync.NewVarEmpty(),
+			sync.NewVarVar(&sync.Rec{
+				Nested: &sync.RecNested{
+					Foo: "foo",
+				},
+			}),
+			sync.NewVarEmpty(),
+			sync.NewVarEmpty(),
+			sync.NewVarEmpty(),
+			sync.NewVarVar(&sync.Rec{
+				Nested: &sync.RecNested{
+					Foo: "bar",
+				},
+			}),
+		}
+		if !reflect.DeepEqual(v, expected) {
+			t.Errorf("expected: %v, got: %#v", expected, v)
+			return
+		}
+		if err := shutdown(); err != nil {
+			t.Errorf("failed to shutdown: %s", err)
+			return
+		}
+	}
+	{
 		v, shutdown, err := sync.WithRecord(ctx, client)
 		if err != nil {
 			t.Errorf("failed to call `wrpc-test:integration/sync.with-record`: %s", err)
