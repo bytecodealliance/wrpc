@@ -2090,7 +2090,7 @@ mod {mod_name} {{
                 }}
             }};
 
-            match state {{"#
+            let decoded = match state {{"#
                 );
                 for Case {
                     name: case_name,
@@ -2107,7 +2107,7 @@ mod {mod_name} {{
                             let Some(payload) = dec.decode(src)? else {{
                                 return Ok(None)
                             }};
-                            Ok(Some(super::{name}::{case}(payload)))
+                            Some(super::{name}::{case}(payload))
                         }},"
                         );
                     }
@@ -2115,7 +2115,11 @@ mod {mod_name} {{
                 uwriteln!(
                     self.src,
                     r#"
-            }}
+            }};
+
+            let _ = self.0.take();
+
+            Ok(decoded)
         }}
     }}
 }}"#,
