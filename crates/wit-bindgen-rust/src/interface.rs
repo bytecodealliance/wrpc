@@ -1999,18 +1999,21 @@ mod {mod_name} {{
                     r#"
     }}
 
-    #[repr(transparent)]
-    pub struct Decoder<R>(::core::option::Option<PayloadDecoder<R>>)
+    pub enum Decoder<R>
     where
-        R: ::core::marker::Send + ::core::marker::Sync + {wrpc_transport}::Index<R> + {tokio}::io::AsyncRead + ::core::marker::Unpin + 'static;
+        R: ::core::marker::Send + ::core::marker::Sync + {wrpc_transport}::Index<R> + {tokio}::io::AsyncRead + ::core::marker::Unpin + 'static,
+    {{
+        Payload(::core::option::Option<PayloadDecoder<R>>),
+        Deferred(::core::option::Option<{wrpc_transport}::DeferredFn<R>>)
+    }}
 
     #[automatically_derived]
-    impl<R> ::core::default::Default for Decoder<R> 
+    impl<R> ::core::default::Default for Decoder<R>
     where
         R: ::core::marker::Send + ::core::marker::Sync + {wrpc_transport}::Index<R> + {tokio}::io::AsyncRead + ::core::marker::Unpin + 'static,
     {{
         fn default() -> Self {{
-            Self(None)
+            Self::Payload(None)
         }}
     }}
 
@@ -2020,7 +2023,8 @@ mod {mod_name} {{
         R: ::core::marker::Send + ::core::marker::Sync + {wrpc_transport}::Index<R> + {tokio}::io::AsyncRead + ::core::marker::Unpin + 'static,
     {{
         fn take_deferred(&mut self) -> ::core::option::Option<{wrpc_transport}::DeferredFn<R>> {{
-            match self.0 {{"#
+            match self {{
+                Self::Payload(None) => None,"#
                 );
                 for Case {
                     name: case_name,
@@ -2030,19 +2034,21 @@ mod {mod_name} {{
                 {
                     let case = case_name.to_upper_camel_case();
                     if ty.is_some() {
-                        uwriteln!(
+                        uwrite!(
                             self.src,
                             r"
-                        Some(PayloadDecoder::{case}(ref mut dec)) => {{
-                            dec.take_deferred()
-                        }},"
+                Self::Payload(Some(PayloadDecoder::{case}(ref mut dec))) => dec.take_deferred(),"
                         );
                     }
                 }
                 uwriteln!(
                     self.src,
                     r#"
-                None => None,
+                Self::Deferred(f) => {{
+                    let f = f.take();
+                    *self = Self::Payload(None);
+                    f
+                }},
             }}
         }}
     }}
@@ -2056,7 +2062,7 @@ mod {mod_name} {{
         type Error = ::std::io::Error;
 
         fn decode(&mut self, src: &mut {bytes}::BytesMut) -> ::core::result::Result<::core::option::Option<Self::Item>, Self::Error> {{
-            let state = if let Some(ref mut state) = self.0 {{
+            let state = if let Self::Payload(Some(ref mut state)) = self {{
                 state
             }} else {{
                 let Some(disc) = {wasm_tokio}::Leb128DecoderU32.decode(src)? else {{
@@ -2075,22 +2081,33 @@ mod {mod_name} {{
                 {
                     let case = case_name.to_upper_camel_case();
                     if ty.is_some() {
-                        uwriteln!(
+                        uwrite!(
                             self.src,
                             r"
-                        {i} => self.0.insert(PayloadDecoder::{case}(::core::default::Default::default())),"
+                    {i} => {{
+                        *self = Self::Payload(::core::option::Option::default());
+                        let Self::Payload(ref mut dec) = self else {{
+                            unreachable!()
+                        }};
+                        dec.insert(PayloadDecoder::{case}(::core::default::Default::default()))
+                    }},"
                         );
                     } else {
-                        uwriteln!(self.src, "{i} => return Ok(Some(super::{name}::{case})),");
+                        uwrite!(
+                            self.src,
+                            "
+                    {i} => return Ok(Some(super::{name}::{case})),"
+                        );
                     }
                 }
                 uwrite!(
                     self.src,
-                    r#"_ => return Err(::std::io::Error::new(::std::io::ErrorKind::InvalidInput, format!("unknown variant discriminant `{{disc}}`"))),
+                    r#"
+                    _ => return Err(::std::io::Error::new(::std::io::ErrorKind::InvalidInput, format!("unknown variant discriminant `{{disc}}`"))),
                 }}
             }};
 
-            let decoded = match state {{"#
+            match state {{"#
                 );
                 for Case {
                     name: case_name,
@@ -2107,7 +2124,8 @@ mod {mod_name} {{
                             let Some(payload) = dec.decode(src)? else {{
                                 return Ok(None)
                             }};
-                            Some(super::{name}::{case}(payload))
+                            *self = Self::Deferred({wrpc_transport}::Deferred::<R>::take_deferred(dec));
+                            Ok(Some(super::{name}::{case}(payload)))
                         }},"
                         );
                     }
@@ -2115,11 +2133,7 @@ mod {mod_name} {{
                 uwriteln!(
                     self.src,
                     r#"
-            }};
-
-            let _ = self.0.take();
-
-            Ok(decoded)
+            }}
         }}
     }}
 }}"#,
