@@ -81,86 +81,71 @@ func subscribe(conn *nats.Conn, prefix string, f func(context.Context, []byte), 
 type Client struct {
 	conn       *nats.Conn
 	prefix     string
-	queueGroup *string
+	queueGroup string
 }
 
 func NewClient(conn *nats.Conn, prefix string) *Client {
-	return &Client{conn: conn, prefix: prefix, queueGroup: nil}
+	return &Client{conn: conn, prefix: prefix, queueGroup: ""}
 }
 
 func NewClientWithQueueGroup(conn *nats.Conn, prefix string, queueGroup string) *Client {
-	return &Client{conn, prefix, &queueGroup}
+	return &Client{conn, prefix, queueGroup}
 }
 
 type paramWriter struct {
-	ctx  context.Context
 	nc   *nats.Conn
-	rx   string
-	tx   string
-	init bool
+	init func() (*initState, error)
+	path string
 }
 
-func (w *paramWriter) publish(p []byte) (int, error) {
+type initState struct {
+	tx  string
+	buf []byte
+}
+
+func (w *paramWriter) Write(p []byte) (int, error) {
+	init, err := w.init()
+	if err != nil {
+		return 0, fmt.Errorf("failed to perform handshake")
+	}
+	tx := init.tx
+	if w.path != "" {
+		tx = fmt.Sprintf("%s.%s", tx, w.path)
+	}
+
+	buf := p
+	if w.path == "" && len(init.buf) > 0 {
+		buf = append(init.buf, p...)
+	}
 	maxPayload := w.nc.MaxPayload()
 	pn := len(p)
-	if !w.init {
-		header, hasHeader := HeaderFromContext(w.ctx)
-		m := nats.NewMsg(w.tx)
-		m.Reply = w.rx
-		if hasHeader {
-			m.Header = header
-		}
-		mSize := int64(m.Size())
-		if mSize > maxPayload {
-			return 0, fmt.Errorf("message size %d is larger than maximum allowed payload size %d", mSize, maxPayload)
-		}
-		maxPayload -= mSize
-		maxPayload = min(maxPayload, int64(len(p)))
-		m.Data, p = p[:maxPayload], p[maxPayload:]
-
-		sub, err := w.nc.SubscribeSync(w.rx)
-		if err != nil {
-			return 0, fmt.Errorf("failed to subscribe on Rx subject: %w", err)
-		}
-		defer func() {
-			if err := sub.Unsubscribe(); err != nil {
-				slog.Error("failed to unsubscribe from Rx subject", "err", err)
-			}
-		}()
-
-		slog.DebugContext(w.ctx, "publishing handshake", "rx", m.Reply)
-		if err := w.nc.PublishMsg(m); err != nil {
-			return 0, fmt.Errorf("failed to send initial payload chunk: %w", err)
-		}
-		n := len(m.Data)
-
-		m, err = sub.NextMsgWithContext(w.ctx)
-		if err != nil {
-			return n, fmt.Errorf("failed to receive handshake: %w", err)
-		}
-		if m.Reply == "" {
-			return n, errors.New("peer did not specify a reply subject")
-		}
-		w.tx = paramSubject(m.Reply)
-		w.init = true
-	}
-	buf := p
+	n := 0
 	for len(buf) > 0 {
 		maxPayload = min(maxPayload, int64(len(buf)))
 		p, buf = buf[:maxPayload], buf[maxPayload:]
-		if err := w.nc.Publish(w.tx, p); err != nil {
-			return 0, fmt.Errorf("failed to send payload chunk: %w", err)
+		if err := w.nc.Publish(tx, p); err != nil {
+			if w.path == "" {
+				bn := len(init.buf)
+				if n < bn {
+					init.buf = init.buf[n:]
+					n = 0
+				} else {
+					n -= bn
+					init.buf = nil
+				}
+			}
+			return n, fmt.Errorf("failed to send payload chunk: %w", err)
 		}
+		n += len(p)
+	}
+	if w.path == "" {
+		init.buf = nil
 	}
 	return pn, nil
 }
 
-func (w *paramWriter) Write(p []byte) (int, error) {
-	return w.publish(p)
-}
-
 func (w *paramWriter) WriteByte(b byte) error {
-	_, err := w.publish([]byte{b})
+	_, err := w.Write([]byte{b})
 	if err != nil {
 		return err
 	}
@@ -168,12 +153,24 @@ func (w *paramWriter) WriteByte(b byte) error {
 }
 
 func (w *paramWriter) Index(path ...uint32) (wrpc.IndexWriter, error) {
-	return nil, errors.New("indexing not supported yet")
+	return &paramWriter{
+		nc:   w.nc,
+		init: w.init,
+		path: indexPath(w.path, path...),
+	}, nil
 }
 
 func (w *paramWriter) Close() error {
-	if err := w.nc.Publish(w.tx, nil); err != nil {
-		return fmt.Errorf("failed to send shutdown message: %w", err)
+	init, err := w.init()
+	if err != nil {
+		return fmt.Errorf("failed to perform handshake")
+	}
+	tx := init.tx
+	if w.path != "" {
+		tx = fmt.Sprintf("%s.%s", tx, w.path)
+	}
+	if err := w.nc.Publish(tx, nil); err != nil {
+		return fmt.Errorf("failed to send empty message to shut down stream")
 	}
 	return nil
 }
@@ -270,18 +267,21 @@ func (r *streamReader) ReadByte() (byte, error) {
 }
 
 func (r *streamReader) Close() (err error) {
+	var errs []error
+	if err := r.sub.Unsubscribe(); err != nil {
+		errs = append(errs, fmt.Errorf("failed to unsubscribe: %w", err))
+	}
 	refs := r.nestRef.Add(-1)
 	if refs == 0 {
 		// since this is the only reference to `nest`, no need to lock the mutex
-		var errs []error
 		for path, sub := range r.nest {
 			if err := sub.Unsubscribe(); err != nil {
 				errs = append(errs, fmt.Errorf("failed to unsubscribe from nested path `%s`: %w", path, err))
 			}
 		}
-		if len(errs) > 0 {
-			return fmt.Errorf("%v", errs)
-		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("%v", errs)
 	}
 	return nil
 }
@@ -306,56 +306,97 @@ func (r *streamReader) Index(path ...uint32) (wrpc.IndexReader, error) {
 	}, nil
 }
 
-func (c *Client) Invoke(ctx context.Context, instance string, name string, f func(wrpc.IndexWriter, wrpc.IndexReadCloser) error, subs ...wrpc.SubscribePath) (err error) {
+func (c *Client) Invoke(ctx context.Context, instance string, name string, f func(wrpc.IndexWriteCloser, wrpc.IndexReadCloser) error, paths ...wrpc.SubscribePath) (err error) {
+	w, r, err := c.InvokeConn(ctx, instance, name, nil, paths...)
+	if err != nil {
+		return err
+	}
+	return f(w, r)
+}
+
+func (c *Client) InvokeConn(ctx context.Context, instance string, name string, buf []byte, paths ...wrpc.SubscribePath) (wrpc.IndexWriteCloser, wrpc.IndexReadCloser, error) {
 	rx := nats.NewInbox()
 
 	resultRx := resultSubject(rx)
 	slog.Debug("subscribing on result subject", "subject", resultRx)
 	resultSub, err := c.conn.SubscribeSync(resultRx)
 	if err != nil {
-		return fmt.Errorf("failed to subscribe on result subject `%s`: %w", resultRx, err)
+		return nil, nil, fmt.Errorf("failed to subscribe on result subject `%s`: %w", resultRx, err)
 	}
-	defer func() {
-		if sErr := resultSub.Unsubscribe(); sErr != nil {
-			if err == nil {
-				err = fmt.Errorf("failed to unsubscribe from result subject: %w", sErr)
-			} else {
-				slog.Error("failed to unsubscribe from result subject", "err", sErr)
-			}
-		}
-	}()
 
-	nest := make(map[string]*nats.Subscription, len(subs))
-	for _, path := range subs {
+	nest := make(map[string]*nats.Subscription, len(paths))
+	for _, path := range paths {
 		s := subscribePath(resultRx, path)
 		slog.Debug("subscribing on nested result subject", "subject", s)
 		sub, err := c.conn.SubscribeSync(s)
 		if err != nil {
-			return fmt.Errorf("failed to subscribe on nested result subject `%s`: %w", s, err)
+			return nil, nil, fmt.Errorf("failed to subscribe on nested result subject `%s`: %w", s, err)
 		}
 		nest[subscribePath("", path)] = sub
 	}
-
-	slog.Debug("calling client handler")
-	w := &paramWriter{
-		ctx: ctx,
-		nc:  c.conn,
-		rx:  rx,
-		tx:  invocationSubject(c.prefix, instance, name),
-	}
 	nestRef := &atomic.Int64{}
 	nestRef.Add(1)
-	return f(w, &streamReader{
-		ctx:     ctx,
-		sub:     resultSub,
-		nestMu:  &sync.Mutex{},
-		nestRef: nestRef,
-		nest:    nest,
-	})
+	return &paramWriter{
+			nc: c.conn,
+			init: sync.OnceValues(func() (init *initState, err error) {
+				header, hasHeader := HeaderFromContext(ctx)
+
+				m := nats.NewMsg(invocationSubject(c.prefix, instance, name))
+				m.Reply = rx
+				if hasHeader {
+					m.Header = header
+				}
+
+				maxPayload := c.conn.MaxPayload()
+				mSize := int64(m.Size())
+				if mSize > maxPayload {
+					return nil, fmt.Errorf("message size %d is larger than maximum allowed payload size %d", mSize, maxPayload)
+				}
+				maxPayload -= mSize
+				maxPayload = min(maxPayload, int64(len(buf)))
+				m.Data, buf = buf[:maxPayload], buf[maxPayload:]
+
+				sub, err := c.conn.SubscribeSync(rx)
+				if err != nil {
+					return nil, fmt.Errorf("failed to subscribe on Rx subject: %w", err)
+				}
+				defer func() {
+					if sErr := sub.Unsubscribe(); sErr != nil {
+						if err == nil {
+							err = fmt.Errorf("failed to unsubscribe from handshake subject: %w", sErr)
+						} else {
+							slog.Error("failed to unsubscribe from handshake subject", "err", sErr)
+						}
+					}
+				}()
+
+				slog.DebugContext(ctx, "publishing handshake", "rx", m.Reply)
+				if err := c.conn.PublishMsg(m); err != nil {
+					return nil, fmt.Errorf("failed to send initial payload chunk: %w", err)
+				}
+				m, err = sub.NextMsgWithContext(ctx)
+				if err != nil {
+					return nil, fmt.Errorf("failed to receive handshake: %w", err)
+				}
+				if m.Reply == "" {
+					return nil, errors.New("peer did not specify a reply subject")
+				}
+				return &initState{
+					buf: buf,
+					tx:  paramSubject(m.Reply),
+				}, nil
+			}),
+		}, &streamReader{
+			ctx:     ctx,
+			sub:     resultSub,
+			nestMu:  &sync.Mutex{},
+			nestRef: nestRef,
+			nest:    nest,
+		}, nil
 }
 
-func (c *Client) Serve(instance string, name string, f func(context.Context, wrpc.IndexWriter, wrpc.IndexReadCloser) error, subs ...wrpc.SubscribePath) (stop func() error, err error) {
-	serveFunction := func(m *nats.Msg) {
+func (c *Client) handleMessage(instance string, name string, f func(context.Context, wrpc.IndexWriteCloser, wrpc.IndexReadCloser), paths ...wrpc.SubscribePath) func(m *nats.Msg) {
+	return func(m *nats.Msg) {
 		ctx := context.Background()
 		ctx = ContextWithHeader(ctx, m.Header)
 
@@ -374,14 +415,9 @@ func (c *Client) Serve(instance string, name string, f func(context.Context, wrp
 			slog.Warn("failed to subscribe on parameter subject", "subject", paramRx, "err", err)
 			return
 		}
-		defer func() {
-			if err := paramSub.Unsubscribe(); err != nil {
-				slog.Error("failed to unsubscribe from parameter subject", "subject", paramRx, "err", err)
-			}
-		}()
 
-		nest := make(map[string]*nats.Subscription, len(subs))
-		for _, path := range subs {
+		nest := make(map[string]*nats.Subscription, len(paths))
+		for _, path := range paths {
 			s := subscribePath(paramRx, path)
 			slog.Debug("subscribing on nested parameter subject", "subject", s)
 			sub, err := c.conn.SubscribeSync(s)
@@ -403,7 +439,7 @@ func (c *Client) Serve(instance string, name string, f func(context.Context, wrp
 		slog.Debug("calling server handler")
 		nestRef := &atomic.Int64{}
 		nestRef.Add(1)
-		if err := f(ctx, &resultWriter{
+		f(ctx, &resultWriter{
 			nc: c.conn,
 			tx: resultSubject(m.Reply),
 		}, &streamReader{
@@ -413,21 +449,22 @@ func (c *Client) Serve(instance string, name string, f func(context.Context, wrp
 			nestMu:  &sync.Mutex{},
 			nestRef: nestRef,
 			nest:    nest,
-		}); err != nil {
-			slog.Warn("failed to handle invocation", "err", err)
-			return
-		}
-		slog.Debug("successfully finished serving invocation")
+		})
+		slog.Debug("finished serving invocation")
 	}
-	var sub *nats.Subscription
-	if c.queueGroup != nil {
-		slog.Debug("serving with queue group", "instance", instance, "name", name, "group", *c.queueGroup)
-		sub, err = c.conn.QueueSubscribe(invocationSubject(c.prefix, instance, name), *c.queueGroup, serveFunction)
-	} else {
-		slog.Debug("serving", "instance", instance, "name", name)
-		sub, err = c.conn.Subscribe(invocationSubject(c.prefix, instance, name), serveFunction)
-	}
+}
 
+func (c *Client) Serve(instance string, name string, f func(context.Context, wrpc.IndexWriteCloser, wrpc.IndexReadCloser), paths ...wrpc.SubscribePath) (stop func() error, err error) {
+	slog.Debug("serving", "instance", instance, "name", name, "group", c.queueGroup)
+
+	subject := invocationSubject(c.prefix, instance, name)
+	handle := c.handleMessage(instance, name, f, paths...)
+	var sub *nats.Subscription
+	if c.queueGroup != "" {
+		sub, err = c.conn.QueueSubscribe(subject, c.queueGroup, handle)
+	} else {
+		sub, err = c.conn.Subscribe(subject, handle)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to serve `%s` for instance `%s`: %w", name, instance, err)
 	}
