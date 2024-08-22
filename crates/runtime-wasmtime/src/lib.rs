@@ -1095,10 +1095,15 @@ where
                     )
                     .await
                     .context("failed to write asynchronous parameters")?;
-                    pin!(outgoing)
-                        .shutdown()
+                    let mut outgoing = pin!(outgoing);
+                    outgoing
+                        .flush()
                         .await
-                        .context("failed to shutdown outgoing stream")
+                        .context("failed to flush outgoing stream")?;
+                    if let Err(err) = outgoing.shutdown().await {
+                        trace!(?err, "failed to shutdown outgoing stream")
+                    }
+                    anyhow::Ok(())
                 };
                 let rx = async {
                     let mut incoming = pin!(incoming);
@@ -1172,9 +1177,12 @@ where
     tx.write_all(&buf)
         .await
         .context("failed to transmit results")?;
-    tx.shutdown()
+    tx.flush()
         .await
-        .context("failed to shutdown outgoing stream")?;
+        .context("failed to flush outgoing stream")?;
+    if let Err(err) = tx.shutdown().await {
+        trace!(?err, "failed to shutdown outgoing stream")
+    }
     try_join_all(
         zip(0.., deferred)
             .filter_map(|(i, f)| f.map(|f| (tx.index(&[i]), f)))
