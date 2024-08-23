@@ -33,7 +33,7 @@ func TestSync(t *testing.T) {
 			return
 		}
 	}()
-	client := wrpcnats.NewClient(nc, "go")
+	client := wrpcnats.NewClient(nc, wrpcnats.WithPrefix("go"))
 
 	var h integration.SyncHandler
 	stop, err := sync_server.Serve(client, h, h)

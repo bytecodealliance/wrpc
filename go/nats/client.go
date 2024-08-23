@@ -12,6 +12,38 @@ import (
 	"github.com/nats-io/nats.go"
 )
 
+// Client is a thin wrapper around *nats.Conn, which is able to serve and invoke wRPC functions
+type Client struct {
+	conn   *nats.Conn
+	prefix string
+	group  string
+}
+
+// ClientOpt is option client configuration option passed to NewClient
+type ClientOpt func(*Client)
+
+// WithPrefix sets a prefix for this Client
+func WithPrefix(prefix string) ClientOpt {
+	return func(c *Client) {
+		c.prefix = prefix
+	}
+}
+
+// WithGroup sets a queue group for this Client
+func WithGroup(group string) ClientOpt {
+	return func(c *Client) {
+		c.group = group
+	}
+}
+
+func NewClient(conn *nats.Conn, opts ...ClientOpt) *Client {
+	c := &Client{conn: conn}
+	for _, opt := range opts {
+		opt(c)
+	}
+	return c
+}
+
 type headerKey struct{}
 
 func HeaderFromContext(ctx context.Context) (nats.Header, bool) {
@@ -76,20 +108,6 @@ func subscribe(conn *nats.Conn, prefix string, f func(context.Context, []byte), 
 		ctx = ContextWithHeader(ctx, m.Header)
 		f(ctx, m.Data)
 	})
-}
-
-type Client struct {
-	conn       *nats.Conn
-	prefix     string
-	queueGroup string
-}
-
-func NewClient(conn *nats.Conn, prefix string) *Client {
-	return &Client{conn: conn, prefix: prefix, queueGroup: ""}
-}
-
-func NewClientWithQueueGroup(conn *nats.Conn, prefix string, queueGroup string) *Client {
-	return &Client{conn, prefix, queueGroup}
 }
 
 type paramWriter struct {
@@ -447,13 +465,13 @@ func (c *Client) handleMessage(instance string, name string, f func(context.Cont
 }
 
 func (c *Client) Serve(instance string, name string, f func(context.Context, wrpc.IndexWriteCloser, wrpc.IndexReadCloser), paths ...wrpc.SubscribePath) (stop func() error, err error) {
-	slog.Debug("serving", "instance", instance, "name", name, "group", c.queueGroup)
+	slog.Debug("serving", "instance", instance, "name", name, "group", c.group)
 
 	subject := invocationSubject(c.prefix, instance, name)
 	handle := c.handleMessage(instance, name, f, paths...)
 	var sub *nats.Subscription
-	if c.queueGroup != "" {
-		sub, err = c.conn.QueueSubscribe(subject, c.queueGroup, handle)
+	if c.group != "" {
+		sub, err = c.conn.QueueSubscribe(subject, c.group, handle)
 	} else {
 		sub, err = c.conn.Subscribe(subject, handle)
 	}

@@ -75,8 +75,8 @@ func run() (err error) {
 	}()
 
 	for _, prefix := range os.Args[1:] {
-		cl := wrpcnats.NewClient(nc, prefix)
-		numbers, bytes, errCh, err := handler.Echo(context.Background(), cl, &handler.Req{
+		client := wrpcnats.NewClient(nc, wrpcnats.WithPrefix(prefix))
+		numbers, bytes, errCh, err := handler.Echo(context.Background(), client, &handler.Req{
 			Numbers: &ThrottleStream[uint64]{
 				tick:   time.Tick(time.Second),
 				values: []uint64{1, 2, 3, 4, 5, 6, 7, 8, 9, 10},

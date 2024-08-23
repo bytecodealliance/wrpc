@@ -32,7 +32,7 @@ func TestResources(t *testing.T) {
 			return
 		}
 	}()
-	client := wrpcnats.NewClient(nc, "go")
+	client := wrpcnats.NewClient(nc, wrpcnats.WithPrefix("go"))
 
 	stop, err := resources_server.Serve(client, &integration.ResourcesHandler{}, integration.ResourcesStrangeHandler{})
 	if err != nil {

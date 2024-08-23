@@ -29,8 +29,8 @@ func run() (err error) {
 	}()
 
 	for _, prefix := range os.Args[1:] {
-		wrpc := wrpcnats.NewClient(nc, prefix)
-		greeting, err := handler.Hello(context.Background(), wrpc)
+		client := wrpcnats.NewClient(nc, wrpcnats.WithPrefix(prefix))
+		greeting, err := handler.Hello(context.Background(), client)
 		if err != nil {
 			return fmt.Errorf("failed to call `wrpc-examples:hello/handler.hello`: %w", err)
 		}
