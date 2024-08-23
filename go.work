@@ -5,6 +5,7 @@ use (
 	./examples/go/hello-client
 	./examples/go/hello-server
 	./examples/go/streams-server
+	./examples/go/streams-client
 	./go
 	./tests/go
 )

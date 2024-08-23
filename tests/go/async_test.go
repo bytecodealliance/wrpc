@@ -52,7 +52,7 @@ func TestAsync(t *testing.T) {
 
 	{
 		slog.DebugContext(ctx, "calling `wrpc-test:integration/async.with-streams`")
-		byteRx, stringListRx, shutdown, err := async.WithStreams(ctx, client, true)
+		byteRx, stringListRx, err := async.WithStreams(ctx, client, true)
 		if err != nil {
 			t.Errorf("failed to call `wrpc-test:integration/async.with-streams`: %s", err)
 			return
@@ -66,6 +66,12 @@ func TestAsync(t *testing.T) {
 			t.Errorf("expected: `test`, got: %s", string(b))
 			return
 		}
+		// TODO: Close
+		//if err := byteRx.Close(); err != nil {
+		//	t.Errorf("failed to close byte reader: %s", err)
+		//	return
+		//}
+
 		ss, err := stringListRx.Receive()
 		if err != nil {
 			t.Errorf("failed to receive ready list<string> stream: %s", err)
@@ -81,15 +87,16 @@ func TestAsync(t *testing.T) {
 			t.Errorf("ready list<string> should have returned (nil, io.EOF), got: (%#v, %v)", ss, err)
 			return
 		}
-		if err := shutdown(); err != nil {
-			t.Errorf("failed to shutdown: %s", err)
-			return
-		}
+		// TODO: Close
+		//if err := stringListRx.Close(); err != nil {
+		//	t.Errorf("failed to close string list receiver: %s", err)
+		//	return
+		//}
 	}
 
 	{
 		slog.DebugContext(ctx, "calling `wrpc-test:integration/async.with-streams`")
-		byteRx, stringListRx, shutdown, err := async.WithStreams(ctx, client, false)
+		byteRx, stringListRx, err := async.WithStreams(ctx, client, false)
 		if err != nil {
 			t.Errorf("failed to call `wrpc-test:integration/async.with-streams`: %s", err)
 			return
@@ -103,6 +110,12 @@ func TestAsync(t *testing.T) {
 			t.Errorf("expected: `test`, got: %s", string(b))
 			return
 		}
+		// TODO: Close
+		//if err := byteRx.Close(); err != nil {
+		//	t.Errorf("failed to close byte reader: %s", err)
+		//	return
+		//}
+
 		ss, err := stringListRx.Receive()
 		if err != nil {
 			t.Errorf("failed to receive ready list<string> stream: %s", err)
@@ -118,10 +131,11 @@ func TestAsync(t *testing.T) {
 			t.Errorf("ready list<string> should have returned (nil, io.EOF), got: (%#v, %v)", ss, err)
 			return
 		}
-		if err := shutdown(); err != nil {
-			t.Errorf("failed to shutdown: %s", err)
-			return
-		}
+		// TODO: Close
+		//if err := stringListRx.Close(); err != nil {
+		//	t.Errorf("failed to close string list receiver: %s", err)
+		//	return
+		//}
 	}
 
 	if err = stop(); err != nil {

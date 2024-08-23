@@ -53,13 +53,9 @@ func TestResources(t *testing.T) {
 	var foo wrpc.Own[resources.Foo]
 	{
 		slog.DebugContext(ctx, "calling `wrpc-test:integration/resources.[constructor]foo`")
-		v, shutdown, err := resources.NewFoo(ctx, client)
+		v, err := resources.NewFoo(ctx, client)
 		if err != nil {
 			t.Errorf("failed to call `wrpc-test:integration/resources.[constructor]foo`: %s", err)
-			return
-		}
-		if err := shutdown(); err != nil {
-			t.Errorf("failed to shutdown: %s", err)
 			return
 		}
 		foo = v
@@ -72,13 +68,9 @@ func TestResources(t *testing.T) {
 
 	{
 		slog.DebugContext(ctx, "calling `wrpc-test:integration/resources.[constructor]foo`")
-		v, shutdown, err := resources.NewFoo(ctx, client)
+		v, err := resources.NewFoo(ctx, client)
 		if err != nil {
 			t.Errorf("failed to call `wrpc-test:integration/resources.[constructor]foo`: %s", err)
-			return
-		}
-		if err := shutdown(); err != nil {
-			t.Errorf("failed to shutdown: %s", err)
 			return
 		}
 		foo = v
@@ -86,7 +78,7 @@ func TestResources(t *testing.T) {
 
 	{
 		slog.DebugContext(ctx, "calling `wrpc-test:integration/resources.[method]foo.bar`")
-		v, shutdown, err := resources.Foo_Bar(ctx, client, foo.Borrow())
+		v, err := resources.Foo_Bar(ctx, client, foo.Borrow())
 		if err != nil {
 			t.Errorf("failed to call `wrpc-test:integration/resources.[method]foo.bar`: %s", err)
 			return
@@ -95,15 +87,11 @@ func TestResources(t *testing.T) {
 			t.Errorf("expected: `bar`, got: %s", v)
 			return
 		}
-		if err := shutdown(); err != nil {
-			t.Errorf("failed to shutdown: %s", err)
-			return
-		}
 	}
 
 	{
 		slog.DebugContext(ctx, "calling `wrpc-test:integration/resources.bar`")
-		v, shutdown, err := resources.Bar(ctx, client, foo.Borrow())
+		v, err := resources.Bar(ctx, client, foo.Borrow())
 		if err != nil {
 			t.Errorf("failed to call `wrpc-test:integration/resources.bar`: %s", err)
 			return
@@ -112,15 +100,11 @@ func TestResources(t *testing.T) {
 			t.Errorf("expected: `bar`, got: %s", v)
 			return
 		}
-		if err := shutdown(); err != nil {
-			t.Errorf("failed to shutdown: %s", err)
-			return
-		}
 	}
 
 	{
 		slog.DebugContext(ctx, "calling `wrpc-test:integration/strange.bar`")
-		v, shutdown, err := strange.Bar(ctx, client, foo.Borrow())
+		v, err := strange.Bar(ctx, client, foo.Borrow())
 		if err != nil {
 			t.Errorf("failed to call `wrpc-test:integration/strange.bar`: %s", err)
 			return
@@ -129,25 +113,17 @@ func TestResources(t *testing.T) {
 			t.Errorf("expected: `bar`, got: %v", v)
 			return
 		}
-		if err := shutdown(); err != nil {
-			t.Errorf("failed to shutdown: %s", err)
-			return
-		}
 	}
 
 	{
 		slog.DebugContext(ctx, "calling `wrpc-test:integration/resources.[static]foo.foo`")
-		v, shutdown, err := resources.Foo_Foo(ctx, client, foo)
+		v, err := resources.Foo_Foo(ctx, client, foo)
 		if err != nil {
 			t.Errorf("failed to call `wrpc-test:integration/resources.bar`: %s", err)
 			return
 		}
 		if v != "foo" {
 			t.Errorf("expected: `foo`, got: %s", v)
-			return
-		}
-		if err := shutdown(); err != nil {
-			t.Errorf("failed to shutdown: %s", err)
 			return
 		}
 	}
