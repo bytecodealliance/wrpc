@@ -4,8 +4,8 @@ use (
 	./examples/go/complex-server
 	./examples/go/hello-client
 	./examples/go/hello-server
-	./examples/go/streams-server
 	./examples/go/streams-client
+	./examples/go/streams-server
 	./go
 	./tests/go
 )
