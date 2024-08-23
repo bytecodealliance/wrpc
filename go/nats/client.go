@@ -306,15 +306,7 @@ func (r *streamReader) Index(path ...uint32) (wrpc.IndexReader, error) {
 	}, nil
 }
 
-func (c *Client) Invoke(ctx context.Context, instance string, name string, f func(wrpc.IndexWriteCloser, wrpc.IndexReadCloser) error, paths ...wrpc.SubscribePath) (err error) {
-	w, r, err := c.InvokeConn(ctx, instance, name, nil, paths...)
-	if err != nil {
-		return err
-	}
-	return f(w, r)
-}
-
-func (c *Client) InvokeConn(ctx context.Context, instance string, name string, buf []byte, paths ...wrpc.SubscribePath) (wrpc.IndexWriteCloser, wrpc.IndexReadCloser, error) {
+func (c *Client) Invoke(ctx context.Context, instance string, name string, buf []byte, paths ...wrpc.SubscribePath) (wrpc.IndexWriteCloser, wrpc.IndexReadCloser, error) {
 	rx := nats.NewInbox()
 
 	resultRx := resultSubject(rx)

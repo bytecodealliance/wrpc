@@ -6,8 +6,7 @@ import (
 )
 
 type Invoker interface {
-	Invoke(ctx context.Context, instance string, name string, f func(IndexWriteCloser, IndexReadCloser) error, subs ...SubscribePath) error
-	InvokeConn(ctx context.Context, instance string, name string, b []byte, paths ...SubscribePath) (IndexWriteCloser, IndexReadCloser, error)
+	Invoke(ctx context.Context, instance string, name string, b []byte, paths ...SubscribePath) (IndexWriteCloser, IndexReadCloser, error)
 }
 
 type Server interface {

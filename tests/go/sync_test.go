@@ -54,7 +54,7 @@ func TestSync(t *testing.T) {
 
 	{
 		slog.DebugContext(ctx, "calling `wrpc-test:integration/sync-client.foo.f`")
-		v, shutdown, err := foo.F(ctx, client, "f")
+		v, err := foo.F(ctx, client, "f")
 		if err != nil {
 			t.Errorf("failed to call `wrpc-test:integration/sync-client.foo.f`: %s", err)
 			return
@@ -63,26 +63,18 @@ func TestSync(t *testing.T) {
 			t.Errorf("expected: 42, got: %d", v)
 			return
 		}
-		if err := shutdown(); err != nil {
-			t.Errorf("failed to shutdown: %s", err)
-			return
-		}
 	}
 	{
 		slog.DebugContext(ctx, "calling `wrpc-test:integration/sync-client.foo.foo`")
-		shutdown, err := foo.Foo(ctx, client, "foo")
+		err := foo.Foo(ctx, client, "foo")
 		if err != nil {
 			t.Errorf("failed to call `wrpc-test:integration/sync-client.foo.foo`: %s", err)
-			return
-		}
-		if err := shutdown(); err != nil {
-			t.Errorf("failed to shutdown: %s", err)
 			return
 		}
 	}
 	{
 		slog.DebugContext(ctx, "calling `wrpc-test:integration/sync.fallible`")
-		v, shutdown, err := sync.Fallible(ctx, client, true)
+		v, err := sync.Fallible(ctx, client, true)
 		if err != nil {
 			t.Errorf("failed to call `wrpc-test:integration/sync.fallible`: %s", err)
 			return
@@ -92,14 +84,10 @@ func TestSync(t *testing.T) {
 			t.Errorf("expected: %#v, got: %#v", expected, v)
 			return
 		}
-		if err := shutdown(); err != nil {
-			t.Errorf("failed to shutdown: %s", err)
-			return
-		}
 	}
 	{
 		slog.DebugContext(ctx, "calling `wrpc-test:integration/sync.fallible`")
-		v, shutdown, err := sync.Fallible(ctx, client, false)
+		v, err := sync.Fallible(ctx, client, false)
 		if err != nil {
 			t.Errorf("failed to call `wrpc-test:integration/sync.fallible`: %s", err)
 			return
@@ -109,14 +97,10 @@ func TestSync(t *testing.T) {
 			t.Errorf("expected: %#v, got: %#v", expected, v)
 			return
 		}
-		if err := shutdown(); err != nil {
-			t.Errorf("failed to shutdown: %s", err)
-			return
-		}
 	}
 	{
 		slog.DebugContext(ctx, "calling `wrpc-test:integration/sync.numbers`")
-		v, shutdown, err := sync.Numbers(ctx, client)
+		v, err := sync.Numbers(ctx, client)
 		if err != nil {
 			t.Errorf("failed to call `wrpc-test:integration/sync.numbers`: %s", err)
 			return
@@ -126,14 +110,10 @@ func TestSync(t *testing.T) {
 			t.Errorf("expected: %v, got: %#v", expected, v)
 			return
 		}
-		if err := shutdown(); err != nil {
-			t.Errorf("failed to shutdown: %s", err)
-			return
-		}
 	}
 	{
 		slog.DebugContext(ctx, "calling `wrpc-test:integration/sync.with-flags`")
-		v, shutdown, err := sync.WithFlags(ctx, client, true, false, true)
+		v, err := sync.WithFlags(ctx, client, true, false, true)
 		if err != nil {
 			t.Errorf("failed to call `wrpc-test:integration/sync.with-flags`: %s", err)
 			return
@@ -143,13 +123,9 @@ func TestSync(t *testing.T) {
 			t.Errorf("expected: %v, got: %#v", expected, v)
 			return
 		}
-		if err := shutdown(); err != nil {
-			t.Errorf("failed to shutdown: %s", err)
-			return
-		}
 	}
 	{
-		v, shutdown, err := sync.WithVariantOption(ctx, client, true)
+		v, err := sync.WithVariantOption(ctx, client, true)
 		if err != nil {
 			t.Errorf("failed to call `wrpc-test:integration/sync.with-variant-option`: %s", err)
 			return
@@ -163,13 +139,9 @@ func TestSync(t *testing.T) {
 			t.Errorf("expected: %v, got: %#v", expected, v)
 			return
 		}
-		if err := shutdown(); err != nil {
-			t.Errorf("failed to shutdown: %s", err)
-			return
-		}
 	}
 	{
-		v, shutdown, err := sync.WithVariantOption(ctx, client, false)
+		v, err := sync.WithVariantOption(ctx, client, false)
 		if err != nil {
 			t.Errorf("failed to call `wrpc-test:integration/sync.with-variant-option`: %s", err)
 			return
@@ -179,13 +151,9 @@ func TestSync(t *testing.T) {
 			t.Errorf("expected: %v, got: %#v", expected, v)
 			return
 		}
-		if err := shutdown(); err != nil {
-			t.Errorf("failed to shutdown: %s", err)
-			return
-		}
 	}
 	{
-		v, shutdown, err := sync.WithVariantList(ctx, client)
+		v, err := sync.WithVariantList(ctx, client)
 		if err != nil {
 			t.Errorf("failed to call `wrpc-test:integration/sync.with-variant-list`: %s", err)
 			return
@@ -210,13 +178,9 @@ func TestSync(t *testing.T) {
 			t.Errorf("expected: %v, got: %#v", expected, v)
 			return
 		}
-		if err := shutdown(); err != nil {
-			t.Errorf("failed to shutdown: %s", err)
-			return
-		}
 	}
 	{
-		v, shutdown, err := sync.WithRecord(ctx, client)
+		v, err := sync.WithRecord(ctx, client)
 		if err != nil {
 			t.Errorf("failed to call `wrpc-test:integration/sync.with-record`: %s", err)
 			return
@@ -230,13 +194,9 @@ func TestSync(t *testing.T) {
 			t.Errorf("expected: %v, got: %#v", expected, v)
 			return
 		}
-		if err := shutdown(); err != nil {
-			t.Errorf("failed to shutdown: %s", err)
-			return
-		}
 	}
 	{
-		v, shutdown, err := sync.WithRecordList(ctx, client, 3)
+		v, err := sync.WithRecordList(ctx, client, 3)
 		if err != nil {
 			t.Errorf("failed to call `wrpc-test:integration/sync.with-record-list`: %s", err)
 			return
@@ -260,10 +220,6 @@ func TestSync(t *testing.T) {
 		}
 		if !reflect.DeepEqual(v, expected) {
 			t.Errorf("expected: %v, got: %#v", expected, v)
-			return
-		}
-		if err := shutdown(); err != nil {
-			t.Errorf("failed to shutdown: %s", err)
 			return
 		}
 	}

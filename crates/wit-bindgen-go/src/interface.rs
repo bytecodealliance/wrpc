@@ -2792,87 +2792,115 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
             let wrpc = self.deps.wrpc();
 
             self.print_docs_and_params(func);
-            if let FunctionKind::Constructor(id) = &func.kind {
-                self.push_str(" (r0__ ");
-                self.print_own(*id);
+
+            self.src.push_str(" (");
+            for (i, ty) in func.results.iter_types().enumerate() {
+                uwrite!(self.src, "r{i}__ ");
+                self.print_opt_ty(ty, true);
                 self.src.push_str(", ");
-            } else {
-                self.src.push_str(" (");
-                for (i, ty) in func.results.iter_types().enumerate() {
-                    uwrite!(self.src, "r{i}__ ");
-                    self.print_opt_ty(ty, true);
-                    self.src.push_str(", ");
-                }
             }
-            self.push_str("close__ func() error, err__ error) ");
-            uwrite!(
-                self.src,
-                r#"{{
-    if err__ = wrpc__.Invoke(ctx__, "{instance}", ""#
-            );
-            self.src.push_str(rpc_func_name(func));
-            uwriteln!(
-                self.src,
-                r#"", func(w__ {wrpc}.IndexWriteCloser, r__ {wrpc}.IndexReadCloser) error {{
-        close__ = r__.Close"#
-            );
+
+            let async_params = func.params.iter().any(|(_, ty)| {
+                let (paths, fut) = async_paths_ty(self.resolve, ty);
+                fut || !paths.is_empty()
+            });
+            if async_params {
+                self.push_str("writeErrs__ <-chan error, ");
+            }
+            self.push_str("err__ error) {");
             if !func.params.is_empty() {
                 let bytes = self.deps.bytes();
-                uwriteln!(
+                uwrite!(
                     self.src,
-                    r"var buf__ {bytes}.Buffer
-        writes__ := make(map[uint32]func({wrpc}.IndexWriter) error, {})",
-                    func.params.len(),
+                    r"
+    var buf__ {bytes}.Buffer",
                 );
-                for (i, (name, ty)) in func.params.iter().enumerate() {
-                    uwrite!(self.src, "write{i}__, err__ :=");
-                    self.print_write_ty(ty, &to_go_ident(name), "&buf__");
-                    self.src.push_str("\nif err__ != nil {\n");
-                    uwriteln!(
+                if async_params {
+                    uwrite!(
                         self.src,
-                        r#"return {fmt}.Errorf("failed to write `{name}` parameter: %w", err__)"#,
-                    );
-                    self.src.push_str("}\n");
-                    uwriteln!(
-                        self.src,
-                        r#"if write{i}__ != nil {{
-                writes__[{i}] = write{i}__
-        }}"#,
+                        r"
+    var writeCount__ uint32"
                     );
                 }
-                self.push_str("_, err__ = w__.Write(buf__.Bytes())\n");
-                self.push_str("if err__ != nil {\n");
-                uwriteln!(
-                    self.src,
-                    r#"return {fmt}.Errorf("failed to write parameters: %w", err__)"#,
-                );
-                self.src.push_str("}\n");
+                for (i, (name, ty)) in func.params.iter().enumerate() {
+                    uwrite!(
+                        self.src,
+                        r"
+    write{i}__, err__ :="
+                    );
+                    self.print_write_ty(ty, &to_go_ident(name), "&buf__");
+                    uwrite!(
+                        self.src,
+                        r#"
+    if err__ != nil {{
+        err__ = {fmt}.Errorf("failed to write `{name}` parameter: %w", err__)
+        return
+    }}"#,
+                    );
+                    if async_params {
+                        uwrite!(
+                            self.src,
+                            r"
+    if write{i}__ != nil {{ 
+        writeCount__++
+    }}"
+                        );
+                    }
+                }
+                if async_params {
+                    uwrite!(
+                        self.src,
+                        r"
+    writes__ := make(map[uint32]func({wrpc}.IndexWriter) error, uint(writeCount__))",
+                    );
+                }
+                for (i, (name, _)) in func.params.iter().enumerate() {
+                    uwrite!(
+                        self.src,
+                        r"
+    if write{i}__ != nil {{"
+                    );
+                    if async_params {
+                        uwrite!(
+                            self.src,
+                            r"
+        writes__[{i}] = write{i}__",
+                        );
+                    } else {
+                        uwrite!(
+                            self.src,
+                            r#"
+        err__ = {errors}.New("unexpected deferred write for synchronous `{name}` parameter")
+        return"#,
+                            errors = self.deps.errors(),
+                        );
+                    }
+                    uwrite!(
+                        self.src,
+                        r#"
+    }}"#,
+                    );
+                }
+            }
+            uwrite!(
+                self.src,
+                r#"
+    var w__ {wrpc}.IndexWriteCloser
+    var r__ {wrpc}.IndexReadCloser
+    w__, r__, err__ = wrpc__.Invoke(ctx__, "{instance}", ""#
+            );
+            self.src.push_str(rpc_func_name(func));
+            self.src.push_str("\", ");
+            if !func.params.is_empty() {
+                self.src.push_str("buf__.Bytes()");
             } else {
-                self.push_str("_, err__ = w__.Write(nil)\n");
-                self.push_str("if err__ != nil {\n");
-                uwriteln!(
-                    self.src,
-                    r#"return {fmt}.Errorf("failed to write empty parameters: %w", err__)"#,
-                );
-                self.src.push_str("}\n");
+                self.src.push_str("nil");
             }
-            for (i, ty) in func.results.iter_types().enumerate() {
-                uwrite!(self.src, "r{i}__, err__ = ");
-                self.print_read_ty(ty, "r__", &format!("[]uint32{{ {i} }}"));
-                self.push_str("\n");
-                uwriteln!(
-                    self.src,
-                    r#"if err__ != nil {{ return {fmt}.Errorf("failed to read result {i}: %w", err__) }}"#,
-                );
-            }
-            self.src.push_str("return nil\n");
-            self.src.push_str("},");
+            self.src.push_str(",\n");
             for (i, ty) in func.results.iter_types().enumerate() {
                 let (nested, fut) = async_paths_ty(self.resolve, ty);
                 for path in nested {
-                    self.push_str(wrpc);
-                    self.push_str(".NewSubscribePath().Index(");
-                    uwrite!(self.src, "{i})");
+                    uwrite!(self.src, "{wrpc}.NewSubscribePath().Index({i})");
                     for p in path {
                         if let Some(p) = p {
                             uwrite!(self.src, ".Index({p})");
@@ -2886,15 +2914,87 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
                     uwrite!(self.src, "{wrpc}.NewSubscribePath().Index({i}), ");
                 }
             }
-            self.src.push_str("); err__ != nil {\n");
+            let slog = self.deps.slog();
+            uwrite!(
+                self.src,
+                r#"
+    )
+    if err__ != nil {{
+        err__ = {fmt}.Errorf("failed to invoke `{name}`: %w", err__)
+        return
+    }}
+    defer func() {{
+        if err := r__.Close(); err != nil {{
+            {slog}.ErrorContext(ctx__, "failed to close reader", "instance", "{instance}", "name", "{name}", "err", err)
+        }}
+    }}()"#,
+                name = func.name,
+            );
+            if async_params {
+                let sync = self.deps.sync();
+                uwrite!(
+                    self.src,
+                    r#"
+    if writeCount__ > 0 {{
+        writeErrCh__ := make(chan error, uint(writeCount__))
+        writeErrs__ = writeErrCh__
+        var wg__ {sync}.WaitGroup
+        for index, write := range writes__ {{
+            wg__.Add(1)
+            w, err := w__.Index(index)
+            if err != nil {{
+                if cErr := w__.Close(); cErr != nil {{
+                    {slog}.DebugContext(ctx__, "failed to close outgoing stream", "instance", "{instance}", "name", "{}", "err", cErr)
+                }}
+                err__ = {fmt}.Errorf("failed to index writer at index `%v`: %w", index, err)
+                return
+            }}
+            write := write
+            go func() {{
+                defer wg__.Done()
+                if err := write(w); err != nil {{
+                    writeErrCh__ <- err
+                }}
+            }}()
+        }}
+        go func() {{
+            wg__.Wait()
+            close(writeErrCh__)
+        }}()
+    }}"#,
+                    func.name,
+                );
+            }
+            uwrite!(
+                self.src,
+                r#"
+    if cErr__ := w__.Close(); cErr__ != nil {{
+        {slog}.DebugContext(ctx__, "failed to close outgoing stream", "instance", "{instance}", "name", "{}", "err", cErr__)
+    }}"#,
+                func.name,
+            );
+
+            for (i, ty) in func.results.iter_types().enumerate() {
+                uwrite!(
+                    self.src,
+                    "
+    r{i}__, err__ = "
+                );
+                self.print_read_ty(ty, "r__", &format!("[]uint32{{ {i} }}"));
+                uwrite!(
+                    self.src,
+                    r#"
+    if err__ != nil {{
+        err__ = {fmt}.Errorf("failed to read result {i}: %w", err__)
+        return 
+    }}"#,
+                );
+            }
             uwriteln!(
                 self.src,
-                r#"err__ = {fmt}.Errorf("failed to invoke `{}`: %w", err__)
-            return
-        }}
-        return
-    }}"#,
-                func.name
+                r#"
+    return
+}}"#,
             );
         }
     }
