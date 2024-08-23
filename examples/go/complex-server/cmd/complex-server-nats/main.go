@@ -87,8 +87,8 @@ func run() (err error) {
 		}
 	}()
 
-	wrpc := wrpcnats.NewClient(nc, "go")
-	stop, err := server.Serve(wrpc, &ResourcesHandler{})
+	client := wrpcnats.NewClient(nc, wrpcnats.WithPrefix("go"))
+	stop, err := server.Serve(client, &ResourcesHandler{})
 	if err != nil {
 		return fmt.Errorf("failed to serve `server` world: %w", err)
 	}

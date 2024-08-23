@@ -32,7 +32,7 @@ func TestAsync(t *testing.T) {
 			return
 		}
 	}()
-	client := wrpcnats.NewClient(nc, "go")
+	client := wrpcnats.NewClient(nc, wrpcnats.WithPrefix("go"))
 
 	stop, err := async_server.Serve(client, integration.AsyncHandler{})
 	if err != nil {
