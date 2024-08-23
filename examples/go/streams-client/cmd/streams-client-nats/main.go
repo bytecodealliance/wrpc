@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/bytecodealliance/wrpc/examples/go/streams-client/bindings/wrpc_examples/streams/handler"
-	wrpcnats "github.com/bytecodealliance/wrpc/go/nats"
+	"wrpc.io/examples/go/streams-client/bindings/wrpc_examples/streams/handler"
+	wrpcnats "wrpc.io/go/nats"
 	"github.com/nats-io/nats.go"
 )
 

@@ -7,8 +7,8 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/bytecodealliance/wrpc/examples/go/hello-client/bindings/wrpc_examples/hello/handler"
-	wrpcnats "github.com/bytecodealliance/wrpc/go/nats"
+	"wrpc.io/examples/go/hello-client/bindings/wrpc_examples/hello/handler"
+	wrpcnats "wrpc.io/go/nats"
 	"github.com/nats-io/nats.go"
 )
 

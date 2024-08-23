@@ -115,10 +115,8 @@ impl Deps {
     }
 
     fn wrpc(&mut self) -> &'static str {
-        self.map.insert(
-            "wrpc".to_string(),
-            "github.com/bytecodealliance/wrpc/go".to_string(),
-        );
+        self.map
+            .insert("wrpc".to_string(), "wrpc.io/go".to_string());
         "wrpc"
     }
 

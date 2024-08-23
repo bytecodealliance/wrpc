@@ -9,8 +9,8 @@ import (
 	"os/signal"
 	"syscall"
 
-	server "github.com/bytecodealliance/wrpc/examples/go/hello-server/bindings"
-	wrpcnats "github.com/bytecodealliance/wrpc/go/nats"
+	server "wrpc.io/examples/go/hello-server/bindings"
+	wrpcnats "wrpc.io/go/nats"
 	"github.com/nats-io/nats.go"
 )
 

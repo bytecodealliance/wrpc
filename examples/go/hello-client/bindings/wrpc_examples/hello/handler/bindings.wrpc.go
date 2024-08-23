@@ -5,10 +5,10 @@ import (
 	context "context"
 	errors "errors"
 	fmt "fmt"
-	wrpc "github.com/bytecodealliance/wrpc/go"
 	io "io"
 	slog "log/slog"
 	utf8 "unicode/utf8"
+	wrpc "wrpc.io/go"
 )
 
 func Hello(ctx__ context.Context, wrpc__ wrpc.Invoker) (r0__ string, err__ error) {

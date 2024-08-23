@@ -8,7 +8,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	wrpc "github.com/bytecodealliance/wrpc/go"
+	wrpc "wrpc.io/go"
 	"github.com/nats-io/nats.go"
 )
 
