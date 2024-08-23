@@ -6,10 +6,10 @@ import (
 	context "context"
 	binary "encoding/binary"
 	fmt "fmt"
-	wrpc "github.com/bytecodealliance/wrpc/go"
 	io "io"
 	slog "log/slog"
 	math "math"
+	wrpc "wrpc.io/go"
 )
 
 type Handler interface {

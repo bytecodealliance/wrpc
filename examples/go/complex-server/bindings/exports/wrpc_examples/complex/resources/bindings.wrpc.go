@@ -7,11 +7,11 @@ import (
 	binary "encoding/binary"
 	errors "errors"
 	fmt "fmt"
-	wrpc "github.com/bytecodealliance/wrpc/go"
 	io "io"
 	slog "log/slog"
 	math "math"
 	utf8 "unicode/utf8"
+	wrpc "wrpc.io/go"
 )
 
 type Foo interface{}

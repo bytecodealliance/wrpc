@@ -3,8 +3,8 @@
 package server
 
 import (
-	exports__wrpc_examples__streams__handler "github.com/bytecodealliance/wrpc/examples/go/streams-server/bindings/exports/wrpc_examples/streams/handler"
-	wrpc "github.com/bytecodealliance/wrpc/go"
+	exports__wrpc_examples__streams__handler "wrpc.io/examples/go/streams-server/bindings/exports/wrpc_examples/streams/handler"
+	wrpc "wrpc.io/go"
 )
 
 func Serve(s wrpc.Server, h0 exports__wrpc_examples__streams__handler.Handler) (stop func() error, err error) {
