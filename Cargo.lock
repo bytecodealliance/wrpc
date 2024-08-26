@@ -411,14 +411,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "complex-component-client"
+name = "resources-component-client"
 version = "0.1.0"
 dependencies = [
  "wit-bindgen",
 ]
 
 [[package]]
-name = "complex-component-server"
+name = "resources-component-server"
 version = "0.1.0"
 dependencies = [
  "wit-bindgen",

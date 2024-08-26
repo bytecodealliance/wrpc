@@ -1,5 +1,0 @@
-package wrpc-examples:complex-go-server;
-
-world server {
-    include wrpc-examples:complex/server;
-}

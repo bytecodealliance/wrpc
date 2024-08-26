@@ -24,7 +24,7 @@ updates:
     interval: "daily"
 
 - package-ecosystem: gomod
-  directory: /examples/go/complex-server
+  directory: /examples/go/resources-server
   schedule:
     interval: daily
 
