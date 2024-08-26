@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nats-io/nats.go"
 	wrpc "wrpc.io/go"
 	wrpcnats "wrpc.io/go/nats"
 	integration "wrpc.io/tests/go"
@@ -16,7 +17,6 @@ import (
 	"wrpc.io/tests/go/bindings/sync_client/wrpc_test/integration/sync"
 	"wrpc.io/tests/go/bindings/sync_server"
 	"wrpc.io/tests/go/internal"
-	"github.com/nats-io/nats.go"
 )
 
 func TestSync(t *testing.T) {
@@ -227,5 +227,8 @@ func TestSync(t *testing.T) {
 	if err = stop(); err != nil {
 		t.Errorf("failed to stop serving `sync-server` world: %s", err)
 		return
+	}
+	if nc.NumSubscriptions() != 0 {
+		t.Errorf("NATS subscriptions leaked: %d active after client stop", nc.NumSubscriptions())
 	}
 }

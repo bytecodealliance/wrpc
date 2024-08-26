@@ -7,9 +7,9 @@ import (
 	"log/slog"
 	"os"
 
+	"github.com/nats-io/nats.go"
 	"wrpc.io/examples/go/hello-client/bindings/wrpc_examples/hello/handler"
 	wrpcnats "wrpc.io/go/nats"
-	"github.com/nats-io/nats.go"
 )
 
 func run() (err error) {

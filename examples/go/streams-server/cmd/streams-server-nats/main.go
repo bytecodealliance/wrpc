@@ -3,22 +3,23 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
 
+	"github.com/nats-io/nats.go"
 	server "wrpc.io/examples/go/streams-server/bindings"
 	"wrpc.io/examples/go/streams-server/bindings/exports/wrpc_examples/streams/handler"
 	wrpc "wrpc.io/go"
 	wrpcnats "wrpc.io/go/nats"
-	"github.com/nats-io/nats.go"
 )
 
 type Handler struct{}
 
-func (Handler) Echo(ctx context.Context, req *handler.Req) (wrpc.ReceiveCompleter[[]uint64], wrpc.ReadCompleter, error) {
+func (Handler) Echo(ctx context.Context, req *handler.Req) (wrpc.Receiver[[]uint64], io.Reader, error) {
 	slog.InfoContext(ctx, "handling `wrpc-examples:streams/handler.echo`")
 	return req.Numbers, req.Bytes, nil
 }

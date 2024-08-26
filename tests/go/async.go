@@ -5,6 +5,7 @@ package integration
 import (
 	"bytes"
 	"context"
+	"io"
 	"log/slog"
 
 	wrpc "wrpc.io/go"
@@ -12,13 +13,13 @@ import (
 
 type AsyncHandler struct{}
 
-func (AsyncHandler) WithStreams(ctx context.Context, complete bool) (wrpc.ReadCompleter, wrpc.ReceiveCompleter[[][]string], error) {
+func (AsyncHandler) WithStreams(ctx context.Context, complete bool) (io.Reader, wrpc.Receiver[[][]string], error) {
 	slog.DebugContext(ctx, "handling `with-streams`", "complete", complete)
 	buf := bytes.NewBuffer([]byte("test"))
 	str := wrpc.NewCompleteReceiver([][]string{{"foo", "bar"}, {"baz"}})
 	if complete {
-		return wrpc.NewCompleteReader(buf), str, nil
+		return buf, str, nil
 	} else {
-		return wrpc.NewPendingByteReader(buf), wrpc.NewPendingReceiver(str), nil
+		return buf, str, nil
 	}
 }

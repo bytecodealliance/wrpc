@@ -910,13 +910,14 @@ impl InterfaceGenerator<'_> {
         match ty {
             Some(ty) if is_list_of(self.resolve, Type::U8, ty) => {
                 let bytes = self.deps.bytes();
+                let io = self.deps.io();
                 let fmt = self.deps.fmt();
                 let slog = self.deps.slog();
                 let wrpc = self.deps.wrpc();
 
                 uwriteln!(
                     self.src,
-                    r#"func(r {wrpc}.IndexReader, path ...uint32) ({wrpc}.ReadCompleter, error) {{
+                    r#"func(r {wrpc}.IndexReader, path ...uint32) ({io}.Reader, error) {{
     {slog}.Debug("reading byte list future status byte")
     status, err := r.ReadByte()
     if err != nil {{
@@ -924,13 +925,11 @@ impl InterfaceGenerator<'_> {
     }}
     switch status {{
     case 0:
-        if len(path) > 0 {{
-            r, err = r.Index(path...)
-            if err != nil {{
-                return nil, {fmt}.Errorf("failed to index reader: %w", err)
-            }}
+        r, err := r.Index(path...)
+        if err != nil {{
+            return nil, {fmt}.Errorf("failed to index reader: %w", err)
         }}
-        return {wrpc}.NewByteStreamReader({wrpc}.NewPendingByteReader(r)), nil
+        return {wrpc}.NewByteStreamReader(r), nil
     case 1:
         {slog}.Debug("reading ready byte list future contents")
         buf, err := "#
@@ -943,7 +942,7 @@ impl InterfaceGenerator<'_> {
             return nil, {fmt}.Errorf("failed to read ready byte list future contents: %w", err)
         }}
         {slog}.Debug("read ready byte list future contents", "len", len(buf))
-        return {wrpc}.NewCompleteReader({bytes}.NewReader(buf)), nil
+        return {bytes}.NewReader(buf), nil
     default:
         return nil, {fmt}.Errorf("invalid byte list future status byte %d", status)
     }}
@@ -963,7 +962,7 @@ impl InterfaceGenerator<'_> {
 
                 uwrite!(
                     self.src,
-                    r#"func(r {wrpc}.IndexReader, path ...uint32) ({wrpc}.ReceiveCompleter["#
+                    r#"func(r {wrpc}.IndexReader, path ...uint32) ({wrpc}.Receiver["#
                 );
                 self.print_opt_ty(ty, true);
                 uwrite!(
@@ -976,11 +975,9 @@ impl InterfaceGenerator<'_> {
     }}
     switch status {{
     case 0:
-        if len(path) > 0 {{
-            r, err = r.Index(path...)
-            if err != nil {{
-                return nil, {fmt}.Errorf("failed to index reader: %w", err)
-            }}
+        r, err := r.Index(path...)
+        if err != nil {{
+            return nil, {fmt}.Errorf("failed to index reader: %w", err)
         }}
         return {wrpc}.NewDecodeReceiver(r, func(r {wrpc}.IndexReader) ("#
                 );
@@ -1032,13 +1029,14 @@ impl InterfaceGenerator<'_> {
         match element {
             Some(ty) if is_ty(self.resolve, Type::U8, ty) => {
                 let bytes = self.deps.bytes();
+                let io = self.deps.io();
                 let fmt = self.deps.fmt();
                 let slog = self.deps.slog();
                 let wrpc = self.deps.wrpc();
 
                 uwriteln!(
                     self.src,
-                    r#"func(r {wrpc}.IndexReader, path ...uint32) ({wrpc}.ReadCompleter, error) {{
+                    r#"func(r {wrpc}.IndexReader, path ...uint32) ({io}.Reader, error) {{
     {slog}.Debug("reading byte stream status byte")
     status, err := r.ReadByte()
     if err != nil {{
@@ -1046,13 +1044,11 @@ impl InterfaceGenerator<'_> {
     }}
     switch status {{
     case 0:
-        if len(path) > 0 {{
-            r, err = r.Index(path...)
-            if err != nil {{
-                return nil, {fmt}.Errorf("failed to index reader: %w", err)
-            }}
+        r, err := r.Index(path...)
+        if err != nil {{
+            return nil, {fmt}.Errorf("failed to index reader: %w", err)
         }}
-        return {wrpc}.NewByteStreamReader({wrpc}.NewPendingByteReader(r)), nil
+        return {wrpc}.NewByteStreamReader(r), nil
     case 1:
         {slog}.Debug("reading ready byte stream contents")
         buf, err := "#
@@ -1065,7 +1061,7 @@ impl InterfaceGenerator<'_> {
             return nil, {fmt}.Errorf("failed to read ready byte stream contents: %w", err)
         }}
         {slog}.Debug("read ready byte stream contents", "len", len(buf))
-        return {wrpc}.NewCompleteReader({bytes}.NewReader(buf)), nil
+        return {bytes}.NewReader(buf), nil
     default:
         return nil, {fmt}.Errorf("invalid stream status byte %d", status)
     }}
@@ -1088,7 +1084,7 @@ impl InterfaceGenerator<'_> {
 
                 uwrite!(
                     self.src,
-                    r#"func(r {wrpc}.IndexReader, path ...uint32) ({wrpc}.ReceiveCompleter["#
+                    r#"func(r {wrpc}.IndexReader, path ...uint32) ({wrpc}.Receiver["#
                 );
                 self.print_list(ty);
                 uwrite!(
@@ -1101,11 +1097,9 @@ impl InterfaceGenerator<'_> {
     }}
     switch status {{
     case 0:
-        if len(path) > 0 {{
-            r, err = r.Index(path...)
-            if err != nil {{
-                return nil, {fmt}.Errorf("failed to index reader: %w", err)
-            }}
+        r, err := r.Index(path...)
+        if err != nil {{
+            return nil, {fmt}.Errorf("failed to index reader: %w", err)
         }}
         var total uint32
         return {wrpc}.NewDecodeReceiver(r, func(r {wrpc}.IndexReader) ("#
@@ -1928,7 +1922,6 @@ impl InterfaceGenerator<'_> {
     fn print_write_future(&mut self, ty: &Option<Type>, name: &str, writer: &str) {
         match ty {
             Some(ty) if is_list_of(self.resolve, Type::U8, ty) => {
-                let bytes = self.deps.bytes();
                 let fmt = self.deps.fmt();
                 let io = self.deps.io();
                 let math = self.deps.math();
@@ -1936,121 +1929,9 @@ impl InterfaceGenerator<'_> {
                 let wrpc = self.deps.wrpc();
                 uwrite!(
                     self.src,
-                    r#"func(v {wrpc}.ReadCompleter, w interface {{ {io}.ByteWriter; {io}.Writer }}) (write func({wrpc}.IndexWriter) error, err error) {{
-                if v.IsComplete() {{
-                    defer func() {{
-                        body, ok := v.({io}.Closer)
-                        if ok {{
-                            if cErr := body.Close(); cErr != nil {{
-                                if err == nil {{
-                                    err = {fmt}.Errorf("failed to close ready byte list future: %w", cErr)
-                                }} else {{
-                                    slog.Warn("failed to close ready byte list future", "err", cErr)
-                                }}
-                            }}
-                        }}
-                    }}()
-                    {slog}.Debug("writing byte list future `future::ready` status byte")
-                    if err = w.WriteByte(1); err != nil {{
-                        return nil, {fmt}.Errorf("failed to write `future::ready` byte: %w", err)
-                    }}
-                    {slog}.Debug("reading ready byte list future contents")
-                    var buf {bytes}.Buffer
-                    var n int64
-                    n, err = {io}.Copy(&buf, v)
-                    if err != nil {{
-                        return nil, {fmt}.Errorf("failed to read ready byte list future contents: %w", err)
-                    }}
-                    {slog}.Debug("writing ready byte list future contents", "len", n)
-                    if err = {wrpc}.WriteByteList(buf.Bytes(), w); err != nil {{
-                        return nil, {fmt}.Errorf("failed to write ready byte list future contents: %w", err)
-                    }}
-                    return nil, nil
-                }} else {{
-                    {slog}.Debug("writing byte list future `future::pending` status byte")
-                    if err = w.WriteByte(0); err != nil {{
-                        return nil, fmt.Errorf("failed to write `future::pending` byte: %w", err)
-                    }}
-                    return func(w {wrpc}.IndexWriter) (err error) {{
-                        defer func() {{
-                            body, ok := v.({io}.Closer)
-                            if ok {{
-                                if cErr := body.Close(); cErr != nil {{
-                                    if err == nil {{
-                                        err = {fmt}.Errorf("failed to close pending byte list future: %w", cErr)
-                                    }} else {{
-                                        {slog}.Warn("failed to close pending byte list future", "err", cErr)
-                                    }}
-                                }}
-                            }}
-                        }}()
-                        {slog}.Debug("reading pending byte list future contents")
-                        chunk, err := {io}.ReadAll(chunk)
-                        if err != nil {{
-                            return {fmt}.Errorf("failed to read pending byte list future: %w", err)
-                        }}
-                        if n > {math}.MaxUint32 {{
-                            return {fmt}.Errorf("pending byte list future length of %d overflows a 32-bit integer", n)
-                        }}
-                        {slog}.Debug("writing pending byte list future length", "len", n)
-                        if err := {wrpc}.WriteUint32(uint32(n), w); err != nil {{
-                            return {fmt}.Errorf("failed to write pending byte list future length of %d: %w", n, err)
-                        }}
-                        _, err = w.Write(chunk[:n])
-                        if err != nil {{
-                            return {fmt}.Errorf("failed to write pending byte list future contents: %w", err)
-                        }}
-                    }}, nil
-                }}
-            }}({name}, {writer})"#,
-                );
-            }
-            Some(ty) => {
-                let fmt = self.deps.fmt();
-                let io = self.deps.io();
-                let slog = self.deps.slog();
-                let wrpc = self.deps.wrpc();
-                uwrite!(self.src, "func(v {wrpc}.ReceiveCompleter[",);
-                self.print_opt_ty(ty, true);
-                uwrite!(
-                    self.src,
-                    r#"], w interface {{ {io}.ByteWriter; {io}.Writer }}) (write func({wrpc}.IndexWriter) error, err error) {{
-            if v.IsComplete() {{
-                defer func() {{
-                    body, ok := v.({io}.Closer)
-                    if ok {{
-                        if cErr := body.Close(); cErr != nil {{
-                            if err == nil {{
-                                err = {fmt}.Errorf("failed to close ready future: %w", cErr)
-                            }} else {{
-                                slog.Warn("failed to close ready future", "err", cErr)
-                            }}
-                        }}
-                    }}
-                }}()
-                {slog}.Debug("writing future `future::ready` status byte")
-                if err = w.WriteByte(1); err != nil {{
-                    return nil, {fmt}.Errorf("failed to write `future::ready` byte: %w", err)
-                }}
-                {slog}.Debug("receiving ready future contents")
-                rx, err := v.Receive()
-                if err != nil && err != {io}.EOF {{
-                    return nil, {fmt}.Errorf("failed to receive ready future contents: %w", err)
-                }}
-                {slog}.Debug("writing ready future contents")
-                write, err := "#,
-                );
-                self.print_write_ty(ty, "rx", "w");
-                uwrite!(
-                    self.src,
-                    r#"
-                if err != nil {{
-                    return nil, {fmt}.Errorf("failed to write ready future contents: %w", err)
-                }}
-                return write, nil
-            }} else {{
-                {slog}.Debug("writing future `future::pending` status byte")
-                if err := w.WriteByte(0); err != nil {{
+                    r#"func(v {io}.Reader, w interface {{ {io}.ByteWriter; {io}.Writer }}) (write func({wrpc}.IndexWriter) error, err error) {{
+                {slog}.Debug("writing byte list future `future::pending` status byte")
+                if err = w.WriteByte(0); err != nil {{
                     return nil, fmt.Errorf("failed to write `future::pending` byte: %w", err)
                 }}
                 return func(w {wrpc}.IndexWriter) (err error) {{
@@ -2059,34 +1940,80 @@ impl InterfaceGenerator<'_> {
                         if ok {{
                             if cErr := body.Close(); cErr != nil {{
                                 if err == nil {{
-                                    err = {fmt}.Errorf("failed to close pending future: %w", cErr)
+                                    err = {fmt}.Errorf("failed to close pending byte list future: %w", cErr)
                                 }} else {{
-                                    {slog}.Warn("failed to close pending future", "err", cErr)
+                                    {slog}.Warn("failed to close pending byte list future", "err", cErr)
                                 }}
                             }}
                         }}
                     }}()
-                    {slog}.Debug("receiving outgoing pending future contents")
-                    rx, err := v.Receive()
+                    {slog}.Debug("reading pending byte list future contents")
+                    chunk, err := {io}.ReadAll(chunk)
                     if err != nil {{
-                        return {fmt}.Errorf("failed to receive outgoing pending future: %w", err)
+                        return {fmt}.Errorf("failed to read pending byte list future: %w", err)
                     }}
-                    {slog}.Debug("writing pending future element")
-                    write, err :="#,
+                    if n > {math}.MaxUint32 {{
+                        return {fmt}.Errorf("pending byte list future length of %d overflows a 32-bit integer", n)
+                    }}
+                    {slog}.Debug("writing pending byte list future length", "len", n)
+                    if err := {wrpc}.WriteUint32(uint32(n), w); err != nil {{
+                        return {fmt}.Errorf("failed to write pending byte list future length of %d: %w", n, err)
+                    }}
+                    _, err = w.Write(chunk[:n])
+                    if err != nil {{
+                        return {fmt}.Errorf("failed to write pending byte list future contents: %w", err)
+                    }}
+                }}, nil
+            }}({name}, {writer})"#,
+                );
+            }
+            Some(ty) => {
+                let fmt = self.deps.fmt();
+                let io = self.deps.io();
+                let slog = self.deps.slog();
+                let wrpc = self.deps.wrpc();
+                uwrite!(self.src, "func(v {wrpc}.Receiver[",);
+                self.print_opt_ty(ty, true);
+                uwrite!(
+                    self.src,
+                    r#"], w interface {{ {io}.ByteWriter; {io}.Writer }}) (write func({wrpc}.IndexWriter) error, err error) {{
+            {slog}.Debug("writing future `future::pending` status byte")
+            if err := w.WriteByte(0); err != nil {{
+                return nil, fmt.Errorf("failed to write `future::pending` byte: %w", err)
+            }}
+            return func(w {wrpc}.IndexWriter) (err error) {{
+                defer func() {{
+                    body, ok := v.({io}.Closer)
+                    if ok {{
+                        if cErr := body.Close(); cErr != nil {{
+                            if err == nil {{
+                                err = {fmt}.Errorf("failed to close pending future: %w", cErr)
+                            }} else {{
+                                {slog}.Warn("failed to close pending future", "err", cErr)
+                            }}
+                        }}
+                    }}
+                }}()
+                {slog}.Debug("receiving outgoing pending future contents")
+                rx, err := v.Receive()
+                if err != nil {{
+                    return {fmt}.Errorf("failed to receive outgoing pending future: %w", err)
+                }}
+                {slog}.Debug("writing pending future element")
+                write, err :="#,
                 );
                 self.print_write_ty(ty, "rx", "w");
                 uwrite!(
                     self.src,
                     r#"
-                    if err != nil {{
-                        return {fmt}.Errorf("failed to write pending future element: %w", err)
-                    }}
-                    if write != nil {{
-                        return write(w)
-                    }}
-                    return nil
-                }}, nil
-            }}
+                if err != nil {{
+                    return {fmt}.Errorf("failed to write pending future element: %w", err)
+                }}
+                if write != nil {{
+                    return write(w)
+                }}
+                return nil
+            }}, nil
         }}({name}, {writer})"#,
                 );
             }
@@ -2097,7 +2024,6 @@ impl InterfaceGenerator<'_> {
     fn print_write_stream(&mut self, Stream { element, .. }: &Stream, name: &str, writer: &str) {
         match element {
             Some(ty) if is_ty(self.resolve, Type::U8, ty) => {
-                let bytes = self.deps.bytes();
                 let fmt = self.deps.fmt();
                 let io = self.deps.io();
                 let math = self.deps.math();
@@ -2105,85 +2031,54 @@ impl InterfaceGenerator<'_> {
                 let wrpc = self.deps.wrpc();
                 uwrite!(
                     self.src,
-                    r#"func(v {wrpc}.ReadCompleter, w interface {{ {io}.ByteWriter; {io}.Writer }}) (write func({wrpc}.IndexWriter) error, err error) {{
-                if v.IsComplete() {{
+                    r#"func(v {io}.Reader, w interface {{ {io}.ByteWriter; {io}.Writer }}) (write func({wrpc}.IndexWriter) error, err error) {{
+                {slog}.Debug("writing byte stream `stream::pending` status byte")
+                if err = w.WriteByte(0); err != nil {{
+                    return nil, fmt.Errorf("failed to write `stream::pending` byte: %w", err)
+                }}
+                return func(w {wrpc}.IndexWriter) (err error) {{
                     defer func() {{
                         body, ok := v.({io}.Closer)
                         if ok {{
                             if cErr := body.Close(); cErr != nil {{
                                 if err == nil {{
-                                    err = {fmt}.Errorf("failed to close ready byte stream: %w", cErr)
+                                    err = {fmt}.Errorf("failed to close pending byte stream: %w", cErr)
                                 }} else {{
-                                    slog.Warn("failed to close ready byte stream", "err", cErr)
+                                    {slog}.Warn("failed to close pending byte stream", "err", cErr)
                                 }}
                             }}
                         }}
                     }}()
-                    {slog}.Debug("writing byte stream `stream::ready` status byte")
-                    if err = w.WriteByte(1); err != nil {{
-                        return nil, {fmt}.Errorf("failed to write `stream::ready` byte: %w", err)
-                    }}
-                    {slog}.Debug("reading ready byte stream contents")
-                    var buf {bytes}.Buffer
-                    var n int64
-                    n, err = {io}.Copy(&buf, v)
-                    if err != nil {{
-                        return nil, {fmt}.Errorf("failed to read ready byte stream contents: %w", err)
-                    }}
-                    {slog}.Debug("writing ready byte stream contents", "len", n)
-                    if err = {wrpc}.WriteByteList(buf.Bytes(), w); err != nil {{
-                        return nil, {fmt}.Errorf("failed to write ready byte stream contents: %w", err)
-                    }}
-                    return nil, nil
-                }} else {{
-                    {slog}.Debug("writing byte stream `stream::pending` status byte")
-                    if err = w.WriteByte(0); err != nil {{
-                        return nil, fmt.Errorf("failed to write `stream::pending` byte: %w", err)
-                    }}
-                    return func(w {wrpc}.IndexWriter) (err error) {{
-                        defer func() {{
-                            body, ok := v.({io}.Closer)
-                            if ok {{
-                                if cErr := body.Close(); cErr != nil {{
-                                    if err == nil {{
-                                        err = {fmt}.Errorf("failed to close pending byte stream: %w", cErr)
-                                    }} else {{
-                                        {slog}.Warn("failed to close pending byte stream", "err", cErr)
-                                    }}
-                                }}
-                            }}
-                        }}()
-                        chunk := make([]byte, 8096)
-                        for {{
-                            var end bool
-                            {slog}.Debug("reading pending byte stream contents")
-                            n, err := v.Read(chunk)
-                            if err == {io}.EOF {{
-                                end = true
-                                {slog}.Debug("pending byte stream reached EOF")
-                            }} else if err != nil {{
-                                return {fmt}.Errorf("failed to read pending byte stream chunk: %w", err)
-                            }}
-                            if n > {math}.MaxUint32 {{
-                                return {fmt}.Errorf("pending byte stream chunk length of %d overflows a 32-bit integer", n)
-                            }}
-                            {slog}.Debug("writing pending byte stream chunk length", "len", n)
-                            if err := {wrpc}.WriteUint32(uint32(n), w); err != nil {{
-                                return {fmt}.Errorf("failed to write pending byte stream chunk length of %d: %w", n, err)
-                            }}
-                            _, err = w.Write(chunk[:n])
-                            if err != nil {{
-                                return {fmt}.Errorf("failed to write pending byte stream chunk contents: %w", err)
-                            }}
-                            if end {{
-                                if err := w.WriteByte(0); err != nil {{
-                                    return {fmt}.Errorf("failed to write pending byte stream end byte: %w", err)
-                                }}
-                                return nil
-                            }}
+                    chunk := make([]byte, 8096)
+                    for {{
+                        var end bool
+                        {slog}.Debug("reading pending byte stream contents")
+                        n, err := v.Read(chunk)
+                        if err == {io}.EOF {{
+                            end = true
+                            {slog}.Debug("pending byte stream reached EOF")
+                        }} else if err != nil {{
+                            return {fmt}.Errorf("failed to read pending byte stream chunk: %w", err)
                         }}
-                    }}, nil
-                }}
+                        if n > {math}.MaxUint32 {{
+                            return {fmt}.Errorf("pending byte stream chunk length of %d overflows a 32-bit integer", n)
+                        }}
+                        {slog}.Debug("writing pending byte stream chunk length", "len", n)
+                        if err := {wrpc}.WriteUint32(uint32(n), w); err != nil {{
+                            return {fmt}.Errorf("failed to write pending byte stream chunk length of %d: %w", n, err)
+                        }}
+                        _, err = w.Write(chunk[:n])
+                        if err != nil {{
+                            return {fmt}.Errorf("failed to write pending byte stream chunk contents: %w", err)
+                        }}
+                        if end {{
+                            if err := w.WriteByte(0); err != nil {{
+                                return {fmt}.Errorf("failed to write pending byte stream end byte: %w", err)
+                            }}
+                            return nil
+                        }}
+                    }}
+                }}, nil
             }}({name}, {writer})"#,
                 );
             }
@@ -2196,140 +2091,91 @@ impl InterfaceGenerator<'_> {
                 let slog = self.deps.slog();
                 let sync = self.deps.sync();
                 let wrpc = self.deps.wrpc();
-                uwrite!(self.src, "func(v {wrpc}.ReceiveCompleter[",);
+                uwrite!(self.src, "func(v {wrpc}.Receiver[",);
                 self.print_list(ty);
                 uwrite!(
                     self.src,
                     r#"], w interface {{ {io}.ByteWriter; {io}.Writer }}) (write func({wrpc}.IndexWriter) error, err error) {{
-            if v.IsComplete() {{
+            {slog}.Debug("writing stream `stream::pending` status byte")
+            if err := w.WriteByte(0); err != nil {{
+                return nil, fmt.Errorf("failed to write `stream::pending` byte: %w", err)
+            }}
+            return func(w {wrpc}.IndexWriter) (err error) {{
                 defer func() {{
                     body, ok := v.({io}.Closer)
                     if ok {{
                         if cErr := body.Close(); cErr != nil {{
                             if err == nil {{
-                                err = {fmt}.Errorf("failed to close ready stream: %w", cErr)
+                                err = {fmt}.Errorf("failed to close pending stream: %w", cErr)
                             }} else {{
-                                slog.Warn("failed to close ready stream", "err", cErr)
+                                {slog}.Warn("failed to close pending stream", "err", cErr)
                             }}
                         }}
                     }}
                 }}()
-                {slog}.Debug("writing stream `stream::ready` status byte")
-                if err = w.WriteByte(1); err != nil {{
-                    return nil, {fmt}.Errorf("failed to write `stream::ready` byte: %w", err)
-                }}
-                {slog}.Debug("receiving ready stream contents")
-                vs, err := v.Receive()
-                if err != nil && err != {io}.EOF {{
-                    return nil, {fmt}.Errorf("failed to receive ready stream contents: %w", err)
-                }}
-                if err != {io}.EOF && len(vs) > 0 {{
-                    for {{
-                        chunk, err := v.Receive()
-                        if err != nil && err != {io}.EOF {{
-                            return nil, {fmt}.Errorf("failed to receive ready stream contents: %w", err)
-                        }}
-                        if len(chunk) > 0 {{
-                            vs = append(vs, chunk...)
-                        }}
-                        if err == {io}.EOF {{
-                            break
-                        }}
+                var wg {sync}.WaitGroup
+                var wgErr {atomic}.Value
+                var total uint32
+                for {{
+                    var end bool
+                    {slog}.Debug("receiving outgoing pending stream contents")
+                    chunk, err := v.Receive()
+                    n := len(chunk)
+                    if n == 0 || err == {io}.EOF {{
+                        end = true
+                        {slog}.Debug("outgoing pending stream reached EOF")
+                    }} else if err != nil {{
+                        return {fmt}.Errorf("failed to receive outgoing pending stream chunk: %w", err)
                     }}
-                }}
-                {slog}.Debug("writing ready stream contents", "len", len(vs))
-                write, err := "#,
-                );
-                self.print_write_list(ty, "vs", "w");
-                uwrite!(
-                    self.src,
-                    r#"
-                if err != nil {{
-                    return nil, {fmt}.Errorf("failed to write ready stream contents: %w", err)
-                }}
-                return write, nil
-            }} else {{
-                {slog}.Debug("writing stream `stream::pending` status byte")
-                if err := w.WriteByte(0); err != nil {{
-                    return nil, fmt.Errorf("failed to write `stream::pending` byte: %w", err)
-                }}
-                return func(w {wrpc}.IndexWriter) (err error) {{
-                    defer func() {{
-                        body, ok := v.({io}.Closer)
-                        if ok {{
-                            if cErr := body.Close(); cErr != nil {{
-                                if err == nil {{
-                                    err = {fmt}.Errorf("failed to close pending stream: %w", cErr)
-                                }} else {{
-                                    {slog}.Warn("failed to close pending stream", "err", cErr)
-                                }}
-                            }}
-                        }}
-                    }}()
-                    var wg {sync}.WaitGroup
-                    var wgErr {atomic}.Value
-                    var total uint32
-                    for {{
-                        var end bool
-                        {slog}.Debug("receiving outgoing pending stream contents")
-                        chunk, err := v.Receive()
-                        n := len(chunk)
-                        if n == 0 || err == {io}.EOF {{
-                            end = true
-                            {slog}.Debug("outgoing pending stream reached EOF")
-                        }} else if err != nil {{
-                            return {fmt}.Errorf("failed to receive outgoing pending stream chunk: %w", err)
-                        }}
-                        if n > {math}.MaxUint32 {{
-                            return {fmt}.Errorf("outgoing pending stream chunk length of %d overflows a 32-bit integer", n)
-                        }}
-                        if {math}.MaxUint32 - uint32(n) < total {{
-                            return {errors}.New("total outgoing pending stream element count would overflow a 32-bit unsigned integer")
-                        }}
-                        {slog}.Debug("writing pending stream chunk length", "len", n)
-                        if err = {wrpc}.WriteUint32(uint32(n), w); err != nil {{
-                            return {fmt}.Errorf("failed to write pending stream chunk length of %d: %w", n, err)
-                        }}
-                        for _, v := range chunk {{
-                            {slog}.Debug("writing pending stream element", "i", total)
-                            write, err :="#,
+                    if n > {math}.MaxUint32 {{
+                        return {fmt}.Errorf("outgoing pending stream chunk length of %d overflows a 32-bit integer", n)
+                    }}
+                    if {math}.MaxUint32 - uint32(n) < total {{
+                        return {errors}.New("total outgoing pending stream element count would overflow a 32-bit unsigned integer")
+                    }}
+                    {slog}.Debug("writing pending stream chunk length", "len", n)
+                    if err = {wrpc}.WriteUint32(uint32(n), w); err != nil {{
+                        return {fmt}.Errorf("failed to write pending stream chunk length of %d: %w", n, err)
+                    }}
+                    for _, v := range chunk {{
+                        {slog}.Debug("writing pending stream element", "i", total)
+                        write, err :="#,
                 );
                 self.print_write_ty(ty, "v", "w");
                 uwrite!(
                     self.src,
                     r#"
+                        if err != nil {{
+                            return {fmt}.Errorf("failed to write pending stream chunk element %d: %w", total, err)
+                        }}
+                        if write != nil {{
+                            wg.Add(1)
+                            w, err := w.Index(total)
                             if err != nil {{
-                                return {fmt}.Errorf("failed to write pending stream chunk element %d: %w", total, err)
+                                return {fmt}.Errorf("failed to index writer: %w", err)
                             }}
-                            if write != nil {{
-                                wg.Add(1)
-                                w, err := w.Index(total)
-                                if err != nil {{
-                                    return {fmt}.Errorf("failed to index writer: %w", err)
+                            go func() {{
+                                defer wg.Done()
+                                if err := write(w); err != nil {{
+                                    wgErr.Store(err)
                                 }}
-                                go func() {{
-                                    defer wg.Done()
-                                    if err := write(w); err != nil {{
-                                        wgErr.Store(err)
-                                    }}
-                                }}()
-                            }}
-                            total++
+                            }}()
                         }}
-                        if end {{
-                            if err := w.WriteByte(0); err != nil {{
-                                return {fmt}.Errorf("failed to write pending stream end byte: %w", err)
-                            }}
-                            wg.Wait()
-                            err := wgErr.Load()
-                            if err == nil {{
-                                return nil
-                            }}
-                            return err.(error)
-                        }}
+                        total++
                     }}
-                }}, nil
-            }}
+                    if end {{
+                        if err := w.WriteByte(0); err != nil {{
+                            return {fmt}.Errorf("failed to write pending stream end byte: %w", err)
+                        }}
+                        wg.Wait()
+                        err := wgErr.Load()
+                        if err == nil {{
+                            return nil
+                        }}
+                        return err.(error)
+                    }}
+                }}
+            }}, nil
         }}({name}, {writer})"#,
                 );
             }
@@ -3298,23 +3144,36 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
     }
 
     fn print_future(&mut self, ty: &Option<Type>) {
-        let wrpc = self.deps.wrpc();
-        self.push_str(wrpc);
-        self.push_str(".ReceiveCompleter[");
-        let ty = ty.expect("futures with no element types are not supported");
-        self.print_opt_ty(&ty, true);
-        self.push_str("]");
+        match ty {
+            Some(ty) if is_ty(self.resolve, Type::U8, ty) => {
+                let io = self.deps.io();
+                self.push_str(io);
+                self.push_str(".Reader");
+            }
+            Some(ty) => {
+                let wrpc = self.deps.wrpc();
+                self.push_str(wrpc);
+                self.push_str(".Receiver[");
+                self.print_opt_ty(ty, true);
+                self.push_str("]");
+            }
+            None => {
+                panic!("futures with no element types are not supported")
+            }
+        }
     }
 
     fn print_stream(&mut self, Stream { element, .. }: &Stream) {
-        let wrpc = self.deps.wrpc();
-        self.push_str(wrpc);
         match element {
             Some(ty) if is_ty(self.resolve, Type::U8, ty) => {
-                self.push_str(".ReadCompleter");
+                let io = self.deps.io();
+                self.push_str(io);
+                self.push_str(".Reader");
             }
             Some(ty) => {
-                self.push_str(".ReceiveCompleter[");
+                let wrpc = self.deps.wrpc();
+                self.push_str(wrpc);
+                self.push_str(".Receiver[");
                 self.print_list(ty);
                 self.push_str("]");
             }

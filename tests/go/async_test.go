@@ -10,12 +10,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nats-io/nats.go"
 	wrpcnats "wrpc.io/go/nats"
 	integration "wrpc.io/tests/go"
 	"wrpc.io/tests/go/bindings/async_client/wrpc_test/integration/async"
 	"wrpc.io/tests/go/bindings/async_server"
 	"wrpc.io/tests/go/internal"
-	"github.com/nats-io/nats.go"
 )
 
 func TestAsync(t *testing.T) {
@@ -66,11 +66,10 @@ func TestAsync(t *testing.T) {
 			t.Errorf("expected: `test`, got: %s", string(b))
 			return
 		}
-		// TODO: Close
-		//if err := byteRx.Close(); err != nil {
-		//	t.Errorf("failed to close byte reader: %s", err)
-		//	return
-		//}
+		if err := byteRx.(io.Closer).Close(); err != nil {
+			t.Errorf("failed to close byte reader: %s", err)
+			return
+		}
 
 		ss, err := stringListRx.Receive()
 		if err != nil {
@@ -87,11 +86,10 @@ func TestAsync(t *testing.T) {
 			t.Errorf("ready list<string> should have returned (nil, io.EOF), got: (%#v, %v)", ss, err)
 			return
 		}
-		// TODO: Close
-		//if err := stringListRx.Close(); err != nil {
-		//	t.Errorf("failed to close string list receiver: %s", err)
-		//	return
-		//}
+		if err := stringListRx.(io.Closer).Close(); err != nil {
+			t.Errorf("failed to close string list receiver: %s", err)
+			return
+		}
 	}
 
 	{
@@ -110,11 +108,10 @@ func TestAsync(t *testing.T) {
 			t.Errorf("expected: `test`, got: %s", string(b))
 			return
 		}
-		// TODO: Close
-		//if err := byteRx.Close(); err != nil {
-		//	t.Errorf("failed to close byte reader: %s", err)
-		//	return
-		//}
+		if err := byteRx.(io.Closer).Close(); err != nil {
+			t.Errorf("failed to close byte reader: %s", err)
+			return
+		}
 
 		ss, err := stringListRx.Receive()
 		if err != nil {
@@ -131,15 +128,17 @@ func TestAsync(t *testing.T) {
 			t.Errorf("ready list<string> should have returned (nil, io.EOF), got: (%#v, %v)", ss, err)
 			return
 		}
-		// TODO: Close
-		//if err := stringListRx.Close(); err != nil {
-		//	t.Errorf("failed to close string list receiver: %s", err)
-		//	return
-		//}
+		if err := stringListRx.(io.Closer).Close(); err != nil {
+			t.Errorf("failed to close string list receiver: %s", err)
+			return
+		}
 	}
 
 	if err = stop(); err != nil {
 		t.Errorf("failed to stop serving `async-server` world: %s", err)
 		return
+	}
+	if nc.NumSubscriptions() != 0 {
+		t.Errorf("NATS subscriptions leaked: %d active after client stop", nc.NumSubscriptions())
 	}
 }

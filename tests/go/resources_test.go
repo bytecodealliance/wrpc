@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nats-io/nats.go"
 	wrpc "wrpc.io/go"
 	wrpcnats "wrpc.io/go/nats"
 	integration "wrpc.io/tests/go"
@@ -15,7 +16,6 @@ import (
 	"wrpc.io/tests/go/bindings/resources_client/wrpc_test/integration/resources"
 	"wrpc.io/tests/go/bindings/resources_server"
 	"wrpc.io/tests/go/internal"
-	"github.com/nats-io/nats.go"
 )
 
 func TestResources(t *testing.T) {
@@ -137,5 +137,8 @@ func TestResources(t *testing.T) {
 	if err = stop(); err != nil {
 		t.Errorf("failed to stop serving `resources-server` world: %s", err)
 		return
+	}
+	if nc.NumSubscriptions() != 0 {
+		t.Errorf("NATS subscriptions leaked: %d active after client stop", nc.NumSubscriptions())
 	}
 }
