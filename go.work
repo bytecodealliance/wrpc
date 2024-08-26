@@ -1,9 +1,9 @@
 go 1.22.2
 
 use (
-	./examples/go/resources-server
 	./examples/go/hello-client
 	./examples/go/hello-server
+	./examples/go/resources-server
 	./examples/go/streams-client
 	./examples/go/streams-server
 	./go
