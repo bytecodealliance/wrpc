@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/google/uuid"
 	wrpc "wrpc.io/go"
 	"wrpc.io/tests/go/bindings/resources_server/exports/wrpc_test/integration/resources"
-	"github.com/google/uuid"
 )
 
 type Foo struct {

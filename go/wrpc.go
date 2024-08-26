@@ -57,14 +57,14 @@ type IndexReader interface {
 	io.Reader
 	io.ByteReader
 
-	Index[IndexReader]
+	Index[IndexReadCloser]
 }
 
 type IndexWriter interface {
 	io.Writer
 	io.ByteWriter
 
-	Index[IndexWriter]
+	Index[IndexWriteCloser]
 }
 
 type IndexReadCloser interface {
@@ -87,43 +87,13 @@ type ByteReader interface {
 	io.Reader
 }
 
-type Completer interface {
-	IsComplete() bool
-}
-
 type Receiver[T any] interface {
 	Receive() (T, error)
 }
 
-type ReceiveCompleter[T any] interface {
-	Receiver[T]
-	Completer
-}
-
-type ReadCompleter interface {
-	io.Reader
-	Completer
-}
-
-type ByteReadCompleter interface {
+type ByteReadCloser interface {
 	ByteReader
-	Completer
-}
-
-type PendingReceiver[T any] struct {
-	Receiver[T]
-}
-
-func (r *PendingReceiver[T]) Receive() (T, error) {
-	return r.Receiver.Receive()
-}
-
-func (*PendingReceiver[T]) IsComplete() bool {
-	return false
-}
-
-func NewPendingReceiver[T any](rx Receiver[T]) *PendingReceiver[T] {
-	return &PendingReceiver[T]{rx}
+	io.Closer
 }
 
 type CompleteReceiver[T any] struct {
@@ -141,16 +111,12 @@ func (r *CompleteReceiver[T]) Receive() (T, error) {
 	return r.v, nil
 }
 
-func (*CompleteReceiver[T]) IsComplete() bool {
-	return true
-}
-
 func NewCompleteReceiver[T any](v T) *CompleteReceiver[T] {
 	return &CompleteReceiver[T]{v, true}
 }
 
 type DecodeReceiver[T any] struct {
-	r      IndexReader
+	r      IndexReadCloser
 	decode func(IndexReader) (T, error)
 }
 
@@ -158,18 +124,10 @@ func (r *DecodeReceiver[T]) Receive() (T, error) {
 	return r.decode(r.r)
 }
 
-func (*DecodeReceiver[T]) IsComplete() bool {
-	return false
-}
-
 func (r *DecodeReceiver[T]) Close() error {
-	c, ok := r.r.(io.Closer)
-	if ok {
-		return c.Close()
-	}
-	return nil
+	return r.r.Close()
 }
 
-func NewDecodeReceiver[T any](r IndexReader, decode func(IndexReader) (T, error)) *DecodeReceiver[T] {
+func NewDecodeReceiver[T any](r IndexReadCloser, decode func(IndexReader) (T, error)) *DecodeReceiver[T] {
 	return &DecodeReceiver[T]{r, decode}
 }

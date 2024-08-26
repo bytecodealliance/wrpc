@@ -8,8 +8,8 @@ import (
 	"sync"
 	"sync/atomic"
 
-	wrpc "wrpc.io/go"
 	"github.com/nats-io/nats.go"
+	wrpc "wrpc.io/go"
 )
 
 // Client is a thin wrapper around *nats.Conn, which is able to serve and invoke wRPC functions
@@ -170,7 +170,7 @@ func (w *paramWriter) WriteByte(b byte) error {
 	return nil
 }
 
-func (w *paramWriter) Index(path ...uint32) (wrpc.IndexWriter, error) {
+func (w *paramWriter) Index(path ...uint32) (wrpc.IndexWriteCloser, error) {
 	return &paramWriter{
 		nc:   w.nc,
 		init: w.init,
@@ -231,7 +231,7 @@ func (w *resultWriter) Close() error {
 	return nil
 }
 
-func (w *resultWriter) Index(path ...uint32) (wrpc.IndexWriter, error) {
+func (w *resultWriter) Index(path ...uint32) (wrpc.IndexWriteCloser, error) {
 	return &resultWriter{nc: w.nc, tx: indexPath(w.tx, path...)}, nil
 }
 
@@ -304,7 +304,7 @@ func (r *streamReader) Close() (err error) {
 	return nil
 }
 
-func (r *streamReader) Index(path ...uint32) (wrpc.IndexReader, error) {
+func (r *streamReader) Index(path ...uint32) (wrpc.IndexReadCloser, error) {
 	r.nestRef.Add(1)
 	s := indexPath(r.path, path...)
 	r.nestMu.Lock()

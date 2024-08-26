@@ -10,12 +10,12 @@ import (
 	"sync"
 	"syscall"
 
+	"github.com/google/uuid"
+	"github.com/nats-io/nats.go"
 	server "wrpc.io/examples/go/resources-server/bindings"
 	"wrpc.io/examples/go/resources-server/bindings/exports/wrpc_examples/resources/resources"
 	wrpc "wrpc.io/go"
 	wrpcnats "wrpc.io/go/nats"
-	"github.com/google/uuid"
-	"github.com/nats-io/nats.go"
 )
 
 type Foo struct {

@@ -9,9 +9,9 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/nats-io/nats.go"
 	server "wrpc.io/examples/go/hello-server/bindings"
 	wrpcnats "wrpc.io/go/nats"
-	"github.com/nats-io/nats.go"
 )
 
 type Handler struct{}

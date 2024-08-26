@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-
 	wrpc "wrpc.io/go"
 	"wrpc.io/tests/go/bindings/types/wrpc_test/integration/get_types"
 )
@@ -16,7 +15,7 @@ type indexReader struct {
 	*bytes.Buffer
 }
 
-func (r *indexReader) Index(path ...uint32) (wrpc.IndexReader, error) {
+func (r *indexReader) Index(path ...uint32) (wrpc.IndexReadCloser, error) {
 	panic("not implemented")
 }
 

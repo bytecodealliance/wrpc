@@ -10,9 +10,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/nats-io/nats.go"
 	"wrpc.io/examples/go/streams-client/bindings/wrpc_examples/streams/handler"
 	wrpcnats "wrpc.io/go/nats"
-	"github.com/nats-io/nats.go"
 )
 
 type ThrottleStream[T any] struct {
