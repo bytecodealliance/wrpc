@@ -10,4 +10,4 @@ use (
 	./tests/go
 )
 
-replace wrpc.io/go v0.0.2 => ./go
+replace wrpc.io/go v0.0.3 => ./go
