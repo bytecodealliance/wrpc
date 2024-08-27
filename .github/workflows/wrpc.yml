@@ -7,12 +7,28 @@ on:
     branches:
       - main
     tags:
-      - 'runtime-wasmtime-v[0-9].[0-9]+.[0-9]+'
-      - 'runtime-wasmtime-v[0-9].[0-9]+.[0-9]+-*'
-      - 'transport-nats-v[0-9].[0-9]+.[0-9]+'
-      - 'transport-nats-v[0-9].[0-9]+.[0-9]+-*'
-      - 'transport-v[0-9].[0-9]+.[0-9]+'
-      - 'transport-v[0-9].[0-9]+.[0-9]+-*'
+      - 'crates/cli/v[0-9].[0-9]+.[0-9]+'
+      - 'crates/cli/v[0-9].[0-9]+.[0-9]+-*'
+      - 'crates/introspect/v[0-9].[0-9]+.[0-9]+'
+      - 'crates/introspect/v[0-9].[0-9]+.[0-9]+-*'
+      - 'crates/runtime-wasmtime/v[0-9].[0-9]+.[0-9]+'
+      - 'crates/runtime-wasmtime/v[0-9].[0-9]+.[0-9]+-*'
+      - 'crates/transport-nats/v[0-9].[0-9]+.[0-9]+'
+      - 'crates/transport-nats/v[0-9].[0-9]+.[0-9]+-*'
+      - 'crates/transport-quic/v[0-9].[0-9]+.[0-9]+'
+      - 'crates/transport-quic/v[0-9].[0-9]+.[0-9]+-*'
+      - 'crates/transport/v[0-9].[0-9]+.[0-9]+'
+      - 'crates/transport/v[0-9].[0-9]+.[0-9]+-*'
+      - 'crates/wasmtime-nats-cli/v[0-9].[0-9]+.[0-9]+'
+      - 'crates/wasmtime-nats-cli/v[0-9].[0-9]+.[0-9]+-*'
+      - 'crates/wit-bindgen/v[0-9].[0-9]+.[0-9]+'
+      - 'crates/wit-bindgen/v[0-9].[0-9]+.[0-9]+-*'
+      - 'crates/wit-bindgen-go/v[0-9].[0-9]+.[0-9]+'
+      - 'crates/wit-bindgen-go/v[0-9].[0-9]+.[0-9]+-*'
+      - 'crates/wit-bindgen-rust/v[0-9].[0-9]+.[0-9]+'
+      - 'crates/wit-bindgen-rust/v[0-9].[0-9]+.[0-9]+-*'
+      - 'crates/wit-bindgen-rust-macro/v[0-9].[0-9]+.[0-9]+'
+      - 'crates/wit-bindgen-rust-macro/v[0-9].[0-9]+.[0-9]+-*'
       - 'v[0-9].[0-9]+.[0-9]+'
       - 'v[0-9].[0-9]+.[0-9]+-*'
   workflow_dispatch:
@@ -150,6 +166,74 @@ jobs:
         if: ${{ matrix.check }} == "nextest" 
       - run: nix build -L .#checks.x86_64-linux.${{ matrix.check }}
 
+  crates:
+    strategy:
+      matrix:
+        include:
+          - crate: cli
+
+          - crate: introspect
+
+          - crate: runtime-wasmtime
+            workspace-dependencies: true
+
+          - crate: transport
+
+          - crate: transport-nats
+            workspace-dependencies: true
+
+          - crate: transport-quic
+            workspace-dependencies: true
+
+          - crate: wasmtime-nats-cli
+            workspace-dependencies: true
+
+          - crate: wit-bindgen
+            workspace-dependencies: true
+
+          - crate: wit-bindgen-go
+            workspace-dependencies: true
+
+          - crate: wit-bindgen-rust
+            workspace-dependencies: true
+
+          - crate: wit-bindgen-rust-macro
+            workspace-dependencies: true
+
+    name: publish ${{ matrix.crate }} to crates.io
+    needs: cargo
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
+
+      - name: Extract tag context
+        id: ctx
+        run: |
+          version=${GITHUB_REF_NAME#crates/${{ matrix.crate }}/v}
+          echo "version is ${version}"
+          if [[ $version == *"-"* ]]; then
+            echo "version ${version} is a pre-release"
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: dry-run publish ${{ matrix.crate }} to crates.io
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        continue-on-error: ${{ matrix.workspace-dependencies }} # publish may fail due to workspace crates not being published yet
+        run: cargo publish --dry-run
+        working-directory: ./crates/${{ matrix.crate }}
+
+      - name: publish ${{ matrix.crate }} to crates.io
+        if: startsWith(github.ref, format('refs/tags/crates/{0}/v', matrix.crate)) && !steps.ctx.outputs.prerelease
+        continue-on-error: ${{ github.repository_owner != 'wrpc' }}
+        run: |
+          pkgver=$(cargo pkgid | cut -d '@' -f 2)
+          if ![ "$pkgver" = "${{ steps.ctx.outputs.version }}" ]; then
+            echo "version mismatch, $pkgver (package) != ${{ steps.ctx.outputs.version }} (tag)"
+            exit 1
+          fi
+          cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        working-directory: ./crates/${{ matrix.crate }}
+
   build-doc:
     runs-on: ubuntu-latest
     steps:
@@ -265,6 +349,7 @@ jobs:
       - build-doc
       - build-lipo
       - cargo
+      - crates
       - oci
       - test-linux
       - test-windows
@@ -273,9 +358,31 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
+
+      - name: Extract tag context
+        id: ctx
+        run: |
+          version=${GITHUB_REF_NAME#v}
+          echo "version is ${version}"
+          if [[ $version == *"-"* ]]; then
+            echo "version ${version} is a pre-release"
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: publish wRPC to crates.io
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          pkgver=$(cargo pkgid | cut -d '@' -f 2)
+          if ![ "$pkgver" = "${{ steps.ctx.outputs.version }}" ]; then
+            echo "version mismatch, $pkgver (package) != ${{ steps.ctx.outputs.version }} (tag)"
+            exit 1
+          fi
+          cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
       - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
         with:
           path: artifacts
+
       - run: |
           for dir in ./artifacts/wrpc-*; do
             target=${dir#./artifacts/wrpc-}
@@ -306,45 +413,3 @@ jobs:
             ./wit-bindgen-wrpc/*
             ./wrpc-wasmtime-nats/*
 
-  crates:
-    strategy:
-      matrix:
-        include:
-          - crate: introspect
-
-          - crate: runtime-wasmtime
-            workspace-dependencies: true
-
-          - crate: transport
-            workspace-dependencies: true
-
-          - crate: transport-nats
-            workspace-dependencies: true
-
-    name: publish ${{ matrix.crate }} to crates.io
-    needs: cargo
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
-
-      - name: Extract tag context
-        id: ctx
-        run: |
-          version=${GITHUB_REF_NAME#${{ matrix.crate }}-v}
-          echo "version is ${version}"
-          if [[ $version == *"-"* ]]; then
-            echo "version ${version} is a pre-release"
-            echo "prerelease=true" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: dry-run publish ${{ matrix.crate }} to crates.io
-        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
-        continue-on-error: ${{ matrix.workspace-dependencies }} # publish may fail due to workspace crates not being published yet
-        run: cargo publish --dry-run
-        working-directory: ./crates/${{ matrix.crate }}
-
-      - name: publish ${{ matrix.crate }} to crates.io
-        if: startsWith(github.ref, format('refs/tags/{0}-v', matrix.crate)) && !steps.ctx.outputs.prerelease
-        continue-on-error: ${{ github.repository_owner != 'wrpc' }}
-        run: cargo publish --token ${{ secrets.CRATES_PUBLISH_TOKEN }}
-        working-directory: ./crates/${{ matrix.crate }}
