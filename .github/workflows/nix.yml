@@ -4,6 +4,8 @@ on:
   merge_group:
   pull_request:
   push:
+    branches:
+      - main
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -19,15 +21,17 @@ jobs:
         cachixAuthToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
     - run: nix fmt
 
-  run:
+  shell:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
     - uses: ./.github/actions/install-nix
       with:
         cachixAuthToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
-    - run: nix run -L . -- --version
-      continue-on-error: true # TODO: fix
+    - run: |
+        nix profile install
+        wit-bindgen-wrpc --version
+        wrpc-wasmtime-nats --version
 
   develop:
     runs-on: ubuntu-latest
