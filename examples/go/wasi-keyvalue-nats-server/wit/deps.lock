@@ -1,0 +1,4 @@
+[keyvalue]
+url = "https://github.com/WebAssembly/wasi-keyvalue/archive/main.tar.gz"
+sha256 = "d2de617fe31ec0abc6072f75f97dd22bf95b3231d5b3111471d73871df9081cd"
+sha512 = "6f0b4e44c684d760c54552e2bde9bc976e0a4f6525fc1d47acb98625e030847276436242f42a41f4da1bb9169fb2968c53d659d61af9b2f709f4eb6f9880e2c7"
