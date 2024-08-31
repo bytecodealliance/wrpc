@@ -1,0 +1,5 @@
+package wrpc-examples:wasi-keyvalue-nats-server;
+
+world server {
+    export wasi:keyvalue/store@0.2.0-draft;
+}
