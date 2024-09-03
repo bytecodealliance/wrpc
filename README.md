@@ -37,6 +37,57 @@ For static use cases, wRPC provides [WIT] binding generators for:
 
 wRPC fully supports the unreleased native [WIT] `stream` and `future` data types along with all currently released WIT functionality.
 
+## Quickstart
+
+Here is a guide demonstrating how to bootstrap the Wasm component based example implemented by
+[examples/rust/hello-component-server](examples/rust/hello-component-server) and 
+[examples/rust/hello-component-client](examples/rust/hello-component-client).
+
+> There are 2 different kinds of examples
+> - Native wRPC applications, using a particular wRPC transport (currently, NATS only)
+> - Generic Wasm components, that run in a Wasm runtime
+
+### Generic Wasm components example
+
+#### Requirement
+- `docker` >= 24.0.6 or `nats-server` >= 2.10.20
+- `rust` >= 1.80.1
+
+#### How-To
+1. Add the `wasm32-wasi` target
+    ```bash
+    rustup target add wasm32-wasip1
+    ```
+1. Build the server WASM component
+    ```bash
+    cargo build --release -p hello-component-server --target wasm32-wasip1
+    ```
+    > Output is target/wasm32-wasi/release/hello_component_server.wasm.
+1. Build the client WASM component
+    ```bash
+    cargo build --release -p hello-component-client --target wasm32-wasip1
+    ```
+    > Output is target/wasm32-wasi/release/hello-component-client.wasm.
+1. Run NATS service
+    - Using docker
+        ```bash
+        docker run --rm -it --name nats-server -p 4222:4222 nats:2.10.20-alpine3.20
+        ```
+    - Or run NATS server directly by following the instructions [here](https://docs.nats.io/running-a-nats-service/introduction/running)
+1. Serve the server WASM component
+    ```bash
+    cargo run --release --bin wrpc-wasmtime-nats -- serve -g hello rust rust ./target/wasm32-wasip1/release/hello_component_server.wasm
+    ```
+1. Call the server WASM component from the client WASM component
+    ```bash
+    cargo run --release --bin wrpc-wasmtime-nats -- run rust ./target/wasm32-wasip1/release/hello-component-client.wasm
+    ```
+    Sample output in client side goes as
+    ```bash
+    INFO async_nats_wrpc: event: connected
+    hello from Rust
+    ```
+
 ## Design
 
 ### Transport
