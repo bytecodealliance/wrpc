@@ -39,53 +39,102 @@ wRPC fully supports the unreleased native [WIT] `stream` and `future` data types
 
 ## Quickstart
 
-Here is a guide demonstrating how to bootstrap the Wasm component based example implemented by
-[examples/rust/hello-component-server](examples/rust/hello-component-server) and 
-[examples/rust/hello-component-client](examples/rust/hello-component-client).
+wRPC usage examples for different programming languages can be found at [./examples](./examples).
 
-> There are 2 different kinds of examples
-> - Native wRPC applications, using a particular wRPC transport (currently, NATS only)
-> - Generic Wasm components, that run in a Wasm runtime
+There are 2 different kinds of examples:
+- Native wRPC applications, tied to a particular wRPC transport (currently, NATS only)
+- Generic Wasm components, that need to run in a Wasm runtime. Those can be executed, for example, using `wrpc-wasmtime-nats`, to polyfill imports at runtime and serve exports using wRPC.
 
-### Generic Wasm components example
+Here is a guide demonstrating how to bootstrap the Rust Wasm component example implemented by:
+- [examples/rust/hello-component-server](examples/rust/hello-component-server)
+- [examples/rust/hello-component-client](examples/rust/hello-component-client)
 
-#### Requirement
-- `docker` >= 24.0.6 or `nats-server` >= 2.10.20
+### `hello` example
+
+In this example we will serve and invoke a simple [`hello`](./examples/wit/hello/hello.wit) application
+
+#### Requirements
+- `nats-server` >= 2.10.20 or `docker` >= 24.0.6 (or any other OCI runtime)
 - `rust` >= 1.80.1
 
 #### How-To
-1. Add the `wasm32-wasi` target
-    ```bash
-    rustup target add wasm32-wasip1
-    ```
-1. Build the server WASM component
-    ```bash
-    cargo build --release -p hello-component-server --target wasm32-wasip1
-    ```
-    > Output is target/wasm32-wasi/release/hello_component_server.wasm.
-1. Build the client WASM component
-    ```bash
+
+In this example we will be using `wasm32-wasip1` target, which is available in stable Rust and configured in [`rust-toolchain.toml`](./rust-toolchain.toml) in the root of this repository. [`wasm32-wasip2`](https://doc.rust-lang.org/nightly/rustc/platform-support/wasm32-wasip2.html) can be used as well.
+
+1. Build the client Wasm component:
+    ```sh
     cargo build --release -p hello-component-client --target wasm32-wasip1
     ```
-    > Output is target/wasm32-wasi/release/hello-component-client.wasm.
-1. Run NATS service
-    - Using docker
-        ```bash
-        docker run --rm -it --name nats-server -p 4222:4222 nats:2.10.20-alpine3.20
-        ```
-    - Or run NATS server directly by following the instructions [here](https://docs.nats.io/running-a-nats-service/introduction/running)
-1. Serve the server WASM component
-    ```bash
-    cargo run --release --bin wrpc-wasmtime-nats -- serve -g hello rust rust ./target/wasm32-wasip1/release/hello_component_server.wasm
+
+> Output is in target/wasm32-wasip1/release/hello-component-client.wasm
+
+1. Build the server Wasm component:
+    ```sh
+    cargo build --release -p hello-component-server --target wasm32-wasip1
     ```
-1. Call the server WASM component from the client WASM component
-    ```bash
-    cargo run --release --bin wrpc-wasmtime-nats -- run rust ./target/wasm32-wasip1/release/hello-component-client.wasm
+
+> Output is in target/wasm32-wasip1/release/hello_component_server.wasm
+> NB: Rust uses `_` separators in the filename, because a component is built as a reactor-style library
+
+1. Build the wRPC Wasm runtime:
+    ```sh
+    cargo build --release --bin wrpc-wasmtime-nats
     ```
-    Sample output in client side goes as
-    ```bash
-    INFO async_nats_wrpc: event: connected
-    hello from Rust
+
+> Output is in target/release/wrpc-wasmtime-nats or target/release/wrpc-wasmtime-nats.exe on Windows
+
+1. Run NATS (more thorough documentation available [here](https://docs.nats.io/running-a-nats-service/introduction/running)):
+    ```sh
+    nats-server
+    ```
+
+    - (optional) using Docker:
+    ```sh
+    docker run --rm -it --name nats-server -p 4222:4222 nats:2.10.20-alpine3.20
+    ```
+
+1. Serve the `hello` application using the Wasm component:
+    ```sh
+    ./target/release/wrpc-wasmtime-nats serve rust rust ./target/wasm32-wasip1/release/hello_component_server.wasm
+    ```
+
+Sample output:
+> INFO async_nats: event: connected
+> INFO wrpc_wasmtime_nats_cli: serving instance function name="hello"
+
+1. Call the server Wasm component from the client Wasm component:
+    ```sh
+    ./target/release/wrpc-wasmtime-nats run rust ./target/wasm32-wasip1/release/hello-component-client.wasm
+    ```
+
+Sample output in the client:
+> INFO async_nats: event: connected
+>hello from Rust
+
+Sample output in the server:
+> INFO wrpc_wasmtime_nats_cli: serving instance function invocation headers=None
+> INFO wrpc_wasmtime_nats_cli: successfully served instance function invocation
+
+1. Call the server Wasm component using a native wRPC client application:
+    ```sh
+    cargo run -p hello-nats-client
+    ```
+
+1. Serve the `hello` using a native wRPC server application:
+    ```sh
+    cargo run -p hello-nats-server native
+    ```
+
+    It can be called using either the component client or a native wRPC client
+
+1. Call both the native wRPC `hello` server and component wRPC `hello` server using a native wRPC client application:
+    ```sh
+    cargo run -p hello-nats-client rust native
+    ```
+
+1. Call native wRPC `hello` server using the client Wasm component
+    ```sh
+    ./target/release/wrpc-wasmtime-nats run native ./target/wasm32-wasip1/release/hello-component-client.wasm
     ```
 
 ## Design
