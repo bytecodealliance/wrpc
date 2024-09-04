@@ -3637,7 +3637,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc"
-version = "0.9.0"
+version = "0.9.1"
 dependencies = [
  "anyhow",
  "async-nats",
@@ -3718,7 +3718,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc-transport-nats"
-version = "0.22.3"
+version = "0.22.4"
 dependencies = [
  "anyhow",
  "async-nats",
@@ -3753,7 +3753,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc-wasmtime-nats-cli"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "anyhow",
  "async-nats",
