@@ -250,7 +250,7 @@ jobs:
         continue-on-error: ${{ github.repository_owner != 'wrpc' }}
         run: |
           pkgver=$(cargo pkgid | cut -d '@' -f 2)
-          if ![ "$pkgver" = "${{ steps.ctx.outputs.version }}" ]; then
+          if ! [ "$pkgver" = "${{ steps.ctx.outputs.version }}" ]; then
             echo "version mismatch, $pkgver (package) != ${{ steps.ctx.outputs.version }} (tag)"
             exit 1
           fi
