@@ -1,6 +1,6 @@
 [package]
 name = "wrpc-wasmtime-nats-cli"
-version = "0.6.0"
+version = "0.6.1"
 description = "wRPC Wasmtime NATS CLI"
 
 authors.workspace = true
