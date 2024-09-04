@@ -1,7 +1,7 @@
 [package]
 description = "WebAssembly component-native RPC framework based on WIT"
 name = "wrpc"
-version = "0.9.1"
+version = "0.10.0"
 
 authors.workspace = true
 categories.workspace = true
@@ -140,6 +140,6 @@ wrpc-cli = { version = "0.3", path = "./crates/cli", default-features = false }
 wrpc-introspect = { version = "0.3", default-features = false, path = "./crates/introspect" }
 wrpc-runtime-wasmtime = { version = "0.21", path = "./crates/runtime-wasmtime", default-features = false }
 wrpc-transport = { version = "0.26.7", path = "./crates/transport", default-features = false }
-wrpc-transport-nats = { version = "0.22.4", path = "./crates/transport-nats", default-features = false }
+wrpc-transport-nats = { version = "0.23", path = "./crates/transport-nats", default-features = false }
 wrpc-transport-quic = { version = "0.1.1", path = "./crates/transport-quic", default-features = false }
-wrpc-wasmtime-nats-cli = { version = "0.6.1", path = "./crates/wasmtime-nats-cli", default-features = false }
+wrpc-wasmtime-nats-cli = { version = "0.7", path = "./crates/wasmtime-nats-cli", default-features = false }
