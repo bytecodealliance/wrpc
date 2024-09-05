@@ -248,7 +248,7 @@ jobs:
 
       - name: publish ${{ matrix.crate }} to crates.io
         if: startsWith(github.ref, format('refs/tags/crates/{0}/v', matrix.crate)) && !steps.ctx.outputs.prerelease
-        continue-on-error: ${{ github.repository_owner != 'wrpc' }}
+        continue-on-error: ${{ github.repository_owner != 'bytecodealliance' }}
         run: |
           pkgver=$(cargo pkgid | cut -d '@' -f 2)
           tagver="${{ steps.ctx.outputs.version }}"
@@ -356,14 +356,14 @@ jobs:
 
       - name: Push `wrpc` version tag
         if: startswith(github.ref, format('refs/tags/{0}v', matrix.prefix))
-        continue-on-error: ${{ github.repository_owner != 'wrpc' }}
+        continue-on-error: ${{ github.repository_owner != 'bytecodealliance' }}
         run: |
           buildah manifest push --all --format 'v2s2' wrpc docker://ghcr.io/${{ steps.ctx.outputs.owner }}/wrpc:${{ steps.ctx.outputs.version }}
           docker run --rm ghcr.io/${{ steps.ctx.outputs.owner }}/wrpc:${{ steps.ctx.outputs.version }} wit-bindgen-wrpc --version
 
       - name: Push `wrpc` `latest` tag
         if: startswith(github.ref, format('refs/tags/{0}v', matrix.prefix)) && !steps.ctx.outputs.prerelease
-        continue-on-error: ${{ github.repository_owner != 'wrpc' }}
+        continue-on-error: ${{ github.repository_owner != 'bytecodealliance' }}
         run: |
           buildah manifest push --all --format 'v2s2' wrpc docker://ghcr.io/${{ steps.ctx.outputs.owner }}/wrpc:latest
           docker run --rm ghcr.io/${{ steps.ctx.outputs.owner }}/wrpc:latest wit-bindgen-wrpc --version
