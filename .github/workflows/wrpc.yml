@@ -233,6 +233,7 @@ jobs:
         id: ctx
         run: |
           version=${GITHUB_REF_NAME#crates/${{ matrix.crate }}/v}
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
           echo "version is ${version}"
           if [[ $version == *"-"* ]]; then
             echo "version ${version} is a pre-release"
@@ -250,7 +251,7 @@ jobs:
         continue-on-error: ${{ github.repository_owner != 'wrpc' }}
         run: |
           pkgver=$(cargo pkgid | cut -d '@' -f 2)
-          tagver=${{ steps.ctx.outputs.version }}
+          tagver="${{ steps.ctx.outputs.version }}"
           if ! [ "$pkgver" = "$tagver" ]; then
             echo "version mismatch, $pkgver (package) != $tagver (tag)"
             exit 1
@@ -388,6 +389,7 @@ jobs:
         id: ctx
         run: |
           version=${GITHUB_REF_NAME#v}
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
           echo "version is ${version}"
           if [[ $version == *"-"* ]]; then
             echo "version ${version} is a pre-release"
@@ -397,8 +399,9 @@ jobs:
       - name: publish wRPC to crates.io
         run: |
           pkgver=$(cargo pkgid | cut -d '@' -f 2)
-          if ![ "$pkgver" = "${{ steps.ctx.outputs.version }}" ]; then
-            echo "version mismatch, $pkgver (package) != ${{ steps.ctx.outputs.version }} (tag)"
+          tagver="${{ steps.ctx.outputs.version }}"
+          if ![ "$pkgver" = "$tagver" ]; then
+            echo "version mismatch, $pkgver (package) != $tagver (tag)"
             exit 1
           fi
           cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
