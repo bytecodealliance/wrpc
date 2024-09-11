@@ -3682,6 +3682,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "wrpc-pack"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "tokio",
+ "tokio-util",
+ "wrpc-transport",
+]
+
+[[package]]
 name = "wrpc-runtime-wasmtime"
 version = "0.21.0"
 dependencies = [
