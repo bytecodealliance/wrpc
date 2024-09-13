@@ -11,6 +11,8 @@ on:
       - 'crates/cli/v[0-9].[0-9]+.[0-9]+-*'
       - 'crates/introspect/v[0-9].[0-9]+.[0-9]+'
       - 'crates/introspect/v[0-9].[0-9]+.[0-9]+-*'
+      - 'crates/pack/v[0-9].[0-9]+.[0-9]+'
+      - 'crates/pack/v[0-9].[0-9]+.[0-9]+-*'
       - 'crates/runtime-wasmtime/v[0-9].[0-9]+.[0-9]+'
       - 'crates/runtime-wasmtime/v[0-9].[0-9]+.[0-9]+-*'
       - 'crates/transport-nats/v[0-9].[0-9]+.[0-9]+'
@@ -21,14 +23,14 @@ on:
       - 'crates/transport/v[0-9].[0-9]+.[0-9]+-*'
       - 'crates/wasmtime-nats-cli/v[0-9].[0-9]+.[0-9]+'
       - 'crates/wasmtime-nats-cli/v[0-9].[0-9]+.[0-9]+-*'
-      - 'crates/wit-bindgen/v[0-9].[0-9]+.[0-9]+'
-      - 'crates/wit-bindgen/v[0-9].[0-9]+.[0-9]+-*'
       - 'crates/wit-bindgen-go/v[0-9].[0-9]+.[0-9]+'
       - 'crates/wit-bindgen-go/v[0-9].[0-9]+.[0-9]+-*'
-      - 'crates/wit-bindgen-rust/v[0-9].[0-9]+.[0-9]+'
-      - 'crates/wit-bindgen-rust/v[0-9].[0-9]+.[0-9]+-*'
       - 'crates/wit-bindgen-rust-macro/v[0-9].[0-9]+.[0-9]+'
       - 'crates/wit-bindgen-rust-macro/v[0-9].[0-9]+.[0-9]+-*'
+      - 'crates/wit-bindgen-rust/v[0-9].[0-9]+.[0-9]+'
+      - 'crates/wit-bindgen-rust/v[0-9].[0-9]+.[0-9]+-*'
+      - 'crates/wit-bindgen/v[0-9].[0-9]+.[0-9]+'
+      - 'crates/wit-bindgen/v[0-9].[0-9]+.[0-9]+-*'
       - 'v[0-9].[0-9]+.[0-9]+'
       - 'v[0-9].[0-9]+.[0-9]+-*'
   workflow_dispatch:
@@ -196,6 +198,9 @@ jobs:
           - crate: cli
 
           - crate: introspect
+
+          - crate: pack
+            workspace-dependencies: true
 
           - crate: runtime-wasmtime
             workspace-dependencies: true
