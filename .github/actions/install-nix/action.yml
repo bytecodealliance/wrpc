@@ -2,7 +2,7 @@ name: install Nix
 
 inputs:
   cachixAuthToken:
-    description: auth token for https://app.cachix.org/organization/wasmcloud/cache/wrpc
+    description: auth token for https://app.cachix.org/organization/wasmcloud/cache/bytecodealliance
 
 runs:
   using: composite
