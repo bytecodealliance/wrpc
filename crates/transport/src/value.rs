@@ -17,7 +17,7 @@ use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinSet;
 use tokio::{select, try_join};
 use tokio_stream::wrappers::ReceiverStream;
-use tokio_util::codec::{Encoder as _, FramedRead};
+use tokio_util::codec::{Decoder, Encoder as _, FramedRead};
 use tokio_util::io::StreamReader;
 use tracing::{instrument, trace};
 use wasm_tokio::cm::{
@@ -260,6 +260,15 @@ impl_deferred_sync!(CoreVecDecoder<Leb128DecoderU64>);
 impl_deferred_sync!(CoreVecDecoder<Leb128DecoderI128>);
 impl_deferred_sync!(CoreVecDecoder<Leb128DecoderU128>);
 impl_deferred_sync!(CoreVecDecoder<UnitCodec>);
+
+impl<T, W> Deferred<T> for CoreVecDecoder<OptionDecoder<W>>
+where
+    W: Deferred<T> + Decoder,
+{
+    fn take_deferred(&mut self) -> Option<DeferredFn<T>> {
+        None
+    }
+}
 
 pub struct SyncCodec<T>(pub T);
 

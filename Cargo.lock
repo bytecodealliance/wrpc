@@ -3637,7 +3637,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc"
-version = "0.10.0"
+version = "0.10.1"
 dependencies = [
  "anyhow",
  "async-nats",
@@ -3713,7 +3713,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc-transport"
-version = "0.26.7"
+version = "0.27.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -3855,3 +3855,8 @@ dependencies = [
  "cc",
  "pkg-config",
 ]
+
+[[patch.unused]]
+name = "wasm-tokio"
+version = "0.6.0"
+source = "git+https://github.com/thomastaylor312/wasm-tokio.git?branch=fix/missing_impls#d07b15ba9641f5b7b87fd8e6221e532d0e54d8d9"
