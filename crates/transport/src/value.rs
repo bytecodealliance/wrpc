@@ -495,9 +495,10 @@ where
 impl<T, R> Decode<R> for Option<T>
 where
     T: Decode<R>,
+    R: crate::Index<R> + Send + 'static,
 {
     type Decoder = OptionDecoder<T::Decoder>;
-    type ListDecoder = CoreVecDecoder<Self::Decoder>;
+    type ListDecoder = ListDecoder<Self::Decoder, R>;
 }
 
 impl<O, E, W> Deferred<W> for ResultEncoder<O, E>
@@ -567,11 +568,12 @@ impl<O, E, R> Decode<R> for Result<O, E>
 where
     O: Decode<R>,
     E: Decode<R>,
+    R: crate::Index<R> + Send + 'static,
     std::io::Error: From<<O::Decoder as tokio_util::codec::Decoder>::Error>,
     std::io::Error: From<<E::Decoder as tokio_util::codec::Decoder>::Error>,
 {
     type Decoder = ResultDecoder<O::Decoder, E::Decoder>;
-    type ListDecoder = CoreVecDecoder<Self::Decoder>;
+    type ListDecoder = ListDecoder<Self::Decoder, R>;
 }
 
 pub struct ListEncoder<W> {

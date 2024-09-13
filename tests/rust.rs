@@ -613,7 +613,7 @@ where
                 .await
                 .expect("failed to accept invocation")
                 .expect("unexpected end of stream");
-            let (a, b, c, d, e, f, g, h, i, j, k, l, m, n): (
+            let (a, b, c, d, e, f, g, h, i, j, k, l, m, n, o): (
                 bool,
                 u8,
                 u16,
@@ -628,6 +628,7 @@ where
                 char,
                 String,
                 Vec<Vec<Vec<u8>>>,
+                Vec<Option<Vec<Result<Option<String>, ()>>>>,
             ) = params;
             assert!(rx.is_none());
             assert!(a);
@@ -644,6 +645,7 @@ where
             assert_eq!(l, 'a');
             assert_eq!(m, "test");
             assert_eq!(n, [[b"foo"]]);
+            assert_eq!(o, [Some(vec![Ok(Some(String::from("bar")))])]);
             info!("transmitting `test.sync` returns");
             tx((
                 true,
@@ -660,6 +662,7 @@ where
                 'a',
                 "test",
                 vec![vec!["foo".as_bytes()]],
+                vec![Some(vec![Ok::<_, ()>(Some(String::from("bar")))])],
             ))
             .await
             .expect("failed to send response");
@@ -689,12 +692,13 @@ where
                         ),
                         "test",
                         vec![vec!["foo".as_bytes()]],
+                        vec![Some(vec![Ok::<_, ()>(Some(String::from("bar")))])],
                     ),
                     &[[]; 0],
                 )
                 .await
                 .expect("failed to invoke `test.sync`");
-            let (a, b, c, d, e, f, g, h, i, j, k, l, m, n): (
+            let (a, b, c, d, e, f, g, h, i, j, k, l, m, n, o): (
                 bool,
                 u8,
                 u16,
@@ -709,6 +713,7 @@ where
                 char,
                 String,
                 Vec<Vec<Vec<u8>>>,
+                Vec<Option<Vec<Result<Option<String>, ()>>>>,
             ) = returns;
             assert!(a);
             assert_eq!(b, 0xfe);
@@ -724,6 +729,7 @@ where
             assert_eq!(l, 'a');
             assert_eq!(m, "test");
             assert_eq!(n, [[b"foo"]]);
+            assert_eq!(o, [Some(vec![Ok(Some(String::from("bar")))])]);
             info!("finishing `test.sync` session");
         }
         .instrument(info_span!("client")),
