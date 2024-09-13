@@ -1,6 +1,6 @@
 [package]
 name = "wrpc-transport"
-version = "0.26.7"
+version = "0.26.8"
 description = "wRPC core transport functionality"
 
 authors.workspace = true
