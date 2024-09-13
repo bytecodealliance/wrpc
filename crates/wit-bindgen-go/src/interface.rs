@@ -2555,7 +2555,7 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
                     self.src,
                     r#"
         if err != nil {{
-            {slog}.WarnContext(ctx, "failed to write result value", "i", {i}, "{instance}", "name", "{name}", "err", err)
+            {slog}.WarnContext(ctx, "failed to write result value", "i", {i}, "instance", "{instance}", "name", "{name}", "err", err)
             return
         }}
         if write{i} != nil {{
@@ -2569,21 +2569,21 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
         {slog}.DebugContext(ctx, "transmitting `{instance}.{name}` result")
         _, err = w.Write(buf.Bytes())
         if err != nil {{
-            {slog}.WarnContext(ctx, "failed to write result", "{instance}", "name", "{name}", "err", err)
+            {slog}.WarnContext(ctx, "failed to write result", "instance", "{instance}", "name", "{name}", "err", err)
             return
         }}
         if len(writes) > 0 {{
             for index, write := range writes {{
                 w, err := w.Index(index)
                 if err != nil {{
-                    {slog}.ErrorContext(ctx, "failed to index writer", "index", index, "{instance}", "name", "{name}", "err", err)
+                    {slog}.ErrorContext(ctx, "failed to index writer", "index", index, "instance", "{instance}", "name", "{name}", "err", err)
                     return
                 }}
                 index := index
                 write := write
                 go func() {{
                     if err := write(w); err != nil {{
-                        {slog}.WarnContext(ctx, "failed to write nested result value", "index", index, "{instance}", "name", "{name}", "err", err)
+                        {slog}.WarnContext(ctx, "failed to write nested result value", "index", index, "instance", "{instance}", "name", "{name}", "err", err)
                     }}
                 }}()
             }}
