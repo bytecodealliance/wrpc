@@ -17,99 +17,119 @@ import (
 	wrpcnats "wrpc.io/go/nats"
 )
 
-var _ store.Handler = &Handler{}
+var (
+	errNoSuchStore     = store.NewErrorNoSuchStore()
+	errInvalidDataType = store.NewErrorOther("invalid data type stored in map")
+)
 
 type Handler struct {
-	data map[Bucket]map[string][]uint8
-	lock sync.Mutex
+	sync.Map
 }
 
-type Bucket string
+func Ok[T any](v T) *wrpc.Result[T, store.Error] {
+	return wrpc.Ok[store.Error](v)
+}
 
 func (h *Handler) Open(ctx context.Context, identifier string) (*wrpc.Result[wrpc.Own[store.Bucket], store.Error], error) {
-	h.lock.Lock()
-	defer h.lock.Unlock()
-
-	if h.data == nil {
-		h.data = make(map[Bucket]map[string][]uint8)
-	}
-	bucket := (Bucket)(identifier)
-	if _, ok := h.data[bucket]; !ok {
-		h.data[bucket] = make(map[string][]uint8)
-	}
-	return wrpc.Ok[store.Error, wrpc.Own[store.Bucket]](wrpc.Own[store.Bucket](bucket)), nil
+	slog.InfoContext(ctx, "handling `wasi:keyvalue/store.open`", "identifier", identifier)
+	h.LoadOrStore(string(identifier), &sync.Map{})
+	return Ok(wrpc.Own[store.Bucket](identifier)), nil
 }
 
-func (h *Handler) Bucket_Get(ctx__ context.Context, self wrpc.Borrow[store.Bucket], key string) (*wrpc.Result[[]uint8, store.Error], error) {
-	h.lock.Lock()
-	defer h.lock.Unlock()
-
-	bucket := (Bucket)(self)
-	if _, ok := h.data[bucket]; !ok {
-		err := store.NewErrorNoSuchStore()
-		return wrpc.Err[[]uint8, store.Error](*err), err
-	}
-	value, ok := h.data[bucket][key]
+func (h *Handler) Bucket_Get(ctx context.Context, bucket wrpc.Borrow[store.Bucket], key string) (*wrpc.Result[[]byte, store.Error], error) {
+	slog.InfoContext(ctx, "handling `wasi:keyvalue/store.bucket.get`", "bucket", bucket, "key", key)
+	v, ok := h.Load(string(bucket))
 	if !ok {
-		return wrpc.Ok[store.Error, []uint8](nil), nil
+		return wrpc.Err[[]byte](*errNoSuchStore), nil
 	}
-	return wrpc.Ok[store.Error, []uint8](value), nil
+	b, ok := v.(*sync.Map)
+	if !ok {
+		return wrpc.Err[[]byte](*errInvalidDataType), nil
+	}
+	v, ok = b.Load(key)
+	if !ok {
+		return Ok([]byte(nil)), nil
+	}
+	buf, ok := v.([]byte)
+	if !ok {
+		return wrpc.Err[[]byte](*errInvalidDataType), nil
+	}
+	return Ok(buf), nil
 }
 
-func (h *Handler) Bucket_Set(ctx__ context.Context, self wrpc.Borrow[store.Bucket], key string, value []uint8) (*wrpc.Result[struct{}, store.Error], error) {
-	h.lock.Lock()
-	defer h.lock.Unlock()
-
-	bucket := (Bucket)(self)
-	if _, ok := h.data[bucket]; !ok {
-		err := store.NewErrorNoSuchStore()
-		return wrpc.Err[struct{}, store.Error](*err), err
+func (h *Handler) Bucket_Set(ctx context.Context, bucket wrpc.Borrow[store.Bucket], key string, value []byte) (*wrpc.Result[struct{}, store.Error], error) {
+	slog.InfoContext(ctx, "handling `wrpc:keyvalue/store.bucket.set`", "bucket", bucket, "key", key, "value", value)
+	v, ok := h.Load(string(bucket))
+	if !ok {
+		return wrpc.Err[struct{}](*errNoSuchStore), nil
 	}
-	h.data[bucket][key] = value
-	return wrpc.Ok[store.Error, struct{}](struct{}{}), nil
+	b, ok := v.(*sync.Map)
+	if !ok {
+		return wrpc.Err[struct{}](*errInvalidDataType), nil
+	}
+	b.Store(key, value)
+	return Ok(struct{}{}), nil
 }
 
-func (h *Handler) Bucket_Delete(ctx__ context.Context, self wrpc.Borrow[store.Bucket], key string) (*wrpc.Result[struct{}, store.Error], error) {
-	h.lock.Lock()
-	defer h.lock.Unlock()
-
-	bucket := (Bucket)(self)
-	if _, ok := h.data[bucket]; !ok {
-		err := store.NewErrorNoSuchStore()
-		return wrpc.Err[struct{}, store.Error](*err), err
+func (h *Handler) Bucket_Delete(ctx context.Context, bucket wrpc.Borrow[store.Bucket], key string) (*wrpc.Result[struct{}, store.Error], error) {
+	slog.InfoContext(ctx, "handling `wrpc:keyvalue/store.bucket.delete`", "bucket", bucket, "key", key)
+	v, ok := h.Load(string(bucket))
+	if !ok {
+		return wrpc.Err[struct{}](*errNoSuchStore), nil
 	}
-	delete(h.data[bucket], key)
-
-	return wrpc.Ok[store.Error, struct{}](struct{}{}), nil
+	b, ok := v.(*sync.Map)
+	if !ok {
+		return wrpc.Err[struct{}](*errInvalidDataType), nil
+	}
+	b.Delete(key)
+	return Ok(struct{}{}), nil
 }
 
-func (h *Handler) Bucket_Exists(ctx__ context.Context, self wrpc.Borrow[store.Bucket], key string) (*wrpc.Result[bool, store.Error], error) {
-	h.lock.Lock()
-	defer h.lock.Unlock()
-
-	bucket := (Bucket)(self)
-	if _, ok := h.data[bucket]; !ok {
-		err := store.NewErrorNoSuchStore()
-		return wrpc.Err[bool, store.Error](*err), err
+func (h *Handler) Bucket_Exists(ctx context.Context, bucket wrpc.Borrow[store.Bucket], key string) (*wrpc.Result[bool, store.Error], error) {
+	slog.InfoContext(ctx, "handling `wrpc:keyvalue/store.bucket.exists`", "bucket", bucket, "key", key)
+	v, ok := h.Load(string(bucket))
+	if !ok {
+		return wrpc.Err[bool](*errNoSuchStore), nil
 	}
-	_, ok := h.data[bucket][key]
-	return wrpc.Ok[store.Error, bool](ok), nil
+	b, ok := v.(*sync.Map)
+	if !ok {
+		return wrpc.Err[bool](*errInvalidDataType), nil
+	}
+	_, ok = b.Load(key)
+	return Ok(ok), nil
 }
 
-func (h *Handler) Bucket_ListKeys(ctx__ context.Context, self wrpc.Borrow[store.Bucket], cursor *uint64) (*wrpc.Result[store.KeyResponse, store.Error], error) {
-	h.lock.Lock()
-	defer h.lock.Unlock()
-
-	bucket := (Bucket)(self)
-	if _, ok := h.data[bucket]; !ok {
-		err := store.NewErrorNoSuchStore()
-		return wrpc.Err[store.KeyResponse, store.Error](*err), err
+func (h *Handler) Bucket_ListKeys(ctx context.Context, bucket wrpc.Borrow[store.Bucket], cursor *uint64) (*wrpc.Result[store.KeyResponse, store.Error], error) {
+	slog.InfoContext(ctx, "handling `wrpc:keyvalue/store.bucket.list-keys`", "bucket", bucket, "cursor", cursor)
+	if cursor != nil {
+		return wrpc.Err[store.KeyResponse](*store.NewErrorOther("cursors are not supported")), nil
 	}
-	keyResponse := store.KeyResponse{Keys: []string{}}
-	for k := range h.data[bucket] {
-		keyResponse.Keys = append(keyResponse.Keys, k)
+	v, ok := h.Load(string(bucket))
+	if !ok {
+		return wrpc.Err[store.KeyResponse](*errNoSuchStore), nil
 	}
-	return wrpc.Ok[store.Error, store.KeyResponse](keyResponse), nil
+	b, ok := v.(*sync.Map)
+	if !ok {
+		return wrpc.Err[store.KeyResponse](*errInvalidDataType), nil
+	}
+	var keys []string
+	var err *store.Error
+	b.Range(func(k, _ any) bool {
+		s, ok := k.(string)
+		if !ok {
+			err = errInvalidDataType
+			return false
+		}
+		keys = append(keys, s)
+		return true
+	})
+	if err != nil {
+		return wrpc.Err[store.KeyResponse](*err), nil
+	}
+	return Ok(store.KeyResponse{
+		Keys:   keys,
+		Cursor: nil,
+	}), nil
 }
 
 func run() error {
@@ -131,7 +151,7 @@ func run() error {
 	client := wrpcnats.NewClient(nc, wrpcnats.WithPrefix("go"))
 	stop, err := server.Serve(client, &Handler{})
 	if err != nil {
-		return fmt.Errorf("failed to serve `keyvalue` world: %w", err)
+		return fmt.Errorf("failed to serve `server` world: %w", err)
 	}
 
 	signalCh := make(chan os.Signal, 1)
@@ -139,7 +159,7 @@ func run() error {
 	<-signalCh
 
 	if err = stop(); err != nil {
-		return fmt.Errorf("failed to stop `keyvalue` world: %w", err)
+		return fmt.Errorf("failed to stop `server` world: %w", err)
 	}
 	return nil
 }
