@@ -31,12 +31,6 @@ type ThrottleStream[T any] struct {
 	values []T
 }
 
-func (s *ThrottleStream[T]) IsComplete() bool {
-	// The stream has full contents available in `s.values`,
-	// but we return `false` to force async transmission
-	return false
-}
-
 func (s *ThrottleStream[T]) Receive() ([]T, error) {
 	if len(s.values) == 0 {
 		return nil, io.EOF
@@ -50,12 +44,6 @@ func (s *ThrottleStream[T]) Receive() ([]T, error) {
 type ThrottleReader struct {
 	tick *time.Ticker
 	buf  []byte
-}
-
-func (s *ThrottleReader) IsComplete() bool {
-	// The reader has full contents available in `s.buf`,
-	// but we return `false` to force async transmission
-	return false
 }
 
 func (s *ThrottleReader) Read(p []byte) (int, error) {
