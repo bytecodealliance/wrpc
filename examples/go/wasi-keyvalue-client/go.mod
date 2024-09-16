@@ -1,4 +1,4 @@
-module wrpc.io/examples/go/wasi-keyvalue-nats-client
+module wrpc.io/examples/go/wasi-keyvalue-client
 
 go 1.22.2
 

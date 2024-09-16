@@ -6,8 +6,8 @@ use (
 	./examples/go/resources-server
 	./examples/go/streams-client
 	./examples/go/streams-server
-	./examples/go/wasi-keyvalue-nats-client
-	./examples/go/wasi-keyvalue-nats-server
+	./examples/go/wasi-keyvalue-client
+	./examples/go/wasi-keyvalue-server
 	./go
 	./tests/go
 )
