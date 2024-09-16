@@ -1,14 +1,13 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"log/slog"
 	"os"
 
 	"github.com/nats-io/nats.go"
-	"wrpc.io/examples/go/hello-client/bindings/wrpc_examples/hello/handler"
+	app "wrpc.io/examples/go/hello-client"
 	wrpcnats "wrpc.io/go/nats"
 )
 
@@ -33,24 +32,11 @@ func run() (err error) {
 	}
 	for _, prefix := range prefixes {
 		client := wrpcnats.NewClient(nc, wrpcnats.WithPrefix(prefix))
-		greeting, err := handler.Hello(context.Background(), client)
-		if err != nil {
-			return fmt.Errorf("failed to call `wrpc-examples:hello/handler.hello`: %w", err)
+		if err := app.Run(prefix, client); err != nil {
+			return err
 		}
-		fmt.Printf("%s: %s\n", prefix, greeting)
 	}
 	return nil
-}
-
-func init() {
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
-		Level: slog.LevelInfo, ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
-			if a.Key == slog.TimeKey {
-				return slog.Attr{}
-			}
-			return a
-		},
-	})))
 }
 
 func main() {
