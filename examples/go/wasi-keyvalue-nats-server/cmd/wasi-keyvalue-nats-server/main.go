@@ -58,7 +58,7 @@ func (h *Handler) Bucket_Get(ctx context.Context, bucket wrpc.Borrow[store.Bucke
 }
 
 func (h *Handler) Bucket_Set(ctx context.Context, bucket wrpc.Borrow[store.Bucket], key string, value []byte) (*wrpc.Result[struct{}, store.Error], error) {
-	slog.InfoContext(ctx, "handling `wrpc:keyvalue/store.bucket.set`", "bucket", bucket, "key", key, "value", value)
+	slog.InfoContext(ctx, "handling `wasi:keyvalue/store.bucket.set`", "bucket", bucket, "key", key, "value", value)
 	v, ok := h.Load(string(bucket))
 	if !ok {
 		return wrpc.Err[struct{}](*errNoSuchStore), nil
@@ -72,7 +72,7 @@ func (h *Handler) Bucket_Set(ctx context.Context, bucket wrpc.Borrow[store.Bucke
 }
 
 func (h *Handler) Bucket_Delete(ctx context.Context, bucket wrpc.Borrow[store.Bucket], key string) (*wrpc.Result[struct{}, store.Error], error) {
-	slog.InfoContext(ctx, "handling `wrpc:keyvalue/store.bucket.delete`", "bucket", bucket, "key", key)
+	slog.InfoContext(ctx, "handling `wasi:keyvalue/store.bucket.delete`", "bucket", bucket, "key", key)
 	v, ok := h.Load(string(bucket))
 	if !ok {
 		return wrpc.Err[struct{}](*errNoSuchStore), nil
@@ -86,7 +86,7 @@ func (h *Handler) Bucket_Delete(ctx context.Context, bucket wrpc.Borrow[store.Bu
 }
 
 func (h *Handler) Bucket_Exists(ctx context.Context, bucket wrpc.Borrow[store.Bucket], key string) (*wrpc.Result[bool, store.Error], error) {
-	slog.InfoContext(ctx, "handling `wrpc:keyvalue/store.bucket.exists`", "bucket", bucket, "key", key)
+	slog.InfoContext(ctx, "handling `wasi:keyvalue/store.bucket.exists`", "bucket", bucket, "key", key)
 	v, ok := h.Load(string(bucket))
 	if !ok {
 		return wrpc.Err[bool](*errNoSuchStore), nil
@@ -100,7 +100,7 @@ func (h *Handler) Bucket_Exists(ctx context.Context, bucket wrpc.Borrow[store.Bu
 }
 
 func (h *Handler) Bucket_ListKeys(ctx context.Context, bucket wrpc.Borrow[store.Bucket], cursor *uint64) (*wrpc.Result[store.KeyResponse, store.Error], error) {
-	slog.InfoContext(ctx, "handling `wrpc:keyvalue/store.bucket.list-keys`", "bucket", bucket, "cursor", cursor)
+	slog.InfoContext(ctx, "handling `wasi:keyvalue/store.bucket.list-keys`", "bucket", bucket, "cursor", cursor)
 	if cursor != nil {
 		return wrpc.Err[store.KeyResponse](*store.NewErrorOther("cursors are not supported")), nil
 	}

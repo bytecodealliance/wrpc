@@ -2,11 +2,11 @@ module wrpc.io/examples/go/wasi-keyvalue-nats-client
 
 go 1.22.2
 
-replace wrpc.io/go v0.0.3 => ../../../go
+replace wrpc.io/go v0.0.4 => ../../../go
 
 require (
 	github.com/nats-io/nats.go v1.37.0
-	wrpc.io/go v0.0.3
+	wrpc.io/go v0.0.4
 )
 
 require (
