@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"log/slog"
@@ -27,36 +28,60 @@ func run() (err error) {
 			}
 		}
 	}()
-
-	for _, prefix := range os.Args[1:] {
+	prefixes := os.Args[1:]
+	if len(prefixes) == 0 {
+		prefixes = []string{"go"}
+	}
+	for _, prefix := range prefixes {
 		client := wrpcnats.NewClient(nc, wrpcnats.WithPrefix(prefix))
-		result, err := store.Open(context.Background(), client, "example")
-		if err != nil || result.Err != nil {
-			return fmt.Errorf("failed to call `wrpc-examples:keyvalue/store.open`: %w", err)
+		open, err := store.Open(context.Background(), client, "example")
+		if err != nil {
+			return fmt.Errorf("failed to invoke `wrpc-examples:keyvalue/store.open`: %w", err)
 		}
-		bucket := result.Ok
+		if open.Err != nil {
+			return fmt.Errorf("failed to open `example` bucket: %w", open.Err)
+		}
+		bucket := open.Ok
 
-		_, err = store.Bucket_Set(context.Background(), client, bucket.Borrow(), "foo", []byte("bar"))
+		set, err := store.Bucket_Set(context.Background(), client, bucket.Borrow(), "foo", []byte("bar"))
 		if err != nil {
-			return fmt.Errorf("failed to call `wrpc-examples:keyvalue/store.bucket.set`: %w", err)
+			return fmt.Errorf("failed to invoke `wrpc-examples:keyvalue/store.bucket.set`: %w", err)
 		}
-		exist, err := store.Bucket_Exists(context.Background(), client, bucket.Borrow(), "foo")
-		if err != nil {
-			return fmt.Errorf("failed to call `wrpc-examples:keyvalue/store.bucket.exists`: %w", err)
-		} else {
-			fmt.Printf("%s exists: %t\n", prefix, *exist.Ok)
+		if set.Err != nil {
+			return fmt.Errorf("failed to set `foo`: %w", set.Err)
 		}
-		value, err := store.Bucket_Get(context.Background(), client, bucket.Borrow(), "foo")
+
+		exists, err := store.Bucket_Exists(context.Background(), client, bucket.Borrow(), "foo")
 		if err != nil {
-			return fmt.Errorf("failed to call `wrpc-examples:keyvalue/store.bucket.get`: %w", err)
-		} else {
-			fmt.Printf("%s get: %s\n", prefix, *value.Ok)
+			return fmt.Errorf("failed to invoke `wrpc-examples:keyvalue/store.bucket.exists`: %w", err)
 		}
-		keys, err := store.Bucket_ListKeys(context.Background(), client, bucket.Borrow(), nil)
+		if exists.Err != nil {
+			return fmt.Errorf("failed to check if `foo` exists: %w", exists.Err)
+		}
+		if !*exists.Ok {
+			return errors.New("key `foo` does not exist in bucket")
+		}
+
+		get, err := store.Bucket_Get(context.Background(), client, bucket.Borrow(), "foo")
 		if err != nil {
-			return fmt.Errorf("failed to call `wrpc-examples:keyvalue/store.bucket.list-keys`: %w", err)
-		} else {
-			fmt.Printf("%s keys: %v\n", prefix, (*keys.Ok).Keys)
+			return fmt.Errorf("failed to invoke `wrpc-examples:keyvalue/store.bucket.get`: %w", err)
+		}
+		if get.Err != nil {
+			return fmt.Errorf("failed to get `foo`: %w", get.Err)
+		}
+		if string(*get.Ok) != "bar" {
+			return errors.New("key `foo` value is not `bar`")
+		}
+
+		listKeys, err := store.Bucket_ListKeys(context.Background(), client, bucket.Borrow(), nil)
+		if err != nil {
+			return fmt.Errorf("failed to invoke `wrpc-examples:keyvalue/store.bucket.list-keys`: %w", err)
+		}
+		if listKeys.Err != nil {
+			return fmt.Errorf("failed to list keys: %w", listKeys.Err)
+		}
+		for _, key := range listKeys.Ok.Keys {
+			fmt.Printf("%s key: %s\n", prefix, key)
 		}
 	}
 	return nil

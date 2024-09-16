@@ -27,8 +27,11 @@ func run() (err error) {
 			}
 		}
 	}()
-
-	for _, prefix := range os.Args[1:] {
+	prefixes := os.Args[1:]
+	if len(prefixes) == 0 {
+		prefixes = []string{"go"}
+	}
+	for _, prefix := range prefixes {
 		client := wrpcnats.NewClient(nc, wrpcnats.WithPrefix(prefix))
 		greeting, err := handler.Hello(context.Background(), client)
 		if err != nil {

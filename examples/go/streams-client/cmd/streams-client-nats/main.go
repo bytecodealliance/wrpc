@@ -73,8 +73,11 @@ func run() (err error) {
 			}
 		}
 	}()
-
-	for _, prefix := range os.Args[1:] {
+	prefixes := os.Args[1:]
+	if len(prefixes) == 0 {
+		prefixes = []string{"go"}
+	}
+	for _, prefix := range prefixes {
 		client := wrpcnats.NewClient(nc, wrpcnats.WithPrefix(prefix))
 		numbers, bytes, errCh, err := handler.Echo(context.Background(), client, &handler.Req{
 			Numbers: &ThrottleStream[uint64]{
