@@ -3,7 +3,7 @@
 package server
 
 import (
-	exports__wasi__keyvalue__store "wrpc.io/examples/go/wasi-keyvalue-nats-server/bindings/exports/wasi/keyvalue/store"
+	exports__wasi__keyvalue__store "wrpc.io/examples/go/wasi-keyvalue-server/bindings/exports/wasi/keyvalue/store"
 	wrpc "wrpc.io/go"
 )
 
