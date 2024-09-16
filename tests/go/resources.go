@@ -28,7 +28,7 @@ type ResourcesHandler struct {
 func (h *ResourcesHandler) Foo(ctx context.Context) (wrpc.Own[resources.Foo], error) {
 	id, err := uuid.NewV7()
 	if err != nil {
-		return "", fmt.Errorf("failed to generate UUIDv7: %w", err)
+		return nil, fmt.Errorf("failed to generate UUIDv7: %w", err)
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	v := Foo{id: id, cancel: cancel}

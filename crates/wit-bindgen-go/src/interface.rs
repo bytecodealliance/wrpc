@@ -1180,7 +1180,6 @@ impl InterfaceGenerator<'_> {
         let fmt = self.deps.fmt();
         let io = self.deps.io();
         let slog = self.deps.slog();
-        let utf8 = self.deps.utf8();
         uwrite!(
             self.src,
             "func(r interface {{ {io}.ByteReader; {io}.Reader }}) (",
@@ -1192,27 +1191,24 @@ impl InterfaceGenerator<'_> {
     var x uint32
     var s uint
     for i := 0; i < 5; i++ {{
-        {slog}.Debug("reading owned resource ID length byte", "i", i)
+        {slog}.Debug("reading owned resource handle length byte", "i", i)
         b, err := r.ReadByte()
         if err != nil {{
             if i > 0 && err == {io}.EOF {{
                 err = {io}.ErrUnexpectedEOF
             }}
-            return "", {fmt}.Errorf("failed to read owned resource ID length byte: %w", err)
+            return nil, {fmt}.Errorf("failed to read owned resource handle length byte: %w", err)
         }}
         if b < 0x80 {{
             if i == 4 && b > 1 {{
-                return "", {errors}.New("owned resource ID length overflows a 32-bit integer")
+                return nil, {errors}.New("owned resource handle length overflows a 32-bit integer")
             }}
             x = x | uint32(b)<<s
             buf := make([]byte, x)
-            {slog}.Debug("reading owned resource ID bytes", "len", x)
+            {slog}.Debug("reading owned resource handle bytes", "len", x)
             _, err = r.Read(buf)
             if err != nil {{
-                return "", {fmt}.Errorf("failed to read owned resource ID bytes: %w", err)
-            }}
-            if !{utf8}.Valid(buf) {{
-                return "", {errors}.New("owned resource ID is not valid UTF-8")
+                return nil, {fmt}.Errorf("failed to read owned resource handle bytes: %w", err)
             }}
             return "#,
         );
@@ -1224,7 +1220,7 @@ impl InterfaceGenerator<'_> {
         x |= uint32(b&0x7f) << s
         s += 7
     }}
-    return "", {errors}.New("owned resource ID length overflows a 32-bit integer")
+    return nil, {errors}.New("owned resource handle length overflows a 32-bit integer")
 }}({reader})"#,
         );
     }
@@ -1234,7 +1230,6 @@ impl InterfaceGenerator<'_> {
         let fmt = self.deps.fmt();
         let io = self.deps.io();
         let slog = self.deps.slog();
-        let utf8 = self.deps.utf8();
         uwrite!(
             self.src,
             "func(r interface {{ {io}.ByteReader; {io}.Reader }}) (",
@@ -1246,27 +1241,24 @@ impl InterfaceGenerator<'_> {
     var x uint32
     var s uint
     for i := 0; i < 5; i++ {{
-        {slog}.Debug("reading borrowed resource ID length byte", "i", i)
+        {slog}.Debug("reading borrowed resource handle length byte", "i", i)
         b, err := r.ReadByte()
         if err != nil {{
             if i > 0 && err == {io}.EOF {{
                 err = {io}.ErrUnexpectedEOF
             }}
-            return "", {fmt}.Errorf("failed to read borrowed resource ID length byte: %w", err)
+            return nil, {fmt}.Errorf("failed to read borrowed resource handle length byte: %w", err)
         }}
         if b < 0x80 {{
             if i == 4 && b > 1 {{
-                return "", {errors}.New("borrowed resource ID length overflows a 32-bit integer")
+                return nil, {errors}.New("borrowed resource handle length overflows a 32-bit integer")
             }}
             x = x | uint32(b)<<s
             buf := make([]byte, x)
-            {slog}.Debug("reading borrowed resource ID bytes", "len", x)
+            {slog}.Debug("reading borrowed resource handle bytes", "len", x)
             _, err = r.Read(buf)
             if err != nil {{
-                return "", {fmt}.Errorf("failed to read borrowed resource ID bytes: %w", err)
-            }}
-            if !{utf8}.Valid(buf) {{
-                return "", {errors}.New("borrowed resource ID is not valid UTF-8")
+                return nil, {fmt}.Errorf("failed to read borrowed resource handle bytes: %w", err)
             }}
             return "#,
         );
@@ -1278,7 +1270,7 @@ impl InterfaceGenerator<'_> {
         x |= uint32(b&0x7f) << s
         s += 7
     }}
-    return "", {errors}.New("borrowed resource ID length overflows a 32-bit integer")
+    return nil, {errors}.New("borrowed resource handle length overflows a 32-bit integer")
 }}({reader})"#,
         );
     }

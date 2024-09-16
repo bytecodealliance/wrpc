@@ -14,14 +14,14 @@ type Server interface {
 }
 
 // Own is an owned resource handle
-type Own[T any] string
+type Own[T any] []byte
 
 func (v Own[T]) Borrow() Borrow[T] {
 	return Borrow[T](v)
 }
 
 // Borrow is a borrowed resource handle
-type Borrow[T any] string
+type Borrow[T any] []byte
 
 type SubscribePath []*uint32
 
