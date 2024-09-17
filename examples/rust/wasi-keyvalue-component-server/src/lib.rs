@@ -39,6 +39,18 @@ impl Bucket {
     }
 }
 
+impl bindings::exports::wasi::keyvalue::store::Guest for Handler {
+    type Bucket = Bucket;
+
+    fn open(identifier: String) -> Result<store::Bucket> {
+        static STORE: OnceLock<Mutex<HashMap<String, Bucket>>> = OnceLock::new();
+        let store = STORE.get_or_init(Mutex::default);
+        let mut store = store.lock().expect("failed to lock store");
+        let bucket = store.entry(identifier).or_default().clone();
+        Ok(store::Bucket::new(bucket))
+    }
+}
+
 impl bindings::exports::wasi::keyvalue::store::GuestBucket for Bucket {
     fn get(&self, key: String) -> Result<Option<Vec<u8>>> {
         let bucket = self.read()?;
@@ -73,17 +85,5 @@ impl bindings::exports::wasi::keyvalue::store::GuestBucket for Bucket {
             bucket.cloned().collect()
         };
         Ok(KeyResponse { keys, cursor: None })
-    }
-}
-
-impl bindings::exports::wasi::keyvalue::store::Guest for Handler {
-    type Bucket = Bucket;
-
-    fn open(identifier: String) -> Result<store::Bucket> {
-        static STORE: OnceLock<Mutex<HashMap<String, Bucket>>> = OnceLock::new();
-        let store = STORE.get_or_init(Mutex::default);
-        let mut store = store.lock().expect("failed to lock store");
-        let bucket = store.entry(identifier).or_default().clone();
-        Ok(store::Bucket::new(bucket))
     }
 }

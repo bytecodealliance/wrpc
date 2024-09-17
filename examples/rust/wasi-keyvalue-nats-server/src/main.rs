@@ -137,6 +137,28 @@ impl Server {
     }
 }
 
+impl bindings::exports::wasi::keyvalue::store::Handler<Option<HeaderMap>> for Server {
+    // NOTE: Resource handle returned is just the `identifier` itself
+    #[instrument(level = "trace", skip(_cx), ret)]
+    async fn open(
+        &self,
+        _cx: Option<HeaderMap>,
+        identifier: String,
+    ) -> anyhow::Result<Result<ResourceOwn<store::Bucket>>> {
+        let identifier = Bytes::from(identifier);
+        {
+            // first, optimistically try read-only lock
+            let store = self.0.read().await;
+            if store.contains_key(&identifier) {
+                return Ok(Ok(ResourceOwn::from(identifier)));
+            }
+        }
+        let mut store = self.0.write().await;
+        store.entry(identifier.clone()).or_default();
+        Ok(Ok(ResourceOwn::from(identifier)))
+    }
+}
+
 impl bindings::exports::wasi::keyvalue::store::HandlerBucket<Option<HeaderMap>> for Server {
     #[instrument(level = "trace", skip(_cx), ret)]
     async fn get(
@@ -207,27 +229,5 @@ impl bindings::exports::wasi::keyvalue::store::HandlerBucket<Option<HeaderMap>> 
             bucket.cloned().collect()
         };
         Ok(Ok(KeyResponse { keys, cursor: None }))
-    }
-}
-
-impl bindings::exports::wasi::keyvalue::store::Handler<Option<HeaderMap>> for Server {
-    // NOTE: Resource handle returned is just the `identifier` itself
-    #[instrument(level = "trace", skip(_cx), ret)]
-    async fn open(
-        &self,
-        _cx: Option<HeaderMap>,
-        identifier: String,
-    ) -> anyhow::Result<Result<ResourceOwn<store::Bucket>>> {
-        let identifier = Bytes::from(identifier);
-        {
-            // first, optimistically try read-only lock
-            let store = self.0.read().await;
-            if store.contains_key(&identifier) {
-                return Ok(Ok(ResourceOwn::from(identifier)));
-            }
-        }
-        let mut store = self.0.write().await;
-        store.entry(identifier.clone()).or_default();
-        Ok(Ok(ResourceOwn::from(identifier)))
     }
 }
