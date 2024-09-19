@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"sync"
 	"sync/atomic"
@@ -258,6 +259,9 @@ func (r *streamReader) Read(p []byte) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	if len(msg.Data) == 0 {
+		return 0, io.EOF
+	}
 	n := copy(p, msg.Data)
 	r.buf = msg.Data[n:]
 	return n, nil
@@ -270,18 +274,16 @@ func (r *streamReader) ReadByte() (byte, error) {
 		r.buf = r.buf[1:]
 		return b, nil
 	}
-	for {
-		slog.Debug("receiving next byte chunk")
-		msg, err := r.sub.NextMsgWithContext(r.ctx)
-		if err != nil {
-			return 0, err
-		}
-		if len(msg.Data) == 0 {
-			continue
-		}
-		r.buf = msg.Data[1:]
-		return msg.Data[0], nil
+	slog.Debug("receiving next byte chunk")
+	msg, err := r.sub.NextMsgWithContext(r.ctx)
+	if err != nil {
+		return 0, err
 	}
+	if len(msg.Data) == 0 {
+		return 0, io.EOF
+	}
+	r.buf = msg.Data[1:]
+	return msg.Data[0], nil
 }
 
 func (r *streamReader) Close() (err error) {
