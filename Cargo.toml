@@ -121,7 +121,7 @@ tokio-stream = { version = "0.1", default-features = false }
 tokio-util = { version = "0.7", default-features = false }
 tracing = { version = "0.1", default-features = false }
 tracing-subscriber = { version = "0.3", default-features = false }
-url = { version = "2", default-features = false }
+url = { version = "2" }
 uuid = { version = "1", default-features = false }
 wasi-preview1-component-adapter-provider = { version = "24", default-features = false }
 wasm-tokio = { version = "0.6", default-features = false }
