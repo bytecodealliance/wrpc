@@ -471,67 +471,35 @@ where
                         .try_into_resource::<InputStream>(&mut self.store)
                         .context("failed to downcast `wasi:io/input-stream`")?;
                     if stream.owned() {
-                        let stream = self
+                        let mut stream = self
                             .store
                             .data_mut()
                             .table()
                             .delete(stream)
                             .context("failed to delete input stream")?;
-                        match stream {
-                            InputStream::Host(mut stream) => {
-                                self.deferred = Some(Box::new(|w| {
-                                    Box::pin(async move {
-                                        let mut w = pin!(w);
-                                        loop {
-                                            stream.ready().await;
-                                            match stream.read(8096) {
-                                                Ok(buf) => {
-                                                    let mut chunk = BytesMut::with_capacity(
-                                                        buf.len().saturating_add(5),
-                                                    );
-                                                    CoreVecEncoderBytes
-                                                        .encode(buf, &mut chunk)
-                                                        .context(
-                                                            "failed to encode input stream chunk",
-                                                        )?;
-                                                    w.write_all(&chunk).await?;
-                                                }
-                                                Err(StreamError::Closed) => {
-                                                    w.write_all(&[0x00]).await?;
-                                                }
-                                                Err(err) => return Err(err.into()),
-                                            }
+                        self.deferred = Some(Box::new(|w| {
+                            Box::pin(async move {
+                                let mut w = pin!(w);
+                                loop {
+                                    stream.ready().await;
+                                    match stream.read(8096) {
+                                        Ok(buf) => {
+                                            let mut chunk = BytesMut::with_capacity(
+                                                buf.len().saturating_add(5),
+                                            );
+                                            CoreVecEncoderBytes
+                                                .encode(buf, &mut chunk)
+                                                .context("failed to encode input stream chunk")?;
+                                            w.write_all(&chunk).await?;
                                         }
-                                    })
-                                }));
-                            }
-                            InputStream::File(mut stream) => {
-                                self.deferred = Some(Box::new(|w| {
-                                    Box::pin(async move {
-                                        let mut w = pin!(w);
-                                        loop {
-                                            match stream.read(8096).await {
-                                                Ok(buf) => {
-                                                    let mut chunk = BytesMut::with_capacity(
-                                                        buf.len().saturating_add(5),
-                                                    );
-                                                    CoreVecEncoderBytes
-                                                        .encode(buf, &mut chunk)
-                                                        .context(
-                                                            "failed to encode input stream chunk",
-                                                        )?;
-                                                    w.write_all(&chunk).await?;
-                                                }
-                                                Err(StreamError::Closed) => {
-                                                    w.write_all(&[0x00]).await?;
-                                                }
-                                                Err(err) => return Err(err.into()),
-                                            }
+                                        Err(StreamError::Closed) => {
+                                            w.write_all(&[0x00]).await?;
                                         }
-                                    })
-                                }));
-                            }
-                        }
+                                        Err(err) => return Err(err.into()),
+                                    }
+                                }
+                            })
+                        }));
                     } else {
                         self.store
                             .data_mut()
@@ -856,11 +824,11 @@ where
                 let res = store
                     .data_mut()
                     .table()
-                    .push(InputStream::Host(Box::new(AsyncReadStream::new(
+                    .push(Box::new(AsyncReadStream::new(
                         FramedRead::new(r, ListDecoderU8::default())
                             .into_async_read()
                             .compat(),
-                    ))))
+                    )))
                     .map_err(|err| std::io::Error::new(std::io::ErrorKind::OutOfMemory, err))?;
                 let v = res
                     .try_into_resource_any(store)
