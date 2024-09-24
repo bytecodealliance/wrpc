@@ -405,7 +405,7 @@ jobs:
         run: |
           pkgver=$(cargo pkgid | cut -d '@' -f 2)
           tagver="${{ steps.ctx.outputs.version }}"
-          if ![ "$pkgver" = "$tagver" ]; then
+          if ! [ "$pkgver" = "$tagver" ]; then
             echo "version mismatch, $pkgver (package) != $tagver (tag)"
             exit 1
           fi
