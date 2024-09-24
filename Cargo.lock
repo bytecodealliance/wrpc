@@ -3714,7 +3714,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "anyhow",
  "async-nats",
@@ -3806,7 +3806,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc-transport-nats"
-version = "0.23.1"
+version = "0.23.2"
 dependencies = [
  "anyhow",
  "async-nats",

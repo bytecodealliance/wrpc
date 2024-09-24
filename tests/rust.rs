@@ -598,12 +598,60 @@ where
         )
         .await
         .context("failed to serve `test.async`")?;
+    let reset_inv = srv
+        .serve_values::<(String,), (String,)>("test", "reset", [Box::default(); 0])
+        .await
+        .context("failed to serve `test.reset`")?;
     let sync_inv = srv
         .serve_values("test", "sync", [Box::default(); 0])
         .await
         .context("failed to serve `test.sync`")?;
+
     let mut async_inv = pin!(async_inv);
+    let mut reset_inv = pin!(reset_inv);
     let mut sync_inv = pin!(sync_inv);
+
+    join!(
+        async {
+            info!("receiving `test.reset` parameters");
+            reset_inv
+                .try_next()
+                .await
+                .expect("failed to accept invocation")
+                .expect("unexpected end of stream");
+            info!("receiving `test.reset` parameters");
+            reset_inv
+                .try_next()
+                .await
+                .expect("failed to accept invocation")
+                .expect("unexpected end of stream");
+            anyhow::Ok(())
+        }
+        .instrument(info_span!("server")),
+        async {
+            info!("invoking `test.reset`");
+            clt.invoke_values_blocking::<_, _, (String,)>(
+                C::default(),
+                "test",
+                "reset",
+                ("arg",),
+                &[[]; 0],
+            )
+            .await
+            .expect_err("`test.reset` should have failed");
+            info!("invoking `test.reset`");
+            clt.invoke_values_blocking::<_, _, (String,)>(
+                C::default(),
+                "test",
+                "reset",
+                ("arg",),
+                &[[]; 0],
+            )
+            .await
+            .expect_err("`test.reset` should have failed");
+        }
+        .instrument(info_span!("client")),
+    );
 
     join!(
         async {
@@ -730,7 +778,6 @@ where
             assert_eq!(m, "test");
             assert_eq!(n, [[b"foo"]]);
             assert_eq!(o, [Some(vec![Ok(Some(String::from("bar")))])]);
-            info!("finishing `test.sync` session");
         }
         .instrument(info_span!("client")),
     );
@@ -867,6 +914,7 @@ where
         }
         .instrument(info_span!("client")),
     );
+
     Ok(())
 }
 
@@ -942,7 +990,7 @@ async fn rust_dynamic_quic() -> anyhow::Result<()> {
     use core::pin::pin;
 
     common::with_quic(
-        &["sync.test", "async.test"],
+        &["sync.test", "async.test", "reset.test"],
         |port, clt_ep, srv_ep| async move {
             let clt = wrpc_transport_quic::Client::new(clt_ep, (Ipv6Addr::LOCALHOST, port));
             let srv = wrpc_transport_quic::Server::default();

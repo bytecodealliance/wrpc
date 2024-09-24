@@ -357,6 +357,10 @@ impl AsyncRead for Reader {
         match self.incoming.poll_next_unpin(cx) {
             Poll::Ready(Some(Message { mut payload, .. })) => {
                 trace!(?payload, "received message");
+                if payload.is_empty() {
+                    trace!("received stream shutdown message");
+                    return Poll::Ready(Ok(()));
+                }
                 if payload.len() > cap {
                     trace!(len = payload.len(), cap, "partially reading the message");
                     buf.put_slice(&payload.split_to(cap));
@@ -380,11 +384,16 @@ impl AsyncRead for Reader {
 pub struct SubjectWriter {
     nats: async_nats::Client,
     tx: Subject,
+    shutdown: bool,
 }
 
 impl SubjectWriter {
     fn new(nats: async_nats::Client, tx: Subject) -> Self {
-        Self { nats, tx }
+        Self {
+            nats,
+            tx,
+            shutdown: false,
+        }
     }
 }
 
@@ -395,6 +404,7 @@ impl wrpc_transport::Index<Self> for SubjectWriter {
         Ok(Self {
             nats: self.nats.clone(),
             tx,
+            shutdown: false,
         })
     }
 }
@@ -450,9 +460,25 @@ impl AsyncWrite for SubjectWriter {
 
     #[instrument(level = "trace", skip_all, ret, fields(subject = self.tx.as_str()))]
     fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        trace!("writing empty buffer to shut down stream");
+        trace!("writing stream shutdown message");
         ready!(self.as_mut().poll_write(cx, &[]))?;
+        self.shutdown = true;
         Poll::Ready(Ok(()))
+    }
+}
+
+impl Drop for SubjectWriter {
+    fn drop(&mut self) {
+        if !self.shutdown {
+            let nats = self.nats.clone();
+            let subject = mem::replace(&mut self.tx, Subject::from_static(""));
+            tokio::spawn(async move {
+                trace!("writing stream shutdown message");
+                if let Err(err) = nats.publish(subject, Bytes::default()).await {
+                    warn!(?err, "failed to publish stream shutdown message")
+                }
+            });
+        }
     }
 }
 
@@ -461,7 +487,7 @@ pub enum RootParamWriter {
     #[default]
     Corrupted,
     Handshaking {
-        tx: SubjectWriter,
+        nats: async_nats::Client,
         sub: Subscriber,
         indexed: std::sync::Mutex<Vec<(Vec<usize>, oneshot::Sender<SubjectWriter>)>>,
         buffer: Bytes,
@@ -474,9 +500,9 @@ pub enum RootParamWriter {
 }
 
 impl RootParamWriter {
-    fn new(tx: SubjectWriter, sub: Subscriber, buffer: Bytes) -> Self {
+    fn new(nats: async_nats::Client, sub: Subscriber, buffer: Bytes) -> Self {
         Self::Handshaking {
-            tx,
+            nats,
             sub,
             indexed: std::sync::Mutex::default(),
             buffer,
@@ -520,7 +546,7 @@ impl RootParamWriter {
                         reply: Some(tx), ..
                     })) => {
                         let Self::Handshaking {
-                            tx: SubjectWriter { nats, .. },
+                            nats,
                             indexed,
                             buffer,
                             ..
@@ -899,7 +925,7 @@ impl wrpc_transport::Invoke for Client {
         .context("failed to send handshake")?;
         Ok((
             ParamWriter::Root(RootParamWriter::new(
-                SubjectWriter::new((*self.nats).clone(), param_tx),
+                (*self.nats).clone(),
                 handshake_rx,
                 params,
             )),
