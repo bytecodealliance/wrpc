@@ -403,7 +403,7 @@ jobs:
 
       - name: publish wRPC to crates.io
         run: |
-          pkgver=$(cargo pkgid | cut -d '@' -f 2)
+          pkgver=$(cargo pkgid | cut -d '#' -f 2)
           tagver="${{ steps.ctx.outputs.version }}"
           if ! [ "$pkgver" = "$tagver" ]; then
             echo "version mismatch, $pkgver (package) != $tagver (tag)"
