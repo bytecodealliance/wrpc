@@ -2331,7 +2331,7 @@ version = "0.0.0"
 dependencies = [
  "codegen-macro",
  "wit-bindgen-core",
- "wit-parser 0.215.0",
+ "wit-parser 0.217.0",
 ]
 
 [[package]]
@@ -3731,7 +3731,7 @@ dependencies = [
 name = "wrpc-introspect"
 version = "0.3.0"
 dependencies = [
- "wit-parser 0.215.0",
+ "wit-parser 0.217.0",
 ]
 
 [[package]]
@@ -3759,7 +3759,7 @@ dependencies = [
  "wasm-tokio",
  "wasmtime",
  "wasmtime-wasi",
- "wit-parser 0.215.0",
+ "wit-parser 0.217.0",
  "wrpc-introspect",
  "wrpc-transport",
 ]
@@ -3837,7 +3837,7 @@ dependencies = [
  "wasmtime-wasi",
  "wit-bindgen-wrpc",
  "wit-component 0.217.0",
- "wit-parser 0.215.0",
+ "wit-parser 0.217.0",
  "wrpc-cli",
  "wrpc-introspect",
  "wrpc-runtime-wasmtime",
