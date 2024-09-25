@@ -17,7 +17,7 @@ use futures::{Stream, StreamExt};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::sync::oneshot;
 use tokio::try_join;
-use tracing::{debug, instrument, trace, warn};
+use tracing::{debug, error, instrument, trace, warn};
 use wrpc_transport::Index as _;
 
 pub const PROTOCOL: &str = "wrpc.0.0.1";
@@ -472,12 +472,23 @@ impl Drop for SubjectWriter {
         if !self.shutdown {
             let nats = self.nats.clone();
             let subject = mem::replace(&mut self.tx, Subject::from_static(""));
-            tokio::spawn(async move {
+            let fut = async move {
                 trace!("writing stream shutdown message");
                 if let Err(err) = nats.publish(subject, Bytes::default()).await {
                     warn!(?err, "failed to publish stream shutdown message")
                 }
-            });
+            };
+            match tokio::runtime::Handle::try_current() {
+                Ok(rt) => {
+                    rt.spawn(fut);
+                }
+                Err(_) => match tokio::runtime::Runtime::new() {
+                    Ok(rt) => {
+                        rt.spawn(fut);
+                    }
+                    Err(err) => error!(?err, "failed to create a new Tokio runtime"),
+                },
+            }
         }
     }
 }

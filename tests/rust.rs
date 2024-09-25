@@ -7,6 +7,7 @@ use core::str;
 use core::time::Duration;
 
 use std::sync::Arc;
+use std::thread;
 
 use anyhow::Context;
 use bytes::Bytes;
@@ -576,7 +577,7 @@ where
 #[instrument(skip_all, ret)]
 async fn assert_dynamic<C, I, S>(clt: Arc<I>, srv: Arc<S>) -> anyhow::Result<()>
 where
-    C: Send + Sync + Default,
+    C: Send + Sync + Default + 'static,
     I: wrpc::Invoke<Context = C>,
     S: wrpc::Serve<Context = C>,
 {
@@ -625,10 +626,26 @@ where
                 .await
                 .expect("failed to accept invocation")
                 .expect("unexpected end of stream");
+            let inv = reset_inv
+                .try_next()
+                .await
+                .expect("failed to accept invocation")
+                .expect("unexpected end of stream");
+            thread::spawn(|| inv);
             anyhow::Ok(())
         }
         .instrument(info_span!("server")),
         async {
+            info!("invoking `test.reset`");
+            clt.invoke_values_blocking::<_, _, (String,)>(
+                C::default(),
+                "test",
+                "reset",
+                ("arg",),
+                &[[]; 0],
+            )
+            .await
+            .expect_err("`test.reset` should have failed");
             info!("invoking `test.reset`");
             clt.invoke_values_blocking::<_, _, (String,)>(
                 C::default(),
