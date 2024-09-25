@@ -37,7 +37,7 @@ interface sync {
 }
 
 interface async {
-    with-streams: func(complete: bool) -> (bytes: stream<u8>, lists: stream<list<string>>);
+    with-streams: func(complete: bool) -> tuple<stream<u8>, stream<list<string>>>;
 }
 
 interface resources {
