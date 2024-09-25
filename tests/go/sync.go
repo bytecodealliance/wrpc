@@ -38,10 +38,8 @@ func (SyncHandler) Fallible(ctx context.Context, ok bool) (*wrpc.Result[bool, st
 	}
 }
 
-func (SyncHandler) Numbers(ctx context.Context) (*wrpc.Tuple10[uint8, uint16, uint32, uint64, int8, int16, int32, int64, float32, float64], error) {
-	return &wrpc.Tuple10[uint8, uint16, uint32, uint64, int8, int16, int32, int64, float32, float64]{
-		V0: 1, V1: 2, V2: 3, V3: 4, V4: 5, V5: 6, V6: 7, V7: 8, V8: 9, V9: 10,
-	}, nil
+func (SyncHandler) Numbers(ctx context.Context) (uint8, uint16, uint32, uint64, int8, int16, int32, int64, float32, float64, error) {
+	return 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, nil
 }
 
 func (SyncHandler) WithFlags(ctx context.Context, a, b, c bool) (*sync.Abc, error) {
@@ -106,20 +104,19 @@ func (SyncHandler) WithRecordList(ctx context.Context, n uint8) ([]*sync.Rec, er
 	return vs, nil
 }
 
-func (SyncHandler) WithRecordTuple(ctx context.Context) (*wrpc.Tuple2[*sync.Rec, *sync.Rec], error) {
+func (SyncHandler) WithRecordTuple(ctx context.Context) (*sync.Rec, *sync.Rec, error) {
 	slog.DebugContext(ctx, "handling `with-record-tuple`")
-	return &wrpc.Tuple2[*sync.Rec, *sync.Rec]{
-		V0: &sync.Rec{
+	return &sync.Rec{
 			Nested: &sync.RecNested{
 				Foo: "0",
 			},
 		},
-		V1: &sync.Rec{
+		&sync.Rec{
 			Nested: &sync.RecNested{
 				Foo: "1",
 			},
 		},
-	}, nil
+		nil
 }
 
 func (SyncHandler) WithEnum(ctx context.Context) (sync.Foobar, error) {

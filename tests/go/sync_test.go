@@ -100,14 +100,49 @@ func TestSync(t *testing.T) {
 	}
 	{
 		slog.DebugContext(ctx, "calling `wrpc-test:integration/sync.numbers`")
-		v, err := sync.Numbers(ctx, client)
+		v0, v1, v2, v3, v4, v5, v6, v7, v8, v9, err := sync.Numbers(ctx, client)
 		if err != nil {
 			t.Errorf("failed to call `wrpc-test:integration/sync.numbers`: %s", err)
 			return
 		}
-		expected := &wrpc.Tuple10[uint8, uint16, uint32, uint64, int8, int16, int32, int64, float32, float64]{V0: 1, V1: 2, V2: 3, V3: 4, V4: 5, V5: 6, V6: 7, V7: 8, V8: 9, V9: 10}
-		if !reflect.DeepEqual(v, expected) {
-			t.Errorf("expected: %v, got: %#v", expected, v)
+		if v0 != 1 {
+			t.Errorf("expected: 1, got: %#v", v0)
+			return
+		}
+		if v1 != 2 {
+			t.Errorf("expected: 2, got: %#v", v1)
+			return
+		}
+		if v2 != 3 {
+			t.Errorf("expected: 3, got: %#v", v2)
+			return
+		}
+		if v3 != 4 {
+			t.Errorf("expected: 4, got: %#v", v3)
+			return
+		}
+		if v4 != 5 {
+			t.Errorf("expected: 5, got: %#v", v4)
+			return
+		}
+		if v5 != 6 {
+			t.Errorf("expected: 6, got: %#v", v5)
+			return
+		}
+		if v6 != 7 {
+			t.Errorf("expected: 7, got: %#v", v6)
+			return
+		}
+		if v7 != 8 {
+			t.Errorf("expected: 8, got: %#v", v7)
+			return
+		}
+		if v8 != 9 {
+			t.Errorf("expected: 9, got: %#v", v8)
+			return
+		}
+		if v9 != 10 {
+			t.Errorf("expected: 10, got: %#v", v9)
 			return
 		}
 	}

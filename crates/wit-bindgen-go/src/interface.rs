@@ -1,3 +1,5 @@
+use core::iter;
+
 use std::fmt::Write as _;
 use std::mem;
 
@@ -46,6 +48,26 @@ fn go_func_name(func: &Function) -> String {
             )
         }
         FunctionKind::Freestanding => to_upper_camel_case(&func.name),
+    }
+}
+
+pub fn flatten_ty<'a>(resolve: &'a Resolve, ty: &Type) -> impl Iterator<Item = Type> + 'a {
+    let mut ty = *ty;
+    loop {
+        if let Type::Id(id) = ty {
+            match resolve.types[id].kind {
+                TypeDefKind::Type(t) => {
+                    ty = t;
+                    continue;
+                }
+                TypeDefKind::Tuple(ref t) => {
+                    return Box::new(t.types.iter().flat_map(|ty| flatten_ty(resolve, ty)))
+                        as Box<dyn Iterator<Item = Type>>
+                }
+                _ => {}
+            }
+        }
+        return Box::new(iter::once(ty)) as Box<dyn Iterator<Item = Type>>;
     }
 }
 
@@ -2401,8 +2423,12 @@ impl InterfaceGenerator<'_> {
             let prev = mem::take(&mut self.src);
             self.print_docs_and_params(func);
             self.src.push_str(" (");
-            for ty in func.results.iter_types() {
-                self.print_opt_ty(ty, true);
+            for ty in func
+                .results
+                .iter_types()
+                .flat_map(|ty| flatten_ty(self.resolve, ty))
+            {
+                self.print_opt_ty(&ty, true);
                 self.src.push_str(", ");
             }
             self.push_str("error)\n");
@@ -2508,11 +2534,16 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
                 r#"
         {slog}.DebugContext(ctx, "calling `{instance}.{name}` handler")"#,
             );
-            for (i, _) in func.results.iter_types().enumerate() {
+            let results: Box<[Type]> = func
+                .results
+                .iter_types()
+                .flat_map(|ty| flatten_ty(self.resolve, ty))
+                .collect();
+            for (i, _) in results.iter().enumerate() {
                 uwrite!(self.src, "r{i}, ");
             }
             self.push_str("err ");
-            if func.results.len() > 0 {
+            if results.len() > 0 {
                 self.push_str(":");
             }
             self.push_str("= h.");
@@ -2534,9 +2565,9 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
 
         var buf {bytes}.Buffer
         writes := make(map[uint32]func({wrpc}.IndexWriter) error, {})"#,
-                func.results.len()
+                results.len()
             );
-            for (i, ty) in func.results.iter_types().enumerate() {
+            for (i, ty) in results.iter().enumerate() {
                 uwrite!(
                     self.src,
                     r#"
@@ -2632,7 +2663,12 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
             self.print_docs_and_params(func);
 
             self.src.push_str(" (");
-            for (i, ty) in func.results.iter_types().enumerate() {
+            let results: Box<[Type]> = func
+                .results
+                .iter_types()
+                .flat_map(|ty| flatten_ty(self.resolve, ty))
+                .collect();
+            for (i, ty) in results.iter().enumerate() {
                 uwrite!(self.src, "r{i}__ ");
                 self.print_opt_ty(ty, true);
                 self.src.push_str(", ");
@@ -2735,7 +2771,7 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
                 self.src.push_str("nil");
             }
             self.src.push_str(",\n");
-            for (i, ty) in func.results.iter_types().enumerate() {
+            for (i, ty) in results.iter().enumerate() {
                 let (nested, fut) = async_paths_ty(self.resolve, ty);
                 for path in nested {
                     uwrite!(self.src, "{wrpc}.NewSubscribePath().Index({i})");
@@ -2812,7 +2848,7 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
                 func.name,
             );
 
-            for (i, ty) in func.results.iter_types().enumerate() {
+            for (i, ty) in results.iter().enumerate() {
                 uwrite!(
                     self.src,
                     "
