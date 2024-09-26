@@ -41,6 +41,7 @@ struct RustWrpc {
     world: Option<WorldId>,
 
     export_paths: Vec<String>,
+    /// Interface names to how they should be generated
     with: GenerationConfiguration,
 }
 

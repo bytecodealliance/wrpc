@@ -2179,9 +2179,11 @@ mod {mod_name} {{
             derives.extend(
                 [
                     ":: core :: clone :: Clone",
-                    ":: core :: marker :: Copy",
-                    ":: core :: cmp :: PartialEq",
                     ":: core :: cmp :: Eq",
+                    ":: core :: cmp :: Ord",
+                    ":: core :: cmp :: PartialEq",
+                    ":: core :: cmp :: PartialOrd",
+                    ":: core :: marker :: Copy",
                 ]
                 .into_iter()
                 .map(std::string::ToString::to_string),
