@@ -77,7 +77,9 @@ func Run(prefix string, client wrpc.Invoker) error {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		// defer numbers.Close()
+		if c, ok := numbers.(io.Closer); ok {
+			defer c.Close()
+		}
 		for {
 			chunk, err := numbers.Receive()
 			if err == io.EOF {
@@ -93,7 +95,9 @@ func Run(prefix string, client wrpc.Invoker) error {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		// defer bytes.Close()
+		if c, ok := bytes.(io.Closer); ok {
+			defer c.Close()
+		}
 		var chunk [128]byte
 		for {
 			n, err := bytes.Read(chunk[:])
