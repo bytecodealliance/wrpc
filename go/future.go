@@ -31,6 +31,7 @@ func ReadFuture[T any](r IndexReader, f func(IndexReader) (T, error), path ...ui
 		return nil, err
 	}
 	if !ok {
+		slog.Debug("indexing pending future reader")
 		r, err := r.Index(path...)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get future reader: %w", err)

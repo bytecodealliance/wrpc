@@ -947,9 +947,10 @@ impl InterfaceGenerator<'_> {
     }}
     switch status {{
     case 0:
+        {slog}.Debug("indexing pending byte list future reader")
         r, err := r.Index(path...)
         if err != nil {{
-            return nil, {fmt}.Errorf("failed to index reader: %w", err)
+            return nil, {fmt}.Errorf("failed to index nested byte list future reader: %w", err)
         }}
         return {wrpc}.NewByteStreamReader(r), nil
     case 1:
@@ -997,9 +998,10 @@ impl InterfaceGenerator<'_> {
     }}
     switch status {{
     case 0:
+        {slog}.Debug("indexing pending future reader")
         r, err := r.Index(path...)
         if err != nil {{
-            return nil, {fmt}.Errorf("failed to index reader: %w", err)
+            return nil, {fmt}.Errorf("failed to index nested future reader: %w", err)
         }}
         return {wrpc}.NewDecodeReceiver(r, func(r {wrpc}.IndexReader) ("#
                 );
@@ -1068,7 +1070,7 @@ impl InterfaceGenerator<'_> {
     case 0:
         r, err := r.Index(path...)
         if err != nil {{
-            return nil, {fmt}.Errorf("failed to index reader: %w", err)
+            return nil, {fmt}.Errorf("failed to index nested byte stream reader: %w", err)
         }}
         return {wrpc}.NewByteStreamReader(r), nil
     case 1:
@@ -1121,7 +1123,7 @@ impl InterfaceGenerator<'_> {
     case 0:
         r, err := r.Index(path...)
         if err != nil {{
-            return nil, {fmt}.Errorf("failed to index reader: %w", err)
+            return nil, {fmt}.Errorf("failed to index nested stream reader: %w", err)
         }}
         var total uint32
         return {wrpc}.NewDecodeReceiver(r, func(r {wrpc}.IndexReader) ("#
@@ -1681,7 +1683,7 @@ impl InterfaceGenerator<'_> {
                     wg.Add(1)
                     w, err := w.Index(index)
                     if err != nil {{
-                        return {fmt}.Errorf("failed to index writer: %w", err)
+                        return {fmt}.Errorf("failed to index nested list writer: %w", err)
                     }}
                     write := write
                     go func() {{
@@ -1855,7 +1857,7 @@ impl InterfaceGenerator<'_> {
             return func(w {wrpc}.IndexWriter) error {{
                     w, err := w.Index(0)
                     if err != nil {{
-                        return {fmt}.Errorf("failed to index writer: %w", err)
+                        return {fmt}.Errorf("failed to index nested tuple writer: %w", err)
                     }}
                     return write(w)
             }}, nil
@@ -1908,7 +1910,7 @@ impl InterfaceGenerator<'_> {
                     wg.Add(1)
                     w, err := w.Index(index)
                     if err != nil {{
-                        return {fmt}.Errorf("failed to index writer: %w", err)
+                        return {fmt}.Errorf("failed to index nested tuple writer: %w", err)
                     }}
                     write := write
                     go func() {{
@@ -1952,6 +1954,7 @@ impl InterfaceGenerator<'_> {
                     defer func() {{
                         body, ok := v.({io}.Closer)
                         if ok {{
+                            {slog}.Debug("closing byte list future writer")
                             if cErr := body.Close(); cErr != nil {{
                                 if err == nil {{
                                     err = {fmt}.Errorf("failed to close pending byte list future: %w", cErr)
@@ -1973,6 +1976,7 @@ impl InterfaceGenerator<'_> {
                     if err := {wrpc}.WriteUint32(uint32(n), w); err != nil {{
                         return {fmt}.Errorf("failed to write pending byte list future length of %d: %w", n, err)
                     }}
+                    {slog}.Debug("writing pending byte list future contents", "buf", chunk[:n])
                     _, err = w.Write(chunk[:n])
                     if err != nil {{
                         return {fmt}.Errorf("failed to write pending byte list future contents: %w", err)
@@ -1999,6 +2003,7 @@ impl InterfaceGenerator<'_> {
                 defer func() {{
                     body, ok := v.({io}.Closer)
                     if ok {{
+                        {slog}.Debug("closing future writer")
                         if cErr := body.Close(); cErr != nil {{
                             if err == nil {{
                                 err = {fmt}.Errorf("failed to close pending future: %w", cErr)
@@ -2054,6 +2059,7 @@ impl InterfaceGenerator<'_> {
                     defer func() {{
                         body, ok := v.({io}.Closer)
                         if ok {{
+                            {slog}.Debug("closing byte list stream writer")
                             if cErr := body.Close(); cErr != nil {{
                                 if err == nil {{
                                     err = {fmt}.Errorf("failed to close pending byte stream: %w", cErr)
@@ -2118,6 +2124,7 @@ impl InterfaceGenerator<'_> {
                 defer func() {{
                     body, ok := v.({io}.Closer)
                     if ok {{
+                        {slog}.Debug("closing stream writer")
                         if cErr := body.Close(); cErr != nil {{
                             if err == nil {{
                                 err = {fmt}.Errorf("failed to close pending stream: %w", cErr)
@@ -2166,7 +2173,7 @@ impl InterfaceGenerator<'_> {
                             wg.Add(1)
                             w, err := w.Index(total)
                             if err != nil {{
-                                return {fmt}.Errorf("failed to index writer: %w", err)
+                                return {fmt}.Errorf("failed to index nested stream writer: %w", err)
                             }}
                             go func() {{
                                 defer wg.Done()
@@ -2599,7 +2606,7 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
             for index, write := range writes {{
                 w, err := w.Index(index)
                 if err != nil {{
-                    {slog}.ErrorContext(ctx, "failed to index writer", "index", index, "instance", "{instance}", "name", "{name}", "err", err)
+                    {slog}.ErrorContext(ctx, "failed to index result writer", "index", index, "instance", "{instance}", "name", "{name}", "err", err)
                     return
                 }}
                 index := index
@@ -2820,7 +2827,7 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
                 if cErr := w__.Close(); cErr != nil {{
                     {slog}.DebugContext(ctx__, "failed to close outgoing stream", "instance", "{instance}", "name", "{}", "err", cErr)
                 }}
-                err__ = {fmt}.Errorf("failed to index writer at index `%v`: %w", index, err)
+                err__ = {fmt}.Errorf("failed to index param writer at index `%v`: %w", index, err)
                 return
             }}
             write := write
@@ -3363,7 +3370,7 @@ func (v *{name}) WriteToIndex(w {wrpc}.ByteWriter) (func({wrpc}.IndexWriter) err
                 wg.Add(1)
                 w, err := w.Index(index)
                 if err != nil {{
-                    return {fmt}.Errorf("failed to index writer: %w", err)
+                    return {fmt}.Errorf("failed to index nested record writer: %w", err)
                 }}
                 write := write
                 go func() {{
@@ -3678,7 +3685,7 @@ func (v *{name}) WriteToIndex(w {wrpc}.ByteWriter) (func({wrpc}.IndexWriter) err
                         return func(w {wrpc}.IndexWriter) error {{
                             w, err := w.Index({i})
                             if err != nil {{
-                                return {fmt}.Errorf("failed to index writer: %w", err)
+                                return {fmt}.Errorf("failed to index nested variant writer: %w", err)
                             }}
                             return write(w)
                         }}, nil
