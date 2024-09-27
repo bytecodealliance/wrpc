@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"runtime"
 	"sync"
 	"sync/atomic"
 
@@ -125,7 +126,7 @@ type initState struct {
 func (w *paramWriter) Write(p []byte) (int, error) {
 	init, err := w.init()
 	if err != nil {
-		return 0, fmt.Errorf("failed to perform handshake")
+		return 0, fmt.Errorf("failed to perform handshake: %w", err)
 	}
 	tx := init.tx
 	if w.path != "" {
@@ -142,6 +143,10 @@ func (w *paramWriter) Write(p []byte) (int, error) {
 	for len(buf) > 0 {
 		maxPayload = min(maxPayload, int64(len(buf)))
 		p, buf = buf[:maxPayload], buf[maxPayload:]
+		slog.Debug("sending param payload chunk",
+			"tx", tx,
+			"buf", p,
+		)
 		if err := w.nc.Publish(tx, p); err != nil {
 			if w.path == "" {
 				bn := len(init.buf)
@@ -172,24 +177,34 @@ func (w *paramWriter) WriteByte(b byte) error {
 }
 
 func (w *paramWriter) Index(path ...uint32) (wrpc.IndexWriteCloser, error) {
+	s := indexPath(w.path, path...)
+	slog.Debug("indexing param writer",
+		"subject", s,
+	)
 	return &paramWriter{
 		nc:   w.nc,
 		init: w.init,
-		path: indexPath(w.path, path...),
+		path: s,
 	}, nil
 }
 
 func (w *paramWriter) Close() error {
+	slog.Debug("closing parameter writer",
+		"path", w.path,
+	)
 	init, err := w.init()
 	if err != nil {
-		return fmt.Errorf("failed to perform handshake")
+		return fmt.Errorf("failed to perform handshake: %w", err)
 	}
 	tx := init.tx
 	if w.path != "" {
 		tx = fmt.Sprintf("%s.%s", tx, w.path)
 	}
+	slog.Debug("sending parameter channel shutdown message",
+		"subject", tx,
+	)
 	if err := w.nc.Publish(tx, nil); err != nil {
-		return fmt.Errorf("failed to send empty message to shut down stream")
+		return fmt.Errorf("failed to send empty message to shut down stream: %w", err)
 	}
 	return nil
 }
@@ -205,27 +220,41 @@ func (w *resultWriter) Write(p []byte) (int, error) {
 	maxPayload = min(maxPayload, int64(n))
 	var buf []byte
 	p, buf = p[:maxPayload], p[maxPayload:]
+	slog.Debug("sending initial result payload chunk",
+		"tx", w.tx,
+		"buf", p,
+	)
 	if err := w.nc.Publish(w.tx, p); err != nil {
-		return 0, fmt.Errorf("failed to send initial payload chunk: %w", err)
+		return 0, fmt.Errorf("failed to send initial result payload chunk: %w", err)
 	}
 	for len(buf) > 0 {
 		maxPayload = min(maxPayload, int64(len(buf)))
 		p, buf = buf[:maxPayload], buf[maxPayload:]
+		slog.Debug("sending result payload chunk",
+			"tx", w.tx,
+			"buf", p,
+		)
 		if err := w.nc.Publish(w.tx, p); err != nil {
-			return 0, fmt.Errorf("failed to send payload chunk: %w", err)
+			return 0, fmt.Errorf("failed to send result payload chunk: %w", err)
 		}
 	}
 	return n, nil
 }
 
 func (w *resultWriter) WriteByte(b byte) error {
-	if err := w.nc.Publish(w.tx, []byte{b}); err != nil {
+	buf := []byte{b}
+	slog.Debug("sending byte result payload chunk",
+		"tx", w.tx,
+		"buf", buf,
+	)
+	if err := w.nc.Publish(w.tx, buf); err != nil {
 		return fmt.Errorf("failed to send byte: %w", err)
 	}
 	return nil
 }
 
 func (w *resultWriter) Close() error {
+	slog.Debug("sending result channel shutdown message")
 	if err := w.nc.Publish(w.tx, nil); err != nil {
 		return fmt.Errorf("failed to send shutdown message: %w", err)
 	}
@@ -247,14 +276,31 @@ type streamReader struct {
 	buf     []byte
 }
 
+func newStreamReader(r *streamReader) *streamReader {
+	runtime.SetFinalizer(r, func(r *streamReader) {
+		slog.DebugContext(r.ctx, "closing unused stream reader")
+		if err := r.drop(); err != nil {
+			slog.WarnContext(r.ctx, "failed to close stream reader", "err", err)
+		}
+	})
+	return r
+}
+
 func (r *streamReader) Read(p []byte) (int, error) {
 	if len(r.buf) > 0 {
 		n := copy(p, r.buf)
-		slog.Debug("copied bytes from buffer", "requested", len(p), "buffered", len(r.buf), "copied", n)
+		slog.DebugContext(r.ctx, "copied bytes from buffer",
+			"subject", r.sub.Subject,
+			"requested", len(p),
+			"buffered", len(r.buf),
+			"copied", n,
+		)
 		r.buf = r.buf[n:]
 		return n, nil
 	}
-	slog.Debug("receiving next byte chunk")
+	slog.DebugContext(r.ctx, "receiving next byte chunk",
+		"subject", r.sub.Subject,
+	)
 	msg, err := r.sub.NextMsgWithContext(r.ctx)
 	if err != nil {
 		return 0, err
@@ -270,11 +316,16 @@ func (r *streamReader) Read(p []byte) (int, error) {
 func (r *streamReader) ReadByte() (byte, error) {
 	if len(r.buf) > 0 {
 		b := r.buf[0]
-		slog.Debug("copied byte from buffer", "buffered", len(r.buf))
+		slog.DebugContext(r.ctx, "copied byte from buffer",
+			"subject", r.sub.Subject,
+			"buffered", len(r.buf),
+		)
 		r.buf = r.buf[1:]
 		return b, nil
 	}
-	slog.Debug("receiving next byte chunk")
+	slog.DebugContext(r.ctx, "receiving next byte chunk",
+		"subject", r.sub.Subject,
+	)
 	msg, err := r.sub.NextMsgWithContext(r.ctx)
 	if err != nil {
 		return 0, err
@@ -286,15 +337,23 @@ func (r *streamReader) ReadByte() (byte, error) {
 	return msg.Data[0], nil
 }
 
-func (r *streamReader) Close() (err error) {
+func (r *streamReader) drop() (err error) {
 	var errs []error
 	if err := r.sub.Unsubscribe(); err != nil {
 		errs = append(errs, fmt.Errorf("failed to unsubscribe: %w", err))
 	}
 	refs := r.nestRef.Add(-1)
+	slog.DebugContext(r.ctx, "unsubscribed",
+		"subject", r.sub.Subject,
+		"refs", refs,
+	)
 	if refs == 0 {
 		// since this is the only reference to `nest`, no need to lock the mutex
 		for path, sub := range r.nest {
+			slog.DebugContext(r.ctx, "unsubscribing from nested subscriber",
+				"subject", sub.Subject,
+				"path", path,
+			)
 			if err := sub.Unsubscribe(); err != nil {
 				errs = append(errs, fmt.Errorf("failed to unsubscribe from nested path `%s`: %w", path, err))
 			}
@@ -306,9 +365,20 @@ func (r *streamReader) Close() (err error) {
 	return nil
 }
 
+func (r *streamReader) Close() (err error) {
+	defer runtime.SetFinalizer(r, nil)
+	return r.drop()
+}
+
 func (r *streamReader) Index(path ...uint32) (wrpc.IndexReadCloser, error) {
-	r.nestRef.Add(1)
+	refs := r.nestRef.Add(1)
 	s := indexPath(r.path, path...)
+	slog.DebugContext(r.ctx, "indexing reader",
+		"subject", r.sub.Subject,
+		"path", s,
+		"refs", refs,
+		"nested", r.nest,
+	)
 	r.nestMu.Lock()
 	defer r.nestMu.Unlock()
 	sub, ok := r.nest[s]
@@ -316,14 +386,14 @@ func (r *streamReader) Index(path ...uint32) (wrpc.IndexReadCloser, error) {
 		return nil, errors.New("unknown subscription")
 	}
 	delete(r.nest, s)
-	return &streamReader{
+	return newStreamReader(&streamReader{
 		ctx:     r.ctx,
 		sub:     sub,
 		nestMu:  r.nestMu,
 		nestRef: r.nestRef,
 		nest:    r.nest,
 		path:    s,
-	}, nil
+	}), nil
 }
 
 func (c *Client) Invoke(ctx context.Context, instance string, name string, buf []byte, paths ...wrpc.SubscribePath) (wrpc.IndexWriteCloser, wrpc.IndexReadCloser, error) {
@@ -398,13 +468,13 @@ func (c *Client) Invoke(ctx context.Context, instance string, name string, buf [
 					tx:  paramSubject(m.Reply),
 				}, nil
 			}),
-		}, &streamReader{
+		}, newStreamReader(&streamReader{
 			ctx:     ctx,
 			sub:     resultSub,
 			nestMu:  &sync.Mutex{},
 			nestRef: nestRef,
 			nest:    nest,
-		}, nil
+		}), nil
 }
 
 func (c *Client) handleMessage(instance string, name string, f func(context.Context, wrpc.IndexWriteCloser, wrpc.IndexReadCloser), paths ...wrpc.SubscribePath) func(m *nats.Msg) {
@@ -454,14 +524,14 @@ func (c *Client) handleMessage(instance string, name string, f func(context.Cont
 		f(ctx, &resultWriter{
 			nc: c.conn,
 			tx: resultSubject(m.Reply),
-		}, &streamReader{
+		}, newStreamReader(&streamReader{
 			ctx:     ctx,
 			sub:     paramSub,
 			buf:     m.Data,
 			nestMu:  &sync.Mutex{},
 			nestRef: nestRef,
 			nest:    nest,
-		})
+		}))
 		slog.Debug("finished serving invocation")
 	}
 }
