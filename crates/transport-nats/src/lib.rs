@@ -871,20 +871,30 @@ impl wrpc_transport::Invoke for Client {
         let paths = paths.as_ref();
         let (result_rx, handshake_rx, nested) = try_join!(
             async {
+                trace!(
+                    subject = result_rx.as_str(),
+                    "subscribing on result subject"
+                );
                 self.nats
                     .subscribe(result_rx.clone())
                     .await
                     .context("failed to subscribe on result subject")
             },
             async {
+                trace!(subject = rx.as_str(), "subscribing on handshake subject");
                 self.nats
                     .subscribe(rx.clone())
                     .await
                     .context("failed to subscribe on handshake subject")
             },
             try_join_all(paths.iter().map(|path| async {
+                let rx = Subject::from(subscribe_path(&result_rx, path.as_ref()));
+                trace!(
+                    subject = rx.as_str(),
+                    "subscribing on nested result subject"
+                );
                 self.nats
-                    .subscribe(Subject::from(subscribe_path(&result_rx, path.as_ref())))
+                    .subscribe(rx)
                     .await
                     .context("failed to subscribe on nested result subject")
             }))
