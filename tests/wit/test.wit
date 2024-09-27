@@ -38,6 +38,7 @@ interface sync {
 
 interface async {
     with-streams: func(complete: bool) -> tuple<stream<u8>, stream<list<string>>>;
+    identity-nested-async: func(v: future<future<future<stream<string>>>>) -> future<future<future<stream<string>>>>;
 }
 
 interface resources {

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go"
+	wrpc "wrpc.io/go"
 	wrpcnats "wrpc.io/go/nats"
 	integration "wrpc.io/tests/go"
 	"wrpc.io/tests/go/bindings/async_client/wrpc_test/integration/async"
@@ -50,7 +51,7 @@ func TestAsync(t *testing.T) {
 	}
 	defer cancel()
 
-	{
+	t.Run("with-streams", func(t *testing.T) {
 		slog.DebugContext(ctx, "calling `wrpc-test:integration/async.with-streams`")
 		byteRx, stringListRx, err := async.WithStreams(ctx, client, true)
 		if err != nil {
@@ -90,49 +91,34 @@ func TestAsync(t *testing.T) {
 			t.Errorf("failed to close string list receiver: %s", err)
 			return
 		}
-	}
+	})
 
-	{
-		slog.DebugContext(ctx, "calling `wrpc-test:integration/async.with-streams`")
-		byteRx, stringListRx, err := async.WithStreams(ctx, client, false)
+	t.Run("identity-nested-async", func(t *testing.T) {
+		slog.DebugContext(ctx, "calling `wrpc-test:integration/async.identity-nested-async`")
+		fut, errCh, err := async.IdentityNestedAsync(ctx, client,
+			wrpc.NewNestedReceiver(wrpc.NewCompleteReceiver(
+				wrpc.NewCompleteReceiver(
+					wrpc.NewNestedReceiver(wrpc.NewCompleteReceiver(
+						wrpc.NewCompleteReceiver(
+							[]string{"foo", "bar", "baz"},
+						),
+					)),
+				),
+			)),
+		)
 		if err != nil {
-			t.Errorf("failed to call `wrpc-test:integration/async.with-streams`: %s", err)
+			t.Errorf("failed to call `wrpc-test:integration/async.identity-nested-async`: %s", err)
 			return
 		}
-		b, err := io.ReadAll(byteRx)
-		if err != nil {
-			t.Errorf("failed to read from stream: %s", err)
+		for err := range errCh {
+			t.Errorf("failed to send async value to peer: %s", err)
 			return
 		}
-		if string(b) != "test" {
-			t.Errorf("expected: `test`, got: %s", string(b))
+		if err := fut.(io.Closer).Close(); err != nil {
+			t.Errorf("failed to close async value receiver: %s", err)
 			return
 		}
-		if err := byteRx.(io.Closer).Close(); err != nil {
-			t.Errorf("failed to close byte reader: %s", err)
-			return
-		}
-
-		ss, err := stringListRx.Receive()
-		if err != nil {
-			t.Errorf("failed to receive ready list<string> stream: %s", err)
-			return
-		}
-		expected := [][]string{{"foo", "bar"}, {"baz"}}
-		if !reflect.DeepEqual(ss, expected) {
-			t.Errorf("expected: `%#v`, got: %#v", expected, ss)
-			return
-		}
-		ss, err = stringListRx.Receive()
-		if ss != nil || err != io.EOF {
-			t.Errorf("ready list<string> should have returned (nil, io.EOF), got: (%#v, %v)", ss, err)
-			return
-		}
-		if err := stringListRx.(io.Closer).Close(); err != nil {
-			t.Errorf("failed to close string list receiver: %s", err)
-			return
-		}
-	}
+	})
 
 	if err = stop(); err != nil {
 		t.Errorf("failed to stop serving `async-server` world: %s", err)
