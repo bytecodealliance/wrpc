@@ -131,3 +131,15 @@ func (r *DecodeReceiver[T]) Close() error {
 func NewDecodeReceiver[T any](r IndexReadCloser, decode func(IndexReader) (T, error)) *DecodeReceiver[T] {
 	return &DecodeReceiver[T]{r, decode}
 }
+
+type nestedReceiver[T any, A Receiver[B], B Receiver[T]] struct {
+	rx A
+}
+
+func (r nestedReceiver[T, A, B]) Receive() (Receiver[T], error) {
+	return r.rx.Receive()
+}
+
+func NewNestedReceiver[T any, A Receiver[B], B Receiver[T]](rx A) Receiver[Receiver[T]] {
+	return nestedReceiver[T, A, B]{rx}
+}
