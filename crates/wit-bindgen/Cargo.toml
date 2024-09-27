@@ -1,6 +1,6 @@
 [package]
 name = "wit-bindgen-wrpc"
-version = "0.6.5"
+version = "0.7.0"
 description = """
 Rust bindings generator for wRPC.
 """

@@ -19,7 +19,7 @@ use tokio::{select, try_join};
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::codec::{Encoder as _, FramedRead};
 use tokio_util::io::StreamReader;
-use tracing::{instrument, trace};
+use tracing::{instrument, trace, Instrument as _};
 use wasm_tokio::cm::{
     BoolCodec, F32Codec, F64Codec, OptionDecoder, OptionEncoder, PrimValEncoder, ResultDecoder,
     ResultEncoder, S16Codec, S32Codec, S64Codec, S8Codec, TupleDecoder, TupleEncoder, U16Codec,
@@ -1494,7 +1494,7 @@ where
         // TODO: Check if future is resolved
         dst.reserve(1);
         dst.put_u8(0x00);
-        self.deferred = Some(Box::new(|w, mut path| {
+        self.deferred = Some(Box::new(|w, path| {
             Box::pin(async move {
                 let mut root = w.index(&path).map_err(std::io::Error::other)?;
                 let item = item.await;
@@ -1503,7 +1503,6 @@ where
                 enc.encode(item, &mut buf)?;
                 try_join!(root.write_all(&buf), async {
                     if let Some(f) = enc.take_deferred() {
-                        path.push(0);
                         f(w, path).await
                     } else {
                         Ok(())
@@ -1578,9 +1577,14 @@ where
         // future is pending
         let (tx, rx) = oneshot::channel();
         let dec = mem::take(&mut self.dec).into_inner();
-        self.deferred = Some(Box::new(|r, mut path| {
+        self.deferred = Some(Box::new(|r, path| {
             Box::pin(async move {
-                let indexed = r.index(&path).map_err(std::io::Error::other)?;
+                let indexed = if path.is_empty() {
+                    Arc::try_unwrap(r)
+                        .map_err(|_| std::io::Error::other("cannot decode a pending future element from a non-unique reference when path is empty"))?
+                } else {
+                    r.index(&path).map_err(std::io::Error::other)?
+                };
                 let mut dec = FramedRead::new(indexed, dec);
                 trace!("receiving future element");
                 let Some(item) = dec.next().await else {
@@ -1598,15 +1602,15 @@ where
                     },
                     async {
                         if let Some(rx) = dec.decoder_mut().take_deferred() {
-                            path.push(0);
-                            rx(r, path).await
+                            let indexed = dec.into_inner();
+                            rx(Arc::new(indexed), Vec::default()).await
                         } else {
                             Ok(())
                         }
                     }
                 )?;
                 Ok(())
-            })
+            }.in_current_span())
         }));
         return Ok(Some(Box::pin(async {
             rx.await.expect("future I/O dropped")
@@ -1708,7 +1712,7 @@ where
                         }
                     }
                 }
-            })
+            }.in_current_span())
         }));
         Ok(())
     }
@@ -1959,7 +1963,12 @@ where
     std::io::Error: From<C::Error>,
 {
     let dec = ListDecoder::new(dec);
-    let indexed = r.index(&path).map_err(std::io::Error::other)?;
+    let indexed = if path.is_empty() {
+        Arc::try_unwrap(r)
+            .map_err(|_| std::io::Error::other("cannot decode a pending stream chunk from a non-unique reference when path is empty"))?
+    } else {
+        r.index(&path).map_err(std::io::Error::other)?
+    };
     let mut framed = FramedRead::new(indexed, dec);
     let mut tasks = JoinSet::new();
     let mut i = 0_usize;
@@ -1988,9 +1997,9 @@ where
                 for (i, deferred) in zip(i.., mem::take(&mut framed.decoder_mut().deferred)) {
                     if let Some(deferred) = deferred {
                         trace!(i, "handling async read");
-                        path.push(i);
-                        let indexed = r.index(&path).map_err(std::io::Error::other)?;
+                        let indexed = framed.get_ref().index(&[i]).map_err(std::io::Error::other)?;
                         trace!("spawning receive task");
+                        path.push(i);
                         tasks.spawn(deferred(indexed.into(), path.clone()));
                         path.pop();
                     }
@@ -2090,7 +2099,12 @@ where
         let dec = mem::take(&mut self.dec);
         self.deferred = Some(Box::new(|r, path| {
             Box::pin(async move {
-                let indexed = r.index(&path).map_err(std::io::Error::other)?;
+                let indexed = if path.is_empty() {
+                    Arc::try_unwrap(r)
+                        .map_err(|_| std::io::Error::other("cannot decode a pending stream chunk from a non-unique reference when path is empty"))?
+                } else {
+                    r.index(&path).map_err(std::io::Error::other)?
+                };
                 let mut framed = FramedRead::new(indexed, dec);
                 trace!("receiving stream chunk");
                 while let Some(chunk) = framed.next().await {
@@ -2163,7 +2177,12 @@ where
         let dec = mem::take(&mut self.dec);
         self.deferred = Some(Box::new(|r, path| {
             Box::pin(async move {
-                let indexed = r.index(&path).map_err(std::io::Error::other)?;
+                let indexed = if path.is_empty() {
+                    Arc::try_unwrap(r)
+                        .map_err(|_| std::io::Error::other("cannot decode a pending stream chunk from a non-unique reference when path is empty"))?
+                } else {
+                    r.index(&path).map_err(std::io::Error::other)?
+                };
                 let mut framed = FramedRead::new(indexed, dec);
                 trace!("receiving stream chunk");
                 while let Some(chunk) = framed.next().await {
