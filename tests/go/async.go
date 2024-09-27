@@ -23,3 +23,8 @@ func (AsyncHandler) WithStreams(ctx context.Context, complete bool) (io.Reader, 
 		return buf, str, nil
 	}
 }
+
+func (AsyncHandler) IdentityNestedAsync(ctx context.Context, v wrpc.Receiver[wrpc.Receiver[wrpc.Receiver[wrpc.Receiver[[]string]]]]) (wrpc.Receiver[wrpc.Receiver[wrpc.Receiver[wrpc.Receiver[[]string]]]], error) {
+	slog.DebugContext(ctx, "handling `identity-nested-async`")
+	return v, nil
+}

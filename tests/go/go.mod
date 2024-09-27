@@ -9,6 +9,8 @@ require (
 	wrpc.io/go v0.0.4
 )
 
+require github.com/lmittmann/tint v1.0.5 // indirect
+
 require (
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/klauspost/compress v1.17.8 // indirect

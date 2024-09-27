@@ -6,12 +6,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lmittmann/tint"
 	"github.com/nats-io/nats-server/v2/server"
 	"github.com/nats-io/nats-server/v2/test"
 )
 
 func init() {
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+	slog.SetDefault(slog.New(tint.NewHandler(os.Stderr, &tint.Options{
 		AddSource: true,
 		Level:     slog.LevelDebug,
 		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
