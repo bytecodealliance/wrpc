@@ -314,6 +314,7 @@ pub struct Reader {
 impl wrpc_transport::Index<Self> for Reader {
     #[instrument(level = "trace", skip(self))]
     fn index(&self, path: &[usize]) -> anyhow::Result<Self> {
+        ensure!(!path.is_empty());
         trace!("locking index tree");
         let mut nested = self
             .nested
@@ -404,6 +405,7 @@ impl SubjectWriter {
 impl wrpc_transport::Index<Self> for SubjectWriter {
     #[instrument(level = "trace", skip(self))]
     fn index(&self, path: &[usize]) -> anyhow::Result<Self> {
+        ensure!(!path.is_empty());
         let tx = Subject::from(index_path(self.tx.as_str(), path));
         Ok(Self {
             nats: self.nats.clone(),
@@ -628,6 +630,7 @@ impl RootParamWriter {
 impl wrpc_transport::Index<IndexedParamWriter> for RootParamWriter {
     #[instrument(level = "trace", skip(self))]
     fn index(&self, path: &[usize]) -> anyhow::Result<IndexedParamWriter> {
+        ensure!(!path.is_empty());
         match self {
             Self::Corrupted => Err(anyhow!(corrupted_memory_error())),
             Self::Handshaking { indexed, .. } => {
@@ -745,6 +748,7 @@ impl IndexedParamWriter {
 impl wrpc_transport::Index<Self> for IndexedParamWriter {
     #[instrument(level = "trace", skip_all)]
     fn index(&self, path: &[usize]) -> anyhow::Result<Self> {
+        ensure!(!path.is_empty());
         match self {
             Self::Corrupted => Err(anyhow!(corrupted_memory_error())),
             Self::Handshaking { indexed, .. } => {
@@ -818,6 +822,7 @@ pub enum ParamWriter {
 
 impl wrpc_transport::Index<Self> for ParamWriter {
     fn index(&self, path: &[usize]) -> anyhow::Result<Self> {
+        ensure!(!path.is_empty());
         match self {
             ParamWriter::Root(w) => w.index(path),
             ParamWriter::Nested(w) => w.index(path),
