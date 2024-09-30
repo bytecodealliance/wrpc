@@ -382,6 +382,7 @@ pin_project! {
 impl wrpc_transport::Index<Self> for Incoming {
     #[instrument(level = "trace", skip(self))]
     fn index(&self, path: &[usize]) -> anyhow::Result<Self> {
+        ensure!(!path.is_empty());
         match self {
             Self::Accepting {
                 index,
@@ -482,6 +483,7 @@ pin_project! {
 impl wrpc_transport::Index<Self> for Outgoing {
     #[instrument(level = "trace", skip(self))]
     fn index(&self, path: &[usize]) -> anyhow::Result<Self> {
+        ensure!(!path.is_empty());
         let mut header = BytesMut::with_capacity(path.len().saturating_add(5));
         let depth = path.len();
         let n = u32::try_from(depth)
