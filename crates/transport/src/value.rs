@@ -331,7 +331,6 @@ pub async fn handle_deferred<T, I>(
     w: Arc<T>,
     deferred: I,
     mut path: Vec<usize>,
-    idx: u64,
 ) -> std::io::Result<()>
 where
     I: IntoIterator<Item = Option<DeferredFn<T>>>,
@@ -368,7 +367,6 @@ pub trait Encode<T>: Sized {
         items: I,
         enc: &mut Self::Encoder,
         dst: &mut BytesMut,
-        idx: u64,
     ) -> Result<Option<DeferredFn<T>>, <Self::Encoder as tokio_util::codec::Encoder<Self>>::Error>
     where
         I: IntoIterator<Item = Self>,
@@ -384,7 +382,7 @@ pub trait Encode<T>: Sized {
         }
         if deferred.iter().any(Option::is_some) {
             Ok(Some(Box::new(move |w, path| {
-                Box::pin(handle_deferred(w, deferred, path, idx))
+                Box::pin(handle_deferred(w, deferred, path))
             })))
         } else {
             Ok(None)
@@ -396,7 +394,6 @@ pub trait Encode<T>: Sized {
         items: I,
         enc: &mut Self::Encoder,
         dst: &mut BytesMut,
-        idx: u64,
     ) -> Result<Option<DeferredFn<T>>, <Self::Encoder as tokio_util::codec::Encoder<&'a Self>>::Error>
     where
         I: IntoIterator<Item = &'a Self>,
@@ -413,7 +410,7 @@ pub trait Encode<T>: Sized {
         }
         if deferred.iter().any(Option::is_some) {
             Ok(Some(Box::new(move |w, path| {
-                Box::pin(handle_deferred(w, deferred, path, idx))
+                Box::pin(handle_deferred(w, deferred, path))
             })))
         } else {
             Ok(None)
@@ -433,7 +430,7 @@ pub trait Encode<T>: Sized {
             .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
         dst.reserve(5 + items.len());
         Leb128Encoder.encode(n, dst)?;
-        Self::encode_iter_own(items, enc, dst, 0)
+        Self::encode_iter_own(items, enc, dst)
     }
 
     #[instrument(level = "trace", skip(items, enc), fields(ty = "list"))]
@@ -450,7 +447,7 @@ pub trait Encode<T>: Sized {
             .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
         dst.reserve(5 + items.len());
         Leb128Encoder.encode(n, dst)?;
-        Self::encode_iter_ref(items, enc, dst, 0)
+        Self::encode_iter_ref(items, enc, dst)
     }
 }
 
@@ -734,7 +731,7 @@ where
         let deferred = mem::take(&mut self.deferred);
         if deferred.iter().any(Option::is_some) {
             Some(Box::new(|r, path| {
-                Box::pin(handle_deferred(r, deferred, path, 0))
+                Box::pin(handle_deferred(r, deferred, path))
             }))
         } else {
             None
@@ -797,7 +794,6 @@ macro_rules! impl_copy_codec {
                 items: I,
                 enc: &mut Self::Encoder,
                 dst: &mut BytesMut,
-                _idx: u64,
             ) -> Result<
                 Option<DeferredFn<W>>,
                 <Self::Encoder as tokio_util::codec::Encoder<Self>>::Error,
@@ -819,7 +815,6 @@ macro_rules! impl_copy_codec {
                 items: I,
                 enc: &mut Self::Encoder,
                 dst: &mut BytesMut,
-                _idx: u64,
             ) -> Result<
                 Option<DeferredFn<W>>,
                 <Self::Encoder as tokio_util::codec::Encoder<&'a Self>>::Error,
@@ -845,7 +840,6 @@ macro_rules! impl_copy_codec {
                 items: I,
                 enc: &mut Self::Encoder,
                 dst: &mut BytesMut,
-                _idx: u64,
             ) -> Result<
                 Option<DeferredFn<W>>,
                 <Self::Encoder as tokio_util::codec::Encoder<Self>>::Error,
@@ -867,7 +861,6 @@ macro_rules! impl_copy_codec {
                 items: I,
                 enc: &mut Self::Encoder,
                 dst: &mut BytesMut,
-                _idx: u64,
             ) -> Result<
                 Option<DeferredFn<W>>,
                 <Self::Encoder as tokio_util::codec::Encoder<&'a Self>>::Error,
@@ -913,7 +906,6 @@ impl<T> Encode<T> for u8 {
         items: I,
         enc: &mut Self::Encoder,
         dst: &mut BytesMut,
-        _idx: u64,
     ) -> Result<Option<DeferredFn<T>>, <Self::Encoder as tokio_util::codec::Encoder<Self>>::Error>
     where
         I: IntoIterator<Item = Self>,
@@ -930,7 +922,6 @@ impl<T> Encode<T> for u8 {
         items: I,
         enc: &mut Self::Encoder,
         dst: &mut BytesMut,
-        _idx: u64,
     ) -> Result<Option<DeferredFn<T>>, <Self::Encoder as tokio_util::codec::Encoder<&'a Self>>::Error>
     where
         I: IntoIterator<Item = &'a Self>,
@@ -975,7 +966,6 @@ impl<'b, T> Encode<T> for &'b u8 {
         items: I,
         enc: &mut Self::Encoder,
         dst: &mut BytesMut,
-        _idx: u64,
     ) -> Result<Option<DeferredFn<T>>, <Self::Encoder as tokio_util::codec::Encoder<Self>>::Error>
     where
         I: IntoIterator<Item = Self>,
@@ -992,7 +982,6 @@ impl<'b, T> Encode<T> for &'b u8 {
         items: I,
         enc: &mut Self::Encoder,
         dst: &mut BytesMut,
-        _idx: u64,
     ) -> Result<Option<DeferredFn<T>>, <Self::Encoder as tokio_util::codec::Encoder<&'a Self>>::Error>
     where
         I: IntoIterator<Item = &'a Self>,
@@ -1268,7 +1257,7 @@ macro_rules! impl_tuple_codec {
                 let Self(($(mut $cn),+,)) = mem::take(self);
                 let deferred = [ $($cn.take_deferred()),+ ];
                 if deferred.iter().any(Option::is_some) {
-                    Some(Box::new(|r, path| Box::pin(handle_deferred(r, deferred, path, 0))))
+                    Some(Box::new(|r, path| Box::pin(handle_deferred(r, deferred, path))))
                 } else {
                     None
                 }
@@ -1319,7 +1308,7 @@ macro_rules! impl_tuple_codec {
                 let ($(mut $cn),+,) = mem::take(self).into_inner();
                 let deferred = [ $($cn.take_deferred()),+ ];
                 if deferred.iter().any(Option::is_some) {
-                    Some(Box::new(|r, path| Box::pin(handle_deferred(r, deferred, path, 0))))
+                    Some(Box::new(|r, path| Box::pin(handle_deferred(r, deferred, path))))
                 } else {
                     None
                 }
@@ -1496,19 +1485,22 @@ where
         dst.put_u8(0x00);
         self.deferred = Some(Box::new(|w, path| {
             Box::pin(async move {
-                let mut root = w.index(&path).map_err(std::io::Error::other)?;
+                let mut w = if path.is_empty() {
+                    Arc::try_unwrap(w)
+                        .map_err(|_| std::io::Error::other("cannot encode a pending future element to a non-unique reference when path is empty"))?
+                } else {
+                    w.index(&path).map_err(std::io::Error::other)?
+                };
                 let item = item.await;
                 let mut enc = T::Encoder::default();
                 let mut buf = BytesMut::default();
                 enc.encode(item, &mut buf)?;
-                try_join!(root.write_all(&buf), async {
-                    if let Some(f) = enc.take_deferred() {
-                        f(w, path).await
-                    } else {
-                        Ok(())
-                    }
-                })?;
-                Ok(())
+                w.write_all(&buf).await?;
+                if let Some(f) = enc.take_deferred() {
+                    f(Arc::new(w), Vec::default()).await
+                } else {
+                    Ok(())
+                }
             })
         }));
         Ok(())
@@ -1579,13 +1571,13 @@ where
         let dec = mem::take(&mut self.dec).into_inner();
         self.deferred = Some(Box::new(|r, path| {
             Box::pin(async move {
-                let indexed = if path.is_empty() {
+                let r = if path.is_empty() {
                     Arc::try_unwrap(r)
                         .map_err(|_| std::io::Error::other("cannot decode a pending future element from a non-unique reference when path is empty"))?
                 } else {
                     r.index(&path).map_err(std::io::Error::other)?
                 };
-                let mut dec = FramedRead::new(indexed, dec);
+                let mut dec = FramedRead::new(r, dec);
                 trace!("receiving future element");
                 let Some(item) = dec.next().await else {
                     return Err(std::io::ErrorKind::UnexpectedEof.into());
@@ -1602,8 +1594,8 @@ where
                     },
                     async {
                         if let Some(rx) = dec.decoder_mut().take_deferred() {
-                            let indexed = dec.into_inner();
-                            rx(Arc::new(indexed), Vec::default()).await
+                            let r = dec.into_inner();
+                            rx(Arc::new(r), Vec::default()).await
                         } else {
                             Ok(())
                         }
@@ -1660,7 +1652,12 @@ where
         dst.put_u8(0x00);
         self.deferred = Some(Box::new(|w, path| {
             Box::pin(async move {
-                let mut root = w.index(&path).map_err(std::io::Error::other)?;
+                let mut w = if path.is_empty() {
+                    Arc::try_unwrap(w)
+                        .map_err(|_| std::io::Error::other("cannot encode a pending stream chunk to a non-unique reference when path is empty"))?
+                } else {
+                    w.index(&path).map_err(std::io::Error::other)?
+                };
                 let mut enc = T::Encoder::default();
                 let mut buf = BytesMut::default();
                 let mut tasks = JoinSet::new();
@@ -1672,15 +1669,11 @@ where
                                 trace!("writing stream end");
                                 buf.reserve(1);
                                 buf.put_u8(0x00);
-                                try_join!(
-                                    root.write_all(&buf),
-                                    async {
-                                        while let Some(res) = tasks.join_next().await {
-                                            trace!(?res, "receiver task finished");
-                                            res??;
-                                        }
-                                    Ok(())
-                                })?;
+                                w.write_all(&buf).await?;
+                                while let Some(res) = tasks.join_next().await {
+                                    trace!(?res, "receiver task finished");
+                                    res??;
+                                }
                                 return Ok(())
                             };
                             let n = u32::try_from(chunk.len()).map_err(|err| {
@@ -1695,9 +1688,18 @@ where
                             trace!(n, "encoding chunk length");
                             Leb128Encoder.encode(n, &mut buf)?;
                             trace!(i, buf = format!("{buf:02x?}"), "writing stream chunk items");
-                            if let Some(deferred) = T::encode_iter_own(chunk, &mut enc, &mut buf, i)? {
-                                trace!("spawning transmit task");
-                                tasks.spawn(deferred(Arc::clone(&w), path.clone()));
+
+                            buf.reserve(chunk.len());
+                            for (i, item) in zip(i.., chunk) {
+                                enc.encode(item, &mut buf)?;
+                                if let Some(f) = enc.take_deferred() {
+                                    let i = i
+                                        .try_into()
+                                        .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
+                                    let w = w.index(&[i]).map_err(std::io::Error::other)?;
+                                    trace!("spawning transmit task");
+                                    tasks.spawn(f(Arc::new(w), Vec::default()));
+                                }
                             }
                             i = end;
                         }
@@ -1705,7 +1707,7 @@ where
                             trace!(?res, "receiver task finished");
                             res??;
                         }
-                        res = root.write(&buf), if !buf.is_empty() => {
+                        res = w.write(&buf), if !buf.is_empty() => {
                             let n = res?;
                             trace!(?buf, n, "wrote bytes from buffer");
                             buf.advance(n);
@@ -1757,7 +1759,12 @@ where
         dst.put_u8(0x00);
         self.deferred = Some(Box::new(|w, path| {
             Box::pin(async move {
-                let mut root = w.index(&path).map_err(std::io::Error::other)?;
+                let mut w = if path.is_empty() {
+                    Arc::try_unwrap(w)
+                        .map_err(|_| std::io::Error::other("cannot encode a pending byte stream chunk to a non-unique reference when path is empty"))?
+                } else {
+                    w.index(&path).map_err(std::io::Error::other)?
+                };
                 let mut buf = BytesMut::default();
                 loop {
                     select! {
@@ -1766,7 +1773,7 @@ where
                                 trace!("writing stream end");
                                 buf.reserve(1);
                                 buf.put_u8(0x00);
-                                return root.write_all(&buf).await
+                                return w.write_all(&buf).await
                             };
                             let n = u32::try_from(chunk.len()).map_err(|err| {
                                 std::io::Error::new(std::io::ErrorKind::InvalidInput, err)
@@ -1775,7 +1782,7 @@ where
                             Leb128Encoder.encode(n, &mut buf)?;
                             buf.extend_from_slice(&chunk);
                         }
-                        res = root.write(&buf), if !buf.is_empty() => {
+                        res = w.write(&buf), if !buf.is_empty() => {
                             let n = res?;
                             buf.advance(n);
                         }
@@ -1824,7 +1831,12 @@ where
         dst.put_u8(0x00);
         self.deferred = Some(Box::new(|w, path| {
             Box::pin(async move {
-                let mut root = w.index(&path).map_err(std::io::Error::other)?;
+                let mut w = if path.is_empty() {
+                    Arc::try_unwrap(w)
+                        .map_err(|_| std::io::Error::other("cannot encode a pending byte stream chunk to a non-unique reference when path is empty"))?
+                } else {
+                    w.index(&path).map_err(std::io::Error::other)?
+                };
                 let mut buf = BytesMut::default();
                 let mut chunk = BytesMut::default();
                 loop {
@@ -1835,7 +1847,7 @@ where
                                 trace!("writing stream end");
                                 buf.reserve(1);
                                 buf.put_u8(0x00);
-                                return root.write_all(&buf).await
+                                return w.write_all(&buf).await
                             }
                             let n = u32::try_from(n).map_err(|err| {
                                 std::io::Error::new(std::io::ErrorKind::InvalidInput, err)
@@ -1845,7 +1857,7 @@ where
                             buf.extend_from_slice(&chunk);
                             chunk.clear();
                         }
-                        res = root.write(&buf), if !buf.is_empty() => {
+                        res = w.write(&buf), if !buf.is_empty() => {
                             let n = res?;
                             buf.advance(n);
                         }
@@ -1954,7 +1966,7 @@ where
 async fn handle_deferred_stream<C, T, R>(
     dec: C,
     r: Arc<R>,
-    mut path: Vec<usize>,
+    path: Vec<usize>,
     tx: mpsc::Sender<Vec<T>>,
 ) -> std::io::Result<()>
 where
@@ -1963,13 +1975,13 @@ where
     std::io::Error: From<C::Error>,
 {
     let dec = ListDecoder::new(dec);
-    let indexed = if path.is_empty() {
+    let r = if path.is_empty() {
         Arc::try_unwrap(r)
             .map_err(|_| std::io::Error::other("cannot decode a pending stream chunk from a non-unique reference when path is empty"))?
     } else {
         r.index(&path).map_err(std::io::Error::other)?
     };
-    let mut framed = FramedRead::new(indexed, dec);
+    let mut framed = FramedRead::new(r, dec);
     let mut tasks = JoinSet::new();
     let mut i = 0_usize;
     loop {
@@ -1996,12 +2008,9 @@ where
                 })?;
                 for (i, deferred) in zip(i.., mem::take(&mut framed.decoder_mut().deferred)) {
                     if let Some(deferred) = deferred {
-                        trace!(i, "handling async read");
-                        let indexed = framed.get_ref().index(&[i]).map_err(std::io::Error::other)?;
+                        let r = framed.get_ref().index(&[i]).map_err(std::io::Error::other)?;
                         trace!("spawning receive task");
-                        path.push(i);
-                        tasks.spawn(deferred(indexed.into(), path.clone()));
-                        path.pop();
+                        tasks.spawn(deferred(Arc::new(r), Vec::default()));
                     }
                 }
                 i = end;
@@ -2099,13 +2108,13 @@ where
         let dec = mem::take(&mut self.dec);
         self.deferred = Some(Box::new(|r, path| {
             Box::pin(async move {
-                let indexed = if path.is_empty() {
+                let r = if path.is_empty() {
                     Arc::try_unwrap(r)
                         .map_err(|_| std::io::Error::other("cannot decode a pending stream chunk from a non-unique reference when path is empty"))?
                 } else {
                     r.index(&path).map_err(std::io::Error::other)?
                 };
-                let mut framed = FramedRead::new(indexed, dec);
+                let mut framed = FramedRead::new(r, dec);
                 trace!("receiving stream chunk");
                 while let Some(chunk) = framed.next().await {
                     let chunk = chunk?;
@@ -2177,13 +2186,13 @@ where
         let dec = mem::take(&mut self.dec);
         self.deferred = Some(Box::new(|r, path| {
             Box::pin(async move {
-                let indexed = if path.is_empty() {
+                let r = if path.is_empty() {
                     Arc::try_unwrap(r)
                         .map_err(|_| std::io::Error::other("cannot decode a pending stream chunk from a non-unique reference when path is empty"))?
                 } else {
                     r.index(&path).map_err(std::io::Error::other)?
                 };
-                let mut framed = FramedRead::new(indexed, dec);
+                let mut framed = FramedRead::new(r, dec);
                 trace!("receiving stream chunk");
                 while let Some(chunk) = framed.next().await {
                     let chunk = chunk?;
