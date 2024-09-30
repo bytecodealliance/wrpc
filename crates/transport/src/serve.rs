@@ -109,7 +109,7 @@ pub trait ServeExt: Serve {
                                         .context("failed to shutdown synchronous return channel")?;
                                     if let Some(tx) = tx {
                                         debug!("transmitting async results");
-                                        tx(outgoing.into(), Vec::with_capacity(8))
+                                        tx(outgoing, Vec::default())
                                             .await
                                             .context("failed to write async results")?;
                                     }
