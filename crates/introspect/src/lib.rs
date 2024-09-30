@@ -164,12 +164,11 @@ pub fn async_paths_tyid(resolve: &Resolve, id: TypeId) -> (BTreeSet<VecDeque<Opt
             (paths, false)
         }
         TypeDefKind::Future(ty) => {
+            let mut paths = BTreeSet::default();
             if let Some(ty) = ty {
-                let (paths, _) = async_paths_ty(resolve, ty);
-                (paths, true)
-            } else {
-                (BTreeSet::default(), true)
+                (paths, _) = async_paths_ty(resolve, ty);
             }
+            (paths, true)
         }
         TypeDefKind::Stream(Stream { element, .. }) => {
             let mut paths = BTreeSet::new();

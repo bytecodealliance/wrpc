@@ -16,7 +16,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-anyhow = { workspace = true }
+anyhow = { workspace = true, features = ["std"] }
 bitflags = { workspace = true }
 bytes = { workspace = true }
 futures = { workspace = true }

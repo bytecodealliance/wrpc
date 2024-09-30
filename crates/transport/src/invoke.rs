@@ -1,4 +1,5 @@
 use core::future::Future;
+use core::mem;
 use core::pin::pin;
 use core::time::Duration;
 
@@ -10,7 +11,7 @@ use tokio::{select, try_join};
 use tokio_util::codec::{Encoder as _, FramedRead};
 use tracing::{debug, instrument, trace, Instrument as _};
 
-use crate::{Deferred as _, Index, TupleDecode, TupleEncode};
+use crate::{Deferred as _, Incoming, Index, TupleDecode, TupleEncode};
 
 /// Client-side handle to a wRPC transport
 pub trait Invoke: Send + Sync {
@@ -181,7 +182,7 @@ pub trait InvokeExt: Invoke {
                 tokio::spawn(
                     async {
                         debug!("transmitting async parameters");
-                        tx(outgoing.into(), Vec::with_capacity(8))
+                        tx(outgoing, Vec::default())
                             .await
                             .context("failed to write async parameters")
                     }
@@ -213,7 +214,12 @@ pub trait InvokeExt: Invoke {
                 results.await?
             };
             trace!("received sync results");
+            let buffer = mem::take(dec.read_buffer_mut());
             let rx = dec.decoder_mut().take_deferred();
+            let incoming = Incoming {
+                buffer,
+                inner: dec.into_inner(),
+            };
             Ok((
                 results,
                 (tx.is_some() || rx.is_some()).then_some(
@@ -223,7 +229,7 @@ pub trait InvokeExt: Invoke {
                                 try_join!(
                                     async {
                                         debug!("receiving async results");
-                                        rx(dec.into_inner().into(), Vec::with_capacity(8))
+                                        rx(incoming, Vec::default())
                                             .await
                                             .context("receiving async results failed")
                                     },
@@ -237,7 +243,7 @@ pub trait InvokeExt: Invoke {
                             }
                             (None, Some(rx)) => {
                                 debug!("receiving async results");
-                                rx(dec.into_inner().into(), Vec::with_capacity(8))
+                                rx(incoming, Vec::default())
                                     .await
                                     .context("receiving async results failed")?;
                             }

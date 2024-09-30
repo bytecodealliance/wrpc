@@ -1,4 +1,5 @@
 use core::future::Future;
+use core::mem;
 use core::pin::Pin;
 
 use std::sync::Arc;
@@ -9,7 +10,7 @@ use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt as _};
 use tokio_util::codec::{FramedRead, FramedWrite};
 use tracing::{debug, instrument, trace, Instrument as _, Span};
 
-use crate::{Deferred as _, Index, TupleDecode, TupleEncode};
+use crate::{Deferred as _, Incoming, Index, TupleDecode, TupleEncode};
 
 /// Server-side handle to a wRPC transport
 pub trait Serve: Sync {
@@ -87,11 +88,20 @@ pub trait ServeExt: Serve {
                     };
                     trace!("received sync parameters");
                     let rx = dec.decoder_mut().take_deferred();
+                    let buffer = mem::take(dec.read_buffer_mut());
                     let span = Span::current();
                     Ok((
                         cx,
                         params,
-                        rx.map(|f| f(dec.into_inner().into(), Vec::with_capacity(8))),
+                        rx.map(|f| {
+                            f(
+                                Incoming {
+                                    buffer,
+                                    inner: dec.into_inner(),
+                                },
+                                Vec::default(),
+                            )
+                        }),
                         move |results| {
                             Box::pin(
                                 async {
