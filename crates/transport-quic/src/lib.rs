@@ -405,7 +405,7 @@ impl wrpc_transport::Index<Self> for Incoming {
                 let mut lock = index.lock().map_err(|err| {
                     std::io::Error::new(std::io::ErrorKind::Other, err.to_string())
                 })?;
-                trace!("taking index subscription");
+                trace!(?path, "taking index subscription");
                 let rx = lock.take_rx(&path).ok_or_else(|| {
                     std::io::Error::new(
                         std::io::ErrorKind::NotFound,
@@ -451,7 +451,7 @@ impl AsyncRead for Incoming {
             IncomingProj::Active { rx, path, .. } => {
                 trace!(?path, "reading buffer");
                 ready!(AsyncRead::poll_read(rx, cx, buf))?;
-                trace!(buf = ?buf.filled(), "read from buffer");
+                trace!(?path, buf = ?buf.filled(), "read from buffer");
                 Poll::Ready(Ok(()))
             }
         }
@@ -580,8 +580,8 @@ impl AsyncWrite for Outgoing {
         ready!(self.as_mut().poll_flush_header(cx))?;
         match self.as_mut().project() {
             OutgoingProj::Opening { .. } => Poll::Ready(Err(corrupted_memory_error())),
-            OutgoingProj::Active { tx, .. } => {
-                trace!("writing buffer");
+            OutgoingProj::Active { tx, path, .. } => {
+                trace!(?path, ?buf, "writing buffer");
                 AsyncWrite::poll_write(tx, cx, buf)
             }
         }
@@ -592,8 +592,8 @@ impl AsyncWrite for Outgoing {
         ready!(self.as_mut().poll_flush_header(cx))?;
         match self.as_mut().project() {
             OutgoingProj::Opening { .. } => Poll::Ready(Err(corrupted_memory_error())),
-            OutgoingProj::Active { tx, .. } => {
-                trace!("flushing stream");
+            OutgoingProj::Active { tx, path, .. } => {
+                trace!(?path, "flushing stream");
                 tx.poll_flush(cx)
             }
         }
@@ -604,8 +604,8 @@ impl AsyncWrite for Outgoing {
         ready!(self.as_mut().poll_flush_header(cx))?;
         match self.as_mut().project() {
             OutgoingProj::Opening { .. } => Poll::Ready(Err(corrupted_memory_error())),
-            OutgoingProj::Active { tx, .. } => {
-                trace!("shutting down stream");
+            OutgoingProj::Active { tx, path, .. } => {
+                trace!(?path, "shutting down stream");
                 tx.poll_shutdown(cx)
             }
         }
