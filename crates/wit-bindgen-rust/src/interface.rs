@@ -389,7 +389,7 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve>(
                                                 if let Some(rx) = rx {{
                                                     rx.abort();
                                                 }}
-                                                {anyhow}::bail!("failed to transmit `{instance}.{wit_name}` invocation results")
+                                                {anyhow}::bail!(err.context("failed to transmit `{instance}.{wit_name}` invocation results"))
                                             }},
                                         }}
                                     }},
@@ -397,7 +397,7 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve>(
                                         if let Some(rx) = rx {{
                                             rx.abort();
                                         }}
-                                        {anyhow}::bail!("failed to serve `{instance}.{wit_name}` invocation")
+                                        {anyhow}::bail!(err.context("failed to serve `{instance}.{wit_name}` invocation"))
                                     }},
                                 }}
                             }})
