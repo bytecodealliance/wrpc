@@ -308,6 +308,7 @@ pub struct Reader {
     buffer: Bytes,
     incoming: Subscriber,
     nested: Arc<std::sync::Mutex<SubscriberTree>>,
+    path: Box<[usize]>,
 }
 
 impl wrpc_transport::Index<Self> for Reader {
@@ -319,13 +320,16 @@ impl wrpc_transport::Index<Self> for Reader {
             .lock()
             .map_err(|err| anyhow!(err.to_string()).context("failed to lock map"))?;
         trace!("taking index subscription");
+        let mut p = self.path.to_vec();
+        p.extend_from_slice(path);
         let incoming = nested
-            .take(path)
-            .with_context(|| format!("unknown subscription for path `{path:?}`"))?;
+            .take(&p)
+            .with_context(|| format!("unknown subscription for path `{p:?}`"))?;
         Ok(Self {
             buffer: Bytes::default(),
             incoming,
             nested: Arc::clone(&self.nested),
+            path: p.into_boxed_slice(),
         })
     }
 }
@@ -954,6 +958,7 @@ impl wrpc_transport::Invoke for Client {
                 buffer: Bytes::default(),
                 incoming: result_rx,
                 nested: Arc::new(std::sync::Mutex::new(nested)),
+                path: Box::default(),
             },
         ))
     }
@@ -1034,6 +1039,7 @@ impl wrpc_transport::Serve for Client {
                                 buffer: payload,
                                 incoming: param_rx,
                                 nested: Arc::new(std::sync::Mutex::new(nested)),
+                                path: Box::default(),
                             },
                         ))
                     }
