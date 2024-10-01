@@ -11,10 +11,9 @@ async fn go_bindgen() -> anyhow::Result<()> {
     use core::time::Duration;
 
     use anyhow::{anyhow, bail};
-    use bytes::Bytes;
-    use futures::{stream, StreamExt as _};
+    use common::assert_async;
+    use tokio::fs;
     use tokio::time::sleep;
-    use tokio::{fs, join};
     use tracing::info;
 
     if let Err(err) = fs::remove_dir_all("tests/go/bindings").await {
@@ -257,58 +256,10 @@ async fn go_bindgen() -> anyhow::Result<()> {
             .spawn()
             .context("failed to run `async-server-nats`")?;
 
-        let client = wrpc_transport_nats::Client::new(nats_client, "go", None);
-
         // TODO: Remove the need for this
         sleep(Duration::from_secs(1)).await;
 
-        info!("calling `wrpc-test:integration/async.with-streams`");
-        let ((a, b), io) = wrpc_test::integration::async_::with_streams(&client, None)
-            .await
-            .context("failed to call `wrpc-test:integration/async.with-streams`")?;
-        join!(
-            async {
-                info!("receiving `a`");
-                assert_eq!(a.collect::<Vec<Bytes>>().await.concat(), b"test");
-            },
-            async {
-                info!("receiving `b`");
-                assert_eq!(
-                    b.collect::<Vec<_>>().await.concat(),
-                    [["foo"].as_slice(), ["bar", "baz"].as_slice()]
-                );
-            },
-            async {
-                if let Some(io) = io {
-                    info!("performing I/O");
-                    io.await.expect("failed to complete async I/O");
-                }
-            }
-        );
-
-        info!("calling `wrpc-test:integration/async.with-future`");
-        let (fut, io) = wrpc_test::integration::async_::with_future(
-            &client,
-            None,
-            &wrpc_test::integration::async_::Something {
-                foo: "bar".to_string(),
-            },
-            Box::pin(stream::iter(["foo".into(), "bar".into()])),
-        )
-        .await
-        .context("failed to call `wrpc-test:integration/async.with-future`")?;
-        join!(
-            async {
-                info!("receiving results");
-                assert_eq!(fut.await.collect::<Vec<Bytes>>().await.concat(), b"foobar");
-            },
-            async {
-                if let Some(io) = io {
-                    info!("performing I/O");
-                    io.await.expect("failed to complete async I/O");
-                }
-            }
-        );
+        assert_async(&wrpc_transport_nats::Client::new(nats_client, "go", None)).await?;
 
         server
             .start_kill()

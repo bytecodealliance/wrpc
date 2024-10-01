@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	wrpc "wrpc.io/go"
 	wrpcnats "wrpc.io/go/nats"
 	integration "wrpc.io/tests/go"
@@ -95,7 +97,7 @@ func TestAsync(t *testing.T) {
 
 	t.Run("identity-nested-async", func(t *testing.T) {
 		slog.DebugContext(ctx, "calling `wrpc-test:integration/async.identity-nested-async`")
-		fut, errCh, err := async.IdentityNestedAsync(ctx, client,
+		fut0, errCh, err := async.IdentityNestedAsync(ctx, client,
 			wrpc.NewNestedReceiver(wrpc.NewCompleteReceiver(
 				wrpc.NewCompleteReceiver(
 					wrpc.NewNestedReceiver(wrpc.NewCompleteReceiver(
@@ -114,7 +116,26 @@ func TestAsync(t *testing.T) {
 			t.Errorf("failed to send async value to peer: %s", err)
 			return
 		}
-		if err := fut.Close(); err != nil {
+		fut1, err := fut0.Receive()
+		require.NoError(t, err, "failed to receive future 0")
+		fut2, err := fut1.Receive()
+		require.NoError(t, err, "failed to receive future 1")
+
+		stream, err := fut2.Receive()
+		require.NoError(t, err, "failed to receive future 2")
+
+		var ss []string
+		for err != io.EOF {
+			var v []string
+			v, err = stream.Receive()
+			if err != io.EOF {
+				require.NoError(t, err, "failed to receive stream element")
+			}
+			ss = append(ss, v...)
+		}
+		assert.Equal(t, ss, []string{"foo", "bar", "baz"})
+
+		if err := fut0.Close(); err != nil {
 			t.Errorf("failed to close async value receiver: %s", err)
 			return
 		}

@@ -24,7 +24,7 @@ func ReadFutureStatus(r ByteReader) (bool, error) {
 }
 
 // ReadFuture reads a future from `r`
-func ReadFuture[T any](r IndexReader, f func(IndexReader) (T, error), path ...uint32) (Receiver[T], error) {
+func ReadFuture[T any](r IndexReadCloser, f func(IndexReadCloser) (T, error), path ...uint32) (Receiver[T], error) {
 	slog.Debug("reading future status byte")
 	ok, err := ReadFutureStatus(r)
 	if err != nil {
