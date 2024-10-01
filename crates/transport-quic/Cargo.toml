@@ -1,6 +1,6 @@
 [package]
 name = "wrpc-transport-quic"
-version = "0.2.0"
+version = "0.2.1"
 description = "wRPC QUIC transport"
 
 authors.workspace = true
