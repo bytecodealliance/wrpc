@@ -12,7 +12,7 @@ import (
 	"github.com/nats-io/nats.go"
 	wrpcnats "wrpc.io/go/nats"
 	integration "wrpc.io/tests/go"
-	"wrpc.io/tests/go/bindings/sync_server"
+	"wrpc.io/tests/go/bindings/async_server"
 )
 
 func run(url string) error {
@@ -32,8 +32,8 @@ func run(url string) error {
 	}()
 
 	client := wrpcnats.NewClient(nc, wrpcnats.WithPrefix("go"))
-	var h integration.SyncHandler
-	stop, err := sync_server.Serve(client, h, h)
+	var h integration.AsyncHandler
+	stop, err := async_server.Serve(client, h)
 	if err != nil {
 		return fmt.Errorf("failed to serve world: %w", err)
 	}

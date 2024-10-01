@@ -104,15 +104,18 @@ type CompleteReceiver[T any] struct {
 
 func (r *CompleteReceiver[T]) Receive() (T, error) {
 	defer func() {
-		*r = CompleteReceiver[T]{}
+		r.ready = false
 	}()
 	if !r.ready {
-		return r.v, io.EOF
+		return CompleteReceiver[T]{}.v, io.EOF
 	}
 	return r.v, nil
 }
 
-func (CompleteReceiver[T]) Close() error {
+func (r *CompleteReceiver[T]) Close() error {
+	if c, ok := (any)(r.v).(io.Closer); ok {
+		return c.Close()
+	}
 	return nil
 }
 

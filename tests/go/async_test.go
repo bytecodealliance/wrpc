@@ -53,7 +53,7 @@ func TestAsync(t *testing.T) {
 
 	t.Run("with-streams", func(t *testing.T) {
 		slog.DebugContext(ctx, "calling `wrpc-test:integration/async.with-streams`")
-		byteRx, stringListRx, err := async.WithStreams(ctx, client, true)
+		byteRx, stringListRx, err := async.WithStreams(ctx, client)
 		if err != nil {
 			t.Errorf("failed to call `wrpc-test:integration/async.with-streams`: %s", err)
 			return
@@ -77,7 +77,7 @@ func TestAsync(t *testing.T) {
 			t.Errorf("failed to receive ready list<string> stream: %s", err)
 			return
 		}
-		expected := [][]string{{"foo", "bar"}, {"baz"}}
+		expected := [][]string{{"foo"}, {"bar", "baz"}}
 		if !reflect.DeepEqual(ss, expected) {
 			t.Errorf("expected: `%#v`, got: %#v", expected, ss)
 			return
