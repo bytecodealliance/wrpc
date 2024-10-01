@@ -14,7 +14,7 @@ anyhow = { workspace = true, features = ["std"] }
 async-nats = { workspace = true, features = ["ring"] }
 bytes = { workspace = true }
 futures = { workspace = true, features = ["async-await"] }
-tokio = { workspace = true, features = ["io-util"] }
+tokio = { workspace = true, features = ["io-util", "rt-multi-thread"] }
 tokio-util = { workspace = true, features = ["codec", "io"] }
 tracing = { workspace = true, features = ["attributes"] }
 wasm-tokio = { workspace = true }
