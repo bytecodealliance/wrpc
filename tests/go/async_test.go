@@ -124,6 +124,8 @@ func TestAsync(t *testing.T) {
 		t.Errorf("failed to stop serving `async-server` world: %s", err)
 		return
 	}
+
+	time.Sleep(time.Second)
 	if nc.NumSubscriptions() != 0 {
 		t.Errorf("NATS subscriptions leaked: %d active after client stop", nc.NumSubscriptions())
 	}
