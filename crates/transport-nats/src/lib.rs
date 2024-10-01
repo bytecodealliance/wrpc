@@ -306,7 +306,7 @@ impl SubscriberTree {
 
 pub struct Reader {
     buffer: Bytes,
-    incoming: Subscriber,
+    incoming: Option<Subscriber>,
     nested: Arc<std::sync::Mutex<SubscriberTree>>,
     path: Box<[usize]>,
 }
@@ -323,9 +323,7 @@ impl wrpc_transport::Index<Self> for Reader {
         trace!("taking index subscription");
         let mut p = self.path.to_vec();
         p.extend_from_slice(path);
-        let incoming = nested
-            .take(&p)
-            .with_context(|| format!("unknown subscription for path `{p:?}`"))?;
+        let incoming = nested.take(&p);
         Ok(Self {
             buffer: Bytes::default(),
             incoming,
@@ -358,8 +356,14 @@ impl AsyncRead for Reader {
             }
             return Poll::Ready(Ok(()));
         }
+        let Some(incoming) = self.incoming.as_mut() else {
+            return Poll::Ready(Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("subscription not found for path {:?}", self.path),
+            )));
+        };
         trace!("polling for next message");
-        match self.incoming.poll_next_unpin(cx) {
+        match incoming.poll_next_unpin(cx) {
             Poll::Ready(Some(Message { mut payload, .. })) => {
                 trace!(?payload, "received message");
                 if payload.is_empty() {
@@ -961,7 +965,7 @@ impl wrpc_transport::Invoke for Client {
             )),
             Reader {
                 buffer: Bytes::default(),
-                incoming: result_rx,
+                incoming: Some(result_rx),
                 nested: Arc::new(std::sync::Mutex::new(nested)),
                 path: Box::default(),
             },
@@ -1042,7 +1046,7 @@ impl wrpc_transport::Serve for Client {
                             SubjectWriter::new((*nats).clone(), Subject::from(result_subject(&tx))),
                             Reader {
                                 buffer: payload,
-                                incoming: param_rx,
+                                incoming: Some(param_rx),
                                 nested: Arc::new(std::sync::Mutex::new(nested)),
                                 path: Box::default(),
                             },

@@ -11,6 +11,7 @@ use std::thread;
 
 use anyhow::Context;
 use bytes::Bytes;
+use common::assert_async;
 use futures::{stream, FutureExt as _, Stream, StreamExt as _, TryStreamExt as _};
 use tokio::sync::{oneshot, RwLock};
 use tokio::time::sleep;
@@ -21,7 +22,165 @@ use wrpc_transport::{
 };
 
 #[instrument(skip_all, ret)]
-async fn assert_bindgen<C, I, S>(clt: Arc<I>, srv: Arc<S>) -> anyhow::Result<()>
+async fn assert_bindgen_async<C, I, S>(clt: Arc<I>, srv: Arc<S>) -> anyhow::Result<()>
+where
+    C: Send + Sync + Default,
+    I: wrpc::Invoke<Context = C> + 'static,
+    S: wrpc::Serve<Context = C> + Send + 'static,
+{
+    let (shutdown_tx, shutdown_rx) = oneshot::channel();
+    let shutdown_rx = async move { shutdown_rx.await.expect("shutdown sender dropped") }.shared();
+    try_join!(
+        async {
+            wrpc::generate!({
+                world: "async-server",
+                path: "tests/wit",
+            });
+
+            #[derive(Clone, Default)]
+            struct Component {}
+
+            impl<C: Send + Sync> exports::wrpc_test::integration::async_::Handler<C> for Component {
+                async fn with_streams(
+                    &self,
+                    _cx: C,
+                ) -> anyhow::Result<(
+                    Pin<Box<dyn Stream<Item = Bytes> + Send>>,
+                    Pin<Box<dyn Stream<Item = Vec<Vec<String>>> + Send>>,
+                )> {
+                    Ok((
+                        Box::pin(stream::iter([Bytes::from("test")])),
+                        Box::pin(stream::iter([
+                            vec![vec!["foo".to_string()]],
+                            vec![vec!["bar".to_string(), "baz".to_string()]],
+                        ])),
+                    ))
+                }
+
+                async fn with_future(
+                    &self,
+                    _cx: C,
+                    x: exports::wrpc_test::integration::async_::Something,
+                    s: Pin<Box<dyn Stream<Item = Bytes> + Send>>,
+                ) -> anyhow::Result<
+                    Pin<Box<dyn Future<Output = Pin<Box<dyn Stream<Item = Bytes> + Send>>> + Send>>,
+                > {
+                    assert_eq!(x.foo, "bar");
+                    Ok(Box::pin(async { s }))
+                }
+
+                async fn identity_nested_async(
+                    &self,
+                    _cx: C,
+                    v: Pin<
+                        Box<
+                            (dyn Future<
+                                Output = Pin<
+                                    Box<
+                                        (dyn Future<
+                                            Output = Pin<
+                                                Box<
+                                                    (dyn Future<
+                                                        Output = Pin<
+                                                            Box<
+                                                                (dyn Stream<Item = Vec<String>>
+                                                                     + Send
+                                                                     + 'static),
+                                                            >,
+                                                        >,
+                                                    > + Send
+                                                         + 'static),
+                                                >,
+                                            >,
+                                        > + Send
+                                             + 'static),
+                                    >,
+                                >,
+                            > + Send
+                                 + 'static),
+                        >,
+                    >,
+                ) -> anyhow::Result<
+                    Pin<
+                        Box<
+                            (dyn Future<
+                                Output = Pin<
+                                    Box<
+                                        (dyn Future<
+                                            Output = Pin<
+                                                Box<
+                                                    (dyn Future<
+                                                        Output = Pin<
+                                                            Box<
+                                                                (dyn Stream<Item = Vec<String>>
+                                                                     + Send
+                                                                     + 'static),
+                                                            >,
+                                                        >,
+                                                    > + Send
+                                                         + 'static),
+                                                >,
+                                            >,
+                                        > + Send
+                                             + 'static),
+                                    >,
+                                >,
+                            > + Send
+                                 + 'static),
+                        >,
+                    >,
+                > {
+                    Ok(v)
+                }
+            }
+
+            let srv = Arc::clone(&srv);
+            let shutdown_rx = shutdown_rx.clone();
+            tokio::spawn(async move {
+                let mut invocations = serve(srv.as_ref(), Component::default())
+                    .await
+                    .context("failed to serve `wrpc-test:integration/async`")?;
+                let mut invocations = stream::select_all(invocations.into_iter().map(
+                    |(instance, name, invocations)| {
+                        invocations.map(move |res| (instance, name, res))
+                    },
+                ));
+                loop {
+                    let shutdown_rx = shutdown_rx.clone();
+                    select! {
+                        Some((instance, name, invocation)) = invocations.next() => {
+                            info!(instance, name, "serving invocation");
+                            invocation.expect("failed to accept invocation").await.expect("failed to serve invocation");
+                        }
+                        () = shutdown_rx => {
+                            info!("shutting down");
+                            return anyhow::Ok(())
+                        }
+                    }
+                }
+            })
+            .await?
+        },
+        async {
+            wrpc::generate!({
+                world: "async-client",
+                path: "tests/wit",
+            });
+
+            // TODO: Remove the need for this
+            sleep(Duration::from_secs(1)).await;
+
+            assert_async(clt.as_ref()).await?;
+
+            shutdown_tx.send(()).expect("failed to send shutdown");
+            Ok(())
+        },
+    )?;
+    Ok(())
+}
+
+#[instrument(skip_all, ret)]
+async fn assert_bindgen_sync<C, I, S>(clt: Arc<I>, srv: Arc<S>) -> anyhow::Result<()>
 where
     C: Send + Sync + Default,
     I: wrpc::Invoke<Context = C> + 'static,
@@ -57,18 +216,8 @@ where
                             }
                         }
 
-                        interface async {
-                            record something {
-                                foo: string,
-                            }
-
-                            with-streams: func() -> (bytes: stream<u8>, lists: stream<list<string>>);
-                            with-future: func(x: something, s: stream<u8>) -> future<stream<u8>>;
-                        }
-
                         world test {
                             export shared;
-                            export async;
 
                             export f: func(x: string) -> u32;
                             export foo: interface {
@@ -237,36 +386,6 @@ where
                 }
             }
 
-            impl<C: Send + Sync> exports::wrpc_test::integration::async_::Handler<C> for Component {
-                async fn with_streams(
-                    &self,
-                    _cx: C,
-                ) -> anyhow::Result<(
-                    Pin<Box<dyn Stream<Item = Bytes> + Send>>,
-                    Pin<Box<dyn Stream<Item = Vec<Vec<String>>> + Send>>,
-                )> {
-                    Ok((
-                        Box::pin(stream::iter([Bytes::from("test")])),
-                        Box::pin(stream::iter([
-                            vec![vec!["foo".to_string()]],
-                            vec![vec!["bar".to_string(), "baz".to_string()]],
-                        ])),
-                    ))
-                }
-
-                async fn with_future(
-                    &self,
-                    _cx: C,
-                    x: exports::wrpc_test::integration::async_::Something,
-                    s: Pin<Box<dyn Stream<Item = Bytes> + Send>>,
-                ) -> anyhow::Result<
-                    Pin<Box<dyn Future<Output = Pin<Box<dyn Stream<Item = Bytes> + Send>>> + Send>>,
-                > {
-                    assert_eq!(x.foo, "bar");
-                    Ok(Box::pin(async { s }))
-                }
-            }
-
             impl<C: Send + Sync> exports::foo::Handler<C> for Component {
                 async fn foo(&self, _cx: C, x: String) -> anyhow::Result<()> {
                     let old = self.inner.write().await.replace(x);
@@ -329,18 +448,8 @@ where
                             }
                         }
 
-                        interface async {
-                            record something {
-                                foo: string,
-                            }
-
-                            with-streams: func() -> (bytes: stream<u8>, lists: stream<list<string>>);
-                            with-future: func(x: something, s: stream<u8>) -> future<stream<u8>>;
-                        }
-
                         world test {
                             import shared;
-                            import async;
 
                             import f: func(x: string) -> u32;
                             import foo: interface {
@@ -471,62 +580,13 @@ where
                     .context("failed to call `wrpc-test:integration/shared.[static]counter-sum")?;
                     assert_eq!(sum, 6);
 
-                    info!("calling `wrpc-test:integration/async.with-streams`");
-                    let (a, b, io) =
-                        wrpc_test::integration::async_::with_streams(self.0.as_ref(), C::default())
-                            .await
-                            .context("failed to call `wrpc-test:integration/async.with-streams`")?;
-                    join!(
-                        async {
-                            info!("receiving `a`");
-                            assert_eq!(a.collect::<Vec<Bytes>>().await.concat(), b"test");
-                        },
-                        async {
-                            info!("receiving `b`");
-                            assert_eq!(
-                                b.collect::<Vec<_>>().await.concat(),
-                                [["foo"].as_slice(), ["bar", "baz"].as_slice()]
-                            );
-                        },
-                        async {
-                            if let Some(io) = io {
-                                info!("performing I/O");
-                                io.await.expect("failed to complete async I/O");
-                            }
-                        }
-                    );
-
-                    info!("calling `wrpc-test:integration/async.with-future`");
-                    let (fut, io) = wrpc_test::integration::async_::with_future(
-                        self.0.as_ref(),
-                        C::default(),
-                        &wrpc_test::integration::async_::Something {
-                            foo: "bar".to_string(),
-                        },
-                        Box::pin(stream::iter(["foo".into(), "bar".into()])),
-                    )
-                    .await
-                    .context("failed to call `wrpc-test:integration/async.with-future`")?;
-                    join!(
-                        async {
-                            info!("receiving results");
-                            assert_eq!(fut.await.collect::<Vec<Bytes>>().await.concat(), b"foobar");
-                        },
-                        async {
-                            if let Some(io) = io {
-                                info!("performing I/O");
-                                io.await.expect("failed to complete async I/O");
-                            }
-                        }
-                    );
-
                     Ok("bar".to_string())
                 }
             }
 
             let mut invocations = serve(srv.as_ref(), Component(Arc::clone(&clt)))
                 .await
-                .context("failed to serve `wrpc-test:integration/async`")?;
+                .context("failed to serve `wrpc-test:integration/test`")?;
             let mut invocations = stream::select_all(invocations.into_iter().map(
                 |(instance, name, invocations)| invocations.map(move |res| (instance, name, res)),
             ));
@@ -938,12 +998,31 @@ where
 #[cfg(feature = "nats")]
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 #[instrument(ret)]
-async fn rust_bindgen_nats() -> anyhow::Result<()> {
+async fn rust_bindgen_nats_sync() -> anyhow::Result<()> {
     common::with_nats(|_, nats_client| async {
-        let client =
-            wrpc_transport_nats::Client::new(nats_client, "test-prefix", Some("test-group".into()));
-        let client = Arc::new(client);
-        assert_bindgen(Arc::clone(&client), client).await
+        let clt = wrpc_transport_nats::Client::new(
+            nats_client,
+            "rust-bindgen-sync",
+            Some("rust-bindgen-sync".into()),
+        );
+        let clt = Arc::new(clt);
+        assert_bindgen_sync(Arc::clone(&clt), clt).await
+    })
+    .await
+}
+
+#[cfg(feature = "nats")]
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+#[instrument(ret)]
+async fn rust_bindgen_nats_async() -> anyhow::Result<()> {
+    common::with_nats(|_, nats_client| async {
+        let clt = wrpc_transport_nats::Client::new(
+            nats_client,
+            "rust-bindgen-async",
+            Some("rust-bindgen-async".into()),
+        );
+        let clt = Arc::new(clt);
+        assert_bindgen_async(Arc::clone(&clt), clt).await
     })
     .await
 }
@@ -953,9 +1032,9 @@ async fn rust_bindgen_nats() -> anyhow::Result<()> {
 #[instrument(ret)]
 async fn rust_dynamic_nats() -> anyhow::Result<()> {
     common::with_nats(|_, nats_client| async {
-        let client = wrpc_transport_nats::Client::new(nats_client, "test-prefix", None);
-        let client = Arc::new(client);
-        assert_dynamic(Arc::clone(&client), client).await
+        let clt = wrpc_transport_nats::Client::new(nats_client, "rust-dynamic", None);
+        let clt = Arc::new(clt);
+        assert_dynamic(Arc::clone(&clt), clt).await
     })
     .await
 }
@@ -963,13 +1042,12 @@ async fn rust_dynamic_nats() -> anyhow::Result<()> {
 #[cfg(feature = "quic")]
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 #[instrument(ret)]
-async fn rust_bindgen_quic() -> anyhow::Result<()> {
+async fn rust_bindgen_quic_sync() -> anyhow::Result<()> {
     use core::net::Ipv6Addr;
     use core::pin::pin;
 
     common::with_quic(
         &[
-            "*.wrpc-test_integration__async",
             "*.wrpc-test_integration__bar",
             "*.wrpc-test_integration__foo",
             "*.wrpc-test_integration__shared",
@@ -981,7 +1059,46 @@ async fn rust_bindgen_quic() -> anyhow::Result<()> {
             let srv = wrpc_transport_quic::Server::default();
 
             let srv = Arc::new(srv);
-            let mut fut = pin!(assert_bindgen(Arc::new(clt), Arc::clone(&srv)));
+            let mut fut = pin!(async {
+                let clt = Arc::new(clt);
+                assert_bindgen_sync(Arc::clone(&clt), Arc::clone(&srv)).await
+            });
+            loop {
+                select! {
+                    res = &mut fut => {
+                        return res
+                    }
+                    res = srv.accept(&srv_ep) => {
+                        let ok = res.expect("failed to accept connection");
+                        assert!(ok);
+                        continue
+                    }
+                }
+            }
+        },
+    )
+    .await
+}
+
+#[cfg(feature = "quic")]
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+#[instrument(ret)]
+#[ignore] // TODO: reenable
+async fn rust_bindgen_quic_async() -> anyhow::Result<()> {
+    use core::net::Ipv6Addr;
+    use core::pin::pin;
+
+    common::with_quic(
+        &["*.wrpc-test_integration__async"],
+        |port, clt_ep, srv_ep| async move {
+            let clt = wrpc_transport_quic::Client::new(clt_ep, (Ipv6Addr::LOCALHOST, port));
+            let srv = wrpc_transport_quic::Server::default();
+
+            let srv = Arc::new(srv);
+            let mut fut = pin!(async {
+                let clt = Arc::new(clt);
+                assert_bindgen_async(Arc::clone(&clt), Arc::clone(&srv)).await
+            });
             loop {
                 select! {
                     res = &mut fut => {

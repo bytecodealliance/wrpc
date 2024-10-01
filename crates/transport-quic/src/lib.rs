@@ -134,7 +134,7 @@ impl<P: AsRef<[Option<usize>]>> FromIterator<P> for IndexTree {
 }
 
 impl IndexTree {
-    #[instrument(level = "trace", skip(self))]
+    #[instrument(level = "trace", skip(self), ret(level = "trace"))]
     fn take_rx(&mut self, path: &[usize]) -> Option<oneshot::Receiver<RecvStream>> {
         let Some((i, path)) = path.split_first() else {
             return match self {
@@ -168,7 +168,7 @@ impl IndexTree {
         }
     }
 
-    #[instrument(level = "trace", skip(self))]
+    #[instrument(level = "trace", skip(self), ret(level = "trace"))]
     fn take_tx(&mut self, path: &[usize]) -> Option<oneshot::Sender<RecvStream>> {
         let Some((i, path)) = path.split_first() else {
             return match self {
@@ -204,7 +204,7 @@ impl IndexTree {
 
     /// Inserts `sender` and `receiver` under a `path` - returns `false` if it failed and `true` if it succeeded.
     /// Tree state after `false` is returned is undefined
-    #[instrument(level = "trace", skip(self, sender, receiver), ret)]
+    #[instrument(level = "trace", skip(self, sender, receiver), ret(level = "trace"))]
     fn insert(
         &mut self,
         path: &[Option<usize>],
@@ -366,7 +366,7 @@ pin_project! {
             index: Arc<std::sync::Mutex<IndexTree>>,
             path: Arc<[usize]>,
             #[pin]
-            rx: oneshot::Receiver<RecvStream>,
+            rx: Option<oneshot::Receiver<RecvStream>>,
             io: Arc<JoinSet<std::io::Result<()>>>,
         },
         Active {
@@ -406,12 +406,7 @@ impl wrpc_transport::Index<Self> for Incoming {
                     std::io::Error::new(std::io::ErrorKind::Other, err.to_string())
                 })?;
                 trace!(?path, "taking index subscription");
-                let rx = lock.take_rx(&path).ok_or_else(|| {
-                    std::io::Error::new(
-                        std::io::ErrorKind::NotFound,
-                        format!("`{path:?}` subscription not found"),
-                    )
-                })?;
+                let rx = lock.take_rx(&path);
                 Ok(Self::Accepting {
                     index: Arc::clone(index),
                     path,
@@ -424,7 +419,7 @@ impl wrpc_transport::Index<Self> for Incoming {
 }
 
 impl AsyncRead for Incoming {
-    #[instrument(level = "trace", skip_all, ret)]
+    #[instrument(level = "trace", skip_all, ret(level = "trace"))]
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -434,11 +429,17 @@ impl AsyncRead for Incoming {
             IncomingProj::Accepting {
                 index,
                 path,
-                mut rx,
+                rx,
                 io,
             } => {
+                let Some(rx) = rx.as_pin_mut() else {
+                    return Poll::Ready(Err(std::io::Error::new(
+                        std::io::ErrorKind::NotFound,
+                        format!("subscription not found for path {:?}", path),
+                    )));
+                };
                 trace!(?path, "polling channel");
-                let rx = ready!(rx.as_mut().poll(cx))
+                let rx = ready!(rx.poll(cx))
                     .map_err(|err| std::io::Error::new(std::io::ErrorKind::BrokenPipe, err))?;
                 *self = Self::Active {
                     index: Arc::clone(index),
@@ -536,7 +537,7 @@ fn poll_write_header(
 }
 
 impl Outgoing {
-    #[instrument(level = "trace", skip_all, ret)]
+    #[instrument(level = "trace", skip_all, ret(level = "trace"))]
     fn poll_flush_header(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -571,7 +572,7 @@ fn corrupted_memory_error() -> std::io::Error {
 }
 
 impl AsyncWrite for Outgoing {
-    #[instrument(level = "trace", skip_all, ret, fields(buf = format!("{buf:02x?}")))]
+    #[instrument(level = "trace", skip_all, fields(buf = format!("{buf:02x?}")), ret(level = "trace"))]
     fn poll_write(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -587,7 +588,7 @@ impl AsyncWrite for Outgoing {
         }
     }
 
-    #[instrument(level = "trace", skip_all, ret)]
+    #[instrument(level = "trace", skip_all, ret(level = "trace"))]
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
         ready!(self.as_mut().poll_flush_header(cx))?;
         match self.as_mut().project() {
@@ -599,7 +600,7 @@ impl AsyncWrite for Outgoing {
         }
     }
 
-    #[instrument(level = "trace", skip_all, ret)]
+    #[instrument(level = "trace", skip_all, ret(level = "trace"))]
     fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
         ready!(self.as_mut().poll_flush_header(cx))?;
         match self.as_mut().project() {
