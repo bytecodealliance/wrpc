@@ -16,7 +16,7 @@ import (
 )
 
 type Req struct {
-	Numbers wrpc.ReceiveCloser[[]uint64]
+	Numbers wrpc.Receiver[[]uint64]
 	Bytes   io.ReadCloser
 }
 
@@ -25,7 +25,7 @@ func (v *Req) String() string { return "Req" }
 func (v *Req) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, error) {
 	writes := make(map[uint32]func(wrpc.IndexWriter) error, 2)
 	slog.Debug("writing field", "name", "numbers")
-	write0, err := func(v wrpc.ReceiveCloser[[]uint64], w interface {
+	write0, err := func(v wrpc.Receiver[[]uint64], w interface {
 		io.ByteWriter
 		io.Writer
 	}) (write func(wrpc.IndexWriter) error, err error) {
@@ -203,7 +203,7 @@ func (v *Req) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, err
 }
 
 type Handler interface {
-	Echo(ctx__ context.Context, r *Req) (wrpc.ReceiveCloser[[]uint64], io.ReadCloser, error)
+	Echo(ctx__ context.Context, r *Req) (wrpc.Receiver[[]uint64], io.ReadCloser, error)
 }
 
 func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
@@ -228,7 +228,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 			v := &Req{}
 			var err error
 			slog.Debug("reading field", "name", "numbers")
-			v.Numbers, err = func(r wrpc.IndexReader, path ...uint32) (wrpc.ReceiveCloser[[]uint64], error) {
+			v.Numbers, err = func(r wrpc.IndexReader, path ...uint32) (wrpc.Receiver[[]uint64], error) {
 				slog.Debug("reading stream status byte")
 				status, err := r.ReadByte()
 				if err != nil {
@@ -463,7 +463,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 		var buf bytes.Buffer
 		writes := make(map[uint32]func(wrpc.IndexWriter) error, 2)
 
-		write0, err := func(v wrpc.ReceiveCloser[[]uint64], w interface {
+		write0, err := func(v wrpc.Receiver[[]uint64], w interface {
 			io.ByteWriter
 			io.Writer
 		}) (write func(wrpc.IndexWriter) error, err error) {

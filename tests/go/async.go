@@ -13,7 +13,7 @@ import (
 
 type AsyncHandler struct{}
 
-func (AsyncHandler) WithStreams(ctx context.Context, complete bool) (io.ReadCloser, wrpc.ReceiveCloser[[][]string], error) {
+func (AsyncHandler) WithStreams(ctx context.Context, complete bool) (io.ReadCloser, wrpc.Receiver[[][]string], error) {
 	slog.DebugContext(ctx, "handling `with-streams`", "complete", complete)
 	buf := io.NopCloser(bytes.NewBuffer([]byte("test")))
 	str := wrpc.NewCompleteReceiver([][]string{{"foo", "bar"}, {"baz"}})
@@ -24,7 +24,7 @@ func (AsyncHandler) WithStreams(ctx context.Context, complete bool) (io.ReadClos
 	}
 }
 
-func (AsyncHandler) IdentityNestedAsync(ctx context.Context, v wrpc.ReceiveCloser[wrpc.ReceiveCloser[wrpc.ReceiveCloser[wrpc.ReceiveCloser[[]string]]]]) (wrpc.ReceiveCloser[wrpc.ReceiveCloser[wrpc.ReceiveCloser[wrpc.ReceiveCloser[[]string]]]], error) {
+func (AsyncHandler) IdentityNestedAsync(ctx context.Context, v wrpc.Receiver[wrpc.Receiver[wrpc.Receiver[wrpc.Receiver[[]string]]]]) (wrpc.Receiver[wrpc.Receiver[wrpc.Receiver[wrpc.Receiver[[]string]]]], error) {
 	slog.DebugContext(ctx, "handling `identity-nested-async`")
 	return v, nil
 }
