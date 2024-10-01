@@ -67,7 +67,7 @@ func TestAsync(t *testing.T) {
 			t.Errorf("expected: `test`, got: %s", string(b))
 			return
 		}
-		if err := byteRx.(io.Closer).Close(); err != nil {
+		if err := byteRx.Close(); err != nil {
 			t.Errorf("failed to close byte reader: %s", err)
 			return
 		}
@@ -87,7 +87,7 @@ func TestAsync(t *testing.T) {
 			t.Errorf("ready list<string> should have returned (nil, io.EOF), got: (%#v, %v)", ss, err)
 			return
 		}
-		if err := stringListRx.(io.Closer).Close(); err != nil {
+		if err := stringListRx.Close(); err != nil {
 			t.Errorf("failed to close string list receiver: %s", err)
 			return
 		}
@@ -114,7 +114,7 @@ func TestAsync(t *testing.T) {
 			t.Errorf("failed to send async value to peer: %s", err)
 			return
 		}
-		if err := fut.(io.Closer).Close(); err != nil {
+		if err := fut.Close(); err != nil {
 			t.Errorf("failed to close async value receiver: %s", err)
 			return
 		}

@@ -13,9 +13,9 @@ import (
 
 type AsyncHandler struct{}
 
-func (AsyncHandler) WithStreams(ctx context.Context, complete bool) (io.Reader, wrpc.Receiver[[][]string], error) {
+func (AsyncHandler) WithStreams(ctx context.Context, complete bool) (io.ReadCloser, wrpc.ReceiveCloser[[][]string], error) {
 	slog.DebugContext(ctx, "handling `with-streams`", "complete", complete)
-	buf := bytes.NewBuffer([]byte("test"))
+	buf := io.NopCloser(bytes.NewBuffer([]byte("test")))
 	str := wrpc.NewCompleteReceiver([][]string{{"foo", "bar"}, {"baz"}})
 	if complete {
 		return buf, str, nil
@@ -24,7 +24,7 @@ func (AsyncHandler) WithStreams(ctx context.Context, complete bool) (io.Reader, 
 	}
 }
 
-func (AsyncHandler) IdentityNestedAsync(ctx context.Context, v wrpc.Receiver[wrpc.Receiver[wrpc.Receiver[wrpc.Receiver[[]string]]]]) (wrpc.Receiver[wrpc.Receiver[wrpc.Receiver[wrpc.Receiver[[]string]]]], error) {
+func (AsyncHandler) IdentityNestedAsync(ctx context.Context, v wrpc.ReceiveCloser[wrpc.ReceiveCloser[wrpc.ReceiveCloser[wrpc.ReceiveCloser[[]string]]]]) (wrpc.ReceiveCloser[wrpc.ReceiveCloser[wrpc.ReceiveCloser[wrpc.ReceiveCloser[[]string]]]], error) {
 	slog.DebugContext(ctx, "handling `identity-nested-async`")
 	return v, nil
 }

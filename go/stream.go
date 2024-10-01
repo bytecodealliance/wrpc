@@ -121,7 +121,7 @@ func ReadStreamStatus(r ByteReader) (bool, error) {
 }
 
 // ReadByteStream reads a stream of bytes from `r`
-func ReadByteStream(r IndexReader, path ...uint32) (io.Reader, error) {
+func ReadByteStream(r IndexReader, path ...uint32) (io.ReadCloser, error) {
 	slog.Debug("reading byte stream status byte")
 	ok, err := ReadStreamStatus(r)
 	if err != nil {
@@ -140,11 +140,11 @@ func ReadByteStream(r IndexReader, path ...uint32) (io.Reader, error) {
 		return nil, fmt.Errorf("failed to read bytes: %w", err)
 	}
 	slog.Debug("read ready byte stream", "len", len(buf))
-	return bytes.NewReader(buf), nil
+	return io.NopCloser(bytes.NewReader(buf)), nil
 }
 
 // ReadStream reads a stream from `r`
-func ReadStream[T any](r IndexReader, f func(IndexReader) (T, error), path ...uint32) (Receiver[[]T], error) {
+func ReadStream[T any](r IndexReader, f func(IndexReader) (T, error), path ...uint32) (ReceiveCloser[[]T], error) {
 	slog.Debug("reading stream status byte")
 	ok, err := ReadStreamStatus(r)
 	if err != nil {

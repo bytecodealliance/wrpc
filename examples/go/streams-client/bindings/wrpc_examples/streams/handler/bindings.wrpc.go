@@ -16,8 +16,8 @@ import (
 )
 
 type Req struct {
-	Numbers wrpc.Receiver[[]uint64]
-	Bytes   io.Reader
+	Numbers wrpc.ReceiveCloser[[]uint64]
+	Bytes   io.ReadCloser
 }
 
 func (v *Req) String() string { return "Req" }
@@ -25,7 +25,7 @@ func (v *Req) String() string { return "Req" }
 func (v *Req) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, error) {
 	writes := make(map[uint32]func(wrpc.IndexWriter) error, 2)
 	slog.Debug("writing field", "name", "numbers")
-	write0, err := func(v wrpc.Receiver[[]uint64], w interface {
+	write0, err := func(v wrpc.ReceiveCloser[[]uint64], w interface {
 		io.ByteWriter
 		io.Writer
 	}) (write func(wrpc.IndexWriter) error, err error) {
@@ -35,14 +35,12 @@ func (v *Req) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, err
 		}
 		return func(w wrpc.IndexWriter) (err error) {
 			defer func() {
-				body, ok := v.(io.Closer)
-				if ok {
-					if cErr := body.Close(); cErr != nil {
-						if err == nil {
-							err = fmt.Errorf("failed to close pending stream: %w", cErr)
-						} else {
-							slog.Warn("failed to close pending stream", "err", cErr)
-						}
+				slog.Debug("closing stream writer")
+				if cErr := v.Close(); cErr != nil {
+					if err == nil {
+						err = fmt.Errorf("failed to close pending stream: %w", cErr)
+					} else {
+						slog.Warn("failed to close pending stream", "err", cErr)
 					}
 				}
 			}()
@@ -86,7 +84,7 @@ func (v *Req) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, err
 						wg.Add(1)
 						w, err := w.Index(total)
 						if err != nil {
-							return fmt.Errorf("failed to index writer: %w", err)
+							return fmt.Errorf("failed to index nested stream writer: %w", err)
 						}
 						go func() {
 							defer wg.Done()
@@ -118,7 +116,7 @@ func (v *Req) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, err
 		writes[0] = write0
 	}
 	slog.Debug("writing field", "name", "bytes")
-	write1, err := func(v io.Reader, w interface {
+	write1, err := func(v io.ReadCloser, w interface {
 		io.ByteWriter
 		io.Writer
 	}) (write func(wrpc.IndexWriter) error, err error) {
@@ -128,14 +126,12 @@ func (v *Req) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, err
 		}
 		return func(w wrpc.IndexWriter) (err error) {
 			defer func() {
-				body, ok := v.(io.Closer)
-				if ok {
-					if cErr := body.Close(); cErr != nil {
-						if err == nil {
-							err = fmt.Errorf("failed to close pending byte stream: %w", cErr)
-						} else {
-							slog.Warn("failed to close pending byte stream", "err", cErr)
-						}
+				slog.Debug("closing byte list stream writer")
+				if cErr := v.Close(); cErr != nil {
+					if err == nil {
+						err = fmt.Errorf("failed to close pending byte stream: %w", cErr)
+					} else {
+						slog.Warn("failed to close pending byte stream", "err", cErr)
 					}
 				}
 			}()
@@ -185,7 +181,7 @@ func (v *Req) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, err
 				wg.Add(1)
 				w, err := w.Index(index)
 				if err != nil {
-					return fmt.Errorf("failed to index writer: %w", err)
+					return fmt.Errorf("failed to index nested record writer: %w", err)
 				}
 				write := write
 				go func() {
@@ -205,7 +201,7 @@ func (v *Req) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, err
 	}
 	return nil, nil
 }
-func Echo(ctx__ context.Context, wrpc__ wrpc.Invoker, r *Req) (r0__ wrpc.Receiver[[]uint64], r1__ io.Reader, writeErrs__ <-chan error, err__ error) {
+func Echo(ctx__ context.Context, wrpc__ wrpc.Invoker, r *Req) (r0__ wrpc.ReceiveCloser[[]uint64], r1__ io.ReadCloser, writeErrs__ <-chan error, err__ error) {
 	var buf__ bytes.Buffer
 	var writeCount__ uint32
 	write0__, err__ := (r).WriteToIndex(&buf__)
@@ -245,7 +241,7 @@ func Echo(ctx__ context.Context, wrpc__ wrpc.Invoker, r *Req) (r0__ wrpc.Receive
 				if cErr := w__.Close(); cErr != nil {
 					slog.DebugContext(ctx__, "failed to close outgoing stream", "instance", "wrpc-examples:streams/handler", "name", "echo", "err", cErr)
 				}
-				err__ = fmt.Errorf("failed to index writer at index `%v`: %w", index, err)
+				err__ = fmt.Errorf("failed to index param writer at index `%v`: %w", index, err)
 				return
 			}
 			write := write
@@ -264,7 +260,7 @@ func Echo(ctx__ context.Context, wrpc__ wrpc.Invoker, r *Req) (r0__ wrpc.Receive
 	if cErr__ := w__.Close(); cErr__ != nil {
 		slog.DebugContext(ctx__, "failed to close outgoing stream", "instance", "wrpc-examples:streams/handler", "name", "echo", "err", cErr__)
 	}
-	r0__, err__ = func(r wrpc.IndexReader, path ...uint32) (wrpc.Receiver[[]uint64], error) {
+	r0__, err__ = func(r wrpc.IndexReader, path ...uint32) (wrpc.ReceiveCloser[[]uint64], error) {
 		slog.Debug("reading stream status byte")
 		status, err := r.ReadByte()
 		if err != nil {
@@ -274,7 +270,7 @@ func Echo(ctx__ context.Context, wrpc__ wrpc.Invoker, r *Req) (r0__ wrpc.Receive
 		case 0:
 			r, err := r.Index(path...)
 			if err != nil {
-				return nil, fmt.Errorf("failed to index reader: %w", err)
+				return nil, fmt.Errorf("failed to index nested stream reader: %w", err)
 			}
 			var total uint32
 			return wrpc.NewDecodeReceiver(r, func(r wrpc.IndexReader) ([]uint64, error) {
@@ -415,7 +411,7 @@ func Echo(ctx__ context.Context, wrpc__ wrpc.Invoker, r *Req) (r0__ wrpc.Receive
 		err__ = fmt.Errorf("failed to read result 0: %w", err__)
 		return
 	}
-	r1__, err__ = func(r wrpc.IndexReader, path ...uint32) (io.Reader, error) {
+	r1__, err__ = func(r wrpc.IndexReader, path ...uint32) (io.ReadCloser, error) {
 		slog.Debug("reading byte stream status byte")
 		status, err := r.ReadByte()
 		if err != nil {
@@ -425,7 +421,7 @@ func Echo(ctx__ context.Context, wrpc__ wrpc.Invoker, r *Req) (r0__ wrpc.Receive
 		case 0:
 			r, err := r.Index(path...)
 			if err != nil {
-				return nil, fmt.Errorf("failed to index reader: %w", err)
+				return nil, fmt.Errorf("failed to index nested byte stream reader: %w", err)
 			}
 			return wrpc.NewByteStreamReader(r), nil
 		case 1:
@@ -468,7 +464,7 @@ func Echo(ctx__ context.Context, wrpc__ wrpc.Invoker, r *Req) (r0__ wrpc.Receive
 				return nil, fmt.Errorf("failed to read ready byte stream contents: %w", err)
 			}
 			slog.Debug("read ready byte stream contents", "len", len(buf))
-			return bytes.NewReader(buf), nil
+			return io.NopCloser(bytes.NewReader(buf)), nil
 		default:
 			return nil, fmt.Errorf("invalid stream status byte %d", status)
 		}

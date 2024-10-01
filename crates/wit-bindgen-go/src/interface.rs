@@ -939,7 +939,7 @@ impl InterfaceGenerator<'_> {
 
                 uwriteln!(
                     self.src,
-                    r#"func(r {wrpc}.IndexReader, path ...uint32) ({io}.Reader, error) {{
+                    r#"func(r {wrpc}.IndexReader, path ...uint32) ({io}.ReadCloser, error) {{
     {slog}.Debug("reading byte list future status byte")
     status, err := r.ReadByte()
     if err != nil {{
@@ -965,7 +965,7 @@ impl InterfaceGenerator<'_> {
             return nil, {fmt}.Errorf("failed to read ready byte list future contents: %w", err)
         }}
         {slog}.Debug("read ready byte list future contents", "len", len(buf))
-        return {bytes}.NewReader(buf), nil
+        return {io}.NopCloser({bytes}.NewReader(buf)), nil
     default:
         return nil, {fmt}.Errorf("invalid byte list future status byte %d", status)
     }}
@@ -985,7 +985,7 @@ impl InterfaceGenerator<'_> {
 
                 uwrite!(
                     self.src,
-                    r#"func(r {wrpc}.IndexReader, path ...uint32) ({wrpc}.Receiver["#
+                    r#"func(r {wrpc}.IndexReader, path ...uint32) ({wrpc}.ReceiveCloser["#
                 );
                 self.print_opt_ty(ty, true);
                 uwrite!(
@@ -1060,7 +1060,7 @@ impl InterfaceGenerator<'_> {
 
                 uwriteln!(
                     self.src,
-                    r#"func(r {wrpc}.IndexReader, path ...uint32) ({io}.Reader, error) {{
+                    r#"func(r {wrpc}.IndexReader, path ...uint32) ({io}.ReadCloser, error) {{
     {slog}.Debug("reading byte stream status byte")
     status, err := r.ReadByte()
     if err != nil {{
@@ -1085,7 +1085,7 @@ impl InterfaceGenerator<'_> {
             return nil, {fmt}.Errorf("failed to read ready byte stream contents: %w", err)
         }}
         {slog}.Debug("read ready byte stream contents", "len", len(buf))
-        return {bytes}.NewReader(buf), nil
+        return {io}.NopCloser({bytes}.NewReader(buf)), nil
     default:
         return nil, {fmt}.Errorf("invalid stream status byte %d", status)
     }}
@@ -1108,7 +1108,7 @@ impl InterfaceGenerator<'_> {
 
                 uwrite!(
                     self.src,
-                    r#"func(r {wrpc}.IndexReader, path ...uint32) ({wrpc}.Receiver["#
+                    r#"func(r {wrpc}.IndexReader, path ...uint32) ({wrpc}.ReceiveCloser["#
                 );
                 self.print_list(ty);
                 uwrite!(
@@ -1990,7 +1990,7 @@ impl InterfaceGenerator<'_> {
                 let io = self.deps.io();
                 let slog = self.deps.slog();
                 let wrpc = self.deps.wrpc();
-                uwrite!(self.src, "func(v {wrpc}.Receiver[",);
+                uwrite!(self.src, "func(v {wrpc}.ReceiveCloser[",);
                 self.print_opt_ty(ty, true);
                 uwrite!(
                     self.src,
@@ -2001,17 +2001,14 @@ impl InterfaceGenerator<'_> {
             }}
             return func(w {wrpc}.IndexWriter) (err error) {{
                 defer func() {{
-                    body, ok := v.({io}.Closer)
-                    if ok {{
-                        {slog}.Debug("closing future writer")
-                        if cErr := body.Close(); cErr != nil {{
-                            if err == nil {{
-                                err = {fmt}.Errorf("failed to close pending future: %w", cErr)
-                            }} else {{
-                                {slog}.Warn("failed to close pending future", "err", cErr)
-                            }}
-                        }}
-                    }}
+                   {slog}.Debug("closing future writer")
+                   if cErr := v.Close(); cErr != nil {{
+                       if err == nil {{
+                           err = {fmt}.Errorf("failed to close pending future: %w", cErr)
+                       }} else {{
+                           {slog}.Warn("failed to close pending future", "err", cErr)
+                       }}
+                   }}
                 }}()
                 {slog}.Debug("receiving outgoing pending future contents")
                 rx, err := v.Receive()
@@ -2050,24 +2047,21 @@ impl InterfaceGenerator<'_> {
                 let wrpc = self.deps.wrpc();
                 uwrite!(
                     self.src,
-                    r#"func(v {io}.Reader, w interface {{ {io}.ByteWriter; {io}.Writer }}) (write func({wrpc}.IndexWriter) error, err error) {{
+                    r#"func(v {io}.ReadCloser, w interface {{ {io}.ByteWriter; {io}.Writer }}) (write func({wrpc}.IndexWriter) error, err error) {{
                 {slog}.Debug("writing byte stream `stream::pending` status byte")
                 if err = w.WriteByte(0); err != nil {{
                     return nil, fmt.Errorf("failed to write `stream::pending` byte: %w", err)
                 }}
                 return func(w {wrpc}.IndexWriter) (err error) {{
                     defer func() {{
-                        body, ok := v.({io}.Closer)
-                        if ok {{
-                            {slog}.Debug("closing byte list stream writer")
-                            if cErr := body.Close(); cErr != nil {{
-                                if err == nil {{
-                                    err = {fmt}.Errorf("failed to close pending byte stream: %w", cErr)
-                                }} else {{
-                                    {slog}.Warn("failed to close pending byte stream", "err", cErr)
-                                }}
-                            }}
-                        }}
+                       {slog}.Debug("closing byte list stream writer")
+                       if cErr := v.Close(); cErr != nil {{
+                           if err == nil {{
+                               err = {fmt}.Errorf("failed to close pending byte stream: %w", cErr)
+                           }} else {{
+                               {slog}.Warn("failed to close pending byte stream", "err", cErr)
+                           }}
+                       }}
                     }}()
                     chunk := make([]byte, 8096)
                     for {{
@@ -2111,7 +2105,7 @@ impl InterfaceGenerator<'_> {
                 let slog = self.deps.slog();
                 let sync = self.deps.sync();
                 let wrpc = self.deps.wrpc();
-                uwrite!(self.src, "func(v {wrpc}.Receiver[",);
+                uwrite!(self.src, "func(v {wrpc}.ReceiveCloser[",);
                 self.print_list(ty);
                 uwrite!(
                     self.src,
@@ -2122,15 +2116,12 @@ impl InterfaceGenerator<'_> {
             }}
             return func(w {wrpc}.IndexWriter) (err error) {{
                 defer func() {{
-                    body, ok := v.({io}.Closer)
-                    if ok {{
-                        {slog}.Debug("closing stream writer")
-                        if cErr := body.Close(); cErr != nil {{
-                            if err == nil {{
-                                err = {fmt}.Errorf("failed to close pending stream: %w", cErr)
-                            }} else {{
-                                {slog}.Warn("failed to close pending stream", "err", cErr)
-                            }}
+                    {slog}.Debug("closing stream writer")
+                    if cErr := v.Close(); cErr != nil {{
+                        if err == nil {{
+                            err = {fmt}.Errorf("failed to close pending stream: %w", cErr)
+                        }} else {{
+                            {slog}.Warn("failed to close pending stream", "err", cErr)
                         }}
                     }}
                 }}()
@@ -3183,12 +3174,12 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
             Some(ty) if is_ty(self.resolve, Type::U8, ty) => {
                 let io = self.deps.io();
                 self.push_str(io);
-                self.push_str(".Reader");
+                self.push_str(".ReadCloser");
             }
             Some(ty) => {
                 let wrpc = self.deps.wrpc();
                 self.push_str(wrpc);
-                self.push_str(".Receiver[");
+                self.push_str(".ReceiveCloser[");
                 self.print_opt_ty(ty, true);
                 self.push_str("]");
             }
@@ -3203,12 +3194,12 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
             Some(ty) if is_ty(self.resolve, Type::U8, ty) => {
                 let io = self.deps.io();
                 self.push_str(io);
-                self.push_str(".Reader");
+                self.push_str(".ReadCloser");
             }
             Some(ty) => {
                 let wrpc = self.deps.wrpc();
                 self.push_str(wrpc);
-                self.push_str(".Receiver[");
+                self.push_str(".ReceiveCloser[");
                 self.print_list(ty);
                 self.push_str("]");
             }
