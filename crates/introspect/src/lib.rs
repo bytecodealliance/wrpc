@@ -70,6 +70,24 @@ pub fn is_list_of(resolve: &Resolve, expected: Type, ty: &Type) -> bool {
 }
 
 #[must_use]
+pub fn is_tuple(resolve: &Resolve, ty: &Type) -> bool {
+    let mut ty = *ty;
+    loop {
+        if let Type::Id(id) = ty {
+            match resolve.types[id].kind {
+                TypeDefKind::Type(t) => {
+                    ty = t;
+                    continue;
+                }
+                TypeDefKind::Tuple(_) => return true,
+                _ => return false,
+            }
+        }
+        return false;
+    }
+}
+
+#[must_use]
 pub fn async_paths_ty(resolve: &Resolve, ty: &Type) -> (BTreeSet<VecDeque<Option<u32>>>, bool) {
     if let Type::Id(ty) = ty {
         async_paths_tyid(resolve, *ty)

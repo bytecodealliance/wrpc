@@ -10,7 +10,7 @@ use wit_bindgen_core::wit_parser::{
     Variant, World, WorldKey,
 };
 use wit_bindgen_core::{uwrite, uwriteln, Source, TypeInfo};
-use wrpc_introspect::{async_paths_ty, is_list_of, is_ty, rpc_func_name};
+use wrpc_introspect::{async_paths_ty, is_list_of, is_tuple, is_ty, rpc_func_name};
 
 use crate::{
     to_go_ident, to_package_ident, to_upper_camel_case, Deps, GoWrpc, Identifier, InterfaceName,
@@ -61,13 +61,12 @@ pub fn flatten_ty<'a>(resolve: &'a Resolve, ty: &Type) -> impl Iterator<Item = T
                     continue;
                 }
                 TypeDefKind::Tuple(ref t) => {
-                    return Box::new(t.types.iter().flat_map(|ty| flatten_ty(resolve, ty)))
-                        as Box<dyn Iterator<Item = Type>>
+                    return Box::new(t.types.iter().map(|ty| *ty)) as Box<dyn Iterator<Item = _>>
                 }
                 _ => {}
             }
         }
-        return Box::new(iter::once(ty)) as Box<dyn Iterator<Item = Type>>;
+        return Box::new(iter::once(ty)) as Box<dyn Iterator<Item = _>>;
     }
 }
 
@@ -1954,7 +1953,7 @@ impl InterfaceGenerator<'_> {
                     defer func() {{
                         body, ok := v.({io}.Closer)
                         if ok {{
-                            {slog}.Debug("closing byte list future writer")
+                            {slog}.Debug("closing byte list future reader")
                             if cErr := body.Close(); cErr != nil {{
                                 if err == nil {{
                                     err = {fmt}.Errorf("failed to close pending byte list future: %w", cErr)
@@ -2077,13 +2076,15 @@ impl InterfaceGenerator<'_> {
                         if n > {math}.MaxUint32 {{
                             return {fmt}.Errorf("pending byte stream chunk length of %d overflows a 32-bit integer", n)
                         }}
-                        {slog}.Debug("writing pending byte stream chunk length", "len", n)
-                        if err := {wrpc}.WriteUint32(uint32(n), w); err != nil {{
-                            return {fmt}.Errorf("failed to write pending byte stream chunk length of %d: %w", n, err)
-                        }}
-                        _, err = w.Write(chunk[:n])
-                        if err != nil {{
-                            return {fmt}.Errorf("failed to write pending byte stream chunk contents: %w", err)
+                        if n > 0 {{
+                            {slog}.Debug("writing pending byte stream chunk length", "len", n)
+                            if err := {wrpc}.WriteUint32(uint32(n), w); err != nil {{
+                                return {fmt}.Errorf("failed to write pending byte stream chunk length of %d: %w", n, err)
+                            }}
+                            _, err = w.Write(chunk[:n])
+                            if err != nil {{
+                                return {fmt}.Errorf("failed to write pending byte stream chunk contents: %w", err)
+                            }}
                         }}
                         if end {{
                             if err := w.WriteByte(0); err != nil {{
@@ -2595,18 +2596,44 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
         }}
         if len(writes) > 0 {{
             for index, write := range writes {{
-                w, err := w.Index(index)
-                if err != nil {{
-                    {slog}.ErrorContext(ctx, "failed to index result writer", "index", index, "instance", "{instance}", "name", "{name}", "err", err)
-                    return
+                _ = write
+                switch index {{"#
+            );
+
+            let mut idx = 0usize;
+            for (i, ty) in func.results.iter_types().enumerate() {
+                for (j, _) in flatten_ty(&self.resolve, ty).enumerate() {
+                    uwrite!(
+                        self.src,
+                        r#"
+                    case {idx}:
+                        w, err := w.Index("#,
+                    );
+                    if is_tuple(&self.resolve, ty) {
+                        uwrite!(self.src, "{i}, ");
+                    }
+                    uwrite!(
+                        self.src,
+                        r#"{j})
+                        if err != nil {{
+                            {slog}.ErrorContext(ctx, "failed to index result writer", "instance", "{instance}", "name", "{name}", "err", err)
+                            return
+                        }}
+                        write := write
+                        go func() {{
+                            if err := write(w); err != nil {{
+                                {slog}.WarnContext(ctx, "failed to write nested result value", "instance", "{instance}", "name", "{name}", "err", err)
+                            }}
+                        }}()"#,
+                    );
+                    idx = idx.saturating_add(1);
+                }
+            }
+
+            uwrite!(
+                self.src,
+                r#"
                 }}
-                index := index
-                write := write
-                go func() {{
-                    if err := write(w); err != nil {{
-                        {slog}.WarnContext(ctx, "failed to write nested result value", "index", index, "instance", "{instance}", "name", "{name}", "err", err)
-                    }}
-                }}()
             }}
         }}
     }}, "#,
@@ -2769,7 +2796,7 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
                 self.src.push_str("nil");
             }
             self.src.push_str(",\n");
-            for (i, ty) in results.iter().enumerate() {
+            for (i, ty) in func.results.iter_types().enumerate() {
                 let (nested, fut) = async_paths_ty(self.resolve, ty);
                 for path in nested {
                     uwrite!(self.src, "{wrpc}.NewSubscribePath().Index({i})");
@@ -2846,21 +2873,30 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
                 func.name,
             );
 
-            for (i, ty) in results.iter().enumerate() {
-                uwrite!(
-                    self.src,
-                    "
-    r{i}__, err__ = "
-                );
-                self.print_read_ty(ty, "r__", &format!("[]uint32{{ {i} }}"));
-                uwrite!(
-                    self.src,
-                    r#"
+            let mut idx = 0usize;
+            for (i, rty) in func.results.iter_types().enumerate() {
+                for (j, ty) in flatten_ty(&self.resolve, rty).enumerate() {
+                    uwrite!(
+                        self.src,
+                        "
+    r{idx}__, err__ = "
+                    );
+                    let path = if is_tuple(&self.resolve, rty) {
+                        format!("[]uint32{{ {i}, {j} }}")
+                    } else {
+                        format!("[]uint32{{ {idx} }}")
+                    };
+                    self.print_read_ty(&ty, "r__", &path);
+                    uwrite!(
+                        self.src,
+                        r#"
     if err__ != nil {{
-        err__ = {fmt}.Errorf("failed to read result {i}: %w", err__)
+        err__ = {fmt}.Errorf("failed to read result {idx}: %w", err__)
         return 
     }}"#,
-                );
+                    );
+                    idx = idx.saturating_add(1);
+                }
             }
             uwriteln!(
                 self.src,

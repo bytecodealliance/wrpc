@@ -266,8 +266,9 @@ func (w *resultWriter) Index(path ...uint32) (wrpc.IndexWriteCloser, error) {
 }
 
 type streamReader struct {
-	ctx context.Context
-	sub *nats.Subscription
+	ctx   context.Context
+	subMu sync.Mutex
+	sub   *nats.Subscription
 	// poor man's [`std::sync::Arc`](https://doc.rust-lang.org/std/sync/struct.Arc.html)
 	nestMu  *sync.Mutex
 	nestRef *atomic.Int64
@@ -338,9 +339,16 @@ func (r *streamReader) ReadByte() (byte, error) {
 }
 
 func (r *streamReader) drop() error {
+	r.subMu.Lock()
+	defer r.subMu.Unlock()
+
 	var errs []error
-	if err := r.sub.Unsubscribe(); err != nil {
-		errs = append(errs, fmt.Errorf("failed to unsubscribe: %w", err))
+	if r.sub != nil {
+		if err := r.sub.Unsubscribe(); err != nil {
+			errs = append(errs, fmt.Errorf("failed to unsubscribe: %w", err))
+		}
+	} else {
+		return nil
 	}
 	refs := r.nestRef.Add(-1)
 	slog.DebugContext(r.ctx, "unsubscribed",
@@ -359,6 +367,7 @@ func (r *streamReader) drop() error {
 			}
 		}
 	}
+	r.sub = nil
 	if len(errs) > 0 {
 		return fmt.Errorf("%v", errs)
 	}
