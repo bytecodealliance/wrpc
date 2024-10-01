@@ -125,7 +125,7 @@ func NewCompleteReceiver[T any](v T) *CompleteReceiver[T] {
 
 type DecodeReceiver[T any] struct {
 	r      IndexReadCloser
-	decode func(IndexReader) (T, error)
+	decode func(IndexReadCloser) (T, error)
 }
 
 func (r *DecodeReceiver[T]) Receive() (T, error) {
@@ -136,7 +136,7 @@ func (r *DecodeReceiver[T]) Close() error {
 	return r.r.Close()
 }
 
-func NewDecodeReceiver[T any](r IndexReadCloser, decode func(IndexReader) (T, error)) *DecodeReceiver[T] {
+func NewDecodeReceiver[T any](r IndexReadCloser, decode func(IndexReadCloser) (T, error)) *DecodeReceiver[T] {
 	return &DecodeReceiver[T]{r, decode}
 }
 

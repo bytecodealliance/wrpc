@@ -25,7 +25,7 @@ func init() {
 
 type Handler struct{}
 
-func (Handler) Echo(ctx context.Context, req *handler.Req) (wrpc.Receiver[[]uint64], io.Reader, error) {
+func (Handler) Echo(ctx context.Context, req *handler.Req) (wrpc.Receiver[[]uint64], io.ReadCloser, error) {
 	slog.InfoContext(ctx, "handling `wrpc-examples:streams/handler.echo`")
 	return req.Numbers, req.Bytes, nil
 }

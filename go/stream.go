@@ -155,7 +155,7 @@ func ReadStream[T any](r IndexReader, f func(IndexReader) (T, error), path ...ui
 		if err != nil {
 			return nil, fmt.Errorf("failed to index reader: %w", err)
 		}
-		return NewDecodeReceiver(r, func(r IndexReader) ([]T, error) {
+		return NewDecodeReceiver(r, func(r IndexReadCloser) ([]T, error) {
 			n, err := ReadUint32(r)
 			if err != nil {
 				return nil, fmt.Errorf("failed to read pending stream chunk length: %w", err)

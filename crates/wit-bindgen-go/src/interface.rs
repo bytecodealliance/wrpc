@@ -61,7 +61,7 @@ pub fn flatten_ty<'a>(resolve: &'a Resolve, ty: &Type) -> impl Iterator<Item = T
                     continue;
                 }
                 TypeDefKind::Tuple(ref t) => {
-                    return Box::new(t.types.iter().map(|ty| *ty)) as Box<dyn Iterator<Item = _>>
+                    return Box::new(t.types.iter().copied()) as Box<dyn Iterator<Item = _>>
                 }
                 _ => {}
             }
@@ -546,7 +546,7 @@ impl InterfaceGenerator<'_> {
         let errors = self.deps.errors();
         let slog = self.deps.slog();
         let wrpc = self.deps.wrpc();
-        uwrite!(self.src, "func(r {wrpc}.IndexReader, path ...uint32) (");
+        uwrite!(self.src, "func(r {wrpc}.IndexReadCloser, path ...uint32) (");
         self.print_list(ty);
         uwrite!(
             self.src,
@@ -605,7 +605,7 @@ impl InterfaceGenerator<'_> {
         let fmt = self.deps.fmt();
         let slog = self.deps.slog();
         let wrpc = self.deps.wrpc();
-        uwrite!(self.src, "func(r {wrpc}.IndexReader, path ...uint32) (");
+        uwrite!(self.src, "func(r {wrpc}.IndexReadCloser, path ...uint32) (");
         self.print_option(ty, true);
         uwrite!(
             self.src,
@@ -652,7 +652,10 @@ impl InterfaceGenerator<'_> {
         let fmt = self.deps.fmt();
         let slog = self.deps.slog();
         let wrpc = self.deps.wrpc();
-        uwrite!(self.src, "func(r {wrpc}.IndexReader, path ...uint32) (*");
+        uwrite!(
+            self.src,
+            "func(r {wrpc}.IndexReadCloser, path ...uint32) (*"
+        );
         self.print_result(ty);
         uwriteln!(
             self.src,
@@ -736,7 +739,7 @@ impl InterfaceGenerator<'_> {
 
         uwriteln!(
             self.src,
-            r#"func(r {wrpc}.IndexReader, path ...uint32) (*{name}, error) {{
+            r#"func(r {wrpc}.IndexReadCloser, path ...uint32) (*{name}, error) {{
     v := &{name}{{}}
     var err error"#
         );
@@ -828,7 +831,7 @@ impl InterfaceGenerator<'_> {
 
         uwrite!(
             self.src,
-            r#"func(r {wrpc}.IndexReader, path ...uint32) (*{name}, error) {{
+            r#"func(r {wrpc}.IndexReadCloser, path ...uint32) (*{name}, error) {{
     v := &{name}{{}}
     n, err := "#
         );
@@ -891,7 +894,10 @@ impl InterfaceGenerator<'_> {
             _ => {
                 let wrpc = self.deps.wrpc();
 
-                uwrite!(self.src, "func(r {wrpc}.IndexReader, path ...uint32) (*");
+                uwrite!(
+                    self.src,
+                    "func(r {wrpc}.IndexReadCloser, path ...uint32) (*"
+                );
                 self.print_tuple(ty, true);
                 self.push_str(", error) {\n");
                 self.push_str("v := &");
@@ -938,7 +944,7 @@ impl InterfaceGenerator<'_> {
 
                 uwriteln!(
                     self.src,
-                    r#"func(r {wrpc}.IndexReader, path ...uint32) ({io}.ReadCloser, error) {{
+                    r#"func(r {wrpc}.IndexReadCloser, path ...uint32) ({io}.ReadCloser, error) {{
     {slog}.Debug("reading byte list future status byte")
     status, err := r.ReadByte()
     if err != nil {{
@@ -947,9 +953,12 @@ impl InterfaceGenerator<'_> {
     switch status {{
     case 0:
         {slog}.Debug("indexing pending byte list future reader")
-        r, err := r.Index(path...)
-        if err != nil {{
-            return nil, {fmt}.Errorf("failed to index nested byte list future reader: %w", err)
+        if len(path) > 0 {{
+            var err error
+            r, err = r.Index(path...)
+            if err != nil {{
+                return nil, {fmt}.Errorf("failed to index nested byte list future reader: %w", err)
+            }}
         }}
         return {wrpc}.NewByteStreamReader(r), nil
     case 1:
@@ -984,7 +993,7 @@ impl InterfaceGenerator<'_> {
 
                 uwrite!(
                     self.src,
-                    r#"func(r {wrpc}.IndexReader, path ...uint32) ({wrpc}.Receiver["#
+                    r#"func(r {wrpc}.IndexReadCloser, path ...uint32) ({wrpc}.Receiver["#
                 );
                 self.print_opt_ty(ty, true);
                 uwrite!(
@@ -998,11 +1007,14 @@ impl InterfaceGenerator<'_> {
     switch status {{
     case 0:
         {slog}.Debug("indexing pending future reader")
-        r, err := r.Index(path...)
-        if err != nil {{
-            return nil, {fmt}.Errorf("failed to index nested future reader: %w", err)
+        if len(path) > 0 {{
+            var err error
+            r, err = r.Index(path...)
+            if err != nil {{
+                return nil, {fmt}.Errorf("failed to index nested future reader: %w", err)
+            }}
         }}
-        return {wrpc}.NewDecodeReceiver(r, func(r {wrpc}.IndexReader) ("#
+        return {wrpc}.NewDecodeReceiver(r, func(r {wrpc}.IndexReadCloser) ("#
                 );
                 self.print_opt_ty(ty, true);
                 uwrite!(
@@ -1059,7 +1071,7 @@ impl InterfaceGenerator<'_> {
 
                 uwriteln!(
                     self.src,
-                    r#"func(r {wrpc}.IndexReader, path ...uint32) ({io}.ReadCloser, error) {{
+                    r#"func(r {wrpc}.IndexReadCloser, path ...uint32) ({io}.ReadCloser, error) {{
     {slog}.Debug("reading byte stream status byte")
     status, err := r.ReadByte()
     if err != nil {{
@@ -1067,9 +1079,12 @@ impl InterfaceGenerator<'_> {
     }}
     switch status {{
     case 0:
-        r, err := r.Index(path...)
-        if err != nil {{
-            return nil, {fmt}.Errorf("failed to index nested byte stream reader: %w", err)
+        if len(path) > 0 {{
+            var err error
+            r, err = r.Index(path...)
+            if err != nil {{
+                return nil, {fmt}.Errorf("failed to index nested byte stream reader: %w", err)
+            }}
         }}
         return {wrpc}.NewByteStreamReader(r), nil
     case 1:
@@ -1107,7 +1122,7 @@ impl InterfaceGenerator<'_> {
 
                 uwrite!(
                     self.src,
-                    r#"func(r {wrpc}.IndexReader, path ...uint32) ({wrpc}.Receiver["#
+                    r#"func(r {wrpc}.IndexReadCloser, path ...uint32) ({wrpc}.Receiver["#
                 );
                 self.print_list(ty);
                 uwrite!(
@@ -1120,12 +1135,15 @@ impl InterfaceGenerator<'_> {
     }}
     switch status {{
     case 0:
-        r, err := r.Index(path...)
-        if err != nil {{
-            return nil, {fmt}.Errorf("failed to index nested stream reader: %w", err)
+        if len(path) > 0 {{ 
+            var err error
+            r, err = r.Index(path...)
+            if err != nil {{
+                return nil, {fmt}.Errorf("failed to index nested stream reader: %w", err)
+            }}
         }}
         var total uint32
-        return {wrpc}.NewDecodeReceiver(r, func(r {wrpc}.IndexReader) ("#
+        return {wrpc}.NewDecodeReceiver(r, func(r {wrpc}.IndexReadCloser) ("#
                 );
                 self.print_list(ty);
                 uwrite!(
@@ -2602,14 +2620,14 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
 
             let mut idx = 0usize;
             for (i, ty) in func.results.iter_types().enumerate() {
-                for (j, _) in flatten_ty(&self.resolve, ty).enumerate() {
+                for (j, _) in flatten_ty(self.resolve, ty).enumerate() {
                     uwrite!(
                         self.src,
                         r#"
                     case {idx}:
                         w, err := w.Index("#,
                     );
-                    if is_tuple(&self.resolve, ty) {
+                    if is_tuple(self.resolve, ty) {
                         uwrite!(self.src, "{i}, ");
                     }
                     uwrite!(
@@ -2875,13 +2893,13 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
 
             let mut idx = 0usize;
             for (i, rty) in func.results.iter_types().enumerate() {
-                for (j, ty) in flatten_ty(&self.resolve, rty).enumerate() {
+                for (j, ty) in flatten_ty(self.resolve, rty).enumerate() {
                     uwrite!(
                         self.src,
                         "
     r{idx}__, err__ = "
                     );
-                    let path = if is_tuple(&self.resolve, rty) {
+                    let path = if is_tuple(self.resolve, rty) {
                         format!("[]uint32{{ {i}, {j} }}")
                     } else {
                         format!("[]uint32{{ {idx} }}")
