@@ -144,7 +144,7 @@ func ReadByteStream(r IndexReader, path ...uint32) (io.ReadCloser, error) {
 }
 
 // ReadStream reads a stream from `r`
-func ReadStream[T any](r IndexReader, f func(IndexReader) (T, error), path ...uint32) (ReceiveCloser[[]T], error) {
+func ReadStream[T any](r IndexReader, f func(IndexReader) (T, error), path ...uint32) (Receiver[[]T], error) {
 	slog.Debug("reading stream status byte")
 	ok, err := ReadStreamStatus(r)
 	if err != nil {

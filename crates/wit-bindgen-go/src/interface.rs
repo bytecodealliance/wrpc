@@ -985,7 +985,7 @@ impl InterfaceGenerator<'_> {
 
                 uwrite!(
                     self.src,
-                    r#"func(r {wrpc}.IndexReader, path ...uint32) ({wrpc}.ReceiveCloser["#
+                    r#"func(r {wrpc}.IndexReader, path ...uint32) ({wrpc}.Receiver["#
                 );
                 self.print_opt_ty(ty, true);
                 uwrite!(
@@ -1108,7 +1108,7 @@ impl InterfaceGenerator<'_> {
 
                 uwrite!(
                     self.src,
-                    r#"func(r {wrpc}.IndexReader, path ...uint32) ({wrpc}.ReceiveCloser["#
+                    r#"func(r {wrpc}.IndexReader, path ...uint32) ({wrpc}.Receiver["#
                 );
                 self.print_list(ty);
                 uwrite!(
@@ -1990,7 +1990,7 @@ impl InterfaceGenerator<'_> {
                 let io = self.deps.io();
                 let slog = self.deps.slog();
                 let wrpc = self.deps.wrpc();
-                uwrite!(self.src, "func(v {wrpc}.ReceiveCloser[",);
+                uwrite!(self.src, "func(v {wrpc}.Receiver[",);
                 self.print_opt_ty(ty, true);
                 uwrite!(
                     self.src,
@@ -2105,7 +2105,7 @@ impl InterfaceGenerator<'_> {
                 let slog = self.deps.slog();
                 let sync = self.deps.sync();
                 let wrpc = self.deps.wrpc();
-                uwrite!(self.src, "func(v {wrpc}.ReceiveCloser[",);
+                uwrite!(self.src, "func(v {wrpc}.Receiver[",);
                 self.print_list(ty);
                 uwrite!(
                     self.src,
@@ -3179,7 +3179,7 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
             Some(ty) => {
                 let wrpc = self.deps.wrpc();
                 self.push_str(wrpc);
-                self.push_str(".ReceiveCloser[");
+                self.push_str(".Receiver[");
                 self.print_opt_ty(ty, true);
                 self.push_str("]");
             }
@@ -3199,7 +3199,7 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
             Some(ty) => {
                 let wrpc = self.deps.wrpc();
                 self.push_str(wrpc);
-                self.push_str(".ReceiveCloser[");
+                self.push_str(".Receiver[");
                 self.print_list(ty);
                 self.push_str("]");
             }

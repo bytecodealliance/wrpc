@@ -16,7 +16,7 @@ import (
 )
 
 type Req struct {
-	Numbers wrpc.ReceiveCloser[[]uint64]
+	Numbers wrpc.Receiver[[]uint64]
 	Bytes   io.ReadCloser
 }
 
@@ -25,7 +25,7 @@ func (v *Req) String() string { return "Req" }
 func (v *Req) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, error) {
 	writes := make(map[uint32]func(wrpc.IndexWriter) error, 2)
 	slog.Debug("writing field", "name", "numbers")
-	write0, err := func(v wrpc.ReceiveCloser[[]uint64], w interface {
+	write0, err := func(v wrpc.Receiver[[]uint64], w interface {
 		io.ByteWriter
 		io.Writer
 	}) (write func(wrpc.IndexWriter) error, err error) {
@@ -201,7 +201,7 @@ func (v *Req) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, err
 	}
 	return nil, nil
 }
-func Echo(ctx__ context.Context, wrpc__ wrpc.Invoker, r *Req) (r0__ wrpc.ReceiveCloser[[]uint64], r1__ io.ReadCloser, writeErrs__ <-chan error, err__ error) {
+func Echo(ctx__ context.Context, wrpc__ wrpc.Invoker, r *Req) (r0__ wrpc.Receiver[[]uint64], r1__ io.ReadCloser, writeErrs__ <-chan error, err__ error) {
 	var buf__ bytes.Buffer
 	var writeCount__ uint32
 	write0__, err__ := (r).WriteToIndex(&buf__)
@@ -260,7 +260,7 @@ func Echo(ctx__ context.Context, wrpc__ wrpc.Invoker, r *Req) (r0__ wrpc.Receive
 	if cErr__ := w__.Close(); cErr__ != nil {
 		slog.DebugContext(ctx__, "failed to close outgoing stream", "instance", "wrpc-examples:streams/handler", "name", "echo", "err", cErr__)
 	}
-	r0__, err__ = func(r wrpc.IndexReader, path ...uint32) (wrpc.ReceiveCloser[[]uint64], error) {
+	r0__, err__ = func(r wrpc.IndexReader, path ...uint32) (wrpc.Receiver[[]uint64], error) {
 		slog.Debug("reading stream status byte")
 		status, err := r.ReadByte()
 		if err != nil {
