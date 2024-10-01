@@ -84,7 +84,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 			for index, write := range writes {
 				w, err := w.Index(index)
 				if err != nil {
-					slog.ErrorContext(ctx, "failed to index writer", "index", index, "instance", "wrpc-examples:hello/handler", "name", "hello", "err", err)
+					slog.ErrorContext(ctx, "failed to index result writer", "index", index, "instance", "wrpc-examples:hello/handler", "name", "hello", "err", err)
 					return
 				}
 				index := index

@@ -91,6 +91,11 @@ type Receiver[T any] interface {
 	Receive() (T, error)
 }
 
+type ReceiveCloser[T any] interface {
+	Receiver[T]
+	io.Closer
+}
+
 type ByteReadCloser interface {
 	ByteReader
 	io.Closer
@@ -109,6 +114,10 @@ func (r *CompleteReceiver[T]) Receive() (T, error) {
 		return r.v, io.EOF
 	}
 	return r.v, nil
+}
+
+func (CompleteReceiver[T]) Close() error {
+	return nil
 }
 
 func NewCompleteReceiver[T any](v T) *CompleteReceiver[T] {
@@ -132,14 +141,18 @@ func NewDecodeReceiver[T any](r IndexReadCloser, decode func(IndexReader) (T, er
 	return &DecodeReceiver[T]{r, decode}
 }
 
-type nestedReceiver[T any, A Receiver[B], B Receiver[T]] struct {
+type nestedReceiver[T any, A ReceiveCloser[B], B ReceiveCloser[T]] struct {
 	rx A
 }
 
-func (r nestedReceiver[T, A, B]) Receive() (Receiver[T], error) {
+func (r nestedReceiver[T, A, B]) Receive() (ReceiveCloser[T], error) {
 	return r.rx.Receive()
 }
 
-func NewNestedReceiver[T any, A Receiver[B], B Receiver[T]](rx A) Receiver[Receiver[T]] {
+func (r nestedReceiver[T, A, B]) Close() error {
+	return r.rx.Close()
+}
+
+func NewNestedReceiver[T any, A ReceiveCloser[B], B ReceiveCloser[T]](rx A) ReceiveCloser[ReceiveCloser[T]] {
 	return nestedReceiver[T, A, B]{rx}
 }

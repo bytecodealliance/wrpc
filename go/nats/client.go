@@ -337,7 +337,7 @@ func (r *streamReader) ReadByte() (byte, error) {
 	return msg.Data[0], nil
 }
 
-func (r *streamReader) drop() (err error) {
+func (r *streamReader) drop() error {
 	var errs []error
 	if err := r.sub.Unsubscribe(); err != nil {
 		errs = append(errs, fmt.Errorf("failed to unsubscribe: %w", err))
@@ -365,7 +365,7 @@ func (r *streamReader) drop() (err error) {
 	return nil
 }
 
-func (r *streamReader) Close() (err error) {
+func (r *streamReader) Close() error {
 	defer runtime.SetFinalizer(r, nil)
 	return r.drop()
 }

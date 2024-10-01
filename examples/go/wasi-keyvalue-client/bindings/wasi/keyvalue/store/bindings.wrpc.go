@@ -161,7 +161,7 @@ func (v *Error) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, e
 			return func(w wrpc.IndexWriter) error {
 				w, err := w.Index(2)
 				if err != nil {
-					return fmt.Errorf("failed to index writer: %w", err)
+					return fmt.Errorf("failed to index nested variant writer: %w", err)
 				}
 				return write(w)
 			}, nil
@@ -242,7 +242,7 @@ func (v *KeyResponse) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) er
 					wg.Add(1)
 					w, err := w.Index(index)
 					if err != nil {
-						return fmt.Errorf("failed to index writer: %w", err)
+						return fmt.Errorf("failed to index nested list writer: %w", err)
 					}
 					write := write
 					go func() {
@@ -312,7 +312,7 @@ func (v *KeyResponse) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) er
 				wg.Add(1)
 				w, err := w.Index(index)
 				if err != nil {
-					return fmt.Errorf("failed to index writer: %w", err)
+					return fmt.Errorf("failed to index nested record writer: %w", err)
 				}
 				write := write
 				go func() {
@@ -881,7 +881,7 @@ func Bucket_Set(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borrow[Buc
 					wg.Add(1)
 					w, err := w.Index(index)
 					if err != nil {
-						return fmt.Errorf("failed to index writer: %w", err)
+						return fmt.Errorf("failed to index nested list writer: %w", err)
 					}
 					write := write
 					go func() {

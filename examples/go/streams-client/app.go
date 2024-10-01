@@ -41,6 +41,11 @@ func (s *ThrottleStream[T]) Receive() ([]T, error) {
 	return []T{v}, nil
 }
 
+func (s *ThrottleStream[T]) Close() error {
+	s.tick.Stop()
+	return nil
+}
+
 type ThrottleReader struct {
 	tick *time.Ticker
 	buf  []byte
@@ -55,6 +60,11 @@ func (s *ThrottleReader) Read(p []byte) (int, error) {
 	b, s.buf = s.buf[0], s.buf[1:]
 	p[0] = b
 	return 1, nil
+}
+
+func (s *ThrottleReader) Close() error {
+	s.tick.Stop()
+	return nil
 }
 
 func Run(prefix string, client wrpc.Invoker) error {
@@ -77,9 +87,7 @@ func Run(prefix string, client wrpc.Invoker) error {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		if c, ok := numbers.(io.Closer); ok {
-			defer c.Close()
-		}
+		defer numbers.Close()
 		for {
 			chunk, err := numbers.Receive()
 			if err == io.EOF {
@@ -95,9 +103,7 @@ func Run(prefix string, client wrpc.Invoker) error {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		if c, ok := bytes.(io.Closer); ok {
-			defer c.Close()
-		}
+		defer bytes.Close()
 		var chunk [128]byte
 		for {
 			n, err := bytes.Read(chunk[:])

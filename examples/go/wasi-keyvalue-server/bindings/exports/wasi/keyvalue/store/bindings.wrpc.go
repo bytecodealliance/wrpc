@@ -161,7 +161,7 @@ func (v *Error) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, e
 			return func(w wrpc.IndexWriter) error {
 				w, err := w.Index(2)
 				if err != nil {
-					return fmt.Errorf("failed to index writer: %w", err)
+					return fmt.Errorf("failed to index nested variant writer: %w", err)
 				}
 				return write(w)
 			}, nil
@@ -242,7 +242,7 @@ func (v *KeyResponse) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) er
 					wg.Add(1)
 					w, err := w.Index(index)
 					if err != nil {
-						return fmt.Errorf("failed to index writer: %w", err)
+						return fmt.Errorf("failed to index nested list writer: %w", err)
 					}
 					write := write
 					go func() {
@@ -312,7 +312,7 @@ func (v *KeyResponse) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) er
 				wg.Add(1)
 				w, err := w.Index(index)
 				if err != nil {
-					return fmt.Errorf("failed to index writer: %w", err)
+					return fmt.Errorf("failed to index nested record writer: %w", err)
 				}
 				write := write
 				go func() {
@@ -555,7 +555,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 			for index, write := range writes {
 				w, err := w.Index(index)
 				if err != nil {
-					slog.ErrorContext(ctx, "failed to index writer", "index", index, "instance", "wasi:keyvalue/store@0.2.0-draft", "name", "open", "err", err)
+					slog.ErrorContext(ctx, "failed to index result writer", "index", index, "instance", "wasi:keyvalue/store@0.2.0-draft", "name", "open", "err", err)
 					return
 				}
 				index := index
@@ -750,7 +750,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 									wg.Add(1)
 									w, err := w.Index(index)
 									if err != nil {
-										return fmt.Errorf("failed to index writer: %w", err)
+										return fmt.Errorf("failed to index nested list writer: %w", err)
 									}
 									write := write
 									go func() {
@@ -815,7 +815,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 			for index, write := range writes {
 				w, err := w.Index(index)
 				if err != nil {
-					slog.ErrorContext(ctx, "failed to index writer", "index", index, "instance", "wasi:keyvalue/store@0.2.0-draft", "name", "bucket.get", "err", err)
+					slog.ErrorContext(ctx, "failed to index result writer", "index", index, "instance", "wasi:keyvalue/store@0.2.0-draft", "name", "bucket.get", "err", err)
 					return
 				}
 				index := index
@@ -1030,7 +1030,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 			for index, write := range writes {
 				w, err := w.Index(index)
 				if err != nil {
-					slog.ErrorContext(ctx, "failed to index writer", "index", index, "instance", "wasi:keyvalue/store@0.2.0-draft", "name", "bucket.set", "err", err)
+					slog.ErrorContext(ctx, "failed to index result writer", "index", index, "instance", "wasi:keyvalue/store@0.2.0-draft", "name", "bucket.set", "err", err)
 					return
 				}
 				index := index
@@ -1203,7 +1203,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 			for index, write := range writes {
 				w, err := w.Index(index)
 				if err != nil {
-					slog.ErrorContext(ctx, "failed to index writer", "index", index, "instance", "wasi:keyvalue/store@0.2.0-draft", "name", "bucket.delete", "err", err)
+					slog.ErrorContext(ctx, "failed to index result writer", "index", index, "instance", "wasi:keyvalue/store@0.2.0-draft", "name", "bucket.delete", "err", err)
 					return
 				}
 				index := index
@@ -1391,7 +1391,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 			for index, write := range writes {
 				w, err := w.Index(index)
 				if err != nil {
-					slog.ErrorContext(ctx, "failed to index writer", "index", index, "instance", "wasi:keyvalue/store@0.2.0-draft", "name", "bucket.exists", "err", err)
+					slog.ErrorContext(ctx, "failed to index result writer", "index", index, "instance", "wasi:keyvalue/store@0.2.0-draft", "name", "bucket.exists", "err", err)
 					return
 				}
 				index := index
@@ -1578,7 +1578,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 			for index, write := range writes {
 				w, err := w.Index(index)
 				if err != nil {
-					slog.ErrorContext(ctx, "failed to index writer", "index", index, "instance", "wasi:keyvalue/store@0.2.0-draft", "name", "bucket.list-keys", "err", err)
+					slog.ErrorContext(ctx, "failed to index result writer", "index", index, "instance", "wasi:keyvalue/store@0.2.0-draft", "name", "bucket.list-keys", "err", err)
 					return
 				}
 				index := index
