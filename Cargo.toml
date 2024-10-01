@@ -139,8 +139,8 @@ wit-component = { version = "0.217", default-features = false }
 wit-parser = { version = "0.217", default-features = false }
 wrpc-cli = { version = "0.3", path = "./crates/cli", default-features = false }
 wrpc-introspect = { version = "0.4", default-features = false, path = "./crates/introspect" }
-wrpc-runtime-wasmtime = { version = "0.22", path = "./crates/runtime-wasmtime", default-features = false }
+wrpc-runtime-wasmtime = { version = "0.23", path = "./crates/runtime-wasmtime", default-features = false }
 wrpc-transport = { version = "0.27", path = "./crates/transport", default-features = false }
 wrpc-transport-nats = { version = "0.24", path = "./crates/transport-nats", default-features = false }
 wrpc-transport-quic = { version = "0.2", path = "./crates/transport-quic", default-features = false }
-wrpc-wasmtime-nats-cli = { version = "0.8", path = "./crates/wasmtime-nats-cli", default-features = false }
+wrpc-wasmtime-nats-cli = { version = "0.9", path = "./crates/wasmtime-nats-cli", default-features = false }
