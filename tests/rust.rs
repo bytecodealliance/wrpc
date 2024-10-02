@@ -1083,7 +1083,6 @@ async fn rust_bindgen_quic_sync() -> anyhow::Result<()> {
 #[cfg(feature = "quic")]
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 #[instrument(ret)]
-#[ignore] // TODO: reenable
 async fn rust_bindgen_quic_async() -> anyhow::Result<()> {
     use core::net::Ipv6Addr;
     use core::pin::pin;
