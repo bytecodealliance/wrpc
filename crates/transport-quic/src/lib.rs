@@ -484,19 +484,6 @@ pin_project! {
 impl wrpc_transport::Index<Self> for Outgoing {
     #[instrument(level = "trace", skip(self))]
     fn index(&self, path: &[usize]) -> anyhow::Result<Self> {
-        ensure!(!path.is_empty());
-        let mut header = BytesMut::with_capacity(path.len().saturating_add(5));
-        let depth = path.len();
-        let n = u32::try_from(depth)
-            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
-        trace!(n, "encoding path length");
-        Leb128Encoder.encode(n, &mut header)?;
-        for p in path {
-            let p = u32::try_from(*p)
-                .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
-            trace!(p, "encoding path element");
-            Leb128Encoder.encode(p, &mut header)?;
-        }
         match self {
             Self::Opening {
                 path: base,
@@ -509,12 +496,33 @@ impl wrpc_transport::Index<Self> for Outgoing {
                 conn,
                 io,
                 ..
-            } => Ok(Self::Opening {
-                header: header.freeze(),
-                path: Arc::from([base, path].concat()),
-                conn: conn.clone(),
-                io: Arc::clone(io),
-            }),
+            } => {
+                ensure!(!path.is_empty());
+                let path: Arc<[usize]> = if base.is_empty() {
+                    Arc::from(path)
+                } else {
+                    Arc::from([base.as_ref(), path].concat())
+                };
+                let mut header = BytesMut::with_capacity(path.len().saturating_add(5));
+                let depth = path.len();
+                let n = u32::try_from(depth)
+                    .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
+                trace!(n, "encoding path length");
+                Leb128Encoder.encode(n, &mut header)?;
+                for p in path.as_ref() {
+                    let p = u32::try_from(*p).map_err(|err| {
+                        std::io::Error::new(std::io::ErrorKind::InvalidInput, err)
+                    })?;
+                    trace!(p, "encoding path element");
+                    Leb128Encoder.encode(p, &mut header)?;
+                }
+                Ok(Self::Opening {
+                    header: header.freeze(),
+                    path,
+                    conn: conn.clone(),
+                    io: Arc::clone(io),
+                })
+            }
         }
     }
 }
