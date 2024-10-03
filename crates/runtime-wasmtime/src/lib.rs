@@ -132,14 +132,14 @@ where
         >,
     >,
 {
-    let futs: FuturesUnordered<_> = zip(0.., deferred)
+    let mut futs: FuturesUnordered<_> = zip(0.., deferred)
         .filter_map(|(i, f)| f.map(|f| (w.index(&[i]), f)))
         .map(|(w, f)| async move {
             let w = w?;
             f(w).await
         })
         .collect();
-    futs.try_collect().await?;
+    while let Some(()) = futs.try_next().await? {}
     Ok(())
 }
 
