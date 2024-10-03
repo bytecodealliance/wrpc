@@ -22,7 +22,7 @@
   inputs.nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
   inputs.wit-deps.inputs.nixify.follows = "nixify";
   inputs.wit-deps.inputs.nixlib.follows = "nixlib";
-  inputs.wit-deps.url = "github:bytecodealliance/wit-deps/v0.3.7";
+  inputs.wit-deps.url = "github:bytecodealliance/wit-deps/v0.4.0";
 
   outputs = {
     nixify,
@@ -227,7 +227,7 @@
               pkgs.natscli
               pkgs.wit-deps
 
-              pkgs.pkgsUnstable.go_1_23
+              pkgs.pkgsUnstable.go
             ];
           }
           devShells;
