@@ -5,17 +5,29 @@ import (
 	"io"
 )
 
+// Invoke is the client-side transport handle
 type Invoker interface {
+	// Invoke invokes a function `name` within an instance `instance`.
+	// Initial, encoded payload must be specified in `b`.
+	// `paths` define the async result paths to subscribe on.
+	// On success, `Invoke` returns two handles used for writing and reading encoded parameters and results respectively.
+	// NOTE: if the returned handle is used for writing, `b` must be non-empty.
 	Invoke(ctx context.Context, instance string, name string, b []byte, paths ...SubscribePath) (IndexWriteCloser, IndexReadCloser, error)
 }
 
+// Server is the server-side transport handle
 type Server interface {
+	// Serve serves a function `name` within an instance `instance`.
+	// `paths` define the async parameter paths to subscribe on.
+	// `Serve` will call `f` with two handles used for writing and reading encoded results and parameters respectively.
+	// On success, `Serve` returns a function, which can be called to stop serving.
 	Serve(instance string, name string, f func(context.Context, IndexWriteCloser, IndexReadCloser), paths ...SubscribePath) (func() error, error)
 }
 
 // Own is an owned resource handle
 type Own[T any] []byte
 
+// Borrow returns the handle as a [`Borrow`]
 func (v Own[T]) Borrow() Borrow[T] {
 	return Borrow[T](v)
 }
@@ -23,8 +35,11 @@ func (v Own[T]) Borrow() Borrow[T] {
 // Borrow is a borrowed resource handle
 type Borrow[T any] []byte
 
+// SubscribePath is the subscription path.
+// `nil` represents a wildcard index used for dynamically-sized values, like `list`
 type SubscribePath []*uint32
 
+// NewSubscribePath creates a new subscription path.
 func NewSubscribePath(ps ...*uint32) SubscribePath {
 	return SubscribePath(ps)
 }
@@ -33,14 +48,18 @@ func (p SubscribePath) push(v *uint32) SubscribePath {
 	return SubscribePath(append(append(make(SubscribePath, 0, len(p)+1), p...), v))
 }
 
+// Index pushes a `uint32` index to the path
 func (p SubscribePath) Index(i uint32) SubscribePath {
 	return p.push(&i)
 }
 
+// Wildcard pushes a wildcard index to the path used for dynamically-sized values, like `list`
 func (p SubscribePath) Wildcard() SubscribePath {
 	return p.push(nil)
 }
 
+// Parent pops the last element in the path and returns the resulting path and `true` and success.
+// It returns `nil`, `false` otherwise.
 func (p SubscribePath) Parent() (SubscribePath, bool) {
 	n := len(p)
 	if n == 0 {
@@ -49,6 +68,7 @@ func (p SubscribePath) Parent() (SubscribePath, bool) {
 	return SubscribePath(p[:n-1]), true
 }
 
+// Index represents entities, which can be indexed by concrete `uint32` paths, for example transport streams.
 type Index[T any] interface {
 	Index(path ...uint32) (T, error)
 }
