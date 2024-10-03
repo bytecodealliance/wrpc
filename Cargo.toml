@@ -129,14 +129,14 @@ wasm-tokio = { version = "0.6", default-features = false }
 wasmparser = { version = "0.218", default-features = false }
 wasmtime = { version = "25", default-features = false }
 wasmtime-wasi = { version = "25", default-features = false }
-wit-bindgen = { version = "0.32", default-features = false }
-wit-bindgen-core = { version = "0.32", default-features = false }
+wit-bindgen = { version = "0.33", default-features = false }
+wit-bindgen-core = { version = "0.33", default-features = false }
 wit-bindgen-wrpc = { version = "0.7", default-features = false, path = "./crates/wit-bindgen" }
 wit-bindgen-wrpc-go = { version = "0.9.1", default-features = false, path = "./crates/wit-bindgen-go" }
 wit-bindgen-wrpc-rust = { version = "0.7", default-features = false, path = "./crates/wit-bindgen-rust" }
 wit-bindgen-wrpc-rust-macro = { version = "0.7", default-features = false, path = "./crates/wit-bindgen-rust-macro" }
 wit-component = { version = "0.218", default-features = false }
-wit-parser = { version = "0.217", default-features = false }
+wit-parser = { version = "0.218", default-features = false }
 wrpc-cli = { version = "0.4", path = "./crates/cli", default-features = false }
 wrpc-introspect = { version = "0.4.1", default-features = false, path = "./crates/introspect" }
 wrpc-runtime-wasmtime = { version = "0.23", path = "./crates/runtime-wasmtime", default-features = false }
