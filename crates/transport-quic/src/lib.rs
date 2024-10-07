@@ -296,7 +296,7 @@ pub enum AcceptError {
     InvalidData,
     ServerNameMissing,
     UnhandledName(String),
-    SendError(mpsc::error::SendError<Connection>),
+    Send(mpsc::error::SendError<Connection>),
 }
 
 impl Display for AcceptError {
@@ -308,7 +308,7 @@ impl Display for AcceptError {
             AcceptError::UnhandledName(name) => {
                 write!(f, "SAN `{name}` does not have a handler registered")
             }
-            AcceptError::SendError(err) => err.fmt(f),
+            AcceptError::Send(err) => err.fmt(f),
         }
     }
 }
@@ -340,7 +340,7 @@ impl Server {
             .get(&name)
             .ok_or_else(|| AcceptError::UnhandledName(name))?;
         let conn = conn.await.map_err(AcceptError::Connection)?;
-        tx.send(conn).await.map_err(AcceptError::SendError)?;
+        tx.send(conn).await.map_err(AcceptError::Send)?;
         Ok(true)
     }
 }
@@ -504,8 +504,7 @@ impl wrpc_transport::Index<Self> for Outgoing {
                     Arc::from([base.as_ref(), path].concat())
                 };
                 let mut header = BytesMut::with_capacity(path.len().saturating_add(5));
-                let depth = path.len();
-                let n = u32::try_from(depth)
+                let n = u32::try_from(path.len())
                     .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
                 trace!(n, "encoding path length");
                 Leb128Encoder.encode(n, &mut header)?;
