@@ -4,11 +4,7 @@ use bytes::{Bytes, BytesMut};
 use tracing::{instrument, trace};
 use wasm_tokio::{Leb128DecoderU32, Leb128DecoderU64, Leb128Encoder};
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Frame {
-    pub path: Arc<[usize]>,
-    pub data: Bytes,
-}
+use super::{Frame, FrameRef};
 
 pub struct Decoder {
     path: Option<Vec<usize>>,
@@ -126,20 +122,6 @@ impl tokio_util::codec::Decoder for Decoder {
             path: Arc::from(path),
             data,
         }))
-    }
-}
-
-pub struct FrameRef<'a> {
-    pub path: &'a [usize],
-    pub data: &'a [u8],
-}
-
-impl<'a> From<&'a Frame> for FrameRef<'a> {
-    fn from(Frame { path, data }: &'a Frame) -> Self {
-        Self {
-            path: path.as_ref(),
-            data: data.as_ref(),
-        }
     }
 }
 

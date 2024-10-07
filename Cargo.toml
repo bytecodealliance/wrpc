@@ -90,9 +90,11 @@ quinn = { workspace = true, features = [
 ] }
 rcgen = { workspace = true, features = ["crypto", "ring", "zeroize"] }
 rustls = { workspace = true, features = ["logging", "ring"] }
+tempfile = { workspace = true }
 test-log = { workspace = true, features = ["color", "log", "trace"] }
 tokio = { workspace = true, features = ["process", "rt-multi-thread"] }
 wrpc-cli = { workspace = true }
+wrpc-transport = { workspace = true, features = ["frame"] }
 
 [workspace.dependencies]
 anyhow = { version = "1", default-features = false }
@@ -115,6 +117,7 @@ send-future = { version = "0.1", default-features = false }
 serde = { version = "1", default-features = false }
 serde_json = { version = "1", default-features = false }
 syn = { version = "2", default-features = false, features = ["printing"] }
+tempfile = { version = "3", default-features = false }
 test-helpers = { default-features = false, path = "./crates/test-helpers" }
 test-log = { version = "0.2", default-features = false }
 tokio = { version = "1", default-features = false }
