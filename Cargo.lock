@@ -3788,7 +3788,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc-transport"
-version = "0.27.0"
+version = "0.27.1"
 dependencies = [
  "anyhow",
  "bytes",
