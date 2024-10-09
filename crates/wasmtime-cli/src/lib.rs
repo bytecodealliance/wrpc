@@ -24,58 +24,20 @@ use wasmtime_wasi::{WasiCtx, WasiView};
 use wrpc_runtime_wasmtime::{
     collect_component_resources, link_item, ServeExt as _, SharedResourceTable, WrpcView,
 };
-use wrpc_transport::Invoke;
+use wrpc_transport::{Invoke, Serve};
+
+mod nats;
+mod tcp;
 
 const DEFAULT_TIMEOUT: &str = "10s";
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 enum Command {
-    Run(RunArgs),
-    Serve(ServeArgs),
-}
-
-/// Run a command component
-#[derive(Parser, Debug)]
-struct RunArgs {
-    /// NATS address to use
-    #[arg(short, long, default_value = wrpc_cli::nats::DEFAULT_URL)]
-    nats: String,
-
-    /// Invocation timeout
-    #[arg(long, default_value = DEFAULT_TIMEOUT)]
-    timeout: humantime::Duration,
-
-    /// Target prefix to send invocations to
-    target: String,
-
-    /// Path or URL to Wasm command component
-    workload: String,
-}
-
-/// Serve a reactor component
-#[derive(Parser, Debug)]
-struct ServeArgs {
-    /// NATS address to use
-    #[arg(short, long, default_value = wrpc_cli::nats::DEFAULT_URL)]
-    nats: String,
-
-    /// Invocation timeout
-    #[arg(long, default_value = DEFAULT_TIMEOUT)]
-    timeout: humantime::Duration,
-
-    /// NATS queue group to use
-    #[arg(short, long)]
-    group: Option<String>,
-
-    /// Target prefix to send invocations to
-    target: String,
-
-    /// Prefix to listen on
-    prefix: String,
-
-    /// Path or URL to Wasm command component
-    workload: String,
+    #[command(subcommand)]
+    Nats(nats::Command),
+    #[command(subcommand)]
+    Tcp(tcp::Command),
 }
 
 pub enum Workload {
@@ -292,27 +254,20 @@ fn new_store<C: Invoke>(
     )
 }
 
-#[instrument(level = "trace", ret)]
-pub async fn handle_run(
-    RunArgs {
-        nats,
-        timeout,
-        target,
-        ref workload,
-    }: RunArgs,
-) -> anyhow::Result<()> {
-    let nats = wrpc_cli::nats::connect(nats)
-        .await
-        .context("failed to connect to NATS")?;
-
+#[instrument(level = "trace", skip(clt, cx), ret(level = "trace"))]
+pub async fn handle_run<C>(
+    clt: C,
+    cx: C::Context,
+    timeout: Duration,
+    workload: &str,
+) -> anyhow::Result<()>
+where
+    C: Invoke,
+    C::Context: Clone + 'static,
+{
     let (pre, engine, _) =
-        instantiate_pre(WASI_SNAPSHOT_PREVIEW1_COMMAND_ADAPTER, None, workload).await?;
-    let mut store = new_store(
-        &engine,
-        wrpc_transport_nats::Client::new(nats, target, None),
-        "command.wasm",
-        *timeout,
-    );
+        instantiate_pre(WASI_SNAPSHOT_PREVIEW1_COMMAND_ADAPTER, cx, workload).await?;
+    let mut store = new_store(&engine, clt, "command.wasm", timeout);
     let cmd = wasmtime_wasi::bindings::CommandPre::new(pre)
         .context("failed to construct `command` instance")?
         .instantiate_async(&mut store)
@@ -325,14 +280,18 @@ pub async fn handle_run(
         .map_err(|()| anyhow!("component failed"))
 }
 
-#[instrument(level = "trace", skip_all, ret)]
-pub async fn serve_shared(
+#[instrument(level = "trace", skip_all, ret(level = "trace"))]
+pub async fn serve_shared<C, S>(
     handlers: &mut JoinSet<()>,
-    srv: wrpc_transport_nats::Client,
-    mut store: wasmtime::Store<Ctx<wrpc_transport_nats::Client>>,
-    pre: InstancePre<Ctx<wrpc_transport_nats::Client>>,
+    srv: S,
+    mut store: wasmtime::Store<Ctx<C>>,
+    pre: InstancePre<Ctx<C>>,
     guest_resources: Arc<[ResourceType]>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<()>
+where
+    C: Invoke + 'static,
+    S: Serve,
+{
     let span = Span::current();
     let instance = pre
         .instantiate_async(&mut store)
@@ -359,14 +318,10 @@ pub async fn serve_shared(
                         let mut invocations = pin!(invocations);
                         while let Some(invocation) = invocations.next().await {
                             match invocation {
-                                Ok((headers, fut)) => {
-                                    info!(?headers, "serving root function invocation");
+                                Ok((_, fut)) => {
+                                    info!("serving root function invocation");
                                     if let Err(err) = fut.await {
-                                        warn!(
-                                            ?headers,
-                                            ?err,
-                                            "failed to serve root function invocation"
-                                        );
+                                        warn!(?err, "failed to serve root function invocation");
                                     } else {
                                         info!("successfully served root function invocation");
                                     }
@@ -408,11 +363,10 @@ pub async fn serve_shared(
                                 let mut invocations = pin!(invocations);
                                 while let Some(invocation) = invocations.next().await {
                                     match invocation {
-                                        Ok((headers, fut)) => {
-                                            info!(?headers, "serving instance function invocation");
+                                        Ok((_, fut)) => {
+                                            info!("serving instance function invocation");
                                             if let Err(err) = fut.await {
                                                 warn!(
-                                                    ?headers,
                                                     ?err,
                                                     "failed to serve instance function invocation"
                                                 );
@@ -467,15 +421,20 @@ pub async fn serve_shared(
     Ok(())
 }
 
-#[instrument(level = "trace", skip_all, ret)]
-pub async fn serve_stateless(
+#[instrument(level = "trace", skip_all, ret(level = "trace"))]
+pub async fn serve_stateless<C, S>(
     handlers: &mut JoinSet<()>,
-    srv: wrpc_transport_nats::Client,
-    clt: wrpc_transport_nats::Client,
-    pre: InstancePre<Ctx<wrpc_transport_nats::Client>>,
+    srv: S,
+    clt: C,
+    pre: InstancePre<Ctx<C>>,
     engine: &Engine,
     timeout: Duration,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<()>
+where
+    C: Invoke + Clone + 'static,
+    C::Context: Clone + 'static,
+    S: Serve,
+{
     let span = Span::current();
     for (name, ty) in pre.component().component_type().exports(engine) {
         match (name, ty) {
@@ -497,14 +456,10 @@ pub async fn serve_stateless(
                         let mut invocations = pin!(invocations);
                         while let Some(invocation) = invocations.next().await {
                             match invocation {
-                                Ok((headers, fut)) => {
-                                    info!(?headers, "serving root function invocation");
+                                Ok((_, fut)) => {
+                                    info!("serving root function invocation");
                                     if let Err(err) = fut.await {
-                                        warn!(
-                                            ?headers,
-                                            ?err,
-                                            "failed to serve root function invocation"
-                                        );
+                                        warn!(?err, "failed to serve root function invocation");
                                     } else {
                                         info!("successfully served root function invocation");
                                     }
@@ -549,11 +504,10 @@ pub async fn serve_stateless(
                                 let mut invocations = pin!(invocations);
                                 while let Some(invocation) = invocations.next().await {
                                     match invocation {
-                                        Ok((headers, fut)) => {
-                                            info!(?headers, "serving instance function invocation");
+                                        Ok((_, fut)) => {
+                                            info!("serving instance function invocation");
                                             if let Err(err) = fut.await {
                                                 warn!(
-                                                    ?headers,
                                                     ?err,
                                                     "failed to serve instance function invocation"
                                                 );
@@ -607,35 +561,30 @@ pub async fn serve_stateless(
     Ok(())
 }
 
-#[instrument(level = "trace", ret)]
-pub async fn handle_serve(
-    ServeArgs {
-        nats,
-        timeout,
-        prefix,
-        target,
-        group,
-        ref workload,
-    }: ServeArgs,
-) -> anyhow::Result<()> {
-    let nats = wrpc_cli::nats::connect(nats)
-        .await
-        .context("failed to connect to NATS")?;
-    let nats = Arc::new(nats);
-
+#[instrument(level = "trace", skip(srv, clt, cx), ret(level = "trace"))]
+pub async fn handle_serve<C, S>(
+    srv: S,
+    clt: C,
+    cx: C::Context,
+    timeout: Duration,
+    workload: &str,
+) -> anyhow::Result<()>
+where
+    C: Invoke + Clone + 'static,
+    C::Context: Clone + 'static,
+    S: Serve,
+{
     let (pre, engine, guest_resources) =
-        instantiate_pre(WASI_SNAPSHOT_PREVIEW1_REACTOR_ADAPTER, None, workload).await?;
+        instantiate_pre(WASI_SNAPSHOT_PREVIEW1_REACTOR_ADAPTER, cx, workload).await?;
 
-    let clt = wrpc_transport_nats::Client::new(Arc::clone(&nats), target, None);
-    let srv = wrpc_transport_nats::Client::new(nats, prefix, group.map(Arc::from));
     let mut handlers = JoinSet::new();
     if guest_resources.is_empty() {
-        serve_stateless(&mut handlers, srv, clt, pre, &engine, *timeout).await?;
+        serve_stateless(&mut handlers, srv, clt, pre, &engine, timeout).await?;
     } else {
         serve_shared(
             &mut handlers,
             srv,
-            new_store(&engine, clt, "reactor.wasm", *timeout),
+            new_store(&engine, clt, "reactor.wasm", timeout),
             pre,
             guest_resources,
         )
@@ -649,11 +598,11 @@ pub async fn handle_serve(
     Ok(())
 }
 
-#[instrument(level = "trace", ret)]
+#[instrument(level = "trace", ret(level = "trace"))]
 pub async fn run() -> anyhow::Result<()> {
     wrpc_cli::tracing::init();
     match Command::parse() {
-        Command::Run(args) => handle_run(args).await,
-        Command::Serve(args) => handle_serve(args).await,
+        Command::Nats(args) => nats::run(args).await,
+        Command::Tcp(args) => tcp::run(args).await,
     }
 }

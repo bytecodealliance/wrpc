@@ -31,7 +31,7 @@ jobs:
     - run: |
         nix profile install
         wit-bindgen-wrpc --version
-        wrpc-wasmtime-nats --version
+        wrpc-wasmtime --version
 
   develop:
     runs-on: ubuntu-latest
