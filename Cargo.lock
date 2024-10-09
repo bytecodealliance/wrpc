@@ -2857,6 +2857,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "wasi-keyvalue-tcp-client"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "clap",
+ "tokio",
+ "tracing-subscriber",
+ "url",
+ "wrpc-transport",
+ "wrpc-wasi-keyvalue",
+]
+
+[[package]]
+name = "wasi-keyvalue-tcp-server"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "clap",
+ "futures",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "wrpc-transport",
+ "wrpc-wasi-keyvalue",
+ "wrpc-wasi-keyvalue-mem",
+]
+
+[[package]]
 name = "wasi-preview1-component-adapter-provider"
 version = "25.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
