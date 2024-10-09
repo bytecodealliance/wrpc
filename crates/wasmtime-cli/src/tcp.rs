@@ -6,6 +6,7 @@ use tracing::{error, instrument};
 
 pub const DEFAULT_ADDR: &str = "[::1]:7761";
 
+/// TCP transport
 #[derive(Parser, Debug)]
 pub enum Command {
     Run(RunArgs),
