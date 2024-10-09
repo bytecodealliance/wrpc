@@ -4,6 +4,8 @@ use anyhow::Context as _;
 use clap::Parser;
 use tracing::{error, instrument};
 
+pub const DEFAULT_ADDR: &str = "[::1]:7761";
+
 #[derive(Parser, Debug)]
 pub enum Command {
     Run(RunArgs),
@@ -18,6 +20,7 @@ pub struct RunArgs {
     timeout: humantime::Duration,
 
     /// Address to send import invocations to
+    #[arg(long, default_value = DEFAULT_ADDR)]
     import: String,
 
     /// Path or URL to Wasm command component
@@ -27,18 +30,16 @@ pub struct RunArgs {
 /// Serve a reactor component
 #[derive(Parser, Debug)]
 pub struct ServeArgs {
-    /// NATS address to use
-    #[arg(short, long, default_value = wrpc_cli::nats::DEFAULT_URL)]
-    nats: String,
-
     /// Invocation timeout
     #[arg(long, default_value = crate::DEFAULT_TIMEOUT)]
     timeout: humantime::Duration,
 
     /// Address to send import invocations to
+    #[arg(long, default_value = DEFAULT_ADDR)]
     import: String,
 
     /// Address to listen for export invocations on
+    #[arg(long, default_value = DEFAULT_ADDR)]
     export: String,
 
     /// Path or URL to Wasm command component
@@ -65,7 +66,6 @@ pub async fn handle_run(
 #[instrument(level = "trace", ret(level = "trace"))]
 pub async fn handle_serve(
     ServeArgs {
-        nats,
         timeout,
         export,
         import,
