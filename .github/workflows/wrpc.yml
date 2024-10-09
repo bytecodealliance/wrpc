@@ -21,8 +21,8 @@ on:
       - 'crates/transport-quic/v[0-9].[0-9]+.[0-9]+-*'
       - 'crates/transport/v[0-9].[0-9]+.[0-9]+'
       - 'crates/transport/v[0-9].[0-9]+.[0-9]+-*'
-      - 'crates/wasmtime-nats-cli/v[0-9].[0-9]+.[0-9]+'
-      - 'crates/wasmtime-nats-cli/v[0-9].[0-9]+.[0-9]+-*'
+      - 'crates/wasmtime-cli/v[0-9].[0-9]+.[0-9]+'
+      - 'crates/wasmtime-cli/v[0-9].[0-9]+.[0-9]+-*'
       - 'crates/wit-bindgen-go/v[0-9].[0-9]+.[0-9]+'
       - 'crates/wit-bindgen-go/v[0-9].[0-9]+.[0-9]+-*'
       - 'crates/wit-bindgen-rust-macro/v[0-9].[0-9]+.[0-9]+'
@@ -48,50 +48,50 @@ jobs:
             test-bin: |
               nix profile install --inputs-from . 'nixpkgs#qemu'
               qemu-aarch64 ./result/bin/wit-bindgen-wrpc --version
-              qemu-aarch64 ./result/bin/wrpc-wasmtime-nats --version
+              qemu-aarch64 ./result/bin/wrpc-wasmtime --version
             test-oci: docker load < ./result
             # TODO: Run aarch64 binary within OCI
 
           - target: aarch64-apple-darwin
             test-bin: |
               file ./result/bin/wit-bindgen-wrpc
-              file ./result/bin/wrpc-wasmtime-nats
+              file ./result/bin/wrpc-wasmtime
             test-oci: docker load < ./result
 
           - target: aarch64-linux-android
             test-bin: |
               file ./result/bin/wit-bindgen-wrpc
-              file ./result/bin/wrpc-wasmtime-nats
+              file ./result/bin/wrpc-wasmtime
             test-oci: docker load < ./result
 
           - target: riscv64gc-unknown-linux-gnu-fhs
             test-bin: |
               nix build -L '.#wrpc-riscv64gc-unknown-linux-gnu'
               nix shell --inputs-from . 'nixpkgs#qemu' -c qemu-riscv64 ./result/bin/wit-bindgen-wrpc --version
-              nix shell --inputs-from . 'nixpkgs#qemu' -c qemu-riscv64 ./result/bin/wrpc-wasmtime-nats --version
+              nix shell --inputs-from . 'nixpkgs#qemu' -c qemu-riscv64 ./result/bin/wrpc-wasmtime --version
 
           - target: x86_64-apple-darwin
             test-bin: |
               file ./result/bin/wit-bindgen-wrpc
-              file ./result/bin/wrpc-wasmtime-nats
+              file ./result/bin/wrpc-wasmtime
             test-oci: docker load < ./result
 
           - target: x86_64-pc-windows-gnu
             test-bin: |
               nix profile install --inputs-from . 'nixpkgs#wine64'
               wine64 ./result/bin/wit-bindgen-wrpc.exe --version
-              wine64 ./result/bin/wrpc-wasmtime-nats.exe --version
+              wine64 ./result/bin/wrpc-wasmtime.exe --version
             test-oci: docker load < ./result
             # TODO: Run win64 binary within OCI
 
           - target: x86_64-unknown-linux-musl
             test-bin: |
               ./result/bin/wit-bindgen-wrpc --version
-              ./result/bin/wrpc-wasmtime-nats --version
+              ./result/bin/wrpc-wasmtime --version
             test-oci: |
               docker load < ./result
               docker run --rm wrpc:$(nix eval --raw .#wrpc-x86_64-unknown-linux-musl-oci.imageTag) wit-bindgen-wrpc --version
-              docker run --rm wrpc:$(nix eval --raw .#wrpc-x86_64-unknown-linux-musl-oci.imageTag) wrpc-wasmtime-nats --version
+              docker run --rm wrpc:$(nix eval --raw .#wrpc-x86_64-unknown-linux-musl-oci.imageTag) wrpc-wasmtime --version
 
     name: wrpc-${{ matrix.config.target }}
     runs-on: ubuntu-latest
@@ -128,16 +128,16 @@ jobs:
 
       - run: chmod +x ./x86_64/bin/*
       - run: ./x86_64/bin/wit-bindgen-wrpc --version
-      - run: ./x86_64/bin/wrpc-wasmtime-nats --version
+      - run: ./x86_64/bin/wrpc-wasmtime --version
 
       - run: mkdir -p ./artifact/bin
       - run: lipo -create ./aarch64/bin/wit-bindgen-wrpc ./x86_64/bin/wit-bindgen-wrpc -output ./artifact/bin/wit-bindgen-wrpc
-      - run: lipo -create ./aarch64/bin/wrpc-wasmtime-nats ./x86_64/bin/wrpc-wasmtime-nats -output ./artifact/bin/wrpc-wasmtime-nats
+      - run: lipo -create ./aarch64/bin/wrpc-wasmtime ./x86_64/bin/wrpc-wasmtime -output ./artifact/bin/wrpc-wasmtime
 
       - run: chmod +x ./artifact/bin/wit-bindgen-wrpc
       - run: ./artifact/bin/wit-bindgen-wrpc --version
-      - run: chmod +x ./artifact/bin/wrpc-wasmtime-nats
-      - run: ./artifact/bin/wrpc-wasmtime-nats --version
+      - run: chmod +x ./artifact/bin/wrpc-wasmtime
+      - run: ./artifact/bin/wrpc-wasmtime --version
 
       - uses: actions/upload-artifact@84480863f228bb9747b473957fcc9e309aa96097 # v4.4.2
         with:
@@ -153,9 +153,9 @@ jobs:
         with:
           name: wrpc-x86_64-unknown-linux-musl
       - run: chmod +x ./bin/wit-bindgen-wrpc
-      - run: chmod +x ./bin/wrpc-wasmtime-nats
+      - run: chmod +x ./bin/wrpc-wasmtime
       - run: ./bin/wit-bindgen-wrpc --version
-      - run: ./bin/wrpc-wasmtime-nats --version
+      - run: ./bin/wrpc-wasmtime --version
 
   test-windows:
     if: ${{ !startsWith(github.ref, 'refs/tags/go/') }}
@@ -166,7 +166,7 @@ jobs:
         with:
           name: wrpc-x86_64-pc-windows-gnu
       - run: .\bin\wit-bindgen-wrpc.exe --version
-      - run: .\bin\wrpc-wasmtime-nats.exe --version
+      - run: .\bin\wrpc-wasmtime.exe --version
 
   cargo:
     strategy:
@@ -213,7 +213,7 @@ jobs:
           - crate: transport-quic
             workspace-dependencies: true
 
-          - crate: wasmtime-nats-cli
+          - crate: wasmtime-cli
             workspace-dependencies: true
 
           - crate: wit-bindgen
@@ -442,5 +442,5 @@ jobs:
           generate_release_notes: true
           files: |
             ./wit-bindgen-wrpc/*
-            ./wrpc-wasmtime-nats/*
+            ./wrpc-wasmtime/*
 

@@ -11,7 +11,8 @@ use crate::Invoke;
 
 pub struct Invocation(std::sync::Mutex<Option<TcpStream>>);
 
-pub struct Client<P>(P);
+#[derive(Clone, Debug)]
+pub struct Client<T>(T);
 
 impl<T> From<T> for Client<T>
 where
@@ -88,7 +89,18 @@ impl Accept for TcpListener {
     type Incoming = OwnedReadHalf;
 
     async fn accept(&self) -> std::io::Result<(Self::Context, Self::Outgoing, Self::Incoming)> {
-        let (stream, addr) = self.accept().await?;
+        (&self).accept().await
+    }
+}
+
+impl Accept for &TcpListener {
+    type Context = SocketAddr;
+    type Outgoing = OwnedWriteHalf;
+    type Incoming = OwnedReadHalf;
+
+    #[instrument(level = "trace")]
+    async fn accept(&self) -> std::io::Result<(Self::Context, Self::Outgoing, Self::Incoming)> {
+        let (stream, addr) = TcpListener::accept(self).await?;
         let (rx, tx) = stream.into_split();
         Ok((addr, tx, rx))
     }

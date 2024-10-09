@@ -11,7 +11,8 @@ use crate::Invoke;
 
 pub struct Invocation(std::sync::Mutex<Option<UnixStream>>);
 
-pub struct Client<P>(P);
+#[derive(Clone, Debug)]
+pub struct Client<T>(T);
 
 impl From<PathBuf> for Client<PathBuf> {
     fn from(path: PathBuf) -> Self {
@@ -170,9 +171,19 @@ impl Accept for UnixListener {
     type Outgoing = OwnedWriteHalf;
     type Incoming = OwnedReadHalf;
 
+    async fn accept(&self) -> std::io::Result<(Self::Context, Self::Outgoing, Self::Incoming)> {
+        (&self).accept().await
+    }
+}
+
+impl Accept for &UnixListener {
+    type Context = SocketAddr;
+    type Outgoing = OwnedWriteHalf;
+    type Incoming = OwnedReadHalf;
+
     #[instrument(level = "trace")]
     async fn accept(&self) -> std::io::Result<(Self::Context, Self::Outgoing, Self::Incoming)> {
-        let (stream, addr) = self.accept().await?;
+        let (stream, addr) = UnixListener::accept(self).await?;
         let (rx, tx) = stream.into_split();
         Ok((addr, tx, rx))
     }

@@ -1078,6 +1078,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-tcp-client"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-nats",
+ "clap",
+ "tokio",
+ "tracing-subscriber",
+ "url",
+ "wit-bindgen-wrpc",
+ "wrpc-transport",
+]
+
+[[package]]
 name = "hermit-abi"
 version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3711,7 +3725,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc"
-version = "0.12.1"
+version = "0.12.0"
 dependencies = [
  "anyhow",
  "async-nats",
@@ -3736,7 +3750,7 @@ dependencies = [
  "wrpc-transport",
  "wrpc-transport-nats",
  "wrpc-transport-quic",
- "wrpc-wasmtime-nats-cli",
+ "wrpc-wasmtime-cli",
 ]
 
 [[package]]
@@ -3839,8 +3853,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "wrpc-wasmtime-nats-cli"
-version = "0.10.1"
+name = "wrpc-wasmtime-cli"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-nats",

@@ -1,7 +1,7 @@
 [package]
-name = "wrpc-wasmtime-nats-cli"
-version = "0.10.1"
-description = "wRPC Wasmtime NATS CLI"
+name = "wrpc-wasmtime-cli"
+version = "0.1.0"
+description = "wRPC Wasmtime CLI"
 
 authors.workspace = true
 categories.workspace = true
@@ -57,5 +57,5 @@ wit-parser = { workspace = true }
 wrpc-cli = { workspace = true, features = ["nats"] }
 wrpc-introspect = { workspace = true }
 wrpc-transport-nats = { workspace = true }
-wrpc-transport = { workspace = true }
+wrpc-transport = { workspace = true, features = ["net"] }
 wrpc-runtime-wasmtime = { workspace = true }

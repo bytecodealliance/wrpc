@@ -6,11 +6,18 @@ pub mod serve;
 
 mod value;
 
-pub use frame::{Decoder as FrameDecoder, Encoder as FrameEncoder, Frame, FrameRef};
+pub use frame::{
+    Accept, Decoder as FrameDecoder, Encoder as FrameEncoder, Frame, FrameRef, Server,
+};
 pub use invoke::{Invoke, InvokeExt};
 pub use send_future::SendFuture;
 pub use serve::{Serve, ServeExt};
 pub use value::*;
+
+#[cfg(feature = "net")]
+pub use frame::tcp;
+#[cfg(all(unix, feature = "net"))]
+pub use frame::unix;
 
 use core::mem;
 use core::pin::{pin, Pin};
