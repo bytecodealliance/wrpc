@@ -1082,11 +1082,23 @@ name = "hello-tcp-client"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-nats",
  "clap",
  "tokio",
  "tracing-subscriber",
- "url",
+ "wit-bindgen-wrpc",
+ "wrpc-transport",
+]
+
+[[package]]
+name = "hello-tcp-server"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "futures",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
  "wit-bindgen-wrpc",
  "wrpc-transport",
 ]
