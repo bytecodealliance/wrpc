@@ -1,6 +1,6 @@
 [package]
 name = "wrpc-transport"
-version = "0.27.1"
+version = "0.27.2"
 description = "wRPC core transport functionality"
 
 authors.workspace = true
@@ -10,8 +10,8 @@ license.workspace = true
 repository.workspace = true
 
 [features]
-default = ["frame", "fs", "net", "io-std"]
-frame = []
+default = ["fs", "net", "io-std"]
+frame = [] # TODO: Remove in 0.28
 fs = ["tokio/fs"]
 net = ["tokio/net"]
 io-std = ["tokio/io-std"]
