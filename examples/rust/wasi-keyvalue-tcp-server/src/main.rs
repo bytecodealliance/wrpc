@@ -1,26 +1,21 @@
 use core::pin::pin;
+use std::sync::Arc;
 
 use anyhow::Context as _;
 use clap::Parser;
 use futures::stream::select_all;
 use futures::{StreamExt as _, TryStreamExt as _};
-use tokio::sync::mpsc;
 use tokio::{select, signal};
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 use tracing_subscriber::layer::SubscriberExt as _;
 use tracing_subscriber::util::SubscriberInitExt as _;
-use url::Url;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
-    /// NATS.io URL to connect to
-    #[arg(short, long, default_value = "nats://127.0.0.1:4222")]
-    nats: Url,
-
-    /// Prefix to serve `wasi:keyvalue` on
-    #[arg(default_value = "rust")]
-    prefix: String,
+    /// Address to serve `wasi:keyvalue` on
+    #[arg(default_value = "[::1]:7761")]
+    addr: String,
 }
 
 #[tokio::main]
@@ -33,17 +28,26 @@ async fn main() -> anyhow::Result<()> {
         .with(tracing_subscriber::fmt::layer().compact().without_time())
         .init();
 
-    let Args { nats, prefix } = Args::parse();
+    let Args { addr } = Args::parse();
 
-    let nats = connect(nats)
+    let lis = tokio::net::TcpListener::bind(&addr)
         .await
-        .context("failed to connect to NATS.io")?;
-    let invocations = wrpc_wasi_keyvalue::serve(
-        &wrpc_transport_nats::Client::new(nats, prefix, None),
-        wrpc_wasi_keyvalue_mem::Handler::default(),
-    )
-    .await
-    .context("failed to serve `wasi:keyvalue`")?;
+        .with_context(|| format!("failed to bind TCP listener on `{addr}`"))?;
+    let srv = Arc::new(wrpc_transport::Server::default());
+    let accept = tokio::spawn({
+        let srv = Arc::clone(&srv);
+        async move {
+            loop {
+                if let Err(err) = srv.accept(&lis).await {
+                    error!(?err, "failed to accept TCP connection")
+                }
+            }
+        }
+    });
+    let invocations =
+        wrpc_wasi_keyvalue::serve(srv.as_ref(), wrpc_wasi_keyvalue_mem::Handler::default())
+            .await
+            .context("failed to serve `wasi:keyvalue`")?;
     // NOTE: This will conflate all invocation streams into a single stream via `futures::stream::SelectAll`,
     // to customize this, iterate over the returned `invocations` and set up custom handling per export
     let mut invocations = select_all(invocations.into_iter().map(
@@ -68,37 +72,9 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
             res = &mut shutdown => {
+                accept.abort();
                 return res.context("failed to listen for ^C")
             }
         }
     }
-}
-
-/// Connect to NATS.io server and ensure that the connection is fully established before
-/// returning the resulting [`async_nats::Client`]
-async fn connect(url: Url) -> anyhow::Result<async_nats::Client> {
-    let (conn_tx, mut conn_rx) = mpsc::channel(1);
-    let client = async_nats::connect_with_options(
-        String::from(url),
-        async_nats::ConnectOptions::new()
-            .retry_on_initial_connect()
-            .event_callback(move |event| {
-                let conn_tx = conn_tx.clone();
-                async move {
-                    if let async_nats::Event::Connected = event {
-                        conn_tx
-                            .send(())
-                            .await
-                            .expect("failed to send NATS.io server connection notification");
-                    }
-                }
-            }),
-    )
-    .await
-    .context("failed to connect to NATS.io server")?;
-    conn_rx
-        .recv()
-        .await
-        .context("failed to await NATS.io server connection to be established")?;
-    Ok(client)
 }
