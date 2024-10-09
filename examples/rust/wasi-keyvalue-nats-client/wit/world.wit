@@ -1,5 +1,0 @@
-package wrpc-examples:wasi-keyvalue-nats-client;
-
-world client {
-    import wasi:keyvalue/store@0.2.0-draft;
-}

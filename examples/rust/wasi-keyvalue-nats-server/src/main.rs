@@ -1,33 +1,15 @@
 use core::pin::pin;
 
-use std::collections::HashMap;
-use std::sync::Arc;
-
 use anyhow::Context as _;
-use async_nats::HeaderMap;
-use bytes::Bytes;
 use clap::Parser;
 use futures::stream::select_all;
 use futures::{StreamExt as _, TryStreamExt as _};
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::mpsc;
 use tokio::{select, signal};
-use tracing::{debug, info, instrument, warn};
+use tracing::{info, warn};
 use tracing_subscriber::layer::SubscriberExt as _;
 use tracing_subscriber::util::SubscriberInitExt as _;
 use url::Url;
-use wrpc_transport::{ResourceBorrow, ResourceOwn};
-
-mod bindings {
-    wit_bindgen_wrpc::generate!({
-       with: {
-           "wasi:keyvalue/store@0.2.0-draft": generate
-       }
-    });
-}
-
-use bindings::exports::wasi::keyvalue::store::{self, KeyResponse};
-
-type Result<T> = core::result::Result<T, store::Error>;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -56,12 +38,12 @@ async fn main() -> anyhow::Result<()> {
     let nats = connect(nats)
         .await
         .context("failed to connect to NATS.io")?;
-    let invocations = bindings::serve(
+    let invocations = wrpc_wasi_keyvalue::serve(
         &wrpc_transport_nats::Client::new(nats, prefix, None),
-        Server::default(),
+        wrpc_wasi_keyvalue_mem::Handler::default(),
     )
     .await
-    .context("failed to serve `wasi:keyvalue/store`")?;
+    .context("failed to serve `wasi:keyvalue`")?;
     // NOTE: This will conflate all invocation streams into a single stream via `futures::stream::SelectAll`,
     // to customize this, iterate over the returned `invocations` and set up custom handling per export
     let mut invocations = select_all(invocations.into_iter().map(
@@ -119,115 +101,4 @@ async fn connect(url: Url) -> anyhow::Result<async_nats::Client> {
         .await
         .context("failed to await NATS.io server connection to be established")?;
     Ok(client)
-}
-
-type Bucket = Arc<RwLock<HashMap<String, Bytes>>>;
-
-#[derive(Clone, Debug, Default)]
-struct Server(Arc<RwLock<HashMap<Bytes, Bucket>>>);
-
-impl Server {
-    async fn bucket(&self, bucket: impl AsRef<[u8]>) -> Result<Bucket> {
-        debug!("looking up bucket");
-        let store = self.0.read().await;
-        store
-            .get(bucket.as_ref())
-            .ok_or(store::Error::NoSuchStore)
-            .cloned()
-    }
-}
-
-impl bindings::exports::wasi::keyvalue::store::Handler<Option<HeaderMap>> for Server {
-    // NOTE: Resource handle returned is just the `identifier` itself
-    #[instrument(level = "trace", skip(_cx), ret)]
-    async fn open(
-        &self,
-        _cx: Option<HeaderMap>,
-        identifier: String,
-    ) -> anyhow::Result<Result<ResourceOwn<store::Bucket>>> {
-        let identifier = Bytes::from(identifier);
-        {
-            // first, optimistically try read-only lock
-            let store = self.0.read().await;
-            if store.contains_key(&identifier) {
-                return Ok(Ok(ResourceOwn::from(identifier)));
-            }
-        }
-        let mut store = self.0.write().await;
-        store.entry(identifier.clone()).or_default();
-        Ok(Ok(ResourceOwn::from(identifier)))
-    }
-}
-
-impl bindings::exports::wasi::keyvalue::store::HandlerBucket<Option<HeaderMap>> for Server {
-    #[instrument(level = "trace", skip(_cx), ret)]
-    async fn get(
-        &self,
-        _cx: Option<HeaderMap>,
-        bucket: ResourceBorrow<store::Bucket>,
-        key: String,
-    ) -> anyhow::Result<Result<Option<Bytes>>> {
-        let bucket = self.bucket(bucket).await?;
-        let bucket = bucket.read().await;
-        Ok(Ok(bucket.get(&key).cloned()))
-    }
-
-    #[instrument(level = "trace", skip(_cx), ret)]
-    async fn set(
-        &self,
-        _cx: Option<HeaderMap>,
-        bucket: ResourceBorrow<store::Bucket>,
-        key: String,
-        value: Bytes,
-    ) -> anyhow::Result<Result<()>> {
-        let bucket = self.bucket(bucket).await?;
-        let mut bucket = bucket.write().await;
-        bucket.insert(key, value);
-        Ok(Ok(()))
-    }
-
-    #[instrument(level = "trace", skip(_cx), ret)]
-    async fn delete(
-        &self,
-        _cx: Option<HeaderMap>,
-        bucket: ResourceBorrow<store::Bucket>,
-        key: String,
-    ) -> anyhow::Result<Result<()>> {
-        let bucket = self.bucket(bucket).await?;
-        let mut bucket = bucket.write().await;
-        bucket.remove(&key);
-        Ok(Ok(()))
-    }
-
-    #[instrument(level = "trace", skip(_cx), ret)]
-    async fn exists(
-        &self,
-        _cx: Option<HeaderMap>,
-        bucket: ResourceBorrow<store::Bucket>,
-        key: String,
-    ) -> anyhow::Result<Result<bool>> {
-        let bucket = self.bucket(bucket).await?;
-        let bucket = bucket.read().await;
-        Ok(Ok(bucket.contains_key(&key)))
-    }
-
-    #[instrument(level = "trace", skip(_cx), ret)]
-    async fn list_keys(
-        &self,
-        _cx: Option<HeaderMap>,
-        bucket: ResourceBorrow<store::Bucket>,
-        cursor: Option<u64>,
-    ) -> anyhow::Result<Result<KeyResponse>> {
-        let bucket = self.bucket(bucket).await?;
-        let bucket = bucket.read().await;
-        let bucket = bucket.keys();
-        let keys = if let Some(cursor) = cursor {
-            let cursor =
-                usize::try_from(cursor).map_err(|err| store::Error::Other(err.to_string()))?;
-            bucket.skip(cursor).cloned().collect()
-        } else {
-            bucket.cloned().collect()
-        };
-        Ok(Ok(KeyResponse { keys, cursor: None }))
-    }
 }

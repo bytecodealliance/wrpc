@@ -1,0 +1,9 @@
+package wrpc:wasi-keyvalue;
+
+world proxy {
+    include wasi:keyvalue/imports@0.2.0-draft2;
+
+    export wasi:keyvalue/atomics@0.2.0-draft2;
+    export wasi:keyvalue/batch@0.2.0-draft2;
+    export wasi:keyvalue/store@0.2.0-draft2;
+}

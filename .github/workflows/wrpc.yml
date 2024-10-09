@@ -21,6 +21,10 @@ on:
       - 'crates/transport-quic/v[0-9].[0-9]+.[0-9]+-*'
       - 'crates/transport/v[0-9].[0-9]+.[0-9]+'
       - 'crates/transport/v[0-9].[0-9]+.[0-9]+-*'
+      - 'crates/wasi-keyvalue-mem/v[0-9].[0-9]+.[0-9]+'
+      - 'crates/wasi-keyvalue-mem/v[0-9].[0-9]+.[0-9]+-*'
+      - 'crates/wasi-keyvalue/v[0-9].[0-9]+.[0-9]+'
+      - 'crates/wasi-keyvalue/v[0-9].[0-9]+.[0-9]+-*'
       - 'crates/wasmtime-cli/v[0-9].[0-9]+.[0-9]+'
       - 'crates/wasmtime-cli/v[0-9].[0-9]+.[0-9]+-*'
       - 'crates/wit-bindgen-go/v[0-9].[0-9]+.[0-9]+'
@@ -211,6 +215,12 @@ jobs:
             workspace-dependencies: true
 
           - crate: transport-quic
+            workspace-dependencies: true
+
+          - crate: wasi-keyvalue
+            workspace-dependencies: true
+
+          - crate: wasi-keyvalue-mem
             workspace-dependencies: true
 
           - crate: wasmtime-cli

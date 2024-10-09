@@ -5,16 +5,7 @@ use tokio::sync::mpsc;
 use tracing_subscriber::layer::SubscriberExt as _;
 use tracing_subscriber::util::SubscriberInitExt as _;
 use url::Url;
-
-mod bindings {
-    wit_bindgen_wrpc::generate!({
-       with: {
-           "wasi:keyvalue/store@0.2.0-draft": generate
-       }
-    });
-}
-
-use bindings::wasi::keyvalue::store;
+use wrpc_wasi_keyvalue::wasi::keyvalue::store;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
