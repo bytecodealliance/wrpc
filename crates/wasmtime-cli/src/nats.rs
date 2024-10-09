@@ -4,6 +4,7 @@ use anyhow::Context as _;
 use clap::Parser;
 use tracing::instrument;
 
+/// NATS transport
 #[derive(Parser, Debug)]
 pub enum Command {
     Run(RunArgs),
