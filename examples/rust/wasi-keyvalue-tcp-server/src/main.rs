@@ -7,8 +7,6 @@ use futures::stream::select_all;
 use futures::{StreamExt as _, TryStreamExt as _};
 use tokio::{select, signal};
 use tracing::{error, info, warn};
-use tracing_subscriber::layer::SubscriberExt as _;
-use tracing_subscriber::util::SubscriberInitExt as _;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -20,13 +18,7 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::registry()
-        .with(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
-        .with(tracing_subscriber::fmt::layer().compact().without_time())
-        .init();
+    tracing_subscriber::fmt().init();
 
     let Args { addr } = Args::parse();
 
