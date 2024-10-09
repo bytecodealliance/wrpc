@@ -1,8 +1,6 @@
 use anyhow::{ensure, Context as _};
 use bytes::Bytes;
 use clap::Parser;
-use tracing_subscriber::layer::SubscriberExt as _;
-use tracing_subscriber::util::SubscriberInitExt as _;
 use wrpc_wasi_keyvalue::wasi::keyvalue::store;
 
 #[derive(Parser, Debug)]
@@ -15,13 +13,7 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::registry()
-        .with(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
-        .with(tracing_subscriber::fmt::layer().compact().without_time())
-        .init();
+    tracing_subscriber::fmt().init();
 
     let Args { addr } = Args::parse();
 

@@ -1,6 +1,5 @@
 use anyhow::Context as _;
 use clap::Parser;
-use tokio::sync::mpsc;
 use url::Url;
 
 mod bindings {
@@ -29,9 +28,13 @@ async fn main() -> anyhow::Result<()> {
 
     let Args { nats, prefixes } = Args::parse();
 
-    let nats = connect(nats)
-        .await
-        .context("failed to connect to NATS.io")?;
+    let nats = async_nats::connect_with_options(
+        String::from(nats),
+        async_nats::ConnectOptions::new().retry_on_initial_connect(),
+    )
+    .await
+    .context("failed to connect to NATS.io server")?;
+
     for prefix in prefixes {
         let wrpc = wrpc_transport_nats::Client::new(nats.clone(), prefix.clone(), None);
         let hello = bindings::wrpc_examples::hello::handler::hello(&wrpc, None)
@@ -40,33 +43,4 @@ async fn main() -> anyhow::Result<()> {
         eprintln!("{prefix}: {hello}");
     }
     Ok(())
-}
-
-/// Connect to NATS.io server and ensure that the connection is fully established before
-/// returning the resulting [`async_nats::Client`]
-async fn connect(url: Url) -> anyhow::Result<async_nats::Client> {
-    let (conn_tx, mut conn_rx) = mpsc::channel(1);
-    let client = async_nats::connect_with_options(
-        String::from(url),
-        async_nats::ConnectOptions::new()
-            .retry_on_initial_connect()
-            .event_callback(move |event| {
-                let conn_tx = conn_tx.clone();
-                async move {
-                    if let async_nats::Event::Connected = event {
-                        conn_tx
-                            .send(())
-                            .await
-                            .expect("failed to send NATS.io server connection notification");
-                    }
-                }
-            }),
-    )
-    .await
-    .context("failed to connect to NATS.io server")?;
-    conn_rx
-        .recv()
-        .await
-        .context("failed to await NATS.io server connection to be established")?;
-    Ok(client)
 }
