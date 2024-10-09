@@ -66,7 +66,7 @@ impl<C, I, O> Server<C, I, O>
 where
     I: AsyncRead + Unpin,
 {
-    /// Accept a connection on a [TcpListener].
+    /// Accept a connection on an [Accept].
     ///
     /// # Errors
     ///

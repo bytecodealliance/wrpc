@@ -1,0 +1,14 @@
+[package]
+name = "wrpc-wasi-keyvalue"
+version = "0.1.0"
+description = "`wasi:keyvalue` bindings for wRPC"
+
+authors.workspace = true
+categories.workspace = true
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+wit-bindgen-wrpc = { workspace = true }

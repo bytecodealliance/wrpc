@@ -2833,8 +2833,8 @@ dependencies = [
  "tokio",
  "tracing-subscriber",
  "url",
- "wit-bindgen-wrpc",
  "wrpc-transport-nats",
+ "wrpc-wasi-keyvalue",
 ]
 
 [[package]]
@@ -2850,9 +2850,10 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "url",
- "wit-bindgen-wrpc",
  "wrpc-transport",
  "wrpc-transport-nats",
+ "wrpc-wasi-keyvalue",
+ "wrpc-wasi-keyvalue-mem",
 ]
 
 [[package]]
@@ -3862,6 +3863,26 @@ dependencies = [
  "tracing",
  "wasm-tokio",
  "wrpc-transport",
+]
+
+[[package]]
+name = "wrpc-wasi-keyvalue"
+version = "0.1.0"
+dependencies = [
+ "wit-bindgen-wrpc",
+]
+
+[[package]]
+name = "wrpc-wasi-keyvalue-mem"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "futures",
+ "tokio",
+ "tracing",
+ "wrpc-transport",
+ "wrpc-wasi-keyvalue",
 ]
 
 [[package]]
