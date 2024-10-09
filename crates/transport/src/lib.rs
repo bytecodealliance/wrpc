@@ -1,14 +1,12 @@
 #![allow(clippy::type_complexity)]
 
-#[cfg(feature = "frame")]
 pub mod frame;
 pub mod invoke;
 pub mod serve;
 
 mod value;
 
-#[cfg(feature = "frame")]
-pub use frame::{Decoder as FrameDecoder, Encoder as FrameEncoder, FrameRef};
+pub use frame::{Decoder as FrameDecoder, Encoder as FrameEncoder, Frame, FrameRef};
 pub use invoke::{Invoke, InvokeExt};
 pub use send_future::SendFuture;
 pub use serve::{Serve, ServeExt};

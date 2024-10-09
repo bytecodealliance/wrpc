@@ -4,21 +4,27 @@ use bytes::Bytes;
 
 mod codec;
 mod conn;
+
+#[cfg(feature = "net")]
 pub mod tcp;
-#[cfg(unix)]
+#[cfg(all(unix, feature = "net"))]
 pub mod unix;
 
 pub use codec::*;
 pub use conn::*;
 
+/// Framing protocol version
 pub const PROTOCOL: u8 = 0;
 
+/// Owned wRPC frame
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Frame {
     pub path: Arc<[usize]>,
     pub data: Bytes,
 }
 
+/// wRPC frame reference
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FrameRef<'a> {
     pub path: &'a [usize],
     pub data: &'a [u8],
