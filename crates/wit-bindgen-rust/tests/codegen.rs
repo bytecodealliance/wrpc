@@ -594,12 +594,12 @@ mod simple_with_option {
 mod multiple_paths {
     wit_bindgen_wrpc::generate!({
         inline: r#"
-        package test:paths;
+            package test:paths;
 
-        world test {
-            import paths:path1/test;
-            export paths:path2/test;
-        }
+            world test {
+                import paths:path1/test;
+                export paths:path2/test;
+            }
         "#,
         path: ["tests/wit/path1", "tests/wit/path2"],
         generate_all,
@@ -610,20 +610,20 @@ mod multiple_paths {
 mod interface_export_example {
     wit_bindgen_wrpc::generate!({
         inline: r#"
-         package my:test;
+            package my:test;
 
-         interface a {
-             type my-type = u32;
-         }
+            interface a {
+                type my-type = u32;
+            }
 
-         world my-world {
-             export b: interface {
-                 use a.{my-type};
+            world my-world {
+                export b: interface {
+                    use a.{my-type};
 
-                 foo: func() -> my-type;
-             }
-         }
-     "#,
+                    foo: func() -> my-type;
+                }
+            }
+        "#,
     });
 
     #[derive(Clone)]
@@ -648,41 +648,45 @@ mod interface_export_example {
         })
     }
 }
-
 #[allow(unused)]
 mod resource_example {
-    use std::sync::RwLock;
+    use std::sync::{Arc, RwLock};
+
+    use anyhow::Context as _;
+    use bytes::Bytes;
+    use wrpc_transport::{ResourceBorrow, ResourceOwn};
 
     wit_bindgen_wrpc::generate!({
-     inline: r#"
-         package my:test;
+        inline: r#"
+            package my:test;
 
-         interface logging {
-             enum level {
-                 debug,
-                 info,
-                 error,
-             }
+            interface logging {
+                enum level {
+                    debug,
+                    info,
+                    error,
+                }
 
-             resource logger {
-                 constructor(level: level);
-                 log: func(level: level, msg: string);
-                 level: func() -> level;
-                 set-level: func(level: level);
-             }
-         }
+                resource logger {
+                    constructor(level: level);
+                    log: func(level: level, msg: string);
+                    level: func() -> level;
+                    set-level: func(level: level);
+                }
+            }
 
-         world my-world {
-             export logging;
-         }
-     "#,
+            world my-world {
+                export logging;
+            }
+        "#,
     });
 
     use exports::my::test::logging::{Handler, HandlerLogger, Level, Logger};
-    use wrpc_transport::{ResourceBorrow, ResourceOwn};
 
-    #[derive(Clone)]
-    struct MyComponent;
+    #[derive(Clone, Default)]
+    struct MyComponent {
+        loggers: Arc<RwLock<Vec<MyLogger>>>,
+    }
 
     // Note that the `logging` interface has no methods of its own but a trait
     // is required to be implemented here to specify the type of `Logger`.
@@ -695,55 +699,65 @@ mod resource_example {
 
     impl<Ctx: Send> HandlerLogger<Ctx> for MyComponent {
         async fn new(&self, cx: Ctx, level: Level) -> anyhow::Result<ResourceOwn<Logger>> {
-            todo!();
-
-            // Ok(MyLogger {
-            //     level: RwLock::new(level),
-            //     contents: RwLock::new(String::new()),
-            // })
+            let mut loggers = self.loggers.write().unwrap();
+            let handle = loggers.len().to_le_bytes();
+            loggers.push(MyLogger {
+                level: RwLock::new(level),
+                contents: RwLock::new(String::new()),
+            });
+            Ok(ResourceOwn::from(Bytes::copy_from_slice(&handle)))
         }
 
         async fn log(
             &self,
             cx: Ctx,
-            self_: ResourceBorrow<Logger>,
+            logger: ResourceBorrow<Logger>,
             level: Level,
             msg: String,
         ) -> anyhow::Result<()> {
-            todo!();
-
-            // if level as u32 <= *self.level.read().unwrap() as u32 {
-            //     self.contents.write().unwrap().push_str(&msg);
-            //     self.contents.write().unwrap().push('\n');
-            // }
-            // Ok(())
+            let i = Bytes::from(logger).as_ref().try_into()?;
+            let i = usize::from_le_bytes(i);
+            let loggers = self.loggers.read().unwrap();
+            let logger = loggers.get(i).context("invalid resource handle")?;
+            if level as u32 <= *logger.level.read().unwrap() as u32 {
+                let mut contents = logger.contents.write().unwrap();
+                contents.push_str(&msg);
+                contents.push_str("\n");
+            }
+            Ok(())
         }
 
-        async fn level(&self, cx: Ctx, self_: ResourceBorrow<Logger>) -> anyhow::Result<Level> {
-            todo!();
-            // Ok(*self.level.read().unwrap())
+        async fn level(&self, cx: Ctx, logger: ResourceBorrow<Logger>) -> anyhow::Result<Level> {
+            let i = Bytes::from(logger).as_ref().try_into()?;
+            let i = usize::from_le_bytes(i);
+            let loggers = self.loggers.read().unwrap();
+            let logger = loggers.get(i).context("invalid resource handle")?;
+            let level = logger.level.read().unwrap();
+            Ok(level.clone())
         }
 
         async fn set_level(
             &self,
             cx: Ctx,
-            self_: ResourceBorrow<Logger>,
+            logger: ResourceBorrow<Logger>,
             level: Level,
         ) -> anyhow::Result<()> {
-            todo!();
-
-            // *self.level.write().unwrap() = level;
-            // Ok(())
+            let i = Bytes::from(logger).as_ref().try_into()?;
+            let i = usize::from_le_bytes(i);
+            let loggers = self.loggers.read().unwrap();
+            let logger = loggers.get(i).context("invalid resource handle")?;
+            *logger.level.write().unwrap() = level;
+            Ok(())
         }
     }
 
     async fn serve_exports(wrpc: &impl wrpc_transport::Serve) {
-        use wit_bindgen_wrpc::futures::stream::TryStreamExt as _;
+        use futures::stream::TryStreamExt as _;
 
-        let invocations = serve(wrpc, MyComponent).await.unwrap();
+        let invocations = serve(wrpc, MyComponent::default()).await.unwrap();
         let invocations = std::thread::spawn(|| invocations).join().unwrap();
         invocations.into_iter().for_each(|(instance, name, st)| {
-            wit_bindgen_wrpc::tokio::spawn(async move {
+            tokio::spawn(async move {
                 eprintln!("serving {instance} {name}");
                 st.try_collect::<Vec<_>>().await.unwrap();
             });
@@ -755,29 +769,29 @@ mod resource_example {
 mod example_4 {
     wit_bindgen_wrpc::generate!({
         inline: r#"
-        package example:exported-resources;
+            package example:exported-resources;
 
-        world import-some-resources {
-            export logging;
-        }
-
-        interface logging {
-            enum level {
-                debug,
-                info,
-                warn,
-                error,
+            world import-some-resources {
+                export logging;
             }
-            resource logger {
-                constructor(max-level: level);
 
-                get-max-level: func() -> level;
-                set-max-level: func(level: level);
+            interface logging {
+                enum level {
+                    debug,
+                    info,
+                    warn,
+                    error,
+                }
+                resource logger {
+                    constructor(max-level: level);
 
-                log: func(level: level, msg: string);
+                    get-max-level: func() -> level;
+                    set-max-level: func(level: level);
+
+                    log: func(level: level, msg: string);
+                }
             }
-        }
-    "#,
+        "#,
     });
 }
 
@@ -785,37 +799,68 @@ mod example_4 {
 mod async_test {
     wit_bindgen_wrpc::generate!({
         inline: r#"
-        package wrpc-test:async;
+            package wrpc-test:async;
 
-        world async {
-            import handler;
-            export handler;
-        }
-
-        interface handler {
-            use types.{request, response};
-
-            handle: func(request: request) -> result<response, string>;
-        }
-
-        interface types {
-            type fields = list<tuple<string, list<list<u8>>>>;
-
-            record request {
-                body: stream<u8>,
-                trailers: future<option<fields>>,
-                path-with-query: option<string>,
-                authority: option<string>,
-                headers: fields,
+            world async {
+                import handler;
+                export handler;
             }
 
-            record response {
-                body: stream<u8>,
-                trailers: future<option<fields>>,
-                status: u16,
-                headers: fields,
+            interface handler {
+                use types.{request, response};
+
+                handle: func(request: request) -> result<response, string>;
             }
-        }
-    "#,
+
+            interface types {
+                type fields = list<tuple<string, list<list<u8>>>>;
+
+                record request {
+                    body: stream<u8>,
+                    trailers: future<option<fields>>,
+                    path-with-query: option<string>,
+                    authority: option<string>,
+                    headers: fields,
+                }
+
+                record response {
+                    body: stream<u8>,
+                    trailers: future<option<fields>>,
+                    status: u16,
+                    headers: fields,
+                }
+            }
+        "#,
     });
+}
+
+#[allow(unused)]
+mod top_level_example {
+    wit_bindgen_wrpc::generate!({
+        inline: r"
+            package a:b;
+
+            world the-world {
+                record fahrenheit {
+                    degrees: f32,
+                }
+
+                import what-temperature-is-it: func() -> fahrenheit;
+
+                record celsius {
+                    degrees: f32,
+                }
+
+                import convert-to-celsius: func(a: fahrenheit) -> celsius;
+            }
+        ",
+    });
+
+    async fn test(wrpc: &impl wrpc_transport::Invoke<Context = ()>) -> anyhow::Result<()> {
+        let current_temp = what_temperature_is_it(wrpc, ()).await?;
+        println!("current temp in fahrenheit is {}", current_temp.degrees);
+        let in_celsius: Celsius = convert_to_celsius(wrpc, (), &current_temp).await?;
+        println!("current temp in celsius is {}", in_celsius.degrees);
+        Ok(())
+    }
 }

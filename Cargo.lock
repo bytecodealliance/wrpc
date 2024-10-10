@@ -3654,7 +3654,7 @@ dependencies = [
 
 [[package]]
 name = "wit-bindgen-wrpc"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "anyhow",
  "bitflags 2.6.0",
@@ -3685,13 +3685,16 @@ name = "wit-bindgen-wrpc-rust"
 version = "0.7.0"
 dependencies = [
  "anyhow",
+ "bytes",
  "clap",
+ "futures",
  "heck 0.5.0",
  "prettyplease",
  "serde",
  "serde_json",
  "syn",
  "test-helpers",
+ "tokio",
  "wit-bindgen-core",
  "wit-bindgen-wrpc",
  "wrpc-introspect",

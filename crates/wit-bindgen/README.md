@@ -28,7 +28,7 @@ also contains a CLI and the RPC framework itself
 [WIT]: https://component-model.bytecodealliance.org/design/wit.html
 [world]: https://component-model.bytecodealliance.org/design/worlds.html
 [online documentation]: https://docs.rs/wit-bindgen-wrpc
-[`wRPC` repository]: https://github.com/rvolosatovs/wrpc
+[`wRPC` repository]: https://github.com/bytecodealliance/wrpc
 
 # License
 
