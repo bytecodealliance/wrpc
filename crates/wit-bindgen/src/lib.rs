@@ -104,7 +104,7 @@
 /// into issues or have idea of how to improve the situation please [file an
 /// issue].
 ///
-/// [file an issue]: https://github.com/rvolosatovs/wit-bindgen-wrpc/issues/new
+/// [file an issue]: https://github.com/bytecodealliance/wrpc/issues/new
 ///
 /// ## Namespacing
 ///
@@ -132,32 +132,36 @@
 /// `generate!` macro is invoked.
 ///
 /// ```
-/// use wit_bindgen_wrpc::generate;
+/// mod bindings {
+///     use wit_bindgen_wrpc::generate;
 ///
-/// generate!({
-///     inline: r"
-///         package a:b;
+///     generate!({
+///         inline: r"
+///             package a:b;
 ///
-///         world the-world {
-///             record fahrenheit {
-///                 degrees: f32,
+///             world the-world {
+///                 record fahrenheit {
+///                     degrees: f32,
+///                 }
+///
+///                 import what-temperature-is-it: func() -> fahrenheit;
+///
+///                 record celsius {
+///                     degrees: f32,
+///                 }
+///
+///                 import convert-to-celsius: func(a: fahrenheit) -> celsius;
 ///             }
+///         ",
+///     });
+/// }
 ///
-///             import what-temperature-is-it: func() -> fahrenheit;
+/// use bindings::Celsius;
 ///
-///             record celsius {
-///                 degrees: f32,
-///             }
-///
-///             import convert-to-celsius: func(a: fahrenheit) -> celsius;
-///         }
-///     ",
-/// });
-///
-/// async fn test(wrpc: &impl wrpc_transport::Client) -> anyhow::Result<()> {
-///     let current_temp = what_temperature_is_it(wrpc).await?;
+/// async fn test(wrpc: &impl wrpc_transport::Invoke<Context = ()>) -> anyhow::Result<()> {
+///     let current_temp = bindings::what_temperature_is_it(wrpc, ()).await?;
 ///     println!("current temp in fahrenheit is {}", current_temp.degrees);
-///     let in_celsius: Celsius = convert_to_celsius(wrpc, current_temp).await?;
+///     let in_celsius: Celsius = bindings::convert_to_celsius(wrpc, (), &current_temp).await?;
 ///     println!("current temp in celsius is {}", in_celsius.degrees);
 ///     Ok(())
 /// }
@@ -200,12 +204,12 @@
 /// // interface name.
 /// use my::test::logging::Level;
 ///
-/// async fn test(wrpc: &impl wrpc_transport::Client) -> anyhow::Result<()> {
-///     let current_level = global_logger::get_current_level(wrpc).await?;
+/// async fn test(wrpc: &impl wrpc_transport::Invoke<Context = ()>) -> anyhow::Result<()> {
+///     let current_level = global_logger::get_current_level(wrpc, ()).await?;
 ///     println!("current logging level is {current_level:?}");
-///     global_logger::set_current_level(wrpc, Level::Error).await?;
+///     global_logger::set_current_level(wrpc, (), Level::Error).await?;
 ///
-///     my::test::logging::log(wrpc, Level::Info, "Hello there!").await?;
+///     my::test::logging::log(wrpc, (), Level::Info, "Hello there!").await?;
 ///     Ok(())
 /// }
 /// #
@@ -249,14 +253,14 @@
 ///     "#,
 /// });
 ///
-/// use my::test::logger::Level;
+/// use my::test::logger::{self, Level};
 ///
-/// async fn test(wrpc: &impl wrpc_transport::Client) -> anyhow::Result<()> {
-///     let logger = get_global_logger(wrpc).await?;
-///     logger.log(wrpc, Level::Debug, "This is a global message");
+/// async fn test(wrpc: &impl wrpc_transport::Invoke<Context = ()>) -> anyhow::Result<()> {
+///     let logger = get_global_logger(wrpc, ()).await?;
+///     Logger::log(wrpc, (), &logger.as_borrow(), Level::Debug, "This is a global message");
 ///
-///     let logger2 = Logger::new(wrpc, "/tmp/other.log").await?;
-///     logger2.log(wrpc, Level::Info, "This is not a global message").await?;
+///     let logger2 = Logger::new(wrpc, (), "/tmp/other.log").await?;
+///     Logger::log(wrpc, (), &logger2.as_borrow(), Level::Info, "This is not a global message").await?;
 ///     Ok(())
 /// }
 /// #
@@ -280,6 +284,7 @@
 /// A minimal example of this is:
 ///
 /// ```
+/// use futures::stream::TryStreamExt as _;
 /// use wit_bindgen_wrpc::generate;
 ///
 /// generate!({
@@ -299,8 +304,14 @@
 ///     async fn hello(&self, cx: Ctx) -> anyhow::Result<()> { Ok(()) }
 /// }
 ///
-/// async fn serve_exports(wrpc: &impl wrpc_transport::Client) -> anyhow::Result<()> {
-///     serve(wrpc, MyComponent, async {}).await
+/// async fn serve_exports(wrpc: &impl wrpc_transport::Serve) {
+///     let invocations = serve(wrpc, MyComponent).await.unwrap();
+///     invocations.into_iter().for_each(|(instance, name, st)| {
+///         tokio::spawn(async move {
+///             eprintln!("serving {instance} {name}");
+///             st.try_collect::<Vec<_>>().await.unwrap();
+///         });
+///     })
 /// }
 /// ```
 ///
@@ -321,6 +332,7 @@
 /// `Handler` here and are namespaced appropriately in modules:
 ///
 /// ```
+/// use futures::stream::TryStreamExt as _;
 /// use wit_bindgen_wrpc::generate;
 ///
 /// generate!({
@@ -358,8 +370,14 @@
 ///     async fn func_in_b(&self, cx: Ctx) -> anyhow::Result<()> { Ok(()) }
 /// }
 ///
-/// async fn serve_exports(wrpc: &impl wrpc_transport::Client) -> anyhow::Result<()> {
-///     serve(wrpc, MyComponent, async {}).await
+/// async fn serve_exports(wrpc: &impl wrpc_transport::Serve) {
+///     let invocations = serve(wrpc, MyComponent).await.unwrap();
+///     invocations.into_iter().for_each(|(instance, name, st)| {
+///         tokio::spawn(async move {
+///             eprintln!("serving {instance} {name}");
+///             st.try_collect::<Vec<_>>().await.unwrap();
+///         });
+///     })
 /// }
 /// ```
 ///
@@ -372,6 +390,8 @@
 /// generated:
 ///
 /// ```
+/// use futures::stream::TryStreamExt as _;
+///
 /// mod bindings {
 ///     use wit_bindgen_wrpc::generate;
 ///
@@ -403,8 +423,14 @@
 ///     }
 /// }
 ///
-/// async fn serve_exports(wrpc: &impl wrpc_transport::Client) -> anyhow::Result<()> {
-///     bindings::serve(wrpc, MyComponent, async {}).await
+/// async fn serve_exports(wrpc: &impl wrpc_transport::Serve) {
+///     let invocations = bindings::serve(wrpc, MyComponent).await.unwrap();
+///     invocations.into_iter().for_each(|(instance, name, st)| {
+///         tokio::spawn(async move {
+///             eprintln!("serving {instance} {name}");
+///             st.try_collect::<Vec<_>>().await.unwrap();
+///         });
+///     })
 /// }
 /// ```
 ///
@@ -426,7 +452,12 @@
 /// corresponding trait for the resource's containing interface/world:
 ///
 /// ```
-/// use std::sync::RwLock;
+/// use std::sync::{Arc, RwLock};
+///
+/// use anyhow::Context;
+/// use bytes::Bytes;
+/// use futures::stream::TryStreamExt as _;
+/// use wrpc_transport::{ResourceBorrow, ResourceOwn};
 ///
 /// mod bindings {
 ///     use wit_bindgen_wrpc::generate;
@@ -457,52 +488,73 @@
 ///     });
 /// }
 ///
-/// use bindings::exports::my::test::logging::{Handler, HandlerLogger, Level};
+/// use bindings::exports::my::test::logging::{Handler, HandlerLogger, Level, Logger};
 ///
-/// #[derive(Clone)]
-/// struct MyComponent;
+/// #[derive(Clone, Default)]
+/// struct MyComponent{
+///     loggers: Arc<RwLock<Vec<MyLogger>>>,
+/// }
 ///
 /// // Note that the `logging` interface has no methods of its own but a trait
 /// // is required to be implemented here to specify the type of `Logger`.
-/// impl<Ctx: Send> Handler<Ctx> for MyComponent {
-///     type Logger = MyLogger;
-/// }
+/// impl<Ctx: Send> Handler<Ctx> for MyComponent {}
 ///
 /// struct MyLogger {
 ///     level: RwLock<Level>,
 ///     contents: RwLock<String>,
 /// }
 ///
-/// impl<Ctx: Send> HandlerLogger<Ctx> for MyLogger {
-///     async fn new(cx: Ctx, level: Level) -> anyhow::Result<MyLogger> {
-///         Ok(MyLogger {
+/// impl<Ctx: Send> HandlerLogger<Ctx> for MyComponent {
+///     async fn new(&self, cx: Ctx, level: Level) -> anyhow::Result<ResourceOwn<Logger>> {
+///         let mut loggers = self.loggers.write().unwrap();
+///         let handle = loggers.len().to_le_bytes();
+///         loggers.push(MyLogger {
 ///             level: RwLock::new(level),
 ///             contents: RwLock::new(String::new()),
-///         })
+///         });
+///         Ok(ResourceOwn::from(Bytes::copy_from_slice(&handle)))
 ///     }
 ///
-///     async fn log(&self, cx: Ctx, level: Level, msg: String) -> anyhow::Result<()> {
-///         if level as u32 <= *self.level.read().unwrap() as u32 {
-///             self.contents.write().unwrap().push_str(&msg);
-///             self.contents.write().unwrap().push_str("\n");
+///     async fn log(&self, cx: Ctx, logger: ResourceBorrow<Logger>, level: Level, msg: String) -> anyhow::Result<()> {
+///         let i = Bytes::from(logger).as_ref().try_into()?;
+///         let i = usize::from_le_bytes(i);
+///         let loggers = self.loggers.read().unwrap();
+///         let logger = loggers.get(i).context("invalid resource handle")?;
+///         if level as u32 <= *logger.level.read().unwrap() as u32 {
+///             let mut contents = logger.contents.write().unwrap();
+///             contents.push_str(&msg);
+///             contents.push_str("\n");
 ///         }
 ///         Ok(())
 ///     }
 ///
-///     async fn level(&self, cx: Ctx) -> anyhow::Result<Level> {
-///         Ok(self.level.read().unwrap().clone())
+///     async fn level(&self, cx: Ctx, logger: ResourceBorrow<Logger>) -> anyhow::Result<Level> {
+///         let i = Bytes::from(logger).as_ref().try_into()?;
+///         let i = usize::from_le_bytes(i);
+///         let loggers = self.loggers.read().unwrap();
+///         let logger = loggers.get(i).context("invalid resource handle")?;
+///         let level = logger.level.read().unwrap();
+///         Ok(level.clone())
 ///     }
 ///
-///     async fn set_level(&self, cx: Ctx, level: Level) -> anyhow::Result<()> {
-///         *self.level.write().unwrap() = level;
+///     async fn set_level(&self, cx: Ctx, logger: ResourceBorrow<Logger>, level: Level) -> anyhow::Result<()> {
+///         let i = Bytes::from(logger).as_ref().try_into()?;
+///         let i = usize::from_le_bytes(i);
+///         let loggers = self.loggers.read().unwrap();
+///         let logger = loggers.get(i).context("invalid resource handle")?;
+///         *logger.level.write().unwrap() = level;
 ///         Ok(())
 ///     }
 /// }
 ///
-/// async fn serve_exports(wrpc: &impl wrpc_transport::Client) -> anyhow::Result<()> {
-///     // Eventually this will be supported:
-///     //bindings::serve(wrpc, MyComponent, async {}).await
-///     anyhow::bail!("resources not supported yet")
+/// async fn serve_exports(wrpc: &impl wrpc_transport::Serve) {
+///     let invocations = bindings::serve(wrpc, MyComponent::default()).await.unwrap();
+///     invocations.into_iter().for_each(|(instance, name, st)| {
+///         tokio::spawn(async move {
+///             eprintln!("serving {instance} {name}");
+///             st.try_collect::<Vec<_>>().await.unwrap();
+///         });
+///     })
 /// }
 /// ```
 ///
@@ -525,6 +577,7 @@
 /// generated:
 ///
 /// ```
+/// use futures::stream::TryStreamExt as _;
 /// use wit_bindgen_wrpc::generate;
 ///
 /// generate!({
@@ -546,8 +599,14 @@
 ///     // ...
 /// }
 ///
-/// async fn serve_exports(wrpc: &impl wrpc_transport::Client) -> anyhow::Result<()> {
-///     serve(wrpc, MyComponent, async {}).await
+/// async fn serve_exports(wrpc: &impl wrpc_transport::Serve) {
+///     let invocations = serve(wrpc, MyComponent).await.unwrap();
+///     invocations.into_iter().for_each(|(instance, name, st)| {
+///         tokio::spawn(async move {
+///             eprintln!("serving {instance} {name}");
+///             st.try_collect::<Vec<_>>().await.unwrap();
+///         });
+///     })
 /// }
 /// ```
 ///
@@ -562,6 +621,7 @@
 /// argument is set to `self`:
 ///
 /// ```
+/// use futures::stream::TryStreamExt as _;
 /// use wit_bindgen_wrpc::generate;
 ///
 /// generate!({
@@ -586,8 +646,14 @@
 /// #
 ///
 ///
-/// async fn serve_exports(wrpc: &impl wrpc_transport::Client) -> anyhow::Result<()> {
-///     serve(wrpc, MyComponent, async {}).await
+/// async fn serve_exports(wrpc: &impl wrpc_transport::Serve) {
+///     let invocations = serve(wrpc, MyComponent).await.unwrap();
+///     invocations.into_iter().for_each(|(instance, name, st)| {
+///         tokio::spawn(async move {
+///             eprintln!("serving {instance} {name}");
+///             st.try_collect::<Vec<_>>().await.unwrap();
+///         });
+///     })
 /// }
 /// ```
 ///
@@ -598,6 +664,8 @@
 /// must be configured:
 ///
 /// ```
+/// use futures::stream::TryStreamExt as _;
+///
 /// mod bindings {
 ///     wit_bindgen_wrpc::generate!({
 ///         // ...
@@ -622,8 +690,14 @@
 /// #
 /// ;
 /// #
-/// async fn serve_exports(wrpc: &impl wrpc_transport::Client) -> anyhow::Result<()> {
-///     bindings::serve(wrpc, MyComponent, async {}).await
+/// async fn serve_exports(wrpc: &impl wrpc_transport::Serve) {
+///     let invocations = bindings::serve(wrpc, MyComponent).await.unwrap();
+///     invocations.into_iter().for_each(|(instance, name, st)| {
+///         tokio::spawn(async move {
+///             eprintln!("serving {instance} {name}");
+///             st.try_collect::<Vec<_>>().await.unwrap();
+///         });
+///     })
 /// }
 /// ```
 ///
