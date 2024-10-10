@@ -67,6 +67,7 @@
           "LICENSE"
           "README.md"
           "SECURITY.md"
+          "SPEC.md"
         ];
 
         doCheck = false; # testing is performed in checks via `nextest`
