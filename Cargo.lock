@@ -3811,7 +3811,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc-introspect"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "wit-parser 0.218.0",
 ]
@@ -3865,7 +3865,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc-transport-nats"
-version = "0.26.0"
+version = "0.25.0"
 dependencies = [
  "anyhow",
  "async-nats",
@@ -3920,7 +3920,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc-wasmtime-cli"
-version = "0.2.0"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-nats",
