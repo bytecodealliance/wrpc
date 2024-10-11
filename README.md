@@ -156,7 +156,7 @@ We will use the following two Rust wRPC applications using TCP transport:
 6. Call native wRPC `hello` server using native wRPC `hello` client via TCP:
 
     ```sh
-    cargo run -p hello-nats-client [::1]:7762
+    cargo run -p hello-tcp-client [::1]:7762
     ```
 
 7. Call native wRPC `hello` server using Wasm `hello` client via TCP:
