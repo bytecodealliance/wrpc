@@ -1,4 +1,18 @@
 #![allow(clippy::type_complexity)]
+#![deny(missing_docs)]
+
+//! wRPC transport abstractions, codec and framing
+//!
+//! wRPC is an RPC framework based on [WIT](https://component-model.bytecodealliance.org/design/wit.html).
+//! It follows client-server model, where peers (servers) may serve function and method calls invoked by the other peers (clients).
+//!
+//! The two main abstractions on top of which wRPC is built are:
+//! - [Invoke] - the client-side handle to a wRPC transport, allowing clients to *invoke* WIT functions over wRPC transport
+//! - [Serve] - the server-side handle to a wRPC transport, allowing servers to *serve* WIT functions over wRPC transport
+//!
+//! Implementations of [Invoke] and [Serve] define transport-specific, multiplexed bidirectional byte stream types:
+//! - [`Invoke::Incoming`] and [`Serve::Incoming`] represent the stream *incoming* from a peer.
+//! - [`Invoke::Outgoing`] and [`Serve::Outgoing`] represent the stream *outgoing* to a peer.
 
 pub mod frame;
 pub mod invoke;
@@ -27,20 +41,25 @@ use bytes::BytesMut;
 use tokio::io::{AsyncRead, ReadBuf};
 use tracing::trace;
 
+/// Internal workaround trait
+///
+/// This is an internal trait used as a workaround for
+/// https://github.com/rust-lang/rust/issues/63033
 #[doc(hidden)]
-// This is an internal trait used as a workaround for
-// https://github.com/rust-lang/rust/issues/63033
 pub trait Captures<'a> {}
 
 impl<'a, T: ?Sized> Captures<'a> for T {}
 
-/// `Index` implementations are capable of multiplexing underlying connections using a particular
-/// structural `path`
+/// Multiplexes streams
+///
+/// Implementations of this trait define multiplexing for underlying connections
+/// using a particular structural `path`
 pub trait Index<T> {
     /// Index the entity using a structural `path`
     fn index(&self, path: &[usize]) -> anyhow::Result<T>;
 }
 
+/// Buffered incoming stream used for decoding values
 pub struct Incoming<T> {
     buffer: BytesMut,
     inner: T,

@@ -19,6 +19,7 @@ use crate::frame::conn::{egress, ingress, Accept};
 use crate::frame::{Incoming, Outgoing};
 use crate::Serve;
 
+/// wRPC server for framed transports
 pub struct Server<C, I, O>(Mutex<HashMap<String, HashMap<String, mpsc::Sender<(C, I, O)>>>>);
 
 impl<C, I, O> Default for Server<C, I, O> {
@@ -27,10 +28,20 @@ impl<C, I, O> Default for Server<C, I, O> {
     }
 }
 
+/// Error returned by [`Server::accept`]
 pub enum AcceptError<C, I, O> {
+    /// I/O error
     IO(std::io::Error),
+    /// Protocol version is not supported
     UnsupportedVersion(u8),
-    UnhandledFunction { instance: String, name: String },
+    /// Function was not handled
+    UnhandledFunction {
+        /// Instance
+        instance: String,
+        /// Function name
+        name: String,
+    },
+    /// Message sending failed
     Send(mpsc::error::SendError<(C, I, O)>),
 }
 

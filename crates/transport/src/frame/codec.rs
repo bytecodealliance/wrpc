@@ -6,6 +6,7 @@ use wasm_tokio::{Leb128DecoderU32, Leb128DecoderU64, Leb128Encoder};
 
 use super::{Frame, FrameRef};
 
+/// [Frame] decoder
 pub struct Decoder {
     path: Option<Vec<usize>>,
     path_cap: usize,
@@ -15,6 +16,7 @@ pub struct Decoder {
 }
 
 impl Decoder {
+    /// Construct a new [Frame] decoder
     #[must_use]
     pub fn new(max_depth: u32, max_size: u64) -> Self {
         Self {
@@ -125,6 +127,7 @@ impl tokio_util::codec::Decoder for Decoder {
     }
 }
 
+/// [Frame] encoder
 pub struct Encoder;
 
 impl tokio_util::codec::Encoder<FrameRef<'_>> for Encoder {

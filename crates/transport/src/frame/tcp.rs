@@ -1,3 +1,5 @@
+//! TCP transport
+
 use core::net::SocketAddr;
 
 use anyhow::{bail, Context as _};
@@ -9,8 +11,13 @@ use tracing::instrument;
 use crate::frame::{invoke, Accept, Incoming, Outgoing};
 use crate::Invoke;
 
+/// [Invoke] implementation in terms of a single [TcpStream]
+///
+/// [`Invoke::invoke`] can only be called once on [Invocation],
+/// repeated calls with return an error
 pub struct Invocation(std::sync::Mutex<Option<TcpStream>>);
 
+/// [Invoke] implementation of a TCP transport
 #[derive(Clone, Debug)]
 pub struct Client<T>(T);
 
