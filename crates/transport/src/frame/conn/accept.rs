@@ -3,6 +3,7 @@ use core::ops::{Deref, DerefMut};
 
 use tokio::io::{AsyncRead, AsyncWrite};
 
+/// Accepts connections on a transport
 pub trait Accept {
     /// Transport-specific invocation context
     type Context: Send + Sync + 'static;
@@ -13,11 +14,13 @@ pub trait Accept {
     /// Incoming byte stream
     type Incoming: AsyncRead + Send + Sync + Unpin + 'static;
 
+    /// Accept a connection returning a pair of streams and connection context
     fn accept(
         &self,
     ) -> impl Future<Output = std::io::Result<(Self::Context, Self::Outgoing, Self::Incoming)>>;
 }
 
+/// Wrapper returned by [`AcceptExt::map_context`]
 pub struct AcceptMapContext<T, F> {
     inner: T,
     f: F,
@@ -37,7 +40,9 @@ impl<T, F> DerefMut for AcceptMapContext<T, F> {
     }
 }
 
+/// Extension trait for [Accept]
 pub trait AcceptExt: Accept + Sized {
+    /// Maps [`Self::Context`](Accept::Context) to a type `T` using `F`
     fn map_context<T, F: Fn(Self::Context) -> T>(self, f: F) -> AcceptMapContext<Self, F> {
         AcceptMapContext { inner: self, f }
     }

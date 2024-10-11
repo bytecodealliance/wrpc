@@ -1,3 +1,5 @@
+//! wRPC transport server handle
+
 use core::future::Future;
 use core::mem;
 use core::pin::Pin;
@@ -38,6 +40,7 @@ pub trait Serve: Sync {
     > + Send;
 }
 
+/// Extension trait for [Serve]
 pub trait ServeExt: Serve {
     /// Serve function `func` from instance `instance` using typed `Params` and `Results`
     #[instrument(level = "trace", skip(self, paths))]

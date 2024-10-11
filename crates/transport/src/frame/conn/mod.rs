@@ -28,8 +28,9 @@ pub use accept::*;
 pub use client::*;
 pub use server::*;
 
+/// Index trie containing async stream subscriptions
 #[derive(Default)]
-pub enum IndexTrie {
+enum IndexTrie {
     #[default]
     Empty,
     Leaf {
@@ -123,6 +124,7 @@ impl<P: AsRef<[Option<usize>]>> FromIterator<P> for IndexTrie {
 }
 
 impl IndexTrie {
+    /// Takes the receiver
     #[instrument(level = "trace", skip(self), ret(level = "trace"))]
     fn take_rx(&mut self, path: &[usize]) -> Option<mpsc::Receiver<std::io::Result<Bytes>>> {
         let Some((i, path)) = path.split_first() else {
@@ -157,6 +159,7 @@ impl IndexTrie {
         }
     }
 
+    /// Gets a sender
     #[instrument(level = "trace", skip(self), ret(level = "trace"))]
     fn get_tx(&mut self, path: &[usize]) -> Option<mpsc::Sender<std::io::Result<Bytes>>> {
         let Some((i, path)) = path.split_first() else {
@@ -269,6 +272,7 @@ impl IndexTrie {
 }
 
 pin_project! {
+    /// Incoming framed stream
     #[project = IncomingProj]
     pub struct Incoming {
         #[pin]
@@ -332,6 +336,7 @@ impl AsyncRead for Incoming {
 }
 
 pin_project! {
+    /// Outgoing framed stream
     #[project = OutgoingProj]
     pub struct Outgoing {
         #[pin]

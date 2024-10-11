@@ -33,6 +33,7 @@ use wasm_tokio::{
 
 use crate::{Incoming, Index as _};
 
+/// Borrowed resource handle, represented as an opaque byte blob
 #[repr(transparent)]
 pub struct ResourceBorrow<T: ?Sized> {
     repr: Bytes,
@@ -96,11 +97,13 @@ impl<T: ?Sized + 'static> Debug for ResourceBorrow<T> {
 }
 
 impl<T: ?Sized> ResourceBorrow<T> {
+    /// Constructs a new borrowed resource handle
     pub fn new(repr: impl Into<Bytes>) -> Self {
         Self::from(repr.into())
     }
 }
 
+/// Owned resource handle, represented as an opaque byte blob
 #[repr(transparent)]
 pub struct ResourceOwn<T: ?Sized> {
     repr: Bytes,
@@ -173,10 +176,12 @@ impl<T: ?Sized + 'static> Debug for ResourceOwn<T> {
 }
 
 impl<T: ?Sized> ResourceOwn<T> {
+    /// Constructs a new owned resource handle
     pub fn new(repr: impl Into<Bytes>) -> Self {
         Self::from(repr.into())
     }
 
+    /// Returns the owned handle as [ResourceBorrow]
     pub fn as_borrow(&self) -> ResourceBorrow<T> {
         ResourceBorrow {
             repr: self.repr.clone(),
@@ -185,11 +190,14 @@ impl<T: ?Sized> ResourceOwn<T> {
     }
 }
 
+/// Deferred operation used for async value processing
 pub type DeferredFn<T> = Box<
     dyn FnOnce(T, Vec<usize>) -> Pin<Box<dyn Future<Output = std::io::Result<()>> + Send>> + Send,
 >;
 
+/// Handles async processing state for codecs
 pub trait Deferred<T> {
+    /// Takes a deferred async processing operation, if any
     fn take_deferred(&mut self) -> Option<DeferredFn<T>>;
 }
 
@@ -261,6 +269,10 @@ impl_deferred_sync!(CoreVecDecoder<Leb128DecoderI128>);
 impl_deferred_sync!(CoreVecDecoder<Leb128DecoderU128>);
 impl_deferred_sync!(CoreVecDecoder<UnitCodec>);
 
+/// Codec for synchronous values
+///
+/// This is a wrapper struct, which provides a no-op [Deferred] implementation
+/// for any codec.
 pub struct SyncCodec<T>(pub T);
 
 impl<T> Deref for SyncCodec<T> {
@@ -327,7 +339,7 @@ where
 }
 
 #[instrument(level = "trace", skip(w, deferred))]
-pub async fn handle_deferred<T, I>(w: T, deferred: I, mut path: Vec<usize>) -> std::io::Result<()>
+async fn handle_deferred<T, I>(w: T, deferred: I, mut path: Vec<usize>) -> std::io::Result<()>
 where
     I: IntoIterator<Item = Option<DeferredFn<T>>>,
     I::IntoIter: ExactSizeIterator,
@@ -346,9 +358,12 @@ where
     Ok(())
 }
 
+/// Defines value encoding
 pub trait Encode<T>: Sized {
+    /// Encoder used to encode the value
     type Encoder: tokio_util::codec::Encoder<Self> + Deferred<T> + Default + Send;
 
+    /// Convenience function for encoding a value
     #[instrument(level = "trace", skip(self, enc))]
     fn encode(
         self,
@@ -360,6 +375,7 @@ pub trait Encode<T>: Sized {
         Ok(enc.take_deferred())
     }
 
+    /// Encode an iterator of owned values
     #[instrument(level = "trace", skip(items, enc))]
     fn encode_iter_own<I>(
         items: I,
@@ -387,6 +403,7 @@ pub trait Encode<T>: Sized {
         }
     }
 
+    /// Encode an iterator of value references
     #[instrument(level = "trace", skip(items, enc))]
     fn encode_iter_ref<'a, I>(
         items: I,
@@ -415,6 +432,7 @@ pub trait Encode<T>: Sized {
         }
     }
 
+    /// Encode a list of owned values
     #[instrument(level = "trace", skip(items, enc), fields(ty = "list"))]
     fn encode_list_own(
         items: Vec<Self>,
@@ -431,6 +449,7 @@ pub trait Encode<T>: Sized {
         Self::encode_iter_own(items, enc, dst)
     }
 
+    /// Encode a list of value references
     #[instrument(level = "trace", skip(items, enc), fields(ty = "list"))]
     fn encode_list_ref<'a>(
         items: &'a [Self],
@@ -449,12 +468,15 @@ pub trait Encode<T>: Sized {
     }
 }
 
+/// Defines value decoding
 pub trait Decode<T>: Sized {
+    /// Decoder used to decode value
     type Decoder: tokio_util::codec::Decoder<Item = Self>
         + Deferred<Incoming<T>>
         + Default
         + Send
         + 'static;
+    /// Decoder used to decode lists of value
     type ListDecoder: tokio_util::codec::Decoder<Item = Vec<Self>> + Default + 'static;
 }
 
@@ -575,6 +597,7 @@ where
     type ListDecoder = ListDecoder<Self::Decoder, R>;
 }
 
+/// Encoder for `list<T>`
 pub struct ListEncoder<W> {
     deferred: Option<DeferredFn<W>>,
 }
@@ -691,6 +714,7 @@ where
     type Encoder = ListEncoder<W>;
 }
 
+/// Decoder for `list<T>`
 pub struct ListDecoder<T, R>
 where
     T: tokio_util::codec::Decoder,
@@ -705,6 +729,7 @@ impl<T, R> ListDecoder<T, R>
 where
     T: tokio_util::codec::Decoder,
 {
+    /// Constructs a new list decoder
     pub fn new(dec: T) -> Self {
         Self {
             dec,
@@ -997,6 +1022,7 @@ impl<'b, T> Encode<T> for &'b u8 {
     }
 }
 
+/// Decoder for `list<u8>`
 #[derive(Debug, Default)]
 #[repr(transparent)]
 pub struct ListDecoderU8(CoreVecDecoderBytes);
@@ -1053,6 +1079,7 @@ impl<R> Decode<R> for Bytes {
     type ListDecoder = CoreVecDecoder<Self::Decoder>;
 }
 
+/// Encoder for `resource` types
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
 #[repr(transparent)]
 pub struct ResourceEncoder;
@@ -1109,6 +1136,7 @@ impl<T: ?Sized, W> Encode<W> for &ResourceBorrow<T> {
     type Encoder = ResourceEncoder;
 }
 
+/// Decoder for borrowed resource types
 #[derive(Debug)]
 #[repr(transparent)]
 pub struct ResourceBorrowDecoder<T: ?Sized> {
@@ -1153,6 +1181,7 @@ impl<T: ?Sized> tokio_util::codec::Decoder for ResourceBorrowDecoder<T> {
     }
 }
 
+/// Decoder for owned resource types
 #[derive(Debug)]
 #[repr(transparent)]
 pub struct ResourceOwnDecoder<T: ?Sized> {
@@ -1197,6 +1226,7 @@ impl<T: ?Sized> tokio_util::codec::Decoder for ResourceOwnDecoder<T> {
     }
 }
 
+/// Codec for `()`
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
 #[repr(transparent)]
 pub struct UnitCodec;
@@ -1455,6 +1485,7 @@ impl_tuple_codec!(
     C0, C1, C2, C3, C4, C5, C6, C7, C8, C9, C10, C11, C12, C13, C14, C15
 );
 
+/// Encoder for `future<T>`
 pub struct FutureEncoder<W> {
     deferred: Option<DeferredFn<W>>,
 }
@@ -1519,6 +1550,7 @@ where
     type Encoder = FutureEncoder<W>;
 }
 
+/// Decoder for `future<T>`
 pub struct FutureDecoder<T, R>
 where
     T: Decode<R>,
@@ -1630,6 +1662,7 @@ where
     type ListDecoder = ListDecoder<Self::Decoder, R>;
 }
 
+/// Encoder for `stream<T>`
 pub struct StreamEncoder<W> {
     deferred: Option<DeferredFn<W>>,
 }
@@ -1737,6 +1770,7 @@ where
     type Encoder = StreamEncoder<W>;
 }
 
+/// Encoder for `stream<list<u8>>`
 pub struct StreamEncoderBytes<W> {
     deferred: Option<DeferredFn<W>>,
 }
@@ -1806,6 +1840,7 @@ where
     type Encoder = StreamEncoderBytes<W>;
 }
 
+/// Encoder for `stream<list<u8>>` with [AsyncRead] support
 pub struct StreamEncoderRead<W> {
     deferred: Option<DeferredFn<W>>,
 }
@@ -1933,6 +1968,7 @@ where
     type Encoder = StreamEncoderRead<W>;
 }
 
+/// Decoder for `stream<T>`
 pub struct StreamDecoder<T, R>
 where
     T: Decode<R>,
@@ -2066,6 +2102,7 @@ where
     type ListDecoder = ListDecoder<Self::Decoder, R>;
 }
 
+/// Decoder for `stream<list<u8>>`
 pub struct StreamDecoderBytes<R> {
     dec: CoreVecDecoderBytes,
     deferred: Option<DeferredFn<Incoming<R>>>,
@@ -2145,6 +2182,7 @@ where
     type ListDecoder = ListDecoder<Self::Decoder, R>;
 }
 
+/// Decoder for `stream<list<u8>>` with [AsyncRead] support
 pub struct StreamDecoderRead<R> {
     dec: CoreVecDecoderBytes,
     deferred: Option<DeferredFn<Incoming<R>>>,

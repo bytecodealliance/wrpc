@@ -1,3 +1,5 @@
+//! wRPC transport stream framing
+
 use std::sync::Arc;
 
 use bytes::Bytes;
@@ -19,14 +21,18 @@ pub const PROTOCOL: u8 = 0;
 /// Owned wRPC frame
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Frame {
+    /// Frame path
     pub path: Arc<[usize]>,
+    /// Frame data
     pub data: Bytes,
 }
 
 /// wRPC frame reference
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FrameRef<'a> {
+    /// Frame path
     pub path: &'a [usize],
+    /// Frame data
     pub data: &'a [u8],
 }
 

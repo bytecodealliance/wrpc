@@ -2,7 +2,7 @@
 
 wRPC is a transport-agnostic protocol designed for asynchronous transmit of WIT function call invocations over network and other means of communication.
 
-wRPC follows client-server model, where peers may *serve* function (servers) and method calls invoked by the other peers (clients).
+wRPC follows client-server model, where peers (servers) may *serve* function and method calls invoked by the other peers (clients).
 
 wRPC relies on [component model value definition encoding] for data encoding on the wire.
 

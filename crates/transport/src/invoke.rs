@@ -1,3 +1,5 @@
+//! wRPC transport client handle
+
 use core::future::Future;
 use core::mem;
 use core::pin::pin;
@@ -76,9 +78,12 @@ pub trait Invoke: Send + Sync {
         P: AsRef<[Option<usize>]> + Send + Sync;
 }
 
+/// Wrapper struct returned by [InvokeExt::timeout]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Timeout<'a, T: ?Sized> {
+    /// Inner [Invoke]
     pub inner: &'a T,
+    /// Invocation timeout
     pub timeout: Duration,
 }
 
@@ -108,9 +113,12 @@ impl<T: Invoke> Invoke for Timeout<'_, T> {
     }
 }
 
+/// Wrapper struct returned by [InvokeExt::timeout_owned]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TimeoutOwned<T> {
+    /// Inner [Invoke]
     pub inner: T,
+    /// Invocation timeout
     pub timeout: Duration,
 }
 
@@ -138,6 +146,7 @@ impl<T: Invoke> Invoke for TimeoutOwned<T> {
     }
 }
 
+/// Extension trait for [Invoke]
 pub trait InvokeExt: Invoke {
     /// Invoke function `func` on instance `instance` using typed `Params` and `Results`
     #[instrument(level = "trace", skip(self, cx, params, paths))]

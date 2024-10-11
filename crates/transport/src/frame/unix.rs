@@ -1,3 +1,5 @@
+//! Unix domain socket transport
+
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context as _};
@@ -9,8 +11,13 @@ use tracing::instrument;
 use crate::frame::{invoke, Accept, Incoming, Outgoing};
 use crate::Invoke;
 
+/// [Invoke] implementation in terms of a single [UnixStream]
+///
+/// [`Invoke::invoke`] can only be called once on [Invocation],
+/// repeated calls with return an error
 pub struct Invocation(std::sync::Mutex<Option<UnixStream>>);
 
+/// [Invoke] implementation of a Unix domain socket transport
 #[derive(Clone, Debug)]
 pub struct Client<T>(T);
 

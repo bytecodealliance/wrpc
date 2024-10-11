@@ -15,6 +15,7 @@ use wasm_tokio::{CoreNameEncoder, CoreVecEncoderBytes};
 use crate::frame::conn::{egress, ingress, Incoming, Outgoing};
 use crate::frame::PROTOCOL;
 
+/// Invoke function `func` on instance `instance`
 #[instrument(level = "trace", skip_all)]
 pub async fn invoke<P, I, O>(
     mut tx: O,
