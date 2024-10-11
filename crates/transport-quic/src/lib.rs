@@ -1,3 +1,5 @@
+//! wRPC QUIC transport
+
 use core::fmt::Display;
 use core::future::Future as _;
 use core::net::SocketAddr;
