@@ -39,6 +39,24 @@ wRPC fully supports the unreleased native [WIT] `stream` and `future` data types
 
 See [specification](./SPEC.md) for more info.
 
+## Installation
+
+Using [`cargo`](https://doc.rust-lang.org/cargo/index.html):
+```sh
+cargo install wrpc
+```
+
+Using [`nix`](https://zero-to-nix.com/start/install):
+```sh
+nix profile install github:bytecodealliance/wrpc
+
+# or, without installing:
+
+nix shell github:bytecodealliance/wrpc
+```
+
+You can also download individual binaries from the [release page](https://github.com/bytecodealliance/wrpc/releases)
+
 ## Quickstart
 
 wRPC usage examples for different programming languages can be found at [examples](./examples).
@@ -47,7 +65,7 @@ There are 2 different kinds of examples:
 - Native wRPC applications, tied to a particular wRPC transport (like Unix Domain Sockets, TCP, QUIC or NATS.io)
 - Generic Wasm components, that need to run in a Wasm runtime. Those can be executed, for example, using `wrpc-wasmtime`, to polyfill imports at runtime and serve exports using wRPC.
 
-### `hello` example
+### `hello` example using NATS.io transport
 
 In this example we will serve and invoke a simple [`hello`](./examples/wit/hello/hello.wit) application using:
 
@@ -60,6 +78,8 @@ In this example we will serve and invoke a simple [`hello`](./examples/wit/hello
 
 - `nats-server` >= 2.10.20 or `docker` >= 24.0.6 (or any other OCI runtime)
 - `rust` >= 1.80.1
+
+NOTE: Nix users can just run `nix develop` anywhere in the repository to get all dependencies correctly set up
 
 #### How-To
 
@@ -85,15 +105,7 @@ In the steps below, `wasm32-wasip1` target will be used, because it is currently
 
     > NB: Rust uses `_` separators in the filename, because a component is built as a reactor-style library
 
-3. Build the wRPC Wasm runtime:
-    
-    ```sh
-    cargo build --release --bin wrpc-wasmtime
-    ```
-
-    > Output is in target/release/wrpc-wasmtime or target/release/wrpc-wasmtime.exe on Windows
-
-4. Run NATS (more thorough documentation available [here](https://docs.nats.io/running-a-nats-service/introduction/running)):
+3. Run NATS (more thorough documentation available [here](https://docs.nats.io/running-a-nats-service/introduction/running)):
 
     - using standalone binary:
     ```sh
@@ -105,10 +117,10 @@ In the steps below, `wasm32-wasip1` target will be used, because it is currently
     docker run --rm -it --name nats-server -p 4222:4222 nats:2.10.20-alpine3.20
     ```
 
-5. Serve Wasm `hello` server via NATS:
+4. Serve Wasm `hello` server via NATS:
 
     ```sh
-    ./target/release/wrpc-wasmtime nats serve rust rust ./target/wasm32-wasip1/release/hello_component_server.wasm
+    wrpc-wasmtime nats serve rust rust ./target/wasm32-wasip1/release/hello_component_server.wasm
     ```
     
     - Sample output:
@@ -116,10 +128,10 @@ In the steps below, `wasm32-wasip1` target will be used, because it is currently
     >
     > INFO wrpc_wasmtime_cli: serving instance function name="hello"
 
-6. Call Wasm `hello` server using a Wasm `hello` client via NATS:
+5. Call Wasm `hello` server using a Wasm `hello` client via NATS:
 
     ```sh
-    ./target/release/wrpc-wasmtime nats run rust ./target/wasm32-wasip1/release/hello-component-client.wasm
+    wrpc-wasmtime nats run rust ./target/wasm32-wasip1/release/hello-component-client.wasm
     ```
     
     - Sample output in the client:
@@ -132,28 +144,28 @@ In the steps below, `wasm32-wasip1` target will be used, because it is currently
     >
     > INFO wrpc_wasmtime_cli: successfully served instance function invocation
 
-7. Call the Wasm `hello` server using a native wRPC `hello` client:
+6. Call the Wasm `hello` server using a native wRPC `hello` client:
 
     ```sh
     cargo run -p hello-nats-client rust
     ```
 
-8. Serve native wRPC `hello` server:
+7. Serve native wRPC `hello` server:
 
     ```sh
     cargo run -p hello-nats-server native
     ```
 
-9. Call both the native wRPC `hello` server and Wasm `hello` server using native wRPC `hello` client:
+8. Call both the native wRPC `hello` server and Wasm `hello` server using native wRPC `hello` client:
 
     ```sh
     cargo run -p hello-nats-client rust native
     ```
 
-10. Call native wRPC `hello` server using Wasm `hello` client via NATS:
+9. Call native wRPC `hello` server using Wasm `hello` client via NATS:
 
     ```sh
-    ./target/release/wrpc-wasmtime nats run native ./target/wasm32-wasip1/release/hello-component-client.wasm
+    wrpc-wasmtime nats run native ./target/wasm32-wasip1/release/hello-component-client.wasm
     ```
 
 ## Repository structure
