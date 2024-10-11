@@ -1,3 +1,8 @@
+//! wRPC is an RPC framework based on WIT
+
+#![deny(missing_docs)]
+
+/// wRPC transport
 pub mod transport {
     pub use wrpc_transport::*;
 
@@ -8,11 +13,11 @@ pub mod transport {
     pub use wrpc_transport_quic as quic;
 }
 
+/// wRPC runtime
 pub mod runtime {
     #[cfg(feature = "wasmtime")]
     pub use wrpc_runtime_wasmtime as wasmtime;
 }
 
-pub use wit_bindgen_wrpc::generate;
-
 pub use transport::{Index, Invoke, Serve};
+pub use wit_bindgen_wrpc::generate;

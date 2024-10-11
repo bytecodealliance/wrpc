@@ -1,3 +1,5 @@
+//! wRPC NATS.io transport
+
 #![allow(clippy::type_complexity)]
 
 use core::future::Future;
