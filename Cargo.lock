@@ -3654,7 +3654,7 @@ dependencies = [
 
 [[package]]
 name = "wit-bindgen-wrpc"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "bitflags 2.6.0",
@@ -3682,7 +3682,7 @@ dependencies = [
 
 [[package]]
 name = "wit-bindgen-wrpc-rust"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -3703,7 +3703,7 @@ dependencies = [
 
 [[package]]
 name = "wit-bindgen-wrpc-rust-macro"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "prettyplease",
@@ -3818,7 +3818,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc-pack"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -3829,7 +3829,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc-runtime-wasmtime"
-version = "0.23.0"
+version = "0.24.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -3848,7 +3848,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc-transport"
-version = "0.27.2"
+version = "0.28.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -3865,7 +3865,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc-transport-nats"
-version = "0.25.0"
+version = "0.26.0"
 dependencies = [
  "anyhow",
  "async-nats",
@@ -3880,7 +3880,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc-transport-quic"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -3920,7 +3920,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc-wasmtime-cli"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-nats",
