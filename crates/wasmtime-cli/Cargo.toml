@@ -28,11 +28,6 @@ reqwest = { workspace = true }
 tokio = { workspace = true, features = ["fs"] }
 tokio-util = { workspace = true, features = ["codec"] }
 tracing = { workspace = true, features = ["attributes"] }
-tracing-subscriber = { workspace = true, features = [
-    "ansi",
-    "env-filter",
-    "fmt",
-] }
 url = { workspace = true }
 wasi-preview1-component-adapter-provider = { workspace = true }
 wasmparser = { workspace = true }
@@ -50,12 +45,8 @@ wasmtime = { workspace = true, features = [
     "wat",
 ] }
 wasmtime-wasi = { workspace = true }
-wasm-tokio = { workspace = true }
-wit-bindgen-wrpc = { workspace = true }
 wit-component = { workspace = true }
-wit-parser = { workspace = true }
 wrpc-cli = { workspace = true, features = ["nats"] }
-wrpc-introspect = { workspace = true }
 wrpc-transport-nats = { workspace = true }
 wrpc-transport = { workspace = true, features = ["net"] }
 wrpc-runtime-wasmtime = { workspace = true }
