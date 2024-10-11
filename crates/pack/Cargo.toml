@@ -1,6 +1,6 @@
 [package]
 name = "wrpc-pack"
-version = "0.2.0"
+version = "0.3.0"
 description = "Temporary stopgap solution for encoding fully-synchronous wRPC values"
 
 authors.workspace = true
