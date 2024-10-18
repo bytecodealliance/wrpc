@@ -104,12 +104,12 @@ mod skip {
 
         let invocations = serve(wrpc, Component).await.unwrap();
         let invocations = std::thread::spawn(|| invocations).join().unwrap();
-        invocations.into_iter().for_each(|(instance, name, st)| {
+        for (instance, name, st) in invocations {
             wit_bindgen_wrpc::tokio::spawn(async move {
                 eprintln!("serving {instance} {name}");
                 st.try_collect::<Vec<_>>().await.unwrap();
             });
-        })
+        }
     }
 }
 
@@ -175,12 +175,12 @@ mod symbol_does_not_conflict {
 
         let invocations = serve(wrpc, Component).await.unwrap();
         let invocations = std::thread::spawn(|| invocations).join().unwrap();
-        invocations.into_iter().for_each(|(instance, name, st)| {
+        for (instance, name, st) in invocations {
             wit_bindgen_wrpc::tokio::spawn(async move {
                 eprintln!("serving {instance} {name}");
                 st.try_collect::<Vec<_>>().await.unwrap();
             });
-        })
+        }
     }
 }
 
@@ -210,12 +210,12 @@ mod alternative_bitflags_path {
 
         let invocations = serve(wrpc, Component).await.unwrap();
         let invocations = std::thread::spawn(|| invocations).join().unwrap();
-        invocations.into_iter().for_each(|(instance, name, st)| {
+        for (instance, name, st) in invocations {
             wit_bindgen_wrpc::tokio::spawn(async move {
                 eprintln!("serving {instance} {name}");
                 st.try_collect::<Vec<_>>().await.unwrap();
             });
-        })
+        }
     }
 
     impl<Ctx: Send> Handler<Ctx> for Component {
@@ -276,12 +276,12 @@ mod owned_resource_deref_mut {
 
         let invocations = serve(wrpc, Component).await.unwrap();
         let invocations = std::thread::spawn(|| invocations).join().unwrap();
-        invocations.into_iter().for_each(|(instance, name, st)| {
+        for (instance, name, st) in invocations {
             wit_bindgen_wrpc::tokio::spawn(async move {
                 eprintln!("serving {instance} {name}");
                 st.try_collect::<Vec<_>>().await.unwrap();
             });
-        })
+        }
     }
 }
 
@@ -324,12 +324,12 @@ mod package_with_versions {
 
         let invocations = serve(wrpc, Component).await.unwrap();
         let invocations = std::thread::spawn(|| invocations).join().unwrap();
-        invocations.into_iter().for_each(|(instance, name, st)| {
+        for (instance, name, st) in invocations {
             wit_bindgen_wrpc::tokio::spawn(async move {
                 eprintln!("serving {instance} {name}");
                 st.try_collect::<Vec<_>>().await.unwrap();
             });
-        })
+        }
     }
 }
 
@@ -384,12 +384,12 @@ mod custom_derives {
 
         let invocations = serve(wrpc, Component).await.unwrap();
         let invocations = std::thread::spawn(|| invocations).join().unwrap();
-        invocations.into_iter().for_each(|(instance, name, st)| {
+        for (instance, name, st) in invocations {
             wit_bindgen_wrpc::tokio::spawn(async move {
                 eprintln!("serving {instance} {name}");
                 st.try_collect::<Vec<_>>().await.unwrap();
             });
-        })
+        }
     }
 }
 
@@ -640,12 +640,12 @@ mod interface_export_example {
 
         let invocations = serve(wrpc, MyComponent).await.unwrap();
         let invocations = std::thread::spawn(|| invocations).join().unwrap();
-        invocations.into_iter().for_each(|(instance, name, st)| {
+        for (instance, name, st) in invocations {
             wit_bindgen_wrpc::tokio::spawn(async move {
                 eprintln!("serving {instance} {name}");
                 st.try_collect::<Vec<_>>().await.unwrap();
             });
-        })
+        }
     }
 }
 #[allow(unused)]
@@ -722,7 +722,7 @@ mod resource_example {
             if level as u32 <= *logger.level.read().unwrap() as u32 {
                 let mut contents = logger.contents.write().unwrap();
                 contents.push_str(&msg);
-                contents.push_str("\n");
+                contents.push('\n');
             }
             Ok(())
         }
@@ -733,7 +733,7 @@ mod resource_example {
             let loggers = self.loggers.read().unwrap();
             let logger = loggers.get(i).context("invalid resource handle")?;
             let level = logger.level.read().unwrap();
-            Ok(level.clone())
+            Ok(*level)
         }
 
         async fn set_level(
@@ -756,12 +756,12 @@ mod resource_example {
 
         let invocations = serve(wrpc, MyComponent::default()).await.unwrap();
         let invocations = std::thread::spawn(|| invocations).join().unwrap();
-        invocations.into_iter().for_each(|(instance, name, st)| {
+        for (instance, name, st) in invocations {
             tokio::spawn(async move {
                 eprintln!("serving {instance} {name}");
                 st.try_collect::<Vec<_>>().await.unwrap();
             });
-        })
+        }
     }
 }
 
