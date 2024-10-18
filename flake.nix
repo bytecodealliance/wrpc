@@ -80,6 +80,7 @@
         targets.s390x-unknown-linux-gnu = false;
         targets.wasm32-unknown-unknown = false;
         targets.wasm32-wasip1 = false;
+        targets.wasm32-wasip2 = false;
 
         clippy.deny = ["warnings"];
         clippy.workspace = true;
