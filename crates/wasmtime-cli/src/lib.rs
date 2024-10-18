@@ -275,6 +275,9 @@ fn new_store<C: Invoke>(
                 .inherit_env()
                 .inherit_stdio()
                 .inherit_network()
+                .allow_ip_name_lookup(true)
+                .allow_tcp(true)
+                .allow_udp(true)
                 .args(&[arg0])
                 .build(),
             table: ResourceTable::new(),
