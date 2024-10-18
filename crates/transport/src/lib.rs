@@ -28,7 +28,7 @@ pub use send_future::SendFuture;
 pub use serve::{Serve, ServeExt};
 pub use value::*;
 
-#[cfg(feature = "net")]
+#[cfg(any(target_family = "wasm", feature = "net"))]
 pub use frame::tcp;
 #[cfg(all(unix, feature = "net"))]
 pub use frame::unix;
