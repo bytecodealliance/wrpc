@@ -27,6 +27,9 @@ tracing = { workspace = true, features = ["attributes"] }
 send-future = { workspace = true }
 wasm-tokio = { workspace = true, features = ["tracing"] }
 
+[target.'cfg(target_family = "wasm")'.dependencies]
+wasi = { workspace = true, features = ["std"] }
+
 [dev-dependencies]
 test-log = { workspace = true, features = ["color", "log", "trace"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

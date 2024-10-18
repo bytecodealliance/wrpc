@@ -1,4 +1,4 @@
-//! TCP transport
+//! wRPC TCP transport using [tokio]
 
 use core::net::SocketAddr;
 
@@ -17,7 +17,7 @@ use crate::Invoke;
 /// repeated calls with return an error
 pub struct Invocation(std::sync::Mutex<Option<TcpStream>>);
 
-/// [Invoke] implementation of a TCP transport
+/// [Invoke] implementation of a TCP transport using [tokio]
 #[derive(Clone, Debug)]
 pub struct Client<T>(T);
 
@@ -25,8 +25,8 @@ impl<T> From<T> for Client<T>
 where
     T: ToSocketAddrs + Clone,
 {
-    fn from(path: T) -> Self {
-        Self(path)
+    fn from(addr: T) -> Self {
+        Self(addr)
     }
 }
 

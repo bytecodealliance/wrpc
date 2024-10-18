@@ -1,0 +1,9 @@
+package wrpc-examples:hello-component-tcp-proxy;
+
+world server {
+    include wrpc-examples:hello/server;
+}
+
+world client {
+    include wrpc-examples:hello/client;
+}

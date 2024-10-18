@@ -183,6 +183,7 @@ pub trait InvokeExt: Invoke {
                 .invoke(cx, instance, func, buf.freeze(), paths)
                 .await
                 .context("failed to invoke function")?;
+            trace!("shutdown synchronous parameter channel");
             outgoing
                 .shutdown()
                 .await
@@ -291,6 +292,7 @@ pub trait InvokeExt: Invoke {
                 .invoke_values(cx, instance, func, params, paths)
                 .await?;
             if let Some(io) = io {
+                trace!("awaiting I/O completion");
                 io.await?;
             }
             Ok(ret)

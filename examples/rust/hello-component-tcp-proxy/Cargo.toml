@@ -1,0 +1,32 @@
+[package]
+name = "hello-component-tcp-proxy"
+version = "0.1.0"
+
+authors.workspace = true
+categories.workspace = true
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+anyhow = { workspace = true }
+clap = { workspace = true, features = [
+    "color",
+    "derive",
+    "error-context",
+    "help",
+    "std",
+    "suggestions",
+    "usage",
+] }
+tokio = { workspace = true, features = ["rt"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["ansi", "fmt"] }
+wasi = { workspace = true }
+wit-bindgen = { workspace = true, features = ["realloc", "macros"] }
+wit-bindgen-wrpc = { workspace = true }
+wrpc-transport = { workspace = true }

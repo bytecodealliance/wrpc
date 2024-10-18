@@ -477,5 +477,6 @@ async fn egress(
         trace!(?frame, "writing egress frame");
         tx.write_all_buf(&mut frame).await?;
     }
-    Ok(())
+    trace!("shutting down outgoing stream");
+    tx.shutdown().await
 }

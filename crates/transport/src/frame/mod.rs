@@ -7,8 +7,9 @@ use bytes::Bytes;
 mod codec;
 mod conn;
 
-#[cfg(feature = "net")]
+#[cfg(any(target_family = "wasm", feature = "net"))]
 pub mod tcp;
+
 #[cfg(all(unix, feature = "net"))]
 pub mod unix;
 
