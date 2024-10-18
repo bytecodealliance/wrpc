@@ -186,7 +186,7 @@ We will use the following two Rust wRPC applications using [NATS.io] transport:
 2. Serve Wasm `hello` server via [NATS.io]
 
     ```sh
-    wrpc-wasmtime nats serve rust rust ./target/wasm32-wasip1/release/hello_component_server.wasm
+    wrpc-wasmtime nats serve --export rust ./target/wasm32-wasip1/release/hello_component_server.wasm
     ```
     
     - Sample output:
@@ -197,7 +197,7 @@ We will use the following two Rust wRPC applications using [NATS.io] transport:
 3. Call Wasm `hello` server using a Wasm `hello` client via [NATS.io]:
 
     ```sh
-    wrpc-wasmtime nats run rust ./target/wasm32-wasip1/release/hello-component-client.wasm
+    wrpc-wasmtime nats run --import rust ./target/wasm32-wasip1/release/hello-component-client.wasm
     ```
     
     - Sample output in the client:
@@ -231,7 +231,7 @@ We will use the following two Rust wRPC applications using [NATS.io] transport:
 7. Call native wRPC `hello` server using Wasm `hello` client via [NATS.io]:
 
     ```sh
-    wrpc-wasmtime nats run native ./target/wasm32-wasip1/release/hello-component-client.wasm
+    wrpc-wasmtime nats run --import native ./target/wasm32-wasip1/release/hello-component-client.wasm
     ```
 
 ## Repository structure
