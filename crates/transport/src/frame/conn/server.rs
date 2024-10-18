@@ -150,9 +150,9 @@ where
                 let index = Arc::clone(&index);
                 async move {
                     if let Err(err) = ingress(rx, index, params_tx).await {
-                        error!(?err, "parameter ingress failed")
+                        error!(?err, "parameter ingress failed");
                     } else {
-                        debug!("parameter ingress successfully complete")
+                        debug!("parameter ingress successfully complete");
                     }
                 }
                 .in_current_span()
@@ -162,9 +162,9 @@ where
             tokio::spawn(
                 async {
                     if let Err(err) = egress(results_rx, tx).await {
-                        error!(?err, "result egress failed")
+                        error!(?err, "result egress failed");
                     } else {
-                        debug!("result egress successfully complete")
+                        debug!("result egress successfully complete");
                     }
                 }
                 .in_current_span(),

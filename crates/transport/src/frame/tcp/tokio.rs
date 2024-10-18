@@ -11,7 +11,7 @@ use tracing::instrument;
 use crate::frame::{invoke, Accept, Incoming, Outgoing};
 use crate::Invoke;
 
-/// [Invoke] implementation in terms of a single [TcpStream]
+/// [Invoke] implementation in terms of a single [`TcpStream`]
 ///
 /// [`Invoke::invoke`] can only be called once on [Invocation],
 /// repeated calls with return an error

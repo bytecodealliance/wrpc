@@ -181,7 +181,7 @@ impl<T: ?Sized> ResourceOwn<T> {
         Self::from(repr.into())
     }
 
-    /// Returns the owned handle as [ResourceBorrow]
+    /// Returns the owned handle as [`ResourceBorrow`]
     pub fn as_borrow(&self) -> ResourceBorrow<T> {
         ResourceBorrow {
             repr: self.repr.clone(),
@@ -1521,7 +1521,7 @@ where
             Box::pin(
                 async move {
                     if !path.is_empty() {
-                        w = w.index(&path).map_err(std::io::Error::other)?
+                        w = w.index(&path).map_err(std::io::Error::other)?;
                     };
                     let item = item.await;
                     let mut enc = T::Encoder::default();
@@ -1609,7 +1609,7 @@ where
             Box::pin(
                 async move {
                     if !path.is_empty() {
-                        r = r.index(&path).map_err(std::io::Error::other)?
+                        r = r.index(&path).map_err(std::io::Error::other)?;
                     };
                     let mut dec = FramedRead::new(r, dec);
                     trace!(?path, "receiving future element");
@@ -1651,7 +1651,7 @@ where
                 error!("future I/O dropped");
                 return pending().await;
             };
-            return ret;
+            ret
         })));
     }
 }
@@ -1701,7 +1701,7 @@ where
         self.deferred = Some(Box::new(|mut w, path| {
             Box::pin(async move {
                 if !path.is_empty() {
-                    w = w.index(&path).map_err(std::io::Error::other)?
+                    w = w.index(&path).map_err(std::io::Error::other)?;
                 };
                 let mut enc = T::Encoder::default();
                 let mut buf = BytesMut::default();
@@ -1806,7 +1806,7 @@ where
         self.deferred = Some(Box::new(|mut w, path| {
             Box::pin(async move {
                 if !path.is_empty() {
-                    w = w.index(&path).map_err(std::io::Error::other)?
+                    w = w.index(&path).map_err(std::io::Error::other)?;
                 };
                 let mut buf = BytesMut::default();
                 loop {
@@ -1844,7 +1844,7 @@ where
     type Encoder = StreamEncoderBytes<W>;
 }
 
-/// Encoder for `stream<list<u8>>` with [AsyncRead] support
+/// Encoder for `stream<list<u8>>` with [`AsyncRead`] support
 pub struct StreamEncoderRead<W> {
     deferred: Option<DeferredFn<W>>,
 }
@@ -1876,7 +1876,7 @@ where
         self.deferred = Some(Box::new(|mut w, path| {
             Box::pin(async move {
                 if !path.is_empty() {
-                    w = w.index(&path).map_err(std::io::Error::other)?
+                    w = w.index(&path).map_err(std::io::Error::other)?;
                 };
                 let mut buf = BytesMut::default();
                 let mut chunk = BytesMut::default();
@@ -2018,7 +2018,7 @@ where
 {
     let dec = ListDecoder::new(dec);
     if !path.is_empty() {
-        r = r.index(&path).map_err(std::io::Error::other)?
+        r = r.index(&path).map_err(std::io::Error::other)?;
     };
     let mut framed = FramedRead::new(r, dec);
     let mut tasks = JoinSet::new();
@@ -2151,7 +2151,7 @@ where
             Box::pin(
                 async move {
                     if !path.is_empty() {
-                        r = r.index(&path).map_err(std::io::Error::other)?
+                        r = r.index(&path).map_err(std::io::Error::other)?;
                     };
                     let mut framed = FramedRead::new(r, dec);
                     trace!(?path, "receiving pending byte stream chunk");
@@ -2186,7 +2186,7 @@ where
     type ListDecoder = ListDecoder<Self::Decoder, R>;
 }
 
-/// Decoder for `stream<list<u8>>` with [AsyncRead] support
+/// Decoder for `stream<list<u8>>` with [`AsyncRead`] support
 pub struct StreamDecoderRead<R> {
     dec: CoreVecDecoderBytes,
     deferred: Option<DeferredFn<Incoming<R>>>,
