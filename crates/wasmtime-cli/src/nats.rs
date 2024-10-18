@@ -23,6 +23,7 @@ pub struct RunArgs {
     timeout: humantime::Duration,
 
     /// Prefix to send import invocations to
+    #[arg(long, default_value = "")]
     import: String,
 
     /// Path or URL to Wasm command component
@@ -45,9 +46,11 @@ pub struct ServeArgs {
     group: Option<String>,
 
     /// Prefix to send import invocations to
+    #[arg(long, default_value = "")]
     import: String,
 
     /// Prefix to listen for export invocations on
+    #[arg(long, default_value = "")]
     export: String,
 
     /// Path or URL to Wasm command component
