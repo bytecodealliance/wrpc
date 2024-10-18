@@ -70,11 +70,7 @@ There are 2 different kinds of examples:
 
 ### Requirements
 
-- For Rust components and wRPC applications: `rust` >= 1.78
-
-  `wasm32-wasip1` target will be used in examples, because it is currently available in stable Rust and also conveniently configured in [`rust-toolchain.toml`](./rust-toolchain.toml) in the root of this repository. `wrpc-wasmtime` will automatically componentize a Wasm module on instantiation.
-
-  [`wasm32-wasip2`](https://doc.rust-lang.org/nightly/rustc/platform-support/wasm32-wasip2.html) can be used instead, if desired.
+- For Rust components and wRPC applications: `rust` >= 1.82
 
 - For [NATS.io] transport: `nats-server` >= 2.10.20 or [`docker`](https://www.docker.com/) >= 24.0.6 (or any other OCI runtime)
 
@@ -95,18 +91,18 @@ We will have to build these components first:
 - Build Wasm `hello` client:
 
     ```sh
-    cargo build --release -p hello-component-client --target wasm32-wasip1
+    cargo build --release -p hello-component-client --target wasm32-wasip2
     ```
 
-    > Output is in target/wasm32-wasip1/release/hello-component-client.wasm
+    > Output is in target/wasm32-wasip2/release/hello-component-client.wasm
 
 - Build Wasm `hello` server:
 
     ```sh
-    cargo build --release -p hello-component-server --target wasm32-wasip1
+    cargo build --release -p hello-component-server --target wasm32-wasip2
     ```
     
-    > Output is in target/wasm32-wasip1/release/hello_component_server.wasm
+    > Output is in target/wasm32-wasip2/release/hello_component_server.wasm
 
     > NB: Rust uses `_` separators in the filename, because a component is built as a reactor-style library
 
@@ -121,7 +117,7 @@ We will use the following two Rust wRPC applications using TCP transport:
 1. Serve Wasm `hello` server via TCP
 
     ```sh
-    wrpc-wasmtime tcp serve ./target/wasm32-wasip1/release/hello_component_server.wasm
+    wrpc-wasmtime tcp serve ./target/wasm32-wasip2/release/hello_component_server.wasm
     ```
 
     - Sample output:
@@ -130,7 +126,7 @@ We will use the following two Rust wRPC applications using TCP transport:
 3. Call Wasm `hello` server using a Wasm `hello` client via TCP:
 
     ```sh
-    wrpc-wasmtime tcp run ./target/wasm32-wasip1/release/hello-component-client.wasm
+    wrpc-wasmtime tcp run ./target/wasm32-wasip2/release/hello-component-client.wasm
     ```
 
     - Sample output in the client:
@@ -162,7 +158,7 @@ We will use the following two Rust wRPC applications using TCP transport:
 7. Call native wRPC `hello` server using Wasm `hello` client via TCP:
 
     ```sh
-    wrpc-wasmtime tcp run --import [::1]:7762 ./target/wasm32-wasip1/release/hello-component-client.wasm
+    wrpc-wasmtime tcp run --import [::1]:7762 ./target/wasm32-wasip2/release/hello-component-client.wasm
     ```
 
 #### Using [NATS.io] transport
@@ -186,7 +182,7 @@ We will use the following two Rust wRPC applications using [NATS.io] transport:
 2. Serve Wasm `hello` server via [NATS.io]
 
     ```sh
-    wrpc-wasmtime nats serve --export rust ./target/wasm32-wasip1/release/hello_component_server.wasm
+    wrpc-wasmtime nats serve --export rust ./target/wasm32-wasip2/release/hello_component_server.wasm
     ```
     
     - Sample output:
@@ -197,7 +193,7 @@ We will use the following two Rust wRPC applications using [NATS.io] transport:
 3. Call Wasm `hello` server using a Wasm `hello` client via [NATS.io]:
 
     ```sh
-    wrpc-wasmtime nats run --import rust ./target/wasm32-wasip1/release/hello-component-client.wasm
+    wrpc-wasmtime nats run --import rust ./target/wasm32-wasip2/release/hello-component-client.wasm
     ```
     
     - Sample output in the client:
@@ -231,7 +227,7 @@ We will use the following two Rust wRPC applications using [NATS.io] transport:
 7. Call native wRPC `hello` server using Wasm `hello` client via [NATS.io]:
 
     ```sh
-    wrpc-wasmtime nats run --import native ./target/wasm32-wasip1/release/hello-component-client.wasm
+    wrpc-wasmtime nats run --import native ./target/wasm32-wasip2/release/hello-component-client.wasm
     ```
 
 ## Repository structure

@@ -17,7 +17,7 @@
   ];
 
   inputs.nixify.inputs.nixlib.follows = "nixlib";
-  inputs.nixify.url = "github:rvolosatovs/nixify";
+  inputs.nixify.url = "github:rvolosatovs/nixify/003d2cccb42b778c06fa82a1f8cf1468b578a746";
   inputs.nixlib.url = "github:nix-community/nixpkgs.lib";
   inputs.nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
   inputs.wit-deps.inputs.nixify.follows = "nixify";
@@ -36,6 +36,8 @@
     with nixify.lib;
       rust.mkFlake {
         src = ./.;
+
+        withToolchain = rust.withRustOverlayToolchain;
 
         overlays = [
           wit-deps.overlays.default
@@ -80,6 +82,7 @@
         targets.s390x-unknown-linux-gnu = false;
         targets.wasm32-unknown-unknown = false;
         targets.wasm32-wasip1 = false;
+        targets.wasm32-wasip2 = false;
 
         clippy.deny = ["warnings"];
         clippy.workspace = true;
