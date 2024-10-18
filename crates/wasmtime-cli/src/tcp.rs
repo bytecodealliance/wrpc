@@ -73,9 +73,9 @@ pub async fn handle_serve(
         ref workload,
     }: ServeArgs,
 ) -> anyhow::Result<()> {
-    let lis = tokio::net::TcpListener::bind(&import)
+    let lis = tokio::net::TcpListener::bind(&export)
         .await
-        .with_context(|| format!("failed to bind TCP listener on `{import}`"))?;
+        .with_context(|| format!("failed to bind TCP listener on `{export}`"))?;
     let srv = Arc::new(wrpc_transport::Server::default());
     let accept = tokio::spawn({
         let srv = Arc::clone(&srv);
