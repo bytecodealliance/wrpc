@@ -437,7 +437,7 @@ impl AsyncRead for Incoming {
                 let Some(rx) = rx.as_pin_mut() else {
                     return Poll::Ready(Err(std::io::Error::new(
                         std::io::ErrorKind::NotFound,
-                        format!("subscription not found for path {:?}", path),
+                        format!("subscription not found for path {path:?}"),
                     )));
                 };
                 trace!(?path, "polling channel");

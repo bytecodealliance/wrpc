@@ -1069,7 +1069,7 @@ where
                         .await
                         .context("failed to flush outgoing stream")?;
                     if let Err(err) = outgoing.shutdown().await {
-                        trace!(?err, "failed to shutdown outgoing stream")
+                        trace!(?err, "failed to shutdown outgoing stream");
                     }
                     anyhow::Ok(())
                 };
@@ -1149,7 +1149,7 @@ where
         .await
         .context("failed to flush outgoing stream")?;
     if let Err(err) = tx.shutdown().await {
-        trace!(?err, "failed to shutdown outgoing stream")
+        trace!(?err, "failed to shutdown outgoing stream");
     }
     try_join_all(
         zip(0.., deferred)

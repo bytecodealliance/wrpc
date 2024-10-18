@@ -78,7 +78,7 @@ pub trait Invoke: Send + Sync {
         P: AsRef<[Option<usize>]> + Send + Sync;
 }
 
-/// Wrapper struct returned by [InvokeExt::timeout]
+/// Wrapper struct returned by [`InvokeExt::timeout`]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Timeout<'a, T: ?Sized> {
     /// Inner [Invoke]
@@ -113,7 +113,7 @@ impl<T: Invoke> Invoke for Timeout<'_, T> {
     }
 }
 
-/// Wrapper struct returned by [InvokeExt::timeout_owned]
+/// Wrapper struct returned by [`InvokeExt::timeout_owned`]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TimeoutOwned<T> {
     /// Inner [Invoke]

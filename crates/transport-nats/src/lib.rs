@@ -487,7 +487,7 @@ impl Drop for SubjectWriter {
             let fut = async move {
                 trace!("writing stream shutdown message");
                 if let Err(err) = nats.publish(subject, Bytes::default()).await {
-                    warn!(?err, "failed to publish stream shutdown message")
+                    warn!(?err, "failed to publish stream shutdown message");
                 }
             };
             match tokio::runtime::Handle::try_current() {

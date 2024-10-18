@@ -31,7 +31,7 @@ async fn main() -> anyhow::Result<()> {
         async move {
             loop {
                 if let Err(err) = srv.accept(&lis).await {
-                    error!(?err, "failed to accept TCP connection")
+                    error!(?err, "failed to accept TCP connection");
                 }
             }
         }
