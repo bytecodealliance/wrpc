@@ -1,6 +1,6 @@
 use core::any::TypeId;
 use core::fmt::{self, Debug};
-use core::future::Future;
+use core::future::{pending, Future};
 use core::hash::{Hash, Hasher};
 use core::iter::zip;
 use core::marker::PhantomData;
@@ -18,7 +18,7 @@ use tokio::{select, try_join};
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::codec::{Encoder as _, FramedRead};
 use tokio_util::io::StreamReader;
-use tracing::{instrument, trace, Instrument as _, Span};
+use tracing::{error, instrument, trace, Instrument as _, Span};
 use wasm_tokio::cm::{
     BoolCodec, F32Codec, F64Codec, OptionDecoder, OptionEncoder, PrimValEncoder, ResultDecoder,
     ResultEncoder, S16Codec, S32Codec, S64Codec, S8Codec, TupleDecoder, TupleEncoder, U16Codec,
@@ -1647,7 +1647,11 @@ where
             )
         }));
         return Ok(Some(Box::pin(async {
-            rx.await.expect("future I/O dropped")
+            let Ok(ret) = rx.await else {
+                error!("future I/O dropped");
+                return pending().await;
+            };
+            return ret;
         })));
     }
 }
