@@ -12,13 +12,13 @@ use bytes::{Buf as _, BufMut as _, Bytes, BytesMut};
 use futures::stream::{self, FuturesUnordered};
 use futures::{Stream, StreamExt as _, TryStreamExt as _};
 use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _};
+use tokio::select;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinSet;
-use tokio::{select, try_join};
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::codec::{Encoder as _, FramedRead};
 use tokio_util::io::StreamReader;
-use tracing::{error, instrument, trace, Instrument as _, Span};
+use tracing::{debug, error, instrument, trace, Instrument as _, Span};
 use wasm_tokio::cm::{
     BoolCodec, F32Codec, F64Codec, OptionDecoder, OptionEncoder, PrimValEncoder, ResultDecoder,
     ResultEncoder, S16Codec, S32Codec, S64Codec, S8Codec, TupleDecoder, TupleEncoder, U16Codec,
@@ -1617,30 +1617,20 @@ where
                         return Err(std::io::ErrorKind::UnexpectedEof.into());
                     };
                     let item = item?;
-                    try_join!(
-                        async {
-                            tx.send(item).map_err(|_| {
-                                std::io::Error::new(
-                                    std::io::ErrorKind::BrokenPipe,
-                                    "future receiver closed",
-                                )
-                            })
-                        },
-                        async {
-                            if let Some(rx) = dec.decoder_mut().take_deferred() {
-                                let buf = mem::take(dec.read_buffer_mut());
-                                let mut r = dec.into_inner();
-                                if !r.buffer.is_empty() {
-                                    r.buffer.unsplit(buf);
-                                } else {
-                                    r.buffer = buf;
-                                }
-                                rx(r, Vec::default()).await
-                            } else {
-                                Ok(())
-                            }
+                    if tx.send(item).is_err() {
+                        debug!("future receiver closed, discard data");
+                        return Ok(());
+                    }
+                    if let Some(rx) = dec.decoder_mut().take_deferred() {
+                        let buf = mem::take(dec.read_buffer_mut());
+                        let mut r = dec.into_inner();
+                        if !r.buffer.is_empty() {
+                            r.buffer.unsplit(buf);
+                        } else {
+                            r.buffer = buf;
                         }
-                    )?;
+                        rx(r, Vec::default()).await?;
+                    }
                     Ok(())
                 }
                 .instrument(span),
@@ -2042,9 +2032,10 @@ where
                     )
                 })?;
                 trace!(i, end, "received stream chunk");
-                tx.send(chunk).await.map_err(|_| {
-                    std::io::Error::new(std::io::ErrorKind::BrokenPipe, "stream receiver closed")
-                })?;
+                if tx.send(chunk).await.is_err() {
+                    debug!("stream receiver closed, discard data");
+                    return Ok(())
+                }
                 for (i, deferred) in zip(i.., mem::take(&mut framed.decoder_mut().deferred)) {
                     if let Some(deferred) = deferred {
                         let r = framed.get_ref().index(&[i]).map_err(std::io::Error::other)?;
@@ -2162,12 +2153,10 @@ where
                             return Ok(());
                         }
                         trace!(?chunk, "received pending byte stream chunk");
-                        tx.send(chunk).await.map_err(|_| {
-                            std::io::Error::new(
-                                std::io::ErrorKind::BrokenPipe,
-                                "stream receiver closed",
-                            )
-                        })?;
+                        if tx.send(chunk).await.is_err() {
+                            debug!("stream receiver closed, discard data");
+                            return Ok(());
+                        }
                     }
                     Ok(())
                 }
@@ -2240,12 +2229,10 @@ where
                         return Ok(());
                     }
                     trace!(?chunk, "received byte stream chunk");
-                    tx.send(std::io::Result::Ok(chunk)).await.map_err(|_| {
-                        std::io::Error::new(
-                            std::io::ErrorKind::BrokenPipe,
-                            "stream receiver closed",
-                        )
-                    })?;
+                    if tx.send(std::io::Result::Ok(chunk)).await.is_err() {
+                        debug!("stream receiver closed, discard data");
+                        return Ok(());
+                    }
                 }
                 Ok(())
             })
