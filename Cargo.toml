@@ -1,7 +1,7 @@
 [package]
 description = "WebAssembly component-native RPC framework based on WIT"
 name = "wrpc"
-version = "0.13.0"
+version = "0.14.0"
 
 authors.workspace = true
 categories.workspace = true
@@ -22,33 +22,29 @@ repository = "https://github.com/bytecodealliance/wrpc"
 members = ["crates/*", "examples/rust/*"]
 
 [features]
-default = ["bin", "nats", "quic", "wasmtime"]
+default = ["bin", "nats", "net", "quic", "wasmtime"]
 
-bin = [
+bin = ["bin-bindgen", "bin-wasmtime"]
+bin-bindgen = [
     "dep:clap",
-    "dep:serde",
-    "dep:serde_json",
-    "dep:tokio",
     "dep:wit-bindgen-core",
     "dep:wit-bindgen-wrpc-go",
-    "dep:wrpc-cli",
-    "dep:wrpc-wasmtime-cli",
-    "tokio/rt-multi-thread",
-    "tokio/sync",
     "wit-bindgen-wrpc-go/clap",
     "wit-bindgen-wrpc-rust/clap",
 ]
+bin-wasmtime = ["dep:tokio", "dep:wrpc-wasmtime-cli", "tokio/rt-multi-thread"]
 nats = ["dep:async-nats", "dep:wrpc-transport-nats", "wrpc-cli/nats"]
+net = ["wrpc-transport/net"]
 quic = ["dep:wrpc-transport-quic"]
 wasmtime = ["dep:wrpc-runtime-wasmtime"]
 
 [[bin]]
 name = "wit-bindgen-wrpc"
-required-features = ["bin"]
+required-features = ["bin-bindgen"]
 
 [[bin]]
 name = "wrpc-wasmtime"
-required-features = ["bin", "nats", "wasmtime"]
+required-features = ["bin-wasmtime"]
 
 [dependencies]
 anyhow = { workspace = true, features = ["std"] }
@@ -62,8 +58,6 @@ clap = { workspace = true, features = [
     "suggestions",
     "usage",
 ], optional = true }
-serde = { workspace = true, optional = true }
-serde_json = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true }
 tracing = { workspace = true, features = ["attributes"] }
 wit-bindgen-core = { workspace = true, optional = true }

@@ -33,7 +33,7 @@ where
     let shutdown_rx = async move { shutdown_rx.await.expect("shutdown sender dropped") }.shared();
     try_join!(
         async {
-            wrpc::generate!({
+            wit_bindgen_wrpc::generate!({
                 world: "async-server",
                 path: "tests/wit",
             });
@@ -166,7 +166,7 @@ where
             .await?
         },
         async {
-            wrpc::generate!({
+            wit_bindgen_wrpc::generate!({
                 world: "async-client",
                 path: "tests/wit",
             });
@@ -196,7 +196,7 @@ where
     try_join!(
         async {
             mod bindings {
-                wrpc::generate!({
+                wit_bindgen_wrpc::generate!({
                     inline: "
                             package wrpc-test:integration;
 
@@ -434,7 +434,7 @@ where
         }.instrument(span.clone()),
         async {
             mod bindings {
-                wrpc::generate!({
+                wit_bindgen_wrpc::generate!({
                     inline: "
                             package wrpc-test:integration;
 
@@ -629,7 +629,7 @@ where
         }.instrument(span.clone()),
         async {
             mod bindings {
-                wrpc::generate!({
+                wit_bindgen_wrpc::generate!({
                     inline: "
                             package wrpc-test:integration;
 
