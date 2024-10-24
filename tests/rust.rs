@@ -198,38 +198,38 @@ where
             mod bindings {
                 wit_bindgen_wrpc::generate!({
                     inline: "
-                            package wrpc-test:integration;
+                       package wrpc-test:integration;
 
-                            interface shared {
-                                flags abc {
-                                    a,
-                                    b,
-                                    c,
-                                }
+                       interface shared {
+                           flags abc {
+                               a,
+                               b,
+                               c,
+                           }
 
-                                fallible: func() -> result<bool, string>;
-                                numbers: func() -> tuple<u8, u16, u32, u64, s8, s16, s32, s64, f32, f64>;
-                                with-flags: func() -> abc;
+                           fallible: func() -> result<bool, string>;
+                           numbers: func() -> tuple<u8, u16, u32, u64, s8, s16, s32, s64, f32, f64>;
+                           with-flags: func() -> abc;
 
-                                resource counter {
-                                    constructor(initial: u32);
-                                    clone-counter: func() -> counter;
+                           resource counter {
+                               constructor(initial: u32);
+                               clone-counter: func() -> counter;
 
-                                    get-count: func() -> u32;
-                                    increment-by: func(num: u32);
+                               get-count: func() -> u32;
+                               increment-by: func(num: u32);
 
-                                    sum: static func(a: borrow<counter>, b: borrow<counter>) -> u32;
-                                }
-                            }
+                               sum: static func(a: borrow<counter>, b: borrow<counter>) -> u32;
+                           }
+                       }
 
-                            world test {
-                                export shared;
+                       world test {
+                           export shared;
 
-                                export f: func(x: string) -> u32;
-                                export foo: interface {
-                                    foo: func(x: string);
-                                }
-                            }"
+                           export f: func(x: string) -> u32;
+                           export foo: interface {
+                               foo: func(x: string);
+                           }
+                       }"
                 });
             }
 
@@ -436,41 +436,41 @@ where
             mod bindings {
                 wit_bindgen_wrpc::generate!({
                     inline: "
-                            package wrpc-test:integration;
+                       package wrpc-test:integration;
 
-                            interface shared {
-                                flags abc {
-                                    a,
-                                    b,
-                                    c,
-                                }
+                       interface shared {
+                           flags abc {
+                               a,
+                               b,
+                               c,
+                           }
 
-                                fallible: func() -> result<bool, string>;
-                                numbers: func() -> tuple<u8, u16, u32, u64, s8, s16, s32, s64, f32, f64>;
-                                with-flags: func() -> abc;
+                           fallible: func() -> result<bool, string>;
+                           numbers: func() -> tuple<u8, u16, u32, u64, s8, s16, s32, s64, f32, f64>;
+                           with-flags: func() -> abc;
 
-                                resource counter {
-                                    constructor(initial: u32);
-                                    clone-counter: func() -> counter;
+                           resource counter {
+                               constructor(initial: u32);
+                               clone-counter: func() -> counter;
 
-                                    get-count: func() -> u32;
-                                    increment-by: func(num: u32);
+                               get-count: func() -> u32;
+                               increment-by: func(num: u32);
 
-                                    sum: static func(a: borrow<counter>, b: borrow<counter>) -> u32;
-                                }
-                            }
+                               sum: static func(a: borrow<counter>, b: borrow<counter>) -> u32;
+                           }
+                       }
 
-                            world test {
-                                import shared;
+                       world test {
+                           import shared;
 
-                                import f: func(x: string) -> u32;
-                                import foo: interface {
-                                    foo: func(x: string);
-                                }
-                                export bar: interface {
-                                    bar: func() -> string;
-                                }
-                            }"
+                           import f: func(x: string) -> u32;
+                           import foo: interface {
+                               foo: func(x: string);
+                           }
+                           export bar: interface {
+                               bar: func() -> string;
+                           }
+                       }"
                 });
             }
             use bindings::{exports, foo, f};
@@ -631,13 +631,13 @@ where
             mod bindings {
                 wit_bindgen_wrpc::generate!({
                     inline: "
-                            package wrpc-test:integration;
+                       package wrpc-test:integration;
 
-                            world test {
-                                import bar: interface {
-                                    bar: func() -> string;
-                                }
-                            }"
+                       world test {
+                           import bar: interface {
+                               bar: func() -> string;
+                           }
+                       }"
                 });
             }
             use bindings::bar;

@@ -46,6 +46,10 @@ required-features = ["bin-bindgen"]
 name = "wrpc-wasmtime"
 required-features = ["bin-wasmtime"]
 
+[[bench]]
+name = "bench"
+harness = false
+
 [dependencies]
 anyhow = { workspace = true, features = ["std"] }
 async-nats = { workspace = true, optional = true }

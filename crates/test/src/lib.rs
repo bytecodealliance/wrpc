@@ -50,7 +50,7 @@ pub async fn start_nats() -> anyhow::Result<(
 )> {
     let port = free_port().await?;
     let (server, stop_tx) =
-        spawn_server(Command::new("nats-server").args(["-V", "-T=false", "-p", &port.to_string()]))
+        spawn_server(Command::new("nats-server").args(["-T=false", "-p", &port.to_string()]))
             .await
             .context("failed to start NATS.io server")?;
 
