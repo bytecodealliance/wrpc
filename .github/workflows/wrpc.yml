@@ -15,6 +15,8 @@ on:
       - 'crates/pack/v[0-9].[0-9]+.[0-9]+-*'
       - 'crates/runtime-wasmtime/v[0-9].[0-9]+.[0-9]+'
       - 'crates/runtime-wasmtime/v[0-9].[0-9]+.[0-9]+-*'
+      - 'crates/test/v[0-9].[0-9]+.[0-9]+'
+      - 'crates/test/v[0-9].[0-9]+.[0-9]+-*'
       - 'crates/transport-nats/v[0-9].[0-9]+.[0-9]+'
       - 'crates/transport-nats/v[0-9].[0-9]+.[0-9]+-*'
       - 'crates/transport-quic/v[0-9].[0-9]+.[0-9]+'
@@ -204,6 +206,9 @@ jobs:
           - crate: introspect
 
           - crate: pack
+            workspace-dependencies: true
+
+          - crate: test
             workspace-dependencies: true
 
           - crate: runtime-wasmtime

@@ -1,0 +1,39 @@
+[package]
+name = "wrpc-test"
+version = "0.1.0"
+authors.workspace = true
+categories.workspace = true
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = ["nats", "quic"]
+nats = ["dep:async-nats", "async-nats/ring", "wrpc-cli/nats"]
+quic = [
+    "dep:quinn",
+    "dep:rcgen",
+    "dep:rustls",
+    "quinn/log",
+    "quinn/platform-verifier",
+    "quinn/ring",
+    "quinn/runtime-tokio",
+    "quinn/rustls",
+    "rcgen/crypto",
+    "rcgen/ring",
+    "rcgen/zeroize",
+    "rustls/logging",
+    "rustls/ring",
+]
+
+[dependencies]
+anyhow = { workspace = true }
+async-nats = { workspace = true, optional = true }
+quinn = { workspace = true, optional = true }
+rcgen = { workspace = true, optional = true }
+rustls = { workspace = true, optional = true }
+tokio = { workspace = true, features = ["net", "process", "rt-multi-thread"] }
+tracing = { workspace = true }
+wrpc-cli = { workspace = true }
+wrpc-transport = { workspace = true }
