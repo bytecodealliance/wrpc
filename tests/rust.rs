@@ -195,43 +195,46 @@ where
     let shutdown_rx = async move { shutdown_rx.await.expect("shutdown sender dropped") }.shared();
     try_join!(
         async {
-            wrpc::generate!({
-                inline: "
-                        package wrpc-test:integration;
+            mod bindings {
+                wrpc::generate!({
+                    inline: "
+                            package wrpc-test:integration;
 
-                        interface shared {
-                            flags abc {
-                                a,
-                                b,
-                                c,
+                            interface shared {
+                                flags abc {
+                                    a,
+                                    b,
+                                    c,
+                                }
+
+                                fallible: func() -> result<bool, string>;
+                                numbers: func() -> tuple<u8, u16, u32, u64, s8, s16, s32, s64, f32, f64>;
+                                with-flags: func() -> abc;
+
+                                resource counter {
+                                    constructor(initial: u32);
+                                    clone-counter: func() -> counter;
+
+                                    get-count: func() -> u32;
+                                    increment-by: func(num: u32);
+
+                                    sum: static func(a: borrow<counter>, b: borrow<counter>) -> u32;
+                                }
                             }
 
-                            fallible: func() -> result<bool, string>;
-                            numbers: func() -> tuple<u8, u16, u32, u64, s8, s16, s32, s64, f32, f64>;
-                            with-flags: func() -> abc;
+                            world test {
+                                export shared;
 
-                            resource counter {
-                                constructor(initial: u32);
-                                clone-counter: func() -> counter;
+                                export f: func(x: string) -> u32;
+                                export foo: interface {
+                                    foo: func(x: string);
+                                }
+                            }"
+                });
+            }
 
-                                get-count: func() -> u32;
-                                increment-by: func(num: u32);
-
-                                sum: static func(a: borrow<counter>, b: borrow<counter>) -> u32;
-                            }
-                        }
-
-                        world test {
-                            export shared;
-
-                            export f: func(x: string) -> u32;
-                            export foo: interface {
-                                foo: func(x: string);
-                            }
-                        }"
-            });
-
-            use exports::wrpc_test::integration::shared::Counter;
+            use bindings::exports;
+            use bindings::exports::wrpc_test::integration::shared::Counter;
 
             #[derive(Clone, Default)]
             struct Component {
@@ -350,7 +353,7 @@ where
                 }
             }
 
-            impl<C: Send + Sync> Handler<C> for Component {
+            impl<C: Send + Sync> bindings::Handler<C> for Component {
                 async fn f(&self, _cx: C, x: String) -> anyhow::Result<u32> {
                     let stored = self.inner.read().await.as_ref().unwrap().to_string();
                     assert_eq!(stored, x);
@@ -402,7 +405,7 @@ where
             let srv = Arc::clone(&srv);
             let shutdown_rx = shutdown_rx.clone();
             tokio::spawn(async move {
-                let mut invocations = serve(srv.as_ref(), Component::default())
+                let mut invocations = bindings::serve(srv.as_ref(), Component::default())
                     .await
                     .context("failed to serve `wrpc-test:integration/test`")?;
                 let mut invocations = stream::select_all(invocations.into_iter().map(
@@ -430,44 +433,49 @@ where
             .await?
         }.instrument(span.clone()),
         async {
-            wrpc::generate!({
-                inline: "
-                        package wrpc-test:integration;
+            mod bindings {
+                wrpc::generate!({
+                    inline: "
+                            package wrpc-test:integration;
 
-                        interface shared {
-                            flags abc {
-                                a,
-                                b,
-                                c,
+                            interface shared {
+                                flags abc {
+                                    a,
+                                    b,
+                                    c,
+                                }
+
+                                fallible: func() -> result<bool, string>;
+                                numbers: func() -> tuple<u8, u16, u32, u64, s8, s16, s32, s64, f32, f64>;
+                                with-flags: func() -> abc;
+
+                                resource counter {
+                                    constructor(initial: u32);
+                                    clone-counter: func() -> counter;
+
+                                    get-count: func() -> u32;
+                                    increment-by: func(num: u32);
+
+                                    sum: static func(a: borrow<counter>, b: borrow<counter>) -> u32;
+                                }
                             }
 
-                            fallible: func() -> result<bool, string>;
-                            numbers: func() -> tuple<u8, u16, u32, u64, s8, s16, s32, s64, f32, f64>;
-                            with-flags: func() -> abc;
+                            world test {
+                                import shared;
 
-                            resource counter {
-                                constructor(initial: u32);
-                                clone-counter: func() -> counter;
-
-                                get-count: func() -> u32;
-                                increment-by: func(num: u32);
-
-                                sum: static func(a: borrow<counter>, b: borrow<counter>) -> u32;
-                            }
-                        }
-
-                        world test {
-                            import shared;
-
-                            import f: func(x: string) -> u32;
-                            import foo: interface {
-                                foo: func(x: string);
-                            }
-                            export bar: interface {
-                                bar: func() -> string;
-                            }
-                        }"
-            });
+                                import f: func(x: string) -> u32;
+                                import foo: interface {
+                                    foo: func(x: string);
+                                }
+                                export bar: interface {
+                                    bar: func() -> string;
+                                }
+                            }"
+                });
+            }
+            use bindings::{exports, foo, f};
+            use bindings::wrpc_test::integration::shared;
+            use bindings::wrpc_test::integration::shared::Counter;
 
             struct Component<T>(Arc<T>);
 
@@ -486,7 +494,7 @@ where
                 T: wrpc::Invoke<Context = C>,
             {
                 async fn bar(&self, _cx: C) -> anyhow::Result<String> {
-                    use wrpc_test::integration::shared::Abc;
+                    use shared::Abc;
 
                     info!("calling `wrpc-test:integration/test.foo.f`");
                     foo::foo(self.0.as_ref(), C::default(), "foo")
@@ -500,13 +508,13 @@ where
                     assert_eq!(v, 42);
 
                     info!("calling `wrpc-test:integration/shared.fallible`");
-                    let v = wrpc_test::integration::shared::fallible(self.0.as_ref(), C::default())
+                    let v = shared::fallible(self.0.as_ref(), C::default())
                         .await
                         .context("failed to call `wrpc-test:integration/shared.fallible`")?;
                     assert_eq!(v, Ok(true));
 
                     info!("calling `wrpc-test:integration/shared.numbers`");
-                    let v = wrpc_test::integration::shared::numbers(self.0.as_ref(), C::default())
+                    let v = shared::numbers(self.0.as_ref(), C::default())
                         .await
                         .context("failed to call `wrpc-test:integration/shared.numbers`")?;
                     assert_eq!(
@@ -527,12 +535,12 @@ where
 
                     info!("calling `wrpc-test:integration/shared.with-flags`");
                     let v =
-                        wrpc_test::integration::shared::with_flags(self.0.as_ref(), C::default())
+                        shared::with_flags(self.0.as_ref(), C::default())
                             .await
                             .context("failed to call `wrpc-test:integration/shared.with-flags`")?;
                     assert_eq!(v, Abc::A | Abc::C);
 
-                    let counter = wrpc_test::integration::shared::Counter::new(
+                    let counter = Counter::new(
                         self.0.as_ref(),
                         C::default(),
                         0,
@@ -543,11 +551,11 @@ where
                     )?;
                     let counter_borrow = counter.as_borrow();
 
-                    wrpc_test::integration::shared::Counter::increment_by(self.0.as_ref(), C::default(), &counter_borrow, 1)
+                    Counter::increment_by(self.0.as_ref(), C::default(), &counter_borrow, 1)
                             .await
                             .context("failed to call `wrpc-test:integration/shared.[method]counter-increment-by`")?;
 
-                    let count = wrpc_test::integration::shared::Counter::get_count(
+                    let count = Counter::get_count(
                         self.0.as_ref(),
                         C::default(),
                         &counter_borrow,
@@ -558,11 +566,11 @@ where
                     )?;
                     assert_eq!(count, 1);
 
-                    wrpc_test::integration::shared::Counter::increment_by(self.0.as_ref(), C::default(), &counter_borrow, 2)
+                    Counter::increment_by(self.0.as_ref(), C::default(), &counter_borrow, 2)
                             .await
                             .context("failed to call `wrpc-test:integration/shared.[method]counter-increment-by`")?;
 
-                    let count = wrpc_test::integration::shared::Counter::get_count(
+                    let count = Counter::get_count(
                         self.0.as_ref(),
                         C::default(),
                         &counter_borrow,
@@ -573,12 +581,12 @@ where
                     )?;
                     assert_eq!(count, 3);
 
-                    let second_counter = wrpc_test::integration::shared::Counter::clone_counter(self.0.as_ref(), C::default(), &counter_borrow)
+                    let second_counter = Counter::clone_counter(self.0.as_ref(), C::default(), &counter_borrow)
                             .await
                             .context("failed to call `wrpc-test:integration/shared.[method]counter-clone-counter`")?;
 
                     let second_counter_borrow = second_counter.as_borrow();
-                    let sum = wrpc_test::integration::shared::Counter::sum(
+                    let sum = Counter::sum(
                         self.0.as_ref(),
                         C::default(),
                         &counter_borrow,
@@ -592,7 +600,7 @@ where
                 }
             }
 
-            let mut invocations = serve(srv.as_ref(), Component(Arc::clone(&clt)))
+            let mut invocations = bindings::serve(srv.as_ref(), Component(Arc::clone(&clt)))
                 .await
                 .context("failed to serve `wrpc-test:integration/test`")?;
             let mut invocations = stream::select_all(invocations.into_iter().map(
@@ -620,16 +628,19 @@ where
             .await?
         }.instrument(span.clone()),
         async {
-            wrpc::generate!({
-                inline: "
-                        package wrpc-test:integration;
+            mod bindings {
+                wrpc::generate!({
+                    inline: "
+                            package wrpc-test:integration;
 
-                        world test {
-                            import bar: interface {
-                                bar: func() -> string;
-                            }
-                        }"
-            });
+                            world test {
+                                import bar: interface {
+                                    bar: func() -> string;
+                                }
+                            }"
+                });
+            }
+            use bindings::bar;
 
             // TODO: Remove the need for this
             sleep(Duration::from_secs(2)).await;
@@ -1010,7 +1021,7 @@ where
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 #[instrument(ret)]
 async fn rust_bindgen_nats_sync() -> anyhow::Result<()> {
-    common::with_nats(|_, nats_client| async {
+    wrpc_test::with_nats(|_, nats_client| async {
         let clt = wrpc_transport_nats::Client::new(
             nats_client,
             "rust-bindgen-sync",
@@ -1026,7 +1037,7 @@ async fn rust_bindgen_nats_sync() -> anyhow::Result<()> {
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 #[instrument(ret)]
 async fn rust_bindgen_nats_async() -> anyhow::Result<()> {
-    common::with_nats(|_, nats_client| {
+    wrpc_test::with_nats(|_, nats_client| {
         async {
             let clt = wrpc_transport_nats::Client::new(
                 nats_client,
@@ -1045,7 +1056,7 @@ async fn rust_bindgen_nats_async() -> anyhow::Result<()> {
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 #[instrument(ret)]
 async fn rust_dynamic_nats() -> anyhow::Result<()> {
-    common::with_nats(|_, nats_client| async {
+    wrpc_test::with_nats(|_, nats_client| async {
         let clt = wrpc_transport_nats::Client::new(nats_client, "rust-dynamic", None);
         let clt = Arc::new(clt);
         assert_dynamic(Arc::clone(&clt), clt).await
@@ -1060,7 +1071,7 @@ async fn rust_bindgen_quic_sync() -> anyhow::Result<()> {
     use core::net::Ipv6Addr;
     use core::pin::pin;
 
-    common::with_quic(
+    wrpc_test::with_quic(
         &[
             "*.wrpc-test_integration__bar",
             "*.wrpc-test_integration__foo",
@@ -1104,7 +1115,7 @@ async fn rust_bindgen_quic_async() -> anyhow::Result<()> {
     use core::net::Ipv6Addr;
     use core::pin::pin;
 
-    common::with_quic(
+    wrpc_test::with_quic(
         &["*.wrpc-test_integration__async"],
         |port, clt_ep, srv_ep| async move {
             let clt = wrpc_transport_quic::Client::new(clt_ep, (Ipv6Addr::LOCALHOST, port));
@@ -1143,7 +1154,7 @@ async fn rust_dynamic_quic() -> anyhow::Result<()> {
     use tracing::Span;
 
     let span = Span::current();
-    common::with_quic(
+    wrpc_test::with_quic(
         &["sync.test", "async.test", "reset.test"],
         |port, clt_ep, srv_ep| {
             async move {

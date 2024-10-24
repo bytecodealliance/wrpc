@@ -41,15 +41,18 @@ async fn go_bindgen() -> anyhow::Result<()> {
         .context("failed to call `go test`")?;
     ensure!(status.success(), "`go test` failed");
 
-    common::with_nats(|port, nats_client| async move {
-        wrpc::generate!({
-            world: "sync-client",
-            path: "tests/wit",
-            additional_derives: [::core::cmp::PartialEq],
-        });
+    wrpc_test::with_nats(|port, nats_client| async move {
+        mod bindings {
+            wrpc::generate!({
+                world: "sync-client",
+                path: "tests/wit",
+                additional_derives: [::core::cmp::PartialEq],
+            });
+        }
 
-        use wrpc_test::integration::sync;
-        use wrpc_test::integration::sync::{Abc, Foobar, Rec, RecNested, Var};
+        use bindings::foo;
+        use bindings::wrpc_test::integration::sync;
+        use bindings::wrpc_test::integration::sync::{Abc, Foobar, Rec, RecNested, Var};
 
         info!("starting `sync-server-nats`");
         let mut server = Command::new("go")
@@ -237,13 +240,7 @@ async fn go_bindgen() -> anyhow::Result<()> {
     })
     .await?;
 
-    common::with_nats(|port, nats_client| async move {
-        wrpc::generate!({
-            world: "async-client",
-            path: "tests/wit",
-            additional_derives: [::core::cmp::PartialEq],
-        });
-
+    wrpc_test::with_nats(|port, nats_client| async move {
         info!("starting `async-server-nats`");
         let mut server = Command::new("go")
             .current_dir("tests/go")
