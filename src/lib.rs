@@ -20,4 +20,3 @@ pub mod runtime {
 }
 
 pub use transport::{Index, Invoke, Serve};
-pub use wit_bindgen_wrpc::generate;

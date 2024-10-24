@@ -43,7 +43,7 @@ async fn go_bindgen() -> anyhow::Result<()> {
 
     wrpc_test::with_nats(|port, nats_client| async move {
         mod bindings {
-            wrpc::generate!({
+            wit_bindgen_wrpc::generate!({
                 world: "sync-client",
                 path: "tests/wit",
                 additional_derives: [::core::cmp::PartialEq],

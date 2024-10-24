@@ -8,7 +8,7 @@ use tracing::info;
 pub async fn assert_async<C: Default>(
     client: &impl wrpc_transport::Invoke<Context = C>,
 ) -> anyhow::Result<()> {
-    wrpc::generate!({
+    wit_bindgen_wrpc::generate!({
         world: "async-client",
         path: "tests/wit",
     });
