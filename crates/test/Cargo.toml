@@ -1,6 +1,8 @@
 [package]
 name = "wrpc-test"
 version = "0.1.0"
+description = "wRPC test utilities"
+
 authors.workspace = true
 categories.workspace = true
 edition.workspace = true
