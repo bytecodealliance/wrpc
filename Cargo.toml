@@ -19,7 +19,7 @@ license = "Apache-2.0 WITH LLVM-exception"
 repository = "https://github.com/bytecodealliance/wrpc"
 
 [workspace]
-members = ["crates/*", "examples/rust/*"]
+members = ["benches/reactor", "crates/*", "examples/rust/*"]
 
 [features]
 default = ["bin", "nats", "net", "quic", "wasmtime"]
@@ -85,6 +85,20 @@ futures = { workspace = true }
 tempfile = { workspace = true }
 test-log = { workspace = true, features = ["color", "log", "trace"] }
 tokio = { workspace = true, features = ["process", "rt-multi-thread"] }
+wasmtime = { workspace = true }
+wasmtime-wasi = { workspace = true }
+wasmtime-cli-flags = { workspace = true, features = [
+    "async",
+    "cache",
+    "component-model",
+    "coredump",
+    "cranelift",
+    "gc",
+    "memory-protection-keys",
+    "parallel-compilation",
+    "pooling-allocator",
+    "threads",
+] }
 wrpc-test = { workspace = true, features = ["nats", "quic"] }
 wrpc-transport = { workspace = true, features = ["net"] }
 
@@ -125,6 +139,7 @@ wasi-preview1-component-adapter-provider = { version = "25", default-features = 
 wasm-tokio = { version = "0.6", default-features = false }
 wasmparser = { version = "0.219", default-features = false }
 wasmtime = { version = "25", default-features = false }
+wasmtime-cli-flags = { version = "25", default-features = false }
 wasmtime-wasi = { version = "25", default-features = false }
 wit-bindgen = { version = "0.33", default-features = false }
 wit-bindgen-core = { version = "0.33", default-features = false }

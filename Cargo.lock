@@ -1929,6 +1929,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "reactor"
+version = "0.1.0"
+dependencies = [
+ "wit-bindgen",
+]
+
+[[package]]
 name = "redox_users"
 version = "0.4.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3338,6 +3345,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "wasmtime-cli-flags"
+version = "25.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b66410a2099505810348d378e02f1373ca60088194f19b89adc85f60a11b6228"
+dependencies = [
+ "anyhow",
+ "clap",
+ "humantime",
+ "rayon",
+ "wasmtime",
+]
+
+[[package]]
 name = "wasmtime-component-macro"
 version = "25.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3994,6 +4014,9 @@ dependencies = [
  "test-log",
  "tokio",
  "tracing",
+ "wasmtime",
+ "wasmtime-cli-flags",
+ "wasmtime-wasi",
  "wit-bindgen-core",
  "wit-bindgen-wrpc",
  "wit-bindgen-wrpc-go",
