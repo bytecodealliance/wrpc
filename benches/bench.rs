@@ -463,7 +463,7 @@ fn bench_wasm_ping_nats_wrpc(
                 }
             }
         });
-        g.bench_function("wRPC", |b| {
+        g.bench_function("wRPC NATS.io", |b| {
             b.to_async(&rt).iter(|| async {
                 ping_bindings_wrpc::wrpc_bench::bench::ping::ping(&wrpc, None)
                     .await
@@ -513,7 +513,7 @@ fn bench_wasm_greet_nats_wrpc(
                 }
             }
         });
-        g.bench_function("wRPC", |b| {
+        g.bench_function("wRPC NATS.io", |b| {
             b.to_async(&rt).iter(|| async {
                 greet_bindings_wrpc::wrpc_bench::bench::greet::greet(&wrpc, None, "test")
                     .await
