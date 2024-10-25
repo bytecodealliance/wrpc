@@ -50,6 +50,9 @@ required-features = ["bin-wasmtime"]
 name = "bench"
 harness = false
 
+[profile.bench]
+debug = true
+
 [dependencies]
 anyhow = { workspace = true, features = ["std"] }
 async-nats = { workspace = true, optional = true }
@@ -80,7 +83,13 @@ wrpc-wasmtime-cli = { workspace = true, optional = true }
 [dev-dependencies]
 anyhow = { workspace = true }
 bytes = { workspace = true }
-criterion = { workspace = true, features = ["async_tokio"] }
+criterion = { workspace = true, features = [
+    "async_tokio",
+    "cargo_bench_support",
+    "html_reports",
+    "plotters",
+    "rayon",
+] }
 futures = { workspace = true }
 tempfile = { workspace = true }
 test-log = { workspace = true, features = ["color", "log", "trace"] }
