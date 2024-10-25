@@ -1,6 +1,6 @@
 [package]
 name = "wrpc-transport-nats"
-version = "0.25.0"
+version = "0.26.0"
 description = "wRPC NATS transport"
 
 authors.workspace = true
@@ -9,9 +9,17 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+default = ["async-nats-0_37"]
+
 [dependencies]
 anyhow = { workspace = true, features = ["std"] }
-async-nats = { workspace = true, features = ["ring"] }
+async-nats-0_37 = { package = "async-nats", version = "0.37", default-features = false, features = [
+    "ring",
+], optional = true }
+async-nats-0_36 = { package = "async-nats", version = "0.36", default-features = false, features = [
+    "ring",
+], optional = true }
 bytes = { workspace = true }
 futures = { workspace = true, features = ["async-await"] }
 tokio = { workspace = true, features = ["io-util", "rt-multi-thread"] }
