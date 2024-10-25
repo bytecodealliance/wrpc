@@ -223,11 +223,11 @@
             buildInputs = [
               pkgs.cargo-audit
               pkgs.cargo-nextest
-              pkgs.nats-server
-              pkgs.natscli
               pkgs.wit-deps
 
               pkgs.pkgsUnstable.go
+              pkgs.pkgsUnstable.nats-server
+              pkgs.pkgsUnstable.natscli
             ];
           }
           devShells;
