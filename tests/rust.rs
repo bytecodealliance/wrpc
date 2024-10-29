@@ -1026,7 +1026,9 @@ async fn rust_bindgen_nats_sync() -> anyhow::Result<()> {
             nats_client,
             "rust-bindgen-sync",
             Some("rust-bindgen-sync".into()),
-        );
+        )
+        .await
+        .context("failed to construct client")?;
         let clt = Arc::new(clt);
         assert_bindgen_sync(Arc::clone(&clt), clt).await
     })
@@ -1043,7 +1045,9 @@ async fn rust_bindgen_nats_async() -> anyhow::Result<()> {
                 nats_client,
                 "rust-bindgen-async",
                 Some("rust-bindgen-async".into()),
-            );
+            )
+            .await
+            .context("failed to construct client")?;
             let clt = Arc::new(clt);
             assert_bindgen_async(Arc::clone(&clt), clt).await
         }
@@ -1057,7 +1061,9 @@ async fn rust_bindgen_nats_async() -> anyhow::Result<()> {
 #[instrument(ret)]
 async fn rust_dynamic_nats() -> anyhow::Result<()> {
     wrpc_test::with_nats(|_, nats_client| async {
-        let clt = wrpc_transport_nats::Client::new(nats_client, "rust-dynamic", None);
+        let clt = wrpc_transport_nats::Client::new(nats_client, "rust-dynamic", None)
+            .await
+            .context("failed to construct client")?;
         let clt = Arc::new(clt);
         assert_dynamic(Arc::clone(&clt), clt).await
     })

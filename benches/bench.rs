@@ -435,7 +435,9 @@ fn bench_wasm_ping_nats_wrpc(
         .block_on(WasmHandler::new(wasm))
         .context("failed to construct a Wasm handler")?;
     with_nats(&rt, |nats| {
-        let wrpc = wrpc_transport_nats::Client::new(nats, "", None);
+        let wrpc = rt
+            .block_on(wrpc_transport_nats::Client::new(nats, "", None))
+            .context("failed to construct client")?;
 
         let invocations = rt
             .block_on(ping_bindings_wrpc::serve(&wrpc, handler))
@@ -485,7 +487,9 @@ fn bench_wasm_greet_nats_wrpc(
         .block_on(WasmHandler::new(wasm))
         .context("failed to construct a Wasm handler")?;
     with_nats(&rt, |nats| {
-        let wrpc = wrpc_transport_nats::Client::new(nats, "", None);
+        let wrpc = rt
+            .block_on(wrpc_transport_nats::Client::new(nats, "", None))
+            .context("failed to construct client")?;
 
         let invocations = rt
             .block_on(greet_bindings_wrpc::serve(&wrpc, handler))
@@ -529,7 +533,9 @@ fn bench_wasm_greet_nats_wrpc(
 fn bench_nats_wrpc_ping(g: &mut BenchmarkGroup<impl Measurement>) -> anyhow::Result<()> {
     let rt = tokio::runtime::Runtime::new().context("failed to build Tokio runtime")?;
     with_nats(&rt, |nats| {
-        let wrpc = wrpc_transport_nats::Client::new(nats, "", None);
+        let wrpc = rt
+            .block_on(wrpc_transport_nats::Client::new(nats, "", None))
+            .context("failed to construct client")?;
 
         let invocations = rt
             .block_on(ping_bindings_wrpc::serve(&wrpc, NativeHandler))
@@ -573,7 +579,9 @@ fn bench_nats_wrpc_ping(g: &mut BenchmarkGroup<impl Measurement>) -> anyhow::Res
 fn bench_nats_wrpc_greet(g: &mut BenchmarkGroup<impl Measurement>) -> anyhow::Result<()> {
     let rt = tokio::runtime::Runtime::new().context("failed to build Tokio runtime")?;
     with_nats(&rt, |nats| {
-        let wrpc = wrpc_transport_nats::Client::new(nats, "", None);
+        let wrpc = rt
+            .block_on(wrpc_transport_nats::Client::new(nats, "", None))
+            .context("failed to construct client")?;
 
         let invocations = rt
             .block_on(greet_bindings_wrpc::serve(&wrpc, NativeHandler))

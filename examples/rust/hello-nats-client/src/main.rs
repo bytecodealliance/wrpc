@@ -36,7 +36,9 @@ async fn main() -> anyhow::Result<()> {
     .context("failed to connect to NATS.io server")?;
 
     for prefix in prefixes {
-        let wrpc = wrpc_transport_nats::Client::new(nats.clone(), prefix.clone(), None);
+        let wrpc = wrpc_transport_nats::Client::new(nats.clone(), prefix.clone(), None)
+            .await
+            .context("failed to construct transport client")?;
         let hello = bindings::wrpc_examples::hello::handler::hello(&wrpc, None)
             .await
             .context("failed to invoke `wrpc-examples.hello/handler.hello`")?;

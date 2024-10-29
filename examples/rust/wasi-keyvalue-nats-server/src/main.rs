@@ -33,12 +33,12 @@ async fn main() -> anyhow::Result<()> {
     .await
     .context("failed to connect to NATS.io server")?;
 
-    let invocations = wrpc_wasi_keyvalue::serve(
-        &wrpc_transport_nats::Client::new(nats, prefix, None),
-        wrpc_wasi_keyvalue_mem::Handler::default(),
-    )
-    .await
-    .context("failed to serve `wasi:keyvalue`")?;
+    let wrpc = wrpc_transport_nats::Client::new(nats, prefix, None)
+        .await
+        .context("failed to construct transport client")?;
+    let invocations = wrpc_wasi_keyvalue::serve(&wrpc, wrpc_wasi_keyvalue_mem::Handler::default())
+        .await
+        .context("failed to serve `wasi:keyvalue`")?;
     // NOTE: This will conflate all invocation streams into a single stream via `futures::stream::SelectAll`,
     // to customize this, iterate over the returned `invocations` and set up custom handling per export
     let mut invocations = select_all(invocations.into_iter().map(

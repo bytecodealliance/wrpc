@@ -62,12 +62,12 @@ async fn main() -> anyhow::Result<()> {
     .await
     .context("failed to connect to NATS.io server")?;
 
-    let invocations = bindings::serve(
-        &wrpc_transport_nats::Client::new(nats, prefix, None),
-        Server,
-    )
-    .await
-    .context("failed to serve `wrpc-examples:streams/handler.echo`")?;
+    let wrpc = wrpc_transport_nats::Client::new(nats, prefix, None)
+        .await
+        .context("failed to construct transport client")?;
+    let invocations = bindings::serve(&wrpc, Server)
+        .await
+        .context("failed to serve `wrpc-examples:streams/handler.echo`")?;
     // NOTE: This will conflate all invocation streams into a single stream via `futures::stream::SelectAll`,
     // to customize this, iterate over the returned `invocations` and set up custom handling per export
     let mut invocations = select_all(invocations.into_iter().map(

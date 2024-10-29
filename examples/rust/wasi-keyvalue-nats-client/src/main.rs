@@ -30,7 +30,9 @@ async fn main() -> anyhow::Result<()> {
     .context("failed to connect to NATS.io server")?;
 
     for prefix in prefixes {
-        let wrpc = wrpc_transport_nats::Client::new(nats.clone(), prefix.clone(), None);
+        let wrpc = wrpc_transport_nats::Client::new(nats.clone(), prefix.clone(), None)
+            .await
+            .context("failed to construct transport client")?;
         let bucket = store::open(&wrpc, None, "example")
             .await
             .context("failed to invoke `open`")?
