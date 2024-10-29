@@ -204,8 +204,8 @@ fn bench_wasm_ping_direct(
             handler
                 .ping(None::<async_nats::HeaderMap>)
                 .await
-                .expect("failed to call handler")
-        })
+                .expect("failed to call handler");
+        });
     });
     Ok(())
 }
@@ -225,7 +225,7 @@ fn bench_wasm_greet_direct(
                 .await
                 .expect("failed to call handler");
             assert_eq!(greeting, "Hello, test");
-        })
+        });
     });
     Ok(())
 }
@@ -272,7 +272,7 @@ where
                     .expect("failed to send message");
                 assert!(status.is_none());
                 assert_eq!(payload, expect);
-            })
+            });
         });
         stop_tx.send(()).expect("failed to stop server");
         rt.block_on(async { srv.await.context("server task panicked")? })?;
@@ -470,7 +470,7 @@ fn bench_wasm_ping_nats_wrpc(
                 ping_bindings_wrpc::wrpc_bench::bench::ping::ping(&wrpc, None)
                     .await
                     .expect("failed to call `ping`");
-            })
+            });
         });
         stop_tx.send(()).expect("failed to stop server");
         rt.block_on(async { srv.await.context("server task panicked")? })?;
@@ -522,7 +522,7 @@ fn bench_wasm_greet_nats_wrpc(
                 greet_bindings_wrpc::wrpc_bench::bench::greet::greet(&wrpc, None, "test")
                     .await
                     .expect("failed to call `greet`");
-            })
+            });
         });
         stop_tx.send(()).expect("failed to stop server");
         rt.block_on(async { srv.await.context("server task panicked")? })?;
@@ -568,7 +568,7 @@ fn bench_nats_wrpc_ping(g: &mut BenchmarkGroup<impl Measurement>) -> anyhow::Res
                 ping_bindings_wrpc::wrpc_bench::bench::ping::ping(&wrpc, None)
                     .await
                     .expect("failed to call `ping`");
-            })
+            });
         });
         stop_tx.send(()).expect("failed to stop server");
         rt.block_on(async { srv.await.context("server task panicked")? })?;
@@ -615,7 +615,7 @@ fn bench_nats_wrpc_greet(g: &mut BenchmarkGroup<impl Measurement>) -> anyhow::Re
                         .await
                         .expect("failed to call `greet`");
                 assert_eq!(greeting, "Hello, test");
-            })
+            });
         });
         stop_tx.send(()).expect("failed to stop server");
         rt.block_on(async { srv.await.context("server task panicked")? })?;
