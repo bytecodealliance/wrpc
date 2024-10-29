@@ -95,7 +95,7 @@ where
     )
     .context("failed to initialize Wasmtime engine")?;
 
-    let wasm = if workload.starts_with('.') {
+    let wasm = if workload.starts_with('.') || workload.starts_with('/') {
         fs::read(&workload)
             .await
             .with_context(|| format!("failed to read relative path to workload `{workload}`"))
