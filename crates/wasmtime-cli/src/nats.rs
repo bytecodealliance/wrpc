@@ -68,14 +68,11 @@ pub async fn handle_run(
 ) -> anyhow::Result<()> {
     let nats = wrpc_cli::nats::connect(nats)
         .await
-        .context("failed to connect to NATS")?;
-    crate::handle_run(
-        wrpc_transport_nats::Client::new(nats, import, None),
-        None,
-        *timeout,
-        workload,
-    )
-    .await
+        .context("failed to connect to NATS.io")?;
+    let nats = wrpc_transport_nats::Client::new(nats, import, None)
+        .await
+        .context("failed to construct NATS.io transport client")?;
+    crate::handle_run(nats, None, *timeout, workload).await
 }
 
 #[instrument(level = "trace", ret(level = "trace"))]
@@ -93,14 +90,13 @@ pub async fn handle_serve(
         .await
         .context("failed to connect to NATS")?;
     let nats = Arc::new(nats);
-    crate::handle_serve(
-        wrpc_transport_nats::Client::new(Arc::clone(&nats), export, group.map(Arc::from)),
-        wrpc_transport_nats::Client::new(nats, import, None),
-        None,
-        *timeout,
-        workload,
-    )
-    .await
+    let exports = wrpc_transport_nats::Client::new(Arc::clone(&nats), export, group.map(Arc::from))
+        .await
+        .context("failed to construct NATS.io transport export client")?;
+    let imports = wrpc_transport_nats::Client::new(nats, import, None)
+        .await
+        .context("failed to construct NATS.io transport import client")?;
+    crate::handle_serve(exports, imports, None, *timeout, workload).await
 }
 
 #[instrument(level = "trace", ret(level = "trace"))]

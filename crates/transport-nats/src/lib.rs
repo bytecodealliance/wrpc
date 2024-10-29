@@ -18,25 +18,50 @@ use async_nats_0_36 as async_nats;
 
 use core::future::Future;
 use core::iter::zip;
+use core::ops::{Deref, DerefMut};
 use core::pin::{pin, Pin};
 use core::task::{ready, Context, Poll};
 use core::{mem, str};
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::{anyhow, ensure, Context as _};
-use async_nats::{HeaderMap, Message, PublishMessage, ServerInfo, StatusCode, Subject, Subscriber};
+use async_nats::{HeaderMap, PublishMessage, ServerInfo, StatusCode, Subject};
 use bytes::{Buf as _, Bytes};
-use futures::future::try_join_all;
 use futures::sink::SinkExt as _;
 use futures::{Stream, StreamExt};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
-use tokio::sync::oneshot;
-use tokio::try_join;
+use tokio::select;
+use tokio::sync::{mpsc, oneshot};
+use tokio::task::JoinSet;
+use tokio_stream::wrappers::ReceiverStream;
 use tracing::{debug, error, instrument, trace, warn};
 use wrpc_transport::Index as _;
 
 pub const PROTOCOL: &str = "wrpc.0.0.1";
+
+fn spawn_async(fut: impl Future<Output = ()> + Send + 'static) {
+    match tokio::runtime::Handle::try_current() {
+        Ok(rt) => {
+            rt.spawn(fut);
+        }
+        Err(_) => match tokio::runtime::Runtime::new() {
+            Ok(rt) => {
+                rt.spawn(fut);
+            }
+            Err(err) => error!(?err, "failed to create a new Tokio runtime"),
+        },
+    }
+}
+
+fn new_inbox(inbox: &str) -> String {
+    let id = nuid::next();
+    let mut s = String::with_capacity(inbox.len().saturating_add(id.len()));
+    s.push_str(inbox);
+    s.push_str(&id);
+    s
+}
 
 #[must_use]
 #[inline]
@@ -109,28 +134,148 @@ fn corrupted_memory_error() -> std::io::Error {
     std::io::Error::new(std::io::ErrorKind::Other, "corrupted memory state")
 }
 
+/// Transport subscriber
+pub struct Subscriber {
+    rx: ReceiverStream<Message>,
+    subject: Subject,
+    commands: mpsc::Sender<Command>,
+}
+
+impl Drop for Subscriber {
+    fn drop(&mut self) {
+        let commands = self.commands.clone();
+        let subject = mem::replace(&mut self.subject, Subject::from_static(""));
+        spawn_async(async move {
+            trace!(?subject, "shutting down subscriber");
+            if let Err(err) = commands.send(Command::Unsubscribe(subject)).await {
+                warn!(?err, "failed to shutdown subscriber");
+            }
+        });
+    }
+}
+
+impl Deref for Subscriber {
+    type Target = ReceiverStream<Message>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.rx
+    }
+}
+
+impl DerefMut for Subscriber {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.rx
+    }
+}
+
+enum Command {
+    Subscribe(Subject, mpsc::Sender<Message>),
+    Unsubscribe(Subject),
+    Batch(Box<[Command]>),
+}
+
+/// Subset of [`async_nats::Message`](async_nats::Message) used by this crate
+pub struct Message {
+    reply: Option<Subject>,
+    payload: Bytes,
+    status: Option<async_nats::StatusCode>,
+    description: Option<String>,
+}
+
 #[derive(Clone, Debug)]
 pub struct Client {
     nats: Arc<async_nats::Client>,
     prefix: Arc<str>,
+    inbox: Arc<str>,
     queue_group: Option<Arc<str>>,
+    commands: mpsc::Sender<Command>,
+    _tasks: Arc<JoinSet<()>>,
 }
 
 impl Client {
-    pub fn new(
+    pub async fn new(
         nats: impl Into<Arc<async_nats::Client>>,
         prefix: impl Into<Arc<str>>,
         queue_group: Option<Arc<str>>,
-    ) -> Self {
-        Self {
-            nats: nats.into(),
+    ) -> anyhow::Result<Self> {
+        let nats = nats.into();
+        let mut inbox = nats.new_inbox();
+        inbox.push('.');
+        let mut subject = String::with_capacity(inbox.len().saturating_add(1));
+        subject.push_str(&inbox);
+        subject.push('>');
+        let mut sub = nats
+            .subscribe(Subject::from(subject))
+            .await
+            .context("failed to subscribe on an inbox subject")?;
+
+        let mut tasks = JoinSet::new();
+        let (cmd_tx, mut cmd_rx) = mpsc::channel(8192);
+        tasks.spawn({
+            async move {
+                fn handle_command(subs: &mut HashMap<String, mpsc::Sender<Message>>, cmd: Command) {
+                    match cmd {
+                        Command::Subscribe(s, tx) => {
+                            subs.insert(s.into_string(), tx);
+                        }
+                        Command::Unsubscribe(s) => {
+                            subs.remove(s.as_str());
+                        }
+                        Command::Batch(cmds) => {
+                            for cmd in cmds {
+                                handle_command(subs, cmd);
+                            }
+                        }
+                    }
+                }
+                async fn handle_message(
+                    subs: &mut HashMap<String, mpsc::Sender<Message>>,
+                    async_nats::Message {
+                        subject,
+                        reply,
+                        payload,
+                        status,
+                        description,
+                        ..
+                    }: async_nats::Message,
+                ) {
+                    let Some(sub) = subs.get_mut(subject.as_str()) else {
+                        debug!(?subject, "drop message with no subscriber");
+                        return;
+                    };
+                    let Ok(sub) = sub.reserve().await else {
+                        debug!(?subject, "drop message with closed subscriber");
+                        subs.remove(subject.as_str());
+                        return;
+                    };
+                    sub.send(Message {
+                        reply,
+                        payload,
+                        status,
+                        description,
+                    });
+                }
+
+                let mut subs = HashMap::new();
+                loop {
+                    select! {
+                        Some(msg) = sub.next() => handle_message(&mut subs, msg).await,
+                        Some(cmd) = cmd_rx.recv() => handle_command(&mut subs, cmd),
+                    }
+                }
+            }
+        });
+        Ok(Self {
+            nats,
             prefix: prefix.into(),
+            inbox: inbox.into(),
             queue_group,
-        }
+            commands: cmd_tx,
+            _tasks: Arc::new(tasks),
+        })
     }
 }
 
-#[derive(Debug)]
 pub struct ByteSubscription(Subscriber);
 
 impl Stream for ByteSubscription {
@@ -147,21 +292,21 @@ impl Stream for ByteSubscription {
 }
 
 #[derive(Default)]
-enum SubscriberTree {
+enum IndexTrie {
     #[default]
     Empty,
     Leaf(Subscriber),
     IndexNode {
         subscriber: Option<Subscriber>,
-        nested: Vec<Option<SubscriberTree>>,
+        nested: Vec<Option<IndexTrie>>,
     },
     WildcardNode {
         subscriber: Option<Subscriber>,
-        nested: Option<Box<SubscriberTree>>,
+        nested: Option<Box<IndexTrie>>,
     },
 }
 
-impl<'a> From<(&'a [Option<usize>], Subscriber)> for SubscriberTree {
+impl<'a> From<(&'a [Option<usize>], Subscriber)> for IndexTrie {
     fn from((path, sub): (&'a [Option<usize>], Subscriber)) -> Self {
         match path {
             [] => Self::Leaf(sub),
@@ -183,7 +328,7 @@ impl<'a> From<(&'a [Option<usize>], Subscriber)> for SubscriberTree {
     }
 }
 
-impl<P: AsRef<[Option<usize>]>> FromIterator<(P, Subscriber)> for SubscriberTree {
+impl<P: AsRef<[Option<usize>]>> FromIterator<(P, Subscriber)> for IndexTrie {
     fn from_iter<T: IntoIterator<Item = (P, Subscriber)>>(iter: T) -> Self {
         let mut root = Self::Empty;
         for (path, sub) in iter {
@@ -195,50 +340,48 @@ impl<P: AsRef<[Option<usize>]>> FromIterator<(P, Subscriber)> for SubscriberTree
     }
 }
 
-impl SubscriberTree {
+impl IndexTrie {
     #[inline]
     fn is_empty(&self) -> bool {
-        matches!(self, SubscriberTree::Empty)
+        matches!(self, IndexTrie::Empty)
     }
 
     #[instrument(level = "trace", skip_all)]
     fn take(&mut self, path: &[usize]) -> Option<Subscriber> {
         let Some((i, path)) = path.split_first() else {
             return match mem::take(self) {
-                SubscriberTree::Empty => None,
-                SubscriberTree::Leaf(subscriber) => Some(subscriber),
-                SubscriberTree::IndexNode { subscriber, nested } => {
-                    if !nested.is_empty() {
-                        *self = SubscriberTree::IndexNode {
-                            subscriber: None,
-                            nested,
-                        }
-                    }
-                    subscriber
-                }
-                SubscriberTree::WildcardNode { .. } => None,
                 // TODO: Demux the subscription
-                //SubscriberTree::WildcardNode { subscriber, nested } => {
+                //IndexTrie::WildcardNode { subscriber, nested } => {
                 //    if let Some(nested) = nested {
-                //        *self = SubscriberTree::WildcardNode {
+                //        *self = IndexTrie::WildcardNode {
                 //            subscriber: None,
                 //            nested: Some(nested),
                 //        }
                 //    }
                 //    subscriber
                 //}
+                IndexTrie::Empty | IndexTrie::WildcardNode { .. } => None,
+                IndexTrie::Leaf(subscriber) => Some(subscriber),
+                IndexTrie::IndexNode { subscriber, nested } => {
+                    if !nested.is_empty() {
+                        *self = IndexTrie::IndexNode {
+                            subscriber: None,
+                            nested,
+                        }
+                    }
+                    subscriber
+                }
             };
         };
         match self {
-            Self::Empty | Self::Leaf(..) => None,
-            Self::IndexNode { ref mut nested, .. } => nested
-                .get_mut(*i)
-                .and_then(|nested| nested.as_mut().and_then(|nested| nested.take(path))),
-            Self::WildcardNode { .. } => None,
             // TODO: Demux the subscription
             //Self::WildcardNode { ref mut nested, .. } => {
             //    nested.as_mut().and_then(|nested| nested.take(path))
             //}
+            Self::Empty | Self::Leaf(..) | Self::WildcardNode { .. } => None,
+            Self::IndexNode { ref mut nested, .. } => nested
+                .get_mut(*i)
+                .and_then(|nested| nested.as_mut().and_then(|nested| nested.take(path))),
         }
     }
 
@@ -323,7 +466,7 @@ impl SubscriberTree {
 pub struct Reader {
     buffer: Bytes,
     incoming: Option<Subscriber>,
-    nested: Arc<std::sync::Mutex<SubscriberTree>>,
+    nested: Arc<std::sync::Mutex<IndexTrie>>,
     path: Box<[usize]>,
 }
 
@@ -498,28 +641,17 @@ impl Drop for SubjectWriter {
         if !self.shutdown {
             let nats = self.nats.clone();
             let subject = mem::replace(&mut self.tx, Subject::from_static(""));
-            let fut = async move {
+            spawn_async(async move {
                 trace!("writing stream shutdown message");
                 if let Err(err) = nats.publish(subject, Bytes::default()).await {
                     warn!(?err, "failed to publish stream shutdown message");
                 }
-            };
-            match tokio::runtime::Handle::try_current() {
-                Ok(rt) => {
-                    rt.spawn(fut);
-                }
-                Err(_) => match tokio::runtime::Runtime::new() {
-                    Ok(rt) => {
-                        rt.spawn(fut);
-                    }
-                    Err(err) => error!(?err, "failed to create a new Tokio runtime"),
-                },
-            }
+            });
         }
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub enum RootParamWriter {
     #[default]
     Corrupted,
@@ -895,44 +1027,38 @@ impl wrpc_transport::Invoke for Client {
         mut params: Bytes,
         paths: impl AsRef<[P]> + Send,
     ) -> anyhow::Result<(Self::Outgoing, Self::Incoming)> {
-        let rx = Subject::from(self.nats.new_inbox());
-        let result_rx = Subject::from(result_subject(&rx));
         let paths = paths.as_ref();
-        let (result_rx, handshake_rx, nested) = try_join!(
-            async {
-                trace!(
-                    subject = result_rx.as_str(),
-                    "subscribing on result subject"
-                );
-                self.nats
-                    .subscribe(result_rx.clone())
-                    .await
-                    .context("failed to subscribe on result subject")
-            },
-            async {
-                trace!(subject = rx.as_str(), "subscribing on handshake subject");
-                self.nats
-                    .subscribe(rx.clone())
-                    .await
-                    .context("failed to subscribe on handshake subject")
-            },
-            try_join_all(paths.iter().map(|path| async {
-                let rx = Subject::from(subscribe_path(&result_rx, path.as_ref()));
-                trace!(
-                    subject = rx.as_str(),
-                    "subscribing on nested result subject"
-                );
-                self.nats
-                    .subscribe(rx)
-                    .await
-                    .context("failed to subscribe on nested result subject")
-            }))
-        )?;
-        let nested: SubscriberTree = zip(paths.iter(), nested).collect();
+        let mut cmds = Vec::with_capacity(paths.len().saturating_add(2));
+
+        let rx = Subject::from(new_inbox(&self.inbox));
+        let (handshake_tx, handshake_rx) = mpsc::channel(1);
+        cmds.push(Command::Subscribe(rx.clone(), handshake_tx));
+
+        let result = Subject::from(result_subject(&rx));
+        let (result_tx, result_rx) = mpsc::channel(16);
+        cmds.push(Command::Subscribe(result.clone(), result_tx));
+
+        let nested = paths.iter().map(|path| {
+            let (tx, rx) = mpsc::channel(16);
+            let subject = Subject::from(subscribe_path(&result, path.as_ref()));
+            cmds.push(Command::Subscribe(subject.clone(), tx));
+            Subscriber {
+                rx: ReceiverStream::new(rx),
+                commands: self.commands.clone(),
+                subject,
+            }
+        });
+        let nested: IndexTrie = zip(paths.iter(), nested).collect();
         ensure!(
             paths.is_empty() == nested.is_empty(),
             "failed to construct subscription tree"
         );
+
+        self.commands
+            .send(Command::Batch(cmds.into_boxed_slice()))
+            .await
+            .context("failed to subscribe")?;
+
         let ServerInfo {
             mut max_payload, ..
         } = self.nats.server_info();
@@ -956,8 +1082,8 @@ impl wrpc_transport::Invoke for Client {
             trace!("publishing handshake");
             self.nats
                 .publish_with_reply_and_headers(
-                    param_tx.clone(),
-                    rx,
+                    param_tx,
+                    rx.clone(),
                     headers,
                     params.split_to(max_payload.min(params.len())),
                 )
@@ -966,27 +1092,96 @@ impl wrpc_transport::Invoke for Client {
             trace!("publishing handshake");
             self.nats
                 .publish_with_reply(
-                    param_tx.clone(),
-                    rx,
+                    param_tx,
+                    rx.clone(),
                     params.split_to(max_payload.min(params.len())),
                 )
                 .await
         }
-        .context("failed to send handshake")?;
+        .context("failed to publish handshake")?;
         Ok((
             ParamWriter::Root(RootParamWriter::new(
                 (*self.nats).clone(),
-                handshake_rx,
+                Subscriber {
+                    rx: ReceiverStream::new(handshake_rx),
+                    commands: self.commands.clone(),
+                    subject: rx,
+                },
                 params,
             )),
             Reader {
                 buffer: Bytes::default(),
-                incoming: Some(result_rx),
+                incoming: Some(Subscriber {
+                    rx: ReceiverStream::new(result_rx),
+                    commands: self.commands.clone(),
+                    subject: result,
+                }),
                 nested: Arc::new(std::sync::Mutex::new(nested)),
                 path: Box::default(),
             },
         ))
     }
+}
+
+async fn handle_message(
+    nats: &async_nats::Client,
+    rx: Subject,
+    commands: mpsc::Sender<Command>,
+    async_nats::Message {
+        reply: tx,
+        payload,
+        headers,
+        ..
+    }: async_nats::Message,
+    paths: &[Box<[Option<usize>]>],
+) -> anyhow::Result<(Option<HeaderMap>, SubjectWriter, Reader)> {
+    let tx = tx.context("peer did not specify a reply subject")?;
+
+    let mut cmds = Vec::with_capacity(paths.len().saturating_add(1));
+
+    let param = Subject::from(param_subject(&rx));
+    let (param_tx, param_rx) = mpsc::channel(16);
+    cmds.push(Command::Subscribe(param.clone(), param_tx));
+
+    let nested = paths.iter().map(|path| {
+        let (tx, rx) = mpsc::channel(16);
+        let subject = Subject::from(subscribe_path(&param, path.as_ref()));
+        cmds.push(Command::Subscribe(subject.clone(), tx));
+        Subscriber {
+            rx: ReceiverStream::new(rx),
+            commands: commands.clone(),
+            subject,
+        }
+    });
+    let nested: IndexTrie = zip(paths.iter(), nested).collect();
+    ensure!(
+        paths.is_empty() == nested.is_empty(),
+        "failed to construct subscription tree"
+    );
+
+    commands
+        .send(Command::Batch(cmds.into_boxed_slice()))
+        .await
+        .context("failed to subscribe")?;
+
+    trace!("publishing handshake response");
+    nats.publish_with_reply(tx.clone(), rx, Bytes::default())
+        .await
+        .context("failed to publish handshake accept")?;
+    Ok((
+        headers,
+        SubjectWriter::new(nats.clone(), Subject::from(result_subject(&tx))),
+        Reader {
+            buffer: payload,
+            incoming: Some(Subscriber {
+                rx: ReceiverStream::new(param_rx),
+                commands,
+                subject: param,
+            }),
+            nested: Arc::new(std::sync::Mutex::new(nested)),
+            path: Box::default(),
+        },
+    ))
 }
 
 impl wrpc_transport::Serve for Client {
@@ -1013,63 +1208,16 @@ impl wrpc_transport::Serve for Client {
             debug!(subject, "subscribing on invocation subject");
             self.nats.subscribe(subject).await?
         };
-        let paths = paths.into();
         let nats = Arc::clone(&self.nats);
-        Ok(sub.then(
-            // NOTE: instrumenting this function causes a stack overflow
-            move |Message {
-                      reply: tx,
-                      payload,
-                      headers,
-                      ..
-                  }: Message| {
-                {
-                    let nats = Arc::clone(&nats);
-                    let paths = Arc::clone(&paths);
-                    async move {
-                        let tx = tx.context("peer did not specify a reply subject")?;
-                        let rx = nats.new_inbox();
-                        let param_rx = Subject::from(param_subject(&rx));
-                        let (param_rx, nested) = try_join!(
-                            async {
-                                trace!(
-                                    subject = param_rx.as_str(),
-                                    "subscribing on parameter subject"
-                                );
-                                nats.subscribe(param_rx.clone())
-                                    .await
-                                    .context("failed to subscribe on parameter subject")
-                            },
-                            try_join_all(paths.iter().map(|path| async {
-                                let subject = subscribe_path(&param_rx, path.as_ref());
-                                trace!(?subject, "subscribing on nested parameter subject");
-                                nats.subscribe(Subject::from(subject))
-                                    .await
-                                    .context("failed to subscribe on nested parameter subject")
-                            }))
-                        )?;
-                        let nested: SubscriberTree = zip(paths.iter(), nested).collect();
-                        ensure!(
-                            paths.is_empty() == nested.is_empty(),
-                            "failed to construct subscription tree"
-                        );
-                        trace!("publishing handshake response");
-                        nats.publish_with_reply(tx.clone(), rx, Bytes::default())
-                            .await
-                            .context("failed to publish handshake accept")?;
-                        Ok((
-                            headers,
-                            SubjectWriter::new((*nats).clone(), Subject::from(result_subject(&tx))),
-                            Reader {
-                                buffer: payload,
-                                incoming: Some(param_rx),
-                                nested: Arc::new(std::sync::Mutex::new(nested)),
-                                path: Box::default(),
-                            },
-                        ))
-                    }
-                }
-            },
-        ))
+        let paths = paths.into();
+        let commands = self.commands.clone();
+        let inbox = Arc::clone(&self.inbox);
+        Ok(sub.then(move |msg| {
+            let nats = Arc::clone(&nats);
+            let paths = Arc::clone(&paths);
+            let commands = commands.clone();
+            let rx = Subject::from(new_inbox(&inbox));
+            async move { handle_message(&nats, rx, commands, msg, &paths).await }
+        }))
     }
 }
