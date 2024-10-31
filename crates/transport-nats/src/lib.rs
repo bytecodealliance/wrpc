@@ -139,17 +139,20 @@ pub struct Subscriber {
     rx: ReceiverStream<Message>,
     subject: Subject,
     commands: mpsc::Sender<Command>,
+    tasks: Arc<JoinSet<()>>,
 }
 
 impl Drop for Subscriber {
     fn drop(&mut self) {
         let commands = self.commands.clone();
         let subject = mem::replace(&mut self.subject, Subject::from_static(""));
+        let tasks = Arc::clone(&self.tasks);
         spawn_async(async move {
             trace!(?subject, "shutting down subscriber");
             if let Err(err) = commands.send(Command::Unsubscribe(subject)).await {
                 warn!(?err, "failed to shutdown subscriber");
             }
+            drop(tasks);
         });
     }
 }
@@ -189,7 +192,7 @@ pub struct Client {
     inbox: Arc<str>,
     queue_group: Option<Arc<str>>,
     commands: mpsc::Sender<Command>,
-    _tasks: Arc<JoinSet<()>>,
+    tasks: Arc<JoinSet<()>>,
 }
 
 impl Client {
@@ -271,7 +274,7 @@ impl Client {
             inbox: inbox.into(),
             queue_group,
             commands: cmd_tx,
-            _tasks: Arc::new(tasks),
+            tasks: Arc::new(tasks),
         })
     }
 }
@@ -553,14 +556,16 @@ pub struct SubjectWriter {
     nats: async_nats::Client,
     tx: Subject,
     shutdown: bool,
+    tasks: Arc<JoinSet<()>>,
 }
 
 impl SubjectWriter {
-    fn new(nats: async_nats::Client, tx: Subject) -> Self {
+    fn new(nats: async_nats::Client, tx: Subject, tasks: Arc<JoinSet<()>>) -> Self {
         Self {
             nats,
             tx,
             shutdown: false,
+            tasks,
         }
     }
 }
@@ -574,6 +579,7 @@ impl wrpc_transport::Index<Self> for SubjectWriter {
             nats: self.nats.clone(),
             tx,
             shutdown: false,
+            tasks: Arc::clone(&self.tasks),
         })
     }
 }
@@ -641,11 +647,13 @@ impl Drop for SubjectWriter {
         if !self.shutdown {
             let nats = self.nats.clone();
             let subject = mem::replace(&mut self.tx, Subject::from_static(""));
+            let tasks = Arc::clone(&self.tasks);
             spawn_async(async move {
                 trace!("writing stream shutdown message");
                 if let Err(err) = nats.publish(subject, Bytes::default()).await {
                     warn!(?err, "failed to publish stream shutdown message");
                 }
+                drop(tasks);
             });
         }
     }
@@ -660,6 +668,7 @@ pub enum RootParamWriter {
         sub: Subscriber,
         indexed: std::sync::Mutex<Vec<(Vec<usize>, oneshot::Sender<SubjectWriter>)>>,
         buffer: Bytes,
+        tasks: Arc<JoinSet<()>>,
     },
     Draining {
         tx: SubjectWriter,
@@ -669,12 +678,18 @@ pub enum RootParamWriter {
 }
 
 impl RootParamWriter {
-    fn new(nats: async_nats::Client, sub: Subscriber, buffer: Bytes) -> Self {
+    fn new(
+        nats: async_nats::Client,
+        sub: Subscriber,
+        buffer: Bytes,
+        tasks: Arc<JoinSet<()>>,
+    ) -> Self {
         Self::Handshaking {
             nats,
             sub,
             indexed: std::sync::Mutex::default(),
             buffer,
+            tasks,
         }
     }
 }
@@ -718,12 +733,13 @@ impl RootParamWriter {
                             nats,
                             indexed,
                             buffer,
+                            tasks,
                             ..
                         } = mem::take(&mut *self)
                         else {
                             return Poll::Ready(Err(corrupted_memory_error()));
                         };
-                        let tx = SubjectWriter::new(nats, Subject::from(param_subject(&tx)));
+                        let tx = SubjectWriter::new(nats, Subject::from(param_subject(&tx)), tasks);
                         let indexed = indexed.into_inner().map_err(|err| {
                             std::io::Error::new(std::io::ErrorKind::Other, err.to_string())
                         })?;
@@ -1046,6 +1062,7 @@ impl wrpc_transport::Invoke for Client {
                 rx: ReceiverStream::new(rx),
                 commands: self.commands.clone(),
                 subject,
+                tasks: Arc::clone(&self.tasks),
             }
         });
         let nested: IndexTrie = zip(paths.iter(), nested).collect();
@@ -1106,8 +1123,10 @@ impl wrpc_transport::Invoke for Client {
                     rx: ReceiverStream::new(handshake_rx),
                     commands: self.commands.clone(),
                     subject: rx,
+                    tasks: Arc::clone(&self.tasks),
                 },
                 params,
+                Arc::clone(&self.tasks),
             )),
             Reader {
                 buffer: Bytes::default(),
@@ -1115,6 +1134,7 @@ impl wrpc_transport::Invoke for Client {
                     rx: ReceiverStream::new(result_rx),
                     commands: self.commands.clone(),
                     subject: result,
+                    tasks: Arc::clone(&self.tasks),
                 }),
                 nested: Arc::new(std::sync::Mutex::new(nested)),
                 path: Box::default(),
@@ -1134,6 +1154,7 @@ async fn handle_message(
         ..
     }: async_nats::Message,
     paths: &[Box<[Option<usize>]>],
+    tasks: Arc<JoinSet<()>>,
 ) -> anyhow::Result<(Option<HeaderMap>, SubjectWriter, Reader)> {
     let tx = tx.context("peer did not specify a reply subject")?;
 
@@ -1151,6 +1172,7 @@ async fn handle_message(
             rx: ReceiverStream::new(rx),
             commands: commands.clone(),
             subject,
+            tasks: Arc::clone(&tasks),
         }
     });
     let nested: IndexTrie = zip(paths.iter(), nested).collect();
@@ -1170,13 +1192,18 @@ async fn handle_message(
         .context("failed to publish handshake accept")?;
     Ok((
         headers,
-        SubjectWriter::new(nats.clone(), Subject::from(result_subject(&tx))),
+        SubjectWriter::new(
+            nats.clone(),
+            Subject::from(result_subject(&tx)),
+            Arc::clone(&tasks),
+        ),
         Reader {
             buffer: payload,
             incoming: Some(Subscriber {
                 rx: ReceiverStream::new(param_rx),
                 commands,
                 subject: param,
+                tasks,
             }),
             nested: Arc::new(std::sync::Mutex::new(nested)),
             path: Box::default(),
@@ -1212,12 +1239,14 @@ impl wrpc_transport::Serve for Client {
         let paths = paths.into();
         let commands = self.commands.clone();
         let inbox = Arc::clone(&self.inbox);
+        let tasks = Arc::clone(&self.tasks);
         Ok(sub.then(move |msg| {
+            let tasks = Arc::clone(&tasks);
             let nats = Arc::clone(&nats);
             let paths = Arc::clone(&paths);
             let commands = commands.clone();
             let rx = Subject::from(new_inbox(&inbox));
-            async move { handle_message(&nats, rx, commands, msg, &paths).await }
+            async move { handle_message(&nats, rx, commands, msg, &paths, tasks).await }
         }))
     }
 }
