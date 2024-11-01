@@ -52,6 +52,7 @@ async fn loopback() -> anyhow::Result<()> {
                             .shutdown()
                             .await
                             .context("failed to shutdown stream")?;
+                        drop(outgoing);
                         info!("wrote `bar`");
                         anyhow::Ok(())
                     },
@@ -65,6 +66,7 @@ async fn loopback() -> anyhow::Result<()> {
                             .shutdown()
                             .await
                             .context("failed to shutdown stream")?;
+                        drop(nested_tx);
                         info!("wrote `client->server`");
                         anyhow::Ok(())
                     },
@@ -125,6 +127,7 @@ async fn loopback() -> anyhow::Result<()> {
                             .shutdown()
                             .await
                             .context("failed to shutdown stream")?;
+                        drop(outgoing);
                         info!("wrote `foo`");
                         anyhow::Ok(())
                     },
@@ -138,6 +141,7 @@ async fn loopback() -> anyhow::Result<()> {
                             .shutdown()
                             .await
                             .context("failed to shutdown stream")?;
+                        drop(nested_tx);
                         info!("wrote `server->client`");
                         anyhow::Ok(())
                     },

@@ -149,11 +149,17 @@ where
             params_io.spawn({
                 let index = Arc::clone(&index);
                 async move {
-                    if let Err(err) = ingress(rx, index, params_tx).await {
+                    if let Err(err) = ingress(rx, &index, params_tx).await {
                         error!(?err, "parameter ingress failed");
                     } else {
                         debug!("parameter ingress successfully complete");
                     }
+                    let Ok(mut index) = index.lock() else {
+                        error!("failed to lock index trie");
+                        return;
+                    };
+                    trace!("shutting down index trie");
+                    index.close_tx();
                 }
                 .in_current_span()
             });

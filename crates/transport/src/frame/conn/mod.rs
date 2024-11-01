@@ -29,12 +29,12 @@ pub use client::*;
 pub use server::*;
 
 /// Index trie containing async stream subscriptions
-#[derive(Default)]
+#[derive(Debug, Default)]
 enum IndexTrie {
     #[default]
     Empty,
     Leaf {
-        tx: mpsc::Sender<std::io::Result<Bytes>>,
+        tx: Option<mpsc::Sender<std::io::Result<Bytes>>>,
         rx: Option<mpsc::Receiver<std::io::Result<Bytes>>>,
     },
     IndexNode {
@@ -65,7 +65,7 @@ impl<'a>
         ),
     ) -> Self {
         match path {
-            [] => Self::Leaf { tx, rx },
+            [] => Self::Leaf { tx: Some(tx), rx },
             [None, path @ ..] => Self::WildcardNode {
                 tx: None,
                 rx: None,
@@ -165,7 +165,7 @@ impl IndexTrie {
         let Some((i, path)) = path.split_first() else {
             return match self {
                 Self::Empty => None,
-                Self::Leaf { tx, .. } => Some(tx.clone()),
+                Self::Leaf { tx, .. } => tx.clone(),
                 Self::IndexNode { tx, .. } | Self::WildcardNode { tx, .. } => tx.clone(),
             };
         };
@@ -179,6 +179,33 @@ impl IndexTrie {
               //Self::WildcardNode { ref mut nested, .. } => {
               //    nested.as_mut().and_then(|nested| nested.take(path))
               //}
+        }
+    }
+
+    /// Closes all senders in the trie
+    #[instrument(level = "trace", skip(self), ret(level = "trace"))]
+    fn close_tx(&mut self) {
+        match self {
+            Self::Empty => {}
+            Self::Leaf { tx, .. } => {
+                mem::take(tx);
+            }
+            Self::IndexNode {
+                tx, ref mut nested, ..
+            } => {
+                mem::take(tx);
+                for nested in nested.iter_mut().flatten() {
+                    nested.close_tx();
+                }
+            }
+            Self::WildcardNode {
+                tx, ref mut nested, ..
+            } => {
+                mem::take(tx);
+                if let Some(nested) = nested {
+                    nested.close_tx();
+                }
+            }
         }
     }
 
@@ -208,14 +235,10 @@ impl IndexTrie {
                     let mut nested = Vec::with_capacity(n);
                     nested.resize_with(n, Option::default);
                     nested[*i] = Some(Self::from((path, sender, receiver)));
-                    *self = Self::IndexNode {
-                        tx: Some(tx),
-                        rx,
-                        nested,
-                    };
+                    *self = Self::IndexNode { tx, rx, nested };
                 } else {
                     *self = Self::WildcardNode {
-                        tx: Some(tx),
+                        tx,
                         rx,
                         nested: Some(Box::new(Self::from((path, sender, receiver)))),
                     };
@@ -405,7 +428,7 @@ impl AsyncWrite for Outgoing {
 #[instrument(level = "trace", skip_all, ret(level = "trace"))]
 async fn ingress(
     mut rx: impl AsyncRead + Unpin,
-    index: Arc<std::sync::Mutex<IndexTrie>>,
+    index: &std::sync::Mutex<IndexTrie>,
     param_tx: mpsc::Sender<std::io::Result<Bytes>>,
 ) -> std::io::Result<()> {
     loop {
