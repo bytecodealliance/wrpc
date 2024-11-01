@@ -2049,6 +2049,9 @@ where
                 trace!(?res, "receiver task finished");
                 res??;
             }
+            else => {
+                return Ok(());
+            }
         }
     }
 }
