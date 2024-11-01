@@ -4121,7 +4121,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc-transport"
-version = "0.28.2"
+version = "0.28.3"
 dependencies = [
  "anyhow",
  "bytes",
@@ -4157,21 +4157,16 @@ dependencies = [
 
 [[package]]
 name = "wrpc-transport-quic"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "bytes",
  "futures",
- "pin-project-lite",
  "quinn",
- "rcgen",
- "rustls",
  "test-log",
  "tokio",
- "tokio-stream",
- "tokio-util",
  "tracing",
- "wasm-tokio",
+ "wrpc-test",
  "wrpc-transport",
 ]
 

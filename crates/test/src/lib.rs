@@ -79,8 +79,7 @@ where
 
 #[cfg(feature = "quic")]
 pub async fn with_quic<T, Fut>(
-    names: &[&str],
-    f: impl FnOnce(u16, quinn::Endpoint, quinn::Endpoint) -> Fut,
+    f: impl FnOnce(quinn::Connection, quinn::Connection) -> Fut,
 ) -> anyhow::Result<T>
 where
     Fut: core::future::Future<Output = anyhow::Result<T>>,
@@ -92,27 +91,18 @@ where
     use rcgen::{generate_simple_self_signed, CertifiedKey};
     use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
     use rustls::version::TLS13;
+    use tokio::try_join;
 
     let CertifiedKey {
         cert: srv_crt,
         key_pair: srv_key,
-    } = generate_simple_self_signed(
-        names
-            .iter()
-            .map(|name| format!("{name}.server.wrpc"))
-            .collect::<Vec<_>>(),
-    )
-    .context("failed to generate server certificate")?;
+    } = generate_simple_self_signed(["server.wrpc".to_string()])
+        .context("failed to generate server certificate")?;
     let CertifiedKey {
         cert: clt_crt,
         key_pair: clt_key,
-    } = generate_simple_self_signed(
-        names
-            .iter()
-            .map(|name| format!("{name}.client.wrpc"))
-            .collect::<Vec<_>>(),
-    )
-    .context("failed to generate client certificate")?;
+    } = generate_simple_self_signed(["client.wrpc".to_string()])
+        .context("failed to generate client certificate")?;
     let srv_crt = CertificateDer::from(srv_crt);
 
     let mut ca = rustls::RootCertStore::empty();
@@ -149,7 +139,21 @@ where
         Arc::new(TokioRuntime),
     )
     .context("failed to create server endpoint")?;
-    f(srv_addr.port(), clt_ep, srv_ep)
-        .await
-        .context("closure failed")
+
+    let (clt, srv) = try_join!(
+        async move {
+            let conn = clt_ep
+                .connect(srv_addr, "server.wrpc")
+                .context("failed to connect to server")?;
+            conn.await.context("failed to establish client connection")
+        },
+        async move {
+            let conn = srv_ep
+                .accept()
+                .await
+                .context("failed to accept connection")?;
+            conn.await.context("failed to establish server connection")
+        }
+    )?;
+    f(clt, srv).await.context("closure failed")
 }

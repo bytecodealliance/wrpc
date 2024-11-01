@@ -1077,40 +1077,30 @@ async fn rust_bindgen_quic_sync() -> anyhow::Result<()> {
     use core::net::Ipv6Addr;
     use core::pin::pin;
 
-    wrpc_test::with_quic(
-        &[
-            "*.wrpc-test_integration__bar",
-            "*.wrpc-test_integration__foo",
-            "*.wrpc-test_integration__shared",
-            "*.wrpc-test_integration__test",
-            "*.counter.wrpc-test_integration__shared",
-        ],
-        |port, clt_ep, srv_ep| {
-            async move {
-                let clt = wrpc_transport_quic::Client::new(clt_ep, (Ipv6Addr::LOCALHOST, port));
-                let srv = wrpc_transport_quic::Server::default();
+    wrpc_test::with_quic(|clt, srv| {
+        async move {
+            let clt = wrpc_transport_quic::Client::from(clt);
+            let srv_conn = wrpc_transport_quic::Client::from(srv);
+            let srv = Arc::new(wrpc_transport::frame::Server::default());
 
-                let srv = Arc::new(srv);
-                let mut fut = pin!(async {
-                    let clt = Arc::new(clt);
-                    assert_bindgen_sync(Arc::clone(&clt), Arc::clone(&srv)).await
-                });
-                loop {
-                    select! {
-                        res = &mut fut => {
-                            return res
-                        }
-                        res = srv.accept(&srv_ep) => {
-                            let ok = res.expect("failed to accept connection");
-                            assert!(ok);
-                            continue
-                        }
+            let mut fut = pin!(async {
+                let clt = Arc::new(clt);
+                assert_bindgen_sync(Arc::clone(&clt), Arc::clone(&srv)).await
+            });
+            loop {
+                select! {
+                    res = &mut fut => {
+                        return res
+                    }
+                    res = srv.accept(&srv_conn) => {
+                        res.expect("failed to accept connection");
+                        continue
                     }
                 }
             }
-            .in_current_span()
-        },
-    )
+        }
+        .in_current_span()
+    })
     .await
 }
 
@@ -1121,32 +1111,28 @@ async fn rust_bindgen_quic_async() -> anyhow::Result<()> {
     use core::net::Ipv6Addr;
     use core::pin::pin;
 
-    wrpc_test::with_quic(
-        &["*.wrpc-test_integration__async"],
-        |port, clt_ep, srv_ep| async move {
-            let clt = wrpc_transport_quic::Client::new(clt_ep, (Ipv6Addr::LOCALHOST, port));
-            let srv = wrpc_transport_quic::Server::default();
+    wrpc_test::with_quic(|clt, srv| async move {
+        let clt = wrpc_transport_quic::Client::from(clt);
+        let srv_conn = wrpc_transport_quic::Client::from(srv);
+        let srv = Arc::new(wrpc_transport::frame::Server::default());
 
-            let srv = Arc::new(srv);
-            let mut fut = pin!(async {
-                let clt = Arc::new(clt);
-                assert_bindgen_async(Arc::clone(&clt), Arc::clone(&srv)).await
-            }
-            .in_current_span());
-            loop {
-                select! {
-                    res = &mut fut => {
-                        return res
-                    }
-                    res = srv.accept(&srv_ep) => {
-                        let ok = res.expect("failed to accept connection");
-                        assert!(ok);
-                        continue
-                    }
+        let mut fut = pin!(async {
+            let clt = Arc::new(clt);
+            assert_bindgen_async(Arc::clone(&clt), Arc::clone(&srv)).await
+        }
+        .in_current_span());
+        loop {
+            select! {
+                res = &mut fut => {
+                    return res
+                }
+                res = srv.accept(&srv_conn) => {
+                    res.expect("failed to accept connection");
+                    continue
                 }
             }
-        },
-    )
+        }
+    })
     .await
 }
 
@@ -1160,32 +1146,28 @@ async fn rust_dynamic_quic() -> anyhow::Result<()> {
     use tracing::Span;
 
     let span = Span::current();
-    wrpc_test::with_quic(
-        &["sync.test", "async.test", "reset.test"],
-        |port, clt_ep, srv_ep| {
-            async move {
-                let clt = wrpc_transport_quic::Client::new(clt_ep, (Ipv6Addr::LOCALHOST, port));
-                let srv = wrpc_transport_quic::Server::default();
+    wrpc_test::with_quic(|clt, srv| {
+        async move {
+            let clt = wrpc_transport_quic::Client::from(clt);
+            let srv_conn = wrpc_transport_quic::Client::from(srv);
+            let srv = Arc::new(wrpc_transport::frame::Server::default());
 
-                let srv = Arc::new(srv);
-                let mut fut = pin!(assert_dynamic(Arc::new(clt), Arc::clone(&srv)));
-                loop {
-                    select! {
-                        res = &mut fut => {
-                            return res
-                        }
-                        res = srv.accept(&srv_ep) => {
-                            let ok = res.expect("failed to accept connection");
-                            assert!(ok);
-                            continue
-                        }
+            let mut fut = pin!(assert_dynamic(Arc::new(clt), Arc::clone(&srv)));
+            loop {
+                select! {
+                    res = &mut fut => {
+                        return res
+                    }
+                    res = srv.accept(&srv_conn) => {
+                        res.expect("failed to accept connection");
+                        continue
                     }
                 }
-                Ok(())
             }
-            .instrument(span)
-        },
-    )
+            Ok(())
+        }
+        .instrument(span)
+    })
     .await
 }
 
