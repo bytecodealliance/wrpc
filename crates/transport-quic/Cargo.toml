@@ -1,6 +1,6 @@
 [package]
 name = "wrpc-transport-quic"
-version = "0.3.0"
+version = "0.4.0"
 description = "wRPC QUIC transport"
 
 authors.workspace = true
@@ -12,24 +12,12 @@ repository.workspace = true
 [dependencies]
 anyhow = { workspace = true, features = ["std"] }
 bytes = { workspace = true }
-futures = { workspace = true }
-pin-project-lite = { workspace = true }
-quinn = { workspace = true, features = [
-    "log",
-    "platform-verifier",
-    "ring",
-    "runtime-tokio",
-    "rustls",
-] }
-tokio = { workspace = true, features = ["macros"] }
-tokio-stream = { workspace = true }
-tokio-util = { workspace = true, features = ["codec", "io"] }
-tracing = { workspace = true, features = ["attributes"] }
-wasm-tokio = { workspace = true }
+quinn = { workspace = true, features = ["runtime-tokio"] }
 wrpc-transport = { workspace = true }
 
 [dev-dependencies]
-rcgen = { workspace = true, features = ["crypto", "ring", "zeroize"] }
-rustls = { workspace = true, features = ["logging", "ring"] }
+futures = { workspace = true }
 test-log = { workspace = true, features = ["color", "log", "trace"] }
 tokio = { workspace = true, features = ["rt-multi-thread"] }
+tracing = { workspace = true }
+wrpc-test = { workspace = true, features = ["quic"] }
