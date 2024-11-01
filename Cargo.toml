@@ -151,14 +151,14 @@ wasmparser = { version = "0.219", default-features = false }
 wasmtime = { version = "25", default-features = false }
 wasmtime-cli-flags = { version = "25", default-features = false }
 wasmtime-wasi = { version = "25", default-features = false }
-wit-bindgen = { version = "0.33", default-features = false }
-wit-bindgen-core = { version = "0.33", default-features = false }
+wit-bindgen = { version = "0.34", default-features = false }
+wit-bindgen-core = { version = "0.34", default-features = false }
 wit-bindgen-wrpc = { version = "0.8", default-features = false, path = "./crates/wit-bindgen" }
 wit-bindgen-wrpc-go = { version = "0.10", default-features = false, path = "./crates/wit-bindgen-go" }
 wit-bindgen-wrpc-rust = { version = "0.8", default-features = false, path = "./crates/wit-bindgen-rust" }
 wit-bindgen-wrpc-rust-macro = { version = "0.8", default-features = false, path = "./crates/wit-bindgen-rust-macro" }
-wit-component = { version = "0.218", default-features = false }
-wit-parser = { version = "0.218", default-features = false }
+wit-component = { version = "0.219", default-features = false }
+wit-parser = { version = "0.219", default-features = false }
 wrpc-cli = { version = "0.4", path = "./crates/cli", default-features = false }
 wrpc-introspect = { version = "0.5", default-features = false, path = "./crates/introspect" }
 wrpc-runtime-wasmtime = { version = "0.24.1", path = "./crates/runtime-wasmtime", default-features = false }
