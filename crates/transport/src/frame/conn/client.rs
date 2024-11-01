@@ -47,7 +47,7 @@ where
         .context("failed to initialize connection")?;
 
     let index = Arc::new(std::sync::Mutex::new(paths.as_ref().iter().collect()));
-    let (results_tx, results_rx) = mpsc::channel(1);
+    let (results_tx, results_rx) = mpsc::channel(128);
     let mut results_io = JoinSet::new();
     results_io.spawn({
         let index = Arc::clone(&index);
@@ -61,7 +61,7 @@ where
         .in_current_span()
     });
 
-    let (params_tx, params_rx) = mpsc::channel(1);
+    let (params_tx, params_rx) = mpsc::channel(128);
     tokio::spawn(
         async {
             if let Err(err) = egress(params_rx, tx).await {

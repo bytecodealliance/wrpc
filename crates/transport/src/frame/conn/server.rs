@@ -144,7 +144,7 @@ where
         trace!("received invocation");
         let index = Arc::new(std::sync::Mutex::new(paths.as_ref().iter().collect()));
         async move {
-            let (params_tx, params_rx) = mpsc::channel(1);
+            let (params_tx, params_rx) = mpsc::channel(128);
             let mut params_io = JoinSet::new();
             params_io.spawn({
                 let index = Arc::clone(&index);
@@ -158,7 +158,7 @@ where
                 .in_current_span()
             });
 
-            let (results_tx, results_rx) = mpsc::channel(1);
+            let (results_tx, results_rx) = mpsc::channel(128);
             tokio::spawn(
                 async {
                     if let Err(err) = egress(results_rx, tx).await {
