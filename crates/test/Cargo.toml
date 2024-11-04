@@ -11,7 +11,7 @@ license.workspace = true
 repository.workspace = true
 
 [features]
-default = ["nats", "quic"]
+default = ["nats", "quic", "web-transport"]
 nats = ["dep:async-nats", "async-nats/ring", "wrpc-cli/nats"]
 quic = [
     "dep:quinn",
@@ -28,6 +28,7 @@ quic = [
     "rustls/logging",
     "rustls/ring",
 ]
+web-transport = ["dep:web-transport-quinn", "dep:url", "quic"]
 
 [dependencies]
 anyhow = { workspace = true }
@@ -37,5 +38,7 @@ rcgen = { workspace = true, optional = true }
 rustls = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["net", "process", "rt-multi-thread"] }
 tracing = { workspace = true }
+url = { workspace = true, optional = true }
+web-transport-quinn = { workspace = true, optional = true }
 wrpc-cli = { workspace = true }
 wrpc-transport = { workspace = true }

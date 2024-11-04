@@ -78,8 +78,8 @@ where
 }
 
 #[cfg(feature = "quic")]
-pub async fn with_quic<T, Fut>(
-    f: impl FnOnce(quinn::Connection, quinn::Connection) -> Fut,
+pub async fn with_quic_endpoints<T, Fut>(
+    f: impl FnOnce(std::net::SocketAddr, quinn::Endpoint, quinn::Endpoint) -> Fut,
 ) -> anyhow::Result<T>
 where
     Fut: core::future::Future<Output = anyhow::Result<T>>,
@@ -91,12 +91,20 @@ where
     use rcgen::{generate_simple_self_signed, CertifiedKey};
     use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
     use rustls::version::TLS13;
-    use tokio::try_join;
+
+    let mut clt_ep = quinn::Endpoint::client((Ipv6Addr::LOCALHOST, 0).into())
+        .context("failed to create client endpoint")?;
+
+    let srv_sock = std::net::UdpSocket::bind((Ipv6Addr::LOCALHOST, 0))
+        .context("failed to open a UDP socket")?;
+    let srv_addr = srv_sock
+        .local_addr()
+        .context("failed to query server address")?;
 
     let CertifiedKey {
         cert: srv_crt,
         key_pair: srv_key,
-    } = generate_simple_self_signed(["server.wrpc".to_string()])
+    } = generate_simple_self_signed(["localhost".to_string()])
         .context("failed to generate server certificate")?;
     let CertifiedKey {
         cert: clt_crt,
@@ -123,15 +131,7 @@ where
     )
     .expect("failed to create server config");
 
-    let mut clt_ep = quinn::Endpoint::client((Ipv6Addr::LOCALHOST, 0).into())
-        .context("failed to create client endpoint")?;
     clt_ep.set_default_client_config(ClientConfig::new(Arc::new(clt_cnf)));
-
-    let srv_sock = std::net::UdpSocket::bind((Ipv6Addr::LOCALHOST, 0))
-        .context("failed to open a UDP socket")?;
-    let srv_addr = srv_sock
-        .local_addr()
-        .context("failed to query server address")?;
     let srv_ep = quinn::Endpoint::new(
         EndpointConfig::default(),
         Some(srv_cnf),
@@ -140,20 +140,64 @@ where
     )
     .context("failed to create server endpoint")?;
 
-    let (clt, srv) = try_join!(
-        async move {
-            let conn = clt_ep
-                .connect(srv_addr, "server.wrpc")
-                .context("failed to connect to server")?;
-            conn.await.context("failed to establish client connection")
-        },
-        async move {
-            let conn = srv_ep
-                .accept()
-                .await
-                .context("failed to accept connection")?;
-            conn.await.context("failed to establish server connection")
-        }
-    )?;
-    f(clt, srv).await.context("closure failed")
+    f(srv_addr, clt_ep, srv_ep).await.context("closure failed")
+}
+
+#[cfg(feature = "quic")]
+pub async fn with_quic<T, Fut>(
+    f: impl FnOnce(quinn::Connection, quinn::Connection) -> Fut,
+) -> anyhow::Result<T>
+where
+    Fut: core::future::Future<Output = anyhow::Result<T>>,
+{
+    with_quic_endpoints(|addr, clt, srv| async move {
+        let (clt, srv) = tokio::try_join!(
+            async move {
+                let conn = clt
+                    .connect(addr, "localhost")
+                    .context("failed to connect to server")?;
+                conn.await.context("failed to establish client connection")
+            },
+            async move {
+                let conn = srv.accept().await.context("failed to accept connection")?;
+                conn.await.context("failed to establish server connection")
+            }
+        )?;
+        f(clt, srv).await.context("closure failed")
+    })
+    .await
+}
+
+#[cfg(feature = "web-transport")]
+pub async fn with_web_transport<T, Fut>(
+    f: impl FnOnce(web_transport_quinn::Session, web_transport_quinn::Session) -> Fut,
+) -> anyhow::Result<T>
+where
+    Fut: core::future::Future<Output = anyhow::Result<T>>,
+{
+    with_quic_endpoints(|addr, clt, srv| async move {
+        let url = url::Url::parse(&format!("https://localhost:{}", addr.port()))
+            .context("failed to construct URL")?;
+        let (clt, srv) = tokio::try_join!(
+            async move {
+                web_transport_quinn::connect(&clt, &url)
+                    .await
+                    .context("failed to connect to server")
+            },
+            async move {
+                let conn = srv.accept().await.context("failed to accept connection")?;
+                let conn = conn
+                    .await
+                    .context("failed to establish server connection")?;
+                let req = web_transport_quinn::accept(conn)
+                    .await
+                    .context("failed to accept connection")?;
+                req.ok()
+                    .await
+                    .context("failed to establish server connection")
+            }
+        )?;
+        f(clt, srv).await.context("closure failed")
+    })
+    .await
 }
