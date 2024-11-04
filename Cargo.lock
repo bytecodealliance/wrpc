@@ -1252,6 +1252,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-web-server"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "futures",
+ "quinn",
+ "rcgen",
+ "rustls",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "web-transport-quinn",
+ "wit-bindgen-wrpc",
+ "wrpc-transport",
+ "wrpc-transport-web",
+]
+
+[[package]]
 name = "hermit-abi"
 version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
