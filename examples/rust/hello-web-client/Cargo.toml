@@ -1,0 +1,30 @@
+[package]
+name = "hello-web-client"
+version = "0.1.0"
+
+authors.workspace = true
+categories.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+clap = { workspace = true, features = [
+    "color",
+    "derive",
+    "error-context",
+    "help",
+    "std",
+    "suggestions",
+    "usage",
+] }
+quinn = { workspace = true }
+rustls = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread"] }
+tracing-subscriber = { workspace = true, features = ["ansi", "fmt"] }
+url = { workspace = true }
+web-transport-quinn = { workspace = true }
+wit-bindgen-wrpc = { workspace = true }
+wrpc-transport = { workspace = true, features = ["net"] }
+wrpc-transport-web = { workspace = true }
