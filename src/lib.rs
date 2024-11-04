@@ -11,6 +11,9 @@ pub mod transport {
 
     #[cfg(feature = "quic")]
     pub use wrpc_transport_quic as quic;
+
+    #[cfg(feature = "web-transport")]
+    pub use wrpc_transport_web as web;
 }
 
 /// wRPC runtime

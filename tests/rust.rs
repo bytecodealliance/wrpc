@@ -1171,6 +1171,107 @@ async fn rust_dynamic_quic() -> anyhow::Result<()> {
     .await
 }
 
+#[cfg(feature = "web-transport")]
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+#[instrument(ret)]
+async fn rust_bindgen_web_transport_sync() -> anyhow::Result<()> {
+    use core::net::Ipv6Addr;
+    use core::pin::pin;
+
+    wrpc_test::with_web_transport(|clt, srv| {
+        async move {
+            let clt = wrpc_transport_web::Client::from(clt);
+            let srv_conn = wrpc_transport_web::Client::from(srv);
+            let srv = Arc::new(wrpc_transport_web::Server::new());
+
+            let mut fut = pin!(async {
+                let clt = Arc::new(clt);
+                assert_bindgen_sync(Arc::clone(&clt), Arc::clone(&srv)).await
+            });
+            loop {
+                select! {
+                    res = &mut fut => {
+                        return res
+                    }
+                    res = srv.accept(&srv_conn) => {
+                        res.expect("failed to accept connection");
+                        continue
+                    }
+                }
+            }
+        }
+        .in_current_span()
+    })
+    .await
+}
+
+#[cfg(feature = "web-transport")]
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+#[instrument(ret)]
+async fn rust_bindgen_web_transport_async() -> anyhow::Result<()> {
+    use core::net::Ipv6Addr;
+    use core::pin::pin;
+
+    wrpc_test::with_web_transport(|clt, srv| async move {
+        let clt = wrpc_transport_web::Client::from(clt);
+        let srv_conn = wrpc_transport_web::Client::from(srv);
+        let srv = Arc::new(wrpc_transport_web::Server::new());
+
+        let mut fut = pin!(async {
+            let clt = Arc::new(clt);
+            assert_bindgen_async(Arc::clone(&clt), Arc::clone(&srv)).await
+        }
+        .in_current_span());
+        loop {
+            select! {
+                res = &mut fut => {
+                    return res
+                }
+                res = srv.accept(&srv_conn) => {
+                    res.expect("failed to accept connection");
+                    continue
+                }
+            }
+        }
+    })
+    .await
+}
+
+#[cfg(feature = "web-transport")]
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+#[instrument(ret)]
+async fn rust_dynamic_web_transport() -> anyhow::Result<()> {
+    use core::net::Ipv6Addr;
+    use core::pin::pin;
+
+    use tracing::Span;
+
+    let span = Span::current();
+    wrpc_test::with_web_transport(|clt, srv| {
+        async move {
+            let clt = wrpc_transport_web::Client::from(clt);
+            let srv_conn = wrpc_transport_web::Client::from(srv);
+            let srv = Arc::new(wrpc_transport_web::Server::new());
+
+            let mut fut = pin!(assert_dynamic(Arc::new(clt), Arc::clone(&srv)));
+            loop {
+                select! {
+                    res = &mut fut => {
+                        return res
+                    }
+                    res = srv.accept(&srv_conn) => {
+                        res.expect("failed to accept connection");
+                        continue
+                    }
+                }
+            }
+            Ok(())
+        }
+        .instrument(span)
+    })
+    .await
+}
+
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 #[instrument(ret)]
 async fn rust_bindgen_tcp_sync() -> anyhow::Result<()> {

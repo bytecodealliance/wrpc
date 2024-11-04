@@ -1117,7 +1117,7 @@ dependencies = [
  "futures-core",
  "futures-sink",
  "futures-util",
- "http",
+ "http 0.2.12",
  "indexmap",
  "slab",
  "tokio",
@@ -1275,13 +1275,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "http"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "21b9ddb458710bc376481b842f5da65cdf31522de232c1ca8146abce2a358258"
+dependencies = [
+ "bytes",
+ "fnv",
+ "itoa",
+]
+
+[[package]]
 name = "http-body"
 version = "0.4.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7ceab25649e9960c0311ea418d17bee82c0dcec1bd053b5f9a66e265a693bed2"
 dependencies = [
  "bytes",
- "http",
+ "http 0.2.12",
  "pin-project-lite",
 ]
 
@@ -1314,7 +1325,7 @@ dependencies = [
  "futures-core",
  "futures-util",
  "h2",
- "http",
+ "http 0.2.12",
  "http-body",
  "httparse",
  "httpdate",
@@ -2052,7 +2063,7 @@ dependencies = [
  "futures-core",
  "futures-util",
  "h2",
- "http",
+ "http 0.2.12",
  "http-body",
  "hyper",
  "ipnet",
@@ -3598,6 +3609,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "web-transport-proto"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6a3806ea43df5817f0d90618c842d28db5946bc18a5db0659b2275c2be48d472"
+dependencies = [
+ "bytes",
+ "http 1.1.0",
+ "thiserror",
+ "url",
+]
+
+[[package]]
+name = "web-transport-quinn"
+version = "0.3.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3020b51cda10472a365e42d9a701916d4f04d74cc743de08246ef6a421c2d137"
+dependencies = [
+ "bytes",
+ "futures",
+ "http 1.1.0",
+ "log",
+ "quinn",
+ "quinn-proto",
+ "thiserror",
+ "tokio",
+ "url",
+ "web-transport-proto",
+]
+
+[[package]]
 name = "webpki-roots"
 version = "0.26.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4054,6 +4095,7 @@ dependencies = [
  "wrpc-transport",
  "wrpc-transport-nats",
  "wrpc-transport-quic",
+ "wrpc-transport-web",
  "wrpc-wasmtime-cli",
 ]
 
@@ -4115,6 +4157,8 @@ dependencies = [
  "rustls",
  "tokio",
  "tracing",
+ "url",
+ "web-transport-quinn",
  "wrpc-cli",
  "wrpc-transport",
 ]
@@ -4166,6 +4210,21 @@ dependencies = [
  "test-log",
  "tokio",
  "tracing",
+ "wrpc-test",
+ "wrpc-transport",
+]
+
+[[package]]
+name = "wrpc-transport-web"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "futures",
+ "test-log",
+ "tokio",
+ "tracing",
+ "web-transport-quinn",
  "wrpc-test",
  "wrpc-transport",
 ]
