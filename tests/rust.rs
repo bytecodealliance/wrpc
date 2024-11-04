@@ -1081,7 +1081,7 @@ async fn rust_bindgen_quic_sync() -> anyhow::Result<()> {
         async move {
             let clt = wrpc_transport_quic::Client::from(clt);
             let srv_conn = wrpc_transport_quic::Client::from(srv);
-            let srv = Arc::new(wrpc_transport::frame::Server::default());
+            let srv = Arc::new(wrpc_transport_quic::Server::new());
 
             let mut fut = pin!(async {
                 let clt = Arc::new(clt);
@@ -1114,7 +1114,7 @@ async fn rust_bindgen_quic_async() -> anyhow::Result<()> {
     wrpc_test::with_quic(|clt, srv| async move {
         let clt = wrpc_transport_quic::Client::from(clt);
         let srv_conn = wrpc_transport_quic::Client::from(srv);
-        let srv = Arc::new(wrpc_transport::frame::Server::default());
+        let srv = Arc::new(wrpc_transport_quic::Server::new());
 
         let mut fut = pin!(async {
             let clt = Arc::new(clt);
@@ -1150,7 +1150,7 @@ async fn rust_dynamic_quic() -> anyhow::Result<()> {
         async move {
             let clt = wrpc_transport_quic::Client::from(clt);
             let srv_conn = wrpc_transport_quic::Client::from(srv);
-            let srv = Arc::new(wrpc_transport::frame::Server::default());
+            let srv = Arc::new(wrpc_transport_quic::Server::new());
 
             let mut fut = pin!(assert_dynamic(Arc::new(clt), Arc::clone(&srv)));
             loop {

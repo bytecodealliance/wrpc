@@ -1,30 +1,40 @@
 use core::fmt::{Debug, Display};
+use core::marker::PhantomData;
 
 use std::collections::{hash_map, HashMap};
 use std::sync::Arc;
 
 use anyhow::bail;
-use bytes::Bytes;
 use futures::{Stream, StreamExt as _};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
 use tokio::sync::{mpsc, Mutex};
-use tokio::task::JoinSet;
 use tokio_stream::wrappers::ReceiverStream;
-use tokio_util::io::StreamReader;
-use tokio_util::sync::PollSender;
-use tracing::{debug, error, instrument, trace, Instrument as _, Span};
+use tracing::{instrument, trace};
 use wasm_tokio::AsyncReadCore as _;
 
-use crate::frame::conn::{egress, ingress, Accept};
-use crate::frame::{Incoming, Outgoing};
+use crate::frame::conn::Accept;
+use crate::frame::{Conn, ConnHandler, Incoming, Outgoing};
 use crate::Serve;
 
 /// wRPC server for framed transports
-pub struct Server<C, I, O>(Mutex<HashMap<String, HashMap<String, mpsc::Sender<(C, I, O)>>>>);
+pub struct Server<C, I, O, H = ()> {
+    handlers: Mutex<HashMap<String, HashMap<String, mpsc::Sender<(C, I, O)>>>>,
+    conn_handler: PhantomData<H>,
+}
+
+impl<C, I, O, H> Server<C, I, O, H> {
+    /// Constructs a new [Server]
+    pub fn new() -> Self {
+        Self {
+            handlers: Mutex::default(),
+            conn_handler: PhantomData,
+        }
+    }
+}
 
 impl<C, I, O> Default for Server<C, I, O> {
     fn default() -> Self {
-        Self(Mutex::default())
+        Self::new()
     }
 }
 
@@ -73,9 +83,10 @@ impl<C, I, O> Display for AcceptError<C, I, O> {
 
 impl<C, I, O> std::error::Error for AcceptError<C, I, O> {}
 
-impl<C, I, O> Server<C, I, O>
+impl<C, I, O, H> Server<C, I, O, H>
 where
     I: AsyncRead + Unpin,
+    H: ConnHandler<I, O>,
 {
     /// Accept a connection on an [Accept].
     ///
@@ -101,7 +112,7 @@ where
             }
             v => return Err(AcceptError::UnsupportedVersion(v)),
         }
-        let h = self.0.lock().await;
+        let h = self.handlers.lock().await;
         let h = h
             .get(&instance)
             .and_then(|h| h.get(&name))
@@ -112,8 +123,8 @@ where
 }
 
 #[instrument(level = "trace", skip(srv, paths))]
-async fn serve<C, I, O>(
-    srv: &Server<C, I, O>,
+async fn serve<C, I, O, H>(
+    srv: &Server<C, I, O, H>,
     instance: &str,
     func: &str,
     paths: impl Into<Arc<[Box<[Option<usize>]>]>> + Send,
@@ -122,9 +133,10 @@ where
     C: Send + Sync + 'static,
     I: AsyncRead + Send + Sync + Unpin + 'static,
     O: AsyncWrite + Send + Sync + Unpin + 'static,
+    H: ConnHandler<I, O>,
 {
     let (tx, rx) = mpsc::channel(1024);
-    let mut handlers = srv.0.lock().await;
+    let mut handlers = srv.handlers.lock().await;
     match handlers
         .entry(instance.to_string())
         .or_default()
@@ -138,67 +150,19 @@ where
         }
     }
     let paths = paths.into();
-    let span = Span::current();
-    Ok(ReceiverStream::new(rx).then(move |(cx, rx, tx)| {
-        let _span = span.enter();
+    Ok(ReceiverStream::new(rx).map(move |(cx, rx, tx)| {
         trace!("received invocation");
-        let index = Arc::new(std::sync::Mutex::new(paths.as_ref().iter().collect()));
-        async move {
-            let (params_tx, params_rx) = mpsc::channel(128);
-            let mut params_io = JoinSet::new();
-            params_io.spawn({
-                let index = Arc::clone(&index);
-                async move {
-                    if let Err(err) = ingress(rx, &index, params_tx).await {
-                        error!(?err, "parameter ingress failed");
-                    } else {
-                        debug!("parameter ingress successfully complete");
-                    }
-                    let Ok(mut index) = index.lock() else {
-                        error!("failed to lock index trie");
-                        return;
-                    };
-                    trace!("shutting down index trie");
-                    index.close_tx();
-                }
-                .in_current_span()
-            });
-
-            let (results_tx, results_rx) = mpsc::channel(128);
-            tokio::spawn(
-                async {
-                    if let Err(err) = egress(results_rx, tx).await {
-                        error!(?err, "result egress failed");
-                    } else {
-                        debug!("result egress successfully complete");
-                    }
-                }
-                .in_current_span(),
-            );
-            Ok((
-                cx,
-                Outgoing {
-                    tx: PollSender::new(results_tx),
-                    path: Arc::from([]),
-                    path_buf: Bytes::from_static(&[0]),
-                },
-                Incoming {
-                    rx: Some(StreamReader::new(ReceiverStream::new(params_rx))),
-                    path: Arc::from([]),
-                    index,
-                    io: Arc::new(params_io),
-                },
-            ))
-        }
-        .instrument(span.clone())
+        let Conn { tx, rx } = Conn::new::<H, _, _, _>(rx, tx, paths.iter());
+        Ok((cx, tx, rx))
     }))
 }
 
-impl<C, I, O> Serve for Server<C, I, O>
+impl<C, I, O, H> Serve for Server<C, I, O, H>
 where
     C: Send + Sync + 'static,
     I: AsyncRead + Send + Sync + Unpin + 'static,
     O: AsyncWrite + Send + Sync + Unpin + 'static,
+    H: ConnHandler<I, O> + Send + Sync,
 {
     type Context = C;
     type Outgoing = Outgoing;
@@ -216,11 +180,12 @@ where
     }
 }
 
-impl<C, I, O> Serve for &Server<C, I, O>
+impl<C, I, O, H> Serve for &Server<C, I, O, H>
 where
     C: Send + Sync + 'static,
     I: AsyncRead + Send + Sync + Unpin + 'static,
     O: AsyncWrite + Send + Sync + Unpin + 'static,
+    H: ConnHandler<I, O> + Send + Sync,
 {
     type Context = C;
     type Outgoing = Outgoing;

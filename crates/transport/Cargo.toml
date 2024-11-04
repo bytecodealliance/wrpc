@@ -20,11 +20,11 @@ anyhow = { workspace = true, features = ["std"] }
 bytes = { workspace = true }
 futures = { workspace = true, features = ["std"] }
 pin-project-lite = { workspace = true }
+send-future = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt", "time"] }
 tokio-stream = { workspace = true }
 tokio-util = { workspace = true, features = ["codec", "io"] }
 tracing = { workspace = true, features = ["attributes"] }
-send-future = { workspace = true }
 wasm-tokio = { workspace = true, features = ["tracing"] }
 
 [target.'cfg(target_family = "wasm")'.dependencies]

@@ -15,7 +15,7 @@ async fn loopback() -> anyhow::Result<()> {
     wrpc_test::with_quic(|clt, srv| async {
         let clt = Client::from(clt);
         let srv_conn = Client::from(srv);
-        let srv = Arc::new(wrpc_transport::frame::Server::default());
+        let srv = Arc::new(wrpc_transport_quic::Server::new());
         let invocations = srv
             .serve("foo", "bar", [Box::from([Some(42), Some(0)])])
             .await

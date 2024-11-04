@@ -13,11 +13,11 @@ repository.workspace = true
 anyhow = { workspace = true, features = ["std"] }
 bytes = { workspace = true }
 quinn = { workspace = true, features = ["runtime-tokio"] }
+tracing = { workspace = true }
 wrpc-transport = { workspace = true }
 
 [dev-dependencies]
 futures = { workspace = true }
 test-log = { workspace = true, features = ["color", "log", "trace"] }
 tokio = { workspace = true, features = ["rt-multi-thread"] }
-tracing = { workspace = true }
 wrpc-test = { workspace = true, features = ["quic"] }

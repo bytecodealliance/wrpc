@@ -2,13 +2,61 @@
 
 use anyhow::Context as _;
 use bytes::Bytes;
-use quinn::{Connection, RecvStream, SendStream};
-use wrpc_transport::frame::{invoke, Accept, Incoming, Outgoing};
+use quinn::{Connection, RecvStream, SendStream, VarInt};
+use tracing::{debug, error, trace, warn};
+use wrpc_transport::frame::{Accept, Incoming, InvokeBuilder, Outgoing};
 use wrpc_transport::Invoke;
 
-/// QUIC transport client
+/// QUIC server with graceful stream shutdown handling
+pub type Server = wrpc_transport::Server<(), RecvStream, SendStream, ConnHandler>;
+
+/// QUIC wRPC client
 #[derive(Clone, Debug)]
 pub struct Client(Connection);
+
+/// Graceful stream shutdown handler
+pub struct ConnHandler;
+
+const DONE: VarInt = VarInt::from_u32(1);
+
+impl wrpc_transport::frame::ConnHandler<RecvStream, SendStream> for ConnHandler {
+    async fn on_ingress(mut rx: RecvStream, res: std::io::Result<()>) {
+        if let Err(err) = res {
+            error!(?err, "ingress failed");
+        } else {
+            debug!("ingress successfully complete");
+        }
+        if let Err(err) = rx.stop(DONE) {
+            error!(?err, "failed to close stream");
+        }
+    }
+
+    async fn on_egress(mut tx: SendStream, res: std::io::Result<()>) {
+        if let Err(err) = res {
+            error!(?err, "egress failed");
+        } else {
+            debug!("egress successfully complete");
+        }
+        if let Err(err) = tx.finish() {
+            error!(?err, "failed to close stream");
+        }
+        match tx.stopped().await {
+            Ok(None) => {
+                trace!("stream successfully closed")
+            }
+            Ok(Some(code)) => {
+                if code == DONE {
+                    trace!("stream successfully closed")
+                } else {
+                    warn!(?code, "stream closed with code")
+                }
+            }
+            Err(err) => {
+                error!(?err, "failed to await stream close");
+            }
+        }
+    }
+}
 
 impl From<Connection> for Client {
     fn from(conn: Connection) -> Self {
@@ -37,7 +85,9 @@ impl Invoke for &Client {
             .open_bi()
             .await
             .context("failed to open parameter stream")?;
-        invoke(tx, rx, instance, func, params, paths).await
+        InvokeBuilder::<ConnHandler>::default()
+            .invoke(tx, rx, instance, func, params, paths)
+            .await
     }
 }
 
