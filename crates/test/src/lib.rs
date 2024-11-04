@@ -1,8 +1,12 @@
-use core::net::{Ipv4Addr, Ipv6Addr};
+use core::net::Ipv6Addr;
 
 use std::process::ExitStatus;
 
 use anyhow::Context;
+use rcgen::{generate_simple_self_signed, CertifiedKey};
+use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
+use rustls::version::TLS13;
+use rustls::{ClientConfig, RootCertStore, ServerConfig};
 use tokio::net::TcpListener;
 use tokio::process::Command;
 use tokio::sync::oneshot;
@@ -40,6 +44,42 @@ pub async fn spawn_server(
         .context("failed to wait for child")
     });
     Ok((child, stop_tx))
+}
+
+pub fn cert_pair() -> anyhow::Result<(rustls::ServerConfig, rustls::ClientConfig)> {
+    let CertifiedKey {
+        cert: srv_crt,
+        key_pair: srv_key,
+    } = generate_simple_self_signed([
+        "127.0.0.1".to_string(),
+        "::1".to_string(),
+        "localhost".to_string(),
+    ])
+    .context("failed to generate server certificate")?;
+    let CertifiedKey {
+        cert: clt_crt,
+        key_pair: clt_key,
+    } = generate_simple_self_signed(["client.wrpc".to_string()])
+        .context("failed to generate client certificate")?;
+    let srv_crt = CertificateDer::from(srv_crt);
+
+    let mut ca = RootCertStore::empty();
+    ca.add(srv_crt.clone())?;
+    let clt_cnf = ClientConfig::builder_with_protocol_versions(&[&TLS13])
+        .with_root_certificates(ca)
+        .with_client_auth_cert(
+            vec![clt_crt.into()],
+            PrivatePkcs8KeyDer::from(clt_key.serialize_der()).into(),
+        )
+        .context("failed to create client config")?;
+    let srv_cnf = ServerConfig::builder_with_protocol_versions(&[&TLS13])
+        .with_no_client_auth() // TODO: verify client cert
+        .with_single_cert(
+            vec![srv_crt],
+            PrivatePkcs8KeyDer::from(srv_key.serialize_der()).into(),
+        )
+        .context("failed to create server config")?;
+    Ok((srv_cnf, clt_cnf))
 }
 
 #[cfg(feature = "nats")]
@@ -87,48 +127,27 @@ where
 {
     use std::sync::Arc;
 
-    use quinn::crypto::rustls::QuicClientConfig;
+    use quinn::crypto::rustls::{QuicClientConfig, QuicServerConfig};
     use quinn::{ClientConfig, ServerConfig};
-    use rcgen::{generate_simple_self_signed, CertifiedKey};
-    use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
-    use rustls::version::TLS13;
 
-    let mut clt_ep = quinn::Endpoint::client((Ipv4Addr::LOCALHOST, 0).into())
+    let mut clt_ep = quinn::Endpoint::client((Ipv6Addr::LOCALHOST, 0).into())
         .context("failed to create client endpoint")?;
 
-    let CertifiedKey {
-        cert: srv_crt,
-        key_pair: srv_key,
-    } = generate_simple_self_signed(["localhost".to_string()])
-        .context("failed to generate server certificate")?;
-    let CertifiedKey {
-        cert: clt_crt,
-        key_pair: clt_key,
-    } = generate_simple_self_signed(["client.wrpc".to_string()])
-        .context("failed to generate client certificate")?;
-    let srv_crt = CertificateDer::from(srv_crt);
+    let (srv_cnf, clt_cnf) = cert_pair().context("failed to generate certificates")?;
 
-    let mut ca = rustls::RootCertStore::empty();
-    ca.add(srv_crt.clone())?;
-    let clt_cnf = rustls::ClientConfig::builder_with_protocol_versions(&[&TLS13])
-        .with_root_certificates(ca)
-        .with_client_auth_cert(
-            vec![clt_crt.into()],
-            PrivatePkcs8KeyDer::from(clt_key.serialize_der()).into(),
-        )
-        .context("failed to create client config")?;
     let clt_cnf: QuicClientConfig = clt_cnf
         .try_into()
         .context("failed to convert rustls client config to QUIC client config")?;
-    let srv_cnf = ServerConfig::with_single_cert(
-        vec![srv_crt],
-        PrivatePkcs8KeyDer::from(srv_key.serialize_der()).into(),
-    )
-    .expect("failed to create server config");
+    let srv_cnf: QuicServerConfig = srv_cnf
+        .try_into()
+        .context("failed to convert rustls server config to QUIC server config")?;
 
     clt_ep.set_default_client_config(ClientConfig::new(Arc::new(clt_cnf)));
-    let srv_ep = quinn::Endpoint::server(srv_cnf, (Ipv4Addr::LOCALHOST, 0).into())
-        .context("failed to create server endpoint")?;
+    let srv_ep = quinn::Endpoint::server(
+        ServerConfig::with_crypto(Arc::new(srv_cnf)),
+        (Ipv6Addr::LOCALHOST, 0).into(),
+    )
+    .context("failed to create server endpoint")?;
     let srv_addr = srv_ep
         .local_addr()
         .context("failed to query server address")?;
@@ -147,7 +166,7 @@ where
         let (clt, srv) = tokio::try_join!(
             async move {
                 let conn = clt
-                    .connect(addr, "localhost")
+                    .connect(addr, "::1")
                     .context("failed to connect to server")?;
                 conn.await.context("failed to establish client connection")
             },
@@ -163,40 +182,46 @@ where
 
 #[cfg(feature = "web-transport")]
 pub async fn with_web_transport<T, Fut>(
-    f: impl FnOnce(web_transport_quinn::Session, web_transport_quinn::Session) -> Fut,
+    f: impl FnOnce(wtransport::Connection, wtransport::Connection) -> Fut,
 ) -> anyhow::Result<T>
 where
     Fut: core::future::Future<Output = anyhow::Result<T>>,
 {
-    with_quic_endpoints(|addr, clt, srv| async move {
-        let url = url::Url::parse(&format!("https://localhost:{}", addr.port()))
-            .context("failed to construct URL")?;
-        let (clt, srv) = tokio::try_join!(
-            async move {
-                let conn = clt
-                    .connect(addr, "localhost")
-                    .context("failed to connect to server")?;
-                let conn = conn
-                    .await
-                    .context("failed to establish client connection")?;
-                web_transport_quinn::connect_with(conn, &url)
-                    .await
-                    .context("failed to connect to server")
-            },
-            async move {
-                let conn = srv.accept().await.context("failed to accept connection")?;
-                let conn = conn
-                    .await
-                    .context("failed to establish server connection")?;
-                let req = web_transport_quinn::accept(conn)
-                    .await
-                    .context("failed to accept connection")?;
-                req.ok()
-                    .await
-                    .context("failed to establish server connection")
-            }
-        )?;
-        f(clt, srv).await.context("closure failed")
-    })
-    .await
+    use wtransport::Endpoint;
+
+    let (srv_cnf, clt_cnf) = cert_pair().context("failed to generate certificates")?;
+
+    let srv = Endpoint::server(
+        wtransport::ServerConfig::builder()
+            .with_bind_default(0)
+            .with_custom_tls(srv_cnf)
+            .build(),
+    )
+    .context("failed to build server endpoint")?;
+    let clt = Endpoint::client(
+        wtransport::ClientConfig::builder()
+            .with_bind_default()
+            .with_custom_tls(clt_cnf)
+            .build(),
+    )
+    .context("failed to create client endpoint")?;
+    let addr = srv.local_addr().context("failed to query server address")?;
+    let (clt, srv) = tokio::try_join!(
+        async move {
+            clt.connect(format!("https://localhost:{}", addr.port()))
+                .await
+                .context("failed to connect to server")
+        },
+        async move {
+            let req = srv
+                .accept()
+                .await
+                .await
+                .context("failed to receive session request")?;
+            req.accept()
+                .await
+                .context("failed to accept client connection")
+        }
+    )?;
+    f(clt, srv).await.context("closure failed")
 }

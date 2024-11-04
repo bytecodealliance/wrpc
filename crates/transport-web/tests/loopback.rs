@@ -85,7 +85,7 @@ async fn loopback() -> anyhow::Result<()> {
                 anyhow::Ok(())
             },
             async {
-                srv.accept(srv_conn)
+                srv.accept(&srv_conn)
                     .await
                     .context("failed to accept invocation")?;
                 let ((), mut outgoing, mut incoming) = invocations
@@ -161,6 +161,8 @@ async fn loopback() -> anyhow::Result<()> {
                 Ok(())
             }
         )?;
+        _ = clt;
+        _ = srv;
         Ok(())
     })
     .await
