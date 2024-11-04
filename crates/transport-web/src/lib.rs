@@ -1,29 +1,44 @@
 //! wRPC WebTransport transport
 
+use core::ops::{Deref, DerefMut};
+
 use anyhow::Context as _;
 use bytes::Bytes;
+use quinn::VarInt;
 use tracing::{debug, error, trace, warn};
-use web_transport_quinn::{RecvStream, SendStream, Session};
 use wrpc_transport::frame::{invoke, Accept, Incoming, Outgoing};
 use wrpc_transport::Invoke;
+use wtransport::{Connection, RecvStream, SendStream};
 
 /// WebTransport server with graceful stream shutdown handling
 pub type Server = wrpc_transport::Server<(), RecvStream, SendStream, ConnHandler>;
 
 /// WebTransport wRPC client
 #[derive(Clone, Debug)]
-pub struct Client(Session);
+pub struct Client(Connection);
 
-impl From<Session> for Client {
-    fn from(session: Session) -> Self {
+impl From<Connection> for Client {
+    fn from(session: Connection) -> Self {
         Self(session)
+    }
+}
+
+impl Deref for Client {
+    type Target = Connection;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for Client {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
     }
 }
 
 /// Graceful stream shutdown handler
 pub struct ConnHandler;
-
-const DONE: u32 = 1;
 
 impl wrpc_transport::frame::ConnHandler<RecvStream, SendStream> for ConnHandler {
     async fn on_ingress(mut rx: RecvStream, res: std::io::Result<()>) {
@@ -32,8 +47,10 @@ impl wrpc_transport::frame::ConnHandler<RecvStream, SendStream> for ConnHandler 
         } else {
             debug!("ingress successfully complete");
         }
-        if let Err(err) = rx.stop(DONE) {
-            debug!(?err, "failed to close incoming stream");
+        if let Ok(code) = VarInt::from_u64(0x52e4a40fa8db) {
+            if let Err(err) = rx.quic_stream_mut().stop(code) {
+                debug!(?err, "failed to close incoming stream");
+            }
         }
     }
 
@@ -43,12 +60,12 @@ impl wrpc_transport::frame::ConnHandler<RecvStream, SendStream> for ConnHandler 
         } else {
             debug!("egress successfully complete");
         }
-        match tx.stopped().await {
+        match tx.quic_stream_mut().stopped().await {
             Ok(None) => {
                 trace!("stream successfully closed")
             }
             Ok(Some(code)) => {
-                if code == DONE {
+                if u64::from(code) == 0x52e4a40fa8db {
                     trace!("stream successfully closed")
                 } else {
                     warn!(?code, "stream closed with code")
@@ -77,11 +94,12 @@ impl Invoke for &Client {
     where
         P: AsRef<[Option<usize>]> + Send + Sync,
     {
-        let (tx, rx) = self
+        let stream = self
             .0
             .open_bi()
             .await
-            .context("failed to open parameter stream")?;
+            .context("failed to initialize parameter stream")?;
+        let (tx, rx) = stream.await.context("failed to open parameter stream")?;
         invoke(tx, rx, instance, func, params, paths).await
     }
 }

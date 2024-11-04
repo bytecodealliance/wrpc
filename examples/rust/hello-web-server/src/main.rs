@@ -7,12 +7,13 @@ use anyhow::Context as _;
 use clap::Parser;
 use futures::stream::select_all;
 use futures::StreamExt as _;
-use quinn::{Endpoint, ServerConfig};
 use rcgen::{generate_simple_self_signed, CertifiedKey};
 use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
+use rustls::version::TLS13;
 use tokio::task::JoinSet;
 use tokio::{select, signal};
 use tracing::{debug, error, info, warn};
+use wtransport::{Endpoint, ServerConfig};
 
 mod bindings {
     wit_bindgen_wrpc::generate!({
@@ -49,13 +50,21 @@ async fn main() -> anyhow::Result<()> {
         .context("failed to generate server certificate")?;
     let cert = CertificateDer::from(cert);
 
-    let conf = ServerConfig::with_single_cert(
-        vec![cert],
-        PrivatePkcs8KeyDer::from(key_pair.serialize_der()).into(),
-    )
-    .context("failed to create server config")?;
+    let conf = rustls::ServerConfig::builder_with_protocol_versions(&[&TLS13])
+        .with_no_client_auth() // TODO: verify client cert
+        .with_single_cert(
+            vec![cert],
+            PrivatePkcs8KeyDer::from(key_pair.serialize_der()).into(),
+        )
+        .context("failed to create server config")?;
 
-    let ep = Endpoint::server(conf, addr).context("failed to create server endpoint")?;
+    let ep = Endpoint::server(
+        ServerConfig::builder()
+            .with_bind_address(addr)
+            .with_custom_tls(conf)
+            .build(),
+    )
+    .context("failed to create server endpoint")?;
 
     let srv = Arc::new(wrpc_transport_web::Server::new());
     let invocations = bindings::serve(srv.as_ref(), Handler)
@@ -64,18 +73,18 @@ async fn main() -> anyhow::Result<()> {
 
     let accept = tokio::spawn(async move {
         let mut tasks = JoinSet::<anyhow::Result<()>>::new();
-        while let Some(conn) = ep.accept().await {
+        loop {
+            let conn = ep.accept().await;
             let srv = Arc::clone(&srv);
             tasks.spawn(async move {
-                let conn = conn.await.context("failed to accept QUIC connection")?;
-                let req = web_transport_quinn::accept(conn)
+                let req = conn
                     .await
                     .context("failed to accept WebTransport connection")?;
-                let session = req
-                    .ok()
+                let conn = req
+                    .accept()
                     .await
                     .context("failed to establish WebTransport connection")?;
-                let wrpc = wrpc_transport_web::Client::from(session);
+                let wrpc = wrpc_transport_web::Client::from(conn);
                 loop {
                     srv.accept(&wrpc)
                         .await

@@ -1,14 +1,13 @@
-use core::net::Ipv6Addr;
-
 use std::sync::Arc;
 
 use anyhow::Context as _;
 use clap::Parser;
-use quinn::{crypto::rustls::QuicClientConfig, rustls::version::TLS13, ClientConfig, Endpoint};
+use quinn::rustls::version::TLS13;
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use rustls::{DigitallySignedStruct, SignatureScheme};
 use url::Url;
+use wtransport::{ClientConfig, Endpoint};
 
 mod bindings {
     wit_bindgen_wrpc::generate!({
@@ -69,17 +68,19 @@ async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt().init();
 
     let Args { addr } = Args::parse();
-    let mut ep = Endpoint::client((Ipv6Addr::UNSPECIFIED, 0).into())
-        .context("failed to create QUIC endpoint")?;
-    let cnf = rustls::ClientConfig::builder_with_protocol_versions(&[&TLS13])
+    let conf = rustls::ClientConfig::builder_with_protocol_versions(&[&TLS13])
         .dangerous()
         .with_custom_certificate_verifier(Arc::new(Insecure))
         .with_no_client_auth();
-    let cnf: QuicClientConfig = cnf
-        .try_into()
-        .context("failed to convert rustls client config to QUIC client config")?;
-    ep.set_default_client_config(ClientConfig::new(Arc::new(cnf)));
-    let session = web_transport_quinn::connect(&ep, &addr)
+    let ep = Endpoint::client(
+        ClientConfig::builder()
+            .with_bind_default()
+            .with_custom_tls(conf)
+            .build(),
+    )
+    .context("failed to create endpoint")?;
+    let session = ep
+        .connect(&addr)
         .await
         .context("failed to connect to server")?;
     let wrpc = wrpc_transport_web::Client::from(session);

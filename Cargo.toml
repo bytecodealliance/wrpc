@@ -36,8 +36,8 @@ bin-wasmtime = ["dep:tokio", "dep:wrpc-wasmtime-cli", "tokio/rt-multi-thread"]
 nats = ["dep:async-nats", "dep:wrpc-transport-nats", "wrpc-cli/nats"]
 net = ["wrpc-transport/net"]
 quic = ["dep:wrpc-transport-quic"]
-web-transport = ["dep:wrpc-transport-web"]
 wasmtime = ["dep:wrpc-runtime-wasmtime"]
+web-transport = ["dep:wrpc-transport-web"]
 
 [[bin]]
 name = "wit-bindgen-wrpc"
@@ -153,7 +153,6 @@ wasmparser = { version = "0.219", default-features = false }
 wasmtime = { version = "25", default-features = false }
 wasmtime-cli-flags = { version = "25", default-features = false }
 wasmtime-wasi = { version = "25", default-features = false }
-web-transport-quinn = { version = "0.3.4", default-features = false }
 wit-bindgen = { version = "0.34", default-features = false }
 wit-bindgen-core = { version = "0.34", default-features = false }
 wit-bindgen-wrpc = { version = "0.8", default-features = false, path = "./crates/wit-bindgen" }
@@ -173,3 +172,4 @@ wrpc-transport-web = { version = "0.1", path = "./crates/transport-web", default
 wrpc-wasi-keyvalue = { version = "0.1", path = "./crates/wasi-keyvalue", default-features = false }
 wrpc-wasi-keyvalue-mem = { version = "0.1", path = "./crates/wasi-keyvalue-mem", default-features = false }
 wrpc-wasmtime-cli = { version = "0.2", path = "./crates/wasmtime-cli", default-features = false }
+wtransport = { version = "0.4", default-features = false }

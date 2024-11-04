@@ -12,9 +12,10 @@ repository.workspace = true
 [dependencies]
 anyhow = { workspace = true, features = ["std"] }
 bytes = { workspace = true }
+quinn = { workspace = true }
 tracing = { workspace = true }
-web-transport-quinn = { workspace = true }
 wrpc-transport = { workspace = true }
+wtransport = { workspace = true, features = ["quinn"] }
 
 [dev-dependencies]
 futures = { workspace = true }
