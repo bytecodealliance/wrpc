@@ -1252,6 +1252,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-web-client"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "quinn",
+ "rustls",
+ "tokio",
+ "tracing-subscriber",
+ "url",
+ "web-transport-quinn",
+ "wit-bindgen-wrpc",
+ "wrpc-transport",
+ "wrpc-transport-web",
+]
+
+[[package]]
 name = "hello-web-server"
 version = "0.1.0"
 dependencies = [

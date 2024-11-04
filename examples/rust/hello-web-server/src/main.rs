@@ -1,3 +1,4 @@
+use core::net::SocketAddr;
 use core::pin::pin;
 
 use std::sync::Arc;
@@ -6,7 +7,7 @@ use anyhow::Context as _;
 use clap::Parser;
 use futures::stream::select_all;
 use futures::StreamExt as _;
-use quinn::{Endpoint, EndpointConfig, ServerConfig, TokioRuntime};
+use quinn::{Endpoint, ServerConfig};
 use rcgen::{generate_simple_self_signed, CertifiedKey};
 use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
 use tokio::task::JoinSet;
@@ -26,7 +27,7 @@ mod bindings {
 struct Args {
     /// Address to serve `wrpc-examples:hello/handler.hello` on
     #[arg(default_value = "[::1]:4433")]
-    addr: String,
+    addr: SocketAddr,
 }
 
 #[derive(Clone, Copy)]
@@ -44,8 +45,6 @@ async fn main() -> anyhow::Result<()> {
 
     let Args { addr } = Args::parse();
 
-    let sock = std::net::UdpSocket::bind(addr).context("failed to open a UDP socket")?;
-
     let CertifiedKey { cert, key_pair } = generate_simple_self_signed(["localhost".to_string()])
         .context("failed to generate server certificate")?;
     let cert = CertificateDer::from(cert);
@@ -56,13 +55,7 @@ async fn main() -> anyhow::Result<()> {
     )
     .context("failed to create server config")?;
 
-    let ep = Endpoint::new(
-        EndpointConfig::default(),
-        Some(conf),
-        sock,
-        Arc::new(TokioRuntime),
-    )
-    .context("failed to create server endpoint")?;
+    let ep = Endpoint::server(conf, addr).context("failed to create server endpoint")?;
 
     let srv = Arc::new(wrpc_transport_web::Server::new());
     let invocations = bindings::serve(srv.as_ref(), Handler)
