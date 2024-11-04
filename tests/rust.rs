@@ -1,5 +1,4 @@
 #![allow(clippy::type_complexity)]
-#![allow(unused)]
 
 mod common;
 
@@ -17,9 +16,7 @@ use tokio::sync::{oneshot, RwLock};
 use tokio::time::sleep;
 use tokio::{join, select, spawn, try_join};
 use tracing::{info, info_span, instrument, Instrument, Span};
-use wrpc_transport::{
-    Invoke as _, InvokeExt as _, ResourceBorrow, ResourceOwn, Serve as _, ServeExt as _,
-};
+use wrpc_transport::{InvokeExt as _, ResourceBorrow, ResourceOwn, ServeExt as _};
 
 #[instrument(skip_all, ret)]
 async fn assert_bindgen_async<C, I, S>(clt: Arc<I>, srv: Arc<S>) -> anyhow::Result<()>
@@ -138,7 +135,7 @@ where
             let srv = Arc::clone(&srv);
             let shutdown_rx = shutdown_rx.clone();
             tokio::spawn(async move {
-                let mut invocations = serve(srv.as_ref(), Component::default())
+                let invocations = serve(srv.as_ref(), Component::default())
                     .await
                     .context("failed to serve `wrpc-test:integration/async`")?;
                 let mut invocations = stream::select_all(invocations.into_iter().map(
@@ -405,7 +402,7 @@ where
             let srv = Arc::clone(&srv);
             let shutdown_rx = shutdown_rx.clone();
             tokio::spawn(async move {
-                let mut invocations = bindings::serve(srv.as_ref(), Component::default())
+                let invocations = bindings::serve(srv.as_ref(), Component::default())
                     .await
                     .context("failed to serve `wrpc-test:integration/test`")?;
                 let mut invocations = stream::select_all(invocations.into_iter().map(
@@ -600,7 +597,7 @@ where
                 }
             }
 
-            let mut invocations = bindings::serve(srv.as_ref(), Component(Arc::clone(&clt)))
+            let invocations = bindings::serve(srv.as_ref(), Component(Arc::clone(&clt)))
                 .await
                 .context("failed to serve `wrpc-test:integration/test`")?;
             let mut invocations = stream::select_all(invocations.into_iter().map(
@@ -682,11 +679,11 @@ where
         .await
         .context("failed to serve `test.async`")?;
     let reset_inv = srv
-        .serve_values::<(String,), (String,)>("test", "reset", [Box::default(); 0])
+        .serve_values::<(String,), (String,)>("test", "reset", Box::default())
         .await
         .context("failed to serve `test.reset`")?;
     let sync_inv = srv
-        .serve_values("test", "sync", [Box::default(); 0])
+        .serve_values("test", "sync", Box::default())
         .await
         .context("failed to serve `test.sync`")?;
 
@@ -697,13 +694,13 @@ where
     join!(
         async {
             info!("receiving `test.reset` parameters");
-            reset_inv
+            _ = reset_inv
                 .try_next()
                 .await
                 .expect("failed to accept invocation")
                 .expect("unexpected end of stream");
             info!("receiving `test.reset` parameters");
-            reset_inv
+            _ = reset_inv
                 .try_next()
                 .await
                 .expect("failed to accept invocation")
@@ -714,7 +711,6 @@ where
                 .expect("failed to accept invocation")
                 .expect("unexpected end of stream");
             thread::spawn(|| inv);
-            anyhow::Ok(())
         }
         .instrument(info_span!("server")),
         async {
@@ -928,7 +924,9 @@ where
                 async {
                     if let Some(io) = io {
                         info!("performing I/O");
-                        io.await.expect("failed to complete async I/O");
+                        io.await
+                            .expect("I/O task panicked")
+                            .expect("failed to complete async I/O");
                     }
                 }
             );
@@ -1074,7 +1072,6 @@ async fn rust_dynamic_nats() -> anyhow::Result<()> {
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 #[instrument(ret)]
 async fn rust_bindgen_quic_sync() -> anyhow::Result<()> {
-    use core::net::Ipv6Addr;
     use core::pin::pin;
 
     wrpc_test::with_quic(|clt, srv| {
@@ -1108,7 +1105,6 @@ async fn rust_bindgen_quic_sync() -> anyhow::Result<()> {
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 #[instrument(ret)]
 async fn rust_bindgen_quic_async() -> anyhow::Result<()> {
-    use core::net::Ipv6Addr;
     use core::pin::pin;
 
     wrpc_test::with_quic(|clt, srv| async move {
@@ -1140,7 +1136,6 @@ async fn rust_bindgen_quic_async() -> anyhow::Result<()> {
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 #[instrument(ret)]
 async fn rust_dynamic_quic() -> anyhow::Result<()> {
-    use core::net::Ipv6Addr;
     use core::pin::pin;
 
     use tracing::Span;
@@ -1164,7 +1159,6 @@ async fn rust_dynamic_quic() -> anyhow::Result<()> {
                     }
                 }
             }
-            Ok(())
         }
         .instrument(span)
     })
@@ -1175,7 +1169,6 @@ async fn rust_dynamic_quic() -> anyhow::Result<()> {
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 #[instrument(ret)]
 async fn rust_bindgen_web_transport_sync() -> anyhow::Result<()> {
-    use core::net::Ipv6Addr;
     use core::pin::pin;
 
     wrpc_test::with_web_transport(|clt, srv| {
@@ -1209,7 +1202,6 @@ async fn rust_bindgen_web_transport_sync() -> anyhow::Result<()> {
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 #[instrument(ret)]
 async fn rust_bindgen_web_transport_async() -> anyhow::Result<()> {
-    use core::net::Ipv6Addr;
     use core::pin::pin;
 
     wrpc_test::with_web_transport(|clt, srv| async move {
@@ -1241,7 +1233,6 @@ async fn rust_bindgen_web_transport_async() -> anyhow::Result<()> {
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 #[instrument(ret)]
 async fn rust_dynamic_web_transport() -> anyhow::Result<()> {
-    use core::net::Ipv6Addr;
     use core::pin::pin;
 
     use tracing::Span;
@@ -1265,7 +1256,6 @@ async fn rust_dynamic_web_transport() -> anyhow::Result<()> {
                     }
                 }
             }
-            Ok(())
         }
         .instrument(span)
     })
@@ -1346,7 +1336,6 @@ async fn rust_bindgen_tcp_async() -> anyhow::Result<()> {
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 #[instrument(ret)]
 async fn rust_bindgen_uds_sync() -> anyhow::Result<()> {
-    use core::net::Ipv6Addr;
     use core::pin::pin;
 
     use std::path::PathBuf;
@@ -1385,7 +1374,6 @@ async fn rust_bindgen_uds_sync() -> anyhow::Result<()> {
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 #[instrument(ret)]
 async fn rust_bindgen_uds_async() -> anyhow::Result<()> {
-    use core::net::Ipv6Addr;
     use core::pin::pin;
 
     use std::path::PathBuf;
