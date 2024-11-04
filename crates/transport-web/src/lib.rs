@@ -33,7 +33,7 @@ impl wrpc_transport::frame::ConnHandler<RecvStream, SendStream> for ConnHandler 
             debug!("ingress successfully complete");
         }
         if let Err(err) = rx.stop(DONE) {
-            error!(?err, "failed to close stream");
+            debug!(?err, "failed to close incoming stream");
         }
     }
 
@@ -42,9 +42,6 @@ impl wrpc_transport::frame::ConnHandler<RecvStream, SendStream> for ConnHandler 
             error!(?err, "egress failed");
         } else {
             debug!("egress successfully complete");
-        }
-        if let Err(err) = tx.finish() {
-            error!(?err, "failed to close stream");
         }
         match tx.stopped().await {
             Ok(None) => {
