@@ -47,6 +47,6 @@ wasmtime = { workspace = true, features = [
 wasmtime-wasi = { workspace = true }
 wit-component = { workspace = true }
 wrpc-cli = { workspace = true, features = ["nats"] }
-wrpc-transport-nats = { workspace = true }
+wrpc-transport-nats = { workspace = true, features = ["async-nats-0_37"] }
 wrpc-transport = { workspace = true, features = ["net"] }
 wrpc-runtime-wasmtime = { workspace = true }

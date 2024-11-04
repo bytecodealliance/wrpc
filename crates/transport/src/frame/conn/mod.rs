@@ -1,3 +1,4 @@
+use core::future::Future;
 use core::mem;
 use core::pin::Pin;
 use core::task::{ready, Context, Poll};
@@ -15,7 +16,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::codec::Encoder;
 use tokio_util::io::StreamReader;
 use tokio_util::sync::PollSender;
-use tracing::{instrument, trace};
+use tracing::{debug, error, instrument, trace, Instrument as _, Span};
 use wasm_tokio::{AsyncReadLeb128 as _, Leb128Encoder};
 
 use crate::Index;
@@ -484,10 +485,10 @@ async fn ingress(
     }
 }
 
-#[instrument(level = "trace", skip_all, ret(level = "trace"))]
+#[instrument(level = "trace", skip_all)]
 async fn egress(
-    mut rx: mpsc::Receiver<(Bytes, Bytes)>,
     mut tx: impl AsyncWrite + Unpin,
+    mut rx: mpsc::Receiver<(Bytes, Bytes)>,
 ) -> std::io::Result<()> {
     let mut buf = BytesMut::with_capacity(5);
     trace!("waiting for next frame");
@@ -502,4 +503,91 @@ async fn egress(
     }
     trace!("shutting down outgoing stream");
     tx.shutdown().await
+}
+
+/// Connection handler defines the connection I/O behavior.
+/// It is mostly useful for transports that may require additional clean up not already covered
+/// by [AsyncWrite::shutdown], for example.
+/// This API is experimental and may change in backwards-incompatible ways in the future.
+pub trait ConnHandler<Rx, Tx> {
+    /// Handle ingress completion
+    fn on_ingress(rx: Rx, res: std::io::Result<()>) -> impl Future<Output = ()> + Send {
+        _ = rx;
+        if let Err(err) = res {
+            error!(?err, "ingress failed");
+        } else {
+            debug!("ingress successfully complete");
+        }
+        async {}
+    }
+
+    /// Handle egress completion
+    fn on_egress(tx: Tx, res: std::io::Result<()>) -> impl Future<Output = ()> + Send {
+        _ = tx;
+        if let Err(err) = res {
+            error!(?err, "egress failed");
+        } else {
+            debug!("egress successfully complete");
+        }
+        async {}
+    }
+}
+
+impl<Rx, Tx> ConnHandler<Rx, Tx> for () {}
+
+/// Peer connection
+pub(crate) struct Conn {
+    rx: Incoming,
+    tx: Outgoing,
+}
+
+impl Conn {
+    /// Creates a new [Conn] given an [AsyncRead], [ConnHandler] and a set of async paths
+    fn new<H, Rx, Tx, P>(mut rx: Rx, mut tx: Tx, paths: impl IntoIterator<Item = P>) -> Self
+    where
+        Rx: AsyncRead + Unpin + Send + 'static,
+        Tx: AsyncWrite + Unpin + Send + 'static,
+        H: ConnHandler<Rx, Tx>,
+        P: AsRef<[Option<usize>]>,
+    {
+        let index = Arc::new(std::sync::Mutex::new(paths.into_iter().collect()));
+        let (rx_tx, rx_rx) = mpsc::channel(128);
+        let mut rx_io = JoinSet::new();
+        let span = Span::current();
+        rx_io.spawn({
+            let index = Arc::clone(&index);
+            async move {
+                let res = ingress(&mut rx, &index, rx_tx).await;
+                H::on_ingress(rx, res).await;
+                let Ok(mut index) = index.lock() else {
+                    error!("failed to lock index trie");
+                    return;
+                };
+                trace!("shutting down index trie");
+                index.close_tx();
+            }
+            .instrument(span.clone())
+        });
+        let (tx_tx, tx_rx) = mpsc::channel(128);
+        tokio::spawn(
+            async {
+                let res = egress(&mut tx, tx_rx).await;
+                H::on_egress(tx, res).await;
+            }
+            .instrument(span.clone()),
+        );
+        Conn {
+            tx: Outgoing {
+                tx: PollSender::new(tx_tx),
+                path: Arc::from([]),
+                path_buf: Bytes::from_static(&[0]),
+            },
+            rx: Incoming {
+                rx: Some(StreamReader::new(ReceiverStream::new(rx_rx))),
+                path: Arc::from([]),
+                index: Arc::clone(&index),
+                io: Arc::new(rx_io),
+            },
+        }
+    }
 }
