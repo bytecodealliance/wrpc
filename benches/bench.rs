@@ -124,6 +124,7 @@ impl WasmHandler {
         )
     }
 
+    #[allow(clippy::unused_async)]
     pub async fn new(wasm: &[u8]) -> anyhow::Result<Self> {
         let mut opts =
             wasmtime_cli_flags::CommonOptions::try_parse_from(iter::empty::<&'static str>())
@@ -236,8 +237,8 @@ fn bench_raw_nats<Fut>(
     id: &str,
     subject: &'static str,
     handle: impl Fn(async_nats::Client, async_nats::Message) -> Fut + Send + 'static,
-    payload: Bytes,
-    expect: Bytes,
+    payload: &Bytes,
+    expect: &[u8],
 ) -> anyhow::Result<()>
 where
     Fut: Future<Output = anyhow::Result<()>> + Send,
@@ -307,8 +308,8 @@ fn bench_nats_raw_ping(g: &mut BenchmarkGroup<impl Measurement>) -> anyhow::Resu
                 .await
                 .context("failed to publish response")
         },
-        Bytes::default(),
-        Bytes::default(),
+        &Bytes::default(),
+        &[],
     )
 }
 
@@ -338,8 +339,8 @@ fn bench_nats_raw_greet(g: &mut BenchmarkGroup<impl Measurement>) -> anyhow::Res
                 .await
                 .context("failed to publish response")
         },
-        Bytes::from("test"),
-        Bytes::from("Hello, test"),
+        &Bytes::from("test"),
+        b"Hello, test",
     )
 }
 
@@ -379,8 +380,8 @@ fn bench_wasm_ping_nats_raw(
                     .context("failed to publish response")
             }
         },
-        Bytes::default(),
-        Bytes::default(),
+        &Bytes::default(),
+        &[],
     )
 }
 
@@ -421,8 +422,8 @@ fn bench_wasm_greet_nats_raw(
                     .context("failed to publish response")
             }
         },
-        Bytes::from("test"),
-        Bytes::from("Hello, test"),
+        &Bytes::from("test"),
+        b"Hello, test",
     )
 }
 
