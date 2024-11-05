@@ -4,11 +4,13 @@
 
 <head>
     <meta content="text/html;charset=utf-8" http-equiv="Content-Type" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@1.0.2/css/bulma.min.css">
+    <title>wRPC WebTransport demo</title>
 </head>
 
-<body>
+<body class="p-4">
     <script type="module">
-        import {CERT_DIGEST, PORT} from './consts.js';
+        import { CERT_DIGEST, PORT } from './consts.js';
 
         async function run() {
             console.log('connecting to wRPC over WebTransport on `' + PORT + '`...');
@@ -123,6 +125,190 @@
         }
         run();
     </script>
+    <script type="module">
+        init();
+
+        function init() {
+            addEventListeners();
+            setTemplate('tcp');
+        }
+
+        function addEventListeners() {
+            const connectionDropdown = document.querySelector('#connection');
+            connectionDropdown.addEventListener('change', () => {
+                setTemplate(connectionDropdown.value);
+            });
+
+            const settingsForm = document.querySelector('#settings');
+            settingsForm.addEventListener('submit', (e) => {
+                // no-op here, just to prevent accidental form submission
+                e.preventDefault();
+            });
+
+            const getForm = document.querySelector('#get');
+            getForm.addEventListener('submit', (e) => {
+                e.preventDefault();
+                handleGet();
+            });
+
+            const setForm = document.querySelector('#set');
+            setForm.addEventListener('submit', (e) => {
+                const value = setForm.querySelector('input[name="set-value"]').value;
+                e.preventDefault();
+                console.log('Set', value, getSettings());
+            });
+        }
+
+        function setTemplate(option) {
+            const defaultTemplate = document.querySelector('.form-fields[data-option=default]');
+            const templateOutput = document.querySelector('#template-output');
+            const template = document.querySelector(`.form-fields[data-option=${option}]`) ?? defaultTemplate;
+
+            console.log('setting template to:', template.id, { option, template });
+            templateOutput.innerHTML = template.innerHTML;
+        }
+
+        /**
+         * @param {Record<string, string>} settings
+         * @returns {Record<string, string> & {connection: string}}
+         */
+        function getSettings() {
+            const form = document.querySelector('#settings');
+            const formData = new FormData(form);
+
+            return Object.fromEntries(formData);
+        }
+
+        function handleGet() {
+            const settings = getSettings();
+
+            const defaultHandler = (data) => {
+                console.log(`[get] fallback from ${settings.connection}`, data)
+            }
+
+            const handler = {
+                'nats': (data) => {
+                    console.log('[get] handling nats connection', data)
+                },
+            }[settings.connection] ?? defaultHandler;
+
+            handler(settings)
+        }
+
+        function handleSet() {
+            const settings = getSettings();
+
+            const defaultHandler = (data) => {
+                console.log(`[set] fallback from ${settings.connection}`, data)
+            }
+
+            const handler = {
+                'nats': (data) => {
+                    console.log('[set] handling nats connection', data)
+                },
+            }[settings.connection] ?? defaultHandler;
+
+            handler(settings)
+        }
+    </script>
+
+    <section class="section columns">
+        <div class="column">
+            <h1 class="title">wRPC WebTransport demo</h1>
+        </div>
+        <div class="column is-narrow">
+            <div class="select">
+                <select id="connection" form="settings" name="connection">
+                    <option value="tcp">TCP</option>
+                    <option value="nats">NATS</option>
+                    <option value="uds">UDS</option>
+                    <option value="quic">QUIC</option>
+                    <option value="webtransport">WebTransport</option>
+                </select>
+            </div>
+        </div>
+    </section>
+
+    <div class="section pt-0">
+        <form id="settings">
+            <div class="field" id="template-output">
+                <!-- templates from below will show here -->
+            </div>
+
+            <template class="form-fields" data-option="default">
+                <!-- shows when no other specific option is selected -->
+                <div class="field">
+                    <label class="label">Connection String</label>
+                    <div class="control">
+                        <input class="input" type="text" name="connection-string">
+                    </div>
+                </div>
+            </template>
+
+            <template class="form-fields" data-option="uds">
+                <div class="field">
+                    <label class="label">UDS Prefix</label>
+                    <div class="control">
+                        <input class="input" type="text" name="nats-prefix">
+                    </div>
+                </div>
+                <div class="field">
+                    <label class="label">NATS Subject</label>
+                    <div class="control">
+                        <input class="input" type="text" name="nats-subject">
+                    </div>
+                </div>
+            </template>
+            <template class="form-fields" data-option="nats">
+                <div class="field">
+                    <label class="label">NATS Prefix</label>
+                    <div class="control">
+                        <input class="input" type="text" name="nats-prefix">
+                    </div>
+                </div>
+                <div class="field">
+                    <label class="label">NATS Subject</label>
+                    <div class="control">
+                        <input class="input" type="text" name="nats-subject">
+                    </div>
+                </div>
+            </template>
+        </form>
+    </div>
+
+    <div class="section columns">
+        <div class="column">
+            <h2 class="title is-4 has-text-centered">Get</h2>
+            <form id="get">
+                <div class="field">
+                    <div class="control">
+                        <button type="submit" class="button is-primary">Get</button>
+                    </div>
+                </div>
+            </form>
+        </div>
+        <div class="column">
+            <h2 class="title is-4 has-text-centered">Set</h2>
+            <form id="set">
+                <div class="field is-horizontal">
+                    <div class="field-label is-normal">
+                        <label class="label">Value</label>
+                    </div>
+                    <div class="field-body">
+                        <div class="field is-grouped">
+                            <div class="control">
+                                <input class="input" name="set-value" />
+                            </div>
+                            <div class="control">
+                                <button type="submit" class="button is-primary">Set</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </form>
+            <div></div>
+        </div>
+    </div>
 </body>
 
 </html>
