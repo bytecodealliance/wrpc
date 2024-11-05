@@ -50,6 +50,10 @@ impl Handler {
 #[derive(Clone, Debug)]
 enum Bucket {
     Mem(ResourceOwn<store::Bucket>),
+    Tcp(
+        ResourceOwn<wrpc_wasi_keyvalue::wasi::keyvalue::store::Bucket>,
+        wrpc_transport::tcp::Client<SocketAddr>,
+    ),
 }
 
 impl<C: Send + Sync> store::Handler<C> for Handler {
@@ -76,28 +80,49 @@ impl<C: Send + Sync> store::Handler<C> for Handler {
             Err(err) => return Ok(Err(store::Error::Other(err.to_string()))),
         };
         match url.scheme() {
-            "wrpc+nats" => {
-                eprintln!("TODO: NATS");
-            }
-            "wrpc+quic" => {
-                eprintln!("TODO: QUIC");
-            }
+            //"wrpc+nats" => {
+            //    eprintln!("TODO: NATS");
+            //}
+            //"wrpc+quic" => {
+            //    eprintln!("TODO: QUIC");
+            //}
             "wrpc+tcp" => {
-                eprintln!("TODO: TCP");
+                let addr: SocketAddr = match url.authority().parse() {
+                    Ok(addr) => addr,
+                    Err(err) => return Ok(Err(store::Error::Other(err.to_string()))),
+                };
+                let wrpc = wrpc_transport::frame::tcp::Client::from(addr);
+                match wrpc_wasi_keyvalue::wasi::keyvalue::store::open(&wrpc, (), &identifier)
+                    .await?
+                {
+                    Ok(bucket) => {
+                        let id = Uuid::now_v7();
+                        let id = Bytes::copy_from_slice(id.as_bytes());
+                        let mut buckets = self.buckets.write().await;
+                        buckets.insert(id.clone(), Bucket::Tcp(bucket, wrpc));
+                        Ok(Ok(ResourceOwn::from(id)))
+                    }
+                    Err(wrpc_wasi_keyvalue::wasi::keyvalue::store::Error::NoSuchStore) => {
+                        Ok(Err(store::Error::NoSuchStore))
+                    }
+                    Err(wrpc_wasi_keyvalue::wasi::keyvalue::store::Error::AccessDenied) => {
+                        Ok(Err(store::Error::AccessDenied))
+                    }
+                    Err(wrpc_wasi_keyvalue::wasi::keyvalue::store::Error::Other(err)) => {
+                        Ok(Err(store::Error::Other(err)))
+                    }
+                }
             }
-            "wrpc+uds" => {
-                eprintln!("TODO: UDS");
-            }
-            "wrpc+web" => {
-                eprintln!("WebTransport");
-            }
-            scheme => {
-                return Ok(Err(store::Error::Other(format!(
-                    "unsupported scheme: {scheme}"
-                ))))
-            }
+            //"wrpc+uds" => {
+            //    eprintln!("TODO: UDS");
+            //}
+            //"wrpc+web" => {
+            //    eprintln!("WebTransport");
+            //}
+            scheme => Ok(Err(store::Error::Other(format!(
+                "unsupported scheme: {scheme}"
+            )))),
         }
-        return Ok(Err(store::Error::Other("unsupported".into())));
     }
 }
 
@@ -109,8 +134,29 @@ impl<C: Send + Sync> store::HandlerBucket<C> for Handler {
         bucket: ResourceBorrow<store::Bucket>,
         key: String,
     ) -> anyhow::Result<Result<Option<Bytes>>> {
-        match self.bucket(bucket).await? {
-            Bucket::Mem(bucket) => self.mem.get(cx, bucket.as_borrow(), key).await,
+        let res = match self.bucket(bucket).await? {
+            Bucket::Mem(bucket) => return self.mem.get(cx, bucket.as_borrow(), key).await,
+            Bucket::Tcp(bucket, wrpc) => {
+                wrpc_wasi_keyvalue::wasi::keyvalue::store::Bucket::get(
+                    &wrpc,
+                    (),
+                    &bucket.as_borrow(),
+                    &key,
+                )
+                .await?
+            }
+        };
+        match res {
+            Ok(res) => Ok(Ok(res)),
+            Err(wrpc_wasi_keyvalue::wasi::keyvalue::store::Error::NoSuchStore) => {
+                Ok(Err(store::Error::NoSuchStore))
+            }
+            Err(wrpc_wasi_keyvalue::wasi::keyvalue::store::Error::AccessDenied) => {
+                Ok(Err(store::Error::AccessDenied))
+            }
+            Err(wrpc_wasi_keyvalue::wasi::keyvalue::store::Error::Other(err)) => {
+                Ok(Err(store::Error::Other(err)))
+            }
         }
     }
 
@@ -122,8 +168,30 @@ impl<C: Send + Sync> store::HandlerBucket<C> for Handler {
         key: String,
         value: Bytes,
     ) -> anyhow::Result<Result<()>> {
-        match self.bucket(bucket).await? {
-            Bucket::Mem(bucket) => self.mem.set(cx, bucket.as_borrow(), key, value).await,
+        let res = match self.bucket(bucket).await? {
+            Bucket::Mem(bucket) => return self.mem.set(cx, bucket.as_borrow(), key, value).await,
+            Bucket::Tcp(bucket, wrpc) => {
+                wrpc_wasi_keyvalue::wasi::keyvalue::store::Bucket::set(
+                    &wrpc,
+                    (),
+                    &bucket.as_borrow(),
+                    &key,
+                    &value,
+                )
+                .await?
+            }
+        };
+        match res {
+            Ok(()) => Ok(Ok(())),
+            Err(wrpc_wasi_keyvalue::wasi::keyvalue::store::Error::NoSuchStore) => {
+                Ok(Err(store::Error::NoSuchStore))
+            }
+            Err(wrpc_wasi_keyvalue::wasi::keyvalue::store::Error::AccessDenied) => {
+                Ok(Err(store::Error::AccessDenied))
+            }
+            Err(wrpc_wasi_keyvalue::wasi::keyvalue::store::Error::Other(err)) => {
+                Ok(Err(store::Error::Other(err)))
+            }
         }
     }
 
@@ -134,8 +202,29 @@ impl<C: Send + Sync> store::HandlerBucket<C> for Handler {
         bucket: ResourceBorrow<store::Bucket>,
         key: String,
     ) -> anyhow::Result<Result<()>> {
-        match self.bucket(bucket).await? {
-            Bucket::Mem(bucket) => self.mem.delete(cx, bucket.as_borrow(), key).await,
+        let res = match self.bucket(bucket).await? {
+            Bucket::Mem(bucket) => return self.mem.delete(cx, bucket.as_borrow(), key).await,
+            Bucket::Tcp(bucket, wrpc) => {
+                wrpc_wasi_keyvalue::wasi::keyvalue::store::Bucket::delete(
+                    &wrpc,
+                    (),
+                    &bucket.as_borrow(),
+                    &key,
+                )
+                .await?
+            }
+        };
+        match res {
+            Ok(()) => Ok(Ok(())),
+            Err(wrpc_wasi_keyvalue::wasi::keyvalue::store::Error::NoSuchStore) => {
+                Ok(Err(store::Error::NoSuchStore))
+            }
+            Err(wrpc_wasi_keyvalue::wasi::keyvalue::store::Error::AccessDenied) => {
+                Ok(Err(store::Error::AccessDenied))
+            }
+            Err(wrpc_wasi_keyvalue::wasi::keyvalue::store::Error::Other(err)) => {
+                Ok(Err(store::Error::Other(err)))
+            }
         }
     }
 
@@ -146,8 +235,29 @@ impl<C: Send + Sync> store::HandlerBucket<C> for Handler {
         bucket: ResourceBorrow<store::Bucket>,
         key: String,
     ) -> anyhow::Result<Result<bool>> {
-        match self.bucket(bucket).await? {
-            Bucket::Mem(bucket) => self.mem.exists(cx, bucket.as_borrow(), key).await,
+        let res = match self.bucket(bucket).await? {
+            Bucket::Mem(bucket) => return self.mem.exists(cx, bucket.as_borrow(), key).await,
+            Bucket::Tcp(bucket, wrpc) => {
+                wrpc_wasi_keyvalue::wasi::keyvalue::store::Bucket::exists(
+                    &wrpc,
+                    (),
+                    &bucket.as_borrow(),
+                    &key,
+                )
+                .await?
+            }
+        };
+        match res {
+            Ok(res) => Ok(Ok(res)),
+            Err(wrpc_wasi_keyvalue::wasi::keyvalue::store::Error::NoSuchStore) => {
+                Ok(Err(store::Error::NoSuchStore))
+            }
+            Err(wrpc_wasi_keyvalue::wasi::keyvalue::store::Error::AccessDenied) => {
+                Ok(Err(store::Error::AccessDenied))
+            }
+            Err(wrpc_wasi_keyvalue::wasi::keyvalue::store::Error::Other(err)) => {
+                Ok(Err(store::Error::Other(err)))
+            }
         }
     }
 
@@ -158,8 +268,31 @@ impl<C: Send + Sync> store::HandlerBucket<C> for Handler {
         bucket: ResourceBorrow<store::Bucket>,
         cursor: Option<String>,
     ) -> anyhow::Result<Result<store::KeyResponse>> {
-        match self.bucket(bucket).await? {
-            Bucket::Mem(bucket) => self.mem.list_keys(cx, bucket.as_borrow(), cursor).await,
+        let res = match self.bucket(bucket).await? {
+            Bucket::Mem(bucket) => return self.mem.list_keys(cx, bucket.as_borrow(), cursor).await,
+            Bucket::Tcp(bucket, wrpc) => {
+                wrpc_wasi_keyvalue::wasi::keyvalue::store::Bucket::list_keys(
+                    &wrpc,
+                    (),
+                    &bucket.as_borrow(),
+                    cursor.as_deref(),
+                )
+                .await?
+            }
+        };
+        match res {
+            Ok(wrpc_wasi_keyvalue::wasi::keyvalue::store::KeyResponse { keys, cursor }) => {
+                Ok(Ok(store::KeyResponse { keys, cursor }))
+            }
+            Err(wrpc_wasi_keyvalue::wasi::keyvalue::store::Error::NoSuchStore) => {
+                Ok(Err(store::Error::NoSuchStore))
+            }
+            Err(wrpc_wasi_keyvalue::wasi::keyvalue::store::Error::AccessDenied) => {
+                Ok(Err(store::Error::AccessDenied))
+            }
+            Err(wrpc_wasi_keyvalue::wasi::keyvalue::store::Error::Other(err)) => {
+                Ok(Err(store::Error::Other(err)))
+            }
         }
     }
 }
