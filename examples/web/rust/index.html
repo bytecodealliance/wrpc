@@ -1,0 +1,125 @@
+<!doctype html>
+<html>
+  <title>wRPC WebTransport demo</title>
+  <head>
+    <meta content="text/html;charset=utf-8" http-equiv="Content-Type"/>
+  </head>
+  <body>
+    <script type="module">
+      import { CERT_DIGEST, PORT } from './consts.js';
+
+      async function run() {
+        console.log('connecting to wRPC over WebTransport on `' + PORT +'`...');
+        try {
+          var transport = new WebTransport("https://localhost:" + PORT, {
+            serverCertificateHashes: [
+                {
+                  algorithm: "sha-256",
+                  value: CERT_DIGEST.buffer
+                }
+            ]
+          });
+        } catch (e) {
+          console.log('failed to connect: ' + e);
+          return;
+        }
+
+        console.log('waiting for readiness...');
+        try {
+          await transport.ready;
+        } catch (e) {
+          console.log('failed to await readiness: ' + e);
+          return;
+        }
+
+        console.log('creating `open` stream...');
+        let stream = await transport.createBidirectionalStream();
+
+        console.log('writing invocation...');
+        let tx = stream.writable.getWriter();
+        let rx = stream.readable.getReader();
+        await tx.write(new Uint8Array([0]));
+        await tx.write(new Uint8Array(["wasi:keyvalue/store@0.2.0-draft2".length]));
+        await tx.write(new TextEncoder().encode("wasi:keyvalue/store@0.2.0-draft2"));
+        await tx.write(new Uint8Array(["open".length]));
+        await tx.write(new TextEncoder().encode("open"));
+        await tx.write(new Uint8Array([0]));
+        await tx.write(new Uint8Array([1 + "test".length]));
+        await tx.write(new Uint8Array(["test".length]));
+        await tx.write(new TextEncoder().encode("test"));
+        tx.close();
+
+        console.log('reading `open` response...');
+        let data = await rx.read();
+        console.log('received `open` response: '+ data.value);
+        let res = data.value[2];
+        if (res != 0) {
+            console.log("failed to open bucket")
+            return;
+        }
+        let bucket = data.value.slice(3);
+        console.log('opened bucket: '+ bucket);
+
+        console.log('creating `set` stream...');
+        stream = await transport.createBidirectionalStream();
+        tx = stream.writable.getWriter();
+        rx = stream.readable.getReader();
+        await tx.write(new Uint8Array([0]));
+        await tx.write(new Uint8Array(["wasi:keyvalue/store@0.2.0-draft2".length]));
+        await tx.write(new TextEncoder().encode("wasi:keyvalue/store@0.2.0-draft2"));
+        await tx.write(new Uint8Array(["bucket.set".length]));
+        await tx.write(new TextEncoder().encode("bucket.set"));
+        await tx.write(new Uint8Array([0]));
+        await tx.write(new Uint8Array([bucket.length + 1 + "foo".length + 1 + "bar".length]));
+        await tx.write(bucket);
+        await tx.write(new Uint8Array(["foo".length]));
+        await tx.write(new TextEncoder().encode("foo"));
+        await tx.write(new Uint8Array(["bar".length]));
+        await tx.write(new TextEncoder().encode("bar"));
+        tx.close();
+
+        console.log('reading `set` response...');
+        data = await rx.read();
+        console.log('received `set` response: '+ data.value);
+        res = data.value[2];
+        if (res != 0) {
+            console.log("failed to set `foo` to `bar`")
+            return;
+        }
+
+        console.log('creating `get` stream...');
+        stream = await transport.createBidirectionalStream();
+        tx = stream.writable.getWriter();
+        rx = stream.readable.getReader();
+        await tx.write(new Uint8Array([0]));
+        await tx.write(new Uint8Array(["wasi:keyvalue/store@0.2.0-draft2".length]));
+        await tx.write(new TextEncoder().encode("wasi:keyvalue/store@0.2.0-draft2"));
+        await tx.write(new Uint8Array(["bucket.get".length]));
+        await tx.write(new TextEncoder().encode("bucket.get"));
+        await tx.write(new Uint8Array([0]));
+        await tx.write(new Uint8Array([bucket.length + 1 + "foo".length]));
+        await tx.write(bucket);
+        await tx.write(new Uint8Array(["foo".length]));
+        await tx.write(new TextEncoder().encode("foo"));
+        tx.close();
+
+        console.log('reading `get` response...');
+        data = await rx.read();
+        console.log('received `get` response: '+ data.value);
+        res = data.value[2];
+        if (res != 0) {
+            console.log("failed to get `foo` value")
+            return;
+        }
+        let ok = data.value[3];
+        if (ok != 1) {
+            console.log("`foo` key missing")
+            return;
+        }
+        let value = new TextDecoder().decode(data.value.slice(5));
+        console.log('got `foo` value: '+ value);
+      }
+      run();
+    </script>
+  </body>
+</html>

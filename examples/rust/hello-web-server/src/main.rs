@@ -46,8 +46,12 @@ async fn main() -> anyhow::Result<()> {
 
     let Args { addr } = Args::parse();
 
-    let CertifiedKey { cert, key_pair } = generate_simple_self_signed(["localhost".to_string()])
-        .context("failed to generate server certificate")?;
+    let CertifiedKey { cert, key_pair } = generate_simple_self_signed([
+        "localhost".to_string(),
+        "::1".to_string(),
+        "127.0.0.1".to_string(),
+    ])
+    .context("failed to generate server certificate")?;
     let cert = CertificateDer::from(cert);
 
     let conf = rustls::ServerConfig::builder_with_protocol_versions(&[&TLS13])
