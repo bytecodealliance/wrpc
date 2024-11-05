@@ -75,9 +75,9 @@ pub trait ServeExt: Serve {
         <Results::Encoder as tokio_util::codec::Encoder<Results>>::Error:
             std::error::Error + Send + Sync + 'static,
     {
+        let span = Span::current();
         async {
             let invocations = self.serve(instance, func, paths).await?;
-            let span = Span::current();
             Ok(invocations.and_then(move |(cx, outgoing, incoming)| {
                 async {
                     let mut dec = FramedRead::new(incoming, Params::Decoder::default());
