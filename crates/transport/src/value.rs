@@ -96,6 +96,15 @@ impl<T: ?Sized + 'static> Debug for ResourceBorrow<T> {
     }
 }
 
+impl<T: ?Sized> Clone for ResourceBorrow<T> {
+    fn clone(&self) -> Self {
+        Self {
+            repr: self.repr.clone(),
+            _ty: PhantomData,
+        }
+    }
+}
+
 impl<T: ?Sized> ResourceBorrow<T> {
     /// Constructs a new borrowed resource handle
     pub fn new(repr: impl Into<Bytes>) -> Self {
@@ -172,6 +181,15 @@ impl<T: ?Sized> AsRef<Bytes> for ResourceOwn<T> {
 impl<T: ?Sized + 'static> Debug for ResourceOwn<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "own<{:?}>", TypeId::of::<T>())
+    }
+}
+
+impl<T: ?Sized> Clone for ResourceOwn<T> {
+    fn clone(&self) -> Self {
+        Self {
+            repr: self.repr.clone(),
+            _ty: PhantomData,
+        }
     }
 }
 
