@@ -7,7 +7,7 @@ inputs:
 runs:
   using: composite
   steps:
-  - uses: DeterminateSystems/nix-installer-action@v14
+  - uses: DeterminateSystems/nix-installer-action@v15
     with:
       extra-conf: |
         accept-flake-config = true
