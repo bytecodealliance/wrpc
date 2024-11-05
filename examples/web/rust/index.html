@@ -10,47 +10,92 @@
 
 <body class="p-4">
     <script type="module">
-        import { CERT_DIGEST, PORT } from './consts.js';
+        import {CERT_DIGEST, PORT} from './consts.js';
 
-        async function run() {
-            console.log('connecting to wRPC over WebTransport on `' + PORT + '`...');
-            try {
-                var transport = new WebTransport("https://localhost:" + PORT, {
-                    serverCertificateHashes: [
-                        {
-                            algorithm: "sha-256",
-                            value: CERT_DIGEST.buffer
-                        }
-                    ]
-                });
-            } catch (e) {
-                console.log('failed to connect: ' + e);
-                return;
+        function setTemplate(option) {
+            const defaultTemplate = document.querySelector('.form-fields[data-option=default]');
+            const templateOutput = document.querySelector('#template-output');
+            const template = document.querySelector(`.form-fields[data-option=${option}]`) ?? defaultTemplate;
+
+            console.log('setting template to:', template.id, {option, template});
+            templateOutput.innerHTML = template.innerHTML;
+        }
+
+        async function getBucket() {
+            const form = document.querySelector('#settings');
+            const formData = new FormData(form);
+            const obj = Object.fromEntries(formData);
+
+            let url;
+            let conn = obj.connection;
+            console.log("transport " + conn);
+            if (conn === 'mem') {
+                url = '';
+            } else if (conn === 'nats') {
+                let nurl = obj['nats-url'];
+                if (nurl == null || nurl === '') {
+                    alert("NATS.io server URL must be set");
+                    return
+                }
+                url = 'wrpc+nats://' + nurl;
+                let prefix = obj['nats-url'];
+                if (prefix != null && prefix != '') {
+                    url = url + "/" + prefix;
+                }
+            } else if (conn === 'quic') {
+                let addr = obj['connection-string'];
+                if (addr == null || addr === '') {
+                    alert("QUIC address must be set");
+                    return
+                }
+                url = 'wrpc+quic://' + addr;
+            } else if (conn === 'tcp') {
+                let addr = obj['tcp-addr'];
+                if (addr == null || addr === '') {
+                    alert("TCP address must be set");
+                    return
+                }
+                url = 'wrpc+tcp://' + addr;
+            } else if (conn === 'uds') {
+                let addr = obj['connection-string'];
+                if (addr == null || addr === '') {
+                    alert("Unix Domain Socket address must be set");
+                    return
+                }
+                url = 'wrpc+uds://' + addr;
+            } else if (conn === 'web') {
+                let addr = obj['connection-string'];
+                if (addr == null || addr === '') {
+                    alert("WebTransport address must be set");
+                    return
+                }
+                url = 'wrpc+web://' + addr;
+            } else {
+                alert("transport not supported yet")
+            }
+            if (url.length >= 127) {
+                alert("this demo does not support URLs longer than 127 bytes - open a PR!");
+                return
             }
 
-            console.log('waiting for readiness...');
-            try {
-                await transport.ready;
-            } catch (e) {
-                console.log('failed to await readiness: ' + e);
-                return;
-            }
+            // TODO: cache the bucket by URL (it should not persist across server restarts)
 
-            console.log('creating `open` stream...');
+            console.log('creating `open` stream for URL `' + url + '`...');
             let stream = await transport.createBidirectionalStream();
 
             console.log('writing invocation...');
             let tx = stream.writable.getWriter();
             let rx = stream.readable.getReader();
+            // TODO: just do one write
             await tx.write(new Uint8Array([0]));
             await tx.write(new Uint8Array(["wasi:keyvalue/store@0.2.0-draft2".length]));
             await tx.write(new TextEncoder().encode("wasi:keyvalue/store@0.2.0-draft2"));
             await tx.write(new Uint8Array(["open".length]));
             await tx.write(new TextEncoder().encode("open"));
             await tx.write(new Uint8Array([0]));
-            await tx.write(new Uint8Array([1 + "test".length]));
-            await tx.write(new Uint8Array(["test".length]));
-            await tx.write(new TextEncoder().encode("test"));
+            await tx.write(new Uint8Array([1 + url.length]));
+            await tx.write(new Uint8Array([url.length]));
+            await tx.write(new TextEncoder().encode(url));
             tx.close();
 
             console.log('reading `open` response...');
@@ -58,82 +103,126 @@
             console.log('received `open` response: ' + data.value);
             let res = data.value[2];
             if (res != 0) {
-                console.log("failed to open bucket")
+                alert("failed to open bucket")
                 return;
             }
             let bucket = data.value.slice(3);
             console.log('opened bucket: ' + bucket);
 
-            console.log('creating `set` stream...');
-            stream = await transport.createBidirectionalStream();
-            tx = stream.writable.getWriter();
-            rx = stream.readable.getReader();
-            await tx.write(new Uint8Array([0]));
-            await tx.write(new Uint8Array(["wasi:keyvalue/store@0.2.0-draft2".length]));
-            await tx.write(new TextEncoder().encode("wasi:keyvalue/store@0.2.0-draft2"));
-            await tx.write(new Uint8Array(["bucket.set".length]));
-            await tx.write(new TextEncoder().encode("bucket.set"));
-            await tx.write(new Uint8Array([0]));
-            await tx.write(new Uint8Array([bucket.length + 1 + "foo".length + 1 + "bar".length]));
-            await tx.write(bucket);
-            await tx.write(new Uint8Array(["foo".length]));
-            await tx.write(new TextEncoder().encode("foo"));
-            await tx.write(new Uint8Array(["bar".length]));
-            await tx.write(new TextEncoder().encode("bar"));
-            tx.close();
+            return bucket
+        }
 
-            console.log('reading `set` response...');
-            data = await rx.read();
-            console.log('received `set` response: ' + data.value);
-            res = data.value[2];
-            if (res != 0) {
-                console.log("failed to set `foo` to `bar`")
-                return;
+        async function handleGet() {
+            const bucket = await getBucket();
+            if (bucket == null) {
+                return
+            }
+            const form = document.querySelector('#get');
+            const formData = new FormData(form);
+            const obj = Object.fromEntries(formData);
+            let key = obj['get-key'];
+            if (key == null || key === '') {
+                alert("key must be set");
+                return
+            }
+            if (key.length >= 127) {
+                alert("this demo does not support keys longer than 127 bytes - open a PR!");
+                return
             }
 
             console.log('creating `get` stream...');
-            stream = await transport.createBidirectionalStream();
-            tx = stream.writable.getWriter();
-            rx = stream.readable.getReader();
+            let stream = await transport.createBidirectionalStream();
+            let tx = stream.writable.getWriter();
+            let rx = stream.readable.getReader();
+            // TODO: just do one write
             await tx.write(new Uint8Array([0]));
             await tx.write(new Uint8Array(["wasi:keyvalue/store@0.2.0-draft2".length]));
             await tx.write(new TextEncoder().encode("wasi:keyvalue/store@0.2.0-draft2"));
             await tx.write(new Uint8Array(["bucket.get".length]));
             await tx.write(new TextEncoder().encode("bucket.get"));
             await tx.write(new Uint8Array([0]));
-            await tx.write(new Uint8Array([bucket.length + 1 + "foo".length]));
+            await tx.write(new Uint8Array([bucket.length + 1 + key.length]));
             await tx.write(bucket);
-            await tx.write(new Uint8Array(["foo".length]));
-            await tx.write(new TextEncoder().encode("foo"));
+            await tx.write(new Uint8Array([key.length]));
+            await tx.write(new TextEncoder().encode(key));
             tx.close();
 
             console.log('reading `get` response...');
-            data = await rx.read();
+            let data = await rx.read();
             console.log('received `get` response: ' + data.value);
-            res = data.value[2];
+            let res = data.value[2];
             if (res != 0) {
-                console.log("failed to get `foo` value")
+                alert("failed to get value")
                 return;
             }
             let ok = data.value[3];
             if (ok != 1) {
-                console.log("`foo` key missing")
+                alert("key missing")
                 return;
             }
             let value = new TextDecoder().decode(data.value.slice(5));
-            console.log('got `foo` value: ' + value);
+            alert('got value: ' + value);
         }
-        run();
-    </script>
-    <script type="module">
-        init();
+
+        async function handleSet() {
+            const bucket = await getBucket();
+            if (bucket == null) {
+                return
+            }
+            const form = document.querySelector('#set');
+            const formData = new FormData(form);
+            const obj = Object.fromEntries(formData);
+            let key = obj['set-key'];
+            let value = obj['set-value'];
+            if (key == null || key === '') {
+                alert("key must be set");
+                return
+            }
+            if (key.length >= 127) {
+                alert("this demo does not support keys longer than 127 bytes - open a PR!");
+                return
+            }
+            if (value == null || value === '') {
+                alert("value must be set");
+                return
+            }
+            if (value.length >= 127) {
+                alert("this demo does not support value longer than 127 bytes - open a PR!");
+                return
+            }
+
+            console.log('creating `set` stream...');
+            let stream = await transport.createBidirectionalStream();
+            let tx = stream.writable.getWriter();
+            let rx = stream.readable.getReader();
+            // TODO: just do one write
+            await tx.write(new Uint8Array([0]));
+            await tx.write(new Uint8Array(["wasi:keyvalue/store@0.2.0-draft2".length]));
+            await tx.write(new TextEncoder().encode("wasi:keyvalue/store@0.2.0-draft2"));
+            await tx.write(new Uint8Array(["bucket.set".length]));
+            await tx.write(new TextEncoder().encode("bucket.set"));
+            await tx.write(new Uint8Array([0]));
+            await tx.write(new Uint8Array([bucket.length + 1 + key.length + 1 + value.length]));
+            await tx.write(bucket);
+            await tx.write(new Uint8Array([key.length]));
+            await tx.write(new TextEncoder().encode(key));
+            await tx.write(new Uint8Array([value.length]));
+            await tx.write(new TextEncoder().encode(value));
+            tx.close();
+
+            console.log('reading `set` response...');
+            let data = await rx.read();
+            console.log('received `set` response: ' + data.value);
+            let res = data.value[2];
+            if (res != 0) {
+                alert("failed to set value")
+                return;
+            }
+        }
 
         function init() {
-            addEventListeners();
-            setTemplate('tcp');
-        }
+            setTemplate('mem');
 
-        function addEventListeners() {
             const connectionDropdown = document.querySelector('#connection');
             connectionDropdown.addEventListener('change', () => {
                 setTemplate(connectionDropdown.value);
@@ -155,61 +244,43 @@
             setForm.addEventListener('submit', (e) => {
                 const value = setForm.querySelector('input[name="set-value"]').value;
                 e.preventDefault();
-                console.log('Set', value, getSettings());
+                handleSet();
             });
         }
 
-        function setTemplate(option) {
-            const defaultTemplate = document.querySelector('.form-fields[data-option=default]');
-            const templateOutput = document.querySelector('#template-output');
-            const template = document.querySelector(`.form-fields[data-option=${option}]`) ?? defaultTemplate;
-
-            console.log('setting template to:', template.id, { option, template });
-            templateOutput.innerHTML = template.innerHTML;
-        }
-
-        /**
-         * @param {Record<string, string>} settings
-         * @returns {Record<string, string> & {connection: string}}
-         */
-        function getSettings() {
-            const form = document.querySelector('#settings');
-            const formData = new FormData(form);
-
-            return Object.fromEntries(formData);
-        }
-
-        function handleGet() {
-            const settings = getSettings();
-
-            const defaultHandler = (data) => {
-                console.log(`[get] fallback from ${settings.connection}`, data)
+        async function connect() {
+            console.log('connecting to wRPC over WebTransport on `' + PORT + '`...');
+            try {
+                var transport = new WebTransport("https://localhost:" + PORT, {
+                    serverCertificateHashes: [
+                        {
+                            algorithm: "sha-256",
+                            value: CERT_DIGEST.buffer
+                        }
+                    ]
+                });
+            } catch (e) {
+                console.log('failed to connect: ' + e);
+                return null;
             }
 
-            const handler = {
-                'nats': (data) => {
-                    console.log('[get] handling nats connection', data)
-                },
-            }[settings.connection] ?? defaultHandler;
-
-            handler(settings)
-        }
-
-        function handleSet() {
-            const settings = getSettings();
-
-            const defaultHandler = (data) => {
-                console.log(`[set] fallback from ${settings.connection}`, data)
+            console.log('waiting for readiness...');
+            try {
+                await transport.ready;
+            } catch (e) {
+                console.log('failed to await readiness: ' + e);
+                return null;
             }
-
-            const handler = {
-                'nats': (data) => {
-                    console.log('[set] handling nats connection', data)
-                },
-            }[settings.connection] ?? defaultHandler;
-
-            handler(settings)
+            return transport;
         }
+
+        init();
+        let transport = await connect();
+        if (transport == null) {
+            // TODO: Retry?
+            alert("failed to connect to server")
+        }
+
     </script>
 
     <section class="section columns">
@@ -219,11 +290,12 @@
         <div class="column is-narrow">
             <div class="select">
                 <select id="connection" form="settings" name="connection">
-                    <option value="tcp">TCP</option>
-                    <option value="nats">NATS</option>
-                    <option value="uds">UDS</option>
+                    <option value="mem">In-memory</option>
+                    <option value="nats">NATS.io</option>
                     <option value="quic">QUIC</option>
-                    <option value="webtransport">WebTransport</option>
+                    <option value="tcp">TCP</option>
+                    <option value="uds">Unix domain sockets</option>
+                    <option value="web">WebTransport</option>
                 </select>
             </div>
         </div>
@@ -245,31 +317,29 @@
                 </div>
             </template>
 
-            <template class="form-fields" data-option="uds">
+            <template class="form-fields" data-option="mem">
+            </template>
+
+            <template class="form-fields" data-option="nats">
                 <div class="field">
-                    <label class="label">UDS Prefix</label>
+                    <label class="label">NATS.io server URL</label>
                     <div class="control">
-                        <input class="input" type="text" name="nats-prefix">
+                        <input class="input" type="text" name="nats-url" placeholder="nats://localhost:4222" value="nats://localhost:4222">
                     </div>
                 </div>
                 <div class="field">
-                    <label class="label">NATS Subject</label>
+                    <label class="label">NATS.io prefix</label>
                     <div class="control">
-                        <input class="input" type="text" name="nats-subject">
+                        <input class="input" type="text" name="nats-prefix">
                     </div>
                 </div>
             </template>
-            <template class="form-fields" data-option="nats">
+
+            <template class="form-fields" data-option="tcp">
                 <div class="field">
-                    <label class="label">NATS Prefix</label>
+                    <label class="label">TCP socket address</label>
                     <div class="control">
-                        <input class="input" type="text" name="nats-prefix">
-                    </div>
-                </div>
-                <div class="field">
-                    <label class="label">NATS Subject</label>
-                    <div class="control">
-                        <input class="input" type="text" name="nats-subject">
+                        <input class="input" type="text" name="tcp-addr" placeholder="[::1]:7761" value="[::1]:7761">
                     </div>
                 </div>
             </template>
@@ -282,6 +352,9 @@
             <form id="get">
                 <div class="field">
                     <div class="control">
+                        <input class="input" name="get-key" placeholder="key" />
+                    </div>
+                    <div class="control">
                         <button type="submit" class="button is-primary">Get</button>
                     </div>
                 </div>
@@ -291,13 +364,13 @@
             <h2 class="title is-4 has-text-centered">Set</h2>
             <form id="set">
                 <div class="field is-horizontal">
-                    <div class="field-label is-normal">
-                        <label class="label">Value</label>
-                    </div>
                     <div class="field-body">
                         <div class="field is-grouped">
                             <div class="control">
-                                <input class="input" name="set-value" />
+                                <input class="input" name="set-key" placeholder="key" />
+                            </div>
+                            <div class="control">
+                                <input class="input" name="set-value" placeholder="value" />
                             </div>
                             <div class="control">
                                 <button type="submit" class="button is-primary">Set</button>
