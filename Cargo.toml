@@ -19,7 +19,12 @@ license = "Apache-2.0 WITH LLVM-exception"
 repository = "https://github.com/bytecodealliance/wrpc"
 
 [workspace]
-members = ["benches/reactor", "crates/*", "examples/rust/*"]
+members = [
+    "benches/reactor",
+    "crates/*",
+    "examples/rust/*",
+    "examples/web/rust",
+]
 
 [features]
 default = ["bin", "nats", "net", "quic", "wasmtime", "web-transport"]
@@ -116,6 +121,7 @@ wrpc-transport = { workspace = true, features = ["net"] }
 [workspace.dependencies]
 anyhow = { version = "1", default-features = false }
 async-nats = { version = "0.37", default-features = false }
+axum = { version = "0.7", default-features = false }
 bitflags = { version = "2", default-features = false }
 bytes = { version = "1", default-features = false }
 clap = { version = "4", default-features = false }
@@ -142,6 +148,8 @@ test-log = { version = "0.2", default-features = false }
 tokio = { version = "1", default-features = false }
 tokio-stream = { version = "0.1", default-features = false }
 tokio-util = { version = "0.7", default-features = false }
+tower = { version = "0.5", default-features = false }
+tower-http = { version = "0.6", default-features = false }
 tracing = { version = "0.1", default-features = false }
 tracing-subscriber = { version = "0.3", default-features = false }
 url = { version = "2" }
