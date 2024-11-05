@@ -351,7 +351,7 @@ impl AsyncRead for Incoming {
             return Poll::Ready(Ok(()));
         };
         ready!(rx.poll_read(cx, buf))?;
-        trace!(?buf, "read buffer");
+        trace!(buf = ?buf.filled(), "read buffer");
         if buf.filled().is_empty() {
             self.rx.take();
         }
@@ -478,7 +478,9 @@ async fn ingress(
         trace!(n, "read data length");
         let mut buf = BytesMut::with_capacity(n);
         buf.put_bytes(0, n);
+        trace!("reading data");
         rx.read_exact(&mut buf).await?;
+        trace!(?buf, "read data");
         tx.send(Ok(buf.freeze())).await.map_err(|_| {
             std::io::Error::new(std::io::ErrorKind::BrokenPipe, "stream receiver closed")
         })?;
