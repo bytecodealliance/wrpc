@@ -1,5 +1,5 @@
 [package]
-name = "web-rust-keyvalue-tcp"
+name = "web-rust-keyvalue"
 version = "0.1.0"
 
 authors.workspace = true
