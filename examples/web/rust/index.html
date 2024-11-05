@@ -10,14 +10,12 @@
 
 <body class="p-4">
     <script type="module">
-        import {CERT_DIGEST, PORT} from './consts.js';
-
         function setTemplate(option) {
             const defaultTemplate = document.querySelector('.form-fields[data-option=default]');
             const templateOutput = document.querySelector('#template-output');
             const template = document.querySelector(`.form-fields[data-option=${option}]`) ?? defaultTemplate;
 
-            console.log('setting template to:', template.id, {option, template});
+            console.log('setting template to:', template.id, { option, template });
             templateOutput.innerHTML = template.innerHTML;
         }
 
@@ -161,7 +159,8 @@
                 return;
             }
             let value = new TextDecoder().decode(data.value.slice(5));
-            alert('got value: ' + value);
+
+            document.querySelector('#get-response').textContent = JSON.stringify(value, null, 2);
         }
 
         async function handleSet() {
@@ -218,6 +217,8 @@
                 alert("failed to set value")
                 return;
             }
+
+            document.querySelector('#set-response').textContent = JSON.stringify(res, null, 2);
         }
 
         function init() {
@@ -242,16 +243,18 @@
 
             const setForm = document.querySelector('#set');
             setForm.addEventListener('submit', (e) => {
-                const value = setForm.querySelector('input[name="set-value"]').value;
                 e.preventDefault();
                 handleSet();
             });
         }
 
         async function connect() {
+            const { PORT, CERT_DIGEST } = await import('./consts.js');
+            let transport;
+
             console.log('connecting to wRPC over WebTransport on `' + PORT + '`...');
             try {
-                var transport = new WebTransport("https://localhost:" + PORT, {
+                transport = new WebTransport("https://localhost:" + PORT, {
                     serverCertificateHashes: [
                         {
                             algorithm: "sha-256",
@@ -303,7 +306,7 @@
 
     <div class="section pt-0">
         <form id="settings">
-            <div class="field" id="template-output">
+            <div id="template-output">
                 <!-- templates from below will show here -->
             </div>
 
@@ -324,7 +327,8 @@
                 <div class="field">
                     <label class="label">NATS.io server URL</label>
                     <div class="control">
-                        <input class="input" type="text" name="nats-url" placeholder="nats://localhost:4222" value="nats://localhost:4222">
+                        <input class="input" type="text" name="nats-url" placeholder="nats://localhost:4222"
+                            value="nats://localhost:4222">
                     </div>
                 </div>
                 <div class="field">
@@ -350,15 +354,22 @@
         <div class="column">
             <h2 class="title is-4 has-text-centered">Get</h2>
             <form id="get">
-                <div class="field">
-                    <div class="control">
-                        <input class="input" name="get-key" placeholder="key" />
-                    </div>
-                    <div class="control">
-                        <button type="submit" class="button is-primary">Get</button>
+                <div class="field is-horizontal">
+                    <div class="field-body">
+                        <div class="field is-grouped">
+                            <div class="control is-expanded">
+                                <input class="input" name="get-key" placeholder="key" />
+                            </div>
+                            <div class="control">
+                                <button type="submit" class="button is-primary">Get</button>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </form>
+            <div class="mt-6">
+                <pre><code id="get-response"></code></pre>
+            </div>
         </div>
         <div class="column">
             <h2 class="title is-4 has-text-centered">Set</h2>
@@ -366,10 +377,10 @@
                 <div class="field is-horizontal">
                     <div class="field-body">
                         <div class="field is-grouped">
-                            <div class="control">
+                            <div class="control is-expanded">
                                 <input class="input" name="set-key" placeholder="key" />
                             </div>
-                            <div class="control">
+                            <div class="control is-expanded">
                                 <input class="input" name="set-value" placeholder="value" />
                             </div>
                             <div class="control">
@@ -379,7 +390,9 @@
                     </div>
                 </div>
             </form>
-            <div></div>
+            <div class="mt-6">
+                <pre><code id="set-response"></code></pre>
+            </div>
         </div>
     </div>
 </body>
