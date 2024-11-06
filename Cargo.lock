@@ -4736,13 +4736,12 @@ dependencies = [
  "tokio",
  "tracing",
  "wrpc-cli",
- "wrpc-transport",
  "wtransport",
 ]
 
 [[package]]
 name = "wrpc-transport"
-version = "0.28.4"
+version = "0.28.3"
 dependencies = [
  "anyhow",
  "bytes",
