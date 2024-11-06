@@ -1,6 +1,6 @@
 [package]
 name = "wrpc-wasi-keyvalue"
-version = "0.1.0"
+version = "0.1.1"
 description = "`wasi:keyvalue` bindings for wRPC"
 
 authors.workspace = true

@@ -392,9 +392,9 @@ dependencies = [
 
 [[package]]
 name = "cap-fs-ext"
-version = "3.4.0"
+version = "3.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8205d31472af3d15f036e8723215aa750b749cdbf1c2bac2e58a6acfc90e521e"
+checksum = "e16619ada836f12897a72011fe99b03f0025b87a8dbbea4f3c9f89b458a23bf3"
 dependencies = [
  "cap-primitives",
  "cap-std",
@@ -404,9 +404,9 @@ dependencies = [
 
 [[package]]
 name = "cap-net-ext"
-version = "3.4.0"
+version = "3.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "05284a64b8bf45d7b0ac3ac7c8f5f2e489ffe6cd66f39a6208ca6294e2ffbda3"
+checksum = "710b0eb776410a22c89a98f2f80b2187c2ac3a8206b99f3412332e63c9b09de0"
 dependencies = [
  "cap-primitives",
  "cap-std",
@@ -433,9 +433,9 @@ dependencies = [
 
 [[package]]
 name = "cap-rand"
-version = "3.4.0"
+version = "3.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7a88573bc4d42836246ac1afc9c5e0b14cb7c2b314c13283267252e1f50d3045"
+checksum = "53774d49369892b70184f8312e50c1b87edccb376691de4485b0ff554b27c36c"
 dependencies = [
  "ambient-authority",
  "rand",
@@ -455,9 +455,9 @@ dependencies = [
 
 [[package]]
 name = "cap-time-ext"
-version = "3.4.0"
+version = "3.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0fc7a67f8ec1f1b9a0ebd28f44cf6c550aaec610c38b752efd4cfa1d81c93683"
+checksum = "69dd48afa2363f746c93f961c211f6f099fb594a3446b8097bc5f79db51b6816"
 dependencies = [
  "ambient-authority",
  "cap-primitives",
@@ -3980,9 +3980,9 @@ dependencies = [
 
 [[package]]
 name = "wasmtime-cli-flags"
-version = "25.0.2"
+version = "25.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b66410a2099505810348d378e02f1373ca60088194f19b89adc85f60a11b6228"
+checksum = "f8d37718666360a4aacf7b0d8afbd9f3c81f9c74b6ab460af1e94b9cfb1859b5"
 dependencies = [
  "anyhow",
  "clap",
@@ -4124,9 +4124,9 @@ dependencies = [
 
 [[package]]
 name = "wasmtime-wasi"
-version = "25.0.2"
+version = "25.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ba1497b38341acc97308d6ce784598419fe0131bf6ddc5cda16a91033ef7c66e"
+checksum = "d042ea66b2834fb03b8a6968ef1a99a4b537211b00f7502a4d6a37f4eb2049b2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4558,7 +4558,7 @@ dependencies = [
 
 [[package]]
 name = "wit-bindgen-wrpc"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "bitflags 2.6.0",
@@ -4574,7 +4574,7 @@ dependencies = [
 
 [[package]]
 name = "wit-bindgen-wrpc-go"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -4586,7 +4586,7 @@ dependencies = [
 
 [[package]]
 name = "wit-bindgen-wrpc-rust"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -4607,7 +4607,7 @@ dependencies = [
 
 [[package]]
 name = "wit-bindgen-wrpc-rust-macro"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "prettyplease",
@@ -4728,14 +4728,14 @@ dependencies = [
 
 [[package]]
 name = "wrpc-introspect"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "wit-parser 0.219.1",
 ]
 
 [[package]]
 name = "wrpc-pack"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "bytes",
@@ -4746,7 +4746,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc-runtime-wasmtime"
-version = "0.24.1"
+version = "0.24.2"
 dependencies = [
  "anyhow",
  "bytes",
@@ -4765,7 +4765,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc-test"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-nats 0.37.0",
@@ -4781,7 +4781,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc-transport"
-version = "0.28.3"
+version = "0.28.4"
 dependencies = [
  "anyhow",
  "bytes",
@@ -4848,7 +4848,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc-wasi-keyvalue"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "wit-bindgen-wrpc",
 ]
@@ -4883,7 +4883,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc-wasmtime-cli"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "async-nats 0.37.0",
