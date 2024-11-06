@@ -47,6 +47,9 @@ func Hello(ctx__ context.Context, wrpc__ wrpc.Invoker) (r0__ string, err__ error
 			}
 			if b < 0x80 {
 				x = x | uint32(b)<<s
+				if x == 0 {
+					return "", nil
+				}
 				buf := make([]byte, x)
 				slog.Debug("reading string bytes", "len", x)
 				_, err = r.Read(buf)

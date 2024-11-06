@@ -361,11 +361,14 @@ func Echo(ctx__ context.Context, wrpc__ wrpc.Invoker, r *Req) (r0__ wrpc.Receive
 							}
 							return nil, fmt.Errorf("failed to read list length byte: %w", err)
 						}
+						if s == 28 && b > 0x0f {
+							return nil, errors.New("list length overflows a 32-bit integer")
+						}
 						if b < 0x80 {
-							if i == 4 && b > 1 {
-								return nil, errors.New("list length overflows a 32-bit integer")
-							}
 							x = x | uint32(b)<<s
+							if x == 0 {
+								return nil, nil
+							}
 							vs := make([]uint64, x)
 							for i := range vs {
 								slog.Debug("reading list element", "i", i)
@@ -450,11 +453,14 @@ func Echo(ctx__ context.Context, wrpc__ wrpc.Invoker, r *Req) (r0__ wrpc.Receive
 							}
 							return nil, fmt.Errorf("failed to read byte list length byte: %w", err)
 						}
+						if s == 28 && b > 0x0f {
+							return nil, errors.New("byte list length overflows a 32-bit integer")
+						}
 						if b < 0x80 {
-							if i == 4 && b > 1 {
-								return nil, errors.New("byte list length overflows a 32-bit integer")
-							}
 							x = x | uint32(b)<<s
+							if x == 0 {
+								return nil, nil
+							}
 							buf := make([]byte, x)
 							slog.Debug("reading byte list contents", "len", x)
 							_, err = io.ReadFull(r, buf)
