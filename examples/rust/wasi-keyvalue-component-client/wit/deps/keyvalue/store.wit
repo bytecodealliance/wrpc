@@ -43,7 +43,7 @@ interface store {
         keys: list<string>,
         /// The continuation token to use to fetch the next page of keys. If this is `null`, then
         /// there are no more keys to fetch.
-        cursor: option<u64>
+        cursor: option<string>
     }
 
     /// Get the bucket with the specified identifier.
@@ -117,6 +117,6 @@ interface store {
         /// MAY show an out-of-date list of keys if there are concurrent writes to the store.
         /// 
         /// If any error occurs, it returns an `Err(error)`.
-        list-keys: func(cursor: option<u64>) -> result<key-response, error>;
+        list-keys: func(cursor: option<string>) -> result<key-response, error>;
     }
 }

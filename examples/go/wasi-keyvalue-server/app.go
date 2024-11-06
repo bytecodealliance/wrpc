@@ -105,7 +105,7 @@ func (h *Handler) Bucket_Exists(ctx context.Context, bucket wrpc.Borrow[store.Bu
 	return Ok(ok), nil
 }
 
-func (h *Handler) Bucket_ListKeys(ctx context.Context, bucket wrpc.Borrow[store.Bucket], cursor *uint64) (*wrpc.Result[store.KeyResponse, store.Error], error) {
+func (h *Handler) Bucket_ListKeys(ctx context.Context, bucket wrpc.Borrow[store.Bucket], cursor *string) (*wrpc.Result[store.KeyResponse, store.Error], error) {
 	slog.InfoContext(ctx, "handling `wasi:keyvalue/store.bucket.list-keys`", "bucket", bucket, "cursor", cursor)
 	if cursor != nil {
 		return wrpc.Err[store.KeyResponse](*store.NewErrorOther("cursors are not supported")), nil
