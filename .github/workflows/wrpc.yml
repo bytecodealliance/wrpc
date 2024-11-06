@@ -21,6 +21,8 @@ on:
       - 'crates/transport-nats/v[0-9].[0-9]+.[0-9]+-*'
       - 'crates/transport-quic/v[0-9].[0-9]+.[0-9]+'
       - 'crates/transport-quic/v[0-9].[0-9]+.[0-9]+-*'
+      - 'crates/transport-web/v[0-9].[0-9]+.[0-9]+'
+      - 'crates/transport-web/v[0-9].[0-9]+.[0-9]+-*'
       - 'crates/transport/v[0-9].[0-9]+.[0-9]+'
       - 'crates/transport/v[0-9].[0-9]+.[0-9]+-*'
       - 'crates/wasi-keyvalue-mem/v[0-9].[0-9]+.[0-9]+'
@@ -222,6 +224,9 @@ jobs:
             workspace-dependencies: true
 
           - crate: transport-quic
+            workspace-dependencies: true
+
+          - crate: transport-web
             workspace-dependencies: true
 
           - crate: wasi-keyvalue
