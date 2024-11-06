@@ -2,9 +2,9 @@ use std::sync::Arc;
 
 use anyhow::Context as _;
 use clap::Parser;
-use quinn::rustls::version::TLS13;
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
+use rustls::version::TLS13;
 use rustls::{DigitallySignedStruct, SignatureScheme};
 use url::Url;
 use wtransport::{ClientConfig, Endpoint};
