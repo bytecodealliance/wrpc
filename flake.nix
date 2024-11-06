@@ -6,6 +6,13 @@
     "https://crane.cachix.org"
     "https://nix-community.cachix.org"
   ];
+  nixConfig.extra-trusted-substituters = [
+    "https://bytecodealliance.cachix.org"
+    "https://wasmcloud.cachix.org"
+    "https://nixify.cachix.org"
+    "https://crane.cachix.org"
+    "https://nix-community.cachix.org"
+  ];
   nixConfig.extra-trusted-public-keys = [
     "bytecodealliance.cachix.org-1:0SBgh//n2n0heh0sDFhTm+ZKBRy2sInakzFGfzN531Y="
     "wasmcloud.cachix.org-1:9gRBzsKh+x2HbVVspreFg/6iFRiD4aOcUQfXVDl3hiM="
