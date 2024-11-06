@@ -136,6 +136,7 @@ proc-macro2 = { version = "1", default-features = false }
 quinn = { version = "0.11", default-features = false }
 quote = { version = "1", default-features = false }
 rcgen = { version = "0.13", default-features = false }
+redis = { version = "0.27", default-features = false }
 reqwest = { version = "0.11", default-features = false }
 rustls = { version = "0.23", default-features = false }
 send-future = { version = "0.1", default-features = false }
@@ -179,5 +180,6 @@ wrpc-transport-quic = { version = "0.4", path = "./crates/transport-quic", defau
 wrpc-transport-web = { version = "0.1", path = "./crates/transport-web", default-features = false }
 wrpc-wasi-keyvalue = { version = "0.1", path = "./crates/wasi-keyvalue", default-features = false }
 wrpc-wasi-keyvalue-mem = { version = "0.1", path = "./crates/wasi-keyvalue-mem", default-features = false }
+wrpc-wasi-keyvalue-redis = { version = "0.1", path = "./crates/wasi-keyvalue-redis", default-features = false }
 wrpc-wasmtime-cli = { version = "0.2", path = "./crates/wasmtime-cli", default-features = false }
 wtransport = { version = "0.4", default-features = false }
