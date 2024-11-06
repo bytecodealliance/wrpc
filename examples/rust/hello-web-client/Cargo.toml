@@ -19,7 +19,6 @@ clap = { workspace = true, features = [
     "suggestions",
     "usage",
 ] }
-quinn = { workspace = true }
 rustls = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread"] }
 tracing-subscriber = { workspace = true, features = ["ansi", "fmt"] }

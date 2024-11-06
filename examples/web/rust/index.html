@@ -24,61 +24,87 @@
             const formData = new FormData(form);
             const obj = Object.fromEntries(formData);
 
-            let url;
+            let identifier;
             let conn = obj.connection;
             console.log("transport " + conn);
             if (conn === 'mem') {
-                url = '';
+                identifier = '';
             } else if (conn === 'nats') {
-                let nurl = obj['nats-url'];
-                if (nurl == null || nurl === '') {
+                let addr = obj['nats-addr'];
+                if (addr == null || addr === '') {
                     alert("NATS.io server URL must be set");
                     return
                 }
-                url = 'wrpc+nats://' + nurl;
-                let prefix = obj['nats-url'];
+                identifier = 'wrpc+nats://' + addr;
+
+                let prefix = obj['nats-prefix'];
                 if (prefix != null && prefix != '') {
-                    url = url + "/" + prefix;
+                    identifier = identifier + "/" + prefix;
+                }
+
+                let bucket = obj['nats-bucket'];
+                if (bucket != null && bucket != '') {
+                    identifier = identifier + ";" + bucket;
                 }
             } else if (conn === 'quic') {
-                let addr = obj['connection-string'];
+                let addr = obj.addr;
                 if (addr == null || addr === '') {
                     alert("QUIC address must be set");
                     return
                 }
-                url = 'wrpc+quic://' + addr;
+                identifier = 'wrpc+quic://' + identifier;
+
+                let bucket = obj.bucket;
+                if (bucket != null && bucket != '') {
+                    identifier = identifier + ";" + bucket;
+                }
             } else if (conn === 'tcp') {
                 let addr = obj['tcp-addr'];
                 if (addr == null || addr === '') {
                     alert("TCP address must be set");
                     return
                 }
-                url = 'wrpc+tcp://' + addr;
+                identifier = 'wrpc+tcp://' + addr;
+
+                let bucket = obj.bucket;
+                if (bucket != null && bucket != '') {
+                    identifier = identifier + ";" + bucket;
+                }
             } else if (conn === 'uds') {
-                let addr = obj['connection-string'];
+                let addr = obj.addr;
                 if (addr == null || addr === '') {
                     alert("Unix Domain Socket address must be set");
                     return
                 }
-                url = 'wrpc+uds://' + addr;
+                identifier = 'wrpc+uds://' + addr;
+
+                let bucket = obj.bucket;
+                if (bucket != null && bucket != '') {
+                    identifier = identifier + ";" + bucket;
+                }
             } else if (conn === 'web') {
-                let addr = obj['connection-string'];
+                let addr = obj.addr;
                 if (addr == null || addr === '') {
                     alert("WebTransport address must be set");
                     return
                 }
-                url = 'wrpc+web://' + addr;
+                identifier = 'wrpc+web://' + addr;
+
+                let bucket = obj.bucket;
+                if (bucket != null && bucket != '') {
+                    identifier = identifier + ";" + bucket;
+                }
             } else {
                 alert("transport not supported yet")
             }
-            if (url.length >= 127) {
-                alert("this demo does not support URLs longer than 127 bytes - open a PR!");
+            if (identifier.length >= 127) {
+                alert("this demo does not support identifiers longer than 127 bytes - open a PR!");
                 return
             }
 
             // TODO: cache the bucket by URL (it should not persist across server restarts)
 
-            console.log('creating `open` stream for URL `' + url + '`...');
+            console.log('creating `open` stream for identifier `' + identifier + '`...');
             let stream = await transport.createBidirectionalStream();
 
             console.log('writing invocation...');
@@ -91,9 +117,9 @@
             await tx.write(new Uint8Array(["open".length]));
             await tx.write(new TextEncoder().encode("open"));
             await tx.write(new Uint8Array([0]));
-            await tx.write(new Uint8Array([1 + url.length]));
-            await tx.write(new Uint8Array([url.length]));
-            await tx.write(new TextEncoder().encode(url));
+            await tx.write(new Uint8Array([1 + identifier.length]));
+            await tx.write(new Uint8Array([identifier.length]));
+            await tx.write(new TextEncoder().encode(identifier));
             tx.close();
 
             console.log('reading `open` response...');
@@ -217,8 +243,6 @@
                 alert("failed to set value")
                 return;
             }
-
-            document.querySelector('#set-response').textContent = JSON.stringify(res, null, 2);
         }
 
         function init() {
@@ -307,15 +331,19 @@
     <div class="section pt-0">
         <form id="settings">
             <div id="template-output">
-                <!-- templates from below will show here -->
             </div>
 
             <template class="form-fields" data-option="default">
-                <!-- shows when no other specific option is selected -->
                 <div class="field">
-                    <label class="label">Connection String</label>
+                    <label class="label">Bucket identifier</label>
                     <div class="control">
-                        <input class="input" type="text" name="connection-string">
+                        <input class="input" type="text" name="bucket">
+                    </div>
+                </div>
+                <div class="field">
+                    <label class="label">Target address</label>
+                    <div class="control">
+                        <input class="input" type="text" name="addr" placeholder="localhost:1234">
                     </div>
                 </div>
             </template>
@@ -325,10 +353,15 @@
 
             <template class="form-fields" data-option="nats">
                 <div class="field">
-                    <label class="label">NATS.io server URL</label>
+                    <label class="label">Bucket identifier</label>
                     <div class="control">
-                        <input class="input" type="text" name="nats-url" placeholder="nats://localhost:4222"
-                            value="nats://localhost:4222">
+                        <input class="input" type="text" name="nats-bucket">
+                    </div>
+                </div>
+                <div class="field">
+                    <label class="label">NATS.io server address</label>
+                    <div class="control">
+                        <input class="input" type="text" name="nats-addr" placeholder="localhost:4222" value="localhost:4222">
                     </div>
                 </div>
                 <div class="field">
@@ -340,6 +373,12 @@
             </template>
 
             <template class="form-fields" data-option="tcp">
+                <div class="field">
+                    <label class="label">Bucket identifier</label>
+                    <div class="control">
+                        <input class="input" type="text" name="tcp-bucket">
+                    </div>
+                </div>
                 <div class="field">
                     <label class="label">TCP socket address</label>
                     <div class="control">
@@ -390,9 +429,6 @@
                     </div>
                 </div>
             </form>
-            <div class="mt-6">
-                <pre><code id="set-response"></code></pre>
-            </div>
         </div>
     </div>
 </body>

@@ -1396,7 +1396,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
- "quinn",
  "rustls",
  "tokio",
  "tracing-subscriber",
@@ -1414,7 +1413,6 @@ dependencies = [
  "anyhow",
  "clap",
  "futures",
- "quinn",
  "rcgen",
  "rustls",
  "tokio",
@@ -4146,10 +4144,13 @@ name = "web-rust-keyvalue"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-nats 0.37.0",
  "axum",
  "bytes",
  "clap",
  "futures",
+ "quinn",
+ "rustls",
  "tokio",
  "tower",
  "tower-http",
