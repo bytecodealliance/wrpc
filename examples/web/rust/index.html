@@ -5,34 +5,92 @@
 <head>
     <meta content="text/html;charset=utf-8" http-equiv="Content-Type" />
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@1.0.2/css/bulma.min.css">
+    <style>
+        * {
+            scrollbar-width: thin;
+            scrollbar-color: rgb(255 255 255 / 0.3) transparent;
+        }
+
+        .section:has(#template-output .field) {
+            margin-bottom: 3em;
+        }
+
+        #log:has(option[value="log"]:checked) :is([data-level="debug"]) {
+            display: none
+        }
+
+        #log:has(option[value="info"]:checked) :is([data-level="debug"], [data-level="log"]) {
+            display: none
+        }
+
+        #log:has(option[value="warn"]:checked) :is([data-level="debug"], [data-level="log"], [data-level="info"]) {
+            display: none
+        }
+
+        #log:has(option[value="error"]:checked) :is([data-level="debug"], [data-level="log"], [data-level="info"], [data-level="warn"]) {
+            display: none;
+        }
+    </style>
     <title>wRPC WebTransport demo</title>
-</head>
-
-<body class="p-4">
     <script type="module">
-        function setTemplate(option) {
-            const defaultTemplate = document.querySelector('.form-fields[data-option=default]');
-            const templateOutput = document.querySelector('#template-output');
-            const template = document.querySelector(`.form-fields[data-option=${option}]`) ?? defaultTemplate;
+        // @ts-check
+        function initUI() {
+            function updateTemplate() {
+                const option = connectionDropdown?.value ?? 'mem'
+                const defaultTemplate = document.querySelector('.form-fields[data-option=default]');
+                const templateOutput = document.querySelector('#template-output');
+                const template = document.querySelector(`.form-fields[data-option=${option}]`) ?? defaultTemplate;
+                if (templateOutput && template) templateOutput.innerHTML = template.innerHTML;
+            }
 
-            console.log('setting template to:', template.id, { option, template });
-            templateOutput.innerHTML = template.innerHTML;
+            /** @type {HTMLSelectElement | null} */
+            const connectionDropdown = document.querySelector('#connection');
+            connectionDropdown?.addEventListener('change', updateTemplate);
+            updateTemplate();
+
+            /** @type {HTMLFormElement | null} */
+            const settingsForm = document.querySelector('#settings');
+            settingsForm?.addEventListener('submit', (e) => e.preventDefault());
+
+            /** @type {HTMLFormElement | null} */
+            const getForm = document.querySelector('#get');
+            getForm?.addEventListener('submit', (e) => {
+                e.preventDefault();
+                handleGet().catch(dbg.error);
+            });
+
+            /** @type {HTMLFormElement | null} */
+            const setForm = document.querySelector('#set');
+            setForm?.addEventListener('submit', (e) => {
+                e.preventDefault();
+                handleSet().catch(dbg.error);
+            });
+        };
+
+        function getFormValues(selector) {
+            /** @type {HTMLFormElement | null} */
+            const form = document.querySelector(selector);
+            if (!form) throw new Error('form not found');
+            const formData = new FormData(form)
+            const formEntries = Array.from(formData);
+            return Object.fromEntries(formEntries.map(([key, value]) => [key, value.toString()]));
         }
 
         async function getBucket() {
-            const form = document.querySelector('#settings');
-            const formData = new FormData(form);
-            const obj = Object.fromEntries(formData);
-
-            let identifier;
+            if (!transport) {
+                dbg.error("transport not connected")
+                return
+            }
+            const obj = getFormValues('#settings');
+            let identifier = '';
             let conn = obj.connection;
-            console.log("transport " + conn);
+            dbg.debug("transport " + conn);
             if (conn === 'mem') {
                 identifier = '';
             } else if (conn === 'nats') {
                 let addr = obj['nats-addr'];
                 if (addr == null || addr === '') {
-                    alert("NATS.io server address must be set");
+                    dbg.error("NATS.io server address must be set");
                     return
                 }
                 identifier = 'wrpc+nats://' + addr;
@@ -48,15 +106,15 @@
                 }
             } else if (conn === 'redis') {
                 let url = obj['redis-url'];
-                if (url == null || url === '') {
-                    alert("Redis URL must be set");
+                if (typeof url !== 'string' || url === '') {
+                    dbg.error("Redis URL must be set");
                     return
                 }
                 identifier = url;
             } else if (conn === 'quic') {
                 let addr = obj.addr;
                 if (addr == null || addr === '') {
-                    alert("QUIC address must be set");
+                    dbg.error("QUIC address must be set");
                     return
                 }
                 identifier = 'wrpc+quic://' + identifier;
@@ -68,7 +126,7 @@
             } else if (conn === 'tcp') {
                 let addr = obj['tcp-addr'];
                 if (addr == null || addr === '') {
-                    alert("TCP address must be set");
+                    dbg.error("TCP address must be set");
                     return
                 }
                 identifier = 'wrpc+tcp://' + addr;
@@ -80,7 +138,7 @@
             } else if (conn === 'uds') {
                 let addr = obj.addr;
                 if (addr == null || addr === '') {
-                    alert("Unix Domain Socket address must be set");
+                    dbg.error("Unix Domain Socket address must be set");
                     return
                 }
                 identifier = 'wrpc+uds://' + addr;
@@ -92,7 +150,7 @@
             } else if (conn === 'web') {
                 let addr = obj.addr;
                 if (addr == null || addr === '') {
-                    alert("WebTransport address must be set");
+                    dbg.error("WebTransport address must be set");
                     return
                 }
                 identifier = 'wrpc+web://' + addr;
@@ -102,19 +160,20 @@
                     identifier = identifier + ";" + bucket;
                 }
             } else {
-                alert("transport not supported yet")
+                dbg.error("transport not supported yet")
             }
+
             if (identifier.length >= 127) {
-                alert("this demo does not support identifiers longer than 127 bytes - open a PR!");
+                dbg.error("this demo does not support identifiers longer than 127 bytes - open a PR!");
                 return
             }
 
             // TODO: cache the bucket by URL (it should not persist across server restarts)
 
-            console.log('creating `open` stream for identifier `' + identifier + '`...');
+            dbg.debug('creating `open` stream for identifier `' + identifier + '`...');
             let stream = await transport.createBidirectionalStream();
 
-            console.log('writing invocation...');
+            dbg.debug('writing invocation...');
             let tx = stream.writable.getWriter();
             let rx = stream.readable.getReader();
             // TODO: just do one write
@@ -129,39 +188,42 @@
             await tx.write(new TextEncoder().encode(identifier));
             tx.close();
 
-            console.log('reading `open` response...');
+            dbg.debug('reading `open` response...');
             let data = await rx.read();
-            console.log('received `open` response: ' + data.value);
+            dbg.debug('received `open` response: ' + data.value);
             let res = data.value[2];
             if (res != 0) {
-                alert("failed to open bucket")
+                dbg.error("failed to open bucket")
                 return;
             }
             let bucket = data.value.slice(3);
-            console.log('opened bucket: ' + bucket);
+            const bucketName = bucket.slice(1).map(x => x.toString(16)).join('');
+            dbg.log('opened bucket: ' + bucketName);
 
             return bucket
         }
 
         async function handleGet() {
+            if (!transport) {
+                dbg.error("transport not connected")
+                return
+            }
             const bucket = await getBucket();
             if (bucket == null) {
                 return
             }
-            const form = document.querySelector('#get');
-            const formData = new FormData(form);
-            const obj = Object.fromEntries(formData);
-            let key = obj['get-key'];
+            const obj = getFormValues('#get');
+            let key = typeof obj['get-key'] === 'string' ? obj['get-key'] : '';
             if (key == null || key === '') {
-                alert("key must be set");
+                dbg.error("key must be set");
                 return
             }
             if (key.length >= 127) {
-                alert("this demo does not support keys longer than 127 bytes - open a PR!");
+                dbg.error("this demo does not support keys longer than 127 bytes - open a PR!");
                 return
             }
 
-            console.log('creating `get` stream...');
+            dbg.debug('creating `get` stream...');
             let stream = await transport.createBidirectionalStream();
             let tx = stream.writable.getWriter();
             let rx = stream.readable.getReader();
@@ -178,52 +240,59 @@
             await tx.write(new TextEncoder().encode(key));
             tx.close();
 
-            console.log('reading `get` response...');
+            dbg.debug('reading `get` response...');
             let data = await rx.read();
-            console.log('received `get` response: ' + data.value);
+            dbg.debug('received `get` response: ' + data.value);
             let res = data.value[2];
             if (res != 0) {
-                alert("failed to get value")
+                dbg.error("failed to get value")
                 return;
             }
             let ok = data.value[3];
             if (ok != 1) {
-                alert("key missing")
+                dbg.error("key missing")
                 return;
             }
-            let value = new TextDecoder().decode(data.value.slice(5));
+            const value = new TextDecoder().decode(data.value.slice(5));
+            const bucketName = bucket.slice(1).map(x => x.toString(16)).join('');
 
-            document.querySelector('#get-response').textContent = JSON.stringify(value, null, 2);
+            dbg.info(`got value from bucket: ${bucketName}`, JSON.stringify(value, null, 2));
+
+            /** @type {HTMLInputElement | null} */
+            const getValue = document.querySelector('#get input[name="set-value"]');
+            if (getValue) getValue.value = value;
         }
 
         async function handleSet() {
+            if (!transport) {
+                dbg.error("transport not connected")
+                return
+            }
             const bucket = await getBucket();
             if (bucket == null) {
                 return
             }
-            const form = document.querySelector('#set');
-            const formData = new FormData(form);
-            const obj = Object.fromEntries(formData);
-            let key = obj['set-key'];
-            let value = obj['set-value'];
+            const obj = getFormValues('#set');
+            let key = typeof obj['set-key'] === 'string' ? obj['set-key'] : '';
+            let value = typeof obj['set-value'] === 'string' ? obj['set-value'] : '';
             if (key == null || key === '') {
-                alert("key must be set");
+                dbg.error("key must be set");
                 return
             }
             if (key.length >= 127) {
-                alert("this demo does not support keys longer than 127 bytes - open a PR!");
+                dbg.error("this demo does not support keys longer than 127 bytes - open a PR!");
                 return
             }
             if (value == null || value === '') {
-                alert("value must be set");
+                dbg.error("value must be set");
                 return
             }
             if (value.length >= 127) {
-                alert("this demo does not support value longer than 127 bytes - open a PR!");
+                dbg.error("this demo does not support value longer than 127 bytes - open a PR!");
                 return
             }
 
-            console.log('creating `set` stream...');
+            dbg.debug('creating `set` stream...');
             let stream = await transport.createBidirectionalStream();
             let tx = stream.writable.getWriter();
             let rx = stream.readable.getReader();
@@ -242,48 +311,25 @@
             await tx.write(new TextEncoder().encode(value));
             tx.close();
 
-            console.log('reading `set` response...');
+            dbg.debug('reading `set` response...');
             let data = await rx.read();
-            console.log('received `set` response: ' + data.value);
+            dbg.debug('received `set` response: ' + data.value);
             let res = data.value[2];
             if (res != 0) {
-                alert("failed to set value")
+                dbg.error("failed to set value")
                 return;
             }
-        }
 
-        function init() {
-            setTemplate('mem');
+            const bucketName = bucket.slice(1).map(x => x.toString(16)).join('');
 
-            const connectionDropdown = document.querySelector('#connection');
-            connectionDropdown.addEventListener('change', () => {
-                setTemplate(connectionDropdown.value);
-            });
-
-            const settingsForm = document.querySelector('#settings');
-            settingsForm.addEventListener('submit', (e) => {
-                // no-op here, just to prevent accidental form submission
-                e.preventDefault();
-            });
-
-            const getForm = document.querySelector('#get');
-            getForm.addEventListener('submit', (e) => {
-                e.preventDefault();
-                handleGet();
-            });
-
-            const setForm = document.querySelector('#set');
-            setForm.addEventListener('submit', (e) => {
-                e.preventDefault();
-                handleSet();
-            });
+            dbg.info(`successfully set value in bucket: ${bucketName}`);
         }
 
         async function connect() {
             const { PORT, CERT_DIGEST } = await import('./consts.js');
             let transport;
 
-            console.log('connecting to wRPC over WebTransport on `' + PORT + '`...');
+            dbg.debug('connecting to wRPC over WebTransport on `' + PORT + '`...');
             try {
                 transport = new WebTransport("https://localhost:" + PORT, {
                     serverCertificateHashes: [
@@ -294,32 +340,66 @@
                     ]
                 });
             } catch (e) {
-                console.log('failed to connect: ' + e);
+                dbg.error('failed to connect: ' + e);
                 return null;
             }
 
-            console.log('waiting for readiness...');
+            dbg.debug('waiting for readiness...');
             try {
                 await transport.ready;
             } catch (e) {
-                console.log('failed to await readiness: ' + e);
+                dbg.error('failed to await readiness: ' + e);
                 return null;
             }
             return transport;
         }
 
-        init();
+        const dbg = (() => {
+            const output = document.querySelector('#message-output');
+            const className = {
+                debug: 'has-text-grey',
+                log: 'has-text-normal',
+                info: 'has-text-info',
+                warn: 'has-text-warning',
+                error: 'has-text-danger',
+            };
+            const handleLog = (value, level = 'log') => {
+                level = ['debug', 'log', 'info', 'warn', 'error'].includes(level) ? level : 'info';
+                const prefix = new Date().toISOString();
+                const levelTag = `[${level}]`.padStart(7, ' ');
+                const span = document.createElement('span');
+                span.textContent = `${prefix} ${levelTag} ${value.join(' ')}\n`;
+                span.classList.add(className[level]);
+                span.dataset.level = level;
+                if (!output) {
+                    console.error(span.textContent)
+                    return
+                }
+                output.prepend(span)
+            }
+            return {
+                debug: (...value) => handleLog(value, 'debug'),
+                log: (...value) => handleLog(value, 'log'),
+                info: (...value) => handleLog(value, 'info'),
+                warn: (...value) => handleLog(value, 'warn'),
+                error: (...value) => handleLog(value, 'error'),
+            }
+        })()
+
+        initUI();
+
         let transport = await connect();
         if (transport == null) {
             // TODO: Retry?
-            alert("failed to connect to server")
+            dbg.error("failed to connect to server")
         }
-
     </script>
+</head>
 
-    <section class="section columns">
+<body>
+    <section class="section columns is-mobile">
         <div class="column">
-            <h1 class="title">wRPC WebTransport demo</h1>
+            <h1 class="title">wRPC Transports</h1>
         </div>
         <div class="column is-narrow">
             <div class="select">
@@ -336,34 +416,33 @@
         </div>
     </section>
 
-    <div class="section pt-0">
+    <section class="section py-0">
         <form id="settings">
-            <div id="template-output">
-            </div>
+            <div id="template-output"></div>
 
             <template class="form-fields" data-option="default">
                 <div class="field">
                     <label class="label">Bucket identifier</label>
                     <div class="control">
-                        <input class="input" type="text" name="bucket">
+                        <input class="input" type="text" name="bucket" autocomplete="off">
                     </div>
                 </div>
                 <div class="field">
                     <label class="label">Target address</label>
                     <div class="control">
-                        <input class="input" type="text" name="addr" placeholder="localhost:1234">
+                        <input class="input" type="text" name="addr" placeholder="localhost:1234" autocomplete="off">
                     </div>
                 </div>
             </template>
 
-            <template class="form-fields" data-option="mem">
-            </template>
+            <template class="form-fields" data-option="mem"></template>
 
             <template class="form-fields" data-option="redis">
                 <div class="field">
                     <label class="label">Redis server URL</label>
                     <div class="control">
-                        <input class="input" type="text" name="redis-url" placeholder="redis://localhost:6379" value="redis://localhost:6379">
+                        <input class="input" type="text" name="redis-url" placeholder="redis://localhost:6379"
+                            value="redis://localhost:6379" autocomplete="off">
                     </div>
                 </div>
             </template>
@@ -372,19 +451,20 @@
                 <div class="field">
                     <label class="label">Bucket identifier</label>
                     <div class="control">
-                        <input class="input" type="text" name="nats-bucket">
+                        <input class="input" type="text" name="nats-bucket" autocomplete="off">
                     </div>
                 </div>
                 <div class="field">
                     <label class="label">NATS.io server address</label>
                     <div class="control">
-                        <input class="input" type="text" name="nats-addr" placeholder="localhost:4222" value="localhost:4222">
+                        <input class="input" type="text" name="nats-addr" placeholder="localhost:4222"
+                            value="localhost:4222" autocomplete="off">
                     </div>
                 </div>
                 <div class="field">
                     <label class="label">NATS.io prefix</label>
                     <div class="control">
-                        <input class="input" type="text" name="nats-prefix">
+                        <input class="input" type="text" name="nats-prefix" autocomplete="off">
                     </div>
                 </div>
             </template>
@@ -393,51 +473,32 @@
                 <div class="field">
                     <label class="label">Bucket identifier</label>
                     <div class="control">
-                        <input class="input" type="text" name="tcp-bucket">
+                        <input class="input" type="text" name="tcp-bucket" autocomplete="off">
                     </div>
                 </div>
                 <div class="field">
                     <label class="label">TCP socket address</label>
                     <div class="control">
-                        <input class="input" type="text" name="tcp-addr" placeholder="[::1]:7761" value="[::1]:7761">
+                        <input class="input" type="text" name="tcp-addr" placeholder="[::1]:7761" value="[::1]:7761"
+                            autocomplete="off">
                     </div>
                 </div>
             </template>
         </form>
-    </div>
+    </section>
 
-    <div class="section columns">
-        <div class="column">
-            <h2 class="title is-4 has-text-centered">Get</h2>
-            <form id="get">
-                <div class="field is-horizontal">
-                    <div class="field-body">
-                        <div class="field is-grouped">
-                            <div class="control is-expanded">
-                                <input class="input" name="get-key" placeholder="key" />
-                            </div>
-                            <div class="control">
-                                <button type="submit" class="button is-primary">Get</button>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </form>
-            <div class="mt-6">
-                <pre><code id="get-response"></code></pre>
-            </div>
-        </div>
-        <div class="column">
+    <section class="container px-5 mb-6 grid is-gap-6">
+        <div class="cell">
             <h2 class="title is-4 has-text-centered">Set</h2>
             <form id="set">
                 <div class="field is-horizontal">
                     <div class="field-body">
                         <div class="field is-grouped">
                             <div class="control is-expanded">
-                                <input class="input" name="set-key" placeholder="key" />
+                                <input class="input" name="set-key" placeholder="key" autocomplete="off" />
                             </div>
                             <div class="control is-expanded">
-                                <input class="input" name="set-value" placeholder="value" />
+                                <input class="input" name="set-value" placeholder="value" autocomplete="off" />
                             </div>
                             <div class="control">
                                 <button type="submit" class="button is-primary">Set</button>
@@ -447,7 +508,59 @@
                 </div>
             </form>
         </div>
-    </div>
+        <div class="cell">
+            <h2 class="title is-4 has-text-centered">Get</h2>
+            <form id="get">
+                <div class="field is-horizontal">
+                    <div class="field-body">
+                        <div class="field is-grouped">
+                            <div class="control is-expanded">
+                                <input class="input" name="get-key" placeholder="key" autocomplete="off" />
+                            </div>
+                            <div class="control is-expanded">
+                                <input disabled readonly class="input" name="set-value" autocomplete="off" />
+                            </div>
+                            <div class="control">
+                                <button type="submit" class="button is-info">Get</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </form>
+        </div>
+    </section>
+
+    <section id="log">
+        <div class="columns px-3 container is-mobile">
+            <div class="column">
+                <h3 class="title is-4">Output</h3>
+            </div>
+            <div class="column is-narrow">
+                <div class="field is-grouped">
+                    <div class="field-label is-small">
+                        <label class="label">Log&nbsp;Level</label>
+                    </div>
+                    <div class="field-body">
+                        <div class="field">
+                            <div class="select is-small">
+                                <select>
+                                    <option value="debug">debug</option>
+                                    <option value="log">log</option>
+                                    <option value="info" selected>info</option>
+                                    <option value="warn">warn</option>
+                                    <option value="error">error</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="has-background">
+            <pre class="container has-background-inherit"><code><p id="message-output"></p></code></pre>
+        </div>
+    </section>
 </body>
 
 </html>
