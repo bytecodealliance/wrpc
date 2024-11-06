@@ -1,7 +1,7 @@
 mod bindings {
     wit_bindgen::generate!({
        with: {
-           "wasi:keyvalue/store@0.2.0-draft": generate
+           "wasi:keyvalue/store@0.2.0-draft2": generate
        }
     });
 }
