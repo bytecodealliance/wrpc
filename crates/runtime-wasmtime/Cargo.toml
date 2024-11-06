@@ -1,6 +1,6 @@
 [package]
 name = "wrpc-runtime-wasmtime"
-version = "0.24.2"
+version = "0.25.0"
 description = "wRPC wasmtime integration"
 
 authors.workspace = true
