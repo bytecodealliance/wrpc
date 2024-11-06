@@ -20,7 +20,6 @@ clap = { workspace = true, features = [
     "usage",
 ] }
 futures = { workspace = true }
-quinn = { workspace = true, features = ["rustls"] }
 rcgen = { workspace = true, features = ["crypto", "ring", "zeroize"] }
 rustls = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "signal", "net"] }
