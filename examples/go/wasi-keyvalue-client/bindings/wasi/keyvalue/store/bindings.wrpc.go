@@ -517,6 +517,9 @@ func Open(ctx__ context.Context, wrpc__ wrpc.Invoker, identifier string) (r0__ *
 							}
 							if b < 0x80 {
 								x = x | uint32(b)<<s
+								if x == 0 {
+									return "", nil
+								}
 								buf := make([]byte, x)
 								slog.Debug("reading string bytes", "len", x)
 								_, err = r.Read(buf)
@@ -673,11 +676,14 @@ func Bucket_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borrow[Buc
 								}
 								return nil, fmt.Errorf("failed to read byte list length byte: %w", err)
 							}
+							if s == 28 && b > 0x0f {
+								return nil, errors.New("byte list length overflows a 32-bit integer")
+							}
 							if b < 0x80 {
-								if i == 4 && b > 1 {
-									return nil, errors.New("byte list length overflows a 32-bit integer")
-								}
 								x = x | uint32(b)<<s
+								if x == 0 {
+									return nil, nil
+								}
 								buf := make([]byte, x)
 								slog.Debug("reading byte list contents", "len", x)
 								_, err = io.ReadFull(r, buf)
@@ -759,6 +765,9 @@ func Bucket_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borrow[Buc
 							}
 							if b < 0x80 {
 								x = x | uint32(b)<<s
+								if x == 0 {
+									return "", nil
+								}
 								buf := make([]byte, x)
 								slog.Debug("reading string bytes", "len", x)
 								_, err = r.Read(buf)
@@ -1012,6 +1021,9 @@ func Bucket_Set(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borrow[Buc
 							}
 							if b < 0x80 {
 								x = x | uint32(b)<<s
+								if x == 0 {
+									return "", nil
+								}
 								buf := make([]byte, x)
 								slog.Debug("reading string bytes", "len", x)
 								_, err = r.Read(buf)
@@ -1197,6 +1209,9 @@ func Bucket_Delete(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borrow[
 							}
 							if b < 0x80 {
 								x = x | uint32(b)<<s
+								if x == 0 {
+									return "", nil
+								}
 								buf := make([]byte, x)
 								slog.Debug("reading string bytes", "len", x)
 								_, err = r.Read(buf)
@@ -1402,6 +1417,9 @@ func Bucket_Exists(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borrow[
 							}
 							if b < 0x80 {
 								x = x | uint32(b)<<s
+								if x == 0 {
+									return "", nil
+								}
 								buf := make([]byte, x)
 								slog.Debug("reading string bytes", "len", x)
 								_, err = r.Read(buf)
@@ -1578,11 +1596,14 @@ func Bucket_ListKeys(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borro
 							}
 							return nil, fmt.Errorf("failed to read list length byte: %w", err)
 						}
+						if s == 28 && b > 0x0f {
+							return nil, errors.New("list length overflows a 32-bit integer")
+						}
 						if b < 0x80 {
-							if i == 4 && b > 1 {
-								return nil, errors.New("list length overflows a 32-bit integer")
-							}
 							x = x | uint32(b)<<s
+							if x == 0 {
+								return nil, nil
+							}
 							vs := make([]string, x)
 							for i := range vs {
 								slog.Debug("reading list element", "i", i)
@@ -1606,6 +1627,9 @@ func Bucket_ListKeys(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borro
 										}
 										if b < 0x80 {
 											x = x | uint32(b)<<s
+											if x == 0 {
+												return "", nil
+											}
 											buf := make([]byte, x)
 											slog.Debug("reading string bytes", "len", x)
 											_, err = r.Read(buf)
@@ -1668,6 +1692,9 @@ func Bucket_ListKeys(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borro
 								}
 								if b < 0x80 {
 									x = x | uint32(b)<<s
+									if x == 0 {
+										return "", nil
+									}
 									buf := make([]byte, x)
 									slog.Debug("reading string bytes", "len", x)
 									_, err = r.Read(buf)
@@ -1757,6 +1784,9 @@ func Bucket_ListKeys(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borro
 							}
 							if b < 0x80 {
 								x = x | uint32(b)<<s
+								if x == 0 {
+									return "", nil
+								}
 								buf := make([]byte, x)
 								slog.Debug("reading string bytes", "len", x)
 								_, err = r.Read(buf)
