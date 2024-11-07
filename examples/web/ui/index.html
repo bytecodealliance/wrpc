@@ -112,14 +112,14 @@
                 }
                 identifier = url;
             } else if (conn === 'quic') {
-                let addr = obj.addr;
+                let addr = obj['quic-addr'];
                 if (addr == null || addr === '') {
                     dbg.error('QUIC address must be set');
                     return
                 }
-                identifier = 'wrpc+quic://' + identifier;
+                identifier = 'wrpc+quic://' + addr;
 
-                let bucket = obj.bucket;
+                let bucket = obj['quic-bucket'];
                 if (bucket != null && bucket != '') {
                     identifier = identifier + ';' + bucket;
                 }
@@ -131,7 +131,7 @@
                 }
                 identifier = 'wrpc+tcp://' + addr;
 
-                let bucket = obj.bucket;
+                let bucket = obj['tcp-bucket'];
                 if (bucket != null && bucket != '') {
                     identifier = identifier + ';' + bucket;
                 }
@@ -148,14 +148,14 @@
                     identifier = identifier + ';' + bucket;
                 }
             } else if (conn === 'web') {
-                let addr = obj.addr;
+                let addr = obj['web-addr'];
                 if (addr == null || addr === '') {
                     dbg.error('WebTransport address must be set');
                     return
                 }
                 identifier = 'wrpc+web://' + addr;
 
-                let bucket = obj.bucket;
+                let bucket = obj['web-bucket'];
                 if (bucket != null && bucket != '') {
                     identifier = identifier + ';' + bucket;
                 }
@@ -205,6 +205,10 @@
         }
 
         async function handleGet() {
+            /** @type {HTMLInputElement | null} */
+            const getValue = document.querySelector('#get input[name="get-value"]');
+            if (getValue) getValue.value = null;
+
             if (!transport) {
                 dbg.error('transport not connected')
                 return
@@ -260,8 +264,6 @@
 
             dbg.info(`got value from bucket: ${bucketName}`, JSON.stringify(value, null, 2));
 
-            /** @type {HTMLInputElement | null} */
-            const getValue = document.querySelector('#get input[name="get-value"]');
             if (getValue) getValue.value = value;
         }
 
@@ -423,22 +425,7 @@
         <form id="settings">
             <div id="template-output"></div>
 
-            <template class="form-fields" data-option="default">
-                <div class="field">
-                    <label class="label">Bucket identifier</label>
-                    <div class="control">
-                        <input class="input" type="text" name="bucket" />
-                    </div>
-                </div>
-                <div class="field">
-                    <label class="label">Target address</label>
-                    <div class="control">
-                        <input class="input" type="text" name="addr" placeholder="localhost:1234" />
-                    </div>
-                </div>
-            </template>
-
-            <template class="form-fields" data-option="mem"></template>
+            <template class="form-fields" data-option="default"></template>
 
             <template class="form-fields" data-option="redis">
                 <div class="field">
@@ -472,6 +459,21 @@
                 </div>
             </template>
 
+            <template class="form-fields" data-option="quic">
+                <div class="field">
+                    <label class="label">Bucket identifier</label>
+                    <div class="control">
+                        <input class="input" type="text" name="quic-bucket" />
+                    </div>
+                </div>
+                <div class="field">
+                    <label class="label">QUIC socket address</label>
+                    <div class="control">
+                        <input class="input" type="text" name="quic-addr" placeholder="[::1]:4433" value="[::1]:4433" />
+                    </div>
+                </div>
+            </template>
+
             <template class="form-fields" data-option="tcp">
                 <div class="field">
                     <label class="label">Bucket identifier</label>
@@ -499,6 +501,22 @@
                     <div class="control">
                         <input class="input" type="text" name="unix-path" placeholder="/tmp/wrpc/wasi/keyvalue.sock"
                             value="/tmp/wrpc/wasi/keyvalue.sock" />
+                    </div>
+                </div>
+            </template>
+
+            <template class="form-fields" data-option="web">
+                <div class="field">
+                    <label class="label">Bucket identifier</label>
+                    <div class="control">
+                        <input class="input" type="text" name="web-bucket" />
+                    </div>
+                </div>
+                <div class="field">
+                    <label class="label">WebTransport address</label>
+                    <div class="control">
+                        <input class="input" type="text" name="web-addr" placeholder="localhost:4433"
+                            value="localhost:4433" />
                     </div>
                 </div>
             </template>

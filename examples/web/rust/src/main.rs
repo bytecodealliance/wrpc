@@ -212,9 +212,8 @@ impl<C: Send + Sync> store::Handler<C> for Handler {
                     Ok(ep) => ep,
                     Err(err) => return Ok(Err(store::Error::Other(format!("{err:#}")))),
                 };
-                let Some(mut san) = url.path().strip_prefix('/') else {
-                    return Ok(Err(store::Error::Other("invalid URL".to_string())));
-                };
+                let san = url.path();
+                let mut san = san.strip_prefix('/').unwrap_or(san);
                 if san.is_empty() {
                     san = "localhost"
                 }
