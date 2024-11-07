@@ -1,6 +1,6 @@
 <!doctype html>
 <html>
-<title>`wasi:keyvalue` in the Web</title>
+<title>`wasi:keyvalue`</title>
 
 <head>
     <meta content="text/html;charset=utf-8" http-equiv="Content-Type" />
@@ -32,6 +32,467 @@
         }
     </style>
     <script type="module">
+        function toHex(v) {
+            if (!v) return '';
+            return v.reduce((s, x) => s + x.toString(16).padStart(2, '0'), '')
+        }
+
+        function uuidString(v) {
+            return v.reduce((s, x) => {
+                const hex = x.toString(16).padStart(2, '0');
+                switch (s.length) {
+                    case 8:
+                    case 13:
+                    case 18:
+                    case 23:
+                        return s + "-" + hex;
+                    default:
+                        return s + hex;
+                }
+            }, '')
+        }
+
+        async function wasiKeyvalueStoreOpen(tx, rx, identifier) {
+            const text = new TextEncoder();
+
+            const idBuf = text.encode(identifier);
+            if (idBuf.length > 127) throw 'this example currently does not support identifiers longer than 127 bytes - open a PR!';
+
+            const payloadBytes = 1 + idBuf.length;
+            if (payloadBytes > 127) throw 'this example currently does not support requests payload longer than 127 bytes - open a PR!';
+
+            let buf = new Uint8Array([
+                0,
+                'wasi:keyvalue/store@0.2.0-draft2'.length,
+                ...text.encode('wasi:keyvalue/store@0.2.0-draft2'),
+                'open'.length,
+                ...text.encode('open'),
+                0,
+                payloadBytes,
+                idBuf.length,
+                ...idBuf
+            ]);
+            dbg.debug('writing `open("' + identifier + '")` invocation: ' + toHex(buf));
+            await tx.write(buf);
+
+            dbg.debug('awaiting write to complete');
+            await tx.ready;
+            tx.close();
+
+            dbg.debug('reading `open` response...');
+            buf = null;
+            return await rx.read().then(function handleChunk({done, value}) {
+                if (!buf) {
+                    buf = value;
+                } else if (value) {
+                    const b = new Uint8Array(buf.length + value.length);
+                    b.set(buf);
+                    b.set(value, buf.length);
+                    buf = b;
+                }
+                if (done) {
+                    if (!buf || buf.length < 4) throw 'unexpected EOF';
+                    dbg.debug('received `open` response: ' + toHex(buf));
+                    if (buf[0] != 0) throw 'unexpected path'
+                    if (buf[1] > 127) throw 'only decoding responses of up to 127 bytes is currently supported - open a PR!'
+                    switch (buf[2]) {
+                        case 0:
+                            // ok
+                            return buf.subarray(4);
+                        case 1:
+                            // error
+                            switch (buf[3]) {
+                                case 0:
+                                    throw "no such store";
+                                case 1:
+                                    throw "access denied";
+                                case 2:
+                                    const err = new TextDecoder().decode(buf.subarray(5));
+                                    throw err;
+                            }
+                        default:
+                            throw "invalid result status byte"
+                    }
+                }
+                return rx.read().then(handleChunk);
+            }, err => {
+                throw 'failed to read `open` response: ' + err;
+            })
+        }
+
+        async function wasiKeyvalueStoreBucketGet(tx, rx, bucket, key) {
+            const text = new TextEncoder();
+
+            if (bucket.length > 127) throw 'this example currently does not support buckets longer than 127 bytes - open a PR!';
+
+            const keyBuf = text.encode(key);
+            if (keyBuf.length > 127) throw 'this example currently does not support keys longer than 127 bytes - open a PR!';
+
+            const payloadBytes = 2 + bucket.length + keyBuf.length;
+            if (payloadBytes > 127) throw 'this example currently does not support request payloads longer than 127 bytes - open a PR!';
+
+            let buf = new Uint8Array([
+                0,
+                'wasi:keyvalue/store@0.2.0-draft2'.length,
+                ...text.encode('wasi:keyvalue/store@0.2.0-draft2'),
+                'bucket.get'.length,
+                ...text.encode('bucket.get'),
+                0,
+                payloadBytes,
+                bucket.length,
+                ...bucket,
+                keyBuf.length,
+                ...keyBuf
+            ]);
+
+            dbg.debug('writing `bucket.get("' + bucket + '", "' + key + '")` invocation: ' + toHex(buf));
+            await tx.write(buf);
+
+            dbg.debug('awaiting write to complete');
+            await tx.ready;
+            tx.close();
+
+            dbg.debug('reading `bucket.get` response...');
+            buf = null;
+            return await rx.read().then(function handleChunk({done, value}) {
+                if (!buf) {
+                    buf = value;
+                } else if (value) {
+                    const b = new Uint8Array(buf.length + value.length);
+                    b.set(buf);
+                    b.set(value, buf.length);
+                    buf = b;
+                }
+                if (done) {
+                    if (!buf || buf.length < 4) throw 'unexpected EOF';
+                    dbg.debug('received `bucket.get` response: ' + toHex(buf));
+                    if (buf[0] != 0) throw 'unexpected path'
+                    if (buf[1] > 127) throw 'only decoding responses of up to 127 bytes is currently supported - open a PR!'
+                    switch (buf[2]) {
+                        case 0:
+                            // ok
+                            switch (buf[3]) {
+                                case 0:
+                                    // none
+                                    return null
+                                case 1:
+                                    // some
+                                    if (buf.length < 5) throw 'unexpected EOF'
+                                    return buf.subarray(5)
+                                default:
+                                    throw "invalid option status byte"
+                            }
+                        case 1:
+                            // error
+                            switch (buf[3]) {
+                                case 0:
+                                    throw "no such store";
+                                case 1:
+                                    throw "access denied";
+                                case 2:
+                                    const err = new TextDecoder().decode(buf.subarray(5));
+                                    throw err;
+                            }
+                        default:
+                            throw "invalid result status byte"
+                    }
+                }
+                return rx.read().then(handleChunk);
+            }, err => {
+                throw 'failed to read `bucket.get` response: ' + err;
+            })
+        }
+
+        async function wasiKeyvalueStoreBucketSet(tx, rx, bucket, key, value) {
+            const text = new TextEncoder();
+
+            if (bucket.length > 127) throw 'this example currently does not support buckets longer than 127 bytes - open a PR!';
+            if (value.length > 127) throw 'this example currently does not support values longer than 127 bytes - open a PR!';
+
+            const keyBuf = text.encode(key);
+            if (keyBuf.length > 127) throw 'this example currently does not support keys longer than 127 bytes - open a PR!';
+
+            const payloadBytes = 3 + bucket.length + keyBuf.length + value.length;
+            if (payloadBytes > 127) throw 'this example currently does not support request payloads longer than 127 bytes - open a PR!';
+
+            let buf = new Uint8Array([
+                0,
+                'wasi:keyvalue/store@0.2.0-draft2'.length,
+                ...text.encode('wasi:keyvalue/store@0.2.0-draft2'),
+                'bucket.set'.length,
+                ...text.encode('bucket.set'),
+                0,
+                payloadBytes,
+                bucket.length,
+                ...bucket,
+                keyBuf.length,
+                ...keyBuf,
+                value.length,
+                ...value
+            ]);
+
+            dbg.debug('writing `bucket.set("' + bucket + '", "' + key + '", "' + value + '") invocation: ' + toHex(buf));
+            await tx.write(buf);
+
+            dbg.debug('awaiting write to complete');
+            await tx.ready;
+            tx.close();
+
+            dbg.debug('reading `bucket.set` response...');
+            buf = null;
+            await rx.read().then(function handleChunk({done, value}) {
+                if (!buf) {
+                    buf = value;
+                } else if (value) {
+                    const b = new Uint8Array(buf.length + value.length);
+                    b.set(buf);
+                    b.set(value, buf.length);
+                    buf = b;
+                }
+                if (done) {
+                    if (!buf || buf.length < 3) throw 'unexpected EOF';
+                    dbg.debug('received `bucket.set` response: ' + toHex(buf));
+                    if (buf[0] != 0) throw 'unexpected path'
+                    if (buf[1] > 127) throw 'only decoding responses of up to 127 bytes is currently supported - open a PR!'
+                    switch (buf[2]) {
+                        case 0:
+                            // ok
+                            if (buf.length != 3) throw "unparsed bytes left on stream";
+                            return
+                        case 1:
+                            if (buf.length < 4) throw 'unexpected EOF';
+                            // error
+                            switch (buf[3]) {
+                                case 0:
+                                    throw "no such store";
+                                case 1:
+                                    throw "access denied";
+                                case 2:
+                                    const err = new TextDecoder().decode(buf.subarray(5));
+                                    throw err;
+                            }
+                        default:
+                            throw "invalid result status byte"
+                    }
+                }
+                rx.read().then(handleChunk);
+            }, err => {
+                throw 'failed to read `bucket.set` response: ' + err;
+            })
+        }
+
+        async function getBucket() {
+            if (!transport) {
+                throw 'transport not connected';
+            }
+            const obj = getFormValues('#settings');
+            let identifier = '';
+            let conn = obj.connection;
+            if (conn === 'mem') {
+                identifier = '';
+            } else if (conn === 'nats') {
+                const addr = obj['nats-addr'];
+                if (!addr) throw 'NATS.io server address must be set';
+                identifier = 'wrpc+nats://' + addr;
+
+                const prefix = obj['nats-prefix'];
+                if (prefix) identifier = identifier + '/' + prefix;
+
+                const bucket = obj['nats-bucket'];
+                if (bucket) identifier = identifier + ';' + bucket;
+            } else if (conn === 'redis') {
+                const url = obj['redis-url'];
+                if (!url) throw 'Redis URL must be set';
+                identifier = url;
+            } else if (conn === 'quic') {
+                const addr = obj['quic-addr'];
+                if (!addr) throw 'QUIC address must be set';
+                identifier = 'wrpc+quic://' + addr;
+
+                const bucket = obj['quic-bucket'];
+                if (bucket) identifier = identifier + ';' + bucket;
+            } else if (conn === 'tcp') {
+                const addr = obj['tcp-addr'];
+                if (!addr) throw 'TCP address must be set';
+                identifier = 'wrpc+tcp://' + addr;
+
+                const bucket = obj['tcp-bucket'];
+                if (bucket) identifier = identifier + ';' + bucket;
+            } else if (conn === 'unix') {
+                const path = obj['unix-path'];
+                if (!path) throw 'Unix Domain Socket path must be set';
+                identifier = 'wrpc+unix://' + path;
+
+                const bucket = obj['unix-bucket']
+                if (bucket) identifier = identifier + ';' + bucket;
+            } else if (conn === 'web') {
+                const addr = obj['web-addr'];
+                if (!addr) throw 'WebTransport address must be set';
+                identifier = 'wrpc+web://' + addr;
+
+                const bucket = obj['web-bucket'];
+                if (bucket) identifier = identifier + ';' + bucket;
+            } else {
+                throw 'transport not supported yet';
+            }
+
+            if (identifier.length > 127) throw 'this example currently does not support identifiers longer than 127 bytes - open a PR!';
+
+            // TODO: cache the bucket by URL (it should not persist across server restarts)
+
+            dbg.debug('creating `open` stream...');
+            const stream = await transport.createBidirectionalStream();
+            return await wasiKeyvalueStoreOpen(
+                stream.writable.getWriter(),
+                stream.readable.getReader(),
+                identifier,
+            ).then(bucket => {
+                const bucketName = uuidString(bucket);
+                dbg.log(`opened bucket ${bucketName}`);
+                return bucket;
+            }, err => {
+                throw 'failed to open bucket: ' + err;
+            });
+        }
+
+        async function handleGet() {
+            /** @type {HTMLInputElement | null} */
+            const getValue = document.querySelector('#get input[name="get-value"]');
+            if (getValue) getValue.value = null;
+
+            if (!transport) throw 'transport not connected';
+            const bucket = await getBucket();
+            if (!bucket) throw 'failed to get bucket';
+
+            const obj = getFormValues('#get');
+
+            const key = obj['get-key'];
+            if (!key) throw 'key must be set';
+            if (key.length > 127) throw 'this example currently does not support keys longer than 127 bytes - open a PR!';
+
+            dbg.debug('creating `get` stream...');
+            const stream = await transport.createBidirectionalStream();
+            await wasiKeyvalueStoreBucketGet(
+                stream.writable.getWriter(),
+                stream.readable.getReader(),
+                bucket,
+                key,
+            ).then(value => {
+                if (!value) {
+                    dbg.info('key missing')
+                    return;
+                }
+                const s = new TextDecoder().decode(value);
+                const bucketName = uuidString(bucket);
+                dbg.info(`got value from bucket ${bucketName}:`, JSON.stringify(s, null, 2));
+                if (getValue) getValue.value = s;
+            }, err => {
+                throw 'failed to get value: ' + err;
+            });
+        }
+
+        async function handleSet() {
+            if (!transport) {
+                dbg.error('transport not connected')
+                return
+            }
+            const bucket = await getBucket();
+            if (bucket == null) {
+                return
+            }
+            const obj = getFormValues('#set');
+
+            const key = obj['set-key'];
+            if (!key) throw 'key must be set';
+            if (key.length > 127) throw 'this example currently does not support keys longer than 127 bytes - open a PR!';
+
+            const value = obj['set-value'];
+            let valueBuf;
+            if (value) {
+                valueBuf = new TextEncoder().encode(value);
+            } else {
+                valueBuf = new Uint8Array();
+            }
+            if (valueBuf.length > 127) throw 'this example currently does not support values longer than 127 bytes - open a PR!';
+
+            dbg.debug('creating `set` stream...');
+            const stream = await transport.createBidirectionalStream();
+            await wasiKeyvalueStoreBucketSet(
+                stream.writable.getWriter(),
+                stream.readable.getReader(),
+                bucket,
+                key,
+                valueBuf,
+            ).then(() => {
+                const bucketName = uuidString(bucket);
+                dbg.info(`set value in bucket ${bucketName}`);
+            }, err => {
+                throw 'failed to set value: ' + err
+            });
+        }
+
+        async function connect() {
+            const {PORT, CERT_DIGEST} = await import('./consts.js');
+            let transport;
+
+            dbg.log('connecting to wRPC over WebTransport on `' + PORT + '`...');
+            try {
+                transport = new WebTransport('https://localhost:' + PORT, {
+                    serverCertificateHashes: [
+                        {
+                            algorithm: 'sha-256',
+                            value: CERT_DIGEST.buffer
+                        }
+                    ]
+                });
+            } catch (e) {
+                dbg.error('failed to connect: ' + e);
+                return null;
+            }
+
+            dbg.debug('waiting for WebTransport readiness...');
+            try {
+                await transport.ready;
+            } catch (e) {
+                throw 'failed to await WebTransport readiness: ' + e;
+                return null;
+            }
+            dbg.info('WebTransport connection established');
+            return transport;
+        }
+
+        const dbg = (() => {
+            const output = document.querySelector('#message-output');
+            const className = {
+                debug: 'has-text-grey',
+                log: 'has-text-normal',
+                info: 'has-text-info',
+                warn: 'has-text-warning',
+                error: 'has-text-danger',
+            };
+            const handleLog = (value, level = 'log') => {
+                level = ['debug', 'log', 'info', 'warn', 'error'].includes(level) ? level : 'info';
+                const prefix = new Date().toISOString();
+                const levelTag = `[${level}]`.padStart(7, ' ');
+                const span = document.createElement('span');
+                span.textContent = `${prefix} ${levelTag} ${value.join(' ')}\n`;
+                span.classList.add(className[level]);
+                span.dataset.level = level;
+                if (!output) {
+                    console.error(span.textContent)
+                    return
+                }
+                output.prepend(span)
+            }
+            return {
+                debug: (...value) => handleLog(value, 'debug'),
+                log: (...value) => handleLog(value, 'log'),
+                info: (...value) => handleLog(value, 'info'),
+                warn: (...value) => handleLog(value, 'warn'),
+                error: (...value) => handleLog(value, 'error'),
+            }
+        })()
+
         // @ts-check
         function initUI() {
             function updateTemplate() {
@@ -75,335 +536,17 @@
             return Object.fromEntries(formEntries.map(([key, value]) => [key, value.toString()]));
         }
 
-        async function getBucket() {
-            if (!transport) {
-                dbg.error('transport not connected')
-                return
-            }
-            const obj = getFormValues('#settings');
-            let identifier = '';
-            let conn = obj.connection;
-            dbg.debug('transport ' + conn);
-            if (conn === 'mem') {
-                identifier = '';
-            } else if (conn === 'nats') {
-                let addr = obj['nats-addr'];
-                if (addr == null || addr === '') {
-                    dbg.error('NATS.io server address must be set');
-                    return
-                }
-                identifier = 'wrpc+nats://' + addr;
-
-                let prefix = obj['nats-prefix'];
-                if (prefix != null && prefix != '') {
-                    identifier = identifier + '/' + prefix;
-                }
-
-                let bucket = obj['nats-bucket'];
-                if (bucket != null && bucket != '') {
-                    identifier = identifier + ';' + bucket;
-                }
-            } else if (conn === 'redis') {
-                let url = obj['redis-url'];
-                if (typeof url !== 'string' || url === '') {
-                    dbg.error('Redis URL must be set');
-                    return
-                }
-                identifier = url;
-            } else if (conn === 'quic') {
-                let addr = obj['quic-addr'];
-                if (addr == null || addr === '') {
-                    dbg.error('QUIC address must be set');
-                    return
-                }
-                identifier = 'wrpc+quic://' + addr;
-
-                let bucket = obj['quic-bucket'];
-                if (bucket != null && bucket != '') {
-                    identifier = identifier + ';' + bucket;
-                }
-            } else if (conn === 'tcp') {
-                let addr = obj['tcp-addr'];
-                if (addr == null || addr === '') {
-                    dbg.error('TCP address must be set');
-                    return
-                }
-                identifier = 'wrpc+tcp://' + addr;
-
-                let bucket = obj['tcp-bucket'];
-                if (bucket != null && bucket != '') {
-                    identifier = identifier + ';' + bucket;
-                }
-            } else if (conn === 'unix') {
-                let path = obj['unix-path'];
-                if (path == null || path === '') {
-                    dbg.error('Unix Domain Socket path must be set');
-                    return
-                }
-                identifier = 'wrpc+unix://' + path;
-
-                let bucket = obj['unix-bucket']
-                if (bucket != null && bucket != '') {
-                    identifier = identifier + ';' + bucket;
-                }
-            } else if (conn === 'web') {
-                let addr = obj['web-addr'];
-                if (addr == null || addr === '') {
-                    dbg.error('WebTransport address must be set');
-                    return
-                }
-                identifier = 'wrpc+web://' + addr;
-
-                let bucket = obj['web-bucket'];
-                if (bucket != null && bucket != '') {
-                    identifier = identifier + ';' + bucket;
-                }
-            } else {
-                dbg.error('transport not supported yet')
-            }
-
-            if (identifier.length >= 127) {
-                dbg.error('this demo does not support identifiers longer than 127 bytes - open a PR!');
-                return
-            }
-
-            // TODO: cache the bucket by URL (it should not persist across server restarts)
-
-            dbg.debug('creating `open` stream for identifier `' + identifier + '`...');
-            let stream = await transport.createBidirectionalStream();
-
-            dbg.debug('writing invocation...');
-            let tx = stream.writable.getWriter();
-            let rx = stream.readable.getReader();
-            // TODO: just do one write
-            await tx.write(new Uint8Array([0]));
-            await tx.write(new Uint8Array(['wasi:keyvalue/store@0.2.0-draft2'.length]));
-            await tx.write(new TextEncoder().encode('wasi:keyvalue/store@0.2.0-draft2'));
-            await tx.write(new Uint8Array(['open'.length]));
-            await tx.write(new TextEncoder().encode('open'));
-            await tx.write(new Uint8Array([0]));
-            await tx.write(new Uint8Array([1 + identifier.length]));
-            await tx.write(new Uint8Array([identifier.length]));
-            await tx.write(new TextEncoder().encode(identifier));
-            tx.close();
-
-            dbg.debug('reading `open` response...');
-            let data = await rx.read();
-            dbg.debug('received `open` response: ' + data.value);
-            let res = data.value[2];
-            if (res != 0) {
-                const err = new TextDecoder().decode(data.value.slice(4));
-                dbg.error('failed to open bucket: ' + err)
-                return;
-            }
-            let bucket = data.value.slice(3);
-            const bucketName = bucket.slice(1).map(x => x.toString(16)).join('');
-            dbg.log('opened bucket: ' + bucketName);
-
-            return bucket
-        }
-
-        async function handleGet() {
-            /** @type {HTMLInputElement | null} */
-            const getValue = document.querySelector('#get input[name="get-value"]');
-            if (getValue) getValue.value = null;
-
-            if (!transport) {
-                dbg.error('transport not connected')
-                return
-            }
-            const bucket = await getBucket();
-            if (bucket == null) {
-                return
-            }
-            const obj = getFormValues('#get');
-            let key = typeof obj['get-key'] === 'string' ? obj['get-key'] : '';
-            if (key == null || key === '') {
-                dbg.error('key must be set');
-                return
-            }
-            if (key.length >= 127) {
-                dbg.error('this demo does not support keys longer than 127 bytes - open a PR!');
-                return
-            }
-
-            dbg.debug('creating `get` stream...');
-            let stream = await transport.createBidirectionalStream();
-            let tx = stream.writable.getWriter();
-            let rx = stream.readable.getReader();
-            // TODO: just do one write
-            await tx.write(new Uint8Array([0]));
-            await tx.write(new Uint8Array(['wasi:keyvalue/store@0.2.0-draft2'.length]));
-            await tx.write(new TextEncoder().encode('wasi:keyvalue/store@0.2.0-draft2'));
-            await tx.write(new Uint8Array(['bucket.get'.length]));
-            await tx.write(new TextEncoder().encode('bucket.get'));
-            await tx.write(new Uint8Array([0]));
-            await tx.write(new Uint8Array([bucket.length + 1 + key.length]));
-            await tx.write(bucket);
-            await tx.write(new Uint8Array([key.length]));
-            await tx.write(new TextEncoder().encode(key));
-            tx.close();
-
-            dbg.debug('reading `get` response...');
-            let data = await rx.read();
-            dbg.debug('received `get` response: ' + data.value);
-            let res = data.value[2];
-            if (res != 0) {
-                const err = new TextDecoder().decode(data.value.slice(4));
-                dbg.error('failed to get value: ' + err)
-                return;
-            }
-            let ok = data.value[3];
-            if (ok != 1) {
-                dbg.error('key missing')
-                return;
-            }
-            const value = new TextDecoder().decode(data.value.slice(5));
-            const bucketName = bucket.slice(1).map(x => x.toString(16)).join('');
-
-            dbg.info(`got value from bucket: ${bucketName}`, JSON.stringify(value, null, 2));
-
-            if (getValue) getValue.value = value;
-        }
-
-        async function handleSet() {
-            if (!transport) {
-                dbg.error('transport not connected')
-                return
-            }
-            const bucket = await getBucket();
-            if (bucket == null) {
-                return
-            }
-            const obj = getFormValues('#set');
-            let key = typeof obj['set-key'] === 'string' ? obj['set-key'] : '';
-            let value = typeof obj['set-value'] === 'string' ? obj['set-value'] : '';
-            if (key == null || key === '') {
-                dbg.error('key must be set');
-                return
-            }
-            if (key.length >= 127) {
-                dbg.error('this demo does not support keys longer than 127 bytes - open a PR!');
-                return
-            }
-            if (value == null || value === '') {
-                dbg.error('value must be set');
-                return
-            }
-            if (value.length >= 127) {
-                dbg.error('this demo does not support value longer than 127 bytes - open a PR!');
-                return
-            }
-
-            dbg.debug('creating `set` stream...');
-            let stream = await transport.createBidirectionalStream();
-            let tx = stream.writable.getWriter();
-            let rx = stream.readable.getReader();
-            // TODO: just do one write
-            await tx.write(new Uint8Array([0]));
-            await tx.write(new Uint8Array(['wasi:keyvalue/store@0.2.0-draft2'.length]));
-            await tx.write(new TextEncoder().encode('wasi:keyvalue/store@0.2.0-draft2'));
-            await tx.write(new Uint8Array(['bucket.set'.length]));
-            await tx.write(new TextEncoder().encode('bucket.set'));
-            await tx.write(new Uint8Array([0]));
-            await tx.write(new Uint8Array([bucket.length + 1 + key.length + 1 + value.length]));
-            await tx.write(bucket);
-            await tx.write(new Uint8Array([key.length]));
-            await tx.write(new TextEncoder().encode(key));
-            await tx.write(new Uint8Array([value.length]));
-            await tx.write(new TextEncoder().encode(value));
-            tx.close();
-
-            dbg.debug('reading `set` response...');
-            let data = await rx.read();
-            dbg.debug('received `set` response: ' + data.value);
-            let res = data.value[2];
-            if (res != 0) {
-                const err = new TextDecoder().decode(data.value.slice(4));
-                dbg.error('failed to set value: ' + err)
-                return;
-            }
-
-            const bucketName = bucket.slice(1).map(x => x.toString(16)).join('');
-
-            dbg.info(`successfully set value in bucket: ${bucketName}`);
-        }
-
-        async function connect() {
-            const {PORT, CERT_DIGEST} = await import('./consts.js');
-            let transport;
-
-            dbg.debug('connecting to wRPC over WebTransport on `' + PORT + '`...');
-            try {
-                transport = new WebTransport('https://localhost:' + PORT, {
-                    serverCertificateHashes: [
-                        {
-                            algorithm: 'sha-256',
-                            value: CERT_DIGEST.buffer
-                        }
-                    ]
-                });
-            } catch (e) {
-                dbg.error('failed to connect: ' + e);
-                return null;
-            }
-
-            dbg.debug('waiting for readiness...');
-            try {
-                await transport.ready;
-            } catch (e) {
-                dbg.error('failed to await readiness: ' + e);
-                return null;
-            }
-            return transport;
-        }
-
-        const dbg = (() => {
-            const output = document.querySelector('#message-output');
-            const className = {
-                debug: 'has-text-grey',
-                log: 'has-text-normal',
-                info: 'has-text-info',
-                warn: 'has-text-warning',
-                error: 'has-text-danger',
-            };
-            const handleLog = (value, level = 'log') => {
-                level = ['debug', 'log', 'info', 'warn', 'error'].includes(level) ? level : 'info';
-                const prefix = new Date().toISOString();
-                const levelTag = `[${level}]`.padStart(7, ' ');
-                const span = document.createElement('span');
-                span.textContent = `${prefix} ${levelTag} ${value.join(' ')}\n`;
-                span.classList.add(className[level]);
-                span.dataset.level = level;
-                if (!output) {
-                    console.error(span.textContent)
-                    return
-                }
-                output.prepend(span)
-            }
-            return {
-                debug: (...value) => handleLog(value, 'debug'),
-                log: (...value) => handleLog(value, 'log'),
-                info: (...value) => handleLog(value, 'info'),
-                warn: (...value) => handleLog(value, 'warn'),
-                error: (...value) => handleLog(value, 'error'),
-            }
-        })()
-
         initUI();
 
-        let transport = await connect();
-        if (transport == null) {
-            // TODO: Retry?
-            dbg.error('failed to connect to server')
-        }
+        let transport = await connect().catch(err => dbg.error('failed to connect to server: ' + err));
+        // TODO: Reconnect on failure
     </script>
 </head>
 
 <body>
     <section class="section columns is-mobile">
         <div class="column">
-            <h1 class="title"><code>wasi:keyvalue</code> in the Web</h1>
+            <h1 class="title"><code>wasi:keyvalue</code></h1>
         </div>
         <div class="column is-narrow">
             <div class="select">

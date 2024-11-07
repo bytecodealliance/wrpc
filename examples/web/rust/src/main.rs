@@ -186,9 +186,8 @@ impl<C: Send + Sync> store::Handler<C> for Handler {
                     Ok(nats) => nats,
                     Err(err) => return Ok(Err(store::Error::Other(format!("{err:#}")))),
                 };
-                let Some(prefix) = url.path().strip_prefix('/') else {
-                    return Ok(Err(store::Error::Other("invalid URL".to_string())));
-                };
+                let prefix = url.path();
+                let prefix = prefix.strip_prefix('/').unwrap_or(prefix);
                 let wrpc = match wrpc_transport_nats::Client::new(nats, prefix, None)
                     .await
                     .context("failed to construct wRPC client")
@@ -221,11 +220,14 @@ impl<C: Send + Sync> store::Handler<C> for Handler {
                     .try_into()
                     .context("failed to convert rustls client config to QUIC client config")?;
                 ep.set_default_client_config(quinn::ClientConfig::new(Arc::new(conf)));
-                let conn = match ep.connect(addr, san).context("failed to connect") {
+                let conn = match ep
+                    .connect(addr, san)
+                    .context("failed to connect using QUIC")
+                {
                     Ok(ep) => ep,
                     Err(err) => return Ok(Err(store::Error::Other(format!("{err:#}")))),
                 };
-                let conn = match conn.await.context("failed to establish connection") {
+                let conn = match conn.await.context("failed to establish QUIC connection") {
                     Ok(ep) => ep,
                     Err(err) => return Ok(Err(store::Error::Other(format!("{err:#}")))),
                 };
@@ -276,7 +278,7 @@ impl<C: Send + Sync> store::Handler<C> for Handler {
                 let conn = match ep
                     .connect(format!("https://{}", url.authority()))
                     .await
-                    .context("failed to establish connection")
+                    .context("failed to establish WebTransport connection")
                 {
                     Ok(ep) => ep,
                     Err(err) => return Ok(Err(store::Error::Other(format!("{err:#}")))),
