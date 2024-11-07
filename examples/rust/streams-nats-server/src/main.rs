@@ -4,9 +4,10 @@ use anyhow::Context as _;
 use bytes::Bytes;
 use clap::Parser;
 use futures::stream::select_all;
-use futures::{Stream, StreamExt as _, TryStreamExt as _};
+use futures::{Stream, StreamExt as _};
+use tokio::task::JoinSet;
 use tokio::{select, signal};
-use tracing::{info, warn};
+use tracing::{debug, error, info, warn};
 use url::Url;
 
 mod bindings {
@@ -70,28 +71,45 @@ async fn main() -> anyhow::Result<()> {
         .context("failed to serve `wrpc-examples:streams/handler.echo`")?;
     // NOTE: This will conflate all invocation streams into a single stream via `futures::stream::SelectAll`,
     // to customize this, iterate over the returned `invocations` and set up custom handling per export
-    let mut invocations = select_all(invocations.into_iter().map(
-        |(instance, name, invocations)| {
-            invocations
-                .try_buffer_unordered(16) // handle up to 16 invocations concurrently
-                .map(move |res| (instance, name, res))
-        },
-    ));
+    let mut invocations = select_all(
+        invocations
+            .into_iter()
+            .map(|(instance, name, invocations)| invocations.map(move |res| (instance, name, res))),
+    );
     let shutdown = signal::ctrl_c();
     let mut shutdown = pin!(shutdown);
+    let mut tasks = JoinSet::new();
     loop {
         select! {
             Some((instance, name, res)) = invocations.next() => {
                 match res {
-                    Ok(()) => {
-                        info!(instance, name, "invocation successfully handled");
+                    Ok(fut) => {
+                        debug!(instance, name, "invocation accepted");
+                        tasks.spawn(async move {
+                            if let Err(err) = fut.await {
+                                warn!(?err, "failed to handle invocation");
+                            } else {
+                                info!(instance, name, "invocation successfully handled");
+                            }
+                        });
                     }
                     Err(err) => {
                         warn!(?err, instance, name, "failed to accept invocation");
                     }
                 }
             }
+            Some(res) = tasks.join_next() => {
+                if let Err(err) = res {
+                    error!(?err, "failed to join task")
+                }
+            }
             res = &mut shutdown => {
+                // wait for all invocations to complete
+                while let Some(res) = tasks.join_next().await {
+                    if let Err(err) = res {
+                        error!(?err, "failed to join task")
+                    }
+                }
                 return res.context("failed to listen for ^C")
             }
         }
