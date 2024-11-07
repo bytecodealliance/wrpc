@@ -248,10 +248,7 @@ impl<C: Send + Sync> store::Handler<C> for Handler {
                 }
             }
             #[cfg(unix)]
-            "wrpc+uds" => {
-                if url.set_scheme("file").is_err() {
-                    return Ok(Err(store::Error::Other("invalid URL".to_string())));
-                }
+            "wrpc+unix" => {
                 let Ok(path) = url.to_file_path() else {
                     return Ok(Err(store::Error::Other(
                         "failed to get filesystem path from URL".to_string(),
