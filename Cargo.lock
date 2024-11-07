@@ -3713,6 +3713,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "wasi-keyvalue-web"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-nats 0.37.0",
+ "axum",
+ "bytes",
+ "clap",
+ "futures",
+ "quinn",
+ "rustls",
+ "tokio",
+ "tower",
+ "tower-http",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+ "uuid",
+ "wit-bindgen-wrpc",
+ "wrpc-transport",
+ "wrpc-transport-nats",
+ "wrpc-transport-quic",
+ "wrpc-transport-web",
+ "wrpc-wasi-keyvalue",
+ "wrpc-wasi-keyvalue-mem",
+ "wrpc-wasi-keyvalue-redis",
+ "wtransport",
+]
+
+[[package]]
 name = "wasi-preview1-component-adapter-provider"
 version = "25.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4162,36 +4192,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8bc3cf014fb336883a411cd662f987abf6a1d2a27f2f0008616a0070bbf6bd0d"
 dependencies = [
  "wast",
-]
-
-[[package]]
-name = "web-rust-keyvalue"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-nats 0.37.0",
- "axum",
- "bytes",
- "clap",
- "futures",
- "quinn",
- "rustls",
- "tokio",
- "tower",
- "tower-http",
- "tracing",
- "tracing-subscriber",
- "url",
- "uuid",
- "wit-bindgen-wrpc",
- "wrpc-transport",
- "wrpc-transport-nats",
- "wrpc-transport-quic",
- "wrpc-transport-web",
- "wrpc-wasi-keyvalue",
- "wrpc-wasi-keyvalue-mem",
- "wrpc-wasi-keyvalue-redis",
- "wtransport",
 ]
 
 [[package]]

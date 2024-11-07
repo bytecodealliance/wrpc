@@ -677,7 +677,7 @@ async fn main() -> anyhow::Result<()> {
         .context("failed to query WebTransport socket address")?;
     let port = ep_addr.port();
 
-    let index = get(Html(include_str!("../index.html")));
+    let index = get(Html(include_str!("../../ui/index.html")));
     let http = axum::serve(
         lis,
         Router::new()
