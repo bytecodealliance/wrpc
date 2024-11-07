@@ -1,5 +1,5 @@
 [package]
-name = "web-rust-keyvalue"
+name = "wasi-keyvalue-web"
 version = "0.1.0"
 
 authors.workspace = true
