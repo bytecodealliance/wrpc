@@ -1,3 +1,4 @@
+use core::net::SocketAddr;
 use core::pin::pin;
 
 use std::sync::Arc;
@@ -6,6 +7,11 @@ use anyhow::Context as _;
 use clap::Parser;
 use futures::stream::select_all;
 use futures::StreamExt as _;
+use quinn::crypto::rustls::QuicServerConfig;
+use quinn::{Endpoint, ServerConfig};
+use rcgen::{generate_simple_self_signed, CertifiedKey};
+use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
+use rustls::version::TLS13;
 use tokio::task::JoinSet;
 use tokio::{select, signal};
 use tracing::{debug, error, info, warn};
@@ -14,8 +20,8 @@ use tracing::{debug, error, info, warn};
 #[command(author, version, about, long_about = None)]
 struct Args {
     /// Address to serve `wasi:keyvalue` on
-    #[arg(default_value = "[::1]:7761")]
-    addr: String,
+    #[arg(default_value = "[::1]:4433")]
+    addr: SocketAddr,
 }
 
 #[tokio::main]
@@ -24,20 +30,70 @@ async fn main() -> anyhow::Result<()> {
 
     let Args { addr } = Args::parse();
 
-    let lis = tokio::net::TcpListener::bind(&addr)
-        .await
-        .with_context(|| format!("failed to bind TCP listener on `{addr}`"))?;
-    let srv = Arc::new(wrpc_transport::Server::default());
+    let CertifiedKey { cert, key_pair } = generate_simple_self_signed([
+        "localhost".to_string(),
+        "::1".to_string(),
+        "127.0.0.1".to_string(),
+    ])
+    .context("failed to generate server certificate")?;
+    let cert = CertificateDer::from(cert);
+
+    let conf = rustls::ServerConfig::builder_with_protocol_versions(&[&TLS13])
+        .with_no_client_auth() // TODO: verify client cert
+        .with_single_cert(
+            vec![cert],
+            PrivatePkcs8KeyDer::from(key_pair.serialize_der()).into(),
+        )
+        .context("failed to create server config")?;
+
+    let conf: QuicServerConfig = conf
+        .try_into()
+        .context("failed to convert rustls client config to QUIC server config")?;
+
+    let ep = Endpoint::server(ServerConfig::with_crypto(Arc::new(conf)), addr)
+        .context("failed to create server endpoint")?;
+
+    let srv = Arc::new(wrpc_transport_quic::Server::new());
     let accept = tokio::spawn({
+        let mut tasks = JoinSet::<anyhow::Result<()>>::new();
         let srv = Arc::clone(&srv);
         async move {
             loop {
-                if let Err(err) = srv.accept(&lis).await {
-                    error!(?err, "failed to accept TCP connection");
+                select! {
+                    Some(conn) = ep.accept() => {
+                        let srv = Arc::clone(&srv);
+                        tasks.spawn(async move {
+                            let conn = conn
+                                .accept()
+                                .context("failed to accept QUIC connection")?;
+                            let conn = conn.await.context("failed to establish QUIC connection")?;
+                            let wrpc = wrpc_transport_quic::Client::from(conn);
+                            loop {
+                                srv.accept(&wrpc)
+                                    .await
+                                    .context("failed to accept wRPC connection")?;
+                            }
+                        });
+                    }
+                    Some(res) = tasks.join_next() => {
+                        match res {
+                            Ok(Ok(())) => {}
+                            Ok(Err(err)) => {
+                                warn!(?err, "failed to serve connection")
+                            }
+                            Err(err) => {
+                                error!(?err, "failed to join task")
+                            }
+                        }
+                    }
+                    else => {
+                        return;
+                    }
                 }
             }
         }
     });
+
     let invocations =
         wrpc_wasi_keyvalue::serve(srv.as_ref(), wrpc_wasi_keyvalue_mem::Handler::default())
             .await

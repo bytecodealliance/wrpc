@@ -1,0 +1,44 @@
+[package]
+name = "wasi-keyvalue-quic-server"
+version = "0.1.0"
+
+authors.workspace = true
+categories.workspace = true
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow = { workspace = true, features = ["std"] }
+bytes = { workspace = true }
+clap = { workspace = true, features = [
+    "color",
+    "derive",
+    "error-context",
+    "help",
+    "std",
+    "suggestions",
+    "usage",
+] }
+futures = { workspace = true }
+quinn = { workspace = true, features = [
+    "log",
+    "platform-verifier",
+    "ring",
+    "runtime-tokio",
+    "rustls",
+] }
+rcgen = { workspace = true, features = ["crypto", "ring", "zeroize"] }
+rustls = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "signal"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = [
+    "ansi",
+    "env-filter",
+    "fmt",
+] }
+wrpc-transport = { workspace = true }
+wrpc-transport-quic = { workspace = true }
+wrpc-wasi-keyvalue = { workspace = true }
+wrpc-wasi-keyvalue-mem = { workspace = true }
