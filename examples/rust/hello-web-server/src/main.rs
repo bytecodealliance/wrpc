@@ -105,9 +105,9 @@ async fn main() -> anyhow::Result<()> {
             .into_iter()
             .map(|(instance, name, invocations)| invocations.map(move |res| (instance, name, res))),
     );
-    let mut tasks = JoinSet::new();
     let shutdown = signal::ctrl_c();
     let mut shutdown = pin!(shutdown);
+    let mut tasks = JoinSet::new();
     loop {
         select! {
             Some((instance, name, res)) = invocations.next() => {
@@ -134,6 +134,7 @@ async fn main() -> anyhow::Result<()> {
             }
             res = &mut shutdown => {
                 accept.abort();
+                // wait for all invocations to complete
                 while let Some(res) = tasks.join_next().await {
                     if let Err(err) = res {
                         error!(?err, "failed to join task")
