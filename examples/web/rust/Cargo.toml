@@ -31,7 +31,7 @@ quinn = { workspace = true, features = [
     "runtime-tokio",
     "rustls",
 ] }
-rustls = { workspace = true }
+rustls = { workspace = true, features = ["ring"] }
 tokio = { workspace = true, features = [
     "macros",
     "rt-multi-thread",

@@ -30,7 +30,7 @@ use url::Url;
 use uuid::Uuid;
 use wrpc_transport::{ResourceBorrow, ResourceOwn};
 use wrpc_wasi_keyvalue::exports::wasi::keyvalue::store;
-use wtransport::tls::Sha256DigestFmt;
+use wtransport::tls::{Sha256DigestFmt, WEBTRANSPORT_ALPN};
 use wtransport::{Endpoint, Identity, ServerConfig};
 
 pub type Result<T, E = store::Error> = core::result::Result<T, E>;
@@ -164,7 +164,7 @@ impl<C: Send + Sync> store::Handler<C> for Handler {
             return Ok(Ok(ResourceOwn::from(id)));
         }
         let (url, suffix) = identifier.split_once(';').unwrap_or((&identifier, ""));
-        let mut url = match Url::parse(url) {
+        let url = match Url::parse(url) {
             Ok(url) => url,
             Err(err) => return Ok(Err(store::Error::Other(err.to_string()))),
         };
@@ -260,14 +260,12 @@ impl<C: Send + Sync> store::Handler<C> for Handler {
                 }
             }
             "wrpc+web" => {
-                if url.set_scheme("https").is_err() {
-                    return Ok(Err(store::Error::Other("invalid URL".to_string())));
-                }
-
+                let mut conf = client_tls_config();
+                conf.alpn_protocols.push(WEBTRANSPORT_ALPN.to_vec());
                 let ep = match wtransport::Endpoint::client(
                     wtransport::ClientConfig::builder()
                         .with_bind_default()
-                        .with_custom_tls(client_tls_config())
+                        .with_custom_tls(conf)
                         .build(),
                 )
                 .context("failed to create WebTransport endpoint")
@@ -276,7 +274,7 @@ impl<C: Send + Sync> store::Handler<C> for Handler {
                     Err(err) => return Ok(Err(store::Error::Other(format!("{err:#}")))),
                 };
                 let conn = match ep
-                    .connect(url)
+                    .connect(format!("https://{}", url.authority()))
                     .await
                     .context("failed to establish connection")
                 {
