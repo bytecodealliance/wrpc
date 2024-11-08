@@ -1,3 +1,4 @@
+use core::future::IntoFuture as _;
 use core::net::{Ipv6Addr, SocketAddr};
 use core::pin::pin;
 use core::time::Duration;
@@ -19,7 +20,7 @@ use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, Server
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use rustls::version::TLS13;
 use rustls::{DigitallySignedStruct, SignatureScheme};
-use tokio::sync::RwLock;
+use tokio::sync::{Notify, RwLock};
 use tokio::task::JoinSet;
 use tokio::{select, signal};
 use tower_http::trace::TraceLayer;
@@ -31,7 +32,7 @@ use uuid::Uuid;
 use wrpc_transport::{ResourceBorrow, ResourceOwn};
 use wrpc_wasi_keyvalue::exports::wasi::keyvalue::store;
 use wtransport::tls::{Sha256DigestFmt, WEBTRANSPORT_ALPN};
-use wtransport::{Endpoint, Identity, ServerConfig};
+use wtransport::{Endpoint, Identity, ServerConfig, VarInt};
 
 pub type Result<T, E = store::Error> = core::result::Result<T, E>;
 
@@ -695,45 +696,6 @@ export const PORT = "{port}"
     );
 
     let srv = Arc::new(wrpc_transport_web::Server::new());
-    let webt = tokio::spawn({
-        let mut tasks = JoinSet::<anyhow::Result<()>>::new();
-        let srv = Arc::clone(&srv);
-        async move {
-            loop {
-                select! {
-                    conn = ep.accept() => {
-                        let srv = Arc::clone(&srv);
-                        tasks.spawn(async move {
-                            let req = conn
-                                .await
-                                .context("failed to accept WebTransport connection")?;
-                            let conn = req
-                                .accept()
-                                .await
-                                .context("failed to establish WebTransport connection")?;
-                            let wrpc = wrpc_transport_web::Client::from(conn);
-                            loop {
-                                srv.accept(&wrpc)
-                                    .await
-                                    .context("failed to accept wRPC connection")?;
-                            }
-                        });
-                    }
-                    Some(res) = tasks.join_next() => {
-                        match res {
-                            Ok(Ok(())) => {}
-                            Ok(Err(err)) => {
-                                warn!(?err, "failed to serve connection")
-                            }
-                            Err(err) => {
-                                error!(?err, "failed to join task")
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    });
 
     let invocations = wrpc_wasi_keyvalue::exports::wasi::keyvalue::store::serve_interface(
         srv.as_ref(),
@@ -746,7 +708,7 @@ export const PORT = "{port}"
             .into_iter()
             .map(|(instance, name, invocations)| invocations.map(move |res| (instance, name, res))),
     );
-    let wrpc = tokio::spawn(async move {
+    let mut wrpc = tokio::spawn(async move {
         let mut tasks = JoinSet::new();
         loop {
             select! {
@@ -779,26 +741,75 @@ export const PORT = "{port}"
         }
     });
 
+    let http_shutdown = Arc::new(Notify::new());
+    let http = http.with_graceful_shutdown({
+        let http_shutdown = Arc::clone(&http_shutdown);
+        async move { http_shutdown.notified().await }
+    });
+    let mut http = http.into_future();
     let shutdown = signal::ctrl_c();
     let mut shutdown = pin!(shutdown);
+    let mut tasks = JoinSet::<anyhow::Result<()>>::new();
     info!("serving HTTP on: http://{addr}");
-    select! {
-        res = http => {
-            trace!("HTTP serving stopped");
-            res.context("failed to serve HTTP")?;
-        }
-        res = webt => {
-            trace!("WebTransport serving task stopped");
-            res.context("failed to serve WebTransport")?;
-        }
-        res = wrpc => {
-            trace!("wRPC serving task stopped");
-            res.context("failed to serve wRPC invocations")?;
-        }
-        res = &mut shutdown => {
-            trace!("^C received");
-            res.context("failed to listen for ^C")?;
+    loop {
+        select! {
+            res = &mut http => {
+                trace!("HTTP serving stopped");
+                return res.context("failed to serve HTTP");
+            }
+            res = &mut wrpc => {
+                trace!("wRPC serving task stopped");
+                return res.context("failed to serve wRPC invocations");
+            }
+            conn = ep.accept() => {
+                let srv = Arc::clone(&srv);
+                tasks.spawn(async move {
+                    let req = conn
+                        .await
+                        .context("failed to accept WebTransport connection")?;
+                    let conn = req
+                        .accept()
+                        .await
+                        .context("failed to establish WebTransport connection")?;
+                    let wrpc = wrpc_transport_web::Client::from(conn);
+                    loop {
+                        srv.accept(&wrpc)
+                            .await
+                            .context("failed to accept wRPC connection")?;
+                    }
+                });
+            }
+            Some(res) = tasks.join_next() => {
+                match res {
+                    Ok(Ok(())) => {}
+                    Ok(Err(err)) => {
+                        warn!(?err, "failed to serve WebTransport invocation")
+                    }
+                    Err(err) => {
+                        error!(?err, "failed to join WebTransport invocation task")
+                    }
+                }
+            }
+            res = &mut shutdown => {
+                trace!("^C received");
+                http_shutdown.notify_waiters();
+                ep.close(VarInt::from_u32(0), b"shutdown");
+                ep.wait_idle().await;
+                // wait for all WebTransport invocations to complete
+                while let Some(res) = tasks.join_next().await {
+                    if let Err(err) = res {
+                        error!(?err, "failed to WebTransport invocation task")
+                    }
+                }
+                http.await.context("HTTP server failed")?;
+                // Drop the last wRPC server reference to shutdown invocation handling task
+                drop(srv);
+                if let Err(err) = wrpc.await {
+                    error!(?err, "wRPC serving task failed");
+                }
+                res.context("failed to listen for ^C")?;
+                return Ok(())
+            }
         }
     }
-    Ok(())
 }

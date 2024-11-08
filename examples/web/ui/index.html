@@ -524,16 +524,16 @@
                     ]
                 });
             } catch (err) {
-                dbg.error('failed to establish WebTransport connection: ' + err);
+                dbg.error('failed to connect to WebTransport endpoint: ' + err);
                 await new Promise(r => setTimeout(r, 1000));
                 continue;
             }
 
-            dbg.debug('waiting for WebTransport readiness...');
+            dbg.debug('waiting for WebTransport connection to be established...');
             try {
                 await c.ready;
             } catch (err) {
-                dbg.error('failed to await WebTransport readiness: ' + err);
+                dbg.error('failed to establish WebTransport connection: ' + err);
                 await new Promise(r => setTimeout(r, 1000));
                 continue;
             }
