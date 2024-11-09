@@ -51,7 +51,7 @@ pub async fn handle_run(
     .await
 }
 
-#[instrument(level = "trace", ret(level = "trace"))]
+#[instrument(level = "trace", skip_all, ret(level = "trace"))]
 pub async fn run(cmd: Command) -> anyhow::Result<()> {
     match cmd {
         Command::Run(args) => handle_run(args).await,
