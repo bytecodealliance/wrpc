@@ -5000,6 +5000,7 @@ dependencies = [
  "clap",
  "futures",
  "humantime",
+ "quinn",
  "reqwest",
  "tokio",
  "tokio-util",
@@ -5015,6 +5016,9 @@ dependencies = [
  "wrpc-runtime-wasmtime",
  "wrpc-transport",
  "wrpc-transport-nats",
+ "wrpc-transport-quic",
+ "wrpc-transport-web",
+ "wtransport",
 ]
 
 [[package]]

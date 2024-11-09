@@ -24,6 +24,13 @@ clap = { workspace = true, features = [
 ] }
 futures = { workspace = true }
 humantime = { workspace = true }
+quinn = { workspace = true, features = [
+    "log",
+    "platform-verifier",
+    "ring",
+    "runtime-tokio",
+    "rustls",
+] }
 reqwest = { workspace = true }
 tokio = { workspace = true, features = ["fs"] }
 tokio-util = { workspace = true, features = ["codec"] }
@@ -47,7 +54,10 @@ wasmtime = { workspace = true, features = [
 wasmtime-wasi = { workspace = true }
 wasmtime-wasi-http = { workspace = true }
 wit-component = { workspace = true }
+wtransport = { workspace = true, features = ["self-signed"] }
 wrpc-cli = { workspace = true, features = ["nats"] }
 wrpc-transport-nats = { workspace = true, features = ["async-nats-0_37"] }
+wrpc-transport-quic = { workspace = true }
+wrpc-transport-web = { workspace = true }
 wrpc-transport = { workspace = true, features = ["net"] }
 wrpc-runtime-wasmtime = { workspace = true }
