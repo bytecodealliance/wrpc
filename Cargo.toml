@@ -162,6 +162,7 @@ wasmparser = { version = "0.219", default-features = false }
 wasmtime = { version = "26.0.1", default-features = false }
 wasmtime-cli-flags = { version = "26.0.1", default-features = false }
 wasmtime-wasi = { version = "26.0.1", default-features = false }
+wasmtime-wasi-http = { version = "26.0.1", default-features = false }
 wit-bindgen = { version = "0.34", default-features = false }
 wit-bindgen-core = { version = "0.34", default-features = false }
 wit-bindgen-wrpc = { version = "0.9", default-features = false, path = "./crates/wit-bindgen" }
