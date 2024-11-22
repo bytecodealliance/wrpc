@@ -19,8 +19,8 @@ use wasi_preview1_component_adapter_provider::{
 };
 use wasmtime::component::{types, Component, InstancePre, Linker, ResourceType};
 use wasmtime::{Engine, Store};
-use wasmtime_wasi::{ResourceTable, WasiCtxBuilder};
-use wasmtime_wasi::{WasiCtx, WasiView};
+use wasmtime_wasi::{ResourceTable, WasiCtx, WasiCtxBuilder, WasiView};
+use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpView};
 use wrpc_runtime_wasmtime::{
     collect_component_resources, link_item, ServeExt as _, SharedResourceTable, WrpcView,
 };
@@ -48,6 +48,7 @@ pub enum Workload {
 pub struct Ctx<C: Invoke> {
     pub table: ResourceTable,
     pub wasi: WasiCtx,
+    pub http: WasiHttpCtx,
     pub wrpc: C,
     pub shared_resources: SharedResourceTable,
     pub timeout: Duration,
@@ -72,6 +73,15 @@ impl<C: Invoke> WrpcView for Ctx<C> {
 impl<C: Invoke> WasiView for Ctx<C> {
     fn ctx(&mut self) -> &mut WasiCtx {
         &mut self.wasi
+    }
+    fn table(&mut self) -> &mut ResourceTable {
+        &mut self.table
+    }
+}
+
+impl<C: Invoke> WasiHttpView for Ctx<C> {
+    fn ctx(&mut self) -> &mut WasiHttpCtx {
+        &mut self.http
     }
     fn table(&mut self) -> &mut ResourceTable {
         &mut self.table
@@ -141,6 +151,8 @@ where
 
     let mut linker = Linker::<Ctx<C>>::new(&engine);
     wasmtime_wasi::add_to_linker_async(&mut linker).context("failed to link WASI")?;
+    wasmtime_wasi_http::add_only_http_to_linker_async(&mut linker)
+        .context("failed to link `wasi:http`")?;
 
     let ty = component.component_type();
     let mut resources = Vec::new();
@@ -280,6 +292,7 @@ fn new_store<C: Invoke>(
                 .allow_udp(true)
                 .args(&[arg0])
                 .build(),
+            http: WasiHttpCtx::new(),
             table: ResourceTable::new(),
             shared_resources: SharedResourceTable::default(),
             wrpc,
