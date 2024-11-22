@@ -234,6 +234,42 @@ dependencies = [
 ]
 
 [[package]]
+name = "async-nats"
+version = "0.38.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "76433c4de73442daedb3a59e991d94e85c14ebfc33db53dfcd347a21cd6ef4f8"
+dependencies = [
+ "base64 0.22.1",
+ "bytes",
+ "futures",
+ "memchr",
+ "nkeys",
+ "nuid",
+ "once_cell",
+ "pin-project",
+ "portable-atomic",
+ "rand",
+ "regex",
+ "ring",
+ "rustls-native-certs 0.7.3",
+ "rustls-pemfile",
+ "rustls-webpki",
+ "serde",
+ "serde_json",
+ "serde_nanos",
+ "serde_repr",
+ "thiserror 1.0.68",
+ "time",
+ "tokio",
+ "tokio-rustls 0.26.0",
+ "tokio-util",
+ "tokio-websockets",
+ "tracing",
+ "tryhard",
+ "url",
+]
+
+[[package]]
 name = "async-trait"
 version = "0.1.83"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1346,7 +1382,7 @@ name = "hello-nats-client"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-nats 0.37.0",
+ "async-nats 0.38.0",
  "clap",
  "tokio",
  "tracing-subscriber",
@@ -1360,7 +1396,7 @@ name = "hello-nats-server"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-nats 0.37.0",
+ "async-nats 0.38.0",
  "clap",
  "futures",
  "tokio",
@@ -3069,7 +3105,7 @@ name = "streams-nats-client"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-nats 0.37.0",
+ "async-nats 0.38.0",
  "bytes",
  "clap",
  "futures",
@@ -3087,7 +3123,7 @@ name = "streams-nats-server"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-nats 0.37.0",
+ "async-nats 0.38.0",
  "bytes",
  "clap",
  "futures",
@@ -3445,6 +3481,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "tokio-websockets"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f591660438b3038dd04d16c938271c79e7e06260ad2ea2885a4861bfb238605d"
+dependencies = [
+ "base64 0.22.1",
+ "bytes",
+ "futures-core",
+ "futures-sink",
+ "http 1.1.0",
+ "httparse",
+ "rand",
+ "ring",
+ "rustls-native-certs 0.8.0",
+ "rustls-pki-types",
+ "tokio",
+ "tokio-rustls 0.26.0",
+ "tokio-util",
+]
+
+[[package]]
 name = "toml"
 version = "0.8.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3759,7 +3816,7 @@ name = "wasi-keyvalue-nats-client"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-nats 0.37.0",
+ "async-nats 0.38.0",
  "bytes",
  "clap",
  "tokio",
@@ -3774,7 +3831,7 @@ name = "wasi-keyvalue-nats-server"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-nats 0.37.0",
+ "async-nats 0.38.0",
  "bytes",
  "clap",
  "futures",
@@ -3859,7 +3916,7 @@ name = "wasi-keyvalue-web"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-nats 0.37.0",
+ "async-nats 0.38.0",
  "axum",
  "bytes",
  "clap",
@@ -4914,7 +4971,7 @@ name = "wrpc"
 version = "0.15.0"
 dependencies = [
  "anyhow",
- "async-nats 0.37.0",
+ "async-nats 0.38.0",
  "bytes",
  "clap",
  "criterion",
@@ -4945,7 +5002,7 @@ name = "wrpc-cli"
 version = "0.4.0"
 dependencies = [
  "anyhow",
- "async-nats 0.37.0",
+ "async-nats 0.38.0",
  "tokio",
  "tracing-subscriber",
 ]
@@ -4992,7 +5049,7 @@ name = "wrpc-test"
 version = "0.2.0"
 dependencies = [
  "anyhow",
- "async-nats 0.37.0",
+ "async-nats 0.38.0",
  "quinn",
  "rcgen",
  "rustls 0.23.18",
@@ -5109,7 +5166,7 @@ name = "wrpc-wasmtime-cli"
 version = "0.4.0"
 dependencies = [
  "anyhow",
- "async-nats 0.37.0",
+ "async-nats 0.38.0",
  "clap",
  "futures",
  "humantime",
