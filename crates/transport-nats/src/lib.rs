@@ -1116,6 +1116,12 @@ impl wrpc_transport::Invoke for Client {
                 .await
         }
         .context("failed to publish handshake")?;
+        let nats = Arc::clone(&self.nats);
+        tokio::spawn(async move {
+            if let Err(err) = nats.flush().await {
+                error!(?err, "failed to flush");
+            }
+        });
         Ok((
             ParamWriter::Root(RootParamWriter::new(
                 (*self.nats).clone(),
