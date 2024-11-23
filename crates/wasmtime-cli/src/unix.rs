@@ -1,12 +1,11 @@
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Context as _;
 use clap::Parser;
 use tracing::{error, instrument};
 
-pub const DEFAULT_ADDR: &str = "[::1]:7761";
-
-/// TCP transport
+/// Unix Domain Socket transport
 #[derive(Parser, Debug)]
 pub enum Command {
     Run(RunArgs),
@@ -20,9 +19,9 @@ pub struct RunArgs {
     #[arg(long, default_value = crate::DEFAULT_TIMEOUT)]
     timeout: humantime::Duration,
 
-    /// Address to send import invocations to
-    #[arg(long, default_value = DEFAULT_ADDR)]
-    import: String,
+    /// Path to send import invocations to
+    #[arg(long)]
+    import: PathBuf,
 
     /// Path or URL to Wasm command component
     workload: String,
@@ -35,13 +34,13 @@ pub struct ServeArgs {
     #[arg(long, default_value = crate::DEFAULT_TIMEOUT)]
     timeout: humantime::Duration,
 
-    /// Address to send import invocations to
-    #[arg(long, default_value = DEFAULT_ADDR)]
-    import: String,
+    /// Path to send import invocations to
+    #[arg(long)]
+    import: PathBuf,
 
-    /// Address to listen for export invocations on
-    #[arg(long, default_value = DEFAULT_ADDR)]
-    export: String,
+    /// Path to listen for export invocations on
+    #[arg(long)]
+    export: PathBuf,
 
     /// Path or URL to Wasm command component
     workload: String,
@@ -56,7 +55,7 @@ pub async fn handle_run(
     }: RunArgs,
 ) -> anyhow::Result<()> {
     crate::handle_run(
-        wrpc_transport::tcp::Client::from(import),
+        wrpc_transport::unix::Client::from(import),
         (),
         *timeout,
         workload,
@@ -73,23 +72,26 @@ pub async fn handle_serve(
         ref workload,
     }: ServeArgs,
 ) -> anyhow::Result<()> {
-    let lis = tokio::net::TcpListener::bind(&export)
-        .await
-        .with_context(|| format!("failed to bind TCP listener on `{export}`"))?;
+    let lis = tokio::net::UnixListener::bind(&export).with_context(|| {
+        format!(
+            "failed to bind Unix socket listener on `{}`",
+            export.display()
+        )
+    })?;
     let srv = Arc::new(wrpc_transport::Server::default());
     let accept = tokio::spawn({
         let srv = Arc::clone(&srv);
         async move {
             loop {
                 if let Err(err) = srv.accept(&lis).await {
-                    error!(?err, "failed to accept TCP connection");
+                    error!(?err, "failed to accept Unix socket connection");
                 }
             }
         }
     });
     let res = crate::handle_serve(
         srv.as_ref(),
-        wrpc_transport::tcp::Client::from(import),
+        wrpc_transport::unix::Client::from(import),
         (),
         *timeout,
         workload,

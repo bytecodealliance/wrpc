@@ -27,7 +27,11 @@ use wrpc_runtime_wasmtime::{
 use wrpc_transport::{Invoke, Serve};
 
 mod nats;
+mod quic;
 mod tcp;
+#[cfg(unix)]
+mod unix;
+mod web;
 
 const DEFAULT_TIMEOUT: &str = "10s";
 
@@ -37,7 +41,14 @@ enum Command {
     #[command(subcommand)]
     Nats(nats::Command),
     #[command(subcommand)]
+    Quic(quic::Command),
+    #[command(subcommand)]
     Tcp(tcp::Command),
+    #[cfg(unix)]
+    #[command(subcommand)]
+    Unix(unix::Command),
+    #[command(subcommand)]
+    Web(web::Command),
 }
 
 pub enum Workload {
@@ -650,6 +661,10 @@ pub async fn run() -> anyhow::Result<()> {
     wrpc_cli::tracing::init();
     match Command::parse() {
         Command::Nats(args) => nats::run(args).await,
+        Command::Quic(args) => quic::run(args).await,
         Command::Tcp(args) => tcp::run(args).await,
+        #[cfg(unix)]
+        Command::Unix(args) => unix::run(args).await,
+        Command::Web(args) => web::run(args).await,
     }
 }
