@@ -44,6 +44,18 @@ wasmtime = { workspace = true, features = [
     "threads",
     "wat",
 ] }
+wasmtime-cli-flags = { workspace = true, features = [
+    "async",
+    "cache",
+    "component-model",
+    "coredump",
+    "cranelift",
+    "gc",
+    "memory-protection-keys",
+    "parallel-compilation",
+    "pooling-allocator",
+    "threads",
+] }
 wasmtime-wasi = { workspace = true }
 wasmtime-wasi-http = { workspace = true }
 wit-component = { workspace = true }
