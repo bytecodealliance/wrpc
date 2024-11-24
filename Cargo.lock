@@ -5008,6 +5008,7 @@ dependencies = [
  "wasi-preview1-component-adapter-provider",
  "wasmparser 0.219.1",
  "wasmtime",
+ "wasmtime-cli-flags",
  "wasmtime-wasi",
  "wasmtime-wasi-http",
  "wit-component",

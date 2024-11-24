@@ -1,5 +1,6 @@
 #![allow(clippy::type_complexity)]
 
+use core::iter;
 use core::pin::pin;
 use core::time::Duration;
 
@@ -88,6 +89,24 @@ impl<C: Invoke> WasiHttpView for Ctx<C> {
     }
 }
 
+// https://github.com/bytecodealliance/wasmtime/blob/b943666650696f1eb7ff8b217762b58d5ef5779d/src/commands/serve.rs#L641-L656
+fn use_pooling_allocator_by_default() -> anyhow::Result<Option<bool>> {
+    const BITS_TO_TEST: u32 = 42;
+    let mut config = wasmtime::Config::new();
+    config.wasm_memory64(true);
+    config.static_memory_maximum_size(1 << BITS_TO_TEST);
+    let engine = wasmtime::Engine::new(&config)?;
+    let mut store = wasmtime::Store::new(&engine, ());
+    // NB: the maximum size is in wasm pages to take out the 16-bits of wasm
+    // page size here from the maximum size.
+    let ty = wasmtime::MemoryType::new64(0, Some(1 << (BITS_TO_TEST - 16)));
+    if wasmtime::Memory::new(&mut store, ty).is_ok() {
+        Ok(Some(true))
+    } else {
+        Ok(None)
+    }
+}
+
 #[instrument(level = "trace", skip(adapter, cx))]
 async fn instantiate_pre<C>(
     adapter: &[u8],
@@ -98,12 +117,14 @@ where
     C: Invoke,
     C::Context: Clone + 'static,
 {
-    let engine = Engine::new(
-        wasmtime::Config::new()
-            .async_support(true)
-            .wasm_component_model(true),
-    )
-    .context("failed to initialize Wasmtime engine")?;
+    let mut opts = wasmtime_cli_flags::CommonOptions::try_parse_from(iter::empty::<&'static str>())
+        .context("failed to construct common Wasmtime options")?;
+    let mut config = opts
+        .config(None, use_pooling_allocator_by_default().unwrap_or(None))
+        .context("failed to construct Wasmtime config")?;
+    config.wasm_component_model(true);
+    config.async_support(true);
+    let engine = wasmtime::Engine::new(&config).context("failed to initialize Wasmtime engine")?;
 
     let wasm = if workload.starts_with('.') || workload.starts_with('/') {
         fs::read(&workload)
