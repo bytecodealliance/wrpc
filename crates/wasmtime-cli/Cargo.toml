@@ -60,6 +60,6 @@ wasmtime-wasi = { workspace = true }
 wasmtime-wasi-http = { workspace = true }
 wit-component = { workspace = true }
 wrpc-cli = { workspace = true, features = ["nats"] }
-wrpc-transport-nats = { workspace = true, features = ["async-nats-0_37"] }
+wrpc-transport-nats = { workspace = true, features = ["async-nats-0_38"] }
 wrpc-transport = { workspace = true, features = ["net"] }
 wrpc-runtime-wasmtime = { workspace = true }

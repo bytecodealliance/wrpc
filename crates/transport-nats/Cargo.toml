@@ -1,6 +1,6 @@
 [package]
 name = "wrpc-transport-nats"
-version = "0.27.1"
+version = "0.28.0"
 description = "wRPC NATS transport"
 
 authors.workspace = true
@@ -10,10 +10,13 @@ license.workspace = true
 repository.workspace = true
 
 [features]
-default = ["async-nats-0_37"]
+default = ["async-nats-0_38"]
 
 [dependencies]
 anyhow = { workspace = true, features = ["std"] }
+async-nats-0_38 = { package = "async-nats", version = "0.38", default-features = false, features = [
+    "ring",
+], optional = true }
 async-nats-0_37 = { package = "async-nats", version = "0.37", default-features = false, features = [
     "ring",
 ], optional = true }
