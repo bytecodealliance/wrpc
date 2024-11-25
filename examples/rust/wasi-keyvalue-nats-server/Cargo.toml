@@ -32,6 +32,6 @@ tracing-subscriber = { workspace = true, features = [
 ] }
 url = { workspace = true }
 wrpc-transport = { workspace = true }
-wrpc-transport-nats = { workspace = true, features = ["async-nats-0_37"] }
+wrpc-transport-nats = { workspace = true, features = ["async-nats-0_38"] }
 wrpc-wasi-keyvalue = { workspace = true }
 wrpc-wasi-keyvalue-mem = { workspace = true }

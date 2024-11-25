@@ -3,12 +3,21 @@
 #![allow(clippy::type_complexity)]
 
 #[cfg(any(
-    not(any(feature = "async-nats-0_37", feature = "async-nats-0_36")),
-    all(feature = "async-nats-0_37", feature = "async-nats-0_36")
+    not(any(
+        feature = "async-nats-0_38",
+        feature = "async-nats-0_37",
+        feature = "async-nats-0_36",
+    )),
+    all(feature = "async-nats-0_38", feature = "async-nats-0_37"),
+    all(feature = "async-nats-0_38", feature = "async-nats-0_36"),
+    all(feature = "async-nats-0_37", feature = "async-nats-0_36"),
 ))]
 compile_error!(
-    "Either feature \"async-nats-0_37\" or \"async-nats-0_36\" must be enabled for this crate."
+    "Either feature \"async-nats-0_38\", \"async-nats-0_37\" or \"async-nats-0_36\" must be enabled for this crate."
 );
+
+#[cfg(feature = "async-nats-0_38")]
+use async_nats_0_38 as async_nats;
 
 #[cfg(feature = "async-nats-0_37")]
 use async_nats_0_37 as async_nats;

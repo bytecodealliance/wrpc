@@ -31,4 +31,4 @@ tracing-subscriber = { workspace = true, features = [
 ] }
 url = { workspace = true }
 wit-bindgen-wrpc = { workspace = true }
-wrpc-transport-nats = { workspace = true, features = ["async-nats-0_37"] }
+wrpc-transport-nats = { workspace = true, features = ["async-nats-0_38"] }
