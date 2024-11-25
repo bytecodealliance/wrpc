@@ -1,6 +1,6 @@
 [package]
 name = "wrpc-wasmtime-cli"
-version = "0.3.0"
+version = "0.4.0"
 description = "wRPC Wasmtime CLI"
 
 authors.workspace = true
@@ -35,11 +35,17 @@ wasmtime = { workspace = true, features = [
     "addr2line",
     "async",
     "cache",
+    "component-model",
     "coredump",
     "cranelift",
+    "debug-builtins",
     "demangle",
     "gc",
+    "gc-drc",
+    "gc-null",
     "parallel-compilation",
+    "pooling-allocator",
+    "profiling",
     "runtime",
     "threads",
     "wat",
