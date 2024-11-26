@@ -158,7 +158,7 @@ uuid = { version = "1", default-features = false }
 wasi = { version = "0.13", default-features = false }
 wasi-preview1-component-adapter-provider = { version = "27", default-features = false }
 wasm-tokio = { version = "0.6", default-features = false }
-wasmparser = { version = "0.219", default-features = false }
+wasmparser = { version = "0.220", default-features = false }
 wasmtime = { version = "27", default-features = false }
 wasmtime-cli-flags = { version = "27", default-features = false }
 wasmtime-wasi = { version = "27", default-features = false }
