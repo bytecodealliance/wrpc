@@ -98,29 +98,12 @@
           pkgsCross ? pkgs,
           ...
         }: {
-          buildInputs ? [],
-          depsBuildBuild ? [],
-          nativeBuildInputs ? [],
           nativeCheckInputs ? [],
           preCheck ? "",
           ...
         } @ args:
-          with pkgs.lib; let
-            darwin2darwin = pkgs.stdenv.hostPlatform.isDarwin && pkgsCross.stdenv.hostPlatform.isDarwin;
-
-            depsBuildBuild' =
-              depsBuildBuild
-              ++ optional pkgs.stdenv.hostPlatform.isDarwin pkgs.darwin.apple_sdk.frameworks.SystemConfiguration
-              ++ optional darwin2darwin pkgs.xcbuild.xcrun;
-          in
-            {
-              buildInputs =
-                buildInputs
-                ++ optional pkgs.stdenv.hostPlatform.isDarwin pkgs.libiconv;
-
-              depsBuildBuild = depsBuildBuild';
-            }
-            // optionalAttrs (args ? cargoArtifacts) {
+          with pkgs.lib;
+            optionalAttrs (args ? cargoArtifacts) {
               preCheck =
                 ''
                   export GOCACHE=$TMPDIR/gocache
@@ -129,13 +112,6 @@
                   export HOME=$TMPDIR/home
                 ''
                 + preCheck;
-
-              depsBuildBuild =
-                depsBuildBuild'
-                ++ optionals darwin2darwin [
-                  pkgs.darwin.apple_sdk.frameworks.CoreFoundation
-                  pkgs.darwin.apple_sdk.frameworks.CoreServices
-                ];
 
               nativeCheckInputs =
                 nativeCheckInputs
