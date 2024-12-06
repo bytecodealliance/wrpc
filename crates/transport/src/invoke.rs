@@ -65,7 +65,6 @@ pub trait Invoke: Send + Sync {
     ///     async { T::default().invoke((), "compiler-bug", "free", "since".into(), [[Some(2024)].as_slice(); 0]).send().await }
     /// }
     /// ```
-
     fn invoke<P>(
         &self,
         cx: Self::Context,
