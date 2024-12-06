@@ -48,7 +48,7 @@ use tracing::trace;
 #[doc(hidden)]
 pub trait Captures<'a> {}
 
-impl<'a, T: ?Sized> Captures<'a> for T {}
+impl<T: ?Sized> Captures<'_> for T {}
 
 /// Multiplexes streams
 ///
