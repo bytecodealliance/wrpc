@@ -3286,7 +3286,7 @@ name = "test-helpers"
 version = "0.0.0"
 dependencies = [
  "codegen-macro",
- "wit-bindgen-core 0.35.0",
+ "wit-bindgen-core",
  "wit-parser 0.220.0",
 ]
 
@@ -4794,17 +4794,6 @@ dependencies = [
 
 [[package]]
 name = "wit-bindgen-core"
-version = "0.35.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "19857cff2a480fece56ea43f9199322ee5014688a3539ebf8d29ae62d75a3a1f"
-dependencies = [
- "anyhow",
- "heck",
- "wit-parser 0.220.0",
-]
-
-[[package]]
-name = "wit-bindgen-core"
 version = "0.36.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b632a5a0fa2409489bd49c9e6d99fcc61bb3d4ce9d1907d44662e75a28c71172"
@@ -4844,7 +4833,7 @@ dependencies = [
  "prettyplease",
  "syn",
  "wasm-metadata 0.220.0",
- "wit-bindgen-core 0.36.0",
+ "wit-bindgen-core",
  "wit-component 0.220.0",
 ]
 
@@ -4859,7 +4848,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
- "wit-bindgen-core 0.36.0",
+ "wit-bindgen-core",
  "wit-bindgen-rust",
 ]
 
@@ -4887,7 +4876,7 @@ dependencies = [
  "clap",
  "heck",
  "test-helpers",
- "wit-bindgen-core 0.35.0",
+ "wit-bindgen-core",
  "wrpc-introspect",
 ]
 
@@ -4906,7 +4895,7 @@ dependencies = [
  "syn",
  "test-helpers",
  "tokio",
- "wit-bindgen-core 0.35.0",
+ "wit-bindgen-core",
  "wit-bindgen-wrpc",
  "wrpc-introspect",
  "wrpc-transport",
@@ -4921,7 +4910,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
- "wit-bindgen-core 0.35.0",
+ "wit-bindgen-core",
  "wit-bindgen-wrpc-rust",
 ]
 
@@ -5046,7 +5035,7 @@ dependencies = [
  "wasmtime",
  "wasmtime-cli-flags",
  "wasmtime-wasi",
- "wit-bindgen-core 0.35.0",
+ "wit-bindgen-core",
  "wit-bindgen-wrpc",
  "wit-bindgen-wrpc-go",
  "wit-bindgen-wrpc-rust",
