@@ -4,7 +4,7 @@ go 1.22.2
 
 require (
 	github.com/nats-io/nats.go v1.37.0
-	wrpc.io/go v0.0.4
+	wrpc.io/go v0.1.0
 )
 
 require (
@@ -15,4 +15,4 @@ require (
 	golang.org/x/sys v0.28.0 // indirect
 )
 
-replace wrpc.io/go v0.0.4 => ../../../go
+replace wrpc.io/go v0.1.0 => ../../../go
