@@ -27,6 +27,7 @@ struct InterfaceName {
 #[derive(Default)]
 struct RustWrpc {
     types: Types,
+    src_preamble: Source,
     src: Source,
     opts: Opts,
     import_modules: Vec<(String, Vec<String>)>,
@@ -228,16 +229,26 @@ impl RustWrpc {
             }
             cur.contents.push(module);
         }
-        emit(&mut self.src, map);
-        fn emit(me: &mut Source, module: Module) {
+
+        emit(&mut self.src, map, &self.opts, true);
+        fn emit(me: &mut Source, module: Module, opts: &Opts, toplevel: bool) {
             for (name, submodule) in module.submodules {
-                // Ignore dead-code warnings. If the bindings are only used
-                // within a crate, and not exported to a different crate, some
-                // parts may be unused, and that's ok.
-                uwriteln!(me, "#[allow(dead_code)]");
+                if toplevel {
+                    // Disable rustfmt. By default we already format the code
+                    // using prettyplease, so we don't want `cargo fmt` to create
+                    // extra diffs for users to deal with.
+                    if opts.format {
+                        uwriteln!(me, "#[rustfmt::skip]");
+                    }
+
+                    // Ignore dead-code and clippy warnings. If the bindings are
+                    // only used within a crate, and not exported to a different
+                    // crate, some parts may be unused, and that's ok.
+                    uwriteln!(me, "#[allow(dead_code, clippy::all)]");
+                }
 
                 uwriteln!(me, "pub mod {name} {{");
-                emit(me, submodule);
+                emit(me, submodule, opts, false);
                 uwriteln!(me, "}}");
             }
             for submodule in module.contents {
@@ -446,23 +457,23 @@ pub fn serve<'a, T: {wrpc_transport}::Serve>(
 
 impl WorldGenerator for RustWrpc {
     fn preprocess(&mut self, resolve: &Resolve, world: WorldId) {
-        wit_bindgen_core::generated_preamble(&mut self.src, env!("CARGO_PKG_VERSION"));
+        wit_bindgen_core::generated_preamble(&mut self.src_preamble, env!("CARGO_PKG_VERSION"));
 
         // Render some generator options to assist with debugging and/or to help
         // recreate it if the original generation command is lost.
-        uwriteln!(self.src, "// Options used:");
+        uwriteln!(self.src_preamble, "// Options used:");
         if !self.opts.skip.is_empty() {
-            uwriteln!(self.src, "//   * skip: {:?}", self.opts.skip);
+            uwriteln!(self.src_preamble, "//   * skip: {:?}", self.opts.skip);
         }
         if !self.opts.additional_derive_attributes.is_empty() {
             uwriteln!(
-                self.src,
+                self.src_preamble,
                 "//   * additional derives {:?}",
                 self.opts.additional_derive_attributes
             );
         }
         for (k, v) in &self.opts.with {
-            uwriteln!(self.src, "//   * with {k:?} = {v:?}");
+            uwriteln!(self.src_preamble, "//   * with {k:?} = {v:?}");
         }
         self.types.analyze(resolve);
         self.world = Some(world);
@@ -515,7 +526,9 @@ impl WorldGenerator for RustWrpc {
         };
         gen.generate_imports(&instance, resolve.interfaces[id].functions.values());
 
-        gen.finish_append_submodule(&snake, module_path);
+        let docs = &resolve.interfaces[id].docs;
+
+        gen.finish_append_submodule(&snake, module_path, docs);
 
         Ok(())
     }
@@ -561,7 +574,10 @@ impl WorldGenerator for RustWrpc {
             Identifier::Interface(id, name),
             resolve.interfaces[id].functions.values(),
         );
-        gen.finish_append_submodule(&snake, module_path);
+
+        let docs = &resolve.interfaces[id].docs;
+
+        gen.finish_append_submodule(&snake, module_path, docs);
         if exports {
             self.export_paths
                 .push(self.interface_names[&id].path.clone());
@@ -625,6 +641,11 @@ impl WorldGenerator for RustWrpc {
             let syntax_tree = syn::parse_file(src.as_str()).unwrap();
             *src.as_mut_string() = prettyplease::unparse(&syntax_tree);
         }
+
+        // Prepend the preamble. We do this after formatting because
+        // `syn::parse_file` + `prettyplease::unparse` does not preserve comments.
+        let src_preamble = mem::take(&mut self.src_preamble);
+        *src.as_mut_string() = format!("{}{}", src_preamble.as_str(), src.as_str());
 
         let module_name = name.to_snake_case();
         files.push(&format!("{module_name}.rs"), src.as_bytes());

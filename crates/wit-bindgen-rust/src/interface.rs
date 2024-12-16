@@ -492,10 +492,16 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve>(
         (snake, module_path)
     }
 
-    pub fn finish_append_submodule(mut self, snake: &str, module_path: Vec<String>) {
+    pub fn finish_append_submodule(mut self, snake: &str, module_path: Vec<String>, docs: &Docs) {
         let module = self.finish();
+
+        self.rustdoc(docs);
+        let docs = mem::take(&mut self.src).to_string();
+        let docs = docs.trim_end();
+
         let module = format!(
             "\
+                {docs}
                 #[allow(dead_code, clippy::all)]
                 pub mod {snake} {{
                     {module}
