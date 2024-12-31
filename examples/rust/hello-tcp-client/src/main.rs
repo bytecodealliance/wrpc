@@ -22,7 +22,7 @@ async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt().init();
 
     let Args { addr } = Args::parse();
-    let wrpc = wrpc_transport::tcp::Client::from(addr);
+    let wrpc = wrpc_transport::tcp::Client::from(&addr);
     let hello = bindings::wrpc_examples::hello::handler::hello(&wrpc, ())
         .await
         .context("failed to invoke `wrpc-examples.hello/handler.hello`")?;

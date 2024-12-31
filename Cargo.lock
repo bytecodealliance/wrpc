@@ -1397,6 +1397,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-http-tcp-proxy"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "http 1.2.0",
+ "hyper 1.5.1",
+ "hyper-util",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "wit-bindgen-wrpc",
+ "wrpc-transport",
+]
+
+[[package]]
 name = "hello-nats-client"
 version = "0.1.0"
 dependencies = [
