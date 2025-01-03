@@ -22,7 +22,7 @@ For example, caller of `wasi:http/outgoing-handler.handle` function MUST be able
 
 wRPC uses a concept of "indexing" for differentiating and identifying the data streams used as part of processing of a single WIT function invocation.
 
-An "index" is a sequence of unsized 32-bit integers and represents a reflective structural path to the value, e.g. a record field or a list element.
+An "index" is a sequence of unsigned 32-bit integers and represents a reflective structural path to the value, e.g. a record field or a list element.
 
 Consider the following WIT:
 
