@@ -7,7 +7,7 @@ on:
 
 jobs:
   nix-flake-update:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: rvolosatovs/nix-flake-update-action@7249aa67d87e2a195c376fe34c230af0862a9900 # v2.0.5
         with:
