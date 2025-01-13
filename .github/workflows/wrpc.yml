@@ -104,7 +104,7 @@ jobs:
               docker run --rm wrpc:$(nix eval --raw .#wrpc-x86_64-unknown-linux-musl-oci.imageTag) wrpc-wasmtime --version
 
     name: wrpc-${{ matrix.config.target }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: ./.github/actions/install-nix
@@ -156,7 +156,7 @@ jobs:
 
   test-linux:
     if: ${{ !startsWith(github.ref, 'refs/tags/go/') }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: build-bin
     steps:
       - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
@@ -188,7 +188,7 @@ jobs:
           - nextest
 
     name: cargo ${{ matrix.check }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: ./.github/actions/install-nix
@@ -255,7 +255,7 @@ jobs:
 
     name: publish ${{ matrix.crate }} to crates.io
     needs: cargo
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
@@ -290,7 +290,7 @@ jobs:
         working-directory: ./crates/${{ matrix.crate }}
 
   build-doc:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: ./.github/actions/install-nix
@@ -316,7 +316,7 @@ jobs:
 
   deploy-doc:
     if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: build-doc
     permissions:
       pages: write
@@ -330,7 +330,7 @@ jobs:
 
   oci:
     if: ${{ !startsWith(github.ref, 'refs/tags/crates/') && !startsWith(github.ref, 'refs/tags/go/') }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     permissions:
       packages: write
     needs:
@@ -409,7 +409,7 @@ jobs:
       - oci
       - test-linux
       - test-windows
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
