@@ -8,8 +8,7 @@ use std::fmt::Write as _;
 use std::mem;
 use wit_bindgen_core::wit_parser::{
     Case, Docs, Enum, Field, Flags, Function, FunctionKind, Handle, Int, InterfaceId, Record,
-    Resolve, Result_, Stream, Tuple, Type, TypeDefKind, TypeId, TypeOwner, Variant, World,
-    WorldKey,
+    Resolve, Result_, Tuple, Type, TypeDefKind, TypeId, TypeOwner, Variant, World, WorldKey,
 };
 use wit_bindgen_core::{uwrite, uwriteln, Source, TypeInfo};
 use wrpc_introspect::{async_paths_ty, async_paths_tyid, is_ty, rpc_func_name};
@@ -978,18 +977,19 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve>(
         self.push_str("> + ::core::marker::Send>>");
     }
 
-    fn print_stream(&mut self, Stream { element, .. }: &Stream, submodule: bool) {
+    fn print_stream(&mut self, ty: &Type, submodule: bool) {
         uwrite!(
             self.src,
             "::core::pin::Pin<::std::boxed::Box<dyn {futures}::Stream<Item = ",
             futures = self.gen.futures_path()
         );
-        if let Some(ty) = element {
-            self.print_list(ty, true, submodule);
-        } else {
-            self.push_str("Vec<()>");
-        }
+        self.print_list(ty, true, submodule);
         self.push_str("> + ::core::marker::Send>>");
+    }
+
+    fn print_error_context(&mut self) {
+        // TODO: Define encoding and print
+        self.push_str("()")
     }
 
     fn print_own(&mut self, id: TypeId, submodule: bool) {
@@ -1025,6 +1025,7 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve>(
             TypeDefKind::Enum(_) => panic!("unsupported anonymous type reference: enum"),
             TypeDefKind::Future(ty) => self.print_future(ty, submodule),
             TypeDefKind::Stream(ty) => self.print_stream(ty, submodule),
+            TypeDefKind::ErrorContext => self.print_error_context(),
             TypeDefKind::Handle(Handle::Own(id)) => self.print_own(*id, submodule),
             TypeDefKind::Handle(Handle::Borrow(id)) => self.print_borrow(*id, submodule),
             TypeDefKind::Type(t) => self.print_ty(t, owned, submodule),
@@ -2425,6 +2426,33 @@ mod {mod_name} {{
             self.rustdoc(docs);
             uwrite!(self.src, "pub type {name} = ");
             self.print_list(ty, true, false);
+            self.push_str(";\n");
+        }
+    }
+
+    fn type_future(&mut self, id: TypeId, _name: &str, ty: &Option<Type>, docs: &Docs) {
+        if let Some(name) = self.name_of(id) {
+            self.rustdoc(docs);
+            uwrite!(self.src, "type {name} = ");
+            self.print_future(ty, false);
+            self.push_str(";\n");
+        }
+    }
+
+    fn type_stream(&mut self, id: TypeId, _name: &str, ty: &Type, docs: &Docs) {
+        if let Some(name) = self.name_of(id) {
+            self.rustdoc(docs);
+            uwrite!(self.src, "type {name} = ");
+            self.print_stream(ty, false);
+            self.push_str(";\n");
+        }
+    }
+
+    fn type_error_context(&mut self, id: TypeId, _name: &str, docs: &Docs) {
+        if let Some(name) = self.name_of(id) {
+            self.rustdoc(docs);
+            uwrite!(self.src, "type {name} = ");
+            self.print_error_context();
             self.push_str(";\n");
         }
     }
