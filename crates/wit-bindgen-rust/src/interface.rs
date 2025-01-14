@@ -1894,8 +1894,8 @@ mod {mod_name} {{
             } else {
                 let tokio = self.gen.tokio_path().to_string();
 
-                let (paths, _) = async_paths_tyid(self.resolve, id);
-                if paths.is_empty() {
+                let (paths, fut) = async_paths_tyid(self.resolve, id);
+                if !fut && paths.is_empty() {
                     uwrite!(
                         self.src,
                         r#"
@@ -1953,7 +1953,7 @@ mod {mod_name} {{
                 );
 
                 let mut names = vec![format!("super::{name}")];
-                if paths.is_empty() {
+                if !fut && paths.is_empty() {
                     names.extend_from_slice(&[
                         format!("&super::{name}"),
                         format!("&&super::{name}"),
