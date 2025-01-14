@@ -1286,8 +1286,12 @@ pub trait TupleDecode<R>: Decode<R> {}
 impl<W> Encode<W> for () {
     type Encoder = UnitCodec;
 }
+impl<W> Encode<W> for &() {
+    type Encoder = UnitCodec;
+}
 
 impl<W> TupleEncode<W> for () {}
+impl<W> TupleEncode<W> for &() {}
 
 impl<R> Decode<R> for () {
     type Decoder = UnitCodec;

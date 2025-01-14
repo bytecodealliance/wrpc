@@ -1,8 +1,8 @@
 use std::collections::{BTreeSet, VecDeque};
 
 use wit_parser::{
-    Case, Field, Flags, Function, FunctionKind, Handle, Int, Record, Resolve, Stream, Type,
-    TypeDefKind, TypeId,
+    Case, Field, Flags, Function, FunctionKind, Handle, Int, Record, Resolve, Type, TypeDefKind,
+    TypeId,
 };
 
 #[must_use]
@@ -188,22 +188,21 @@ pub fn async_paths_tyid(resolve: &Resolve, id: TypeId) -> (BTreeSet<VecDeque<Opt
             }
             (paths, true)
         }
-        TypeDefKind::Stream(Stream { element, .. }) => {
+        TypeDefKind::Stream(ty) => {
             let mut paths = BTreeSet::new();
-            if let Some(ty) = element {
-                let (nested, fut) = async_paths_ty(resolve, ty);
-                for mut path in nested {
-                    path.push_front(None);
-                    paths.insert(path);
-                }
-                if fut {
-                    paths.insert(vec![None].into());
-                }
+            let (nested, fut) = async_paths_ty(resolve, ty);
+            for mut path in nested {
+                path.push_front(None);
+                paths.insert(path);
+            }
+            if fut {
+                paths.insert(vec![None].into());
             }
             (paths.into_iter().collect(), true)
         }
         TypeDefKind::Type(ty) => async_paths_ty(resolve, ty),
         TypeDefKind::Resource
+        | TypeDefKind::ErrorContext
         | TypeDefKind::Flags(..)
         | TypeDefKind::Enum(..)
         | TypeDefKind::Handle(Handle::Own(..) | Handle::Borrow(..)) => (BTreeSet::default(), false),

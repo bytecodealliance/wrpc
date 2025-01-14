@@ -75,6 +75,66 @@ mod strings {
     }
 }
 
+/// Like `strings` but with a type alias.
+mod aliased_strings {
+    wit_bindgen_wrpc::generate!({
+        inline: "
+            package my:strings;
+            world not-used-name {
+                import cat: interface {
+                    type my-string = string;
+                    foo: func(x: my-string);
+                    bar: func() -> my-string;
+                }
+            }
+        ",
+    });
+
+    #[allow(dead_code)]
+    async fn test(
+        wrpc: &impl wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,
+    ) -> anyhow::Result<()> {
+        // Test the argument is `&str`.
+        cat::foo(wrpc, (), "hello").await?;
+
+        // Test the return type is `String`.
+        let _t: String = cat::bar(wrpc, ()).await?;
+
+        Ok(())
+    }
+}
+
+/// Like `aliased_string` but with lists instead of strings.
+mod aliased_lists {
+    use wit_bindgen_wrpc::bytes::Bytes;
+
+    wit_bindgen_wrpc::generate!({
+        inline: "
+            package my:strings;
+            world not-used-name {
+                import cat: interface {
+                    type my-list = list<u8>;
+                    foo: func(x: my-list);
+                    bar: func() -> my-list;
+                }
+            }
+        ",
+    });
+
+    #[allow(dead_code)]
+    async fn test(
+        wrpc: &impl wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,
+    ) -> anyhow::Result<()> {
+        // Test the argument is `Bytes`.
+        cat::foo(wrpc, (), &Bytes::from("hello")).await?;
+
+        // Test the return type is `Bytes`.
+        let _t: Bytes = cat::bar(wrpc, ()).await?;
+
+        Ok(())
+    }
+}
+
 mod skip {
     wit_bindgen_wrpc::generate!({
         inline: "
