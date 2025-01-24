@@ -330,7 +330,7 @@ jobs:
 
   oci:
     if: ${{ !startsWith(github.ref, 'refs/tags/crates/') && !startsWith(github.ref, 'refs/tags/go/') }}
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     permissions:
       packages: write
     needs:
