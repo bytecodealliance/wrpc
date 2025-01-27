@@ -1474,7 +1474,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
- "rustls 0.23.20",
+ "rustls 0.23.21",
  "tokio",
  "tracing-subscriber",
  "url",
@@ -1492,7 +1492,7 @@ dependencies = [
  "clap",
  "futures",
  "rcgen",
- "rustls 0.23.20",
+ "rustls 0.23.21",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -2434,7 +2434,7 @@ dependencies = [
  "quinn-proto",
  "quinn-udp",
  "rustc-hash",
- "rustls 0.23.20",
+ "rustls 0.23.21",
  "socket2",
  "thiserror 2.0.7",
  "tokio",
@@ -2452,7 +2452,7 @@ dependencies = [
  "rand",
  "ring",
  "rustc-hash",
- "rustls 0.23.20",
+ "rustls 0.23.21",
  "rustls-pki-types",
  "rustls-platform-verifier",
  "slab",
@@ -2774,9 +2774,9 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.20"
+version = "0.23.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5065c3f250cbd332cd894be57c40fa52387247659b14a2d6041d121547903b1b"
+checksum = "8f287924602bf649d949c63dc8ac8b235fa5387d394020705b80c4eb597ce5b8"
 dependencies = [
  "log",
  "once_cell",
@@ -2841,7 +2841,7 @@ dependencies = [
  "jni",
  "log",
  "once_cell",
- "rustls 0.23.20",
+ "rustls 0.23.21",
  "rustls-native-certs 0.7.3",
  "rustls-platform-verifier-android",
  "rustls-webpki",
@@ -3489,7 +3489,7 @@ version = "0.26.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5f6d0975eaace0cf0fcadee4e4aaa5da15b5c079146f2cffb67c113be122bf37"
 dependencies = [
- "rustls 0.23.20",
+ "rustls 0.23.21",
  "tokio",
 ]
 
@@ -3894,7 +3894,7 @@ dependencies = [
  "futures",
  "quinn",
  "rcgen",
- "rustls 0.23.20",
+ "rustls 0.23.21",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -3961,7 +3961,7 @@ dependencies = [
  "clap",
  "futures",
  "quinn",
- "rustls 0.23.20",
+ "rustls 0.23.21",
  "tokio",
  "tower",
  "tower-http",
@@ -5120,7 +5120,7 @@ dependencies = [
  "async-nats 0.38.0",
  "quinn",
  "rcgen",
- "rustls 0.23.20",
+ "rustls 0.23.21",
  "tokio",
  "tracing",
  "wrpc-cli",
@@ -5267,7 +5267,7 @@ dependencies = [
  "pem",
  "quinn",
  "rcgen",
- "rustls 0.23.20",
+ "rustls 0.23.21",
  "rustls-native-certs 0.8.1",
  "rustls-pemfile",
  "rustls-pki-types",
