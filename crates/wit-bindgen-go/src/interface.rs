@@ -6,8 +6,8 @@ use std::mem;
 use heck::ToUpperCamelCase;
 use wit_bindgen_core::wit_parser::{
     Case, Docs, Enum, EnumCase, Field, Flag, Flags, Function, FunctionKind, Handle, Int,
-    InterfaceId, Record, Resolve, Result_, Stream, Tuple, Type, TypeDefKind, TypeId, TypeOwner,
-    Variant, World, WorldKey,
+    InterfaceId, Record, Resolve, Result_, Tuple, Type, TypeDefKind, TypeId, TypeOwner, Variant,
+    World, WorldKey,
 };
 use wit_bindgen_core::{uwrite, uwriteln, Source, TypeInfo};
 use wrpc_introspect::{async_paths_ty, is_list_of, is_tuple, is_ty, rpc_func_name};
@@ -1069,18 +1069,17 @@ impl InterfaceGenerator<'_> {
         }
     }
 
-    fn print_read_stream(&mut self, Stream { element, .. }: &Stream, reader: &str, path: &str) {
-        match element {
-            Some(ty) if is_ty(self.resolve, Type::U8, ty) => {
-                let bytes = self.deps.bytes();
-                let io = self.deps.io();
-                let fmt = self.deps.fmt();
-                let slog = self.deps.slog();
-                let wrpc = self.deps.wrpc();
+    fn print_read_stream(&mut self, ty: &Type, reader: &str, path: &str) {
+        if is_ty(self.resolve, Type::U8, ty) {
+            let bytes = self.deps.bytes();
+            let io = self.deps.io();
+            let fmt = self.deps.fmt();
+            let slog = self.deps.slog();
+            let wrpc = self.deps.wrpc();
 
-                uwriteln!(
-                    self.src,
-                    r#"func(r {wrpc}.IndexReadCloser, path ...uint32) ({io}.ReadCloser, error) {{
+            uwriteln!(
+                self.src,
+                r#"func(r {wrpc}.IndexReadCloser, path ...uint32) ({io}.ReadCloser, error) {{
     {slog}.Debug("reading byte stream status byte")
     status, err := r.ReadByte()
     if err != nil {{
@@ -1099,11 +1098,11 @@ impl InterfaceGenerator<'_> {
     case 1:
         {slog}.Debug("reading ready byte stream contents")
         buf, err := "#
-                );
-                self.print_read_byte_list("r");
-                uwrite!(
-                    self.src,
-                    r#"
+            );
+            self.print_read_byte_list("r");
+            uwrite!(
+                self.src,
+                r#"
         if err != nil {{
             return nil, {fmt}.Errorf("failed to read ready byte stream contents: %w", err)
         }}
@@ -1113,30 +1112,29 @@ impl InterfaceGenerator<'_> {
         return nil, {fmt}.Errorf("invalid stream status byte %d", status)
     }}
 }}({reader}"#
-                );
-                if !path.is_empty() {
-                    self.src.push_str(", ");
-                    self.src.push_str(path);
-                    self.src.push_str("...");
-                }
-                self.src.push_str(")");
+            );
+            if !path.is_empty() {
+                self.src.push_str(", ");
+                self.src.push_str(path);
+                self.src.push_str("...");
             }
-            Some(ty) => {
-                let errors = self.deps.errors();
-                let fmt = self.deps.fmt();
-                let io = self.deps.io();
-                let math = self.deps.math();
-                let slog = self.deps.slog();
-                let wrpc = self.deps.wrpc();
+            self.src.push_str(")");
+        } else {
+            let errors = self.deps.errors();
+            let fmt = self.deps.fmt();
+            let io = self.deps.io();
+            let math = self.deps.math();
+            let slog = self.deps.slog();
+            let wrpc = self.deps.wrpc();
 
-                uwrite!(
-                    self.src,
-                    r#"func(r {wrpc}.IndexReadCloser, path ...uint32) ({wrpc}.Receiver["#
-                );
-                self.print_list(ty);
-                uwrite!(
-                    self.src,
-                    r#"], error) {{
+            uwrite!(
+                self.src,
+                r#"func(r {wrpc}.IndexReadCloser, path ...uint32) ({wrpc}.Receiver["#
+            );
+            self.print_list(ty);
+            uwrite!(
+                self.src,
+                r#"], error) {{
     {slog}.Debug("reading stream status byte")
     status, err := r.ReadByte()
     if err != nil {{
@@ -1153,18 +1151,18 @@ impl InterfaceGenerator<'_> {
         }}
         var total uint32
         return {wrpc}.NewDecodeReceiver(r, func(r {wrpc}.IndexReadCloser) ("#
-                );
-                self.print_list(ty);
-                uwrite!(
-                    self.src,
-                    r#", error) {{
+            );
+            self.print_list(ty);
+            uwrite!(
+                self.src,
+                r#", error) {{
             {slog}.Debug("reading pending stream chunk length")
             n, err := "#
-                );
-                self.print_read_u32("r");
-                uwrite!(
-                    self.src,
-                    r#"
+            );
+            self.print_read_u32("r");
+            uwrite!(
+                self.src,
+                r#"
             if err != nil {{
                 return nil, {fmt}.Errorf("failed to read pending stream chunk length: %w", err)
             }}
@@ -1175,19 +1173,19 @@ impl InterfaceGenerator<'_> {
                 return nil, {errors}.New("total incoming pending stream element count would overflow a 32-bit unsigned integer")
             }}
             vs := make("#
-                );
-                self.print_list(ty);
-                uwrite!(
-                    self.src,
-                    r#", n)
+            );
+            self.print_list(ty);
+            uwrite!(
+                self.src,
+                r#", n)
             for i := range vs {{
                 {slog}.Debug("reading pending stream element", "i", total)
                 v, err := "#
-                );
-                self.print_read_ty(ty, "r", "[]uint32{total}");
-                uwriteln!(
-                    self.src,
-                    r#"
+            );
+            self.print_read_ty(ty, "r", "[]uint32{total}");
+            uwriteln!(
+                self.src,
+                r#"
                 if err != nil {{
                     return nil, {fmt}.Errorf("failed to read pending stream chunk element %d: %w", i, err)
                 }}
@@ -1199,11 +1197,11 @@ impl InterfaceGenerator<'_> {
     case 1:
         {slog}.Debug("reading ready stream contents")
         vs, err := "#
-                );
-                self.print_read_list(ty, "r", "path");
-                uwrite!(
-                    self.src,
-                    r#"
+            );
+            self.print_read_list(ty, "r", "path");
+            uwrite!(
+                self.src,
+                r#"
         if err != nil {{
             return nil, {fmt}.Errorf("failed to read ready stream contents: %w", err)
         }}
@@ -1213,16 +1211,25 @@ impl InterfaceGenerator<'_> {
         return nil, {fmt}.Errorf("invalid stream status byte %d", status)
     }}
 }}({reader}"#
-                );
-                if !path.is_empty() {
-                    self.src.push_str(", ");
-                    self.src.push_str(path);
-                    self.src.push_str("...");
-                }
-                self.src.push_str(")");
+            );
+            if !path.is_empty() {
+                self.src.push_str(", ");
+                self.src.push_str(path);
+                self.src.push_str("...");
             }
-            None => panic!("streams with no element types are not supported"),
+            self.src.push_str(")");
         }
+    }
+
+    fn print_read_error_context(&mut self, reader: &str) {
+        // TODO: Define error context encoding and read it
+        let io = self.deps.io();
+        uwrite!(
+            self.src,
+            r#"func(r {io}.ByteReader) (struct{{}}, error) {{
+    return struct{{}}{{}}, nil
+}}({reader})"#,
+        );
     }
 
     fn print_read_own(&mut self, reader: &str, id: TypeId) {
@@ -1372,6 +1379,7 @@ impl InterfaceGenerator<'_> {
             TypeDefKind::List(ty) => self.print_read_list(ty, reader, path),
             TypeDefKind::Future(ty) => self.print_read_future(ty, reader, path),
             TypeDefKind::Stream(ty) => self.print_read_stream(ty, reader, path),
+            TypeDefKind::ErrorContext => self.print_read_error_context(reader),
             TypeDefKind::Type(ty) => {
                 if let Some(name) = name {
                     self.push_str("func() (");
@@ -2063,17 +2071,16 @@ impl InterfaceGenerator<'_> {
         }
     }
 
-    fn print_write_stream(&mut self, Stream { element, .. }: &Stream, name: &str, writer: &str) {
-        match element {
-            Some(ty) if is_ty(self.resolve, Type::U8, ty) => {
-                let fmt = self.deps.fmt();
-                let io = self.deps.io();
-                let math = self.deps.math();
-                let slog = self.deps.slog();
-                let wrpc = self.deps.wrpc();
-                uwrite!(
-                    self.src,
-                    r#"func(v {io}.ReadCloser, w interface {{ {io}.ByteWriter; {io}.Writer }}) (write func({wrpc}.IndexWriter) error, err error) {{
+    fn print_write_stream(&mut self, ty: &Type, name: &str, writer: &str) {
+        if is_ty(self.resolve, Type::U8, ty) {
+            let fmt = self.deps.fmt();
+            let io = self.deps.io();
+            let math = self.deps.math();
+            let slog = self.deps.slog();
+            let wrpc = self.deps.wrpc();
+            uwrite!(
+                self.src,
+                r#"func(v {io}.ReadCloser, w interface {{ {io}.ByteWriter; {io}.Writer }}) (write func({wrpc}.IndexWriter) error, err error) {{
                 {slog}.Debug("writing byte stream `stream::pending` status byte")
                 if err = w.WriteByte(0); err != nil {{
                     return nil, fmt.Errorf("failed to write `stream::pending` byte: %w", err)
@@ -2122,22 +2129,21 @@ impl InterfaceGenerator<'_> {
                     }}
                 }}, nil
             }}({name}, {writer})"#,
-                );
-            }
-            Some(ty) => {
-                let atomic = self.deps.atomic();
-                let errors = self.deps.errors();
-                let fmt = self.deps.fmt();
-                let io = self.deps.io();
-                let math = self.deps.math();
-                let slog = self.deps.slog();
-                let sync = self.deps.sync();
-                let wrpc = self.deps.wrpc();
-                uwrite!(self.src, "func(v {wrpc}.Receiver[",);
-                self.print_list(ty);
-                uwrite!(
-                    self.src,
-                    r#"], w interface {{ {io}.ByteWriter; {io}.Writer }}) (write func({wrpc}.IndexWriter) error, err error) {{
+            );
+        } else {
+            let atomic = self.deps.atomic();
+            let errors = self.deps.errors();
+            let fmt = self.deps.fmt();
+            let io = self.deps.io();
+            let math = self.deps.math();
+            let slog = self.deps.slog();
+            let sync = self.deps.sync();
+            let wrpc = self.deps.wrpc();
+            uwrite!(self.src, "func(v {wrpc}.Receiver[",);
+            self.print_list(ty);
+            uwrite!(
+                self.src,
+                r#"], w interface {{ {io}.ByteWriter; {io}.Writer }}) (write func({wrpc}.IndexWriter) error, err error) {{
             {slog}.Debug("writing stream `stream::pending` status byte")
             if err := w.WriteByte(0); err != nil {{
                 return nil, fmt.Errorf("failed to write `stream::pending` byte: %w", err)
@@ -2180,11 +2186,11 @@ impl InterfaceGenerator<'_> {
                     for _, v := range chunk {{
                         {slog}.Debug("writing pending stream element", "i", total)
                         write, err :="#,
-                );
-                self.print_write_ty(ty, "v", "w");
-                uwrite!(
-                    self.src,
-                    r#"
+            );
+            self.print_write_ty(ty, "v", "w");
+            uwrite!(
+                self.src,
+                r#"
                         if err != nil {{
                             return {fmt}.Errorf("failed to write pending stream chunk element %d: %w", total, err)
                         }}
@@ -2217,10 +2223,21 @@ impl InterfaceGenerator<'_> {
                 }}
             }}, nil
         }}({name}, {writer})"#,
-                );
-            }
-            None => panic!("streams with no element types are not supported"),
+            );
         }
+    }
+
+    fn print_write_error_context(&mut self, name: &str, writer: &str) {
+        // TODO: Define encoding and write error context
+        let io = self.deps.io();
+        let slog = self.deps.slog();
+        uwrite!(
+            self.src,
+            r#"func(struct{{}}, {io}.ByteWriter) error {{
+                {slog}.Debug("writing error context")
+                return nil
+            }}({name}, {writer})"#,
+        );
     }
 
     fn print_write_ty(&mut self, ty: &Type, name: &str, writer: &str) {
@@ -2313,6 +2330,7 @@ impl InterfaceGenerator<'_> {
             TypeDefKind::List(ty) => self.print_write_list(ty, name, writer),
             TypeDefKind::Future(ty) => self.print_write_future(ty, name, writer),
             TypeDefKind::Stream(ty) => self.print_write_stream(ty, name, writer),
+            TypeDefKind::ErrorContext => self.print_write_error_context(name, writer),
             TypeDefKind::Type(ty) => self.print_write_ty(ty, name, writer),
             _ => {
                 if ty.name.is_some() {
@@ -3252,24 +3270,22 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
         }
     }
 
-    fn print_stream(&mut self, Stream { element, .. }: &Stream) {
-        match element {
-            Some(ty) if is_ty(self.resolve, Type::U8, ty) => {
-                let io = self.deps.io();
-                self.push_str(io);
-                self.push_str(".ReadCloser");
-            }
-            Some(ty) => {
-                let wrpc = self.deps.wrpc();
-                self.push_str(wrpc);
-                self.push_str(".Receiver[");
-                self.print_list(ty);
-                self.push_str("]");
-            }
-            None => {
-                panic!("streams with no element types are not supported")
-            }
+    fn print_stream(&mut self, ty: &Type) {
+        if is_ty(self.resolve, Type::U8, ty) {
+            let io = self.deps.io();
+            self.push_str(io);
+            self.push_str(".ReadCloser");
+        } else {
+            let wrpc = self.deps.wrpc();
+            self.push_str(wrpc);
+            self.push_str(".Receiver[");
+            self.print_list(ty);
+            self.push_str("]");
         }
+    }
+
+    fn print_error_context(&mut self) {
+        self.push_str("struct{}");
     }
 
     fn print_own(&mut self, id: TypeId) {
@@ -3307,6 +3323,7 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
             TypeDefKind::Enum(_) => panic!("unsupported anonymous type reference: enum"),
             TypeDefKind::Future(ty) => self.print_future(ty),
             TypeDefKind::Stream(ty) => self.print_stream(ty),
+            TypeDefKind::ErrorContext => self.print_error_context(),
             TypeDefKind::Handle(Handle::Own(id)) => self.print_own(*id),
             TypeDefKind::Handle(Handle::Borrow(id)) => self.print_borrow(*id),
             TypeDefKind::Type(t) => self.print_ty(t, decl),
@@ -3856,6 +3873,33 @@ func (v *{name}) WriteToIndex(w {wrpc}.ByteWriter) (func({wrpc}.IndexWriter) err
             self.godoc(docs);
             uwrite!(self.src, "type {name} = ");
             self.print_list(ty);
+            self.push_str("\n");
+        }
+    }
+
+    fn type_future(&mut self, id: TypeId, _name: &str, ty: &Option<Type>, docs: &Docs) {
+        if let Some(name) = self.name_of(id) {
+            self.godoc(docs);
+            uwrite!(self.src, "type {name} = ");
+            self.print_future(ty);
+            self.push_str("\n");
+        }
+    }
+
+    fn type_stream(&mut self, id: TypeId, _name: &str, ty: &Type, docs: &Docs) {
+        if let Some(name) = self.name_of(id) {
+            self.godoc(docs);
+            uwrite!(self.src, "type {name} = ");
+            self.print_stream(ty);
+            self.push_str("\n");
+        }
+    }
+
+    fn type_error_context(&mut self, id: TypeId, _name: &str, docs: &Docs) {
+        if let Some(name) = self.name_of(id) {
+            self.godoc(docs);
+            uwrite!(self.src, "type {name} = ");
+            self.print_error_context();
             self.push_str("\n");
         }
     }

@@ -46,6 +46,7 @@ struct Config {
     resolve: Resolve,
     world: WorldId,
     files: Vec<PathBuf>,
+    debug: bool,
 }
 
 /// The source of the wit package definition
@@ -63,6 +64,7 @@ impl Parse for Config {
         let mut world = None;
         let mut source = None;
         let mut features = Vec::new();
+        let mut debug = false;
 
         if input.peek(token::Brace) {
             let content;
@@ -138,6 +140,9 @@ impl Parse for Config {
                     Opt::WrpcTransportPath(path) => {
                         opts.wrpc_transport_path = Some(path.value());
                     }
+                    Opt::Debug(enable) => {
+                        debug = enable.value();
+                    }
                 }
             }
         } else {
@@ -157,6 +162,7 @@ impl Parse for Config {
             resolve,
             world,
             files,
+            debug,
         })
     }
 }
@@ -249,7 +255,7 @@ impl Config {
         // place a formatted version of the expanded code into a file. This file
         // will then show up in rustc error messages for any codegen issues and can
         // be inspected manually.
-        if std::env::var("WIT_BINDGEN_DEBUG").is_ok() {
+        if std::env::var("WIT_BINDGEN_DEBUG").is_ok() || self.debug {
             static INVOCATION: AtomicUsize = AtomicUsize::new(0);
             let root = Path::new(env!("DEBUG_OUTPUT_DIR"));
             let world_name = &self.resolve.worlds[self.world].name;
@@ -304,6 +310,7 @@ mod kw {
     syn::custom_keyword!(tracing_path);
     syn::custom_keyword!(wasm_tokio_path);
     syn::custom_keyword!(wrpc_transport_path);
+    syn::custom_keyword!(debug);
 }
 
 enum Opt {
@@ -326,6 +333,7 @@ enum Opt {
     TracingPath(syn::LitStr),
     WasmTokioPath(syn::LitStr),
     WrpcTransportPath(syn::LitStr),
+    Debug(syn::LitBool),
 }
 
 impl Parse for Opt {
@@ -426,6 +434,10 @@ impl Parse for Opt {
             input.parse::<kw::wrpc_transport_path>()?;
             input.parse::<Token![:]>()?;
             Ok(Opt::WrpcTransportPath(input.parse()?))
+        } else if l.peek(kw::debug) {
+            input.parse::<kw::debug>()?;
+            input.parse::<Token![:]>()?;
+            Ok(Opt::Debug(input.parse()?))
         } else {
             Err(l.error())
         }
