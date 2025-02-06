@@ -4110,7 +4110,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c17a3bd88f2155da63a1f2fcb8a56377a24f0b6dfed12733bb5f544e86f690c5"
 dependencies = [
  "leb128",
- "wasmparser 0.221.2",
+ "wasmparser 0.221.3",
 ]
 
 [[package]]
@@ -4142,7 +4142,7 @@ dependencies = [
  "serde_json",
  "spdx",
  "wasm-encoder 0.221.2",
- "wasmparser 0.221.2",
+ "wasmparser 0.221.3",
 ]
 
 [[package]]
@@ -4187,9 +4187,9 @@ dependencies = [
 
 [[package]]
 name = "wasmparser"
-version = "0.221.2"
+version = "0.221.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9845c470a2e10b61dd42c385839cdd6496363ed63b5c9e420b5488b77bd22083"
+checksum = "d06bfa36ab3ac2be0dee563380147a5b81ba10dd8885d7fbbc9eb574be67d185"
 dependencies = [
  "bitflags 2.8.0",
  "hashbrown 0.15.2",
@@ -4976,7 +4976,7 @@ dependencies = [
  "serde_json",
  "wasm-encoder 0.221.2",
  "wasm-metadata 0.221.2",
- "wasmparser 0.221.2",
+ "wasmparser 0.221.3",
  "wit-parser 0.221.2",
 ]
 
@@ -5031,7 +5031,7 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "unicode-xid",
- "wasmparser 0.221.2",
+ "wasmparser 0.221.3",
 ]
 
 [[package]]
@@ -5257,7 +5257,7 @@ dependencies = [
  "tracing",
  "url",
  "wasi-preview1-component-adapter-provider",
- "wasmparser 0.221.2",
+ "wasmparser 0.221.3",
  "wasmtime",
  "wasmtime-cli-flags",
  "wasmtime-wasi",
