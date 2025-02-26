@@ -159,13 +159,13 @@ tracing-subscriber = { version = "0.3", default-features = false }
 url = { version = "2" }
 uuid = { version = "1", default-features = false }
 wasi = { version = "0.13", default-features = false }
-wasi-preview1-component-adapter-provider = { version = "27", default-features = false }
+wasi-preview1-component-adapter-provider = { version = "30", default-features = false }
 wasm-tokio = { version = "0.6", default-features = false }
 wasmparser = { version = "0.221", default-features = false }
-wasmtime = { version = "27", default-features = false }
-wasmtime-cli-flags = { version = "27", default-features = false }
-wasmtime-wasi = { version = "27", default-features = false }
-wasmtime-wasi-http = { version = "27", default-features = false }
+wasmtime = { version = "30", default-features = false }
+wasmtime-cli-flags = { version = "30", default-features = false }
+wasmtime-wasi = { version = "30", default-features = false }
+wasmtime-wasi-http = { version = "30", default-features = false }
 wit-bindgen = { version = "0.36", default-features = false }
 wit-bindgen-core = { version = "0.36", default-features = false }
 wit-bindgen-wrpc = { version = "0.9", default-features = false, path = "./crates/wit-bindgen" }

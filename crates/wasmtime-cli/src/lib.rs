@@ -20,7 +20,7 @@ use wasi_preview1_component_adapter_provider::{
 };
 use wasmtime::component::{types, Component, InstancePre, Linker, ResourceType};
 use wasmtime::{Engine, Store};
-use wasmtime_wasi::{ResourceTable, WasiCtx, WasiCtxBuilder, WasiView};
+use wasmtime_wasi::{IoView, ResourceTable, WasiCtx, WasiCtxBuilder, WasiView};
 use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpView};
 use wrpc_runtime_wasmtime::{
     collect_component_resources, link_item, ServeExt as _, SharedResourceTable, WrpcView,
@@ -71,21 +71,21 @@ impl<C: Invoke> WrpcView for Ctx<C> {
     }
 }
 
+impl<C: Invoke> IoView for Ctx<C> {
+    fn table(&mut self) -> &mut ResourceTable {
+        &mut self.table
+    }
+}
+
 impl<C: Invoke> WasiView for Ctx<C> {
     fn ctx(&mut self) -> &mut WasiCtx {
         &mut self.wasi
-    }
-    fn table(&mut self) -> &mut ResourceTable {
-        &mut self.table
     }
 }
 
 impl<C: Invoke> WasiHttpView for Ctx<C> {
     fn ctx(&mut self) -> &mut WasiHttpCtx {
         &mut self.http
-    }
-    fn table(&mut self) -> &mut ResourceTable {
-        &mut self.table
     }
 }
 
@@ -94,7 +94,7 @@ fn use_pooling_allocator_by_default() -> anyhow::Result<Option<bool>> {
     const BITS_TO_TEST: u32 = 42;
     let mut config = wasmtime::Config::new();
     config.wasm_memory64(true);
-    config.static_memory_maximum_size(1 << BITS_TO_TEST);
+    config.memory_reservation(1 << BITS_TO_TEST);
     let engine = wasmtime::Engine::new(&config)?;
     let mut store = wasmtime::Store::new(&engine, ());
     // NB: the maximum size is in wasm pages to take out the 16-bits of wasm
@@ -120,7 +120,7 @@ where
     let mut opts = wasmtime_cli_flags::CommonOptions::try_parse_from(iter::empty::<&'static str>())
         .context("failed to construct common Wasmtime options")?;
     let mut config = opts
-        .config(None, use_pooling_allocator_by_default().unwrap_or(None))
+        .config(use_pooling_allocator_by_default().unwrap_or(None))
         .context("failed to construct Wasmtime config")?;
     config.wasm_component_model(true);
     config.async_support(true);
