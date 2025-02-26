@@ -24,4 +24,4 @@ tokio = { workspace = true, features = ["rt-multi-thread"] }
 tracing-subscriber = { workspace = true, features = ["ansi", "fmt"] }
 url = { workspace = true }
 wit-bindgen-wrpc = { workspace = true }
-wrpc-transport-nats = { workspace = true, features = ["async-nats-0_38"] }
+wrpc-transport-nats = { workspace = true, features = ["async-nats-0_39"] }
