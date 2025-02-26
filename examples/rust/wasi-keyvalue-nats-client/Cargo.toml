@@ -29,5 +29,5 @@ tracing-subscriber = { workspace = true, features = [
     "fmt",
 ] }
 url = { workspace = true }
-wrpc-transport-nats = { workspace = true, features = ["async-nats-0_38"] }
+wrpc-transport-nats = { workspace = true, features = ["async-nats-0_39"] }
 wrpc-wasi-keyvalue = { workspace = true }

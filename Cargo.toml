@@ -81,7 +81,7 @@ wrpc-cli = { workspace = true, optional = true }
 wrpc-runtime-wasmtime = { workspace = true, optional = true }
 wrpc-transport = { workspace = true }
 wrpc-transport-nats = { workspace = true, features = [
-    "async-nats-0_38",
+    "async-nats-0_39",
 ], optional = true }
 wrpc-transport-quic = { workspace = true, optional = true }
 wrpc-transport-web = { workspace = true, optional = true }
