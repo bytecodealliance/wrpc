@@ -33,7 +33,7 @@ use wasmtime::component::{
 };
 use wasmtime::{AsContextMut, Engine, StoreContextMut};
 use wasmtime_wasi::pipe::AsyncReadStream;
-use wasmtime_wasi::{InputStream, StreamError, WasiView};
+use wasmtime_wasi::{DynInputStream, StreamError, WasiView};
 use wrpc_transport::{Index as _, Invoke, InvokeExt as _, ListDecoderU8};
 
 // this returns the RPC name for a wasmtime function name.
@@ -466,9 +466,9 @@ where
                 Ok(())
             }
             (Val::Resource(resource), Type::Own(ty) | Type::Borrow(ty)) => {
-                if *ty == ResourceType::host::<InputStream>() {
+                if *ty == ResourceType::host::<DynInputStream>() {
                     let stream = resource
-                        .try_into_resource::<InputStream>(&mut self.store)
+                        .try_into_resource::<DynInputStream>(&mut self.store)
                         .context("failed to downcast `wasi:io/input-stream`")?;
                     if stream.owned() {
                         let mut stream = self
@@ -814,7 +814,7 @@ where
             Ok(())
         }
         Type::Own(ty) | Type::Borrow(ty) => {
-            if *ty == ResourceType::host::<InputStream>() {
+            if *ty == ResourceType::host::<DynInputStream>() {
                 let mut store = store.as_context_mut();
                 let r = r
                     .index(path)
@@ -1029,7 +1029,7 @@ where
             async move {
                 let mut buf = BytesMut::default();
                 let mut deferred = vec![];
-                for (v, ref ty) in zip(params, ty.params()) {
+                for (v, (_, ref ty)) in zip(params, ty.params()) {
                     let mut enc = ValEncoder::new(store.as_context_mut(), ty, &resources);
                     enc.encode(v, &mut buf)
                         .context("failed to encode parameter")?;
@@ -1254,7 +1254,7 @@ pub trait ServeExt: wrpc_transport::Serve {
             // TODO: set paths
             let invocations = self.serve(instance_name, rpc_func_name(name), []).await?;
             let name = Arc::<str>::from(name);
-            let params_ty: Arc<[_]> = ty.params().collect();
+            let params_ty: Arc<[_]> = ty.params().map(|(_, ty)| ty).collect();
             let results_ty: Arc<[_]> = ty.results().collect();
             Ok(invocations.map_ok(move |(cx, tx, rx)| {
                 let instance_pre = instance_pre.clone();
@@ -1339,7 +1339,7 @@ pub trait ServeExt: wrpc_transport::Serve {
             debug!(instance = instance_name, name, "serving function export");
             // TODO: set paths
             let invocations = self.serve(instance_name, rpc_func_name(name), []).await?;
-            let params_ty: Arc<[_]> = ty.params().collect();
+            let params_ty: Arc<[_]> = ty.params().map(|(_, ty)| ty).collect();
             let results_ty: Arc<[_]> = ty.results().collect();
             let guest_resources = Arc::clone(&guest_resources);
             Ok(invocations.map_ok(move |(cx, tx, rx)| {

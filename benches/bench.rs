@@ -14,7 +14,7 @@ use futures::StreamExt as _;
 use tokio::select;
 use tokio::sync::oneshot;
 use wasmtime::component::{Component, Linker};
-use wasmtime_wasi::{ResourceTable, WasiCtx, WasiCtxBuilder, WasiView};
+use wasmtime_wasi::{IoView, ResourceTable, WasiCtx, WasiCtxBuilder, WasiView};
 
 mod ping_bindings_wrpc {
     wit_bindgen_wrpc::generate!({
@@ -71,13 +71,15 @@ struct Ctx {
     wasi: WasiCtx,
 }
 
+impl IoView for Ctx {
+    fn table(&mut self) -> &mut ResourceTable {
+        &mut self.table
+    }
+}
+
 impl WasiView for Ctx {
     fn ctx(&mut self) -> &mut WasiCtx {
         &mut self.wasi
-    }
-
-    fn table(&mut self) -> &mut ResourceTable {
-        &mut self.table
     }
 }
 
@@ -94,7 +96,7 @@ impl WasmHandler {
         const BITS_TO_TEST: u32 = 42;
         let mut config = wasmtime::Config::new();
         config.wasm_memory64(true);
-        config.static_memory_maximum_size(1 << BITS_TO_TEST);
+        config.memory_reservation(1 << BITS_TO_TEST);
         let engine = wasmtime::Engine::new(&config)?;
         let mut store = wasmtime::Store::new(&engine, ());
         // NB: the maximum size is in wasm pages to take out the 16-bits of wasm
@@ -130,10 +132,7 @@ impl WasmHandler {
             wasmtime_cli_flags::CommonOptions::try_parse_from(iter::empty::<&'static str>())
                 .context("failed to construct common Wasmtime options")?;
         let mut config = opts
-            .config(
-                None,
-                Self::use_pooling_allocator_by_default().unwrap_or(None),
-            )
+            .config(Self::use_pooling_allocator_by_default().unwrap_or(None))
             .context("failed to construct Wasmtime config")?;
         config.wasm_component_model(true);
         config.async_support(true);
