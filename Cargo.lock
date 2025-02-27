@@ -5383,7 +5383,7 @@ dependencies = [
  "tracing",
  "url",
  "wasi-preview1-component-adapter-provider",
- "wasmparser 0.221.3",
+ "wasmparser 0.226.0",
  "wasmtime",
  "wasmtime-cli-flags",
  "wasmtime-wasi",
