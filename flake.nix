@@ -27,7 +27,7 @@
   inputs.nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
   inputs.wit-deps.inputs.nixify.follows = "nixify";
   inputs.wit-deps.inputs.nixlib.follows = "nixlib";
-  inputs.wit-deps.url = "github:bytecodealliance/wit-deps/v0.4.0";
+  inputs.wit-deps.url = "github:bytecodealliance/wit-deps/v0.5.0";
 
   outputs = {
     nixify,
