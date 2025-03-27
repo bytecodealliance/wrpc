@@ -1,6 +1,6 @@
 [package]
 name = "wrpc-wasmtime-cli"
-version = "0.4.0"
+version = "0.4.1"
 description = "wRPC Wasmtime CLI"
 
 authors.workspace = true
@@ -25,6 +25,7 @@ clap = { workspace = true, features = [
 futures = { workspace = true }
 humantime = { workspace = true }
 reqwest = { workspace = true }
+semver = { workspace = true }
 tokio = { workspace = true, features = ["fs"] }
 tokio-util = { workspace = true, features = ["codec"] }
 tracing = { workspace = true, features = ["attributes"] }

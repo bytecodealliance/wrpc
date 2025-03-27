@@ -1452,6 +1452,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-component-rpc-client"
+version = "0.1.0"
+dependencies = [
+ "wit-bindgen",
+]
+
+[[package]]
 name = "hello-component-server"
 version = "0.1.0"
 dependencies = [
@@ -5211,7 +5218,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc-runtime-wasmtime"
-version = "0.26.0"
+version = "0.26.1"
 dependencies = [
  "anyhow",
  "bytes",
@@ -5349,7 +5356,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc-wasmtime-cli"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "anyhow",
  "async-nats 0.39.0",
@@ -5357,6 +5364,7 @@ dependencies = [
  "futures",
  "humantime",
  "reqwest",
+ "semver",
  "tokio",
  "tokio-util",
  "tracing",
