@@ -51,12 +51,21 @@ pub struct Ctx<C: Invoke> {
     pub wasi: WasiCtx,
     pub http: WasiHttpCtx,
     pub wrpc: C,
+    pub cx: C::Context,
     pub shared_resources: SharedResourceTable,
     pub timeout: Duration,
 }
 
-impl<C: Invoke> WrpcView for Ctx<C> {
+impl<C> WrpcView for Ctx<C>
+where
+    C: Invoke,
+    C::Context: Clone,
+{
     type Invoke = C;
+
+    fn context(&self) -> C::Context {
+        self.cx.clone()
+    }
 
     fn client(&self) -> &Self::Invoke {
         &self.wrpc
@@ -107,14 +116,28 @@ fn use_pooling_allocator_by_default() -> anyhow::Result<Option<bool>> {
     }
 }
 
-#[instrument(level = "trace", skip(adapter, cx))]
+fn is_0_2(version: &str, min_patch: u64) -> bool {
+    if let Ok(semver::Version {
+        major,
+        minor,
+        patch,
+        pre,
+        build,
+    }) = version.parse()
+    {
+        major == 0 && minor == 2 && patch >= min_patch && pre.is_empty() && build.is_empty()
+    } else {
+        false
+    }
+}
+
+#[instrument(level = "trace", skip(adapter))]
 async fn instantiate_pre<C>(
     adapter: &[u8],
-    cx: C::Context,
     workload: &str,
 ) -> anyhow::Result<(InstancePre<Ctx<C>>, Engine, Arc<[ResourceType]>)>
 where
-    C: Invoke,
+    C: Invoke + Clone + 'static,
     C::Context: Clone + 'static,
 {
     let mut opts = wasmtime_cli_flags::CommonOptions::try_parse_from(iter::empty::<&'static str>())
@@ -174,6 +197,7 @@ where
     wasmtime_wasi::add_to_linker_async(&mut linker).context("failed to link WASI")?;
     wasmtime_wasi_http::add_only_http_to_linker_async(&mut linker)
         .context("failed to link `wasi:http`")?;
+    wrpc_runtime_wasmtime::rpc::add_to_linker(&mut linker).context("failed to link `wrpc:rpc`")?;
 
     let ty = component.component_type();
     let mut resources = Vec::new();
@@ -181,111 +205,52 @@ where
     let resources = Arc::from(resources);
     for (name, item) in ty.imports(&engine) {
         // Avoid polyfilling instances, for which static bindings are linked
-        match name {
-            "wasi:cli/environment@0.2.0"
-            | "wasi:cli/environment@0.2.1"
-            | "wasi:cli/environment@0.2.2"
-            | "wasi:cli/exit@0.2.0"
-            | "wasi:cli/exit@0.2.1"
-            | "wasi:cli/exit@0.2.2"
-            | "wasi:cli/stderr@0.2.0"
-            | "wasi:cli/stderr@0.2.1"
-            | "wasi:cli/stderr@0.2.2"
-            | "wasi:cli/stdin@0.2.0"
-            | "wasi:cli/stdin@0.2.1"
-            | "wasi:cli/stdin@0.2.2"
-            | "wasi:cli/stdout@0.2.0"
-            | "wasi:cli/stdout@0.2.1"
-            | "wasi:cli/stdout@0.2.2"
-            | "wasi:cli/terminal-input@0.2.0"
-            | "wasi:cli/terminal-input@0.2.1"
-            | "wasi:cli/terminal-input@0.2.2"
-            | "wasi:cli/terminal-output@0.2.0"
-            | "wasi:cli/terminal-output@0.2.1"
-            | "wasi:cli/terminal-output@0.2.2"
-            | "wasi:cli/terminal-stderr@0.2.0"
-            | "wasi:cli/terminal-stderr@0.2.1"
-            | "wasi:cli/terminal-stderr@0.2.2"
-            | "wasi:cli/terminal-stdin@0.2.0"
-            | "wasi:cli/terminal-stdin@0.2.1"
-            | "wasi:cli/terminal-stdin@0.2.2"
-            | "wasi:cli/terminal-stdout@0.2.0"
-            | "wasi:cli/terminal-stdout@0.2.1"
-            | "wasi:cli/terminal-stdout@0.2.2"
-            | "wasi:clocks/monotonic-clock@0.2.0"
-            | "wasi:clocks/monotonic-clock@0.2.1"
-            | "wasi:clocks/monotonic-clock@0.2.2"
-            | "wasi:clocks/timezone@0.2.1"
-            | "wasi:clocks/timezone@0.2.2"
-            | "wasi:clocks/wall-clock@0.2.0"
-            | "wasi:clocks/wall-clock@0.2.1"
-            | "wasi:clocks/wall-clock@0.2.2"
-            | "wasi:filesystem/preopens@0.2.0"
-            | "wasi:filesystem/preopens@0.2.1"
-            | "wasi:filesystem/preopens@0.2.2"
-            | "wasi:filesystem/types@0.2.0"
-            | "wasi:filesystem/types@0.2.1"
-            | "wasi:filesystem/types@0.2.2"
-            | "wasi:http/incoming-handler@0.2.0"
-            | "wasi:http/incoming-handler@0.2.1"
-            | "wasi:http/incoming-handler@0.2.2"
-            | "wasi:http/outgoing-handler@0.2.0"
-            | "wasi:http/outgoing-handler@0.2.1"
-            | "wasi:http/outgoing-handler@0.2.2"
-            | "wasi:http/types@0.2.0"
-            | "wasi:http/types@0.2.1"
-            | "wasi:http/types@0.2.2"
-            | "wasi:io/error@0.2.0"
-            | "wasi:io/error@0.2.1"
-            | "wasi:io/error@0.2.2"
-            | "wasi:io/poll@0.2.0"
-            | "wasi:io/poll@0.2.1"
-            | "wasi:io/poll@0.2.2"
-            | "wasi:io/streams@0.2.0"
-            | "wasi:io/streams@0.2.1"
-            | "wasi:io/streams@0.2.2"
-            | "wasi:random/insecure-seed@0.2.0"
-            | "wasi:random/insecure-seed@0.2.1"
-            | "wasi:random/insecure-seed@0.2.2"
-            | "wasi:random/insecure@0.2.0"
-            | "wasi:random/insecure@0.2.1"
-            | "wasi:random/insecure@0.2.2"
-            | "wasi:random/random@0.2.0"
-            | "wasi:random/random@0.2.1"
-            | "wasi:random/random@0.2.2"
-            | "wasi:sockets/instance-network@0.2.0"
-            | "wasi:sockets/instance-network@0.2.1"
-            | "wasi:sockets/instance-network@0.2.2"
-            | "wasi:sockets/ip-name-lookup@0.2.0"
-            | "wasi:sockets/ip-name-lookup@0.2.1"
-            | "wasi:sockets/ip-name-lookup@0.2.2"
-            | "wasi:sockets/network@0.2.0"
-            | "wasi:sockets/network@0.2.1"
-            | "wasi:sockets/network@0.2.2"
-            | "wasi:sockets/tcp-create-socket@0.2.0"
-            | "wasi:sockets/tcp-create-socket@0.2.1"
-            | "wasi:sockets/tcp-create-socket@0.2.2"
-            | "wasi:sockets/tcp@0.2.0"
-            | "wasi:sockets/tcp@0.2.1"
-            | "wasi:sockets/tcp@0.2.2"
-            | "wasi:sockets/udp-create-socket@0.2.0"
-            | "wasi:sockets/udp-create-socket@0.2.1"
-            | "wasi:sockets/udp-create-socket@0.2.2"
-            | "wasi:sockets/udp@0.2.0"
-            | "wasi:sockets/udp@0.2.1"
-            | "wasi:sockets/udp@0.2.2" => continue,
-            _ => {}
-        }
-        if let Err(err) = link_item(
-            &engine,
-            &mut linker.root(),
-            Arc::clone(&resources),
-            item,
-            "",
-            name,
-            cx.clone(),
-        ) {
-            error!(?err, "failed to polyfill instance");
+        match name.split_once('/').map(|(pkg, suffix)| {
+            suffix
+                .split_once('@')
+                .map_or((pkg, suffix, None), |(iface, version)| {
+                    (pkg, iface, Some(version))
+                })
+        }) {
+            Some(("wrpc:rpc", "transport" | "error" | "context" | "invoker", Some("0.1.0"))) => {}
+            Some((
+                "wasi:cli",
+                "environment" | "exit" | "stderr" | "stdin" | "stdout" | "terminal-input"
+                | "terminal-output" | "terminal-stderr" | "terminal-stdin" | "terminal-stdout",
+                Some(version),
+            )) if is_0_2(version, 0) => {}
+            Some(("wasi:clocks", "monotonic-clock" | "wall-clock", Some(version)))
+                if is_0_2(version, 0) => {}
+            Some(("wasi:clocks", "timezone", Some(version))) if is_0_2(version, 1) => {}
+            Some(("wasi:filesystem", "preopens" | "types", Some(version)))
+                if is_0_2(version, 0) => {}
+            Some((
+                "wasi:http",
+                "incoming-handler" | "outgoing-handler" | "types",
+                Some(version),
+            )) if is_0_2(version, 0) => {}
+            Some(("wasi:io", "error" | "poll" | "streams", Some(version)))
+                if is_0_2(version, 0) => {}
+            Some(("wasi:random", "insecure-seed" | "insecure" | "random", Some(version)))
+                if is_0_2(version, 0) => {}
+            Some((
+                "wasi:sockets",
+                "instance-network" | "ip-name-lookup" | "network" | "tcp-create-socket" | "tcp"
+                | "udp-create-socket" | "udp",
+                Some(version),
+            )) if is_0_2(version, 0) => {}
+            _ => {
+                if let Err(err) = link_item(
+                    &engine,
+                    &mut linker.root(),
+                    Arc::clone(&resources),
+                    item,
+                    "",
+                    name,
+                ) {
+                    error!(?err, "failed to polyfill instance");
+                }
+            }
         }
     }
 
@@ -298,6 +263,7 @@ where
 fn new_store<C: Invoke>(
     engine: &Engine,
     wrpc: C,
+    cx: C::Context,
     arg0: &str,
     timeout: Duration,
 ) -> wasmtime::Store<Ctx<C>> {
@@ -317,6 +283,7 @@ fn new_store<C: Invoke>(
             table: ResourceTable::new(),
             shared_resources: SharedResourceTable::default(),
             wrpc,
+            cx,
             timeout,
         },
     )
@@ -330,12 +297,12 @@ pub async fn handle_run<C>(
     workload: &str,
 ) -> anyhow::Result<()>
 where
-    C: Invoke,
+    C: Invoke + Clone + 'static,
     C::Context: Clone + 'static,
 {
     let (pre, engine, _) =
-        instantiate_pre(WASI_SNAPSHOT_PREVIEW1_COMMAND_ADAPTER, cx, workload).await?;
-    let mut store = new_store(&engine, clt, "command.wasm", timeout);
+        instantiate_pre(WASI_SNAPSHOT_PREVIEW1_COMMAND_ADAPTER, workload).await?;
+    let mut store = new_store(&engine, clt, cx, "command.wasm", timeout);
     let cmd = wasmtime_wasi::bindings::CommandPre::new(pre)
         .context("failed to construct `command` instance")?
         .instantiate_async(&mut store)
@@ -358,6 +325,7 @@ pub async fn serve_shared<C, S>(
 ) -> anyhow::Result<()>
 where
     C: Invoke + 'static,
+    C::Context: Clone,
     S: Serve,
 {
     let span = Span::current();
@@ -494,6 +462,7 @@ pub async fn serve_stateless<C, S>(
     handlers: &mut JoinSet<()>,
     srv: S,
     clt: C,
+    cx: C::Context,
     pre: InstancePre<Ctx<C>>,
     engine: &Engine,
     timeout: Duration,
@@ -508,11 +477,14 @@ where
         match (name, ty) {
             (name, types::ComponentItem::ComponentFunc(ty)) => {
                 let clt = clt.clone();
+                let cx = cx.clone();
                 let engine = engine.clone();
                 info!(?name, "serving root function");
                 let invocations = srv
                     .serve_function(
-                        move || new_store(&engine, clt.clone(), "reactor.wasm", timeout),
+                        move || {
+                            new_store(&engine, clt.clone(), cx.clone(), "reactor.wasm", timeout)
+                        },
                         pre.clone(),
                         ty,
                         "",
@@ -556,11 +528,18 @@ where
                         types::ComponentItem::ComponentFunc(ty) => {
                             let clt = clt.clone();
                             let engine = engine.clone();
+                            let cx = cx.clone();
                             info!(?name, "serving instance function");
                             let invocations = srv
                                 .serve_function(
                                     move || {
-                                        new_store(&engine, clt.clone(), "reactor.wasm", timeout)
+                                        new_store(
+                                            &engine,
+                                            clt.clone(),
+                                            cx.clone(),
+                                            "reactor.wasm",
+                                            timeout,
+                                        )
                                     },
                                     pre.clone(),
                                     ty,
@@ -643,16 +622,16 @@ where
     S: Serve,
 {
     let (pre, engine, guest_resources) =
-        instantiate_pre(WASI_SNAPSHOT_PREVIEW1_REACTOR_ADAPTER, cx, workload).await?;
+        instantiate_pre(WASI_SNAPSHOT_PREVIEW1_REACTOR_ADAPTER, workload).await?;
 
     let mut handlers = JoinSet::new();
     if guest_resources.is_empty() {
-        serve_stateless(&mut handlers, srv, clt, pre, &engine, timeout).await?;
+        serve_stateless(&mut handlers, srv, clt, cx, pre, &engine, timeout).await?;
     } else {
         serve_shared(
             &mut handlers,
             srv,
-            new_store(&engine, clt, "reactor.wasm", timeout),
+            new_store(&engine, clt, cx, "reactor.wasm", timeout),
             pre,
             guest_resources,
         )
