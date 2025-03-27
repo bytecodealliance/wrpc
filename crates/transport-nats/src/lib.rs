@@ -280,6 +280,7 @@ impl Client {
                     select! {
                         Some(msg) = sub.next() => handle_message(&mut subs, msg).await,
                         Some(cmd) = cmd_rx.recv() => handle_command(&mut subs, cmd),
+                        else => return,
                     }
                 }
             }
