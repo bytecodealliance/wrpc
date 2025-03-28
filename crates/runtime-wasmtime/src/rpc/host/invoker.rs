@@ -1,4 +1,5 @@
 use anyhow::Context as _;
+use tokio::io::AsyncWriteExt as _;
 use wasmtime::component::Resource;
 use wrpc_transport::Invoke;
 
@@ -33,9 +34,13 @@ where
             .collect::<Result<Box<[_]>, _>>()
             .context("failed to construct subscription paths")?;
         let invocation = async move {
-            client
+            let (mut tx, rx) = client
                 .invoke(cx, &instance, &name, params.into(), paths)
+                .await?;
+            tx.flush()
                 .await
+                .context("failed to flush outgoing stream")?;
+            Ok((tx, rx))
         };
         self.0.push_invocation(invocation)
     }

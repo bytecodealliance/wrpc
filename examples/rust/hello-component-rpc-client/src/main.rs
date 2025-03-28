@@ -4,7 +4,7 @@ mod bindings {
 
 use bindings::wrpc::rpc;
 
-fn main() {
+fn explicit() {
     let cx = rpc::context::Context::default();
     let hello = rpc::invoker::invoke(cx, "wrpc-examples:hello/handler", "hello", &[], &[]);
     hello.subscribe().block();
@@ -25,7 +25,10 @@ fn main() {
                         );
                         return;
                     }
-                    println!("{}", String::from_utf8_lossy(greeting))
+                    println!(
+                        "explicit call result: {}",
+                        String::from_utf8_lossy(greeting)
+                    )
                 }
                 Err(bindings::wasi::io::streams::StreamError::Closed) => {
                     eprintln!("failed to read `hello` results: stream closed")
@@ -45,7 +48,25 @@ fn main() {
             };
         }
         Err(err) => {
-            eprintln!("failed to invoke `hello`: {}", err.to_debug_string())
+            eprintln!(
+                "failed to invoke `hello` explicitly: {}",
+                err.to_debug_string()
+            )
         }
     }
+}
+
+fn implicit() {
+    match bindings::wrpc_examples::hello::handler::hello() {
+        Ok(greeting) => println!("implicit call result: {greeting}"),
+        Err(err) => eprintln!(
+            "failed to invoke `hello` implicitly: {}",
+            err.to_debug_string()
+        ),
+    }
+}
+
+fn main() {
+    implicit();
+    explicit();
 }

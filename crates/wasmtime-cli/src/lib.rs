@@ -1,9 +1,11 @@
 #![allow(clippy::type_complexity)]
 
 use core::iter;
+use core::ops::Bound;
 use core::pin::pin;
 use core::time::Duration;
 
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 use anyhow::{anyhow, bail, Context as _};
@@ -23,7 +25,8 @@ use wasmtime::{Engine, Store};
 use wasmtime_wasi::{IoView, ResourceTable, WasiCtx, WasiCtxBuilder, WasiView};
 use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpView};
 use wrpc_runtime_wasmtime::{
-    collect_component_resources, link_item, ServeExt as _, SharedResourceTable, WrpcView,
+    collect_component_resource_exports, collect_component_resource_imports, link_item, rpc,
+    RemoteResource, ServeExt as _, SharedResourceTable, WrpcView,
 };
 use wrpc_transport::{Invoke, Serve};
 
@@ -200,9 +203,98 @@ where
     wrpc_runtime_wasmtime::rpc::add_to_linker(&mut linker).context("failed to link `wrpc:rpc`")?;
 
     let ty = component.component_type();
-    let mut resources = Vec::new();
-    collect_component_resources(&engine, &ty, &mut resources);
-    let resources = Arc::from(resources);
+    let mut host_resources = BTreeMap::default();
+    let mut guest_resources = Vec::new();
+    collect_component_resource_imports(&engine, &ty, &mut host_resources);
+    collect_component_resource_exports(&engine, &ty, &mut guest_resources);
+    let io_err_tys = host_resources
+        .range::<str, _>((
+            Bound::Included("wasi:io/error@0.2"),
+            Bound::Excluded("wasi:io/error@0.3"),
+        ))
+        .map(|(name, instance)| {
+            instance
+                .get("error")
+                .copied()
+                .with_context(|| format!("{name} instance import missing `error` resource"))
+        })
+        .collect::<anyhow::Result<Box<[_]>>>()?;
+    let io_pollable_tys = host_resources
+        .range::<str, _>((
+            Bound::Included("wasi:io/poll@0.2"),
+            Bound::Excluded("wasi:io/poll@0.3"),
+        ))
+        .map(|(name, instance)| {
+            instance
+                .get("pollable")
+                .copied()
+                .with_context(|| format!("{name} instance import missing `pollable` resource"))
+        })
+        .collect::<anyhow::Result<Box<[_]>>>()?;
+    let io_input_stream_tys = host_resources
+        .range::<str, _>((
+            Bound::Included("wasi:io/streams@0.2"),
+            Bound::Excluded("wasi:io/streams@0.3"),
+        ))
+        .map(|(name, instance)| {
+            instance
+                .get("input-stream")
+                .copied()
+                .with_context(|| format!("{name} instance import missing `input-stream` resource"))
+        })
+        .collect::<anyhow::Result<Box<[_]>>>()?;
+    let io_output_stream_tys = host_resources
+        .range::<str, _>((
+            Bound::Included("wasi:io/streams@0.2"),
+            Bound::Excluded("wasi:io/streams@0.3"),
+        ))
+        .map(|(name, instance)| {
+            instance
+                .get("output-stream")
+                .copied()
+                .with_context(|| format!("{name} instance import missing `output-stream` resource"))
+        })
+        .collect::<anyhow::Result<Box<[_]>>>()?;
+    let rpc_err_ty = host_resources
+        .get("wrpc:rpc/error@0.1.0")
+        .map(|instance| {
+            instance
+                .get("error")
+                .copied()
+                .context("`wrpc:rpc/error@0.1.0` instance import missing `error` resource")
+        })
+        .transpose()?;
+    // TODO: This should include `wasi:http` resources
+    let host_resources = host_resources
+        .into_iter()
+        .map(|(name, instance)| {
+            let instance = instance
+                .into_iter()
+                .map(|(name, ty)| {
+                    let host_ty = match ty {
+                        ty if Some(ty) == rpc_err_ty => ResourceType::host::<rpc::Error>(),
+                        ty if io_err_tys.contains(&ty) => {
+                            ResourceType::host::<wasmtime_wasi::bindings::io::error::Error>()
+                        }
+                        ty if io_input_stream_tys.contains(&ty) => ResourceType::host::<
+                            wasmtime_wasi::bindings::io::streams::InputStream,
+                        >(),
+                        ty if io_output_stream_tys.contains(&ty) => ResourceType::host::<
+                            wasmtime_wasi::bindings::io::streams::OutputStream,
+                        >(),
+                        ty if io_pollable_tys.contains(&ty) => {
+                            ResourceType::host::<wasmtime_wasi::bindings::io::poll::Pollable>()
+                        }
+                        _ => ResourceType::host::<RemoteResource>(),
+                    };
+                    (name, (ty, host_ty))
+                })
+                .collect::<HashMap<_, _>>();
+            (name, instance)
+        })
+        .collect::<HashMap<_, _>>();
+    let host_resources = Arc::from(host_resources);
+    let guest_resources = Arc::from(guest_resources);
     for (name, item) in ty.imports(&engine) {
         // Avoid polyfilling instances, for which static bindings are linked
         match name.split_once('/').map(|(pkg, suffix)| {
@@ -243,7 +335,8 @@ where
                 if let Err(err) = link_item(
                     &engine,
                     &mut linker.root(),
-                    Arc::clone(&resources),
+                    Arc::clone(&guest_resources),
+                    Arc::clone(&host_resources),
                     item,
                     "",
                     name,
@@ -257,7 +350,7 @@ where
     let pre = linker
         .instantiate_pre(&component)
         .context("failed to pre-instantiate component")?;
-    Ok((pre, engine, resources))
+    Ok((pre, engine, guest_resources))
 }
 
 fn new_store<C: Invoke>(

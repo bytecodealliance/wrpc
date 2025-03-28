@@ -1,2 +1,2 @@
-hello = "../../../wit/hello"
+hello = "../../../wit/hello-rpc"
 rpc = "https://github.com/wrpc/rpc/archive/main.tar.gz"
