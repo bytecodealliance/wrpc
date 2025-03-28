@@ -1,10 +1,13 @@
 #![allow(clippy::type_complexity)] // TODO: https://github.com/bytecodealliance/wrpc/issues/2
 
+use core::any::Any;
+use core::future::Future;
+use core::iter::zip;
+use core::pin::pin;
 use core::time::Duration;
-use core::{any::Any, iter::zip};
-use core::{future::Future, pin::pin};
 
-use std::{collections::HashMap, sync::Arc};
+use std::collections::{BTreeMap, HashMap};
+use std::sync::Arc;
 
 use anyhow::{anyhow, bail, Context as _};
 use bytes::{Bytes, BytesMut};
@@ -344,8 +347,8 @@ where
 }
 
 /// Recursively iterates the component item type and collects all exported resource types
-#[instrument(level = "trace", skip_all)]
-pub fn collect_item_resources(
+#[instrument(level = "debug", skip_all)]
+pub fn collect_item_resource_exports(
     engine: &Engine,
     ty: types::ComponentItem,
     resources: &mut impl Extend<types::ResourceType>,
@@ -355,34 +358,81 @@ pub fn collect_item_resources(
         | types::ComponentItem::CoreFunc(_)
         | types::ComponentItem::Module(_)
         | types::ComponentItem::Type(_) => {}
-        types::ComponentItem::Component(ty) => collect_component_resources(engine, &ty, resources),
-        types::ComponentItem::ComponentInstance(ty) => {
-            collect_instance_resources(engine, &ty, resources);
+        types::ComponentItem::Component(ty) => {
+            collect_component_resource_exports(engine, &ty, resources)
         }
-        types::ComponentItem::Resource(ty) => resources.extend([ty]),
+
+        types::ComponentItem::ComponentInstance(ty) => {
+            collect_instance_resource_exports(engine, &ty, resources)
+        }
+        types::ComponentItem::Resource(ty) => {
+            debug!(?ty, "collect resource export");
+            resources.extend([ty])
+        }
     }
 }
 
-/// Recursively iterates the component type and collects all exported resource types
-#[instrument(level = "trace", skip_all)]
-pub fn collect_instance_resources(
+/// Recursively iterates the instance type and collects all exported resource types
+#[instrument(level = "debug", skip_all)]
+pub fn collect_instance_resource_exports(
     engine: &Engine,
     ty: &types::ComponentInstance,
     resources: &mut impl Extend<types::ResourceType>,
 ) {
-    for (_, ty) in ty.exports(engine) {
-        collect_item_resources(engine, ty, resources);
+    for (name, ty) in ty.exports(engine) {
+        trace!(name, ?ty, "collect instance item resource exports");
+        collect_item_resource_exports(engine, ty, resources);
     }
 }
 
 /// Recursively iterates the component type and collects all exported resource types
-#[instrument(level = "trace", skip_all)]
-pub fn collect_component_resources(
+#[instrument(level = "debug", skip_all)]
+pub fn collect_component_resource_exports(
     engine: &Engine,
     ty: &types::Component,
     resources: &mut impl Extend<types::ResourceType>,
 ) {
-    for (_, ty) in ty.exports(engine) {
-        collect_item_resources(engine, ty, resources);
+    for (name, ty) in ty.exports(engine) {
+        trace!(name, ?ty, "collect component item resource exports");
+        collect_item_resource_exports(engine, ty, resources);
+    }
+}
+
+/// Iterates the component type and collects all imported resource types
+#[instrument(level = "debug", skip_all)]
+pub fn collect_component_resource_imports(
+    engine: &Engine,
+    ty: &types::Component,
+    resources: &mut BTreeMap<Box<str>, HashMap<Box<str>, types::ResourceType>>,
+) {
+    for (name, ty) in ty.imports(engine) {
+        match ty {
+            types::ComponentItem::ComponentFunc(..)
+            | types::ComponentItem::CoreFunc(..)
+            | types::ComponentItem::Module(..)
+            | types::ComponentItem::Type(..)
+            | types::ComponentItem::Component(..) => {}
+            types::ComponentItem::ComponentInstance(ty) => {
+                let instance = name;
+                for (name, ty) in ty.exports(engine) {
+                    if let types::ComponentItem::Resource(ty) = ty {
+                        debug!(instance, name, ?ty, "collect instance resource import");
+                        if let Some(resources) = resources.get_mut(instance) {
+                            resources.insert(name.into(), ty);
+                        } else {
+                            resources.insert(instance.into(), HashMap::from([(name.into(), ty)]));
+                        }
+                    }
+                }
+            }
+            types::ComponentItem::Resource(ty) => {
+                debug!(name, "collect component resource import");
+                if let Some(resources) = resources.get_mut("") {
+                    resources.insert(name.into(), ty);
+                } else {
+                    resources.insert("".into(), HashMap::from([(name.into(), ty)]));
+                }
+            }
+        }
     }
 }

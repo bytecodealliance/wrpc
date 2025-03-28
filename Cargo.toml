@@ -177,7 +177,7 @@ wit-component = { version = "0.221", default-features = false }
 wit-parser = { version = "0.220", default-features = false }
 wrpc-cli = { version = "0.5", path = "./crates/cli", default-features = false }
 wrpc-introspect = { version = "0.6", default-features = false, path = "./crates/introspect" }
-wrpc-runtime-wasmtime = { version = "0.26", path = "./crates/runtime-wasmtime", default-features = false }
+wrpc-runtime-wasmtime = { version = "0.27", path = "./crates/runtime-wasmtime", default-features = false }
 wrpc-test = { path = "./crates/test", default-features = false }
 wrpc-transport = { version = "0.28.3", path = "./crates/transport", default-features = false }
 wrpc-transport-nats = { version = "0.28", path = "./crates/transport-nats", default-features = false }
@@ -186,5 +186,5 @@ wrpc-transport-web = { version = "0.1", path = "./crates/transport-web", default
 wrpc-wasi-keyvalue = { version = "0.1.1", path = "./crates/wasi-keyvalue", default-features = false }
 wrpc-wasi-keyvalue-mem = { version = "0.1", path = "./crates/wasi-keyvalue-mem", default-features = false }
 wrpc-wasi-keyvalue-redis = { version = "0.1", path = "./crates/wasi-keyvalue-redis", default-features = false }
-wrpc-wasmtime-cli = { version = "0.4", path = "./crates/wasmtime-cli", default-features = false }
+wrpc-wasmtime-cli = { version = "0.5", path = "./crates/wasmtime-cli", default-features = false }
 wtransport = { version = "0.4", default-features = false }
