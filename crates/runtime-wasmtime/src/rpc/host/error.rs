@@ -15,11 +15,11 @@ impl<T: WrpcView> HostError for WrpcRpcImpl<T> {
     ) -> wasmtime::Result<Result<Resource<Error>, Resource<IoError>>> {
         let table = self.0.table();
         let error = table
-            .delete(error)
+            .delete::<IoError>(error)
             .context("failed to delete `wasi:io/error.error` from table")?;
         match error.downcast() {
-            Ok(Error(error)) => {
-                let error = self.0.push_error(error)?;
+            Ok(error) => {
+                let error = self.0.push_error(Error::Stream(error))?;
                 Ok(Ok(error))
             }
             Err(error) => {

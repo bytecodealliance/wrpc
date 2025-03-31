@@ -18,7 +18,7 @@ use wasmtime_wasi::WasiView;
 use wrpc_transport::{Index as _, Invoke, InvokeExt as _};
 
 use crate::rpc::Error;
-use crate::{read_value, rpc_func_name, ValEncoder, WrpcView, WrpcViewExt as _};
+use crate::{read_value, rpc_func_name, rpc_result_type, ValEncoder, WrpcView, WrpcViewExt as _};
 
 /// Polyfill [`types::ComponentItem`] in a [`LinkerInstance`] using [`wrpc_transport::Invoke`]
 #[instrument(level = "trace", skip_all)]
@@ -242,22 +242,7 @@ where
     let name = name.into();
     let guest_resources = guest_resources.into();
     let host_resources = host_resources.into();
-    let result_ty = {
-        let rpc_err_ty = host_resources
-            .get("wrpc:rpc/error@0.1.0")
-            .and_then(|instance| instance.get("error"));
-        let mut result_ty = ty.results();
-        match (rpc_err_ty, result_ty.next(), result_ty.next()) {
-            (Some((guest_rpc_err_ty, host_rpc_err_ty)), Some(Type::Result(result_ty)), None)
-                if *host_rpc_err_ty == ResourceType::host::<Error>()
-                    && result_ty.err() == Some(Type::Own(*guest_rpc_err_ty)) =>
-            {
-                Some(result_ty.ok())
-            }
-            _ => None,
-        }
-    };
-    match result_ty {
+    match rpc_result_type(&host_resources, ty.results()) {
         None => linker.func_new_async(&Arc::clone(&name), move |mut store, params, results| {
             let ty = ty.clone();
             let instance = Arc::clone(&instance);
@@ -285,6 +270,7 @@ where
                 .instrument(span.clone()),
             )
         }),
+        // `result<_, rpc-eror>`
         Some(None) => {
             linker.func_new_async(&Arc::clone(&name), move |mut store, params, results| {
                 let ty = ty.clone();
@@ -312,7 +298,7 @@ where
                                 *result = Val::Result(Ok(None));
                             }
                             Err(err) => {
-                                let err = store.data_mut().push_error(err)?;
+                                let err = store.data_mut().push_error(Error::Invoke(err))?;
                                 let err = err
                                     .try_into_resource_any(&mut store)
                                     .context("failed to lower error resource")?;
@@ -325,6 +311,7 @@ where
                 )
             })
         }
+        // `result<T, rpc-eror>`
         Some(Some(result_ty)) => {
             linker.func_new_async(&Arc::clone(&name), move |mut store, params, results| {
                 let ty = ty.clone();
@@ -355,7 +342,7 @@ where
                                 *result = Val::Result(Ok(Some(Box::new(ok))));
                             }
                             Err(err) => {
-                                let err = store.data_mut().push_error(err)?;
+                                let err = store.data_mut().push_error(Error::Invoke(err))?;
                                 let err = err
                                     .try_into_resource_any(&mut store)
                                     .context("failed to lower error resource")?;

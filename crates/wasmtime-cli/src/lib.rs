@@ -138,7 +138,12 @@ fn is_0_2(version: &str, min_patch: u64) -> bool {
 async fn instantiate_pre<C>(
     adapter: &[u8],
     workload: &str,
-) -> anyhow::Result<(InstancePre<Ctx<C>>, Engine, Arc<[ResourceType]>)>
+) -> anyhow::Result<(
+    InstancePre<Ctx<C>>,
+    Engine,
+    Arc<[ResourceType]>,
+    Arc<HashMap<Box<str>, HashMap<Box<str>, (ResourceType, ResourceType)>>>,
+)>
 where
     C: Invoke + Clone + 'static,
     C::Context: Clone + 'static,
@@ -350,7 +355,7 @@ where
     let pre = linker
         .instantiate_pre(&component)
         .context("failed to pre-instantiate component")?;
-    Ok((pre, engine, guest_resources))
+    Ok((pre, engine, guest_resources, host_resources))
 }
 
 fn new_store<C: Invoke>(
@@ -393,7 +398,7 @@ where
     C: Invoke + Clone + 'static,
     C::Context: Clone + 'static,
 {
-    let (pre, engine, _) =
+    let (pre, engine, _, _) =
         instantiate_pre(WASI_SNAPSHOT_PREVIEW1_COMMAND_ADAPTER, workload).await?;
     let mut store = new_store(&engine, clt, cx, "command.wasm", timeout);
     let cmd = wasmtime_wasi::bindings::CommandPre::new(pre)
@@ -415,6 +420,7 @@ pub async fn serve_shared<C, S>(
     mut store: wasmtime::Store<Ctx<C>>,
     pre: InstancePre<Ctx<C>>,
     guest_resources: Arc<[ResourceType]>,
+    host_resources: Arc<HashMap<Box<str>, HashMap<Box<str>, (ResourceType, ResourceType)>>>,
 ) -> anyhow::Result<()>
 where
     C: Invoke + 'static,
@@ -437,6 +443,7 @@ where
                         Arc::clone(&store),
                         instance,
                         Arc::clone(&guest_resources),
+                        Arc::clone(&host_resources),
                         ty,
                         "",
                         name,
@@ -483,6 +490,7 @@ where
                                     Arc::clone(&store),
                                     instance,
                                     Arc::clone(&guest_resources),
+                                    Arc::clone(&host_resources),
                                     ty,
                                     instance_name,
                                     name,
@@ -551,12 +559,14 @@ where
 }
 
 #[instrument(level = "trace", skip_all, ret(level = "trace"))]
+#[allow(clippy::too_many_arguments)]
 pub async fn serve_stateless<C, S>(
     handlers: &mut JoinSet<()>,
     srv: S,
     clt: C,
     cx: C::Context,
     pre: InstancePre<Ctx<C>>,
+    host_resources: Arc<HashMap<Box<str>, HashMap<Box<str>, (ResourceType, ResourceType)>>>,
     engine: &Engine,
     timeout: Duration,
 ) -> anyhow::Result<()>
@@ -579,6 +589,7 @@ where
                             new_store(&engine, clt.clone(), cx.clone(), "reactor.wasm", timeout)
                         },
                         pre.clone(),
+                        Arc::clone(&host_resources),
                         ty,
                         "",
                         name,
@@ -635,6 +646,7 @@ where
                                         )
                                     },
                                     pre.clone(),
+                                    Arc::clone(&host_resources),
                                     ty,
                                     instance_name,
                                     name,
@@ -714,12 +726,22 @@ where
     C::Context: Clone + 'static,
     S: Serve,
 {
-    let (pre, engine, guest_resources) =
+    let (pre, engine, guest_resources, host_resources) =
         instantiate_pre(WASI_SNAPSHOT_PREVIEW1_REACTOR_ADAPTER, workload).await?;
 
     let mut handlers = JoinSet::new();
     if guest_resources.is_empty() {
-        serve_stateless(&mut handlers, srv, clt, cx, pre, &engine, timeout).await?;
+        serve_stateless(
+            &mut handlers,
+            srv,
+            clt,
+            cx,
+            pre,
+            host_resources,
+            &engine,
+            timeout,
+        )
+        .await?;
     } else {
         serve_shared(
             &mut handlers,
@@ -727,6 +749,7 @@ where
             new_store(&engine, clt, cx, "reactor.wasm", timeout),
             pre,
             guest_resources,
+            host_resources,
         )
         .await?;
     }
