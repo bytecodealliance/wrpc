@@ -15,7 +15,7 @@ bytes = { workspace = true }
 quinn = { workspace = true }
 tracing = { workspace = true }
 wrpc-transport = { workspace = true }
-wtransport = { workspace = true, features = ["quinn"] }
+wtransport = { workspace = true, features = ["quinn", "ring"] }
 
 [dev-dependencies]
 futures = { workspace = true }

@@ -187,4 +187,4 @@ wrpc-wasi-keyvalue = { version = "0.1.1", path = "./crates/wasi-keyvalue", defau
 wrpc-wasi-keyvalue-mem = { version = "0.1", path = "./crates/wasi-keyvalue-mem", default-features = false }
 wrpc-wasi-keyvalue-redis = { version = "0.1", path = "./crates/wasi-keyvalue-redis", default-features = false }
 wrpc-wasmtime-cli = { version = "0.5", path = "./crates/wasmtime-cli", default-features = false }
-wtransport = { version = "0.4", default-features = false }
+wtransport = { version = "0.6", default-features = false }
