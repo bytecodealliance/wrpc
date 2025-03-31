@@ -1461,6 +1461,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-component-rpc-server"
+version = "0.1.0"
+dependencies = [
+ "wit-bindgen",
+]
+
+[[package]]
 name = "hello-component-server"
 version = "0.1.0"
 dependencies = [
@@ -5394,7 +5401,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc-runtime-wasmtime"
-version = "0.27.0"
+version = "0.28.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -5532,7 +5539,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc-wasmtime-cli"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "anyhow",
  "async-nats 0.39.0",

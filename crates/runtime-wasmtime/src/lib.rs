@@ -1,6 +1,8 @@
 #![allow(clippy::type_complexity)] // TODO: https://github.com/bytecodealliance/wrpc/issues/2
 
 use core::any::Any;
+use core::borrow::Borrow;
+use core::fmt;
 use core::future::Future;
 use core::iter::zip;
 use core::pin::pin;
@@ -47,6 +49,29 @@ fn rpc_func_name(name: &str) -> &str {
         name
     } else {
         name
+    }
+}
+
+fn rpc_result_type<T: Borrow<Type>>(
+    host_resources: &HashMap<Box<str>, HashMap<Box<str>, (ResourceType, ResourceType)>>,
+    results_ty: impl IntoIterator<Item = T>,
+) -> Option<Option<Type>> {
+    let rpc_err_ty = host_resources
+        .get("wrpc:rpc/error@0.1.0")
+        .and_then(|instance| instance.get("error"));
+    let mut results_ty = results_ty.into_iter();
+    match (
+        rpc_err_ty,
+        results_ty.next().as_ref().map(Borrow::borrow),
+        results_ty.next(),
+    ) {
+        (Some((guest_rpc_err_ty, host_rpc_err_ty)), Some(Type::Result(result_ty)), None)
+            if *host_rpc_err_ty == ResourceType::host::<Error>()
+                && result_ty.err() == Some(Type::Own(*guest_rpc_err_ty)) =>
+        {
+            Some(result_ty.ok())
+        }
+        _ => None,
     }
 }
 
@@ -227,30 +252,30 @@ pub trait WrpcViewExt: WrpcView {
         Ok(*incoming)
     }
 
-    fn push_error(&mut self, error: anyhow::Error) -> anyhow::Result<Resource<Error>> {
+    fn push_error(&mut self, error: Error) -> anyhow::Result<Resource<Error>> {
         self.table()
-            .push(Error(error))
+            .push(error)
             .context("failed to push error to table")
     }
 
-    fn get_error(&mut self, error: &Resource<Error>) -> anyhow::Result<&anyhow::Error> {
-        let Error(error) = self
+    fn get_error(&mut self, error: &Resource<Error>) -> anyhow::Result<&Error> {
+        let error = self
             .table()
             .get(error)
             .context("failed to get error from table")?;
         Ok(error)
     }
 
-    fn get_error_mut(&mut self, error: &Resource<Error>) -> anyhow::Result<&mut anyhow::Error> {
-        let Error(error) = self
+    fn get_error_mut(&mut self, error: &Resource<Error>) -> anyhow::Result<&mut Error> {
+        let error = self
             .table()
             .get_mut(error)
             .context("failed to get error from table")?;
         Ok(error)
     }
 
-    fn delete_error(&mut self, error: Resource<Error>) -> anyhow::Result<anyhow::Error> {
-        let Error(error) = self
+    fn delete_error(&mut self, error: Resource<Error>) -> anyhow::Result<Error> {
+        let error = self
             .table()
             .delete(error)
             .context("failed to delete error from table")?;
@@ -287,15 +312,67 @@ pub trait WrpcViewExt: WrpcView {
 
 impl<T: WrpcView> WrpcViewExt for T {}
 
+/// Error type returned by [call]
+pub enum CallError {
+    Decode(anyhow::Error),
+    Encode(anyhow::Error),
+    Table(anyhow::Error),
+    Call(anyhow::Error),
+    TypeMismatch(anyhow::Error),
+    Write(anyhow::Error),
+    Flush(anyhow::Error),
+    Deferred(anyhow::Error),
+    PostReturn(anyhow::Error),
+    Guest(Error),
+}
+
+impl core::error::Error for CallError {}
+
+impl fmt::Debug for CallError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            CallError::Decode(error)
+            | CallError::Encode(error)
+            | CallError::Table(error)
+            | CallError::Call(error)
+            | CallError::TypeMismatch(error)
+            | CallError::Write(error)
+            | CallError::Flush(error)
+            | CallError::Deferred(error)
+            | CallError::PostReturn(error) => error.fmt(f),
+            CallError::Guest(error) => error.fmt(f),
+        }
+    }
+}
+
+impl fmt::Display for CallError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            CallError::Decode(error)
+            | CallError::Encode(error)
+            | CallError::Table(error)
+            | CallError::Call(error)
+            | CallError::TypeMismatch(error)
+            | CallError::Write(error)
+            | CallError::Flush(error)
+            | CallError::Deferred(error)
+            | CallError::PostReturn(error) => error.fmt(f),
+            CallError::Guest(error) => error.fmt(f),
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 pub async fn call<C, I, O>(
     mut store: C,
     rx: I,
     mut tx: O,
-    params_ty: impl ExactSizeIterator<Item = &Type>,
-    results_ty: impl ExactSizeIterator<Item = &Type>,
-    func: Func,
     guest_resources: &[ResourceType],
-) -> anyhow::Result<()>
+    host_resources: &HashMap<Box<str>, HashMap<Box<str>, (ResourceType, ResourceType)>>,
+    params_ty: impl ExactSizeIterator<Item = &Type>,
+    results_ty: &[Type],
+    func: Func,
+) -> Result<(), CallError>
 where
     I: AsyncRead + wrpc_transport::Index<I> + Send + Sync + Unpin + 'static,
     O: AsyncWrite + wrpc_transport::Index<O> + Send + Sync + Unpin + 'static,
@@ -307,27 +384,69 @@ where
     for (i, (v, ty)) in zip(&mut params, params_ty).enumerate() {
         read_value(&mut store, &mut rx, guest_resources, v, ty, &[i])
             .await
-            .with_context(|| format!("failed to decode parameter value {i}"))?;
+            .with_context(|| format!("failed to decode parameter value {i}"))
+            .map_err(CallError::Decode)?;
     }
     let mut results = vec![Val::Bool(false); results_ty.len()];
     func.call_async(&mut store, &params, &mut results)
         .await
-        .context("failed to call function")?;
+        .context("failed to call function")
+        .map_err(CallError::Call)?;
+
     let mut buf = BytesMut::default();
     let mut deferred = vec![];
-    for (i, (ref v, ty)) in zip(results, results_ty).enumerate() {
-        let mut enc = ValEncoder::new(store.as_context_mut(), ty, guest_resources);
-        enc.encode(v, &mut buf)
-            .with_context(|| format!("failed to encode result value {i}"))?;
-        deferred.push(enc.deferred);
+    match (
+        &rpc_result_type(host_resources, results_ty),
+        results.as_slice(),
+    ) {
+        (None, results) => {
+            for (i, (v, ty)) in zip(results, results_ty).enumerate() {
+                let mut enc = ValEncoder::new(store.as_context_mut(), ty, guest_resources);
+                enc.encode(v, &mut buf)
+                    .with_context(|| format!("failed to encode result value {i}"))
+                    .map_err(CallError::Encode)?;
+                deferred.push(enc.deferred);
+            }
+        }
+        // `result<_, rpc-eror>`
+        (Some(None), [Val::Result(Ok(None))]) => {}
+        // `result<T, rpc-eror>`
+        (Some(Some(ty)), [Val::Result(Ok(Some(v)))]) => {
+            let mut enc = ValEncoder::new(store.as_context_mut(), ty, guest_resources);
+            enc.encode(v, &mut buf)
+                .context("failed to encode result value 0")
+                .map_err(CallError::Encode)?;
+            deferred.push(enc.deferred);
+        }
+        (Some(..), [Val::Result(Err(Some(err)))]) => {
+            let Val::Resource(err) = &**err else {
+                return Err(CallError::TypeMismatch(anyhow!(
+                    "RPC result error value is not a resource"
+                )));
+            };
+            let mut store = store.as_context_mut();
+            let err = err
+                .try_into_resource(&mut store)
+                .context("RPC result error resource type mismatch")
+                .map_err(CallError::TypeMismatch)?;
+            let err = store
+                .data_mut()
+                .delete_error(err)
+                .map_err(CallError::Table)?;
+            return Err(CallError::Guest(err));
+        }
+        _ => return Err(CallError::TypeMismatch(anyhow!("RPC result type mismatch"))),
     }
+
     debug!("transmitting results");
     tx.write_all(&buf)
         .await
-        .context("failed to transmit results")?;
+        .context("failed to transmit results")
+        .map_err(CallError::Write)?;
     tx.flush()
         .await
-        .context("failed to flush outgoing stream")?;
+        .context("failed to flush outgoing stream")
+        .map_err(CallError::Flush)?;
     if let Err(err) = tx.shutdown().await {
         trace!(?err, "failed to shutdown outgoing stream");
     }
@@ -339,10 +458,12 @@ where
                 f(w).await
             }),
     )
-    .await?;
+    .await
+    .map_err(CallError::Deferred)?;
     func.post_return_async(&mut store)
         .await
-        .context("failed to perform post-return cleanup")?;
+        .context("failed to perform post-return cleanup")
+        .map_err(CallError::PostReturn)?;
     Ok(())
 }
 

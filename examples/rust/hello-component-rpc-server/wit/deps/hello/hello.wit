@@ -1,0 +1,15 @@
+package wrpc-examples:hello;
+
+interface handler {
+    use wrpc:rpc/error@0.1.0.{error};
+
+    hello: func() -> result<string, error>;
+}
+
+world client {
+    import handler;
+}
+
+world server {
+    export handler;
+}

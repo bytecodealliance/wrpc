@@ -42,7 +42,7 @@ impl<T: WrpcView> HostInvocation for WrpcRpcImpl<T> {
                 Ok(Ok((tx, rx)))
             }
             Err(error) => {
-                let error = self.0.push_error(error)?;
+                let error = self.0.push_error(Error::Invoke(error))?;
                 Ok(Err(error))
             }
         }
@@ -112,7 +112,7 @@ impl<T: WrpcView> HostIncomingChannel for WrpcRpcImpl<T> {
                 Ok(Ok(incoming))
             }
             Err(error) => {
-                let error = self.0.push_error(error)?;
+                let error = self.0.push_error(Error::IncomingIndex(error))?;
                 Ok(Err(error))
             }
         }
@@ -185,7 +185,7 @@ impl<T: WrpcView> HostOutgoingChannel for WrpcRpcImpl<T> {
                 Ok(Ok(outgoing))
             }
             Err(error) => {
-                let error = self.0.push_error(error)?;
+                let error = self.0.push_error(Error::OutgoingIndex(error))?;
                 Ok(Err(error))
             }
         }
