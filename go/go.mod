@@ -4,7 +4,7 @@ go 1.23.0
 
 toolchain go1.24.1
 
-require github.com/nats-io/nats.go v1.40.1
+require github.com/nats-io/nats.go v1.41.0
 
 require (
 	github.com/klauspost/compress v1.18.0 // indirect
