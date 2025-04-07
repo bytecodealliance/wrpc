@@ -1,0 +1,24 @@
+package wasiext:dynamic@0.1.0;
+
+interface types {
+    use wasi:io/poll@0.2.0.{pollable};
+
+    resource async-return {}
+    resource dynamic-future {}
+    resource dynamic-stream {}
+
+    resource future-send {
+        subscribe: func() -> pollable;
+
+        // returns false if the receiver was closed before the value was received
+        await: func() -> bool;
+    }
+
+    resource stream-send {
+        subscribe: func() -> pollable;
+
+        // returns 0 if the receiver was closed before any values were received, otherwise
+        // returns the count of values received
+        await: func() -> u32;
+    }
+}
