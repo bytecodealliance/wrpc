@@ -56,7 +56,7 @@ jobs:
         config:
           - target: aarch64-unknown-linux-musl
             test-bin: |
-              nix profile install --inputs-from . 'nixpkgs#qemu'
+              nix profile install --inputs-from . 'nixpkgs-unstable#qemu'
               qemu-aarch64 ./result/bin/wit-bindgen-wrpc --version
               qemu-aarch64 ./result/bin/wrpc-wasmtime --version
             test-oci: docker load < ./result
@@ -77,8 +77,8 @@ jobs:
           - target: riscv64gc-unknown-linux-gnu-fhs
             test-bin: |
               nix build -L '.#wrpc-riscv64gc-unknown-linux-gnu'
-              nix shell --inputs-from . 'nixpkgs#qemu' -c qemu-riscv64 ./result/bin/wit-bindgen-wrpc --version
-              nix shell --inputs-from . 'nixpkgs#qemu' -c qemu-riscv64 ./result/bin/wrpc-wasmtime --version
+              nix shell --inputs-from . 'nixpkgs-unstable#qemu' -c qemu-riscv64 ./result/bin/wit-bindgen-wrpc --version
+              nix shell --inputs-from . 'nixpkgs-unstable#qemu' -c qemu-riscv64 ./result/bin/wrpc-wasmtime --version
 
           - target: x86_64-apple-darwin
             test-bin: |
@@ -88,7 +88,7 @@ jobs:
 
           - target: x86_64-pc-windows-gnu
             test-bin: |
-              nix profile install --inputs-from . 'nixpkgs#wine64'
+              nix profile install --inputs-from . 'nixpkgs-unstable#wine64'
               wine64 ./result/bin/wit-bindgen-wrpc.exe --version
               wine64 ./result/bin/wrpc-wasmtime.exe --version
             test-oci: docker load < ./result
@@ -365,7 +365,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install `skopeo`
-        run: nix profile install --inputs-from . 'nixpkgs#skopeo'
+        run: nix profile install --inputs-from . 'nixpkgs-unstable#skopeo'
 
       - name: Build `wrpc` image
         run: nix build -L .#wrpc-oci
