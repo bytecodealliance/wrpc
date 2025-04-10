@@ -5395,7 +5395,6 @@ dependencies = [
  "wasm-tokio",
  "wasmtime",
  "wasmtime-wasi",
- "wit-parser 0.220.1",
  "wrpc-introspect",
  "wrpc-transport",
 ]

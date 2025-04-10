@@ -21,6 +21,5 @@ uuid = { workspace = true, features = ["std", "v7"] }
 wasm-tokio = { workspace = true }
 wasmtime = { workspace = true }
 wasmtime-wasi = { workspace = true }
-wit-parser = { workspace = true }
 wrpc-introspect = { workspace = true }
 wrpc-transport = { workspace = true }

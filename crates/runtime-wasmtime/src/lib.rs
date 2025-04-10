@@ -1,14 +1,13 @@
 #![allow(clippy::type_complexity)] // TODO: https://github.com/bytecodealliance/wrpc/issues/2
 
 use core::any::Any;
-use core::borrow::Borrow;
 use core::fmt;
 use core::future::Future;
 use core::iter::zip;
 use core::pin::pin;
 use core::time::Duration;
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::{anyhow, bail, Context as _};
@@ -16,10 +15,10 @@ use bytes::{Bytes, BytesMut};
 use futures::future::try_join_all;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt as _};
 use tokio_util::codec::Encoder;
-use tracing::{debug, instrument, trace, warn};
+use tracing::{debug, trace};
 use uuid::Uuid;
-use wasmtime::component::{types, Func, Resource, ResourceAny, ResourceType, Type, Val};
-use wasmtime::{AsContextMut, Engine};
+use wasmtime::component::{Func, Resource, ResourceAny, ResourceType, Type, Val};
+use wasmtime::AsContextMut;
 use wasmtime_wasi::{IoView, WasiView};
 use wrpc_transport::Invoke;
 
@@ -32,48 +31,12 @@ mod codec;
 mod polyfill;
 pub mod rpc;
 mod serve;
+mod types;
 
 pub use codec::*;
 pub use polyfill::*;
 pub use serve::*;
-
-// this returns the RPC name for a wasmtime function name.
-// Unfortunately, the [`types::ComponentFunc`] does not include the kind information and we want to
-// avoid (re-)parsing the WIT here.
-fn rpc_func_name(name: &str) -> &str {
-    if let Some(name) = name.strip_prefix("[constructor]") {
-        name
-    } else if let Some(name) = name.strip_prefix("[static]") {
-        name
-    } else if let Some(name) = name.strip_prefix("[method]") {
-        name
-    } else {
-        name
-    }
-}
-
-fn rpc_result_type<T: Borrow<Type>>(
-    host_resources: &HashMap<Box<str>, HashMap<Box<str>, (ResourceType, ResourceType)>>,
-    results_ty: impl IntoIterator<Item = T>,
-) -> Option<Option<Type>> {
-    let rpc_err_ty = host_resources
-        .get("wrpc:rpc/error@0.1.0")
-        .and_then(|instance| instance.get("error"));
-    let mut results_ty = results_ty.into_iter();
-    match (
-        rpc_err_ty,
-        results_ty.next().as_ref().map(Borrow::borrow),
-        results_ty.next(),
-    ) {
-        (Some((guest_rpc_err_ty, host_rpc_err_ty)), Some(Type::Result(result_ty)), None)
-            if *host_rpc_err_ty == ResourceType::host::<Error>()
-                && result_ty.err() == Some(Type::Own(*guest_rpc_err_ty)) =>
-        {
-            Some(result_ty.ok())
-        }
-        _ => None,
-    }
-}
+pub use types::*;
 
 pub struct RemoteResource(pub Bytes);
 
@@ -396,7 +359,7 @@ where
     let mut buf = BytesMut::default();
     let mut deferred = vec![];
     match (
-        &rpc_result_type(host_resources, results_ty),
+        CustomReturnType::new(host_resources, results_ty),
         results.as_slice(),
     ) {
         (None, results) => {
@@ -409,16 +372,16 @@ where
             }
         }
         // `result<_, rpc-eror>`
-        (Some(None), [Val::Result(Ok(None))]) => {}
+        (Some(CustomReturnType::Rpc(None)), [Val::Result(Ok(None))]) => {}
         // `result<T, rpc-eror>`
-        (Some(Some(ty)), [Val::Result(Ok(Some(v)))]) => {
-            let mut enc = ValEncoder::new(store.as_context_mut(), ty, guest_resources);
+        (Some(CustomReturnType::Rpc(Some(ty))), [Val::Result(Ok(Some(v)))]) => {
+            let mut enc = ValEncoder::new(store.as_context_mut(), &ty, guest_resources);
             enc.encode(v, &mut buf)
                 .context("failed to encode result value 0")
                 .map_err(CallError::Encode)?;
             deferred.push(enc.deferred);
         }
-        (Some(..), [Val::Result(Err(Some(err)))]) => {
+        (Some(CustomReturnType::Rpc(..)), [Val::Result(Err(Some(err)))]) => {
             let Val::Resource(err) = &**err else {
                 return Err(CallError::TypeMismatch(anyhow!(
                     "RPC result error value is not a resource"
@@ -465,95 +428,4 @@ where
         .context("failed to perform post-return cleanup")
         .map_err(CallError::PostReturn)?;
     Ok(())
-}
-
-/// Recursively iterates the component item type and collects all exported resource types
-#[instrument(level = "debug", skip_all)]
-pub fn collect_item_resource_exports(
-    engine: &Engine,
-    ty: types::ComponentItem,
-    resources: &mut impl Extend<types::ResourceType>,
-) {
-    match ty {
-        types::ComponentItem::ComponentFunc(_)
-        | types::ComponentItem::CoreFunc(_)
-        | types::ComponentItem::Module(_)
-        | types::ComponentItem::Type(_) => {}
-        types::ComponentItem::Component(ty) => {
-            collect_component_resource_exports(engine, &ty, resources)
-        }
-
-        types::ComponentItem::ComponentInstance(ty) => {
-            collect_instance_resource_exports(engine, &ty, resources)
-        }
-        types::ComponentItem::Resource(ty) => {
-            debug!(?ty, "collect resource export");
-            resources.extend([ty])
-        }
-    }
-}
-
-/// Recursively iterates the instance type and collects all exported resource types
-#[instrument(level = "debug", skip_all)]
-pub fn collect_instance_resource_exports(
-    engine: &Engine,
-    ty: &types::ComponentInstance,
-    resources: &mut impl Extend<types::ResourceType>,
-) {
-    for (name, ty) in ty.exports(engine) {
-        trace!(name, ?ty, "collect instance item resource exports");
-        collect_item_resource_exports(engine, ty, resources);
-    }
-}
-
-/// Recursively iterates the component type and collects all exported resource types
-#[instrument(level = "debug", skip_all)]
-pub fn collect_component_resource_exports(
-    engine: &Engine,
-    ty: &types::Component,
-    resources: &mut impl Extend<types::ResourceType>,
-) {
-    for (name, ty) in ty.exports(engine) {
-        trace!(name, ?ty, "collect component item resource exports");
-        collect_item_resource_exports(engine, ty, resources);
-    }
-}
-
-/// Iterates the component type and collects all imported resource types
-#[instrument(level = "debug", skip_all)]
-pub fn collect_component_resource_imports(
-    engine: &Engine,
-    ty: &types::Component,
-    resources: &mut BTreeMap<Box<str>, HashMap<Box<str>, types::ResourceType>>,
-) {
-    for (name, ty) in ty.imports(engine) {
-        match ty {
-            types::ComponentItem::ComponentFunc(..)
-            | types::ComponentItem::CoreFunc(..)
-            | types::ComponentItem::Module(..)
-            | types::ComponentItem::Type(..)
-            | types::ComponentItem::Component(..) => {}
-            types::ComponentItem::ComponentInstance(ty) => {
-                let instance = name;
-                for (name, ty) in ty.exports(engine) {
-                    if let types::ComponentItem::Resource(ty) = ty {
-                        debug!(instance, name, ?ty, "collect instance resource import");
-                        if let Some(resources) = resources.get_mut(instance) {
-                            resources.insert(name.into(), ty);
-                        } else {
-                            resources.insert(instance.into(), HashMap::from([(name.into(), ty)]));
-                        }
-                    }
-                }
-            }
-            types::ComponentItem::Resource(ty) => {
-                debug!(name, "collect component resource import");
-                if let Some(resources) = resources.get_mut("") {
-                    resources.insert(name.into(), ty);
-                } else {
-                    resources.insert("".into(), HashMap::from([(name.into(), ty)]));
-                }
-            }
-        }
-    }
 }
