@@ -5,7 +5,7 @@ go 1.23.0
 toolchain go1.24.1
 
 require (
-	github.com/nats-io/nats.go v1.41.0
+	github.com/nats-io/nats.go v1.41.1
 	wrpc.io/go v0.1.0
 )
 
