@@ -18,7 +18,10 @@ use wasmtime_wasi::WasiView;
 use wrpc_transport::{Index as _, Invoke, InvokeExt as _};
 
 use crate::rpc::Error;
-use crate::{read_value, rpc_func_name, rpc_result_type, ValEncoder, WrpcView, WrpcViewExt as _};
+use crate::{
+    read_value, rpc_func_name, CustomReturnType, DynamicResources, ValEncoder, WrpcView,
+    WrpcViewExt as _,
+};
 
 /// Polyfill [`types::ComponentItem`] in a [`LinkerInstance`] using [`wrpc_transport::Invoke`]
 #[instrument(level = "trace", skip_all)]
@@ -27,6 +30,7 @@ pub fn link_item<V>(
     linker: &mut LinkerInstance<V>,
     guest_resources: impl Into<Arc<[ResourceType]>>,
     host_resources: impl Into<Arc<HashMap<Box<str>, HashMap<Box<str>, (ResourceType, ResourceType)>>>>,
+    dynamic_resources: &DynamicResources,
     ty: types::ComponentItem,
     instance: impl Into<Arc<str>>,
     name: impl Into<Arc<str>>,
@@ -62,6 +66,7 @@ where
                     linker,
                     Arc::clone(&guest_resources),
                     Arc::clone(&host_resources),
+                    dynamic_resources,
                     ty,
                     "",
                     name,
@@ -79,6 +84,7 @@ where
                 &mut linker,
                 guest_resources,
                 host_resources,
+                dynamic_resources,
                 ty,
                 name,
             )?;
@@ -94,7 +100,7 @@ where
             };
             ensure!(ty == *guest_ty, "{instance}/{name} resource type mismatch");
 
-            debug!(?instance, ?name, "linking resource");
+            debug!(?instance, ?name, "linking host resource");
             linker.resource(&name, *host_ty, |_, _| Ok(()))?;
         }
     }
@@ -108,6 +114,7 @@ pub fn link_instance<V>(
     linker: &mut LinkerInstance<V>,
     guest_resources: impl Into<Arc<[ResourceType]>>,
     host_resources: impl Into<Arc<HashMap<Box<str>, HashMap<Box<str>, (ResourceType, ResourceType)>>>>,
+    dynamic_resources: &DynamicResources,
     ty: types::ComponentInstance,
     name: impl Into<Arc<str>>,
 ) -> wasmtime::Result<()>
@@ -124,6 +131,7 @@ where
             linker,
             Arc::clone(&guest_resources),
             Arc::clone(&host_resources),
+            dynamic_resources,
             ty,
             Arc::clone(&instance),
             name,
@@ -242,7 +250,7 @@ where
     let name = name.into();
     let guest_resources = guest_resources.into();
     let host_resources = host_resources.into();
-    match rpc_result_type(&host_resources, ty.results()) {
+    match CustomReturnType::new(&host_resources, ty.results()) {
         None => linker.func_new_async(&Arc::clone(&name), move |mut store, params, results| {
             let ty = ty.clone();
             let instance = Arc::clone(&instance);
@@ -271,7 +279,7 @@ where
             )
         }),
         // `result<_, rpc-eror>`
-        Some(None) => {
+        Some(CustomReturnType::Rpc(None)) => {
             linker.func_new_async(&Arc::clone(&name), move |mut store, params, results| {
                 let ty = ty.clone();
                 let instance = Arc::clone(&instance);
@@ -312,7 +320,7 @@ where
             })
         }
         // `result<T, rpc-eror>`
-        Some(Some(result_ty)) => {
+        Some(CustomReturnType::Rpc(Some(result_ty))) => {
             linker.func_new_async(&Arc::clone(&name), move |mut store, params, results| {
                 let ty = ty.clone();
                 let instance = Arc::clone(&instance);
@@ -355,5 +363,6 @@ where
                 )
             })
         }
+        Some(CustomReturnType::AsyncReturn(ty)) => todo!("async return"),
     }
 }
