@@ -9,24 +9,24 @@ import (
 	"math"
 )
 
-func PutUint16(buf []byte, x uint16) {
-	binary.PutUvarint(buf, uint64(x))
+func PutUint16(buf []byte, x uint16) int {
+	return binary.PutUvarint(buf, uint64(x))
 }
 
 func AppendUint16(buf []byte, x uint16) []byte {
 	return binary.AppendUvarint(buf, uint64(x))
 }
 
-func PutUint32(buf []byte, x uint32) {
-	binary.PutUvarint(buf, uint64(x))
+func PutUint32(buf []byte, x uint32) int {
+	return binary.PutUvarint(buf, uint64(x))
 }
 
 func AppendUint32(buf []byte, x uint32) []byte {
 	return binary.AppendUvarint(buf, uint64(x))
 }
 
-func PutUint64(buf []byte, x uint64) {
-	binary.PutUvarint(buf, x)
+func PutUint64(buf []byte, x uint64) int {
+	return binary.PutUvarint(buf, x)
 }
 
 func AppendUint64(buf []byte, x uint64) []byte {
@@ -53,42 +53,46 @@ func WriteUint8(v uint8, w ByteWriter) error {
 	return w.WriteByte(v)
 }
 
-func WriteUint16(v uint16, w ByteWriter) error {
+func WriteUint16(v uint16, w ByteWriter) (int, error) {
 	b := make([]byte, binary.MaxVarintLen16)
 	i := binary.PutUvarint(b, uint64(v))
-	_, err := w.Write(b[:i])
-	return err
+	return w.Write(b[:i])
 }
 
-func WriteUint32(v uint32, w ByteWriter) error {
+func WriteUint32(v uint32, w ByteWriter) (int, error) {
 	b := make([]byte, binary.MaxVarintLen32)
 	i := binary.PutUvarint(b, uint64(v))
-	_, err := w.Write(b[:i])
-	return err
+	return w.Write(b[:i])
 }
 
-func WriteUint64(v uint64, w ByteWriter) error {
+func WriteUint64(v uint64, w ByteWriter) (int, error) {
 	b := make([]byte, binary.MaxVarintLen64)
 	i := binary.PutUvarint(b, uint64(v))
-	_, err := w.Write(b[:i])
-	return err
+	return w.Write(b[:i])
 }
 
-func WriteString(v string, w ByteWriter) error {
+func WriteString(v string, w ByteWriter) (int, error) {
 	n := len(v)
 	if n > math.MaxUint32 {
-		return fmt.Errorf("string byte length of %d overflows a 32-bit integer", n)
+		return 0, fmt.Errorf("string byte length of %d overflows a 32-bit integer", n)
 	}
 	slog.Debug("writing string byte length", "len", n)
-	if err := WriteUint32(uint32(n), w); err != nil {
-		return fmt.Errorf("failed to write string length of %d: %w", n, err)
+	wn, err := WriteUint32(uint32(n), w)
+	if err != nil {
+		return wn, fmt.Errorf("failed to write string length of %d: %w", n, err)
 	}
 	slog.Debug("writing string bytes")
-	_, err := w.Write([]byte(v))
-	if err != nil {
-		return fmt.Errorf("failed to write string bytes: %w", err)
+	n, err = w.Write([]byte(v))
+	if n > 0 {
+		if math.MaxInt-n < wn {
+			return math.MaxInt, errors.New("written byte count overflows int")
+		}
+		wn += n
 	}
-	return nil
+	if err != nil {
+		return wn, fmt.Errorf("failed to write string bytes: %w", err)
+	}
+	return wn, nil
 }
 
 // ReadString reads a string from `r` and returns it
@@ -129,7 +133,7 @@ var errOverflow16 = errors.New("wrpc: varint overflows a 16-bit integer")
 func ReadUint16(r ByteReader) (uint16, error) {
 	var x uint16
 	var s uint8
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		b, err := r.ReadByte()
 		if err != nil {
 			if i > 0 && err == io.EOF {
@@ -158,7 +162,7 @@ var errOverflow32 = errors.New("wrpc: varint overflows a 32-bit integer")
 func ReadUint32(r ByteReader) (uint32, error) {
 	var x uint32
 	var s uint8
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		b, err := r.ReadByte()
 		if err != nil {
 			if i > 0 && err == io.EOF {

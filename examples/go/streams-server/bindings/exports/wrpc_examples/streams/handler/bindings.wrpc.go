@@ -65,7 +65,8 @@ func (v *Req) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, err
 					return errors.New("total outgoing pending stream element count would overflow a 32-bit unsigned integer")
 				}
 				slog.Debug("writing pending stream chunk length", "len", n)
-				if err = wrpc.WriteUint32(uint32(n), w); err != nil {
+				_, err = wrpc.WriteUint32(uint32(n), w)
+				if err != nil {
 					return fmt.Errorf("failed to write pending stream chunk length of %d: %w", n, err)
 				}
 				for _, v := range chunk {
@@ -151,7 +152,8 @@ func (v *Req) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, err
 				}
 				if n > 0 {
 					slog.Debug("writing pending byte stream chunk length", "len", n)
-					if err := wrpc.WriteUint32(uint32(n), w); err != nil {
+					_, err = wrpc.WriteUint32(uint32(n), w)
+					if err != nil {
 						return fmt.Errorf("failed to write pending byte stream chunk length of %d: %w", n, err)
 					}
 					_, err = w.Write(chunk[:n])
@@ -517,7 +519,8 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 						return errors.New("total outgoing pending stream element count would overflow a 32-bit unsigned integer")
 					}
 					slog.Debug("writing pending stream chunk length", "len", n)
-					if err = wrpc.WriteUint32(uint32(n), w); err != nil {
+					_, err = wrpc.WriteUint32(uint32(n), w)
+					if err != nil {
 						return fmt.Errorf("failed to write pending stream chunk length of %d: %w", n, err)
 					}
 					for _, v := range chunk {
@@ -603,7 +606,8 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 					}
 					if n > 0 {
 						slog.Debug("writing pending byte stream chunk length", "len", n)
-						if err := wrpc.WriteUint32(uint32(n), w); err != nil {
+						_, err = wrpc.WriteUint32(uint32(n), w)
+						if err != nil {
 							return fmt.Errorf("failed to write pending byte stream chunk length of %d: %w", n, err)
 						}
 						_, err = w.Write(chunk[:n])
