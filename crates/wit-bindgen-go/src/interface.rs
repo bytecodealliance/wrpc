@@ -2572,7 +2572,7 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
                 uwrite!(self.src, "r{i}, ");
             }
             self.push_str("err ");
-            if results.len() > 0 {
+            if !results.is_empty() {
                 self.push_str(":");
             }
             self.push_str("= h.");

@@ -147,7 +147,7 @@ pub fn invocation_subject(prefix: &str, instance: &str, func: &str) -> String {
 }
 
 fn corrupted_memory_error() -> std::io::Error {
-    std::io::Error::new(std::io::ErrorKind::Other, "corrupted memory state")
+    std::io::Error::other("corrupted memory state")
 }
 
 /// Transport subscriber
@@ -735,8 +735,7 @@ impl RootParamWriter {
                         status: Some(code),
                         description,
                         ..
-                    })) if !code.is_success() => Poll::Ready(Err(std::io::Error::new(
-                        std::io::ErrorKind::Other,
+                    })) if !code.is_success() => Poll::Ready(Err(std::io::Error::other(
                         if let Some(description) = description {
                             format!("received a response with code `{code}` ({description})")
                         } else {
@@ -757,13 +756,11 @@ impl RootParamWriter {
                             return Poll::Ready(Err(corrupted_memory_error()));
                         };
                         let tx = SubjectWriter::new(nats, Subject::from(param_subject(&tx)), tasks);
-                        let indexed = indexed.into_inner().map_err(|err| {
-                            std::io::Error::new(std::io::ErrorKind::Other, err.to_string())
-                        })?;
+                        let indexed = indexed
+                            .into_inner()
+                            .map_err(|err| std::io::Error::other(err.to_string()))?;
                         for (path, tx_tx) in indexed {
-                            let tx = tx.index(&path).map_err(|err| {
-                                std::io::Error::new(std::io::ErrorKind::Other, err)
-                            })?;
+                            let tx = tx.index(&path).map_err(std::io::Error::other)?;
                             tx_tx.send(tx).map_err(|_| {
                                 std::io::Error::from(std::io::ErrorKind::BrokenPipe)
                             })?;
@@ -820,9 +817,9 @@ impl wrpc_transport::Index<IndexedParamWriter> for RootParamWriter {
             Self::Corrupted => Err(anyhow!(corrupted_memory_error())),
             Self::Handshaking { indexed, .. } => {
                 let (tx_tx, tx_rx) = oneshot::channel();
-                let mut indexed = indexed.lock().map_err(|err| {
-                    std::io::Error::new(std::io::ErrorKind::Other, err.to_string())
-                })?;
+                let mut indexed = indexed
+                    .lock()
+                    .map_err(|err| std::io::Error::other(err.to_string()))?;
                 indexed.push((path.to_vec(), tx_tx));
                 Ok(IndexedParamWriter::Handshaking {
                     tx_rx,
@@ -907,13 +904,11 @@ impl IndexedParamWriter {
                         let Self::Handshaking { indexed, .. } = mem::take(&mut *self) else {
                             return Poll::Ready(Err(corrupted_memory_error()));
                         };
-                        let indexed = indexed.into_inner().map_err(|err| {
-                            std::io::Error::new(std::io::ErrorKind::Other, err.to_string())
-                        })?;
+                        let indexed = indexed
+                            .into_inner()
+                            .map_err(|err| std::io::Error::other(err.to_string()))?;
                         for (path, tx_tx) in indexed {
-                            let tx = tx.index(&path).map_err(|err| {
-                                std::io::Error::new(std::io::ErrorKind::Other, err)
-                            })?;
+                            let tx = tx.index(&path).map_err(std::io::Error::other)?;
                             tx_tx.send(tx).map_err(|_| {
                                 std::io::Error::from(std::io::ErrorKind::BrokenPipe)
                             })?;
@@ -938,9 +933,9 @@ impl wrpc_transport::Index<Self> for IndexedParamWriter {
             Self::Corrupted => Err(anyhow!(corrupted_memory_error())),
             Self::Handshaking { indexed, .. } => {
                 let (tx_tx, tx_rx) = oneshot::channel();
-                let mut indexed = indexed.lock().map_err(|err| {
-                    std::io::Error::new(std::io::ErrorKind::Other, err.to_string())
-                })?;
+                let mut indexed = indexed
+                    .lock()
+                    .map_err(|err| std::io::Error::other(err.to_string()))?;
                 indexed.push((path.to_vec(), tx_tx));
                 Ok(Self::Handshaking {
                     tx_rx,

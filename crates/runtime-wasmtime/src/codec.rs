@@ -791,9 +791,7 @@ where
         Type::Own(ty) | Type::Borrow(ty) => {
             if *ty == ResourceType::host::<DynInputStream>() {
                 let mut store = store.as_context_mut();
-                let r = r
-                    .index(path)
-                    .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))?;
+                let r = r.index(path).map_err(std::io::Error::other)?;
                 // TODO: Implement a custom reader, this approach ignores the stream end (`\0`),
                 // which will could potentially break/hang with some transports
                 let res = store
@@ -807,7 +805,7 @@ where
                     .map_err(|err| std::io::Error::new(std::io::ErrorKind::OutOfMemory, err))?;
                 let v = res
                     .try_into_resource_any(store)
-                    .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))?;
+                    .map_err(std::io::Error::other)?;
                 *val = Val::Resource(v);
                 Ok(())
             } else if resources.contains(ty) {
@@ -858,7 +856,7 @@ where
                     .map_err(|err| std::io::Error::new(std::io::ErrorKind::OutOfMemory, err))?;
                 let resource = resource
                     .try_into_resource_any(store)
-                    .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))?;
+                    .map_err(std::io::Error::other)?;
                 *val = Val::Resource(resource);
                 Ok(())
             }
