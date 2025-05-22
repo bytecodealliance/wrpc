@@ -43,7 +43,8 @@ func (v *ByteStreamWriter) WriteTo(w ByteWriter) (err error) {
 			return fmt.Errorf("pending byte stream chunk length of %d overflows a 32-bit integer", n)
 		}
 		slog.Debug("writing pending byte stream chunk length", "len", n)
-		if err := WriteUint32(uint32(n), buf); err != nil {
+		_, err = WriteUint32(uint32(n), buf)
+		if err != nil {
 			return fmt.Errorf("failed to write pending byte stream chunk length of %d: %w", n, err)
 		}
 		_, err = buf.Write(v.chunk[:n])

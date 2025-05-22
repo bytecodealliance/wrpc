@@ -1,6 +1,7 @@
 package wrpc
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -13,39 +14,47 @@ func Slice[T any](v []T) *[]T {
 	return &v
 }
 
-func WriteByteList(v []byte, w ByteWriter) error {
+func WriteByteList(v []byte, w ByteWriter) (int, error) {
 	n := len(v)
 	if n > math.MaxUint32 {
-		return fmt.Errorf("byte list length of %d overflows a 32-bit integer", n)
+		return 0, fmt.Errorf("byte list length of %d overflows a 32-bit integer", n)
 	}
 	slog.Debug("writing byte list length", "len", n)
-	if err := WriteUint32(uint32(n), w); err != nil {
-		return fmt.Errorf("failed to write list length of %d: %w", n, err)
+	wn, err := WriteUint32(uint32(n), w)
+	if err != nil {
+		return wn, fmt.Errorf("failed to write list length of %d: %w", n, err)
 	}
 	slog.Debug("writing byte list contents")
-	_, err := w.Write(v)
-	if err != nil {
-		return fmt.Errorf("failed to write byte list contents: %w", err)
+	n, err = w.Write(v)
+	if n > 0 {
+		if math.MaxInt-n < wn {
+			return math.MaxInt, errors.New("written byte count overflows int")
+		}
+		wn += n
 	}
-	return nil
+	if err != nil {
+		return wn, fmt.Errorf("failed to write byte list contents: %w", err)
+	}
+	return wn, nil
 }
 
-func WriteList[T any](v []T, w ByteWriter, f func(T, ByteWriter) error) error {
+func WriteList[T any](v []T, w ByteWriter, f func(T, ByteWriter) error) (int, error) {
 	n := len(v)
 	if n > math.MaxUint32 {
-		return fmt.Errorf("list length of %d overflows a 32-bit integer", n)
+		return 0, fmt.Errorf("list length of %d overflows a 32-bit integer", n)
 	}
 	slog.Debug("writing list length", "len", n)
-	if err := WriteUint32(uint32(n), w); err != nil {
-		return fmt.Errorf("failed to write list length of %d: %w", n, err)
+	wn, err := WriteUint32(uint32(n), w)
+	if err != nil {
+		return wn, fmt.Errorf("failed to write list length of %d: %w", n, err)
 	}
 	for i := range v {
 		slog.Debug("writing list element", "index", i)
 		if err := f(v[i], w); err != nil {
-			return fmt.Errorf("failed to write list element %d: %w", i, err)
+			return wn, fmt.Errorf("failed to write list element %d: %w", i, err)
 		}
 	}
-	return nil
+	return wn, nil
 }
 
 // ReadByteList reads a []byte from `r` and returns it

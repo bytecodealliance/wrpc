@@ -1999,7 +1999,8 @@ impl InterfaceGenerator<'_> {
                         return {fmt}.Errorf("pending byte list future length of %d overflows a 32-bit integer", n)
                     }}
                     {slog}.Debug("writing pending byte list future length", "len", n)
-                    if err := {wrpc}.WriteUint32(uint32(n), w); err != nil {{
+                    _, err = {wrpc}.WriteUint32(uint32(n), w)
+                    if err != nil {{
                         return {fmt}.Errorf("failed to write pending byte list future length of %d: %w", n, err)
                     }}
                     {slog}.Debug("writing pending byte list future contents", "buf", chunk[:n])
@@ -2105,7 +2106,8 @@ impl InterfaceGenerator<'_> {
                         }}
                         if n > 0 {{
                             {slog}.Debug("writing pending byte stream chunk length", "len", n)
-                            if err := {wrpc}.WriteUint32(uint32(n), w); err != nil {{
+                            _, err = {wrpc}.WriteUint32(uint32(n), w)
+                            if err != nil {{
                                 return {fmt}.Errorf("failed to write pending byte stream chunk length of %d: %w", n, err)
                             }}
                             _, err = w.Write(chunk[:n])
@@ -2174,7 +2176,8 @@ impl InterfaceGenerator<'_> {
                         return {errors}.New("total outgoing pending stream element count would overflow a 32-bit unsigned integer")
                     }}
                     {slog}.Debug("writing pending stream chunk length", "len", n)
-                    if err = {wrpc}.WriteUint32(uint32(n), w); err != nil {{
+                    _, err = {wrpc}.WriteUint32(uint32(n), w)
+                    if err != nil {{
                         return {fmt}.Errorf("failed to write pending stream chunk length of %d: %w", n, err)
                     }}
                     for _, v := range chunk {{
