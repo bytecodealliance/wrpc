@@ -23,10 +23,7 @@ impl AsyncRead for NoopStream {
         _: &mut Context<'_>,
         _: &mut tokio::io::ReadBuf<'_>,
     ) -> Poll<std::io::Result<()>> {
-        Poll::Ready(Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            "should not be called",
-        )))
+        Poll::Ready(Err(std::io::Error::other("should not be called")))
     }
 }
 
@@ -36,24 +33,15 @@ impl AsyncWrite for NoopStream {
         _: &mut Context<'_>,
         _: &[u8],
     ) -> Poll<std::io::Result<usize>> {
-        Poll::Ready(Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            "should not be called",
-        )))
+        Poll::Ready(Err(std::io::Error::other("should not be called")))
     }
 
     fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        Poll::Ready(Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            "should not be called",
-        )))
+        Poll::Ready(Err(std::io::Error::other("should not be called")))
     }
 
     fn poll_shutdown(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        Poll::Ready(Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            "should not be called",
-        )))
+        Poll::Ready(Err(std::io::Error::other("should not be called")))
     }
 }
 

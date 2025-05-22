@@ -320,7 +320,7 @@ impl Index<Self> for Incoming {
         let mut index = self
             .index
             .lock()
-            .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err.to_string()))?;
+            .map_err(|err| std::io::Error::other(err.to_string()))?;
         trace!(?path, "taking index subscription");
         let rx = index
             .take_rx(&path)
@@ -462,7 +462,7 @@ async fn ingress(
             trace!("locking index trie");
             let mut index = index
                 .lock()
-                .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err.to_string()))?;
+                .map_err(|err| std::io::Error::other(err.to_string()))?;
             &index.get_tx(&path).ok_or_else(|| {
                 std::io::Error::new(
                     std::io::ErrorKind::NotFound,
