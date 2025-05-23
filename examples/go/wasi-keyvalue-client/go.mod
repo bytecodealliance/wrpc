@@ -1,8 +1,8 @@
 module wrpc.io/examples/go/wasi-keyvalue-client
 
-go 1.23.0
+go 1.24
 
-toolchain go1.24.1
+toolchain go1.24.2
 
 replace wrpc.io/go v0.1.0 => ../../../go
 
