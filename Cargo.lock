@@ -5517,7 +5517,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc-test"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "async-nats 0.41.0",
