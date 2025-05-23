@@ -32,4 +32,4 @@ rustls = { workspace = true, features = ["logging", "ring"] }
 tokio = { workspace = true, features = ["net", "process", "rt-multi-thread"] }
 tracing = { workspace = true }
 wrpc-cli = { workspace = true }
-wtransport = { workspace = true, optional = true }
+wtransport = { workspace = true, features = ["ring"], optional = true }
