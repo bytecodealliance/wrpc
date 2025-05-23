@@ -22,8 +22,8 @@ use wasm_tokio::{
 use wasmtime::component::types::{Case, Field};
 use wasmtime::component::{ResourceType, Type, Val};
 use wasmtime::{AsContextMut, StoreContextMut};
-use wasmtime_wasi::pipe::AsyncReadStream;
-use wasmtime_wasi::{DynInputStream, StreamError, WasiView};
+use wasmtime_wasi::p2::pipe::AsyncReadStream;
+use wasmtime_wasi::p2::{DynInputStream, StreamError, WasiView};
 use wrpc_transport::ListDecoderU8;
 
 use crate::{RemoteResource, WrpcView};

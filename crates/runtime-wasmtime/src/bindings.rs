@@ -2,7 +2,7 @@ mod generated {
     wasmtime::component::bindgen!({
         world: "wrpc:rpc/imports",
         with: {
-            "wasi": wasmtime_wasi::bindings,
+            "wasi": wasmtime_wasi::p2::bindings,
             "wrpc:rpc/context/context": with::Context,
             "wrpc:rpc/error/error": crate::rpc::Error,
             "wrpc:rpc/transport/incoming-channel": crate::rpc::IncomingChannel,

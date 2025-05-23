@@ -20,7 +20,7 @@ use tracing::{debug, instrument, trace, warn};
 use uuid::Uuid;
 use wasmtime::component::{types, Func, Resource, ResourceAny, ResourceType, Type, Val};
 use wasmtime::{AsContextMut, Engine};
-use wasmtime_wasi::{IoView, WasiView};
+use wasmtime_wasi::p2::{IoView, WasiView};
 use wrpc_transport::Invoke;
 
 use crate::bindings::rpc::context::Context;

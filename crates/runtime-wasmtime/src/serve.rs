@@ -10,7 +10,7 @@ use tracing::{debug, instrument, Instrument as _, Span};
 use wasmtime::component::types;
 use wasmtime::component::{Instance, InstancePre, ResourceType};
 use wasmtime::AsContextMut;
-use wasmtime_wasi::WasiView;
+use wasmtime_wasi::p2::WasiView;
 
 use crate::{call, rpc_func_name, WrpcView};
 
@@ -50,13 +50,13 @@ pub trait ServeExt: wrpc_transport::Serve {
             let idx = if instance_name.is_empty() {
                 None
             } else {
-                let (_, idx) = component_ty
-                    .export_index(None, instance_name)
+                let idx = component_ty
+                    .get_export_index(None, instance_name)
                     .with_context(|| format!("export `{instance_name}` not found"))?;
                 Some(idx)
             };
-            let (_, idx) = component_ty
-                .export_index(idx.as_ref(), name)
+            let idx = component_ty
+                .get_export_index(idx.as_ref(), name)
                 .with_context(|| format!("export `{name}` not found"))?;
 
             // TODO: set paths
@@ -146,12 +146,12 @@ pub trait ServeExt: wrpc_transport::Serve {
                     None
                 } else {
                     let idx = instance
-                        .get_export(store.as_context_mut(), None, instance_name)
+                        .get_export_index(store.as_context_mut(), None, instance_name)
                         .with_context(|| format!("export `{instance_name}` not found"))?;
                     Some(idx)
                 };
                 let idx = instance
-                    .get_export(store.as_context_mut(), idx.as_ref(), name)
+                    .get_export_index(store.as_context_mut(), idx.as_ref(), name)
                     .with_context(|| format!("export `{name}` not found"))?;
                 instance.get_func(store.as_context_mut(), idx)
             }

@@ -4,10 +4,10 @@ use std::sync::Arc;
 
 use anyhow::{bail, Context as _};
 use wasmtime::component::Resource;
-use wasmtime_wasi::bindings::io::poll::Pollable;
-use wasmtime_wasi::bindings::io::streams::{InputStream, OutputStream};
-use wasmtime_wasi::pipe::{AsyncReadStream, AsyncWriteStream};
-use wasmtime_wasi::subscribe;
+use wasmtime_wasi::p2::bindings::io::poll::Pollable;
+use wasmtime_wasi::p2::bindings::io::streams::{InputStream, OutputStream};
+use wasmtime_wasi::p2::pipe::{AsyncReadStream, AsyncWriteStream};
+use wasmtime_wasi::p2::subscribe;
 use wrpc_transport::{Index as _, Invoke};
 
 use crate::bindings::rpc::error::Error;

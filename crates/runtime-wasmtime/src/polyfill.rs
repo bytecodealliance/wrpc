@@ -14,7 +14,7 @@ use tokio_util::codec::Encoder;
 use tracing::{debug, instrument, trace, warn, Instrument as _, Span};
 use wasmtime::component::{types, LinkerInstance, ResourceType, Type, Val};
 use wasmtime::{AsContextMut, Engine, StoreContextMut};
-use wasmtime_wasi::WasiView;
+use wasmtime_wasi::p2::WasiView;
 use wrpc_transport::{Index as _, Invoke, InvokeExt as _};
 
 use crate::rpc::Error;
