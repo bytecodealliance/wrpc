@@ -1,6 +1,7 @@
 package wrpc
 
 import (
+	"bufio"
 	"context"
 	"io"
 )
@@ -15,13 +16,15 @@ type Invoker interface {
 	Invoke(ctx context.Context, instance string, name string, b []byte, paths ...SubscribePath) (IndexWriteCloser, IndexReadCloser, error)
 }
 
+type HandleFunc func(context.Context, IndexWriteCloser, IndexReadCloser)
+
 // Server is the server-side transport handle
 type Server interface {
 	// Serve serves a function `name` within an instance `instance`.
 	// `paths` define the async parameter paths to subscribe on.
 	// `Serve` will call `f` with two handles used for writing and reading encoded results and parameters respectively.
 	// On success, `Serve` returns a function, which can be called to stop serving.
-	Serve(instance string, name string, f func(context.Context, IndexWriteCloser, IndexReadCloser), paths ...SubscribePath) (func() error, error)
+	Serve(instance string, name string, f HandleFunc, paths ...SubscribePath) (func() error, error)
 }
 
 // Own is an owned resource handle
@@ -174,4 +177,9 @@ func (r nestedReceiver[T, A, B]) Close() error {
 
 func NewNestedReceiver[T any, A Receiver[B], B Receiver[T]](rx A) Receiver[Receiver[T]] {
 	return nestedReceiver[T, A, B]{rx}
+}
+
+type BufReadCloser struct {
+	*bufio.Reader
+	io.Closer
 }

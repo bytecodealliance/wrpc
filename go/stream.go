@@ -157,11 +157,13 @@ func ReadStream[T any](r IndexReader, f func(IndexReader) (T, error), path ...ui
 			return nil, fmt.Errorf("failed to index reader: %w", err)
 		}
 		return NewDecodeReceiver(r, func(r IndexReadCloser) ([]T, error) {
+			slog.Debug("reading pending stream chunk length")
 			n, err := ReadUint32(r)
 			if err != nil {
 				return nil, fmt.Errorf("failed to read pending stream chunk length: %w", err)
 			}
 			if n == 0 {
+				slog.Debug("pending stream EOF chunk received")
 				return nil, io.EOF
 			}
 			vs := make([]T, n)

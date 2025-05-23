@@ -2146,12 +2146,12 @@ impl InterfaceGenerator<'_> {
             }}
             return func(w {wrpc}.IndexWriter) (err error) {{
                 defer func() {{
-                    {slog}.Debug("closing stream writer")
+                    {slog}.Debug("closing outgoing pending stream")
                     if cErr := v.Close(); cErr != nil {{
                         if err == nil {{
-                            err = {fmt}.Errorf("failed to close pending stream: %w", cErr)
+                            err = {fmt}.Errorf("failed to close outgoing pending stream: %w", cErr)
                         }} else {{
-                            {slog}.Warn("failed to close pending stream", "err", cErr)
+                            {slog}.Warn("failed to close outgoing pending stream", "err", cErr)
                         }}
                     }}
                 }}()
@@ -2637,14 +2637,14 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
                         self.src,
                         r#"
                     case {idx}:
-                        w, err := w.Index("#,
+                        w, err := w.Index({i}"#,
                     );
                     if is_tuple(self.resolve, ty) {
-                        uwrite!(self.src, "{i}, ");
+                        uwrite!(self.src, ", {j}");
                     }
                     uwrite!(
                         self.src,
-                        r#"{j})
+                        r#")
                         if err != nil {{
                             {slog}.ErrorContext(ctx, "failed to index result writer", "instance", "{instance}", "name", "{name}", "err", err)
                             return
