@@ -9,7 +9,7 @@ import (
 
 func run() (err error) {
 	addr := "[::1]:7761"
-	return app.Run(addr, wrpctcp.NewClient(addr))
+	return app.Run(addr, wrpctcp.NewInvoker(addr))
 }
 
 func main() {

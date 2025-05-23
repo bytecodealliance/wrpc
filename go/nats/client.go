@@ -486,7 +486,7 @@ func (c *Client) Invoke(ctx context.Context, instance string, name string, buf [
 		}), nil
 }
 
-func (c *Client) handleMessage(instance string, name string, f func(context.Context, wrpc.IndexWriteCloser, wrpc.IndexReadCloser), paths ...wrpc.SubscribePath) func(m *nats.Msg) {
+func (c *Client) handleMessage(instance string, name string, f wrpc.HandleFunc, paths ...wrpc.SubscribePath) func(m *nats.Msg) {
 	return func(m *nats.Msg) {
 		ctx := context.Background()
 		ctx = ContextWithHeader(ctx, m.Header)
@@ -545,7 +545,7 @@ func (c *Client) handleMessage(instance string, name string, f func(context.Cont
 	}
 }
 
-func (c *Client) Serve(instance string, name string, f func(context.Context, wrpc.IndexWriteCloser, wrpc.IndexReadCloser), paths ...wrpc.SubscribePath) (stop func() error, err error) {
+func (c *Client) Serve(instance string, name string, f wrpc.HandleFunc, paths ...wrpc.SubscribePath) (stop func() error, err error) {
 	slog.Debug("serving", "instance", instance, "name", name, "group", c.group)
 
 	subject := invocationSubject(c.prefix, instance, name)

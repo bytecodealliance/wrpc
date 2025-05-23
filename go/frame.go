@@ -48,12 +48,16 @@ func WriteFrame(v Frame, w ByteWriter) (int, error) {
 	if n > math.MaxUint32 {
 		return 0, fmt.Errorf("path length of %d overflows a 32-bit integer", n)
 	}
-	slog.Debug("writing path length", "len", n)
+	slog.Debug("writing frame path length",
+		"frame", v,
+	)
 	wn, err := WriteUint32(uint32(n), w)
 	if err != nil {
 		return wn, fmt.Errorf("failed to write path length of %d: %w", n, err)
 	}
-	slog.Debug("writing path elements")
+	slog.Debug("writing frame path elements",
+		"frame", v,
+	)
 	for _, v := range v.Path {
 		n, err = WriteUint32(v, w)
 		if n > 0 {
@@ -66,7 +70,9 @@ func WriteFrame(v Frame, w ByteWriter) (int, error) {
 			return wn, fmt.Errorf("failed to write path contents: %w", err)
 		}
 	}
-	slog.Debug("writing frame data")
+	slog.Debug("writing frame data",
+		"frame", v,
+	)
 	n, err = WriteByteList(v.Data, w)
 	if n > 0 {
 		if math.MaxInt-n < wn {
@@ -77,5 +83,9 @@ func WriteFrame(v Frame, w ByteWriter) (int, error) {
 	if err != nil {
 		return wn, fmt.Errorf("failed to write frame bytes: %w", err)
 	}
+	slog.Debug("written frame",
+		"frame", v,
+		"n", wn,
+	)
 	return wn, nil
 }

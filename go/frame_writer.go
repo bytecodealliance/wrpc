@@ -32,21 +32,6 @@ func newFrameStreamWriter(w *FrameStreamWriter) *FrameStreamWriter {
 	return w
 }
 
-func writeFrames(ctx context.Context, w *bufio.Writer, frames ...Frame) error {
-	for _, frame := range frames {
-		_, err := WriteFrame(frame, w)
-		if err != nil {
-			slog.DebugContext(ctx, "failed to write frame", "err", err)
-			return err
-		}
-		if err = w.Flush(); err != nil {
-			slog.DebugContext(ctx, "failed to flush buffer", "err", err)
-			return err
-		}
-	}
-	return nil
-}
-
 func NewFrameStreamWriter(ctx context.Context, w io.WriteCloser) *FrameStreamWriter {
 	ch := make(chan Frame, 64)
 	var writers atomic.Int64
@@ -61,7 +46,6 @@ func NewFrameStreamWriter(ctx context.Context, w io.WriteCloser) *FrameStreamWri
 		}()
 
 		w := bufio.NewWriter(w)
-		var frames []Frame
 	outer:
 		for {
 			select {
@@ -71,27 +55,36 @@ func NewFrameStreamWriter(ctx context.Context, w io.WriteCloser) *FrameStreamWri
 				if !ok {
 					break outer
 				}
-				frames = append(frames, frame)
-			default:
-				if len(frames) == 0 {
-					select {
-					case <-ctx.Done():
-						return
-					case frame, ok := <-ch:
-						if !ok {
-							break outer
-						}
-						frames = append(frames, frame)
-					}
-				}
-				if err := writeFrames(ctx, w, frames...); err != nil {
+				_, err := WriteFrame(frame, w)
+				if err != nil {
+					slog.DebugContext(ctx, "failed to write frame", "err", err)
 					cancel(err)
 					return
 				}
-				frames = frames[:0]
+			default:
+				if err := w.Flush(); err != nil {
+					slog.DebugContext(ctx, "failed to flush buffer", "err", err)
+					cancel(err)
+					return
+				}
+				select {
+				case <-ctx.Done():
+					return
+				case frame, ok := <-ch:
+					if !ok {
+						break outer
+					}
+					_, err := WriteFrame(frame, w)
+					if err != nil {
+						slog.DebugContext(ctx, "failed to write frame", "err", err)
+						cancel(err)
+						return
+					}
+				}
 			}
 		}
-		if err := writeFrames(ctx, w, frames...); err != nil {
+		if err := w.Flush(); err != nil {
+			slog.DebugContext(ctx, "failed to flush buffer", "err", err)
 			cancel(err)
 			return
 		}
@@ -105,43 +98,57 @@ func NewFrameStreamWriter(ctx context.Context, w io.WriteCloser) *FrameStreamWri
 	})
 }
 
-func (w *FrameStreamWriter) Write(p []byte) (int, error) {
+func sendFrame(ctx context.Context, ch chan<- Frame, frame Frame) error {
 	select {
-	case w.ch <- Frame{
+	case <-ctx.Done():
+		return ctx.Err()
+	case ch <- frame:
+		slog.DebugContext(ctx, "sent transmit frame",
+			"frame", frame,
+		)
+		return nil
+	}
+}
+
+func (w *FrameStreamWriter) Write(p []byte) (int, error) {
+	if err := sendFrame(w.ctx, w.ch, Frame{
 		Path: w.path,
 		Data: p,
-	}:
-	case <-w.ctx.Done():
-		return 0, w.ctx.Err()
+	}); err != nil {
+		return 0, err
 	}
 	return len(p), nil
 }
 
 func (w *FrameStreamWriter) WriteByte(c byte) error {
-	select {
-	case w.ch <- Frame{
+	return sendFrame(w.ctx, w.ch, Frame{
 		Path: w.path,
 		Data: []byte{c},
-	}:
-	case <-w.ctx.Done():
-		return w.ctx.Err()
-	}
-	return nil
+	})
 }
 
 func (w *FrameStreamWriter) Index(path ...uint32) (IndexWriteCloser, error) {
-	w.writers.Add(1)
+	p := make([]uint32, 0, len(w.path))
+	p = append(p, w.path...)
+	p = append(p, path...)
+	writers := w.writers.Add(1)
+	slog.DebugContext(w.ctx, "indexing writer",
+		"writers", writers,
+		"head", w.path,
+		"tail", path,
+		"path", p,
+	)
 	return newFrameStreamWriter(&FrameStreamWriter{
 		ctx:     w.ctx,
 		writers: w.writers,
 		ch:      w.ch,
-		path:    append(w.path, path...),
+		path:    p,
 	}), nil
 }
 
 func (w *FrameStreamWriter) drop() {
 	writers := w.writers.Add(-1)
-	slog.DebugContext(w.ctx, "dropped stream writer",
+	slog.DebugContext(w.ctx, "dropped frame stream writer",
 		"writers", writers,
 		"path", w.path,
 	)

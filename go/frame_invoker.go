@@ -1,6 +1,7 @@
 package wrpc
 
 import (
+	"bufio"
 	"context"
 	"encoding/binary"
 	"errors"
@@ -51,5 +52,8 @@ func InvokeFramed(ctx context.Context, w io.WriteCloser, r io.ReadCloser, instan
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to write initial frame: %w", err)
 	}
-	return NewFrameStreamWriter(ctx, w), NewFrameStreamReader(ctx, r, paths...), nil
+	return NewFrameStreamWriter(ctx, w), NewFrameStreamReader(ctx, BufReadCloser{
+		Reader: bufio.NewReader(r),
+		Closer: r,
+	}, paths...), nil
 }
