@@ -4,12 +4,11 @@ go 1.24
 
 require (
 	github.com/google/uuid v1.6.0
+	github.com/lmittmann/tint v1.0.5
 	github.com/nats-io/nats-server/v2 v2.10.14
 	github.com/nats-io/nats.go v1.42.0
-	wrpc.io/go v0.1.0
+	wrpc.io/go v0.2.0
 )
-
-require github.com/lmittmann/tint v1.0.5
 
 require (
 	github.com/davecgh/go-spew v1.1.1 // indirect
@@ -26,4 +25,4 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-replace wrpc.io/go v0.1.0 => ../../go
+replace wrpc.io/go v0.2.0 => ../../go
