@@ -59,8 +59,7 @@ func (s *FramedServer) Serve(instance string, name string, f HandleFunc, paths .
 			delete(hs, name)
 		}
 
-		// TODO: Fix deadlock here
-		//wg.Wait()
+		wg.Wait()
 
 		return nil
 	}, nil

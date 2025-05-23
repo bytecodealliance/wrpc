@@ -51,7 +51,7 @@ func newFrameStreamReader(r *FrameStreamReader) *FrameStreamReader {
 }
 
 func NewFrameStreamReader(ctx context.Context, r ByteReadCloser, paths ...SubscribePath) *FrameStreamReader {
-	ch := make(chan []byte, 1)
+	ch := make(chan []byte, 64)
 
 	var nestMu sync.Mutex
 	nest := make(map[string]chan []byte, len(paths))
@@ -62,7 +62,7 @@ func NewFrameStreamReader(ctx context.Context, r ByteReadCloser, paths ...Subscr
 			slog.ErrorContext(ctx, "invalid subscription path", "err", err)
 			continue
 		}
-		nest[p] = make(chan []byte)
+		nest[p] = make(chan []byte, 64)
 	}
 	var readers atomic.Int64
 	readers.Add(1)
@@ -86,10 +86,10 @@ func NewFrameStreamReader(ctx context.Context, r ByteReadCloser, paths ...Subscr
 			frame, err := ReadFrame(r)
 			if err != nil {
 				if err == io.EOF {
-					break
+					break outer
 				}
 				slog.ErrorContext(ctx, "failed to read frame", "err", err)
-				break
+				break outer
 			}
 
 			slog.DebugContext(ctx, "read frame",
@@ -101,7 +101,7 @@ func NewFrameStreamReader(ctx context.Context, r ByteReadCloser, paths ...Subscr
 			if !ok {
 				slog.ErrorContext(ctx, "received a frame for unknown path", "path", frame.Path)
 				nestMu.Unlock()
-				break
+				break outer
 			}
 			if len(frame.Data) == 0 {
 				slog.DebugContext(ctx, "received shutdown frame, closing channel", "path", frame.Path)
@@ -116,11 +116,18 @@ func NewFrameStreamReader(ctx context.Context, r ByteReadCloser, paths ...Subscr
 					slog.DebugContext(ctx, "context done, stop reading frames",
 						"err", ctx.Err(),
 					)
+					nestMu.Unlock()
 					break outer
 				case ch <- frame.Data:
 					slog.DebugContext(ctx, "sent received frame data",
 						"frame", frame,
 					)
+				default:
+					slog.ErrorContext(ctx, "reader too slow, dropping frame",
+						"frame", frame,
+					)
+					nestMu.Unlock()
+					break outer
 				}
 			}
 			nestMu.Unlock()
