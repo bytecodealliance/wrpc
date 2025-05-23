@@ -7,7 +7,7 @@ toolchain go1.24.2
 require (
 	github.com/google/uuid v1.6.0
 	github.com/nats-io/nats.go v1.42.0
-	wrpc.io/go v0.1.0
+	wrpc.io/go v0.2.0
 )
 
 require (
@@ -18,4 +18,4 @@ require (
 	golang.org/x/sys v0.32.0 // indirect
 )
 
-replace wrpc.io/go v0.1.0 => ../../../go
+replace wrpc.io/go v0.2.0 => ../../../go
