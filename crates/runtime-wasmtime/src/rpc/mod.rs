@@ -12,7 +12,7 @@ use std::sync::Arc;
 use anyhow::Context as _;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use wasmtime::component::Linker;
-use wasmtime_wasi::Pollable;
+use wasmtime_wasi::p2::Pollable;
 use wrpc_transport::Invoke;
 
 use crate::{bindings, WrpcView};

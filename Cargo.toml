@@ -160,24 +160,24 @@ tracing-subscriber = { version = "0.3", default-features = false }
 url = { version = "2" }
 uuid = { version = "1", default-features = false }
 wasi = { version = "0.14", default-features = false }
-wasi-preview1-component-adapter-provider = { version = "31", default-features = false }
+wasi-preview1-component-adapter-provider = { version = "33", default-features = false }
 wasm-tokio = { version = "0.6", default-features = false }
-wasmparser = { version = "0.227", default-features = false }
-wasmtime = { version = "31", default-features = false }
-wasmtime-cli-flags = { version = "31", default-features = false }
-wasmtime-wasi = { version = "31", default-features = false }
-wasmtime-wasi-http = { version = "31", default-features = false }
+wasmparser = { version = "0.230", default-features = false }
+wasmtime = { version = "33", default-features = false }
+wasmtime-cli-flags = { version = "33", default-features = false }
+wasmtime-wasi = { version = "33", default-features = false }
+wasmtime-wasi-http = { version = "33", default-features = false }
 wit-bindgen = { version = "0.36", default-features = false }
 wit-bindgen-core = { version = "0.36", default-features = false }
 wit-bindgen-wrpc = { version = "0.9", default-features = false, path = "./crates/wit-bindgen" }
 wit-bindgen-wrpc-go = { version = "0.12", default-features = false, path = "./crates/wit-bindgen-go" }
 wit-bindgen-wrpc-rust = { version = "0.9", default-features = false, path = "./crates/wit-bindgen-rust" }
 wit-bindgen-wrpc-rust-macro = { version = "0.9", default-features = false, path = "./crates/wit-bindgen-rust-macro" }
-wit-component = { version = "0.221", default-features = false }
+wit-component = { version = "0.230", default-features = false }
 wit-parser = { version = "0.220", default-features = false }
 wrpc-cli = { version = "0.5", path = "./crates/cli", default-features = false }
 wrpc-introspect = { version = "0.6", default-features = false, path = "./crates/introspect" }
-wrpc-runtime-wasmtime = { version = "0.28", path = "./crates/runtime-wasmtime", default-features = false }
+wrpc-runtime-wasmtime = { version = "0.29", path = "./crates/runtime-wasmtime", default-features = false }
 wrpc-test = { path = "./crates/test", default-features = false }
 wrpc-transport = { version = "0.28.3", path = "./crates/transport", default-features = false }
 wrpc-transport-nats = { version = "0.28", path = "./crates/transport-nats", default-features = false }
@@ -186,5 +186,5 @@ wrpc-transport-web = { version = "0.1", path = "./crates/transport-web", default
 wrpc-wasi-keyvalue = { version = "0.1.1", path = "./crates/wasi-keyvalue", default-features = false }
 wrpc-wasi-keyvalue-mem = { version = "0.1", path = "./crates/wasi-keyvalue-mem", default-features = false }
 wrpc-wasi-keyvalue-redis = { version = "0.1", path = "./crates/wasi-keyvalue-redis", default-features = false }
-wrpc-wasmtime-cli = { version = "0.6", path = "./crates/wasmtime-cli", default-features = false }
+wrpc-wasmtime-cli = { version = "0.7", path = "./crates/wasmtime-cli", default-features = false }
 wtransport = { version = "0.6", default-features = false }

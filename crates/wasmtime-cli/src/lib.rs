@@ -20,9 +20,9 @@ use wasi_preview1_component_adapter_provider::{
     WASI_SNAPSHOT_PREVIEW1_ADAPTER_NAME, WASI_SNAPSHOT_PREVIEW1_COMMAND_ADAPTER,
     WASI_SNAPSHOT_PREVIEW1_REACTOR_ADAPTER,
 };
-use wasmtime::component::{types, Component, InstancePre, Linker, ResourceType};
+use wasmtime::component::{types, Component, InstancePre, Linker, ResourceTable, ResourceType};
 use wasmtime::{Engine, Store};
-use wasmtime_wasi::{IoView, ResourceTable, WasiCtx, WasiCtxBuilder, WasiView};
+use wasmtime_wasi::p2::{IoView, WasiCtx, WasiCtxBuilder, WasiView};
 use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpView};
 use wrpc_runtime_wasmtime::{
     collect_component_resource_exports, collect_component_resource_imports, link_item, rpc,
@@ -202,7 +202,7 @@ where
     let component = Component::new(&engine, wasm).context("failed to compile component")?;
 
     let mut linker = Linker::<Ctx<C>>::new(&engine);
-    wasmtime_wasi::add_to_linker_async(&mut linker).context("failed to link WASI")?;
+    wasmtime_wasi::p2::add_to_linker_async(&mut linker).context("failed to link WASI")?;
     wasmtime_wasi_http::add_only_http_to_linker_async(&mut linker)
         .context("failed to link `wasi:http`")?;
     wrpc_runtime_wasmtime::rpc::add_to_linker(&mut linker).context("failed to link `wrpc:rpc`")?;
@@ -279,16 +279,16 @@ where
                     let host_ty = match ty {
                         ty if Some(ty) == rpc_err_ty => ResourceType::host::<rpc::Error>(),
                         ty if io_err_tys.contains(&ty) => {
-                            ResourceType::host::<wasmtime_wasi::bindings::io::error::Error>()
+                            ResourceType::host::<wasmtime_wasi::p2::bindings::io::error::Error>()
                         }
                         ty if io_input_stream_tys.contains(&ty) => ResourceType::host::<
-                            wasmtime_wasi::bindings::io::streams::InputStream,
+                            wasmtime_wasi::p2::bindings::io::streams::InputStream,
                         >(),
                         ty if io_output_stream_tys.contains(&ty) => ResourceType::host::<
-                            wasmtime_wasi::bindings::io::streams::OutputStream,
+                            wasmtime_wasi::p2::bindings::io::streams::OutputStream,
                         >(),
                         ty if io_pollable_tys.contains(&ty) => {
-                            ResourceType::host::<wasmtime_wasi::bindings::io::poll::Pollable>()
+                            ResourceType::host::<wasmtime_wasi::p2::bindings::io::poll::Pollable>()
                         }
                         _ => ResourceType::host::<RemoteResource>(),
                     };
@@ -401,7 +401,7 @@ where
     let (pre, engine, _, _) =
         instantiate_pre(WASI_SNAPSHOT_PREVIEW1_COMMAND_ADAPTER, workload).await?;
     let mut store = new_store(&engine, clt, cx, "command.wasm", timeout);
-    let cmd = wasmtime_wasi::bindings::CommandPre::new(pre)
+    let cmd = wasmtime_wasi::p2::bindings::CommandPre::new(pre)
         .context("failed to construct `command` instance")?
         .instantiate_async(&mut store)
         .await
