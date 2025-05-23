@@ -4,11 +4,22 @@
 
 #[cfg(any(
     not(any(
+        feature = "async-nats-0_41",
+        feature = "async-nats-0_40",
         feature = "async-nats-0_39",
         feature = "async-nats-0_38",
         feature = "async-nats-0_37",
         feature = "async-nats-0_36",
     )),
+    all(feature = "async-nats-0_41", feature = "async-nats-0_40"),
+    all(feature = "async-nats-0_41", feature = "async-nats-0_39"),
+    all(feature = "async-nats-0_41", feature = "async-nats-0_38"),
+    all(feature = "async-nats-0_41", feature = "async-nats-0_37"),
+    all(feature = "async-nats-0_41", feature = "async-nats-0_36"),
+    all(feature = "async-nats-0_40", feature = "async-nats-0_39"),
+    all(feature = "async-nats-0_40", feature = "async-nats-0_38"),
+    all(feature = "async-nats-0_40", feature = "async-nats-0_37"),
+    all(feature = "async-nats-0_40", feature = "async-nats-0_36"),
     all(feature = "async-nats-0_39", feature = "async-nats-0_38"),
     all(feature = "async-nats-0_39", feature = "async-nats-0_37"),
     all(feature = "async-nats-0_39", feature = "async-nats-0_36"),
@@ -17,8 +28,14 @@
     all(feature = "async-nats-0_37", feature = "async-nats-0_36"),
 ))]
 compile_error!(
-    "Either feature \"async-nats-0_39\", \"async-nats-0_38\", \"async-nats-0_37\" or \"async-nats-0_36\" must be enabled for this crate."
+    "Either feature \"async-nats-0_41\", \"async-nats-0_40\", \"async-nats-0_39\", \"async-nats-0_38\", \"async-nats-0_37\" or \"async-nats-0_36\" must be enabled for this crate."
 );
+
+#[cfg(feature = "async-nats-0_41")]
+use async_nats_0_41 as async_nats;
+
+#[cfg(feature = "async-nats-0_40")]
+use async_nats_0_40 as async_nats;
 
 #[cfg(feature = "async-nats-0_39")]
 use async_nats_0_39 as async_nats;
