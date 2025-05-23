@@ -13,8 +13,8 @@ use criterion::{BenchmarkGroup, Criterion};
 use futures::StreamExt as _;
 use tokio::select;
 use tokio::sync::oneshot;
-use wasmtime::component::{Component, Linker};
-use wasmtime_wasi::{IoView, ResourceTable, WasiCtx, WasiCtxBuilder, WasiView};
+use wasmtime::component::{Component, Linker, ResourceTable};
+use wasmtime_wasi::p2::{IoView, WasiCtx, WasiCtxBuilder, WasiView};
 
 mod ping_bindings_wrpc {
     wit_bindgen_wrpc::generate!({
@@ -142,7 +142,7 @@ impl WasmHandler {
         let component = Component::new(&engine, wasm).context("failed to compile component")?;
 
         let mut linker = Linker::<Ctx>::new(&engine);
-        wasmtime_wasi::add_to_linker_async(&mut linker).context("failed to link WASI")?;
+        wasmtime_wasi::p2::add_to_linker_async(&mut linker).context("failed to link WASI")?;
 
         let pre = linker
             .instantiate_pre(&component)
