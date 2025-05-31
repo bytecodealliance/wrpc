@@ -1,5 +1,9 @@
 name: install Nix
 
+permissions:
+  id-token: write
+  contents: read
+
 inputs:
   cachixAuthToken:
     description: auth token for https://app.cachix.org/organization/wasmcloud/cache/bytecodealliance
@@ -7,12 +11,10 @@ inputs:
 runs:
   using: composite
   steps:
-  - uses: DeterminateSystems/nix-installer-action@v17
+  - uses: DeterminateSystems/determinate-nix-action@v3.6.1
     with:
       extra-conf: |
         accept-flake-config = true
-
-  - uses: DeterminateSystems/magic-nix-cache-action@v9
 
   - uses: cachix/cachix-action@v16
     continue-on-error: true
