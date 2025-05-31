@@ -40,7 +40,10 @@
     with nixlib.lib;
     with nixify.lib;
       rust.mkFlake {
-        src = ./.;
+        src = builtins.path {
+          path = ./.;
+          name = "source";
+        };
 
         overlays = [
           wit-deps.overlays.default
