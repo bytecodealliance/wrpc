@@ -30,6 +30,7 @@
   inputs.wit-deps.url = "github:bytecodealliance/wit-deps/v0.5.0";
 
   outputs = {
+    self,
     nixify,
     nixlib,
     nixpkgs-unstable,
@@ -40,28 +41,25 @@
     with nixlib.lib;
     with nixify.lib;
       rust.mkFlake {
-        src = builtins.path {
-          path = ./.;
-          name = "source";
-        };
+        src = self;
+
+        nixpkgsConfig.allowUnfree = true;
 
         overlays = [
           wit-deps.overlays.default
-          (
-            final: prev: {
-              pkgsUnstable = import nixpkgs-unstable {
-                inherit
-                  (final.stdenv.hostPlatform)
-                  system
-                  ;
+          (final: prev: {
+            pkgsUnstable = import nixpkgs-unstable {
+              inherit
+                (final.stdenv.hostPlatform)
+                system
+                ;
 
-                inherit
-                  (final)
-                  config
-                  ;
-              };
-            }
-          )
+              inherit
+                (final)
+                config
+                ;
+            };
+          })
         ];
 
         excludePaths = [
