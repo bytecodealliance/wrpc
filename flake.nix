@@ -21,6 +21,8 @@
     "nix-community.cachix.org-1:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs="
   ];
 
+  inputs.fenix.url = "github:nix-community/fenix/76ffc1b7b3ec8078fe01794628b6abff35cbda8f"; # Rust 1.86
+  inputs.nixify.inputs.fenix.follows = "fenix";
   inputs.nixify.inputs.nixlib.follows = "nixlib";
   inputs.nixify.url = "github:rvolosatovs/nixify";
   inputs.nixlib.url = "github:nix-community/nixpkgs.lib";
