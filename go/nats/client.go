@@ -488,60 +488,71 @@ func (c *Client) Invoke(ctx context.Context, instance string, name string, buf [
 
 func (c *Client) handleMessage(instance string, name string, f wrpc.HandleFunc, paths ...wrpc.SubscribePath) func(m *nats.Msg) {
 	return func(m *nats.Msg) {
-		ctx := context.Background()
-		ctx = ContextWithHeader(ctx, m.Header)
+		// Spawn a goroutine to handle the message concurrently
+		go func(msg *nats.Msg) {
+			// Recover from panics, logging an error but not sending a response
+			// since an invalid response shape could cause further issues
+			defer func() {
+				if r := recover(); r != nil {
+					slog.Error("recovered from panic in NATS message handler", "panic", r, "instance", instance, "name", name, "subject", msg.Subject)
+				}
+			}()
 
-		slog.Debug("received invocation", "instance", instance, "name", name, "payload", m.Data, "reply", m.Reply)
-		if m.Reply == "" {
-			slog.Warn("peer did not specify a reply subject")
-			return
-		}
+			ctx := context.Background()
+			ctx = ContextWithHeader(ctx, msg.Header)
 
-		rx := nats.NewInbox()
-
-		paramRx := paramSubject(rx)
-		slog.Debug("subscribing on parameter subject", "subject", paramRx)
-		paramSub, err := c.conn.SubscribeSync(paramRx)
-		if err != nil {
-			slog.Warn("failed to subscribe on parameter subject", "subject", paramRx, "err", err)
-			return
-		}
-
-		nest := make(map[string]*nats.Subscription, len(paths))
-		for _, path := range paths {
-			s := subscribePath(paramRx, path)
-			slog.Debug("subscribing on nested parameter subject", "subject", s)
-			sub, err := c.conn.SubscribeSync(s)
-			if err != nil {
-				slog.Warn("failed to subscribe on nested parameter subject", "subject", s, "err", err)
+			slog.Debug("received invocation", "instance", instance, "name", name, "payload", msg.Data, "reply", msg.Reply)
+			if msg.Reply == "" {
+				slog.Warn("peer did not specify a reply subject")
 				return
 			}
-			nest[subscribePath("", path)] = sub
-		}
 
-		slog.DebugContext(ctx, "publishing handshake response", "subject", m.Reply, "reply", rx)
-		accept := nats.NewMsg(m.Reply)
-		accept.Reply = rx
-		if err := c.conn.PublishMsg(accept); err != nil {
-			slog.Error("failed to send handshake", "err", err)
-			return
-		}
+			rx := nats.NewInbox()
 
-		slog.Debug("calling server handler")
-		nestRef := &atomic.Int64{}
-		nestRef.Add(1)
-		f(ctx, &resultWriter{
-			nc: c.conn,
-			tx: resultSubject(m.Reply),
-		}, newStreamReader(&streamReader{
-			ctx:     ctx,
-			sub:     paramSub,
-			buf:     m.Data,
-			nestMu:  &sync.Mutex{},
-			nestRef: nestRef,
-			nest:    nest,
-		}))
-		slog.Debug("finished serving invocation")
+			paramRx := paramSubject(rx)
+			slog.Debug("subscribing on parameter subject", "subject", paramRx)
+			paramSub, err := c.conn.SubscribeSync(paramRx)
+			if err != nil {
+				slog.Warn("failed to subscribe on parameter subject", "subject", paramRx, "err", err)
+				return
+			}
+
+			nest := make(map[string]*nats.Subscription, len(paths))
+			for _, path := range paths {
+				s := subscribePath(paramRx, path)
+				slog.Debug("subscribing on nested parameter subject", "subject", s)
+				sub, err := c.conn.SubscribeSync(s)
+				if err != nil {
+					slog.Warn("failed to subscribe on nested parameter subject", "subject", s, "err", err)
+					return
+				}
+				nest[subscribePath("", path)] = sub
+			}
+
+			slog.DebugContext(ctx, "publishing handshake response", "subject", msg.Reply, "reply", rx)
+			accept := nats.NewMsg(msg.Reply)
+			accept.Reply = rx
+			if err := c.conn.PublishMsg(accept); err != nil {
+				slog.Error("failed to send handshake", "err", err)
+				return
+			}
+
+			slog.Debug("calling server handler")
+			nestRef := &atomic.Int64{}
+			nestRef.Add(1)
+			f(ctx, &resultWriter{
+				nc: c.conn,
+				tx: resultSubject(msg.Reply),
+			}, newStreamReader(&streamReader{
+				ctx:     ctx,
+				sub:     paramSub,
+				buf:     msg.Data,
+				nestMu:  &sync.Mutex{},
+				nestRef: nestRef,
+				nest:    nest,
+			}))
+			slog.Debug("finished serving invocation")
+		}(m)
 	}
 }
 
