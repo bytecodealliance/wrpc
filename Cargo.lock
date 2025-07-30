@@ -1650,7 +1650,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
- "rustls 0.23.28",
+ "rustls 0.23.31",
  "tokio",
  "tracing-subscriber",
  "url",
@@ -1668,7 +1668,7 @@ dependencies = [
  "clap",
  "futures",
  "rcgen",
- "rustls 0.23.28",
+ "rustls 0.23.31",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -2610,7 +2610,7 @@ dependencies = [
  "quinn-proto",
  "quinn-udp",
  "rustc-hash",
- "rustls 0.23.28",
+ "rustls 0.23.31",
  "socket2",
  "thiserror 2.0.12",
  "tokio",
@@ -2630,7 +2630,7 @@ dependencies = [
  "rand 0.9.1",
  "ring",
  "rustc-hash",
- "rustls 0.23.28",
+ "rustls 0.23.31",
  "rustls-pki-types",
  "rustls-platform-verifier",
  "slab",
@@ -3008,15 +3008,15 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.28"
+version = "0.23.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7160e3e10bf4535308537f3c4e1641468cd0e485175d6163087c0393c7d46643"
+checksum = "c0ebcbd2f03de0fc1122ad9bb24b127a5a6cd51d72604a3f3c50ac459762b6cc"
 dependencies = [
  "log",
  "once_cell",
  "ring",
  "rustls-pki-types",
- "rustls-webpki 0.103.3",
+ "rustls-webpki 0.103.4",
  "subtle",
  "zeroize",
 ]
@@ -3076,10 +3076,10 @@ dependencies = [
  "jni",
  "log",
  "once_cell",
- "rustls 0.23.28",
+ "rustls 0.23.31",
  "rustls-native-certs 0.8.1",
  "rustls-platform-verifier-android",
- "rustls-webpki 0.103.3",
+ "rustls-webpki 0.103.4",
  "security-framework 3.2.0",
  "security-framework-sys",
  "webpki-root-certs 0.26.11",
@@ -3105,9 +3105,9 @@ dependencies = [
 
 [[package]]
 name = "rustls-webpki"
-version = "0.103.3"
+version = "0.103.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e4a72fe2bcf7a6ac6fd7d0b9e5cb68aeb7d4c0a0271730218b3e92d43b4eb435"
+checksum = "0a17884ae0c1b773f1ccd2bd4a8c72f16da897310a98b0e84bf349ad5ead92fc"
 dependencies = [
  "ring",
  "rustls-pki-types",
@@ -3721,7 +3721,7 @@ version = "0.26.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8e727b36a1a0e8b74c376ac2211e40c2c8af09fb4013c60d910495810f008e9b"
 dependencies = [
- "rustls 0.23.28",
+ "rustls 0.23.31",
  "tokio",
 ]
 
@@ -4142,7 +4142,7 @@ dependencies = [
  "futures",
  "quinn",
  "rcgen",
- "rustls 0.23.28",
+ "rustls 0.23.31",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -4209,7 +4209,7 @@ dependencies = [
  "clap",
  "futures",
  "quinn",
- "rustls 0.23.28",
+ "rustls 0.23.31",
  "tokio",
  "tower",
  "tower-http",
@@ -5524,7 +5524,7 @@ dependencies = [
  "async-nats 0.41.0",
  "quinn",
  "rcgen",
- "rustls 0.23.28",
+ "rustls 0.23.31",
  "tokio",
  "tracing",
  "wrpc-cli",
@@ -5675,7 +5675,7 @@ dependencies = [
  "pem",
  "quinn",
  "rcgen",
- "rustls 0.23.28",
+ "rustls 0.23.31",
  "rustls-native-certs 0.8.1",
  "rustls-pemfile",
  "rustls-pki-types",
