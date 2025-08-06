@@ -1654,13 +1654,13 @@ where
                 .instrument(span),
             )
         }));
-        return Ok(Some(Box::pin(async {
+        Ok(Some(Box::pin(async {
             let Ok(ret) = rx.await else {
                 error!("future I/O dropped");
                 return pending().await;
             };
             ret
-        })));
+        })))
     }
 }
 
@@ -2102,7 +2102,7 @@ where
                 async move { handle_deferred_stream(T::Decoder::default(), r, path, tx).await },
             )
         }));
-        return Ok(Some(Box::pin(ReceiverStream::new(rx))));
+        Ok(Some(Box::pin(ReceiverStream::new(rx))))
     }
 }
 
@@ -2184,7 +2184,7 @@ where
                 .instrument(span),
             )
         }));
-        return Ok(Some(Box::pin(ReceiverStream::new(rx))));
+        Ok(Some(Box::pin(ReceiverStream::new(rx))))
     }
 }
 
@@ -2258,7 +2258,7 @@ where
                 Ok(())
             })
         }));
-        return Ok(Some(Box::pin(StreamReader::new(ReceiverStream::new(rx)))));
+        Ok(Some(Box::pin(StreamReader::new(ReceiverStream::new(rx)))))
     }
 }
 
