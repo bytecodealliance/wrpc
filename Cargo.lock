@@ -1444,7 +1444,7 @@ dependencies = [
  "js-sys",
  "libc",
  "r-efi",
- "wasi 0.14.2+wasi-0.2.4",
+ "wasi 0.14.3+wasi-0.2.4",
  "wasm-bindgen",
 ]
 
@@ -1536,28 +1536,28 @@ checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 name = "hello-component-client"
 version = "0.1.0"
 dependencies = [
- "wit-bindgen",
+ "wit-bindgen 0.36.0",
 ]
 
 [[package]]
 name = "hello-component-rpc-client"
 version = "0.1.0"
 dependencies = [
- "wit-bindgen",
+ "wit-bindgen 0.36.0",
 ]
 
 [[package]]
 name = "hello-component-rpc-server"
 version = "0.1.0"
 dependencies = [
- "wit-bindgen",
+ "wit-bindgen 0.36.0",
 ]
 
 [[package]]
 name = "hello-component-server"
 version = "0.1.0"
 dependencies = [
- "wit-bindgen",
+ "wit-bindgen 0.36.0",
 ]
 
 [[package]]
@@ -1569,8 +1569,8 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
- "wasi 0.14.2+wasi-0.2.4",
- "wit-bindgen",
+ "wasi 0.14.3+wasi-0.2.4",
+ "wit-bindgen 0.36.0",
  "wit-bindgen-wrpc",
  "wrpc-transport",
 ]
@@ -2775,7 +2775,7 @@ dependencies = [
 name = "reactor"
 version = "0.1.0"
 dependencies = [
- "wit-bindgen",
+ "wit-bindgen 0.36.0",
 ]
 
 [[package]]
@@ -2896,14 +2896,14 @@ dependencies = [
 name = "resources-component-client"
 version = "0.1.0"
 dependencies = [
- "wit-bindgen",
+ "wit-bindgen 0.36.0",
 ]
 
 [[package]]
 name = "resources-component-server"
 version = "0.1.0"
 dependencies = [
- "wit-bindgen",
+ "wit-bindgen 0.36.0",
 ]
 
 [[package]]
@@ -4077,11 +4077,11 @@ checksum = "ccf3ec651a847eb01de73ccad15eb7d99f80485de043efb2f370cd654f4ea44b"
 
 [[package]]
 name = "wasi"
-version = "0.14.2+wasi-0.2.4"
+version = "0.14.3+wasi-0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9683f9a5a998d873c0d21fcbe3c083009670149a8fab228644b8bd36b2c48cb3"
+checksum = "6a51ae83037bdd272a9e28ce236db8c07016dd0d50c27038b3f407533c030c95"
 dependencies = [
- "wit-bindgen-rt 0.39.0",
+ "wit-bindgen 0.45.0",
 ]
 
 [[package]]
@@ -4089,14 +4089,14 @@ name = "wasi-keyvalue-component-client"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "wit-bindgen",
+ "wit-bindgen 0.36.0",
 ]
 
 [[package]]
 name = "wasi-keyvalue-component-server"
 version = "0.1.0"
 dependencies = [
- "wit-bindgen",
+ "wit-bindgen 0.36.0",
 ]
 
 [[package]]
@@ -5310,9 +5310,15 @@ version = "0.36.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6a2b3e15cd6068f233926e7d8c7c588b2ec4fb7cc7bf3824115e7c7e2a8485a3"
 dependencies = [
- "wit-bindgen-rt 0.36.0",
+ "wit-bindgen-rt",
  "wit-bindgen-rust-macro",
 ]
+
+[[package]]
+name = "wit-bindgen"
+version = "0.45.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "052283831dbae3d879dc7f51f3d92703a316ca49f91540417d38591826127814"
 
 [[package]]
 name = "wit-bindgen-core"
@@ -5330,15 +5336,6 @@ name = "wit-bindgen-rt"
 version = "0.36.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7947d0131c7c9da3f01dfde0ab8bd4c4cf3c5bd49b6dba0ae640f1fa752572ea"
-dependencies = [
- "bitflags 2.9.4",
-]
-
-[[package]]
-name = "wit-bindgen-rt"
-version = "0.39.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6f42320e61fe2cfd34354ecb597f86f413484a798ba44a8ca1165c58d42da6c1"
 dependencies = [
  "bitflags 2.9.4",
 ]
@@ -5641,7 +5638,7 @@ dependencies = [
  "tokio-stream",
  "tokio-util",
  "tracing",
- "wasi 0.14.2+wasi-0.2.4",
+ "wasi 0.14.3+wasi-0.2.4",
  "wasm-tokio",
 ]
 
