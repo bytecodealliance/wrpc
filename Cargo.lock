@@ -1444,7 +1444,7 @@ dependencies = [
  "js-sys",
  "libc",
  "r-efi",
- "wasi 0.14.4+wasi-0.2.4",
+ "wasi 0.14.5+wasi-0.2.4",
  "wasm-bindgen",
 ]
 
@@ -1569,7 +1569,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
- "wasi 0.14.4+wasi-0.2.4",
+ "wasi 0.14.5+wasi-0.2.4",
  "wit-bindgen 0.36.0",
  "wit-bindgen-wrpc",
  "wrpc-transport",
@@ -4077,11 +4077,11 @@ checksum = "ccf3ec651a847eb01de73ccad15eb7d99f80485de043efb2f370cd654f4ea44b"
 
 [[package]]
 name = "wasi"
-version = "0.14.4+wasi-0.2.4"
+version = "0.14.5+wasi-0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "88a5f4a424faf49c3c2c344f166f0662341d470ea185e939657aaff130f0ec4a"
+checksum = "a4494f6290a82f5fe584817a676a34b9d6763e8d9d18204009fb31dceca98fd4"
 dependencies = [
- "wit-bindgen 0.45.1",
+ "wasip2",
 ]
 
 [[package]]
@@ -4252,6 +4252,15 @@ name = "wasi-preview1-component-adapter-provider"
 version = "34.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "33696c5f1ff1e083de9f36c3da471abd736362bc173e093f8b0b1ed5a387e39b"
+
+[[package]]
+name = "wasip2"
+version = "1.0.0+wasi-0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "03fa2761397e5bd52002cd7e73110c71af2109aca4e521a9f40473fe685b0a24"
+dependencies = [
+ "wit-bindgen 0.45.1",
+]
 
 [[package]]
 name = "wasm-bindgen"
@@ -5638,7 +5647,7 @@ dependencies = [
  "tokio-stream",
  "tokio-util",
  "tracing",
- "wasi 0.14.4+wasi-0.2.4",
+ "wasi 0.14.5+wasi-0.2.4",
  "wasm-tokio",
 ]
 
