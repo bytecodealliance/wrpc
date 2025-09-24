@@ -120,7 +120,7 @@ wrpc-transport = { workspace = true, features = ["net"] }
 
 [workspace.dependencies]
 anyhow = { version = "1", default-features = false }
-async-nats = { version = "0.41", default-features = false }
+async-nats = { version = "0.43", default-features = false }
 axum = { version = "0.7", default-features = false }
 bitflags = { version = "2", default-features = false }
 bytes = { version = "1", default-features = false }
