@@ -385,6 +385,43 @@ dependencies = [
 ]
 
 [[package]]
+name = "async-nats"
+version = "0.44.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "58f1564b878e64608a4fc8ab74c0b499b566400b9ab6e5097f21ba1945dab5bb"
+dependencies = [
+ "base64 0.22.1",
+ "bytes",
+ "futures-util",
+ "memchr",
+ "nkeys",
+ "nuid",
+ "once_cell",
+ "pin-project",
+ "portable-atomic",
+ "rand 0.8.5",
+ "regex",
+ "ring",
+ "rustls-native-certs 0.7.3",
+ "rustls-pemfile",
+ "rustls-webpki 0.102.8",
+ "serde",
+ "serde_json",
+ "serde_nanos",
+ "serde_repr",
+ "thiserror 1.0.69",
+ "time",
+ "tokio",
+ "tokio-rustls 0.26.2",
+ "tokio-stream",
+ "tokio-util",
+ "tokio-websockets",
+ "tracing",
+ "tryhard",
+ "url",
+]
+
+[[package]]
 name = "async-trait"
 version = "0.1.88"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1236,7 +1273,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "778e2ac28f6c47af28e4907f13ffd1e1ddbd400980a9abd7c8df189bf578a5ad"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -1596,7 +1633,7 @@ name = "hello-nats-client"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-nats 0.41.0",
+ "async-nats 0.44.1",
  "clap",
  "tokio",
  "tracing-subscriber",
@@ -1610,7 +1647,7 @@ name = "hello-nats-server"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-nats 0.41.0",
+ "async-nats 0.44.1",
  "clap",
  "futures",
  "tokio",
@@ -2973,7 +3010,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.9.4",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -3390,7 +3427,7 @@ name = "streams-nats-client"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-nats 0.41.0",
+ "async-nats 0.44.1",
  "bytes",
  "clap",
  "futures",
@@ -3408,7 +3445,7 @@ name = "streams-nats-server"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-nats 0.41.0",
+ "async-nats 0.44.1",
  "bytes",
  "clap",
  "futures",
@@ -3518,7 +3555,7 @@ dependencies = [
  "fastrand",
  "once_cell",
  "rustix 1.0.8",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -4104,7 +4141,7 @@ name = "wasi-keyvalue-nats-client"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-nats 0.41.0",
+ "async-nats 0.44.1",
  "bytes",
  "clap",
  "tokio",
@@ -4119,7 +4156,7 @@ name = "wasi-keyvalue-nats-server"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-nats 0.41.0",
+ "async-nats 0.44.1",
  "bytes",
  "clap",
  "futures",
@@ -4204,7 +4241,7 @@ name = "wasi-keyvalue-web"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-nats 0.41.0",
+ "async-nats 0.44.1",
  "axum",
  "bytes",
  "clap",
@@ -4900,7 +4937,7 @@ version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf221c93e13a30d793f7645a0e7762c55d169dbb0a49671918a2319d289b10bb"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -5536,7 +5573,7 @@ name = "wrpc"
 version = "0.15.0"
 dependencies = [
  "anyhow",
- "async-nats 0.41.0",
+ "async-nats 0.44.1",
  "bytes",
  "clap",
  "criterion",
@@ -5567,7 +5604,7 @@ name = "wrpc-cli"
 version = "0.6.0"
 dependencies = [
  "anyhow",
- "async-nats 0.41.0",
+ "async-nats 0.44.1",
  "tokio",
  "tracing-subscriber",
 ]
@@ -5614,7 +5651,7 @@ name = "wrpc-test"
 version = "0.3.0"
 dependencies = [
  "anyhow",
- "async-nats 0.41.0",
+ "async-nats 0.44.1",
  "quinn",
  "rcgen",
  "rustls 0.23.31",
@@ -5735,7 +5772,7 @@ name = "wrpc-wasmtime-cli"
 version = "0.7.0"
 dependencies = [
  "anyhow",
- "async-nats 0.41.0",
+ "async-nats 0.44.1",
  "clap",
  "futures",
  "humantime",
