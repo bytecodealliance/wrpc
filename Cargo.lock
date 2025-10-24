@@ -4098,6 +4098,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "wasi-keyvalue-quic-client"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "clap",
+ "futures",
+ "quinn",
+ "rcgen",
+ "rustls 0.23.31",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "wrpc-transport",
+ "wrpc-transport-quic",
+ "wrpc-wasi-keyvalue",
+ "wrpc-wasi-keyvalue-mem",
+]
+
+[[package]]
 name = "wasi-keyvalue-quic-server"
 version = "0.1.0"
 dependencies = [
