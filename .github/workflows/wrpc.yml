@@ -127,11 +127,11 @@ jobs:
     needs: build-bin
     runs-on: macos-latest
     steps:
-      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
         with:
           name: wrpc-aarch64-apple-darwin
           path: aarch64
-      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
         with:
           name: wrpc-x86_64-apple-darwin
           path: x86_64
@@ -159,7 +159,7 @@ jobs:
     runs-on: ubuntu-24.04
     needs: build-bin
     steps:
-      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
         with:
           name: wrpc-x86_64-unknown-linux-musl
       - run: chmod +x ./bin/wit-bindgen-wrpc
@@ -172,7 +172,7 @@ jobs:
     runs-on: windows-latest
     needs: build-bin
     steps:
-      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
         with:
           name: wrpc-x86_64-pc-windows-gnu
       - run: .\bin\wit-bindgen-wrpc.exe --version
@@ -436,7 +436,7 @@ jobs:
           fi
           cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
-      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
         with:
           path: artifacts
 
