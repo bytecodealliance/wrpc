@@ -1,3 +1,4 @@
 /target
 dump.rdb
 .DS_Store
+.direnv
