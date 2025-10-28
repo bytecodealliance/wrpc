@@ -1601,6 +1601,44 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-quic-client"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "clap",
+ "futures",
+ "quinn",
+ "rcgen",
+ "rustls 0.23.31",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "wit-bindgen-wrpc",
+ "wrpc-transport",
+ "wrpc-transport-quic",
+]
+
+[[package]]
+name = "hello-quic-server"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "clap",
+ "futures",
+ "quinn",
+ "rcgen",
+ "rustls 0.23.31",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "wit-bindgen-wrpc",
+ "wrpc-transport",
+ "wrpc-transport-quic",
+]
+
+[[package]]
 name = "hello-tcp-client"
 version = "0.1.0"
 dependencies = [
