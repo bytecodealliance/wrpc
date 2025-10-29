@@ -21,7 +21,6 @@ clap = { workspace = true, features = [
     "suggestions",
     "usage",
 ] }
-futures = { workspace = true }
 quinn = { workspace = true, features = [
     "log",
     "platform-verifier",
@@ -38,7 +37,5 @@ tracing-subscriber = { workspace = true, features = [
     "env-filter",
     "fmt",
 ] }
-wrpc-transport = { workspace = true }
 wrpc-transport-quic = { workspace = true }
 wrpc-wasi-keyvalue = { workspace = true }
-wrpc-wasi-keyvalue-mem = { workspace = true }
