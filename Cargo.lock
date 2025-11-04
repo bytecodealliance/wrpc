@@ -3248,6 +3248,47 @@ dependencies = [
 ]
 
 [[package]]
+name = "streams-quic-client"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "clap",
+ "futures",
+ "quinn",
+ "rcgen",
+ "rustls 0.23.35",
+ "tokio",
+ "tokio-stream",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+ "wit-bindgen-wrpc",
+ "wrpc-transport",
+ "wrpc-transport-quic",
+]
+
+[[package]]
+name = "streams-quic-server"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "clap",
+ "futures",
+ "quinn",
+ "rcgen",
+ "rustls 0.23.35",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+ "wit-bindgen-wrpc",
+ "wrpc-transport",
+ "wrpc-transport-quic",
+]
+
+[[package]]
 name = "strsim"
 version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
