@@ -9,29 +9,9 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
-[features]
-default = ["async-nats-0_41"]
-
 [dependencies]
 anyhow = { workspace = true, features = ["std"] }
-async-nats-0_41 = { package = "async-nats", version = "0.41", default-features = false, features = [
-    "ring",
-], optional = true }
-async-nats-0_40 = { package = "async-nats", version = "0.40", default-features = false, features = [
-    "ring",
-], optional = true }
-async-nats-0_39 = { package = "async-nats", version = "0.39", default-features = false, features = [
-    "ring",
-], optional = true }
-async-nats-0_38 = { package = "async-nats", version = "0.38", default-features = false, features = [
-    "ring",
-], optional = true }
-async-nats-0_37 = { package = "async-nats", version = "0.37", default-features = false, features = [
-    "ring",
-], optional = true }
-async-nats-0_36 = { package = "async-nats", version = "0.36", default-features = false, features = [
-    "ring",
-], optional = true }
+async-nats = { workspace = true, features = ["ring"] }
 bytes = { workspace = true }
 futures = { workspace = true, features = ["async-await"] }
 nuid = { workspace = true }
