@@ -31,7 +31,7 @@ impl wrpc_transport::frame::ConnHandler<RecvStream, SendStream> for ConnHandler 
         }
     }
 
-    async fn on_egress(mut tx: SendStream, res: std::io::Result<()>) {
+    async fn on_egress(tx: SendStream, res: std::io::Result<()>) {
         if let Err(err) = res {
             error!(?err, "egress failed");
         } else {

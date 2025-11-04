@@ -52,7 +52,7 @@ url = { workspace = true }
 uuid = { workspace = true, features = ["std", "v7"] }
 wit-bindgen-wrpc = { workspace = true }
 wrpc-transport = { workspace = true, features = ["net"] }
-wrpc-transport-nats = { workspace = true, features = ["async-nats-0_41"] }
+wrpc-transport-nats = { workspace = true }
 wrpc-transport-quic = { workspace = true }
 wrpc-transport-web = { workspace = true }
 wrpc-wasi-keyvalue = { workspace = true }
