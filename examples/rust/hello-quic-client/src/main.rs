@@ -24,7 +24,7 @@ mod bindings {
 #[command(author, version, about, long_about = None)]
 struct Args {
     /// Address to invoke `wrpc-examples:hello/handler.hello` on
-    #[arg(default_value = "127.0.0.1:4433")]
+    #[arg(default_value = "[::1]:4433")]
     addr: SocketAddr,
 }
 

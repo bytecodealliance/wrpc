@@ -31,7 +31,7 @@ use bindings::wrpc_examples::streams::handler::{echo, Req};
 #[command(author, version, about, long_about = None)]
 struct Args {
     /// Address to invoke `wrpc-examples:streams/handler.echo` on
-    #[arg(default_value = "127.0.0.1:4433")]
+    #[arg(default_value = "[::1]:4433")]
     addr: SocketAddr,
 }
 
