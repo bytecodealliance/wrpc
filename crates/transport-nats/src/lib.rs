@@ -13,7 +13,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::{anyhow, ensure, Context as _};
-use async_nats::{HeaderMap, PublishMessage, ServerInfo, StatusCode, Subject};
+use async_nats::message::OutboundMessage;
+use async_nats::{HeaderMap, ServerInfo, StatusCode, Subject};
 use bytes::{Buf as _, Bytes};
 use futures::sink::SinkExt as _;
 use futures::{Stream, StreamExt};
@@ -598,7 +599,7 @@ impl AsyncWrite for SubjectWriter {
         }
         trace!("starting send");
         let subject = self.tx.clone();
-        match self.nats.start_send_unpin(PublishMessage {
+        match self.nats.start_send_unpin(OutboundMessage {
             subject,
             payload: Bytes::copy_from_slice(buf),
             reply: None,
