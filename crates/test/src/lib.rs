@@ -2,6 +2,7 @@ use core::net::Ipv6Addr;
 
 use std::process::ExitStatus;
 
+use std::sync::Arc;
 use anyhow::Context;
 use rcgen::{generate_simple_self_signed, CertifiedKey};
 use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
@@ -12,6 +13,7 @@ use tokio::process::Command;
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 use tokio::{select, spawn};
+use zenoh::{Config};
 
 pub async fn free_port() -> anyhow::Result<u16> {
     TcpListener::bind((Ipv6Addr::LOCALHOST, 0))
@@ -118,6 +120,55 @@ pub async fn start_nats() -> anyhow::Result<(
         .await
         .context("failed to connect to NATS.io server")?;
     Ok((port, client, server, stop_tx))
+}
+
+#[cfg(feature = "zenoh-transport")]
+pub async fn start_zenoh() -> anyhow::Result<(
+    u16,
+    wrpc_transport_zenoh::Client,
+    JoinHandle<anyhow::Result<ExitStatus>>,
+    oneshot::Sender<()>,
+)> {
+    let port = free_port().await?; // not used in setup -- just return
+    let (server, stop_tx) =
+        spawn_server(Command::new("zenohd").args(&[] as &[&str]))
+            .await
+            .context("failed to start zenohd server")?;
+
+    // connect to zenoh
+    let cfg = Config::from_env().expect("Missing environment variable 'ZENOH_CONFIG'");
+
+    let session = zenoh::open(cfg)
+                            .await
+                            .expect("Failed to open a Zenoh session");
+
+    let arc_session = Arc::new(session);
+
+    let prefix = Arc::<str>::from("");
+
+    let client = wrpc_transport_zenoh::Client::new(arc_session, prefix)
+                    .await
+                    .context("failed to construct transport client")?;
+
+    Ok((port, client, server, stop_tx))
+}
+
+#[cfg(feature = "zenoh-transport")]
+pub async fn with_zenoh<T, Fut>(f: impl FnOnce(u16, wrpc_transport_zenoh::Client) -> Fut) -> anyhow::Result<T>
+where
+    Fut: core::future::Future<Output = anyhow::Result<T>>,
+{
+    let (port, zenoh_client, zenoh_server, stop_tx) = start_zenoh()
+        .await
+        .context("failed to start Zenoh server")?;
+    let res = f(port, zenoh_client).await.context("closure failed")?;
+
+    stop_tx.send(()).expect("failed to stop Zenoh server");
+    zenoh_server
+        .await
+        .context("failed to await Zenoh server stop")?
+        .context("Zenoh server failed to stop")?;
+    Ok(res)
 }
 
 #[cfg(feature = "nats")]
