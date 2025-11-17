@@ -14,7 +14,7 @@ use futures::StreamExt as _;
 use tokio::select;
 use tokio::sync::oneshot;
 use wasmtime::component::{Component, Linker, ResourceTable};
-use wasmtime_wasi::p2::{IoView, WasiCtx, WasiCtxBuilder, WasiView};
+use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 
 mod ping_bindings_wrpc {
     wit_bindgen_wrpc::generate!({
@@ -24,7 +24,7 @@ mod ping_bindings_wrpc {
 }
 mod ping_bindings_wasmtime {
     wasmtime::component::bindgen!({
-        async: true,
+        exports: { default: async },
         world: "ping-proxy",
         path: "benches/wit",
     });
@@ -37,7 +37,7 @@ mod greet_bindings_wrpc {
 }
 mod greet_bindings_wasmtime {
     wasmtime::component::bindgen!({
-        async: true,
+        exports: { default: async },
         world: "greet-proxy",
         path: "benches/wit",
     });
@@ -71,15 +71,12 @@ struct Ctx {
     wasi: WasiCtx,
 }
 
-impl IoView for Ctx {
-    fn table(&mut self) -> &mut ResourceTable {
-        &mut self.table
-    }
-}
-
 impl WasiView for Ctx {
-    fn ctx(&mut self) -> &mut WasiCtx {
-        &mut self.wasi
+    fn ctx(&mut self) -> WasiCtxView<'_> {
+        WasiCtxView {
+            ctx: &mut self.wasi,
+            table: &mut self.table,
+        }
     }
 }
 

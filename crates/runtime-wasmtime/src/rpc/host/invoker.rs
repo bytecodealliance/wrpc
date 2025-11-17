@@ -22,7 +22,7 @@ where
         params: Vec<u8>,
         paths: Vec<Vec<Option<u32>>>,
     ) -> wasmtime::Result<Resource<Invocation>> {
-        let client = self.0.client().clone();
+        let client = self.0.wrpc().ctx.client().clone();
         let cx = self.0.delete_context(cx)?;
         let paths = paths
             .into_iter()

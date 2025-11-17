@@ -22,11 +22,11 @@ use wasi_preview1_component_adapter_provider::{
 };
 use wasmtime::component::{types, Component, InstancePre, Linker, ResourceTable, ResourceType};
 use wasmtime::{Engine, Store};
-use wasmtime_wasi::p2::{IoView, WasiCtx, WasiCtxBuilder, WasiView};
+use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpView};
 use wrpc_runtime_wasmtime::{
     collect_component_resource_exports, collect_component_resource_imports, link_item, rpc,
-    RemoteResource, ServeExt as _, SharedResourceTable, WrpcView,
+    RemoteResource, ServeExt as _, SharedResourceTable, WrpcCtxView, WrpcView,
 };
 use wrpc_transport::{Invoke, Serve};
 
@@ -49,28 +49,30 @@ pub enum Workload {
     Binary(Vec<u8>),
 }
 
-pub struct Ctx<C: Invoke> {
-    pub table: ResourceTable,
-    pub wasi: WasiCtx,
-    pub http: WasiHttpCtx,
+pub struct WrpcCtx<C: Invoke> {
     pub wrpc: C,
     pub cx: C::Context,
     pub shared_resources: SharedResourceTable,
     pub timeout: Duration,
 }
 
-impl<C> WrpcView for Ctx<C>
+pub struct Ctx<C: Invoke> {
+    pub table: ResourceTable,
+    pub wasi: WasiCtx,
+    pub http: WasiHttpCtx,
+    pub wrpc: WrpcCtx<C>,
+}
+
+impl<C> wrpc_runtime_wasmtime::WrpcCtx<C> for WrpcCtx<C>
 where
     C: Invoke,
     C::Context: Clone,
 {
-    type Invoke = C;
-
     fn context(&self) -> C::Context {
         self.cx.clone()
     }
 
-    fn client(&self) -> &Self::Invoke {
+    fn client(&self) -> &C {
         &self.wrpc
     }
 
@@ -83,21 +85,37 @@ where
     }
 }
 
-impl<C: Invoke> IoView for Ctx<C> {
-    fn table(&mut self) -> &mut ResourceTable {
-        &mut self.table
+impl<C> WrpcView for Ctx<C>
+where
+    C: Invoke,
+    C::Context: Clone,
+{
+    type Invoke = C;
+
+    fn wrpc(&mut self) -> WrpcCtxView<'_, Self::Invoke> {
+        WrpcCtxView {
+            ctx: &mut self.wrpc,
+            table: &mut self.table,
+        }
     }
 }
 
 impl<C: Invoke> WasiView for Ctx<C> {
-    fn ctx(&mut self) -> &mut WasiCtx {
-        &mut self.wasi
+    fn ctx(&mut self) -> WasiCtxView<'_> {
+        WasiCtxView {
+            ctx: &mut self.wasi,
+            table: &mut self.table,
+        }
     }
 }
 
 impl<C: Invoke> WasiHttpView for Ctx<C> {
     fn ctx(&mut self) -> &mut WasiHttpCtx {
         &mut self.http
+    }
+
+    fn table(&mut self) -> &mut ResourceTable {
+        &mut self.table
     }
 }
 
@@ -379,10 +397,12 @@ fn new_store<C: Invoke>(
                 .build(),
             http: WasiHttpCtx::new(),
             table: ResourceTable::new(),
-            shared_resources: SharedResourceTable::default(),
-            wrpc,
-            cx,
-            timeout,
+            wrpc: WrpcCtx {
+                wrpc,
+                cx,
+                shared_resources: SharedResourceTable::default(),
+                timeout,
+            },
         },
     )
 }

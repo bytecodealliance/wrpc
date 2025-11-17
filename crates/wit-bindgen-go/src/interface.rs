@@ -3507,7 +3507,7 @@ func (v *{name}) WriteToIndex(w {wrpc}.ByteWriter) (func({wrpc}.IndexWriter) err
 
             // WriteToIndex()
             let mut buf_len = ty.flags.len() / 8;
-            if ty.flags.len() % 8 > 0 {
+            if !ty.flags.len().is_multiple_of(8) {
                 buf_len += 1;
             }
 

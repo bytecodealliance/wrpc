@@ -10,7 +10,7 @@ use tracing::{debug, instrument, Instrument as _, Span};
 use wasmtime::component::types;
 use wasmtime::component::{Instance, InstancePre, ResourceType};
 use wasmtime::AsContextMut;
-use wasmtime_wasi::p2::WasiView;
+use wasmtime_wasi::WasiView;
 
 use crate::{call, rpc_func_name, WrpcView};
 

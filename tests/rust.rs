@@ -72,59 +72,65 @@ where
                     _cx: C,
                     v: Pin<
                         Box<
-                            (dyn Future<
-                                Output = Pin<
-                                    Box<
-                                        (dyn Future<
-                                            Output = Pin<
-                                                Box<
-                                                    (dyn Future<
-                                                        Output = Pin<
-                                                            Box<
-                                                                (dyn Stream<Item = Vec<String>>
-                                                                     + Send
-                                                                     + 'static),
-                                                            >,
+                            dyn Future<
+                                    Output = Pin<
+                                        Box<
+                                            dyn Future<
+                                                    Output = Pin<
+                                                        Box<
+                                                            dyn Future<
+                                                                    Output = Pin<
+                                                                        Box<
+                                                                            dyn Stream<
+                                                                                    Item = Vec<
+                                                                                        String,
+                                                                                    >,
+                                                                                > + Send
+                                                                                + 'static,
+                                                                        >,
+                                                                    >,
+                                                                > + Send
+                                                                + 'static,
                                                         >,
-                                                    > + Send
-                                                         + 'static),
-                                                >,
-                                            >,
-                                        > + Send
-                                             + 'static),
+                                                    >,
+                                                > + Send
+                                                + 'static,
+                                        >,
                                     >,
-                                >,
-                            > + Send
-                                 + 'static),
+                                > + Send
+                                + 'static,
                         >,
                     >,
                 ) -> anyhow::Result<
                     Pin<
                         Box<
-                            (dyn Future<
-                                Output = Pin<
-                                    Box<
-                                        (dyn Future<
-                                            Output = Pin<
-                                                Box<
-                                                    (dyn Future<
-                                                        Output = Pin<
-                                                            Box<
-                                                                (dyn Stream<Item = Vec<String>>
-                                                                     + Send
-                                                                     + 'static),
-                                                            >,
+                            dyn Future<
+                                    Output = Pin<
+                                        Box<
+                                            dyn Future<
+                                                    Output = Pin<
+                                                        Box<
+                                                            dyn Future<
+                                                                    Output = Pin<
+                                                                        Box<
+                                                                            dyn Stream<
+                                                                                    Item = Vec<
+                                                                                        String,
+                                                                                    >,
+                                                                                > + Send
+                                                                                + 'static,
+                                                                        >,
+                                                                    >,
+                                                                > + Send
+                                                                + 'static,
                                                         >,
-                                                    > + Send
-                                                         + 'static),
-                                                >,
-                                            >,
-                                        > + Send
-                                             + 'static),
+                                                    >,
+                                                > + Send
+                                                + 'static,
+                                        >,
                                     >,
-                                >,
-                            > + Send
-                                 + 'static),
+                                > + Send
+                                + 'static,
                         >,
                     >,
                 > {

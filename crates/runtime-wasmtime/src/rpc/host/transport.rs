@@ -25,7 +25,7 @@ impl<T: WrpcView> HostInvocation for WrpcRpcImpl<T> {
         &mut self,
         invocation: Resource<Invocation>,
     ) -> wasmtime::Result<Resource<Pollable>> {
-        subscribe(self.0.table(), invocation)
+        subscribe(self.0.wrpc().table, invocation)
     }
 
     async fn finish(
@@ -61,7 +61,8 @@ impl<T: WrpcView> HostIncomingChannel for WrpcRpcImpl<T> {
     ) -> wasmtime::Result<Option<Resource<InputStream>>> {
         let IncomingChannel(stream) = self
             .0
-            .table()
+            .wrpc()
+            .table
             .get_mut(&incoming)
             .context("failed to get incoming channel from table")?;
         if Arc::get_mut(stream).is_none() {
@@ -70,7 +71,8 @@ impl<T: WrpcView> HostIncomingChannel for WrpcRpcImpl<T> {
         let stream = Arc::clone(stream);
         let stream = self
             .0
-            .table()
+            .wrpc()
+            .table
             .push_child(
                 Box::new(AsyncReadStream::new(IncomingChannelStream {
                     incoming: IncomingChannel(stream),
@@ -94,7 +96,8 @@ impl<T: WrpcView> HostIncomingChannel for WrpcRpcImpl<T> {
             .context("failed to construct subscription path")?;
         let IncomingChannel(incoming) = self
             .0
-            .table()
+            .wrpc()
+            .table
             .get(&incoming)
             .context("failed to get incoming channel from table")?;
         let incoming = {
@@ -131,7 +134,8 @@ impl<T: WrpcView> HostOutgoingChannel for WrpcRpcImpl<T> {
     ) -> wasmtime::Result<Option<Resource<OutputStream>>> {
         let OutgoingChannel(stream) = self
             .0
-            .table()
+            .wrpc()
+            .table
             .get_mut(&outgoing)
             .context("failed to get outgoing channel from table")?;
         if Arc::get_mut(stream).is_none() {
@@ -140,7 +144,8 @@ impl<T: WrpcView> HostOutgoingChannel for WrpcRpcImpl<T> {
         let stream = Arc::clone(stream);
         let stream = self
             .0
-            .table()
+            .wrpc()
+            .table
             .push_child(
                 Box::new(AsyncWriteStream::new(
                     8192,
@@ -167,7 +172,8 @@ impl<T: WrpcView> HostOutgoingChannel for WrpcRpcImpl<T> {
             .context("failed to construct subscription path")?;
         let OutgoingChannel(outgoing) = self
             .0
-            .table()
+            .wrpc()
+            .table
             .get(&outgoing)
             .context("failed to get outgoing channel from table")?;
         let incoming = {

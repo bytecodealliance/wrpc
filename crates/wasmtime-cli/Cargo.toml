@@ -1,6 +1,6 @@
 [package]
 name = "wrpc-wasmtime-cli"
-version = "0.7.0"
+version = "0.8.0"
 description = "wRPC Wasmtime CLI"
 
 authors.workspace = true
@@ -64,7 +64,7 @@ wasmtime-cli-flags = { workspace = true, features = [
     "threads",
 ] }
 wasmtime-wasi = { workspace = true }
-wasmtime-wasi-http = { workspace = true }
+wasmtime-wasi-http = { workspace = true, features = ["default-send-request"] }
 wit-component = { workspace = true }
 wrpc-cli = { workspace = true, features = ["nats"] }
 wrpc-transport-nats = { workspace = true }
