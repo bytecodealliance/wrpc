@@ -9,12 +9,10 @@ mod generated {
             "wrpc:rpc/transport/invocation": crate::rpc::Invocation,
             "wrpc:rpc/transport/outgoing-channel": crate::rpc::OutgoingChannel,
         },
-        async: {
-            only_imports: [
-                "wrpc:rpc/transport@0.1.0#[static]invocation.finish",
-            ],
+        imports: {
+            default: trappable,
+            "wrpc:rpc/transport@0.1.0/[static]invocation.finish": async | trappable,
         },
-        trappable_imports: true,
         require_store_data_send: true,
     });
 

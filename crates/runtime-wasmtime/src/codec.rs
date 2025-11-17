@@ -23,12 +23,12 @@ use wasmtime::component::types::{Case, Field};
 use wasmtime::component::{ResourceType, Type, Val};
 use wasmtime::{AsContextMut, StoreContextMut};
 use wasmtime_wasi::p2::pipe::AsyncReadStream;
-use wasmtime_wasi::p2::{DynInputStream, StreamError, WasiView};
+use wasmtime_wasi::p2::{DynInputStream, StreamError};
 use wrpc_transport::ListDecoderU8;
 
 use crate::{RemoteResource, WrpcView};
 
-pub struct ValEncoder<'a, T, W> {
+pub struct ValEncoder<'a, T: 'static, W> {
     pub store: StoreContextMut<'a, T>,
     pub ty: &'a Type,
     pub resources: &'a [ResourceType],
@@ -120,7 +120,7 @@ where
 
 impl<T, W> Encoder<&Val> for ValEncoder<'_, T, W>
 where
-    T: WasiView + WrpcView,
+    T: WrpcView,
     W: AsyncWrite + wrpc_transport::Index<W> + Sync + Send + 'static,
 {
     type Error = wasmtime::Error;
@@ -449,7 +449,8 @@ where
                         let mut stream = self
                             .store
                             .data_mut()
-                            .table()
+                            .wrpc()
+                            .table
                             .delete(stream)
                             .context("failed to delete input stream")?;
                         self.deferred = Some(Box::new(|w| {
@@ -478,7 +479,8 @@ where
                     } else {
                         self.store
                             .data_mut()
-                            .table()
+                            .wrpc()
+                            .table
                             .get_mut(&stream)
                             .context("failed to get input stream")?;
                         // NOTE: In order to handle this we'd need to know how many bytes the
@@ -491,7 +493,7 @@ where
                     let resource = resource
                         .try_into_resource(&mut self.store)
                         .context("resource type mismatch")?;
-                    let table = self.store.data_mut().table();
+                    let table = self.store.data_mut().wrpc().table;
                     if resource.owned() {
                         let RemoteResource(buf) = table
                             .delete(resource)
@@ -516,6 +518,8 @@ where
                     if self
                         .store
                         .data_mut()
+                        .wrpc()
+                        .ctx
                         .shared_resources()
                         .0
                         .insert(id, *resource)
@@ -527,6 +531,10 @@ where
                 } else {
                     bail!("encoding host resources not supported yet")
                 }
+            }
+
+            (_, Type::Future(..) | Type::Stream(..) | Type::ErrorContext) => {
+                bail!("async not supported")
             }
             _ => bail!("value type mismatch"),
         }
@@ -551,7 +559,7 @@ pub async fn read_value<T, R>(
     path: &[usize],
 ) -> std::io::Result<()>
 where
-    T: WasiView + WrpcView,
+    T: WrpcView + 'static,
     R: AsyncRead + wrpc_transport::Index<R> + Send + Unpin + 'static,
 {
     match ty {
@@ -796,7 +804,8 @@ where
                 // which will could potentially break/hang with some transports
                 let res = store
                     .data_mut()
-                    .table()
+                    .wrpc()
+                    .table
                     .push(Box::new(AsyncReadStream::new(
                         FramedRead::new(r, ListDecoderU8::default())
                             .into_async_read()
@@ -837,6 +846,8 @@ where
                 trace!(?id, "lookup shared resource");
                 let resource = store
                     .data_mut()
+                    .wrpc()
+                    .ctx
                     .shared_resources()
                     .0
                     .get(&id)
@@ -850,7 +861,7 @@ where
                     .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
                 let mut buf = Vec::with_capacity(n);
                 r.read_to_end(&mut buf).await?;
-                let table = store.data_mut().table();
+                let table = store.data_mut().wrpc().table;
                 let resource = table
                     .push(RemoteResource(buf.into()))
                     .map_err(|err| std::io::Error::new(std::io::ErrorKind::OutOfMemory, err))?;
@@ -861,5 +872,9 @@ where
                 Ok(())
             }
         }
+        Type::Future(..) | Type::Stream(..) | Type::ErrorContext => Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "async not supported",
+        )),
     }
 }

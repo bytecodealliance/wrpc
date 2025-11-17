@@ -18,9 +18,10 @@ use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt as _};
 use tokio_util::codec::Encoder;
 use tracing::{debug, instrument, trace, warn};
 use uuid::Uuid;
-use wasmtime::component::{types, Func, Resource, ResourceAny, ResourceType, Type, Val};
+use wasmtime::component::{
+    types, Func, Resource, ResourceAny, ResourceTable, ResourceType, Type, Val,
+};
 use wasmtime::{AsContextMut, Engine};
-use wasmtime_wasi::p2::{IoView, WasiView};
 use wrpc_transport::Invoke;
 
 use crate::bindings::rpc::context::Context;
@@ -81,14 +82,12 @@ pub struct RemoteResource(pub Bytes);
 #[derive(Debug, Default)]
 pub struct SharedResourceTable(HashMap<Uuid, ResourceAny>);
 
-pub trait WrpcView: IoView + Send {
-    type Invoke: Invoke;
-
+pub trait WrpcCtx<T: Invoke>: Send {
     /// Returns context to use for invocation
-    fn context(&self) -> <Self::Invoke as Invoke>::Context;
+    fn context(&self) -> T::Context;
 
     /// Returns an [Invoke] implementation used to satisfy polyfilled imports
-    fn client(&self) -> &Self::Invoke;
+    fn client(&self) -> &T;
 
     /// Returns a table of shared exported resources
     fn shared_resources(&mut self) -> &mut SharedResourceTable;
@@ -100,23 +99,22 @@ pub trait WrpcView: IoView + Send {
     }
 }
 
+pub struct WrpcCtxView<'a, T: Invoke> {
+    pub ctx: &'a mut dyn WrpcCtx<T>,
+    pub table: &'a mut ResourceTable,
+}
+
+pub trait WrpcView: Send {
+    type Invoke: Invoke;
+
+    fn wrpc(&mut self) -> WrpcCtxView<'_, Self::Invoke>;
+}
+
 impl<T: WrpcView> WrpcView for &mut T {
     type Invoke = T::Invoke;
 
-    fn context(&self) -> <Self::Invoke as Invoke>::Context {
-        (**self).context()
-    }
-
-    fn client(&self) -> &Self::Invoke {
-        (**self).client()
-    }
-
-    fn shared_resources(&mut self) -> &mut SharedResourceTable {
-        (**self).shared_resources()
-    }
-
-    fn timeout(&self) -> Option<Duration> {
-        (**self).timeout()
+    fn wrpc(&mut self) -> WrpcCtxView<'_, Self::Invoke> {
+        T::wrpc(self)
     }
 }
 
@@ -131,7 +129,8 @@ pub trait WrpcViewExt: WrpcView {
             > + Send
             + 'static,
     ) -> anyhow::Result<Resource<Invocation>> {
-        self.table()
+        self.wrpc()
+            .table
             .push(Invocation::Future(Box::pin(async move {
                 let res = invocation.await;
                 Box::new(res) as Box<dyn Any + Send>
@@ -153,7 +152,8 @@ pub trait WrpcViewExt: WrpcView {
         >,
     > {
         let invocation = self
-            .table()
+            .wrpc()
+            .table
             .get(invocation)
             .context("failed to get invocation from table")?;
         match invocation {
@@ -177,7 +177,8 @@ pub trait WrpcViewExt: WrpcView {
         >,
     > {
         let invocation = self
-            .table()
+            .wrpc()
+            .table
             .delete(invocation)
             .context("failed to delete invocation from table")?;
         Ok(async move {
@@ -196,7 +197,8 @@ pub trait WrpcViewExt: WrpcView {
         &mut self,
         outgoing: <Self::Invoke as Invoke>::Outgoing,
     ) -> anyhow::Result<Resource<OutgoingChannel>> {
-        self.table()
+        self.wrpc()
+            .table
             .push(OutgoingChannel(Arc::new(std::sync::RwLock::new(Box::new(
                 outgoing,
             )))))
@@ -208,7 +210,8 @@ pub trait WrpcViewExt: WrpcView {
         outgoing: Resource<OutgoingChannel>,
     ) -> anyhow::Result<<Self::Invoke as Invoke>::Outgoing> {
         let OutgoingChannel(outgoing) = self
-            .table()
+            .wrpc()
+            .table
             .delete(outgoing)
             .context("failed to delete outgoing channel from table")?;
         let outgoing =
@@ -226,7 +229,8 @@ pub trait WrpcViewExt: WrpcView {
         &mut self,
         incoming: <Self::Invoke as Invoke>::Incoming,
     ) -> anyhow::Result<Resource<IncomingChannel>> {
-        self.table()
+        self.wrpc()
+            .table
             .push(IncomingChannel(Arc::new(std::sync::RwLock::new(Box::new(
                 incoming,
             )))))
@@ -238,7 +242,8 @@ pub trait WrpcViewExt: WrpcView {
         incoming: Resource<IncomingChannel>,
     ) -> anyhow::Result<<Self::Invoke as Invoke>::Incoming> {
         let IncomingChannel(incoming) = self
-            .table()
+            .wrpc()
+            .table
             .delete(incoming)
             .context("failed to delete incoming channel from table")?;
         let incoming =
@@ -253,14 +258,16 @@ pub trait WrpcViewExt: WrpcView {
     }
 
     fn push_error(&mut self, error: Error) -> anyhow::Result<Resource<Error>> {
-        self.table()
+        self.wrpc()
+            .table
             .push(error)
             .context("failed to push error to table")
     }
 
     fn get_error(&mut self, error: &Resource<Error>) -> anyhow::Result<&Error> {
         let error = self
-            .table()
+            .wrpc()
+            .table
             .get(error)
             .context("failed to get error from table")?;
         Ok(error)
@@ -268,7 +275,8 @@ pub trait WrpcViewExt: WrpcView {
 
     fn get_error_mut(&mut self, error: &Resource<Error>) -> anyhow::Result<&mut Error> {
         let error = self
-            .table()
+            .wrpc()
+            .table
             .get_mut(error)
             .context("failed to get error from table")?;
         Ok(error)
@@ -276,7 +284,8 @@ pub trait WrpcViewExt: WrpcView {
 
     fn delete_error(&mut self, error: Resource<Error>) -> anyhow::Result<Error> {
         let error = self
-            .table()
+            .wrpc()
+            .table
             .delete(error)
             .context("failed to delete error from table")?;
         Ok(error)
@@ -289,7 +298,8 @@ pub trait WrpcViewExt: WrpcView {
     where
         <Self::Invoke as Invoke>::Context: 'static,
     {
-        self.table()
+        self.wrpc()
+            .table
             .push(Context(Box::new(cx)))
             .context("failed to push context to table")
     }
@@ -302,7 +312,8 @@ pub trait WrpcViewExt: WrpcView {
         <Self::Invoke as Invoke>::Context: 'static,
     {
         let Context(cx) = self
-            .table()
+            .wrpc()
+            .table
             .delete(cx)
             .context("failed to delete context from table")?;
         let cx = cx.downcast().map_err(|_| anyhow!("invalid context type"))?;
@@ -377,7 +388,7 @@ where
     I: AsyncRead + wrpc_transport::Index<I> + Send + Sync + Unpin + 'static,
     O: AsyncWrite + wrpc_transport::Index<O> + Send + Sync + Unpin + 'static,
     C: AsContextMut,
-    C::Data: WasiView + WrpcView,
+    C::Data: WrpcView,
 {
     let mut params = vec![Val::Bool(false); params_ty.len()];
     let mut rx = pin!(rx);

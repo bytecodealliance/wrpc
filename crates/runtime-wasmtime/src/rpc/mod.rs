@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use anyhow::Context as _;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
-use wasmtime::component::Linker;
+use wasmtime::component::{HasData, Linker};
 use wasmtime_wasi::p2::Pollable;
 use wrpc_transport::Invoke;
 
@@ -23,11 +23,8 @@ mod host;
 #[repr(transparent)]
 pub struct WrpcRpcImpl<T>(pub T);
 
-fn type_annotate<T, F>(val: F) -> F
-where
-    F: Fn(&mut T) -> WrpcRpcImpl<&mut T>,
-{
-    val
+impl<T: 'static> HasData for WrpcRpcImpl<T> {
+    type Data<'a> = WrpcRpcImpl<&'a mut T>;
 }
 
 pub fn add_to_linker<T>(linker: &mut Linker<T>) -> anyhow::Result<()>
@@ -36,14 +33,13 @@ where
     T::Invoke: Clone + 'static,
     <T::Invoke as Invoke>::Context: 'static,
 {
-    let closure = type_annotate::<T, _>(|t| WrpcRpcImpl(t));
-    bindings::rpc::context::add_to_linker_get_host(linker, closure)
+    bindings::rpc::context::add_to_linker::<_, WrpcRpcImpl<T>>(linker, |t| WrpcRpcImpl(t))
         .context("failed to link `wrpc:rpc/context`")?;
-    bindings::rpc::error::add_to_linker_get_host(linker, closure)
+    bindings::rpc::error::add_to_linker::<_, WrpcRpcImpl<T>>(linker, |t| WrpcRpcImpl(t))
         .context("failed to link `wrpc:rpc/error`")?;
-    bindings::rpc::invoker::add_to_linker_get_host(linker, closure)
+    bindings::rpc::invoker::add_to_linker::<_, WrpcRpcImpl<T>>(linker, |t| WrpcRpcImpl(t))
         .context("failed to link `wrpc:rpc/invoker`")?;
-    bindings::rpc::transport::add_to_linker_get_host(linker, closure)
+    bindings::rpc::transport::add_to_linker::<_, WrpcRpcImpl<T>>(linker, |t| WrpcRpcImpl(t))
         .context("failed to link `wrpc:rpc/transport`")?;
     Ok(())
 }

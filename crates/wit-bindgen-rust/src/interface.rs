@@ -1631,7 +1631,11 @@ pub struct {}(());",
             uwriteln!(self.src, "}}");
 
             let n = flags.flags.len();
-            let n = if n % 8 == 0 { n / 8 } else { n / 8 + 1 };
+            let n = if n.is_multiple_of(8) {
+                n / 8
+            } else {
+                n / 8 + 1
+            };
             uwriteln!(
                 self.src,
                 r#"

@@ -12,7 +12,7 @@ where
     <T::Invoke as Invoke>::Context: 'static,
 {
     fn default(&mut self) -> wasmtime::Result<Resource<Context>> {
-        let cx = self.0.context();
+        let cx = self.0.wrpc().ctx.context();
         self.0.push_context(cx)
     }
 

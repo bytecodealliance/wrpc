@@ -14,7 +14,6 @@ use tokio_util::codec::Encoder;
 use tracing::{debug, instrument, trace, warn, Instrument as _, Span};
 use wasmtime::component::{types, LinkerInstance, ResourceType, Type, Val};
 use wasmtime::{AsContextMut, Engine, StoreContextMut};
-use wasmtime_wasi::p2::WasiView;
 use wrpc_transport::{Index as _, Invoke, InvokeExt as _};
 
 use crate::rpc::Error;
@@ -32,7 +31,7 @@ pub fn link_item<V>(
     name: impl Into<Arc<str>>,
 ) -> wasmtime::Result<()>
 where
-    V: WasiView + WrpcView,
+    V: WrpcView,
 {
     let instance = instance.into();
     let guest_resources = guest_resources.into();
@@ -112,7 +111,7 @@ pub fn link_instance<V>(
     name: impl Into<Arc<str>>,
 ) -> wasmtime::Result<()>
 where
-    V: WrpcView + WasiView,
+    V: WrpcView,
 {
     let instance = name.into();
     let guest_resources = guest_resources.into();
@@ -133,7 +132,7 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn invoke<T: WrpcView + WasiView>(
+async fn invoke<T: WrpcView>(
     mut store: &mut StoreContextMut<'_, T>,
     params: &[Val],
     results: &mut [Val],
@@ -151,9 +150,10 @@ async fn invoke<T: WrpcView + WasiView>(
             .with_context(|| format!("failed to encode parameter `{name}`"))?;
         deferred.push(enc.deferred);
     }
-    let clt = store.data().client();
-    let cx = store.data().context();
-    let timeout = store.data().timeout();
+    let view = store.data_mut().wrpc();
+    let clt = view.ctx.client();
+    let cx = view.ctx.context();
+    let timeout = view.ctx.timeout();
     let buf = buf.freeze();
     // TODO: set paths
     let paths = &[[]; 0];
@@ -235,7 +235,7 @@ pub fn link_function<V>(
     name: impl Into<Arc<str>>,
 ) -> wasmtime::Result<()>
 where
-    V: WrpcView + WasiView,
+    V: WrpcView,
 {
     let span = Span::current();
     let instance = instance.into();
