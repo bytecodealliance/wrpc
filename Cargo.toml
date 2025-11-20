@@ -184,5 +184,5 @@ wrpc-transport-web = { version = "0.2", path = "./crates/transport-web", default
 wrpc-wasi-keyvalue = { version = "0.1.1", path = "./crates/wasi-keyvalue", default-features = false }
 wrpc-wasi-keyvalue-mem = { version = "0.1", path = "./crates/wasi-keyvalue-mem", default-features = false }
 wrpc-wasi-keyvalue-redis = { version = "0.1", path = "./crates/wasi-keyvalue-redis", default-features = false }
-wrpc-wasmtime-cli = { version = "0.8", path = "./crates/wasmtime-cli", default-features = false }
+wrpc-wasmtime-cli = { version = "0.8.1", path = "./crates/wasmtime-cli", default-features = false }
 wtransport = { version = "0.6.1", default-features = false }

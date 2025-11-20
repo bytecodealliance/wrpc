@@ -5552,7 +5552,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc-wasmtime-cli"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "anyhow",
  "async-nats",
