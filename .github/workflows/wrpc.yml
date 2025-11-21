@@ -106,7 +106,7 @@ jobs:
     name: wrpc-${{ matrix.config.target }}
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+      - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
       - uses: ./.github/actions/install-nix
         with:
           cachixAuthToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
@@ -190,7 +190,7 @@ jobs:
     name: cargo ${{ matrix.check }}
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+      - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
       - uses: ./.github/actions/install-nix
         with:
           cachixAuthToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
@@ -257,7 +257,7 @@ jobs:
     needs: cargo
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+      - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
 
       - name: Extract tag context
         id: ctx
@@ -292,7 +292,7 @@ jobs:
   build-doc:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+      - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
       - uses: ./.github/actions/install-nix
         with:
           cachixAuthToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
@@ -337,7 +337,7 @@ jobs:
       - build-bin
       - test-linux
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+      - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
       - uses: ./.github/actions/install-nix
         with:
           cachixAuthToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
@@ -411,7 +411,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+      - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
 
       - name: Extract tag context
         id: ctx
