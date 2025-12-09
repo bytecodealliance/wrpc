@@ -9,7 +9,7 @@ jobs:
   nix-flake-update:
     runs-on: ubuntu-24.04
     steps:
-      - uses: rvolosatovs/nix-flake-update-action@7249aa67d87e2a195c376fe34c230af0862a9900 # v2.0.5
+      - uses: rvolosatovs/nix-flake-update-action@fbf9785a8c450529ebd91985bcd167089081e52e # v3.0.0
         with:
           app-id: ${{ secrets.BOT_APP_ID }}
           private-key: ${{ secrets.BOT_APP_PRIVATE_KEY }}
