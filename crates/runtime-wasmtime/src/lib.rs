@@ -568,3 +568,64 @@ pub fn collect_component_resource_imports(
         }
     }
 }
+
+#[instrument(level = "trace", skip_all, ret(level = "trace"))]
+pub fn collect_component_functions(
+    engine: &Engine,
+    component: types::Component,
+    functions: &mut impl Extend<(String, String, types::ComponentFunc)>,
+) {
+    for (name, ty) in component.exports(engine) {
+        match (name, ty) {
+            (name, types::ComponentItem::ComponentFunc(ty)) => {
+                trace!(?name, "collecting root function");
+                functions.extend([(name.into(), "".into(), ty)]);
+            }
+            (_, types::ComponentItem::CoreFunc(_)) => {
+                warn!(name, "collecting root core function exports not supported yet");
+            }
+            (_, types::ComponentItem::Module(_)) => {
+                warn!(name, "collecting root module exports not supported yet");
+            }
+            (_, types::ComponentItem::Component(_)) => {
+                warn!(name, "collecting root component exports not supported yet");
+            }
+            (instance_name, types::ComponentItem::ComponentInstance(ty)) => {
+                for (name, ty) in ty.exports(engine) {
+                    match ty {
+                        types::ComponentItem::ComponentFunc(ty) => {
+                            trace!(?name, "collecting instance function");
+                            functions.extend([(name.into(), instance_name.into(), ty)]);
+                        }
+                        types::ComponentItem::CoreFunc(_) => {
+                            warn!(
+                                instance_name,
+                                name, "collecting instance core function exports not supported yet"
+                            );
+                        }
+                        types::ComponentItem::Module(_) => {
+                            warn!(
+                                instance_name,
+                                name, "collecting instance module exports not supported yet"
+                            );
+                        }
+                        types::ComponentItem::Component(_) => {
+                            warn!(
+                                instance_name,
+                                name, "collecting instance component exports not supported yet"
+                            );
+                        }
+                        types::ComponentItem::ComponentInstance(_) => {
+                            warn!(
+                                instance_name,
+                                name, "collecting nested instance exports not supported yet"
+                            );
+                        }
+                        types::ComponentItem::Type(_) | types::ComponentItem::Resource(_) => {}
+                    }
+                }
+            }
+            (_, types::ComponentItem::Type(_) | types::ComponentItem::Resource(_)) => {}
+        }
+    }
+}

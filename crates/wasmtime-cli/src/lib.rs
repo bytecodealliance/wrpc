@@ -20,11 +20,12 @@ use wasi_preview1_component_adapter_provider::{
     WASI_SNAPSHOT_PREVIEW1_ADAPTER_NAME, WASI_SNAPSHOT_PREVIEW1_COMMAND_ADAPTER,
     WASI_SNAPSHOT_PREVIEW1_REACTOR_ADAPTER,
 };
-use wasmtime::component::{types, Component, InstancePre, Linker, ResourceTable, ResourceType};
+use wasmtime::component::{Component, InstancePre, Linker, ResourceTable, ResourceType};
 use wasmtime::{Engine, Store};
 use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpView};
 use wrpc_runtime_wasmtime::{
+    collect_component_functions,
     collect_component_resource_exports, collect_component_resource_imports, link_item, rpc,
     RemoteResource, ServeExt as _, SharedResourceTable, WrpcCtxView, WrpcView,
 };
@@ -431,128 +432,50 @@ where
         .instantiate_async(&mut store)
         .await
         .context("failed to instantiate component")?;
-    let engine = store.engine().clone();
+    let mut functions = Vec::new();
+    collect_component_functions(&store.engine(), pre.component().component_type(), &mut functions);
+
     let store = Arc::new(Mutex::new(store));
-    for (name, ty) in pre.component().component_type().exports(&engine) {
-        match (name, ty) {
-            (name, types::ComponentItem::ComponentFunc(ty)) => {
-                info!(?name, "serving root function");
-                let invocations = srv
-                    .serve_function_shared(
-                        Arc::clone(&store),
-                        instance,
-                        Arc::clone(&guest_resources),
-                        Arc::clone(&host_resources),
-                        ty,
-                        "",
-                        name,
-                    )
-                    .await?;
-                handlers.spawn(
-                    async move {
-                        let mut invocations = pin!(invocations);
-                        while let Some(invocation) = invocations.next().await {
-                            match invocation {
-                                Ok((_, fut)) => {
-                                    info!("serving root function invocation");
-                                    if let Err(err) = fut.await {
-                                        warn!(?err, "failed to serve root function invocation");
-                                    } else {
-                                        info!("successfully served root function invocation");
-                                    }
-                                }
-                                Err(err) => {
-                                    error!(?err, "failed to accept root function invocation");
-                                }
-                            }
+    for (name, instance_name, ty) in functions {
+        let pretty_name = if instance_name.is_empty() { "root".to_string() } else { instance_name.clone() };
+        let invocations = srv
+            .serve_function_shared(
+                Arc::clone(&store),
+                instance,
+                Arc::clone(&guest_resources),
+                Arc::clone(&host_resources),
+                ty,
+                &instance_name,
+                &name,
+            )
+            .await?;
+        handlers.spawn(async move {
+            let mut invocations = pin!(invocations);
+            while let Some(invocation) = invocations.next().await {
+                match invocation {
+                    Ok((_, fut)) => {
+                        info!("serving {pretty_name} function invocation");
+                        if let Err(err) = fut.await {
+                            warn!(
+                                ?err,
+                                "failed to serve {pretty_name} function invocation"
+                            );
+                        } else {
+                            info!(
+                                "successfully served {pretty_name} function invocation"
+                            );
                         }
                     }
-                    .instrument(span.clone()),
-                );
-            }
-            (_, types::ComponentItem::CoreFunc(_)) => {
-                warn!(name, "serving root core function exports not supported yet");
-            }
-            (_, types::ComponentItem::Module(_)) => {
-                warn!(name, "serving root module exports not supported yet");
-            }
-            (_, types::ComponentItem::Component(_)) => {
-                warn!(name, "serving root component exports not supported yet");
-            }
-            (instance_name, types::ComponentItem::ComponentInstance(ty)) => {
-                for (name, ty) in ty.exports(&engine) {
-                    match ty {
-                        types::ComponentItem::ComponentFunc(ty) => {
-                            info!(?name, "serving instance function");
-                            let invocations = srv
-                                .serve_function_shared(
-                                    Arc::clone(&store),
-                                    instance,
-                                    Arc::clone(&guest_resources),
-                                    Arc::clone(&host_resources),
-                                    ty,
-                                    instance_name,
-                                    name,
-                                )
-                                .await?;
-                            handlers.spawn(async move {
-                                let mut invocations = pin!(invocations);
-                                while let Some(invocation) = invocations.next().await {
-                                    match invocation {
-                                        Ok((_, fut)) => {
-                                            info!("serving instance function invocation");
-                                            if let Err(err) = fut.await {
-                                                warn!(
-                                                    ?err,
-                                                    "failed to serve instance function invocation"
-                                                );
-                                            } else {
-                                                info!(
-                                                    "successfully served instance function invocation"
-                                                );
-                                            }
-                                        }
-                                        Err(err) => {
-                                            error!(
-                                                ?err,
-                                                "failed to accept instance function invocation"
-                                            );
-                                        }
-                                    }
-                                }
-                            }
-                            .instrument(span.clone()));
-                        }
-                        types::ComponentItem::CoreFunc(_) => {
-                            warn!(
-                                instance_name,
-                                name, "serving instance core function exports not supported yet"
-                            );
-                        }
-                        types::ComponentItem::Module(_) => {
-                            warn!(
-                                instance_name,
-                                name, "serving instance module exports not supported yet"
-                            );
-                        }
-                        types::ComponentItem::Component(_) => {
-                            warn!(
-                                instance_name,
-                                name, "serving instance component exports not supported yet"
-                            );
-                        }
-                        types::ComponentItem::ComponentInstance(_) => {
-                            warn!(
-                                instance_name,
-                                name, "serving nested instance exports not supported yet"
-                            );
-                        }
-                        types::ComponentItem::Type(_) | types::ComponentItem::Resource(_) => {}
+                    Err(err) => {
+                        error!(
+                            ?err,
+                            "failed to accept {pretty_name} function invocation"
+                        );
                     }
                 }
             }
-            (_, types::ComponentItem::Type(_) | types::ComponentItem::Resource(_)) => {}
         }
+        .instrument(span.clone()));
     }
     Ok(())
 }
@@ -575,139 +498,47 @@ where
     S: Serve,
 {
     let span = Span::current();
-    for (name, ty) in pre.component().component_type().exports(engine) {
-        match (name, ty) {
-            (name, types::ComponentItem::ComponentFunc(ty)) => {
-                let clt = clt.clone();
-                let cx = cx.clone();
-                let engine = engine.clone();
-                info!(?name, "serving root function");
-                let invocations = srv
-                    .serve_function(
-                        move || {
-                            new_store(&engine, clt.clone(), cx.clone(), "reactor.wasm", timeout)
-                        },
-                        pre.clone(),
-                        Arc::clone(&host_resources),
-                        ty,
-                        "",
-                        name,
-                    )
-                    .await?;
-                handlers.spawn(
-                    async move {
-                        let mut invocations = pin!(invocations);
-                        while let Some(invocation) = invocations.next().await {
-                            match invocation {
-                                Ok((_, fut)) => {
-                                    info!("serving root function invocation");
-                                    if let Err(err) = fut.await {
-                                        warn!(?err, "failed to serve root function invocation");
-                                    } else {
-                                        info!("successfully served root function invocation");
-                                    }
-                                }
-                                Err(err) => {
-                                    error!(?err, "failed to accept root function invocation");
-                                }
+
+    let mut functions = Vec::new();
+    collect_component_functions(engine, pre.component().component_type(), &mut functions);
+    for (name, instance_name, ty) in functions {
+        let pretty_name = if instance_name.is_empty() { "root".to_string() } else { instance_name.clone() };
+        let engine = engine.clone();
+        let clt = clt.clone();
+        let cx = cx.clone();
+        let invocations = srv
+            .serve_function(
+                move || {
+                    new_store(&engine, clt.clone(), cx.clone(), "reactor.wasm", timeout)
+                },
+                pre.clone(),
+                Arc::clone(&host_resources),
+                ty,
+                &instance_name,
+                &name,
+            )
+            .await?;
+        handlers.spawn(
+            async move {
+                let mut invocations = pin!(invocations);
+                while let Some(invocation) = invocations.next().await {
+                    match invocation {
+                        Ok((_, fut)) => {
+                            info!("serving {pretty_name} function invocation");
+                            if let Err(err) = fut.await {
+                                warn!(?err, "failed to serve {pretty_name} function invocation");
+                            } else {
+                                info!("successfully served {pretty_name} function invocation");
                             }
                         }
-                    }
-                    .instrument(span.clone()),
-                );
-            }
-            (_, types::ComponentItem::CoreFunc(_)) => {
-                warn!(name, "serving root core function exports not supported yet");
-            }
-            (_, types::ComponentItem::Module(_)) => {
-                warn!(name, "serving root module exports not supported yet");
-            }
-            (_, types::ComponentItem::Component(_)) => {
-                warn!(name, "serving root component exports not supported yet");
-            }
-            (instance_name, types::ComponentItem::ComponentInstance(ty)) => {
-                for (name, ty) in ty.exports(engine) {
-                    match ty {
-                        types::ComponentItem::ComponentFunc(ty) => {
-                            let clt = clt.clone();
-                            let engine = engine.clone();
-                            let cx = cx.clone();
-                            info!(?name, "serving instance function");
-                            let invocations = srv
-                                .serve_function(
-                                    move || {
-                                        new_store(
-                                            &engine,
-                                            clt.clone(),
-                                            cx.clone(),
-                                            "reactor.wasm",
-                                            timeout,
-                                        )
-                                    },
-                                    pre.clone(),
-                                    Arc::clone(&host_resources),
-                                    ty,
-                                    instance_name,
-                                    name,
-                                )
-                                .await?;
-                            handlers.spawn(async move {
-                                let mut invocations = pin!(invocations);
-                                while let Some(invocation) = invocations.next().await {
-                                    match invocation {
-                                        Ok((_, fut)) => {
-                                            info!("serving instance function invocation");
-                                            if let Err(err) = fut.await {
-                                                warn!(
-                                                    ?err,
-                                                    "failed to serve instance function invocation"
-                                                );
-                                            } else {
-                                                info!(
-                                                    "successfully served instance function invocation"
-                                                );
-                                            }
-                                        }
-                                        Err(err) => {
-                                            error!(
-                                                ?err,
-                                                "failed to accept instance function invocation"
-                                            );
-                                        }
-                                    }
-                                }
-                            }.instrument(span.clone()));
+                        Err(err) => {
+                            error!(?err, "failed to accept {pretty_name} function invocation");
                         }
-                        types::ComponentItem::CoreFunc(_) => {
-                            warn!(
-                                instance_name,
-                                name, "serving instance core function exports not supported yet"
-                            );
-                        }
-                        types::ComponentItem::Module(_) => {
-                            warn!(
-                                instance_name,
-                                name, "serving instance module exports not supported yet"
-                            );
-                        }
-                        types::ComponentItem::Component(_) => {
-                            warn!(
-                                instance_name,
-                                name, "serving instance component exports not supported yet"
-                            );
-                        }
-                        types::ComponentItem::ComponentInstance(_) => {
-                            warn!(
-                                instance_name,
-                                name, "serving nested instance exports not supported yet"
-                            );
-                        }
-                        types::ComponentItem::Type(_) | types::ComponentItem::Resource(_) => {}
                     }
                 }
             }
-            (_, types::ComponentItem::Type(_) | types::ComponentItem::Resource(_)) => {}
-        }
+            .instrument(span.clone()),
+        );
     }
     Ok(())
 }

@@ -225,3 +225,14 @@ where
     )?;
     f(clt, srv).await.context("closure failed")
 }
+
+#[cfg(feature = "memory")]
+pub async fn with_memory<T, Fut>(
+    f: impl FnOnce(wrpc_transport_memory::Client, wrpc_transport_memory::Server) -> Fut,
+) -> anyhow::Result<T>
+where
+    Fut: core::future::Future<Output = anyhow::Result<T>>,
+{
+    let (clt, srv) = wrpc_transport_memory::new_memory_transport();
+    f(clt, srv).await.context("closure failed")
+}

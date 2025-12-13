@@ -5381,6 +5381,7 @@ dependencies = [
  "wrpc-runtime-wasmtime",
  "wrpc-test",
  "wrpc-transport",
+ "wrpc-transport-memory",
  "wrpc-transport-nats",
  "wrpc-transport-quic",
  "wrpc-transport-web",
@@ -5446,6 +5447,7 @@ dependencies = [
  "tokio",
  "tracing",
  "wrpc-cli",
+ "wrpc-transport-memory",
  "wtransport",
 ]
 
@@ -5465,6 +5467,26 @@ dependencies = [
  "tracing",
  "wasi 0.14.7+wasi-0.2.4",
  "wasm-tokio",
+]
+
+[[package]]
+name = "wrpc-transport-memory"
+version = "0.5.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "futures",
+ "test-log",
+ "tokio",
+ "tokio-stream",
+ "tokio-util",
+ "tracing",
+ "wasm-tokio",
+ "wasmtime",
+ "wasmtime-wasi",
+ "wrpc-runtime-wasmtime",
+ "wrpc-test",
+ "wrpc-transport",
 ]
 
 [[package]]
