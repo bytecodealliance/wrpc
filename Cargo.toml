@@ -43,6 +43,7 @@ net = ["wrpc-transport/net"]
 quic = ["dep:wrpc-transport-quic"]
 wasmtime = ["dep:wrpc-runtime-wasmtime"]
 web-transport = ["dep:wrpc-transport-web"]
+memory = ["dep:wrpc-transport-memory"]
 
 [[bin]]
 name = "wit-bindgen-wrpc"
@@ -83,6 +84,7 @@ wrpc-transport = { workspace = true }
 wrpc-transport-nats = { workspace = true, optional = true }
 wrpc-transport-quic = { workspace = true, optional = true }
 wrpc-transport-web = { workspace = true, optional = true }
+wrpc-transport-memory = { workspace = true, optional = true }
 wrpc-wasmtime-cli = { workspace = true, optional = true }
 
 [dev-dependencies]
@@ -181,6 +183,7 @@ wrpc-transport = { version = "0.28.3", path = "./crates/transport", default-feat
 wrpc-transport-nats = { version = "0.30", path = "./crates/transport-nats", default-features = false }
 wrpc-transport-quic = { version = "0.5", path = "./crates/transport-quic", default-features = false }
 wrpc-transport-web = { version = "0.2", path = "./crates/transport-web", default-features = false }
+wrpc-transport-memory = { version = "0.5", path = "./crates/transport-memory", default-features = false }
 wrpc-wasi-keyvalue = { version = "0.1.1", path = "./crates/wasi-keyvalue", default-features = false }
 wrpc-wasi-keyvalue-mem = { version = "0.1", path = "./crates/wasi-keyvalue-mem", default-features = false }
 wrpc-wasi-keyvalue-redis = { version = "0.1", path = "./crates/wasi-keyvalue-redis", default-features = false }

@@ -1,0 +1,33 @@
+[package]
+name = "wrpc-transport-memory"
+version = "0.5.0"
+description = "wRPC in-memory transport for same-process component communication"
+authors.workspace = true
+categories.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow = { workspace = true, features = ["std"] }
+bytes = { workspace = true }
+tokio = { workspace = true, features = ["io-util"] }
+wrpc-transport = { workspace = true }
+tokio-stream = { workspace = true, features = ["sync"] }
+futures = { workspace = true, features = ["async-await"] }
+wasmtime = { workspace = true, features = ["component-model"], optional = true }
+wrpc-runtime-wasmtime = { workspace = true, optional = true }
+
+[features]
+default = []
+wasmtime = ["dep:wasmtime", "dep:wrpc-runtime-wasmtime"]
+
+[dev-dependencies]
+test-log = { workspace = true, features = ["color", "log", "trace"] }
+wasmtime = { workspace = true, features = ["cranelift", "runtime", "component-model"] }
+wasmtime-wasi = { workspace = true }
+wrpc-runtime-wasmtime = { workspace = true }
+tokio-util = { workspace = true }
+wrpc-test = { workspace = true, features = ["memory"] }
+wasm-tokio = { workspace = true }
+tracing = { workspace = true }

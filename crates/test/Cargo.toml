@@ -11,7 +11,7 @@ license.workspace = true
 repository.workspace = true
 
 [features]
-default = ["nats", "quic", "web-transport"]
+default = ["nats", "quic", "web-transport", "memory"]
 nats = ["dep:async-nats", "async-nats/ring", "wrpc-cli/nats"]
 quic = [
     "dep:quinn",
@@ -22,14 +22,16 @@ quic = [
     "quinn/rustls",
 ]
 web-transport = ["dep:wtransport", "wtransport/self-signed"]
+memory = ["dep:wrpc-transport-memory"]
 
 [dependencies]
 anyhow = { workspace = true }
 async-nats = { workspace = true, optional = true }
 quinn = { workspace = true, optional = true }
 rcgen = { workspace = true, features = ["crypto", "ring", "zeroize"] }
-rustls = { workspace = true, features = ["logging", "ring"] }
+rustls = { workspace = true, features = ["std", "logging", "ring"] }
 tokio = { workspace = true, features = ["net", "process", "rt-multi-thread"] }
 tracing = { workspace = true }
 wrpc-cli = { workspace = true }
 wtransport = { workspace = true, features = ["ring"], optional = true }
+wrpc-transport-memory = { workspace = true, optional = true }
