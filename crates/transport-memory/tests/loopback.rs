@@ -6,7 +6,7 @@ use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::try_join;
 use tracing::info;
 use wrpc_transport::{Index as _, Invoke as _, Serve as _};
-use wrpc_transport_memory::{Server, Client};
+use wrpc_transport_memory::{Client, Server};
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn loopback() -> anyhow::Result<()> {
@@ -82,9 +82,7 @@ async fn loopback() -> anyhow::Result<()> {
                 anyhow::Ok(())
             },
             async {
-                srv.accept()
-                    .await
-                    .context("failed to accept invocation")?;
+                srv.accept().await.context("failed to accept invocation")?;
                 let ((), mut outgoing, mut incoming) = invocations
                     .next()
                     .await

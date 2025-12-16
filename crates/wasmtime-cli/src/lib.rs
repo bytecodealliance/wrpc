@@ -25,9 +25,9 @@ use wasmtime::{Engine, Store};
 use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpView};
 use wrpc_runtime_wasmtime::{
-    collect_component_functions,
-    collect_component_resource_exports, collect_component_resource_imports, link_item, rpc,
-    RemoteResource, ServeExt as _, SharedResourceTable, WrpcCtxView, WrpcView,
+    collect_component_functions, collect_component_resource_exports,
+    collect_component_resource_imports, link_item, rpc, RemoteResource, ServeExt as _,
+    SharedResourceTable, WrpcCtxView, WrpcView,
 };
 use wrpc_transport::{Invoke, Serve};
 
@@ -433,11 +433,19 @@ where
         .await
         .context("failed to instantiate component")?;
     let mut functions = Vec::new();
-    collect_component_functions(&store.engine(), pre.component().component_type(), &mut functions);
+    collect_component_functions(
+        &store.engine(),
+        pre.component().component_type(),
+        &mut functions,
+    );
 
     let store = Arc::new(Mutex::new(store));
     for (name, instance_name, ty) in functions {
-        let pretty_name = if instance_name.is_empty() { "root".to_string() } else { instance_name.clone() };
+        let pretty_name = if instance_name.is_empty() {
+            "root".to_string()
+        } else {
+            instance_name.clone()
+        };
         let invocations = srv
             .serve_function_shared(
                 Arc::clone(&store),
@@ -449,33 +457,27 @@ where
                 &name,
             )
             .await?;
-        handlers.spawn(async move {
-            let mut invocations = pin!(invocations);
-            while let Some(invocation) = invocations.next().await {
-                match invocation {
-                    Ok((_, fut)) => {
-                        info!("serving {pretty_name} function invocation");
-                        if let Err(err) = fut.await {
-                            warn!(
-                                ?err,
-                                "failed to serve {pretty_name} function invocation"
-                            );
-                        } else {
-                            info!(
-                                "successfully served {pretty_name} function invocation"
-                            );
+        handlers.spawn(
+            async move {
+                let mut invocations = pin!(invocations);
+                while let Some(invocation) = invocations.next().await {
+                    match invocation {
+                        Ok((_, fut)) => {
+                            info!("serving {pretty_name} function invocation");
+                            if let Err(err) = fut.await {
+                                warn!(?err, "failed to serve {pretty_name} function invocation");
+                            } else {
+                                info!("successfully served {pretty_name} function invocation");
+                            }
                         }
-                    }
-                    Err(err) => {
-                        error!(
-                            ?err,
-                            "failed to accept {pretty_name} function invocation"
-                        );
+                        Err(err) => {
+                            error!(?err, "failed to accept {pretty_name} function invocation");
+                        }
                     }
                 }
             }
-        }
-        .instrument(span.clone()));
+            .instrument(span.clone()),
+        );
     }
     Ok(())
 }
@@ -502,15 +504,17 @@ where
     let mut functions = Vec::new();
     collect_component_functions(engine, pre.component().component_type(), &mut functions);
     for (name, instance_name, ty) in functions {
-        let pretty_name = if instance_name.is_empty() { "root".to_string() } else { instance_name.clone() };
+        let pretty_name = if instance_name.is_empty() {
+            "root".to_string()
+        } else {
+            instance_name.clone()
+        };
         let engine = engine.clone();
         let clt = clt.clone();
         let cx = cx.clone();
         let invocations = srv
             .serve_function(
-                move || {
-                    new_store(&engine, clt.clone(), cx.clone(), "reactor.wasm", timeout)
-                },
+                move || new_store(&engine, clt.clone(), cx.clone(), "reactor.wasm", timeout),
                 pre.clone(),
                 Arc::clone(&host_resources),
                 ty,

@@ -9,12 +9,12 @@
 
 use anyhow::Context as _;
 use bytes::Bytes;
+use core::pin::Pin;
 use tokio::io::{duplex, AsyncReadExt as _};
 use tokio::sync::mpsc;
-use core::pin::Pin;
 use wrpc_transport::frame::{invoke, Accept, Incoming, Outgoing};
-use wrpc_transport::{Invoke, Serve};
 use wrpc_transport::Server as TransportServer;
+use wrpc_transport::{Invoke, Serve};
 
 /// In-memory wRPC client
 /// It routes invocations to a per-component `Server` via in-memory streams.
@@ -24,12 +24,16 @@ pub struct Client {
 }
 
 /// In-memory connection listener
-/// 
+///
 /// In our model, the in-memory Client creates new io streams *per* request (per `invoke`)
 /// These are received by the listener, to be accepted by the server later
 #[derive(Clone, Debug)]
 pub struct Listener {
-    rx: std::sync::Arc<tokio::sync::Mutex<mpsc::UnboundedReceiver<(tokio::io::DuplexStream, tokio::io::DuplexStream)>>>,
+    rx: std::sync::Arc<
+        tokio::sync::Mutex<
+            mpsc::UnboundedReceiver<(tokio::io::DuplexStream, tokio::io::DuplexStream)>,
+        >,
+    >,
 }
 
 impl Accept for Listener {
@@ -129,19 +133,20 @@ impl Invoke for Client {
         // Server -> Client: server writes to server_tx, client reads from client_rx
         let (client_tx, server_rx) = duplex(65536);
         let (server_tx, client_rx) = duplex(65536);
-        
+        // TODO: simplex stream instead of duplex?
+
         // Set up wRPC framing on client side (writes invocation header + params)
         let (client_outgoing, client_incoming) =
             invoke(client_tx, client_rx, instance, func, params, paths)
                 .await
                 .context("failed to set up client invocation")?;
-        
+
         // Send raw server-side streams to the listener
         // The Server will use Accept to get these, read the header, and set up framing via serve()
         self.server_tx
             .send((server_tx, server_rx))
             .map_err(|_| anyhow::anyhow!("server channel closed"))?;
-        
+
         Ok((client_outgoing, client_incoming))
     }
 }
@@ -157,9 +162,8 @@ impl Serve for Server {
         func: &str,
         paths: impl Into<std::sync::Arc<[Box<[Option<usize>]>]>> + Send,
     ) -> anyhow::Result<
-        impl futures::Stream<
-                Item = anyhow::Result<(Self::Context, Self::Outgoing, Self::Incoming)>,
-            > + Send
+        impl futures::Stream<Item = anyhow::Result<(Self::Context, Self::Outgoing, Self::Incoming)>>
+            + Send
             + 'static,
     > {
         // Delegate to the transport_server's serve method
@@ -185,7 +189,9 @@ pub trait IncomingExt {
     /// let raw_bytes = incoming.read_raw_bytes().await?;
     /// // raw_bytes is Vec<u8> containing the component model encoded value
     /// ```
-    fn read_raw_bytes(&mut self) -> impl std::future::Future<Output = anyhow::Result<Vec<u8>>> + Send;
+    fn read_raw_bytes(
+        &mut self,
+    ) -> impl std::future::Future<Output = anyhow::Result<Vec<u8>>> + Send;
 }
 
 impl IncomingExt for Incoming {
@@ -261,21 +267,24 @@ impl IncomingValExt for Incoming {
 
 #[cfg(test)]
 mod tests {
+    use core::pin::pin;
+    use futures::StreamExt;
     use std::path::PathBuf;
     use std::sync::Arc;
     use std::time::Duration;
-    use core::pin::pin;
-    use futures::StreamExt;
-    use tokio::sync::Mutex;
     use tokio::io::AsyncWriteExt;
+    use tokio::sync::Mutex;
     use tokio::task::JoinHandle;
-    use wasmtime::{Store};
-    use wasmtime::component::{Component, Instance, Linker};
-    use wasmtime::{Engine};
-    use wasmtime::component::ResourceTable;
-    use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
     use wasm_tokio::AsyncReadLeb128 as _;
-    use wrpc_runtime_wasmtime::{SharedResourceTable, WrpcCtxView, WrpcView, collect_component_functions, collect_component_resource_exports, ServeExt};
+    use wasmtime::component::ResourceTable;
+    use wasmtime::component::{Component, Instance, Linker};
+    use wasmtime::Engine;
+    use wasmtime::Store;
+    use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
+    use wrpc_runtime_wasmtime::{
+        collect_component_functions, collect_component_resource_exports, ServeExt,
+        SharedResourceTable, WrpcCtxView, WrpcView,
+    };
     use wrpc_transport::Invoke;
 
     use super::{IncomingValExt, *};
@@ -286,13 +295,13 @@ mod tests {
         pub shared_resources: SharedResourceTable,
         pub timeout: Duration,
     }
-    
+
     pub struct Ctx<C: Invoke> {
         pub table: ResourceTable,
         pub wasi: WasiCtx,
         pub wrpc: WrpcCtx<C>,
     }
-    
+
     impl<C> wrpc_runtime_wasmtime::WrpcCtx<C> for WrpcCtx<C>
     where
         C: Invoke,
@@ -301,27 +310,27 @@ mod tests {
         fn context(&self) -> C::Context {
             self.cx.clone()
         }
-    
+
         fn client(&self) -> &C {
             &self.wrpc
         }
-    
+
         fn shared_resources(&mut self) -> &mut SharedResourceTable {
             &mut self.shared_resources
         }
-    
+
         fn timeout(&self) -> Option<Duration> {
             Some(self.timeout)
         }
     }
-    
+
     impl<C> WrpcView for Ctx<C>
     where
         C: Invoke,
         C::Context: Clone,
     {
         type Invoke = C;
-    
+
         fn wrpc(&mut self) -> WrpcCtxView<'_, Self::Invoke> {
             WrpcCtxView {
                 ctx: &mut self.wrpc,
@@ -341,15 +350,11 @@ mod tests {
             }
         }
     }
-    
-    pub fn gen_ctx<C: Invoke>(
-        wrpc: C,
-        cx: C::Context,
-    ) -> Ctx<C> {
+
+    pub fn gen_ctx<C: Invoke>(wrpc: C, cx: C::Context) -> Ctx<C> {
         Ctx {
             table: ResourceTable::new(),
-            wasi: WasiCtxBuilder::new()
-                .build(),
+            wasi: WasiCtxBuilder::new().build(),
             wrpc: WrpcCtx {
                 wrpc,
                 cx,
@@ -361,21 +366,21 @@ mod tests {
 
     async fn gen_component(
         engine: &Engine,
-        client: Client
+        client: Client,
     ) -> anyhow::Result<(Component, Instance, Store<Ctx<Client>>)> {
         let component_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests")
-        .join("no-args.wasm");
+            .join("tests")
+            .join("no-args.wasm");
         let component_bytes = std::fs::read(&component_path)
             .with_context(|| format!("failed to read component from {:?}", component_path))?;
 
-        let component = Component::new(engine, component_bytes)
-            .context("failed to parse component")?;
+        let component =
+            Component::new(engine, component_bytes).context("failed to parse component")?;
 
         let linker = Linker::new(engine);
         let ctx = gen_ctx(client, ());
         let mut store = Store::new(engine, ctx);
-        
+
         let instance = linker
             .instantiate_async(&mut store, &component)
             .await
@@ -384,10 +389,19 @@ mod tests {
         Ok((component, instance, store))
     }
 
-    async fn register_handlers(server: &Arc<Server>, component: &Component, instance: Instance, store: Store<Ctx<Client>>) -> anyhow::Result<Vec<JoinHandle<()>>> {
+    async fn register_handlers(
+        server: &Arc<Server>,
+        component: &Component,
+        instance: Instance,
+        store: Store<Ctx<Client>>,
+    ) -> anyhow::Result<Vec<JoinHandle<()>>> {
         // Collect guest resources
         let mut guest_resources_vec = Vec::new();
-        collect_component_resource_exports(store.engine(), &component.component_type(), &mut guest_resources_vec);
+        collect_component_resource_exports(
+            store.engine(),
+            &component.component_type(),
+            &mut guest_resources_vec,
+        );
         let guest_resources = Arc::from(guest_resources_vec);
 
         // goal: register handlers for all exported functions (both at the root level, and (non-deeply) nested component instances)
@@ -396,11 +410,15 @@ mod tests {
 
         let mut functions = Vec::new();
         collect_component_functions(store.engine(), component_ty, &mut functions);
-        
+
         let store_arc = Arc::new(Mutex::new(store));
 
         for (name, instance_name, ty) in functions {
-            let pretty_name = if instance_name.is_empty() { "root".to_string() } else { instance_name.clone() };
+            let pretty_name = if instance_name.is_empty() {
+                "root".to_string()
+            } else {
+                instance_name.clone()
+            };
             // note: all WASM Components instantiated (no `InstancePre`)
             // i.e. always use serve_function_shared (i.e. unlike `serve_stateless`)
             let invocations_stream = server
@@ -414,7 +432,9 @@ mod tests {
                     &name,
                 )
                 .await
-                .with_context(|| format!("failed to register handler for {pretty_name} function `{name}`"))?;
+                .with_context(|| {
+                    format!("failed to register handler for {pretty_name} function `{name}`")
+                })?;
 
             // Spawn task to process invocations for this function
             let invocation_handle = tokio::spawn(async move {
@@ -444,14 +464,14 @@ mod tests {
 
         let mut config = wasmtime::Config::default();
         config.async_support(true);
-        let engine = Engine::new(&config)
-            .context("failed to create engine with async support")?;
+        let engine = Engine::new(&config).context("failed to create engine with async support")?;
 
         let (component, instance, store) = gen_component(&engine, client.clone()).await?;
 
         let server_arc = Arc::new(server);
         // register handlers for all functions
-        let invocation_handles = register_handlers(&server_arc, &component, instance, store).await?;
+        let invocation_handles =
+            register_handlers(&server_arc, &component, instance, store).await?;
 
         // Spawn server accept loop (after registering handlers)
         let server_handle = tokio::spawn(async move {
@@ -465,17 +485,18 @@ mod tests {
         {
             let params = bytes::Bytes::new();
             let paths: &[&[Option<usize>]] = &[];
-            
+
             let (mut outgoing, mut incoming) = client
                 .invoke((), "", func_name, params, paths)
                 .await
                 .context("failed to invoke function via wRPC")?;
-            
+
             // Flush outgoing to ensure the request is sent
-            outgoing.flush()
+            outgoing
+                .flush()
                 .await
                 .context("failed to flush outgoing stream")?;
-            
+
             let raw_bytes = incoming
                 .read_raw_bytes()
                 .await
@@ -485,28 +506,26 @@ mod tests {
         }
 
         // Test 2: Read as wasmtime Val
-        {   
+        {
             let paths: &[&[Option<usize>]] = &[];
             let (mut outgoing, mut incoming) = client
                 .invoke((), "", func_name, bytes::Bytes::new(), paths)
                 .await
                 .context("failed to invoke function via wRPC")?;
-            
-            outgoing.flush()
+
+            outgoing
+                .flush()
                 .await
                 .context("failed to flush outgoing stream")?;
-            
+
             // Decode to wasmtime Val
-            let mut store = Store::new(
-                &Engine::default(),
-                gen_ctx(client.clone(), ()),
-            );
+            let mut store = Store::new(&Engine::default(), gen_ctx(client.clone(), ()));
             let ty = wasmtime::component::Type::S64;
             let val = incoming
                 .read_value(&mut store, &ty, &[], &[])
                 .await
                 .context("failed to decode value to wasmtime Val")?;
-            
+
             // Verify the result
             match val {
                 wasmtime::component::Val::S64(v) => assert_eq!(v, 5),
@@ -521,16 +540,17 @@ mod tests {
                 .invoke((), "", func_name, bytes::Bytes::new(), paths)
                 .await
                 .context("failed to invoke function via wRPC")?;
-            
-            outgoing.flush()
+
+            outgoing
+                .flush()
                 .await
                 .context("failed to flush outgoing stream")?;
-            
+
             let result = incoming
                 .read_i64_leb128()
                 .await
                 .context("failed to read result from incoming stream")?;
-            
+
             // Verify the result
             assert_eq!(result, 5);
         }

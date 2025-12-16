@@ -582,7 +582,10 @@ pub fn collect_component_functions(
                 functions.extend([(name.into(), "".into(), ty)]);
             }
             (_, types::ComponentItem::CoreFunc(_)) => {
-                warn!(name, "collecting root core function exports not supported yet");
+                warn!(
+                    name,
+                    "collecting root core function exports not supported yet"
+                );
             }
             (_, types::ComponentItem::Module(_)) => {
                 warn!(name, "collecting root module exports not supported yet");
