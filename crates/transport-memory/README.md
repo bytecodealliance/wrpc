@@ -2,7 +2,7 @@
 
 This crate provides an in-memory transport for wRPC that allows components running in the same process to communicate without requiring network connections.
 
-Internally uses `tokio::io::duplex` to create bidirectional in-memory streams
+Internally uses two `tokio::io::simplex` to create bidirectional in-memory streams
 
 ## Use Case
 
