@@ -10,7 +10,7 @@
 use anyhow::Context as _;
 use bytes::Bytes;
 use core::pin::Pin;
-use tokio::io::{AsyncReadExt as _, SimplexStream, simplex};
+use tokio::io::{simplex, AsyncReadExt as _, SimplexStream};
 use tokio::sync::mpsc;
 use wrpc_transport::frame::{invoke, Accept, Incoming, Outgoing};
 use wrpc_transport::Server as TransportServer;
@@ -20,7 +20,10 @@ use wrpc_transport::{Invoke, Serve};
 /// It routes invocations to a per-component `Server` via in-memory streams.
 #[derive(Clone, Debug)]
 pub struct Client {
-    server_tx: mpsc::UnboundedSender<(tokio::io::WriteHalf<SimplexStream>, tokio::io::ReadHalf<SimplexStream>)>,
+    server_tx: mpsc::UnboundedSender<(
+        tokio::io::WriteHalf<SimplexStream>,
+        tokio::io::ReadHalf<SimplexStream>,
+    )>,
 }
 
 /// In-memory connection listener
@@ -31,7 +34,10 @@ pub struct Client {
 pub struct Listener {
     rx: std::sync::Arc<
         tokio::sync::Mutex<
-            mpsc::UnboundedReceiver<(tokio::io::WriteHalf<SimplexStream>, tokio::io::ReadHalf<SimplexStream>)>,
+            mpsc::UnboundedReceiver<(
+                tokio::io::WriteHalf<SimplexStream>,
+                tokio::io::ReadHalf<SimplexStream>,
+            )>,
         >,
     >,
 }
@@ -63,7 +69,11 @@ impl Accept for &Listener {
 /// In-memory wRPC server that handles invocations.
 pub struct Server {
     /// `wrpc_transport::Server`, but using an in-memory `tokio::io::SimplexStream` for input and output
-    transport_server: TransportServer<(), tokio::io::ReadHalf<SimplexStream>, tokio::io::WriteHalf<SimplexStream>>,
+    transport_server: TransportServer<
+        (),
+        tokio::io::ReadHalf<SimplexStream>,
+        tokio::io::WriteHalf<SimplexStream>,
+    >,
     /// Queued streams created by client invocations, waiting to be accepted
     listener: Listener,
 }
@@ -131,7 +141,7 @@ impl Invoke for Client {
         // Create bidirectional in-memory streams
         // Client -> Server: client writes to client_tx, server reads from server_rx
         // Server -> Client: server writes to server_tx, client reads from client_rx
-        let (server_rx, client_tx, ) = simplex(65536);
+        let (server_rx, client_tx) = simplex(65536);
         let (client_rx, server_tx) = simplex(65536);
 
         // Set up wRPC framing on client side (writes invocation header + params)
