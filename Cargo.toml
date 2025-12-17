@@ -99,6 +99,7 @@ futures = { workspace = true }
 tempfile = { workspace = true }
 test-log = { workspace = true, features = ["color", "log", "trace"] }
 tokio = { workspace = true, features = ["process", "rt-multi-thread"] }
+tokio-util = { workspace = true }
 wasmtime = { workspace = true }
 wasmtime-wasi = { workspace = true }
 wasmtime-cli-flags = { workspace = true, features = [
