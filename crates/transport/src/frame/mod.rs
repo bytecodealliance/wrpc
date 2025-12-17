@@ -6,6 +6,7 @@ use bytes::Bytes;
 
 mod codec;
 mod conn;
+mod oneshot;
 
 #[cfg(any(target_family = "wasm", feature = "net"))]
 pub mod tcp;
@@ -15,6 +16,7 @@ pub mod unix;
 
 pub use codec::*;
 pub use conn::*;
+pub use oneshot::*;
 
 /// Framing protocol version
 pub const PROTOCOL: u8 = 0;

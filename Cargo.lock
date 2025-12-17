@@ -5197,7 +5197,7 @@ dependencies = [
 
 [[package]]
 name = "wit-bindgen-wrpc"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "anyhow",
  "bitflags 2.10.0",
@@ -5225,7 +5225,7 @@ dependencies = [
 
 [[package]]
 name = "wit-bindgen-wrpc-rust"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -5246,7 +5246,7 @@ dependencies = [
 
 [[package]]
 name = "wit-bindgen-wrpc-rust-macro"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "anyhow",
  "prettyplease",
@@ -5357,7 +5357,7 @@ checksum = "9edde0db4769d2dc68579893f2306b26c6ecfbe0ef499b013d731b7b9247e0b9"
 
 [[package]]
 name = "wrpc"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "anyhow",
  "async-nats",
@@ -5416,7 +5416,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc-runtime-wasmtime"
-version = "0.30.0"
+version = "0.31.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -5450,7 +5450,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc-transport"
-version = "0.28.4"
+version = "0.29.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -5468,7 +5468,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc-transport-nats"
-version = "0.30.0"
+version = "0.31.0"
 dependencies = [
  "anyhow",
  "async-nats",
@@ -5485,7 +5485,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc-transport-quic"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -5500,7 +5500,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc-transport-web"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -5523,7 +5523,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc-wasi-keyvalue-mem"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -5536,7 +5536,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc-wasi-keyvalue-redis"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -5551,7 +5551,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc-wasmtime-cli"
-version = "0.8.1"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "async-nats",

@@ -1,6 +1,6 @@
 [package]
 name = "wrpc-wasi-keyvalue-mem"
-version = "0.1.0"
+version = "0.2.0"
 description = "In-memory implementation of wRPC `wasi:keyvalue` handler"
 
 authors.workspace = true

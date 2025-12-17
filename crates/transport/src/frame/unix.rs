@@ -2,7 +2,6 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Context as _};
 use bytes::Bytes;
 use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf, SocketAddr};
 use tokio::net::{UnixListener, UnixStream};
@@ -11,11 +10,25 @@ use tracing::instrument;
 use crate::frame::{invoke, Accept, Incoming, Outgoing};
 use crate::Invoke;
 
-/// [Invoke] implementation in terms of a single [`UnixStream`]
+/// [Invoke] and [Accept] implementation in terms of a single [`UnixStream`].
 ///
-/// [`Invoke::invoke`] can only be called once on [Invocation],
-/// repeated calls with return an error
-pub struct Invocation(std::sync::Mutex<Option<UnixStream>>);
+/// Either [`Invoke::invoke`] or [`Accept::accept`] can only be called at most once
+/// on [Oneshot], repeated calls with return an error
+pub type Oneshot = super::Oneshot<OwnedReadHalf, OwnedWriteHalf>;
+
+impl Oneshot {
+    /// Creates a pair of connected [Oneshot] using [UnixStream::pair].
+    pub fn unix_pair() -> std::io::Result<(Oneshot, Oneshot)> {
+        let (a, b) = UnixStream::pair()?;
+        Ok((a.into(), b.into()))
+    }
+}
+
+impl From<UnixStream> for Oneshot {
+    fn from(stream: UnixStream) -> Self {
+        stream.into_split().into()
+    }
+}
 
 /// [Invoke] implementation of a Unix domain socket transport
 #[derive(Clone, Debug)]
@@ -134,40 +147,6 @@ impl Invoke for Client<std::os::unix::net::SocketAddr> {
     {
         let stream = std::os::unix::net::UnixStream::connect_addr(&self.0)?;
         let stream = UnixStream::from_std(stream)?;
-        let (rx, tx) = stream.into_split();
-        invoke(tx, rx, instance, func, params, paths).await
-    }
-}
-
-impl From<UnixStream> for Invocation {
-    fn from(stream: UnixStream) -> Self {
-        Self(std::sync::Mutex::new(Some(stream)))
-    }
-}
-
-impl Invoke for Invocation {
-    type Context = ();
-    type Outgoing = Outgoing;
-    type Incoming = Incoming;
-
-    #[instrument(level = "trace", skip(self, paths, params), fields(params = format!("{params:02x?}")))]
-    async fn invoke<P>(
-        &self,
-        (): Self::Context,
-        instance: &str,
-        func: &str,
-        params: Bytes,
-        paths: impl AsRef<[P]> + Send,
-    ) -> anyhow::Result<(Self::Outgoing, Self::Incoming)>
-    where
-        P: AsRef<[Option<usize>]> + Send + Sync,
-    {
-        let stream = match self.0.lock() {
-            Ok(mut stream) => stream
-                .take()
-                .context("stream was already used for an invocation")?,
-            Err(_) => bail!("stream lock poisoned"),
-        };
         let (rx, tx) = stream.into_split();
         invoke(tx, rx, instance, func, params, paths).await
     }
