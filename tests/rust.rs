@@ -1329,6 +1329,53 @@ where
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 #[instrument(ret)]
+async fn rust_oneshot_raw() -> anyhow::Result<()> {
+    let (clt, mut srv) = tokio::io::duplex(1024);
+
+    join!(
+        async {
+            let (a,) = Oneshot::from(clt)
+                .invoke_values_blocking::<_, _, (String,)>((), "foo", "bar", (42,), &[[]; 0])
+                .await
+                .expect("failed to invoke `foo.bar`");
+            assert_eq!(a, "test");
+        },
+        async {
+            use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+            use tokio_util::codec::Encoder as _;
+            use wrpc_transport::Encode as _;
+
+            let mut req = Vec::default();
+            _ = srv.read_to_end(&mut req).await;
+            eprintln!("request: `{:?}`", Bytes::from(req));
+
+            let mut data = bytes::BytesMut::default();
+            let deferred: Option<wrpc_transport::DeferredFn<wrpc_transport::frame::Outgoing>> =
+                ("test",)
+                    .encode(&mut Default::default(), &mut data)
+                    .expect("failed to encode");
+            assert!(deferred.is_none());
+
+            let mut res = bytes::BytesMut::default();
+            wrpc_transport::FrameEncoder
+                .encode(
+                    &wrpc_transport::Frame {
+                        path: Arc::default(),
+                        data: data.freeze(),
+                    },
+                    &mut res,
+                )
+                .expect("failed to encode response frame");
+            eprintln!("response: `{res:?}`");
+
+            srv.write_all(&res).await.expect("failed to write response");
+        }
+    );
+    Ok(())
+}
+
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+#[instrument(ret)]
 async fn rust_oneshot_duplex() -> anyhow::Result<()> {
     let (clt, srv_io) = Oneshot::duplex(1024);
     assert_oneshot(clt, srv_io).await

@@ -5368,6 +5368,7 @@ dependencies = [
  "tempfile",
  "test-log",
  "tokio",
+ "tokio-util",
  "tracing",
  "wasmtime",
  "wasmtime-cli-flags",
@@ -5405,7 +5406,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc-pack"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "bytes",
