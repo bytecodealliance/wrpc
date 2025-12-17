@@ -1,6 +1,6 @@
 [package]
 name = "wrpc-wasi-keyvalue-redis"
-version = "0.1.0"
+version = "0.2.0"
 description = "Redis implementation of wRPC `wasi:keyvalue` handler"
 
 authors.workspace = true

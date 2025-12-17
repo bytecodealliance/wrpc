@@ -2,6 +2,8 @@
 
 mod common;
 
+use core::net::Ipv6Addr;
+use core::pin::pin;
 use core::str;
 use core::time::Duration;
 
@@ -16,7 +18,8 @@ use tokio::sync::{oneshot, RwLock};
 use tokio::time::sleep;
 use tokio::{join, select, spawn, try_join};
 use tracing::{info, info_span, instrument, Instrument, Span};
-use wrpc_transport::{InvokeExt as _, ResourceBorrow, ResourceOwn, ServeExt as _};
+use wrpc_transport::frame::{AcceptExt as _, Oneshot};
+use wrpc_transport::{Accept, InvokeExt as _, ResourceBorrow, ResourceOwn, ServeExt as _};
 
 #[instrument(skip_all, ret)]
 async fn assert_bindgen_async<C, I, S>(clt: Arc<I>, srv: Arc<S>) -> anyhow::Result<()>
@@ -1142,10 +1145,6 @@ async fn rust_bindgen_quic_async() -> anyhow::Result<()> {
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 #[instrument(ret)]
 async fn rust_dynamic_quic() -> anyhow::Result<()> {
-    use core::pin::pin;
-
-    use tracing::Span;
-
     let span = Span::current();
     wrpc_test::with_quic(|clt, srv| {
         async move {
@@ -1239,10 +1238,6 @@ async fn rust_bindgen_web_transport_async() -> anyhow::Result<()> {
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 #[instrument(ret)]
 async fn rust_dynamic_web_transport() -> anyhow::Result<()> {
-    use core::pin::pin;
-
-    use tracing::Span;
-
     let span = Span::current();
     wrpc_test::with_web_transport(|clt, srv| {
         async move {
@@ -1271,12 +1266,6 @@ async fn rust_dynamic_web_transport() -> anyhow::Result<()> {
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 #[instrument(ret)]
 async fn rust_bindgen_tcp_sync() -> anyhow::Result<()> {
-    use core::net::Ipv6Addr;
-    use core::pin::pin;
-
-    use tracing::Span;
-    use wrpc_transport::frame::AcceptExt as _;
-
     let lis = tokio::net::TcpListener::bind((Ipv6Addr::LOCALHOST, 0))
         .await
         .context("failed to start TCP listener")?;
@@ -1303,15 +1292,59 @@ async fn rust_bindgen_tcp_sync() -> anyhow::Result<()> {
     }
 }
 
+#[instrument(skip_all, ret)]
+async fn assert_oneshot<I, A>(clt: I, acceptor: A) -> anyhow::Result<()>
+where
+    I: wrpc::Invoke<Context = ()> + 'static,
+    A: Accept<Context = ()> + Send + 'static,
+{
+    let srv = Arc::new(wrpc_transport::frame::Server::default());
+    let invocations = srv
+        .serve_values::<(u32,), (&str,)>("foo", "bar", Box::default())
+        .await?;
+    join!(
+        async {
+            let (a,) = clt
+                .invoke_values_blocking::<_, _, (String,)>((), "foo", "bar", (42,), &[[]; 0])
+                .await
+                .expect("failed to invoke `foo.bar`");
+            assert_eq!(a, "test");
+        },
+        async {
+            srv.accept(acceptor)
+                .await
+                .expect("failed to accept connection");
+            let ((), params, rx, tx) = pin!(invocations)
+                .try_next()
+                .await
+                .expect("failed to accept invocation")
+                .expect("unexpected end of stream");
+            assert!(rx.is_none());
+            assert_eq!(params, (42,));
+            tx(("test",)).await.expect("failed to transmit response");
+        }
+    );
+    Ok(())
+}
+
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+#[instrument(ret)]
+async fn rust_oneshot_duplex() -> anyhow::Result<()> {
+    let (clt, srv_io) = Oneshot::duplex(1024);
+    assert_oneshot(clt, srv_io).await
+}
+
+#[cfg(unix)]
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+#[instrument(ret)]
+async fn rust_oneshot_uds() -> anyhow::Result<()> {
+    let (clt, srv_io) = Oneshot::unix_pair()?;
+    assert_oneshot(clt, srv_io).await
+}
+
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 #[instrument(ret)]
 async fn rust_bindgen_tcp_async() -> anyhow::Result<()> {
-    use core::net::Ipv6Addr;
-    use core::pin::pin;
-
-    use tracing::Span;
-    use wrpc_transport::frame::AcceptExt as _;
-
     let lis = tokio::net::TcpListener::bind((Ipv6Addr::LOCALHOST, 0))
         .await
         .context("failed to start TCP listener")?;
@@ -1342,13 +1375,9 @@ async fn rust_bindgen_tcp_async() -> anyhow::Result<()> {
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 #[instrument(ret)]
 async fn rust_bindgen_uds_sync() -> anyhow::Result<()> {
-    use core::pin::pin;
-
     use std::path::PathBuf;
 
     use tempfile::NamedTempFile;
-    use tracing::Span;
-    use wrpc_transport::frame::AcceptExt as _;
 
     let tmp = NamedTempFile::new().context("failed to create temporary file")?;
     let path = PathBuf::from(&tmp.into_temp_path());
@@ -1380,13 +1409,9 @@ async fn rust_bindgen_uds_sync() -> anyhow::Result<()> {
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 #[instrument(ret)]
 async fn rust_bindgen_uds_async() -> anyhow::Result<()> {
-    use core::pin::pin;
-
     use std::path::PathBuf;
 
     use tempfile::NamedTempFile;
-    use tracing::Span;
-    use wrpc_transport::frame::AcceptExt as _;
 
     let tmp = NamedTempFile::new().context("failed to create temporary file")?;
     let path = PathBuf::from(&tmp.into_temp_path());

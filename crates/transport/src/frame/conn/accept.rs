@@ -1,7 +1,9 @@
 use core::future::Future;
 use core::ops::{Deref, DerefMut};
 
+use futures::{Stream, StreamExt as _};
 use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::sync::mpsc;
 
 /// Accepts connections on a transport
 pub trait Accept {
@@ -78,5 +80,136 @@ where
     async fn accept(&self) -> std::io::Result<(Self::Context, Self::Outgoing, Self::Incoming)> {
         let (cx, tx, rx) = self.inner.accept().await?;
         Ok(((self.f)(cx), tx, rx))
+    }
+}
+
+/// A wrapper around a [Stream] of connections
+pub struct AcceptStream<T>(tokio::sync::Mutex<T>);
+
+impl<T> From<T> for AcceptStream<T> {
+    fn from(stream: T) -> Self {
+        Self(tokio::sync::Mutex::new(stream))
+    }
+}
+
+impl<T, C, O, I> Accept for AcceptStream<T>
+where
+    T: Stream<Item = (C, O, I)> + Unpin,
+    C: Send + Sync + 'static,
+    O: AsyncWrite + Send + Sync + Unpin + 'static,
+    I: AsyncRead + Send + Sync + Unpin + 'static,
+{
+    type Context = C;
+    type Outgoing = O;
+    type Incoming = I;
+
+    async fn accept(&self) -> std::io::Result<(Self::Context, Self::Outgoing, Self::Incoming)> {
+        (&self).accept().await
+    }
+}
+
+impl<T, C, O, I> Accept for &AcceptStream<T>
+where
+    T: Stream<Item = (C, O, I)> + Unpin,
+    C: Send + Sync + 'static,
+    O: AsyncWrite + Send + Sync + Unpin + 'static,
+    I: AsyncRead + Send + Sync + Unpin + 'static,
+{
+    type Context = C;
+    type Outgoing = O;
+    type Incoming = I;
+
+    async fn accept(&self) -> std::io::Result<(Self::Context, Self::Outgoing, Self::Incoming)> {
+        let mut stream = self.0.lock().await;
+        let Some((cx, tx, rx)) = stream.next().await else {
+            return Err(std::io::ErrorKind::UnexpectedEof.into());
+        };
+        Ok((cx, tx, rx))
+    }
+}
+
+/// A wrapper around an [mpsc::Receiver] of connections
+pub struct AcceptReceiver<C, O, I>(tokio::sync::Mutex<mpsc::Receiver<(C, O, I)>>);
+
+impl<C, O, I> From<mpsc::Receiver<(C, O, I)>> for AcceptReceiver<C, O, I> {
+    fn from(stream: mpsc::Receiver<(C, O, I)>) -> Self {
+        Self(tokio::sync::Mutex::new(stream))
+    }
+}
+
+impl<C, O, I> Accept for AcceptReceiver<C, O, I>
+where
+    C: Send + Sync + 'static,
+    O: AsyncWrite + Send + Sync + Unpin + 'static,
+    I: AsyncRead + Send + Sync + Unpin + 'static,
+{
+    type Context = C;
+    type Outgoing = O;
+    type Incoming = I;
+
+    async fn accept(&self) -> std::io::Result<(Self::Context, Self::Outgoing, Self::Incoming)> {
+        (&self).accept().await
+    }
+}
+
+impl<C, O, I> Accept for &AcceptReceiver<C, O, I>
+where
+    C: Send + Sync + 'static,
+    O: AsyncWrite + Send + Sync + Unpin + 'static,
+    I: AsyncRead + Send + Sync + Unpin + 'static,
+{
+    type Context = C;
+    type Outgoing = O;
+    type Incoming = I;
+
+    async fn accept(&self) -> std::io::Result<(Self::Context, Self::Outgoing, Self::Incoming)> {
+        let mut stream = self.0.lock().await;
+        let Some((cx, tx, rx)) = stream.recv().await else {
+            return Err(std::io::ErrorKind::UnexpectedEof.into());
+        };
+        Ok((cx, tx, rx))
+    }
+}
+
+/// A wrapper around an [mpsc::UnboundedReceiver] of connections
+pub struct AcceptUnboundedReceiver<C, O, I>(tokio::sync::Mutex<mpsc::UnboundedReceiver<(C, O, I)>>);
+
+impl<C, O, I> From<mpsc::UnboundedReceiver<(C, O, I)>> for AcceptUnboundedReceiver<C, O, I> {
+    fn from(stream: mpsc::UnboundedReceiver<(C, O, I)>) -> Self {
+        Self(tokio::sync::Mutex::new(stream))
+    }
+}
+
+impl<C, O, I> Accept for AcceptUnboundedReceiver<C, O, I>
+where
+    C: Send + Sync + 'static,
+    O: AsyncWrite + Send + Sync + Unpin + 'static,
+    I: AsyncRead + Send + Sync + Unpin + 'static,
+{
+    type Context = C;
+    type Outgoing = O;
+    type Incoming = I;
+
+    async fn accept(&self) -> std::io::Result<(Self::Context, Self::Outgoing, Self::Incoming)> {
+        (&self).accept().await
+    }
+}
+
+impl<C, O, I> Accept for &AcceptUnboundedReceiver<C, O, I>
+where
+    C: Send + Sync + 'static,
+    O: AsyncWrite + Send + Sync + Unpin + 'static,
+    I: AsyncRead + Send + Sync + Unpin + 'static,
+{
+    type Context = C;
+    type Outgoing = O;
+    type Incoming = I;
+
+    async fn accept(&self) -> std::io::Result<(Self::Context, Self::Outgoing, Self::Incoming)> {
+        let mut stream = self.0.lock().await;
+        let Some((cx, tx, rx)) = stream.recv().await else {
+            return Err(std::io::ErrorKind::UnexpectedEof.into());
+        };
+        Ok((cx, tx, rx))
     }
 }
