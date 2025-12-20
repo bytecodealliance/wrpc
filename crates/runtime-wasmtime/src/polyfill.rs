@@ -243,8 +243,7 @@ where
     let guest_resources = guest_resources.into();
     let host_resources = host_resources.into();
     match rpc_result_type(&host_resources, ty.results()) {
-        None => linker.func_new_async(&Arc::clone(&name), move |mut store, params, results| {
-            let ty = ty.clone();
+        None => linker.func_new_async(&Arc::clone(&name), move |mut store, ty, params, results| {
             let instance = Arc::clone(&instance);
             let name = Arc::clone(&name);
             let resources = Arc::clone(&guest_resources);
@@ -272,8 +271,7 @@ where
         }),
         // `result<_, rpc-eror>`
         Some(None) => {
-            linker.func_new_async(&Arc::clone(&name), move |mut store, params, results| {
-                let ty = ty.clone();
+            linker.func_new_async(&Arc::clone(&name), move |mut store, ty, params, results| {
                 let instance = Arc::clone(&instance);
                 let name = Arc::clone(&name);
                 let resources = Arc::clone(&guest_resources);
@@ -313,8 +311,7 @@ where
         }
         // `result<T, rpc-eror>`
         Some(Some(result_ty)) => {
-            linker.func_new_async(&Arc::clone(&name), move |mut store, params, results| {
-                let ty = ty.clone();
+            linker.func_new_async(&Arc::clone(&name), move |mut store, ty, params, results| {
                 let instance = Arc::clone(&instance);
                 let name = Arc::clone(&name);
                 let resources = Arc::clone(&guest_resources);
