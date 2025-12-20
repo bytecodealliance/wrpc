@@ -90,10 +90,7 @@ pub async fn start_nats() -> anyhow::Result<(
     oneshot::Sender<()>,
 )> {
     // Check if nats-server is available
-    let nats_server_check = Command::new("nats-server")
-        .arg("--version")
-        .output()
-        .await;
+    let nats_server_check = Command::new("nats-server").arg("--version").output().await;
     if let Err(e) = nats_server_check {
         let error_msg = if e.kind() == std::io::ErrorKind::NotFound {
             "nats-server is not installed or not in PATH"
