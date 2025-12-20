@@ -89,6 +89,28 @@ pub async fn start_nats() -> anyhow::Result<(
     JoinHandle<anyhow::Result<ExitStatus>>,
     oneshot::Sender<()>,
 )> {
+    // Check if nats-server is available
+    let nats_server_check = Command::new("nats-server")
+        .arg("--version")
+        .output()
+        .await;
+    if let Err(e) = nats_server_check {
+        let error_msg = if e.kind() == std::io::ErrorKind::NotFound {
+            "nats-server is not installed or not in PATH"
+        } else if e.kind() == std::io::ErrorKind::PermissionDenied {
+            "nats-server is not executable or permission denied"
+        } else {
+            "failed to execute nats-server"
+        };
+        anyhow::bail!(
+            "{}. Please install nats-server >= 2.10.20. \
+            See https://docs.nats.io/running-a-nats-service/introduction/installation for installation instructions. \
+            Original error: {}",
+            error_msg,
+            e
+        );
+    }
+
     let port = free_port().await?;
     let (server, stop_tx) =
         spawn_server(Command::new("nats-server").args(["-T=false", "-p", &port.to_string()]))
