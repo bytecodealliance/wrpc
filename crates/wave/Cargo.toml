@@ -1,0 +1,33 @@
+[package]
+name = "wrpc-wave"
+version = "0.1.0"
+description = "wRPC runtime-agnostic encoding and decoding support for wasm-wave traits"
+
+authors.workspace = true
+categories.workspace = true
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = ["sync", "pack"]
+sync = ["dep:futures"]
+pack = ["dep:wrpc-pack"]
+
+[dependencies]
+anyhow = { workspace = true, features = ["std"] }
+bytes = { workspace = true }
+futures = { workspace = true, features = ["executor"], optional = true }
+tokio = { workspace = true, features = ["io-util"] }
+tokio-util = { workspace = true, features = ["codec"] }
+tracing = { workspace = true, features = ["attributes"] }
+wasm-tokio = { workspace = true }
+wasm-wave = "0.243"
+wrpc-pack = { path = "../pack", optional = true }
+wrpc-transport = { workspace = true }
+
+[dev-dependencies]
+futures = { workspace = true, features = ["executor"] }
+tokio = { workspace = true, features = ["net"] }
+wit-bindgen-wrpc = { workspace = true }
