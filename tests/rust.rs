@@ -22,11 +22,12 @@ use wrpc_transport::frame::{AcceptExt as _, Oneshot};
 use wrpc_transport::{Accept, InvokeExt as _, ResourceBorrow, ResourceOwn, ServeExt as _};
 
 #[instrument(skip_all, ret)]
-async fn assert_bindgen_async<C, I, S>(clt: Arc<I>, srv: Arc<S>) -> anyhow::Result<()>
+async fn assert_bindgen_async<IC, SC, I, S>(clt: Arc<I>, srv: Arc<S>) -> anyhow::Result<()>
 where
-    C: Send + Sync + Default,
-    I: wrpc::Invoke<Context = C> + 'static,
-    S: wrpc::Serve<Context = C> + Send + 'static,
+    IC: Send + Sync + Default,
+    SC: Send + Sync + Default,
+    I: wrpc::Invoke<Context = IC> + 'static,
+    S: wrpc::Serve<Context = SC> + Send + 'static,
 {
     let span = Span::current();
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
@@ -190,11 +191,12 @@ where
 }
 
 #[instrument(skip_all, ret)]
-async fn assert_bindgen_sync<C, I, S>(clt: Arc<I>, srv: Arc<S>) -> anyhow::Result<()>
+async fn assert_bindgen_sync<IC, SC, I, S>(clt: Arc<I>, srv: Arc<S>) -> anyhow::Result<()>
 where
-    C: Send + Sync + Default,
-    I: wrpc::Invoke<Context = C> + 'static,
-    S: wrpc::Serve<Context = C> + Send + 'static,
+    IC: Send + Sync + Default,
+    SC: Send + Sync + Default,
+    I: wrpc::Invoke<Context = IC> + 'static,
+    S: wrpc::Serve<Context = SC> + Send + 'static,
 {
     let span = Span::current();
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
@@ -494,33 +496,34 @@ where
             // TODO: Remove the need for this
             sleep(Duration::from_secs(1)).await;
 
-            impl<C, T> exports::bar::Handler<C> for Component<T>
+            impl<IC, SC, T> exports::bar::Handler<SC> for Component<T>
             where
-                C: Send + Sync + Default,
-                T: wrpc::Invoke<Context = C>,
+                IC: Send + Sync + Default,
+                SC: Send + Sync + Default,
+                T: wrpc::Invoke<Context = IC>,
             {
-                async fn bar(&self, _cx: C) -> anyhow::Result<String> {
+                async fn bar(&self, _cx: SC) -> anyhow::Result<String> {
                     use shared::Abc;
 
                     info!("calling `wrpc-test:integration/test.foo.f`");
-                    foo::foo(self.0.as_ref(), C::default(), "foo")
+                    foo::foo(self.0.as_ref(), IC::default(), "foo")
                         .await
                         .context("failed to call `wrpc-test:integration/test.foo.foo`")?;
 
                     info!("calling `wrpc-test:integration/test.f`");
-                    let v = f(self.0.as_ref(), C::default(), "foo")
+                    let v = f(self.0.as_ref(), IC::default(), "foo")
                         .await
                         .context("failed to call `wrpc-test:integration/test.f`")?;
                     assert_eq!(v, 42);
 
                     info!("calling `wrpc-test:integration/shared.fallible`");
-                    let v = shared::fallible(self.0.as_ref(), C::default())
+                    let v = shared::fallible(self.0.as_ref(), IC::default())
                         .await
                         .context("failed to call `wrpc-test:integration/shared.fallible`")?;
                     assert_eq!(v, Ok(true));
 
                     info!("calling `wrpc-test:integration/shared.numbers`");
-                    let v = shared::numbers(self.0.as_ref(), C::default())
+                    let v = shared::numbers(self.0.as_ref(), IC::default())
                         .await
                         .context("failed to call `wrpc-test:integration/shared.numbers`")?;
                     assert_eq!(
@@ -541,14 +544,14 @@ where
 
                     info!("calling `wrpc-test:integration/shared.with-flags`");
                     let v =
-                        shared::with_flags(self.0.as_ref(), C::default())
+                        shared::with_flags(self.0.as_ref(), IC::default())
                             .await
                             .context("failed to call `wrpc-test:integration/shared.with-flags`")?;
                     assert_eq!(v, Abc::A | Abc::C);
 
                     let counter = Counter::new(
                         self.0.as_ref(),
-                        C::default(),
+                        IC::default(),
                         0,
                     )
                     .await
@@ -557,13 +560,13 @@ where
                     )?;
                     let counter_borrow = counter.as_borrow();
 
-                    Counter::increment_by(self.0.as_ref(), C::default(), &counter_borrow, 1)
+                    Counter::increment_by(self.0.as_ref(), IC::default(), &counter_borrow, 1)
                             .await
                             .context("failed to call `wrpc-test:integration/shared.[method]counter-increment-by`")?;
 
                     let count = Counter::get_count(
                         self.0.as_ref(),
-                        C::default(),
+                        IC::default(),
                         &counter_borrow,
                     )
                     .await
@@ -572,13 +575,13 @@ where
                     )?;
                     assert_eq!(count, 1);
 
-                    Counter::increment_by(self.0.as_ref(), C::default(), &counter_borrow, 2)
+                    Counter::increment_by(self.0.as_ref(), IC::default(), &counter_borrow, 2)
                             .await
                             .context("failed to call `wrpc-test:integration/shared.[method]counter-increment-by`")?;
 
                     let count = Counter::get_count(
                         self.0.as_ref(),
-                        C::default(),
+                        IC::default(),
                         &counter_borrow,
                     )
                     .await
@@ -587,14 +590,14 @@ where
                     )?;
                     assert_eq!(count, 3);
 
-                    let second_counter = Counter::clone_counter(self.0.as_ref(), C::default(), &counter_borrow)
+                    let second_counter = Counter::clone_counter(self.0.as_ref(), IC::default(), &counter_borrow)
                             .await
                             .context("failed to call `wrpc-test:integration/shared.[method]counter-clone-counter`")?;
 
                     let second_counter_borrow = second_counter.as_borrow();
                     let sum = Counter::sum(
                         self.0.as_ref(),
-                        C::default(),
+                        IC::default(),
                         &counter_borrow,
                         &second_counter_borrow,
                     )
@@ -651,7 +654,7 @@ where
             // TODO: Remove the need for this
             sleep(Duration::from_secs(2)).await;
 
-            let v = bar::bar(clt.as_ref(), C::default())
+            let v = bar::bar(clt.as_ref(), IC::default())
                 .await
                 .context("failed to call `wrpc-test:integration/test.bar.bar`")?;
             assert_eq!(v, "bar");
@@ -663,11 +666,12 @@ where
 }
 
 #[instrument(skip_all, ret)]
-async fn assert_dynamic<C, I, S>(clt: Arc<I>, srv: Arc<S>) -> anyhow::Result<()>
+async fn assert_dynamic<IC, SC, I, S>(clt: Arc<I>, srv: Arc<S>) -> anyhow::Result<()>
 where
-    C: Send + Sync + Default + 'static,
-    I: wrpc::Invoke<Context = C>,
-    S: wrpc::Serve<Context = C>,
+    IC: Send + Sync + Default + 'static,
+    SC: Send + Sync + Default + 'static,
+    I: wrpc::Invoke<Context = IC>,
+    S: wrpc::Serve<Context = SC>,
 {
     use core::pin::pin;
 
@@ -725,7 +729,7 @@ where
         async {
             info!("invoking `test.reset`");
             clt.invoke_values_blocking::<_, _, (String,)>(
-                C::default(),
+                IC::default(),
                 "test",
                 "reset",
                 ("arg",),
@@ -735,7 +739,7 @@ where
             .expect_err("`test.reset` should have failed");
             info!("invoking `test.reset`");
             clt.invoke_values_blocking::<_, _, (String,)>(
-                C::default(),
+                IC::default(),
                 "test",
                 "reset",
                 ("arg",),
@@ -745,7 +749,7 @@ where
             .expect_err("`test.reset` should have failed");
             info!("invoking `test.reset`");
             clt.invoke_values_blocking::<_, _, (String,)>(
-                C::default(),
+                IC::default(),
                 "test",
                 "reset",
                 ("arg",),
@@ -824,7 +828,7 @@ where
             info!("invoking `test.sync`");
             let returns = clt
                 .invoke_values_blocking(
-                    C::default(),
+                    IC::default(),
                     "test",
                     "sync",
                     (
@@ -966,7 +970,7 @@ where
             info!("invoking `test.async`");
             let (returns, io) = clt
                 .invoke_values(
-                    C::default(),
+                    IC::default(),
                     "test",
                     "async",
                     (a, b, c, d, e),

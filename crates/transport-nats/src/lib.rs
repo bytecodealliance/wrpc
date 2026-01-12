@@ -1012,6 +1012,21 @@ impl AsyncWrite for ParamWriter {
     }
 }
 
+#[derive(Debug)]
+pub struct NatsContext {
+    pub headers: Option<HeaderMap>,
+    pub subject: Subject,
+}
+
+impl Default for NatsContext {
+    fn default() -> Self {
+        Self {
+            headers: None,
+            subject: Subject::from(""),
+        }
+    }
+}
+
 impl wrpc_transport::Invoke for Client {
     type Context = Option<HeaderMap>;
     type Outgoing = ParamWriter;
@@ -1140,11 +1155,12 @@ async fn handle_message(
         reply: tx,
         payload,
         headers,
+        subject,
         ..
     }: async_nats::Message,
     paths: &[Box<[Option<usize>]>],
     tasks: Arc<JoinSet<()>>,
-) -> anyhow::Result<(Option<HeaderMap>, SubjectWriter, Reader)> {
+) -> anyhow::Result<(NatsContext, SubjectWriter, Reader)> {
     let tx = tx.context("peer did not specify a reply subject")?;
 
     let mut cmds = Vec::with_capacity(paths.len().saturating_add(1));
@@ -1180,7 +1196,7 @@ async fn handle_message(
         .await
         .context("failed to publish handshake accept")?;
     Ok((
-        headers,
+        NatsContext { headers, subject },
         SubjectWriter::new(
             nats.clone(),
             Subject::from(result_subject(&tx)),
@@ -1201,7 +1217,7 @@ async fn handle_message(
 }
 
 impl wrpc_transport::Serve for Client {
-    type Context = Option<HeaderMap>;
+    type Context = NatsContext;
     type Outgoing = SubjectWriter;
     type Incoming = Reader;
 

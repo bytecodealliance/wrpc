@@ -32,10 +32,10 @@ struct Args {
 #[derive(Clone, Copy)]
 struct Server;
 
-impl bindings::exports::wrpc_examples::hello::handler::Handler<Option<async_nats::HeaderMap>>
+impl bindings::exports::wrpc_examples::hello::handler::Handler<wrpc_transport_nats::NatsContext>
     for Server
 {
-    async fn hello(&self, _: Option<async_nats::HeaderMap>) -> anyhow::Result<String> {
+    async fn hello(&self, _: wrpc_transport_nats::NatsContext) -> anyhow::Result<String> {
         Ok("hello from Rust".to_string())
     }
 }
