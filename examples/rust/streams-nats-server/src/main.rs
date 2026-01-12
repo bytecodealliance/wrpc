@@ -35,12 +35,12 @@ struct Args {
 #[derive(Clone, Copy)]
 struct Server;
 
-impl bindings::exports::wrpc_examples::streams::handler::Handler<Option<async_nats::HeaderMap>>
+impl bindings::exports::wrpc_examples::streams::handler::Handler<wrpc_transport_nats::NatsContext>
     for Server
 {
     async fn echo(
         &self,
-        _cx: Option<async_nats::HeaderMap>,
+        _cx: wrpc_transport_nats::NatsContext,
         Req { numbers, bytes }: Req,
     ) -> anyhow::Result<(
         Pin<Box<dyn Stream<Item = Vec<u64>> + Send>>,
