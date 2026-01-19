@@ -241,7 +241,7 @@ where
                         .flatten()
                         .context("variant case should have payload type")?;
                     let mut enc = self.with_type(&payload_type);
-                    enc.encode(&payload_val.into_owned(), dst)
+                    enc.encode(&*payload_val, dst)
                         .context("failed to encode variant payload")?;
                 }
                 Ok(())
@@ -293,7 +293,7 @@ where
                         .option_some_type()
                         .context("option type should have some type")?;
                     let mut enc = self.with_type(&inner_type);
-                    enc.encode(&inner.into_owned(), dst)
+                    enc.encode(&*inner, dst)
                         .context("failed to encode `option::some` value")?;
                     Ok(())
                 }
@@ -311,7 +311,7 @@ where
                                 dst.put_u8(0);
                                 if let Some(ok_ty) = ok_type {
                                     let mut enc = self.with_type(&ok_ty);
-                                    enc.encode(&val.into_owned(), dst)
+                                    enc.encode(&*val, dst)
                                         .context("failed to encode `result::ok` value")?;
                                 }
                             }
@@ -329,7 +329,7 @@ where
                                 dst.put_u8(1);
                                 if let Some(err_ty) = err_type {
                                     let mut enc = self.with_type(&err_ty);
-                                    enc.encode(&val.into_owned(), dst)
+                                    enc.encode(&*val, dst)
                                         .context("failed to encode `result::err` value")?;
                                 }
                             }

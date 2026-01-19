@@ -33,8 +33,9 @@ use wasm_wave::wasm::{WasmType, WasmTypeKind, WasmValue as _};
 
 /// Read a wasm-wave `Value` from an async reader
 ///
-/// This mirrors `wrpc_runtime_wasmtime::codec::read_value` but without the
-/// `Index<R>` trait bound and `path` parameter, since wasm-wave doesn't support resources.
+/// This mirrors `wrpc_runtime_wasmtime::codec::read_value`
+/// but without the `Index<R>` trait bound and `path` parameter,
+/// since wasm-wave doesn't support resources, async or streams
 ///
 /// # Errors
 ///
@@ -158,7 +159,7 @@ where
             })?;
 
             let payload = if let Some(payload_type) = payload_type {
-                let value = Box::pin(read_value(r, &payload_type)).await?;
+                let value = Box::pin(read_value(r, payload_type)).await?;
                 Some(value)
             } else {
                 None
@@ -222,7 +223,7 @@ where
         }
         WasmTypeKind::Flags => {
             let names: Vec<_> = ty.flags_names().collect();
-            let byte_count = (names.len() + 7) / 8; // Ceiling division
+            let byte_count = names.len().div_ceil(8);
 
             let mut buf = vec![0u8; byte_count];
             r.read_exact(&mut buf).await?;

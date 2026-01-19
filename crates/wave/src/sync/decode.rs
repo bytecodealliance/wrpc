@@ -12,7 +12,7 @@
 //!
 //! Note: `unpack` is not supported, as
 //! 1. `wasm-wave` doesn't't expose (`pub(super)`) its internal type system,
-//!     so it can't be used a generic passed to `unpack<T>`
+//!    so it can't be used a generic passed to `unpack<T>`
 //! 2. `unpack` only accepts one argument (`buf`)
 //!    but, because of (1), we need to be able to pass a `Type` to decode
 
