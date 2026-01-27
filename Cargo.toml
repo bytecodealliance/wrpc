@@ -163,7 +163,7 @@ wasi-preview1-component-adapter-provider = { version = "39", default-features = 
 wasm-tokio = { version = "0.6", default-features = false }
 wasmparser = { version = "0.239", default-features = false }
 wasmtime = { version = "39", default-features = false }
-wasmtime-cli-flags = { version = "39", default-features = false }
+wasmtime-cli-flags = { version = "41", default-features = false }
 wasmtime-wasi = { version = "39", default-features = false }
 wasmtime-wasi-http = { version = "39", default-features = false }
 wit-bindgen = { version = "0.45", default-features = false }
