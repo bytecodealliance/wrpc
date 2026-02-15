@@ -21,6 +21,9 @@ use tracing::{info, info_span, instrument, Instrument, Span};
 use wrpc_transport::frame::{AcceptExt as _, Oneshot};
 use wrpc_transport::{Accept, InvokeExt as _, ResourceBorrow, ResourceOwn, ServeExt as _};
 
+use zenoh::{Config};
+use serial_test::serial;
+
 #[instrument(skip_all, ret)]
 async fn assert_bindgen_async<IC, SC, I, S>(clt: Arc<I>, srv: Arc<S>) -> anyhow::Result<()>
 where
@@ -1026,6 +1029,45 @@ where
     );
 
     Ok(())
+}
+
+#[cfg(feature = "zenoh-transport")]
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+#[serial(zenoh_tests)]
+#[instrument(ret)]
+async fn rust_bindgen_zenoh_sync() -> anyhow::Result<()> {
+    wrpc_test::with_zenoh(|_, zenoh_client| async {
+        let clt = Arc::new(zenoh_client);
+        assert_bindgen_sync(Arc::clone(&clt), clt).await
+    })
+    .await
+}
+
+#[cfg(feature = "zenoh-transport")]
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+#[serial(zenoh_tests)]
+#[instrument(ret)]
+async fn rust_bindgen_zenoh_async() -> anyhow::Result<()> {
+    wrpc_test::with_zenoh(|_, zenoh_client| {
+        async {
+            let clt = Arc::new(zenoh_client);
+            assert_bindgen_async(Arc::clone(&clt), clt).await
+        }
+        .in_current_span()
+    })
+    .await
+}
+
+#[cfg(feature = "zenoh-transport")]
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+#[serial(zenoh_tests)]
+#[instrument(ret)]
+async fn rust_dynamic_zenoh() -> anyhow::Result<()> {
+    wrpc_test::with_zenoh(|_, zenoh_client| async {
+        let clt = Arc::new(zenoh_client);
+        assert_dynamic(Arc::clone(&clt), clt).await
+    })
+    .await
 }
 
 #[cfg(feature = "nats")]

@@ -1,0 +1,43 @@
+package wrpc-examples:hello;
+
+interface handler {
+    record timespec {
+        tv-sec: s64,
+        tv-nsec: u32
+    }
+ 
+    record tracking {
+        ref-id: u32,
+        ip-addr: ipv4-address,
+        stratum: u16,
+        leap-status: u16,
+        ref-time: timespec,
+        current-correction: f64,
+        last-offset: f64,
+        rms-offset: f64,
+        freq-ppm: f64,
+        resid-freq-ppm: f64,
+        skew-ppm: f64,
+        root-delay: f64,
+        root-dispersion: f64,
+        last-update-interval: f64,
+    }
+    
+    record ipv4-address {
+        // It seems that a list with a fixed size is supported in the WIT standard. However I have no clue if wasmtime implements it...
+        // octets: list<u8, 4>, // https: //github.com/WebAssembly/component-model/blob/main/design/mvp/WIT.md#types
+ 
+        octets: tuple<u8, u8, u8, u8> // Backup solution: closest to a static u8 array with 4 elements
+    }
+
+    hello: func() -> string;
+    get-tracking: func(t: tracking) -> tracking;
+}
+
+world client {
+    import handler;
+}
+
+world server {
+    export handler;
+}
