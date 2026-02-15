@@ -69,4 +69,6 @@ wit-component = { workspace = true }
 wrpc-cli = { workspace = true, features = ["nats"] }
 wrpc-transport-nats = { workspace = true }
 wrpc-transport = { workspace = true, features = ["net"] }
+wrpc-transport-zenoh = { workspace = true, features = ["zenoh-1_5_0"] }
 wrpc-runtime-wasmtime = { workspace = true }
+zenoh = { workspace = true }

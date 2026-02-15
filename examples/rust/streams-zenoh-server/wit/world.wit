@@ -1,0 +1,5 @@
+package wrpc-examples:streams-rust-server;
+
+world server {
+    include wrpc-examples:streams/server;
+}
