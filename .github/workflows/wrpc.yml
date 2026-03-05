@@ -89,8 +89,8 @@ jobs:
           - target: x86_64-pc-windows-gnu
             test-bin: |
               nix profile install --inputs-from . 'nixpkgs-unstable#wine64'
-              wine64 ./result/bin/wit-bindgen-wrpc.exe --version
-              wine64 ./result/bin/wrpc-wasmtime.exe --version
+              wine ./result/bin/wit-bindgen-wrpc.exe --version
+              wine ./result/bin/wrpc-wasmtime.exe --version
             test-oci: docker load < ./result
             # TODO: Run win64 binary within OCI
 
