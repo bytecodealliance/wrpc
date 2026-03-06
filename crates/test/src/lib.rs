@@ -136,7 +136,10 @@ pub async fn start_zenoh() -> anyhow::Result<(
             .context("failed to start zenohd server")?;
 
     // connect to zenoh
-    let cfg = Config::from_env().expect("Missing environment variable 'ZENOH_CONFIG'");
+    let cfg = match Config::from_env() {
+        Ok(cfg) => cfg,
+        Err(_) => Config::default(),
+    };
 
     let session = zenoh::open(cfg)
                             .await

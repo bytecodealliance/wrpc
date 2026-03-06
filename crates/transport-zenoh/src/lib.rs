@@ -4,17 +4,13 @@
 
 use anyhow::{anyhow, ensure, Context as _};
 use wrpc_transport::Index;
-
-use zenoh_1_5_0::sample::Sample;
-#[cfg(feature = "zenoh-1_5_0")]
-use zenoh_1_5_0 as zenoh;
+use zenoh::bytes::ZBytes;
+use zenoh::sample::Sample;
 
 use core::ops::{Deref, DerefMut};
 use std::iter::zip;
 use std::{io, mem};
-use zenoh::Session;
-use zenoh::bytes::ZBytes;
-use zenoh::Wait;
+use zenoh::{Session, Wait};
 
 use core::future::Future;
 use core::pin::{pin, Pin};
@@ -36,15 +32,9 @@ use tracing::{debug, error, instrument, trace, warn};
 
 pub const PROTOCOL: &str = "wrpc.0.0.1";
 
-// wrpc_transport_zenoh.rs
-// Minimal wRPC transport over Zenoh (no NATS extras)
 
-
-// ---------- Key helpers (slash-separated Zenoh style) ----------
-#[hotpath::measure]
 fn send_sync(session: &Session, key: &str, payload: &[u8]) -> io::Result<()> {
-    // Using the synchronous (blocking) API
-    // Note: session.put returns a builder; calling `.wait()` executes it synchronously.
+    // Using the synchronous (blocking) API due to some synchronization issue that nats handles 
     session
         .put(key, payload)
         .wait()
@@ -52,20 +42,7 @@ fn send_sync(session: &Session, key: &str, payload: &[u8]) -> io::Result<()> {
     Ok(())
 }
 
-#[hotpath::measure]
-async fn publish_with_reply(
-        session: &zenoh::Session,
-        subject: String,
-        reply: String,
-        payload: Bytes,
-    ) -> Result<(), zenoh::Error> {
-        let zbytes = prepare_payload_zbytes(Some(reply), &payload, None, None);
-        session.put(subject, zbytes).await.unwrap();
 
-        Ok(())
-    }
-
-#[hotpath::measure]
 fn spawn_async(fut: impl Future<Output = ()> + Send + 'static) {
     match tokio::runtime::Handle::try_current() {
         Ok(rt) => {
@@ -80,20 +57,24 @@ fn spawn_async(fut: impl Future<Output = ()> + Send + 'static) {
     }
 }
 
-fn child_inbox(base: &str) -> String {
-    let base = if base.ends_with('/') { base } else { &format!("{base}/") };
-    format!("{base}{}", nuid::next())
+fn zbytes_as_bytes(zbytes: &ZBytes) -> Bytes {
+    // Get &ZBytes from the sample
+    let bytes = match zbytes.to_bytes() {
+                std::borrow::Cow::Borrowed(slice) => Bytes::copy_from_slice(slice),
+                std::borrow::Cow::Owned(vec) => Bytes::from(vec),
+    };
+
+    bytes
 }
 
-
-// fn new_inbox() -> String {
-//     let inbox = "_inbox/";
-//     let id = nuid::next();
-//     let mut s = String::with_capacity(inbox.len().saturating_add(id.len()));
-//     s.push_str(inbox);
-//     s.push_str(&id);
-//     s
-// }
+fn child_inbox(base: &str) -> String {
+    let base = if base.ends_with('/') {
+        base
+    } else {
+        &format!("{base}/")
+    };
+    format!("{base}{}", nuid::next())
+}
 
 #[must_use]
 #[inline]
@@ -166,10 +147,9 @@ fn corrupted_memory_error() -> std::io::Error {
     std::io::Error::other("corrupted memory state")
 }
 
-
 /// Transport subscriber
 pub struct Subscriber {
-    rx: ReceiverStream<Message>,
+    rx: ReceiverStream<Sample>,
     subject: String,
     commands: mpsc::Sender<Command>,
     tasks: Arc<JoinSet<()>>,
@@ -193,7 +173,7 @@ impl Drop for Subscriber {
 
 #[hotpath::measure_all]
 impl Deref for Subscriber {
-    type Target = ReceiverStream<Message>;
+    type Target = ReceiverStream<Sample>;
 
     fn deref(&self) -> &Self::Target {
         &self.rx
@@ -207,21 +187,10 @@ impl DerefMut for Subscriber {
     }
 }
 
-
 enum Command {
-    Subscribe(String, mpsc::Sender<Message>),
+    Subscribe(String, mpsc::Sender<Sample>),
     Unsubscribe(String),
     Batch(Box<[Command]>, oneshot::Sender<()>),
-}
-
-
-/// Subset of [`async_nats::Message`](async_nats::Message) used by this crate
-pub struct Message {
-    subject: String,
-    reply: Option<String>,
-    payload: Bytes,
-    status: Option<String>,
-    description: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -234,110 +203,6 @@ pub struct Client {
     tasks: Arc<JoinSet<()>>,
 }
 
-#[hotpath::measure]
-fn parse_zbytes_message(sample: Sample) -> (String, Option<String>, Bytes, Option<String>, Option<String>) {
-    let key = sample.key_expr().as_str().to_string();
-    let zbytes = sample.payload();
-    
-    let bytes = zbytes.to_bytes();
-    let mut cursor = 0;
-    
-    // Decode reply
-    let reply = if cursor < bytes.len() && bytes[cursor] == 1 {
-        cursor += 1;
-        let len = u32::from_le_bytes([bytes[cursor], bytes[cursor+1], bytes[cursor+2], bytes[cursor+3]]) as usize;
-        cursor += 4;
-        let reply_str = String::from_utf8_lossy(&bytes[cursor..cursor+len]).into_owned();
-        cursor += len;
-        Some(reply_str)
-    } else {
-        cursor += 1;
-        None
-    };
-    
-    // Decode status
-    let status = if cursor < bytes.len() && bytes[cursor] == 1 {
-        cursor += 1;
-        let len = u32::from_le_bytes([bytes[cursor], bytes[cursor+1], bytes[cursor+2], bytes[cursor+3]]) as usize;
-        cursor += 4;
-        let status_str = String::from_utf8_lossy(&bytes[cursor..cursor+len]).into_owned();
-        cursor += len;
-        Some(status_str)
-    } else {
-        cursor += 1;
-        None
-    };
-    
-    // Decode description
-    let description = if cursor < bytes.len() && bytes[cursor] == 1 {
-        cursor += 1;
-        let len = u32::from_le_bytes([bytes[cursor], bytes[cursor+1], bytes[cursor+2], bytes[cursor+3]]) as usize;
-        cursor += 4;
-        let desc_str = String::from_utf8_lossy(&bytes[cursor..cursor+len]).into_owned();
-        cursor += len;
-        Some(desc_str)
-    } else {
-        cursor += 1;
-        None
-    };
-    
-    // Remaining bytes are payload
-    let payload = if cursor < bytes.len() {
-        Bytes::copy_from_slice(&bytes[cursor..])
-    } else {
-        Bytes::new()
-    };
-    
-    (key, reply, payload, status, description)
-}
-
-#[hotpath::measure]
-fn prepare_payload_zbytes(
-    reply: Option<String>,
-    payload: &[u8],
-    status: Option<String>,
-    description: Option<String>
-) -> ZBytes {
-    // use std::io::Write;
-    
-    let mut buf = Vec::new();
-    
-    // Encode reply
-    if let Some(reply) = reply {
-        buf.push(1u8); // has_reply = true
-        let reply_bytes = reply.as_bytes();
-        buf.extend_from_slice(&(reply_bytes.len() as u32).to_le_bytes());
-        buf.extend_from_slice(reply_bytes);
-    } else {
-        buf.push(0u8); // has_reply = false
-    }
-    
-    // Encode status
-    if let Some(status) = status {
-        buf.push(1u8);
-        let status_bytes = status.as_bytes();
-        buf.extend_from_slice(&(status_bytes.len() as u32).to_le_bytes());
-        buf.extend_from_slice(status_bytes);
-    } else {
-        buf.push(0u8);
-    }
-    
-    // Encode description
-    if let Some(description) = description {
-        buf.push(1u8);
-        let desc_bytes = description.as_bytes();
-        buf.extend_from_slice(&(desc_bytes.len() as u32).to_le_bytes());
-        buf.extend_from_slice(desc_bytes);
-    } else {
-        buf.push(0u8);
-    }
-    
-    // Append payload
-    buf.extend_from_slice(payload);
-    
-    ZBytes::from(buf)
-}
-
 #[hotpath::measure_all]
 impl Client {
     pub async fn new(
@@ -348,16 +213,17 @@ impl Client {
         let session: Arc<zenoh::Session> = session.into();
         let root = format!("_inbox/{}/", nuid::next());
         let wildcard = format!("{root}**");
-        let mut sub = session
+        let sub = session
             .declare_subscriber(wildcard)
             .with(flume::bounded(8192))
-            .await.unwrap();
+            .await
+            .unwrap();
 
         let mut tasks = JoinSet::new();
         let (cmd_tx, mut cmd_rx) = mpsc::channel(8192);
         tasks.spawn({
             async move {
-                fn handle_command(subs: &mut HashMap<String, mpsc::Sender<Message>>, cmd: Command) {
+                fn handle_command(subs: &mut HashMap<String, mpsc::Sender<Sample>>, cmd: Command) {
                     //println!("Handle Command Called");
                     match cmd {
                         Command::Subscribe(s, tx) => {
@@ -379,13 +245,13 @@ impl Client {
                 }
 
                 async fn handle_message(
-                    subs: &mut HashMap<String, mpsc::Sender<Message>>,
+                    subs: &mut HashMap<String, mpsc::Sender<Sample>>,
                     sample: Sample,
                 ) {
                     //println!("Handle Command Called");
                     let key = sample.key_expr().clone().as_str().to_string();
                     // let msg = parse_message(sample);
-                    
+
                     let Some(sub) = subs.get_mut(&key) else {
                         debug!(?key, "drop message with no subscriber");
                         return;
@@ -395,20 +261,8 @@ impl Client {
                         subs.remove(&key);
                         return;
                     };
-                    
-                    let (_key_parsed, 
-                        reply, 
-                        payload, 
-                        status, 
-                        description) = parse_zbytes_message(sample);
 
-                    sub.send(Message {
-                        subject: key,
-                        reply,
-                        payload,
-                        status,
-                        description
-                    });
+                    sub.send(sample);
                 }
 
                 let mut subs = HashMap::new();
@@ -432,7 +286,6 @@ impl Client {
     }
 }
 
-
 pub struct ByteSubscription(Subscriber);
 
 #[hotpath::measure_all]
@@ -442,7 +295,7 @@ impl Stream for ByteSubscription {
     #[instrument(level = "trace", skip_all)]
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         match self.0.poll_next_unpin(cx) {
-            Poll::Ready(Some(Message { payload, .. })) => Poll::Ready(Some(Ok(payload))),
+            Poll::Ready(Some(sample)) => Poll::Ready(Some(Ok(zbytes_as_bytes(sample.payload())))),
             Poll::Ready(None) => Poll::Ready(None),
             Poll::Pending => Poll::Pending,
         }
@@ -623,9 +476,6 @@ impl IndexTrie {
     }
 }
 
-
-
-
 pub struct Reader {
     buffer: Bytes,
     incoming: Option<Subscriber>,
@@ -688,7 +538,8 @@ impl AsyncRead for Reader {
         };
         trace!("polling for next message");
         match incoming.poll_next_unpin(cx) {
-            Poll::Ready(Some(Message { mut payload, .. })) => {
+            Poll::Ready(Some(sample)) => {
+                let mut payload = zbytes_as_bytes(sample.payload());
                 trace!(?payload, "received message");
                 if payload.is_empty() {
                     trace!("received stream shutdown message");
@@ -712,8 +563,6 @@ impl AsyncRead for Reader {
         }
     }
 }
-
-
 
 #[derive(Clone, Debug)]
 pub struct SubjectWriter {
@@ -752,22 +601,29 @@ impl wrpc_transport::Index<Self> for SubjectWriter {
 impl AsyncWrite for SubjectWriter {
     #[instrument(level = "trace", skip_all, ret, fields(subject = self.tx, buf = format!("{buf:02x?}")))]
     fn poll_write(
-    mut self: Pin<&mut Self>,
-    _cx: &mut Context<'_>,
-    buf: &[u8],
+        self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+        buf: &[u8],
     ) -> Poll<std::io::Result<usize>> {
         trace!("starting send");
 
-        // let msg = prepare_payload_json(None, Bytes::copy_from_slice(buf), None, None);
-        let zbytes = prepare_payload_zbytes(None, buf, None, None);
-        let zbytes_bytes = zbytes.to_bytes();
+        // let Ok(payload) = prepare_attachment_bytes(self.tx.clone(), None, buf, None, None) else {
+        //     return Poll::Ready(Err(io::Error::new(
+        //         io::ErrorKind::InvalidData,
+        //         "Couldn't prepare payload as bytes",
+        //     )));
+        // };
 
         let subject = &self.tx;
         let session = &self.session;
 
-        trace!("writing message synchronously: key={} size={}", subject, buf.len());
+        trace!(
+            "writing message synchronously: key={} size={}",
+            subject,
+            buf.len()
+        );
 
-        match send_sync(session, subject, &zbytes_bytes) {
+        match send_sync(session, subject, &buf) {
             Ok(()) => {
                 trace!("put completed");
                 Poll::Ready(Ok(buf.len()))
@@ -779,15 +635,14 @@ impl AsyncWrite for SubjectWriter {
         }
     }
 
-
     #[instrument(level = "trace", skip_all, ret, fields(subject = self.tx))]
-    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+    fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
         trace!("flushing");
         Poll::Ready(Ok(()))
     }
 
     #[instrument(level = "trace", skip_all, ret, fields(subject = self.tx))]
-    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+    fn poll_shutdown(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
         trace!("writing stream shutdown message");
         if !self.shutdown {
             let session = self.session.clone();
@@ -796,8 +651,7 @@ impl AsyncWrite for SubjectWriter {
 
             spawn_async(async move {
                 trace!("writing stream shutdown message (explicit)");
-                let zbytes = prepare_payload_zbytes(None, &[], None, None);
-                if let Err(err) = session.put(key, zbytes).await {
+                if let Err(err) = session.put(key, &[]).await {
                     warn!(?err, "failed to publish stream shutdown message");
                 }
             });
@@ -815,8 +669,11 @@ impl Drop for SubjectWriter {
             let tasks = Arc::clone(&self.tasks);
             spawn_async(async move {
                 trace!("writing stream shutdown message");
-                let zbytes = prepare_payload_zbytes(None, &[],None, None);
-                if let Err(err) = session.put(key, zbytes).await {
+                // let Ok(payload) = prepare_attachment_bytes(key.clone(), None, &[], None, None) else {
+                //     warn!("Couldn't prepare payload as bytes");
+                //     return ();
+                // };
+                if let Err(err) = session.put(key, &[]).await {
                     warn!(?err, "failed to publish stream shutdown message");
                 }
                 drop(tasks);
@@ -824,8 +681,6 @@ impl Drop for SubjectWriter {
         }
     }
 }
-
-
 
 #[derive(Default)]
 pub enum RootParamWriter {
@@ -867,9 +722,11 @@ fn map_status_to_error_kind(code: &str) -> Option<io::ErrorKind> {
     let c = code.trim();
     match c {
         // Allow either symbolic names or common numeric equivalents
-        c if c.eq_ignore_ascii_case("NO_RESPONDERS") || c == "503" => Some(io::ErrorKind::NotConnected),
-        c if c.eq_ignore_ascii_case("TIMEOUT")       || c == "408" => Some(io::ErrorKind::TimedOut),
-        c if c.eq_ignore_ascii_case("REQUEST_TERMINATED")          => Some(io::ErrorKind::UnexpectedEof),
+        c if c.eq_ignore_ascii_case("NO_RESPONDERS") || c == "503" => {
+            Some(io::ErrorKind::NotConnected)
+        }
+        c if c.eq_ignore_ascii_case("TIMEOUT") || c == "408" => Some(io::ErrorKind::TimedOut),
+        c if c.eq_ignore_ascii_case("REQUEST_TERMINATED") => Some(io::ErrorKind::UnexpectedEof),
         _ => None,
     }
 }
@@ -883,28 +740,26 @@ impl RootParamWriter {
             Self::Handshaking { sub, .. } => {
                 trace!("polling for handshake response 1");
                 match sub.poll_next_unpin(cx) {
-                    Poll::Ready(Some(Message { status: Some(code), description, .. })) => {
-                        if let Some(kind) = map_status_to_error_kind(&code) {
-                            return Poll::Ready(Err(kind.into()));
-                        }
-                        if !code.is_empty() {
-                            let msg = match description {
-                                Some(desc) if !desc.is_empty() =>
-                                    format!("received a response with code `{code}` ({desc})"),
-                                _ =>
-                                    format!("received a response with code `{code}`"),
-                            };
-                            return Poll::Ready(Err(io::Error::other(msg)));
-                        }
-                        // Empty status string: fall through to the generic error below
-                        return Poll::Ready(Err(io::Error::new(
-                            io::ErrorKind::InvalidInput,
-                            "empty status string in handshake response",
-                        )));
-                    }
-                    Poll::Ready(Some(Message {
-                        reply: Some(tx), ..
-                    })) => {
+                    // Poll::Ready(Some(sample) => {
+                    //     if let Some(kind) = map_status_to_error_kind(&code) {
+                    //         return Poll::Ready(Err(kind.into()));
+                    //     }
+                    //     if !code.is_empty() {
+                    //         let msg = match description {
+                    //             Some(desc) if !desc.is_empty() => {
+                    //                 format!("received a response with code `{code}` ({desc})")
+                    //             }
+                    //             _ => format!("received a response with code `{code}`"),
+                    //         };
+                    //         return Poll::Ready(Err(io::Error::other(msg)));
+                    //     }
+                    //     // Empty status string: fall through to the generic error below
+                    //     return Poll::Ready(Err(io::Error::new(
+                    //         io::ErrorKind::InvalidInput,
+                    //         "empty status string in handshake response",
+                    //     )));
+                    // }
+                    Poll::Ready(Some(sample)) => {
                         let Self::Handshaking {
                             session,
                             indexed,
@@ -915,6 +770,17 @@ impl RootParamWriter {
                         else {
                             return Poll::Ready(Err(corrupted_memory_error()));
                         };
+
+                        let tx = match sample.attachment() {
+                            Some(zbytes) => zbytes.try_to_string().unwrap().into_owned(),
+                            None => {
+                                return Poll::Ready(Err(std::io::Error::new(
+                                std::io::ErrorKind::InvalidInput,
+                                "peer did not specify a reply subject",
+                            )))
+                            },
+                        };
+
                         let tx = SubjectWriter::new(session, param_subject(&tx), tasks);
                         let indexed = indexed
                             .into_inner()
@@ -934,10 +800,6 @@ impl RootParamWriter {
                             self.poll_active(cx)
                         }
                     }
-                    Poll::Ready(Some(..)) => Poll::Ready(Err(std::io::Error::new(
-                        std::io::ErrorKind::InvalidInput,
-                        "peer did not specify a reply subject",
-                    ))),
                     Poll::Ready(None) => {
                         *self = Self::Corrupted;
                         Poll::Ready(Err(std::io::Error::from(std::io::ErrorKind::BrokenPipe)))
@@ -1054,7 +916,6 @@ pub enum IndexedParamWriter {
     Active(SubjectWriter),
 }
 
-
 #[hotpath::measure_all]
 impl IndexedParamWriter {
     #[instrument(level = "trace", skip_all, ret)]
@@ -1089,7 +950,6 @@ impl IndexedParamWriter {
     }
 }
 
-
 #[hotpath::measure_all]
 impl wrpc_transport::Index<Self> for IndexedParamWriter {
     #[instrument(level = "trace", skip_all)]
@@ -1112,7 +972,6 @@ impl wrpc_transport::Index<Self> for IndexedParamWriter {
         }
     }
 }
-
 
 #[hotpath::measure_all]
 impl AsyncWrite for IndexedParamWriter {
@@ -1162,7 +1021,6 @@ impl AsyncWrite for IndexedParamWriter {
         }
     }
 }
-
 
 pub enum ParamWriter {
     Root(RootParamWriter),
@@ -1223,7 +1081,7 @@ impl wrpc_transport::Invoke for Client {
         cx: Self::Context,
         instance: &str,
         func: &str,
-        mut params: Bytes,
+        params: Bytes,
         paths: impl AsRef<[P]> + Send,
     ) -> anyhow::Result<(Self::Outgoing, Self::Incoming)> {
         let paths = paths.as_ref();
@@ -1265,13 +1123,11 @@ impl wrpc_transport::Invoke for Client {
 
         let param_tx = invocation_subject(&self.prefix, instance, func);
         trace!("publishing handshake");
-            publish_with_reply(
-                    &self.session,
-                    param_tx,
-                    rx.clone(),
-                    params)
-                .await.unwrap();
-        
+        self.session.put(param_tx, params).attachment(rx.clone()).await.unwrap();
+        // publish_with_reply(&self.session, param_tx, rx.clone(), params)
+        //     .await
+        //     .unwrap();
+
         // let session = Arc::clone(&self.session);
         // tokio::spawn(async move {
         //     if let Err(err) = nats.flush().await {
@@ -1310,15 +1166,14 @@ async fn handle_message(
     session: &zenoh::Session,
     rx: String,
     commands: mpsc::Sender<Command>,
-    Message {
-        reply: tx,
-        payload,
-        ..
-    }: Message,
+    sample: Sample,
     paths: &[Box<[Option<usize>]>],
     tasks: Arc<JoinSet<()>>,
 ) -> anyhow::Result<((), SubjectWriter, Reader)> {
-    let tx = tx.clone();
+    let tx = match sample.attachment() {
+        Some(zbytes) => zbytes.try_to_string().unwrap().into_owned(),
+        None => todo!(),
+    };
 
     let mut cmds = Vec::with_capacity(paths.len().saturating_add(1));
 
@@ -1353,17 +1208,17 @@ async fn handle_message(
     ack_rx.await?;
 
     trace!("publishing handshake response");
-    publish_with_reply(session, tx.clone().unwrap(), rx, Bytes::default())
-        .await.unwrap();
+
+    session.put(tx.clone(), Bytes::default()).attachment(rx.clone()).await.unwrap();
     Ok((
         (),
         SubjectWriter::new(
             session.clone().into(),
-            result_subject(&tx.unwrap()),
+            result_subject(&tx),
             Arc::clone(&tasks),
         ),
         Reader {
-            buffer: payload,
+            buffer: zbytes_as_bytes(sample.payload()),
             incoming: Some(Subscriber {
                 rx: ReceiverStream::new(param_rx),
                 commands,
@@ -1407,24 +1262,20 @@ impl wrpc_transport::Serve for Client {
             |(sub, session, paths, commands, tasks, inbox_root)| async move {
                 match sub.recv_async().await {
                     Ok(sample) => {
-                        let (subject, 
-                            reply, 
-                            payload, 
-                            status, 
-                            description) = parse_zbytes_message(sample);
+                        // let Ok(message) = parse_bytes_message(sample) else {
+                        //     return None;
+                        // };
 
-                        let message = Message {
-                            subject,
-                            reply,
-                            payload,
-                            status,
-                            description,
-                        };
-
-                        let rx   = child_inbox(inbox_root.as_ref());
+                        let rx = child_inbox(inbox_root.as_ref());
                         let item = handle_message(
-                            &session, rx, commands.clone(), message, &paths, Arc::clone(&tasks)
-                        ).await;
+                            &session,
+                            rx,
+                            commands.clone(),
+                            sample,
+                            &paths,
+                            Arc::clone(&tasks),
+                        )
+                        .await;
 
                         // put `inboxroot` back into state for the next loop
                         Some((item, (sub, session, paths, commands, tasks, inbox_root)))

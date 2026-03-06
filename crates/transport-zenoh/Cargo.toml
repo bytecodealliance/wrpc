@@ -10,7 +10,6 @@ license.workspace = true
 repository.workspace = true
 
 [features]
-default = ["zenoh-1_5_0"]
 hotpath = ["hotpath/hotpath"]
 hotpath-alloc = ["hotpath/hotpath-alloc"]
 
@@ -25,9 +24,9 @@ tokio-util = { workspace = true, features = ["codec", "io"] }
 tracing = { workspace = true, features = ["attributes"] }
 wasm-tokio = { workspace = true }
 wrpc-transport = { workspace = true }
-zenoh-1_5_0 = { package = "zenoh", version = "1.5.0", default-features = false, optional = true }
-serde_json = { workspace = true }
+zenoh = { workspace = true }
 serde = { workspace = true }
 uuid = { workspace = true }
 flume = { workspace = true }
-hotpath = "0.9"
+postcard = {workspace = true, features = ["use-std"]}
+hotpath = "0.13.0"

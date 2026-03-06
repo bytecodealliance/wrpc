@@ -2,6 +2,7 @@ use std::sync::Arc;
 use anyhow::Context as _;
 use zenoh::{Config};
 use std::time::Instant;
+use serde_json::json;
 
 mod bindings {
     wit_bindgen_wrpc::generate!({
@@ -16,7 +17,20 @@ mod bindings {
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt().init();
 
-    let cfg = Config::from_env().expect("Missing environment variable 'ZENOH_CONFIG'");
+    let cfg = match Config::from_env() {
+        Ok(cfg) => cfg,
+        Err(_) => {
+            let mut config = Config::default();
+            // Set mode
+            config.insert_json5("mode", &json!("peer").to_string()).unwrap();
+            config.insert_json5(
+                "connect/endpoints",
+                &json!(["tcp/0.0.0.0:7447"]).to_string(),
+            ).unwrap();
+
+            config
+        },
+    };
 
     let session = zenoh::open(cfg)
                             .await

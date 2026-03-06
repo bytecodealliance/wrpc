@@ -4,6 +4,7 @@ use std::sync::Arc;
 use anyhow::Context as _;
 use futures::stream::select_all;
 use futures::StreamExt as _;
+use serde_json::json;
 use tokio::task::JoinSet;
 use tokio::{select, signal};
 use tracing::{debug, error, info, warn};
@@ -37,7 +38,20 @@ impl bindings::exports::wrpc_examples::hello::handler::Handler<()>
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt().init();
 
-    let cfg = Config::from_env().expect("Missing environment variable 'ZENOH_CONFIG'");
+    let cfg = match Config::from_env() {
+        Ok(cfg) => cfg,
+        Err(_) => {
+            let mut config = Config::default();
+            // Set mode
+            config.insert_json5("mode", &json!("peer").to_string()).unwrap();
+            config.insert_json5(
+                "connect/endpoints",
+                &json!(["tcp/0.0.0.0:7447"]).to_string(),
+            ).unwrap();
+
+            config
+        },
+    };
 
     let session = zenoh::open(cfg)
                             .await
