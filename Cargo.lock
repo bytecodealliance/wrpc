@@ -1417,7 +1417,7 @@ dependencies = [
  "clap",
  "futures",
  "quinn",
- "rcgen",
+ "rcgen 0.14.7",
  "rustls 0.23.36",
  "tokio",
  "tracing",
@@ -1436,7 +1436,7 @@ dependencies = [
  "clap",
  "futures",
  "quinn",
- "rcgen",
+ "rcgen 0.14.7",
  "rustls 0.23.36",
  "tokio",
  "tracing",
@@ -1495,7 +1495,7 @@ dependencies = [
  "anyhow",
  "clap",
  "futures",
- "rcgen",
+ "rcgen 0.14.7",
  "rustls 0.23.36",
  "tokio",
  "tracing",
@@ -2598,6 +2598,19 @@ dependencies = [
  "rustls-pki-types",
  "time",
  "yasna",
+]
+
+[[package]]
+name = "rcgen"
+version = "0.14.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "10b99e0098aa4082912d4c649628623db6aba77335e4f4569ff5083a6448b32e"
+dependencies = [
+ "ring",
+ "rustls-pki-types",
+ "time",
+ "x509-parser 0.18.1",
+ "yasna",
  "zeroize",
 ]
 
@@ -3256,7 +3269,7 @@ dependencies = [
  "clap",
  "futures",
  "quinn",
- "rcgen",
+ "rcgen 0.14.7",
  "rustls 0.23.36",
  "tokio",
  "tokio-stream",
@@ -3277,7 +3290,7 @@ dependencies = [
  "clap",
  "futures",
  "quinn",
- "rcgen",
+ "rcgen 0.14.7",
  "rustls 0.23.36",
  "tokio",
  "tracing",
@@ -3993,7 +4006,7 @@ dependencies = [
  "bytes",
  "clap",
  "quinn",
- "rcgen",
+ "rcgen 0.14.7",
  "rustls 0.23.36",
  "tokio",
  "tracing",
@@ -4011,7 +4024,7 @@ dependencies = [
  "clap",
  "futures",
  "quinn",
- "rcgen",
+ "rcgen 0.14.7",
  "rustls 0.23.36",
  "tokio",
  "tracing",
@@ -5500,7 +5513,7 @@ dependencies = [
  "anyhow",
  "async-nats",
  "quinn",
- "rcgen",
+ "rcgen 0.14.7",
  "rustls 0.23.36",
  "tokio",
  "tracing",
@@ -5663,7 +5676,7 @@ dependencies = [
  "bytes",
  "pem",
  "quinn",
- "rcgen",
+ "rcgen 0.13.2",
  "rustls 0.23.36",
  "rustls-native-certs 0.8.2",
  "rustls-pemfile",
@@ -5676,7 +5689,7 @@ dependencies = [
  "tracing",
  "url",
  "wtransport-proto",
- "x509-parser",
+ "x509-parser 0.17.0",
 ]
 
 [[package]]
@@ -5703,6 +5716,24 @@ dependencies = [
  "lazy_static",
  "nom",
  "oid-registry",
+ "rusticata-macros",
+ "thiserror 2.0.17",
+ "time",
+]
+
+[[package]]
+name = "x509-parser"
+version = "0.18.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d43b0f71ce057da06bc0851b23ee24f3f86190b07203dd8f567d0b706a185202"
+dependencies = [
+ "asn1-rs",
+ "data-encoding",
+ "der-parser",
+ "lazy_static",
+ "nom",
+ "oid-registry",
+ "ring",
  "rusticata-macros",
  "thiserror 2.0.17",
  "time",
