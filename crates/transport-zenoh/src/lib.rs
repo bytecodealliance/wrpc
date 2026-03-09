@@ -34,10 +34,7 @@ pub const PROTOCOL: &str = "wrpc.0.0.1";
 
 fn send_sync(session: &Session, key: &str, payload: &[u8]) -> io::Result<()> {
     // Using the synchronous (blocking) API due to some synchronization issue that nats handles
-    session
-        .put(key, payload)
-        .wait()
-        .map_err(io::Error::other)?;
+    session.put(key, payload).wait().map_err(io::Error::other)?;
     Ok(())
 }
 

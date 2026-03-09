@@ -1274,11 +1274,9 @@ async fn rust_dynamic_web_transport() -> anyhow::Result<()> {
 #[instrument(ret)]
 async fn rust_bindgen_zenoh_sync() -> anyhow::Result<()> {
     wrpc_test::with_zenoh(|_, zenoh_client| async {
-        let clt = wrpc_transport_zenoh::Client::new(
-            zenoh_client,
-            "rust-bindgen-sync"
-        ).await
-        .context("failed to construct client")?;
+        let clt = wrpc_transport_zenoh::Client::new(zenoh_client, "rust-bindgen-sync")
+            .await
+            .context("failed to construct client")?;
         let clt = Arc::new(clt);
         assert_bindgen_sync(Arc::clone(&clt), clt).await
     })
@@ -1291,11 +1289,9 @@ async fn rust_bindgen_zenoh_sync() -> anyhow::Result<()> {
 async fn rust_bindgen_zenoh_async() -> anyhow::Result<()> {
     wrpc_test::with_zenoh(|_, zenoh_client| {
         async {
-            let clt = wrpc_transport_zenoh::Client::new(
-            zenoh_client,
-            "rust-bindgen-sync"
-        ).await
-        .context("failed to construct client")?;
+            let clt = wrpc_transport_zenoh::Client::new(zenoh_client, "rust-bindgen-sync")
+                .await
+                .context("failed to construct client")?;
             let clt = Arc::new(clt);
             assert_bindgen_async(Arc::clone(&clt), clt).await
         }
@@ -1309,7 +1305,9 @@ async fn rust_bindgen_zenoh_async() -> anyhow::Result<()> {
 #[instrument(ret)]
 async fn rust_dynamic_zenoh() -> anyhow::Result<()> {
     wrpc_test::with_zenoh(|_, zenoh_client| async {
-        let clt = wrpc_transport_zenoh::Client::new(zenoh_client, "rust-bindgen-dynamic").await.unwrap();
+        let clt = wrpc_transport_zenoh::Client::new(zenoh_client, "rust-bindgen-dynamic")
+            .await
+            .unwrap();
         let clt = Arc::new(clt);
         assert_dynamic(Arc::clone(&clt), clt).await
     })

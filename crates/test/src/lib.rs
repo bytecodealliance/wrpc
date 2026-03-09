@@ -8,13 +8,13 @@ use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
 use rustls::version::TLS13;
 use rustls::{ClientConfig, RootCertStore, ServerConfig};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::process::Command;
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
-use tokio::{select, spawn};
-use std::time::Duration;
 use tokio::time::sleep;
+use tokio::{select, spawn};
 
 pub async fn free_port() -> anyhow::Result<u16> {
     TcpListener::bind((Ipv6Addr::LOCALHOST, 0))
@@ -130,9 +130,9 @@ pub async fn start_zenoh() -> anyhow::Result<(
     JoinHandle<anyhow::Result<ExitStatus>>,
     oneshot::Sender<()>,
 )> {
-        // Check if nats-server is available
+    // Check if nats-server is available
 
-        use zenoh::Config;
+    use zenoh::Config;
     let nats_server_check = Command::new("zenohd").arg("--version").output().await;
     if let Err(e) = nats_server_check {
         let error_msg = if e.kind() == std::io::ErrorKind::NotFound {
@@ -162,7 +162,7 @@ pub async fn start_zenoh() -> anyhow::Result<(
     let mut ready = false;
 
     // Check that zenohd is ready
-    for _ in 0..50 {    
+    for _ in 0..50 {
         if TcpStream::connect(("127.0.0.1", port)).await.is_ok() {
             ready = true;
             break;
@@ -197,7 +197,6 @@ pub async fn start_zenoh() -> anyhow::Result<(
     };
 
     let session = zenoh::open(cfg).await.unwrap();
-
 
     let arc_session = Arc::new(session);
 
