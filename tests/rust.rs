@@ -1285,7 +1285,7 @@ async fn rust_bindgen_zenoh_sync() -> anyhow::Result<()> {
     .await
 }
 
-#[cfg(feature = "nats")]
+#[cfg(feature = "zenoh-transport")]
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 #[instrument(ret)]
 async fn rust_bindgen_zenoh_async() -> anyhow::Result<()> {
