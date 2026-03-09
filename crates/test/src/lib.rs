@@ -103,11 +103,9 @@ pub async fn start_nats() -> anyhow::Result<(
             "failed to execute nats-server"
         };
         anyhow::bail!(
-            "{}. Please install nats-server >= 2.10.20. \
+            "{error_msg}. Please install nats-server >= 2.10.20. \
             See https://docs.nats.io/running-a-nats-service/introduction/installation for installation instructions. \
-            Original error: {}",
-            error_msg,
-            e
+            Original error: {e}"
         );
     }
 
@@ -143,11 +141,9 @@ pub async fn start_zenoh() -> anyhow::Result<(
             "failed to execute zenohd"
         };
         anyhow::bail!(
-            "{}. Please install zenohd \
+            "{error_msg}. Please install zenohd \
             See https://zenoh.io/docs/getting-started/installation/ for installation instructions. \
-            Original error: {}",
-            error_msg,
-            e
+            Original error: {e}"
         );
     }
 
@@ -174,26 +170,23 @@ pub async fn start_zenoh() -> anyhow::Result<(
         anyhow::bail!("zenohd did not open port {port}");
     }
 
-    let cfg = match Config::from_env() {
-        Ok(cfg) => cfg,
-        Err(_) => {
-            use serde_json::json;
+    let cfg = if let Ok(cfg) = Config::from_env() { cfg } else {
+        use serde_json::json;
 
-            let mut config = Config::default();
+        let mut config = Config::default();
 
-            // Set mode
-            config
-                .insert_json5("mode", &json!("client").to_string())
-                .unwrap();
-            config
-                .insert_json5(
-                    "connect/endpoints",
-                    &json!([format!("tcp/127.0.0.1:{port}")]).to_string(),
-                )
-                .unwrap();
+        // Set mode
+        config
+            .insert_json5("mode", &json!("client").to_string())
+            .unwrap();
+        config
+            .insert_json5(
+                "connect/endpoints",
+                &json!([format!("tcp/127.0.0.1:{port}")]).to_string(),
+            )
+            .unwrap();
 
-            config
-        }
+        config
     };
 
     let session = zenoh::open(cfg).await.unwrap();

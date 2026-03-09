@@ -93,14 +93,14 @@ async fn main() -> anyhow::Result<()> {
             }
             Some(res) = tasks.join_next() => {
                 if let Err(err) = res {
-                    error!(?err, "failed to join task")
+                    error!(?err, "failed to join task");
                 }
             }
             res = &mut shutdown => {
                 // wait for all invocations to complete
                 while let Some(res) = tasks.join_next().await {
                     if let Err(err) = res {
-                        error!(?err, "failed to join task")
+                        error!(?err, "failed to join task");
                     }
                 }
                 return res.context("failed to listen for ^C")

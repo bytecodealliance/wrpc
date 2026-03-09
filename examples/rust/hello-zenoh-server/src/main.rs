@@ -21,7 +21,7 @@ mod bindings {
 struct Server;
 
 impl bindings::exports::wrpc_examples::hello::handler::Handler<()> for Server {
-    async fn hello(&self, _: ()) -> anyhow::Result<String> {
+    async fn hello(&self, (): ()) -> anyhow::Result<String> {
         Ok("hello from Rust".to_string())
     }
 }
@@ -83,14 +83,14 @@ async fn main() -> anyhow::Result<()> {
             }
             Some(res) = tasks.join_next() => {
                 if let Err(err) = res {
-                    error!(?err, "failed to join task")
+                    error!(?err, "failed to join task");
                 }
             }
             res = &mut shutdown => {
                 // wait for all invocations to complete
                 while let Some(res) = tasks.join_next().await {
                     if let Err(err) = res {
-                        error!(?err, "failed to join task")
+                        error!(?err, "failed to join task");
                     }
                 }
                 return res.context("failed to listen for ^C")
