@@ -14,11 +14,11 @@ use zenoh::{Session, Wait};
 
 use core::future::Future;
 use core::pin::{pin, Pin};
+use core::str;
 use core::task::{Context, Poll};
-use core::{str};
 
-use std::collections::{HashMap};
-use std::sync::{Arc};
+use std::collections::HashMap;
+use std::sync::Arc;
 
 use bytes::{Buf as _, Bytes};
 use futures::{Stream, StreamExt};
@@ -32,16 +32,14 @@ use tracing::{debug, error, instrument, trace, warn};
 
 pub const PROTOCOL: &str = "wrpc.0.0.1";
 
-
 fn send_sync(session: &Session, key: &str, payload: &[u8]) -> io::Result<()> {
-    // Using the synchronous (blocking) API due to some synchronization issue that nats handles 
+    // Using the synchronous (blocking) API due to some synchronization issue that nats handles
     session
         .put(key, payload)
         .wait()
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        .map_err(io::Error::other)?;
     Ok(())
 }
-
 
 fn spawn_async(fut: impl Future<Output = ()> + Send + 'static) {
     match tokio::runtime::Handle::try_current() {
@@ -60,8 +58,8 @@ fn spawn_async(fut: impl Future<Output = ()> + Send + 'static) {
 fn zbytes_as_bytes(zbytes: &ZBytes) -> Bytes {
     // Get &ZBytes from the sample
     let bytes = match zbytes.to_bytes() {
-                std::borrow::Cow::Borrowed(slice) => Bytes::copy_from_slice(slice),
-                std::borrow::Cow::Owned(vec) => Bytes::from(vec),
+        std::borrow::Cow::Borrowed(slice) => Bytes::copy_from_slice(slice),
+        std::borrow::Cow::Owned(vec) => Bytes::from(vec),
     };
 
     bytes
@@ -155,7 +153,6 @@ pub struct Subscriber {
     tasks: Arc<JoinSet<()>>,
 }
 
-#[hotpath::measure_all]
 impl Drop for Subscriber {
     fn drop(&mut self) {
         let commands = self.commands.clone();
@@ -171,7 +168,6 @@ impl Drop for Subscriber {
     }
 }
 
-#[hotpath::measure_all]
 impl Deref for Subscriber {
     type Target = ReceiverStream<Sample>;
 
@@ -180,7 +176,6 @@ impl Deref for Subscriber {
     }
 }
 
-#[hotpath::measure_all]
 impl DerefMut for Subscriber {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.rx
@@ -203,7 +198,6 @@ pub struct Client {
     tasks: Arc<JoinSet<()>>,
 }
 
-#[hotpath::measure_all]
 impl Client {
     pub async fn new(
         session: impl Into<Arc<zenoh::Session>>,
@@ -224,18 +218,14 @@ impl Client {
         tasks.spawn({
             async move {
                 fn handle_command(subs: &mut HashMap<String, mpsc::Sender<Sample>>, cmd: Command) {
-                    //println!("Handle Command Called");
                     match cmd {
                         Command::Subscribe(s, tx) => {
-                            //println!("Handle Command Subcribe: {}", s);
                             subs.insert(s, tx);
                         }
                         Command::Unsubscribe(s) => {
-                            //println!("Handle Command Unsubscribe: {}", s);
                             subs.remove(&s);
                         }
                         Command::Batch(cmds, ack) => {
-                            //println!("Handle Command Batch");
                             for cmd in cmds {
                                 handle_command(subs, cmd);
                             }
@@ -248,9 +238,7 @@ impl Client {
                     subs: &mut HashMap<String, mpsc::Sender<Sample>>,
                     sample: Sample,
                 ) {
-                    //println!("Handle Command Called");
                     let key = sample.key_expr().clone().as_str().to_string();
-                    // let msg = parse_message(sample);
 
                     let Some(sub) = subs.get_mut(&key) else {
                         debug!(?key, "drop message with no subscriber");
@@ -267,7 +255,6 @@ impl Client {
 
                 let mut subs = HashMap::new();
                 loop {
-                    //println!("Loop Called");
                     select! {
                         Ok(msg) = sub.recv_async() => handle_message(&mut subs, msg).await,
                         Some(cmd) = cmd_rx.recv() => handle_command(&mut subs, cmd),
@@ -288,7 +275,6 @@ impl Client {
 
 pub struct ByteSubscription(Subscriber);
 
-#[hotpath::measure_all]
 impl Stream for ByteSubscription {
     type Item = std::io::Result<Bytes>;
 
@@ -317,7 +303,6 @@ enum IndexTrie {
     },
 }
 
-#[hotpath::measure_all]
 impl<'a> From<(&'a [Option<usize>], Subscriber)> for IndexTrie {
     fn from((path, sub): (&'a [Option<usize>], Subscriber)) -> Self {
         match path {
@@ -352,7 +337,6 @@ impl<P: AsRef<[Option<usize>]>> FromIterator<(P, Subscriber)> for IndexTrie {
     }
 }
 
-#[hotpath::measure_all]
 impl IndexTrie {
     #[inline]
     fn is_empty(&self) -> bool {
@@ -483,7 +467,6 @@ pub struct Reader {
     path: Box<[usize]>,
 }
 
-#[hotpath::measure_all]
 impl wrpc_transport::Index<Self> for Reader {
     #[instrument(level = "trace", skip(self))]
     fn index(&self, path: &[usize]) -> anyhow::Result<Self> {
@@ -506,7 +489,6 @@ impl wrpc_transport::Index<Self> for Reader {
     }
 }
 
-#[hotpath::measure_all]
 impl AsyncRead for Reader {
     #[instrument(level = "trace", skip_all, ret)]
     fn poll_read(
@@ -583,7 +565,6 @@ impl SubjectWriter {
     }
 }
 
-#[hotpath::measure_all]
 impl wrpc_transport::Index<Self> for SubjectWriter {
     #[instrument(level = "trace", skip(self))]
     fn index(&self, path: &[usize]) -> anyhow::Result<Self> {
@@ -623,7 +604,7 @@ impl AsyncWrite for SubjectWriter {
             buf.len()
         );
 
-        match send_sync(session, subject, &buf) {
+        match send_sync(session, subject, buf) {
             Ok(()) => {
                 trace!("put completed");
                 Poll::Ready(Ok(buf.len()))
@@ -660,7 +641,6 @@ impl AsyncWrite for SubjectWriter {
     }
 }
 
-#[hotpath::measure_all]
 impl Drop for SubjectWriter {
     fn drop(&mut self) {
         if !self.shutdown {
@@ -717,21 +697,6 @@ impl RootParamWriter {
     }
 }
 
-#[hotpath::measure]
-fn map_status_to_error_kind(code: &str) -> Option<io::ErrorKind> {
-    let c = code.trim();
-    match c {
-        // Allow either symbolic names or common numeric equivalents
-        c if c.eq_ignore_ascii_case("NO_RESPONDERS") || c == "503" => {
-            Some(io::ErrorKind::NotConnected)
-        }
-        c if c.eq_ignore_ascii_case("TIMEOUT") || c == "408" => Some(io::ErrorKind::TimedOut),
-        c if c.eq_ignore_ascii_case("REQUEST_TERMINATED") => Some(io::ErrorKind::UnexpectedEof),
-        _ => None,
-    }
-}
-
-#[hotpath::measure_all]
 impl RootParamWriter {
     #[instrument(level = "trace", skip_all, ret)]
     fn poll_active(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
@@ -775,10 +740,10 @@ impl RootParamWriter {
                             Some(zbytes) => zbytes.try_to_string().unwrap().into_owned(),
                             None => {
                                 return Poll::Ready(Err(std::io::Error::new(
-                                std::io::ErrorKind::InvalidInput,
-                                "peer did not specify a reply subject",
-                            )))
-                            },
+                                    std::io::ErrorKind::InvalidInput,
+                                    "peer did not specify a reply subject",
+                                )))
+                            }
                         };
 
                         let tx = SubjectWriter::new(session, param_subject(&tx), tasks);
@@ -831,7 +796,6 @@ impl RootParamWriter {
     }
 }
 
-#[hotpath::measure_all]
 impl wrpc_transport::Index<IndexedParamWriter> for RootParamWriter {
     #[instrument(level = "trace", skip(self))]
     fn index(&self, path: &[usize]) -> anyhow::Result<IndexedParamWriter> {
@@ -856,7 +820,6 @@ impl wrpc_transport::Index<IndexedParamWriter> for RootParamWriter {
     }
 }
 
-#[hotpath::measure_all]
 impl AsyncWrite for RootParamWriter {
     #[instrument(level = "trace", skip_all, ret, fields(buf = format!("{buf:02x?}")))]
     fn poll_write(
@@ -916,7 +879,6 @@ pub enum IndexedParamWriter {
     Active(SubjectWriter),
 }
 
-#[hotpath::measure_all]
 impl IndexedParamWriter {
     #[instrument(level = "trace", skip_all, ret)]
     fn poll_active(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
@@ -950,7 +912,6 @@ impl IndexedParamWriter {
     }
 }
 
-#[hotpath::measure_all]
 impl wrpc_transport::Index<Self> for IndexedParamWriter {
     #[instrument(level = "trace", skip_all)]
     fn index(&self, path: &[usize]) -> anyhow::Result<Self> {
@@ -973,7 +934,6 @@ impl wrpc_transport::Index<Self> for IndexedParamWriter {
     }
 }
 
-#[hotpath::measure_all]
 impl AsyncWrite for IndexedParamWriter {
     #[instrument(level = "trace", skip_all, ret, fields(buf = format!("{buf:02x?}")))]
     fn poll_write(
@@ -1027,7 +987,6 @@ pub enum ParamWriter {
     Nested(IndexedParamWriter),
 }
 
-#[hotpath::measure_all]
 impl wrpc_transport::Index<Self> for ParamWriter {
     fn index(&self, path: &[usize]) -> anyhow::Result<Self> {
         ensure!(!path.is_empty());
@@ -1039,7 +998,6 @@ impl wrpc_transport::Index<Self> for ParamWriter {
     }
 }
 
-#[hotpath::measure_all]
 impl AsyncWrite for ParamWriter {
     #[instrument(level = "trace", skip_all, ret, fields(buf = format!("{buf:02x?}")))]
     fn poll_write(
@@ -1123,17 +1081,11 @@ impl wrpc_transport::Invoke for Client {
 
         let param_tx = invocation_subject(&self.prefix, instance, func);
         trace!("publishing handshake");
-        self.session.put(param_tx, params).attachment(rx.clone()).await.unwrap();
-        // publish_with_reply(&self.session, param_tx, rx.clone(), params)
-        //     .await
-        //     .unwrap();
-
-        // let session = Arc::clone(&self.session);
-        // tokio::spawn(async move {
-        //     if let Err(err) = nats.flush().await {
-        //         error!(?err, "failed to flush");
-        //     }
-        // });
+        self.session
+            .put(param_tx, params)
+            .attachment(rx.clone())
+            .await
+            .unwrap();
         Ok((
             ParamWriter::Root(RootParamWriter::new(
                 (*self.session).clone().into(),
@@ -1161,7 +1113,6 @@ impl wrpc_transport::Invoke for Client {
     }
 }
 
-#[hotpath::measure]
 async fn handle_message(
     session: &zenoh::Session,
     rx: String,
@@ -1209,7 +1160,11 @@ async fn handle_message(
 
     trace!("publishing handshake response");
 
-    session.put(tx.clone(), Bytes::default()).attachment(rx.clone()).await.unwrap();
+    session
+        .put(tx.clone(), Bytes::default())
+        .attachment(rx.clone())
+        .await
+        .unwrap();
     Ok((
         (),
         SubjectWriter::new(
@@ -1231,7 +1186,6 @@ async fn handle_message(
     ))
 }
 
-#[hotpath::measure_all]
 impl wrpc_transport::Serve for Client {
     type Context = ();
     type Outgoing = SubjectWriter;
@@ -1247,8 +1201,6 @@ impl wrpc_transport::Serve for Client {
         impl Stream<Item = anyhow::Result<(Self::Context, Self::Outgoing, Self::Incoming)>> + 'static,
     > {
         let subject = invocation_subject(&self.prefix, instance, func);
-
-        //println!("Client serve subscribe to: {}", subject);
 
         let sub = self.session.declare_subscriber(subject).await.unwrap();
         let session = Arc::clone(&self.session);

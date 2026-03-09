@@ -28,8 +28,4 @@ url = { workspace = true }
 wit-bindgen-wrpc = { workspace = true }
 wrpc-transport-zenoh = { workspace = true }
 serde_json = {workspace = true}
-hotpath = "0.13.0"
-
-[features]
-hotpath = ["hotpath/hotpath"]
-hotpath-alloc = ["hotpath/hotpath-alloc"]
+wrpc-cli = { workspace = true, features = ["zenoh-transport"] }

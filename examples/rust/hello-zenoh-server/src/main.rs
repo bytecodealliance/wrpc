@@ -2,13 +2,12 @@ use core::pin::pin;
 use std::sync::Arc;
 
 use anyhow::Context as _;
+use clap::Parser;
 use futures::stream::select_all;
 use futures::StreamExt as _;
-use serde_json::json;
 use tokio::task::JoinSet;
 use tokio::{select, signal};
 use tracing::{debug, error, info, warn};
-use zenoh::{Config};
 
 mod bindings {
     wit_bindgen_wrpc::generate!({
@@ -21,45 +20,31 @@ mod bindings {
 #[derive(Clone, Copy)]
 struct Server;
 
-impl bindings::exports::wrpc_examples::hello::handler::Handler<()>
-    for Server
-{
+impl bindings::exports::wrpc_examples::hello::handler::Handler<()> for Server {
     async fn hello(&self, _: ()) -> anyhow::Result<String> {
         Ok("hello from Rust".to_string())
     }
+}
 
-    async fn get_tracking(&self, _cx: (), t:bindings::exports::wrpc_examples::hello::handler::Tracking) -> Result<bindings::exports::wrpc_examples::hello::handler::Tracking, anyhow::Error> {
-        Ok(t)
-    }
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    /// Prefix to serve `wrpc-examples:hello/handler.hello` on
+    #[arg(default_value = "rust")]
+    prefix: String,
 }
 
 #[tokio::main]
-#[hotpath::main(percentiles = [99])]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt().init();
 
-    let cfg = match Config::from_env() {
-        Ok(cfg) => cfg,
-        Err(_) => {
-            let mut config = Config::default();
-            // Set mode
-            config.insert_json5("mode", &json!("peer").to_string()).unwrap();
-            config.insert_json5(
-                "connect/endpoints",
-                &json!(["tcp/0.0.0.0:7447"]).to_string(),
-            ).unwrap();
+    let Args { prefix } = Args::parse();
 
-            config
-        },
-    };
-
-    let session = zenoh::open(cfg)
-                            .await
-                            .expect("Failed to open a Zenoh session");
+    let session = wrpc_cli::zenoh::connect()
+        .await
+        .context("failed to connect to zenoh")?;
 
     let arc_session = Arc::new(session);
-
-    let prefix = Arc::<str>::from("");
 
     let wrpc = wrpc_transport_zenoh::Client::new(arc_session, prefix)
         .await

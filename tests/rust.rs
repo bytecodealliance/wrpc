@@ -16,7 +16,6 @@ use anyhow::Context;
 use bytes::Bytes;
 use common::assert_async;
 use futures::{stream, FutureExt as _, Stream, StreamExt as _, TryStreamExt as _};
-use serial_test::serial;
 use tokio::sync::{oneshot, RwLock};
 use tokio::time::sleep;
 use tokio::{join, select, spawn, try_join};
@@ -1272,24 +1271,32 @@ async fn rust_dynamic_web_transport() -> anyhow::Result<()> {
 
 #[cfg(feature = "zenoh-transport")]
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
-#[serial(zenoh_tests)]
 #[instrument(ret)]
 async fn rust_bindgen_zenoh_sync() -> anyhow::Result<()> {
     wrpc_test::with_zenoh(|_, zenoh_client| async {
-        let clt = Arc::new(zenoh_client);
+        let clt = wrpc_transport_zenoh::Client::new(
+            zenoh_client,
+            "rust-bindgen-sync"
+        ).await
+        .context("failed to construct client")?;
+        let clt = Arc::new(clt);
         assert_bindgen_sync(Arc::clone(&clt), clt).await
     })
     .await
 }
 
-#[cfg(feature = "zenoh-transport")]
+#[cfg(feature = "nats")]
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
-#[serial(zenoh_tests)]
 #[instrument(ret)]
 async fn rust_bindgen_zenoh_async() -> anyhow::Result<()> {
     wrpc_test::with_zenoh(|_, zenoh_client| {
         async {
-            let clt = Arc::new(zenoh_client);
+            let clt = wrpc_transport_zenoh::Client::new(
+            zenoh_client,
+            "rust-bindgen-sync"
+        ).await
+        .context("failed to construct client")?;
+            let clt = Arc::new(clt);
             assert_bindgen_async(Arc::clone(&clt), clt).await
         }
         .in_current_span()
@@ -1299,11 +1306,11 @@ async fn rust_bindgen_zenoh_async() -> anyhow::Result<()> {
 
 #[cfg(feature = "zenoh-transport")]
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
-#[serial(zenoh_tests)]
 #[instrument(ret)]
 async fn rust_dynamic_zenoh() -> anyhow::Result<()> {
     wrpc_test::with_zenoh(|_, zenoh_client| async {
-        let clt = Arc::new(zenoh_client);
+        let clt = wrpc_transport_zenoh::Client::new(zenoh_client, "rust-bindgen-dynamic").await.unwrap();
+        let clt = Arc::new(clt);
         assert_dynamic(Arc::clone(&clt), clt).await
     })
     .await
