@@ -2,12 +2,12 @@ use core::pin::pin;
 use std::sync::Arc;
 
 use anyhow::Context as _;
+use clap::Parser;
 use futures::stream::select_all;
 use futures::StreamExt as _;
 use tokio::task::JoinSet;
 use tokio::{select, signal};
 use tracing::{debug, error, info, warn};
-use zenoh::{Config};
 
 mod bindings {
     wit_bindgen_wrpc::generate!({
@@ -20,32 +20,31 @@ mod bindings {
 #[derive(Clone, Copy)]
 struct Server;
 
-impl bindings::exports::wrpc_examples::hello::handler::Handler<()>
-    for Server
-{
-    async fn hello(&self, _: ()) -> anyhow::Result<String> {
+impl bindings::exports::wrpc_examples::hello::handler::Handler<()> for Server {
+    async fn hello(&self, (): ()) -> anyhow::Result<String> {
         Ok("hello from Rust".to_string())
-    }
-
-    async fn get_tracking(&self, _cx: (), t:bindings::exports::wrpc_examples::hello::handler::Tracking) -> Result<bindings::exports::wrpc_examples::hello::handler::Tracking, anyhow::Error> {
-        Ok(t)
     }
 }
 
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    /// Prefix to serve `wrpc-examples:hello/handler.hello` on
+    #[arg(default_value = "rust")]
+    prefix: String,
+}
+
 #[tokio::main]
-#[hotpath::main(percentiles = [99])]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt().init();
 
-    let cfg = Config::from_env().expect("Missing environment variable 'ZENOH_CONFIG'");
+    let Args { prefix } = Args::parse();
 
-    let session = zenoh::open(cfg)
-                            .await
-                            .expect("Failed to open a Zenoh session");
+    let session = wrpc_cli::zenoh::connect()
+        .await
+        .context("failed to connect to zenoh")?;
 
     let arc_session = Arc::new(session);
-
-    let prefix = Arc::<str>::from("");
 
     let wrpc = wrpc_transport_zenoh::Client::new(arc_session, prefix)
         .await
@@ -84,14 +83,14 @@ async fn main() -> anyhow::Result<()> {
             }
             Some(res) = tasks.join_next() => {
                 if let Err(err) = res {
-                    error!(?err, "failed to join task")
+                    error!(?err, "failed to join task");
                 }
             }
             res = &mut shutdown => {
                 // wait for all invocations to complete
                 while let Some(res) = tasks.join_next().await {
                     if let Err(err) = res {
-                        error!(?err, "failed to join task")
+                        error!(?err, "failed to join task");
                     }
                 }
                 return res.context("failed to listen for ^C")

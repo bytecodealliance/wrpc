@@ -32,4 +32,6 @@ tracing-subscriber = { workspace = true, features = [
 ] }
 url = { workspace = true }
 wit-bindgen-wrpc = { workspace = true }
-wrpc-transport-zenoh = { workspace = true, features = ["zenoh-1_5_0"] }
+wrpc-transport-zenoh = { workspace = true }
+serde_json = {workspace = true}
+wrpc-cli = { workspace = true, features = ["zenoh-transport"] }

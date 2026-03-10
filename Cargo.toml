@@ -85,9 +85,7 @@ wrpc-transport-nats = { workspace = true, optional = true }
 wrpc-transport-quic = { workspace = true, optional = true }
 wrpc-transport-web = { workspace = true, optional = true }
 wrpc-wasmtime-cli = { workspace = true, optional = true }
-wrpc-transport-zenoh = { workspace = true, features = [
-    "zenoh-1_5_0",
-], optional = true }
+wrpc-transport-zenoh = { workspace = true, optional = true }
 zenoh = { workspace = true, optional = true }
 
 [dev-dependencies]
@@ -195,5 +193,6 @@ wrpc-wasi-keyvalue-mem = { version = "0.2", path = "./crates/wasi-keyvalue-mem",
 wrpc-wasi-keyvalue-redis = { version = "0.2", path = "./crates/wasi-keyvalue-redis", default-features = false }
 wrpc-wasmtime-cli = { version = "0.9", path = "./crates/wasmtime-cli", default-features = false }
 wtransport = { version = "0.6.1", default-features = false }
-zenoh = {version = "1.5.0", default-features = false}
-flume = {version = "0.11.0", default-features = false}
+zenoh = {version = "1.7", default-features = false}
+flume = {version = "0.11", default-features = false}
+postcard = {version = "1.1"}

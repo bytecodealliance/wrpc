@@ -24,4 +24,6 @@ tokio = { workspace = true, features = ["rt-multi-thread"] }
 tracing-subscriber = { workspace = true, features = ["ansi", "fmt"] }
 url = { workspace = true }
 wit-bindgen-wrpc = { workspace = true }
-wrpc-transport-zenoh = { workspace = true, features = ["zenoh-1_5_0"] }
+wrpc-transport-zenoh = { workspace = true }
+serde_json = {workspace = true}
+wrpc-cli = { workspace = true, features = ["zenoh-transport"] }

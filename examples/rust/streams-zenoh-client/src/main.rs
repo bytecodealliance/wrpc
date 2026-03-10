@@ -1,13 +1,12 @@
-use core::time::Duration;
-use std::sync::Arc;
-
 use anyhow::Context as _;
 use bytes::Bytes;
+use clap::Parser;
+use core::time::Duration;
 use futures::{stream, StreamExt as _};
+use std::sync::Arc;
 use tokio::{time, try_join};
 use tokio_stream::wrappers::IntervalStream;
 use tracing::debug;
-use zenoh::{Config};
 
 mod bindings {
     wit_bindgen_wrpc::generate!({
@@ -19,22 +18,27 @@ mod bindings {
 
 use bindings::wrpc_examples::streams::handler::{echo, Req};
 
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    /// Prefixes to invoke `wrpc-examples:streams/handler.echo` on
+    #[arg(default_value = "rust")]
+    prefixes: Vec<String>,
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt().init();
 
-    let cfg = Config::from_env().expect("Missing environment variable 'ZENOH_CONFIG'");
+    let Args { prefixes } = Args::parse();
 
-    let session = zenoh::open(cfg)
-                            .await
-                            .expect("Failed to open a Zenoh session");
+    let session = wrpc_cli::zenoh::connect()
+        .await
+        .context("failed to connect to zenoh")?;
 
     let arc_session = Arc::new(session);
-    
-    let prefix = Arc::<str>::from("rust"); 
-    //let prefixes = vec!["Hello", "Zenoh", "streams!"]; // Expected was a string vec ... !
 
-    //for prefix in prefixes {
+    for prefix in prefixes {
         let numbers = Box::pin(
             stream::iter(1..)
                 .take(10)
@@ -53,7 +57,7 @@ async fn main() -> anyhow::Result<()> {
         );
 
         // Client creation moved here from top
-        let wrpc = wrpc_transport_zenoh::Client::new(arc_session, prefix)
+        let wrpc = wrpc_transport_zenoh::Client::new(arc_session.clone(), prefix)
             .await
             .context("failed to construct transport client")?;
 
@@ -82,6 +86,6 @@ async fn main() -> anyhow::Result<()> {
                 Ok(())
             }
         )?;
-    //}
+    }
     Ok(())
 }

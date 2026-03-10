@@ -27,3 +27,4 @@ tracing-subscriber = { workspace = true, features = [
     "tracing-log",
 ] }
 zenoh = { workspace = true, optional = true, features = ["transport_tcp"] }
+serde_json = { workspace = true, default-features = false }
