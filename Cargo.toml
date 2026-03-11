@@ -27,7 +27,7 @@ members = [
 ]
 
 [features]
-default = ["bin", "nats", "net", "quic", "wasmtime", "web-transport"]
+default = ["bin", "nats", "net", "quic", "wasmtime", "web-transport", "zenoh-transport"]
 
 bin = ["bin-bindgen", "bin-wasmtime"]
 bin-bindgen = [
@@ -43,6 +43,7 @@ net = ["wrpc-transport/net"]
 quic = ["dep:wrpc-transport-quic"]
 wasmtime = ["dep:wrpc-runtime-wasmtime"]
 web-transport = ["dep:wrpc-transport-web"]
+zenoh-transport = ["dep:zenoh", "dep:wrpc-transport-zenoh", "wrpc-cli/zenoh-transport"]
 
 [[bin]]
 name = "wit-bindgen-wrpc"
@@ -84,6 +85,8 @@ wrpc-transport-nats = { workspace = true, optional = true }
 wrpc-transport-quic = { workspace = true, optional = true }
 wrpc-transport-web = { workspace = true, optional = true }
 wrpc-wasmtime-cli = { workspace = true, optional = true }
+wrpc-transport-zenoh = { workspace = true, optional = true }
+zenoh = { workspace = true, optional = true }
 
 [dev-dependencies]
 anyhow = { workspace = true }
@@ -114,8 +117,10 @@ wasmtime-cli-flags = { workspace = true, features = [
     "pooling-allocator",
     "threads",
 ] }
-wrpc-test = { workspace = true, features = ["nats", "quic", "web-transport"] }
+wrpc-test = { workspace = true, features = ["nats", "quic", "web-transport", "zenoh-transport"] }
 wrpc-transport = { workspace = true, features = ["net"] }
+serial_test = "*"
+
 
 [workspace.dependencies]
 anyhow = { version = "1", default-features = false }
@@ -182,8 +187,12 @@ wrpc-transport = { version = "0.29", path = "./crates/transport", default-featur
 wrpc-transport-nats = { version = "0.31", path = "./crates/transport-nats", default-features = false }
 wrpc-transport-quic = { version = "0.6", path = "./crates/transport-quic", default-features = false }
 wrpc-transport-web = { version = "0.3", path = "./crates/transport-web", default-features = false }
+wrpc-transport-zenoh = { version = "0.29", path = "./crates/transport-zenoh", default-features = false }
 wrpc-wasi-keyvalue = { version = "0.1.1", path = "./crates/wasi-keyvalue", default-features = false }
 wrpc-wasi-keyvalue-mem = { version = "0.2", path = "./crates/wasi-keyvalue-mem", default-features = false }
 wrpc-wasi-keyvalue-redis = { version = "0.2", path = "./crates/wasi-keyvalue-redis", default-features = false }
 wrpc-wasmtime-cli = { version = "0.9", path = "./crates/wasmtime-cli", default-features = false }
 wtransport = { version = "0.6.1", default-features = false }
+zenoh = {version = "1.7", default-features = false}
+flume = {version = "0.11", default-features = false}
+postcard = {version = "1.1"}

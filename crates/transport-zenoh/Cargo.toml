@@ -1,0 +1,32 @@
+[package]
+name = "wrpc-transport-zenoh"
+version = "0.29.0"
+description = "wRPC Zenoh transport"
+
+authors.workspace = true
+categories.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+hotpath = ["hotpath/hotpath"]
+hotpath-alloc = ["hotpath/hotpath-alloc"]
+
+[dependencies]
+anyhow = { workspace = true, features = ["std"] }
+bytes = { workspace = true, features = ["serde"] }
+futures = { workspace = true, features = ["async-await"] }
+nuid = { workspace = true }
+tokio = { workspace = true, features = ["io-util", "rt-multi-thread"] }
+tokio-stream = { workspace = true, features = ["sync"] }
+tokio-util = { workspace = true, features = ["codec", "io"] }
+tracing = { workspace = true, features = ["attributes"] }
+wasm-tokio = { workspace = true }
+wrpc-transport = { workspace = true }
+zenoh = { workspace = true }
+serde = { workspace = true }
+uuid = { workspace = true }
+flume = { workspace = true }
+postcard = {workspace = true, features = ["use-std"]}
+hotpath = "0.13.0"

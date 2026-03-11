@@ -122,6 +122,8 @@
                   pkgs.nats-server
 
                   pkgs.pkgsUnstable.go
+
+                  pkgs.zenoh
                 ];
             };
 
@@ -210,6 +212,7 @@
               pkgs.cargo-audit
               pkgs.cargo-nextest
               pkgs.wit-deps
+              pkgs.zenoh
 
               pkgs.pkgsUnstable.go
               pkgs.pkgsUnstable.nats-server

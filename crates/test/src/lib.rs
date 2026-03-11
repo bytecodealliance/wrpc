@@ -7,10 +7,13 @@ use rcgen::{generate_simple_self_signed, CertifiedKey};
 use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
 use rustls::version::TLS13;
 use rustls::{ClientConfig, RootCertStore, ServerConfig};
-use tokio::net::TcpListener;
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::net::{TcpListener, TcpStream};
 use tokio::process::Command;
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
+use tokio::time::sleep;
 use tokio::{select, spawn};
 
 pub async fn free_port() -> anyhow::Result<u16> {
@@ -100,11 +103,9 @@ pub async fn start_nats() -> anyhow::Result<(
             "failed to execute nats-server"
         };
         anyhow::bail!(
-            "{}. Please install nats-server >= 2.10.20. \
+            "{error_msg}. Please install nats-server >= 2.10.20. \
             See https://docs.nats.io/running-a-nats-service/introduction/installation for installation instructions. \
-            Original error: {}",
-            error_msg,
-            e
+            Original error: {e}"
         );
     }
 
@@ -118,6 +119,101 @@ pub async fn start_nats() -> anyhow::Result<(
         .await
         .context("failed to connect to NATS.io server")?;
     Ok((port, client, server, stop_tx))
+}
+
+#[cfg(feature = "zenoh-transport")]
+pub async fn start_zenoh() -> anyhow::Result<(
+    u16,
+    Arc<zenoh::Session>,
+    JoinHandle<anyhow::Result<ExitStatus>>,
+    oneshot::Sender<()>,
+)> {
+    // Check if nats-server is available
+
+    use zenoh::Config;
+    let nats_server_check = Command::new("zenohd").arg("--version").output().await;
+    if let Err(e) = nats_server_check {
+        let error_msg = if e.kind() == std::io::ErrorKind::NotFound {
+            "zenohd is not installed or not in PATH"
+        } else if e.kind() == std::io::ErrorKind::PermissionDenied {
+            "zenohd is not executable or permission denied"
+        } else {
+            "failed to execute zenohd"
+        };
+        anyhow::bail!(
+            "{error_msg}. Please install zenohd \
+            See https://zenoh.io/docs/getting-started/installation/ for installation instructions. \
+            Original error: {e}"
+        );
+    }
+
+    let port = free_port().await?; // not used in setup -- just return
+
+    let listen = format!("tcp/0.0.0.0:{port}");
+
+    let (server, stop_tx) = spawn_server(Command::new("zenohd").args(["-l", &listen]))
+        .await
+        .context("failed to start zenohd server")?;
+
+    let mut ready = false;
+
+    // Check that zenohd is ready
+    for _ in 0..50 {
+        if TcpStream::connect(("127.0.0.1", port)).await.is_ok() {
+            ready = true;
+            break;
+        }
+        sleep(Duration::from_millis(100)).await;
+    }
+
+    if !ready {
+        anyhow::bail!("zenohd did not open port {port}");
+    }
+
+    let cfg = if let Ok(cfg) = Config::from_env() { cfg } else {
+        use serde_json::json;
+
+        let mut config = Config::default();
+
+        // Set mode
+        config
+            .insert_json5("mode", &json!("client").to_string())
+            .unwrap();
+        config
+            .insert_json5(
+                "connect/endpoints",
+                &json!([format!("tcp/127.0.0.1:{port}")]).to_string(),
+            )
+            .unwrap();
+
+        config
+    };
+
+    let session = zenoh::open(cfg).await.unwrap();
+
+    let arc_session = Arc::new(session);
+
+    Ok((port, arc_session, server, stop_tx))
+}
+
+#[cfg(feature = "zenoh-transport")]
+pub async fn with_zenoh<T, Fut>(
+    f: impl FnOnce(u16, Arc<zenoh::Session>) -> Fut,
+) -> anyhow::Result<T>
+where
+    Fut: core::future::Future<Output = anyhow::Result<T>>,
+{
+    let (port, zenoh_session, zenoh_server, stop_tx) = start_zenoh()
+        .await
+        .context("failed to start Zenoh server")?;
+    let res = f(port, zenoh_session).await.context("closure failed")?;
+
+    stop_tx.send(()).expect("failed to stop Zenoh server");
+    zenoh_server
+        .await
+        .context("failed to await Zenoh server stop")?
+        .context("Zenoh server failed to stop")?;
+    Ok(res)
 }
 
 #[cfg(feature = "nats")]

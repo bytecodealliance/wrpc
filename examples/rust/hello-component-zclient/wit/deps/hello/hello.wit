@@ -1,0 +1,13 @@
+package wrpc-examples:hello;
+
+interface handler {
+    hello: func() -> string;
+}
+
+world client {
+    import handler;
+}
+
+world server {
+    export handler;
+}

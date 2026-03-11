@@ -32,6 +32,7 @@ use wrpc_transport::{Invoke, Serve};
 
 mod nats;
 mod tcp;
+mod zenoh;
 
 const DEFAULT_TIMEOUT: &str = "10s";
 
@@ -42,6 +43,8 @@ enum Command {
     Nats(nats::Command),
     #[command(subcommand)]
     Tcp(tcp::Command),
+    #[command(subcommand)]
+    Zenoh(zenoh::Command),
 }
 
 pub enum Workload {
@@ -495,12 +498,15 @@ where
                                     name,
                                 )
                                 .await?;
+
+                            let name_copy = name.to_owned();
+
                             handlers.spawn(async move {
                                 let mut invocations = pin!(invocations);
                                 while let Some(invocation) = invocations.next().await {
                                     match invocation {
                                         Ok((_, fut)) => {
-                                            info!("serving instance function invocation");
+                                            info!(?name_copy, "serving instance function invocation");
                                             if let Err(err) = fut.await {
                                                 warn!(
                                                     ?err,
@@ -508,7 +514,7 @@ where
                                                 );
                                             } else {
                                                 info!(
-                                                    "successfully served instance function invocation"
+                                                    ?name_copy, "successfully served instance function invocation"
                                                 );
                                             }
                                         }
@@ -651,6 +657,7 @@ where
                                     name,
                                 )
                                 .await?;
+
                             handlers.spawn(async move {
                                 let mut invocations = pin!(invocations);
                                 while let Some(invocation) = invocations.next().await {
@@ -664,7 +671,7 @@ where
                                                 );
                                             } else {
                                                 info!(
-                                                    "successfully served instance function invocation"
+                                                    "successfully served instance function invocation: "
                                                 );
                                             }
                                         }
@@ -766,5 +773,6 @@ pub async fn run() -> anyhow::Result<()> {
     match Command::parse() {
         Command::Nats(args) => nats::run(args).await,
         Command::Tcp(args) => tcp::run(args).await,
+        Command::Zenoh(args) => zenoh::run(args).await,
     }
 }

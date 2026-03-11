@@ -1,6 +1,7 @@
 [package]
-name = "reactor"
+name = "hello-component-zclient"
 version = "0.1.0"
+
 authors.workspace = true
 categories.workspace = true
 edition.workspace = true
@@ -8,8 +9,5 @@ homepage.workspace = true
 license.workspace = true
 repository.workspace = true
 
-[lib]
-crate-type = ["rlib"]
-
 [dependencies]
-wit-bindgen = { workspace = true, features = ["macros", "realloc"] }
+wit-bindgen = { workspace = true, features = ["realloc", "macros"] }

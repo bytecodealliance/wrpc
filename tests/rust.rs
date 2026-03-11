@@ -8,6 +8,8 @@ use core::pin::{pin, Pin};
 use core::str;
 use core::time::Duration;
 
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::thread;
 
@@ -1264,6 +1266,51 @@ async fn rust_dynamic_web_transport() -> anyhow::Result<()> {
             }
         }
         .instrument(span)
+    })
+    .await
+}
+
+#[cfg(feature = "zenoh-transport")]
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+#[instrument(ret)]
+async fn rust_bindgen_zenoh_sync() -> anyhow::Result<()> {
+    wrpc_test::with_zenoh(|_, zenoh_client| async {
+        let clt = wrpc_transport_zenoh::Client::new(zenoh_client, "rust-bindgen-sync")
+            .await
+            .context("failed to construct client")?;
+        let clt = Arc::new(clt);
+        assert_bindgen_sync(Arc::clone(&clt), clt).await
+    })
+    .await
+}
+
+#[cfg(feature = "zenoh-transport")]
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+#[instrument(ret)]
+async fn rust_bindgen_zenoh_async() -> anyhow::Result<()> {
+    wrpc_test::with_zenoh(|_, zenoh_client| {
+        async {
+            let clt = wrpc_transport_zenoh::Client::new(zenoh_client, "rust-bindgen-sync")
+                .await
+                .context("failed to construct client")?;
+            let clt = Arc::new(clt);
+            assert_bindgen_async(Arc::clone(&clt), clt).await
+        }
+        .in_current_span()
+    })
+    .await
+}
+
+#[cfg(feature = "zenoh-transport")]
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+#[instrument(ret)]
+async fn rust_dynamic_zenoh() -> anyhow::Result<()> {
+    wrpc_test::with_zenoh(|_, zenoh_client| async {
+        let clt = wrpc_transport_zenoh::Client::new(zenoh_client, "rust-bindgen-dynamic")
+            .await
+            .unwrap();
+        let clt = Arc::new(clt);
+        assert_dynamic(Arc::clone(&clt), clt).await
     })
     .await
 }
