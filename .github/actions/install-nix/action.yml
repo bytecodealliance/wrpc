@@ -16,7 +16,7 @@ runs:
       extra-conf: |
         accept-flake-config = true
 
-  - uses: cachix/cachix-action@v16
+  - uses: cachix/cachix-action@v17
     continue-on-error: true
     with:
       name: bytecodealliance
