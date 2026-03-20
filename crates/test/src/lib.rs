@@ -170,7 +170,9 @@ pub async fn start_zenoh() -> anyhow::Result<(
         anyhow::bail!("zenohd did not open port {port}");
     }
 
-    let cfg = if let Ok(cfg) = Config::from_env() { cfg } else {
+    let cfg = if let Ok(cfg) = Config::from_env() {
+        cfg
+    } else {
         use serde_json::json;
 
         let mut config = Config::default();
