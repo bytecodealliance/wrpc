@@ -3,7 +3,9 @@ use zenoh::{Config, Session};
 
 /// Open a regular Zenoh session with configs supplied by an environment variable.
 pub async fn connect() -> anyhow::Result<Session> {
-    let cfg = if let Ok(cfg) = Config::from_env() { cfg } else {
+    let cfg = if let Ok(cfg) = Config::from_env() {
+        cfg
+    } else {
         let mut config = Config::default();
         // Set mode
         config
