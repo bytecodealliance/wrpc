@@ -8,6 +8,8 @@ use core::pin::{pin, Pin};
 use core::str;
 use core::time::Duration;
 
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::thread;
 
