@@ -11,8 +11,9 @@ license.workspace = true
 repository.workspace = true
 
 [features]
-default = ["nats"]
+default = ["nats", "zenoh-transport"]
 nats = ["async-nats/ring", "dep:async-nats", "dep:tokio", "tokio/sync"]
+zenoh-transport = ["dep:zenoh", "dep:tokio", "tokio/sync"]
 
 [dependencies]
 anyhow = { workspace = true, features = ["std"] }
@@ -25,3 +26,5 @@ tracing-subscriber = { workspace = true, features = [
     "smallvec",
     "tracing-log",
 ] }
+zenoh = { workspace = true, optional = true, features = ["transport_tcp"] }
+serde_json = { workspace = true, default-features = false }

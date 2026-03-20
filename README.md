@@ -230,6 +230,128 @@ We will use the following two Rust wRPC applications using [NATS.io] transport:
     wrpc-wasmtime nats run --import native ./target/wasm32-wasip2/release/hello-component-client.wasm
     ```
 
+#### Using [zenoh.io] transport
+
+We will use the following two Rust wRPC applications using [zenoh.io] transport:
+- [examples/rust/hello-zenoh-client](examples/rust/hello-zenoh-client)
+- [examples/rust/hello-zenoh-server](examples/rust/hello-zenoh-server)
+
+1. Run [zenoh.io] (more thorough documentation available [here](https://docs.nats.io/running-a-nats-service/introduction/running)):
+
+    - using standalone binary:
+    ```sh
+    zenohd
+    ```
+    
+    - using nix flake develop environment:
+    ```sh
+    nix develop
+    zenohd
+    ```
+
+2. Serve Wasm `hello` server via [zenoh.io]
+
+    ```sh
+    wrpc-wasmtime zenoh serve --export rust ./target/wasm32-wasip2/release/hello_component_server.wasm
+    ```
+    
+    - Sample output:
+    > INFO async_nats: event: connected
+    >
+    > INFO wrpc_wasmtime_cli: serving instance function name="hello"
+
+3. Call Wasm `hello` server using a Wasm `hello` client via [zenoh.io]:
+
+    ```sh
+    wrpc-wasmtime zenoh run --import rust ./target/wasm32-wasip2/release/hello-component-client.wasm
+    ```
+    
+    - Sample output in the client:
+    > INFO async_nats: event: connected
+    >
+    >hello from Rust
+    
+    - Sample output in the server:
+    > INFO wrpc_wasmtime_cli: serving instance function invocation
+    >
+    > INFO wrpc_wasmtime_cli: successfully served instance function invocation
+
+4. Call the Wasm `hello` server using a native wRPC `hello` client via [zenoh.io]:
+
+    ```sh
+    cargo run -p hello-zenoh-client rust
+    ```
+
+5. Serve native wRPC `hello` server via [zenoh.io]:
+
+    ```sh
+    cargo run -p hello-zenoh-server native
+    ```
+
+6. Call both the native wRPC `hello` server and Wasm `hello` server using native wRPC `hello` client via [zenoh.io]:
+
+    ```sh
+    cargo run -p hello-zenoh-client rust native
+    ```
+
+7. Call native wRPC `hello` server using Wasm `hello` client via [zenoh.io]:
+
+    ```sh
+    wrpc-wasmtime zenoh run --import native ./target/wasm32-wasip2/release/hello-component-client.wasm
+    ```
+
+
+To test the transport-zenoh package run:
+
+    ```sh
+    cargo test zenoh -- --nocapture
+    ```
+
+    - Sample output:
+    > test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 13 filtered out; finished in 6.17s
+
+### Zenoh Configuration
+By default we set Zenoh to run in **client mode**. In this mode it behaves
+similarly to a typical NATS client: the application connects to a local
+Zenoh router (`zenohd`) that acts as the message broker. 
+
+The client attempts to connect to a `zenohd` instance running on the
+**default Zenoh port (`7447`) on the same machine**.
+
+Zenohd has been
+added to the flake nix file and is available after running nix develop in the 
+command lnine.
+
+This behavior can be altered by providing a **custom Zenoh configuration
+file** and setting the `ZENOH_CONFIG` environment variable to its path.
+
+Example:
+
+``` bash
+export ZENOH_CONFIG="/path/to/config/zenoh_conf.json5"
+```
+
+
+When this environment variable is set, Zenoh will load the configuration
+from the specified file instead of using the default settings.
+
+Example configuration:
+
+``` json
+{
+  "mode": "client",
+  "listen": {
+    "endpoints": ["tcp/0.0.0.0:7447"]
+  }
+}
+```
+
+
+More information about available configuration options and how to confige zenoh in peer mode can be found in
+the official Zenoh configuration manual:
+
+https://zenoh.io/docs/manual/configuration/
+
 ## Repository structure
 
 This repository contains (for all supported languages):
@@ -256,3 +378,4 @@ Whether you're a seasoned developer or just getting started, your contributions 
 
 [Docker]: https://www.docker.com/
 [NATS.io]: https://nats.io/
+[zenoh.io]: https://zenoh.io/

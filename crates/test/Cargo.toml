@@ -11,7 +11,7 @@ license.workspace = true
 repository.workspace = true
 
 [features]
-default = ["nats", "quic", "web-transport"]
+default = ["nats", "quic", "web-transport", "zenoh-transport"]
 nats = ["dep:async-nats", "async-nats/ring", "wrpc-cli/nats"]
 quic = [
     "dep:quinn",
@@ -22,6 +22,7 @@ quic = [
     "quinn/rustls",
 ]
 web-transport = ["dep:wtransport", "wtransport/self-signed"]
+zenoh-transport = ["dep:zenoh", "dep:wrpc-transport-zenoh", "wrpc-cli/zenoh-transport"]
 
 [dependencies]
 anyhow = { workspace = true }
@@ -33,3 +34,6 @@ tokio = { workspace = true, features = ["net", "process", "rt-multi-thread"] }
 tracing = { workspace = true }
 wrpc-cli = { workspace = true }
 wtransport = { workspace = true, features = ["ring"], optional = true }
+wrpc-transport-zenoh = { workspace = true, optional = true }
+zenoh = { workspace = true, optional = true }
+serde_json = { workspace = true }
