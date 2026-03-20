@@ -173,6 +173,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "arcstr"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "03918c3dbd7701a85c6b9887732e2921175f26c350b4563841d0958c21d57e6d"
+
+[[package]]
 name = "array-init"
 version = "2.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -294,11 +300,10 @@ checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
 
 [[package]]
 name = "axum"
-version = "0.7.9"
+version = "0.8.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "edca88bc138befd0323b20752846e6587272d3b03b0343c8ea28a6f819e6e71f"
+checksum = "8b52af3cb4058c895d37317bb27508dccc8e5f2d39454016b297bf4a400597b8"
 dependencies = [
- "async-trait",
  "axum-core",
  "bytes",
  "futures-util",
@@ -313,8 +318,7 @@ dependencies = [
  "mime",
  "percent-encoding",
  "pin-project-lite",
- "rustversion",
- "serde",
+ "serde_core",
  "sync_wrapper 1.0.2",
  "tokio",
  "tower",
@@ -324,19 +328,17 @@ dependencies = [
 
 [[package]]
 name = "axum-core"
-version = "0.4.5"
+version = "0.5.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "09f2bd6146b97ae3359fa0cc6d6b376d9539582c7b4220f041a33ec24c226199"
+checksum = "08c78f31d7b1291f7ee735c1c6780ccde7785daae9a9206026862dab7d8792d1"
 dependencies = [
- "async-trait",
  "bytes",
- "futures-util",
+ "futures-core",
  "http 1.4.0",
  "http-body 1.0.1",
  "http-body-util",
  "mime",
  "pin-project-lite",
- "rustversion",
  "sync_wrapper 1.0.2",
  "tower-layer",
  "tower-service",
@@ -1837,7 +1839,7 @@ dependencies = [
  "clap",
  "futures",
  "quinn",
- "rcgen",
+ "rcgen 0.13.2",
  "rustls 0.23.37",
  "tokio",
  "tracing",
@@ -1856,7 +1858,7 @@ dependencies = [
  "clap",
  "futures",
  "quinn",
- "rcgen",
+ "rcgen 0.13.2",
  "rustls 0.23.37",
  "tokio",
  "tracing",
@@ -1915,7 +1917,7 @@ dependencies = [
  "anyhow",
  "clap",
  "futures",
- "rcgen",
+ "rcgen 0.13.2",
  "rustls 0.23.37",
  "tokio",
  "tracing",
@@ -2410,15 +2412,6 @@ dependencies = [
 
 [[package]]
 name = "itertools"
-version = "0.13.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "413ee7dfc52ee1a4949ceeb7dbc8a33f2d6c088194d9f922fb8318faf1f01186"
-dependencies = [
- "either",
-]
-
-[[package]]
-name = "itertools"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2b192c782037fadd9cfa75548310488aabdbf3d2da73885b31bd0abd03351285"
@@ -2684,9 +2677,9 @@ dependencies = [
 
 [[package]]
 name = "matchit"
-version = "0.7.3"
+version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0e7465ac9959cc2b1404e8e2367b43684a6d13790fe23056cc8c6c5a6b7bcb94"
+checksum = "47e1ffaa40ddd1f3ed91f717a33c8c0ee23fff369e3aa8772b9605cc1d22f4c3"
 
 [[package]]
 name = "maybe-owned"
@@ -3485,12 +3478,24 @@ version = "0.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "75e669e5202259b5314d1ea5397316ad400819437857b90861765f24c4cf80a2"
 dependencies = [
- "pem",
  "ring",
  "rustls-pki-types",
  "time",
  "yasna",
  "zeroize",
+]
+
+[[package]]
+name = "rcgen"
+version = "0.14.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "10b99e0098aa4082912d4c649628623db6aba77335e4f4569ff5083a6448b32e"
+dependencies = [
+ "ring",
+ "rustls-pki-types",
+ "time",
+ "x509-parser 0.18.1",
+ "yasna",
 ]
 
 [[package]]
@@ -3502,26 +3507,27 @@ dependencies = [
 
 [[package]]
 name = "redis"
-version = "0.27.6"
+version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "09d8f99a4090c89cc489a94833c901ead69bfbf3877b4867d5482e321ee875bc"
+checksum = "b36964393906eb775b89b25b05b7b95685b8dd14062f1663a31ff93e75c452e5"
 dependencies = [
  "arc-swap",
- "async-trait",
+ "arcstr",
  "backon",
  "bytes",
+ "cfg-if",
  "combine",
- "futures",
+ "futures-channel",
  "futures-util",
- "itertools 0.13.0",
  "itoa",
- "num-bigint",
  "percent-encoding",
  "pin-project-lite",
  "ryu",
+ "socket2 0.6.3",
  "tokio",
  "tokio-util",
  "url",
+ "xxhash-rust",
 ]
 
 [[package]]
@@ -4450,7 +4456,7 @@ dependencies = [
  "clap",
  "futures",
  "quinn",
- "rcgen",
+ "rcgen 0.13.2",
  "rustls 0.23.37",
  "tokio",
  "tokio-stream",
@@ -4471,7 +4477,7 @@ dependencies = [
  "clap",
  "futures",
  "quinn",
- "rcgen",
+ "rcgen 0.13.2",
  "rustls 0.23.37",
  "tokio",
  "tracing",
@@ -5391,7 +5397,7 @@ dependencies = [
  "bytes",
  "clap",
  "quinn",
- "rcgen",
+ "rcgen 0.13.2",
  "rustls 0.23.37",
  "tokio",
  "tracing",
@@ -5409,7 +5415,7 @@ dependencies = [
  "clap",
  "futures",
  "quinn",
- "rcgen",
+ "rcgen 0.13.2",
  "rustls 0.23.37",
  "tokio",
  "tracing",
@@ -7059,7 +7065,7 @@ dependencies = [
  "anyhow",
  "async-nats",
  "quinn",
- "rcgen",
+ "rcgen 0.13.2",
  "rustls 0.23.37",
  "serde_json",
  "tokio",
@@ -7242,17 +7248,16 @@ dependencies = [
 
 [[package]]
 name = "wtransport"
-version = "0.6.1"
+version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3e5e745c8789c20095c9061d292098d4106660efe2d172efd8ae7a369fe28e3e"
+checksum = "e56b611f195638f3790e4e5a41e9d777643a6c324ae4ffd1f0f53f2738e7678c"
 dependencies = [
  "bytes",
  "pem",
  "quinn",
- "rcgen",
+ "rcgen 0.14.7",
  "rustls 0.23.37",
  "rustls-native-certs 0.8.3",
- "rustls-pemfile",
  "rustls-pki-types",
  "sha2",
  "socket2 0.5.10",
@@ -7262,14 +7267,14 @@ dependencies = [
  "tracing",
  "url",
  "wtransport-proto",
- "x509-parser",
+ "x509-parser 0.17.0",
 ]
 
 [[package]]
 name = "wtransport-proto"
-version = "0.6.1"
+version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1a09d89a8dba201c2439d9d5eca55a0faa08909d69da50decdb5ec00be0ac504"
+checksum = "1627c5b59450278e9771aab35275d72bfa2788128c197c5af1e4a820c8737ef4"
 dependencies = [
  "httlib-huffman",
  "octets",
@@ -7293,6 +7298,30 @@ dependencies = [
  "thiserror 2.0.18",
  "time",
 ]
+
+[[package]]
+name = "x509-parser"
+version = "0.18.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d43b0f71ce057da06bc0851b23ee24f3f86190b07203dd8f567d0b706a185202"
+dependencies = [
+ "asn1-rs",
+ "data-encoding",
+ "der-parser",
+ "lazy_static",
+ "nom",
+ "oid-registry",
+ "ring",
+ "rusticata-macros",
+ "thiserror 2.0.18",
+ "time",
+]
+
+[[package]]
+name = "xxhash-rust"
+version = "0.8.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fdd20c5420375476fbd4394763288da7eb0cc0b8c11deed431a91562af7335d3"
 
 [[package]]
 name = "yasna"
