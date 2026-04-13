@@ -3338,6 +3338,7 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
         let InterfaceName {
             import_name,
             import_path,
+            ..
         } = &self.gen.interface_names[&interface];
         if let Identifier::Interface(cur, _) = self.identifier {
             if cur == interface {

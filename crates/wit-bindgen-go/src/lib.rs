@@ -1,5 +1,5 @@
 use crate::interface::InterfaceGenerator;
-use anyhow::Result;
+use anyhow::{bail, Result};
 use core::fmt::Display;
 use heck::{ToLowerCamelCase, ToSnakeCase, ToUpperCamelCase};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -9,7 +9,9 @@ use std::mem;
 use std::process::{Command, Stdio};
 use wit_bindgen_core::{
     uwrite, uwriteln,
-    wit_parser::{Function, InterfaceId, PackageId, Resolve, TypeId, World, WorldId, WorldKey},
+    wit_parser::{
+        Function, InterfaceId, PackageId, Resolve, TypeId, World, WorldId, WorldItem, WorldKey,
+    },
     Files, InterfaceGenerator as _, Source, Types, WorldGenerator,
 };
 
@@ -17,11 +19,41 @@ mod interface;
 
 #[derive(Clone)]
 struct InterfaceName {
+    /// True when this interface name has been remapped through the use of `with`.
+    remapped: bool,
+
     /// The string import name for this interface.
     import_name: String,
 
     /// The string import path for this interface.
     import_path: String,
+}
+
+/// How an interface should be generated.
+enum InterfaceGeneration {
+    /// Remapped to some other type at the given Go import path.
+    Remap(String),
+    /// Generate the interface.
+    Generate,
+}
+
+#[derive(Default)]
+struct GenerationConfiguration {
+    map: HashMap<String, InterfaceGeneration>,
+    generate_by_default: bool,
+}
+
+impl GenerationConfiguration {
+    fn get(&self, key: &str) -> Option<&InterfaceGeneration> {
+        self.map.get(key).or_else(|| {
+            self.generate_by_default
+                .then_some(&InterfaceGeneration::Generate)
+        })
+    }
+
+    fn insert(&mut self, name: String, generate: InterfaceGeneration) {
+        self.map.insert(name, generate);
+    }
 }
 
 #[derive(Default)]
@@ -40,6 +72,9 @@ struct GoWrpc {
 
     export_paths: Vec<String>,
     deps: Deps,
+    with_name_counter: usize,
+    /// Interface names to how they should be generated.
+    with: GenerationConfiguration,
 }
 
 #[derive(Default)]
@@ -151,6 +186,45 @@ fn generated_preamble() -> String {
     )
 }
 
+#[cfg(feature = "clap")]
+fn parse_with(s: &str) -> Result<(String, WithOption), String> {
+    let (k, v) = s.split_once('=').ok_or_else(|| {
+        format!("expected string of form `<key>=<value>[,<key>=<value>...]`; got `{s}`")
+    })?;
+    let v = match v {
+        "generate" => WithOption::Generate,
+        other => WithOption::Path(other.to_string()),
+    };
+    Ok((k.to_string(), v))
+}
+
+/// Represents options for remapping interface bindings.
+#[derive(Debug, Clone)]
+pub enum WithOption {
+    /// Remap the interface to an existing Go import path.
+    Path(String),
+    /// Generate the interface bindings.
+    Generate,
+}
+
+impl fmt::Display for WithOption {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            WithOption::Path(p) => f.write_fmt(format_args!("\"{p}\"")),
+            WithOption::Generate => f.write_str("generate"),
+        }
+    }
+}
+
+impl From<WithOption> for InterfaceGeneration {
+    fn from(opt: WithOption) -> Self {
+        match opt {
+            WithOption::Path(p) => InterfaceGeneration::Remap(p),
+            WithOption::Generate => InterfaceGeneration::Generate,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "clap", derive(clap::Args))]
 pub struct Opts {
@@ -161,6 +235,19 @@ pub struct Opts {
     /// Go package path containing the generated bindings
     #[cfg_attr(feature = "clap", arg(long, default_value = ""))]
     pub package: String,
+
+    /// Remapping of interface names to Go import paths.
+    ///
+    /// Argument must be of the form `k=v` and this option can be passed
+    /// multiple times or one option can be comma separated, for example
+    /// `k1=v1,k2=v2`.
+    #[cfg_attr(feature = "clap", arg(long, value_parser = parse_with, value_delimiter = ','))]
+    pub with: Vec<(String, WithOption)>,
+
+    /// Indicates that all interfaces not specified in `with` should be
+    /// generated.
+    #[cfg_attr(feature = "clap", arg(long))]
+    pub generate_all: bool,
 }
 
 impl Default for Opts {
@@ -168,6 +255,8 @@ impl Default for Opts {
         Self {
             gofmt: true,
             package: String::new(),
+            with: Vec::new(),
+            generate_all: false,
         }
     }
 }
@@ -224,21 +313,41 @@ impl GoWrpc {
         id: InterfaceId,
         name: &WorldKey,
         is_export: bool,
-    ) {
-        let path = compute_module_path(name, resolve, is_export);
-        let import_name = path.join("__");
-        let import_path = if !self.opts.package.is_empty() {
-            format!("{}/{}", self.opts.package, path.join("/"))
-        } else {
-            path.join("/")
+    ) -> Result<bool> {
+        let with_name = resolve.name_world_key(name);
+        let Some(remapping) = self.with.get(&with_name) else {
+            bail!("no remapping found for {with_name:?} - use `--generate-all` or `--with {with_name}=generate` to generate bindings for this interface");
         };
-        self.interface_names.insert(
-            id,
-            InterfaceName {
-                import_name,
-                import_path,
-            },
-        );
+
+        let entry = match remapping {
+            InterfaceGeneration::Remap(remapped_path) => {
+                let import_name = format!("__with_name{}", self.with_name_counter);
+                self.with_name_counter += 1;
+                InterfaceName {
+                    remapped: true,
+                    import_name,
+                    import_path: remapped_path.clone(),
+                }
+            }
+            InterfaceGeneration::Generate => {
+                let path = compute_module_path(name, resolve, is_export);
+                let import_name = path.join("__");
+                let import_path = if !self.opts.package.is_empty() {
+                    format!("{}/{}", self.opts.package, path.join("/"))
+                } else {
+                    path.join("/")
+                };
+                InterfaceName {
+                    remapped: false,
+                    import_name,
+                    import_path,
+                }
+            }
+        };
+
+        let remapped = entry.remapped;
+        self.interface_names.insert(id, entry);
+        Ok(remapped)
     }
 
     /// Generates imports and a `Serve` function for the world
@@ -365,6 +474,23 @@ impl WorldGenerator for GoWrpc {
     fn preprocess(&mut self, resolve: &Resolve, world: WorldId) {
         self.types.analyze(resolve);
         self.world = Some(world);
+
+        let world = &resolve.worlds[world];
+        // Specify that all imports/exports local to the world's package should be generated
+        for (key, item) in world.imports.iter().chain(world.exports.iter()) {
+            if let WorldItem::Interface { id, .. } = item {
+                if resolve.interfaces[*id].package == world.package {
+                    let name = resolve.name_world_key(key);
+                    if self.with.get(&name).is_none() {
+                        self.with.insert(name, InterfaceGeneration::Generate);
+                    }
+                }
+            }
+        }
+        for (k, v) in &self.opts.with {
+            self.with.insert(k.clone(), v.clone().into());
+        }
+        self.with.generate_by_default = self.opts.generate_all;
     }
 
     fn import_interface(
@@ -377,7 +503,9 @@ impl WorldGenerator for GoWrpc {
         self.interface_last_seen_as_import.insert(id, true);
         let mut gen = self.interface(Identifier::Interface(id, name), resolve, true);
         let (snake, module_path) = gen.start_append_submodule(name);
-        gen.gen.name_interface(resolve, id, name, false);
+        if gen.gen.name_interface(resolve, id, name, false)? {
+            return Ok(());
+        }
         gen.types(id);
 
         let identifier = Identifier::Interface(id, name);
@@ -446,7 +574,9 @@ impl WorldGenerator for GoWrpc {
         self.interface_last_seen_as_import.insert(id, false);
         let mut gen = self.interface(Identifier::Interface(id, name), resolve, false);
         let (snake, module_path) = gen.start_append_submodule(name);
-        gen.gen.name_interface(resolve, id, name, true);
+        if gen.gen.name_interface(resolve, id, name, true)? {
+            return Ok(());
+        }
         gen.types(id);
         let exports = gen.generate_exports(
             Identifier::Interface(id, name),
@@ -457,6 +587,7 @@ impl WorldGenerator for GoWrpc {
             let InterfaceName {
                 import_name,
                 import_path,
+                ..
             } = &self.interface_names[&id];
             self.export_paths
                 .push(self.deps.import(import_name.clone(), import_path.clone()));

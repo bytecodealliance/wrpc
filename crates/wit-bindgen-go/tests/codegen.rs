@@ -15,6 +15,8 @@ macro_rules! codegen_test {
                     wit_bindgen_wrpc_go::Opts {
                         gofmt: false,
                         package: "bindings".to_string(),
+                        with: Vec::new(),
+                        generate_all: true,
                     }
                     .build()
                     .generate(resolve, world, files)
