@@ -3,7 +3,7 @@ module wrpc.io/examples/go/hello-client
 go 1.25.0
 
 require (
-	github.com/nats-io/nats.go v1.50.0
+	github.com/nats-io/nats.go v1.51.0
 	wrpc.io/go v0.2.0
 )
 
