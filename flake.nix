@@ -80,15 +80,15 @@
 
         doCheck = false; # testing is performed in checks via `nextest`
 
-        targets.arm-unknown-linux-gnueabihf = false;
-        targets.arm-unknown-linux-musleabihf = false;
-        targets.armv7-unknown-linux-gnueabihf = false;
-        targets.armv7-unknown-linux-musleabihf = false;
-        targets.powerpc64le-unknown-linux-gnu = false;
-        targets.s390x-unknown-linux-gnu = false;
-        targets.wasm32-unknown-unknown = false;
-        targets.wasm32-wasip1 = false;
-        targets.wasm32-wasip2 = false;
+        targets.aarch64-apple-darwin = true;
+        targets.aarch64-linux-android = true;
+        targets.aarch64-unknown-linux-gnu = true;
+        targets.aarch64-unknown-linux-musl = true;
+        targets.riscv64gc-unknown-linux-gnu = true;
+        targets.x86_64-apple-darwin = true;
+        targets.x86_64-pc-windows-gnu = true;
+        targets.x86_64-unknown-linux-gnu = true;
+        targets.x86_64-unknown-linux-musl = true;
 
         clippy.deny = ["warnings"];
         clippy.workspace = true;
