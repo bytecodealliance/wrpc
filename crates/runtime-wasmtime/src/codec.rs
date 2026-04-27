@@ -5,7 +5,6 @@ use core::pin::{pin, Pin};
 
 use std::collections::HashSet;
 
-use anyhow::{bail, Context as _};
 use bytes::{BufMut as _, BytesMut};
 use futures::stream::FuturesUnordered;
 use futures::TryStreamExt as _;
@@ -19,8 +18,10 @@ use wasm_tokio::{
     AsyncReadCore as _, AsyncReadLeb128 as _, AsyncReadUtf8 as _, CoreNameEncoder,
     CoreVecEncoderBytes, Leb128Encoder, Utf8Codec,
 };
+use wasmtime::bail;
 use wasmtime::component::types::{Case, Field};
 use wasmtime::component::{ResourceType, Type, Val};
+use wasmtime::error::Context as _;
 use wasmtime::{AsContextMut, StoreContextMut};
 use wasmtime_wasi::p2::pipe::AsyncReadStream;
 use wasmtime_wasi::p2::{DynInputStream, StreamError};
@@ -110,7 +111,7 @@ where
     let mut futs: FuturesUnordered<_> = zip(0.., deferred)
         .filter_map(|(i, f)| f.map(|f| (w.index(&[i]), f)))
         .map(|(w, f)| async move {
-            let w = w?;
+            let w = w.map_err(wasmtime::Error::from_anyhow)?;
             f(w).await
         })
         .collect();
@@ -875,6 +876,10 @@ where
         Type::Future(..) | Type::Stream(..) | Type::ErrorContext => Err(std::io::Error::new(
             std::io::ErrorKind::Unsupported,
             "async not supported",
+        )),
+        Type::Map(..) => Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "`map` type not supported",
         )),
     }
 }

@@ -23,7 +23,8 @@ use wasi_preview1_component_adapter_provider::{
 use wasmtime::component::{types, Component, InstancePre, Linker, ResourceTable, ResourceType};
 use wasmtime::{Engine, Store};
 use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
-use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpView};
+use wasmtime_wasi_http::p2::{WasiHttpCtxView, WasiHttpView};
+use wasmtime_wasi_http::WasiHttpCtx;
 use wrpc_runtime_wasmtime::{
     collect_component_resource_exports, collect_component_resource_imports, link_item, rpc,
     RemoteResource, ServeExt as _, SharedResourceTable, WrpcCtxView, WrpcView,
@@ -110,12 +111,12 @@ impl<C: Invoke> WasiView for Ctx<C> {
 }
 
 impl<C: Invoke> WasiHttpView for Ctx<C> {
-    fn ctx(&mut self) -> &mut WasiHttpCtx {
-        &mut self.http
-    }
-
-    fn table(&mut self) -> &mut ResourceTable {
-        &mut self.table
+    fn http(&mut self) -> WasiHttpCtxView<'_> {
+        WasiHttpCtxView {
+            ctx: &mut self.http,
+            table: &mut self.table,
+            hooks: wasmtime_wasi_http::p2::default_hooks(),
+        }
     }
 }
 
@@ -170,10 +171,12 @@ where
         .context("failed to construct common Wasmtime options")?;
     let mut config = opts
         .config(use_pooling_allocator_by_default().unwrap_or(None))
+        .map_err(anyhow::Error::from)
         .context("failed to construct Wasmtime config")?;
     config.wasm_component_model(true);
-    config.async_support(true);
-    let engine = wasmtime::Engine::new(&config).context("failed to initialize Wasmtime engine")?;
+    let engine = wasmtime::Engine::new(&config)
+        .map_err(anyhow::Error::from)
+        .context("failed to initialize Wasmtime engine")?;
 
     let wasm = if workload.starts_with('.') || workload.starts_with('/') {
         fs::read(&workload)
@@ -217,13 +220,20 @@ where
         wasm
     };
 
-    let component = Component::new(&engine, wasm).context("failed to compile component")?;
+    let component = Component::new(&engine, wasm)
+        .map_err(anyhow::Error::from)
+        .context("failed to compile component")?;
 
     let mut linker = Linker::<Ctx<C>>::new(&engine);
-    wasmtime_wasi::p2::add_to_linker_async(&mut linker).context("failed to link WASI")?;
-    wasmtime_wasi_http::add_only_http_to_linker_async(&mut linker)
+    wasmtime_wasi::p2::add_to_linker_async(&mut linker)
+        .map_err(anyhow::Error::from)
+        .context("failed to link WASI")?;
+    wasmtime_wasi_http::p2::add_only_http_to_linker_async(&mut linker)
+        .map_err(anyhow::Error::from)
         .context("failed to link `wasi:http`")?;
-    wrpc_runtime_wasmtime::rpc::add_to_linker(&mut linker).context("failed to link `wrpc:rpc`")?;
+    wrpc_runtime_wasmtime::rpc::add_to_linker(&mut linker)
+        .map_err(anyhow::Error::from)
+        .context("failed to link `wrpc:rpc`")?;
 
     let ty = component.component_type();
     let mut host_resources = BTreeMap::default();
@@ -351,6 +361,7 @@ where
 
     let pre = linker
         .instantiate_pre(&component)
+        .map_err(anyhow::Error::from)
         .context("failed to pre-instantiate component")?;
     Ok((pre, engine, guest_resources, host_resources))
 }
@@ -401,13 +412,16 @@ where
         instantiate_pre(WASI_SNAPSHOT_PREVIEW1_COMMAND_ADAPTER, workload).await?;
     let mut store = new_store(&engine, clt, cx, "command.wasm", timeout);
     let cmd = wasmtime_wasi::p2::bindings::CommandPre::new(pre)
+        .map_err(anyhow::Error::from)
         .context("failed to construct `command` instance")?
         .instantiate_async(&mut store)
         .await
+        .map_err(anyhow::Error::from)
         .context("failed to instantiate `command`")?;
     cmd.wasi_cli_run()
         .call_run(&mut store)
         .await
+        .map_err(anyhow::Error::from)
         .context("failed to run component")?
         .map_err(|()| anyhow!("component failed"))
 }
@@ -430,6 +444,7 @@ where
     let instance = pre
         .instantiate_async(&mut store)
         .await
+        .map_err(anyhow::Error::from)
         .context("failed to instantiate component")?;
     let engine = store.engine().clone();
     let store = Arc::new(Mutex::new(store));

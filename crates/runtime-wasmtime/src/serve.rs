@@ -80,6 +80,7 @@ pub trait ServeExt: wrpc_transport::Serve {
                             let instance = instance_pre
                                 .instantiate_async(&mut store)
                                 .await
+                                .map_err(anyhow::Error::from)
                                 .context("failed to instantiate component")?;
                             let func = instance
                                 .get_func(&mut store, idx)

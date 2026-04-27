@@ -1,5 +1,5 @@
-use anyhow::Context as _;
 use wasmtime::component::Resource;
+use wasmtime::error::Context as _;
 use wasmtime_wasi::p2::bindings::io::error::Error as IoError;
 
 use crate::bindings::rpc::error::{Error, Host, HostError};

@@ -128,10 +128,7 @@ where
             }
 
             // Create the fields iterator from owned strings
-            let fields = field_names
-                .iter()
-                .map(|s| s.as_str())
-                .zip(field_values.into_iter());
+            let fields = field_names.iter().map(|s| s.as_str()).zip(field_values);
 
             Value::make_record(ty, fields).map_err(io_error)
         }
@@ -265,14 +262,14 @@ mod tests {
     #[test]
     fn test_decode_bool_true() -> anyhow::Result<()> {
         let value = decode_sync(&Type::BOOL, &[1u8])?;
-        assert_eq!(value.unwrap_bool(), true);
+        assert!(value.unwrap_bool());
         Ok(())
     }
 
     #[test]
     fn test_decode_bool_false() -> anyhow::Result<()> {
         let value = decode_sync(&Type::BOOL, &[0u8])?;
-        assert_eq!(value.unwrap_bool(), false);
+        assert!(!value.unwrap_bool());
         Ok(())
     }
 
@@ -426,7 +423,7 @@ mod tests {
         let elements: Vec<_> = value.unwrap_tuple().collect();
         assert_eq!(elements.len(), 2);
         assert_eq!(elements[0].unwrap_u32(), 42);
-        assert_eq!(elements[1].unwrap_bool(), true);
+        assert!(elements[1].unwrap_bool());
         Ok(())
     }
 
