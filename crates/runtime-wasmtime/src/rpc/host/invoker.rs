@@ -1,6 +1,6 @@
-use anyhow::Context as _;
 use tokio::io::AsyncWriteExt as _;
 use wasmtime::component::Resource;
+use wasmtime::error::Context as _;
 use wrpc_transport::Invoke;
 
 use crate::bindings::rpc::context::Context;

@@ -130,24 +130,32 @@ impl WasmHandler {
                 .context("failed to construct common Wasmtime options")?;
         let mut config = opts
             .config(Self::use_pooling_allocator_by_default().unwrap_or(None))
+            .map_err(anyhow::Error::from)
             .context("failed to construct Wasmtime config")?;
         config.wasm_component_model(true);
-        config.async_support(true);
-        let engine =
-            wasmtime::Engine::new(&config).context("failed to initialize Wasmtime engine")?;
+        let engine = wasmtime::Engine::new(&config)
+            .map_err(anyhow::Error::from)
+            .context("failed to initialize Wasmtime engine")?;
 
-        let component = Component::new(&engine, wasm).context("failed to compile component")?;
+        let component = Component::new(&engine, wasm)
+            .map_err(anyhow::Error::from)
+            .context("failed to compile component")?;
 
         let mut linker = Linker::<Ctx>::new(&engine);
-        wasmtime_wasi::p2::add_to_linker_async(&mut linker).context("failed to link WASI")?;
+        wasmtime_wasi::p2::add_to_linker_async(&mut linker)
+            .map_err(anyhow::Error::from)
+            .context("failed to link WASI")?;
 
         let pre = linker
             .instantiate_pre(&component)
+            .map_err(anyhow::Error::from)
             .context("failed to pre-instantiate component")?;
         let ping_pre = PingProxyPre::new(pre.clone())
+            .map_err(anyhow::Error::from)
             .context("failed to pre-instantiate `ping-proxy` world")?;
-        let greet_pre =
-            GreetProxyPre::new(pre).context("failed to pre-instantiate `greet-proxy` world")?;
+        let greet_pre = GreetProxyPre::new(pre)
+            .map_err(anyhow::Error::from)
+            .context("failed to pre-instantiate `greet-proxy` world")?;
         Ok(Self {
             engine,
             ping_pre,
@@ -159,19 +167,31 @@ impl WasmHandler {
 impl<T: Send> ping_bindings_wrpc::exports::wrpc_bench::bench::ping::Handler<T> for WasmHandler {
     async fn ping(&self, _cx: T) -> anyhow::Result<()> {
         let mut store = self.new_store();
-        let ping = self.ping_pre.instantiate_async(&mut store).await?;
-        ping.wrpc_bench_bench_ping().call_ping(&mut store).await
+        let ping = self
+            .ping_pre
+            .instantiate_async(&mut store)
+            .await
+            .map_err(anyhow::Error::from)?;
+        ping.wrpc_bench_bench_ping()
+            .call_ping(&mut store)
+            .await
+            .map_err(anyhow::Error::from)
     }
 }
 
 impl<T: Send> greet_bindings_wrpc::exports::wrpc_bench::bench::greet::Handler<T> for WasmHandler {
     async fn greet(&self, _cx: T, name: String) -> anyhow::Result<String> {
         let mut store = self.new_store();
-        let greet = self.greet_pre.instantiate_async(&mut store).await?;
+        let greet = self
+            .greet_pre
+            .instantiate_async(&mut store)
+            .await
+            .map_err(anyhow::Error::from)?;
         greet
             .wrpc_bench_bench_greet()
             .call_greet(&mut store, &name)
             .await
+            .map_err(anyhow::Error::from)
     }
 }
 

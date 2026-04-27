@@ -9,9 +9,9 @@ use core::task::{Context, Poll};
 
 use std::sync::Arc;
 
-use anyhow::Context as _;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use wasmtime::component::{HasData, Linker};
+use wasmtime::error::Context as _;
 use wasmtime_wasi::p2::Pollable;
 use wrpc_transport::Invoke;
 
@@ -27,7 +27,7 @@ impl<T: 'static> HasData for WrpcRpcImpl<T> {
     type Data<'a> = WrpcRpcImpl<&'a mut T>;
 }
 
-pub fn add_to_linker<T>(linker: &mut Linker<T>) -> anyhow::Result<()>
+pub fn add_to_linker<T>(linker: &mut Linker<T>) -> wasmtime::Result<()>
 where
     T: WrpcView,
     T::Invoke: Clone + 'static,

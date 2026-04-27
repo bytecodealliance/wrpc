@@ -2,8 +2,9 @@ use core::marker::PhantomData;
 
 use std::sync::Arc;
 
-use anyhow::{bail, Context as _};
+use wasmtime::bail;
 use wasmtime::component::Resource;
+use wasmtime::error::Context as _;
 use wasmtime_wasi::p2::bindings::io::poll::Pollable;
 use wasmtime_wasi::p2::bindings::io::streams::{InputStream, OutputStream};
 use wasmtime_wasi::p2::pipe::{AsyncReadStream, AsyncWriteStream};

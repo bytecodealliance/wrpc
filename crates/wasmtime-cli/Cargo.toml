@@ -63,8 +63,8 @@ wasmtime-cli-flags = { workspace = true, features = [
     "pooling-allocator",
     "threads",
 ] }
-wasmtime-wasi = { workspace = true }
-wasmtime-wasi-http = { workspace = true, features = ["default-send-request"] }
+wasmtime-wasi = { workspace = true, features = ["p2"] }
+wasmtime-wasi-http = { workspace = true, features = ["default-send-request", "p2"] }
 wit-component = { workspace = true }
 wrpc-cli = { workspace = true, features = ["nats"] }
 wrpc-transport-nats = { workspace = true }
