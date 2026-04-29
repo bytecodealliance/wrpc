@@ -49,7 +49,7 @@ pub async fn spawn_server(
 pub fn cert_pair() -> anyhow::Result<(rustls::ServerConfig, rustls::ClientConfig)> {
     let CertifiedKey {
         cert: srv_crt,
-        key_pair: srv_key,
+        signing_key: srv_key,
     } = generate_simple_self_signed([
         "127.0.0.1".to_string(),
         "::1".to_string(),
@@ -58,7 +58,7 @@ pub fn cert_pair() -> anyhow::Result<(rustls::ServerConfig, rustls::ClientConfig
     .context("failed to generate server certificate")?;
     let CertifiedKey {
         cert: clt_crt,
-        key_pair: clt_key,
+        signing_key: clt_key,
     } = generate_simple_self_signed(["client.wrpc".to_string()])
         .context("failed to generate client certificate")?;
     let srv_crt = CertificateDer::from(srv_crt);

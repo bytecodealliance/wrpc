@@ -30,7 +30,7 @@ async fn main() -> anyhow::Result<()> {
 
     let Args { addr } = Args::parse();
 
-    let CertifiedKey { cert, key_pair } = generate_simple_self_signed([
+    let CertifiedKey { cert, signing_key } = generate_simple_self_signed([
         "localhost".to_string(),
         "::1".to_string(),
         "127.0.0.1".to_string(),
@@ -42,7 +42,7 @@ async fn main() -> anyhow::Result<()> {
         .with_no_client_auth() // TODO: verify client cert
         .with_single_cert(
             vec![cert],
-            PrivatePkcs8KeyDer::from(key_pair.serialize_der()).into(),
+            PrivatePkcs8KeyDer::from(signing_key.serialize_der()).into(),
         )
         .context("failed to create server config")?;
 
