@@ -4,6 +4,16 @@ updates:
   directory: "/"
   schedule:
     interval: "daily"
+  ignore:
+    - dependency-name: "wit-bindgen"
+    - dependency-name: "wit-bindgen-core"
+    - dependency-name: "wit-parser"
+  groups:
+    wasm:
+      patterns:
+        - "wasi*"
+        - "wasm*"
+        - "wit-*"
 
 - package-ecosystem: "gomod"
   directory: "/go"
@@ -20,6 +30,11 @@ updates:
     interval: "daily"
 - package-ecosystem: "github-actions"
   directory: "/.github/actions/install-nix"
+  schedule:
+    interval: "daily"
+
+- package-ecosystem: "nix"
+  directory: "/"
   schedule:
     interval: "daily"
 
