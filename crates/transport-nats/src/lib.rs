@@ -34,9 +34,7 @@ fn spawn_async(fut: impl Future<Output = ()> + Send + 'static) {
             rt.spawn(fut);
         }
         Err(_) => match tokio::runtime::Runtime::new() {
-            Ok(rt) => {
-                rt.spawn(fut);
-            }
+            Ok(rt) => rt.block_on(fut),
             Err(err) => error!(?err, "failed to create a new Tokio runtime"),
         },
     }
