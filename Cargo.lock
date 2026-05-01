@@ -1478,6 +1478,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-unix-client"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "tokio",
+ "tracing-subscriber",
+ "wit-bindgen-wrpc",
+ "wrpc-transport",
+]
+
+[[package]]
+name = "hello-unix-server"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "futures",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "wit-bindgen-wrpc",
+ "wrpc-transport",
+]
+
+[[package]]
 name = "hello-web-client"
 version = "0.1.0"
 dependencies = [
