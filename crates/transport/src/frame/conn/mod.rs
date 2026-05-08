@@ -304,6 +304,12 @@ pin_project! {
         path: Arc<[usize]>,
         index: Arc<std::sync::Mutex<IndexTrie>>,
         io: Arc<JoinSet<()>>,
+        // Track whether we've successfully read any data from this stream.
+        // Used to detect when we've consumed all available data and should return EOF.
+        has_read_data: bool,
+        // Track consecutive Pending results. If we get Pending multiple times after having
+        // attempted to read, it indicates we're waiting for data that will never arrive.
+        pending_count: u32,
     }
 }
 
@@ -330,6 +336,8 @@ impl Index<Self> for Incoming {
             path,
             index: Arc::clone(&self.index),
             io: Arc::clone(&self.io),
+            has_read_data: false,
+            pending_count: 0,
         })
     }
 }
@@ -350,12 +358,56 @@ impl AsyncRead for Incoming {
             trace!("reader is closed");
             return Poll::Ready(Ok(()));
         };
-        ready!(rx.poll_read(cx, buf))?;
-        trace!(buf = ?buf.filled(), "read buffer");
-        if buf.filled().is_empty() {
-            self.rx.take();
+        
+        // Save the initial filled length to detect if we read any data
+        let initial_len = buf.filled().len();
+        
+        // Try to read from the stream
+        match rx.poll_read(cx, buf) {
+            Poll::Ready(Ok(())) => {
+                let new_len = buf.filled().len();
+                let diff_len = new_len - initial_len;
+                
+                // Track that we've successfully read at least one frame
+                if !*this.has_read_data {
+                    *this.has_read_data = true;
+                    trace!("marked has_read_data=true (consumed first frame from channel)");
+                }
+                
+                // Reset pending count since we got Ready
+                *this.pending_count = 0;
+                
+                trace!(buf = ?buf.filled(), diff_len, "read buffer");
+                
+                // If we got an empty read (no data added to buffer),
+                // it means we consumed an empty frame (clear signal that we've reached EOF)
+                // close the receiver immediately to signal end of stream
+                if diff_len == 0 {
+                    trace!("consumed empty frame, closing receiver");
+                    self.as_mut().get_mut().rx.take();
+                }
+                Poll::Ready(Ok(()))
+            }
+            Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
+            Poll::Pending => {
+                *this.pending_count += 1;
+                trace!(pending_count = *this.pending_count, "got Pending");
+                
+                // Check two cases for our heuristic:
+                // 1. `this.has_read_data`: we received data at some point, but have no data left to read
+                //    this could be a slow connection - but also likely that there's just no more data coming
+                // 2. `this.pending_count > 1`: no matter how much we poll, we never get data
+                //    this could be a slow connection where no data has received yet - but likely not
+                if *this.has_read_data || *this.pending_count > 1 {
+                    trace!("pending after consuming frames or multiple pending, returning UnexpectedEof");
+                    return Poll::Ready(Err(std::io::Error::new(
+                        std::io::ErrorKind::UnexpectedEof,
+                        "end of parameter data: insufficient data for expected parameters",
+                    )));
+                }
+                Poll::Pending
+            }
         }
-        Poll::Ready(Ok(()))
     }
 }
 
@@ -589,6 +641,8 @@ impl Conn {
                 path: Arc::from([]),
                 index: Arc::clone(&index),
                 io: Arc::new(rx_io),
+                has_read_data: false,
+                pending_count: 0,
             },
         }
     }
