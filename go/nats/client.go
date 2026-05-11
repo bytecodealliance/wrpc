@@ -559,5 +559,9 @@ func (c *Client) Serve(instance string, name string, f wrpc.HandleFunc, paths ..
 	if err != nil {
 		return nil, fmt.Errorf("failed to serve `%s` for instance `%s`: %w", name, instance, err)
 	}
+	if err := c.conn.Flush(); err != nil {
+		_ = sub.Unsubscribe()
+		return nil, fmt.Errorf("failed to flush subscription for `%s` on instance `%s`: %w", name, instance, err)
+	}
 	return sub.Unsubscribe, nil
 }

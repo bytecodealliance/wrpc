@@ -653,7 +653,7 @@ where
             use bindings::bar;
 
             // TODO: Remove the need for this
-            sleep(Duration::from_secs(2)).await;
+            sleep(Duration::from_secs(1)).await;
 
             let v = bar::bar(clt.as_ref(), IC::default())
                 .await
