@@ -494,9 +494,6 @@ where
                 }
             }
 
-            // TODO: Remove the need for this
-            sleep(Duration::from_secs(1)).await;
-
             impl<IC, SC, T> exports::bar::Handler<SC> for Component<T>
             where
                 IC: Send + Sync + Default,
@@ -609,6 +606,7 @@ where
                     Ok("bar".to_string())
                 }
             }
+
 
             let invocations = bindings::serve(srv.as_ref(), Component(Arc::clone(&clt)))
                 .await
@@ -728,6 +726,9 @@ where
         }
         .instrument(info_span!("server")),
         async {
+            // TODO: Remove the need for this
+            sleep(Duration::from_secs(1)).await;
+
             info!("invoking `test.reset`");
             clt.invoke_values_blocking::<_, _, (String,)>(
                 IC::default(),
@@ -959,6 +960,9 @@ where
         }
         .instrument(info_span!("server")),
         async {
+            // TODO: Remove the need for this
+            sleep(Duration::from_secs(1)).await;
+
             let a: Pin<Box<dyn Stream<Item = Vec<u32>> + Send>> =
                 Box::pin(stream::iter([vec![0xc0, 0xff, 0xee]]));
             let b: Pin<Box<dyn Stream<Item = Vec<&str>> + Send>> =
@@ -1033,9 +1037,9 @@ where
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 #[instrument(ret)]
 async fn rust_bindgen_nats_sync() -> anyhow::Result<()> {
-    wrpc_test::with_nats(|_, nats_client| async {
+    wrpc_test::with_nats(|_, clt| async {
         let clt = wrpc_transport_nats::Client::new(
-            nats_client,
+            clt,
             "rust-bindgen-sync",
             Some("rust-bindgen-sync".into()),
         )
@@ -1051,10 +1055,10 @@ async fn rust_bindgen_nats_sync() -> anyhow::Result<()> {
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 #[instrument(ret)]
 async fn rust_bindgen_nats_async() -> anyhow::Result<()> {
-    wrpc_test::with_nats(|_, nats_client| {
+    wrpc_test::with_nats(|_, clt| {
         async {
             let clt = wrpc_transport_nats::Client::new(
-                nats_client,
+                clt,
                 "rust-bindgen-async",
                 Some("rust-bindgen-async".into()),
             )
@@ -1072,8 +1076,8 @@ async fn rust_bindgen_nats_async() -> anyhow::Result<()> {
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 #[instrument(ret)]
 async fn rust_dynamic_nats() -> anyhow::Result<()> {
-    wrpc_test::with_nats(|_, nats_client| async {
-        let clt = wrpc_transport_nats::Client::new(nats_client, "rust-dynamic", None)
+    wrpc_test::with_nats(|_, clt| async {
+        let clt = wrpc_transport_nats::Client::new(clt, "rust-dynamic", None)
             .await
             .context("failed to construct client")?;
         let clt = Arc::new(clt);
