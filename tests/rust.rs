@@ -607,7 +607,6 @@ where
                 }
             }
 
-
             let invocations = bindings::serve(srv.as_ref(), Component(Arc::clone(&clt)))
                 .await
                 .context("failed to serve `wrpc-test:integration/test`")?;
