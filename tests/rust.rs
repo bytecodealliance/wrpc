@@ -9,7 +9,6 @@ use core::str;
 use core::time::Duration;
 
 use std::sync::Arc;
-use std::thread;
 
 use anyhow::Context;
 use bytes::Bytes;
@@ -721,7 +720,9 @@ where
                 .await
                 .expect("failed to accept invocation")
                 .expect("unexpected end of stream");
-            thread::spawn(|| inv);
+            tokio::spawn(async move { drop(inv) })
+                .await
+                .expect("failed to drop abandoned `test.reset` invocation");
         }
         .instrument(info_span!("server")),
         async {
