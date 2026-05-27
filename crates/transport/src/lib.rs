@@ -24,7 +24,6 @@ pub use frame::{
     Accept, Decoder as FrameDecoder, Encoder as FrameEncoder, Frame, FrameRef, Server,
 };
 pub use invoke::{Invoke, InvokeExt};
-pub use send_future::SendFuture;
 pub use serve::{Serve, ServeExt};
 pub use value::*;
 

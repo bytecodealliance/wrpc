@@ -27,44 +27,6 @@ pub trait Invoke: Send + Sync {
     type Incoming: AsyncRead + Index<Self::Incoming> + Send + Sync + Unpin + 'static;
 
     /// Invoke function `func` on instance `instance`
-    ///
-    /// Note, that compilation of code calling methods on [`Invoke`] implementations within [`Send`] async functions
-    /// may fail with hard-to-debug errors due to a compiler bug:
-    /// [https://github.com/rust-lang/rust/issues/96865](https://github.com/rust-lang/rust/issues/96865)
-    ///
-    /// The following fails to compile with rustc 1.78.0:
-    ///
-    /// ```compile_fail
-    /// use core::future::Future;
-    ///
-    /// fn invoke_send<T>() -> impl Future<Output = anyhow::Result<(T::Outgoing, T::Incoming)>> + Send
-    /// where
-    ///     T: wrpc_transport::Invoke<Context = ()> + Default,
-    /// {
-    ///     async { T::default().invoke((), "compiler-bug", "free", "since".into(), [[Some(2024)].as_slice(); 0]).await }
-    /// }
-    /// ```
-    ///
-    /// ```text
-    /// async { T::default().invoke((), "compiler-bug", "free", "since".into(), [[Some(2024)].as_slice(); 0]).await }
-    /// |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ implementation of `AsRef` is not general enough
-    ///  |
-    ///  = note: `[&'0 [Option<usize>]; 0]` must implement `AsRef<[&'1 [Option<usize>]]>`, for any two lifetimes `'0` and `'1`...
-    ///  = note: ...but it actually implements `AsRef<[&[Option<usize>]]>`
-    /// ```
-    ///
-    /// The fix is to call [`send`](send_future::SendFuture::send) provided by [`send_future::SendFuture`], re-exported by this crate, on the future before awaiting:
-    /// ```
-    /// use core::future::Future;
-    /// use wrpc_transport::SendFuture as _;
-    ///
-    /// fn invoke_send<T>() -> impl Future<Output = anyhow::Result<(T::Outgoing, T::Incoming)>> + Send
-    /// where
-    ///     T: wrpc_transport::Invoke<Context = ()> + Default,
-    /// {
-    ///     async { T::default().invoke((), "compiler-bug", "free", "since".into(), [[Some(2024)].as_slice(); 0]).send().await }
-    /// }
-    /// ```
     fn invoke<P>(
         &self,
         cx: Self::Context,
@@ -331,7 +293,6 @@ mod tests {
 
     use bytes::Bytes;
     use futures::{Stream, StreamExt as _};
-    use send_future::SendFuture as _;
 
     use super::*;
 
@@ -354,7 +315,6 @@ mod tests {
                     (),
                     [[None].as_slice()],
                 )
-                .send()
                 .await?;
             Ok(r0)
         }
