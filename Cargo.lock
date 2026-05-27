@@ -2916,12 +2916,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "send-future"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "224e328af6e080cddbab3c770b1cf50f0351ba0577091ef2410c3951d835ff87"
-
-[[package]]
 name = "serde"
 version = "1.0.228"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5400,7 +5394,6 @@ dependencies = [
  "bytes",
  "futures",
  "pin-project-lite",
- "send-future",
  "test-log",
  "tokio",
  "tokio-stream",
