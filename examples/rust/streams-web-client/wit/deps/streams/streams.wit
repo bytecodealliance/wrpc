@@ -1,0 +1,17 @@
+package wrpc-examples:streams;
+
+interface handler {
+    record req {
+        numbers: stream<u64>,
+        bytes: stream<u8>,
+    }
+    echo: func(r: req) -> (numbers: stream<u64>, bytes: stream<u8>);
+}
+
+world client {
+    import handler;
+}
+
+world server {
+    export handler;
+}

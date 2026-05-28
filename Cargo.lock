@@ -3187,6 +3187,45 @@ dependencies = [
 ]
 
 [[package]]
+name = "streams-web-client"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "clap",
+ "futures",
+ "rustls",
+ "tokio",
+ "tokio-stream",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+ "wit-bindgen-wrpc",
+ "wrpc-transport",
+ "wrpc-transport-web",
+ "wtransport",
+]
+
+[[package]]
+name = "streams-web-server"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "clap",
+ "futures",
+ "rcgen",
+ "rustls",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "wit-bindgen-wrpc",
+ "wrpc-transport",
+ "wrpc-transport-web",
+ "wtransport",
+]
+
+[[package]]
 name = "strsim"
 version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
