@@ -1,0 +1,12 @@
+package wrpc-examples:streams-io;
+
+interface handler {
+    use wasi:io/streams@0.2.0.{input-stream};
+
+    /// Read the entire input stream and return the total number of bytes read.
+    count: func(data: input-stream) -> u64;
+}
+
+world server {
+    export handler;
+}

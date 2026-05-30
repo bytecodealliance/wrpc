@@ -447,6 +447,12 @@ where
         .map_err(anyhow::Error::from)
         .context("failed to instantiate component")?;
     let engine = store.engine().clone();
+    let io_stream_resources: Arc<[ResourceType]> =
+        wrpc_runtime_wasmtime::paths::wasi_io_stream_resources(
+            &engine,
+            &pre.component().component_type(),
+        )
+        .into();
     let store = Arc::new(Mutex::new(store));
     for (name, ty) in pre.component().component_type().exports(&engine) {
         match (name, ty) {
@@ -458,6 +464,7 @@ where
                         instance,
                         Arc::clone(&guest_resources),
                         Arc::clone(&host_resources),
+                        Arc::clone(&io_stream_resources),
                         ty,
                         "",
                         name,
@@ -505,6 +512,7 @@ where
                                     instance,
                                     Arc::clone(&guest_resources),
                                     Arc::clone(&host_resources),
+                                    Arc::clone(&io_stream_resources),
                                     ty,
                                     instance_name,
                                     name,
