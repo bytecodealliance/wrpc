@@ -31,6 +31,7 @@ use crate::bindings::rpc::transport::{IncomingChannel, Invocation, OutgoingChann
 
 pub mod bindings;
 mod codec;
+pub mod paths;
 mod polyfill;
 pub mod rpc;
 mod serve;
@@ -383,6 +384,7 @@ pub async fn call<C, I, O>(
     mut tx: O,
     guest_resources: &[ResourceType],
     host_resources: &HashMap<Box<str>, HashMap<Box<str>, (ResourceType, ResourceType)>>,
+    io_streams: &[ResourceType],
     params_ty: impl ExactSizeIterator<Item = &Type>,
     results_ty: &[Type],
     func: Func,
@@ -396,10 +398,18 @@ where
     let mut params = vec![Val::Bool(false); params_ty.len()];
     let mut rx = pin!(rx);
     for (i, (v, ty)) in zip(&mut params, params_ty).enumerate() {
-        read_value(&mut store, &mut rx, guest_resources, v, ty, &[i])
-            .await
-            .with_context(|| format!("failed to decode parameter value {i}"))
-            .map_err(CallError::Decode)?;
+        read_value(
+            &mut store,
+            &mut rx,
+            guest_resources,
+            io_streams,
+            v,
+            ty,
+            &[i],
+        )
+        .await
+        .with_context(|| format!("failed to decode parameter value {i}"))
+        .map_err(CallError::Decode)?;
     }
     let mut results = vec![Val::Bool(false); results_ty.len()];
     func.call_async(&mut store, &params, &mut results)
@@ -415,7 +425,8 @@ where
     ) {
         (None, results) => {
             for (i, (v, ty)) in zip(results, results_ty).enumerate() {
-                let mut enc = ValEncoder::new(store.as_context_mut(), ty, guest_resources);
+                let mut enc =
+                    ValEncoder::new(store.as_context_mut(), ty, guest_resources, io_streams);
                 enc.encode(v, &mut buf)
                     .with_context(|| format!("failed to encode result value {i}"))
                     .map_err(CallError::Encode)?;
@@ -426,7 +437,7 @@ where
         (Some(None), [Val::Result(Ok(None))]) => {}
         // `result<T, rpc-eror>`
         (Some(Some(ty)), [Val::Result(Ok(Some(v)))]) => {
-            let mut enc = ValEncoder::new(store.as_context_mut(), ty, guest_resources);
+            let mut enc = ValEncoder::new(store.as_context_mut(), ty, guest_resources, io_streams);
             enc.encode(v, &mut buf)
                 .context("failed to encode result value 0")
                 .map_err(CallError::Encode)?;

@@ -59,10 +59,17 @@ pub trait ServeExt: wrpc_transport::Serve {
                 .get_export_index(idx.as_ref(), name)
                 .with_context(|| format!("export `{name}` not found"))?;
 
-            // TODO: set paths
-            let invocations = self.serve(instance_name, rpc_func_name(name), []).await?;
-            let name = Arc::<str>::from(name);
             let params_ty: Arc<[_]> = ty.params().map(|(_, ty)| ty).collect();
+            let io_streams: Arc<[ResourceType]> = crate::paths::wasi_io_stream_resources(
+                component_ty.engine(),
+                &component_ty.component_type(),
+            )
+            .into();
+            let paths = crate::paths::params_async_paths(params_ty.iter(), &io_streams);
+            let invocations = self
+                .serve(instance_name, rpc_func_name(name), paths)
+                .await?;
+            let name = Arc::<str>::from(name);
             let results_ty: Arc<[_]> = ty.results().collect();
             let host_resources = Arc::clone(&host_resources);
             Ok(invocations.map_ok(move |(cx, tx, rx)| {
@@ -71,6 +78,7 @@ pub trait ServeExt: wrpc_transport::Serve {
                 let params_ty = Arc::clone(&params_ty);
                 let results_ty = Arc::clone(&results_ty);
                 let host_resources = Arc::clone(&host_resources);
+                let io_streams = Arc::clone(&io_streams);
 
                 let mut store = store();
                 (
@@ -91,6 +99,7 @@ pub trait ServeExt: wrpc_transport::Serve {
                                 tx,
                                 &[],
                                 &host_resources,
+                                &io_streams,
                                 params_ty.iter(),
                                 &results_ty,
                                 func,
@@ -120,6 +129,7 @@ pub trait ServeExt: wrpc_transport::Serve {
         host_resources: impl Into<
             Arc<HashMap<Box<str>, HashMap<Box<str>, (ResourceType, ResourceType)>>>,
         >,
+        io_stream_resources: impl Into<Arc<[ResourceType]>>,
         ty: types::ComponentFunc,
         instance_name: &str,
         name: &str,
@@ -140,6 +150,7 @@ pub trait ServeExt: wrpc_transport::Serve {
         let span = Span::current();
         let guest_resources = guest_resources.into();
         let host_resources = host_resources.into();
+        let io_stream_resources = io_stream_resources.into();
         async move {
             let func = {
                 let mut store = store.lock().await;
@@ -158,9 +169,11 @@ pub trait ServeExt: wrpc_transport::Serve {
             }
             .with_context(|| format!("function export `{name}` not found"))?;
             debug!(instance = instance_name, name, "serving function export");
-            // TODO: set paths
-            let invocations = self.serve(instance_name, rpc_func_name(name), []).await?;
             let params_ty: Arc<[_]> = ty.params().map(|(_, ty)| ty).collect();
+            let paths = crate::paths::params_async_paths(params_ty.iter(), &io_stream_resources);
+            let invocations = self
+                .serve(instance_name, rpc_func_name(name), paths)
+                .await?;
             let results_ty: Arc<[_]> = ty.results().collect();
             let guest_resources = Arc::clone(&guest_resources);
             let host_resources = Arc::clone(&host_resources);
@@ -169,6 +182,7 @@ pub trait ServeExt: wrpc_transport::Serve {
                 let results_ty = Arc::clone(&results_ty);
                 let guest_resources = Arc::clone(&guest_resources);
                 let host_resources = Arc::clone(&host_resources);
+                let io_stream_resources = Arc::clone(&io_stream_resources);
                 let store = Arc::clone(&store);
                 (
                     cx,
@@ -181,6 +195,7 @@ pub trait ServeExt: wrpc_transport::Serve {
                                 tx,
                                 &guest_resources,
                                 &host_resources,
+                                &io_stream_resources,
                                 params_ty.iter(),
                                 &results_ty,
                                 func,
