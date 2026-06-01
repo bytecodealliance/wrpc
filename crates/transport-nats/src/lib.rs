@@ -248,8 +248,18 @@ impl Client {
                 let mut subs = HashMap::new();
                 loop {
                     select! {
-                        Some(msg) = sub.next() => handle_message(&mut subs, msg).await,
+                        // NOTE: `biased` ensures that pending subscription commands are always
+                        // applied before incoming messages are routed. Every wRPC subscription is
+                        // registered via `Command::Subscribe` before the matching data is
+                        // published, but both reach this single demux task as independent ready
+                        // events. Without biasing, `select!` picks a ready branch at random and may
+                        // route a message before its `Subscribe` command is applied, dropping it as
+                        // having "no subscriber" and hanging the consumer forever. This races more
+                        // easily under load, when the task is scheduled less frequently and a
+                        // queued command and an arrived message are both ready in the same poll.
+                        biased;
                         Some(cmd) = cmd_rx.recv() => handle_command(&mut subs, cmd),
+                        Some(msg) = sub.next() => handle_message(&mut subs, msg).await,
                         else => return,
                     }
                 }
