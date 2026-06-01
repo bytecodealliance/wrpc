@@ -333,6 +333,10 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       packages: write
+    env:
+      # The runner ships a v1-format /etc/containers/registries.conf, which the
+      # newer skopeo from nixpkgs-unstable rejects. Point it at our own v2 file.
+      CONTAINERS_REGISTRIES_CONF: ${{ github.workspace }}/.github/registries.conf
     needs:
       - build-bin
       - test-linux
@@ -363,6 +367,9 @@ jobs:
           registry: ghcr.io
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Write v2 `registries.conf`
+        run: printf 'unqualified-search-registries = ["docker.io"]\n' > "${CONTAINERS_REGISTRIES_CONF}"
 
       - name: Install `skopeo`
         run: nix profile install --inputs-from . 'nixpkgs-unstable#skopeo'
