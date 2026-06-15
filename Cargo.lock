@@ -4188,10 +4188,8 @@ version = "0.252.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "054d19e2b53e3bf158deac6e8cc003d9eaf3ec7ecaef579988ef7b5c666f9546"
 dependencies = [
- "anyhow",
  "logos",
  "thiserror 2.0.18",
- "wit-parser 0.252.0",
 ]
 
 [[package]]
