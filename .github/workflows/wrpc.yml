@@ -33,6 +33,8 @@ on:
       - 'crates/wasi-keyvalue/v[0-9].[0-9]+.[0-9]+-*'
       - 'crates/wasmtime-cli/v[0-9].[0-9]+.[0-9]+'
       - 'crates/wasmtime-cli/v[0-9].[0-9]+.[0-9]+-*'
+      - 'crates/wave/v[0-9].[0-9]+.[0-9]+'
+      - 'crates/wave/v[0-9].[0-9]+.[0-9]+-*'
       - 'crates/wit-bindgen-go/v[0-9].[0-9]+.[0-9]+'
       - 'crates/wit-bindgen-go/v[0-9].[0-9]+.[0-9]+-*'
       - 'crates/wit-bindgen-rust-macro/v[0-9].[0-9]+.[0-9]+'
@@ -239,6 +241,9 @@ jobs:
             workspace-dependencies: true
 
           - crate: wasmtime-cli
+            workspace-dependencies: true
+
+          - crate: wave
             workspace-dependencies: true
 
           - crate: wit-bindgen
