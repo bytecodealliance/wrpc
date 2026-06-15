@@ -5094,7 +5094,7 @@ dependencies = [
 
 [[package]]
 name = "wit-bindgen-wrpc-go"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -5454,7 +5454,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc-wasi-keyvalue"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "wit-bindgen-wrpc",
 ]
