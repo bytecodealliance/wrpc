@@ -129,7 +129,7 @@ impl Accept for &Client {
     type Outgoing = SendStream;
     type Incoming = RecvStream;
 
-    async fn accept(&self) -> std::io::Result<(Self::Context, Self::Outgoing, Self::Incoming)> {
+    async fn accept(&mut self) -> std::io::Result<(Self::Context, Self::Outgoing, Self::Incoming)> {
         let (tx, rx) = self.0.accept_bi().await.map_err(std::io::Error::other)?;
         Ok(((), tx, rx))
     }
@@ -140,7 +140,7 @@ impl Accept for Client {
     type Outgoing = SendStream;
     type Incoming = RecvStream;
 
-    async fn accept(&self) -> std::io::Result<(Self::Context, Self::Outgoing, Self::Incoming)> {
-        (&self).accept().await
+    async fn accept(&mut self) -> std::io::Result<(Self::Context, Self::Outgoing, Self::Incoming)> {
+        <&Self>::accept(&mut &*self).await
     }
 }
