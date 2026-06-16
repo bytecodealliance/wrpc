@@ -95,8 +95,8 @@ impl Accept for TcpListener {
     type Outgoing = OwnedWriteHalf;
     type Incoming = OwnedReadHalf;
 
-    async fn accept(&self) -> std::io::Result<(Self::Context, Self::Outgoing, Self::Incoming)> {
-        (&self).accept().await
+    async fn accept(&mut self) -> std::io::Result<(Self::Context, Self::Outgoing, Self::Incoming)> {
+        <&Self>::accept(&mut &*self).await
     }
 }
 
@@ -106,7 +106,7 @@ impl Accept for &TcpListener {
     type Incoming = OwnedReadHalf;
 
     #[instrument(level = "trace")]
-    async fn accept(&self) -> std::io::Result<(Self::Context, Self::Outgoing, Self::Incoming)> {
+    async fn accept(&mut self) -> std::io::Result<(Self::Context, Self::Outgoing, Self::Incoming)> {
         let (stream, addr) = TcpListener::accept(self).await?;
         let (rx, tx) = stream.into_split();
         Ok((addr, tx, rx))

@@ -114,22 +114,8 @@ where
     type Outgoing = O;
     type Incoming = I;
 
-    async fn accept(&self) -> std::io::Result<(Self::Context, Self::Outgoing, Self::Incoming)> {
-        (&self).accept().await
-    }
-}
-
-impl<I, O> Accept for &Oneshot<I, O>
-where
-    I: AsyncRead + Send + Sync + Unpin + 'static,
-    O: AsyncWrite + Send + Sync + Unpin + 'static,
-{
-    type Context = ();
-    type Outgoing = O;
-    type Incoming = I;
-
     #[instrument(level = "trace", skip(self))]
-    async fn accept(&self) -> std::io::Result<(Self::Context, Self::Outgoing, Self::Incoming)> {
+    async fn accept(&mut self) -> std::io::Result<(Self::Context, Self::Outgoing, Self::Incoming)> {
         let (rx, tx) = self.try_take_inner()?;
         Ok(((), tx, rx))
     }

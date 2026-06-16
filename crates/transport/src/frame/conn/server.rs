@@ -96,7 +96,7 @@ where
     #[instrument(level = "trace", skip_all, ret(level = "trace"))]
     pub async fn accept(
         &self,
-        listener: impl Accept<Context = C, Incoming = I, Outgoing = O>,
+        mut listener: impl Accept<Context = C, Incoming = I, Outgoing = O>,
     ) -> Result<(), AcceptError<C, I, O>> {
         let (cx, tx, mut rx) = listener.accept().await.map_err(AcceptError::IO)?;
         let mut instance = String::default();
