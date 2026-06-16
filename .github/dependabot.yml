@@ -37,6 +37,10 @@ updates:
   directory: "/"
   schedule:
     interval: "daily"
+  groups:
+    nix:
+      patterns:
+        - "*"
 
 - package-ecosystem: gomod
   directory: /examples/go/resources-server
