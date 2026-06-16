@@ -7,19 +7,19 @@ pub mod transport {
     pub use wrpc_transport::*;
 
     #[cfg(feature = "nats")]
-    pub use wrpc_transport_nats as nats;
+    pub use wrpc_nats as nats;
 
     #[cfg(feature = "quic")]
-    pub use wrpc_transport_quic as quic;
+    pub use wrpc_quic as quic;
 
     #[cfg(feature = "web-transport")]
-    pub use wrpc_transport_web as web;
+    pub use wrpc_webtransport as web;
 }
 
 /// wRPC runtime
 pub mod runtime {
     #[cfg(feature = "wasmtime")]
-    pub use wrpc_runtime_wasmtime as wasmtime;
+    pub use wrpc_wasmtime as wasmtime;
 }
 
 pub use transport::{Index, Invoke, Serve};

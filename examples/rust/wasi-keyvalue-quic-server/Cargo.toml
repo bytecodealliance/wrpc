@@ -39,6 +39,6 @@ tracing-subscriber = { workspace = true, features = [
     "fmt",
 ] }
 wrpc-transport = { workspace = true }
-wrpc-transport-quic = { workspace = true }
+wrpc-quic = { workspace = true }
 wrpc-wasi-keyvalue = { workspace = true }
 wrpc-wasi-keyvalue-mem = { workspace = true }

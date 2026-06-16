@@ -93,7 +93,7 @@ async fn main() -> anyhow::Result<()> {
         .connect_with(conf, addr, "localhost")?
         .await
         .context("failed to connect to server")?;
-    let wrpc = wrpc_transport_quic::Client::from(connection);
+    let wrpc = wrpc_quic::Client::from(connection);
 
     let numbers = Box::pin(
         stream::iter(1..)

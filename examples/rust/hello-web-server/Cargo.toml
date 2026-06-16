@@ -27,5 +27,5 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["ansi", "fmt"] }
 wit-bindgen-wrpc = { workspace = true }
 wrpc-transport = { workspace = true }
-wrpc-transport-web = { workspace = true }
+wrpc-webtransport = { workspace = true }
 wtransport = { workspace = true }

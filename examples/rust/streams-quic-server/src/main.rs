@@ -80,7 +80,7 @@ async fn main() -> anyhow::Result<()> {
     let ep = Endpoint::server(ServerConfig::with_crypto(Arc::new(conf)), addr)
         .context("failed to create server endpoint")?;
 
-    let srv = Arc::new(wrpc_transport_quic::Server::new());
+    let srv = Arc::new(wrpc_quic::Server::new());
     let accept = tokio::spawn({
         let mut tasks = JoinSet::<anyhow::Result<()>>::new();
         let srv = Arc::clone(&srv);
@@ -94,7 +94,7 @@ async fn main() -> anyhow::Result<()> {
                                 .accept()
                                 .context("failed to accept QUIC connection")?;
                             let conn = conn.await.context("failed to establish QUIC connection")?;
-                            let wrpc = wrpc_transport_quic::Client::from(conn);
+                            let wrpc = wrpc_quic::Client::from(conn);
                             loop {
                                 srv.accept(&wrpc)
                                     .await

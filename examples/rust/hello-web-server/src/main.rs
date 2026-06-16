@@ -70,7 +70,7 @@ async fn main() -> anyhow::Result<()> {
     )
     .context("failed to create server endpoint")?;
 
-    let srv = Arc::new(wrpc_transport_web::Server::new());
+    let srv = Arc::new(wrpc_webtransport::Server::new());
     let invocations = bindings::serve(srv.as_ref(), Handler)
         .await
         .context("failed to serve `wrpc-examples.hello/handler.hello`")?;
@@ -88,7 +88,7 @@ async fn main() -> anyhow::Result<()> {
                     .accept()
                     .await
                     .context("failed to establish WebTransport connection")?;
-                let wrpc = wrpc_transport_web::Client::from(conn);
+                let wrpc = wrpc_webtransport::Client::from(conn);
                 loop {
                     srv.accept(&wrpc)
                         .await

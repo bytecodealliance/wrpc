@@ -13,7 +13,7 @@ use wasm_tokio::{CoreNameEncoder, Leb128Encoder, Utf8Codec};
 use wasm_wave::wasm::{WasmType, WasmTypeKind, WasmValue};
 
 /// Encoder for wasm-wave values with type information stored in the encoder.
-/// This mirrors the `ValEncoder` from `wrpc-runtime-wasmtime`.
+/// This mirrors the `ValEncoder` from `wrpc-wasmtime`.
 ///
 /// ## Usage
 ///

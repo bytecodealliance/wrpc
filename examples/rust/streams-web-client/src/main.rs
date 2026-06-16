@@ -95,7 +95,7 @@ async fn main() -> anyhow::Result<()> {
         .connect(&addr)
         .await
         .context("failed to connect to server")?;
-    let wrpc = wrpc_transport_web::Client::from(session);
+    let wrpc = wrpc_webtransport::Client::from(session);
 
     let numbers = Box::pin(
         stream::iter(1..)

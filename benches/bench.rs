@@ -453,7 +453,7 @@ fn bench_wasm_ping_nats_wrpc(
         .context("failed to construct a Wasm handler")?;
     with_nats(&rt, |nats| {
         let wrpc = rt
-            .block_on(wrpc_transport_nats::Client::new(nats, "", None))
+            .block_on(wrpc_nats::Client::new(nats, "", None))
             .context("failed to construct client")?;
 
         let invocations = rt
@@ -505,7 +505,7 @@ fn bench_wasm_greet_nats_wrpc(
         .context("failed to construct a Wasm handler")?;
     with_nats(&rt, |nats| {
         let wrpc = rt
-            .block_on(wrpc_transport_nats::Client::new(nats, "", None))
+            .block_on(wrpc_nats::Client::new(nats, "", None))
             .context("failed to construct client")?;
 
         let invocations = rt
@@ -551,7 +551,7 @@ fn bench_nats_wrpc_ping(g: &mut BenchmarkGroup<impl Measurement>) -> anyhow::Res
     let rt = tokio::runtime::Runtime::new().context("failed to build Tokio runtime")?;
     with_nats(&rt, |nats| {
         let wrpc = rt
-            .block_on(wrpc_transport_nats::Client::new(nats, "", None))
+            .block_on(wrpc_nats::Client::new(nats, "", None))
             .context("failed to construct client")?;
 
         let invocations = rt
@@ -597,7 +597,7 @@ fn bench_nats_wrpc_greet(g: &mut BenchmarkGroup<impl Measurement>) -> anyhow::Re
     let rt = tokio::runtime::Runtime::new().context("failed to build Tokio runtime")?;
     with_nats(&rt, |nats| {
         let wrpc = rt
-            .block_on(wrpc_transport_nats::Client::new(nats, "", None))
+            .block_on(wrpc_nats::Client::new(nats, "", None))
             .context("failed to construct client")?;
 
         let invocations = rt

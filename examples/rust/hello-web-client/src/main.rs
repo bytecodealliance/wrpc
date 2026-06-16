@@ -83,7 +83,7 @@ async fn main() -> anyhow::Result<()> {
         .connect(&addr)
         .await
         .context("failed to connect to server")?;
-    let wrpc = wrpc_transport_web::Client::from(session);
+    let wrpc = wrpc_webtransport::Client::from(session);
     let hello = bindings::wrpc_examples::hello::handler::hello(&wrpc, ())
         .await
         .context("failed to invoke `wrpc-examples.hello/handler.hello`")?;

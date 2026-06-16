@@ -8,14 +8,14 @@ use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::try_join;
 use tracing::info;
 use wrpc_transport::{Index as _, Invoke as _, Serve as _};
-use wrpc_transport_quic::Client;
+use wrpc_webtransport::Client;
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn loopback() -> anyhow::Result<()> {
-    wrpc_test::with_quic(|clt, srv| async {
+    wrpc_test::with_web_transport(|clt, srv| async {
         let clt = Client::from(clt);
         let srv_conn = Client::from(srv);
-        let srv = Arc::new(wrpc_transport_quic::Server::new());
+        let srv = Arc::new(wrpc_webtransport::Server::new());
         let invocations = srv
             .serve("foo", "bar", [Box::from([Some(42), Some(0)])])
             .await
@@ -85,7 +85,7 @@ async fn loopback() -> anyhow::Result<()> {
                 anyhow::Ok(())
             },
             async {
-                srv.accept(srv_conn)
+                srv.accept(&srv_conn)
                     .await
                     .context("failed to accept invocation")?;
                 let ((), mut outgoing, mut incoming) = invocations
@@ -161,6 +161,8 @@ async fn loopback() -> anyhow::Result<()> {
                 Ok(())
             }
         )?;
+        _ = clt;
+        _ = srv;
         Ok(())
     })
     .await

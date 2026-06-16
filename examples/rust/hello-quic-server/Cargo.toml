@@ -40,4 +40,4 @@ tracing-subscriber = { workspace = true, features = [
 ] }
 wit-bindgen-wrpc = { workspace = true }
 wrpc-transport = { workspace = true }
-wrpc-transport-quic = { workspace = true }
+wrpc-quic = { workspace = true }

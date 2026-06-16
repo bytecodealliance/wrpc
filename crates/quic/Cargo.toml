@@ -1,7 +1,7 @@
 [package]
-name = "wrpc-transport-web"
-version = "0.3.0"
-description = "wRPC WebTransport transport"
+name = "wrpc-quic"
+version = "0.1.0"
+description = "wRPC QUIC transport"
 
 authors.workspace = true
 categories.workspace = true
@@ -12,13 +12,12 @@ repository.workspace = true
 [dependencies]
 anyhow = { workspace = true, features = ["std"] }
 bytes = { workspace = true }
-quinn = { workspace = true }
+quinn = { workspace = true, features = ["runtime-tokio"] }
 tracing = { workspace = true }
 wrpc-transport = { workspace = true }
-wtransport = { workspace = true, features = ["quinn", "ring"] }
 
 [dev-dependencies]
 futures = { workspace = true }
 test-log = { workspace = true, features = ["color", "log", "trace"] }
 tokio = { workspace = true, features = ["rt-multi-thread"] }
-wrpc-test = { workspace = true, features = ["web-transport"] }
+wrpc-test = { workspace = true, features = ["quic"] }

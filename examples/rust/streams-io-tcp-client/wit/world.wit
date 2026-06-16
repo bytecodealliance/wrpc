@@ -3,7 +3,7 @@ package wrpc-examples:streams-io;
 interface handler {
     /// Same function as the component server exports, but viewed over the wire:
     /// the component's `wasi:io/streams.input-stream` parameter is bridged to a
-    /// native wRPC `stream<u8>` by `wrpc-runtime-wasmtime`.
+    /// native wRPC `stream<u8>` by `wrpc-wasmtime`.
     count: func(data: stream<u8>) -> u64;
 }
 
