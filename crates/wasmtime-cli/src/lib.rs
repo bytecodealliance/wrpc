@@ -25,11 +25,11 @@ use wasmtime::{Engine, Store};
 use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 use wasmtime_wasi_http::p2::{WasiHttpCtxView, WasiHttpView};
 use wasmtime_wasi_http::WasiHttpCtx;
-use wrpc_runtime_wasmtime::{
+use wrpc_transport::{Invoke, Serve};
+use wrpc_wasmtime::{
     collect_component_resource_exports, collect_component_resource_imports, link_item, rpc,
     RemoteResource, ServeExt as _, SharedResourceTable, WrpcCtxView, WrpcView,
 };
-use wrpc_transport::{Invoke, Serve};
 
 mod nats;
 mod tcp;
@@ -64,7 +64,7 @@ pub struct Ctx<C: Invoke> {
     pub wrpc: WrpcCtx<C>,
 }
 
-impl<C> wrpc_runtime_wasmtime::WrpcCtx<C> for WrpcCtx<C>
+impl<C> wrpc_wasmtime::WrpcCtx<C> for WrpcCtx<C>
 where
     C: Invoke,
     C::Context: Clone,
@@ -231,7 +231,7 @@ where
     wasmtime_wasi_http::p2::add_only_http_to_linker_async(&mut linker)
         .map_err(anyhow::Error::from)
         .context("failed to link `wasi:http`")?;
-    wrpc_runtime_wasmtime::rpc::add_to_linker(&mut linker)
+    wrpc_wasmtime::rpc::add_to_linker(&mut linker)
         .map_err(anyhow::Error::from)
         .context("failed to link `wrpc:rpc`")?;
 
@@ -448,11 +448,8 @@ where
         .context("failed to instantiate component")?;
     let engine = store.engine().clone();
     let io_stream_resources: Arc<[ResourceType]> =
-        wrpc_runtime_wasmtime::paths::wasi_io_stream_resources(
-            &engine,
-            &pre.component().component_type(),
-        )
-        .into();
+        wrpc_wasmtime::paths::wasi_io_stream_resources(&engine, &pre.component().component_type())
+            .into();
     let store = Arc::new(Mutex::new(store));
     for (name, ty) in pre.component().component_type().exports(&engine) {
         match (name, ty) {

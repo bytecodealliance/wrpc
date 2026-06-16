@@ -1,6 +1,6 @@
 //! Async value decoder for wasm-wave types
 //!
-//! This module provides `read_value`, which mirrors `wrpc_runtime_wasmtime::codec::read_value`
+//! This module provides `read_value`, which mirrors `wrpc_wasmtime::codec::read_value`
 //! but works with `wasm_wave::value::Value` instead of `wasmtime::component::Val`.
 //!
 //! ## Design
@@ -33,7 +33,7 @@ use wasm_wave::wasm::{WasmType, WasmTypeKind, WasmValue as _};
 
 /// Read a wasm-wave `Value` from an async reader
 ///
-/// This mirrors `wrpc_runtime_wasmtime::codec::read_value`
+/// This mirrors `wrpc_wasmtime::codec::read_value`
 /// but without the `Index<R>` trait bound and `path` parameter,
 /// since wasm-wave doesn't support resources, async or streams
 ///

@@ -82,11 +82,11 @@ enum Bucket {
     Redis(ResourceOwn<store::Bucket>),
     Nats(
         ResourceOwn<wrpc_wasi_keyvalue::wasi::keyvalue::store::Bucket>,
-        wrpc_transport_nats::Client,
+        wrpc_nats::Client,
     ),
     Quic(
         ResourceOwn<wrpc_wasi_keyvalue::wasi::keyvalue::store::Bucket>,
-        wrpc_transport_quic::Client,
+        wrpc_quic::Client,
     ),
     Tcp(
         ResourceOwn<wrpc_wasi_keyvalue::wasi::keyvalue::store::Bucket>,
@@ -99,7 +99,7 @@ enum Bucket {
     ),
     Web(
         ResourceOwn<wrpc_wasi_keyvalue::wasi::keyvalue::store::Bucket>,
-        wrpc_transport_web::Client,
+        wrpc_webtransport::Client,
     ),
 }
 
@@ -189,7 +189,7 @@ impl<C: Send + Sync> store::Handler<C> for Handler {
                 };
                 let prefix = url.path();
                 let prefix = prefix.strip_prefix('/').unwrap_or(prefix);
-                let wrpc = match wrpc_transport_nats::Client::new(nats, prefix, None)
+                let wrpc = match wrpc_nats::Client::new(nats, prefix, None)
                     .await
                     .context("failed to construct wRPC client")
                 {
@@ -232,7 +232,7 @@ impl<C: Send + Sync> store::Handler<C> for Handler {
                     Ok(ep) => ep,
                     Err(err) => return Ok(Err(store::Error::Other(format!("{err:#}")))),
                 };
-                let wrpc = wrpc_transport_quic::Client::from(conn);
+                let wrpc = wrpc_quic::Client::from(conn);
                 match wrpc_wasi_keyvalue::wasi::keyvalue::store::open(&wrpc, (), suffix).await? {
                     Ok(bucket) => Bucket::Quic(bucket, wrpc),
                     Err(err) => return Ok(Err(err.into())),
@@ -284,7 +284,7 @@ impl<C: Send + Sync> store::Handler<C> for Handler {
                     Ok(ep) => ep,
                     Err(err) => return Ok(Err(store::Error::Other(format!("{err:#}")))),
                 };
-                let wrpc = wrpc_transport_web::Client::from(conn);
+                let wrpc = wrpc_webtransport::Client::from(conn);
                 match wrpc_wasi_keyvalue::wasi::keyvalue::store::open(&wrpc, (), suffix).await? {
                     Ok(bucket) => Bucket::Web(bucket, wrpc),
                     Err(err) => return Ok(Err(err.into())),
@@ -695,7 +695,7 @@ export const PORT = "{port}"
             .layer(TraceLayer::new_for_http()),
     );
 
-    let srv = Arc::new(wrpc_transport_web::Server::new());
+    let srv = Arc::new(wrpc_webtransport::Server::new());
 
     let invocations = wrpc_wasi_keyvalue::exports::wasi::keyvalue::store::serve_interface(
         srv.as_ref(),
@@ -771,7 +771,7 @@ export const PORT = "{port}"
                         .accept()
                         .await
                         .context("failed to establish WebTransport connection")?;
-                    let wrpc = wrpc_transport_web::Client::from(conn);
+                    let wrpc = wrpc_webtransport::Client::from(conn);
                     loop {
                         srv.accept(&wrpc)
                             .await

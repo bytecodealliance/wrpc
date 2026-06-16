@@ -1391,7 +1391,7 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "wit-bindgen-wrpc",
- "wrpc-transport-nats",
+ "wrpc-nats",
 ]
 
 [[package]]
@@ -1407,7 +1407,7 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "wit-bindgen-wrpc",
- "wrpc-transport-nats",
+ "wrpc-nats",
 ]
 
 [[package]]
@@ -1425,8 +1425,8 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "wit-bindgen-wrpc",
+ "wrpc-quic",
  "wrpc-transport",
- "wrpc-transport-quic",
 ]
 
 [[package]]
@@ -1444,8 +1444,8 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "wit-bindgen-wrpc",
+ "wrpc-quic",
  "wrpc-transport",
- "wrpc-transport-quic",
 ]
 
 [[package]]
@@ -1512,7 +1512,7 @@ dependencies = [
  "url",
  "wit-bindgen-wrpc",
  "wrpc-transport",
- "wrpc-transport-web",
+ "wrpc-webtransport",
  "wtransport",
 ]
 
@@ -1530,7 +1530,7 @@ dependencies = [
  "tracing-subscriber",
  "wit-bindgen-wrpc",
  "wrpc-transport",
- "wrpc-transport-web",
+ "wrpc-webtransport",
  "wtransport",
 ]
 
@@ -3094,7 +3094,7 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "wit-bindgen-wrpc",
- "wrpc-transport-nats",
+ "wrpc-nats",
 ]
 
 [[package]]
@@ -3111,7 +3111,7 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "wit-bindgen-wrpc",
- "wrpc-transport-nats",
+ "wrpc-nats",
 ]
 
 [[package]]
@@ -3131,8 +3131,8 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "wit-bindgen-wrpc",
+ "wrpc-quic",
  "wrpc-transport",
- "wrpc-transport-quic",
 ]
 
 [[package]]
@@ -3151,8 +3151,8 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "wit-bindgen-wrpc",
+ "wrpc-quic",
  "wrpc-transport",
- "wrpc-transport-quic",
 ]
 
 [[package]]
@@ -3202,7 +3202,7 @@ dependencies = [
  "url",
  "wit-bindgen-wrpc",
  "wrpc-transport",
- "wrpc-transport-web",
+ "wrpc-webtransport",
  "wtransport",
 ]
 
@@ -3221,7 +3221,7 @@ dependencies = [
  "tracing-subscriber",
  "wit-bindgen-wrpc",
  "wrpc-transport",
- "wrpc-transport-web",
+ "wrpc-webtransport",
  "wtransport",
 ]
 
@@ -3866,7 +3866,7 @@ dependencies = [
  "tokio",
  "tracing-subscriber",
  "url",
- "wrpc-transport-nats",
+ "wrpc-nats",
  "wrpc-wasi-keyvalue",
 ]
 
@@ -3883,8 +3883,8 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "url",
+ "wrpc-nats",
  "wrpc-transport",
- "wrpc-transport-nats",
  "wrpc-wasi-keyvalue",
  "wrpc-wasi-keyvalue-mem",
 ]
@@ -3902,7 +3902,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
- "wrpc-transport-quic",
+ "wrpc-quic",
  "wrpc-wasi-keyvalue",
 ]
 
@@ -3920,8 +3920,8 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "wrpc-quic",
  "wrpc-transport",
- "wrpc-transport-quic",
  "wrpc-wasi-keyvalue",
  "wrpc-wasi-keyvalue-mem",
 ]
@@ -3992,13 +3992,13 @@ dependencies = [
  "url",
  "uuid",
  "wit-bindgen-wrpc",
+ "wrpc-nats",
+ "wrpc-quic",
  "wrpc-transport",
- "wrpc-transport-nats",
- "wrpc-transport-quic",
- "wrpc-transport-web",
  "wrpc-wasi-keyvalue",
  "wrpc-wasi-keyvalue-mem",
  "wrpc-wasi-keyvalue-redis",
+ "wrpc-webtransport",
  "wtransport",
 ]
 
@@ -4014,9 +4014,9 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "wrpc-transport",
- "wrpc-transport-web",
  "wrpc-wasi-keyvalue",
  "wrpc-wasi-keyvalue-mem",
+ "wrpc-webtransport",
  "wtransport",
 ]
 
@@ -5330,13 +5330,13 @@ dependencies = [
  "wit-bindgen-wrpc-go",
  "wit-bindgen-wrpc-rust",
  "wrpc-cli",
- "wrpc-runtime-wasmtime",
+ "wrpc-nats",
+ "wrpc-quic",
  "wrpc-test",
  "wrpc-transport",
- "wrpc-transport-nats",
- "wrpc-transport-quic",
- "wrpc-transport-web",
+ "wrpc-wasmtime",
  "wrpc-wasmtime-cli",
+ "wrpc-webtransport",
 ]
 
 [[package]]
@@ -5357,6 +5357,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "wrpc-nats"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-nats",
+ "bytes",
+ "futures",
+ "nuid",
+ "tokio",
+ "tokio-stream",
+ "tokio-util",
+ "tracing",
+ "wasm-tokio",
+ "wrpc-transport",
+]
+
+[[package]]
 name = "wrpc-pack"
 version = "0.4.0"
 dependencies = [
@@ -5368,21 +5385,17 @@ dependencies = [
 ]
 
 [[package]]
-name = "wrpc-runtime-wasmtime"
-version = "0.31.0"
+name = "wrpc-quic"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "bytes",
  "futures",
+ "quinn",
+ "test-log",
  "tokio",
- "tokio-util",
  "tracing",
- "uuid",
- "wasm-tokio",
- "wasmtime",
- "wasmtime-wasi",
- "wit-parser 0.220.1",
- "wrpc-introspect",
+ "wrpc-test",
  "wrpc-transport",
 ]
 
@@ -5416,54 +5429,6 @@ dependencies = [
  "tracing",
  "wasi 0.14.7+wasi-0.2.4",
  "wasm-tokio",
-]
-
-[[package]]
-name = "wrpc-transport-nats"
-version = "0.31.0"
-dependencies = [
- "anyhow",
- "async-nats",
- "bytes",
- "futures",
- "nuid",
- "tokio",
- "tokio-stream",
- "tokio-util",
- "tracing",
- "wasm-tokio",
- "wrpc-transport",
-]
-
-[[package]]
-name = "wrpc-transport-quic"
-version = "0.6.0"
-dependencies = [
- "anyhow",
- "bytes",
- "futures",
- "quinn",
- "test-log",
- "tokio",
- "tracing",
- "wrpc-test",
- "wrpc-transport",
-]
-
-[[package]]
-name = "wrpc-transport-web"
-version = "0.3.0"
-dependencies = [
- "anyhow",
- "bytes",
- "futures",
- "quinn",
- "test-log",
- "tokio",
- "tracing",
- "wrpc-test",
- "wrpc-transport",
- "wtransport",
 ]
 
 [[package]]
@@ -5502,6 +5467,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "wrpc-wasmtime"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "futures",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "uuid",
+ "wasm-tokio",
+ "wasmtime",
+ "wasmtime-wasi",
+ "wit-parser 0.220.1",
+ "wrpc-introspect",
+ "wrpc-transport",
+]
+
+[[package]]
 name = "wrpc-wasmtime-cli"
 version = "0.9.0"
 dependencies = [
@@ -5524,9 +5508,9 @@ dependencies = [
  "wasmtime-wasi-http",
  "wit-component 0.252.0",
  "wrpc-cli",
- "wrpc-runtime-wasmtime",
+ "wrpc-nats",
  "wrpc-transport",
- "wrpc-transport-nats",
+ "wrpc-wasmtime",
 ]
 
 [[package]]
@@ -5544,6 +5528,22 @@ dependencies = [
  "wit-bindgen-wrpc",
  "wrpc-pack",
  "wrpc-transport",
+]
+
+[[package]]
+name = "wrpc-webtransport"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "futures",
+ "quinn",
+ "test-log",
+ "tokio",
+ "tracing",
+ "wrpc-test",
+ "wrpc-transport",
+ "wtransport",
 ]
 
 [[package]]

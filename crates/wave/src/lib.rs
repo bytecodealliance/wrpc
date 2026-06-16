@@ -6,7 +6,7 @@
 //!
 //! ### 1. Encoder approach (tokio-util codec)
 //!
-//! This approach mirrors the `ValEncoder` from `wrpc-runtime-wasmtime`,
+//! This approach mirrors the `ValEncoder` from `wrpc-wasmtime`,
 //! where you create an encoder with a type reference and then encode values directly:
 //!
 //! ```no_run

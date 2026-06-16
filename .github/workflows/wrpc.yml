@@ -11,18 +11,14 @@ on:
       - 'crates/cli/v[0-9].[0-9]+.[0-9]+-*'
       - 'crates/introspect/v[0-9].[0-9]+.[0-9]+'
       - 'crates/introspect/v[0-9].[0-9]+.[0-9]+-*'
+      - 'crates/nats/v[0-9].[0-9]+.[0-9]+'
+      - 'crates/nats/v[0-9].[0-9]+.[0-9]+-*'
       - 'crates/pack/v[0-9].[0-9]+.[0-9]+'
       - 'crates/pack/v[0-9].[0-9]+.[0-9]+-*'
-      - 'crates/runtime-wasmtime/v[0-9].[0-9]+.[0-9]+'
-      - 'crates/runtime-wasmtime/v[0-9].[0-9]+.[0-9]+-*'
+      - 'crates/quic/v[0-9].[0-9]+.[0-9]+'
+      - 'crates/quic/v[0-9].[0-9]+.[0-9]+-*'
       - 'crates/test/v[0-9].[0-9]+.[0-9]+'
       - 'crates/test/v[0-9].[0-9]+.[0-9]+-*'
-      - 'crates/transport-nats/v[0-9].[0-9]+.[0-9]+'
-      - 'crates/transport-nats/v[0-9].[0-9]+.[0-9]+-*'
-      - 'crates/transport-quic/v[0-9].[0-9]+.[0-9]+'
-      - 'crates/transport-quic/v[0-9].[0-9]+.[0-9]+-*'
-      - 'crates/transport-web/v[0-9].[0-9]+.[0-9]+'
-      - 'crates/transport-web/v[0-9].[0-9]+.[0-9]+-*'
       - 'crates/transport/v[0-9].[0-9]+.[0-9]+'
       - 'crates/transport/v[0-9].[0-9]+.[0-9]+-*'
       - 'crates/wasi-keyvalue-mem/v[0-9].[0-9]+.[0-9]+'
@@ -33,8 +29,12 @@ on:
       - 'crates/wasi-keyvalue/v[0-9].[0-9]+.[0-9]+-*'
       - 'crates/wasmtime-cli/v[0-9].[0-9]+.[0-9]+'
       - 'crates/wasmtime-cli/v[0-9].[0-9]+.[0-9]+-*'
+      - 'crates/wasmtime/v[0-9].[0-9]+.[0-9]+'
+      - 'crates/wasmtime/v[0-9].[0-9]+.[0-9]+-*'
       - 'crates/wave/v[0-9].[0-9]+.[0-9]+'
       - 'crates/wave/v[0-9].[0-9]+.[0-9]+-*'
+      - 'crates/webtransport/v[0-9].[0-9]+.[0-9]+'
+      - 'crates/webtransport/v[0-9].[0-9]+.[0-9]+-*'
       - 'crates/wit-bindgen-go/v[0-9].[0-9]+.[0-9]+'
       - 'crates/wit-bindgen-go/v[0-9].[0-9]+.[0-9]+-*'
       - 'crates/wit-bindgen-rust-macro/v[0-9].[0-9]+.[0-9]+'
@@ -211,24 +211,18 @@ jobs:
 
           - crate: introspect
 
+          - crate: nats
+            workspace-dependencies: true
+
           - crate: pack
             workspace-dependencies: true
 
           - crate: test
             workspace-dependencies: true
 
-          - crate: runtime-wasmtime
-            workspace-dependencies: true
-
           - crate: transport
 
-          - crate: transport-nats
-            workspace-dependencies: true
-
-          - crate: transport-quic
-            workspace-dependencies: true
-
-          - crate: transport-web
+          - crate: quic
             workspace-dependencies: true
 
           - crate: wasi-keyvalue
@@ -240,10 +234,16 @@ jobs:
           - crate: wasi-keyvalue-redis
             workspace-dependencies: true
 
+          - crate: wasmtime
+            workspace-dependencies: true
+
           - crate: wasmtime-cli
             workspace-dependencies: true
 
           - crate: wave
+            workspace-dependencies: true
+
+          - crate: webtransport
             workspace-dependencies: true
 
           - crate: wit-bindgen

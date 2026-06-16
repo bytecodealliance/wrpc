@@ -1038,13 +1038,10 @@ where
 #[instrument(ret)]
 async fn rust_bindgen_nats_sync() -> anyhow::Result<()> {
     wrpc_test::with_nats(|_, clt| async {
-        let clt = wrpc_transport_nats::Client::new(
-            clt,
-            "rust-bindgen-sync",
-            Some("rust-bindgen-sync".into()),
-        )
-        .await
-        .context("failed to construct client")?;
+        let clt =
+            wrpc_nats::Client::new(clt, "rust-bindgen-sync", Some("rust-bindgen-sync".into()))
+                .await
+                .context("failed to construct client")?;
         let clt = Arc::new(clt);
         assert_bindgen_sync(Arc::clone(&clt), clt).await
     })
@@ -1057,7 +1054,7 @@ async fn rust_bindgen_nats_sync() -> anyhow::Result<()> {
 async fn rust_bindgen_nats_async() -> anyhow::Result<()> {
     wrpc_test::with_nats(|_, clt| {
         async {
-            let clt = wrpc_transport_nats::Client::new(
+            let clt = wrpc_nats::Client::new(
                 clt,
                 "rust-bindgen-async",
                 Some("rust-bindgen-async".into()),
@@ -1077,7 +1074,7 @@ async fn rust_bindgen_nats_async() -> anyhow::Result<()> {
 #[instrument(ret)]
 async fn rust_dynamic_nats() -> anyhow::Result<()> {
     wrpc_test::with_nats(|_, clt| async {
-        let clt = wrpc_transport_nats::Client::new(clt, "rust-dynamic", None)
+        let clt = wrpc_nats::Client::new(clt, "rust-dynamic", None)
             .await
             .context("failed to construct client")?;
         let clt = Arc::new(clt);
@@ -1094,9 +1091,9 @@ async fn rust_bindgen_quic_sync() -> anyhow::Result<()> {
 
     wrpc_test::with_quic(|clt, srv| {
         async move {
-            let clt = wrpc_transport_quic::Client::from(clt);
-            let srv_conn = wrpc_transport_quic::Client::from(srv);
-            let srv = Arc::new(wrpc_transport_quic::Server::new());
+            let clt = wrpc_quic::Client::from(clt);
+            let srv_conn = wrpc_quic::Client::from(srv);
+            let srv = Arc::new(wrpc_quic::Server::new());
 
             let mut fut = pin!(async {
                 let clt = Arc::new(clt);
@@ -1126,9 +1123,9 @@ async fn rust_bindgen_quic_async() -> anyhow::Result<()> {
     use core::pin::pin;
 
     wrpc_test::with_quic(|clt, srv| async move {
-        let clt = wrpc_transport_quic::Client::from(clt);
-        let srv_conn = wrpc_transport_quic::Client::from(srv);
-        let srv = Arc::new(wrpc_transport_quic::Server::new());
+        let clt = wrpc_quic::Client::from(clt);
+        let srv_conn = wrpc_quic::Client::from(srv);
+        let srv = Arc::new(wrpc_quic::Server::new());
 
         let mut fut = pin!(async {
             let clt = Arc::new(clt);
@@ -1157,9 +1154,9 @@ async fn rust_dynamic_quic() -> anyhow::Result<()> {
     let span = Span::current();
     wrpc_test::with_quic(|clt, srv| {
         async move {
-            let clt = wrpc_transport_quic::Client::from(clt);
-            let srv_conn = wrpc_transport_quic::Client::from(srv);
-            let srv = Arc::new(wrpc_transport_quic::Server::new());
+            let clt = wrpc_quic::Client::from(clt);
+            let srv_conn = wrpc_quic::Client::from(srv);
+            let srv = Arc::new(wrpc_quic::Server::new());
 
             let mut fut = pin!(assert_dynamic(Arc::new(clt), Arc::clone(&srv)));
             loop {
@@ -1187,9 +1184,9 @@ async fn rust_bindgen_web_transport_sync() -> anyhow::Result<()> {
 
     wrpc_test::with_web_transport(|clt, srv| {
         async move {
-            let clt = wrpc_transport_web::Client::from(clt);
-            let srv_conn = wrpc_transport_web::Client::from(srv);
-            let srv = Arc::new(wrpc_transport_web::Server::new());
+            let clt = wrpc_webtransport::Client::from(clt);
+            let srv_conn = wrpc_webtransport::Client::from(srv);
+            let srv = Arc::new(wrpc_webtransport::Server::new());
 
             let mut fut = pin!(async {
                 let clt = Arc::new(clt);
@@ -1219,9 +1216,9 @@ async fn rust_bindgen_web_transport_async() -> anyhow::Result<()> {
     use core::pin::pin;
 
     wrpc_test::with_web_transport(|clt, srv| async move {
-        let clt = wrpc_transport_web::Client::from(clt);
-        let srv_conn = wrpc_transport_web::Client::from(srv);
-        let srv = Arc::new(wrpc_transport_web::Server::new());
+        let clt = wrpc_webtransport::Client::from(clt);
+        let srv_conn = wrpc_webtransport::Client::from(srv);
+        let srv = Arc::new(wrpc_webtransport::Server::new());
 
         let mut fut = pin!(async {
             let clt = Arc::new(clt);
@@ -1250,9 +1247,9 @@ async fn rust_dynamic_web_transport() -> anyhow::Result<()> {
     let span = Span::current();
     wrpc_test::with_web_transport(|clt, srv| {
         async move {
-            let clt = wrpc_transport_web::Client::from(clt);
-            let srv_conn = wrpc_transport_web::Client::from(srv);
-            let srv = Arc::new(wrpc_transport_web::Server::new());
+            let clt = wrpc_webtransport::Client::from(clt);
+            let srv_conn = wrpc_webtransport::Client::from(srv);
+            let srv = Arc::new(wrpc_webtransport::Server::new());
 
             let mut fut = pin!(assert_dynamic(Arc::new(clt), Arc::clone(&srv)));
             loop {

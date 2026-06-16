@@ -32,10 +32,8 @@ struct Args {
 #[derive(Clone, Copy)]
 struct Server;
 
-impl bindings::exports::wrpc_examples::hello::handler::Handler<wrpc_transport_nats::NatsContext>
-    for Server
-{
-    async fn hello(&self, _: wrpc_transport_nats::NatsContext) -> anyhow::Result<String> {
+impl bindings::exports::wrpc_examples::hello::handler::Handler<wrpc_nats::NatsContext> for Server {
+    async fn hello(&self, _: wrpc_nats::NatsContext) -> anyhow::Result<String> {
         Ok("hello from Rust".to_string())
     }
 }
@@ -53,7 +51,7 @@ async fn main() -> anyhow::Result<()> {
     .await
     .context("failed to connect to NATS.io server")?;
 
-    let wrpc = wrpc_transport_nats::Client::new(nats, prefix, None)
+    let wrpc = wrpc_nats::Client::new(nats, prefix, None)
         .await
         .context("failed to construct transport client")?;
     let invocations = bindings::serve(&wrpc, Server)
