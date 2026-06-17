@@ -21,4 +21,4 @@ wtransport = { workspace = true, features = ["quinn", "ring"] }
 futures = { workspace = true }
 test-log = { workspace = true, features = ["color", "log", "trace"] }
 tokio = { workspace = true, features = ["rt-multi-thread"] }
-wrpc-test = { workspace = true, features = ["web-transport"] }
+wrpc-test = { workspace = true, features = ["webtransport"] }

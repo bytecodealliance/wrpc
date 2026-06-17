@@ -199,8 +199,8 @@ where
     .await
 }
 
-#[cfg(feature = "web-transport")]
-pub async fn with_web_transport<T, Fut>(
+#[cfg(feature = "webtransport")]
+pub async fn with_webtransport<T, Fut>(
     f: impl FnOnce(wtransport::Connection, wtransport::Connection) -> Fut,
 ) -> anyhow::Result<T>
 where

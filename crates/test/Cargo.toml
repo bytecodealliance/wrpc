@@ -11,7 +11,7 @@ license.workspace = true
 repository.workspace = true
 
 [features]
-default = ["nats", "quic", "web-transport"]
+default = ["nats", "quic", "webtransport"]
 nats = ["dep:async-nats", "async-nats/ring", "wrpc-cli/nats"]
 quic = [
     "dep:quinn",
@@ -21,7 +21,7 @@ quic = [
     "quinn/runtime-tokio",
     "quinn/rustls",
 ]
-web-transport = ["dep:wtransport", "wtransport/self-signed"]
+webtransport = ["dep:wtransport", "wtransport/self-signed"]
 
 [dependencies]
 anyhow = { workspace = true }
