@@ -12,7 +12,7 @@ use wrpc_webtransport::Client;
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn loopback() -> anyhow::Result<()> {
-    wrpc_test::with_web_transport(|clt, srv| async {
+    wrpc_test::with_webtransport(|clt, srv| async {
         let clt = Client::from(clt);
         let srv_conn = Client::from(srv);
         let srv = Arc::new(wrpc_webtransport::Server::new());

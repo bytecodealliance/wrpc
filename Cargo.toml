@@ -27,7 +27,7 @@ members = [
 ]
 
 [features]
-default = ["bin", "nats", "net", "quic", "wasmtime", "web-transport"]
+default = ["bin", "nats", "net", "quic", "wasmtime", "webtransport"]
 
 bin = ["bin-bindgen", "bin-wasmtime"]
 bin-bindgen = [
@@ -42,7 +42,7 @@ nats = ["dep:async-nats", "dep:wrpc-nats", "wrpc-cli/nats"]
 net = ["wrpc-transport/net"]
 quic = ["dep:wrpc-quic"]
 wasmtime = ["dep:wrpc-wasmtime"]
-web-transport = ["dep:wrpc-webtransport"]
+webtransport = ["dep:wrpc-webtransport"]
 
 [[bin]]
 name = "wit-bindgen-wrpc"
@@ -114,7 +114,7 @@ wasmtime-cli-flags = { workspace = true, features = [
     "pooling-allocator",
     "threads",
 ] }
-wrpc-test = { workspace = true, features = ["nats", "quic", "web-transport"] }
+wrpc-test = { workspace = true, features = ["nats", "quic", "webtransport"] }
 wrpc-transport = { workspace = true, features = ["net"] }
 
 [workspace.dependencies]

@@ -1176,13 +1176,13 @@ async fn rust_dynamic_quic() -> anyhow::Result<()> {
     .await
 }
 
-#[cfg(feature = "web-transport")]
+#[cfg(feature = "webtransport")]
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 #[instrument(ret)]
-async fn rust_bindgen_web_transport_sync() -> anyhow::Result<()> {
+async fn rust_bindgen_webtransport_sync() -> anyhow::Result<()> {
     use core::pin::pin;
 
-    wrpc_test::with_web_transport(|clt, srv| {
+    wrpc_test::with_webtransport(|clt, srv| {
         async move {
             let clt = wrpc_webtransport::Client::from(clt);
             let srv_conn = wrpc_webtransport::Client::from(srv);
@@ -1209,13 +1209,13 @@ async fn rust_bindgen_web_transport_sync() -> anyhow::Result<()> {
     .await
 }
 
-#[cfg(feature = "web-transport")]
+#[cfg(feature = "webtransport")]
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 #[instrument(ret)]
-async fn rust_bindgen_web_transport_async() -> anyhow::Result<()> {
+async fn rust_bindgen_webtransport_async() -> anyhow::Result<()> {
     use core::pin::pin;
 
-    wrpc_test::with_web_transport(|clt, srv| async move {
+    wrpc_test::with_webtransport(|clt, srv| async move {
         let clt = wrpc_webtransport::Client::from(clt);
         let srv_conn = wrpc_webtransport::Client::from(srv);
         let srv = Arc::new(wrpc_webtransport::Server::new());
@@ -1240,12 +1240,12 @@ async fn rust_bindgen_web_transport_async() -> anyhow::Result<()> {
     .await
 }
 
-#[cfg(feature = "web-transport")]
+#[cfg(feature = "webtransport")]
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 #[instrument(ret)]
-async fn rust_dynamic_web_transport() -> anyhow::Result<()> {
+async fn rust_dynamic_webtransport() -> anyhow::Result<()> {
     let span = Span::current();
-    wrpc_test::with_web_transport(|clt, srv| {
+    wrpc_test::with_webtransport(|clt, srv| {
         async move {
             let clt = wrpc_webtransport::Client::from(clt);
             let srv_conn = wrpc_webtransport::Client::from(srv);

@@ -12,7 +12,7 @@ pub mod transport {
     #[cfg(feature = "quic")]
     pub use wrpc_quic as quic;
 
-    #[cfg(feature = "web-transport")]
+    #[cfg(feature = "webtransport")]
     pub use wrpc_webtransport as web;
 }
 
