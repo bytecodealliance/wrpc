@@ -12,7 +12,6 @@ use tokio_stream::wrappers::ReceiverStream;
 use tracing::{instrument, trace};
 use wasm_tokio::AsyncReadCore as _;
 
-use crate::frame::conn::Accept;
 use crate::frame::{Conn, ConnHandler, Incoming, Outgoing};
 use crate::Serve;
 
@@ -88,17 +87,13 @@ where
     I: AsyncRead + Unpin,
     H: ConnHandler<I, O>,
 {
-    /// Accept a connection on an [Accept].
+    /// Accept an already-established connection.
     ///
     /// # Errors
     ///
-    /// Returns an error if accepting the connection has failed
+    /// Returns an error if handling the invocation fails
     #[instrument(level = "trace", skip_all, ret(level = "trace"))]
-    pub async fn accept(
-        &self,
-        mut listener: impl Accept<Context = C, Incoming = I, Outgoing = O>,
-    ) -> Result<(), AcceptError<C, I, O>> {
-        let (cx, tx, mut rx) = listener.accept().await.map_err(AcceptError::IO)?;
+    pub async fn accept(&self, cx: C, tx: O, mut rx: I) -> Result<(), AcceptError<C, I, O>> {
         let mut instance = String::default();
         let mut name = String::default();
         match rx.read_u8().await.map_err(AcceptError::IO)? {

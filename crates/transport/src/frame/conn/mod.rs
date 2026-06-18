@@ -21,11 +21,9 @@ use wasm_tokio::{AsyncReadLeb128 as _, Leb128Encoder};
 
 use crate::Index;
 
-mod accept;
 mod client;
 mod server;
 
-pub use accept::*;
 pub use client::*;
 pub use server::*;
 

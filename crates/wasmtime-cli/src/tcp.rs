@@ -81,8 +81,14 @@ pub async fn handle_serve(
         let srv = Arc::clone(&srv);
         async move {
             loop {
-                if let Err(err) = srv.accept(&lis).await {
-                    error!(?err, "failed to accept TCP connection");
+                match lis.accept().await {
+                    Ok((stream, addr)) => {
+                        let (rx, tx) = stream.into_split();
+                        if let Err(err) = srv.accept(addr, tx, rx).await {
+                            error!(?err, "failed to serve TCP connection");
+                        }
+                    }
+                    Err(err) => error!(?err, "failed to accept TCP connection"),
                 }
             }
         }

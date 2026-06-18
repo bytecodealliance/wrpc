@@ -7,12 +7,12 @@ use tokio::io::{duplex, split, AsyncRead, AsyncWrite, DuplexStream, ReadHalf, Wr
 use tracing::instrument;
 
 use crate::frame::{invoke, Incoming, Outgoing};
-use crate::{Accept, Invoke};
+use crate::Invoke;
 
-/// [Invoke] and [Accept] implementation in terms of a single stream pair.
+/// [Invoke] implementation in terms of a single stream pair.
 ///
-/// Either [`Invoke::invoke`] or [`Accept::accept`] can only be called at most once
-/// on [Oneshot], repeated calls with return an error
+/// [`Invoke::invoke`] can only be called at most once on [Oneshot],
+/// repeated calls will return an error.
 #[derive(Debug)]
 pub struct Oneshot<I, O>(std::sync::Mutex<Option<(I, O)>>);
 
@@ -29,10 +29,10 @@ impl From<DuplexStream> for Oneshot<ReadHalf<DuplexStream>, WriteHalf<DuplexStre
 }
 
 impl Oneshot<ReadHalf<DuplexStream>, WriteHalf<DuplexStream>> {
-    /// Creates a pair of connected [Oneshot] using [tokio::io::duplex].
-    pub fn duplex(max_buf_size: usize) -> (Self, Self) {
-        let (a, b) = duplex(max_buf_size);
-        (a.into(), b.into())
+    /// Creates a pair of [Oneshot] and server-side [DuplexStream] using [tokio::io::duplex].
+    pub fn duplex(max_buf_size: usize) -> (Self, DuplexStream) {
+        let (clt, srv) = duplex(max_buf_size);
+        (clt.into(), srv)
     }
 }
 
@@ -102,21 +102,5 @@ where
             let (rx, tx) = stream?;
             invoke(tx, rx, instance, func, params, paths).await
         }
-    }
-}
-
-impl<I, O> Accept for Oneshot<I, O>
-where
-    I: AsyncRead + Send + Sync + Unpin + 'static,
-    O: AsyncWrite + Send + Sync + Unpin + 'static,
-{
-    type Context = ();
-    type Outgoing = O;
-    type Incoming = I;
-
-    #[instrument(level = "trace", skip(self))]
-    async fn accept(&mut self) -> std::io::Result<(Self::Context, Self::Outgoing, Self::Incoming)> {
-        let (rx, tx) = self.try_take_inner()?;
-        Ok(((), tx, rx))
     }
 }

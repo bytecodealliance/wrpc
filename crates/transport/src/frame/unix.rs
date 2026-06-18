@@ -3,24 +3,24 @@
 use std::path::{Path, PathBuf};
 
 use bytes::Bytes;
-use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf, SocketAddr};
-use tokio::net::{UnixListener, UnixStream};
+use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
+use tokio::net::UnixStream;
 use tracing::instrument;
 
-use crate::frame::{invoke, Accept, Incoming, Outgoing};
+use crate::frame::{invoke, Incoming, Outgoing};
 use crate::Invoke;
 
-/// [Invoke] and [Accept] implementation in terms of a single [`UnixStream`].
+/// [Invoke] implementation in terms of a single [`UnixStream`].
 ///
-/// Either [`Invoke::invoke`] or [`Accept::accept`] can only be called at most once
-/// on [Oneshot], repeated calls with return an error
+/// [`Invoke::invoke`] can only be called at most once on [Oneshot],
+/// repeated calls will return an error.
 pub type Oneshot = super::Oneshot<OwnedReadHalf, OwnedWriteHalf>;
 
 impl Oneshot {
     /// Creates a pair of connected [Oneshot] using [UnixStream::pair].
-    pub fn unix_pair() -> std::io::Result<(Oneshot, Oneshot)> {
-        let (a, b) = UnixStream::pair()?;
-        Ok((a.into(), b.into()))
+    pub fn unix_pair() -> std::io::Result<(Oneshot, UnixStream)> {
+        let (clt, srv) = UnixStream::pair()?;
+        Ok((clt.into(), srv))
     }
 }
 
@@ -149,28 +149,5 @@ impl Invoke for Client<std::os::unix::net::SocketAddr> {
         let stream = UnixStream::from_std(stream)?;
         let (rx, tx) = stream.into_split();
         invoke(tx, rx, instance, func, params, paths).await
-    }
-}
-
-impl Accept for UnixListener {
-    type Context = SocketAddr;
-    type Outgoing = OwnedWriteHalf;
-    type Incoming = OwnedReadHalf;
-
-    async fn accept(&mut self) -> std::io::Result<(Self::Context, Self::Outgoing, Self::Incoming)> {
-        <&Self>::accept(&mut &*self).await
-    }
-}
-
-impl Accept for &UnixListener {
-    type Context = SocketAddr;
-    type Outgoing = OwnedWriteHalf;
-    type Incoming = OwnedReadHalf;
-
-    #[instrument(level = "trace")]
-    async fn accept(&mut self) -> std::io::Result<(Self::Context, Self::Outgoing, Self::Incoming)> {
-        let (stream, addr) = UnixListener::accept(self).await?;
-        let (rx, tx) = stream.into_split();
-        Ok((addr, tx, rx))
     }
 }
