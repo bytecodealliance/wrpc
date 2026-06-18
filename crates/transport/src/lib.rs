@@ -20,9 +20,7 @@ pub mod serve;
 
 mod value;
 
-pub use frame::{
-    Accept, Decoder as FrameDecoder, Encoder as FrameEncoder, Frame, FrameRef, Server,
-};
+pub use frame::{Decoder as FrameDecoder, Encoder as FrameEncoder, Frame, FrameRef, Server};
 pub use invoke::{Invoke, InvokeExt};
 pub use serve::{Serve, ServeExt};
 pub use value::*;

@@ -6,7 +6,7 @@ use anyhow::Context as _;
 use bytes::Bytes;
 use quinn::VarInt;
 use tracing::{debug, error, trace, warn};
-use wrpc_transport::frame::{invoke, Accept, Incoming, Outgoing};
+use wrpc_transport::frame::{invoke, Incoming, Outgoing};
 use wrpc_transport::Invoke;
 use wtransport::{Connection, RecvStream, SendStream};
 
@@ -121,26 +121,5 @@ impl Invoke for Client {
         P: AsRef<[Option<usize>]> + Send + Sync,
     {
         (&self).invoke((), instance, func, params, paths).await
-    }
-}
-
-impl Accept for &Client {
-    type Context = ();
-    type Outgoing = SendStream;
-    type Incoming = RecvStream;
-
-    async fn accept(&mut self) -> std::io::Result<(Self::Context, Self::Outgoing, Self::Incoming)> {
-        let (tx, rx) = self.0.accept_bi().await.map_err(std::io::Error::other)?;
-        Ok(((), tx, rx))
-    }
-}
-
-impl Accept for Client {
-    type Context = ();
-    type Outgoing = SendStream;
-    type Incoming = RecvStream;
-
-    async fn accept(&mut self) -> std::io::Result<(Self::Context, Self::Outgoing, Self::Incoming)> {
-        <&Self>::accept(&mut &*self).await
     }
 }

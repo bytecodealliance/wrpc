@@ -12,9 +12,8 @@ use wrpc_transport::{Index as _, Invoke as _, Serve as _};
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn loopback() -> anyhow::Result<()> {
-    wrpc_test::with_quic(|clt, srv| async {
-        let clt = Client::from(clt);
-        let srv_conn = Client::from(srv);
+    wrpc_test::with_quic(|cc, sc| async move {
+        let clt = Client::from(cc);
         let srv = Arc::new(wrpc_quic::Server::new());
         let invocations = srv
             .serve("foo", "bar", [Box::from([Some(42), Some(0)])])
@@ -85,7 +84,11 @@ async fn loopback() -> anyhow::Result<()> {
                 anyhow::Ok(())
             },
             async {
-                srv.accept(srv_conn)
+                let (tx, rx) = sc
+                    .accept_bi()
+                    .await
+                    .context("failed to accept invocation")?;
+                srv.accept((), tx, rx)
                     .await
                     .context("failed to accept invocation")?;
                 let ((), mut outgoing, mut incoming) = invocations

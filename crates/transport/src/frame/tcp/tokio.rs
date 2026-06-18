@@ -1,14 +1,11 @@
 //! wRPC TCP transport using [tokio]
 
-use core::net::SocketAddr;
-
 use anyhow::{bail, Context as _};
 use bytes::Bytes;
-use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
-use tokio::net::{TcpListener, TcpStream, ToSocketAddrs};
+use tokio::net::{TcpStream, ToSocketAddrs};
 use tracing::instrument;
 
-use crate::frame::{invoke, Accept, Incoming, Outgoing};
+use crate::frame::{invoke, Incoming, Outgoing};
 use crate::Invoke;
 
 /// [Invoke] implementation in terms of a single [`TcpStream`]
@@ -87,28 +84,5 @@ impl Invoke for Invocation {
         };
         let (rx, tx) = stream.into_split();
         invoke(tx, rx, instance, func, params, paths).await
-    }
-}
-
-impl Accept for TcpListener {
-    type Context = SocketAddr;
-    type Outgoing = OwnedWriteHalf;
-    type Incoming = OwnedReadHalf;
-
-    async fn accept(&mut self) -> std::io::Result<(Self::Context, Self::Outgoing, Self::Incoming)> {
-        <&Self>::accept(&mut &*self).await
-    }
-}
-
-impl Accept for &TcpListener {
-    type Context = SocketAddr;
-    type Outgoing = OwnedWriteHalf;
-    type Incoming = OwnedReadHalf;
-
-    #[instrument(level = "trace")]
-    async fn accept(&mut self) -> std::io::Result<(Self::Context, Self::Outgoing, Self::Incoming)> {
-        let (stream, addr) = TcpListener::accept(self).await?;
-        let (rx, tx) = stream.into_split();
-        Ok((addr, tx, rx))
     }
 }

@@ -4,7 +4,7 @@ use anyhow::Context as _;
 use bytes::Bytes;
 use quinn::{Connection, RecvStream, SendStream, VarInt};
 use tracing::{debug, error, trace, warn};
-use wrpc_transport::frame::{Accept, Incoming, InvokeBuilder, Outgoing};
+use wrpc_transport::frame::{Incoming, InvokeBuilder, Outgoing};
 use wrpc_transport::Invoke;
 
 /// QUIC server with graceful stream shutdown handling
@@ -105,26 +105,5 @@ impl Invoke for Client {
         P: AsRef<[Option<usize>]> + Send + Sync,
     {
         (&self).invoke((), instance, func, params, paths).await
-    }
-}
-
-impl Accept for &Client {
-    type Context = ();
-    type Outgoing = SendStream;
-    type Incoming = RecvStream;
-
-    async fn accept(&mut self) -> std::io::Result<(Self::Context, Self::Outgoing, Self::Incoming)> {
-        let (tx, rx) = self.0.accept_bi().await?;
-        Ok(((), tx, rx))
-    }
-}
-
-impl Accept for Client {
-    type Context = ();
-    type Outgoing = SendStream;
-    type Incoming = RecvStream;
-
-    async fn accept(&mut self) -> std::io::Result<(Self::Context, Self::Outgoing, Self::Incoming)> {
-        <&Self>::accept(&mut &*self).await
     }
 }

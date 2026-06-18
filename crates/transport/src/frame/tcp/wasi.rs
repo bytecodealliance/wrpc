@@ -431,4 +431,4 @@ impl Invoke for Client<IpSocketAddress, Network> {
     }
 }
 
-// TODO: Implement `Accept`
+// TODO: Implement a server-side listener for the WASI TCP transport

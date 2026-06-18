@@ -58,8 +58,14 @@ async fn main() -> anyhow::Result<()> {
         let srv = Arc::clone(&srv);
         async move {
             loop {
-                if let Err(err) = srv.accept(&lis).await {
-                    error!(?err, "failed to accept Unix connection");
+                match lis.accept().await {
+                    Ok((stream, addr)) => {
+                        let (rx, tx) = stream.into_split();
+                        if let Err(err) = srv.accept(addr, tx, rx).await {
+                            error!(?err, "failed to serve Unix connection");
+                        }
+                    }
+                    Err(err) => error!(?err, "failed to accept Unix connection"),
                 }
             }
         }
