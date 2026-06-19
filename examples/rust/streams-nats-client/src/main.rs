@@ -65,7 +65,7 @@ async fn main() -> anyhow::Result<()> {
         let wrpc = wrpc_nats::Client::new(nats.clone(), prefix, None)
             .await
             .context("failed to construct transport client")?;
-        let (mut numbers, mut bytes, io) = echo(&wrpc, None, Req { numbers, bytes })
+        let ((mut numbers, mut bytes), io) = echo(&wrpc, None, Req { numbers, bytes })
             .await
             .context("failed to invoke `wrpc-examples:streams/handler.echo`")?;
         try_join!(

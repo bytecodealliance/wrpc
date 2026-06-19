@@ -47,6 +47,35 @@ fn go_func_name(func: &Function) -> String {
                 tail.to_upper_camel_case()
             )
         }
+        FunctionKind::AsyncStatic(..) => {
+            let name = func
+                .name
+                .strip_prefix("[async static]")
+                .expect("failed to strip `[async static]` prefix");
+            let (head, tail) = name.split_once('.').expect("failed to split on `.`");
+            format!(
+                "{}_{}",
+                head.to_upper_camel_case(),
+                tail.to_upper_camel_case()
+            )
+        }
+        FunctionKind::AsyncMethod(..) => {
+            let name = func
+                .name
+                .strip_prefix("[async method]")
+                .expect("failed to strip `[async method]` prefix");
+            let (head, tail) = name.split_once('.').expect("failed to split on `.`");
+            format!(
+                "{}_{}",
+                head.to_upper_camel_case(),
+                tail.to_upper_camel_case()
+            )
+        }
+        FunctionKind::AsyncFreestanding => to_upper_camel_case(
+            func.name
+                .strip_prefix("[async]")
+                .expect("failed to strip `[async]` prefix"),
+        ),
         FunctionKind::Freestanding => to_upper_camel_case(&func.name),
     }
 }
@@ -1341,6 +1370,7 @@ impl InterfaceGenerator<'_> {
             Type::F64 => self.print_read_f64(reader),
             Type::Char => self.print_read_char(reader),
             Type::String => self.print_read_string(reader),
+            Type::ErrorContext => panic!("error-context is not supported"),
         }
     }
 
@@ -1372,7 +1402,6 @@ impl InterfaceGenerator<'_> {
             TypeDefKind::List(ty) => self.print_read_list(ty, reader, path),
             TypeDefKind::Future(ty) => self.print_read_future(ty, reader, path),
             TypeDefKind::Stream(ty) => self.print_read_stream(ty, reader, path),
-            TypeDefKind::ErrorContext => panic!("unsupported type: error-context"),
             TypeDefKind::Type(ty) => {
                 if let Some(name) = name {
                     self.push_str("func() (");
@@ -2295,6 +2324,7 @@ impl InterfaceGenerator<'_> {
                 uwrite!(self.src, "(func({wrpc}.IndexWriter) error)(nil), ");
                 self.print_write_string(name, writer);
             }
+            Type::ErrorContext => panic!("error-context is not supported"),
         }
     }
 
@@ -2454,8 +2484,8 @@ impl InterfaceGenerator<'_> {
             self.print_docs_and_params(func);
             self.src.push_str(" (");
             for ty in func
-                .results
-                .iter_types()
+                .result
+                .iter()
                 .flat_map(|ty| flatten_ty(self.resolve, ty))
             {
                 self.print_opt_ty(&ty, true);
@@ -2565,8 +2595,8 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
         {slog}.DebugContext(ctx, "calling `{instance}.{name}` handler")"#,
             );
             let results: Box<[Type]> = func
-                .results
-                .iter_types()
+                .result
+                .iter()
                 .flat_map(|ty| flatten_ty(self.resolve, ty))
                 .collect();
             for (i, _) in results.iter().enumerate() {
@@ -2632,7 +2662,7 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
             );
 
             let mut idx = 0usize;
-            for (i, ty) in func.results.iter_types().enumerate() {
+            for (i, ty) in func.result.iter().enumerate() {
                 for (j, _) in flatten_ty(self.resolve, ty).enumerate() {
                     uwrite!(
                         self.src,
@@ -2720,8 +2750,8 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
 
             self.src.push_str(" (");
             let results: Box<[Type]> = func
-                .results
-                .iter_types()
+                .result
+                .iter()
                 .flat_map(|ty| flatten_ty(self.resolve, ty))
                 .collect();
             for (i, ty) in results.iter().enumerate() {
@@ -2827,7 +2857,7 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
                 self.src.push_str("nil");
             }
             self.src.push_str(",\n");
-            for (i, ty) in func.results.iter_types().enumerate() {
+            for (i, ty) in func.result.iter().enumerate() {
                 let (nested, fut) = async_paths_ty(self.resolve, ty);
                 for path in nested {
                     uwrite!(self.src, "{wrpc}.NewSubscribePath().Index({i})");
@@ -2905,7 +2935,7 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
             );
 
             let mut idx = 0usize;
-            for (i, rty) in func.results.iter_types().enumerate() {
+            for (i, rty) in func.result.iter().enumerate() {
                 for (j, ty) in flatten_ty(self.resolve, rty).enumerate() {
                     uwrite!(
                         self.src,
@@ -3066,6 +3096,7 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
             Type::F64 => self.push_str("float64"),
             Type::Char => self.push_str("rune"),
             Type::String => self.push_str("string"),
+            Type::ErrorContext => self.push_str("struct{}"),
         }
     }
 
@@ -3184,6 +3215,7 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
             Type::F64 => self.push_str("float64"),
             Type::Char => self.push_str("rune"),
             Type::String => self.push_str("string"),
+            Type::ErrorContext => self.push_str("struct{}"),
         }
     }
 
@@ -3309,9 +3341,6 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
             TypeDefKind::Record(_) => panic!("unsupported anonymous type reference: record"),
             TypeDefKind::Flags(_) => panic!("unsupported anonymous type reference: flags"),
             TypeDefKind::Enum(_) => panic!("unsupported anonymous type reference: enum"),
-            TypeDefKind::ErrorContext => {
-                panic!("unsupported anonymous type reference: error-context")
-            }
             TypeDefKind::Future(ty) => self.print_future(ty),
             TypeDefKind::Stream(ty) => self.print_stream(ty),
             TypeDefKind::Handle(Handle::Own(id)) => self.print_own(*id),
@@ -3890,13 +3919,6 @@ func (v *{name}) WriteToIndex(w {wrpc}.ByteWriter) (func({wrpc}.IndexWriter) err
             uwrite!(self.src, "type {name} = ");
             self.print_stream(ty);
             self.push_str("\n");
-        }
-    }
-
-    fn type_error_context(&mut self, id: TypeId, _name: &str, docs: &Docs) {
-        if let Some(name) = self.name_of(id) {
-            self.godoc(docs);
-            uwrite!(self.src, "type {name} = struct{{}}\n");
         }
     }
 }

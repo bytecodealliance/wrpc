@@ -36,7 +36,7 @@ interface sync {
     with-enum: func() -> foobar;
 }
 
-interface async {
+interface %async {
     record something {
         foo: string,
     }
@@ -75,11 +75,11 @@ world sync-client {
 }
 
 world async-server {
-    export async;
+    export %async;
 }
 
 world async-client {
-    import async;
+    import %async;
 }
 
 world resources-server {

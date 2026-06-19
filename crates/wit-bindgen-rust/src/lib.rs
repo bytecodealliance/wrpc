@@ -5,11 +5,11 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::{self, Write as _};
 use std::mem;
 use wit_bindgen_core::wit_parser::{
-    Flags, FlagsRepr, Function, Int, InterfaceId, Resolve, SizeAlign, TypeId, World, WorldId,
-    WorldItem, WorldKey,
+    Flags, FlagsRepr, Function, Int, InterfaceId, Resolve, SizeAlign, TypeId, TypeOwner, World,
+    WorldId, WorldItem, WorldKey,
 };
 use wit_bindgen_core::{
-    name_package_module, uwrite, uwriteln, Files, InterfaceGenerator as _, Source, Types,
+    dealias, name_package_module, uwrite, uwriteln, Files, InterfaceGenerator as _, Source, Types,
     WorldGenerator,
 };
 
@@ -36,45 +36,55 @@ struct RustWrpc {
     interface_names: HashMap<InterfaceId, InterfaceName>,
     import_funcs_called: bool,
     with_name_counter: usize,
-    // Track which interfaces were generated. Remapped interfaces provided via `with`
+    // Track which interfaces and types are generated. Remapped interfaces and types provided via `with`
     // are required to be used.
-    generated_interfaces: HashSet<String>,
+    generated_types: HashSet<String>,
     world: Option<WorldId>,
 
     export_paths: Vec<String>,
-    /// Interface names to how they should be generated
+    /// Maps wit interface and type names to their Rust identifiers
     with: GenerationConfiguration,
 }
 
 #[derive(Default)]
 struct GenerationConfiguration {
-    map: HashMap<String, InterfaceGeneration>,
+    map: HashMap<String, TypeGeneration>,
     generate_by_default: bool,
 }
 
 impl GenerationConfiguration {
-    fn get(&self, key: &str) -> Option<&InterfaceGeneration> {
+    fn get(&self, key: &str) -> Option<&TypeGeneration> {
         self.map.get(key).or_else(|| {
             self.generate_by_default
-                .then_some(&InterfaceGeneration::Generate)
+                .then_some(&TypeGeneration::Generate)
         })
     }
 
-    fn insert(&mut self, name: String, generate: InterfaceGeneration) {
+    fn insert(&mut self, name: String, generate: TypeGeneration) {
         self.map.insert(name, generate);
     }
 
-    fn iter(&self) -> impl Iterator<Item = (&String, &InterfaceGeneration)> {
+    fn iter(&self) -> impl Iterator<Item = (&String, &TypeGeneration)> {
         self.map.iter()
     }
 }
 
-/// How an interface should be generated.
-enum InterfaceGeneration {
-    /// Remapped to some other type
+/// How a wit interface or type should be rendered in Rust
+enum TypeGeneration {
+    /// Uses a Rust identifier defined elsewhere
     Remap(String),
-    /// Generate the interface
+    /// Define the interface or type with this bindgen invocation
     Generate,
+}
+
+impl TypeGeneration {
+    /// Returns true if the interface or type should be defined with this bindgen invocation
+    fn generated(&self) -> bool {
+        match self {
+            TypeGeneration::Generate => true,
+            TypeGeneration::Remap(_) => false,
+        }
+    }
 }
 
 #[cfg(feature = "clap")]
@@ -334,9 +344,9 @@ impl RustWrpc {
 with: {{\n\t{with_name:?}: generate\n}}
 ```")
         };
-        self.generated_interfaces.insert(with_name);
+        self.generated_types.insert(with_name);
         let entry = match remapping {
-            InterfaceGeneration::Remap(remapped_path) => {
+            TypeGeneration::Remap(remapped_path) => {
                 let name = format!("__with_name{}", self.with_name_counter);
                 self.with_name_counter += 1;
                 uwriteln!(self.src, "use {remapped_path} as {name};");
@@ -345,7 +355,7 @@ with: {{\n\t{with_name:?}: generate\n}}
                     path: name,
                 }
             }
-            InterfaceGeneration::Generate => {
+            TypeGeneration::Generate => {
                 let path = compute_module_path(name, resolve, is_export).join("::");
 
                 InterfaceName {
@@ -485,7 +495,7 @@ impl WorldGenerator for RustWrpc {
                 if resolve.interfaces[*id].package == world.package {
                     let name = resolve.name_world_key(key);
                     if self.with.get(&name).is_none() {
-                        self.with.insert(name, InterfaceGeneration::Generate);
+                        self.with.insert(name, TypeGeneration::Generate);
                     }
                 }
             }
@@ -503,12 +513,29 @@ impl WorldGenerator for RustWrpc {
         id: InterfaceId,
         _files: &mut Files,
     ) -> Result<()> {
+        let mut to_define = Vec::new();
+        for (name, ty_id) in resolve.interfaces[id].types.iter() {
+            let full_name = full_wit_type_name(resolve, *ty_id);
+            if let Some(type_gen) = self.with.get(&full_name) {
+                // skip type definition generation for remapped types
+                if type_gen.generated() {
+                    to_define.push((name, ty_id));
+                }
+            } else {
+                to_define.push((name, ty_id));
+            }
+            self.generated_types.insert(full_name);
+        }
+
         let mut gen = self.interface(Identifier::Interface(id, name), resolve, true);
         let (snake, module_path) = gen.start_append_submodule(name);
         if gen.gen.name_interface(resolve, id, name, false)? {
             return Ok(());
         }
-        gen.types(id);
+
+        for (name, ty_id) in to_define {
+            gen.define_type(name, *ty_id);
+        }
 
         let interface = &resolve.interfaces[id];
         let name = match name {
@@ -564,12 +591,30 @@ impl WorldGenerator for RustWrpc {
         id: InterfaceId,
         _files: &mut Files,
     ) -> Result<()> {
+        let mut to_define = Vec::new();
+        for (name, ty_id) in resolve.interfaces[id].types.iter() {
+            let full_name = full_wit_type_name(resolve, *ty_id);
+            if let Some(type_gen) = self.with.get(&full_name) {
+                // skip type definition generation for remapped types
+                if type_gen.generated() {
+                    to_define.push((name, ty_id));
+                }
+            } else {
+                to_define.push((name, ty_id));
+            }
+            self.generated_types.insert(full_name);
+        }
+
         let mut gen = self.interface(Identifier::Interface(id, name), resolve, false);
         let (snake, module_path) = gen.start_append_submodule(name);
         if gen.gen.name_interface(resolve, id, name, true)? {
             return Ok(());
         }
-        gen.types(id);
+
+        for (name, ty_id) in to_define {
+            gen.define_type(name, *ty_id);
+        }
+
         let exports = gen.generate_exports(
             Identifier::Interface(id, name),
             resolve.interfaces[id].functions.values(),
@@ -609,8 +654,21 @@ impl WorldGenerator for RustWrpc {
         types: &[(&str, TypeId)],
         _files: &mut Files,
     ) {
+        let mut to_define = Vec::new();
+        for (name, ty_id) in types {
+            let full_name = full_wit_type_name(resolve, *ty_id);
+            if let Some(type_gen) = self.with.get(&full_name) {
+                // skip type definition generation for remapped types
+                if type_gen.generated() {
+                    to_define.push((name, ty_id));
+                }
+            } else {
+                to_define.push((name, ty_id));
+            }
+            self.generated_types.insert(full_name);
+        }
         let mut gen = self.interface(Identifier::World(world), resolve, true);
-        for (name, ty) in types {
+        for (name, ty) in to_define {
             gen.define_type(name, *ty);
         }
         let src = gen.finish();
@@ -658,7 +716,7 @@ impl WorldGenerator for RustWrpc {
             .collect::<HashSet<String>>();
 
         let mut unused_keys = remapped_keys
-            .difference(&self.generated_interfaces)
+            .difference(&self.generated_types)
             .collect::<Vec<&String>>();
 
         unused_keys.sort();
@@ -713,11 +771,11 @@ impl std::fmt::Display for WithOption {
     }
 }
 
-impl From<WithOption> for InterfaceGeneration {
+impl From<WithOption> for TypeGeneration {
     fn from(opt: WithOption) -> Self {
         match opt {
-            WithOption::Path(p) => InterfaceGeneration::Remap(p),
-            WithOption::Generate => InterfaceGeneration::Generate,
+            WithOption::Path(p) => TypeGeneration::Remap(p),
+            WithOption::Generate => TypeGeneration::Generate,
         }
     }
 }
@@ -850,6 +908,21 @@ impl fmt::Display for MissingWith {
 }
 
 impl std::error::Error for MissingWith {}
+
+/// Returns the full WIT type name with fully qualified interface name
+fn full_wit_type_name(resolve: &Resolve, id: TypeId) -> String {
+    let id = dealias(resolve, id);
+    let type_def = &resolve.types[id];
+    let interface_name = match type_def.owner {
+        TypeOwner::World(w) => Some(resolve.worlds[w].name.clone()),
+        TypeOwner::Interface(id) => resolve.id_of(id),
+        TypeOwner::None => None,
+    };
+    match interface_name {
+        Some(interface_name) => format!("{}/{}", interface_name, type_def.name.clone().unwrap()),
+        None => type_def.name.clone().unwrap(),
+    }
+}
 
 // bail!("no remapping found for {with_name:?} - use the `generate!` macro's `with` option to force the interface to be generated or specify where it is already defined:
 // ```

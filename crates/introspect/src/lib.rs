@@ -30,6 +30,18 @@ pub fn rpc_func_name(func: &Function) -> &str {
             .name
             .strip_prefix("[method]")
             .expect("failed to strip `[method]` prefix"),
+        FunctionKind::AsyncStatic(..) => func
+            .name
+            .strip_prefix("[async static]")
+            .expect("failed to strip `[async static]` prefix"),
+        FunctionKind::AsyncMethod(..) => func
+            .name
+            .strip_prefix("[async method]")
+            .expect("failed to strip `[async method]` prefix"),
+        FunctionKind::AsyncFreestanding => func
+            .name
+            .strip_prefix("[async]")
+            .expect("failed to strip `[async]` prefix"),
         FunctionKind::Freestanding => &func.name,
     }
 }
@@ -204,7 +216,6 @@ pub fn async_paths_tyid(resolve: &Resolve, id: TypeId) -> (BTreeSet<VecDeque<Opt
         }
         TypeDefKind::Type(ty) => async_paths_ty(resolve, ty),
         TypeDefKind::Resource
-        | TypeDefKind::ErrorContext
         | TypeDefKind::Flags(..)
         | TypeDefKind::Enum(..)
         | TypeDefKind::Handle(Handle::Own(..) | Handle::Borrow(..)) => (BTreeSet::default(), false),

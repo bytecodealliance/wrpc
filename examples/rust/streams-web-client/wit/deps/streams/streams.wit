@@ -5,7 +5,7 @@ interface handler {
         numbers: stream<u64>,
         bytes: stream<u8>,
     }
-    echo: func(r: req) -> (numbers: stream<u64>, bytes: stream<u8>);
+    echo: func(r: req) -> tuple<stream<u64>, stream<u8>>;
 }
 
 world client {

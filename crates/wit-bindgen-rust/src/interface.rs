@@ -1,6 +1,6 @@
 use crate::{
-    int_repr, to_rust_ident, to_upper_camel_case, FnSig, Identifier, InterfaceName, RustFlagsRepr,
-    RustWrpc,
+    full_wit_type_name, int_repr, to_rust_ident, to_upper_camel_case, FnSig, Identifier,
+    InterfaceName, RustFlagsRepr, RustWrpc, TypeGeneration,
 };
 use heck::{ToShoutySnakeCase, ToUpperCamelCase};
 use std::collections::{BTreeMap, BTreeSet};
@@ -49,10 +49,12 @@ impl InterfaceGenerator<'_> {
             }
 
             let resource = match func.kind {
-                FunctionKind::Freestanding => None,
+                FunctionKind::Freestanding | FunctionKind::AsyncFreestanding => None,
                 FunctionKind::Method(id)
                 | FunctionKind::Constructor(id)
-                | FunctionKind::Static(id) => Some(id),
+                | FunctionKind::Static(id)
+                | FunctionKind::AsyncMethod(id)
+                | FunctionKind::AsyncStatic(id) => Some(id),
             };
             funcs_to_export.push(func);
             let (_, methods) = traits.get_mut(&resource).unwrap();
@@ -67,7 +69,7 @@ impl InterfaceGenerator<'_> {
             sig.self_is_first_param = false;
 
             self.print_docs_and_params(func, &sig);
-            match func.results.len() {
+            match func.result.iter().len() {
                 0 => {
                     uwrite!(
                         self.src,
@@ -81,7 +83,7 @@ impl InterfaceGenerator<'_> {
                         " -> impl ::core::future::Future<Output = {}::Result<",
                         self.gen.anyhow_path()
                     );
-                    let ty = func.results.iter_types().next().unwrap();
+                    let ty = func.result.iter().next().unwrap();
                     self.print_ty(ty, true, false);
                     self.push_str(">> + ::core::marker::Send");
                 }
@@ -91,7 +93,7 @@ impl InterfaceGenerator<'_> {
                         " -> impl ::core::future::Future<Output = {}::Result<(",
                         self.gen.anyhow_path()
                     );
-                    for ty in func.results.iter_types() {
+                    for ty in func.result.iter() {
                         self.print_ty(ty, true, false);
                         self.push_str(", ");
                     }
@@ -181,10 +183,10 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve>(
                 self.src,
                 "{}_{},",
                 match kind {
-                    FunctionKind::Freestanding => "f",
-                    FunctionKind::Method(_) => "m",
+                    FunctionKind::Freestanding | FunctionKind::AsyncFreestanding => "f",
+                    FunctionKind::Method(_) | FunctionKind::AsyncMethod(_) => "m",
                     FunctionKind::Constructor(_) => "c",
-                    FunctionKind::Static(_) => "s",
+                    FunctionKind::Static(_) | FunctionKind::AsyncStatic(_) => "s",
                 },
                 to_rust_ident(name)
             );
@@ -305,10 +307,10 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve>(
                     ::std::boxed::Box::pin(
                         {futures}::TryStreamExt::map_ok({}_{name}, move |(cx, ("#,
                 match func.kind {
-                    FunctionKind::Freestanding => "f",
-                    FunctionKind::Method(_) => "m",
+                    FunctionKind::Freestanding | FunctionKind::AsyncFreestanding => "f",
+                    FunctionKind::Method(_) | FunctionKind::AsyncMethod(_) => "m",
                     FunctionKind::Constructor(_) => "c",
-                    FunctionKind::Static(_) => "s",
+                    FunctionKind::Static(_) | FunctionKind::AsyncStatic(_) => "s",
                 },
                 futures = self.gen.futures_path(),
                 wit_name = func.name,
@@ -324,10 +326,12 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve>(
                             ::std::boxed::Box::pin(async move {{"
             );
             let (trait_name, name) = match func.kind {
-                FunctionKind::Freestanding => ("Handler", name),
+                FunctionKind::Freestanding | FunctionKind::AsyncFreestanding => ("Handler", name),
                 FunctionKind::Method(id)
                 | FunctionKind::Constructor(id)
-                | FunctionKind::Static(id) => (
+                | FunctionKind::Static(id)
+                | FunctionKind::AsyncMethod(id)
+                | FunctionKind::AsyncStatic(id) => (
                     traits
                         .get(&Some(id))
                         .map(|(name, _)| name.as_str())
@@ -359,7 +363,7 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve>(
                                     Ok(results) => {{
                                         match tx(",
             );
-            if func.results.len() == 1 {
+            if func.result.iter().len() == 1 {
                 // wrap single-element results into a tuple for correct indexing
                 self.push_str("(results,)");
             } else {
@@ -522,7 +526,7 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve>(
 
         let mut sig = FnSig::default();
         match func.kind {
-            FunctionKind::Method(id) => {
+            FunctionKind::Method(id) | FunctionKind::AsyncMethod(id) => {
                 let name = self.resolve.types[id].name.as_ref().unwrap();
                 let name = to_upper_camel_case(name);
                 uwriteln!(self.src, "impl {name} {{");
@@ -531,14 +535,16 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve>(
                 sig.self_arg = Some("&self".into());
                 sig.self_is_first_param = true;
             }
-            FunctionKind::Static(id) | FunctionKind::Constructor(id) => {
+            FunctionKind::Static(id)
+            | FunctionKind::Constructor(id)
+            | FunctionKind::AsyncStatic(id) => {
                 let name = self.resolve.types[id].name.as_ref().unwrap();
                 let name = to_upper_camel_case(name);
                 uwriteln!(self.src, "impl {name} {{");
 
                 sig.use_item_name = true;
             }
-            FunctionKind::Freestanding => {}
+            FunctionKind::Freestanding | FunctionKind::AsyncFreestanding => {}
         }
         self.src.push_str("#[allow(clippy::all)]\n");
 
@@ -546,34 +552,35 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve>(
             let (paths, fut) = async_paths_ty(self.resolve, ty);
             fut || !paths.is_empty()
         });
-        let paths = func.results.iter_types().enumerate().fold(
-            BTreeSet::default(),
-            |mut paths, (i, ty)| {
-                let (nested, fut) = async_paths_ty(self.resolve, ty);
-                for path in nested {
-                    let mut s = String::with_capacity(7 + path.len() * 6);
-                    s.push_str(&format!("[Some({i})"));
-                    for i in path {
-                        if let Some(i) = i {
-                            s.push_str(&format!(", Some({i})"));
-                        } else {
-                            s.push_str(", None");
+        let paths =
+            func.result
+                .iter()
+                .enumerate()
+                .fold(BTreeSet::default(), |mut paths, (i, ty)| {
+                    let (nested, fut) = async_paths_ty(self.resolve, ty);
+                    for path in nested {
+                        let mut s = String::with_capacity(7 + path.len() * 6);
+                        s.push_str(&format!("[Some({i})"));
+                        for i in path {
+                            if let Some(i) = i {
+                                s.push_str(&format!(", Some({i})"));
+                            } else {
+                                s.push_str(", None");
+                            }
                         }
+                        s.push(']');
+                        paths.insert(s);
                     }
-                    s.push(']');
-                    paths.insert(s);
-                }
-                if fut {
-                    paths.insert(format!("[Some({i})]"));
-                }
-                paths
-            },
-        );
+                    if fut {
+                        paths.insert(format!("[Some({i})]"));
+                    }
+                    paths
+                });
 
         let anyhow = self.gen.anyhow_path().to_string();
 
         let params = self.print_docs_and_params(func, &sig);
-        match func.results.iter_types().collect::<Vec<_>>().as_slice() {
+        match func.result.iter().collect::<Vec<_>>().as_slice() {
             [] => {
                 uwrite!(
                     self.src,
@@ -623,7 +630,7 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve>(
         async move {",
         );
 
-        if func.results.len() == 0 || (!async_params && paths.is_empty()) {
+        if func.result.iter().len() == 0 || (!async_params && paths.is_empty()) {
             uwrite!(
                 self.src,
                 r#"
@@ -656,7 +663,7 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve>(
                     "failed to invoke `{instance}.{}`")?;"#,
                 func.name,
             );
-            if func.results.len() == 1 {
+            if func.result.iter().len() == 1 {
                 self.push_str("let (wrpc__,) = wrpc__;\n");
             }
             self.push_str("Ok(wrpc__)\n");
@@ -693,17 +700,17 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve>(
                     "failed to invoke `{instance}.{}`")?;"#,
                 func.name,
             );
-            if func.results.len() == 1 {
+            if func.result.iter().len() == 1 {
                 self.push_str("let (wrpc__,) = wrpc__;\n");
                 self.push_str("Ok((wrpc__, io__))\n");
             } else {
                 self.push_str("let (");
-                for i in 0..func.results.len() {
+                for i in 0..func.result.iter().len() {
                     uwrite!(self.src, "r{i}__, ");
                 }
                 self.push_str(") = wrpc__;\n");
                 self.push_str("Ok((");
-                for i in 0..func.results.len() {
+                for i in 0..func.result.iter().len() {
                     uwrite!(self.src, "r{i}__, ");
                 }
                 self.push_str("io__))\n");
@@ -717,8 +724,12 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve>(
         );
 
         match func.kind {
-            FunctionKind::Freestanding => {}
-            FunctionKind::Method(_) | FunctionKind::Static(_) | FunctionKind::Constructor(_) => {
+            FunctionKind::Freestanding | FunctionKind::AsyncFreestanding => {}
+            FunctionKind::Method(_)
+            | FunctionKind::Static(_)
+            | FunctionKind::Constructor(_)
+            | FunctionKind::AsyncMethod(_)
+            | FunctionKind::AsyncStatic(_) => {
                 self.src.push_str("}\n");
             }
         }
@@ -873,6 +884,7 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve>(
                     self.push_str("&'a str");
                 }
             }
+            Type::ErrorContext => self.push_str("()"),
         }
     }
 
@@ -940,6 +952,7 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve>(
             Type::F64 => self.push_str("f64"),
             Type::Char => self.push_str("char"),
             Type::String => self.push_str("&'a str"),
+            Type::ErrorContext => self.push_str("()"),
         }
     }
 
@@ -1029,8 +1042,16 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve>(
     fn print_tyid(&mut self, id: TypeId, owned: bool, submodule: bool) {
         let ty = &self.resolve.types[id];
         if let Some(name) = &ty.name {
-            let name = self.type_path_with_name(id, to_upper_camel_case(name), submodule);
-            self.push_str(&name);
+            let full_wit_type_name = full_wit_type_name(self.resolve, id);
+            if let Some(TypeGeneration::Remap(remapped_path)) =
+                self.gen.with.get(&full_wit_type_name)
+            {
+                let remapped_path = remapped_path.clone();
+                self.push_str(&remapped_path);
+            } else {
+                let name = self.type_path_with_name(id, to_upper_camel_case(name), submodule);
+                self.push_str(&name);
+            }
             return;
         }
         match &ty.kind {
@@ -1043,9 +1064,6 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve>(
             TypeDefKind::Record(_) => panic!("unsupported anonymous type reference: record"),
             TypeDefKind::Flags(_) => panic!("unsupported anonymous type reference: flags"),
             TypeDefKind::Enum(_) => panic!("unsupported anonymous type reference: enum"),
-            TypeDefKind::ErrorContext => {
-                panic!("unsupported anonymous type reference: error-context")
-            }
             TypeDefKind::Future(ty) => self.print_future(ty, submodule),
             TypeDefKind::Stream(ty) => self.print_stream(ty, submodule),
             TypeDefKind::Handle(Handle::Own(id)) => self.print_own(*id, submodule),
@@ -2478,13 +2496,6 @@ mod {mod_name} {{
             uwrite!(self.src, "pub type {name} = ");
             self.print_stream(ty, false);
             self.push_str(";\n");
-        }
-    }
-
-    fn type_error_context(&mut self, id: TypeId, _name: &str, docs: &Docs) {
-        if let Some(name) = self.name_of(id) {
-            self.rustdoc(docs);
-            uwrite!(self.src, "pub type {name} = ();\n");
         }
     }
 }

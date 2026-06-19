@@ -561,6 +561,190 @@ mod with_and_resources {
     }
 }
 
+mod with_type {
+    use wit_bindgen_wrpc::bytes::Bytes;
+    use wrpc_transport::ResourceOwn;
+
+    mod my_types {
+        use std::marker::PhantomData;
+
+        use wit_bindgen_wrpc::bytes::BytesMut;
+        use wit_bindgen_wrpc::tokio_util::codec::{Decoder, Encoder};
+        use wit_bindgen_wrpc::wasm_tokio::CoreVecDecoder;
+        use wit_bindgen_wrpc::wrpc_transport::{Decode, Deferred, DeferredFn, Encode};
+
+        #[derive(Debug, Clone, Copy)]
+        pub struct MyA {
+            pub inner: f64,
+        }
+
+        #[derive(Debug, Clone, Copy)]
+        pub struct MyB;
+
+        pub enum MyC {
+            A(MyA),
+            B(MyB),
+        }
+
+        pub struct MyD {
+            pub inner: u32,
+        }
+
+        pub struct MyE {
+            pub inner: u32,
+        }
+
+        pub struct Codec<T>(PhantomData<T>);
+
+        impl<T> Default for Codec<T> {
+            fn default() -> Self {
+                Self(PhantomData)
+            }
+        }
+
+        impl<T> Encoder<T> for Codec<T> {
+            type Error = std::io::Error;
+
+            fn encode(&mut self, _: T, dst: &mut BytesMut) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        impl<T> Encoder<&T> for Codec<T> {
+            type Error = std::io::Error;
+
+            fn encode(&mut self, _: &T, _: &mut BytesMut) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        impl<T> Decoder for Codec<T> {
+            type Item = T;
+            type Error = std::io::Error;
+
+            fn decode(&mut self, _: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+                Ok(None)
+            }
+        }
+
+        impl<T, I> Deferred<I> for Codec<T> {
+            fn take_deferred(&mut self) -> Option<DeferredFn<I>> {
+                None
+            }
+        }
+
+        macro_rules! impl_codec {
+            ($t:ty) => {
+                impl<T> Encode<T> for $t {
+                    type Encoder = Codec<$t>;
+                }
+
+                impl<T> Encode<T> for &$t {
+                    type Encoder = Codec<$t>;
+                }
+
+                impl<T> Decode<T> for $t {
+                    type Decoder = Codec<$t>;
+                    type ListDecoder = CoreVecDecoder<Self::Decoder>;
+                }
+            };
+        }
+
+        impl_codec!(MyA);
+        impl_codec!(MyB);
+        impl_codec!(MyC);
+        impl_codec!(MyD);
+        impl_codec!(MyE);
+    }
+
+    wit_bindgen_wrpc::generate!({
+        inline: "
+            package my:inline;
+            interface foo {
+                record a {
+                    inner: f64,
+                }
+                resource b;
+                variant c {
+                    a(a),
+                    b(b),
+                }
+                // test type definition generation with `generate` option
+                record f {
+                    inner: u32,
+                }
+                // test type definition generation without `generate` option
+                record g {
+                    inner: u32,
+                }
+                func1: func(v: a) -> a;
+                func2: func(v: b) -> b;
+                func3: func(v: list<a>) -> list<b>;
+                func4: func(v: option<a>) -> option<a>;
+                func5: func() -> result<a>;
+                func6: func() -> result<f>;
+                func7: func() -> result<g>;
+            }
+            interface bar {
+                record e {
+                    inner: u32,
+                }
+                func6: func(v: e) -> e;
+            }
+            world dummy-type-remap {
+                // test remapping with importing type directly 
+                use foo.{c};
+                import func7: func(v: c) -> c;
+                // test remapping the type defined in world
+                record d {
+                    inner: u32,
+                }
+                import func8: func(v: d) -> d;
+                export bar;
+            }
+        ",
+        with: {
+            "my:inline/foo/a": crate::with_type::my_types::MyA,
+            "my:inline/foo/b": crate::with_type::my_types::MyB,
+            "my:inline/foo/c": crate::with_type::my_types::MyC,
+            "dummy-type-remap/d": crate::with_type::my_types::MyD,
+            "my:inline/bar/e": crate::with_type::my_types::MyE,
+            "my:inline/foo/f": generate,
+        },
+    });
+
+    struct Component;
+
+    impl<Ctx: Send> exports::my::inline::bar::Handler<Ctx> for Component {
+        async fn func6(&self, _: Ctx, v: my_types::MyE) -> anyhow::Result<my_types::MyE> {
+            Ok(v)
+        }
+    }
+
+    async fn test(
+        wrpc: &impl wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,
+    ) -> anyhow::Result<()> {
+        let a = my_types::MyA { inner: 0.0 };
+        let _ = my::inline::foo::func1(wrpc, (), &a).await?;
+
+        let _ = my::inline::foo::func2(wrpc, (), &ResourceOwn::from(Bytes::default()));
+
+        let c = my_types::MyC::A(a);
+        let _ = func7(wrpc, (), &c).await?;
+
+        let a_list = vec![a, a];
+        let _ = my::inline::foo::func3(wrpc, (), &a_list).await?;
+
+        let _ = my::inline::foo::func4(wrpc, (), Some(a)).await?;
+
+        let _ = my::inline::foo::func5(wrpc, ()).await?;
+
+        let d = my_types::MyD { inner: 0 };
+        let _ = func8(wrpc, (), &d).await?;
+        Ok(())
+    }
+}
+
 #[allow(unused)]
 mod generate_unused_types {
     use exports::foo::bar::component::UnusedEnum;
@@ -868,9 +1052,9 @@ mod example_4 {
 mod async_test {
     wit_bindgen_wrpc::generate!({
         inline: r#"
-            package wrpc-test:async;
+            package wrpc-test:%async;
 
-            world async {
+            world %async {
                 import handler;
                 export handler;
             }

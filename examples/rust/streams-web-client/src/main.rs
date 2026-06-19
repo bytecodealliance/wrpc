@@ -114,7 +114,7 @@ async fn main() -> anyhow::Result<()> {
             .map(Bytes::from),
     );
 
-    let (mut numbers, mut bytes, io) = echo(&wrpc, (), Req { numbers, bytes })
+    let ((mut numbers, mut bytes), io) = echo(&wrpc, (), Req { numbers, bytes })
         .await
         .context("failed to invoke `wrpc-examples:streams/handler.echo`")?;
     try_join!(

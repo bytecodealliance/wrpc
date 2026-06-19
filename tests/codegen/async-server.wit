@@ -1,6 +1,6 @@
 package test:async-server;
 
-interface async {
+interface %async {
     record sync {
         foo: string,
     }
@@ -16,11 +16,11 @@ interface async {
         b: future<var>,
     }
 
-    with-streams: func(complete: bool) -> (bytes: stream<u8>, lists: stream<list<string>>);
+    with-streams: func(complete: bool) -> tuple<stream<u8>, stream<list<string>>>;
     with-future: func(s: stream<u8>) -> future<stream<u8>>;
     with-nested: func(r: rec, f: future<rec>) -> rec;
 }
 
 world async-server {
-    export async;
+    export %async;
 }
