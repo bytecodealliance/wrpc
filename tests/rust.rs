@@ -671,8 +671,6 @@ where
     I: wrpc::Invoke<Context = IC>,
     S: wrpc::Serve<Context = SC>,
 {
-    use core::pin::pin;
-
     use tokio::io::{AsyncRead, AsyncReadExt as _};
 
     let async_inv = srv
@@ -1088,15 +1086,12 @@ async fn rust_dynamic_nats() -> anyhow::Result<()> {
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 #[instrument(ret)]
 async fn rust_bindgen_quic_sync() -> anyhow::Result<()> {
-    use core::pin::pin;
-
     wrpc_test::with_quic(|cc, sc| {
         async move {
-            let clt = wrpc_quic::Client::from(cc);
             let srv = Arc::new(wrpc_quic::Server::new());
-
-            let mut fut =
-                pin!(async { assert_bindgen_sync(Arc::new(clt), Arc::clone(&srv)).await });
+            let mut fut = pin!(async {
+                assert_bindgen_sync(Arc::new(wrpc_quic::Client::from(cc)), Arc::clone(&srv)).await
+            });
             loop {
                 let accept = async {
                     let (tx, rx) = sc.accept_bi().await.expect("failed to accept connection");
@@ -1119,15 +1114,12 @@ async fn rust_bindgen_quic_sync() -> anyhow::Result<()> {
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 #[instrument(ret)]
 async fn rust_bindgen_quic_async() -> anyhow::Result<()> {
-    use core::pin::pin;
-
     wrpc_test::with_quic(|cc, sc| async move {
-        let clt = wrpc_quic::Client::from(cc);
         let srv = Arc::new(wrpc_quic::Server::new());
-
-        let mut fut = pin!(
-            async { assert_bindgen_async(Arc::new(clt), Arc::clone(&srv)).await }.in_current_span()
-        );
+        let mut fut = pin!(async {
+            assert_bindgen_async(Arc::new(wrpc_quic::Client::from(cc)), Arc::clone(&srv)).await
+        }
+        .in_current_span());
         loop {
             let accept = async {
                 let (tx, rx) = sc.accept_bi().await.expect("failed to accept connection");
@@ -1151,10 +1143,11 @@ async fn rust_dynamic_quic() -> anyhow::Result<()> {
     let span = Span::current();
     wrpc_test::with_quic(|cc, sc| {
         async move {
-            let clt = wrpc_quic::Client::from(cc);
             let srv = Arc::new(wrpc_quic::Server::new());
-
-            let mut fut = pin!(assert_dynamic(Arc::new(clt), Arc::clone(&srv)));
+            let mut fut = pin!(assert_dynamic(
+                Arc::new(wrpc_quic::Client::from(cc)),
+                Arc::clone(&srv)
+            ));
             loop {
                 let accept = async {
                     let (tx, rx) = sc.accept_bi().await.expect("failed to accept connection");
@@ -1177,15 +1170,16 @@ async fn rust_dynamic_quic() -> anyhow::Result<()> {
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 #[instrument(ret)]
 async fn rust_bindgen_webtransport_sync() -> anyhow::Result<()> {
-    use core::pin::pin;
-
     wrpc_test::with_webtransport(|cc, sc| {
         async move {
-            let clt = wrpc_webtransport::Client::from(cc);
             let srv = Arc::new(wrpc_webtransport::Server::new());
-
-            let mut fut =
-                pin!(async { assert_bindgen_sync(Arc::new(clt), Arc::clone(&srv)).await });
+            let mut fut = pin!(async {
+                assert_bindgen_sync(
+                    Arc::new(wrpc_webtransport::Client::from(cc)),
+                    Arc::clone(&srv),
+                )
+                .await
+            });
             loop {
                 let accept = async {
                     let (tx, rx) = sc.accept_bi().await.expect("failed to accept connection");
@@ -1208,15 +1202,16 @@ async fn rust_bindgen_webtransport_sync() -> anyhow::Result<()> {
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 #[instrument(ret)]
 async fn rust_bindgen_webtransport_async() -> anyhow::Result<()> {
-    use core::pin::pin;
-
     wrpc_test::with_webtransport(|cc, sc| async move {
-        let clt = wrpc_webtransport::Client::from(cc);
         let srv = Arc::new(wrpc_webtransport::Server::new());
-
-        let mut fut = pin!(
-            async { assert_bindgen_async(Arc::new(clt), Arc::clone(&srv)).await }.in_current_span()
-        );
+        let mut fut = pin!(async {
+            assert_bindgen_async(
+                Arc::new(wrpc_webtransport::Client::from(cc)),
+                Arc::clone(&srv),
+            )
+            .await
+        }
+        .in_current_span());
         loop {
             let accept = async {
                 let (tx, rx) = sc.accept_bi().await.expect("failed to accept connection");
@@ -1240,10 +1235,11 @@ async fn rust_dynamic_webtransport() -> anyhow::Result<()> {
     let span = Span::current();
     wrpc_test::with_webtransport(|cc, sc| {
         async move {
-            let clt = wrpc_webtransport::Client::from(cc);
             let srv = Arc::new(wrpc_webtransport::Server::new());
-
-            let mut fut = pin!(assert_dynamic(Arc::new(clt), Arc::clone(&srv)));
+            let mut fut = pin!(assert_dynamic(
+                Arc::new(wrpc_webtransport::Client::from(cc)),
+                Arc::clone(&srv)
+            ));
             loop {
                 let accept = async {
                     let (tx, rx) = sc.accept_bi().await.expect("failed to accept connection");
@@ -1262,6 +1258,94 @@ async fn rust_dynamic_webtransport() -> anyhow::Result<()> {
     .await
 }
 
+#[cfg(feature = "websockets")]
+async fn accept_websockets(
+    lis: &tokio::net::TcpListener,
+    sb: &wrpc_websockets::ServerBuilder,
+    srv: &wrpc_transport::frame::Server<
+        (),
+        tokio_util::io::StreamReader<wrpc_websockets::Incoming<tokio::net::TcpStream>, Bytes>,
+        tokio_util::io::SinkWriter<wrpc_websockets::Outgoing<tokio::net::TcpStream>>,
+    >,
+) {
+    let (stream, addr) = lis.accept().await.expect("failed to accept connection");
+    assert!(addr.ip().is_loopback());
+    let (_req, ws) = sb
+        .accept(stream)
+        .await
+        .expect("failed to perform WebSocket handshake");
+    let (tx, rx) = wrpc_websockets::split(ws);
+    srv.accept((), tx, rx)
+        .await
+        .expect("failed to accept connection")
+}
+
+#[cfg(feature = "websockets")]
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+#[instrument(ret)]
+async fn rust_bindgen_websockets_sync() -> anyhow::Result<()> {
+    wrpc_test::with_websockets(|clt, sb, lis| async move {
+        let srv = Arc::new(wrpc_transport::frame::Server::default());
+        let mut fut = pin!(async {
+            assert_bindgen_sync(
+                Arc::new(wrpc_websockets::Client::from(clt)),
+                Arc::clone(&srv),
+            )
+            .await
+        });
+        loop {
+            select! {
+                res = &mut fut => return res,
+                () = accept_websockets(&lis, &sb, &srv) => continue,
+            }
+        }
+    })
+    .await
+}
+
+#[cfg(feature = "websockets")]
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+#[instrument(ret)]
+async fn rust_bindgen_websockets_async() -> anyhow::Result<()> {
+    wrpc_test::with_websockets(|clt, sb, lis| async move {
+        let srv = Arc::new(wrpc_transport::frame::Server::default());
+        let mut fut = pin!(async {
+            assert_bindgen_async(
+                Arc::new(wrpc_websockets::Client::from(clt)),
+                Arc::clone(&srv),
+            )
+            .await
+        });
+        loop {
+            select! {
+                res = &mut fut => return res,
+                () = accept_websockets(&lis, &sb, &srv) => continue,
+            }
+        }
+    })
+    .await
+}
+
+#[cfg(feature = "websockets")]
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+#[instrument(ret)]
+async fn rust_dynamic_websockets() -> anyhow::Result<()> {
+    wrpc_test::with_websockets(|clt, sb, lis| async move {
+        let srv = Arc::new(wrpc_transport::frame::Server::default());
+        let mut fut = pin!(assert_dynamic(
+            Arc::new(wrpc_websockets::Client::from(clt)),
+            Arc::clone(&srv)
+        ));
+        loop {
+            select! {
+                res = &mut fut => return res,
+                () = accept_websockets(&lis, &sb, &srv) => continue,
+            }
+        }
+    })
+    .await
+}
+
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 #[instrument(ret)]
 async fn rust_bindgen_tcp_sync() -> anyhow::Result<()> {
@@ -1271,12 +1355,15 @@ async fn rust_bindgen_tcp_sync() -> anyhow::Result<()> {
     let addr = lis.local_addr().context("failed to get server address")?;
 
     let srv = Arc::new(wrpc_transport::frame::Server::default());
-    let clt = wrpc_transport::frame::tcp::Client::from(addr);
     let span = Span::current();
-    let mut fut = pin!(
-        async { assert_bindgen_sync(Arc::new(clt), Arc::clone(&srv),).await }
-            .instrument(span.clone())
-    );
+    let mut fut = pin!(async {
+        assert_bindgen_sync(
+            Arc::new(wrpc_transport::frame::tcp::Client::from(addr)),
+            Arc::clone(&srv),
+        )
+        .await
+    }
+    .instrument(span.clone()));
     loop {
         let accept = async {
             let (stream, addr) = lis.accept().await.expect("failed to accept connection");

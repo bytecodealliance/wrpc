@@ -1,0 +1,44 @@
+[package]
+name = "wrpc-websockets"
+version = "0.1.0"
+description = "wRPC WebSockets integration"
+
+authors.workspace = true
+categories.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+aws_lc_rs = ["tokio-websockets/aws_lc_rs"]
+fastrand = ["tokio-websockets/fastrand"]
+getrandom = ["tokio-websockets/getrandom"]
+native-tls = ["tokio-websockets/native-tls"]
+openssl = ["tokio-websockets/openssl"]
+rand = ["tokio-websockets/rand"]
+ring = ["tokio-websockets/ring"]
+rustls-bring-your-own-connector = [
+    "tokio-websockets/rustls-bring-your-own-connector",
+]
+rustls-native-roots = ["tokio-websockets/rustls-native-roots"]
+rustls-platform-verifier = ["tokio-websockets/rustls-platform-verifier"]
+rustls-tls12 = ["tokio-websockets/rustls-tls12"]
+rustls-webpki-roots = ["tokio-websockets/rustls-webpki-roots"]
+sha1_smol = ["tokio-websockets/sha1_smol"]
+
+[dependencies]
+anyhow = { workspace = true, features = ["std"] }
+bytes = { workspace = true }
+futures = { workspace = true, features = ["alloc"] }
+tokio = { workspace = true }
+tokio-util = { workspace = true, features = ["io"] }
+tokio-websockets = { workspace = true, features = ["client", "server"] }
+tracing = { workspace = true }
+wrpc-transport = { workspace = true }
+
+[dev-dependencies]
+anyhow = { workspace = true, features = ["std"] }
+test-log = { workspace = true, features = ["color", "log", "trace"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tracing = { workspace = true }
+wrpc-test = { workspace = true, features = ["websockets"] }
