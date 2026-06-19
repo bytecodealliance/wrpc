@@ -6,6 +6,9 @@
 pub mod transport {
     pub use wrpc_transport::*;
 
+    #[cfg(feature = "message-channel")]
+    pub use wrpc_message_channel as message_channel;
+
     #[cfg(feature = "nats")]
     pub use wrpc_nats as nats;
 
