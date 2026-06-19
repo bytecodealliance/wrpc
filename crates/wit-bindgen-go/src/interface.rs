@@ -6,8 +6,8 @@ use std::mem;
 use heck::ToUpperCamelCase;
 use wit_bindgen_core::wit_parser::{
     Case, Docs, Enum, EnumCase, Field, Flag, Flags, Function, FunctionKind, Handle, Int,
-    InterfaceId, Record, Resolve, Result_, Stream, Tuple, Type, TypeDefKind, TypeId, TypeOwner,
-    Variant, World, WorldKey,
+    InterfaceId, Record, Resolve, Result_, Tuple, Type, TypeDefKind, TypeId, TypeOwner, Variant,
+    World, WorldKey,
 };
 use wit_bindgen_core::{uwrite, uwriteln, Source, TypeInfo};
 use wrpc_introspect::{async_paths_ty, is_list_of, is_tuple, is_ty, rpc_func_name};
@@ -1069,8 +1069,8 @@ impl InterfaceGenerator<'_> {
         }
     }
 
-    fn print_read_stream(&mut self, Stream { element, .. }: &Stream, reader: &str, path: &str) {
-        match element {
+    fn print_read_stream(&mut self, element: &Type, reader: &str, path: &str) {
+        match Some(element) {
             Some(ty) if is_ty(self.resolve, Type::U8, ty) => {
                 let bytes = self.deps.bytes();
                 let io = self.deps.io();
@@ -1372,6 +1372,7 @@ impl InterfaceGenerator<'_> {
             TypeDefKind::List(ty) => self.print_read_list(ty, reader, path),
             TypeDefKind::Future(ty) => self.print_read_future(ty, reader, path),
             TypeDefKind::Stream(ty) => self.print_read_stream(ty, reader, path),
+            TypeDefKind::ErrorContext => panic!("unsupported type: error-context"),
             TypeDefKind::Type(ty) => {
                 if let Some(name) = name {
                     self.push_str("func() (");
@@ -2064,8 +2065,8 @@ impl InterfaceGenerator<'_> {
         }
     }
 
-    fn print_write_stream(&mut self, Stream { element, .. }: &Stream, name: &str, writer: &str) {
-        match element {
+    fn print_write_stream(&mut self, element: &Type, name: &str, writer: &str) {
+        match Some(element) {
             Some(ty) if is_ty(self.resolve, Type::U8, ty) => {
                 let fmt = self.deps.fmt();
                 let io = self.deps.io();
@@ -3255,8 +3256,8 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
         }
     }
 
-    fn print_stream(&mut self, Stream { element, .. }: &Stream) {
-        match element {
+    fn print_stream(&mut self, element: &Type) {
+        match Some(element) {
             Some(ty) if is_ty(self.resolve, Type::U8, ty) => {
                 let io = self.deps.io();
                 self.push_str(io);
@@ -3308,6 +3309,9 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
             TypeDefKind::Record(_) => panic!("unsupported anonymous type reference: record"),
             TypeDefKind::Flags(_) => panic!("unsupported anonymous type reference: flags"),
             TypeDefKind::Enum(_) => panic!("unsupported anonymous type reference: enum"),
+            TypeDefKind::ErrorContext => {
+                panic!("unsupported anonymous type reference: error-context")
+            }
             TypeDefKind::Future(ty) => self.print_future(ty),
             TypeDefKind::Stream(ty) => self.print_stream(ty),
             TypeDefKind::Handle(Handle::Own(id)) => self.print_own(*id),
@@ -3869,5 +3873,30 @@ func (v *{name}) WriteToIndex(w {wrpc}.ByteWriter) (func({wrpc}.IndexWriter) err
         uwrite!(self.src, "type {} = ", name.to_upper_camel_case());
         self.print_ty(ty, true);
         self.src.push_str("\n");
+    }
+
+    fn type_future(&mut self, id: TypeId, _name: &str, ty: &Option<Type>, docs: &Docs) {
+        if let Some(name) = self.name_of(id) {
+            self.godoc(docs);
+            uwrite!(self.src, "type {name} = ");
+            self.print_future(ty);
+            self.push_str("\n");
+        }
+    }
+
+    fn type_stream(&mut self, id: TypeId, _name: &str, ty: &Type, docs: &Docs) {
+        if let Some(name) = self.name_of(id) {
+            self.godoc(docs);
+            uwrite!(self.src, "type {name} = ");
+            self.print_stream(ty);
+            self.push_str("\n");
+        }
+    }
+
+    fn type_error_context(&mut self, id: TypeId, _name: &str, docs: &Docs) {
+        if let Some(name) = self.name_of(id) {
+            self.godoc(docs);
+            uwrite!(self.src, "type {name} = struct{{}}\n");
+        }
     }
 }

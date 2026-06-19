@@ -8,10 +8,9 @@ use std::fmt::Write as _;
 use std::mem;
 use wit_bindgen_core::wit_parser::{
     Case, Docs, Enum, Field, Flags, Function, FunctionKind, Handle, Int, InterfaceId, Record,
-    Resolve, Result_, Stream, Tuple, Type, TypeDefKind, TypeId, TypeOwner, Variant, World,
-    WorldKey,
+    Resolve, Result_, Tuple, Type, TypeDefKind, TypeId, TypeOwner, Variant, World, WorldKey,
 };
-use wit_bindgen_core::{uwrite, uwriteln, Source, TypeInfo};
+use wit_bindgen_core::{dealias, uwrite, uwriteln, Source, TypeInfo};
 use wrpc_introspect::{async_paths_ty, async_paths_tyid, is_ty, rpc_func_name};
 
 pub struct InterfaceGenerator<'a> {
@@ -832,6 +831,27 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve>(
     }
 
     fn print_ty(&mut self, ty: &Type, owned: bool, submodule: bool) {
+        // If we have a typedef of a string or a list and it is being borrowed,
+        // the typedef is an alias for `String` or `Vec<T>`; borrow it as `&str`
+        // or `&[T]` so callers don't need to create owned copies.
+        if !owned {
+            if let Type::Id(id) = ty {
+                let id = dealias(self.resolve, *id);
+                match &self.resolve.types[id].kind {
+                    TypeDefKind::Type(Type::String) => {
+                        self.push_str("&'a str");
+                        return;
+                    }
+                    TypeDefKind::List(element) => {
+                        let element = *element;
+                        self.print_list(&element, false, submodule);
+                        return;
+                    }
+                    _ => {}
+                }
+            }
+        }
+
         match ty {
             Type::Id(t) => self.print_tyid(*t, owned, submodule),
             Type::Bool => self.push_str("bool"),
@@ -978,17 +998,13 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve>(
         self.push_str("> + ::core::marker::Send>>");
     }
 
-    fn print_stream(&mut self, Stream { element, .. }: &Stream, submodule: bool) {
+    fn print_stream(&mut self, element: &Type, submodule: bool) {
         uwrite!(
             self.src,
             "::core::pin::Pin<::std::boxed::Box<dyn {futures}::Stream<Item = ",
             futures = self.gen.futures_path()
         );
-        if let Some(ty) = element {
-            self.print_list(ty, true, submodule);
-        } else {
-            self.push_str("Vec<()>");
-        }
+        self.print_list(element, true, submodule);
         self.push_str("> + ::core::marker::Send>>");
     }
 
@@ -1023,6 +1039,9 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve>(
             TypeDefKind::Record(_) => panic!("unsupported anonymous type reference: record"),
             TypeDefKind::Flags(_) => panic!("unsupported anonymous type reference: flags"),
             TypeDefKind::Enum(_) => panic!("unsupported anonymous type reference: enum"),
+            TypeDefKind::ErrorContext => {
+                panic!("unsupported anonymous type reference: error-context")
+            }
             TypeDefKind::Future(ty) => self.print_future(ty, submodule),
             TypeDefKind::Stream(ty) => self.print_stream(ty, submodule),
             TypeDefKind::Handle(Handle::Own(id)) => self.print_own(*id, submodule),
@@ -2438,5 +2457,30 @@ mod {mod_name} {{
         uwrite!(self.src, "pub type {} = ", name.to_upper_camel_case());
         self.print_ty(ty, true, false);
         self.src.push_str(";\n");
+    }
+
+    fn type_future(&mut self, id: TypeId, _name: &str, ty: &Option<Type>, docs: &Docs) {
+        if let Some(name) = self.name_of(id) {
+            self.rustdoc(docs);
+            uwrite!(self.src, "pub type {name} = ");
+            self.print_future(ty, false);
+            self.push_str(";\n");
+        }
+    }
+
+    fn type_stream(&mut self, id: TypeId, _name: &str, ty: &Type, docs: &Docs) {
+        if let Some(name) = self.name_of(id) {
+            self.rustdoc(docs);
+            uwrite!(self.src, "pub type {name} = ");
+            self.print_stream(ty, false);
+            self.push_str(";\n");
+        }
+    }
+
+    fn type_error_context(&mut self, id: TypeId, _name: &str, docs: &Docs) {
+        if let Some(name) = self.name_of(id) {
+            self.rustdoc(docs);
+            uwrite!(self.src, "pub type {name} = ();\n");
+        }
     }
 }

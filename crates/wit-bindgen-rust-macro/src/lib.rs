@@ -46,6 +46,7 @@ struct Config {
     resolve: Resolve,
     world: WorldId,
     files: Vec<PathBuf>,
+    debug: bool,
 }
 
 /// The source of the wit package definition
@@ -63,6 +64,7 @@ impl Parse for Config {
         let mut world = None;
         let mut source = None;
         let mut features = Vec::new();
+        let mut debug = false;
 
         if input.peek(token::Brace) {
             let content;
@@ -114,6 +116,9 @@ impl Parse for Config {
                     Opt::Features(f) => {
                         features.extend(f.into_iter().map(|f| f.value()));
                     }
+                    Opt::Debug(enable) => {
+                        debug = enable.value();
+                    }
                     Opt::AnyhowPath(path) => {
                         opts.anyhow_path = Some(path.value());
                     }
@@ -157,6 +162,7 @@ impl Parse for Config {
             resolve,
             world,
             files,
+            debug,
         })
     }
 }
@@ -249,7 +255,7 @@ impl Config {
         // place a formatted version of the expanded code into a file. This file
         // will then show up in rustc error messages for any codegen issues and can
         // be inspected manually.
-        if std::env::var("WIT_BINDGEN_DEBUG").is_ok() {
+        if std::env::var("WIT_BINDGEN_DEBUG").is_ok() || self.debug {
             static INVOCATION: AtomicUsize = AtomicUsize::new(0);
             let root = Path::new(env!("DEBUG_OUTPUT_DIR"));
             let world_name = &self.resolve.worlds[self.world].name;
@@ -296,6 +302,7 @@ mod kw {
     syn::custom_keyword!(generate_all);
     syn::custom_keyword!(generate_unused_types);
     syn::custom_keyword!(features);
+    syn::custom_keyword!(debug);
     syn::custom_keyword!(anyhow_path);
     syn::custom_keyword!(bytes_path);
     syn::custom_keyword!(futures_path);
@@ -318,6 +325,7 @@ enum Opt {
     GenerateAll,
     GenerateUnusedTypes(syn::LitBool),
     Features(Vec<syn::LitStr>),
+    Debug(syn::LitBool),
     AnyhowPath(syn::LitStr),
     BytesPath(syn::LitStr),
     FuturesPath(syn::LitStr),
@@ -394,6 +402,10 @@ impl Parse for Opt {
             syn::bracketed!(contents in input);
             let list = Punctuated::<_, Token![,]>::parse_terminated(&contents)?;
             Ok(Opt::Features(list.into_iter().collect()))
+        } else if l.peek(kw::debug) {
+            input.parse::<kw::debug>()?;
+            input.parse::<Token![:]>()?;
+            Ok(Opt::Debug(input.parse()?))
         } else if l.peek(kw::anyhow_path) {
             input.parse::<kw::anyhow_path>()?;
             input.parse::<Token![:]>()?;

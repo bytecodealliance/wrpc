@@ -5,6 +5,15 @@ mod codegen_tests {
     macro_rules! codegen_test {
         (wasi_cli $name:tt $test:tt) => {};
         (wasi_http $name:tt $test:tt) => {};
+
+        // TODO: implement support for stream, future, and error-context in the
+        // wRPC generator, and then remove these lines:
+        (streams $name:tt $test:tt) => {};
+        (futures $name:tt $test:tt) => {};
+        (resources_with_streams $name:tt $test:tt) => {};
+        (resources_with_futures $name:tt $test:tt) => {};
+        (error_context $name:tt $test:tt) => {};
+
         ($id:ident $name:tt $test:tt) => {
             mod $id {
                 wit_bindgen_wrpc::generate!({
@@ -70,6 +79,66 @@ mod strings {
 
         // Test the return type is `String`.
         let _t: String = cat::bar(wrpc, ()).await?;
+
+        Ok(())
+    }
+}
+
+/// Like `strings` but with a type alias.
+mod aliased_strings {
+    wit_bindgen_wrpc::generate!({
+        inline: "
+            package my:strings;
+
+            world not-used-name {
+                import cat: interface {
+                    type my-string = string;
+                    foo: func(x: my-string);
+                    bar: func() -> my-string;
+                }
+            }
+        ",
+    });
+
+    #[allow(dead_code)]
+    async fn test(
+        wrpc: &impl wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,
+    ) -> anyhow::Result<()> {
+        // Test the argument is `&str`.
+        cat::foo(wrpc, (), "hello").await?;
+
+        // Test the return type is `String`.
+        let _t: String = cat::bar(wrpc, ()).await?;
+
+        Ok(())
+    }
+}
+
+/// Like `aliased_strings` but with lists instead of strings.
+mod aliased_lists {
+    wit_bindgen_wrpc::generate!({
+        inline: "
+            package my:lists;
+
+            world not-used-name {
+                import cat: interface {
+                    type my-list = list<u32>;
+                    foo: func(x: my-list);
+                    bar: func() -> my-list;
+                }
+            }
+        ",
+    });
+
+    #[allow(dead_code)]
+    async fn test(
+        wrpc: &impl wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,
+    ) -> anyhow::Result<()> {
+        // Test the argument is `&[u32]`.
+        cat::foo(wrpc, (), &[1, 2, 3]).await?;
+
+        // Test the return type is `Vec<u32>`.
+        let _t: Vec<u32> = cat::bar(wrpc, ()).await?;
 
         Ok(())
     }

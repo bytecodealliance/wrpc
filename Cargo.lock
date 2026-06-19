@@ -3425,8 +3425,8 @@ name = "test-helpers"
 version = "0.0.0"
 dependencies = [
  "codegen-macro",
- "wit-bindgen-core 0.36.0",
- "wit-parser 0.220.1",
+ "wit-bindgen-core 0.37.0",
+ "wit-parser 0.223.1",
 ]
 
 [[package]]
@@ -4381,9 +4381,9 @@ dependencies = [
 
 [[package]]
 name = "wasmparser"
-version = "0.220.1"
+version = "0.223.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8d07b6a3b550fefa1a914b6d54fc175dd11c3392da11eee604e6ffc759805d25"
+checksum = "664b980991ed9a8c834eb528a8979ab1109edcf52dc05dd5751e2cc3fb31035d"
 dependencies = [
  "bitflags",
  "indexmap",
@@ -5168,13 +5168,13 @@ checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
 
 [[package]]
 name = "wit-bindgen-core"
-version = "0.36.0"
+version = "0.37.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b632a5a0fa2409489bd49c9e6d99fcc61bb3d4ce9d1907d44662e75a28c71172"
+checksum = "8ba105733ba146c94e067793fb46505265ea8720eb14ceae65b10797c7728a65"
 dependencies = [
  "anyhow",
  "heck",
- "wit-parser 0.220.1",
+ "wit-parser 0.223.1",
 ]
 
 [[package]]
@@ -5285,7 +5285,7 @@ dependencies = [
  "clap",
  "heck",
  "test-helpers",
- "wit-bindgen-core 0.36.0",
+ "wit-bindgen-core 0.37.0",
  "wrpc-introspect",
 ]
 
@@ -5304,7 +5304,7 @@ dependencies = [
  "syn",
  "test-helpers",
  "tokio",
- "wit-bindgen-core 0.36.0",
+ "wit-bindgen-core 0.37.0",
  "wit-bindgen-wrpc",
  "wrpc-introspect",
  "wrpc-transport",
@@ -5319,7 +5319,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
- "wit-bindgen-core 0.36.0",
+ "wit-bindgen-core 0.37.0",
  "wit-bindgen-wrpc-rust",
 ]
 
@@ -5382,9 +5382,9 @@ dependencies = [
 
 [[package]]
 name = "wit-parser"
-version = "0.220.1"
+version = "0.223.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ae2a7999ed18efe59be8de2db9cb2b7f84d88b27818c79353dfc53131840fe1a"
+checksum = "263fde17f1fbe55a413f16eb59094bf751795c6da469a05c3d45ea6c77df6b40"
 dependencies = [
  "anyhow",
  "id-arena",
@@ -5395,7 +5395,7 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "unicode-xid",
- "wasmparser 0.220.1",
+ "wasmparser 0.223.1",
 ]
 
 [[package]]
@@ -5496,7 +5496,7 @@ dependencies = [
  "wasmtime",
  "wasmtime-cli-flags",
  "wasmtime-wasi",
- "wit-bindgen-core 0.36.0",
+ "wit-bindgen-core 0.37.0",
  "wit-bindgen-wrpc",
  "wit-bindgen-wrpc-go",
  "wit-bindgen-wrpc-rust",
@@ -5525,7 +5525,7 @@ dependencies = [
 name = "wrpc-introspect"
 version = "0.7.0"
 dependencies = [
- "wit-parser 0.220.1",
+ "wit-parser 0.223.1",
 ]
 
 [[package]]
@@ -5655,7 +5655,7 @@ dependencies = [
  "wasm-tokio",
  "wasmtime",
  "wasmtime-wasi",
- "wit-parser 0.220.1",
+ "wit-parser 0.223.1",
  "wrpc-introspect",
  "wrpc-transport",
 ]
