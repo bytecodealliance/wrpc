@@ -49,6 +49,7 @@ impl<H> InvokeBuilder<H> {
         tx.write_all(&buf)
             .await
             .context("failed to initialize connection")?;
+        tx.flush().await.context("failed to flush invocation")?;
 
         let Conn { tx, rx } = Conn::new::<H, _, _, _>(rx, tx, paths.as_ref());
         Ok((tx, rx))

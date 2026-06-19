@@ -500,6 +500,7 @@ async fn egress(
         let mut frame = path.chain(&mut buf).chain(data);
         trace!(?frame, "writing egress frame");
         tx.write_all_buf(&mut frame).await?;
+        tx.flush().await?;
     }
     trace!("shutting down outgoing stream");
     tx.shutdown().await
