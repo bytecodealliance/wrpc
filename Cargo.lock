@@ -5405,12 +5405,14 @@ version = "0.3.0"
 dependencies = [
  "anyhow",
  "async-nats",
+ "futures",
  "quinn",
  "rcgen",
  "rustls",
  "tokio",
  "tracing",
  "wrpc-cli",
+ "wrpc-transport",
  "wtransport",
 ]
 

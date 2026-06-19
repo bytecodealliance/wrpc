@@ -26,10 +26,12 @@ webtransport = ["dep:wtransport", "wtransport/self-signed"]
 [dependencies]
 anyhow = { workspace = true }
 async-nats = { workspace = true, optional = true }
+futures = { workspace = true }
 quinn = { workspace = true, optional = true }
 rcgen = { workspace = true, features = ["crypto", "ring", "zeroize"] }
 rustls = { workspace = true, features = ["logging", "ring"] }
 tokio = { workspace = true, features = ["net", "process", "rt-multi-thread"] }
 tracing = { workspace = true }
 wrpc-cli = { workspace = true }
+wrpc-transport = { workspace = true }
 wtransport = { workspace = true, features = ["ring"], optional = true }
