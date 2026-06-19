@@ -42,6 +42,7 @@ bin-wasmtime = ["dep:tokio", "dep:wrpc-wasmtime-cli", "tokio/rt-multi-thread"]
 net = ["wrpc-transport/net"]
 quic = ["dep:wrpc-quic"]
 wasmtime = ["dep:wrpc-wasmtime"]
+message-channel = ["dep:wrpc-message-channel"]
 webtransport = ["dep:wrpc-webtransport"]
 websockets = [
     "dep:wrpc-websockets",
@@ -83,6 +84,7 @@ wit-bindgen-wrpc-go = { workspace = true, optional = true }
 wit-bindgen-wrpc-rust = { workspace = true, optional = true }
 wit-bindgen-wrpc-test = { workspace = true, optional = true }
 wrpc-cli = { workspace = true, optional = true }
+wrpc-message-channel = { workspace = true, optional = true }
 wrpc-quic = { workspace = true, optional = true }
 wrpc-transport = { workspace = true }
 wrpc-wasmtime = { workspace = true, optional = true }
@@ -139,6 +141,7 @@ http = { version = "1", default-features = false }
 humantime = { version = "2.1", default-features = false }
 hyper = { version = "1", default-features = false }
 hyper-util = { version = "0.1", default-features = false }
+js-sys = { version = "0.3", default-features = false }
 nuid = { version = "0.6", default-features = false }
 pin-project-lite = { version = "0.2", default-features = false }
 prettyplease = { version = "0.2.37", default-features = false }
@@ -171,8 +174,12 @@ url = { version = "2" }
 uuid = { version = "1", default-features = false }
 wasi = { version = "0.14", default-features = false }
 wasi-preview1-component-adapter-provider = { version = "46", default-features = false }
+wasm-bindgen = { version = "0.2", default-features = false }
+wasm-bindgen-futures = { version = "0.4", default-features = false }
+wasm-bindgen-test = { version = "0.3", default-features = false }
 wasm-tokio = { version = "0.6.1", default-features = false }
 wasm-wave = { version = "0.252", default-features = false }
+web-sys = { version = "0.3", default-features = false }
 wasmparser = { version = "0.252", default-features = false }
 wasmtime = { version = "46", default-features = false }
 wasmtime-cli-flags = { version = "46", default-features = false }
@@ -189,6 +196,7 @@ wit-component = { version = "0.252", default-features = false }
 wit-parser = { version = "0.251", default-features = false }
 wrpc-cli = { version = "0.8", path = "./crates/cli", default-features = false }
 wrpc-introspect = { version = "0.7", default-features = false, path = "./crates/introspect" }
+wrpc-message-channel = { version = "0.1", path = "./crates/message-channel", default-features = false }
 wrpc-pack = { version = "0.4", path = "./crates/pack", default-features = false }
 wrpc-quic = { version = "0.1", path = "./crates/quic", default-features = false }
 wrpc-test = { path = "./crates/test", default-features = false }
