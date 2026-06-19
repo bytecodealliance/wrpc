@@ -423,3 +423,28 @@ where
     )?;
     f(clt, srv).await.context("closure failed")
 }
+
+#[cfg(feature = "websockets")]
+pub async fn with_websockets<T, Fut>(
+    f: impl FnOnce(
+        tokio_websockets::ClientBuilder<'static>,
+        tokio_websockets::ServerBuilder,
+        TcpListener,
+    ) -> Fut,
+) -> anyhow::Result<T>
+where
+    Fut: core::future::Future<Output = anyhow::Result<T>>,
+{
+    use tokio_websockets::{ClientBuilder, ServerBuilder};
+
+    let lis = tcp_bind().await?;
+    let addr = lis
+        .local_addr()
+        .context("failed to query listener local address")?;
+    let clt = ClientBuilder::new()
+        .uri(&format!("ws://[::1]:{}", addr.port()))
+        .context("failed to set WebSocket URI")?;
+    f(clt, ServerBuilder::new(), lis)
+        .await
+        .context("closure failed")
+}
