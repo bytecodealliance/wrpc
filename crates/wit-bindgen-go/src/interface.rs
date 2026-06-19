@@ -1069,8 +1069,8 @@ impl InterfaceGenerator<'_> {
         }
     }
 
-    fn print_read_stream(&mut self, element: &Type, reader: &str, path: &str) {
-        match Some(element) {
+    fn print_read_stream(&mut self, element: &Option<Type>, reader: &str, path: &str) {
+        match element {
             Some(ty) if is_ty(self.resolve, Type::U8, ty) => {
                 let bytes = self.deps.bytes();
                 let io = self.deps.io();
@@ -2065,8 +2065,8 @@ impl InterfaceGenerator<'_> {
         }
     }
 
-    fn print_write_stream(&mut self, element: &Type, name: &str, writer: &str) {
-        match Some(element) {
+    fn print_write_stream(&mut self, element: &Option<Type>, name: &str, writer: &str) {
+        match element {
             Some(ty) if is_ty(self.resolve, Type::U8, ty) => {
                 let fmt = self.deps.fmt();
                 let io = self.deps.io();
@@ -3256,8 +3256,8 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
         }
     }
 
-    fn print_stream(&mut self, element: &Type) {
-        match Some(element) {
+    fn print_stream(&mut self, element: &Option<Type>) {
+        match element {
             Some(ty) if is_ty(self.resolve, Type::U8, ty) => {
                 let io = self.deps.io();
                 self.push_str(io);
@@ -3884,7 +3884,7 @@ func (v *{name}) WriteToIndex(w {wrpc}.ByteWriter) (func({wrpc}.IndexWriter) err
         }
     }
 
-    fn type_stream(&mut self, id: TypeId, _name: &str, ty: &Type, docs: &Docs) {
+    fn type_stream(&mut self, id: TypeId, _name: &str, ty: &Option<Type>, docs: &Docs) {
         if let Some(name) = self.name_of(id) {
             self.godoc(docs);
             uwrite!(self.src, "type {name} = ");

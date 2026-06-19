@@ -998,13 +998,17 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve>(
         self.push_str("> + ::core::marker::Send>>");
     }
 
-    fn print_stream(&mut self, element: &Type, submodule: bool) {
+    fn print_stream(&mut self, element: &Option<Type>, submodule: bool) {
         uwrite!(
             self.src,
             "::core::pin::Pin<::std::boxed::Box<dyn {futures}::Stream<Item = ",
             futures = self.gen.futures_path()
         );
-        self.print_list(element, true, submodule);
+        if let Some(ty) = element {
+            self.print_list(ty, true, submodule);
+        } else {
+            self.push_str("Vec<()>");
+        }
         self.push_str("> + ::core::marker::Send>>");
     }
 
@@ -2468,7 +2472,7 @@ mod {mod_name} {{
         }
     }
 
-    fn type_stream(&mut self, id: TypeId, _name: &str, ty: &Type, docs: &Docs) {
+    fn type_stream(&mut self, id: TypeId, _name: &str, ty: &Option<Type>, docs: &Docs) {
         if let Some(name) = self.name_of(id) {
             self.rustdoc(docs);
             uwrite!(self.src, "pub type {name} = ");
