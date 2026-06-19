@@ -1,0 +1,32 @@
+[package]
+name = "wrpc-message-channel"
+version = "0.1.0"
+description = "wRPC browser MessagePort transport"
+
+authors.workspace = true
+categories.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[target.'cfg(target_family = "wasm")'.dependencies]
+bytes = { workspace = true }
+futures = { workspace = true, features = ["std"] }
+js-sys = { workspace = true }
+tokio = { workspace = true, features = ["sync"] }
+tokio-stream = { workspace = true }
+tokio-util = { workspace = true, features = ["io"] }
+tracing = { workspace = true, features = ["attributes"] }
+wasm-bindgen = { workspace = true }
+wasm-bindgen-futures = { workspace = true }
+web-sys = { workspace = true, features = [
+    "MessageChannel",
+    "MessageEvent",
+    "MessagePort",
+] }
+wrpc-transport = { workspace = true }
+
+[target.'cfg(target_family = "wasm")'.dev-dependencies]
+tokio = { workspace = true, features = ["io-util", "macros"] }
+wasm-bindgen-test = { workspace = true }
+web-sys = { workspace = true, features = ["MessageChannel"] }
