@@ -1,0 +1,45 @@
+{
+  "name": "@bytecodealliance/wrpc",
+  "version": "0.1.0",
+  "description": "Transport-agnostic, component-native wRPC client for JavaScript",
+  "type": "module",
+  "license": "Apache-2.0 WITH LLVM-exception",
+  "homepage": "https://wrpc.io",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bytecodealliance/wrpc.git",
+    "directory": "js"
+  },
+  "keywords": [
+    "wrpc",
+    "wit",
+    "rpc",
+    "component-model",
+    "webassembly",
+    "wasm"
+  ],
+  "main": "./src/index.js",
+  "module": "./src/index.js",
+  "types": "./src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.d.ts",
+      "default": "./src/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "test": "node --test",
+    "check": "tsc"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
