@@ -1625,7 +1625,7 @@ mod {mod_name} {{
                 self.push_str("write!(f, \"{:?}\", self)\n");
                 self.push_str("}\n");
                 self.push_str("}\n");
-                self.push_str("impl ::std::error::Error for ");
+                self.push_str("impl ::core::error::Error for ");
                 self.push_str(&name);
                 self.push_str(" {}\n");
             }
@@ -1851,7 +1851,7 @@ mod {mod_name} {{
                 self.push_str("\n");
 
                 self.push_str("impl");
-                self.push_str(" ::std::error::Error for ");
+                self.push_str(" ::core::error::Error for ");
                 self.push_str(&name);
                 self.push_str(" {}\n");
             }
@@ -2368,7 +2368,7 @@ mod {mod_name} {{
                 self.push_str("}\n");
                 self.push_str("}\n");
                 self.push_str("\n");
-                self.push_str("impl ::std::error::Error for ");
+                self.push_str("impl ::core::error::Error for ");
                 self.push_str(&name);
                 self.push_str(" {}\n");
             } else {
