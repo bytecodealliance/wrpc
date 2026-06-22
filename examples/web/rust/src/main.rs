@@ -23,6 +23,7 @@ use rustls::{DigitallySignedStruct, SignatureScheme};
 use tokio::sync::{Notify, RwLock};
 use tokio::task::JoinSet;
 use tokio::{select, signal};
+use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
 use tracing::{debug, error, info, instrument, trace, warn};
 use tracing_subscriber::layer::SubscriberExt as _;
@@ -615,6 +616,11 @@ export const PORT = "{port}"
 "#
                     ),
                 )),
+            )
+            // Serve the `@bytecodealliance/wrpc` client the UI imports.
+            .nest_service(
+                "/wrpc",
+                ServeDir::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../../js/src")),
             )
             .fallback(index)
             .layer(TraceLayer::new_for_http()),
