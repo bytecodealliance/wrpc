@@ -34,6 +34,7 @@ bin-bindgen = [
     "dep:clap",
     "dep:wit-bindgen-core",
     "dep:wit-bindgen-wrpc-go",
+    "dep:wit-bindgen-wrpc-test",
     "wit-bindgen-wrpc-go/clap",
     "wit-bindgen-wrpc-rust/clap",
 ]
@@ -82,6 +83,7 @@ wit-bindgen-core = { workspace = true, optional = true }
 wit-bindgen-wrpc = { workspace = true }
 wit-bindgen-wrpc-go = { workspace = true, optional = true }
 wit-bindgen-wrpc-rust = { workspace = true, optional = true }
+wit-bindgen-wrpc-test = { workspace = true, optional = true }
 wrpc-cli = { workspace = true, optional = true }
 wrpc-nats = { workspace = true, optional = true }
 wrpc-quic = { workspace = true, optional = true }
@@ -148,8 +150,10 @@ prettyplease = { version = "0.2.37", default-features = false }
 proc-macro2 = { version = "1", default-features = false }
 quinn = { version = "0.11.6", default-features = false }
 quote = { version = "1", default-features = false }
+rayon = { version = "1", default-features = false }
 rcgen = { version = "0.14", default-features = false }
 redis = { version = "1.2", default-features = false }
+regex = { version = "1", default-features = false }
 reqwest = { version = "0.13", default-features = false }
 rustls = { version = "0.23", default-features = false }
 semver = { version = "1", default-features = false }
@@ -163,6 +167,7 @@ tokio = { version = "1", default-features = false }
 tokio-stream = { version = "0.1", default-features = false }
 tokio-util = { version = "0.7", default-features = false }
 tokio-websockets = { version = "0.13", default-features = false }
+toml = { version = "0.8", default-features = false }
 tower = { version = "0.5", default-features = false }
 tower-http = { version = "0.7", default-features = false }
 tracing = { version = "0.1", default-features = false }
@@ -179,11 +184,12 @@ wasmtime-cli-flags = { version = "45", default-features = false }
 wasmtime-wasi = { version = "45", default-features = false }
 wasmtime-wasi-http = { version = "45", default-features = false }
 wit-bindgen = { version = "0.45", default-features = false }
-wit-bindgen-core = { version = "0.40", default-features = false }
+wit-bindgen-core = { version = "0.41", default-features = false }
 wit-bindgen-wrpc = { version = "0.11", default-features = false, path = "./crates/wit-bindgen" }
 wit-bindgen-wrpc-go = { version = "0.13", default-features = false, path = "./crates/wit-bindgen-go" }
 wit-bindgen-wrpc-rust = { version = "0.11", default-features = false, path = "./crates/wit-bindgen-rust" }
 wit-bindgen-wrpc-rust-macro = { version = "0.11", default-features = false, path = "./crates/wit-bindgen-rust-macro" }
+wit-bindgen-wrpc-test = { version = "0.1", default-features = false, path = "./crates/wit-bindgen-test" }
 wit-component = { version = "0.252", default-features = false }
 wit-parser = { version = "0.227", default-features = false }
 wrpc-cli = { version = "0.8", path = "./crates/cli", default-features = false }

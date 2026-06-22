@@ -1,0 +1,14 @@
+package my:test;
+
+interface exports-iface {
+  foo: func();
+  bar: func();
+}
+
+world test {
+  export exports-iface;
+}
+
+world runner {
+  import exports-iface;
+}

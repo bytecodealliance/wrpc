@@ -29,6 +29,12 @@ enum Opt {
         #[clap(flatten)]
         args: Common,
     },
+
+    // doc-comments are present on `wit_bindgen_wrpc_test::Opts` for clap to use.
+    Test {
+        #[clap(flatten)]
+        opts: wit_bindgen_wrpc_test::Opts,
+    },
 }
 
 #[derive(Debug, Parser)]
@@ -82,6 +88,10 @@ fn main() -> Result<()> {
     let (generator, opt) = match Opt::parse() {
         Opt::Rust { opts, args } => (opts.build(), args),
         Opt::Go { opts, args } => (opts.build(), args),
+        Opt::Test { opts } => {
+            let exe = std::env::args_os().next().unwrap();
+            return opts.run(std::path::Path::new(&exe));
+        }
     };
 
     gen_world(generator, &opt, &mut files).map_err(attach_with_context)?;

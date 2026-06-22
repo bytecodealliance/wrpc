@@ -22,6 +22,3 @@ clap = { workspace = true, features = ["derive"], optional = true }
 heck = { workspace = true }
 wit-bindgen-core = { workspace = true }
 wrpc-introspect = { workspace = true }
-
-[dev-dependencies]
-test-helpers = { workspace = true }

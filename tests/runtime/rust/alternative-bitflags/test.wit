@@ -1,0 +1,18 @@
+package my:inline;
+
+interface flags-iface {
+  flags bar {
+    foo,
+    bar,
+    baz,
+  }
+  get-flag: func() -> bar;
+}
+
+world test {
+  export flags-iface;
+}
+
+world runner {
+  import flags-iface;
+}

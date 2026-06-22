@@ -2,7 +2,7 @@ use crate::{
     full_wit_type_name, int_repr, to_rust_ident, to_upper_camel_case, FnSig, Identifier,
     InterfaceName, RustFlagsRepr, RustWrpc, TypeGeneration,
 };
-use heck::{ToShoutySnakeCase, ToUpperCamelCase};
+use heck::{ToKebabCase, ToShoutySnakeCase, ToUpperCamelCase};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::mem;
@@ -17,7 +17,7 @@ pub struct InterfaceGenerator<'a> {
     pub src: Source,
     pub(super) identifier: Identifier<'a>,
     pub in_import: bool,
-    pub(super) gen: &'a mut RustWrpc,
+    pub(super) r#gen: &'a mut RustWrpc,
     pub resolve: &'a Resolve,
 }
 
@@ -44,7 +44,7 @@ impl InterfaceGenerator<'_> {
         }
 
         for func in funcs {
-            if self.gen.skip.contains(&func.name) {
+            if self.r#gen.skip.contains(&func.name) {
                 continue;
             }
 
@@ -74,14 +74,14 @@ impl InterfaceGenerator<'_> {
                     uwrite!(
                         self.src,
                         " -> impl ::core::future::Future<Output = {}::Result<()>> + ::core::marker::Send",
-                        self.gen.anyhow_path()
+                        self.r#gen.anyhow_path()
                     );
                 }
                 1 => {
                     uwrite!(
                         self.src,
                         " -> impl ::core::future::Future<Output = {}::Result<",
-                        self.gen.anyhow_path()
+                        self.r#gen.anyhow_path()
                     );
                     let ty = func.result.iter().next().unwrap();
                     self.print_ty(ty, true, false);
@@ -91,7 +91,7 @@ impl InterfaceGenerator<'_> {
                     uwrite!(
                         self.src,
                         " -> impl ::core::future::Future<Output = {}::Result<(",
-                        self.gen.anyhow_path()
+                        self.r#gen.anyhow_path()
                     );
                     for ty in func.result.iter() {
                         self.print_ty(ty, true, false);
@@ -174,9 +174,9 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve>(
     async move {{
         let ("#,
             resource_traits = trait_names.join(""),
-            anyhow = self.gen.anyhow_path(),
-            futures = self.gen.futures_path(),
-            wrpc_transport = self.gen.wrpc_transport_path()
+            anyhow = self.r#gen.anyhow_path(),
+            futures = self.r#gen.futures_path(),
+            wrpc_transport = self.r#gen.wrpc_transport_path()
         );
         for Function { name, kind, .. } in &funcs_to_export {
             uwriteln!(
@@ -194,7 +194,7 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve>(
         uwrite!(
             self.src,
             ") = {tokio}::try_join!(",
-            tokio = self.gen.tokio_path()
+            tokio = self.r#gen.tokio_path()
         );
         let instance = match identifier {
             Identifier::Interface(id, name) => {
@@ -258,8 +258,8 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve>(
                     "{}",
                     ::std::sync::Arc::from("#,
                 rpc_func_name(func),
-                anyhow = self.gen.anyhow_path(),
-                wrpc_transport = self.gen.wrpc_transport_path(),
+                anyhow = self.r#gen.anyhow_path(),
+                wrpc_transport = self.r#gen.wrpc_transport_path(),
             );
             if paths.is_empty() {
                 self.src.push_str(
@@ -292,7 +292,7 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve>(
             self.src,
             r"
         {anyhow}::Ok([",
-            anyhow = self.gen.anyhow_path(),
+            anyhow = self.r#gen.anyhow_path(),
         );
         for func in &funcs_to_export {
             let name = to_rust_ident(&func.name);
@@ -312,7 +312,7 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve>(
                     FunctionKind::Constructor(_) => "c",
                     FunctionKind::Static(_) | FunctionKind::AsyncStatic(_) => "s",
                 },
-                futures = self.gen.futures_path(),
+                futures = self.r#gen.futures_path(),
                 wit_name = func.name,
             );
             for i in 0..func.params.len() {
@@ -349,8 +349,8 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve>(
                                 let rx = rx.map({tracing}::Instrument::in_current_span).map({tokio}::spawn);
                                 {tracing}::trace!(instance = "{instance}", func = "{wit_name}", "calling handler");
                                 match {trait_name}::{name}(&handler, cx"#,
-                tokio = self.gen.tokio_path(),
-                tracing = self.gen.tracing_path(),
+                tokio = self.r#gen.tokio_path(),
+                tracing = self.r#gen.tracing_path(),
                 wit_name = func.name,
             );
             for i in 0..func.params.len() {
@@ -430,9 +430,9 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve>(
                     >
                 )
             }},"#,
-                anyhow = self.gen.anyhow_path(),
-                futures = self.gen.futures_path(),
-                tracing = self.gen.tracing_path(),
+                anyhow = self.r#gen.anyhow_path(),
+                futures = self.r#gen.futures_path(),
+                tracing = self.r#gen.tracing_path(),
                 wit_name = func.name,
             );
         }
@@ -512,15 +512,15 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve>(
 ",
         );
         let map = if self.in_import {
-            &mut self.gen.import_modules
+            &mut self.r#gen.import_modules
         } else {
-            &mut self.gen.export_modules
+            &mut self.r#gen.export_modules
         };
         map.push((module, module_path));
     }
 
     fn generate_guest_import(&mut self, instance: &str, func: &Function) {
-        if self.gen.skip.contains(&func.name) {
+        if self.r#gen.skip.contains(&func.name) {
             return;
         }
 
@@ -577,7 +577,7 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve>(
                     paths
                 });
 
-        let anyhow = self.gen.anyhow_path().to_string();
+        let anyhow = self.r#gen.anyhow_path().to_string();
 
         let params = self.print_docs_and_params(func, &sig);
         match func.result.iter().collect::<Vec<_>>().as_slice() {
@@ -600,7 +600,7 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve>(
                     uwrite!(
                         self.src,
                         ", ::core::option::Option<impl ::core::future::Future<Output = {anyhow}::Result<()>> + ::core::marker::Send + 'static + {wrpc_transport}::Captures<'a>>)",
-                        wrpc_transport = self.gen.wrpc_transport_path(),
+                        wrpc_transport = self.r#gen.wrpc_transport_path(),
                     );
                 }
                 uwrite!(self.src, ">> + Send + 'a");
@@ -618,7 +618,7 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve>(
                     uwrite!(
                         self.src,
                         "::core::option::Option<impl ::core::future::Future<Output = {anyhow}::Result<()>> + ::core::marker::Send + 'static + {wrpc_transport}::Captures<'a>>",
-                        wrpc_transport = self.gen.wrpc_transport_path(),
+                        wrpc_transport = self.r#gen.wrpc_transport_path(),
                     );
                 }
                 uwrite!(self.src, ")>> + Send + 'a");
@@ -637,7 +637,7 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve>(
                 let wrpc__ = {anyhow}::Context::context(
                     {wrpc_transport}::InvokeExt::invoke_values_blocking(wrpc__, cx__, "{instance}", "{}", ({params}), "#,
                 rpc_func_name(func),
-                wrpc_transport = self.gen.wrpc_transport_path(),
+                wrpc_transport = self.r#gen.wrpc_transport_path(),
                 params = {
                     let s = params.join(", ");
                     if params.len() == 1 {
@@ -674,7 +674,7 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve>(
                 let (wrpc__, io__) = {anyhow}::Context::context(
                     {wrpc_transport}::InvokeExt::invoke_values(wrpc__, cx__, "{instance}", "{}", ({params}), "#,
                 rpc_func_name(func),
-                wrpc_transport = self.gen.wrpc_transport_path(),
+                wrpc_transport = self.r#gen.wrpc_transport_path(),
                 params = {
                     let s = params.join(", ");
                     if params.len() == 1 {
@@ -809,7 +809,7 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve>(
             uwrite!(
                 self.src,
                 "<'a, C: {wrpc_transport}::Invoke>(wrpc__: &'a C, cx__: C::Context,",
-                wrpc_transport = self.gen.wrpc_transport_path(),
+                wrpc_transport = self.r#gen.wrpc_transport_path(),
             );
         } else {
             self.push_str("(");
@@ -982,7 +982,7 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve>(
     fn print_list(&mut self, ty: &Type, owned: bool, submodule: bool) {
         if owned {
             if is_ty(self.resolve, Type::U8, ty) {
-                uwrite!(self.src, "{bytes}::Bytes", bytes = self.gen.bytes_path());
+                uwrite!(self.src, "{bytes}::Bytes", bytes = self.r#gen.bytes_path());
             } else {
                 self.push_str("Vec<");
                 self.print_ty(ty, true, submodule);
@@ -992,7 +992,7 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve>(
             uwrite!(
                 self.src,
                 "&'a {bytes}::Bytes",
-                bytes = self.gen.bytes_path()
+                bytes = self.r#gen.bytes_path()
             );
         } else {
             self.push_str("&'a [");
@@ -1015,7 +1015,7 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve>(
         uwrite!(
             self.src,
             "::core::pin::Pin<::std::boxed::Box<dyn {futures}::Stream<Item = ",
-            futures = self.gen.futures_path()
+            futures = self.r#gen.futures_path()
         );
         if let Some(ty) = element {
             self.print_list(ty, true, submodule);
@@ -1026,14 +1026,14 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve>(
     }
 
     fn print_own(&mut self, id: TypeId, submodule: bool) {
-        self.src.push_str(self.gen.wrpc_transport_path());
+        self.src.push_str(self.r#gen.wrpc_transport_path());
         self.push_str("::ResourceOwn<");
         self.print_tyid(id, true, submodule);
         self.push_str(">");
     }
 
     fn print_borrow(&mut self, id: TypeId, submodule: bool) {
-        self.src.push_str(self.gen.wrpc_transport_path());
+        self.src.push_str(self.r#gen.wrpc_transport_path());
         self.push_str("::ResourceBorrow<");
         self.print_tyid(id, true, submodule);
         self.push_str(">");
@@ -1044,7 +1044,7 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve>(
         if let Some(name) = &ty.name {
             let full_wit_type_name = full_wit_type_name(self.resolve, id);
             if let Some(TypeGeneration::Remap(remapped_path)) =
-                self.gen.with.get(&full_wit_type_name)
+                self.r#gen.with.get(&full_wit_type_name)
             {
                 let remapped_path = remapped_path.clone();
                 self.push_str(&remapped_path);
@@ -1078,7 +1078,7 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve>(
     }
 
     fn name_of(&self, ty: TypeId) -> Option<String> {
-        (self.gen.opts.generate_unused_types
+        (self.r#gen.opts.generate_unused_types
             // If this type isn't actually used, no need to generate it.
             || matches!(
                 self.info(ty),
@@ -1132,7 +1132,7 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve>(
     }
 
     fn path_to_interface(&self, interface: InterfaceId) -> Option<String> {
-        let InterfaceName { path, remapped } = &self.gen.interface_names[&interface];
+        let InterfaceName { path, remapped } = &self.r#gen.interface_names[&interface];
         if *remapped {
             let mut path_to_root = self.path_to_root();
             path_to_root.push_str(path);
@@ -1165,7 +1165,7 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve>(
     }
 
     fn info(&self, ty: TypeId) -> TypeInfo {
-        self.gen.types.get(ty)
+        self.r#gen.types.get(ty)
     }
 }
 
@@ -1184,7 +1184,7 @@ impl<'a> wit_bindgen_core::InterfaceGenerator<'a> for InterfaceGenerator<'a> {
         let info = self.info(id);
         // We use a BTree set to make sure we don't have any duplicates and we have a stable order
         let additional_derives: BTreeSet<String> = self
-            .gen
+            .r#gen
             .opts
             .additional_derive_attributes
             .iter()
@@ -1194,7 +1194,15 @@ impl<'a> wit_bindgen_core::InterfaceGenerator<'a> for InterfaceGenerator<'a> {
             let (paths, _) = async_paths_tyid(self.resolve, id);
 
             self.rustdoc(docs);
-            let mut derives = additional_derives.clone();
+            let mut derives = BTreeSet::new();
+            if !self
+                .r#gen
+                .opts
+                .additional_derive_ignore
+                .contains(&name.to_kebab_case())
+            {
+                derives.extend(additional_derives.clone());
+            }
             if info.is_copy() && paths.is_empty() {
                 self.push_str("#[repr(C)]\n");
                 if !derives.contains("Clone")
@@ -1235,10 +1243,10 @@ impl<'a> wit_bindgen_core::InterfaceGenerator<'a> for InterfaceGenerator<'a> {
 
             let mod_name = to_rust_ident(ty_name);
 
-            let bytes = self.gen.bytes_path().to_string();
-            let tokio = self.gen.tokio_path().to_string();
-            let tokio_util = self.gen.tokio_util_path().to_string();
-            let wrpc_transport = self.gen.wrpc_transport_path().to_string();
+            let bytes = self.r#gen.bytes_path().to_string();
+            let tokio = self.r#gen.tokio_path().to_string();
+            let tokio_util = self.r#gen.tokio_util_path().to_string();
+            let wrpc_transport = self.r#gen.wrpc_transport_path().to_string();
 
             let (paths, _) = async_paths_tyid(self.resolve, id);
             if paths.is_empty() {
@@ -1643,11 +1651,11 @@ pub struct {}(());",
 
     fn type_flags(&mut self, id: TypeId, ty_name: &str, flags: &Flags, docs: &Docs) {
         if let Some(name) = self.name_of(id) {
-            let bitflags = self.gen.bitflags_path().to_string();
-            let bytes = self.gen.bytes_path().to_string();
-            let tokio_util = self.gen.tokio_util_path().to_string();
-            let wasm_tokio = self.gen.wasm_tokio_path().to_string();
-            let wrpc_transport = self.gen.wrpc_transport_path().to_string();
+            let bitflags = self.r#gen.bitflags_path().to_string();
+            let bytes = self.r#gen.bytes_path().to_string();
+            let tokio_util = self.r#gen.tokio_util_path().to_string();
+            let wasm_tokio = self.r#gen.wasm_tokio_path().to_string();
+            let wrpc_transport = self.r#gen.wrpc_transport_path().to_string();
 
             let mod_name = to_rust_ident(ty_name);
 
@@ -1773,7 +1781,7 @@ mod {mod_name} {{
         let info = self.info(id);
         // We use a BTree set to make sure we don't have any duplicates and have a stable order
         let additional_derives: BTreeSet<String> = self
-            .gen
+            .r#gen
             .opts
             .additional_derive_attributes
             .iter()
@@ -1783,7 +1791,15 @@ mod {mod_name} {{
             let (paths, _) = async_paths_tyid(self.resolve, id);
 
             self.rustdoc(docs);
-            let mut derives = additional_derives.clone();
+            let mut derives = BTreeSet::new();
+            if !self
+                .r#gen
+                .opts
+                .additional_derive_ignore
+                .contains(&name.to_kebab_case())
+            {
+                derives.extend(additional_derives.clone());
+            }
             if info.is_copy() && paths.is_empty() {
                 derives.extend(
                     ["::core::marker::Copy", "::core::clone::Clone"]
@@ -1837,10 +1853,10 @@ mod {mod_name} {{
                 self.push_str(" {}\n");
             }
 
-            let bytes = self.gen.bytes_path().to_string();
-            let tokio_util = self.gen.tokio_util_path().to_string();
-            let wasm_tokio = self.gen.wasm_tokio_path().to_string();
-            let wrpc_transport = self.gen.wrpc_transport_path().to_string();
+            let bytes = self.r#gen.bytes_path().to_string();
+            let tokio_util = self.r#gen.tokio_util_path().to_string();
+            let wasm_tokio = self.r#gen.wasm_tokio_path().to_string();
+            let wrpc_transport = self.r#gen.wrpc_transport_path().to_string();
 
             let mod_name = to_rust_ident(ty_name);
 
@@ -1936,7 +1952,7 @@ mod {mod_name} {{
 }}"#,
                 );
             } else {
-                let tokio = self.gen.tokio_path().to_string();
+                let tokio = self.r#gen.tokio_path().to_string();
 
                 let (paths, _) = async_paths_tyid(self.resolve, id);
                 if paths.is_empty() {
@@ -2124,7 +2140,7 @@ mod {mod_name} {{
                         uwrite!(
                             self.src,
                             r"
-                Self::Payload(Some(PayloadDecoder::{case}(ref mut dec))) => dec.take_deferred(),"
+                Self::Payload(Some(PayloadDecoder::{case}(dec))) => dec.take_deferred(),"
                         );
                     }
                 }
@@ -2149,7 +2165,7 @@ mod {mod_name} {{
         type Error = ::std::io::Error;
 
         fn decode(&mut self, src: &mut {bytes}::BytesMut) -> ::core::result::Result<::core::option::Option<Self::Item>, Self::Error> {{
-            let state = if let Self::Payload(Some(ref mut state)) = self {{
+            let state = if let Self::Payload(Some(state)) = self {{
                 state
             }} else {{
                 let Some(disc) = {wasm_tokio}::Leb128DecoderU32.decode(src)? else {{
@@ -2173,7 +2189,7 @@ mod {mod_name} {{
                             r"
                     {i} => {{
                         *self = Self::Payload(::core::option::Option::default());
-                        let Self::Payload(ref mut dec) = self else {{
+                        let Self::Payload(dec) = self else {{
                             unreachable!()
                         }};
                         dec.insert(PayloadDecoder::{case}(::core::default::Default::default()))
@@ -2256,13 +2272,15 @@ mod {mod_name} {{
             self.int_repr(enum_.tag());
             self.push_str(")]\n");
             // We use a BTree set to make sure we don't have any duplicates and a stable order
-            let mut derives: BTreeSet<String> = self
-                .gen
+            let mut derives: BTreeSet<String> = BTreeSet::new();
+            if !self
+                .r#gen
                 .opts
-                .additional_derive_attributes
-                .iter()
-                .cloned()
-                .collect();
+                .additional_derive_ignore
+                .contains(&name.to_kebab_case())
+            {
+                derives.extend(self.r#gen.opts.additional_derive_attributes.to_vec());
+            }
             derives.extend(
                 [
                     ":: core :: clone :: Clone",
@@ -2360,10 +2378,10 @@ mod {mod_name} {{
                 );
             }
 
-            let bytes = self.gen.bytes_path().to_string();
-            let tokio_util = self.gen.tokio_util_path().to_string();
-            let wasm_tokio = self.gen.wasm_tokio_path().to_string();
-            let wrpc_transport = self.gen.wrpc_transport_path().to_string();
+            let bytes = self.r#gen.bytes_path().to_string();
+            let tokio_util = self.r#gen.tokio_util_path().to_string();
+            let wasm_tokio = self.r#gen.wasm_tokio_path().to_string();
+            let wrpc_transport = self.r#gen.wrpc_transport_path().to_string();
 
             let mod_name = to_rust_ident(ty_name);
 

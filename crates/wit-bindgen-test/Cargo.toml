@@ -1,0 +1,27 @@
+[package]
+name = "wit-bindgen-wrpc-test"
+version = "0.1.0"
+description = """
+Test runner for the wRPC bindings generators, exposed as `wit-bindgen-wrpc test`.
+"""
+
+authors.workspace = true
+categories.workspace = true
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+doctest = false
+
+[dependencies]
+anyhow = { workspace = true, features = ["std"] }
+clap = { workspace = true, features = ["derive", "std"] }
+heck = { workspace = true }
+rayon = { workspace = true }
+regex = { workspace = true, features = ["std", "perf", "unicode"] }
+serde = { workspace = true, features = ["derive", "std"] }
+serde_json = { workspace = true, features = ["std"] }
+toml = { workspace = true, features = ["parse"] }
+wit-parser = { workspace = true }

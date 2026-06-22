@@ -226,7 +226,7 @@ impl From<WithOption> for InterfaceGeneration {
 }
 
 #[derive(Debug, Clone)]
-#[cfg_attr(feature = "clap", derive(clap::Args))]
+#[cfg_attr(feature = "clap", derive(clap::Parser))]
 pub struct Opts {
     /// Whether or not `gofmt` is executed to format generated code.
     #[cfg_attr(feature = "clap", arg(long, default_missing_value = "true", default_value_t = true, num_args = 0..=1, require_equals = true, action = clap::ArgAction::Set))]

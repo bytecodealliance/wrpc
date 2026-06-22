@@ -1,0 +1,21 @@
+package my:inline;
+
+interface foo {
+  record a {
+    inner: f64,
+  }
+  variant c {
+    a(a),
+    other(u32),
+  }
+  func1: func(v: a) -> a;
+  func3: func(v: c) -> c;
+}
+
+world test {
+  export foo;
+}
+
+world runner {
+  import foo;
+}
