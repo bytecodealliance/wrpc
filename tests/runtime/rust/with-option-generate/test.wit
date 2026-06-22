@@ -1,0 +1,17 @@
+//@ default-bindgen-args = false
+
+package foo:bar;
+
+world test {
+  export foo:baz/a;
+}
+
+world runner {
+  import foo:baz/a;
+}
+
+package foo:baz {
+  interface a {
+    x: func();
+  }
+}

@@ -106,6 +106,10 @@ impl Parse for Config {
                             .map(|p| p.into_token_stream().to_string())
                             .collect();
                     }
+                    Opt::AdditionalDerivesIgnore(list) => {
+                        opts.additional_derive_ignore =
+                            list.into_iter().map(|i| i.value()).collect()
+                    }
                     Opt::With(with) => opts.with.extend(with),
                     Opt::GenerateAll => {
                         opts.generate_all = true;
@@ -298,6 +302,7 @@ mod kw {
     syn::custom_keyword!(bitflags_path);
     syn::custom_keyword!(exports);
     syn::custom_keyword!(additional_derives);
+    syn::custom_keyword!(additional_derives_ignore);
     syn::custom_keyword!(with);
     syn::custom_keyword!(generate_all);
     syn::custom_keyword!(generate_unused_types);
@@ -321,6 +326,7 @@ enum Opt {
     BitflagsPath(syn::LitStr),
     // Parse as paths so we can take the concrete types/macro names rather than raw strings
     AdditionalDerives(Vec<syn::Path>),
+    AdditionalDerivesIgnore(Vec<syn::LitStr>),
     With(HashMap<String, WithOption>),
     GenerateAll,
     GenerateUnusedTypes(syn::LitBool),
@@ -380,6 +386,13 @@ impl Parse for Opt {
             syn::bracketed!(contents in input);
             let list = Punctuated::<_, Token![,]>::parse_terminated(&contents)?;
             Ok(Opt::AdditionalDerives(list.iter().cloned().collect()))
+        } else if l.peek(kw::additional_derives_ignore) {
+            input.parse::<kw::additional_derives_ignore>()?;
+            input.parse::<Token![:]>()?;
+            let contents;
+            syn::bracketed!(contents in input);
+            let list = Punctuated::<_, Token![,]>::parse_terminated(&contents)?;
+            Ok(Opt::AdditionalDerivesIgnore(list.iter().cloned().collect()))
         } else if l.peek(kw::with) {
             input.parse::<kw::with>()?;
             input.parse::<Token![:]>()?;

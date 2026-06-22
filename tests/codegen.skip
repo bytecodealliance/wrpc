@@ -1,0 +1,15 @@
+# codegen tests the wRPC generators do not yet support (per-version, from the macro skip arms)
+rust wasi-cli
+rust wasi-http
+rust streams
+rust futures
+rust resources-with-streams
+rust resources-with-futures
+rust error-context
+go issue668
+go multiversion
+go streams
+go futures
+go resources-with-streams
+go resources-with-futures
+go error-context

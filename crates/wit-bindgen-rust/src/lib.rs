@@ -123,6 +123,15 @@ pub struct Opts {
     #[cfg_attr(feature = "clap", arg(long = "additional_derive_attribute", short = 'd', default_values_t = Vec::<String>::new()))]
     pub additional_derive_attributes: Vec<String>,
 
+    /// Variants and records to ignore when applying additional derive attributes.
+    ///
+    /// These names are specified as they are listed in the wit file, i.e. in kebab case.
+    /// This feature allows some variants and records to use types for which adding traits will cause
+    /// compilation to fail, such as serde::Deserialize on wasi:io/streams.
+    ///
+    #[cfg_attr(feature = "clap", arg(long = "additional_derive_ignore", default_values_t = Vec::<String>::new()))]
+    pub additional_derive_ignore: Vec<String>,
+
     /// Remapping of interface names to rust module names.
     ///
     /// Argument must be of the form `k=v` and this option can be passed
@@ -217,7 +226,7 @@ impl RustWrpc {
             identifier,
             src: Source::default(),
             in_import,
-            gen: self,
+            r#gen: self,
             resolve,
         }
     }
@@ -482,6 +491,13 @@ impl WorldGenerator for RustWrpc {
                 self.opts.additional_derive_attributes
             );
         }
+        if !self.opts.additional_derive_ignore.is_empty() {
+            uwriteln!(
+                self.src_preamble,
+                "//   * additional derives ignored {:?}",
+                self.opts.additional_derive_ignore
+            );
+        }
         for (k, v) in &self.opts.with {
             uwriteln!(self.src_preamble, "//   * with {k:?} = {v:?}");
         }
@@ -527,14 +543,14 @@ impl WorldGenerator for RustWrpc {
             self.generated_types.insert(full_name);
         }
 
-        let mut gen = self.interface(Identifier::Interface(id, name), resolve, true);
-        let (snake, module_path) = gen.start_append_submodule(name);
-        if gen.gen.name_interface(resolve, id, name, false)? {
+        let mut r#gen = self.interface(Identifier::Interface(id, name), resolve, true);
+        let (snake, module_path) = r#gen.start_append_submodule(name);
+        if r#gen.r#gen.name_interface(resolve, id, name, false)? {
             return Ok(());
         }
 
         for (name, ty_id) in to_define {
-            gen.define_type(name, *ty_id);
+            r#gen.define_type(name, *ty_id);
         }
 
         let interface = &resolve.interfaces[id];
@@ -551,11 +567,11 @@ impl WorldGenerator for RustWrpc {
         } else {
             name
         };
-        gen.generate_imports(&instance, resolve.interfaces[id].functions.values());
+        r#gen.generate_imports(&instance, resolve.interfaces[id].functions.values());
 
         let docs = &resolve.interfaces[id].docs;
 
-        gen.finish_append_submodule(&snake, module_path, docs);
+        r#gen.finish_append_submodule(&snake, module_path, docs);
 
         Ok(())
     }
@@ -569,7 +585,7 @@ impl WorldGenerator for RustWrpc {
     ) {
         self.import_funcs_called = true;
 
-        let mut gen = self.interface(Identifier::World(world), resolve, true);
+        let mut r#gen = self.interface(Identifier::World(world), resolve, true);
         let World {
             ref name, package, ..
         } = resolve.worlds[world];
@@ -578,9 +594,9 @@ impl WorldGenerator for RustWrpc {
         } else {
             name.to_string()
         };
-        gen.generate_imports(&instance, funcs.iter().map(|(_, func)| *func));
+        r#gen.generate_imports(&instance, funcs.iter().map(|(_, func)| *func));
 
-        let src = gen.finish();
+        let src = r#gen.finish();
         self.src.push_str(&src);
     }
 
@@ -605,24 +621,24 @@ impl WorldGenerator for RustWrpc {
             self.generated_types.insert(full_name);
         }
 
-        let mut gen = self.interface(Identifier::Interface(id, name), resolve, false);
-        let (snake, module_path) = gen.start_append_submodule(name);
-        if gen.gen.name_interface(resolve, id, name, true)? {
+        let mut r#gen = self.interface(Identifier::Interface(id, name), resolve, false);
+        let (snake, module_path) = r#gen.start_append_submodule(name);
+        if r#gen.r#gen.name_interface(resolve, id, name, true)? {
             return Ok(());
         }
 
         for (name, ty_id) in to_define {
-            gen.define_type(name, *ty_id);
+            r#gen.define_type(name, *ty_id);
         }
 
-        let exports = gen.generate_exports(
+        let exports = r#gen.generate_exports(
             Identifier::Interface(id, name),
             resolve.interfaces[id].functions.values(),
         );
 
         let docs = &resolve.interfaces[id].docs;
 
-        gen.finish_append_submodule(&snake, module_path, docs);
+        r#gen.finish_append_submodule(&snake, module_path, docs);
         if exports {
             self.export_paths
                 .push(self.interface_names[&id].path.clone());
@@ -637,9 +653,9 @@ impl WorldGenerator for RustWrpc {
         funcs: &[(&str, &Function)],
         _files: &mut Files,
     ) -> Result<()> {
-        let mut gen = self.interface(Identifier::World(world), resolve, false);
-        let exports = gen.generate_exports(Identifier::World(world), funcs.iter().map(|f| f.1));
-        let src = gen.finish();
+        let mut r#gen = self.interface(Identifier::World(world), resolve, false);
+        let exports = r#gen.generate_exports(Identifier::World(world), funcs.iter().map(|f| f.1));
+        let src = r#gen.finish();
         self.src.push_str(&src);
         if exports {
             self.export_paths.push(String::new());
@@ -667,11 +683,11 @@ impl WorldGenerator for RustWrpc {
             }
             self.generated_types.insert(full_name);
         }
-        let mut gen = self.interface(Identifier::World(world), resolve, true);
+        let mut r#gen = self.interface(Identifier::World(world), resolve, true);
         for (name, ty) in to_define {
-            gen.define_type(name, *ty);
+            r#gen.define_type(name, *ty);
         }
-        let src = gen.finish();
+        let src = r#gen.finish();
         self.src.push_str(&src);
     }
 
