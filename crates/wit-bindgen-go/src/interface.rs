@@ -50,8 +50,8 @@ fn go_func_name(func: &Function) -> String {
         FunctionKind::AsyncStatic(..) => {
             let name = func
                 .name
-                .strip_prefix("[async static]")
-                .expect("failed to strip `[async static]` prefix");
+                .strip_prefix("[static]")
+                .expect("failed to strip `[static]` prefix");
             let (head, tail) = name.split_once('.').expect("failed to split on `.`");
             format!(
                 "{}_{}",
@@ -62,8 +62,8 @@ fn go_func_name(func: &Function) -> String {
         FunctionKind::AsyncMethod(..) => {
             let name = func
                 .name
-                .strip_prefix("[async method]")
-                .expect("failed to strip `[async method]` prefix");
+                .strip_prefix("[method]")
+                .expect("failed to strip `[method]` prefix");
             let (head, tail) = name.split_once('.').expect("failed to split on `.`");
             format!(
                 "{}_{}",
@@ -71,11 +71,7 @@ fn go_func_name(func: &Function) -> String {
                 tail.to_upper_camel_case()
             )
         }
-        FunctionKind::AsyncFreestanding => to_upper_camel_case(
-            func.name
-                .strip_prefix("[async]")
-                .expect("failed to strip `[async]` prefix"),
-        ),
+        FunctionKind::AsyncFreestanding => to_upper_camel_case(&func.name),
         FunctionKind::Freestanding => to_upper_camel_case(&func.name),
     }
 }

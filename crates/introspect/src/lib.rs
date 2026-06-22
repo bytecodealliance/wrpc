@@ -32,16 +32,13 @@ pub fn rpc_func_name(func: &Function) -> &str {
             .expect("failed to strip `[method]` prefix"),
         FunctionKind::AsyncStatic(..) => func
             .name
-            .strip_prefix("[async static]")
-            .expect("failed to strip `[async static]` prefix"),
+            .strip_prefix("[static]")
+            .expect("failed to strip `[static]` prefix"),
         FunctionKind::AsyncMethod(..) => func
             .name
-            .strip_prefix("[async method]")
-            .expect("failed to strip `[async method]` prefix"),
-        FunctionKind::AsyncFreestanding => func
-            .name
-            .strip_prefix("[async]")
-            .expect("failed to strip `[async]` prefix"),
+            .strip_prefix("[method]")
+            .expect("failed to strip `[method]` prefix"),
+        FunctionKind::AsyncFreestanding => &func.name,
         FunctionKind::Freestanding => &func.name,
     }
 }
