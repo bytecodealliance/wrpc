@@ -179,7 +179,7 @@ wasmtime-cli-flags = { version = "45", default-features = false }
 wasmtime-wasi = { version = "45", default-features = false }
 wasmtime-wasi-http = { version = "45", default-features = false }
 wit-bindgen = { version = "0.45", default-features = false }
-wit-bindgen-core = { version = "0.49", default-features = false }
+wit-bindgen-core = { version = "0.50", default-features = false }
 wit-bindgen-wrpc = { version = "0.11", default-features = false, path = "./crates/wit-bindgen" }
 wit-bindgen-wrpc-go = { version = "0.13", default-features = false, path = "./crates/wit-bindgen-go" }
 wit-bindgen-wrpc-rust = { version = "0.11", default-features = false, path = "./crates/wit-bindgen-rust" }
