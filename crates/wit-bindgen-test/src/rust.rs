@@ -281,6 +281,8 @@ impl Runner<'_> {
             Edition::E2021 => "--edition=2021",
             Edition::E2024 => "--edition=2024",
         })
+        .arg("-Dwarnings")
+        .arg("-Cdebuginfo=1")
         .arg("-L")
         .arg(format!("dependency={}", state.deps_dir.display()));
         cmd
@@ -325,7 +327,6 @@ impl Runner<'_> {
         let mut cmd = self.rustc(Edition::E2021);
         cmd.arg(&driver)
             .arg("--crate-type=bin")
-            .arg("-Dwarnings")
             .arg("-o")
             .arg(&bin)
             .env("WRPC_TEST_BINDINGS", &test_rs)

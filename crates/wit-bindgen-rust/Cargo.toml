@@ -17,11 +17,15 @@ repository.workspace = true
 test = false
 doctest = false
 
+[features]
+serde = ["dep:serde"]
+
 [dependencies]
 anyhow = { workspace = true }
 clap = { workspace = true, features = ["derive", "std"], optional = true }
 heck = { workspace = true }
 prettyplease = { workspace = true }
+serde = { workspace = true, features = ["derive"], optional = true }
 syn = { workspace = true, features = ["parsing"] }
 wit-bindgen-core = { workspace = true }
 wrpc-introspect = { workspace = true }

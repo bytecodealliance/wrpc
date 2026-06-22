@@ -1056,6 +1056,9 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve>(
         }
         match &ty.kind {
             TypeDefKind::List(ty) => self.print_list(ty, owned, submodule),
+            TypeDefKind::FixedSizeList(..) => {
+                panic!("unsupported anonymous type reference: fixed size list")
+            }
             TypeDefKind::Option(ty) => self.print_option(ty, owned, submodule),
             TypeDefKind::Result(ty) => self.print_result(ty, owned, submodule),
             TypeDefKind::Variant(_) => panic!("unsupported anonymous variant"),
@@ -2279,7 +2282,7 @@ mod {mod_name} {{
                 .additional_derive_ignore
                 .contains(&name.to_kebab_case())
             {
-                derives.extend(self.r#gen.opts.additional_derive_attributes.to_vec());
+                derives.extend(self.r#gen.opts.additional_derive_attributes.iter().cloned());
             }
             derives.extend(
                 [

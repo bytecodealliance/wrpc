@@ -287,16 +287,32 @@ impl Runner<'_> {
             .push_file(&wit)
             .context("failed to load `test.wit` in test directory")?;
         let resolve = Arc::new(resolve);
-        resolve
-            .select_world(pkg, Some("runner"))
-            .context("failed to find expected `runner` world to generate bindings")?;
-        resolve
-            .select_world(pkg, Some("test"))
-            .context("failed to find expected `test` world to generate bindings")?;
 
         let wit_contents = std::fs::read_to_string(wit)?;
         let wit_config: config::WitConfig = config::parse_test_config(&wit_contents, "//@")
             .context("failed to parse WIT test config")?;
+
+        let runner_world = wit_config.runner_world().to_string();
+        // Upstream composes a runner against many dependency worlds; wRPC links
+        // exactly one `runner` against one `test` world over the transport, so
+        // only a single dependency world is supported here.
+        let test_world = match wit_config.dependency_worlds().as_slice() {
+            [world] => world.clone(),
+            worlds => bail!(
+                "wRPC runtime tests support exactly one `test` world, found {}: {worlds:?}",
+                worlds.len()
+            ),
+        };
+        resolve
+            .select_world(pkg, Some(runner_world.as_str()))
+            .with_context(|| {
+                format!("failed to find expected `{runner_world}` world to generate bindings")
+            })?;
+        resolve
+            .select_world(pkg, Some(test_world.as_str()))
+            .with_context(|| {
+                format!("failed to find expected `{test_world}` world to generate bindings")
+            })?;
 
         let mut components = Vec::new();
         let mut any_runner = false;
@@ -322,7 +338,10 @@ impl Runner<'_> {
             let bindgen = Bindgen {
                 args: Vec::new(),
                 wit_config: wit_config.clone(),
-                world: kind.to_string(),
+                world: match kind {
+                    Kind::Runner => runner_world.clone(),
+                    Kind::Test => test_world.clone(),
+                },
                 wit_path: wit.to_path_buf(),
             };
 

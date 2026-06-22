@@ -101,13 +101,18 @@ fn parse_with(s: &str) -> Result<(String, WithOption), String> {
 
 #[derive(Default, Debug, Clone)]
 #[cfg_attr(feature = "clap", derive(clap::Parser))]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Deserialize),
+    serde(default, rename_all = "kebab-case")
+)]
 pub struct Opts {
     /// Whether or not a formatter is executed to format generated code.
     #[cfg_attr(feature = "clap", arg(long))]
     pub format: bool,
 
     /// Names of functions to skip generating bindings for.
-    #[cfg_attr(feature = "clap", arg(long))]
+    #[cfg_attr(feature = "clap", arg(long, value_name = "NAME"))]
     pub skip: Vec<String>,
 
     /// The optional path to the bitflags crate to use.
@@ -120,7 +125,7 @@ pub struct Opts {
     /// specified multiple times to add multiple attributes.
     ///
     /// These derive attributes will be added to any generated structs or enums
-    #[cfg_attr(feature = "clap", arg(long, short = 'd'))]
+    #[cfg_attr(feature = "clap", arg(long, short = 'd', value_name = "DERIVE"))]
     pub additional_derive_attributes: Vec<String>,
 
     /// Variants and records to ignore when applying additional derive attributes.
@@ -129,7 +134,7 @@ pub struct Opts {
     /// This feature allows some variants and records to use types for which adding traits will cause
     /// compilation to fail, such as serde::Deserialize on wasi:io/streams.
     ///
-    #[cfg_attr(feature = "clap", arg(long))]
+    #[cfg_attr(feature = "clap", arg(long, value_name = "NAME"))]
     pub additional_derive_ignore: Vec<String>,
 
     /// Remapping of interface names to rust module names.
@@ -152,31 +157,31 @@ pub struct Opts {
     /// The optional path to the `anyhow` crate to use.
     ///
     /// This defaults to `wit_bindgen_wrpc::anyhow`.
-    #[cfg_attr(feature = "clap", arg(long))]
+    #[cfg_attr(feature = "clap", arg(long, value_name = "PATH"))]
     pub anyhow_path: Option<String>,
 
     /// The optional path to the `bytes` crate to use.
     ///
     /// This defaults to `wit_bindgen_wrpc::bytes`.
-    #[cfg_attr(feature = "clap", arg(long))]
+    #[cfg_attr(feature = "clap", arg(long, value_name = "PATH"))]
     pub bytes_path: Option<String>,
 
     /// The optional path to the `futures` crate to use.
     ///
     /// This defaults to `wit_bindgen_wrpc::futures`.
-    #[cfg_attr(feature = "clap", arg(long))]
+    #[cfg_attr(feature = "clap", arg(long, value_name = "PATH"))]
     pub futures_path: Option<String>,
 
     /// The optional path to the `tokio` crate to use.
     ///
     /// This defaults to `wit_bindgen_wrpc::tokio`.
-    #[cfg_attr(feature = "clap", arg(long))]
+    #[cfg_attr(feature = "clap", arg(long, value_name = "PATH"))]
     pub tokio_path: Option<String>,
 
     /// The optional path to the `tokio-util` crate to use.
     ///
     /// This defaults to `wit_bindgen_wrpc::tokio_util`.
-    #[cfg_attr(feature = "clap", arg(long))]
+    #[cfg_attr(feature = "clap", arg(long, value_name = "PATH"))]
     pub tokio_util_path: Option<String>,
 
     /// The optional path to the `tracing` crate to use.
@@ -773,6 +778,11 @@ enum Identifier<'a> {
 
 /// Options for with "with" remappings.
 #[derive(Debug, Clone)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Deserialize),
+    serde(rename_all = "kebab-case")
+)]
 pub enum WithOption {
     Path(String),
     Generate,
