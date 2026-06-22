@@ -111,20 +111,26 @@ impl<T: Invoke> Invoke for TimeoutOwned<T> {
 pub trait InvokeExt: Invoke {
     /// Invoke function `func` on instance `instance` using typed `Params` and `Results`
     #[instrument(level = "trace", skip(self, cx, params, paths))]
-    fn invoke_values<P, Params, Results>(
+    fn invoke_values<P, Params, Results, Paths>(
         &self,
         cx: Self::Context,
         instance: &str,
         func: &str,
         params: Params,
-        paths: impl AsRef<[P]> + Send,
+        paths: Paths,
     ) -> impl Future<
         Output = anyhow::Result<(
             Results,
-            Option<impl Future<Output = anyhow::Result<()>> + Send + 'static>,
+            Option<
+                impl Future<Output = anyhow::Result<()>>
+                    + Send
+                    + 'static
+                    + use<Self, P, Params, Results, Paths>,
+            >,
         )>,
     > + Send
     where
+        Paths: AsRef<[P]> + Send,
         P: AsRef<[Option<usize>]> + Send + Sync,
         Params: TupleEncode<Self::Outgoing> + Send,
         Results: TupleDecode<Self::Incoming> + Send,

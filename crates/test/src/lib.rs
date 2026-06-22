@@ -3,6 +3,7 @@ use core::net::Ipv6Addr;
 use core::pin::pin;
 
 use std::process::ExitStatus;
+use std::sync::Arc;
 
 use anyhow::Context;
 use futures::TryStreamExt as _;
@@ -49,7 +50,7 @@ where
     S: Serve,
 {
     let invocations = srv
-        .serve("foo", "bar", [Box::from([Some(42), Some(0)])])
+        .serve("foo", "bar", Arc::from([Box::from([Some(42), Some(0)])]))
         .await
         .context("failed to serve `foo.bar`")?;
     let mut invocations = pin!(invocations);
@@ -323,8 +324,6 @@ pub async fn with_quic_endpoints<T, Fut>(
 where
     Fut: Future<Output = anyhow::Result<T>>,
 {
-    use std::sync::Arc;
-
     use quinn::crypto::rustls::{QuicClientConfig, QuicServerConfig};
     use quinn::{ClientConfig, ServerConfig};
 

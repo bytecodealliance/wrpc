@@ -122,7 +122,7 @@ async fn serve<C, I, O, H>(
     srv: &Server<C, I, O, H>,
     instance: &str,
     func: &str,
-    paths: impl Into<Arc<[Box<[Option<usize>]>]>> + Send,
+    paths: Arc<[Box<[Option<usize>]>]>,
 ) -> anyhow::Result<impl Stream<Item = anyhow::Result<(C, Outgoing, Incoming)>> + 'static>
 where
     C: Send + Sync + 'static,
@@ -144,7 +144,6 @@ where
             entry.insert(tx);
         }
     }
-    let paths = paths.into();
     Ok(ReceiverStream::new(rx).map(move |(cx, rx, tx)| {
         trace!("received invocation");
         let Conn { tx, rx } = Conn::new::<H, _, _, _>(rx, tx, paths.iter());
@@ -167,15 +166,17 @@ where
         &self,
         instance: &str,
         func: &str,
-        paths: impl Into<Arc<[Box<[Option<usize>]>]>> + Send,
+        paths: Arc<[Box<[Option<usize>]>]>,
     ) -> anyhow::Result<
-        impl Stream<Item = anyhow::Result<(Self::Context, Self::Outgoing, Self::Incoming)>> + 'static,
+        impl Stream<Item = anyhow::Result<(Self::Context, Self::Outgoing, Self::Incoming)>>
+            + 'static
+            + use<C, I, O, H>,
     > {
         serve(self, instance, func, paths).await
     }
 }
 
-impl<C, I, O, H> Serve for &Server<C, I, O, H>
+impl<'a, C, I, O, H> Serve for &'a Server<C, I, O, H>
 where
     C: Send + Sync + 'static,
     I: AsyncRead + Send + Sync + Unpin + 'static,
@@ -190,9 +191,11 @@ where
         &self,
         instance: &str,
         func: &str,
-        paths: impl Into<Arc<[Box<[Option<usize>]>]>> + Send,
+        paths: Arc<[Box<[Option<usize>]>]>,
     ) -> anyhow::Result<
-        impl Stream<Item = anyhow::Result<(Self::Context, Self::Outgoing, Self::Incoming)>> + 'static,
+        impl Stream<Item = anyhow::Result<(Self::Context, Self::Outgoing, Self::Incoming)>>
+            + 'static
+            + use<'a, C, I, O, H>,
     > {
         serve(self, instance, func, paths).await
     }
