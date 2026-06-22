@@ -42,6 +42,7 @@ impl LanguageMethods for Go {
                 | "error-context.wit"
                 | "resources-with-futures.wit"
                 | "future-same-type-different-names.wit"
+                | "named-fixed-length-list.wit"
         )
     }
 

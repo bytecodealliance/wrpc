@@ -64,7 +64,10 @@ impl LanguageMethods for Rust {
         // The wRPC Rust generator does not yet support bare `stream`/`future`
         // types. Other async constructs (`error-context`, futures/streams behind
         // resources) generate successfully.
-        matches!(name, "streams.wit" | "futures.wit")
+        matches!(
+            name,
+            "streams.wit" | "futures.wit" | "named-fixed-length-list.wit"
+        )
     }
 
     fn default_bindgen_args(&self) -> &[&str] {

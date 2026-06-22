@@ -3902,6 +3902,17 @@ func (v *{name}) WriteToIndex(w {wrpc}.ByteWriter) (func({wrpc}.IndexWriter) err
         }
     }
 
+    fn type_fixed_length_list(
+        &mut self,
+        _id: TypeId,
+        _name: &str,
+        _ty: &Type,
+        _size: u32,
+        _docs: &Docs,
+    ) {
+        panic!("unsupported type: fixed length list")
+    }
+
     fn type_builtin(&mut self, _id: TypeId, name: &str, ty: &Type, docs: &Docs) {
         self.godoc(docs);
         uwrite!(self.src, "type {} = ", name.to_upper_camel_case());
