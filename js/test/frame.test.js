@@ -46,7 +46,11 @@ test("decodeResults reads a root result frame", () => {
   assert.deepEqual(decoded, value);
 });
 
-test("decodeResults returns [] for an empty body or no result types", () => {
-  assert.deepEqual(decodeResults(new Uint8Array(), [t.string]), []);
+test("decodeResults returns [] when no results are expected", () => {
+  assert.deepEqual(decodeResults(new Uint8Array(), []), []);
   assert.deepEqual(decodeResults(Uint8Array.from([0, 0]), []), []);
+});
+
+test("decodeResults throws when results are expected but the body is empty", () => {
+  assert.throws(() => decodeResults(new Uint8Array(), [t.string]), /without sending a result/);
 });

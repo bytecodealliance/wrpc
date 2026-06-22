@@ -52,14 +52,22 @@ export function encodeInvocation(instance, func, paramTypes, args) {
 
 /**
  * Decode the server's root result frame `[path-len=0][data-len][data]` into the
- * result values. An empty input means no result frame was written (i.e. a
- * function with no results).
+ * result values. A function with no results writes no frame, so an empty input
+ * is expected (and returns `[]`) only when no results are expected. If results
+ * are expected but the input is empty, the peer closed the stream without
+ * responding (e.g. the invocation failed server-side) and an error is thrown.
  * @param {Uint8Array} bytes
  * @param {Type[]} resultTypes
  * @returns {any[]}
  */
 export function decodeResults(bytes, resultTypes) {
-  if (resultTypes.length === 0 || bytes.length === 0) return [];
+  if (resultTypes.length === 0) return [];
+  if (bytes.length === 0) {
+    throw new Error(
+      "peer closed the stream without sending a result frame " +
+        "(the invocation likely failed on the other end)",
+    );
+  }
   const frame = new Reader(bytes);
   const pathLen = Number(frame.varU());
   if (pathLen !== 0) throw new Error(`unexpected result frame path length ${pathLen}`);
