@@ -137,7 +137,8 @@ pub struct Opts {
     #[cfg_attr(feature = "clap", arg(long, value_name = "NAME"))]
     pub additional_derive_ignore: Vec<String>,
 
-    /// Remapping of interface names to rust module names.
+    /// Remapping of wit import interface and type names to Rust module names
+    /// and types.
     ///
     /// Argument must be of the form `k=v` and this option can be passed
     /// multiple times or one option can be comma separated, for example
@@ -352,17 +353,28 @@ impl RustWrpc {
         is_export: bool,
     ) -> Result<bool> {
         let with_name = resolve.name_world_key(name);
-        let Some(remapping) = self.with.get(&with_name) else {
-            bail!("no remapping found for {with_name:?} - use the `generate!` macro's `with` option to force the interface to be generated or specify where it is already defined:
+        // `with` remappings only apply to imports; exports are always generated
+        // since their types are defined by the implementation.
+        let remapping = if is_export {
+            &TypeGeneration::Generate
+        } else {
+            let Some(remapping) = self.with.get(&with_name) else {
+                bail!("no remapping found for {with_name:?} - use the `generate!` macro's `with` option to force the interface to be generated or specify where it is already defined:
 ```
 with: {{\n\t{with_name:?}: generate\n}}
 ```")
+            };
+            remapping
         };
         self.generated_types.insert(with_name);
         let entry = match remapping {
             TypeGeneration::Remap(remapped_path) => {
                 let name = format!("__with_name{}", self.with_name_counter);
                 self.with_name_counter += 1;
+                uwriteln!(
+                    self.src,
+                    "#[allow(unfulfilled_lint_expectations, unused_imports)]"
+                );
                 uwriteln!(self.src, "use {remapped_path} as {name};");
                 InterfaceName {
                     remapped: true,
@@ -511,7 +523,7 @@ impl WorldGenerator for RustWrpc {
 
         let world = &resolve.worlds[world];
         // Specify that all imports local to the world's package should be generated
-        for (key, item) in world.imports.iter().chain(world.exports.iter()) {
+        for (key, item) in world.imports.iter() {
             if let WorldItem::Interface { id, .. } = item
                 && resolve.interfaces[*id].package == world.package
             {
@@ -615,14 +627,8 @@ impl WorldGenerator for RustWrpc {
         let mut to_define = Vec::new();
         for (name, ty_id) in resolve.interfaces[id].types.iter() {
             let full_name = full_wit_type_name(resolve, *ty_id);
-            if let Some(type_gen) = self.with.get(&full_name) {
-                // skip type definition generation for remapped types
-                if type_gen.generated() {
-                    to_define.push((name, ty_id));
-                }
-            } else {
-                to_define.push((name, ty_id));
-            }
+            // `with` remappings only apply to imports; exported types are always generated.
+            to_define.push((name, ty_id));
             self.generated_types.insert(full_name);
         }
 

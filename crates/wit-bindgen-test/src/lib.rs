@@ -304,12 +304,12 @@ impl Runner<'_> {
             ),
         };
         resolve
-            .select_world(pkg, Some(runner_world.as_str()))
+            .select_world(&[pkg], Some(runner_world.as_str()))
             .with_context(|| {
                 format!("failed to find expected `{runner_world}` world to generate bindings")
             })?;
         resolve
-            .select_world(pkg, Some(test_world.as_str()))
+            .select_world(&[pkg], Some(test_world.as_str()))
             .with_context(|| {
                 format!("failed to find expected `{test_world}` world to generate bindings")
             })?;
@@ -521,8 +521,12 @@ impl Runner<'_> {
         let mut resolve = wit_parser::Resolve::default();
         let (pkg, _) = resolve.push_path(test).context("failed to load WIT")?;
         let world = resolve
-            .select_world(pkg, None)
-            .or_else(|err| resolve.select_world(pkg, Some("imports")).map_err(|_| err))
+            .select_world(&[pkg], None)
+            .or_else(|err| {
+                resolve
+                    .select_world(&[pkg], Some("imports"))
+                    .map_err(|_| err)
+            })
             .context("failed to select a world for bindings generation")?;
         let world = resolve.worlds[world].name.clone();
 

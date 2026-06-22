@@ -167,7 +167,7 @@ fn gen_world(
         }
     }
     let (pkg, _files) = resolve.push_path(&opts.wit)?;
-    let world = resolve.select_world(pkg, opts.world.as_deref())?;
+    let world = resolve.select_world(&[pkg], opts.world.as_deref())?;
     generator.generate(&resolve, world, files)?;
 
     Ok(())
