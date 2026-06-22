@@ -66,7 +66,7 @@ impl LanguageMethods for Rust {
         // resources) generate successfully.
         matches!(
             name,
-            "streams.wit" | "futures.wit" | "named-fixed-length-list.wit"
+            "streams.wit" | "futures.wit" | "named-fixed-length-list.wit" | "map.wit"
         )
     }
 

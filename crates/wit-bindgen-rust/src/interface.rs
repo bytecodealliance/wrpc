@@ -2514,6 +2514,10 @@ mod {mod_name} {{
         panic!("unsupported type: fixed length list")
     }
 
+    fn type_map(&mut self, _id: TypeId, _name: &str, _key: &Type, _value: &Type, _docs: &Docs) {
+        panic!("unsupported type: map")
+    }
+
     fn type_builtin(&mut self, _id: TypeId, name: &str, ty: &Type, docs: &Docs) {
         self.rustdoc(docs);
         uwrite!(self.src, "pub type {} = ", name.to_upper_camel_case());
