@@ -3260,8 +3260,8 @@ name = "test-helpers"
 version = "0.0.0"
 dependencies = [
  "codegen-macro",
- "wit-bindgen-core 0.50.0",
- "wit-parser 0.243.0",
+ "wit-bindgen-core 0.51.0",
+ "wit-parser 0.244.0",
 ]
 
 [[package]]
@@ -4204,17 +4204,6 @@ dependencies = [
 
 [[package]]
 name = "wasmparser"
-version = "0.243.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f6d8db401b0528ec316dfbe579e6ab4152d61739cfe076706d2009127970159d"
-dependencies = [
- "bitflags",
- "indexmap",
- "semver",
-]
-
-[[package]]
-name = "wasmparser"
 version = "0.244.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "47b807c72e1bac69382b3a6fb3dbe8ea4c0ed87ff5629b8685ae6b9a611028fe"
@@ -4993,17 +4982,6 @@ dependencies = [
 
 [[package]]
 name = "wit-bindgen-core"
-version = "0.50.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6ee98d5747ec63897e51101c8cafad569cc639346332c0378772ef4baeea8ed2"
-dependencies = [
- "anyhow",
- "heck",
- "wit-parser 0.243.0",
-]
-
-[[package]]
-name = "wit-bindgen-core"
 version = "0.51.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ea61de684c3ea68cb082b7a88508a8b27fcc8b797d738bfc99a82facf1d752dc"
@@ -5098,7 +5076,7 @@ dependencies = [
  "anyhow",
  "clap",
  "heck",
- "wit-bindgen-core 0.50.0",
+ "wit-bindgen-core 0.51.0",
  "wrpc-introspect",
 ]
 
@@ -5116,7 +5094,7 @@ dependencies = [
  "serde_json",
  "syn",
  "tokio",
- "wit-bindgen-core 0.50.0",
+ "wit-bindgen-core 0.51.0",
  "wit-bindgen-wrpc",
  "wrpc-introspect",
  "wrpc-transport",
@@ -5131,7 +5109,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
- "wit-bindgen-core 0.50.0",
+ "wit-bindgen-core 0.51.0",
  "wit-bindgen-wrpc-rust",
 ]
 
@@ -5147,7 +5125,7 @@ dependencies = [
  "serde",
  "serde_json",
  "toml 0.8.23",
- "wit-parser 0.243.0",
+ "wit-parser 0.244.0",
 ]
 
 [[package]]
@@ -5223,24 +5201,6 @@ dependencies = [
  "serde_json",
  "unicode-xid",
  "wasmparser 0.238.1",
-]
-
-[[package]]
-name = "wit-parser"
-version = "0.243.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "df983a8608e513d8997f435bb74207bf0933d0e49ca97aa9d8a6157164b9b7fc"
-dependencies = [
- "anyhow",
- "id-arena",
- "indexmap",
- "log",
- "semver",
- "serde",
- "serde_derive",
- "serde_json",
- "unicode-xid",
- "wasmparser 0.243.0",
 ]
 
 [[package]]
@@ -5322,7 +5282,7 @@ dependencies = [
  "wasmtime",
  "wasmtime-cli-flags",
  "wasmtime-wasi",
- "wit-bindgen-core 0.50.0",
+ "wit-bindgen-core 0.51.0",
  "wit-bindgen-wrpc",
  "wit-bindgen-wrpc-go",
  "wit-bindgen-wrpc-rust",
@@ -5348,7 +5308,7 @@ dependencies = [
 name = "wrpc-introspect"
 version = "0.7.0"
 dependencies = [
- "wit-parser 0.243.0",
+ "wit-parser 0.244.0",
 ]
 
 [[package]]
@@ -5459,7 +5419,7 @@ dependencies = [
  "wasm-tokio",
  "wasmtime",
  "wasmtime-wasi",
- "wit-parser 0.243.0",
+ "wit-parser 0.244.0",
  "wrpc-introspect",
  "wrpc-transport",
 ]

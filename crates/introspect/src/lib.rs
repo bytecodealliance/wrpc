@@ -227,6 +227,7 @@ pub fn async_paths_tyid(resolve: &Resolve, id: TypeId) -> (BTreeSet<VecDeque<Opt
         TypeDefKind::Resource
         | TypeDefKind::Flags(..)
         | TypeDefKind::Enum(..)
+        | TypeDefKind::Map(..)
         | TypeDefKind::Handle(Handle::Own(..) | Handle::Borrow(..)) => (BTreeSet::default(), false),
         TypeDefKind::Unknown => unreachable!(),
     }

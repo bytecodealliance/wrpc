@@ -1400,6 +1400,7 @@ impl InterfaceGenerator<'_> {
             TypeDefKind::Result(ty) => self.print_read_result(ty, reader, path),
             TypeDefKind::List(ty) => self.print_read_list(ty, reader, path),
             TypeDefKind::FixedSizeList(..) => panic!("unsupported type: fixed size list"),
+            TypeDefKind::Map(..) => panic!("unsupported type: map"),
             TypeDefKind::Future(ty) => self.print_read_future(ty, reader, path),
             TypeDefKind::Stream(ty) => self.print_read_stream(ty, reader, path),
             TypeDefKind::Type(ty) => {
@@ -3332,6 +3333,7 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
             TypeDefKind::FixedSizeList(..) => {
                 panic!("unsupported anonymous type reference: fixed size list")
             }
+            TypeDefKind::Map(..) => panic!("unsupported anonymous type reference: map"),
             TypeDefKind::Option(ty) => self.print_option(ty, decl),
             TypeDefKind::Result(ty) => self.print_result(ty),
             TypeDefKind::Variant(_) => panic!("unsupported anonymous variant"),

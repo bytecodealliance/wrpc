@@ -1059,6 +1059,7 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve>(
             TypeDefKind::FixedSizeList(..) => {
                 panic!("unsupported anonymous type reference: fixed size list")
             }
+            TypeDefKind::Map(..) => panic!("unsupported anonymous type reference: map"),
             TypeDefKind::Option(ty) => self.print_option(ty, owned, submodule),
             TypeDefKind::Result(ty) => self.print_result(ty, owned, submodule),
             TypeDefKind::Variant(_) => panic!("unsupported anonymous variant"),
