@@ -7,8 +7,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::mem;
 use wit_bindgen_core::wit_parser::{
-    Case, Docs, Enum, Field, Flags, Function, FunctionKind, Handle, Int, InterfaceId, Record,
-    Resolve, Result_, Tuple, Type, TypeDefKind, TypeId, TypeOwner, Variant, World, WorldKey,
+    Case, Docs, Enum, Field, Flags, Function, FunctionKind, Handle, Int, InterfaceId, Param,
+    Record, Resolve, Result_, Tuple, Type, TypeDefKind, TypeId, TypeOwner, Variant, World,
+    WorldKey,
 };
 use wit_bindgen_core::{Source, TypeInfo, dealias, uwrite, uwriteln};
 use wrpc_introspect::{async_paths_ty, async_paths_tyid, is_ty, rpc_func_name};
@@ -227,8 +228,8 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve>(
         for func in &funcs_to_export {
             let paths = func.params.iter().enumerate().fold(
                 BTreeSet::default(),
-                |mut paths, (i, (_, ty))| {
-                    let (nested, fut) = async_paths_ty(self.resolve, ty);
+                |mut paths, (i, param)| {
+                    let (nested, fut) = async_paths_ty(self.resolve, &param.ty);
                     for path in nested {
                         let mut s = String::with_capacity(3 + path.len() * 6);
                         s.push_str(&format!("[Some({i})"));
@@ -550,8 +551,8 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve>(
         }
         self.src.push_str("#[allow(clippy::all)]\n");
 
-        let async_params = func.params.iter().any(|(_, ty)| {
-            let (paths, fut) = async_paths_ty(self.resolve, ty);
+        let async_params = func.params.iter().any(|param| {
+            let (paths, fut) = async_paths_ty(self.resolve, &param.ty);
             fut || !paths.is_empty()
         });
         let paths =
@@ -752,7 +753,7 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve>(
         }
     }
 
-    fn rustdoc_params(&mut self, docs: &[(String, Type)], header: &str) {
+    fn rustdoc_params(&mut self, docs: &[Param], header: &str) {
         let _ = (docs, header);
         // let docs = docs
         //     .iter()
@@ -822,7 +823,13 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve>(
             self.push_str("cx: Ctx,");
         }
         let mut params = Vec::new();
-        for (i, (name, param)) in func.params.iter().enumerate() {
+        for (
+            i,
+            Param {
+                name, ty: param, ..
+            },
+        ) in func.params.iter().enumerate()
+        {
             if i == 0 && sig.self_is_first_param && !self.in_import {
                 continue;
             }
@@ -1056,7 +1063,7 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve>(
         }
         match &ty.kind {
             TypeDefKind::List(ty) => self.print_list(ty, owned, submodule),
-            TypeDefKind::FixedSizeList(..) => {
+            TypeDefKind::FixedLengthList(..) => {
                 panic!("unsupported anonymous type reference: fixed size list")
             }
             TypeDefKind::Map(..) => panic!("unsupported anonymous type reference: map"),
@@ -1235,7 +1242,7 @@ impl<'a> wit_bindgen_core::InterfaceGenerator<'a> for InterfaceGenerator<'a> {
                 self.push_str(")]\n");
             }
             uwriteln!(self.src, "pub struct {name} {{");
-            for Field { name, ty, docs } in fields {
+            for Field { name, ty, docs, .. } in fields {
                 self.rustdoc(docs);
                 self.push_str("pub ");
                 self.push_str(&to_rust_ident(name));

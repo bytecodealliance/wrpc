@@ -120,7 +120,7 @@ pub fn async_paths_tyid(resolve: &Resolve, id: TypeId) -> (BTreeSet<VecDeque<Opt
             }
             (paths, false)
         }
-        TypeDefKind::FixedSizeList(ty, _) => {
+        TypeDefKind::FixedLengthList(ty, _) => {
             let mut paths = BTreeSet::default();
             let (nested, fut) = async_paths_ty(resolve, ty);
             for mut path in nested {

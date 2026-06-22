@@ -6,8 +6,8 @@ use std::mem;
 use heck::ToUpperCamelCase;
 use wit_bindgen_core::wit_parser::{
     Case, Docs, Enum, EnumCase, Field, Flag, Flags, Function, FunctionKind, Handle, Int,
-    InterfaceId, Record, Resolve, Result_, Tuple, Type, TypeDefKind, TypeId, TypeOwner, Variant,
-    World, WorldKey,
+    InterfaceId, Param, Record, Resolve, Result_, Tuple, Type, TypeDefKind, TypeId, TypeOwner,
+    Variant, World, WorldKey,
 };
 use wit_bindgen_core::{Source, TypeInfo, uwrite, uwriteln};
 use wrpc_introspect::{async_paths_ty, is_list_of, is_tuple, is_ty, rpc_func_name};
@@ -1399,7 +1399,7 @@ impl InterfaceGenerator<'_> {
             TypeDefKind::Option(ty) => self.print_read_option(ty, reader, path),
             TypeDefKind::Result(ty) => self.print_read_result(ty, reader, path),
             TypeDefKind::List(ty) => self.print_read_list(ty, reader, path),
-            TypeDefKind::FixedSizeList(..) => panic!("unsupported type: fixed size list"),
+            TypeDefKind::FixedLengthList(..) => panic!("unsupported type: fixed size list"),
             TypeDefKind::Map(..) => panic!("unsupported type: map"),
             TypeDefKind::Future(ty) => self.print_read_future(ty, reader, path),
             TypeDefKind::Stream(ty) => self.print_read_stream(ty, reader, path),
@@ -2569,7 +2569,7 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
             }}
         }}()"#,
             );
-            for (i, (_, ty)) in func.params.iter().enumerate() {
+            for (i, Param { ty, .. }) in func.params.iter().enumerate() {
                 uwrite!(
                     self.src,
                     r#"
@@ -2700,7 +2700,7 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
         }}
     }}, "#,
             );
-            for (i, (_, ty)) in func.params.iter().enumerate() {
+            for (i, Param { ty, .. }) in func.params.iter().enumerate() {
                 let (nested, fut) = async_paths_ty(self.resolve, ty);
                 for path in nested {
                     self.push_str(wrpc);
@@ -2761,8 +2761,8 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
                 self.src.push_str(", ");
             }
 
-            let async_params = func.params.iter().any(|(_, ty)| {
-                let (paths, fut) = async_paths_ty(self.resolve, ty);
+            let async_params = func.params.iter().any(|param| {
+                let (paths, fut) = async_paths_ty(self.resolve, &param.ty);
                 fut || !paths.is_empty()
             });
             if async_params {
@@ -2783,7 +2783,7 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
     var writeCount__ uint32"
                     );
                 }
-                for (i, (name, ty)) in func.params.iter().enumerate() {
+                for (i, Param { name, ty, .. }) in func.params.iter().enumerate() {
                     uwrite!(
                         self.src,
                         r"
@@ -2815,7 +2815,7 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
     writes__ := make(map[uint32]func({wrpc}.IndexWriter) error, uint(writeCount__))",
                     );
                 }
-                for (i, (name, _)) in func.params.iter().enumerate() {
+                for (i, Param { name, .. }) in func.params.iter().enumerate() {
                     uwrite!(
                         self.src,
                         r"
@@ -3017,7 +3017,7 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
         }
     }
 
-    fn godoc_params(&mut self, docs: &[(String, Type)], header: &str) {
+    fn godoc_params(&mut self, docs: &[Param], header: &str) {
         let _ = (docs, header);
         // let docs = docs
         //     .iter()
@@ -3072,7 +3072,10 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
             let wrpc = self.deps.wrpc();
             uwrite!(self.src, "wrpc__ {wrpc}.Invoker, ");
         }
-        for (name, param) in &func.params {
+        for Param {
+            name, ty: param, ..
+        } in &func.params
+        {
             self.push_str(&to_go_ident(name));
             self.push_str(" ");
             self.print_opt_ty(param, true);
@@ -3330,7 +3333,7 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
         }
         match &ty.kind {
             TypeDefKind::List(ty) => self.print_list(ty),
-            TypeDefKind::FixedSizeList(..) => {
+            TypeDefKind::FixedLengthList(..) => {
                 panic!("unsupported anonymous type reference: fixed size list")
             }
             TypeDefKind::Map(..) => panic!("unsupported anonymous type reference: map"),
@@ -3407,7 +3410,7 @@ impl<'a> wit_bindgen_core::InterfaceGenerator<'a> for InterfaceGenerator<'a> {
         if let Some(name) = self.name_of(id) {
             self.godoc(docs);
             uwriteln!(self.src, "type {name} struct {{");
-            for Field { name, ty, docs } in fields {
+            for Field { name, ty, docs, .. } in fields {
                 self.godoc(docs);
                 self.push_str(&name.to_upper_camel_case());
                 self.push_str(" ");
@@ -3520,7 +3523,7 @@ func (v *{name}) WriteToIndex(w {wrpc}.ByteWriter) (func({wrpc}.IndexWriter) err
             // Struct
             self.godoc(docs);
             uwriteln!(self.src, "type {name} struct {{");
-            for Flag { name, docs } in &ty.flags {
+            for Flag { name, docs, .. } in &ty.flags {
                 self.godoc(docs);
                 self.push_str(&name.to_upper_camel_case());
                 self.push_str(" bool\n");
@@ -3673,6 +3676,7 @@ func (v *{name}) WriteToIndex(w {wrpc}.ByteWriter) (func({wrpc}.IndexWriter) err
                 name: case_name,
                 ty,
                 docs,
+                ..
             } in &variant.cases
             {
                 let camel = case_name.to_upper_camel_case();

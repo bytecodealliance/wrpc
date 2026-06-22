@@ -37,7 +37,11 @@ impl LanguageMethods for Go {
         // types, `error-context`, or futures held by resources.
         matches!(
             name,
-            "streams.wit" | "futures.wit" | "error-context.wit" | "resources-with-futures.wit"
+            "streams.wit"
+                | "futures.wit"
+                | "error-context.wit"
+                | "resources-with-futures.wit"
+                | "future-same-type-different-names.wit"
         )
     }
 

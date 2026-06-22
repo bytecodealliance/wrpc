@@ -57,11 +57,12 @@ stderr ---
 pub fn run_world_codegen_test(
     gen_name: &str,
     wit_path: &Path,
-    generate: fn(&Resolve, WorldId, &mut Files),
+    generate: fn(&mut Resolve, WorldId, &mut Files),
     verify: fn(&Path, &str),
 ) {
-    let (resolve, world) = parse_wit(wit_path);
-    let world_name = &resolve.worlds[world].name;
+    let (mut resolve, world) = parse_wit(wit_path);
+    let world_name = resolve.worlds[world].name.clone();
+    let world_name = world_name.as_str();
 
     let wit_name = if wit_path.is_dir() {
         wit_path
@@ -77,7 +78,7 @@ pub fn run_world_codegen_test(
     let dir = test_directory("codegen", &gen_name, world_name);
 
     let mut files = Default::default();
-    generate(&resolve, world, &mut files);
+    generate(&mut resolve, world, &mut files);
     for (file, contents) in files.iter() {
         let dst = dir.join(file);
         std::fs::create_dir_all(dst.parent().unwrap()).unwrap();
