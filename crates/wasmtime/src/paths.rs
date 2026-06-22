@@ -13,6 +13,7 @@
 //! `wasi:io/streams` imports up front and comparing against them.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::sync::Arc;
 
 use wasmtime::component::types::{self, Type};
 use wasmtime::component::ResourceType;
@@ -153,7 +154,7 @@ fn async_paths(ty: &Type, streams: &[ResourceType]) -> (BTreeSet<VecDeque<Option
 pub(crate) fn params_async_paths<'a>(
     params: impl IntoIterator<Item = &'a Type>,
     streams: &[ResourceType],
-) -> Vec<Box<[Option<usize>]>> {
+) -> Arc<[Box<[Option<usize>]>]> {
     let mut out = BTreeSet::new();
     for (i, ty) in params.into_iter().enumerate() {
         let (nested, fut) = async_paths(ty, streams);

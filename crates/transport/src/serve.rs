@@ -30,12 +30,13 @@ pub trait Serve: Sync {
         &self,
         instance: &str,
         func: &str,
-        paths: impl Into<Arc<[Box<[Option<usize>]>]>> + Send,
+        paths: Arc<[Box<[Option<usize>]>]>,
     ) -> impl Future<
         Output = anyhow::Result<
             impl Stream<Item = anyhow::Result<(Self::Context, Self::Outgoing, Self::Incoming)>>
                 + Send
-                + 'static,
+                + 'static
+                + use<Self>,
         >,
     > + Send;
 }
@@ -48,23 +49,33 @@ pub trait ServeExt: Serve {
         &self,
         instance: &str,
         func: &str,
-        paths: impl Into<Arc<[Box<[Option<usize>]>]>> + Send,
+        paths: Arc<[Box<[Option<usize>]>]>,
     ) -> impl Future<
         Output = anyhow::Result<
             impl Stream<
                     Item = anyhow::Result<(
                         Self::Context,
                         Params,
-                        Option<impl Future<Output = std::io::Result<()>> + Send + Unpin + 'static>,
+                        Option<
+                            impl Future<Output = std::io::Result<()>>
+                                + Send
+                                + Unpin
+                                + 'static
+                                + use<Self, Params, Results>,
+                        >,
                         impl FnOnce(
                                 Results,
                             ) -> Pin<
                                 Box<dyn Future<Output = anyhow::Result<()>> + Send + 'static>,
-                            > + Send
-                            + 'static,
+                            >
+                            + Send
+                            + 'static
+                            + use<Self, Params, Results>,
                     )>,
-                > + Send
-                + 'static,
+                >
+                + Send
+                + 'static
+                + use<Self, Params, Results>,
         >,
     > + Send
     where
@@ -159,7 +170,7 @@ mod tests {
                 s.serve(
                     "foo",
                     "bar",
-                    [Box::from([Some(42), None]), Box::from([None])],
+                    Arc::from([Box::from([Some(42), None]), Box::from([None])]),
                 )
                 .await
                 .unwrap()
@@ -168,7 +179,7 @@ mod tests {
                 s.serve(
                     "foo",
                     "bar",
-                    vec![Box::from([Some(42), None]), Box::from([None])],
+                    Arc::from([Box::from([Some(42), None]), Box::from([None])]),
                 )
                 .await
                 .unwrap()
@@ -177,7 +188,7 @@ mod tests {
                 s.serve(
                     "foo",
                     "bar",
-                    [Box::from([Some(42), None]), Box::from([None])].as_slice(),
+                    Arc::from([Box::from([Some(42), None]), Box::from([None])]),
                 )
                 .await
                 .unwrap()
@@ -195,7 +206,7 @@ mod tests {
         let fut = s.serve(
             "foo",
             "bar",
-            [Box::from([Some(42), None]), Box::from([None])],
+            Arc::from([Box::from([Some(42), None]), Box::from([None])]),
         );
         async move {
             let st = fut.await.unwrap();
@@ -212,7 +223,7 @@ mod tests {
         let fut = s.serve_values::<(Bytes,), (Bytes,)>(
             "foo",
             "bar",
-            [Box::from([Some(42), None]), Box::from([None])],
+            Arc::from([Box::from([Some(42), None]), Box::from([None])]),
         );
         async move {
             let st = fut.await.unwrap();

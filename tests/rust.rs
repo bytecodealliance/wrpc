@@ -677,22 +677,22 @@ where
         .serve_values(
             "test",
             "async",
-            [
+            Arc::from([
                 Box::from([Some(0)]),
                 Box::from([Some(1)]),
                 Box::from([Some(2)]),
                 Box::from([Some(3)]),
                 Box::from([Some(4)]),
-            ],
+            ]),
         )
         .await
         .context("failed to serve `test.async`")?;
     let reset_inv = srv
-        .serve_values::<(String,), (String,)>("test", "reset", Box::default())
+        .serve_values::<(String,), (String,)>("test", "reset", Arc::default())
         .await
         .context("failed to serve `test.reset`")?;
     let sync_inv = srv
-        .serve_values("test", "sync", Box::default())
+        .serve_values("test", "sync", Arc::default())
         .await
         .context("failed to serve `test.sync`")?;
 
@@ -1390,7 +1390,7 @@ where
 {
     let srv = Arc::new(wrpc_transport::frame::Server::default());
     let invocations = srv
-        .serve_values::<(u32,), (&str,)>("foo", "bar", Box::default())
+        .serve_values::<(u32,), (&str,)>("foo", "bar", Arc::default())
         .await?;
     join!(
         async {

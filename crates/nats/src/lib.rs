@@ -1236,9 +1236,11 @@ impl wrpc_transport::Serve for Client {
         &self,
         instance: &str,
         func: &str,
-        paths: impl Into<Arc<[Box<[Option<usize>]>]>> + Send,
+        paths: Arc<[Box<[Option<usize>]>]>,
     ) -> anyhow::Result<
-        impl Stream<Item = anyhow::Result<(Self::Context, Self::Outgoing, Self::Incoming)>> + 'static,
+        impl Stream<Item = anyhow::Result<(Self::Context, Self::Outgoing, Self::Incoming)>>
+            + 'static
+            + use<>,
     > {
         let subject = invocation_subject(&self.prefix, instance, func);
         let sub = if let Some(group) = &self.queue_group {
@@ -1252,7 +1254,6 @@ impl wrpc_transport::Serve for Client {
         };
         self.nats.flush().await.context("failed to flush")?;
         let nats = Arc::clone(&self.nats);
-        let paths = paths.into();
         let commands = self.commands.clone();
         let inbox = Arc::clone(&self.inbox);
         let tasks = Arc::clone(&self.tasks);
