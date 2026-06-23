@@ -12,13 +12,13 @@ wRPC relies on [component model value definition encoding] for data encoding on 
 
 wRPC makes use of *transports*, which are responsible for establishing a connection between two parties and transferring the wRPC wire protocol data between them.
 
-Examples of supported wRPC transports are: TCP, Unix Domain Sockets and QUIC.
+Examples of supported wRPC transports are: TCP, Unix Domain Sockets, QUIC, WebTransport and WebSockets.
 
 ### Indexing
 
 As WIT interfaces and associated values are asynchronous in nature, callers and callees require ability to asynchronously, bidirectionally transfer (portions of) function parameter and result value data.
 
-For example, caller of `wasi:http/outgoing-handler.handle` function MUST be able to simultaneously send data over the passed `output-stream` and well as receive data from the returned `input-stream`. For this purpose wRPC transports MUST be *multiplexed*, i.e. they MUST allow for bidirectional concurrent transfer of multiple data streams.
+For example, caller of `wasi:http/outgoing-handler.handle` function MUST be able to simultaneously send data over the passed `output-stream` and well as receive data from the returned `input-stream`. For this purpose wRPC *multiplexes* these data streams over a single bidirectional byte stream provided by the transport, allowing for bidirectional concurrent transfer of multiple data streams (see [Framing](#framing)).
 
 wRPC uses a concept of "indexing" for differentiating and identifying the data streams used as part of processing of a single WIT function invocation.
 
@@ -55,9 +55,9 @@ The indexing rules are as follows:
 
 ### Framing
 
-Some transports (like QUIC) have builtin support for multiplexing, whereas others, like TCP or UDS do not.
+Transports provide a single bidirectional byte stream per wRPC invocation. wRPC defines a default framing format, described below, that multiplexes the asynchronous data streams of an invocation (each identified by its [index](#indexing)) over that single byte stream.
 
-wRPC suggests a default framing format for non-multiplexed transports, however individual transport implementations are free to use a custom one.
+All current wRPC transports (TCP, Unix Domain Sockets, QUIC, WebTransport and WebSockets) use this default framing. Individual transport implementations are free to use a custom framing instead, for example one built on a transport's native stream multiplexing.
 
 ## Framed stream specification
 
