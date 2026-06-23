@@ -111,9 +111,11 @@ func sendFrame(ctx context.Context, ch chan<- Frame, frame Frame) error {
 }
 
 func (w *FrameStreamWriter) Write(p []byte) (int, error) {
+	data := make([]byte, len(p))
+	copy(data, p)
 	if err := sendFrame(w.ctx, w.ch, Frame{
 		Path: w.path,
-		Data: p,
+		Data: data,
 	}); err != nil {
 		return 0, err
 	}
