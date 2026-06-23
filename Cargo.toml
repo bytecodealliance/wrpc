@@ -27,7 +27,7 @@ members = [
 ]
 
 [features]
-default = ["bin", "nats", "net", "quic", "wasmtime", "webtransport", "websockets"]
+default = ["bin", "net", "quic", "wasmtime", "webtransport", "websockets"]
 
 bin = ["bin-bindgen", "bin-wasmtime"]
 bin-bindgen = [
@@ -39,7 +39,6 @@ bin-bindgen = [
     "wit-bindgen-wrpc-rust/clap",
 ]
 bin-wasmtime = ["dep:tokio", "dep:wrpc-wasmtime-cli", "tokio/rt-multi-thread"]
-nats = ["dep:async-nats", "dep:wrpc-nats", "wrpc-cli/nats"]
 net = ["wrpc-transport/net"]
 quic = ["dep:wrpc-quic"]
 wasmtime = ["dep:wrpc-wasmtime"]
@@ -67,7 +66,6 @@ debug = true
 
 [dependencies]
 anyhow = { workspace = true, features = ["std"] }
-async-nats = { workspace = true, optional = true }
 clap = { workspace = true, features = [
     "color",
     "derive",
@@ -85,7 +83,6 @@ wit-bindgen-wrpc-go = { workspace = true, optional = true }
 wit-bindgen-wrpc-rust = { workspace = true, optional = true }
 wit-bindgen-wrpc-test = { workspace = true, optional = true }
 wrpc-cli = { workspace = true, optional = true }
-wrpc-nats = { workspace = true, optional = true }
 wrpc-quic = { workspace = true, optional = true }
 wrpc-transport = { workspace = true }
 wrpc-wasmtime = { workspace = true, optional = true }
@@ -103,10 +100,10 @@ criterion = { workspace = true, features = [
     "plotters",
     "rayon",
 ] }
-futures = { workspace = true }
+futures = { workspace = true, features = ["async-await"] }
 tempfile = { workspace = true }
 test-log = { workspace = true, features = ["color", "log", "trace"] }
-tokio = { workspace = true, features = ["process", "rt-multi-thread"] }
+tokio = { workspace = true, features = ["net", "process", "rt-multi-thread"] }
 tokio-util = { workspace = true }
 wasmtime = { workspace = true }
 wasmtime-wasi = { workspace = true }
@@ -123,7 +120,6 @@ wasmtime-cli-flags = { workspace = true, features = [
     "threads",
 ] }
 wrpc-test = { workspace = true, features = [
-    "nats",
     "quic",
     "webtransport",
     "websockets",
@@ -132,7 +128,6 @@ wrpc-transport = { workspace = true, features = ["net"] }
 
 [workspace.dependencies]
 anyhow = { version = "1", default-features = false }
-async-nats = { version = "0.49", default-features = false }
 axum = { version = "0.8", default-features = false }
 bitflags = { version = "2", default-features = false }
 bytes = { version = "1", default-features = false }
@@ -194,7 +189,6 @@ wit-component = { version = "0.252", default-features = false }
 wit-parser = { version = "0.236", default-features = false }
 wrpc-cli = { version = "0.8", path = "./crates/cli", default-features = false }
 wrpc-introspect = { version = "0.7", default-features = false, path = "./crates/introspect" }
-wrpc-nats = { version = "0.1", path = "./crates/nats", default-features = false }
 wrpc-pack = { version = "0.4", path = "./crates/pack", default-features = false }
 wrpc-quic = { version = "0.1", path = "./crates/quic", default-features = false }
 wrpc-test = { path = "./crates/test", default-features = false }

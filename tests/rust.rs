@@ -1032,56 +1032,6 @@ where
     Ok(())
 }
 
-#[cfg(feature = "nats")]
-#[test_log::test(tokio::test(flavor = "multi_thread"))]
-#[instrument(ret)]
-async fn rust_bindgen_nats_sync() -> anyhow::Result<()> {
-    wrpc_test::with_nats(|_, clt| async {
-        let clt =
-            wrpc_nats::Client::new(clt, "rust-bindgen-sync", Some("rust-bindgen-sync".into()))
-                .await
-                .context("failed to construct client")?;
-        let clt = Arc::new(clt);
-        assert_bindgen_sync(Arc::clone(&clt), clt).await
-    })
-    .await
-}
-
-#[cfg(feature = "nats")]
-#[test_log::test(tokio::test(flavor = "multi_thread"))]
-#[instrument(ret)]
-async fn rust_bindgen_nats_async() -> anyhow::Result<()> {
-    wrpc_test::with_nats(|_, clt| {
-        async {
-            let clt = wrpc_nats::Client::new(
-                clt,
-                "rust-bindgen-async",
-                Some("rust-bindgen-async".into()),
-            )
-            .await
-            .context("failed to construct client")?;
-            let clt = Arc::new(clt);
-            assert_bindgen_async(Arc::clone(&clt), clt).await
-        }
-        .in_current_span()
-    })
-    .await
-}
-
-#[cfg(feature = "nats")]
-#[test_log::test(tokio::test(flavor = "multi_thread"))]
-#[instrument(ret)]
-async fn rust_dynamic_nats() -> anyhow::Result<()> {
-    wrpc_test::with_nats(|_, clt| async {
-        let clt = wrpc_nats::Client::new(clt, "rust-dynamic", None)
-            .await
-            .context("failed to construct client")?;
-        let clt = Arc::new(clt);
-        assert_dynamic(Arc::clone(&clt), clt).await
-    })
-    .await
-}
-
 #[cfg(feature = "quic")]
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 #[instrument(ret)]

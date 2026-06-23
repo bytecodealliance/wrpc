@@ -11,15 +11,13 @@ license.workspace = true
 repository.workspace = true
 
 [features]
-default = ["nats", "quic", "webtransport", "websockets"]
-nats = ["dep:async-nats", "wrpc-cli/nats"]
+default = ["quic", "webtransport", "websockets"]
 quic = ["dep:quinn"]
 webtransport = ["dep:wtransport"]
 websockets = ["dep:tokio-websockets"]
 
 [dependencies]
 anyhow = { workspace = true }
-async-nats = { workspace = true, features = ["ring"], optional = true }
 futures = { workspace = true }
 quinn = { workspace = true, features = [
     "log",
@@ -38,7 +36,6 @@ tokio-websockets = { workspace = true, features = [
     "server",
 ], optional = true }
 tracing = { workspace = true }
-wrpc-cli = { workspace = true }
 wrpc-transport = { workspace = true }
 wtransport = { workspace = true, features = [
     "ring",

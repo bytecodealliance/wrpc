@@ -1,5 +1,0 @@
-package wrpc-examples:hello-rust-server;
-
-world server {
-    include wrpc-examples:hello/server;
-}

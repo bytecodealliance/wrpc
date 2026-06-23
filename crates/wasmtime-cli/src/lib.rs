@@ -31,7 +31,6 @@ use wrpc_wasmtime::{
     collect_component_resource_exports, collect_component_resource_imports, link_item, rpc,
 };
 
-mod nats;
 mod tcp;
 
 const DEFAULT_TIMEOUT: &str = "10s";
@@ -39,8 +38,6 @@ const DEFAULT_TIMEOUT: &str = "10s";
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 enum Command {
-    #[command(subcommand)]
-    Nats(nats::Command),
     #[command(subcommand)]
     Tcp(tcp::Command),
 }
@@ -788,7 +785,6 @@ where
 pub async fn run() -> anyhow::Result<()> {
     wrpc_cli::tracing::init();
     match Command::parse() {
-        Command::Nats(args) => nats::run(args).await,
         Command::Tcp(args) => tcp::run(args).await,
     }
 }

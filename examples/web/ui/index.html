@@ -292,16 +292,6 @@
             let proto = obj.proto;
             if (proto === 'mem') {
                 identifier = '';
-            } else if (proto === 'nats') {
-                const addr = obj['nats-addr'];
-                if (!addr) throw 'NATS.io server address must be set';
-                identifier = 'wrpc+nats://' + addr;
-
-                const prefix = obj['nats-prefix'];
-                if (prefix) identifier = identifier + '/' + prefix;
-
-                const bucket = obj['nats-bucket'];
-                if (bucket) identifier = identifier + ';' + bucket;
             } else if (proto === 'redis') {
                 const url = obj['redis-url'];
                 if (!url) throw 'Redis URL must be set';
@@ -566,7 +556,6 @@
                 <select id="proto" form="settings" name="proto">
                     <option value="mem">In-memory</option>
                     <option value="redis">Redis</option>
-                    <option value="nats">wRPC/NATS.io</option>
                     <option value="quic">wRPC/QUIC</option>
                     <option value="tcp">wRPC/TCP</option>
                     <option value="unix">wRPC/Unix domain sockets</option>
@@ -588,28 +577,6 @@
                     <div class="control">
                         <input class="input" type="text" name="redis-url" placeholder="redis://localhost:6379"
                             value="redis://localhost:6379" />
-                    </div>
-                </div>
-            </template>
-
-            <template class="form-fields" data-option="nats">
-                <div class="field">
-                    <label class="label">Bucket identifier</label>
-                    <div class="control">
-                        <input class="input" type="text" name="nats-bucket" />
-                    </div>
-                </div>
-                <div class="field">
-                    <label class="label">NATS.io server address</label>
-                    <div class="control">
-                        <input class="input" type="text" name="nats-addr" placeholder="localhost:4222"
-                            value="localhost:4222" />
-                    </div>
-                </div>
-                <div class="field">
-                    <label class="label">NATS.io prefix</label>
-                    <div class="control">
-                        <input class="input" type="text" name="nats-prefix" />
                     </div>
                 </div>
             </template>

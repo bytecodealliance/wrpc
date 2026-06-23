@@ -1,5 +1,0 @@
-package wrpc-examples:hello-rust-client;
-
-world client {
-    include wrpc-examples:hello/client;
-}

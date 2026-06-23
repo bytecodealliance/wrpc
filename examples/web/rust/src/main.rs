@@ -80,10 +80,6 @@ impl ServerCertVerifier for Insecure {
 enum Bucket {
     Mem(ResourceOwn<store::Bucket>),
     Redis(ResourceOwn<store::Bucket>),
-    Nats(
-        ResourceOwn<wrpc_wasi_keyvalue::wasi::keyvalue::store::Bucket>,
-        wrpc_nats::Client,
-    ),
     Quic(
         ResourceOwn<wrpc_wasi_keyvalue::wasi::keyvalue::store::Bucket>,
         wrpc_quic::Client,
@@ -174,31 +170,6 @@ impl<C: Send + Sync> store::Handler<C> for Handler {
                 match self.redis.open(cx, identifier).await? {
                     Ok(bucket) => Bucket::Redis(bucket),
                     Err(err) => return Ok(Err(err)),
-                }
-            }
-            "wrpc+nats" => {
-                let nats = match async_nats::connect_with_options(
-                    url.authority(),
-                    async_nats::ConnectOptions::new().retry_on_initial_connect(),
-                )
-                .await
-                .context("failed to connect to NATS.io server")
-                {
-                    Ok(nats) => nats,
-                    Err(err) => return Ok(Err(store::Error::Other(format!("{err:#}")))),
-                };
-                let prefix = url.path();
-                let prefix = prefix.strip_prefix('/').unwrap_or(prefix);
-                let wrpc = match wrpc_nats::Client::new(nats, prefix, None)
-                    .await
-                    .context("failed to construct wRPC client")
-                {
-                    Ok(wrpc) => wrpc,
-                    Err(err) => return Ok(Err(store::Error::Other(format!("{err:#}")))),
-                };
-                match wrpc_wasi_keyvalue::wasi::keyvalue::store::open(&wrpc, None, suffix).await? {
-                    Ok(bucket) => Bucket::Nats(bucket, wrpc),
-                    Err(err) => return Ok(Err(err.into())),
                 }
             }
             "wrpc+quic" => {
@@ -315,15 +286,6 @@ impl<C: Send + Sync> store::HandlerBucket<C> for Handler {
         let res = match self.bucket(bucket).await? {
             Bucket::Mem(bucket) => return self.mem.get(cx, bucket.as_borrow(), key).await,
             Bucket::Redis(bucket) => return self.redis.get(cx, bucket.as_borrow(), key).await,
-            Bucket::Nats(bucket, wrpc) => {
-                wrpc_wasi_keyvalue::wasi::keyvalue::store::Bucket::get(
-                    &wrpc,
-                    None,
-                    &bucket.as_borrow(),
-                    &key,
-                )
-                .await?
-            }
             Bucket::Quic(bucket, wrpc) => {
                 wrpc_wasi_keyvalue::wasi::keyvalue::store::Bucket::get(
                     &wrpc,
@@ -380,16 +342,6 @@ impl<C: Send + Sync> store::HandlerBucket<C> for Handler {
             Bucket::Mem(bucket) => return self.mem.set(cx, bucket.as_borrow(), key, value).await,
             Bucket::Redis(bucket) => {
                 return self.redis.set(cx, bucket.as_borrow(), key, value).await;
-            }
-            Bucket::Nats(bucket, wrpc) => {
-                wrpc_wasi_keyvalue::wasi::keyvalue::store::Bucket::set(
-                    &wrpc,
-                    None,
-                    &bucket.as_borrow(),
-                    &key,
-                    &value,
-                )
-                .await?
             }
             Bucket::Quic(bucket, wrpc) => {
                 wrpc_wasi_keyvalue::wasi::keyvalue::store::Bucket::set(
@@ -449,15 +401,6 @@ impl<C: Send + Sync> store::HandlerBucket<C> for Handler {
         let res = match self.bucket(bucket).await? {
             Bucket::Mem(bucket) => return self.mem.delete(cx, bucket.as_borrow(), key).await,
             Bucket::Redis(bucket) => return self.redis.delete(cx, bucket.as_borrow(), key).await,
-            Bucket::Nats(bucket, wrpc) => {
-                wrpc_wasi_keyvalue::wasi::keyvalue::store::Bucket::delete(
-                    &wrpc,
-                    None,
-                    &bucket.as_borrow(),
-                    &key,
-                )
-                .await?
-            }
             Bucket::Quic(bucket, wrpc) => {
                 wrpc_wasi_keyvalue::wasi::keyvalue::store::Bucket::delete(
                     &wrpc,
@@ -512,15 +455,6 @@ impl<C: Send + Sync> store::HandlerBucket<C> for Handler {
         let res = match self.bucket(bucket).await? {
             Bucket::Mem(bucket) => return self.mem.exists(cx, bucket.as_borrow(), key).await,
             Bucket::Redis(bucket) => return self.redis.exists(cx, bucket.as_borrow(), key).await,
-            Bucket::Nats(bucket, wrpc) => {
-                wrpc_wasi_keyvalue::wasi::keyvalue::store::Bucket::exists(
-                    &wrpc,
-                    None,
-                    &bucket.as_borrow(),
-                    &key,
-                )
-                .await?
-            }
             Bucket::Quic(bucket, wrpc) => {
                 wrpc_wasi_keyvalue::wasi::keyvalue::store::Bucket::exists(
                     &wrpc,
@@ -576,15 +510,6 @@ impl<C: Send + Sync> store::HandlerBucket<C> for Handler {
             Bucket::Mem(bucket) => return self.mem.list_keys(cx, bucket.as_borrow(), cursor).await,
             Bucket::Redis(bucket) => {
                 return self.redis.list_keys(cx, bucket.as_borrow(), cursor).await;
-            }
-            Bucket::Nats(bucket, wrpc) => {
-                wrpc_wasi_keyvalue::wasi::keyvalue::store::Bucket::list_keys(
-                    &wrpc,
-                    None,
-                    &bucket.as_borrow(),
-                    cursor.as_deref(),
-                )
-                .await?
             }
             Bucket::Quic(bucket, wrpc) => {
                 wrpc_wasi_keyvalue::wasi::keyvalue::store::Bucket::list_keys(

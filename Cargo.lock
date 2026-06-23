@@ -184,36 +184,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "async-nats"
-version = "0.49.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fad3cd6df81292728e2a8cb1f1dcb4d7e7a1ab59b80c14fbbcba2baf9d5cf86a"
-dependencies = [
- "bytes",
- "futures-util",
- "memchr",
- "pin-project",
- "portable-atomic",
- "rand 0.10.1",
- "regex",
- "ring",
- "rustls-native-certs",
- "rustls-pki-types",
- "rustls-webpki",
- "serde",
- "serde_json",
- "serde_repr",
- "thiserror 2.0.18",
- "tokio",
- "tokio-rustls",
- "tokio-stream",
- "tokio-util",
- "tokio-websockets 0.10.1",
- "tracing",
- "url",
-]
-
-[[package]]
 name = "async-trait"
 version = "0.1.89"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -372,9 +342,6 @@ name = "bytes"
 version = "1.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ae3f5d315924270530207e2a68396c3cc547f6dca3fbdca317cfb1a51edb593"
-dependencies = [
- "serde",
-]
 
 [[package]]
 name = "cap-fs-ext"
@@ -1439,36 +1406,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "hello-nats-client"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-nats",
- "clap",
- "tokio",
- "tracing-subscriber",
- "url",
- "wit-bindgen-wrpc",
- "wrpc-nats",
-]
-
-[[package]]
-name = "hello-nats-server"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-nats",
- "clap",
- "futures",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "url",
- "wit-bindgen-wrpc",
- "wrpc-nats",
-]
-
-[[package]]
 name = "hello-quic-client"
 version = "0.1.0"
 dependencies = [
@@ -2208,15 +2145,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "nuid"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "94efe3d748e299d5af2206bc27f2545151dc46a476eb47ebdbf178c5d3745575"
-dependencies = [
- "rand 0.9.4",
-]
-
-[[package]]
 name = "num-bigint"
 version = "0.4.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2371,26 +2299,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
-name = "pin-project"
-version = "1.1.13"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2466b2336ed02bcdca6b294417127b90ec92038d1d5c4fbeac971a922e0e0924"
-dependencies = [
- "pin-project-internal",
-]
-
-[[package]]
-name = "pin-project-internal"
-version = "1.1.13"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c96395f0a926bc13b1c17622aaddda1ecb55d49c8f1bf9777e4d877800a43f8b"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
-]
-
-[[package]]
 name = "pin-project-lite"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2429,12 +2337,6 @@ checksum = "51bae2ac328883f7acdfea3d66a7c35751187f870bc81f94563733a154d7a670"
 dependencies = [
  "plotters-backend",
 ]
-
-[[package]]
-name = "portable-atomic"
-version = "1.13.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c33a9471896f1c69cecef8d20cbe2f7accd12527ce60845ff44c153bb2a21b49"
 
 [[package]]
 name = "postcard"
@@ -2593,22 +2495,11 @@ checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
 name = "rand"
-version = "0.8.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5ca0ecfa931c29007047d1bc58e623ab12e5590e8c7cc53200d5202b69266d8a"
-dependencies = [
- "libc",
- "rand_chacha 0.3.1",
- "rand_core 0.6.4",
-]
-
-[[package]]
-name = "rand"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "44c5af06bb1b7d3216d91932aed5265164bf384dc89cd6ba05cf59a35f5f76ea"
 dependencies = [
- "rand_chacha 0.9.0",
+ "rand_chacha",
  "rand_core 0.9.5",
 ]
 
@@ -2625,31 +2516,12 @@ dependencies = [
 
 [[package]]
 name = "rand_chacha"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e6c10a63a0fa32252be49d21e7709d4d4baf8d231c2dbce1eaa8141b9b127d88"
-dependencies = [
- "ppv-lite86",
- "rand_core 0.6.4",
-]
-
-[[package]]
-name = "rand_chacha"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d3022b5f1df60f26e1ffddd6c66e8aa15de382ae63b3a0c1bfc0e4d3e3f325cb"
 dependencies = [
  "ppv-lite86",
  "rand_core 0.9.5",
-]
-
-[[package]]
-name = "rand_core"
-version = "0.6.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ec0be4795e2f6a28069bec0b5ff3e2ac9bafc99e6a9a7dc3547996c5c816922c"
-dependencies = [
- "getrandom 0.2.17",
 ]
 
 [[package]]
@@ -3071,17 +2943,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "serde_repr"
-version = "0.1.20"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "175ee3e80ae9982737ca543e96133087cbd9a485eecc3bc4de9c1a37b47ea59c"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
-]
-
-[[package]]
 name = "serde_spanned"
 version = "0.6.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3210,41 +3071,6 @@ dependencies = [
  "tracing-subscriber",
  "wit-bindgen-wrpc",
  "wrpc-transport",
-]
-
-[[package]]
-name = "streams-nats-client"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-nats",
- "bytes",
- "clap",
- "futures",
- "tokio",
- "tokio-stream",
- "tracing",
- "tracing-subscriber",
- "url",
- "wit-bindgen-wrpc",
- "wrpc-nats",
-]
-
-[[package]]
-name = "streams-nats-server"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-nats",
- "bytes",
- "clap",
- "futures",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "url",
- "wit-bindgen-wrpc",
- "wrpc-nats",
 ]
 
 [[package]]
@@ -3641,7 +3467,6 @@ dependencies = [
  "futures-core",
  "pin-project-lite",
  "tokio",
- "tokio-util",
 ]
 
 [[package]]
@@ -3656,27 +3481,6 @@ dependencies = [
  "futures-sink",
  "pin-project-lite",
  "tokio",
-]
-
-[[package]]
-name = "tokio-websockets"
-version = "0.10.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f591660438b3038dd04d16c938271c79e7e06260ad2ea2885a4861bfb238605d"
-dependencies = [
- "base64",
- "bytes",
- "futures-core",
- "futures-sink",
- "http",
- "httparse",
- "rand 0.8.6",
- "ring",
- "rustls-pki-types",
- "tokio",
- "tokio-rustls",
- "tokio-util",
- "webpki-roots 0.26.11",
 ]
 
 [[package]]
@@ -4070,40 +3874,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "wasi-keyvalue-nats-client"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-nats",
- "bytes",
- "clap",
- "tokio",
- "tracing-subscriber",
- "url",
- "wrpc-nats",
- "wrpc-wasi-keyvalue",
-]
-
-[[package]]
-name = "wasi-keyvalue-nats-server"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-nats",
- "bytes",
- "clap",
- "futures",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "url",
- "wrpc-nats",
- "wrpc-transport",
- "wrpc-wasi-keyvalue",
- "wrpc-wasi-keyvalue-mem",
-]
-
-[[package]]
 name = "wasi-keyvalue-quic-client"
 version = "0.1.0"
 dependencies = [
@@ -4191,7 +3961,6 @@ name = "wasi-keyvalue-web"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-nats",
  "axum",
  "bytes",
  "clap",
@@ -4206,7 +3975,6 @@ dependencies = [
  "url",
  "uuid",
  "wit-bindgen-wrpc",
- "wrpc-nats",
  "wrpc-quic",
  "wrpc-transport",
  "wrpc-wasi-keyvalue",
@@ -5542,7 +5310,6 @@ name = "wrpc"
 version = "0.17.0"
 dependencies = [
  "anyhow",
- "async-nats",
  "bytes",
  "clap",
  "criterion",
@@ -5561,7 +5328,6 @@ dependencies = [
  "wit-bindgen-wrpc-rust",
  "wit-bindgen-wrpc-test",
  "wrpc-cli",
- "wrpc-nats",
  "wrpc-quic",
  "wrpc-test",
  "wrpc-transport",
@@ -5575,9 +5341,6 @@ dependencies = [
 name = "wrpc-cli"
 version = "0.8.0"
 dependencies = [
- "anyhow",
- "async-nats",
- "tokio",
  "tracing-subscriber",
 ]
 
@@ -5586,23 +5349,6 @@ name = "wrpc-introspect"
 version = "0.7.0"
 dependencies = [
  "wit-parser 0.236.1",
-]
-
-[[package]]
-name = "wrpc-nats"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-nats",
- "bytes",
- "futures",
- "nuid",
- "tokio",
- "tokio-stream",
- "tokio-util",
- "tracing",
- "wasm-tokio",
- "wrpc-transport",
 ]
 
 [[package]]
@@ -5636,15 +5382,13 @@ name = "wrpc-test"
 version = "0.3.0"
 dependencies = [
  "anyhow",
- "async-nats",
  "futures",
  "quinn",
  "rcgen",
  "rustls",
  "tokio",
- "tokio-websockets 0.13.2",
+ "tokio-websockets",
  "tracing",
- "wrpc-cli",
  "wrpc-transport",
  "wtransport",
 ]
@@ -5725,7 +5469,6 @@ name = "wrpc-wasmtime-cli"
 version = "0.9.0"
 dependencies = [
  "anyhow",
- "async-nats",
  "clap",
  "futures",
  "humantime",
@@ -5743,7 +5486,6 @@ dependencies = [
  "wasmtime-wasi-http",
  "wit-component 0.252.0",
  "wrpc-cli",
- "wrpc-nats",
  "wrpc-transport",
  "wrpc-wasmtime",
 ]
@@ -5775,7 +5517,7 @@ dependencies = [
  "test-log",
  "tokio",
  "tokio-util",
- "tokio-websockets 0.13.2",
+ "tokio-websockets",
  "tracing",
  "wrpc-test",
  "wrpc-transport",

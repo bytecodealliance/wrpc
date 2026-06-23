@@ -8,9 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nats-io/nats.go"
 	wrpc "wrpc.io/go"
-	wrpcnats "wrpc.io/go/nats"
 	integration "wrpc.io/tests/go"
 	"wrpc.io/tests/go/bindings/resources_client/strange"
 	"wrpc.io/tests/go/bindings/resources_client/wrpc_test/integration/resources"
@@ -19,27 +17,6 @@ import (
 )
 
 func TestResources(t *testing.T) {
-	natsSrv := internal.RunNats(t)
-	nc, err := nats.Connect(natsSrv.ClientURL())
-	if err != nil {
-		t.Errorf("failed to connect to NATS.io: %s", err)
-		return
-	}
-	defer nc.Close()
-	defer func() {
-		if err := nc.Drain(); err != nil {
-			t.Errorf("failed to drain NATS.io connection: %s", err)
-			return
-		}
-	}()
-	client := wrpcnats.NewClient(nc, wrpcnats.WithPrefix("go"))
-
-	stop, err := resources_server.Serve(client, &integration.ResourcesHandler{}, integration.ResourcesStrangeHandler{})
-	if err != nil {
-		t.Errorf("failed to serve `resources-server` world: %s", err)
-		return
-	}
-
 	var cancel func()
 	ctx := context.Background()
 	dl, ok := t.Deadline()
@@ -49,6 +26,15 @@ func TestResources(t *testing.T) {
 		ctx, cancel = context.WithTimeout(ctx, time.Minute)
 	}
 	defer cancel()
+
+	srv, client := internal.RunTCP(t, ctx)
+
+	stop, err := resources_server.Serve(srv, &integration.ResourcesHandler{}, integration.ResourcesStrangeHandler{})
+	if err != nil {
+		t.Errorf("failed to serve `resources-server` world: %s", err)
+		return
+	}
+	internal.Accept(ctx, srv)
 
 	var foo wrpc.Own[resources.Foo]
 	{
@@ -137,8 +123,5 @@ func TestResources(t *testing.T) {
 	if err = stop(); err != nil {
 		t.Errorf("failed to stop serving `resources-server` world: %s", err)
 		return
-	}
-	if nc.NumSubscriptions() != 0 {
-		t.Errorf("NATS subscriptions leaked: %d active after client stop", nc.NumSubscriptions())
 	}
 }

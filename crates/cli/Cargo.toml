@@ -10,14 +10,7 @@ homepage.workspace = true
 license.workspace = true
 repository.workspace = true
 
-[features]
-default = ["nats"]
-nats = ["async-nats/ring", "dep:async-nats", "dep:tokio", "tokio/sync"]
-
 [dependencies]
-anyhow = { workspace = true, features = ["std"] }
-async-nats = { workspace = true, optional = true }
-tokio = { workspace = true, optional = true }
 tracing-subscriber = { workspace = true, features = [
     "ansi",
     "env-filter",
