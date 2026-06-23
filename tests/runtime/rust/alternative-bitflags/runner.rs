@@ -1,7 +1,17 @@
-pub async fn run(
-    clt: &impl wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,
-) -> anyhow::Result<()> {
-    let flag = my::inline::flags_iface::get_flag(clt, ()).await?;
-    assert_eq!(flag, my::inline::flags_iface::Bar::BAZ);
-    Ok(())
+//@ args = '--bitflags-path crate::my_bitflags'
+
+include!(env!("BINDINGS"));
+
+pub(crate) use wit_bindgen::rt::bitflags as my_bitflags;
+
+use crate::my::inline::t::{get_flag, Bar};
+
+struct Component;
+
+export!(Component);
+
+impl Guest for Component {
+    fn run() {
+        assert_eq!(get_flag(), Bar::BAZ);
+    }
 }

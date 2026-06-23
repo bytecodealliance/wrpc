@@ -1,12 +1,17 @@
-//@ args = '--bitflags-path=wit_bindgen_wrpc::bitflags'
+//@ args = '--bitflags-path crate::my_bitflags'
 
-use exports::my::inline::flags_iface::Bar;
+include!(env!("BINDINGS"));
 
-#[derive(Clone)]
-pub struct Component;
+pub(crate) use wit_bindgen::rt::bitflags as my_bitflags;
 
-impl<Ctx: Send> exports::my::inline::flags_iface::Handler<Ctx> for Component {
-    async fn get_flag(&self, _cx: Ctx) -> anyhow::Result<Bar> {
-        Ok(Bar::BAZ)
+struct Component;
+
+export!(Component);
+
+use crate::exports::my::inline::t::{Bar, Guest};
+
+impl Guest for Component {
+    fn get_flag() -> Bar {
+        Bar::BAZ
     }
 }

@@ -1,10 +1,13 @@
 //@ args = '--generate-all'
 
-#[derive(Clone)]
-pub struct Component;
+include!(env!("BINDINGS"));
 
-impl<Ctx: Send> exports::foo::baz::a::Handler<Ctx> for Component {
-    async fn x(&self, _cx: Ctx) -> anyhow::Result<()> {
-        Ok(())
-    }
+struct Test;
+
+export!(Test);
+
+use crate::exports::foo::baz::a::Guest;
+
+impl Guest for Test {
+    fn x() {}
 }

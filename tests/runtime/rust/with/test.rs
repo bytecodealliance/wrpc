@@ -1,11 +1,13 @@
-use exports::my::inline::bar::Msg;
+include!(env!("BINDINGS"));
 
-#[derive(Clone)]
-pub struct Component;
+struct Component;
 
-impl<Ctx: Send> exports::my::inline::bar::Handler<Ctx> for Component {
-    async fn bar(&self, _cx: Ctx, m: Msg) -> anyhow::Result<()> {
+export!(Component);
+
+use crate::exports::my::inline::bar::{Guest, Msg};
+
+impl Guest for Component {
+    fn bar(m: Msg) {
         assert_eq!(m.field, "hello");
-        Ok(())
     }
 }

@@ -1,32 +1,74 @@
 //@ args = [
-//@   '--with=my:inline/foo/a=crate::runner::other::my::inline::foo::A',
-//@   '--with=my:inline/foo/c=crate::runner::other::my::inline::foo::C',
+//@     '--with=my:inline/foo/a=crate::my_types::MyA',
+//@     '--with=my:inline/foo/b=crate::my_types::MyB',
+//@     '--with=my:inline/foo/c=crate::my_types::MyC',
+//@     '--with=d=crate::my_types::MyD',
+//@     '--with=my:inline/bar/e=crate::my_types::MyE',
+//@     '--with=my:inline/foo/f=generate',
 //@ ]
 
-mod other {
-    wit_bindgen_wrpc::generate!({
-        inline: "
-            package my:inline;
-            interface foo {
-                record a { inner: f64, }
-                variant c { a(a), other(u32), }
-            }
-            world dummy {
-                use foo.{a, c};
-                import f: func(v: a, w: c);
-            }
-        ",
-    });
+include!(env!("BINDINGS"));
+
+mod my_types {
+    #[derive(Debug, Clone, Copy)]
+    pub struct MyA {
+        pub inner: f64,
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    pub struct MyB;
+
+    impl MyB {
+        pub fn take_handle(&self) -> u32 {
+            0
+        }
+
+        pub fn from_handle(_handle: u32) -> Self {
+            Self
+        }
+    }
+
+    pub enum MyC {
+        A(MyA),
+        B(MyB),
+    }
+
+    pub struct MyD {
+        pub inner: u32,
+    }
+
+    pub struct MyE {
+        pub inner: u32,
+    }
 }
 
-pub async fn run(
-    clt: &impl wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,
-) -> anyhow::Result<()> {
-    let a = other::my::inline::foo::A { inner: 1.5 };
-    let got = my::inline::foo::func1(clt, (), &a).await?;
-    assert_eq!(got.inner, 1.5);
+struct Component;
 
-    let c = other::my::inline::foo::C::A(a);
-    my::inline::foo::func3(clt, (), &c).await?;
-    Ok(())
+export!(Component);
+
+impl Guest for Component {
+    fn run() {
+        let a = my_types::MyA { inner: 0.0 };
+        let _ = my::inline::foo::func1(a);
+
+        // can't actually succeed at runtime as this is faking a resource, so check
+        // that it compiles but dynamically skip it.
+        if false {
+            let b = my_types::MyB;
+            let _ = my::inline::foo::func2(b);
+        }
+
+        let c = my_types::MyC::A(a);
+        let _ = i::func7(c);
+
+        let a_list = vec![a, a];
+        let _ = my::inline::foo::func3(&a_list);
+
+        let _ = my::inline::foo::func4(Some(a));
+
+        let _ = my::inline::foo::func5();
+
+        let d = my_types::MyD { inner: 0 };
+        let _ = i::func8(d);
+    }
 }

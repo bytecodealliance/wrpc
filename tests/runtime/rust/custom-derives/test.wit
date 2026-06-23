@@ -7,26 +7,27 @@ interface blag {
 }
 
 interface blah {
-  use blag.{input-stream};
+    use blag.{input-stream};
+    record foo {
+        field1: string,
+        field2: list<u32>
+    }
 
-  record foo {
-    field1: string,
-    field2: list<u32>,
-  }
+    bar: func(cool: foo);
 
-  bar: func(cool: foo);
+    variant ignoreme {
+        stream-type(input-stream),
+    }
 
-  variant ignoreme {
-    stream-type(input-stream),
-  }
-
-  barry: func(warm: ignoreme);
+    barry: func(warm: ignoreme);
 }
 
 world test {
-  export blah;
+    export blag;
+    export blah;
 }
-
 world runner {
-  import blah;
+    import blah;
+
+    export run: func();
 }
