@@ -59,15 +59,41 @@ impl LanguageMethods for Rust {
         &self,
         name: &str,
         _config: &crate::config::WitConfig,
-        _args: &[String],
+        args: &[String],
     ) -> bool {
+        // wRPC's Rust generator implements none of upstream's codegen variant
+        // flags (`--ownership`, `--async`, `--std-feature`,
+        // `--merge-structurally-equal-types`, `--map-type`), so every variant
+        // invocation (i.e. anything with extra `args`) is expected to fail.
+        if !args.is_empty() {
+            return true;
+        }
         // The wRPC Rust generator does not yet support bare `stream`/`future`
-        // types. Other async constructs (`error-context`, futures/streams behind
-        // resources) generate successfully.
+        // types, named fixed-length lists, or `map`. Other async constructs
+        // (`error-context`, futures/streams behind resources) generate
+        // successfully.
         matches!(
             name,
             "streams.wit" | "futures.wit" | "named-fixed-length-list.wit" | "map.wit"
         )
+    }
+
+    fn codegen_test_variants(&self) -> &[(&str, &[&str])] {
+        // Mirrors upstream wit-bindgen's codegen variant matrix. wRPC does not
+        // implement any of these flags yet, so all variants are marked as
+        // expected failures in `should_fail_verify`; they are kept to track
+        // parity with upstream and to surface the day a flag becomes supported.
+        &[
+            ("borrowed", &["--ownership=borrowing"]),
+            (
+                "borrowed-duplicate",
+                &["--ownership=borrowing-duplicate-if-necessary"],
+            ),
+            ("async", &["--async=all"]),
+            ("no-std", &["--std-feature"]),
+            ("merge-equal", &["--merge-structurally-equal-types"]),
+            ("hashmap", &["--map-type=std::collections::HashMap"]),
+        ]
     }
 
     fn default_bindgen_args(&self) -> &[&str] {
