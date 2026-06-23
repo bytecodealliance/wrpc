@@ -1,18 +1,21 @@
 package my:inline;
 
-interface flags-iface {
-  flags bar {
-    foo,
-    bar,
-    baz,
-  }
-  get-flag: func() -> bar;
+interface t {
+    flags bar {
+        foo,
+        bar,
+        baz
+    }
+
+    get-flag: func() -> bar;
 }
 
 world test {
-  export flags-iface;
+  export t;
 }
 
 world runner {
-  import flags-iface;
+  import t;
+
+  export run: func();
 }
