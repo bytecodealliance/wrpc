@@ -833,6 +833,136 @@
 /// [WIT package]: https://component-model.bytecodealliance.org/design/packages.html
 pub use wit_bindgen_wrpc_rust_macro::generate;
 
+/// Compile-fail tests mirroring upstream `wit-bindgen`'s
+/// `crates/rust/tests/codegen.rs` modules for features the wRPC generator does
+/// **not** implement yet. They are kept as `compile_fail` doctests rather than
+/// regular codegen tests (which would break the build) to track parity with
+/// upstream and to surface the day a feature becomes supported — at which point
+/// the corresponding doctest will start failing because the code now compiles.
+///
+/// Newtyped `list` types remapped via `with:` are unsupported: the remapped
+/// type does not implement wRPC's `Encode`/`Decode` (upstream #1442).
+///
+/// ```compile_fail
+/// mod newtyped_list {
+///     use std::ops::Deref;
+///
+///     wit_bindgen_wrpc::generate!({
+///         inline: r#"
+///         package test:newtyped-list;
+///
+///         interface byte {
+///             type newtyped-list-of-byte = list<u8>;
+///
+///             record rec-of-lists {
+///                 nl: newtyped-list-of-byte,
+///             }
+///
+///             use-newtyped-list-of-byte: func(nl: newtyped-list-of-byte) -> newtyped-list-of-byte;
+///             use-rec-of-lists: func(t: rec-of-lists) -> rec-of-lists;
+///         }
+///
+///         world test {
+///             import byte;
+///             export byte;
+///         }
+///         "#,
+///         with: {
+///             "test:newtyped-list/byte/newtyped-list-of-byte": crate::newtyped_list::NewtypedListOfByte,
+///         }
+///     });
+///
+///     pub struct NewtypedListOfByte(Vec<u8>);
+///
+///     impl From<Vec<u8>> for NewtypedListOfByte {
+///         fn from(value: Vec<u8>) -> Self {
+///             NewtypedListOfByte(value)
+///         }
+///     }
+///
+///     impl From<NewtypedListOfByte> for Vec<u8> {
+///         fn from(value: NewtypedListOfByte) -> Self {
+///             value.0
+///         }
+///     }
+///
+///     impl Deref for NewtypedListOfByte {
+///         type Target = Vec<u8>;
+///
+///         fn deref(&self) -> &Self::Target {
+///             &self.0
+///         }
+///     }
+/// }
+/// ```
+///
+/// The `map_type` option is not supported:
+///
+/// ```compile_fail
+/// wit_bindgen_wrpc::generate!({
+///     inline: r#"
+///     package test:map-type;
+///
+///     interface maps {
+///         type names-by-id = map<u32, string>;
+///
+///         roundtrip: func(a: names-by-id) -> names-by-id;
+///         inline-roundtrip: func(a: map<string, u32>) -> map<string, u32>;
+///     }
+///
+///     world test {
+///         import maps;
+///         export maps;
+///     }
+///     "#,
+///     map_type: "std::collections::HashMap",
+///     generate_all,
+/// });
+/// ```
+///
+/// `map` types are not supported even with the default map type:
+///
+/// ```compile_fail
+/// wit_bindgen_wrpc::generate!({
+///     inline: r#"
+///     package test:map-default;
+///
+///     interface maps {
+///         type names-by-id = map<u32, string>;
+///         nested: func(a: map<string, map<u32, string>>) -> map<string, map<u32, string>>;
+///     }
+///
+///     world test {
+///         import maps;
+///         export maps;
+///     }
+///     "#,
+///     generate_all,
+/// });
+/// ```
+///
+/// The `enable_method_chaining` option is not supported (upstream #1586):
+///
+/// ```compile_fail
+/// wit_bindgen_wrpc::generate!({
+///     inline: r#"
+///     package test:method-chaining;
+///     world test {
+///         resource a {
+///             constructor();
+///             set-a: func(arg: u32);
+///             set-b: func(arg: bool);
+///             do: func();
+///         }
+///     }
+///     "#,
+///     generate_all,
+///     enable_method_chaining: true
+/// });
+/// ```
+#[cfg(doctest)]
+pub struct UnimplementedFeatureTests;
+
 #[cfg(docsrs)]
 pub mod examples;
 

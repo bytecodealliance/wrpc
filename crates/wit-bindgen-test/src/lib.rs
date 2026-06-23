@@ -94,11 +94,9 @@ pub struct Opts {
     #[clap(short, long)]
     inherit_stderr: bool,
 
-    /// Configuration of which languages are tested.
-    ///
-    /// Passing `--lang rust` will only test Rust for example. Passing
-    /// `--lang=-rust` will test everything except Rust.
-    #[clap(short, long)]
+    /// Passing `--lang rust` will only test Rust for example. If not specified
+    /// all languages are tested.
+    #[clap(short, long, value_delimiter = ',')]
     languages: Vec<String>,
 }
 
@@ -615,7 +613,7 @@ impl Runner<'_> {
 
         // Next, massage the data a bit. Create a map of all tests to where
         // their components are located. Then perform a product of runners/tests
-        // to generate a list of test cases. Finally actually execute the testj
+        // to generate a list of test cases. Finally actually execute the test
         // cases.
         let mut compiled_components = HashMap::new();
         for (test, component, path) in compilations {
@@ -761,43 +759,14 @@ status: {}",
 
     /// Returns whether `languages` is included in this testing session.
     fn include_language(&self, language: &Language) -> bool {
-        let lang = language.obj().display();
-        let mut any_positive = false;
-        let mut any_negative = false;
-        for opt in self.opts.languages.iter() {
-            for name in opt.split(',') {
-                if let Some(suffix) = name.strip_prefix('-') {
-                    any_negative = true;
-                    // If explicitly asked to not include this, don't include
-                    // it.
-                    if suffix == lang {
-                        return false;
-                    }
-                } else {
-                    any_positive = true;
-                    // If explicitly asked to include this, then include it.
-                    if name == lang {
-                        return true;
-                    }
-                }
-            }
-        }
-
-        // By default include all languages.
-        if self.opts.languages.is_empty() {
-            return true;
-        }
-
-        // If any language was explicitly included then assume any non-mentioned
-        // language should be omitted.
-        if any_positive {
-            return false;
-        }
-
-        // And if there are only negative mentions (e.g. `-foo`) then assume
-        // everything else is allowed.
-        assert!(any_negative);
-        true
+        // Unlike upstream, wRPC makes `--lang` optional; its in-tree harness
+        // selects every language, so an empty list means "test everything".
+        self.opts.languages.is_empty()
+            || self
+                .opts
+                .languages
+                .iter()
+                .any(|l| l == language.obj().display())
     }
 
     fn render_errors<'a>(&self, results: impl Iterator<Item = StepResult<'a>>) {
