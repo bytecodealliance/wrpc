@@ -262,61 +262,6 @@ pub fn cert_pair() -> anyhow::Result<(rustls::ServerConfig, rustls::ClientConfig
     Ok((srv_cnf, clt_cnf))
 }
 
-#[cfg(feature = "nats")]
-pub async fn start_nats() -> anyhow::Result<(
-    u16,
-    async_nats::Client,
-    JoinHandle<anyhow::Result<ExitStatus>>,
-    oneshot::Sender<()>,
-)> {
-    // Check if nats-server is available
-    let nats_server_check = Command::new("nats-server").arg("--version").output().await;
-    if let Err(e) = nats_server_check {
-        let error_msg = if e.kind() == std::io::ErrorKind::NotFound {
-            "nats-server is not installed or not in PATH"
-        } else if e.kind() == std::io::ErrorKind::PermissionDenied {
-            "nats-server is not executable or permission denied"
-        } else {
-            "failed to execute nats-server"
-        };
-        anyhow::bail!(
-            "{}. Please install nats-server >= 2.10.20. \
-            See https://docs.nats.io/running-a-nats-service/introduction/installation for installation instructions. \
-            Original error: {}",
-            error_msg,
-            e
-        );
-    }
-
-    let port = free_port().await?;
-    let (server, stop_tx) =
-        spawn_server(Command::new("nats-server").args(["-T=false", "-p", &port.to_string()]))
-            .await
-            .context("failed to start NATS.io server")?;
-
-    let client = wrpc_cli::nats::connect(format!("nats://localhost:{port}"))
-        .await
-        .context("failed to connect to NATS.io server")?;
-    Ok((port, client, server, stop_tx))
-}
-
-#[cfg(feature = "nats")]
-pub async fn with_nats<T, Fut>(f: impl FnOnce(u16, async_nats::Client) -> Fut) -> anyhow::Result<T>
-where
-    Fut: Future<Output = anyhow::Result<T>>,
-{
-    let (port, nats_client, nats_server, stop_tx) = start_nats()
-        .await
-        .context("failed to start NATS.io server")?;
-    let res = f(port, nats_client).await.context("closure failed")?;
-    stop_tx.send(()).expect("failed to stop NATS.io server");
-    nats_server
-        .await
-        .context("failed to await NATS.io server stop")?
-        .context("NATS.io server failed to stop")?;
-    Ok(res)
-}
-
 #[cfg(feature = "quic")]
 pub async fn with_quic_endpoints<T, Fut>(
     f: impl FnOnce(core::net::SocketAddr, quinn::Endpoint, quinn::Endpoint) -> Fut,

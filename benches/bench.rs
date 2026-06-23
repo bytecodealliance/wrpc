@@ -1,12 +1,12 @@
-use core::future::Future;
 use core::iter;
+use core::net::Ipv6Addr;
 
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::Arc;
 
 use anyhow::{Context as _, bail};
-use bytes::Bytes;
 use clap::Parser as _;
 use criterion::measurement::Measurement;
 use criterion::{BenchmarkGroup, Criterion};
@@ -47,9 +47,6 @@ use greet_bindings_wasmtime::GreetProxyPre;
 use greet_bindings_wrpc::exports::wrpc_bench::bench::greet::Handler as _;
 use ping_bindings_wasmtime::PingProxyPre;
 use ping_bindings_wrpc::exports::wrpc_bench::bench::ping::Handler as _;
-
-const PING_SUBJECT: &str = "wrpc.0.0.1.wrpc-bench:bench/ping.ping";
-const GREET_SUBJECT: &str = "wrpc.0.0.1.wrpc-bench:bench/greet.greet";
 
 #[derive(Clone, Copy)]
 struct NativeHandler;
@@ -195,19 +192,6 @@ impl<T: Send> greet_bindings_wrpc::exports::wrpc_bench::bench::greet::Handler<T>
     }
 }
 
-pub fn with_nats<T>(
-    rt: &tokio::runtime::Runtime,
-    f: impl FnOnce(async_nats::Client) -> anyhow::Result<T>,
-) -> anyhow::Result<T> {
-    let (_, nats_clt, nats_srv, stop_tx) = rt.block_on(wrpc_test::start_nats())?;
-    let res = f(nats_clt).context("closure failed")?;
-    stop_tx.send(()).expect("failed to stop NATS.io server");
-    rt.block_on(nats_srv)
-        .context("failed to await NATS.io server stop")?
-        .context("NATS.io server failed to stop")?;
-    Ok(res)
-}
-
 fn bench_wasm_ping_direct(
     g: &mut BenchmarkGroup<impl Measurement>,
     wasm: &[u8],
@@ -218,10 +202,7 @@ fn bench_wasm_ping_direct(
         .context("failed to construct a Wasm handler")?;
     g.bench_function("direct", |b| {
         b.to_async(&rt).iter(|| async {
-            handler
-                .ping(None::<async_nats::HeaderMap>)
-                .await
-                .expect("failed to call handler");
+            handler.ping(()).await.expect("failed to call handler");
         });
     });
     Ok(())
@@ -238,7 +219,7 @@ fn bench_wasm_greet_direct(
     g.bench_function("direct", |b| {
         b.to_async(&rt).iter(|| async {
             let greeting = handler
-                .greet(None::<async_nats::HeaderMap>, "test".into())
+                .greet((), "test".into())
                 .await
                 .expect("failed to call handler");
             assert_eq!(greeting, "Hello, test");
@@ -247,120 +228,7 @@ fn bench_wasm_greet_direct(
     Ok(())
 }
 
-fn bench_raw_nats<Fut>(
-    rt: &tokio::runtime::Runtime,
-    g: &mut BenchmarkGroup<impl Measurement>,
-    id: &str,
-    subject: &'static str,
-    handle: impl Fn(async_nats::Client, async_nats::Message) -> Fut + Send + 'static,
-    payload: &Bytes,
-    expect: &[u8],
-) -> anyhow::Result<()>
-where
-    Fut: Future<Output = anyhow::Result<()>> + Send,
-{
-    with_nats(rt, |nats| {
-        let mut sub = rt
-            .block_on(nats.subscribe(subject))
-            .context("failed to subscribe on subject")?;
-
-        let (stop_tx, mut stop_rx) = oneshot::channel();
-        let srv = rt.spawn({
-            let nats = nats.clone();
-            async move {
-                loop {
-                    select! {
-                        Some(msg) = sub.next() => { handle(nats.clone(), msg).await? }
-                        _ = &mut stop_rx => {
-                            sub.unsubscribe().await.context("failed to unsubscribe")?;
-                            return anyhow::Ok(())
-                        }
-                    }
-                }
-            }
-        });
-        g.bench_function(id, |b| {
-            b.to_async(rt).iter(|| async {
-                let async_nats::Message {
-                    payload, status, ..
-                } = nats
-                    .request(subject, payload.clone())
-                    .await
-                    .expect("failed to send message");
-                assert!(status.is_none());
-                assert_eq!(payload, expect);
-            });
-        });
-        stop_tx.send(()).expect("failed to stop server");
-        rt.block_on(async { srv.await.context("server task panicked")? })?;
-        Ok(())
-    })
-}
-
-fn bench_nats_raw_ping(g: &mut BenchmarkGroup<impl Measurement>) -> anyhow::Result<()> {
-    let rt = tokio::runtime::Runtime::new().context("failed to build Tokio runtime")?;
-    bench_raw_nats(
-        &rt,
-        g,
-        "raw",
-        PING_SUBJECT,
-        |nats,
-         async_nats::Message {
-             payload,
-             status,
-             reply,
-             headers,
-             ..
-         }| async move {
-            assert!(status.is_none());
-            assert!(payload.is_empty());
-            let reply = reply.context("reply subject missing")?;
-            NativeHandler
-                .ping(headers)
-                .await
-                .context("failed to call handler")?;
-            nats.clone()
-                .publish(reply, Bytes::default())
-                .await
-                .context("failed to publish response")
-        },
-        &Bytes::default(),
-        &[],
-    )
-}
-
-fn bench_nats_raw_greet(g: &mut BenchmarkGroup<impl Measurement>) -> anyhow::Result<()> {
-    let rt = tokio::runtime::Runtime::new().context("failed to build Tokio runtime")?;
-    bench_raw_nats(
-        &rt,
-        g,
-        "raw",
-        GREET_SUBJECT,
-        |nats,
-         async_nats::Message {
-             payload,
-             status,
-             reply,
-             headers,
-             ..
-         }| async move {
-            assert!(status.is_none());
-            let reply = reply.context("reply subject missing")?;
-            let payload = String::from_utf8(Vec::from(payload)).context("payload in not UTF-8")?;
-            let payload = NativeHandler
-                .greet(headers, payload)
-                .await
-                .context("failed to call handler")?;
-            nats.publish(reply, Bytes::from(payload))
-                .await
-                .context("failed to publish response")
-        },
-        &Bytes::from("test"),
-        b"Hello, test",
-    )
-}
-
-fn bench_wasm_ping_nats_raw(
+fn bench_wasm_ping_wrpc(
     g: &mut BenchmarkGroup<impl Measurement>,
     wasm: &[u8],
 ) -> anyhow::Result<()> {
@@ -368,40 +236,61 @@ fn bench_wasm_ping_nats_raw(
     let handler = rt
         .block_on(WasmHandler::new(wasm))
         .context("failed to construct a Wasm handler")?;
-    bench_raw_nats(
-        &rt,
-        g,
-        "raw NATS.io",
-        PING_SUBJECT,
-        move |nats,
-              async_nats::Message {
-                  payload,
-                  status,
-                  reply,
-                  headers,
-                  ..
-              }| {
-            let handler = handler.clone();
-            async move {
-                assert!(status.is_none());
-                assert!(payload.is_empty());
-                let reply = reply.context("reply subject missing")?;
-                handler
-                    .ping(headers)
-                    .await
-                    .context("failed to call handler")?;
-                nats.clone()
-                    .publish(reply, Bytes::default())
-                    .await
-                    .context("failed to publish response")
+
+    let lis = rt
+        .block_on(tokio::net::TcpListener::bind((Ipv6Addr::LOCALHOST, 0)))
+        .context("failed to bind TCP listener")?;
+    let addr = lis
+        .local_addr()
+        .context("failed to query listener address")?;
+    let srv = Arc::new(wrpc_transport::frame::Server::default());
+    let wrpc = wrpc_transport::frame::tcp::Client::from(addr);
+
+    let invocations = rt
+        .block_on(ping_bindings_wrpc::serve(srv.as_ref(), handler))
+        .context("failed to serve bindings")?;
+    let mut invocations = invocations.into_iter();
+    let (Some((_, _, mut invocations)), None) = (invocations.next(), invocations.next()) else {
+        bail!("invalid invocation stream vector")
+    };
+    let (stop_tx, mut stop_rx) = oneshot::channel();
+    let server = rt.spawn({
+        let srv = Arc::clone(&srv);
+        async move {
+            loop {
+                select! {
+                    Some(res) = invocations.next() => {
+                        let fut = res.expect("failed to accept invocation");
+                        tokio::spawn(fut);
+                    }
+                    conn = lis.accept() => {
+                        let (stream, _) = conn.expect("failed to accept TCP connection");
+                        let (rx, tx) = stream.into_split();
+                        srv.accept((), tx, rx)
+                            .await
+                            .expect("failed to accept connection");
+                    }
+                    _ = &mut stop_rx => {
+                        drop(invocations);
+                        return anyhow::Ok(());
+                    }
+                }
             }
-        },
-        &Bytes::default(),
-        &[],
-    )
+        }
+    });
+    g.bench_function("wRPC", |b| {
+        b.to_async(&rt).iter(|| async {
+            ping_bindings_wrpc::wrpc_bench::bench::ping::ping(&wrpc, ())
+                .await
+                .expect("failed to call `ping`");
+        });
+    });
+    stop_tx.send(()).expect("failed to stop server");
+    rt.block_on(async { server.await.context("server task panicked")? })?;
+    Ok(())
 }
 
-fn bench_wasm_greet_nats_raw(
+fn bench_wasm_greet_wrpc(
     g: &mut BenchmarkGroup<impl Measurement>,
     wasm: &[u8],
 ) -> anyhow::Result<()> {
@@ -409,235 +298,171 @@ fn bench_wasm_greet_nats_raw(
     let handler = rt
         .block_on(WasmHandler::new(wasm))
         .context("failed to construct a Wasm handler")?;
-    bench_raw_nats(
-        &rt,
-        g,
-        "raw NATS.io",
-        GREET_SUBJECT,
-        move |nats,
-              async_nats::Message {
-                  payload,
-                  status,
-                  reply,
-                  headers,
-                  ..
-              }| {
-            let handler = handler.clone();
-            async move {
-                assert!(status.is_none());
-                let reply = reply.context("reply subject missing")?;
-                let payload =
-                    String::from_utf8(Vec::from(payload)).context("payload in not UTF-8")?;
-                let payload = handler
-                    .greet(headers, payload)
-                    .await
-                    .context("failed to call handler")?;
-                nats.clone()
-                    .publish(reply, payload.into())
-                    .await
-                    .context("failed to publish response")
-            }
-        },
-        &Bytes::from("test"),
-        b"Hello, test",
-    )
-}
 
-fn bench_wasm_ping_nats_wrpc(
-    g: &mut BenchmarkGroup<impl Measurement>,
-    wasm: &[u8],
-) -> anyhow::Result<()> {
-    let rt = tokio::runtime::Runtime::new().context("failed to build Tokio runtime")?;
-    let handler = rt
-        .block_on(WasmHandler::new(wasm))
-        .context("failed to construct a Wasm handler")?;
-    with_nats(&rt, |nats| {
-        let wrpc = rt
-            .block_on(wrpc_nats::Client::new(nats, "", None))
-            .context("failed to construct client")?;
+    let lis = rt
+        .block_on(tokio::net::TcpListener::bind((Ipv6Addr::LOCALHOST, 0)))
+        .context("failed to bind TCP listener")?;
+    let addr = lis
+        .local_addr()
+        .context("failed to query listener address")?;
+    let srv = Arc::new(wrpc_transport::frame::Server::default());
+    let wrpc = wrpc_transport::frame::tcp::Client::from(addr);
 
-        let invocations = rt
-            .block_on(ping_bindings_wrpc::serve(&wrpc, handler))
-            .context("failed to serve bindings")?;
-        let mut invocations = invocations.into_iter();
-        let (Some((_, _, mut invocations)), None) = (invocations.next(), invocations.next()) else {
-            bail!("invalid invocation stream vector")
-        };
-        let (stop_tx, mut stop_rx) = oneshot::channel();
-        let handle = rt.handle().clone();
-        let srv = handle.spawn({
-            let handle = handle.clone();
-            async move {
-                loop {
-                    select! {
-                        Some(res) = invocations.next() => {
-                            let fut = res.expect("failed to accept invocation");
-                            handle.spawn(fut);
-                        },
-                        _ = &mut stop_rx => {
-                            drop(invocations);
-                            return anyhow::Ok(())
-                        },
+    let invocations = rt
+        .block_on(greet_bindings_wrpc::serve(srv.as_ref(), handler))
+        .context("failed to serve bindings")?;
+    let mut invocations = invocations.into_iter();
+    let (Some((_, _, mut invocations)), None) = (invocations.next(), invocations.next()) else {
+        bail!("invalid invocation stream vector")
+    };
+    let (stop_tx, mut stop_rx) = oneshot::channel();
+    let server = rt.spawn({
+        let srv = Arc::clone(&srv);
+        async move {
+            loop {
+                select! {
+                    Some(res) = invocations.next() => {
+                        let fut = res.expect("failed to accept invocation");
+                        tokio::spawn(fut);
+                    }
+                    conn = lis.accept() => {
+                        let (stream, _) = conn.expect("failed to accept TCP connection");
+                        let (rx, tx) = stream.into_split();
+                        srv.accept((), tx, rx)
+                            .await
+                            .expect("failed to accept connection");
+                    }
+                    _ = &mut stop_rx => {
+                        drop(invocations);
+                        return anyhow::Ok(());
                     }
                 }
             }
+        }
+    });
+    g.bench_function("wRPC", |b| {
+        b.to_async(&rt).iter(|| async {
+            greet_bindings_wrpc::wrpc_bench::bench::greet::greet(&wrpc, (), "test")
+                .await
+                .expect("failed to call `greet`");
         });
-        g.bench_function("wRPC NATS.io", |b| {
-            b.to_async(&rt).iter(|| async {
-                ping_bindings_wrpc::wrpc_bench::bench::ping::ping(&wrpc, None)
-                    .await
-                    .expect("failed to call `ping`");
-            });
-        });
-        stop_tx.send(()).expect("failed to stop server");
-        rt.block_on(async { srv.await.context("server task panicked")? })?;
-        Ok(())
-    })
+    });
+    stop_tx.send(()).expect("failed to stop server");
+    rt.block_on(async { server.await.context("server task panicked")? })?;
+    Ok(())
 }
 
-fn bench_wasm_greet_nats_wrpc(
-    g: &mut BenchmarkGroup<impl Measurement>,
-    wasm: &[u8],
-) -> anyhow::Result<()> {
+fn bench_wrpc_ping(g: &mut BenchmarkGroup<impl Measurement>) -> anyhow::Result<()> {
     let rt = tokio::runtime::Runtime::new().context("failed to build Tokio runtime")?;
-    let handler = rt
-        .block_on(WasmHandler::new(wasm))
-        .context("failed to construct a Wasm handler")?;
-    with_nats(&rt, |nats| {
-        let wrpc = rt
-            .block_on(wrpc_nats::Client::new(nats, "", None))
-            .context("failed to construct client")?;
 
-        let invocations = rt
-            .block_on(greet_bindings_wrpc::serve(&wrpc, handler))
-            .context("failed to serve bindings")?;
-        let mut invocations = invocations.into_iter();
-        let (Some((_, _, mut invocations)), None) = (invocations.next(), invocations.next()) else {
-            bail!("invalid invocation stream vector")
-        };
-        let (stop_tx, mut stop_rx) = oneshot::channel();
-        let handle = rt.handle().clone();
-        let srv = handle.spawn({
-            let handle = handle.clone();
-            async move {
-                loop {
-                    select! {
-                        Some(res) = invocations.next() => {
-                            let fut = res.expect("failed to accept invocation");
-                            handle.spawn(fut);
-                        },
-                        _ = &mut stop_rx => {
-                            drop(invocations);
-                            return anyhow::Ok(())
-                        },
+    let lis = rt
+        .block_on(tokio::net::TcpListener::bind((Ipv6Addr::LOCALHOST, 0)))
+        .context("failed to bind TCP listener")?;
+    let addr = lis
+        .local_addr()
+        .context("failed to query listener address")?;
+    let srv = Arc::new(wrpc_transport::frame::Server::default());
+    let wrpc = wrpc_transport::frame::tcp::Client::from(addr);
+
+    let invocations = rt
+        .block_on(ping_bindings_wrpc::serve(srv.as_ref(), NativeHandler))
+        .context("failed to serve bindings")?;
+    let mut invocations = invocations.into_iter();
+    let (Some((_, _, mut invocations)), None) = (invocations.next(), invocations.next()) else {
+        bail!("invalid invocation stream vector")
+    };
+    let (stop_tx, mut stop_rx) = oneshot::channel();
+    let server = rt.spawn({
+        let srv = Arc::clone(&srv);
+        async move {
+            loop {
+                select! {
+                    Some(res) = invocations.next() => {
+                        let fut = res.expect("failed to accept invocation");
+                        tokio::spawn(fut);
+                    }
+                    conn = lis.accept() => {
+                        let (stream, _) = conn.expect("failed to accept TCP connection");
+                        let (rx, tx) = stream.into_split();
+                        srv.accept((), tx, rx)
+                            .await
+                            .expect("failed to accept connection");
+                    }
+                    _ = &mut stop_rx => {
+                        drop(invocations);
+                        return anyhow::Ok(());
                     }
                 }
             }
+        }
+    });
+    g.bench_function("wRPC", |b| {
+        b.to_async(&rt).iter(|| async {
+            ping_bindings_wrpc::wrpc_bench::bench::ping::ping(&wrpc, ())
+                .await
+                .expect("failed to call `ping`");
         });
-        g.bench_function("wRPC NATS.io", |b| {
-            b.to_async(&rt).iter(|| async {
-                greet_bindings_wrpc::wrpc_bench::bench::greet::greet(&wrpc, None, "test")
-                    .await
-                    .expect("failed to call `greet`");
-            });
-        });
-        stop_tx.send(()).expect("failed to stop server");
-        rt.block_on(async { srv.await.context("server task panicked")? })?;
-        Ok(())
-    })
+    });
+    stop_tx.send(()).expect("failed to stop server");
+    rt.block_on(async { server.await.context("server task panicked")? })?;
+    Ok(())
 }
 
-fn bench_nats_wrpc_ping(g: &mut BenchmarkGroup<impl Measurement>) -> anyhow::Result<()> {
+fn bench_wrpc_greet(g: &mut BenchmarkGroup<impl Measurement>) -> anyhow::Result<()> {
     let rt = tokio::runtime::Runtime::new().context("failed to build Tokio runtime")?;
-    with_nats(&rt, |nats| {
-        let wrpc = rt
-            .block_on(wrpc_nats::Client::new(nats, "", None))
-            .context("failed to construct client")?;
 
-        let invocations = rt
-            .block_on(ping_bindings_wrpc::serve(&wrpc, NativeHandler))
-            .context("failed to serve bindings")?;
-        let mut invocations = invocations.into_iter();
-        let (Some((_, _, mut invocations)), None) = (invocations.next(), invocations.next()) else {
-            bail!("invalid invocation stream vector")
-        };
-        let (stop_tx, mut stop_rx) = oneshot::channel();
-        let handle = rt.handle().clone();
-        let srv = handle.spawn({
-            let handle = handle.clone();
-            async move {
-                loop {
-                    select! {
-                        Some(res) = invocations.next() => {
-                            let fut = res.expect("failed to accept invocation");
-                            handle.spawn(fut);
-                        },
-                        _ = &mut stop_rx => {
-                            drop(invocations);
-                            return anyhow::Ok(())
-                        },
+    let lis = rt
+        .block_on(tokio::net::TcpListener::bind((Ipv6Addr::LOCALHOST, 0)))
+        .context("failed to bind TCP listener")?;
+    let addr = lis
+        .local_addr()
+        .context("failed to query listener address")?;
+    let srv = Arc::new(wrpc_transport::frame::Server::default());
+    let wrpc = wrpc_transport::frame::tcp::Client::from(addr);
+
+    let invocations = rt
+        .block_on(greet_bindings_wrpc::serve(srv.as_ref(), NativeHandler))
+        .context("failed to serve bindings")?;
+    let mut invocations = invocations.into_iter();
+    let (Some((_, _, mut invocations)), None) = (invocations.next(), invocations.next()) else {
+        bail!("invalid invocation stream vector")
+    };
+    let (stop_tx, mut stop_rx) = oneshot::channel();
+    let server = rt.spawn({
+        let srv = Arc::clone(&srv);
+        async move {
+            loop {
+                select! {
+                    Some(res) = invocations.next() => {
+                        let fut = res.expect("failed to accept invocation");
+                        tokio::spawn(fut);
+                    }
+                    conn = lis.accept() => {
+                        let (stream, _) = conn.expect("failed to accept TCP connection");
+                        let (rx, tx) = stream.into_split();
+                        srv.accept((), tx, rx)
+                            .await
+                            .expect("failed to accept connection");
+                    }
+                    _ = &mut stop_rx => {
+                        drop(invocations);
+                        return anyhow::Ok(());
                     }
                 }
             }
+        }
+    });
+    g.bench_function("wRPC", |b| {
+        b.to_async(&rt).iter(|| async {
+            let greeting = greet_bindings_wrpc::wrpc_bench::bench::greet::greet(&wrpc, (), "test")
+                .await
+                .expect("failed to call `greet`");
+            assert_eq!(greeting, "Hello, test");
         });
-        g.bench_function("wRPC", |b| {
-            b.to_async(&rt).iter(|| async {
-                ping_bindings_wrpc::wrpc_bench::bench::ping::ping(&wrpc, None)
-                    .await
-                    .expect("failed to call `ping`");
-            });
-        });
-        stop_tx.send(()).expect("failed to stop server");
-        rt.block_on(async { srv.await.context("server task panicked")? })?;
-        Ok(())
-    })
-}
-
-fn bench_nats_wrpc_greet(g: &mut BenchmarkGroup<impl Measurement>) -> anyhow::Result<()> {
-    let rt = tokio::runtime::Runtime::new().context("failed to build Tokio runtime")?;
-    with_nats(&rt, |nats| {
-        let wrpc = rt
-            .block_on(wrpc_nats::Client::new(nats, "", None))
-            .context("failed to construct client")?;
-
-        let invocations = rt
-            .block_on(greet_bindings_wrpc::serve(&wrpc, NativeHandler))
-            .context("failed to serve bindings")?;
-        let mut invocations = invocations.into_iter();
-        let (Some((_, _, mut invocations)), None) = (invocations.next(), invocations.next()) else {
-            bail!("invalid invocation stream vector")
-        };
-        let (stop_tx, mut stop_rx) = oneshot::channel();
-        let handle = rt.handle().clone();
-        let srv = handle.spawn({
-            let handle = handle.clone();
-            async move {
-                loop {
-                    select! {
-                        Some(res) = invocations.next() => {
-                            let fut = res.expect("failed to accept invocation");
-                            handle.spawn(fut);
-                        },
-                        _ = &mut stop_rx => {
-                            return anyhow::Ok(())
-                        },
-                    }
-                }
-            }
-        });
-        g.bench_function("wRPC", |b| {
-            b.to_async(&rt).iter(|| async {
-                let greeting =
-                    greet_bindings_wrpc::wrpc_bench::bench::greet::greet(&wrpc, None, "test")
-                        .await
-                        .expect("failed to call `greet`");
-                assert_eq!(greeting, "Hello, test");
-            });
-        });
-        stop_tx.send(()).expect("failed to stop server");
-        rt.block_on(async { srv.await.context("server task panicked")? })?;
-        Ok(())
-    })
+    });
+    stop_tx.send(()).expect("failed to stop server");
+    rt.block_on(async { server.await.context("server task panicked")? })?;
+    Ok(())
 }
 
 fn main() -> anyhow::Result<()> {
@@ -670,27 +495,23 @@ fn main() -> anyhow::Result<()> {
     {
         let mut g = c.benchmark_group("Wasm ping RTT");
         bench_wasm_ping_direct(&mut g, &reactor)?;
-        bench_wasm_ping_nats_raw(&mut g, &reactor)?;
-        bench_wasm_ping_nats_wrpc(&mut g, &reactor)?;
+        bench_wasm_ping_wrpc(&mut g, &reactor)?;
         g.finish();
     }
     {
         let mut g = c.benchmark_group("Wasm greet RTT");
         bench_wasm_greet_direct(&mut g, &reactor)?;
-        bench_wasm_greet_nats_raw(&mut g, &reactor)?;
-        bench_wasm_greet_nats_wrpc(&mut g, &reactor)?;
+        bench_wasm_greet_wrpc(&mut g, &reactor)?;
         g.finish();
     }
     {
-        let mut g = c.benchmark_group("NATS.io ping RTT");
-        bench_nats_raw_ping(&mut g)?;
-        bench_nats_wrpc_ping(&mut g)?;
+        let mut g = c.benchmark_group("wRPC ping RTT");
+        bench_wrpc_ping(&mut g)?;
         g.finish();
     }
     {
-        let mut g = c.benchmark_group("NATS.io greet RTT");
-        bench_nats_raw_greet(&mut g)?;
-        bench_nats_wrpc_greet(&mut g)?;
+        let mut g = c.benchmark_group("wRPC greet RTT");
+        bench_wrpc_greet(&mut g)?;
         g.finish();
     }
     c.final_summary();

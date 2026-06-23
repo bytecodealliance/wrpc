@@ -113,8 +113,6 @@
               nativeCheckInputs =
                 nativeCheckInputs
                 ++ [
-                  pkgs.nats-server
-
                   pkgs.pkgsUnstable.go
                 ];
             };
@@ -206,8 +204,6 @@
               pkgs.wit-deps
 
               pkgs.pkgsUnstable.go
-              pkgs.pkgsUnstable.nats-server
-              pkgs.pkgsUnstable.natscli
             ];
           }
           devShells;

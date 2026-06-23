@@ -65,14 +65,12 @@ See [specification](./SPEC.md) for more info.
 wRPC usage examples for different programming languages can be found at [examples](./examples).
 
 There are 2 different kinds of examples:
-- Native wRPC applications, tied to a particular wRPC transport (like Unix Domain Sockets, TCP, QUIC or [NATS.io])
+- Native wRPC applications, tied to a particular wRPC transport (like Unix Domain Sockets, TCP or QUIC)
 - Generic Wasm components, that need to run in a Wasm runtime. Those can be executed, for example, using `wrpc-wasmtime`, to polyfill imports at runtime and serve exports using wRPC.
 
 ### Requirements
 
 - For Rust components and wRPC applications: `rust` >= 1.82
-
-- For [NATS.io] transport: `nats-server` >= 2.10.20 or [`docker`](https://www.docker.com/) >= 24.0.6 (or any other OCI runtime)
 
 Nix users can run `nix develop` anywhere in the repository to get all dependencies correctly set up
 
@@ -161,75 +159,6 @@ We will use the following two Rust wRPC applications using TCP transport:
     wrpc-wasmtime tcp run --import [::1]:7762 ./target/wasm32-wasip2/release/hello-component-client.wasm
     ```
 
-#### Using [NATS.io] transport
-
-We will use the following two Rust wRPC applications using [NATS.io] transport:
-- [examples/rust/hello-nats-client](examples/rust/hello-nats-client)
-- [examples/rust/hello-nats-server](examples/rust/hello-nats-server)
-
-1. Run [NATS.io] (more thorough documentation available [here](https://docs.nats.io/running-a-nats-service/introduction/running)):
-
-    - using standalone binary:
-    ```sh
-    nats-server
-    ```
-    
-    - using [Docker]:
-    ```sh
-    docker run --rm -it --name nats-server -p 4222:4222 nats:2.10.20-alpine3.20
-    ```
-
-2. Serve Wasm `hello` server via [NATS.io]
-
-    ```sh
-    wrpc-wasmtime nats serve --export rust ./target/wasm32-wasip2/release/hello_component_server.wasm
-    ```
-    
-    - Sample output:
-    > INFO async_nats: event: connected
-    >
-    > INFO wrpc_wasmtime_cli: serving instance function name="hello"
-
-3. Call Wasm `hello` server using a Wasm `hello` client via [NATS.io]:
-
-    ```sh
-    wrpc-wasmtime nats run --import rust ./target/wasm32-wasip2/release/hello-component-client.wasm
-    ```
-    
-    - Sample output in the client:
-    > INFO async_nats: event: connected
-    >
-    >hello from Rust
-    
-    - Sample output in the server:
-    > INFO wrpc_wasmtime_cli: serving instance function invocation
-    >
-    > INFO wrpc_wasmtime_cli: successfully served instance function invocation
-
-4. Call the Wasm `hello` server using a native wRPC `hello` client via [NATS.io]:
-
-    ```sh
-    cargo run -p hello-nats-client rust
-    ```
-
-5. Serve native wRPC `hello` server via [NATS.io]:
-
-    ```sh
-    cargo run -p hello-nats-server native
-    ```
-
-6. Call both the native wRPC `hello` server and Wasm `hello` server using native wRPC `hello` client via [NATS.io]:
-
-    ```sh
-    cargo run -p hello-nats-client rust native
-    ```
-
-7. Call native wRPC `hello` server using Wasm `hello` client via [NATS.io]:
-
-    ```sh
-    wrpc-wasmtime nats run --import native ./target/wasm32-wasip2/release/hello-component-client.wasm
-    ```
-
 ## Repository structure
 
 This repository contains (for all supported languages):
@@ -253,6 +182,3 @@ This repository contains (for all supported languages):
 👋 **Welcome, new contributors!**
 
 Whether you're a seasoned developer or just getting started, your contributions are valuable to us. Don't hesitate to jump in, explore the project, and make an impact. To start contributing, please check out our [Contribution Guidelines](CONTRIBUTING.md). 
-
-[Docker]: https://www.docker.com/
-[NATS.io]: https://nats.io/

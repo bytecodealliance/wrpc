@@ -6,9 +6,6 @@
 pub mod transport {
     pub use wrpc_transport::*;
 
-    #[cfg(feature = "nats")]
-    pub use wrpc_nats as nats;
-
     #[cfg(feature = "quic")]
     pub use wrpc_quic as quic;
 

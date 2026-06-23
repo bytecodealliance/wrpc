@@ -1,14 +1,15 @@
 package internal
 
 import (
+	"context"
+	"errors"
 	"log/slog"
+	"net"
 	"os"
 	"testing"
-	"time"
 
 	"github.com/lmittmann/tint"
-	"github.com/nats-io/nats-server/v2/server"
-	"github.com/nats-io/nats-server/v2/test"
+	wrpctcp "wrpc.io/go/x/tcp"
 )
 
 func init() {
@@ -24,25 +25,42 @@ func init() {
 	})))
 }
 
-func RunNats(t *testing.T) *server.Server {
-	opts := test.DefaultTestOptions
-	opts.Cluster.Compression.Mode = server.CompressionOff
-	opts.Cluster.PoolSize = -1
-	opts.Debug = true
-	opts.LeafNode.Compression.Mode = server.CompressionOff
-	opts.NoLog = false
-	opts.Port = -1
-	opts.Trace = true
-	opts.TraceVerbose = true
-
-	s, err := server.NewServer(&opts)
+// RunTCP sets up an in-process wRPC TCP transport bound to a loopback address.
+// It returns a server, on which worlds can be served, and an invoker connected
+// to it. The listener is closed automatically when the test completes.
+func RunTCP(t *testing.T, ctx context.Context) (*wrpctcp.Server, *wrpctcp.Invoker) {
+	t.Helper()
+	a, err := net.ResolveTCPAddr("tcp", "[::1]:0")
 	if err != nil {
-		t.Fatal("failed to contruct NATS server")
+		t.Fatalf("failed to resolve TCP address: %s", err)
 	}
-	s.ConfigureLogger()
-	go s.Start()
-	if !s.ReadyForConnections(10 * time.Second) {
-		t.Fatal("failed to start NATS Server")
+	l, err := net.ListenTCP("tcp", a)
+	if err != nil {
+		t.Fatalf("failed to listen on TCP socket: %s", err)
 	}
-	return s
+	t.Cleanup(func() {
+		l.Close()
+	})
+	srv := wrpctcp.NewServerWithContext(ctx, l)
+	return srv, wrpctcp.NewInvoker(l.Addr().String())
+}
+
+// Accept runs the server's accept loop in a goroutine until the listener is
+// closed or the context is cancelled.
+func Accept(ctx context.Context, srv *wrpctcp.Server) {
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+				if err := srv.Accept(); err != nil {
+					if !errors.Is(err, net.ErrClosed) {
+						slog.Error("failed to accept invocation", "err", err)
+					}
+					return
+				}
+			}
+		}
+	}()
 }
