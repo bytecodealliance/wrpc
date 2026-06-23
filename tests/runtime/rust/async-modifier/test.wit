@@ -1,0 +1,11 @@
+package my:inline;
+
+interface i {
+  f: async func();
+  one-argument: async func(x: u32);
+  one-result: async func() -> u32;
+  one-argument-and-result: async func(x: u32) -> u32;
+}
+
+world test { export i; }
+world runner { import i; }

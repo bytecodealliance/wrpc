@@ -1,0 +1,28 @@
+//@ async = true
+
+package my:async-resource;
+
+interface i {
+  f: async func();
+  one-argument: async func(x: u32);
+  one-result: async func() -> u32;
+  one-argument-and-result: async func(x: u32) -> u32;
+
+  resource r {
+    constructor();
+    method-no-args: async func();
+    method-one-argument: async func(x: u32);
+    method-one-result: async func() -> u32;
+    method-one-argument-and-result: async func(x: u32) -> u32;
+
+    static-no-args: static async func();
+    static-one-argument: static async func(x: u32);
+    static-one-result: static async func() -> u32;
+    static-one-argument-and-result: static async func(x: u32) -> u32;
+  }
+}
+
+world async-resource {
+  import i;
+  export i;
+}
