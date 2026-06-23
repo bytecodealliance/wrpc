@@ -15,9 +15,9 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::Arc;
 
-use wasmtime::component::types::{self, Type};
-use wasmtime::component::ResourceType;
 use wasmtime::Engine;
+use wasmtime::component::ResourceType;
+use wasmtime::component::types::{self, Type};
 
 /// Collect the (uninstantiated) resource types of the component's imported
 /// `wasi:io/streams` `input-stream` and `output-stream`, against which

@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use anyhow::Context as _;
 use bytes::Bytes;
-use redis::{aio::ConnectionManager, AsyncCommands as _};
+use redis::{AsyncCommands as _, aio::ConnectionManager};
 use tokio::sync::RwLock;
 use tracing::{instrument, trace};
 use uuid::Uuid;

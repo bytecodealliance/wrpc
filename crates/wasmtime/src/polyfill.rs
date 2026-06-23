@@ -10,14 +10,14 @@ use tokio::io::AsyncWriteExt as _;
 use tokio::time::Instant;
 use tokio::try_join;
 use tokio_util::codec::Encoder;
-use tracing::{debug, instrument, trace, warn, Instrument as _, Span};
-use wasmtime::component::{types, LinkerInstance, ResourceType, Type, Val};
+use tracing::{Instrument as _, Span, debug, instrument, trace, warn};
+use wasmtime::component::{LinkerInstance, ResourceType, Type, Val, types};
 use wasmtime::error::Context as _;
-use wasmtime::{bail, ensure, AsContextMut, Engine, StoreContextMut};
+use wasmtime::{AsContextMut, Engine, StoreContextMut, bail, ensure};
 use wrpc_transport::{Index as _, Invoke, InvokeExt as _};
 
 use crate::rpc::Error;
-use crate::{read_value, rpc_func_name, rpc_result_type, ValEncoder, WrpcView, WrpcViewExt as _};
+use crate::{ValEncoder, WrpcView, WrpcViewExt as _, read_value, rpc_func_name, rpc_result_type};
 
 /// Polyfill [`types::ComponentItem`] in a [`LinkerInstance`] using [`wrpc_transport::Invoke`]
 #[instrument(level = "trace", skip_all)]
@@ -171,7 +171,7 @@ async fn invoke<T: WrpcView>(
         Err(err) => {
             return Ok(Err(err.context(format!(
                 "failed to invoke `{instance}.{name}` polyfill via wRPC"
-            ))))
+            ))));
         }
     };
     let tx = async {

@@ -53,11 +53,11 @@ pub fn is_ty(resolve: &Resolve, expected: Type, ty: &Type) -> bool {
         if ty == expected {
             return true;
         }
-        if let Type::Id(id) = ty {
-            if let TypeDefKind::Type(t) = resolve.types[id].kind {
-                ty = t;
-                continue;
-            }
+        if let Type::Id(id) = ty
+            && let TypeDefKind::Type(t) = resolve.types[id].kind
+        {
+            ty = t;
+            continue;
         }
         return false;
     }

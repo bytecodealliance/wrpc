@@ -31,7 +31,7 @@ pub use frame::tcp;
 pub use frame::unix;
 
 use core::mem;
-use core::pin::{pin, Pin};
+use core::pin::{Pin, pin};
 use core::task::{Context, Poll};
 
 use bytes::BytesMut;

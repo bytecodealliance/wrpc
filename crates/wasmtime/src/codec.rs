@@ -1,13 +1,13 @@
 use core::future::Future;
 use core::iter::zip;
 use core::ops::{BitOrAssign, Shl};
-use core::pin::{pin, Pin};
+use core::pin::{Pin, pin};
 
 use std::collections::HashSet;
 
 use bytes::{BufMut as _, BytesMut};
-use futures::stream::FuturesUnordered;
 use futures::TryStreamExt as _;
+use futures::stream::FuturesUnordered;
 use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _};
 use tokio_util::codec::{Encoder, FramedRead};
 use tokio_util::compat::FuturesAsyncReadCompatExt as _;

@@ -5,7 +5,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
-use anyhow::{bail, Context as _};
+use anyhow::{Context as _, bail};
 use bytes::Bytes;
 use clap::Parser as _;
 use criterion::measurement::Measurement;

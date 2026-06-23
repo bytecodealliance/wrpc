@@ -2,8 +2,8 @@ use core::pin::pin;
 
 use anyhow::Context as _;
 use clap::Parser;
-use futures::stream::select_all;
 use futures::StreamExt as _;
+use futures::stream::select_all;
 use tokio::task::JoinSet;
 use tokio::{select, signal};
 use tracing::{debug, error, info, warn};
@@ -57,11 +57,11 @@ async fn main() -> anyhow::Result<()> {
                     Ok(fut) => {
                         debug!(instance, name, "invocation accepted");
                         tasks.spawn(async move {
-                            if let Err(err) = fut.await {
+                            match fut.await { Err(err) => {
                                 warn!(?err, "failed to handle invocation");
-                            } else {
+                            } _ => {
                                 info!(instance, name, "invocation successfully handled");
-                            }
+                            }}
                         });
                     }
                     Err(err) => {

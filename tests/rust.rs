@@ -4,7 +4,7 @@ mod common;
 
 use core::future::Future;
 use core::net::Ipv6Addr;
-use core::pin::{pin, Pin};
+use core::pin::{Pin, pin};
 use core::str;
 use core::time::Duration;
 
@@ -13,12 +13,12 @@ use std::sync::Arc;
 use anyhow::Context;
 use bytes::Bytes;
 use common::assert_async;
-use futures::{stream, FutureExt as _, Stream, StreamExt as _, TryStreamExt as _};
+use futures::{FutureExt as _, Stream, StreamExt as _, TryStreamExt as _, stream};
 use tokio::io::split;
-use tokio::sync::{oneshot, RwLock};
+use tokio::sync::{RwLock, oneshot};
 use tokio::time::sleep;
 use tokio::{join, select, spawn, try_join};
-use tracing::{info, info_span, instrument, Instrument, Span};
+use tracing::{Instrument, Span, info, info_span, instrument};
 use wrpc_transport::frame::Oneshot;
 use wrpc_transport::{InvokeExt as _, ResourceBorrow, ResourceOwn, ServeExt as _};
 
@@ -1116,10 +1116,12 @@ async fn rust_bindgen_quic_sync() -> anyhow::Result<()> {
 async fn rust_bindgen_quic_async() -> anyhow::Result<()> {
     wrpc_test::with_quic(|cc, sc| async move {
         let srv = Arc::new(wrpc_quic::Server::new());
-        let mut fut = pin!(async {
-            assert_bindgen_async(Arc::new(wrpc_quic::Client::from(cc)), Arc::clone(&srv)).await
-        }
-        .in_current_span());
+        let mut fut = pin!(
+            async {
+                assert_bindgen_async(Arc::new(wrpc_quic::Client::from(cc)), Arc::clone(&srv)).await
+            }
+            .in_current_span()
+        );
         loop {
             let accept = async {
                 let (tx, rx) = sc.accept_bi().await.expect("failed to accept connection");
@@ -1204,14 +1206,16 @@ async fn rust_bindgen_webtransport_sync() -> anyhow::Result<()> {
 async fn rust_bindgen_webtransport_async() -> anyhow::Result<()> {
     wrpc_test::with_webtransport(|cc, sc| async move {
         let srv = Arc::new(wrpc_webtransport::Server::new());
-        let mut fut = pin!(async {
-            assert_bindgen_async(
-                Arc::new(wrpc_webtransport::Client::from(cc)),
-                Arc::clone(&srv),
-            )
-            .await
-        }
-        .in_current_span());
+        let mut fut = pin!(
+            async {
+                assert_bindgen_async(
+                    Arc::new(wrpc_webtransport::Client::from(cc)),
+                    Arc::clone(&srv),
+                )
+                .await
+            }
+            .in_current_span()
+        );
         loop {
             let accept = async {
                 let (tx, rx) = sc.accept_bi().await.expect("failed to accept connection");
@@ -1356,14 +1360,16 @@ async fn rust_bindgen_tcp_sync() -> anyhow::Result<()> {
 
     let srv = Arc::new(wrpc_transport::frame::Server::default());
     let span = Span::current();
-    let mut fut = pin!(async {
-        assert_bindgen_sync(
-            Arc::new(wrpc_transport::frame::tcp::Client::from(addr)),
-            Arc::clone(&srv),
-        )
-        .await
-    }
-    .instrument(span.clone()));
+    let mut fut = pin!(
+        async {
+            assert_bindgen_sync(
+                Arc::new(wrpc_transport::frame::tcp::Client::from(addr)),
+                Arc::clone(&srv),
+            )
+            .await
+        }
+        .instrument(span.clone())
+    );
     loop {
         let accept = async {
             let (stream, addr) = lis.accept().await.expect("failed to accept connection");

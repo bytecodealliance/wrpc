@@ -1,11 +1,11 @@
 //! wRPC TCP transport using `wasi:sockets`
 
 use core::pin::Pin;
-use core::task::{ready, Context, Poll, Waker};
+use core::task::{Context, Poll, Waker, ready};
 
 use std::sync::Arc;
 
-use anyhow::{bail, Context as _};
+use anyhow::{Context as _, bail};
 use bytes::Bytes;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::sync::mpsc;
@@ -18,10 +18,10 @@ use wasi::sockets::network::{
     IpAddress, IpAddressFamily, IpSocketAddress, Ipv4SocketAddress, Ipv6SocketAddress, Network,
 };
 use wasi::sockets::tcp::ShutdownType;
-use wasi::sockets::tcp_create_socket::{create_tcp_socket, TcpSocket};
+use wasi::sockets::tcp_create_socket::{TcpSocket, create_tcp_socket};
 
-use crate::frame::{Incoming, Outgoing};
 use crate::Invoke;
+use crate::frame::{Incoming, Outgoing};
 
 /// [Invoke] implementation of a TCP transport using `wasi:sockets`
 #[derive(Clone, Copy, Debug)]
@@ -94,7 +94,7 @@ impl AsyncRead for IncomingStream {
             Ok(chunk) => chunk,
             Err(StreamError::Closed) => return Poll::Ready(Ok(())),
             Err(StreamError::LastOperationFailed(err)) => {
-                return Poll::Ready(Err(std::io::Error::new(std::io::ErrorKind::Other, err)))
+                return Poll::Ready(Err(std::io::Error::new(std::io::ErrorKind::Other, err)));
             }
         };
         if chunk.is_empty() {

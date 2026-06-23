@@ -1,19 +1,19 @@
 use core::fmt::{Debug, Display};
 use core::marker::PhantomData;
 
-use std::collections::{hash_map, HashMap};
+use std::collections::{HashMap, hash_map};
 use std::sync::Arc;
 
 use anyhow::bail;
 use futures::{Stream, StreamExt as _};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{Mutex, mpsc};
 use tokio_stream::wrappers::ReceiverStream;
 use tracing::{instrument, trace};
 use wasm_tokio::AsyncReadCore as _;
 
-use crate::frame::{Conn, ConnHandler, Incoming, Outgoing};
 use crate::Serve;
+use crate::frame::{Conn, ConnHandler, Incoming, Outgoing};
 
 /// wRPC server for framed transports
 pub struct Server<C, I, O, H = ()> {
@@ -123,7 +123,9 @@ async fn serve<C, I, O, H>(
     instance: &str,
     func: &str,
     paths: Arc<[Box<[Option<usize>]>]>,
-) -> anyhow::Result<impl Stream<Item = anyhow::Result<(C, Outgoing, Incoming)>> + 'static>
+) -> anyhow::Result<
+    impl Stream<Item = anyhow::Result<(C, Outgoing, Incoming)>> + 'static + use<C, I, O, H>,
+>
 where
     C: Send + Sync + 'static,
     I: AsyncRead + Send + Sync + Unpin + 'static,
@@ -169,8 +171,8 @@ where
         paths: Arc<[Box<[Option<usize>]>]>,
     ) -> anyhow::Result<
         impl Stream<Item = anyhow::Result<(Self::Context, Self::Outgoing, Self::Incoming)>>
-            + 'static
-            + use<C, I, O, H>,
+        + 'static
+        + use<C, I, O, H>,
     > {
         serve(self, instance, func, paths).await
     }
@@ -194,8 +196,8 @@ where
         paths: Arc<[Box<[Option<usize>]>]>,
     ) -> anyhow::Result<
         impl Stream<Item = anyhow::Result<(Self::Context, Self::Outgoing, Self::Incoming)>>
-            + 'static
-            + use<'a, C, I, O, H>,
+        + 'static
+        + use<'a, C, I, O, H>,
     > {
         serve(self, instance, func, paths).await
     }

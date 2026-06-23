@@ -19,10 +19,10 @@ use tokio_util::codec::Encoder;
 use tracing::{debug, instrument, trace, warn};
 use uuid::Uuid;
 use wasmtime::component::{
-    types, Func, Resource, ResourceAny, ResourceTable, ResourceType, Type, Val,
+    Func, Resource, ResourceAny, ResourceTable, ResourceType, Type, Val, types,
 };
 use wasmtime::error::Context as _;
-use wasmtime::{bail, AsContextMut, Engine};
+use wasmtime::{AsContextMut, Engine, bail};
 use wrpc_transport::Invoke;
 
 use crate::bindings::rpc::context::Context;
@@ -124,12 +124,12 @@ pub trait WrpcViewExt: WrpcView {
     fn push_invocation(
         &mut self,
         invocation: impl Future<
-                Output = anyhow::Result<(
-                    <Self::Invoke as Invoke>::Outgoing,
-                    <Self::Invoke as Invoke>::Incoming,
-                )>,
-            > + Send
-            + 'static,
+            Output = anyhow::Result<(
+                <Self::Invoke as Invoke>::Outgoing,
+                <Self::Invoke as Invoke>::Incoming,
+            )>,
+        > + Send
+        + 'static,
     ) -> wasmtime::Result<Resource<Invocation>> {
         self.wrpc()
             .table
@@ -463,7 +463,7 @@ where
         _ => {
             return Err(CallError::TypeMismatch(wasmtime::Error::msg(
                 "RPC result type mismatch",
-            )))
+            )));
         }
     }
 

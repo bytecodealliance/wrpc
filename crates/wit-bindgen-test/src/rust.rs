@@ -1,5 +1,5 @@
 use crate::{Component, LanguageMethods, Runner, Test, Verify};
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::Parser;
 use heck::ToSnakeCase;
 use std::collections::HashMap;

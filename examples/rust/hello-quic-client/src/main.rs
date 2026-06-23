@@ -4,12 +4,12 @@ use anyhow::Context as _;
 use clap::Parser;
 use core::net::SocketAddr;
 use quinn::Endpoint;
-use quinn::{crypto::rustls::QuicClientConfig, ClientConfig};
+use quinn::{ClientConfig, crypto::rustls::QuicClientConfig};
 use rustls::{
+    DigitallySignedStruct, SignatureScheme,
     client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier},
     pki_types::{CertificateDer, ServerName, UnixTime},
     version::TLS13,
-    DigitallySignedStruct, SignatureScheme,
 };
 
 mod bindings {

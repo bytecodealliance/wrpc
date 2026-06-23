@@ -1,8 +1,8 @@
-use anyhow::{bail, Context, Error, Result};
+use anyhow::{Context, Error, Result, bail};
 use clap::Parser;
 use std::path::PathBuf;
 use std::str;
-use wit_bindgen_core::{wit_parser, Files, WorldGenerator};
+use wit_bindgen_core::{Files, WorldGenerator, wit_parser};
 use wit_parser::Resolve;
 
 /// Helper for passing VERSION to opt.
@@ -111,14 +111,15 @@ fn main() -> Result<()> {
                 // problem is directly.
                 if let (Ok(utf8_prev), Ok(utf8_contents)) =
                     (str::from_utf8(&prev), str::from_utf8(contents))
-                {
-                    if !utf8_prev
+                    && !utf8_prev
                         .chars()
                         .any(|c| c.is_control() && !matches!(c, '\n' | '\r' | '\t'))
-                        && utf8_prev.lines().eq(utf8_contents.lines())
-                    {
-                        bail!("{} differs only in line endings (CRLF vs. LF). If this is a text file, configure git to mark the file as `text eol=lf`.", dst.display());
-                    }
+                    && utf8_prev.lines().eq(utf8_contents.lines())
+                {
+                    bail!(
+                        "{} differs only in line endings (CRLF vs. LF). If this is a text file, configure git to mark the file as `text eol=lf`.",
+                        dst.display()
+                    );
                 }
                 // The contents are binary or there are other differences; just
                 // issue a generic error.

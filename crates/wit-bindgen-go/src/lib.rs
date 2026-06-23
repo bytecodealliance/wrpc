@@ -1,5 +1,5 @@
 use crate::interface::InterfaceGenerator;
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use core::fmt::Display;
 use heck::{ToLowerCamelCase, ToSnakeCase, ToUpperCamelCase};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -8,11 +8,10 @@ use std::io::{Read, Write};
 use std::mem;
 use std::process::{Command, Stdio};
 use wit_bindgen_core::{
-    uwrite, uwriteln,
+    Files, InterfaceGenerator as _, Source, Types, WorldGenerator, uwrite, uwriteln,
     wit_parser::{
         Function, InterfaceId, PackageId, Resolve, TypeId, World, WorldId, WorldItem, WorldKey,
     },
-    Files, InterfaceGenerator as _, Source, Types, WorldGenerator,
 };
 
 mod interface;
@@ -287,7 +286,7 @@ impl GoWrpc {
             identifier,
             src: Source::default(),
             in_import,
-            gen: self,
+            r#gen: self,
             resolve,
             deps: Deps {
                 map: BTreeMap::default(),
@@ -316,7 +315,9 @@ impl GoWrpc {
     ) -> Result<bool> {
         let with_name = resolve.name_world_key(name);
         let Some(remapping) = self.with.get(&with_name) else {
-            bail!("no remapping found for {with_name:?} - use `--generate-all` or `--with {with_name}=generate` to generate bindings for this interface");
+            bail!(
+                "no remapping found for {with_name:?} - use `--generate-all` or `--with {with_name}=generate` to generate bindings for this interface"
+            );
         };
 
         let entry = match remapping {
@@ -478,12 +479,12 @@ impl WorldGenerator for GoWrpc {
         let world = &resolve.worlds[world];
         // Specify that all imports/exports local to the world's package should be generated
         for (key, item) in world.imports.iter().chain(world.exports.iter()) {
-            if let WorldItem::Interface { id, .. } = item {
-                if resolve.interfaces[*id].package == world.package {
-                    let name = resolve.name_world_key(key);
-                    if self.with.get(&name).is_none() {
-                        self.with.insert(name, InterfaceGeneration::Generate);
-                    }
+            if let WorldItem::Interface { id, .. } = item
+                && resolve.interfaces[*id].package == world.package
+            {
+                let name = resolve.name_world_key(key);
+                if self.with.get(&name).is_none() {
+                    self.with.insert(name, InterfaceGeneration::Generate);
                 }
             }
         }
@@ -501,12 +502,12 @@ impl WorldGenerator for GoWrpc {
         _files: &mut Files,
     ) -> anyhow::Result<()> {
         self.interface_last_seen_as_import.insert(id, true);
-        let mut gen = self.interface(Identifier::Interface(id, name), resolve, true);
-        let (snake, module_path) = gen.start_append_submodule(name);
-        if gen.gen.name_interface(resolve, id, name, false)? {
+        let mut r#gen = self.interface(Identifier::Interface(id, name), resolve, true);
+        let (snake, module_path) = r#gen.start_append_submodule(name);
+        if r#gen.r#gen.name_interface(resolve, id, name, false)? {
             return Ok(());
         }
-        gen.types(id);
+        r#gen.types(id);
 
         let identifier = Identifier::Interface(id, name);
         let interface = &resolve.interfaces[id];
@@ -523,13 +524,13 @@ impl WorldGenerator for GoWrpc {
         } else {
             name
         };
-        gen.generate_imports(
+        r#gen.generate_imports(
             identifier,
             &instance,
             resolve.interfaces[id].functions.values(),
         );
 
-        gen.finish_append_submodule(&snake, module_path);
+        r#gen.finish_append_submodule(&snake, module_path);
         Ok(())
     }
 
@@ -542,7 +543,7 @@ impl WorldGenerator for GoWrpc {
     ) {
         self.import_funcs_called = true;
 
-        let mut gen = self.interface(Identifier::World(world), resolve, true);
+        let mut r#gen = self.interface(Identifier::World(world), resolve, true);
         let World {
             ref name, package, ..
         } = resolve.worlds[world];
@@ -551,14 +552,14 @@ impl WorldGenerator for GoWrpc {
         } else {
             name.to_string()
         };
-        gen.generate_imports(
+        r#gen.generate_imports(
             Identifier::World(world),
             &instance,
             funcs.iter().map(|(_, func)| *func),
         );
 
-        let src = gen.finish();
-        for (k, v) in gen.deps.map {
+        let src = r#gen.finish();
+        for (k, v) in r#gen.deps.map {
             self.deps.import(k, v);
         }
         self.src.push_str(&src);
@@ -572,17 +573,17 @@ impl WorldGenerator for GoWrpc {
         _files: &mut Files,
     ) -> Result<()> {
         self.interface_last_seen_as_import.insert(id, false);
-        let mut gen = self.interface(Identifier::Interface(id, name), resolve, false);
-        let (snake, module_path) = gen.start_append_submodule(name);
-        if gen.gen.name_interface(resolve, id, name, true)? {
+        let mut r#gen = self.interface(Identifier::Interface(id, name), resolve, false);
+        let (snake, module_path) = r#gen.start_append_submodule(name);
+        if r#gen.r#gen.name_interface(resolve, id, name, true)? {
             return Ok(());
         }
-        gen.types(id);
-        let exports = gen.generate_exports(
+        r#gen.types(id);
+        let exports = r#gen.generate_exports(
             Identifier::Interface(id, name),
             resolve.interfaces[id].functions.values(),
         );
-        gen.finish_append_submodule(&snake, module_path);
+        r#gen.finish_append_submodule(&snake, module_path);
         if exports {
             let InterfaceName {
                 import_name,
@@ -603,10 +604,10 @@ impl WorldGenerator for GoWrpc {
         funcs: &[(&str, &Function)],
         _files: &mut Files,
     ) -> Result<()> {
-        let mut gen = self.interface(Identifier::World(world), resolve, false);
-        let exports = gen.generate_exports(Identifier::World(world), funcs.iter().map(|f| f.1));
-        let src = gen.finish();
-        for (k, v) in gen.deps.map {
+        let mut r#gen = self.interface(Identifier::World(world), resolve, false);
+        let exports = r#gen.generate_exports(Identifier::World(world), funcs.iter().map(|f| f.1));
+        let src = r#gen.finish();
+        for (k, v) in r#gen.deps.map {
             self.deps.import(k, v);
         }
         self.src.push_str(&src);
@@ -623,12 +624,12 @@ impl WorldGenerator for GoWrpc {
         types: &[(&str, TypeId)],
         _files: &mut Files,
     ) {
-        let mut gen = self.interface(Identifier::World(world), resolve, true);
+        let mut r#gen = self.interface(Identifier::World(world), resolve, true);
         for (name, ty) in types {
-            gen.define_type(name, *ty);
+            r#gen.define_type(name, *ty);
         }
-        let src = gen.finish();
-        for (k, v) in gen.deps.map {
+        let src = r#gen.finish();
+        for (k, v) in r#gen.deps.map {
             self.deps.import(k, v);
         }
         self.src.push_str(&src);

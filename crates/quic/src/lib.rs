@@ -4,8 +4,8 @@ use anyhow::Context as _;
 use bytes::Bytes;
 use quinn::{Connection, RecvStream, SendStream, VarInt};
 use tracing::{debug, error, trace, warn};
-use wrpc_transport::frame::{Incoming, InvokeBuilder, Outgoing};
 use wrpc_transport::Invoke;
+use wrpc_transport::frame::{Incoming, InvokeBuilder, Outgoing};
 
 /// QUIC server with graceful stream shutdown handling
 pub type Server = wrpc_transport::Server<(), RecvStream, SendStream, ConnHandler>;

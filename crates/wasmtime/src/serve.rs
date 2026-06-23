@@ -6,13 +6,13 @@ use std::{collections::HashMap, sync::Arc};
 use anyhow::Context as _;
 use futures::{Stream, TryStreamExt as _};
 use tokio::sync::Mutex;
-use tracing::{debug, instrument, Instrument as _, Span};
+use tracing::{Instrument as _, Span, debug, instrument};
+use wasmtime::AsContextMut;
 use wasmtime::component::types;
 use wasmtime::component::{Instance, InstancePre, ResourceType};
-use wasmtime::AsContextMut;
 use wasmtime_wasi::WasiView;
 
-use crate::{call, rpc_func_name, WrpcView};
+use crate::{WrpcView, call, rpc_func_name};
 
 pub trait ServeExt: wrpc_transport::Serve {
     /// Serve [`types::ComponentFunc`] from an [`InstancePre`] instantiating it on each call.
@@ -31,12 +31,12 @@ pub trait ServeExt: wrpc_transport::Serve {
     ) -> impl Future<
         Output = anyhow::Result<
             impl Stream<
-                    Item = anyhow::Result<(
-                        Self::Context,
-                        Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + 'static>>,
-                    )>,
-                > + Send
-                + 'static,
+                Item = anyhow::Result<(
+                    Self::Context,
+                    Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + 'static>>,
+                )>,
+            > + Send
+            + 'static,
         >,
     > + Send
     where
@@ -136,12 +136,12 @@ pub trait ServeExt: wrpc_transport::Serve {
     ) -> impl Future<
         Output = anyhow::Result<
             impl Stream<
-                    Item = anyhow::Result<(
-                        Self::Context,
-                        Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + 'static>>,
-                    )>,
-                > + Send
-                + 'static,
+                Item = anyhow::Result<(
+                    Self::Context,
+                    Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + 'static>>,
+                )>,
+            > + Send
+            + 'static,
         >,
     > + Send
     where

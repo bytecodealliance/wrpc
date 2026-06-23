@@ -5,7 +5,7 @@ use core::ops::{BitOrAssign, Shl};
 
 use std::collections::HashSet;
 
-use anyhow::{bail, Context as _};
+use anyhow::{Context as _, bail};
 use bytes::{BufMut as _, BytesMut};
 use tokio_util::codec::Encoder;
 use tracing::instrument;

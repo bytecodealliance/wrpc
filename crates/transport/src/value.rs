@@ -1,6 +1,6 @@
 use core::any::TypeId;
 use core::fmt::{self, Debug};
-use core::future::{pending, Future};
+use core::future::{Future, pending};
 use core::hash::{Hash, Hasher};
 use core::iter::zip;
 use core::marker::PhantomData;
@@ -18,16 +18,16 @@ use tokio::task::JoinSet;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::codec::{Encoder as _, FramedRead};
 use tokio_util::io::StreamReader;
-use tracing::{debug, error, instrument, trace, Instrument as _, Span};
+use tracing::{Instrument as _, Span, debug, error, instrument, trace};
 use wasm_tokio::cm::{
     BoolCodec, F32Codec, F64Codec, OptionDecoder, OptionEncoder, PrimValEncoder, ResultDecoder,
-    ResultEncoder, S16Codec, S32Codec, S64Codec, S8Codec, TupleDecoder, TupleEncoder, U16Codec,
-    U32Codec, U64Codec, U8Codec,
+    ResultEncoder, S8Codec, S16Codec, S32Codec, S64Codec, TupleDecoder, TupleEncoder, U8Codec,
+    U16Codec, U32Codec, U64Codec,
 };
 use wasm_tokio::{
     CoreNameDecoder, CoreNameEncoder, CoreVecDecoder, CoreVecDecoderBytes, CoreVecEncoderBytes,
-    Leb128DecoderI128, Leb128DecoderI16, Leb128DecoderI32, Leb128DecoderI64, Leb128DecoderI8,
-    Leb128DecoderU128, Leb128DecoderU16, Leb128DecoderU32, Leb128DecoderU64, Leb128DecoderU8,
+    Leb128DecoderI8, Leb128DecoderI16, Leb128DecoderI32, Leb128DecoderI64, Leb128DecoderI128,
+    Leb128DecoderU8, Leb128DecoderU16, Leb128DecoderU32, Leb128DecoderU64, Leb128DecoderU128,
     Leb128Encoder, Utf8Codec,
 };
 
@@ -944,7 +944,7 @@ const CANONICAL_NAN_F64: u64 = 0x7ff8_0000_0000_0000;
 /// match the Component Model canonical ABI, delegating the actual byte encoding
 /// and decoding to the wrapped `wasm-tokio` codec.
 macro_rules! impl_canonical_nan_codec {
-    ($name:ident, $inner:ty, $t:ty, $canon:expr) => {
+    ($name:ident, $inner:ty, $t:ty, $canon:expr_2021) => {
         #[doc = concat!("Canonicalizes `NaN`s on encode, wrapping [`", stringify!($inner), "`].")]
         #[derive(Debug, Default)]
         pub struct $name($inner);
@@ -1610,10 +1610,9 @@ where
                     let mut buf = BytesMut::default();
                     enc.encode(item, &mut buf)?;
                     w.write_all(&buf).await?;
-                    if let Some(f) = enc.take_deferred() {
-                        f(w, Vec::default()).await
-                    } else {
-                        Ok(())
+                    match enc.take_deferred() {
+                        Some(f) => f(w, Vec::default()).await,
+                        _ => Ok(()),
                     }
                 }
                 .instrument(span),

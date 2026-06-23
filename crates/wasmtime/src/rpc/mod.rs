@@ -15,7 +15,7 @@ use wasmtime::error::Context as _;
 use wasmtime_wasi::p2::Pollable;
 use wrpc_transport::Invoke;
 
-use crate::{bindings, WrpcView};
+use crate::{WrpcView, bindings};
 
 mod host;
 

@@ -9,11 +9,11 @@ use wit_bindgen_core::wit_parser::{
     InterfaceId, Record, Resolve, Result_, Tuple, Type, TypeDefKind, TypeId, TypeOwner, Variant,
     World, WorldKey,
 };
-use wit_bindgen_core::{uwrite, uwriteln, Source, TypeInfo};
+use wit_bindgen_core::{Source, TypeInfo, uwrite, uwriteln};
 use wrpc_introspect::{async_paths_ty, is_list_of, is_tuple, is_ty, rpc_func_name};
 
 use crate::{
-    to_go_ident, to_package_ident, to_upper_camel_case, Deps, GoWrpc, Identifier, InterfaceName,
+    Deps, GoWrpc, Identifier, InterfaceName, to_go_ident, to_package_ident, to_upper_camel_case,
 };
 
 fn go_func_name(func: &Function) -> String {
@@ -80,7 +80,10 @@ fn go_func_name(func: &Function) -> String {
     }
 }
 
-pub fn flatten_ty<'a>(resolve: &'a Resolve, ty: &Type) -> impl Iterator<Item = Type> + 'a {
+pub fn flatten_ty<'a>(
+    resolve: &'a Resolve,
+    ty: &Type,
+) -> impl Iterator<Item = Type> + 'a + use<'a> {
     let mut ty = *ty;
     loop {
         if let Type::Id(id) = ty {
@@ -90,7 +93,7 @@ pub fn flatten_ty<'a>(resolve: &'a Resolve, ty: &Type) -> impl Iterator<Item = T
                     continue;
                 }
                 TypeDefKind::Tuple(ref t) => {
-                    return Box::new(t.types.iter().copied()) as Box<dyn Iterator<Item = _>>
+                    return Box::new(t.types.iter().copied()) as Box<dyn Iterator<Item = _>>;
                 }
                 _ => {}
             }
@@ -103,7 +106,7 @@ pub struct InterfaceGenerator<'a> {
     pub src: Source,
     pub(super) identifier: Identifier<'a>,
     pub in_import: bool,
-    pub(super) gen: &'a mut GoWrpc,
+    pub(super) r#gen: &'a mut GoWrpc,
     pub resolve: &'a Resolve,
     pub deps: Deps,
 }
@@ -2475,7 +2478,7 @@ impl InterfaceGenerator<'_> {
         let mut funcs_to_export = vec![];
 
         for func in funcs {
-            if self.gen.skip.contains(&func.name) {
+            if self.r#gen.skip.contains(&func.name) {
                 continue;
             }
 
@@ -2739,7 +2742,7 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
         funcs: impl Iterator<Item = &'a Function>,
     ) {
         for func in funcs {
-            if self.gen.skip.contains(&func.name) {
+            if self.r#gen.skip.contains(&func.name) {
                 return;
             }
 
@@ -2994,9 +2997,9 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
             self.deps,
         );
         let map = if self.in_import {
-            &mut self.gen.import_modules
+            &mut self.r#gen.import_modules
         } else {
-            &mut self.gen.export_modules
+            &mut self.r#gen.export_modules
         };
         map.push((module, module_path));
     }
@@ -3108,10 +3111,10 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
     }
 
     fn type_path_with_name(&mut self, id: TypeId, name: String) -> String {
-        if let TypeOwner::Interface(id) = self.resolve.types[id].owner {
-            if let Some(path) = self.path_to_interface(id) {
-                return format!("{path}.{name}");
-            }
+        if let TypeOwner::Interface(id) = self.resolve.types[id].owner
+            && let Some(path) = self.path_to_interface(id)
+        {
+            return format!("{path}.{name}");
         }
         name
     }
@@ -3125,17 +3128,13 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
                 | TypeDefKind::Handle(..) => {}
                 TypeDefKind::List(..) if result => {}
                 TypeDefKind::Tuple(Tuple { types }) if types.len() == 1 => {
-                    return self.nillable_ptr(&types[0], result, decl)
+                    return self.nillable_ptr(&types[0], result, decl);
                 }
                 TypeDefKind::Type(ty) => return self.nillable_ptr(ty, result, decl),
                 _ => return "",
             }
         }
-        if decl {
-            "*"
-        } else {
-            "&"
-        }
+        if decl { "*" } else { "&" }
     }
 
     fn print_nillable_ptr(&mut self, ty: &Type, result: bool, decl: bool) {
@@ -3220,12 +3219,12 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
     }
 
     fn print_option(&mut self, ty: &Type, decl: bool) {
-        if let Type::Id(id) = ty {
-            if let TypeDefKind::List(t) = self.resolve.types[*id].kind {
-                // Go slices are pointer types
-                self.print_list(&t);
-                return;
-            }
+        if let Type::Id(id) = ty
+            && let TypeDefKind::List(t) = self.resolve.types[*id].kind
+        {
+            // Go slices are pointer types
+            self.print_list(&t);
+            return;
         }
         if decl {
             self.push_str("*");
@@ -3372,11 +3371,11 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
             import_name,
             import_path,
             ..
-        } = &self.gen.interface_names[&interface];
-        if let Identifier::Interface(cur, _) = self.identifier {
-            if cur == interface {
-                return None;
-            }
+        } = &self.r#gen.interface_names[&interface];
+        if let Identifier::Interface(cur, _) = self.identifier
+            && cur == interface
+        {
+            return None;
         }
         Some(self.deps.import(import_name.clone(), import_path.clone()))
     }
@@ -3386,7 +3385,7 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
     }
 
     fn info(&self, ty: TypeId) -> TypeInfo {
-        self.gen.types.get(ty)
+        self.r#gen.types.get(ty)
     }
 }
 

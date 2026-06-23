@@ -1,6 +1,6 @@
 use crate::{
-    full_wit_type_name, int_repr, to_rust_ident, to_upper_camel_case, FnSig, Identifier,
-    InterfaceName, RustFlagsRepr, RustWrpc, TypeGeneration,
+    FnSig, Identifier, InterfaceName, RustFlagsRepr, RustWrpc, TypeGeneration, full_wit_type_name,
+    int_repr, to_rust_ident, to_upper_camel_case,
 };
 use heck::{ToKebabCase, ToShoutySnakeCase, ToUpperCamelCase};
 use std::collections::{BTreeMap, BTreeSet};
@@ -10,7 +10,7 @@ use wit_bindgen_core::wit_parser::{
     Case, Docs, Enum, Field, Flags, Function, FunctionKind, Handle, Int, InterfaceId, Record,
     Resolve, Result_, Tuple, Type, TypeDefKind, TypeId, TypeOwner, Variant, World, WorldKey,
 };
-use wit_bindgen_core::{dealias, uwrite, uwriteln, Source, TypeInfo};
+use wit_bindgen_core::{Source, TypeInfo, dealias, uwrite, uwriteln};
 use wrpc_introspect::{async_paths_ty, async_paths_tyid, is_ty, rpc_func_name};
 
 pub struct InterfaceGenerator<'a> {
@@ -845,21 +845,19 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve>(
         // If we have a typedef of a string or a list and it is being borrowed,
         // the typedef is an alias for `String` or `Vec<T>`; borrow it as `&str`
         // or `&[T]` so callers don't need to create owned copies.
-        if !owned {
-            if let Type::Id(id) = ty {
-                let id = dealias(self.resolve, *id);
-                match &self.resolve.types[id].kind {
-                    TypeDefKind::Type(Type::String) => {
-                        self.push_str("&'a str");
-                        return;
-                    }
-                    TypeDefKind::List(element) => {
-                        let element = *element;
-                        self.print_list(&element, false, submodule);
-                        return;
-                    }
-                    _ => {}
+        if !owned && let Type::Id(id) = ty {
+            let id = dealias(self.resolve, *id);
+            match &self.resolve.types[id].kind {
+                TypeDefKind::Type(Type::String) => {
+                    self.push_str("&'a str");
+                    return;
                 }
+                TypeDefKind::List(element) => {
+                    let element = *element;
+                    self.print_list(&element, false, submodule);
+                    return;
+                }
+                _ => {}
             }
         }
 
@@ -898,13 +896,13 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve>(
     }
 
     fn type_path_with_name(&self, id: TypeId, name: String, submodule: bool) -> String {
-        if let TypeOwner::Interface(id) = self.resolve.types[id].owner {
-            if let Some(path) = self.path_to_interface(id) {
-                if submodule {
-                    return format!("super::{path}::{name}");
-                } else {
-                    return format!("{path}::{name}");
-                }
+        if let TypeOwner::Interface(id) = self.resolve.types[id].owner
+            && let Some(path) = self.path_to_interface(id)
+        {
+            if submodule {
+                return format!("super::{path}::{name}");
+            } else {
+                return format!("{path}::{name}");
             }
         }
         if submodule {

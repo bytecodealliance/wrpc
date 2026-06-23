@@ -5,8 +5,8 @@ use std::sync::Arc;
 
 use anyhow::Context as _;
 use clap::Parser;
-use futures::stream::select_all;
 use futures::StreamExt as _;
+use futures::stream::select_all;
 use tokio::task::JoinSet;
 use tokio::{fs, select, signal};
 use tracing::{debug, error, info, warn};
@@ -25,12 +25,12 @@ async fn main() -> anyhow::Result<()> {
 
     let Args { path } = Args::parse();
 
-    if let Some(dir) = path.parent() {
-        if !dir.exists() {
-            fs::create_dir_all(dir)
-                .await
-                .with_context(|| format!("failed to create `{}`", dir.display()))?
-        }
+    if let Some(dir) = path.parent()
+        && !dir.exists()
+    {
+        fs::create_dir_all(dir)
+            .await
+            .with_context(|| format!("failed to create `{}`", dir.display()))?
     }
     let lis = tokio::net::UnixListener::bind(&path)
         .with_context(|| format!("failed to bind Unix listener on `{}`", path.display()))?;
@@ -73,11 +73,11 @@ async fn main() -> anyhow::Result<()> {
                     Ok(fut) => {
                         debug!(instance, name, "invocation accepted");
                         tasks.spawn(async move {
-                            if let Err(err) = fut.await {
+                            match fut.await { Err(err) => {
                                 warn!(?err, "failed to handle invocation");
-                            } else {
+                            } _ => {
                                 info!(instance, name, "invocation successfully handled");
-                            }
+                            }}
                         });
                     }
                     Err(err) => {

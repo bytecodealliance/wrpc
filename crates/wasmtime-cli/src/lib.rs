@@ -8,27 +8,27 @@ use core::time::Duration;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
-use anyhow::{anyhow, bail, Context as _};
+use anyhow::{Context as _, anyhow, bail};
 use clap::Parser;
 use futures::StreamExt as _;
 use tokio::fs;
 use tokio::sync::Mutex;
 use tokio::task::JoinSet;
-use tracing::{error, info, instrument, warn, Instrument as _, Span};
+use tracing::{Instrument as _, Span, error, info, instrument, warn};
 use url::Url;
 use wasi_preview1_component_adapter_provider::{
     WASI_SNAPSHOT_PREVIEW1_ADAPTER_NAME, WASI_SNAPSHOT_PREVIEW1_COMMAND_ADAPTER,
     WASI_SNAPSHOT_PREVIEW1_REACTOR_ADAPTER,
 };
-use wasmtime::component::{types, Component, InstancePre, Linker, ResourceTable, ResourceType};
+use wasmtime::component::{Component, InstancePre, Linker, ResourceTable, ResourceType, types};
 use wasmtime::{Engine, Store};
 use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
-use wasmtime_wasi_http::p2::{WasiHttpCtxView, WasiHttpView};
 use wasmtime_wasi_http::WasiHttpCtx;
+use wasmtime_wasi_http::p2::{WasiHttpCtxView, WasiHttpView};
 use wrpc_transport::{Invoke, Serve};
 use wrpc_wasmtime::{
-    collect_component_resource_exports, collect_component_resource_imports, link_item, rpc,
     RemoteResource, ServeExt as _, SharedResourceTable, WrpcCtxView, WrpcView,
+    collect_component_resource_exports, collect_component_resource_imports, link_item, rpc,
 };
 
 mod nats;
@@ -139,17 +139,15 @@ fn use_pooling_allocator_by_default() -> anyhow::Result<Option<bool>> {
 }
 
 fn is_0_2(version: &str, min_patch: u64) -> bool {
-    if let Ok(semver::Version {
-        major,
-        minor,
-        patch,
-        pre,
-        build,
-    }) = version.parse()
-    {
-        major == 0 && minor == 2 && patch >= min_patch && pre.is_empty() && build.is_empty()
-    } else {
-        false
+    match version.parse() {
+        Ok(semver::Version {
+            major,
+            minor,
+            patch,
+            pre,
+            build,
+        }) => major == 0 && minor == 2 && patch >= min_patch && pre.is_empty() && build.is_empty(),
+        _ => false,
     }
 }
 
@@ -474,10 +472,13 @@ where
                             match invocation {
                                 Ok((_, fut)) => {
                                     info!("serving root function invocation");
-                                    if let Err(err) = fut.await {
-                                        warn!(?err, "failed to serve root function invocation");
-                                    } else {
-                                        info!("successfully served root function invocation");
+                                    match fut.await {
+                                        Err(err) => {
+                                            warn!(?err, "failed to serve root function invocation");
+                                        }
+                                        _ => {
+                                            info!("successfully served root function invocation");
+                                        }
                                     }
                                 }
                                 Err(err) => {
@@ -521,16 +522,16 @@ where
                                     match invocation {
                                         Ok((_, fut)) => {
                                             info!("serving instance function invocation");
-                                            if let Err(err) = fut.await {
+                                            match fut.await { Err(err) => {
                                                 warn!(
                                                     ?err,
                                                     "failed to serve instance function invocation"
                                                 );
-                                            } else {
+                                            } _ => {
                                                 info!(
                                                     "successfully served instance function invocation"
                                                 );
-                                            }
+                                            }}
                                         }
                                         Err(err) => {
                                             error!(
@@ -621,10 +622,13 @@ where
                             match invocation {
                                 Ok((_, fut)) => {
                                     info!("serving root function invocation");
-                                    if let Err(err) = fut.await {
-                                        warn!(?err, "failed to serve root function invocation");
-                                    } else {
-                                        info!("successfully served root function invocation");
+                                    match fut.await {
+                                        Err(err) => {
+                                            warn!(?err, "failed to serve root function invocation");
+                                        }
+                                        _ => {
+                                            info!("successfully served root function invocation");
+                                        }
                                     }
                                 }
                                 Err(err) => {
@@ -677,16 +681,16 @@ where
                                     match invocation {
                                         Ok((_, fut)) => {
                                             info!("serving instance function invocation");
-                                            if let Err(err) = fut.await {
+                                            match fut.await { Err(err) => {
                                                 warn!(
                                                     ?err,
                                                     "failed to serve instance function invocation"
                                                 );
-                                            } else {
+                                            } _ => {
                                                 info!(
                                                     "successfully served instance function invocation"
                                                 );
-                                            }
+                                            }}
                                         }
                                         Err(err) => {
                                             error!(

@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use futures::TryStreamExt as _;
-use rcgen::{generate_simple_self_signed, CertifiedKey};
+use rcgen::{CertifiedKey, generate_simple_self_signed};
 use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
 use rustls::version::TLS13;
 use rustls::{ClientConfig, RootCertStore, ServerConfig};
