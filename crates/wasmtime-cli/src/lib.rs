@@ -302,7 +302,7 @@ where
         .collect::<HashMap<_, _>>();
     let host_resources = Arc::from(host_resources);
     let guest_resources = Arc::from(guest_resources);
-    for (name, item) in ty.imports(&engine) {
+    for (name, types::ComponentExtern { ty: item, .. }) in ty.imports(&engine) {
         // Avoid polyfilling instances, for which static bindings are linked
         match name.split_once('/').map(|(pkg, suffix)| {
             suffix
@@ -446,7 +446,9 @@ where
         wrpc_wasmtime::paths::wasi_io_stream_resources(&engine, &pre.component().component_type())
             .into();
     let store = Arc::new(Mutex::new(store));
-    for (name, ty) in pre.component().component_type().exports(&engine) {
+    for (name, types::ComponentExtern { ty, .. }) in
+        pre.component().component_type().exports(&engine)
+    {
         match (name, ty) {
             (name, types::ComponentItem::ComponentFunc(ty)) => {
                 info!(?name, "serving root function");
@@ -497,7 +499,7 @@ where
                 warn!(name, "serving root component exports not supported yet");
             }
             (instance_name, types::ComponentItem::ComponentInstance(ty)) => {
-                for (name, ty) in ty.exports(&engine) {
+                for (name, types::ComponentExtern { ty, .. }) in ty.exports(&engine) {
                     match ty {
                         types::ComponentItem::ComponentFunc(ty) => {
                             info!(?name, "serving instance function");
@@ -593,7 +595,9 @@ where
     S: Serve,
 {
     let span = Span::current();
-    for (name, ty) in pre.component().component_type().exports(engine) {
+    for (name, types::ComponentExtern { ty, .. }) in
+        pre.component().component_type().exports(engine)
+    {
         match (name, ty) {
             (name, types::ComponentItem::ComponentFunc(ty)) => {
                 let clt = clt.clone();
@@ -647,7 +651,7 @@ where
                 warn!(name, "serving root component exports not supported yet");
             }
             (instance_name, types::ComponentItem::ComponentInstance(ty)) => {
-                for (name, ty) in ty.exports(engine) {
+                for (name, types::ComponentExtern { ty, .. }) in ty.exports(engine) {
                     match ty {
                         types::ComponentItem::ComponentFunc(ty) => {
                             let clt = clt.clone();

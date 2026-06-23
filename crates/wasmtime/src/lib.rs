@@ -525,7 +525,7 @@ pub fn collect_instance_resource_exports(
     ty: &types::ComponentInstance,
     resources: &mut impl Extend<types::ResourceType>,
 ) {
-    for (name, ty) in ty.exports(engine) {
+    for (name, types::ComponentExtern { ty, .. }) in ty.exports(engine) {
         trace!(name, ?ty, "collect instance item resource exports");
         collect_item_resource_exports(engine, ty, resources);
     }
@@ -538,7 +538,7 @@ pub fn collect_component_resource_exports(
     ty: &types::Component,
     resources: &mut impl Extend<types::ResourceType>,
 ) {
-    for (name, ty) in ty.exports(engine) {
+    for (name, types::ComponentExtern { ty, .. }) in ty.exports(engine) {
         trace!(name, ?ty, "collect component item resource exports");
         collect_item_resource_exports(engine, ty, resources);
     }
@@ -551,7 +551,7 @@ pub fn collect_component_resource_imports(
     ty: &types::Component,
     resources: &mut BTreeMap<Box<str>, HashMap<Box<str>, types::ResourceType>>,
 ) {
-    for (name, ty) in ty.imports(engine) {
+    for (name, types::ComponentExtern { ty, .. }) in ty.imports(engine) {
         match ty {
             types::ComponentItem::ComponentFunc(..)
             | types::ComponentItem::CoreFunc(..)
@@ -560,7 +560,7 @@ pub fn collect_component_resource_imports(
             | types::ComponentItem::Component(..) => {}
             types::ComponentItem::ComponentInstance(ty) => {
                 let instance = name;
-                for (name, ty) in ty.exports(engine) {
+                for (name, types::ComponentExtern { ty, .. }) in ty.exports(engine) {
                     if let types::ComponentItem::Resource(ty) = ty {
                         debug!(instance, name, ?ty, "collect instance resource import");
                         if let Some(resources) = resources.get_mut(instance) {
