@@ -326,7 +326,9 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve>(
                             ::std::boxed::Box::pin(async move {{"
             );
             let (trait_name, name) = match func.kind {
-                FunctionKind::Freestanding | FunctionKind::AsyncFreestanding => ("Handler", name),
+                FunctionKind::Freestanding | FunctionKind::AsyncFreestanding => {
+                    ("Handler", to_rust_ident(func.item_name()).to_string())
+                }
                 FunctionKind::Method(id)
                 | FunctionKind::Constructor(id)
                 | FunctionKind::Static(id)
@@ -803,7 +805,7 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve>(
                 self.push_str(&to_rust_ident(func.item_name()));
             }
         } else {
-            self.push_str(&to_rust_ident(&func.name));
+            self.push_str(&to_rust_ident(func.item_name()));
         };
         if self.in_import {
             uwrite!(
