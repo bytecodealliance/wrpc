@@ -228,7 +228,7 @@ async fn go_bindgen() -> anyhow::Result<()> {
         let v = sync::with_enum(&client, None)
             .await
             .context("failed to call `wrpc-test:integration/sync.with-enum-tuple`")?;
-        ensure!(v == Foobar::Bar, "{v:?}",);
+        ensure!(v == Foobar::Bar, "{v:?}");
 
         server
             .start_kill()

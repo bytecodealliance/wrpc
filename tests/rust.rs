@@ -364,7 +364,7 @@ where
 
             impl<C: Send + Sync> bindings::Handler<C> for Component {
                 async fn f(&self, _cx: C, x: String) -> anyhow::Result<u32> {
-                    let stored = self.inner.read().await.as_ref().unwrap().to_string();
+                    let stored = self.inner.read().await.as_ref().unwrap().clone();
                     assert_eq!(stored, x);
                     Ok(42)
                 }
@@ -1097,7 +1097,7 @@ async fn rust_bindgen_quic_sync() -> anyhow::Result<()> {
                     let (tx, rx) = sc.accept_bi().await.expect("failed to accept connection");
                     srv.accept((), tx, rx)
                         .await
-                        .expect("failed to accept connection")
+                        .expect("failed to accept connection");
                 };
                 select! {
                     res = &mut fut => return res,
@@ -1127,7 +1127,7 @@ async fn rust_bindgen_quic_async() -> anyhow::Result<()> {
                 let (tx, rx) = sc.accept_bi().await.expect("failed to accept connection");
                 srv.accept((), tx, rx)
                     .await
-                    .expect("failed to accept connection")
+                    .expect("failed to accept connection");
             };
             select! {
                 res = &mut fut => return res,
@@ -1155,7 +1155,7 @@ async fn rust_dynamic_quic() -> anyhow::Result<()> {
                     let (tx, rx) = sc.accept_bi().await.expect("failed to accept connection");
                     srv.accept((), tx, rx)
                         .await
-                        .expect("failed to accept connection")
+                        .expect("failed to accept connection");
                 };
                 select! {
                     res = &mut fut => return res,
@@ -1187,7 +1187,7 @@ async fn rust_bindgen_webtransport_sync() -> anyhow::Result<()> {
                     let (tx, rx) = sc.accept_bi().await.expect("failed to accept connection");
                     srv.accept((), tx, rx)
                         .await
-                        .expect("failed to accept connection")
+                        .expect("failed to accept connection");
                 };
                 select! {
                     res = &mut fut => return res,
@@ -1221,7 +1221,7 @@ async fn rust_bindgen_webtransport_async() -> anyhow::Result<()> {
                 let (tx, rx) = sc.accept_bi().await.expect("failed to accept connection");
                 srv.accept((), tx, rx)
                     .await
-                    .expect("failed to accept connection")
+                    .expect("failed to accept connection");
             };
             select! {
                 res = &mut fut => return res,
@@ -1249,7 +1249,7 @@ async fn rust_dynamic_webtransport() -> anyhow::Result<()> {
                     let (tx, rx) = sc.accept_bi().await.expect("failed to accept connection");
                     srv.accept((), tx, rx)
                         .await
-                        .expect("failed to accept connection")
+                        .expect("failed to accept connection");
                 };
                 select! {
                     res = &mut fut => return res,
@@ -1281,7 +1281,7 @@ async fn accept_websockets(
     let (tx, rx) = wrpc_websockets::split(ws);
     srv.accept((), tx, rx)
         .await
-        .expect("failed to accept connection")
+        .expect("failed to accept connection");
 }
 
 #[cfg(feature = "websockets")]
@@ -1377,7 +1377,7 @@ async fn rust_bindgen_tcp_sync() -> anyhow::Result<()> {
             let (rx, tx) = stream.into_split();
             srv.accept((), tx, rx)
                 .await
-                .expect("failed to accept connection")
+                .expect("failed to accept connection");
         }
         .instrument(span.clone());
         select! {
@@ -1509,7 +1509,7 @@ async fn rust_bindgen_tcp_async() -> anyhow::Result<()> {
             let (rx, tx) = stream.into_split();
             srv.accept((), tx, rx)
                 .await
-                .expect("failed to accept connection")
+                .expect("failed to accept connection");
         }
         .instrument(span.clone());
         select! {
@@ -1545,7 +1545,7 @@ async fn rust_bindgen_uds_sync() -> anyhow::Result<()> {
             let (rx, tx) = stream.into_split();
             srv.accept((), tx, rx)
                 .await
-                .expect("failed to accept connection")
+                .expect("failed to accept connection");
         }
         .instrument(span.clone());
         select! {
@@ -1581,7 +1581,7 @@ async fn rust_bindgen_uds_async() -> anyhow::Result<()> {
             let (rx, tx) = stream.into_split();
             srv.accept((), tx, rx)
                 .await
-                .expect("failed to accept connection")
+                .expect("failed to accept connection");
         }
         .instrument(span.clone());
         select! {
