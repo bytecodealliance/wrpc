@@ -54,7 +54,7 @@ where
         }
         types::ComponentItem::Module(_) => bail!("polyfilling modules not supported yet"),
         types::ComponentItem::Component(ty) => {
-            for (name, ty) in ty.imports(engine) {
+            for (name, types::ComponentExtern { ty, .. }) in ty.imports(engine) {
                 debug!(?instance, name, "linking component item");
                 link_item(
                     engine,
@@ -116,7 +116,7 @@ where
     let instance = name.into();
     let guest_resources = guest_resources.into();
     let host_resources = host_resources.into();
-    for (name, ty) in ty.exports(engine) {
+    for (name, types::ComponentExtern { ty, .. }) in ty.exports(engine) {
         debug!(name, "linking instance item");
         link_item(
             engine,
