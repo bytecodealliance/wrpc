@@ -1,8 +1,15 @@
-//@ args = '--with=foo:baz/a=generate'
+//@ args = '--with foo:baz/a=generate'
 
-pub async fn run(
-    clt: &impl wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,
-) -> anyhow::Result<()> {
-    foo::baz::a::x(clt, ()).await?;
-    Ok(())
+include!(env!("BINDINGS"));
+
+use crate::foo::baz::a::x;
+
+struct Component;
+
+export!(Component);
+
+impl Guest for Component {
+    fn run() {
+        x();
+    }
 }

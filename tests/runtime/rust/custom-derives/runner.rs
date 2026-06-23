@@ -1,16 +1,16 @@
-use my::inline::blah::{bar, Foo};
+include!(env!("BINDINGS"));
 
-pub async fn run(
-    clt: &impl wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,
-) -> anyhow::Result<()> {
-    bar(
-        clt,
-        (),
-        &Foo {
+use crate::my::inline::blah::{bar, Foo};
+
+struct Component;
+
+export!(Component);
+
+impl Guest for Component {
+    fn run() {
+        bar(&Foo {
             field1: "x".to_string(),
             field2: vec![2, 3, 3, 4],
-        },
-    )
-    .await?;
-    Ok(())
+        });
+    }
 }
