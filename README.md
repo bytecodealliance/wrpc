@@ -65,12 +65,12 @@ See [specification](./SPEC.md) for more info.
 wRPC usage examples for different programming languages can be found at [examples](./examples).
 
 There are 2 different kinds of examples:
-- Native wRPC applications, tied to a particular wRPC transport (like Unix Domain Sockets, TCP or QUIC)
+- Native wRPC applications, tied to a particular wRPC transport (like Unix Domain Sockets, TCP, QUIC, WebTransport or WebSockets)
 - Generic Wasm components, that need to run in a Wasm runtime. Those can be executed, for example, using `wrpc-wasmtime`, to polyfill imports at runtime and serve exports using wRPC.
 
 ### Requirements
 
-- For Rust components and wRPC applications: `rust` >= 1.82
+- For Rust components and wRPC applications: `rust` >= 1.93
 
 Nix users can run `nix develop` anywhere in the repository to get all dependencies correctly set up
 
