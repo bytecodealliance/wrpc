@@ -6,11 +6,11 @@ use core::pin::Pin;
 
 use std::sync::Arc;
 
-use anyhow::{bail, Context as _};
+use anyhow::{Context as _, bail};
 use futures::{SinkExt as _, Stream, TryStreamExt as _};
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt as _};
 use tokio_util::codec::{FramedRead, FramedWrite};
-use tracing::{debug, instrument, trace, Instrument as _, Span};
+use tracing::{Instrument as _, Span, debug, instrument, trace};
 
 use crate::{Deferred as _, Incoming, Index, TupleDecode, TupleEncode};
 
@@ -34,9 +34,9 @@ pub trait Serve: Sync {
     ) -> impl Future<
         Output = anyhow::Result<
             impl Stream<Item = anyhow::Result<(Self::Context, Self::Outgoing, Self::Incoming)>>
-                + Send
-                + 'static
-                + use<Self>,
+            + Send
+            + 'static
+            + use<Self>,
         >,
     > + Send;
 }
@@ -53,29 +53,28 @@ pub trait ServeExt: Serve {
     ) -> impl Future<
         Output = anyhow::Result<
             impl Stream<
-                    Item = anyhow::Result<(
-                        Self::Context,
-                        Params,
-                        Option<
-                            impl Future<Output = std::io::Result<()>>
-                                + Send
-                                + Unpin
-                                + 'static
-                                + use<Self, Params, Results>,
-                        >,
-                        impl FnOnce(
-                                Results,
-                            ) -> Pin<
-                                Box<dyn Future<Output = anyhow::Result<()>> + Send + 'static>,
-                            >
-                            + Send
-                            + 'static
-                            + use<Self, Params, Results>,
-                    )>,
-                >
-                + Send
-                + 'static
-                + use<Self, Params, Results>,
+                Item = anyhow::Result<(
+                    Self::Context,
+                    Params,
+                    Option<
+                        impl Future<Output = std::io::Result<()>>
+                        + Send
+                        + Unpin
+                        + 'static
+                        + use<Self, Params, Results>,
+                    >,
+                    impl FnOnce(
+                        Results,
+                    )
+                        -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + 'static>>
+                    + Send
+                    + 'static
+                    + use<Self, Params, Results>,
+                )>,
+            >
+            + Send
+            + 'static
+            + use<Self, Params, Results>,
         >,
     > + Send
     where
@@ -156,7 +155,7 @@ impl<T: Serve> ServeExt for T {}
 #[cfg(test)]
 mod tests {
     use bytes::Bytes;
-    use futures::{stream, StreamExt as _, TryStreamExt as _};
+    use futures::{StreamExt as _, TryStreamExt as _, stream};
 
     use crate::Captures;
 

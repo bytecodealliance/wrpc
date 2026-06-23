@@ -5,7 +5,7 @@ use std::sync::Arc;
 use anyhow::Context as _;
 use bytes::Bytes;
 use clap::Parser;
-use futures::{stream, StreamExt as _};
+use futures::{StreamExt as _, stream};
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use rustls::version::TLS13;
@@ -24,7 +24,7 @@ mod bindings {
     });
 }
 
-use bindings::wrpc_examples::streams::handler::{echo, Req};
+use bindings::wrpc_examples::streams::handler::{Req, echo};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]

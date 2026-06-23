@@ -7,14 +7,14 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::Context as _;
+use axum::Router;
 use axum::http::header::CONTENT_TYPE;
 use axum::response::Html;
 use axum::routing::get;
-use axum::Router;
 use bytes::Bytes;
 use clap::Parser;
-use futures::stream::select_all;
 use futures::StreamExt as _;
+use futures::stream::select_all;
 use quinn::crypto::rustls::QuicClientConfig;
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
@@ -293,7 +293,7 @@ impl<C: Send + Sync> store::Handler<C> for Handler {
             scheme => {
                 return Ok(Err(store::Error::Other(format!(
                     "unsupported scheme: {scheme}"
-                ))))
+                ))));
             }
         };
         let id = Uuid::now_v7();
@@ -379,7 +379,7 @@ impl<C: Send + Sync> store::HandlerBucket<C> for Handler {
         let res = match self.bucket(bucket).await? {
             Bucket::Mem(bucket) => return self.mem.set(cx, bucket.as_borrow(), key, value).await,
             Bucket::Redis(bucket) => {
-                return self.redis.set(cx, bucket.as_borrow(), key, value).await
+                return self.redis.set(cx, bucket.as_borrow(), key, value).await;
             }
             Bucket::Nats(bucket, wrpc) => {
                 wrpc_wasi_keyvalue::wasi::keyvalue::store::Bucket::set(
@@ -575,7 +575,7 @@ impl<C: Send + Sync> store::HandlerBucket<C> for Handler {
         let res = match self.bucket(bucket).await? {
             Bucket::Mem(bucket) => return self.mem.list_keys(cx, bucket.as_borrow(), cursor).await,
             Bucket::Redis(bucket) => {
-                return self.redis.list_keys(cx, bucket.as_borrow(), cursor).await
+                return self.redis.list_keys(cx, bucket.as_borrow(), cursor).await;
             }
             Bucket::Nats(bucket, wrpc) => {
                 wrpc_wasi_keyvalue::wasi::keyvalue::store::Bucket::list_keys(
@@ -717,11 +717,11 @@ export const PORT = "{port}"
                         Ok(fut) => {
                             debug!(instance, name, "invocation accepted");
                             tasks.spawn(async move {
-                                if let Err(err) = fut.await {
+                                match fut.await { Err(err) => {
                                     warn!(?err, "failed to handle invocation");
-                                } else {
+                                } _ => {
                                     info!(instance, name, "invocation successfully handled");
-                                }
+                                }}
                             });
                         }
                         Err(err) => {

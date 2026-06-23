@@ -6,7 +6,7 @@ mod bindings {
     });
 }
 
-use anyhow::{ensure, Context as _};
+use anyhow::{Context as _, ensure};
 
 use bindings::wasi::keyvalue::store;
 

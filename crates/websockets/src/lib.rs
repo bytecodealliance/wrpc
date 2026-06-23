@@ -1,7 +1,7 @@
 //! wRPC WebSocket transport using [tokio_websockets]
 
 use core::pin::Pin;
-use core::task::{ready, Context, Poll};
+use core::task::{Context, Poll, ready};
 
 use anyhow::Context as _;
 use bytes::Bytes;
@@ -13,8 +13,8 @@ use tokio_websockets::resolver::{Gai, Resolver};
 use tokio_websockets::{Message, WebSocketStream};
 use tracing::instrument;
 
-use wrpc_transport::frame::invoke;
 use wrpc_transport::Invoke;
+use wrpc_transport::frame::invoke;
 
 pub use tokio_websockets;
 #[doc(no_inline)]
@@ -86,7 +86,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Stream for Incoming<T> {
                     return Poll::Ready(Some(Err(std::io::Error::new(
                         std::io::ErrorKind::UnexpectedEof,
                         "WebSocket connection closed before EOF sentinel",
-                    ))))
+                    ))));
                 }
                 Some(Ok(msg)) if msg.is_ping() || msg.is_pong() => continue,
                 Some(Ok(msg)) => return Poll::Ready(Some(Ok(Bytes::from(msg.into_payload())))),

@@ -1,12 +1,12 @@
 //! wRPC TCP transport using [tokio]
 
-use anyhow::{bail, Context as _};
+use anyhow::{Context as _, bail};
 use bytes::Bytes;
 use tokio::net::{TcpStream, ToSocketAddrs};
 use tracing::instrument;
 
-use crate::frame::{invoke, Incoming, Outgoing};
 use crate::Invoke;
+use crate::frame::{Incoming, Outgoing, invoke};
 
 /// [Invoke] implementation in terms of a single [`TcpStream`]
 ///

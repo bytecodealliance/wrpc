@@ -26,7 +26,7 @@ use std::pin::Pin;
 
 use tokio::io::{AsyncRead, AsyncReadExt as _};
 use wasm_tokio::{
-    cm::AsyncReadValue as _, AsyncReadCore as _, AsyncReadLeb128 as _, AsyncReadUtf8 as _,
+    AsyncReadCore as _, AsyncReadLeb128 as _, AsyncReadUtf8 as _, cm::AsyncReadValue as _,
 };
 use wasm_wave::value::{Type, Value};
 use wasm_wave::wasm::{WasmType, WasmTypeKind, WasmValue as _};

@@ -5,14 +5,14 @@
 use core::future::Future;
 use core::iter::zip;
 use core::ops::{Deref, DerefMut};
-use core::pin::{pin, Pin};
-use core::task::{ready, Context, Poll};
+use core::pin::{Pin, pin};
+use core::task::{Context, Poll, ready};
 use core::{mem, str};
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use anyhow::{anyhow, ensure, Context as _};
+use anyhow::{Context as _, anyhow, ensure};
 use async_nats::message::OutboundMessage;
 use async_nats::{HeaderMap, ServerInfo, StatusCode, Subject};
 use bytes::{Buf as _, Bytes};
@@ -379,7 +379,7 @@ impl IndexTrie {
             //    nested.as_mut().and_then(|nested| nested.take(path))
             //}
             Self::Empty | Self::Leaf(..) | Self::WildcardNode { .. } => None,
-            Self::IndexNode { ref mut nested, .. } => nested
+            Self::IndexNode { nested, .. } => nested
                 .get_mut(*i)
                 .and_then(|nested| nested.as_mut().and_then(|nested| nested.take(path))),
         }
@@ -418,10 +418,7 @@ impl IndexTrie {
                 }
                 true
             }
-            Self::WildcardNode {
-                ref mut subscriber,
-                ref mut nested,
-            } => match (&subscriber, path) {
+            Self::WildcardNode { subscriber, nested } => match (&subscriber, path) {
                 (None, []) => {
                     *subscriber = Some(sub);
                     true
@@ -436,10 +433,7 @@ impl IndexTrie {
                 }
                 _ => false,
             },
-            Self::IndexNode {
-                ref mut subscriber,
-                ref mut nested,
-            } => match (&subscriber, path) {
+            Self::IndexNode { subscriber, nested } => match (&subscriber, path) {
                 (None, []) => {
                     *subscriber = Some(sub);
                     true
@@ -595,7 +589,7 @@ impl AsyncWrite for SubjectWriter {
                 return Poll::Ready(Err(std::io::Error::new(
                     std::io::ErrorKind::BrokenPipe,
                     err,
-                )))
+                )));
             }
             Poll::Ready(Ok(())) => {}
         }
@@ -1239,8 +1233,8 @@ impl wrpc_transport::Serve for Client {
         paths: Arc<[Box<[Option<usize>]>]>,
     ) -> anyhow::Result<
         impl Stream<Item = anyhow::Result<(Self::Context, Self::Outgoing, Self::Incoming)>>
-            + 'static
-            + use<>,
+        + 'static
+        + use<>,
     > {
         let subject = invocation_subject(&self.prefix, instance, func);
         let sub = if let Some(group) = &self.queue_group {

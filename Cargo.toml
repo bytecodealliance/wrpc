@@ -13,7 +13,7 @@ repository.workspace = true
 [workspace.package]
 authors = ["Roman Volosatovs <rvolosatovs@riseup.net>"]
 categories = ["wasm"]
-edition = "2021"
+edition = "2024"
 homepage = "https://github.com/bytecodealliance/wrpc"
 license = "Apache-2.0 WITH LLVM-exception"
 repository = "https://github.com/bytecodealliance/wrpc"

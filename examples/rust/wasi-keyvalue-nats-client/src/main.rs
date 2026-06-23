@@ -1,4 +1,4 @@
-use anyhow::{ensure, Context as _};
+use anyhow::{Context as _, ensure};
 use bytes::Bytes;
 use clap::Parser;
 use url::Url;

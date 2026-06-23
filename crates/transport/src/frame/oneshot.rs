@@ -3,11 +3,11 @@
 use core::future::Future;
 
 use bytes::Bytes;
-use tokio::io::{duplex, split, AsyncRead, AsyncWrite, DuplexStream, ReadHalf, WriteHalf};
+use tokio::io::{AsyncRead, AsyncWrite, DuplexStream, ReadHalf, WriteHalf, duplex, split};
 use tracing::instrument;
 
-use crate::frame::{invoke, Incoming, Outgoing};
 use crate::Invoke;
+use crate::frame::{Incoming, Outgoing, invoke};
 
 /// [Invoke] implementation in terms of a single stream pair.
 ///

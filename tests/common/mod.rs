@@ -1,6 +1,6 @@
 use anyhow::Context;
 use bytes::Bytes;
-use futures::{stream, StreamExt as _};
+use futures::{StreamExt as _, stream};
 use tokio::join;
 use tracing::info;
 

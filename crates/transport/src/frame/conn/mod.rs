@@ -1,7 +1,7 @@
 use core::future::Future;
 use core::mem;
 use core::pin::Pin;
-use core::task::{ready, Context, Poll};
+use core::task::{Context, Poll, ready};
 
 use std::sync::Arc;
 
@@ -16,7 +16,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::codec::Encoder;
 use tokio_util::io::StreamReader;
 use tokio_util::sync::PollSender;
-use tracing::{debug, error, instrument, trace, Instrument as _, Span};
+use tracing::{Instrument as _, Span, debug, error, instrument, trace};
 use wasm_tokio::{AsyncReadLeb128 as _, Leb128Encoder};
 
 use crate::Index;
@@ -148,7 +148,7 @@ impl IndexTrie {
         };
         match self {
             Self::Empty | Self::Leaf { .. } | Self::WildcardNode { .. } => None,
-            Self::IndexNode { ref mut nested, .. } => nested
+            Self::IndexNode { nested, .. } => nested
                 .get_mut(*i)
                 .and_then(|nested| nested.as_mut().and_then(|nested| nested.take_rx(path))),
             // TODO: Demux the subscription
@@ -170,7 +170,7 @@ impl IndexTrie {
         };
         match self {
             Self::Empty | Self::Leaf { .. } | Self::WildcardNode { .. } => None,
-            Self::IndexNode { ref mut nested, .. } => {
+            Self::IndexNode { nested, .. } => {
                 let nested = nested.get_mut(*i)?;
                 let nested = nested.as_mut()?;
                 nested.get_tx(path)
@@ -189,17 +189,13 @@ impl IndexTrie {
             Self::Leaf { tx, .. } => {
                 mem::take(tx);
             }
-            Self::IndexNode {
-                tx, ref mut nested, ..
-            } => {
+            Self::IndexNode { tx, nested, .. } => {
                 mem::take(tx);
                 for nested in nested.iter_mut().flatten() {
                     nested.close_tx();
                 }
             }
-            Self::WildcardNode {
-                tx, ref mut nested, ..
-            } => {
+            Self::WildcardNode { tx, nested, .. } => {
                 mem::take(tx);
                 if let Some(nested) = nested {
                     nested.close_tx();
@@ -244,11 +240,7 @@ impl IndexTrie {
                 }
                 true
             }
-            Self::IndexNode {
-                ref mut tx,
-                ref mut rx,
-                ref mut nested,
-            } => match (&tx, &rx, path) {
+            Self::IndexNode { tx, rx, nested } => match (&tx, &rx, path) {
                 (None, None, []) => {
                     *tx = Some(sender);
                     *rx = receiver;
@@ -269,11 +261,7 @@ impl IndexTrie {
                 }
                 _ => false,
             },
-            Self::WildcardNode {
-                ref mut tx,
-                ref mut rx,
-                ref mut nested,
-            } => match (&tx, &rx, path) {
+            Self::WildcardNode { tx, rx, nested } => match (&tx, &rx, path) {
                 (None, None, []) => {
                     *tx = Some(sender);
                     *rx = receiver;

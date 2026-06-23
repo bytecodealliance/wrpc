@@ -1,6 +1,6 @@
 use anyhow::Context as _;
 use wrpc_transport::frame::Server;
-use wrpc_websockets::{split, Client};
+use wrpc_websockets::{Client, split};
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn loopback() -> anyhow::Result<()> {

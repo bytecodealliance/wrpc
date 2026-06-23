@@ -1,5 +1,5 @@
 use crate::interface::InterfaceGenerator;
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use heck::{ToSnakeCase, ToUpperCamelCase};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::{self, Write as _};
@@ -9,8 +9,8 @@ use wit_bindgen_core::wit_parser::{
     WorldId, WorldItem, WorldKey,
 };
 use wit_bindgen_core::{
-    dealias, name_package_module, uwrite, uwriteln, Files, InterfaceGenerator as _, Source, Types,
-    WorldGenerator,
+    Files, InterfaceGenerator as _, Source, Types, WorldGenerator, dealias, name_package_module,
+    uwrite, uwriteln,
 };
 
 mod interface;
@@ -507,12 +507,12 @@ impl WorldGenerator for RustWrpc {
         let world = &resolve.worlds[world];
         // Specify that all imports local to the world's package should be generated
         for (key, item) in world.imports.iter().chain(world.exports.iter()) {
-            if let WorldItem::Interface { id, .. } = item {
-                if resolve.interfaces[*id].package == world.package {
-                    let name = resolve.name_world_key(key);
-                    if self.with.get(&name).is_none() {
-                        self.with.insert(name, TypeGeneration::Generate);
-                    }
+            if let WorldItem::Interface { id, .. } = item
+                && resolve.interfaces[*id].package == world.package
+            {
+                let name = resolve.name_world_key(key);
+                if self.with.get(&name).is_none() {
+                    self.with.insert(name, TypeGeneration::Generate);
                 }
             }
         }

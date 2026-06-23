@@ -1,5 +1,5 @@
 use core::net::SocketAddr;
-use core::pin::{pin, Pin};
+use core::pin::{Pin, pin};
 
 use std::sync::Arc;
 
@@ -93,11 +93,11 @@ async fn main() -> anyhow::Result<()> {
                     Ok(fut) => {
                         debug!(instance, name, "invocation accepted");
                         tasks.spawn(async move {
-                            if let Err(err) = fut.await {
+                            match fut.await { Err(err) => {
                                 warn!(?err, "failed to handle invocation");
-                            } else {
+                            } _ => {
                                 info!(instance, name, "invocation successfully handled");
-                            }
+                            }}
                         });
                     }
                     Err(err) => {

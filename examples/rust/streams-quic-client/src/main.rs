@@ -5,13 +5,13 @@ use anyhow::Context as _;
 use bytes::Bytes;
 use clap::Parser;
 use core::net::SocketAddr;
-use futures::{stream, StreamExt as _};
-use quinn::{crypto::rustls::QuicClientConfig, ClientConfig, Endpoint};
+use futures::{StreamExt as _, stream};
+use quinn::{ClientConfig, Endpoint, crypto::rustls::QuicClientConfig};
 use rustls::{
+    DigitallySignedStruct, SignatureScheme,
     client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier},
     pki_types::{CertificateDer, ServerName, UnixTime},
     version::TLS13,
-    DigitallySignedStruct, SignatureScheme,
 };
 use tokio::{time, try_join};
 use tokio_stream::wrappers::IntervalStream;
@@ -25,7 +25,7 @@ mod bindings {
     });
 }
 
-use bindings::wrpc_examples::streams::handler::{echo, Req};
+use bindings::wrpc_examples::streams::handler::{Req, echo};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]

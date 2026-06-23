@@ -9,7 +9,7 @@
     clippy::nonminimal_bool
 )]
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use clap::Parser;
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
@@ -947,10 +947,10 @@ impl fmt::Display for Kind {
 /// as it was already on disk.
 fn write_if_different(path: &Path, contents: impl AsRef<[u8]>) -> Result<bool> {
     let contents = contents.as_ref();
-    if let Ok(prev) = fs::read(path) {
-        if prev == contents {
-            return Ok(false);
-        }
+    if let Ok(prev) = fs::read(path)
+        && prev == contents
+    {
+        return Ok(false);
     }
 
     if let Some(parent) = path.parent() {

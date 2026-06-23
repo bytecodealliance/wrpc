@@ -11,7 +11,7 @@ use futures::TryStreamExt as _;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt as _};
 use tokio::{select, try_join};
 use tokio_util::codec::{Encoder as _, FramedRead};
-use tracing::{debug, instrument, trace, Instrument as _};
+use tracing::{Instrument as _, debug, instrument, trace};
 
 use crate::{Deferred as _, Incoming, Index, TupleDecode, TupleEncode};
 
@@ -123,9 +123,9 @@ pub trait InvokeExt: Invoke {
             Results,
             Option<
                 impl Future<Output = anyhow::Result<()>>
-                    + Send
-                    + 'static
-                    + use<Self, P, Params, Results, Paths>,
+                + Send
+                + 'static
+                + use<Self, P, Params, Results, Paths>,
             >,
         )>,
     > + Send
@@ -175,20 +175,21 @@ pub trait InvokeExt: Invoke {
                     .context("failed to receive sync results")?
                     .context("incomplete results")
             };
-            let results = if let Some(mut fut) = tx.take() {
-                let mut results = pin!(results);
-                select! {
-                    res = &mut results => {
-                        tx = Some(fut);
-                        res?
-                    }
-                    res = &mut fut => {
-                        res??;
-                        results.await?
+            let results = match tx.take() {
+                Some(mut fut) => {
+                    let mut results = pin!(results);
+                    select! {
+                        res = &mut results => {
+                            tx = Some(fut);
+                            res?
+                        }
+                        res = &mut fut => {
+                            res??;
+                            results.await?
+                        }
                     }
                 }
-            } else {
-                results.await?
+                _ => results.await?,
             };
             trace!("received sync results");
             let buffer = mem::take(dec.read_buffer_mut());

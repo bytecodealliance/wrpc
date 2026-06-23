@@ -6,8 +6,8 @@ use anyhow::Context as _;
 use bytes::Bytes;
 use quinn::VarInt;
 use tracing::{debug, error, trace, warn};
-use wrpc_transport::frame::{invoke, Incoming, Outgoing};
 use wrpc_transport::Invoke;
+use wrpc_transport::frame::{Incoming, Outgoing, invoke};
 use wtransport::{Connection, RecvStream, SendStream};
 
 /// WebTransport server with graceful stream shutdown handling
@@ -47,10 +47,10 @@ impl wrpc_transport::frame::ConnHandler<RecvStream, SendStream> for ConnHandler 
         } else {
             debug!("ingress successfully complete");
         }
-        if let Ok(code) = VarInt::from_u64(0x52e4a40fa8db) {
-            if let Err(err) = rx.quic_stream_mut().stop(code) {
-                debug!(?err, "failed to close incoming stream");
-            }
+        if let Ok(code) = VarInt::from_u64(0x52e4a40fa8db)
+            && let Err(err) = rx.quic_stream_mut().stop(code)
+        {
+            debug!(?err, "failed to close incoming stream");
         }
     }
 
