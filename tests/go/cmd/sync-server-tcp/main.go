@@ -1,42 +1,57 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"log"
 	"log/slog"
+	"net"
 	"os"
 	"os/signal"
 	"syscall"
 
 	"github.com/lmittmann/tint"
-	"github.com/nats-io/nats.go"
-	wrpcnats "wrpc.io/go/nats"
+	wrpctcp "wrpc.io/go/x/tcp"
 	integration "wrpc.io/tests/go"
 	"wrpc.io/tests/go/bindings/sync_server"
 )
 
-func run(url string) error {
-	nc, err := nats.Connect(url)
+func run(addr string) (err error) {
+	a, err := net.ResolveTCPAddr("tcp", addr)
 	if err != nil {
-		return fmt.Errorf("failed to connect to NATS.io: %w", err)
+		return fmt.Errorf("failed to resolve `%s` as TCP address: %w", addr, err)
 	}
-	defer nc.Close()
-	defer func() {
-		if dErr := nc.Drain(); dErr != nil {
-			if err == nil {
-				err = fmt.Errorf("failed to drain NATS.io connection: %w", dErr)
-			} else {
-				slog.Error("failed to drain NATS.io connection", "err", dErr)
-			}
-		}
-	}()
+	l, err := net.ListenTCP("tcp", a)
+	if err != nil {
+		return fmt.Errorf("failed to listen on TCP socket: %w", err)
+	}
 
-	client := wrpcnats.NewClient(nc, wrpcnats.WithPrefix("go"))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	srv := wrpctcp.NewServerWithContext(ctx, l)
 	var h integration.SyncHandler
-	stop, err := sync_server.Serve(client, h, h)
+	stop, err := sync_server.Serve(srv, h, h)
 	if err != nil {
 		return fmt.Errorf("failed to serve world: %w", err)
 	}
+
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+				slog.Debug("accepting invocation")
+				if err := srv.Accept(); err != nil {
+					if !errors.Is(err, net.ErrClosed) {
+						slog.Error("failed to accept invocation", "err", err)
+					}
+				}
+			}
+		}
+	}()
 
 	signalCh := make(chan os.Signal, 1)
 	signal.Notify(signalCh, syscall.SIGINT)

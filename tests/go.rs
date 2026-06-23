@@ -4,7 +4,6 @@ use tracing::instrument;
 
 mod common;
 
-#[cfg(feature = "nats")]
 #[instrument(ret)]
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn go_bindgen() -> anyhow::Result<()> {
@@ -41,7 +40,7 @@ async fn go_bindgen() -> anyhow::Result<()> {
         .context("failed to call `go test`")?;
     ensure!(status.success(), "`go test` failed");
 
-    wrpc_test::with_nats(|port, nats_client| async move {
+    {
         mod bindings {
             wit_bindgen_wrpc::generate!({
                 world: "sync-client",
@@ -54,50 +53,49 @@ async fn go_bindgen() -> anyhow::Result<()> {
         use bindings::wrpc_test::integration::sync;
         use bindings::wrpc_test::integration::sync::{Abc, Foobar, Rec, RecNested, Var};
 
-        info!("starting `sync-server-nats`");
+        let port = wrpc_test::free_port()
+            .await
+            .context("failed to find free port")?;
+        let addr = format!("[::1]:{port}");
+
+        info!("starting `sync-server-tcp`");
         let mut server = Command::new("go")
             .current_dir("tests/go")
-            .args([
-                "run",
-                "./cmd/sync-server-nats",
-                &format!("nats://localhost:{port}"),
-            ])
+            .args(["run", "./cmd/sync-server-tcp", &addr])
             .kill_on_drop(true)
             .spawn()
-            .context("failed to run `sync-server-nats`")?;
+            .context("failed to run `sync-server-tcp`")?;
 
-        let client = wrpc_nats::Client::new(nats_client, "go", None)
-            .await
-            .context("failed to construct client")?;
+        let client = wrpc_transport::frame::tcp::Client::from(addr);
 
         // TODO: Remove the need for this
         sleep(Duration::from_secs(1)).await;
 
         info!("calling `wrpc-test:integration/sync-client.foo.f`");
-        let v = foo::f(&client, None, "f")
+        let v = foo::f(&client, (), "f")
             .await
             .context("failed to call `wrpc-test:integration/sync-client.foo.f`")?;
         ensure!(v == 42);
 
         info!("calling `wrpc-test:integration/sync-client.foo.foo`");
-        foo::foo(&client, None, "foo")
+        foo::foo(&client, (), "foo")
             .await
             .context("failed to call `wrpc-test:integration/sync-client.foo.foo`")?;
 
         info!("calling `wrpc-test:integration/sync.fallible`");
-        let res = sync::fallible(&client, None, true)
+        let res = sync::fallible(&client, (), true)
             .await
             .context("failed to call `wrpc-test:integration/sync.fallible`")?;
         ensure!(res == Ok(true));
 
         info!("calling `wrpc-test:integration/sync.fallible`");
-        let res = sync::fallible(&client, None, false)
+        let res = sync::fallible(&client, (), false)
             .await
             .context("failed to call `wrpc-test:integration/sync.fallible`")?;
         ensure!(res == Err("test".to_string()));
 
         info!("calling `wrpc-test:integration/sync.numbers`");
-        let (a, b, c, d, e, f, g, h, i, j) = sync::numbers(&client, None)
+        let (a, b, c, d, e, f, g, h, i, j) = sync::numbers(&client, ())
             .await
             .context("failed to call `wrpc-test:integration/sync.numbers`")?;
         ensure!(a == 1);
@@ -112,19 +110,19 @@ async fn go_bindgen() -> anyhow::Result<()> {
         ensure!(j == 10.);
 
         info!("calling `wrpc-test:integration/sync.with-flags`");
-        let v = sync::with_flags(&client, None, true, false, true)
+        let v = sync::with_flags(&client, (), true, false, true)
             .await
             .context("failed to call `wrpc-test:integration/sync.with-flags`")?;
         ensure!(v == Abc::A | Abc::C, "{v:?}");
 
         info!("calling `wrpc-test:integration/sync.with-variant-option`");
-        let v = sync::with_variant_option(&client, None, false)
+        let v = sync::with_variant_option(&client, (), false)
             .await
             .context("failed to call `wrpc-test:integration/sync.with-variant-option`")?;
         ensure!(v.is_none(), "{v:?}");
 
         info!("calling `wrpc-test:integration/sync.with-variant-option`");
-        let v = sync::with_variant_option(&client, None, true)
+        let v = sync::with_variant_option(&client, (), true)
             .await
             .context("failed to call `wrpc-test:integration/sync.with-variant-option`")?;
         ensure!(
@@ -137,7 +135,7 @@ async fn go_bindgen() -> anyhow::Result<()> {
         );
 
         info!("calling `wrpc-test:integration/sync.with-variant-list`");
-        let v = sync::with_variant_list(&client, None)
+        let v = sync::with_variant_list(&client, ())
             .await
             .context("failed to call `wrpc-test:integration/sync.with-variant-list`")?;
         ensure!(
@@ -161,7 +159,7 @@ async fn go_bindgen() -> anyhow::Result<()> {
         );
 
         info!("calling `wrpc-test:integration/sync.with-record`");
-        let v = sync::with_record(&client, None)
+        let v = sync::with_record(&client, ())
             .await
             .context("failed to call `wrpc-test:integration/sync.with-record`")?;
         ensure!(
@@ -174,13 +172,13 @@ async fn go_bindgen() -> anyhow::Result<()> {
         );
 
         info!("calling `wrpc-test:integration/sync.with-record-list`");
-        let v = sync::with_record_list(&client, None, 0)
+        let v = sync::with_record_list(&client, (), 0)
             .await
             .context("failed to call `wrpc-test:integration/sync.with-record-list`")?;
         ensure!(v.is_empty(), "{v:?}");
 
         info!("calling `wrpc-test:integration/sync.with-record-list`");
-        let v = sync::with_record_list(&client, None, 3)
+        let v = sync::with_record_list(&client, (), 3)
             .await
             .context("failed to call `wrpc-test:integration/sync.with-record-list`")?;
         ensure!(
@@ -205,7 +203,7 @@ async fn go_bindgen() -> anyhow::Result<()> {
         );
 
         info!("calling `wrpc-test:integration/sync.with-record-tuple`");
-        let v = sync::with_record_tuple(&client, None)
+        let v = sync::with_record_tuple(&client, ())
             .await
             .context("failed to call `wrpc-test:integration/sync.with-record-tuple`")?;
         ensure!(
@@ -225,55 +223,48 @@ async fn go_bindgen() -> anyhow::Result<()> {
         );
 
         info!("calling `wrpc-test:integration/sync.with-enum`");
-        let v = sync::with_enum(&client, None)
+        let v = sync::with_enum(&client, ())
             .await
             .context("failed to call `wrpc-test:integration/sync.with-enum-tuple`")?;
         ensure!(v == Foobar::Bar, "{v:?}");
 
         server
             .start_kill()
-            .context("failed to kill `sync-server-nats`")?;
+            .context("failed to kill `sync-server-tcp`")?;
         server
             .wait_with_output()
             .await
-            .context("failed to wait for `sync-server-nats` to exit")?;
+            .context("failed to wait for `sync-server-tcp` to exit")?;
+    }
 
-        Ok(())
-    })
-    .await?;
+    {
+        let port = wrpc_test::free_port()
+            .await
+            .context("failed to find free port")?;
+        let addr = format!("[::1]:{port}");
 
-    wrpc_test::with_nats(|port, nats_client| async move {
-        info!("starting `async-server-nats`");
+        info!("starting `async-server-tcp`");
         let mut server = Command::new("go")
             .current_dir("tests/go")
-            .args([
-                "run",
-                "./cmd/async-server-nats",
-                &format!("nats://localhost:{port}"),
-            ])
+            .args(["run", "./cmd/async-server-tcp", &addr])
             .kill_on_drop(true)
             .spawn()
-            .context("failed to run `async-server-nats`")?;
+            .context("failed to run `async-server-tcp`")?;
 
         // TODO: Remove the need for this
         sleep(Duration::from_secs(1)).await;
 
-        let client = wrpc_nats::Client::new(nats_client, "go", None)
-            .await
-            .context("failed to construct client")?;
+        let client = wrpc_transport::frame::tcp::Client::from(addr);
         assert_async(&client).await?;
 
         server
             .start_kill()
-            .context("failed to kill `async-server-nats`")?;
+            .context("failed to kill `async-server-tcp`")?;
         server
             .wait_with_output()
             .await
-            .context("failed to wait for `async-server-nats` to exit")?;
-
-        Ok(())
-    })
-    .await?;
+            .context("failed to wait for `async-server-tcp` to exit")?;
+    }
 
     Ok(())
 }
