@@ -1,15 +1,8 @@
 //@ args = '--with foo:baz/a=generate'
 
-include!(env!("BINDINGS"));
-
-use crate::foo::baz::a::x;
-
-struct Component;
-
-export!(Component);
-
-impl Guest for Component {
-    fn run() {
-        x();
-    }
+pub async fn run(
+    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,
+) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+    crate::runner::foo::baz::a::x(wrpc, ()).await?;
+    Ok(())
 }

@@ -1,74 +1,82 @@
 //@ args = [
-//@     '--with=my:inline/foo/a=crate::my_types::MyA',
-//@     '--with=my:inline/foo/b=crate::my_types::MyB',
-//@     '--with=my:inline/foo/c=crate::my_types::MyC',
-//@     '--with=d=crate::my_types::MyD',
-//@     '--with=my:inline/bar/e=crate::my_types::MyE',
+//@     '--with=my:inline/foo/a=crate::runner::my_types::MyA',
+//@     '--with=my:inline/foo/b=crate::runner::my_types::MyB',
+//@     '--with=my:inline/foo/c=crate::runner::my_types::MyC',
+//@     '--with=d=crate::runner::my_types::MyD',
+//@     '--with=my:inline/bar/e=crate::runner::my_types::MyE',
 //@     '--with=my:inline/foo/f=generate',
 //@ ]
 
-include!(env!("BINDINGS"));
-
 mod my_types {
-    #[derive(Debug, Clone, Copy)]
-    pub struct MyA {
-        pub inner: f64,
-    }
+    ::wit_bindgen_wrpc::generate!({
+        inline: "
+            package my:types;
 
-    #[derive(Debug, Clone, Copy)]
-    pub struct MyB;
+            interface t {
+                record rec-a {
+                    inner: f64,
+                }
 
-    impl MyB {
-        pub fn take_handle(&self) -> u32 {
-            0
-        }
+                resource res-b;
 
-        pub fn from_handle(_handle: u32) -> Self {
-            Self
-        }
-    }
+                variant var-c {
+                    a(rec-a),
+                    b(res-b),
+                }
 
-    pub enum MyC {
-        A(MyA),
-        B(MyB),
-    }
+                record rec-d {
+                    inner: u32,
+                }
 
-    pub struct MyD {
-        pub inner: u32,
-    }
+                record rec-e {
+                    inner: u32,
+                }
 
-    pub struct MyE {
-        pub inner: u32,
-    }
+                use-a: func(v: rec-a) -> rec-a;
+                use-b: func(v: res-b) -> res-b;
+                use-c: func(v: var-c) -> var-c;
+                use-d: func(v: rec-d) -> rec-d;
+                use-e: func(v: rec-e) -> rec-e;
+            }
+
+            world dummy {
+                import t;
+            }
+        ",
+        generate_all,
+    });
+
+    pub use self::my::types::t::{
+        RecA as MyA, RecD as MyD, RecE as MyE, ResB as MyB, VarC as MyC,
+    };
 }
 
-struct Component;
+pub async fn run(
+    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,
+) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+    let a = my_types::MyA { inner: 0.0 };
+    let _ = crate::runner::my::inline::foo::func1(wrpc, (), &a).await?;
 
-export!(Component);
-
-impl Guest for Component {
-    fn run() {
-        let a = my_types::MyA { inner: 0.0 };
-        let _ = my::inline::foo::func1(a);
-
-        // can't actually succeed at runtime as this is faking a resource, so check
-        // that it compiles but dynamically skip it.
-        if false {
-            let b = my_types::MyB;
-            let _ = my::inline::foo::func2(b);
-        }
-
-        let c = my_types::MyC::A(a);
-        let _ = i::func7(c);
-
-        let a_list = vec![a, a];
-        let _ = my::inline::foo::func3(&a_list);
-
-        let _ = my::inline::foo::func4(Some(a));
-
-        let _ = my::inline::foo::func5();
-
-        let d = my_types::MyD { inner: 0 };
-        let _ = i::func8(d);
+    // can't actually succeed at runtime as this is faking a resource, so check
+    // that it compiles but dynamically skip it.
+    if false {
+        let b = ::wit_bindgen_wrpc::wrpc_transport::ResourceOwn::<my_types::MyB>::from(
+            ::wit_bindgen_wrpc::bytes::Bytes::new(),
+        );
+        let _ = crate::runner::my::inline::foo::func2(wrpc, (), &b).await?;
     }
+
+    let c = my_types::MyC::A(a);
+    let _ = crate::runner::i::func7(wrpc, (), &c).await?;
+
+    let a_list = vec![a, a];
+    let _ = crate::runner::my::inline::foo::func3(wrpc, (), &a_list).await?;
+
+    let _ = crate::runner::my::inline::foo::func4(wrpc, (), Some(a)).await?;
+
+    let _ = crate::runner::my::inline::foo::func5(wrpc, ()).await?;
+
+    let d = my_types::MyD { inner: 0 };
+    let _ = crate::runner::i::func8(wrpc, (), &d).await?;
+    Ok(())
 }

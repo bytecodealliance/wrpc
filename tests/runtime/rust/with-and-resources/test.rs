@@ -1,26 +1,30 @@
-include!(env!("BINDINGS"));
+use crate::test::exports::my::inline::bar::Handler as HandlerBar;
+use crate::test::exports::my::inline::foo::{Handler as HandlerFoo, HandlerA, A};
 
-struct Component;
+#[derive(Clone)]
+pub struct Component;
 
-export!(Component);
-
-use crate::exports::my::inline::bar::Guest as GuestBar;
-use crate::exports::my::inline::foo::{Guest as GuestFoo, GuestA, A};
-
-struct MyA;
-
-impl GuestFoo for Component {
-    type A = MyA;
-
-    fn bar() -> A {
-        A::new(MyA)
+impl<Ctx: Send> HandlerFoo<Ctx> for Component {
+    async fn bar(
+        &self,
+        _cx: Ctx,
+    ) -> ::wit_bindgen_wrpc::anyhow::Result<::wit_bindgen_wrpc::wrpc_transport::ResourceOwn<A>> {
+        Ok(::wit_bindgen_wrpc::wrpc_transport::ResourceOwn::from(
+            ::wit_bindgen_wrpc::bytes::Bytes::from_static(b"a"),
+        ))
     }
 }
 
-impl GuestA for MyA {}
+impl<Ctx: Send> HandlerA<Ctx> for Component {}
 
-impl GuestBar for Component {
-    fn bar(m: A) -> Vec<A> {
-        vec![m]
+impl<Ctx: Send> HandlerBar<Ctx> for Component {
+    async fn bar(
+        &self,
+        _cx: Ctx,
+        m: ::wit_bindgen_wrpc::wrpc_transport::ResourceOwn<A>,
+    ) -> ::wit_bindgen_wrpc::anyhow::Result<
+        Vec<::wit_bindgen_wrpc::wrpc_transport::ResourceOwn<A>>,
+    > {
+        Ok(vec![m])
     }
 }
