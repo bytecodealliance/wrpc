@@ -1,9 +1,13 @@
-package export_wit_world
+package runner
 
 import (
-	test "wit_component/test_many_arguments_to_test"
+	"context"
+
+	wrpc "wrpc.io/go"
+
+	"driver/runner/test/many_arguments/to_test"
 )
 
-func Run() {
-	test.ManyArguments(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16)
+func Run(ctx context.Context, c wrpc.Invoker) error {
+	return to_test.ManyArguments(ctx, c, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16)
 }
