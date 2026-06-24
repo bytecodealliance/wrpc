@@ -2962,6 +2962,26 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
                     idx = idx.saturating_add(1);
                 }
             }
+            if func.result.is_none() {
+                // A function with no results still completes with an (empty)
+                // result transmission; await it so the call is synchronous and
+                // the invocation's server-side effects are observable on return.
+                // The framed reader signals a closed result stream with
+                // `io.ErrUnexpectedEOF`, which is the expected terminator here.
+                let io = self.deps.io();
+                let errors = self.deps.errors();
+                let fmt = self.deps.fmt();
+                uwrite!(
+                    self.src,
+                    r#"
+    if _, err__ = {io}.ReadAll(r__); err__ != nil && !{errors}.Is(err__, {io}.EOF) && !{errors}.Is(err__, {io}.ErrUnexpectedEOF) {{
+        err__ = {fmt}.Errorf("failed to await `{name}` completion: %w", err__)
+        return
+    }}
+    err__ = nil"#,
+                    name = func.name,
+                );
+            }
             uwriteln!(
                 self.src,
                 r#"
