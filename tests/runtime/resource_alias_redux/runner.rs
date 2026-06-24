@@ -1,31 +1,44 @@
-include!(env!("BINDINGS"));
+use crate::runner::test::resource_alias_redux::resource_alias1 as a1;
+use crate::runner::test::resource_alias_redux::resource_alias2 as a2;
+use crate::runner::the_test::test;
 
-use crate::test::resource_alias_redux::resource_alias1 as a1;
-use crate::test::resource_alias_redux::resource_alias2 as a2;
-use crate::the_test::test;
+pub async fn run(
+    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,
+) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+    let thing1 = a1::Thing::new(wrpc, (), "Ni Hao").await?;
+    let result = test(wrpc, (), &[thing1]).await?;
+    assert_eq!(result.len(), 1);
+    assert_eq!(
+        a1::Thing::get(wrpc, (), &result[0].as_borrow()).await?,
+        "Ni Hao GuestThing GuestThing.get"
+    );
 
-struct Component;
+    let thing2 = a1::Thing::new(wrpc, (), "Ciao").await?;
+    let result = a1::a(wrpc, (), &a1::Foo { thing: thing2 }).await?;
+    assert_eq!(result.len(), 1);
+    assert_eq!(
+        a1::Thing::get(wrpc, (), &result[0].as_borrow()).await?,
+        "Ciao GuestThing GuestThing.get"
+    );
 
-export!(Component);
+    let thing3 = a1::Thing::new(wrpc, (), "Ciao").await?;
+    let thing4 = a1::Thing::new(wrpc, (), "Aloha").await?;
 
-impl Guest for Component {
-    fn run() {
-        let thing1 = crate::the_test::Thing::new("Ni Hao");
-        let result = test(vec![thing1]);
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].get(), "Ni Hao GuestThing GuestThing.get");
-
-        let thing2 = crate::test::resource_alias_redux::resource_alias1::Thing::new("Ciao");
-        let result = a1::a(a1::Foo { thing: thing2 });
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].get(), "Ciao GuestThing GuestThing.get");
-
-        let thing3 = crate::test::resource_alias_redux::resource_alias1::Thing::new("Ciao");
-        let thing4 = crate::test::resource_alias_redux::resource_alias1::Thing::new("Aloha");
-
-        let result = a2::b(a2::Foo { thing: thing3 }, a2::Bar { thing: thing4 });
-        assert_eq!(result.len(), 2);
-        assert_eq!(result[0].get(), "Ciao GuestThing GuestThing.get");
-        assert_eq!(result[1].get(), "Aloha GuestThing GuestThing.get");
-    }
+    let result = a2::b(
+        wrpc,
+        (),
+        &a2::Foo { thing: thing3 },
+        &a1::Foo { thing: thing4 },
+    )
+    .await?;
+    assert_eq!(result.len(), 2);
+    assert_eq!(
+        a1::Thing::get(wrpc, (), &result[0].as_borrow()).await?,
+        "Ciao GuestThing GuestThing.get"
+    );
+    assert_eq!(
+        a1::Thing::get(wrpc, (), &result[1].as_borrow()).await?,
+        "Aloha GuestThing GuestThing.get"
+    );
+    Ok(())
 }
