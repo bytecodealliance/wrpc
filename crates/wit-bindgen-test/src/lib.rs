@@ -716,7 +716,7 @@ impl Runner<'_> {
             Language::Rust => {
                 self.rust_runtime_test(case, runner, runner_bindings, test, test_bindings)
             }
-            Language::Go => bail!("Go runtime tests are not yet supported"),
+            Language::Go => self.go_runtime_test(case, runner, test),
         }
     }
 

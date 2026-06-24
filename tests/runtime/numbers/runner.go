@@ -1,63 +1,80 @@
-package export_wit_world
+package runner
 
 import (
+	"context"
 	"fmt"
 	"math"
-	test "wit_component/test_numbers_numbers"
+
+	wrpc "wrpc.io/go"
+	"driver/runner/test/numbers/numbers"
 )
 
-func Run() {
-	assertEqual(test.RoundtripU8(1), 1)
-	assertEqual(test.RoundtripU8(0), 0)
-	assertEqual(test.RoundtripU8(math.MaxUint8), math.MaxUint8)
+func Run(ctx context.Context, c wrpc.Invoker) error {
+	assertEqual(must(numbers.RoundtripU8(ctx, c, 1)), 1)
+	assertEqual(must(numbers.RoundtripU8(ctx, c, 0)), 0)
+	assertEqual(must(numbers.RoundtripU8(ctx, c, math.MaxUint8)), math.MaxUint8)
 
-	assertEqual(test.RoundtripS8(1), 1)
-	assertEqual(test.RoundtripS8(math.MinInt8), math.MinInt8)
-	assertEqual(test.RoundtripS8(math.MaxInt8), math.MaxInt8)
+	assertEqual(must(numbers.RoundtripS8(ctx, c, 1)), 1)
+	assertEqual(must(numbers.RoundtripS8(ctx, c, math.MinInt8)), math.MinInt8)
+	assertEqual(must(numbers.RoundtripS8(ctx, c, math.MaxInt8)), math.MaxInt8)
 
-	assertEqual(test.RoundtripU16(1), 1)
-	assertEqual(test.RoundtripU16(0), 0)
-	assertEqual(test.RoundtripU16(math.MaxUint16), math.MaxUint16)
+	assertEqual(must(numbers.RoundtripU16(ctx, c, 1)), 1)
+	assertEqual(must(numbers.RoundtripU16(ctx, c, 0)), 0)
+	assertEqual(must(numbers.RoundtripU16(ctx, c, math.MaxUint16)), math.MaxUint16)
 
-	assertEqual(test.RoundtripS16(1), 1)
-	assertEqual(test.RoundtripS16(math.MinInt16), math.MinInt16)
-	assertEqual(test.RoundtripS16(math.MaxInt16), math.MaxInt16)
+	assertEqual(must(numbers.RoundtripS16(ctx, c, 1)), 1)
+	assertEqual(must(numbers.RoundtripS16(ctx, c, math.MinInt16)), math.MinInt16)
+	assertEqual(must(numbers.RoundtripS16(ctx, c, math.MaxInt16)), math.MaxInt16)
 
-	assertEqual(test.RoundtripU32(1), 1)
-	assertEqual(test.RoundtripU32(0), 0)
-	assertEqual(test.RoundtripU32(math.MaxUint32), math.MaxUint32)
+	assertEqual(must(numbers.RoundtripU32(ctx, c, 1)), 1)
+	assertEqual(must(numbers.RoundtripU32(ctx, c, 0)), 0)
+	assertEqual(must(numbers.RoundtripU32(ctx, c, math.MaxUint32)), math.MaxUint32)
 
-	assertEqual(test.RoundtripS32(1), 1)
-	assertEqual(test.RoundtripS32(math.MinInt32), math.MinInt32)
-	assertEqual(test.RoundtripS32(math.MaxInt32), math.MaxInt32)
+	assertEqual(must(numbers.RoundtripS32(ctx, c, 1)), 1)
+	assertEqual(must(numbers.RoundtripS32(ctx, c, math.MinInt32)), math.MinInt32)
+	assertEqual(must(numbers.RoundtripS32(ctx, c, math.MaxInt32)), math.MaxInt32)
 
-	assertEqual(test.RoundtripU64(1), 1)
-	assertEqual(test.RoundtripU64(0), 0)
-	assertEqual(test.RoundtripU64(math.MaxUint64), math.MaxUint64)
+	assertEqual(must(numbers.RoundtripU64(ctx, c, 1)), 1)
+	assertEqual(must(numbers.RoundtripU64(ctx, c, 0)), 0)
+	assertEqual(must(numbers.RoundtripU64(ctx, c, math.MaxUint64)), math.MaxUint64)
 
-	assertEqual(test.RoundtripS64(1), 1)
-	assertEqual(test.RoundtripS64(math.MinInt64), math.MinInt64)
-	assertEqual(test.RoundtripS64(math.MaxInt64), math.MaxInt64)
+	assertEqual(must(numbers.RoundtripS64(ctx, c, 1)), 1)
+	assertEqual(must(numbers.RoundtripS64(ctx, c, math.MinInt64)), math.MinInt64)
+	assertEqual(must(numbers.RoundtripS64(ctx, c, math.MaxInt64)), math.MaxInt64)
 
-	assertEqual(test.RoundtripF32(1.0), 1.0)
-	assertEqual(test.RoundtripF32(float32(math.Inf(1))), float32(math.Inf(1)))
-	assertEqual(test.RoundtripF32(float32(math.Inf(-1))), float32(math.Inf(-1)))
-	assert(math.IsNaN(float64(test.RoundtripF32(float32(math.NaN())))))
+	assertEqual(must(numbers.RoundtripF32(ctx, c, 1.0)), 1.0)
+	assertEqual(must(numbers.RoundtripF32(ctx, c, float32(math.Inf(1)))), float32(math.Inf(1)))
+	assertEqual(must(numbers.RoundtripF32(ctx, c, float32(math.Inf(-1)))), float32(math.Inf(-1)))
+	assert(math.IsNaN(float64(must(numbers.RoundtripF32(ctx, c, float32(math.NaN()))))))
 
-	assertEqual(test.RoundtripF64(1.0), 1.0)
-	assertEqual(test.RoundtripF64(math.Inf(1)), math.Inf(1))
-	assertEqual(test.RoundtripF64(math.Inf(-1)), math.Inf(-1))
-	assert(math.IsNaN(test.RoundtripF64(math.NaN())))
+	assertEqual(must(numbers.RoundtripF64(ctx, c, 1.0)), 1.0)
+	assertEqual(must(numbers.RoundtripF64(ctx, c, math.Inf(1))), math.Inf(1))
+	assertEqual(must(numbers.RoundtripF64(ctx, c, math.Inf(-1))), math.Inf(-1))
+	assert(math.IsNaN(must(numbers.RoundtripF64(ctx, c, math.NaN()))))
 
-	assertEqual(test.RoundtripChar('a'), 'a')
-	assertEqual(test.RoundtripChar(' '), ' ')
-	assertEqual(test.RoundtripChar('🚩'), '🚩')
+	assertEqual(must(numbers.RoundtripChar(ctx, c, 'a')), 'a')
+	assertEqual(must(numbers.RoundtripChar(ctx, c, ' ')), ' ')
+	assertEqual(must(numbers.RoundtripChar(ctx, c, '🚩')), '🚩')
 
-	test.SetScalar(2)
-	assertEqual(test.GetScalar(), 2)
+	must0(numbers.SetScalar(ctx, c, 2))
+	assertEqual(must(numbers.GetScalar(ctx, c)), 2)
 
-	test.SetScalar(4)
-	assertEqual(test.GetScalar(), 4)
+	must0(numbers.SetScalar(ctx, c, 4))
+	assertEqual(must(numbers.GetScalar(ctx, c)), 4)
+	return nil
+}
+
+func must[T any](v T, err error) T {
+	if err != nil {
+		panic(err)
+	}
+	return v
+}
+
+func must0(err error) {
+	if err != nil {
+		panic(err)
+	}
 }
 
 func assertEqual[T comparable](a T, b T) {
