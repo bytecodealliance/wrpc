@@ -592,29 +592,34 @@ impl Runner<'_> {
         let compile_results = components
             .par_iter()
             .map(|(test, component)| {
+                let should_fail = Self::runtime_test_should_fail(&test.name);
                 let path = self
                     .compile_component(test, component)
                     .with_context(|| format!("failed to compile component {:?}", component.path));
-                self.update_status(&path, false);
-                (test, component, path)
+                self.update_status(&path, should_fail);
+                (test, component, path, should_fail)
             })
             .collect::<Vec<_>>();
         println!("");
 
         let mut compilations = Vec::new();
-        self.render_errors(
-            compile_results
-                .into_iter()
-                .map(|(test, component, result)| match result {
-                    Ok(path) => {
-                        compilations.push((test, component, path));
-                        StepResult::new("", Ok(()))
-                    }
-                    Err(e) => StepResult::new(&test.name, Err(e))
-                        .metadata("component", &component.name)
-                        .metadata("path", component.path.display()),
-                }),
-        );
+        self.render_errors(compile_results.into_iter().map(
+            |(test, component, result, should_fail)| match result {
+                // A test expected to fail that nonetheless compiled should be
+                // flagged so its xfail entry can be removed.
+                Ok(path) if !should_fail => {
+                    compilations.push((test, component, path));
+                    StepResult::new("", Ok(()))
+                }
+                Ok(_) => StepResult::new(&test.name, Ok(()))
+                    .should_fail(true)
+                    .metadata("component", &component.name),
+                Err(e) => StepResult::new(&test.name, Err(e))
+                    .should_fail(should_fail)
+                    .metadata("component", &component.name)
+                    .metadata("path", component.path.display()),
+            },
+        ));
 
         // Next, massage the data a bit. Create a map of all tests to where
         // their components are located. Then perform a product of runners/tests
@@ -750,6 +755,16 @@ status: {}",
         }
 
         bail!("{error}")
+    }
+
+    /// Returns whether the named runtime test is expected to fail.
+    ///
+    /// The wRPC generators do not yet implement the `map` or fixed-length
+    /// `list<T, N>` WIT types, so bindings generation for those tests panics.
+    /// Their failure is expected; if a test here starts succeeding, the harness
+    /// flags it so this entry can be removed.
+    fn runtime_test_should_fail(name: &str) -> bool {
+        matches!(name, "map" | "fixed-length-lists")
     }
 
     /// "poor man's test output progress"
