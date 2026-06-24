@@ -1,13 +1,10 @@
 //@ args = '--generate-all'
 
-include!(env!("BINDINGS"));
+#[derive(Clone)]
+pub struct Component;
 
-struct Test;
-
-export!(Test);
-
-use crate::exports::foo::baz::a::Guest;
-
-impl Guest for Test {
-    fn x() {}
+impl<Ctx: Send> crate::test::exports::foo::baz::a::Handler<Ctx> for Component {
+    async fn x(&self, _cx: Ctx) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+        Ok(())
+    }
 }

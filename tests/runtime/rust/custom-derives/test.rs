@@ -6,16 +6,15 @@
 //@   '--additional-derive-ignore=ignoreme',
 //@ ]
 
-include!(env!("BINDINGS"));
-
-use crate::exports::my::inline::blag;
-use crate::exports::my::inline::blah::{Foo, Guest, Ignoreme};
+use crate::test::exports::my::inline::blag::{Handler as HandlerBlag, HandlerInputStream};
+use crate::test::exports::my::inline::blah::{Foo, Handler as HandlerBlah, Ignoreme};
 use std::collections::{hash_map::RandomState, HashSet};
 
-struct Component;
+#[derive(Clone)]
+pub struct Component;
 
-impl Guest for Component {
-    fn bar(cool: Foo) {
+impl<Ctx: Send> HandlerBlah<Ctx> for Component {
+    async fn bar(&self, _cx: Ctx, cool: Foo) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
         let _blah: HashSet<Foo, RandomState> = HashSet::from_iter([
             Foo {
                 field1: "hello".to_string(),
@@ -23,21 +22,25 @@ impl Guest for Component {
             },
             cool,
         ]);
+        Ok(())
     }
 
-    fn barry(_: Ignoreme) {}
+    async fn barry(&self, _cx: Ctx, _warm: Ignoreme) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+        Ok(())
+    }
 }
 
-struct MyInputStream;
+impl<Ctx: Send> HandlerBlag<Ctx> for Component {}
 
-impl blag::Guest for Component {
-    type InputStream = MyInputStream;
-}
-
-impl blag::GuestInputStream for MyInputStream {
-    fn read(&self, _len: u64) -> Vec<u8> {
+impl<Ctx: Send> HandlerInputStream<Ctx> for Component {
+    async fn read(
+        &self,
+        _cx: Ctx,
+        _stream: ::wit_bindgen_wrpc::wrpc_transport::ResourceBorrow<
+            crate::test::exports::my::inline::blag::InputStream,
+        >,
+        _len: u64,
+    ) -> ::wit_bindgen_wrpc::anyhow::Result<::wit_bindgen_wrpc::bytes::Bytes> {
         todo!()
     }
 }
-
-export!(Component);

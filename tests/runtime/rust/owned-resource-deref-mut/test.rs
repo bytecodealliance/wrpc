@@ -1,33 +1,39 @@
-include!(env!("BINDINGS"));
+use crate::test::exports::my::inline::foo::{Handler, HandlerBar, Bar};
 
-pub struct MyResource {
-    data: u32,
-}
+#[derive(Clone)]
+pub struct Component;
 
-impl exports::my::inline::foo::GuestBar for MyResource {
-    fn new(data: u32) -> Self {
-        Self { data }
+impl<Ctx: Send> Handler<Ctx> for Component {}
+
+impl<Ctx: Send> HandlerBar<Ctx> for Component {
+    async fn new(
+        &self,
+        _cx: Ctx,
+        data: u32,
+    ) -> ::wit_bindgen_wrpc::anyhow::Result<
+        ::wit_bindgen_wrpc::wrpc_transport::ResourceOwn<Bar>,
+    > {
+        Ok(::wit_bindgen_wrpc::wrpc_transport::ResourceOwn::from(
+            ::wit_bindgen_wrpc::bytes::Bytes::copy_from_slice(&data.to_le_bytes()),
+        ))
     }
 
-    fn get_data(&self) -> u32 {
-        self.data
+    async fn get_data(
+        &self,
+        _cx: Ctx,
+        self_: ::wit_bindgen_wrpc::wrpc_transport::ResourceBorrow<Bar>,
+    ) -> ::wit_bindgen_wrpc::anyhow::Result<u32> {
+        let bytes: &[u8] = self_.as_ref();
+        Ok(u32::from_le_bytes(bytes.try_into().unwrap()))
     }
 
-    fn consume(mut this: exports::my::inline::foo::Bar) -> u32 {
-        let me: &MyResource = this.get();
-        let prior_data: &u32 = &me.data;
-        let new_data = prior_data + 1;
-        let me: &mut MyResource = this.get_mut();
-        let mutable_data: &mut u32 = &mut me.data;
-        *mutable_data = new_data;
-        me.data
+    async fn consume(
+        &self,
+        _cx: Ctx,
+        self_: ::wit_bindgen_wrpc::wrpc_transport::ResourceOwn<Bar>,
+    ) -> ::wit_bindgen_wrpc::anyhow::Result<u32> {
+        let bytes: &[u8] = self_.as_ref();
+        let data = u32::from_le_bytes(bytes.try_into().unwrap());
+        Ok(data + 1)
     }
 }
-
-struct Component;
-
-impl exports::my::inline::foo::Guest for Component {
-    type Bar = MyResource;
-}
-
-export!(Component);

@@ -1,15 +1,10 @@
-include!(env!("BINDINGS"));
+use crate::runner::my::inline::foo::Bar;
 
-use crate::my::inline::foo::Bar;
-
-struct Component;
-
-export!(Component);
-
-impl Guest for Component {
-    fn run() {
-        let data = Bar::new(3);
-        assert_eq!(data.get_data(), 3);
-        assert_eq!(Bar::consume(data), 4);
-    }
+pub async fn run(
+    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,
+) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+    let data = Bar::new(wrpc, (), 3).await?;
+    assert_eq!(Bar::get_data(wrpc, (), &data.as_borrow()).await?, 3);
+    assert_eq!(Bar::consume(wrpc, (), &data).await?, 4);
+    Ok(())
 }

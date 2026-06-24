@@ -1,12 +1,8 @@
-include!(env!("BINDINGS"));
+use crate::runner::exports::bar;
 
-struct Component;
-
-export!(Component);
-
-impl Guest for Component {
-    fn run() {
-        exports::foo();
-        exports::bar();
-    }
+pub async fn run(
+    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,
+) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+    bar(wrpc, ()).await?;
+    Ok(())
 }
