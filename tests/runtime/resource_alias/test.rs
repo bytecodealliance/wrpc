@@ -1,5 +1,5 @@
-use crate::test::exports::test::resource_alias::e1;
-use crate::test::exports::test::resource_alias::e2;
+use crate::server::exports::test::resource_alias::e1;
+use crate::server::exports::test::resource_alias::e2;
 
 #[derive(Clone)]
 pub struct Component;

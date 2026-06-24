@@ -1,7 +1,7 @@
 #[derive(Clone)]
 pub struct Component;
 
-impl<Ctx: Send> crate::test::exports::cat::Handler<Ctx> for Component {
+impl<Ctx: Send> crate::server::exports::cat::Handler<Ctx> for Component {
     async fn foo(&self, _cx: Ctx, x: String) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
         assert_eq!(x, "hello");
         Ok(())

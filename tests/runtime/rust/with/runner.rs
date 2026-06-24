@@ -26,6 +26,6 @@ pub async fn run(
     let msg = other::my::inline::foo::Msg {
         field: "hello".to_string(),
     };
-    crate::runner::my::inline::bar::bar(wrpc, (), &msg).await?;
+    crate::client::my::inline::bar::bar(wrpc, (), &msg).await?;
     Ok(())
 }

@@ -1,7 +1,7 @@
 #[derive(Clone)]
 pub struct Component;
 
-impl<Ctx: Send> crate::test::exports::test::strings::to_test::Handler<Ctx> for Component {
+impl<Ctx: Send> crate::server::exports::test::strings::to_test::Handler<Ctx> for Component {
     async fn take_basic(&self, _cx: Ctx, s: String) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
         assert_eq!(s, "latin utf16");
         Ok(())

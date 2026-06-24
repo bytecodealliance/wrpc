@@ -1,4 +1,4 @@
-use crate::runner::test::resource_aggregates::to_test::{
+use crate::client::test::resource_aggregates::to_test::{
     foo, Thing, R1, R2, R3, V1, V2,
 };
 

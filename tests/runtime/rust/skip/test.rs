@@ -1,6 +1,6 @@
 //@ args = '--skip foo'
 
-use crate::test::exports::exports::Handler;
+use crate::server::exports::exports::Handler;
 
 #[derive(Clone)]
 pub struct Component;

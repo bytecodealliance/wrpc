@@ -1,4 +1,4 @@
-use crate::test::exports::test::resource_borrow_in_record::to_test::{
+use crate::server::exports::test::resource_borrow_in_record::to_test::{
     Foo, Handler, HandlerThing, Thing,
 };
 

@@ -1,7 +1,7 @@
 #[derive(Clone)]
 pub struct Component;
 
-impl<Ctx: Send> crate::test::exports::test::many_arguments::to_test::Handler<Ctx> for Component {
+impl<Ctx: Send> crate::server::exports::test::many_arguments::to_test::Handler<Ctx> for Component {
     async fn many_arguments(
         &self,
         _cx: Ctx,

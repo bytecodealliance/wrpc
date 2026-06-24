@@ -1,9 +1,9 @@
-use crate::test::exports::test::list_in_variant::to_test::*;
+use crate::server::exports::test::list_in_variant::to_test::*;
 
 #[derive(Clone)]
 pub struct Component;
 
-impl<Ctx: Send> crate::test::exports::test::list_in_variant::to_test::Handler<Ctx> for Component {
+impl<Ctx: Send> crate::server::exports::test::list_in_variant::to_test::Handler<Ctx> for Component {
     async fn list_in_option(
         &self,
         _cx: Ctx,

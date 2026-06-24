@@ -3,9 +3,9 @@
 use ::wit_bindgen_wrpc::anyhow::Result;
 use ::wit_bindgen_wrpc::wrpc_transport::ResourceOwn;
 
-use crate::test::exports::i::{C as IC, D as ID, Handler as HandlerI};
-use crate::test::exports::my::inline::bar::{E, Handler as HandlerBar};
-use crate::test::exports::my::inline::foo::{
+use crate::server::exports::i::{C as IC, D as ID, Handler as HandlerI};
+use crate::server::exports::my::inline::bar::{E, Handler as HandlerBar};
+use crate::server::exports::my::inline::foo::{
     A, B, F, G, Handler as HandlerFoo, HandlerB,
 };
 

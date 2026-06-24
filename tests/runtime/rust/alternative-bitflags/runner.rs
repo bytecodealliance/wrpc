@@ -1,8 +1,8 @@
-//@ args = '--bitflags-path crate::runner::my_bitflags'
+//@ args = '--bitflags-path crate::client::my_bitflags'
 
 pub(crate) use ::wit_bindgen_wrpc::bitflags as my_bitflags;
 
-use crate::runner::my::inline::t::{get_flag, Bar};
+use crate::client::my::inline::t::{get_flag, Bar};
 
 pub async fn run(
     wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,

@@ -1,4 +1,4 @@
-use crate::runner::test::options::to_test::*;
+use crate::client::test::options::to_test::*;
 
 pub async fn run(
     wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,

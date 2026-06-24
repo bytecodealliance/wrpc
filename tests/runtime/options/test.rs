@@ -1,7 +1,7 @@
 #[derive(Clone)]
 pub struct Component;
 
-impl<Ctx: Send> crate::test::exports::test::options::to_test::Handler<Ctx> for Component {
+impl<Ctx: Send> crate::server::exports::test::options::to_test::Handler<Ctx> for Component {
     async fn option_none_param(
         &self,
         _cx: Ctx,

@@ -1,6 +1,6 @@
-use crate::test::exports::test::resource_alias_redux::resource_alias1 as a1;
-use crate::test::exports::test::resource_alias_redux::resource_alias2 as a2;
-use crate::test::exports::the_test;
+use crate::server::exports::test::resource_alias_redux::resource_alias1 as a1;
+use crate::server::exports::test::resource_alias_redux::resource_alias2 as a2;
+use crate::server::exports::the_test;
 
 #[derive(Clone)]
 pub struct Component;

@@ -1,4 +1,4 @@
-use crate::runner::my::inline::foo::Bar;
+use crate::client::my::inline::foo::Bar;
 
 pub async fn run(
     wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,
