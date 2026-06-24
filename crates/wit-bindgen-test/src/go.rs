@@ -211,7 +211,16 @@ impl Runner<'_> {
         )?;
         super::write_if_different(&driver.join("main.go"), DRIVER)?;
 
-        self.run_command(Command::new("go").args(["run", "."]).current_dir(&driver))
-            .context("Go runtime test driver failed")
+        // The driver module lives under the build artifacts directory, which is
+        // nested inside the repository's `go.work`. Disable workspace mode so
+        // `go run` uses the driver's own `go.mod` (and its `wrpc.io/go` replace)
+        // rather than refusing to build a module absent from `go.work`.
+        self.run_command(
+            Command::new("go")
+                .args(["run", "."])
+                .env("GOWORK", "off")
+                .current_dir(&driver),
+        )
+        .context("Go runtime test driver failed")
     }
 }
