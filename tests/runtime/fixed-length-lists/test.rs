@@ -1,43 +1,86 @@
-include!(env!("BINDINGS"));
+//@ wasmtime-flags = '-Wcomponent-model-fixed-length-lists'
 
-struct Component;
+use crate::server::exports::test::fixed_length_lists::to_test::{Handler, Nested};
 
-export!(Component);
+#[derive(Clone)]
+pub struct Component;
 
-use crate::exports::test::fixed_length_lists::to_test::Nested;
-
-impl exports::test::fixed_length_lists::to_test::Guest for Component {
-    fn list_param(a: [u32; 4]) {
+impl<Ctx: Send> Handler<Ctx> for Component {
+    async fn list_param(&self, _cx: Ctx, a: [u32; 4]) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
         assert_eq!(a, [1, 2, 3, 4]);
+        Ok(())
     }
-    fn list_param2(a: [[u32; 2]; 2]) {
+
+    async fn list_param2(
+        &self,
+        _cx: Ctx,
+        a: [[u32; 2]; 2],
+    ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
         assert_eq!(a, [[1, 2], [3, 4]]);
+        Ok(())
     }
-    fn list_param3(a: [i32; 20]) {
+
+    async fn list_param3(&self, _cx: Ctx, a: [i32; 20]) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
         assert_eq!(
             a,
             [-1, 2, -3, 4, -5, 6, -7, 8, -9, 10, -11, 12, -13, 14, -15, 16, -17, 18, -19, 20]
         );
+        Ok(())
     }
-    fn list_minmax16(a: [u16; 4], b: [i16; 4]) -> ([u16; 4], [i16; 4]) {
-        (a, b)
+
+    async fn list_minmax16(
+        &self,
+        _cx: Ctx,
+        a: [u16; 4],
+        b: [i16; 4],
+    ) -> ::wit_bindgen_wrpc::anyhow::Result<([u16; 4], [i16; 4])> {
+        Ok((a, b))
     }
-    fn list_minmax_float(a: [f32; 2], b: [f64; 2]) -> ([f32; 2], [f64; 2]) {
-        (a, b)
+
+    async fn list_minmax_float(
+        &self,
+        _cx: Ctx,
+        a: [f32; 2],
+        b: [f64; 2],
+    ) -> ::wit_bindgen_wrpc::anyhow::Result<([f32; 2], [f64; 2])> {
+        Ok((a, b))
     }
-    fn list_roundtrip(a: [u8; 12]) -> [u8; 12] {
-        a
+
+    async fn list_roundtrip(
+        &self,
+        _cx: Ctx,
+        a: [u8; 12],
+    ) -> ::wit_bindgen_wrpc::anyhow::Result<[u8; 12]> {
+        Ok(a)
     }
-    fn list_result() -> [u8; 8] {
-        [b'0', b'1', b'A', b'B', b'a', b'b', 128, 255]
+
+    async fn list_result(&self, _cx: Ctx) -> ::wit_bindgen_wrpc::anyhow::Result<[u8; 8]> {
+        Ok([b'0', b'1', b'A', b'B', b'a', b'b', 128, 255])
     }
-    fn nested_roundtrip(a: [[u32; 2]; 2], b: [[i32; 2]; 2]) -> ([[u32; 2]; 2], [[i32; 2]; 2]) {
-        (a, b)
+
+    async fn nested_roundtrip(
+        &self,
+        _cx: Ctx,
+        a: [[u32; 2]; 2],
+        b: [[i32; 2]; 2],
+    ) -> ::wit_bindgen_wrpc::anyhow::Result<([[u32; 2]; 2], [[i32; 2]; 2])> {
+        Ok((a, b))
     }
-    fn large_roundtrip(a: [[u32; 2]; 2], b: [[i32; 4]; 4]) -> ([[u32; 2]; 2], [[i32; 4]; 4]) {
-        (a, b)
+
+    async fn large_roundtrip(
+        &self,
+        _cx: Ctx,
+        a: [[u32; 2]; 2],
+        b: [[i32; 4]; 4],
+    ) -> ::wit_bindgen_wrpc::anyhow::Result<([[u32; 2]; 2], [[i32; 4]; 4])> {
+        Ok((a, b))
     }
-    fn nightmare_on_cpp(a: [Nested; 2]) -> [Nested; 2] {
-        a
+
+    async fn nightmare_on_cpp(
+        &self,
+        _cx: Ctx,
+        a: [Nested; 2],
+    ) -> ::wit_bindgen_wrpc::anyhow::Result<[Nested; 2]> {
+        Ok(a)
     }
 }

@@ -1,71 +1,81 @@
-package export_test_maps_to_test
+//@ wasmtime-flags = '-Wcomponent-model-map'
+
+package test
 
 import (
-	. "wit_component/test_maps_to_test"
+	"context"
 
-	. "go.bytecodealliance.org/pkg/wit/types"
+	wrpc "wrpc.io/go"
+
+	"driver/test/exports/test/maps/to_test"
 )
 
-func NamedRoundtrip(a NamesById) IdsByName {
-	result := make(IdsByName)
+type handler struct{}
+
+func NewHandler() handler {
+	return handler{}
+}
+
+func (handler) NamedRoundtrip(ctx context.Context, a to_test.NamesById) (to_test.IdsByName, error) {
+	result := make(to_test.IdsByName)
 	for id, name := range a {
 		result[name] = id
 	}
-	return result
+	return result, nil
 }
 
-func BytesRoundtrip(a BytesByName) BytesByName {
-	return a
+func (handler) BytesRoundtrip(ctx context.Context, a to_test.BytesByName) (to_test.BytesByName, error) {
+	return a, nil
 }
 
-func EmptyRoundtrip(a NamesById) NamesById {
-	return a
+func (handler) EmptyRoundtrip(ctx context.Context, a to_test.NamesById) (to_test.NamesById, error) {
+	return a, nil
 }
 
-func OptionRoundtrip(a map[string]Option[uint32]) map[string]Option[uint32] {
-	return a
+func (handler) OptionRoundtrip(ctx context.Context, a map[string]*uint32) (map[string]*uint32, error) {
+	return a, nil
 }
 
-func RecordRoundtrip(a LabeledEntry) LabeledEntry {
-	return a
+func (handler) RecordRoundtrip(ctx context.Context, a *to_test.LabeledEntry) (*to_test.LabeledEntry, error) {
+	return a, nil
 }
 
-func InlineRoundtrip(a map[uint32]string) map[string]uint32 {
+func (handler) InlineRoundtrip(ctx context.Context, a map[uint32]string) (map[string]uint32, error) {
 	result := make(map[string]uint32)
 	for k, v := range a {
 		result[v] = k
 	}
-	return result
+	return result, nil
 }
 
-func LargeRoundtrip(a NamesById) NamesById {
-	return a
+func (handler) LargeRoundtrip(ctx context.Context, a to_test.NamesById) (to_test.NamesById, error) {
+	return a, nil
 }
 
-func MultiParamRoundtrip(a NamesById, b BytesByName) (IdsByName, BytesByName) {
-	ids := make(IdsByName)
+func (handler) MultiParamRoundtrip(ctx context.Context, a to_test.NamesById, b to_test.BytesByName) (to_test.IdsByName, to_test.BytesByName, error) {
+	ids := make(to_test.IdsByName)
 	for id, name := range a {
 		ids[name] = id
 	}
-	return ids, b
+	return ids, b, nil
 }
 
-func NestedRoundtrip(a map[string]map[uint32]string) map[string]map[uint32]string {
-	return a
+func (handler) NestedRoundtrip(ctx context.Context, a map[string]map[uint32]string) (map[string]map[uint32]string, error) {
+	return a, nil
 }
 
-func VariantRoundtrip(a MapOrString) MapOrString {
-	return a
+func (handler) VariantRoundtrip(ctx context.Context, a *to_test.MapOrString) (*to_test.MapOrString, error) {
+	return a, nil
 }
 
-func ResultRoundtrip(a Result[NamesById, string]) Result[NamesById, string] {
-	return a
+func (handler) ResultRoundtrip(ctx context.Context, a *wrpc.Result[to_test.NamesById, string]) (*wrpc.Result[to_test.NamesById, string], error) {
+	return a, nil
 }
 
-func TupleRoundtrip(a Tuple2[NamesById, uint64]) (NamesById, uint64) {
-	return a.F0, a.F1
+func (handler) TupleRoundtrip(ctx context.Context, a *wrpc.Tuple2[to_test.NamesById, uint64]) (to_test.NamesById, uint64, error) {
+	return a.V0, a.V1, nil
 }
 
-func SingleEntryRoundtrip(a NamesById) NamesById {
-	return a
+func (handler) SingleEntryRoundtrip(ctx context.Context, a to_test.NamesById) (to_test.NamesById, error) {
+	return a, nil
 }
