@@ -13,30 +13,30 @@ mod my_types {
             package my:types;
 
             interface t {
-                record rec-a {
+                record a {
                     inner: f64,
                 }
 
-                resource res-b;
+                resource b;
 
-                variant var-c {
-                    a(rec-a),
-                    b(res-b),
+                variant c {
+                    a(a),
+                    b(b),
                 }
 
-                record rec-d {
+                record d {
                     inner: u32,
                 }
 
-                record rec-e {
+                record e {
                     inner: u32,
                 }
 
-                use-a: func(v: rec-a) -> rec-a;
-                use-b: func(v: res-b) -> res-b;
-                use-c: func(v: var-c) -> var-c;
-                use-d: func(v: rec-d) -> rec-d;
-                use-e: func(v: rec-e) -> rec-e;
+                use-a: func(v: a) -> a;
+                use-b: func(v: b) -> b;
+                use-c: func(v: c) -> c;
+                use-d: func(v: d) -> d;
+                use-e: func(v: e) -> e;
             }
 
             world dummy {
@@ -46,9 +46,7 @@ mod my_types {
         generate_all,
     });
 
-    pub use self::my::types::t::{
-        RecA as MyA, RecD as MyD, RecE as MyE, ResB as MyB, VarC as MyC,
-    };
+    pub use self::my::types::t::{A as MyA, B as MyB, C as MyC, D as MyD, E as MyE};
 }
 
 pub async fn run(
