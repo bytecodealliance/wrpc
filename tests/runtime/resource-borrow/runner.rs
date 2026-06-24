@@ -1,13 +1,9 @@
-include!(env!("BINDINGS"));
+use crate::runner::test::resource_borrow::to_test::{foo, Thing};
 
-use crate::test::resource_borrow::to_test::{foo, Thing};
-
-struct Component;
-
-export!(Component);
-
-impl Guest for Component {
-    fn run() {
-        assert_eq!(foo(&Thing::new(42)), 42 + 1 + 2);
-    }
+pub async fn run(
+    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,
+) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+    let thing = Thing::new(wrpc, (), 42).await?;
+    assert_eq!(foo(wrpc, (), &thing.as_borrow()).await?, 42 + 1 + 2);
+    Ok(())
 }

@@ -1,30 +1,45 @@
-include!(env!("BINDINGS"));
+use crate::test::exports::test::resource_alias::e1;
+use crate::test::exports::test::resource_alias::e2;
 
-pub struct Test {}
+#[derive(Clone)]
+pub struct Component;
 
-export!(Test);
-
-#[allow(dead_code)]
-pub struct E1X(u32);
-
-impl exports::test::resource_alias::e1::Guest for Test {
-    type X = E1X;
-
-    fn a(f: exports::test::resource_alias::e1::Foo) -> Vec<exports::test::resource_alias::e1::X> {
-        vec![f.x]
+impl<Ctx: Send> e1::Handler<Ctx> for Component {
+    async fn a(
+        &self,
+        _cx: Ctx,
+        f: e1::Foo,
+    ) -> ::wit_bindgen_wrpc::anyhow::Result<
+        Vec<::wit_bindgen_wrpc::wrpc_transport::ResourceOwn<e1::X>>,
+    > {
+        Ok(vec![f.x])
     }
 }
-impl exports::test::resource_alias::e1::GuestX for E1X {
-    fn new(v: u32) -> Self {
-        Self(v)
+
+impl<Ctx: Send> e1::HandlerX<Ctx> for Component {
+    async fn new(
+        &self,
+        _cx: Ctx,
+        v: u32,
+    ) -> ::wit_bindgen_wrpc::anyhow::Result<
+        ::wit_bindgen_wrpc::wrpc_transport::ResourceOwn<e1::X>,
+    > {
+        Ok(::wit_bindgen_wrpc::wrpc_transport::ResourceOwn::from(
+            ::wit_bindgen_wrpc::bytes::Bytes::copy_from_slice(&v.to_le_bytes()),
+        ))
     }
 }
-impl exports::test::resource_alias::e2::Guest for Test {
-    fn a(
-        f: exports::test::resource_alias::e2::Foo,
-        g: exports::test::resource_alias::e2::Bar,
-        _h: exports::test::resource_alias::e1::XBorrow<'_>,
-    ) -> Vec<exports::test::resource_alias::e2::Y> {
-        vec![f.x, g.x]
+
+impl<Ctx: Send> e2::Handler<Ctx> for Component {
+    async fn a(
+        &self,
+        _cx: Ctx,
+        f: e2::Foo,
+        g: e2::Bar,
+        _h: ::wit_bindgen_wrpc::wrpc_transport::ResourceBorrow<e2::Y>,
+    ) -> ::wit_bindgen_wrpc::anyhow::Result<
+        Vec<::wit_bindgen_wrpc::wrpc_transport::ResourceOwn<e2::Y>>,
+    > {
+        Ok(vec![f.x, g.x])
     }
 }

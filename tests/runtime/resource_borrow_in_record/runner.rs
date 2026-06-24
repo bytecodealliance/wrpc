@@ -1,19 +1,27 @@
-include!(env!("BINDINGS"));
+use crate::runner::test::resource_borrow_in_record::to_test::{test, Foo, Thing};
 
-use crate::test::resource_borrow_in_record::to_test::{test, Foo, Thing};
-
-struct Component;
-
-export!(Component);
-
-impl Guest for Component {
-    fn run() {
-        let thing1 = Thing::new("Bonjour");
-        let thing2 = Thing::new("mon cher");
-        let result = test(&[Foo { thing: &thing1 }, Foo { thing: &thing2 }])
-            .into_iter()
-            .map(|x| x.get())
-            .collect::<Vec<_>>();
-        assert_eq!(result, ["Bonjour new test get", "mon cher new test get"]);
+pub async fn run(
+    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,
+) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+    let thing1 = Thing::new(wrpc, (), "Bonjour").await?;
+    let thing2 = Thing::new(wrpc, (), "mon cher").await?;
+    let things = test(
+        wrpc,
+        (),
+        &[
+            Foo {
+                thing: thing1.as_borrow(),
+            },
+            Foo {
+                thing: thing2.as_borrow(),
+            },
+        ],
+    )
+    .await?;
+    let mut result = Vec::new();
+    for thing in &things {
+        result.push(Thing::get(wrpc, (), &thing.as_borrow()).await?);
     }
+    assert_eq!(result, ["Bonjour new test get", "mon cher new test get"]);
+    Ok(())
 }
