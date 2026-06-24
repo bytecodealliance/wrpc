@@ -1,55 +1,64 @@
-package export_test_numbers_numbers
+package test
 
-func RoundtripU8(v uint8) uint8 {
-	return v
+import "context"
+
+type handler struct{}
+
+func NewHandler() handler {
+	return handler{}
 }
 
-func RoundtripS8(v int8) int8 {
-	return v
+func (handler) RoundtripU8(ctx context.Context, v uint8) (uint8, error) {
+	return v, nil
 }
 
-func RoundtripU16(v uint16) uint16 {
-	return v
+func (handler) RoundtripS8(ctx context.Context, v int8) (int8, error) {
+	return v, nil
 }
 
-func RoundtripS16(v int16) int16 {
-	return v
+func (handler) RoundtripU16(ctx context.Context, v uint16) (uint16, error) {
+	return v, nil
 }
 
-func RoundtripU32(v uint32) uint32 {
-	return v
+func (handler) RoundtripS16(ctx context.Context, v int16) (int16, error) {
+	return v, nil
 }
 
-func RoundtripS32(v int32) int32 {
-	return v
+func (handler) RoundtripU32(ctx context.Context, v uint32) (uint32, error) {
+	return v, nil
 }
 
-func RoundtripU64(v uint64) uint64 {
-	return v
+func (handler) RoundtripS32(ctx context.Context, v int32) (int32, error) {
+	return v, nil
 }
 
-func RoundtripS64(v int64) int64 {
-	return v
+func (handler) RoundtripU64(ctx context.Context, v uint64) (uint64, error) {
+	return v, nil
 }
 
-func RoundtripF32(v float32) float32 {
-	return v
+func (handler) RoundtripS64(ctx context.Context, v int64) (int64, error) {
+	return v, nil
 }
 
-func RoundtripF64(v float64) float64 {
-	return v
+func (handler) RoundtripF32(ctx context.Context, v float32) (float32, error) {
+	return v, nil
 }
 
-func RoundtripChar(v rune) rune {
-	return v
+func (handler) RoundtripF64(ctx context.Context, v float64) (float64, error) {
+	return v, nil
+}
+
+func (handler) RoundtripChar(ctx context.Context, v rune) (rune, error) {
+	return v, nil
 }
 
 var scalar uint32 = 0
 
-func SetScalar(v uint32) {
+func (handler) SetScalar(ctx context.Context, v uint32) error {
 	scalar = v
+	return nil
 }
 
-func GetScalar() uint32 {
-	return scalar
+func (handler) GetScalar(ctx context.Context) (uint32, error) {
+	return scalar, nil
 }
