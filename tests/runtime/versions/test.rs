@@ -1,28 +1,22 @@
-include!(env!("BINDINGS"));
+#[derive(Clone)]
+pub struct Component;
 
-use exports::test::dep0_1_0::test::Guest as v1;
-use exports::test::dep0_2_0::test::Guest as v2;
-
-struct Component;
-
-export!(Component);
-
-impl v1 for Component {
-    fn x() -> f32 {
-        1.0
+impl<Ctx: Send> crate::test::exports::test::dep0_1_0::test::Handler<Ctx> for Component {
+    async fn x(&self, _cx: Ctx) -> ::wit_bindgen_wrpc::anyhow::Result<f32> {
+        Ok(1.0)
     }
 
-    fn y(a: f32) -> f32 {
-        1.0 + a
+    async fn y(&self, _cx: Ctx, a: f32) -> ::wit_bindgen_wrpc::anyhow::Result<f32> {
+        Ok(1.0 + a)
     }
 }
 
-impl v2 for Component {
-    fn x() -> f32 {
-        2.0
+impl<Ctx: Send> crate::test::exports::test::dep0_2_0::test::Handler<Ctx> for Component {
+    async fn x(&self, _cx: Ctx) -> ::wit_bindgen_wrpc::anyhow::Result<f32> {
+        Ok(2.0)
     }
 
-    fn z(a: f32, b: f32) -> f32 {
-        2.0 + a + b
+    async fn z(&self, _cx: Ctx, a: f32, b: f32) -> ::wit_bindgen_wrpc::anyhow::Result<f32> {
+        Ok(2.0 + a + b)
     }
 }

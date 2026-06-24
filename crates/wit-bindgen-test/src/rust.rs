@@ -32,6 +32,13 @@ pub struct RustOpts {
         value_name = "X.Y.Z"
     )]
     rust_wrpc_transport_version: Option<String>,
+
+    /// A custom `path` dependency to use as a `[patch.crates-io]` override for
+    /// `leb128-tokio` (the LEB128 codec used transitively via `wasm-tokio`).
+    ///
+    /// Useful while a fix is pending an upstream release.
+    #[clap(long, value_name = "PATH")]
+    rust_leb128_tokio_path: Option<PathBuf>,
 }
 
 pub struct Rust;
@@ -125,6 +132,14 @@ impl LanguageMethods for Rust {
             }
         };
 
+        let patch = match &opts.rust_leb128_tokio_path {
+            Some(path) => format!(
+                "\n[patch.crates-io]\nleb128-tokio = {{ path = {:?} }}\n",
+                cwd.join(path)
+            ),
+            None => String::new(),
+        };
+
         let dir = cwd.join(&runner.opts.artifacts).join("rust");
         let helper = dir.join("deps-crate");
 
@@ -151,7 +166,7 @@ futures = "0.3"
 anyhow = "1"
 serde = {{ version = "1", features = ["derive"] }}
 serde_json = "1"
-"#,
+{patch}"#,
             ),
         )?;
         super::write_if_different(&helper.join("lib.rs"), "")?;

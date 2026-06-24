@@ -1,13 +1,10 @@
-include!(env!("BINDINGS"));
+#[derive(Clone)]
+pub struct Component;
 
-struct Component;
-
-export!(Component);
-
-use crate::exports::test::many_arguments::to_test::Guest;
-
-impl Guest for Component {
-    fn many_arguments(
+impl<Ctx: Send> crate::test::exports::test::many_arguments::to_test::Handler<Ctx> for Component {
+    async fn many_arguments(
+        &self,
+        _cx: Ctx,
         a1: u64,
         a2: u64,
         a3: u64,
@@ -24,7 +21,7 @@ impl Guest for Component {
         a14: u64,
         a15: u64,
         a16: u64,
-    ) {
+    ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
         assert_eq!(a1, 1);
         assert_eq!(a2, 2);
         assert_eq!(a3, 3);
@@ -41,5 +38,6 @@ impl Guest for Component {
         assert_eq!(a14, 14);
         assert_eq!(a15, 15);
         assert_eq!(a16, 16);
+        Ok(())
     }
 }

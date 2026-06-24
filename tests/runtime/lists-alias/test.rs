@@ -1,15 +1,15 @@
-include!(env!("BINDINGS"));
+use ::wit_bindgen_wrpc::bytes::Bytes;
 
-struct Test;
+#[derive(Clone)]
+pub struct Component;
 
-export!(Test);
-
-impl exports::cat::Guest for Test {
-    fn foo(x: Vec<u8>) {
-        assert_eq!(x, b"hello");
+impl<Ctx: Send> crate::test::exports::cat::Handler<Ctx> for Component {
+    async fn foo(&self, _cx: Ctx, x: Bytes) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+        assert_eq!(x, &b"hello"[..]);
+        Ok(())
     }
 
-    fn bar() -> Vec<u8> {
-        b"world".into()
+    async fn bar(&self, _cx: Ctx) -> ::wit_bindgen_wrpc::anyhow::Result<Bytes> {
+        Ok(Bytes::from_static(b"world"))
     }
 }

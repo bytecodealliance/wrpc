@@ -1,39 +1,36 @@
-include!(env!("BINDINGS"));
+use crate::runner::test::list_in_variant::to_test::*;
 
-use crate::test::list_in_variant::to_test::*;
+pub async fn run(
+    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,
+) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+    let hw: Vec<&str> = vec!["hello", "world"];
+    assert_eq!(
+        list_in_option(wrpc, (), Some(hw.as_slice())).await?,
+        "hello,world"
+    );
+    assert_eq!(list_in_option(wrpc, (), None).await?, "none");
 
-struct Component;
+    let fbb = PayloadOrEmpty::WithData(vec!["foo".into(), "bar".into(), "baz".into()]);
+    assert_eq!(list_in_variant(wrpc, (), &fbb).await?, "foo,bar,baz");
+    assert_eq!(
+        list_in_variant(wrpc, (), &PayloadOrEmpty::Empty).await?,
+        "empty"
+    );
 
-export!(Component);
+    let abc: Result<Vec<String>, String> = Ok(vec!["a".into(), "b".into(), "c".into()]);
+    assert_eq!(list_in_result(wrpc, (), &abc).await?, "a,b,c");
+    let oops: Result<Vec<String>, String> = Err("oops".to_string());
+    assert_eq!(list_in_result(wrpc, (), &oops).await?, "err:oops");
 
-impl Guest for Component {
-    fn run() {
-        // list-in-option (Bug 1: list freed inside match arm before FFI call)
-        let hw: Vec<String> = ["hello", "world"].into_iter().map(Into::into).collect();
-        assert_eq!(list_in_option(Some(&hw)), "hello,world");
-        assert_eq!(list_in_option(None), "none");
+    let hw2: Vec<&str> = vec!["hello", "world"];
+    let s = list_in_option_with_return(wrpc, (), Some(hw2.as_slice())).await?;
+    assert_eq!(s.count, 2);
+    assert_eq!(s.label, "hello,world");
+    let s = list_in_option_with_return(wrpc, (), None).await?;
+    assert_eq!(s.count, 0);
+    assert_eq!(s.label, "none");
 
-        // list-in-variant (Bug 1: same pattern with variant)
-        let fbb = PayloadOrEmpty::WithData(vec!["foo".into(), "bar".into(), "baz".into()]);
-        assert_eq!(list_in_variant(&fbb), "foo,bar,baz");
-        assert_eq!(list_in_variant(&PayloadOrEmpty::Empty), "empty");
-
-        // list-in-result (Bug 1: same pattern with result)
-        let abc: Vec<String> = ["a", "b", "c"].into_iter().map(Into::into).collect();
-        assert_eq!(list_in_result(Ok(&abc)), "a,b,c");
-        assert_eq!(list_in_result(Err("oops")), "err:oops");
-
-        // list-in-option-with-return (Bug 1 + Bug 2: freed list + return_area read-after-free)
-        let hw2: Vec<String> = ["hello", "world"].into_iter().map(Into::into).collect();
-        let s = list_in_option_with_return(Some(&hw2));
-        assert_eq!(s.count, 2);
-        assert_eq!(s.label, "hello,world");
-        let s = list_in_option_with_return(None);
-        assert_eq!(s.count, 0);
-        assert_eq!(s.label, "none");
-
-        // top-level-list (NOT affected — contrast case)
-        let xyz: Vec<String> = ["x", "y", "z"].into_iter().map(Into::into).collect();
-        assert_eq!(top_level_list(&xyz), "x,y,z");
-    }
+    let xyz: Vec<&str> = vec!["x", "y", "z"];
+    assert_eq!(top_level_list(wrpc, (), &xyz).await?, "x,y,z");
+    Ok(())
 }

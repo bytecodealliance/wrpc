@@ -1,16 +1,13 @@
-include!(env!("BINDINGS"));
+use ::wit_bindgen_wrpc::bytes::Bytes;
 
-struct Component;
+use crate::runner::cat::*;
 
-export!(Component);
+pub async fn run(
+    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,
+) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+    foo(wrpc, (), &Bytes::from_static(b"hello")).await?;
 
-impl Guest for Component {
-    fn run() {
-        // Test the argument is `&[u8]`
-        cat::foo(b"hello");
-
-        // Test the return type is `Vec<u8>`
-        let t: Vec<u8> = cat::bar();
-        assert_eq!(t, b"world");
-    }
+    let t: Bytes = bar(wrpc, ()).await?;
+    assert_eq!(t, &b"world"[..]);
+    Ok(())
 }
