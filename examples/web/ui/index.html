@@ -32,12 +32,65 @@
         }
     </style>
     <script type="module">
+        // The wRPC wire encoding and framing are provided by the
+        // `@bytecodealliance/wrpc` codec, served by the backend under `/wrpc`.
+        // This example owns the WebTransport stream handling (see `invoke`).
+        import { t, encodeInvocation, decodeResults, concatBytes } from '/wrpc/index.js';
+
+        // `wasi:keyvalue/store`, as served by the backend. The types mirror the
+        // WIT in `crates/wasi-keyvalue/wit/deps/keyvalue/store.wit`; the codec
+        // walks them to encode arguments and decode results.
+        const STORE = 'wasi:keyvalue/store@0.2.0-draft2';
+        const error = t.variant({ 'no-such-store': null, 'access-denied': null, other: t.string });
+
+        // open: func(identifier: string) -> result<bucket, error>
+        const OPEN = { params: [t.string], results: [t.result(t.own('bucket'), error)] };
+        // bucket.get: func(key: string) -> result<option<list<u8>>, error>
+        const GET = {
+            params: [t.borrow('bucket'), t.string],
+            results: [t.result(t.option(t.list(t.u8)), error)],
+        };
+        // bucket.set: func(key: string, value: list<u8>) -> result<_, error>
+        const SET = {
+            params: [t.borrow('bucket'), t.string, t.list(t.u8)],
+            results: [t.result(null, error)],
+        };
+
         let conn;
         let buckets = new Map();
 
-        function toHex(v) {
-            if (!v) return '';
-            return v.reduce((s, x) => s + x.toString(16).padStart(2, '0'), '')
+        // Invoke `func` on `instance` over a fresh WebTransport bidirectional
+        // stream: the codec builds the request bytes, the stream carries them,
+        // and the codec decodes the reply. The framed transport maps one stream
+        // to one invocation, so the write side is closed once the request is
+        // sent and the response is read until the stream ends.
+        async function invoke(instance, func, paramTypes, resultTypes, args) {
+            if (!conn) throw 'WebTransport not connected';
+            const payload = encodeInvocation(instance, func, paramTypes, args);
+
+            const stream = await conn.createBidirectionalStream();
+            const writer = stream.writable.getWriter();
+            await writer.write(payload);
+            await writer.close();
+
+            const reader = stream.readable.getReader();
+            const chunks = [];
+            for (; ;) {
+                const { done, value } = await reader.read();
+                if (value) chunks.push(value);
+                if (done) break;
+            }
+            return decodeResults(concatBytes(chunks), resultTypes);
+        }
+
+        // Render a decoded `error` variant value (`{ tag, val? }`) as a string.
+        function formatError(err) {
+            switch (err.tag) {
+                case 'no-such-store': return 'no such store';
+                case 'access-denied': return 'access denied';
+                case 'other': return err.val;
+                default: return `unknown error \`${err.tag}\``;
+            }
         }
 
         function uuidString(v) {
@@ -53,235 +106,6 @@
                         return s + hex;
                 }
             }, '')
-        }
-
-        async function wasiKeyvalueStoreOpen(tx, rx, identifier) {
-            const text = new TextEncoder();
-
-            const idBuf = text.encode(identifier);
-            if (idBuf.length > 127) throw 'this example currently does not support identifiers longer than 127 bytes - open a PR!';
-
-            const payloadBytes = 1 + idBuf.length;
-            if (payloadBytes > 127) throw 'this example currently does not support requests payload longer than 127 bytes - open a PR!';
-
-            let buf = new Uint8Array([
-                0,
-                'wasi:keyvalue/store@0.2.0-draft2'.length,
-                ...text.encode('wasi:keyvalue/store@0.2.0-draft2'),
-                'open'.length,
-                ...text.encode('open'),
-                0,
-                payloadBytes,
-                idBuf.length,
-                ...idBuf
-            ]);
-            dbg.debug('writing `open("' + identifier + '")` invocation: ' + toHex(buf));
-            await tx.write(buf);
-
-            dbg.debug('awaiting write to complete');
-            await tx.ready;
-            tx.close();
-
-            dbg.debug('reading `open` response...');
-            buf = null;
-            return await rx.read().then(function handleChunk({done, value}) {
-                if (!buf) {
-                    buf = value;
-                } else if (value) {
-                    const b = new Uint8Array(buf.length + value.length);
-                    b.set(buf);
-                    b.set(value, buf.length);
-                    buf = b;
-                }
-                if (done) {
-                    if (!buf || buf.length < 4) throw 'unexpected EOF';
-                    dbg.debug('received `open` response: ' + toHex(buf));
-                    if (buf[0] != 0) throw 'unexpected path'
-                    if (buf[1] > 127) throw 'only decoding responses of up to 127 bytes is currently supported - open a PR!'
-                    switch (buf[2]) {
-                        case 0:
-                            // ok
-                            return buf.subarray(4);
-                        case 1:
-                            // error
-                            switch (buf[3]) {
-                                case 0:
-                                    throw "no such store";
-                                case 1:
-                                    throw "access denied";
-                                case 2:
-                                    const err = new TextDecoder().decode(buf.subarray(5));
-                                    throw err;
-                            }
-                        default:
-                            throw "invalid result status byte"
-                    }
-                }
-                return rx.read().then(handleChunk);
-            }, err => {
-                throw 'failed to read `open` response: ' + err;
-            })
-        }
-
-        async function wasiKeyvalueStoreBucketGet(tx, rx, bucket, key) {
-            const text = new TextEncoder();
-
-            if (bucket.length > 127) throw 'this example currently does not support buckets longer than 127 bytes - open a PR!';
-
-            const keyBuf = text.encode(key);
-            if (keyBuf.length > 127) throw 'this example currently does not support keys longer than 127 bytes - open a PR!';
-
-            const payloadBytes = 2 + bucket.length + keyBuf.length;
-            if (payloadBytes > 127) throw 'this example currently does not support request payloads longer than 127 bytes - open a PR!';
-
-            let buf = new Uint8Array([
-                0,
-                'wasi:keyvalue/store@0.2.0-draft2'.length,
-                ...text.encode('wasi:keyvalue/store@0.2.0-draft2'),
-                'bucket.get'.length,
-                ...text.encode('bucket.get'),
-                0,
-                payloadBytes,
-                bucket.length,
-                ...bucket,
-                keyBuf.length,
-                ...keyBuf
-            ]);
-
-            dbg.debug('writing `bucket.get("' + bucket + '", "' + key + '")` invocation: ' + toHex(buf));
-            await tx.write(buf);
-
-            dbg.debug('awaiting write to complete');
-            await tx.ready;
-            tx.close();
-
-            dbg.debug('reading `bucket.get` response...');
-            buf = null;
-            return await rx.read().then(function handleChunk({done, value}) {
-                if (!buf) {
-                    buf = value;
-                } else if (value) {
-                    const b = new Uint8Array(buf.length + value.length);
-                    b.set(buf);
-                    b.set(value, buf.length);
-                    buf = b;
-                }
-                if (done) {
-                    if (!buf || buf.length < 4) throw 'unexpected EOF';
-                    dbg.debug('received `bucket.get` response: ' + toHex(buf));
-                    if (buf[0] != 0) throw 'unexpected path'
-                    if (buf[1] > 127) throw 'only decoding responses of up to 127 bytes is currently supported - open a PR!'
-                    switch (buf[2]) {
-                        case 0:
-                            // ok
-                            switch (buf[3]) {
-                                case 0:
-                                    // none
-                                    return null
-                                case 1:
-                                    // some
-                                    if (buf.length < 5) throw 'unexpected EOF'
-                                    return buf.subarray(5)
-                                default:
-                                    throw "invalid option status byte"
-                            }
-                        case 1:
-                            // error
-                            switch (buf[3]) {
-                                case 0:
-                                    throw "no such store";
-                                case 1:
-                                    throw "access denied";
-                                case 2:
-                                    const err = new TextDecoder().decode(buf.subarray(5));
-                                    throw err;
-                            }
-                        default:
-                            throw "invalid result status byte"
-                    }
-                }
-                return rx.read().then(handleChunk);
-            }, err => {
-                throw 'failed to read `bucket.get` response: ' + err;
-            })
-        }
-
-        async function wasiKeyvalueStoreBucketSet(tx, rx, bucket, key, value) {
-            const text = new TextEncoder();
-
-            if (bucket.length > 127) throw 'this example currently does not support buckets longer than 127 bytes - open a PR!';
-            if (value.length > 127) throw 'this example currently does not support values longer than 127 bytes - open a PR!';
-
-            const keyBuf = text.encode(key);
-            if (keyBuf.length > 127) throw 'this example currently does not support keys longer than 127 bytes - open a PR!';
-
-            const payloadBytes = 3 + bucket.length + keyBuf.length + value.length;
-            if (payloadBytes > 127) throw 'this example currently does not support request payloads longer than 127 bytes - open a PR!';
-
-            let buf = new Uint8Array([
-                0,
-                'wasi:keyvalue/store@0.2.0-draft2'.length,
-                ...text.encode('wasi:keyvalue/store@0.2.0-draft2'),
-                'bucket.set'.length,
-                ...text.encode('bucket.set'),
-                0,
-                payloadBytes,
-                bucket.length,
-                ...bucket,
-                keyBuf.length,
-                ...keyBuf,
-                value.length,
-                ...value
-            ]);
-
-            dbg.debug('writing `bucket.set("' + bucket + '", "' + key + '", "' + value + '") invocation: ' + toHex(buf));
-            await tx.write(buf);
-
-            dbg.debug('awaiting write to complete');
-            await tx.ready;
-            tx.close();
-
-            dbg.debug('reading `bucket.set` response...');
-            buf = null;
-            await rx.read().then(function handleChunk({done, value}) {
-                if (!buf) {
-                    buf = value;
-                } else if (value) {
-                    const b = new Uint8Array(buf.length + value.length);
-                    b.set(buf);
-                    b.set(value, buf.length);
-                    buf = b;
-                }
-                if (done) {
-                    if (!buf || buf.length < 3) throw 'unexpected EOF';
-                    dbg.debug('received `bucket.set` response: ' + toHex(buf));
-                    if (buf[0] != 0) throw 'unexpected path'
-                    if (buf[1] > 127) throw 'only decoding responses of up to 127 bytes is currently supported - open a PR!'
-                    switch (buf[2]) {
-                        case 0:
-                            // ok
-                            if (buf.length != 3) throw "unparsed bytes left on stream";
-                            return
-                        case 1:
-                            if (buf.length < 4) throw 'unexpected EOF';
-                            // error
-                            switch (buf[3]) {
-                                case 0:
-                                    throw "no such store";
-                                case 1:
-                                    throw "access denied";
-                                case 2:
-                                    const err = new TextDecoder().decode(buf.subarray(5));
-                                    throw err;
-                            }
-                        default:
-                            throw "invalid result status byte"
-                    }
-                }
-                rx.read().then(handleChunk);
-            }, err => {
-                throw 'failed to read `bucket.set` response: ' + err;
-            })
         }
 
         async function getBucket() {
@@ -328,25 +152,16 @@
                 throw 'selected wRPC transport not supported yet';
             }
 
-            if (identifier.length > 127) throw 'this example currently does not support identifiers longer than 127 bytes - open a PR!';
+            const existing = buckets.get(identifier);
+            if (existing) return existing;
 
-            const bucket = buckets.get(identifier);
-            if (bucket) return bucket;
-
-            dbg.debug('creating `open` stream...');
-            const stream = await conn.createBidirectionalStream();
-            return await wasiKeyvalueStoreOpen(
-                stream.writable.getWriter(),
-                stream.readable.getReader(),
-                identifier,
-            ).then(bucket => {
-                const bucketName = uuidString(bucket);
-                dbg.log(`opened bucket ${bucketName}`);
-                buckets.set(identifier, bucket);
-                return bucket;
-            }, err => {
-                throw 'failed to open bucket: ' + err;
-            });
+            dbg.debug(`opening bucket for \`${identifier}\`...`);
+            const [res] = await invoke(STORE, 'open', OPEN.params, OPEN.results, [identifier]);
+            if (res.tag === 'err') throw 'failed to open bucket: ' + formatError(res.val);
+            const bucket = res.val;
+            buckets.set(identifier, bucket);
+            dbg.log(`opened bucket ${uuidString(bucket)}`);
+            return bucket;
         }
 
         async function handleGet() {
@@ -354,73 +169,38 @@
             const getValue = document.querySelector('#get input[name="get-value"]');
             if (getValue) getValue.value = null;
 
-            if (!conn) throw 'WebTransport not connected';
-
             const bucket = await getBucket();
-            if (!bucket) throw 'failed to get bucket';
 
             const obj = getFormValues('#get');
-
             const key = obj['get-key'];
             if (!key) throw 'key must be set';
-            if (key.length > 127) throw 'this example currently does not support keys longer than 127 bytes - open a PR!';
 
-            dbg.debug('creating `get` stream...');
-            const stream = await conn.createBidirectionalStream();
-            await wasiKeyvalueStoreBucketGet(
-                stream.writable.getWriter(),
-                stream.readable.getReader(),
-                bucket,
-                key,
-            ).then(value => {
-                if (!value) {
-                    dbg.info('key missing')
-                    return;
-                }
-                const s = new TextDecoder().decode(value);
-                const bucketName = uuidString(bucket);
-                dbg.info(`got value from bucket ${bucketName}:`, JSON.stringify(s, null, 2));
-                if (getValue) getValue.value = s;
-            }, err => {
-                throw 'failed to get value: ' + err;
-            });
+            dbg.debug(`getting \`${key}\`...`);
+            const [res] = await invoke(STORE, 'bucket.get', GET.params, GET.results, [bucket, key]);
+            if (res.tag === 'err') throw 'failed to get value: ' + formatError(res.val);
+            if (res.val === undefined) {
+                dbg.info('key missing');
+                return;
+            }
+            const s = new TextDecoder().decode(res.val);
+            dbg.info(`got value from bucket ${uuidString(bucket)}:`, JSON.stringify(s, null, 2));
+            if (getValue) getValue.value = s;
         }
 
         async function handleSet() {
-            if (!conn) throw 'WebTransport not connected';
-
             const bucket = await getBucket();
-            if (!bucket) throw 'failed to get bucket';
 
             const obj = getFormValues('#set');
-
             const key = obj['set-key'];
             if (!key) throw 'key must be set';
-            if (key.length > 127) throw 'this example currently does not support keys longer than 127 bytes - open a PR!';
 
             const value = obj['set-value'];
-            let valueBuf;
-            if (value) {
-                valueBuf = new TextEncoder().encode(value);
-            } else {
-                valueBuf = new Uint8Array();
-            }
-            if (valueBuf.length > 127) throw 'this example currently does not support values longer than 127 bytes - open a PR!';
+            const valueBuf = value ? new TextEncoder().encode(value) : new Uint8Array();
 
-            dbg.debug('creating `set` stream...');
-            const stream = await conn.createBidirectionalStream();
-            await wasiKeyvalueStoreBucketSet(
-                stream.writable.getWriter(),
-                stream.readable.getReader(),
-                bucket,
-                key,
-                valueBuf,
-            ).then(() => {
-                const bucketName = uuidString(bucket);
-                dbg.info(`set value in bucket ${bucketName}`);
-            }, err => {
-                throw 'failed to set value: ' + err
-            });
+            dbg.debug(`setting \`${key}\`...`);
+            const [res] = await invoke(STORE, 'bucket.set', SET.params, SET.results, [bucket, key, valueBuf]);
+            if (res.tag === 'err') throw 'failed to set value: ' + formatError(res.val);
+            dbg.info(`set value in bucket ${uuidString(bucket)}`);
         }
 
         const dbg = (() => {
