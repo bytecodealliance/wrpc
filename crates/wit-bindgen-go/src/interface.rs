@@ -2206,36 +2206,38 @@ impl InterfaceGenerator<'_> {
                     if {math}.MaxUint32 - uint32(n) < total {{
                         return {errors}.New("total outgoing pending stream element count would overflow a 32-bit unsigned integer")
                     }}
-                    {slog}.Debug("writing pending stream chunk length", "len", n)
-                    _, err = {wrpc}.WriteUint32(uint32(n), w)
-                    if err != nil {{
-                        return {fmt}.Errorf("failed to write pending stream chunk length of %d: %w", n, err)
-                    }}
-                    for _, v := range chunk {{
-                        {slog}.Debug("writing pending stream element", "i", total)
-                        write, err :="#,
+                    if n > 0 {{
+                        {slog}.Debug("writing pending stream chunk length", "len", n)
+                        _, err = {wrpc}.WriteUint32(uint32(n), w)
+                        if err != nil {{
+                            return {fmt}.Errorf("failed to write pending stream chunk length of %d: %w", n, err)
+                        }}
+                        for _, v := range chunk {{
+                            {slog}.Debug("writing pending stream element", "i", total)
+                            write, err :="#,
                 );
                 self.print_write_ty(ty, "v", "w");
                 uwrite!(
                     self.src,
                     r#"
-                        if err != nil {{
-                            return {fmt}.Errorf("failed to write pending stream chunk element %d: %w", total, err)
-                        }}
-                        if write != nil {{
-                            wg.Add(1)
-                            w, err := w.Index(total)
                             if err != nil {{
-                                return {fmt}.Errorf("failed to index nested stream writer: %w", err)
+                                return {fmt}.Errorf("failed to write pending stream chunk element %d: %w", total, err)
                             }}
-                            go func() {{
-                                defer wg.Done()
-                                if err := write(w); err != nil {{
-                                    wgErr.Store(err)
+                            if write != nil {{
+                                wg.Add(1)
+                                w, err := w.Index(total)
+                                if err != nil {{
+                                    return {fmt}.Errorf("failed to index nested stream writer: %w", err)
                                 }}
-                            }}()
+                                go func() {{
+                                    defer wg.Done()
+                                    if err := write(w); err != nil {{
+                                        wgErr.Store(err)
+                                    }}
+                                }}()
+                            }}
+                            total++
                         }}
-                        total++
                     }}
                     if end {{
                         if err := w.WriteByte(0); err != nil {{
