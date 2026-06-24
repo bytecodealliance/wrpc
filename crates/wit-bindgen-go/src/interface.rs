@@ -3599,6 +3599,15 @@ func (v *{name}) WriteToIndex(w {wrpc}.ByteWriter) (func({wrpc}.IndexWriter) err
                 );
             }
 
+            // Number of meaningful bits in the final byte. When the flag count
+            // is an exact multiple of 8 the last byte is fully used, so the
+            // shift must be 8 (not `len % 8 == 0`, which would reject every
+            // set bit in that byte as "unassociated").
+            let last_byte_bits = if ty.flags.is_empty() {
+                0
+            } else {
+                (ty.flags.len() - 1) % 8 + 1
+            };
             uwriteln!(
                 self.src,
                 r#"
@@ -3606,7 +3615,7 @@ func (v *{name}) WriteToIndex(w {wrpc}.ByteWriter) (func({wrpc}.IndexWriter) err
         return {errors}.New("bit not associated with any flag is set")
     }}"#,
                 buf_len - 1,
-                ty.flags.len() % 8,
+                last_byte_bits,
             );
             self.push_str("return nil\n}\n");
 
