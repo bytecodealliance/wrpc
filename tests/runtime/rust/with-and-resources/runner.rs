@@ -1,9 +1,7 @@
 //@ args = '--with my:inline/foo=other::my::inline::foo'
 
-include!(env!("BINDINGS"));
-
 mod other {
-    wit_bindgen::generate!({
+    ::wit_bindgen_wrpc::generate!({
         inline: "
             package my:inline;
 
@@ -17,16 +15,14 @@ mod other {
                 import foo;
             }
         ",
+        generate_all,
     });
 }
 
-struct Component;
-
-export!(Component);
-
-impl Guest for Component {
-    fn run() {
-        let resource = other::my::inline::foo::bar();
-        my::inline::bar::bar(resource);
-    }
+pub async fn run(
+    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,
+) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+    let resource = other::my::inline::foo::bar(wrpc, ()).await?;
+    let _ = crate::runner::my::inline::bar::bar(wrpc, (), &resource).await?;
+    Ok(())
 }

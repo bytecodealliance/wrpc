@@ -1,26 +1,24 @@
-include!(env!("BINDINGS"));
+use crate::test::exports::test::resource_into_inner::to_test::{Handler, HandlerThing, Thing};
 
-use exports::test::resource_into_inner::to_test::{Guest, GuestThing, Thing};
+#[derive(Clone)]
+pub struct Component;
 
-pub struct Test;
-
-export!(Test);
-
-impl Guest for Test {
-    type Thing = MyThing;
-
-    fn test() {
-        let text = "Jabberwocky";
-        let thing = Thing::new(MyThing(text.to_string()));
-        let inner: MyThing = thing.into_inner();
-        assert_eq!(text, &inner.0);
+impl<Ctx: Send> Handler<Ctx> for Component {
+    async fn test(&self, _cx: Ctx) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+        Ok(())
     }
 }
 
-pub struct MyThing(String);
-
-impl GuestThing for MyThing {
-    fn new(text: String) -> Self {
-        Self(text)
+impl<Ctx: Send> HandlerThing<Ctx> for Component {
+    async fn new(
+        &self,
+        _cx: Ctx,
+        text: String,
+    ) -> ::wit_bindgen_wrpc::anyhow::Result<
+        ::wit_bindgen_wrpc::wrpc_transport::ResourceOwn<Thing>,
+    > {
+        Ok(::wit_bindgen_wrpc::wrpc_transport::ResourceOwn::from(
+            ::wit_bindgen_wrpc::bytes::Bytes::copy_from_slice(text.as_bytes()),
+        ))
     }
 }
