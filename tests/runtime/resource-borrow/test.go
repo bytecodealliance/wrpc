@@ -1,21 +1,27 @@
-package export_test_resource_borrow_to_test
+package test
 
 import (
-	"runtime"
+	"context"
+	"encoding/binary"
+
+	wrpc "wrpc.io/go"
+
+	to_test "driver/test/exports/test/resource_borrow/to_test"
 )
 
-type Thing struct {
-	pinner runtime.Pinner
-	handle int32
-	val    uint32
+type handler struct{}
+
+func NewHandler() handler {
+	return handler{}
 }
 
-func (self *Thing) OnDrop() {}
-
-func MakeThing(v uint32) *Thing {
-	return &Thing{runtime.Pinner{}, 0, v + 1}
+func (handler) Thing(ctx context.Context, v uint32) (wrpc.Own[to_test.Thing], error) {
+	buf := make([]byte, 4)
+	binary.LittleEndian.PutUint32(buf, v+1)
+	return wrpc.Own[to_test.Thing](buf), nil
 }
 
-func Foo(v *Thing) uint32 {
-	return v.val + 2
+func (handler) Foo(ctx context.Context, v wrpc.Borrow[to_test.Thing]) (uint32, error) {
+	val := binary.LittleEndian.Uint32([]byte(v))
+	return val + 2, nil
 }

@@ -1,6 +1,18 @@
-package export_test_many_arguments_to_test
+package test
 
-func ManyArguments(
+import (
+	"context"
+	"fmt"
+)
+
+type handler struct{}
+
+func NewHandler() handler {
+	return handler{}
+}
+
+func (handler) ManyArguments(
+	ctx context.Context,
 	a1 uint64,
 	a2 uint64,
 	a3 uint64,
@@ -17,7 +29,7 @@ func ManyArguments(
 	a14 uint64,
 	a15 uint64,
 	a16 uint64,
-) {
+) error {
 	assertEqual(a1, 1)
 	assertEqual(a2, 2)
 	assertEqual(a3, 3)
@@ -34,10 +46,11 @@ func ManyArguments(
 	assertEqual(a14, 14)
 	assertEqual(a15, 15)
 	assertEqual(a16, 16)
+	return nil
 }
 
-func assertEqual(a uint64, b uint64) {
+func assertEqual[T comparable](a T, b T) {
 	if a != b {
-		panic("trouble")
+		panic(fmt.Sprintf("%v not equal to %v", a, b))
 	}
 }

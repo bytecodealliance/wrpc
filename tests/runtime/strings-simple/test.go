@@ -1,13 +1,23 @@
-package export_cat
+package test
 
-import "fmt"
+import (
+	"context"
+	"fmt"
+)
 
-func Foo(x string) {
+type handler struct{}
+
+func NewHandler() handler {
+	return handler{}
+}
+
+func (handler) Foo(ctx context.Context, x string) error {
 	if x != "hello" {
 		panic(fmt.Sprintf("unexpected value: `%v`", x))
 	}
+	return nil
 }
 
-func Bar() string {
-	return "world"
+func (handler) Bar(ctx context.Context) (string, error) {
+	return "world", nil
 }

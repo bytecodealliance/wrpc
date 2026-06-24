@@ -1,16 +1,25 @@
-package export_wit_world
+package runner
 
 import (
+	"context"
 	"fmt"
-	test "wit_component/test_resource_borrow_to_test"
+
+	wrpc "wrpc.io/go"
+
+	"driver/runner/test/resource_borrow/to_test"
 )
 
-func Run() {
-	thing := test.MakeThing(42)
-	defer thing.Drop()
+func Run(ctx context.Context, c wrpc.Invoker) error {
+	thing := must(to_test.NewThing(ctx, c, 42))
+	assertEqual(must(to_test.Foo(ctx, c, thing.Borrow())), 42+1+2)
+	return nil
+}
 
-	result := test.Foo(thing)
-	assertEqual(result, uint32(42+1+2))
+func must[T any](v T, err error) T {
+	if err != nil {
+		panic(err)
+	}
+	return v
 }
 
 func assertEqual[T comparable](a T, b T) {
