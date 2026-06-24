@@ -1,16 +1,9 @@
 //@ args = '--features y'
 
-include!(env!("BINDINGS"));
-
-use crate::foo::bar::bindings::{y, z};
-
-struct Component;
-
-export!(Component);
-
-impl Guest for Component {
-    fn run() {
-        y();
-        z();
-    }
+pub async fn run(
+    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,
+) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+    crate::runner::foo::bar::bindings::y(wrpc, ()).await?;
+    crate::runner::foo::bar::bindings::z(wrpc, ()).await?;
+    Ok(())
 }
