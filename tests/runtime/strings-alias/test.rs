@@ -1,15 +1,13 @@
-include!(env!("BINDINGS"));
+#[derive(Clone)]
+pub struct Component;
 
-struct Test;
-
-export!(Test);
-
-impl exports::cat::Guest for Test {
-    fn foo(x: String) {
+impl<Ctx: Send> crate::test::exports::cat::Handler<Ctx> for Component {
+    async fn foo(&self, _cx: Ctx, x: String) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
         assert_eq!(x, "hello");
+        Ok(())
     }
 
-    fn bar() -> String {
-        "world".into()
+    async fn bar(&self, _cx: Ctx) -> ::wit_bindgen_wrpc::anyhow::Result<String> {
+        Ok("world".into())
     }
 }

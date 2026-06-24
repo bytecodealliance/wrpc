@@ -1,23 +1,21 @@
-include!(env!("BINDINGS"));
+#[derive(Clone)]
+pub struct Component;
 
-struct Component;
-
-export!(Component);
-
-impl exports::test::strings::to_test::Guest for Component {
-    fn take_basic(s: String) {
+impl<Ctx: Send> crate::test::exports::test::strings::to_test::Handler<Ctx> for Component {
+    async fn take_basic(&self, _cx: Ctx, s: String) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
         assert_eq!(s, "latin utf16");
+        Ok(())
     }
 
-    fn return_unicode () -> String {
-        "🚀🚀🚀 𠈄𓀀".to_string()
+    async fn return_unicode(&self, _cx: Ctx) -> ::wit_bindgen_wrpc::anyhow::Result<String> {
+        Ok("🚀🚀🚀 𠈄𓀀".to_string())
     }
 
-    fn return_empty() -> String{
-        "".to_string()
+    async fn return_empty(&self, _cx: Ctx) -> ::wit_bindgen_wrpc::anyhow::Result<String> {
+        Ok("".to_string())
     }
 
-    fn roundtrip(s: String) -> String {
-        s.clone()
+    async fn roundtrip(&self, _cx: Ctx, s: String) -> ::wit_bindgen_wrpc::anyhow::Result<String> {
+        Ok(s.clone())
     }
 }

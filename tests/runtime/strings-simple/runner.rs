@@ -1,16 +1,11 @@
-include!(env!("BINDINGS"));
+use crate::runner::cat::*;
 
-struct Component;
+pub async fn run(
+    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,
+) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+    foo(wrpc, (), "hello").await?;
 
-export!(Component);
-
-impl Guest for Component {
-    fn run() {
-        // Test the argument is `&str`
-        cat::foo("hello");
-
-        // Test the return type is `String`
-        let t: String = cat::bar();
-        assert_eq!(t, "world");
-    }
+    let t: String = bar(wrpc, ()).await?;
+    assert_eq!(t, "world");
+    Ok(())
 }

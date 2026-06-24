@@ -1,17 +1,19 @@
-include!(env!("BINDINGS"));
+#[derive(Clone)]
+pub struct Component;
 
-pub struct MyResource;
+impl<Ctx: Send> crate::test::exports::my::inline::foo::Handler<Ctx> for Component {}
 
-impl exports::my::inline::foo::GuestBar for MyResource {
-    fn new() -> Self {
-        MyResource
+impl<Ctx: Send> crate::test::exports::my::inline::foo::HandlerBar<Ctx> for Component {
+    async fn new(
+        &self,
+        _cx: Ctx,
+    ) -> ::wit_bindgen_wrpc::anyhow::Result<
+        ::wit_bindgen_wrpc::wrpc_transport::ResourceOwn<
+            crate::test::exports::my::inline::foo::Bar,
+        >,
+    > {
+        Ok(::wit_bindgen_wrpc::wrpc_transport::ResourceOwn::from(
+            ::wit_bindgen_wrpc::bytes::Bytes::new(),
+        ))
     }
 }
-
-struct Component;
-
-impl exports::my::inline::foo::Guest for Component {
-    type Bar = MyResource;
-}
-
-export!(Component);
