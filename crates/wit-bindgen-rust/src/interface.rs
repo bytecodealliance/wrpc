@@ -811,7 +811,7 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve>(
         if self.in_import {
             uwrite!(
                 self.src,
-                "<'a, C: {wrpc_transport}::Invoke>(wrpc__: &'a C, cx__: C::Context,",
+                "<'a, C__: {wrpc_transport}::Invoke>(wrpc__: &'a C__, cx__: C__::Context,",
                 wrpc_transport = self.r#gen.wrpc_transport_path(),
             );
         } else {
