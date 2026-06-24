@@ -1,9 +1,9 @@
-use crate::test::exports::test::flavorful::to_test::*;
+use crate::server::exports::test::flavorful::to_test::*;
 
 #[derive(Clone)]
 pub struct Component;
 
-impl<Ctx: Send> crate::test::exports::test::flavorful::to_test::Handler<Ctx> for Component {
+impl<Ctx: Send> crate::server::exports::test::flavorful::to_test::Handler<Ctx> for Component {
     async fn f_list_in_record1(
         &self,
         _cx: Ctx,

@@ -1,4 +1,4 @@
-use crate::test::exports::test::resource_aggregates::to_test::{
+use crate::server::exports::test::resource_aggregates::to_test::{
     Handler, HandlerThing, Thing, R1, R2, R3, T1, T2, V1, V2,
 };
 

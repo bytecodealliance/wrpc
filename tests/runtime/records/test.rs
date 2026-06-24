@@ -1,9 +1,9 @@
-use crate::test::exports::test::records::to_test::*;
+use crate::server::exports::test::records::to_test::*;
 
 #[derive(Clone)]
 pub struct Component;
 
-impl<Ctx: Send> crate::test::exports::test::records::to_test::Handler<Ctx> for Component {
+impl<Ctx: Send> crate::server::exports::test::records::to_test::Handler<Ctx> for Component {
     async fn multiple_results(&self, _cx: Ctx) -> ::wit_bindgen_wrpc::anyhow::Result<(u8, u16)> {
         Ok((4, 5))
     }

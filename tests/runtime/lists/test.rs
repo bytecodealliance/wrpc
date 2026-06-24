@@ -3,7 +3,7 @@ use ::wit_bindgen_wrpc::bytes::Bytes;
 #[derive(Clone)]
 pub struct Component;
 
-impl<Ctx: Send> crate::test::exports::test::lists::to_test::Handler<Ctx> for Component {
+impl<Ctx: Send> crate::server::exports::test::lists::to_test::Handler<Ctx> for Component {
     async fn allocated_bytes(&self, _cx: Ctx) -> ::wit_bindgen_wrpc::anyhow::Result<u32> {
         Ok(0)
     }

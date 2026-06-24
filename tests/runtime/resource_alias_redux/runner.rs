@@ -1,6 +1,6 @@
-use crate::runner::test::resource_alias_redux::resource_alias1 as a1;
-use crate::runner::test::resource_alias_redux::resource_alias2 as a2;
-use crate::runner::the_test::test;
+use crate::client::test::resource_alias_redux::resource_alias1 as a1;
+use crate::client::test::resource_alias_redux::resource_alias2 as a2;
+use crate::client::the_test::test;
 
 pub async fn run(
     wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,

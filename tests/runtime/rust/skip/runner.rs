@@ -1,4 +1,4 @@
-use crate::runner::exports::bar;
+use crate::client::exports::bar;
 
 pub async fn run(
     wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,

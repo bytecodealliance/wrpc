@@ -1,4 +1,4 @@
-use crate::test::exports::my::inline::foo::{Handler, HandlerBar, Bar};
+use crate::server::exports::my::inline::foo::{Handler, HandlerBar, Bar};
 
 #[derive(Clone)]
 pub struct Component;

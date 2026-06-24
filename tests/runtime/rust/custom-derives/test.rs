@@ -6,8 +6,8 @@
 //@   '--additional-derive-ignore=ignoreme',
 //@ ]
 
-use crate::test::exports::my::inline::blag::{Handler as HandlerBlag, HandlerInputStream};
-use crate::test::exports::my::inline::blah::{Foo, Handler as HandlerBlah, Ignoreme};
+use crate::server::exports::my::inline::blag::{Handler as HandlerBlag, HandlerInputStream};
+use crate::server::exports::my::inline::blah::{Foo, Handler as HandlerBlah, Ignoreme};
 use std::collections::{hash_map::RandomState, HashSet};
 
 #[derive(Clone)]
@@ -37,7 +37,7 @@ impl<Ctx: Send> HandlerInputStream<Ctx> for Component {
         &self,
         _cx: Ctx,
         _stream: ::wit_bindgen_wrpc::wrpc_transport::ResourceBorrow<
-            crate::test::exports::my::inline::blag::InputStream,
+            crate::server::exports::my::inline::blag::InputStream,
         >,
         _len: u64,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<::wit_bindgen_wrpc::bytes::Bytes> {

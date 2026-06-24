@@ -5,7 +5,7 @@ pub struct Component;
 
 static SCALAR: AtomicU32 = AtomicU32::new(0);
 
-impl<Ctx: Send> crate::test::exports::test::numbers::numbers::Handler<Ctx> for Component {
+impl<Ctx: Send> crate::server::exports::test::numbers::numbers::Handler<Ctx> for Component {
     async fn roundtrip_u8(&self, _cx: Ctx, a: u8) -> ::wit_bindgen_wrpc::anyhow::Result<u8> {
         Ok(a)
     }

@@ -1,7 +1,7 @@
 #[derive(Clone)]
 pub struct Component;
 
-impl<Ctx: Send> crate::test::exports::test::dep0_1_0::test::Handler<Ctx> for Component {
+impl<Ctx: Send> crate::server::exports::test::dep0_1_0::test::Handler<Ctx> for Component {
     async fn x(&self, _cx: Ctx) -> ::wit_bindgen_wrpc::anyhow::Result<f32> {
         Ok(1.0)
     }
@@ -11,7 +11,7 @@ impl<Ctx: Send> crate::test::exports::test::dep0_1_0::test::Handler<Ctx> for Com
     }
 }
 
-impl<Ctx: Send> crate::test::exports::test::dep0_2_0::test::Handler<Ctx> for Component {
+impl<Ctx: Send> crate::server::exports::test::dep0_2_0::test::Handler<Ctx> for Component {
     async fn x(&self, _cx: Ctx) -> ::wit_bindgen_wrpc::anyhow::Result<f32> {
         Ok(2.0)
     }

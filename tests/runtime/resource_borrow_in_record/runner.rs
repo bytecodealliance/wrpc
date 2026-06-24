@@ -1,4 +1,4 @@
-use crate::runner::test::resource_borrow_in_record::to_test::{test, Foo, Thing};
+use crate::client::test::resource_borrow_in_record::to_test::{test, Foo, Thing};
 
 pub async fn run(
     wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,

@@ -1,5 +1,5 @@
-use crate::test::exports::my::inline::bar::Handler as HandlerBar;
-use crate::test::exports::my::inline::foo::{Handler as HandlerFoo, HandlerA, A};
+use crate::server::exports::my::inline::bar::Handler as HandlerBar;
+use crate::server::exports::my::inline::foo::{Handler as HandlerFoo, HandlerA, A};
 
 #[derive(Clone)]
 pub struct Component;

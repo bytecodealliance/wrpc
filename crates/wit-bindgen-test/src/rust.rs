@@ -228,18 +228,18 @@ enum Edition {
     E2024,
 }
 
-/// The fixed driver linking a `runner` (client) and `test` (server) into one
-/// binary, connected over an in-process TCP transport.
+/// The fixed driver linking a `client` (the `runner` world) and a `server` (the
+/// `test` world) into one binary, connected over an in-process TCP transport.
 const DRIVER: &str = r##"#![allow(warnings)]
 
-pub mod test {
-    include!(env!("WRPC_TEST_BINDINGS"));
-    include!(env!("WRPC_TEST_SRC"));
+pub mod server {
+    include!(env!("WRPC_SERVER_BINDINGS"));
+    include!(env!("WRPC_SERVER_SRC"));
 }
 
-pub mod runner {
-    include!(env!("WRPC_RUNNER_BINDINGS"));
-    include!(env!("WRPC_RUNNER_SRC"));
+pub mod client {
+    include!(env!("WRPC_CLIENT_BINDINGS"));
+    include!(env!("WRPC_CLIENT_SRC"));
 }
 
 #[tokio::main(flavor = "multi_thread")]
@@ -258,9 +258,9 @@ async fn main() -> anyhow::Result<()> {
 
     let srv = Arc::new(Server::default());
 
-    // Register the `test` world's exported handlers, then serve them forever in
+    // Register the `server`'s exported handlers, then serve them forever in
     // the background.
-    let invocations = test::serve(srv.as_ref(), test::Component)
+    let invocations = server::serve(srv.as_ref(), server::Component)
         .await
         .expect("failed to serve `test` world exports");
     tokio::spawn(async move {
@@ -293,9 +293,9 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
-    // Run the `runner` world (client) to completion.
+    // Run the `client` to completion.
     let clt = tcp::Client::from(addr);
-    tokio::time::timeout(Duration::from_secs(60), runner::run(&clt))
+    tokio::time::timeout(Duration::from_secs(60), client::run(&clt))
         .await
         .expect("runtime test timed out")?;
     Ok(())
@@ -358,10 +358,10 @@ impl Runner<'_> {
             .arg("--crate-type=bin")
             .arg("-o")
             .arg(&bin)
-            .env("WRPC_TEST_BINDINGS", &test_rs)
-            .env("WRPC_RUNNER_BINDINGS", &runner_rs)
-            .env("WRPC_TEST_SRC", tst.path.canonicalize()?)
-            .env("WRPC_RUNNER_SRC", runner.path.canonicalize()?)
+            .env("WRPC_SERVER_BINDINGS", &test_rs)
+            .env("WRPC_CLIENT_BINDINGS", &runner_rs)
+            .env("WRPC_SERVER_SRC", tst.path.canonicalize()?)
+            .env("WRPC_CLIENT_SRC", runner.path.canonicalize()?)
             // Set so a `wit_bindgen_wrpc::generate!` embedded in a runner/test
             // source (e.g. the `with` tests' `mod other`) doesn't panic looking
             // for the manifest dir.

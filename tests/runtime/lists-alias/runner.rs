@@ -1,6 +1,6 @@
 use ::wit_bindgen_wrpc::bytes::Bytes;
 
-use crate::runner::cat::*;
+use crate::client::cat::*;
 
 pub async fn run(
     wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,

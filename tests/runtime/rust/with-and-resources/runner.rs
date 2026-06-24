@@ -23,6 +23,6 @@ pub async fn run(
     wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
     let resource = other::my::inline::foo::bar(wrpc, ()).await?;
-    let _ = crate::runner::my::inline::bar::bar(wrpc, (), &resource).await?;
+    let _ = crate::client::my::inline::bar::bar(wrpc, (), &resource).await?;
     Ok(())
 }

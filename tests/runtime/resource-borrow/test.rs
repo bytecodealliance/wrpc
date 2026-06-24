@@ -1,4 +1,4 @@
-use crate::test::exports::test::resource_borrow::to_test::{Handler, HandlerThing, Thing};
+use crate::server::exports::test::resource_borrow::to_test::{Handler, HandlerThing, Thing};
 
 #[derive(Clone)]
 pub struct Component;
