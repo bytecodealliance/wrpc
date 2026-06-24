@@ -604,20 +604,22 @@ impl Runner<'_> {
 
         let mut compilations = Vec::new();
         self.render_errors(compile_results.into_iter().map(
-            |(test, component, result, should_fail)| match result {
-                // A test expected to fail that nonetheless compiled should be
-                // flagged so its xfail entry can be removed.
-                Ok(path) if !should_fail => {
-                    compilations.push((test, component, path));
-                    StepResult::new("", Ok(()))
+            |(test, component, result, should_fail)| {
+                match result {
+                    // A test expected to fail that nonetheless compiled should be
+                    // flagged so its xfail entry can be removed.
+                    Ok(path) if !should_fail => {
+                        compilations.push((test, component, path));
+                        StepResult::new("", Ok(()))
+                    }
+                    Ok(_) => StepResult::new(&test.name, Ok(()))
+                        .should_fail(true)
+                        .metadata("component", &component.name),
+                    Err(e) => StepResult::new(&test.name, Err(e))
+                        .should_fail(should_fail)
+                        .metadata("component", &component.name)
+                        .metadata("path", component.path.display()),
                 }
-                Ok(_) => StepResult::new(&test.name, Ok(()))
-                    .should_fail(true)
-                    .metadata("component", &component.name),
-                Err(e) => StepResult::new(&test.name, Err(e))
-                    .should_fail(should_fail)
-                    .metadata("component", &component.name)
-                    .metadata("path", component.path.display()),
             },
         ));
 
