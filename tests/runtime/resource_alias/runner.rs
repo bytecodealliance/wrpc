@@ -1,20 +1,17 @@
-include!(env!("BINDINGS"));
+use crate::runner::test::resource_alias::e1::{a as a1, Foo as Foo1, X};
+use crate::runner::test::resource_alias::e2::{a as a2, Foo as Foo2};
 
-use test::resource_alias::e1::{a as a1, Foo as Foo1, X};
-use test::resource_alias::e2::{a as a2, Foo as Foo2};
+pub async fn run(
+    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,
+) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+    let x = X::new(wrpc, (), 42).await?;
+    a1(wrpc, (), &Foo1 { x }).await?;
 
-struct Component;
-
-export!(Component);
-
-impl Guest for Component {
-    fn run() {
-        let foo_e1 = Foo1 { x: X::new(42) };
-        a1(foo_e1);
-
-        let foo_e2 = Foo2 { x: X::new(7) };
-        let bar_e2 = Foo1 { x: X::new(8) };
-        let y = X::new(8);
-        a2(foo_e2, bar_e2, &y);
-    }
+    let x = X::new(wrpc, (), 7).await?;
+    let foo_e2 = Foo2 { x };
+    let x = X::new(wrpc, (), 8).await?;
+    let bar_e2 = Foo1 { x };
+    let y = X::new(wrpc, (), 8).await?;
+    a2(wrpc, (), &foo_e2, &bar_e2, &y.as_borrow()).await?;
+    Ok(())
 }

@@ -1,29 +1,31 @@
-include!(env!("BINDINGS"));
+use crate::test::exports::test::resource_borrow::to_test::{Handler, HandlerThing, Thing};
 
-use exports::test::resource_borrow::to_test::{Guest, GuestThing, ThingBorrow};
+#[derive(Clone)]
+pub struct Component;
 
-pub struct Test {}
-
-export!(Test);
-
-pub struct MyThing {
-    val: u32,
-}
-
-fn get_val<'a>(v: &ThingBorrow<'a>) -> &'a u32 {
-  &v.get::<MyThing>().val
-}
-
-impl Guest for Test {
-    type Thing = MyThing;
-
-    fn foo(v: ThingBorrow<'_>) -> u32 {
-        get_val(&v) + 2
+impl<Ctx: Send> Handler<Ctx> for Component {
+    async fn foo(
+        &self,
+        _cx: Ctx,
+        v: ::wit_bindgen_wrpc::wrpc_transport::ResourceBorrow<Thing>,
+    ) -> ::wit_bindgen_wrpc::anyhow::Result<u32> {
+        let bytes: &[u8] = v.as_ref();
+        let val = u32::from_le_bytes(bytes.try_into().unwrap());
+        Ok(val + 2)
     }
 }
 
-impl GuestThing for MyThing {
-    fn new(v: u32) -> Self {
-        Self { val: v + 1 }
+impl<Ctx: Send> HandlerThing<Ctx> for Component {
+    async fn new(
+        &self,
+        _cx: Ctx,
+        v: u32,
+    ) -> ::wit_bindgen_wrpc::anyhow::Result<
+        ::wit_bindgen_wrpc::wrpc_transport::ResourceOwn<Thing>,
+    > {
+        let val = v + 1;
+        Ok(::wit_bindgen_wrpc::wrpc_transport::ResourceOwn::from(
+            ::wit_bindgen_wrpc::bytes::Bytes::copy_from_slice(&val.to_le_bytes()),
+        ))
     }
 }
