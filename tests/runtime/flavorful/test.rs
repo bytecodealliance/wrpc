@@ -1,86 +1,126 @@
-include!(env!("BINDINGS"));
+use crate::test::exports::test::flavorful::to_test::*;
 
-use exports::test::flavorful::to_test::*;
+#[derive(Clone)]
+pub struct Component;
 
-struct Component;
-
-export!(Component);
-
-impl Guest for Component {
-    fn f_list_in_record1(ty: ListInRecord1) {
+impl<Ctx: Send> crate::test::exports::test::flavorful::to_test::Handler<Ctx> for Component {
+    async fn f_list_in_record1(
+        &self,
+        _cx: Ctx,
+        ty: ListInRecord1,
+    ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
         assert_eq!(ty.a, "list_in_record1");
+        Ok(())
     }
 
-    fn f_list_in_record2() -> ListInRecord2 {
-        ListInRecord2 {
+    async fn f_list_in_record2(
+        &self,
+        _cx: Ctx,
+    ) -> ::wit_bindgen_wrpc::anyhow::Result<ListInRecord2> {
+        Ok(ListInRecord2 {
             a: "list_in_record2".to_string(),
-        }
+        })
     }
 
-    fn f_list_in_record3(a: ListInRecord3) -> ListInRecord3 {
+    async fn f_list_in_record3(
+        &self,
+        _cx: Ctx,
+        a: ListInRecord3,
+    ) -> ::wit_bindgen_wrpc::anyhow::Result<ListInRecord3> {
         assert_eq!(a.a, "list_in_record3 input");
-        ListInRecord3 {
+        Ok(ListInRecord3 {
             a: "list_in_record3 output".to_string(),
-        }
+        })
     }
 
-    fn f_list_in_record4(a: ListInAlias) -> ListInAlias {
+    async fn f_list_in_record4(
+        &self,
+        _cx: Ctx,
+        a: ListInAlias,
+    ) -> ::wit_bindgen_wrpc::anyhow::Result<ListInAlias> {
         assert_eq!(a.a, "input4");
-        ListInRecord4 {
+        Ok(ListInRecord4 {
             a: "result4".to_string(),
-        }
+        })
     }
 
-    fn f_list_in_variant1(a: ListInVariant1V1, b: ListInVariant1V2) {
+    async fn f_list_in_variant1(
+        &self,
+        _cx: Ctx,
+        a: ListInVariant1V1,
+        b: ListInVariant1V2,
+    ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
         assert_eq!(a.unwrap(), "foo");
         assert_eq!(b.unwrap_err(), "bar");
+        Ok(())
     }
 
-    fn f_list_in_variant2() -> Option<String> {
-        Some("list_in_variant2".to_string())
+    async fn f_list_in_variant2(
+        &self,
+        _cx: Ctx,
+    ) -> ::wit_bindgen_wrpc::anyhow::Result<ListInVariant2> {
+        Ok(Some("list_in_variant2".to_string()))
     }
 
-    fn f_list_in_variant3(a: ListInVariant3) -> Option<String> {
+    async fn f_list_in_variant3(
+        &self,
+        _cx: Ctx,
+        a: ListInVariant3,
+    ) -> ::wit_bindgen_wrpc::anyhow::Result<ListInVariant3> {
         assert_eq!(a.unwrap(), "input3");
-        Some("output3".to_string())
+        Ok(Some("output3".to_string()))
     }
 
-    fn errno_result() -> Result<(), MyErrno> {
-        static mut FIRST: bool = true;
+    async fn errno_result(
+        &self,
+        _cx: Ctx,
+    ) -> ::wit_bindgen_wrpc::anyhow::Result<::core::result::Result<(), MyErrno>> {
+        static FIRST: ::std::sync::atomic::AtomicBool = ::std::sync::atomic::AtomicBool::new(true);
         MyErrno::A.to_string();
         _ = format!("{:?}", MyErrno::A);
         fn assert_error<T: std::error::Error>() {}
         assert_error::<MyErrno>();
 
-        unsafe {
-            if FIRST {
-                FIRST = false;
-                Err(MyErrno::B)
-            } else {
-                Ok(())
-            }
+        if FIRST.swap(false, ::std::sync::atomic::Ordering::SeqCst) {
+            Ok(Err(MyErrno::B))
+        } else {
+            Ok(Ok(()))
         }
     }
 
-    fn list_typedefs(a: ListTypedef, b: ListTypedef3) -> (ListTypedef2, ListTypedef3) {
+    async fn list_typedefs(
+        &self,
+        _cx: Ctx,
+        a: ListTypedef,
+        c: ListTypedef3,
+    ) -> ::wit_bindgen_wrpc::anyhow::Result<(ListTypedef2, ListTypedef3)> {
         assert_eq!(a, "typedef1");
-        assert_eq!(b.len(), 1);
-        assert_eq!(b[0], "typedef2");
-        (b"typedef3".to_vec(), vec!["typedef4".to_string()])
+        assert_eq!(c.len(), 1);
+        assert_eq!(c[0], "typedef2");
+        Ok((
+            ::wit_bindgen_wrpc::bytes::Bytes::from_static(b"typedef3"),
+            vec!["typedef4".to_string()],
+        ))
     }
 
-    fn list_of_variants(
+    async fn list_of_variants(
+        &self,
+        _cx: Ctx,
         bools: Vec<bool>,
-        results: Vec<Result<(), ()>>,
+        results: Vec<::core::result::Result<(), ()>>,
         enums: Vec<MyErrno>,
-    ) -> (Vec<bool>, Vec<Result<(), ()>>, Vec<MyErrno>) {
+    ) -> ::wit_bindgen_wrpc::anyhow::Result<(
+        Vec<bool>,
+        Vec<::core::result::Result<(), ()>>,
+        Vec<MyErrno>,
+    )> {
         assert_eq!(bools, [true, false]);
         assert_eq!(results, [Ok(()), Err(())]);
         assert_eq!(enums, [MyErrno::Success, MyErrno::A]);
-        (
+        Ok((
             vec![false, true],
             vec![Err(()), Ok(())],
             vec![MyErrno::A, MyErrno::B],
-        )
+        ))
     }
 }
