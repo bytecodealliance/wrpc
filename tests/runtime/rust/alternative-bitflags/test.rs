@@ -1,4 +1,6 @@
-//@ args = '--bitflags-path ::wit_bindgen_wrpc::bitflags'
+//@ args = '--bitflags-path crate::test::my_bitflags'
+
+pub(crate) use ::wit_bindgen_wrpc::bitflags as my_bitflags;
 
 use crate::test::exports::my::inline::t::{Bar, Handler};
 

@@ -1,4 +1,6 @@
-//@ args = '--bitflags-path ::wit_bindgen_wrpc::bitflags'
+//@ args = '--bitflags-path crate::runner::my_bitflags'
+
+pub(crate) use ::wit_bindgen_wrpc::bitflags as my_bitflags;
 
 use crate::runner::my::inline::t::{get_flag, Bar};
 
