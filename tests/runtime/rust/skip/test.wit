@@ -1,14 +1,17 @@
 package my:test;
 
-interface exports-iface {
-  foo: func();
-  bar: func();
+world runner {
+  import exports: interface {
+    foo: func();
+    bar: func();
+  }
+
+  export run: func();
 }
 
 world test {
-  export exports-iface;
-}
-
-world runner {
-  import exports-iface;
+  export exports: interface {
+    foo: func();
+    bar: func();
+  }
 }

@@ -1,8 +1,8 @@
 //@ args = '--generate-all'
 
 pub async fn run(
-    clt: &impl wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,
-) -> anyhow::Result<()> {
-    foo::baz::a::x(clt, ()).await?;
+    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,
+) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+    crate::runner::foo::baz::a::x(wrpc, ()).await?;
     Ok(())
 }

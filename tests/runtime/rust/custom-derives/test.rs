@@ -1,44 +1,46 @@
 //@ args = [
 //@   '-dHash',
 //@   '-dClone',
-//@   '-d::core::cmp::PartialEq',
-//@   '-d::core::cmp::Eq',
-//@   '-dserde::Serialize',
-//@   '-dserde::Deserialize',
+//@   '-dstd::cmp::PartialEq',
+//@   '-dcore::cmp::Eq',
 //@   '--additional-derive-ignore=ignoreme',
 //@ ]
 
+use crate::test::exports::my::inline::blag::{Handler as HandlerBlag, HandlerInputStream};
+use crate::test::exports::my::inline::blah::{Foo, Handler as HandlerBlah, Ignoreme};
 use std::collections::{hash_map::RandomState, HashSet};
-
-use exports::my::inline::blah::Foo;
 
 #[derive(Clone)]
 pub struct Component;
 
-impl<Ctx: Send> exports::my::inline::blah::Handler<Ctx> for Component {
-    async fn bar(&self, _cx: Ctx, cool: Foo) -> anyhow::Result<()> {
-        // The added `Hash`/`Eq` derives must apply to `foo`, so it can be used
-        // as a `HashSet` element.
-        let _blah: HashSet<Foo, RandomState> = HashSet::from_iter([Foo {
-            field1: "hello".to_string(),
-            field2: vec![1, 2, 3],
-        }]);
-
-        // The added `serde` derives must apply too, otherwise this fails to
-        // compile.
-        let _ = serde_json::to_string(&cool);
+impl<Ctx: Send> HandlerBlah<Ctx> for Component {
+    async fn bar(&self, _cx: Ctx, cool: Foo) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+        let _blah: HashSet<Foo, RandomState> = HashSet::from_iter([
+            Foo {
+                field1: "hello".to_string(),
+                field2: vec![1, 2, 3],
+            },
+            cool,
+        ]);
         Ok(())
     }
 
-    async fn barry(
+    async fn barry(&self, _cx: Ctx, _warm: Ignoreme) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+        Ok(())
+    }
+}
+
+impl<Ctx: Send> HandlerBlag<Ctx> for Component {}
+
+impl<Ctx: Send> HandlerInputStream<Ctx> for Component {
+    async fn read(
         &self,
         _cx: Ctx,
-        warm: exports::my::inline::blah::Ignoreme,
-    ) -> anyhow::Result<()> {
-        // Compilation would fail here if `serde::Deserialize` were applied to
-        // `ignoreme`, since it holds a resource handle. `--additional-derive-ignore`
-        // must have excluded it.
-        let _ = warm;
-        Ok(())
+        _stream: ::wit_bindgen_wrpc::wrpc_transport::ResourceBorrow<
+            crate::test::exports::my::inline::blag::InputStream,
+        >,
+        _len: u64,
+    ) -> ::wit_bindgen_wrpc::anyhow::Result<::wit_bindgen_wrpc::bytes::Bytes> {
+        todo!()
     }
 }

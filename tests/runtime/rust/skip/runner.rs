@@ -1,6 +1,8 @@
+use crate::runner::exports::bar;
+
 pub async fn run(
-    clt: &impl wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,
-) -> anyhow::Result<()> {
-    my::test::exports_iface::bar(clt, ()).await?;
+    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,
+) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+    bar(wrpc, ()).await?;
     Ok(())
 }

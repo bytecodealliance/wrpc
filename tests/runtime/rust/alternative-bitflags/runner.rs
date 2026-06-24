@@ -1,7 +1,12 @@
+//@ args = '--bitflags-path crate::runner::my_bitflags'
+
+pub(crate) use ::wit_bindgen_wrpc::bitflags as my_bitflags;
+
+use crate::runner::my::inline::t::{get_flag, Bar};
+
 pub async fn run(
-    clt: &impl wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,
-) -> anyhow::Result<()> {
-    let flag = my::inline::flags_iface::get_flag(clt, ()).await?;
-    assert_eq!(flag, my::inline::flags_iface::Bar::BAZ);
+    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,
+) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+    assert_eq!(get_flag(wrpc, ()).await?, Bar::BAZ);
     Ok(())
 }

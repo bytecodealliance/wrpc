@@ -281,8 +281,11 @@ impl Runner<'_> {
     /// Returns a list of components that were found within this directory.
     fn load_test(&self, wit: &Path, dir: &Path) -> Result<Vec<Component>> {
         let mut resolve = wit_parser::Resolve::default();
-        let pkg = resolve
-            .push_file(&wit)
+        // Use `push_path` on the test directory (not `push_file` on `test.wit`)
+        // so a sibling `deps/` directory of dependency packages is resolved,
+        // matching how codegen tests are loaded.
+        let (pkg, _) = resolve
+            .push_path(&dir)
             .context("failed to load `test.wit` in test directory")?;
         let resolve = Arc::new(resolve);
 
@@ -340,7 +343,9 @@ impl Runner<'_> {
                     Kind::Runner => runner_world.clone(),
                     Kind::Test => test_world.clone(),
                 },
-                wit_path: wit.to_path_buf(),
+                // Point at the test directory rather than `test.wit` so the
+                // bindings generator resolves a sibling `deps/` directory.
+                wit_path: dir.to_path_buf(),
             };
 
             let component = self
@@ -587,29 +592,36 @@ impl Runner<'_> {
         let compile_results = components
             .par_iter()
             .map(|(test, component)| {
+                let should_fail = Self::runtime_test_should_fail(&test.name);
                 let path = self
                     .compile_component(test, component)
                     .with_context(|| format!("failed to compile component {:?}", component.path));
-                self.update_status(&path, false);
-                (test, component, path)
+                self.update_status(&path, should_fail);
+                (test, component, path, should_fail)
             })
             .collect::<Vec<_>>();
         println!("");
 
         let mut compilations = Vec::new();
-        self.render_errors(
-            compile_results
-                .into_iter()
-                .map(|(test, component, result)| match result {
-                    Ok(path) => {
+        self.render_errors(compile_results.into_iter().map(
+            |(test, component, result, should_fail)| {
+                match result {
+                    // A test expected to fail that nonetheless compiled should be
+                    // flagged so its xfail entry can be removed.
+                    Ok(path) if !should_fail => {
                         compilations.push((test, component, path));
                         StepResult::new("", Ok(()))
                     }
+                    Ok(_) => StepResult::new(&test.name, Ok(()))
+                        .should_fail(true)
+                        .metadata("component", &component.name),
                     Err(e) => StepResult::new(&test.name, Err(e))
+                        .should_fail(should_fail)
                         .metadata("component", &component.name)
                         .metadata("path", component.path.display()),
-                }),
-        );
+                }
+            },
+        ));
 
         // Next, massage the data a bit. Create a map of all tests to where
         // their components are located. Then perform a product of runners/tests
@@ -706,7 +718,7 @@ impl Runner<'_> {
             Language::Rust => {
                 self.rust_runtime_test(case, runner, runner_bindings, test, test_bindings)
             }
-            Language::Go => bail!("Go runtime tests are not yet supported"),
+            Language::Go => self.go_runtime_test(case, runner, test),
         }
     }
 
@@ -745,6 +757,16 @@ status: {}",
         }
 
         bail!("{error}")
+    }
+
+    /// Returns whether the named runtime test is expected to fail.
+    ///
+    /// The wRPC generators do not yet implement the `map` or fixed-length
+    /// `list<T, N>` WIT types, so bindings generation for those tests panics.
+    /// Their failure is expected; if a test here starts succeeding, the harness
+    /// flags it so this entry can be removed.
+    fn runtime_test_should_fail(name: &str) -> bool {
+        matches!(name, "map" | "fixed-length-lists")
     }
 
     /// "poor man's test output progress"

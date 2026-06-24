@@ -1,10 +1,10 @@
-use my::inline::blah::{bar, Foo};
+use crate::runner::my::inline::blah::{bar, Foo};
 
 pub async fn run(
-    clt: &impl wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,
-) -> anyhow::Result<()> {
+    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,
+) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
     bar(
-        clt,
+        wrpc,
         (),
         &Foo {
             field1: "x".to_string(),
