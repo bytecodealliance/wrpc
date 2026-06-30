@@ -1435,9 +1435,9 @@ mod {mod_name} {{
     }}
 
     #[automatically_derived]
-    impl {wrpc_transport}::Deferred<{wrpc_transport}::Incoming> for Decoder
+    impl {wrpc_transport}::Deferred<{wrpc_transport}::BufferedIncoming> for Decoder
     {{
-        fn take_deferred(&mut self) -> ::core::option::Option<{wrpc_transport}::DeferredFn<{wrpc_transport}::Incoming>> {{"
+        fn take_deferred(&mut self) -> ::core::option::Option<{wrpc_transport}::DeferredFn<{wrpc_transport}::BufferedIncoming>> {{"
             );
             if !fields.is_empty() {
                 for Field { name, .. } in fields {
@@ -2080,7 +2080,7 @@ mod {mod_name} {{
     pub enum Decoder
     {{
         Payload(::core::option::Option<PayloadDecoder>),
-        Deferred(::core::option::Option<{wrpc_transport}::DeferredFn<{wrpc_transport}::Incoming>>)
+        Deferred(::core::option::Option<{wrpc_transport}::DeferredFn<{wrpc_transport}::BufferedIncoming>>)
     }}
 
     #[automatically_derived]
@@ -2092,9 +2092,9 @@ mod {mod_name} {{
     }}
 
     #[automatically_derived]
-    impl {wrpc_transport}::Deferred<{wrpc_transport}::Incoming> for Decoder
+    impl {wrpc_transport}::Deferred<{wrpc_transport}::BufferedIncoming> for Decoder
     {{
-        fn take_deferred(&mut self) -> ::core::option::Option<{wrpc_transport}::DeferredFn<{wrpc_transport}::Incoming>> {{
+        fn take_deferred(&mut self) -> ::core::option::Option<{wrpc_transport}::DeferredFn<{wrpc_transport}::BufferedIncoming>> {{
             match self {{
                 Self::Payload(None) => None,"#
                 );
@@ -2194,7 +2194,7 @@ mod {mod_name} {{
                             let Some(payload) = dec.decode(src)? else {{
                                 return Ok(None)
                             }};
-                            *self = Self::Deferred({wrpc_transport}::Deferred::<{wrpc_transport}::Incoming>::take_deferred(dec));
+                            *self = Self::Deferred({wrpc_transport}::Deferred::<{wrpc_transport}::BufferedIncoming>::take_deferred(dec));
                             Ok(Some(super::{name}::{case}(payload)))
                         }},"
                         );

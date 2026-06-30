@@ -14,7 +14,7 @@ use tokio_util::codec::{Encoder as _, FramedRead};
 use tracing::{Instrument as _, debug, instrument, trace};
 
 use crate::frame::{Incoming, Outgoing};
-use crate::{Deferred as _, TupleDecode, TupleEncode};
+use crate::{BufferedIncoming, Deferred as _, TupleDecode, TupleEncode};
 
 /// Client-side handle to a wRPC transport
 ///
@@ -189,7 +189,7 @@ pub trait InvokeExt: Invoke {
             trace!("received sync results");
             let buffer = mem::take(dec.read_buffer_mut());
             let rx = dec.decoder_mut().take_deferred();
-            let incoming = crate::Incoming {
+            let incoming = BufferedIncoming {
                 buffer,
                 inner: dec.into_inner(),
             };
