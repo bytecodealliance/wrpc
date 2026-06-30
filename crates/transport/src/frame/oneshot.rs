@@ -58,8 +58,6 @@ where
     O: AsyncWrite + Send + Unpin + 'static,
 {
     type Context = ();
-    type Outgoing = Outgoing;
-    type Incoming = Incoming;
 
     async fn invoke<P>(
         &self,
@@ -68,7 +66,7 @@ where
         func: &str,
         params: Bytes,
         paths: impl AsRef<[P]> + Send,
-    ) -> anyhow::Result<(Self::Outgoing, Self::Incoming)>
+    ) -> anyhow::Result<(Outgoing, Incoming)>
     where
         P: AsRef<[Option<usize>]> + Send + Sync,
     {
@@ -82,8 +80,6 @@ where
     O: AsyncWrite + Send + Unpin + 'static,
 {
     type Context = ();
-    type Outgoing = Outgoing;
-    type Incoming = Incoming;
 
     #[instrument(level = "trace", skip(self, paths, params), fields(params = format!("{params:02x?}")))]
     fn invoke<P>(
@@ -93,7 +89,7 @@ where
         func: &str,
         params: Bytes,
         paths: impl AsRef<[P]> + Send,
-    ) -> impl Future<Output = anyhow::Result<(Self::Outgoing, Self::Incoming)>>
+    ) -> impl Future<Output = anyhow::Result<(Outgoing, Incoming)>>
     where
         P: AsRef<[Option<usize>]> + Send + Sync,
     {

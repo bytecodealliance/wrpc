@@ -60,8 +60,6 @@ impl From<std::os::unix::net::SocketAddr> for Client<std::os::unix::net::SocketA
 
 impl Invoke for Client<PathBuf> {
     type Context = ();
-    type Outgoing = Outgoing;
-    type Incoming = Incoming;
 
     #[instrument(level = "trace", skip(self, paths, params), fields(params = format!("{params:02x?}")))]
     async fn invoke<P>(
@@ -71,7 +69,7 @@ impl Invoke for Client<PathBuf> {
         func: &str,
         params: Bytes,
         paths: impl AsRef<[P]> + Send,
-    ) -> anyhow::Result<(Self::Outgoing, Self::Incoming)>
+    ) -> anyhow::Result<(Outgoing, Incoming)>
     where
         P: AsRef<[Option<usize>]> + Send + Sync,
     {
@@ -83,8 +81,6 @@ impl Invoke for Client<PathBuf> {
 
 impl Invoke for Client<&Path> {
     type Context = ();
-    type Outgoing = Outgoing;
-    type Incoming = Incoming;
 
     #[instrument(level = "trace", skip(self, paths, params), fields(params = format!("{params:02x?}")))]
     async fn invoke<P>(
@@ -94,7 +90,7 @@ impl Invoke for Client<&Path> {
         func: &str,
         params: Bytes,
         paths: impl AsRef<[P]> + Send,
-    ) -> anyhow::Result<(Self::Outgoing, Self::Incoming)>
+    ) -> anyhow::Result<(Outgoing, Incoming)>
     where
         P: AsRef<[Option<usize>]> + Send + Sync,
     {
@@ -106,8 +102,6 @@ impl Invoke for Client<&Path> {
 
 impl Invoke for Client<&std::os::unix::net::SocketAddr> {
     type Context = ();
-    type Outgoing = Outgoing;
-    type Incoming = Incoming;
 
     #[instrument(level = "trace", skip(self, paths, params), fields(params = format!("{params:02x?}")))]
     async fn invoke<P>(
@@ -117,7 +111,7 @@ impl Invoke for Client<&std::os::unix::net::SocketAddr> {
         func: &str,
         params: Bytes,
         paths: impl AsRef<[P]> + Send,
-    ) -> anyhow::Result<(Self::Outgoing, Self::Incoming)>
+    ) -> anyhow::Result<(Outgoing, Incoming)>
     where
         P: AsRef<[Option<usize>]> + Send + Sync,
     {
@@ -130,8 +124,6 @@ impl Invoke for Client<&std::os::unix::net::SocketAddr> {
 
 impl Invoke for Client<std::os::unix::net::SocketAddr> {
     type Context = ();
-    type Outgoing = Outgoing;
-    type Incoming = Incoming;
 
     #[instrument(level = "trace", skip(self, paths, params), fields(params = format!("{params:02x?}")))]
     async fn invoke<P>(
@@ -141,7 +133,7 @@ impl Invoke for Client<std::os::unix::net::SocketAddr> {
         func: &str,
         params: Bytes,
         paths: impl AsRef<[P]> + Send,
-    ) -> anyhow::Result<(Self::Outgoing, Self::Incoming)>
+    ) -> anyhow::Result<(Outgoing, Incoming)>
     where
         P: AsRef<[Option<usize>]> + Send + Sync,
     {

@@ -8,7 +8,7 @@ use std::collections::HashSet;
 use bytes::{BufMut as _, BytesMut};
 use futures::TryStreamExt as _;
 use futures::stream::FuturesUnordered;
-use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _};
+use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWriteExt as _};
 use tokio_util::codec::{Encoder, FramedRead};
 use tokio_util::compat::FuturesAsyncReadCompatExt as _;
 use tracing::{error, instrument, trace, warn};
@@ -26,10 +26,11 @@ use wasmtime::{AsContextMut, StoreContextMut};
 use wasmtime_wasi::p2::pipe::AsyncReadStream;
 use wasmtime_wasi::p2::{DynInputStream, StreamError};
 use wrpc_transport::ListDecoderU8;
+use wrpc_transport::frame::{Incoming, Outgoing};
 
 use crate::{RemoteResource, WrpcView};
 
-pub struct ValEncoder<'a, T: 'static, W> {
+pub struct ValEncoder<'a, T: 'static> {
     pub store: StoreContextMut<'a, T>,
     pub ty: &'a Type,
     pub resources: &'a [ResourceType],
@@ -37,18 +38,21 @@ pub struct ValEncoder<'a, T: 'static, W> {
     /// `output-stream`), identified by their possibly-uninstantiated type.
     pub io_streams: &'a [ResourceType],
     pub deferred: Option<
-        Box<dyn FnOnce(W) -> Pin<Box<dyn Future<Output = wasmtime::Result<()>> + Send>> + Send>,
+        Box<
+            dyn FnOnce(Outgoing) -> Pin<Box<dyn Future<Output = wasmtime::Result<()>> + Send>>
+                + Send,
+        >,
     >,
 }
 
-impl<T, W> ValEncoder<'_, T, W> {
+impl<T> ValEncoder<'_, T> {
     #[must_use]
     pub fn new<'a>(
         store: StoreContextMut<'a, T>,
         ty: &'a Type,
         resources: &'a [ResourceType],
         io_streams: &'a [ResourceType],
-    ) -> ValEncoder<'a, T, W> {
+    ) -> ValEncoder<'a, T> {
         ValEncoder {
             store,
             ty,
@@ -58,7 +62,7 @@ impl<T, W> ValEncoder<'_, T, W> {
         }
     }
 
-    pub fn with_type<'a>(&'a mut self, ty: &'a Type) -> ValEncoder<'a, T, W> {
+    pub fn with_type<'a>(&'a mut self, ty: &'a Type) -> ValEncoder<'a, T> {
         ValEncoder {
             store: self.store.as_context_mut(),
             ty,
@@ -104,13 +108,15 @@ fn flag_bits<'a, T: BitOrAssign + Shl<u8, Output = T> + From<u8>>(
     v
 }
 
-async fn write_deferred<W, I>(w: W, deferred: I) -> wasmtime::Result<()>
+async fn write_deferred<I>(w: Outgoing, deferred: I) -> wasmtime::Result<()>
 where
-    W: wrpc_transport::Index<W> + Sync + Send + 'static,
     I: IntoIterator,
     I::IntoIter: ExactSizeIterator<
         Item = Option<
-            Box<dyn FnOnce(W) -> Pin<Box<dyn Future<Output = wasmtime::Result<()>> + Send>> + Send>,
+            Box<
+                dyn FnOnce(Outgoing) -> Pin<Box<dyn Future<Output = wasmtime::Result<()>> + Send>>
+                    + Send,
+            >,
         >,
     >,
 {
@@ -125,10 +131,9 @@ where
     Ok(())
 }
 
-impl<T, W> Encoder<&Val> for ValEncoder<'_, T, W>
+impl<T> Encoder<&Val> for ValEncoder<'_, T>
 where
     T: WrpcView,
-    W: AsyncWrite + wrpc_transport::Index<W> + Sync + Send + 'static,
 {
     type Error = wasmtime::Error;
 
@@ -558,9 +563,9 @@ async fn read_flags(n: usize, r: &mut (impl AsyncRead + Unpin)) -> std::io::Resu
 /// Read encoded value of type [`Type`] from an [`AsyncRead`] into a [`Val`]
 #[instrument(level = "trace", skip_all, fields(ty, path))]
 #[allow(clippy::too_many_arguments)]
-pub async fn read_value<T, R>(
+pub async fn read_value<T>(
     store: &mut impl AsContextMut<Data = T>,
-    r: &mut Pin<&mut R>,
+    r: &mut Pin<&mut Incoming>,
     resources: &[ResourceType],
     io_streams: &[ResourceType],
     val: &mut Val,
@@ -569,7 +574,6 @@ pub async fn read_value<T, R>(
 ) -> std::io::Result<()>
 where
     T: WrpcView + 'static,
-    R: AsyncRead + wrpc_transport::Index<R> + Send + Unpin + 'static,
 {
     match ty {
         Type::Bool => {

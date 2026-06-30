@@ -136,8 +136,6 @@ impl<'a, R: Resolver> From<ClientBuilder<'a, R>> for Client<'a, R> {
 
 impl<R: Resolver + Send + Sync> Invoke for Client<'_, R> {
     type Context = ();
-    type Outgoing = wrpc_transport::frame::Outgoing;
-    type Incoming = wrpc_transport::frame::Incoming;
 
     #[instrument(level = "trace", skip(self, paths, params), fields(params = format!("{params:02x?}")))]
     async fn invoke<P>(
@@ -147,7 +145,10 @@ impl<R: Resolver + Send + Sync> Invoke for Client<'_, R> {
         func: &str,
         params: Bytes,
         paths: impl AsRef<[P]> + Send,
-    ) -> anyhow::Result<(Self::Outgoing, Self::Incoming)>
+    ) -> anyhow::Result<(
+        wrpc_transport::frame::Outgoing,
+        wrpc_transport::frame::Incoming,
+    )>
     where
         P: AsRef<[Option<usize>]> + Send + Sync,
     {

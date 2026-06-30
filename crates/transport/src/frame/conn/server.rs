@@ -161,8 +161,6 @@ where
     H: ConnHandler<I, O> + Send + Sync,
 {
     type Context = C;
-    type Outgoing = Outgoing;
-    type Incoming = Incoming;
 
     async fn serve(
         &self,
@@ -170,7 +168,7 @@ where
         func: &str,
         paths: Arc<[Box<[Option<usize>]>]>,
     ) -> anyhow::Result<
-        impl Stream<Item = anyhow::Result<(Self::Context, Self::Outgoing, Self::Incoming)>>
+        impl Stream<Item = anyhow::Result<(Self::Context, Outgoing, Incoming)>>
         + 'static
         + use<C, I, O, H>,
     > {
@@ -186,8 +184,6 @@ where
     H: ConnHandler<I, O> + Send + Sync,
 {
     type Context = C;
-    type Outgoing = Outgoing;
-    type Incoming = Incoming;
 
     async fn serve(
         &self,
@@ -195,7 +191,7 @@ where
         func: &str,
         paths: Arc<[Box<[Option<usize>]>]>,
     ) -> anyhow::Result<
-        impl Stream<Item = anyhow::Result<(Self::Context, Self::Outgoing, Self::Incoming)>>
+        impl Stream<Item = anyhow::Result<(Self::Context, Outgoing, Incoming)>>
         + 'static
         + use<'a, C, I, O, H>,
     > {

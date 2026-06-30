@@ -55,9 +55,9 @@ The indexing rules are as follows:
 
 ### Framing
 
-Transports provide a single bidirectional byte stream per wRPC invocation. wRPC defines a default framing format, described below, that multiplexes the asynchronous data streams of an invocation (each identified by its [index](#indexing)) over that single byte stream.
+Transports provide a single bidirectional byte stream per wRPC invocation. wRPC defines a mandatory framing format, described below, that multiplexes the asynchronous data streams of an invocation (each identified by its [index](#indexing)) over that single byte stream.
 
-All current wRPC transports (TCP, Unix Domain Sockets, QUIC, WebTransport and WebSockets) use this default framing. Individual transport implementations are free to use a custom framing instead, for example one built on a transport's native stream multiplexing.
+All wRPC transports use this framing. A transport implementation only needs to provide a single bidirectional byte stream; the framing layer supplies the multiplexing, so transports do not implement their own indexing scheme.
 
 ## Framed stream specification
 

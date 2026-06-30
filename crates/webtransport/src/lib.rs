@@ -80,8 +80,6 @@ impl wrpc_transport::frame::ConnHandler<RecvStream, SendStream> for ConnHandler 
 
 impl Invoke for &Client {
     type Context = ();
-    type Outgoing = Outgoing;
-    type Incoming = Incoming;
 
     async fn invoke<P>(
         &self,
@@ -90,7 +88,7 @@ impl Invoke for &Client {
         func: &str,
         params: Bytes,
         paths: impl AsRef<[P]> + Send,
-    ) -> anyhow::Result<(Self::Outgoing, Self::Incoming)>
+    ) -> anyhow::Result<(Outgoing, Incoming)>
     where
         P: AsRef<[Option<usize>]> + Send + Sync,
     {
@@ -106,8 +104,6 @@ impl Invoke for &Client {
 
 impl Invoke for Client {
     type Context = ();
-    type Outgoing = Outgoing;
-    type Incoming = Incoming;
 
     async fn invoke<P>(
         &self,
@@ -116,7 +112,7 @@ impl Invoke for Client {
         func: &str,
         params: Bytes,
         paths: impl AsRef<[P]> + Send,
-    ) -> anyhow::Result<(Self::Outgoing, Self::Incoming)>
+    ) -> anyhow::Result<(Outgoing, Incoming)>
     where
         P: AsRef<[Option<usize>]> + Send + Sync,
     {

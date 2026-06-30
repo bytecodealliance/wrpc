@@ -288,8 +288,6 @@ where
 
 impl Invoke for Client<&str, &Network> {
     type Context = mpsc::UnboundedSender<(Pollable, Waker)>;
-    type Outgoing = Outgoing;
-    type Incoming = Incoming;
 
     async fn invoke<P>(
         &self,
@@ -298,7 +296,7 @@ impl Invoke for Client<&str, &Network> {
         func: &str,
         params: Bytes,
         paths: impl AsRef<[P]> + Send,
-    ) -> anyhow::Result<(Self::Outgoing, Self::Incoming)>
+    ) -> anyhow::Result<(Outgoing, Incoming)>
     where
         P: AsRef<[Option<usize>]> + Send + Sync,
     {
@@ -317,8 +315,6 @@ impl Invoke for Client<&str, &Network> {
 
 impl Invoke for Client<&str, Network> {
     type Context = mpsc::UnboundedSender<(Pollable, Waker)>;
-    type Outgoing = Outgoing;
-    type Incoming = Incoming;
 
     async fn invoke<P>(
         &self,
@@ -327,7 +323,7 @@ impl Invoke for Client<&str, Network> {
         func: &str,
         params: Bytes,
         paths: impl AsRef<[P]> + Send,
-    ) -> anyhow::Result<(Self::Outgoing, Self::Incoming)>
+    ) -> anyhow::Result<(Outgoing, Incoming)>
     where
         P: AsRef<[Option<usize>]> + Send + Sync,
     {
@@ -346,8 +342,6 @@ impl Invoke for Client<&str, Network> {
 
 impl Invoke for Client<Box<str>, Network> {
     type Context = mpsc::UnboundedSender<(Pollable, Waker)>;
-    type Outgoing = Outgoing;
-    type Incoming = Incoming;
 
     async fn invoke<P>(
         &self,
@@ -356,7 +350,7 @@ impl Invoke for Client<Box<str>, Network> {
         func: &str,
         params: Bytes,
         paths: impl AsRef<[P]> + Send,
-    ) -> anyhow::Result<(Self::Outgoing, Self::Incoming)>
+    ) -> anyhow::Result<(Outgoing, Incoming)>
     where
         P: AsRef<[Option<usize>]> + Send + Sync,
     {
@@ -375,8 +369,6 @@ impl Invoke for Client<Box<str>, Network> {
 
 impl Invoke for Client<IpSocketAddress, &Network> {
     type Context = mpsc::UnboundedSender<(Pollable, Waker)>;
-    type Outgoing = Outgoing;
-    type Incoming = Incoming;
 
     async fn invoke<P>(
         &self,
@@ -385,7 +377,7 @@ impl Invoke for Client<IpSocketAddress, &Network> {
         func: &str,
         params: Bytes,
         paths: impl AsRef<[P]> + Send,
-    ) -> anyhow::Result<(Self::Outgoing, Self::Incoming)>
+    ) -> anyhow::Result<(Outgoing, Incoming)>
     where
         P: AsRef<[Option<usize>]> + Send + Sync,
     {
@@ -404,8 +396,6 @@ impl Invoke for Client<IpSocketAddress, &Network> {
 
 impl Invoke for Client<IpSocketAddress, Network> {
     type Context = mpsc::UnboundedSender<(Pollable, Waker)>;
-    type Outgoing = Outgoing;
-    type Incoming = Incoming;
 
     async fn invoke<P>(
         &self,
@@ -414,7 +404,7 @@ impl Invoke for Client<IpSocketAddress, Network> {
         func: &str,
         params: Bytes,
         paths: impl AsRef<[P]> + Send,
-    ) -> anyhow::Result<(Self::Outgoing, Self::Incoming)>
+    ) -> anyhow::Result<(Outgoing, Incoming)>
     where
         P: AsRef<[Option<usize>]> + Send + Sync,
     {

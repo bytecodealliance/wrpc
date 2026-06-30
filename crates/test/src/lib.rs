@@ -18,7 +18,7 @@ use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 use tokio::{select, spawn, try_join};
 use tracing::info;
-use wrpc_transport::{Index, Invoke, Serve};
+use wrpc_transport::{Invoke, Serve};
 
 async fn tcp_bind() -> anyhow::Result<TcpListener> {
     TcpListener::bind((Ipv6Addr::LOCALHOST, 0))

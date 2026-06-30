@@ -14,7 +14,7 @@ use std::sync::Arc;
 use anyhow::anyhow;
 use bytes::{Bytes, BytesMut};
 use futures::future::try_join_all;
-use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt as _};
+use tokio::io::AsyncWriteExt as _;
 use tokio_util::codec::Encoder;
 use tracing::{debug, instrument, trace, warn};
 use uuid::Uuid;
@@ -24,6 +24,7 @@ use wasmtime::component::{
 use wasmtime::error::Context as _;
 use wasmtime::{AsContextMut, Engine, bail};
 use wrpc_transport::Invoke;
+use wrpc_transport::frame::{Incoming, Outgoing};
 
 use crate::bindings::rpc::context::Context;
 use crate::bindings::rpc::error::Error;
@@ -123,13 +124,7 @@ impl<T: WrpcView> WrpcView for &mut T {
 pub trait WrpcViewExt: WrpcView {
     fn push_invocation(
         &mut self,
-        invocation: impl Future<
-            Output = anyhow::Result<(
-                <Self::Invoke as Invoke>::Outgoing,
-                <Self::Invoke as Invoke>::Incoming,
-            )>,
-        > + Send
-        + 'static,
+        invocation: impl Future<Output = anyhow::Result<(Outgoing, Incoming)>> + Send + 'static,
     ) -> wasmtime::Result<Resource<Invocation>> {
         self.wrpc()
             .table
@@ -143,16 +138,7 @@ pub trait WrpcViewExt: WrpcView {
     fn get_invocation_result(
         &mut self,
         invocation: &Resource<Invocation>,
-    ) -> wasmtime::Result<
-        Option<
-            &Box<
-                anyhow::Result<(
-                    <Self::Invoke as Invoke>::Outgoing,
-                    <Self::Invoke as Invoke>::Incoming,
-                )>,
-            >,
-        >,
-    > {
+    ) -> wasmtime::Result<Option<&Box<anyhow::Result<(Outgoing, Incoming)>>>> {
         let invocation = self
             .wrpc()
             .table
@@ -170,14 +156,7 @@ pub trait WrpcViewExt: WrpcView {
     fn delete_invocation(
         &mut self,
         invocation: Resource<Invocation>,
-    ) -> wasmtime::Result<
-        impl Future<
-            Output = anyhow::Result<(
-                <Self::Invoke as Invoke>::Outgoing,
-                <Self::Invoke as Invoke>::Incoming,
-            )>,
-        >,
-    > {
+    ) -> wasmtime::Result<impl Future<Output = anyhow::Result<(Outgoing, Incoming)>>> {
         let invocation = self
             .wrpc()
             .table
@@ -197,7 +176,7 @@ pub trait WrpcViewExt: WrpcView {
 
     fn push_outgoing_channel(
         &mut self,
-        outgoing: <Self::Invoke as Invoke>::Outgoing,
+        outgoing: Outgoing,
     ) -> wasmtime::Result<Resource<OutgoingChannel>> {
         self.wrpc()
             .table
@@ -210,7 +189,7 @@ pub trait WrpcViewExt: WrpcView {
     fn delete_outgoing_channel(
         &mut self,
         outgoing: Resource<OutgoingChannel>,
-    ) -> wasmtime::Result<<Self::Invoke as Invoke>::Outgoing> {
+    ) -> wasmtime::Result<Outgoing> {
         let OutgoingChannel(outgoing) = self
             .wrpc()
             .table
@@ -229,7 +208,7 @@ pub trait WrpcViewExt: WrpcView {
 
     fn push_incoming_channel(
         &mut self,
-        incoming: <Self::Invoke as Invoke>::Incoming,
+        incoming: Incoming,
     ) -> wasmtime::Result<Resource<IncomingChannel>> {
         self.wrpc()
             .table
@@ -242,7 +221,7 @@ pub trait WrpcViewExt: WrpcView {
     fn delete_incoming_channel(
         &mut self,
         incoming: Resource<IncomingChannel>,
-    ) -> wasmtime::Result<<Self::Invoke as Invoke>::Incoming> {
+    ) -> wasmtime::Result<Incoming> {
         let IncomingChannel(incoming) = self
             .wrpc()
             .table
@@ -378,10 +357,10 @@ impl fmt::Display for CallError {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub async fn call<C, I, O>(
+pub async fn call<C>(
     mut store: C,
-    rx: I,
-    mut tx: O,
+    rx: Incoming,
+    mut tx: Outgoing,
     guest_resources: &[ResourceType],
     host_resources: &HashMap<Box<str>, HashMap<Box<str>, (ResourceType, ResourceType)>>,
     io_streams: &[ResourceType],
@@ -390,8 +369,6 @@ pub async fn call<C, I, O>(
     func: Func,
 ) -> Result<(), CallError>
 where
-    I: AsyncRead + wrpc_transport::Index<I> + Send + Sync + Unpin + 'static,
-    O: AsyncWrite + wrpc_transport::Index<O> + Send + Sync + Unpin + 'static,
     C: AsContextMut,
     C::Data: WrpcView,
 {
