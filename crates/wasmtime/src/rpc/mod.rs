@@ -50,10 +50,10 @@ pub enum Error {
     Invoke(anyhow::Error),
     /// Error originating from an [`index`](wrpc_transport::frame::Incoming::index) call on the
     /// incoming framed stream.
-    IncomingIndex(anyhow::Error),
+    IncomingIndex(std::io::Error),
     /// Error originating from an [`index`](wrpc_transport::frame::Outgoing::index) call on the
     /// outgoing framed stream.
-    OutgoingIndex(anyhow::Error),
+    OutgoingIndex(std::io::Error),
     /// Error originating from a `wasi:io` stream provided by this crate.
     Stream(StreamError),
 }
@@ -61,9 +61,8 @@ pub enum Error {
 impl fmt::Debug for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Error::Invoke(error) | Error::IncomingIndex(error) | Error::OutgoingIndex(error) => {
-                error.fmt(f)
-            }
+            Error::Invoke(error) => error.fmt(f),
+            Error::IncomingIndex(error) | Error::OutgoingIndex(error) => error.fmt(f),
             Error::Stream(error) => error.fmt(f),
         }
     }
@@ -72,9 +71,8 @@ impl fmt::Debug for Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Error::Invoke(error) | Error::IncomingIndex(error) | Error::OutgoingIndex(error) => {
-                error.fmt(f)
-            }
+            Error::Invoke(error) => error.fmt(f),
+            Error::IncomingIndex(error) | Error::OutgoingIndex(error) => error.fmt(f),
             Error::Stream(error) => error.fmt(f),
         }
     }
