@@ -40,15 +40,6 @@ use bytes::BytesMut;
 use tokio::io::{AsyncRead, ReadBuf};
 use tracing::trace;
 
-/// Internal workaround trait
-///
-/// This is an internal trait used as a workaround for
-/// https://github.com/rust-lang/rust/issues/63033
-#[doc(hidden)]
-pub trait Captures<'a> {}
-
-impl<T: ?Sized> Captures<'_> for T {}
-
 /// Buffered incoming stream used for decoding values
 ///
 /// This wraps the multiplexed framed [`frame::Incoming`] stream with a read buffer used to

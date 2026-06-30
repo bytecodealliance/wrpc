@@ -143,9 +143,9 @@ impl InterfaceGenerator<'_> {
             self.src,
             r#"
 #[allow(clippy::manual_async_fn)]
-pub fn serve_interface<'a, T: {wrpc_transport}::Serve>(
+pub fn serve_interface<'a, T: {wrpc_transport}::Serve, H: Handler<T::Context> + {resource_traits} ::core::marker::Send + ::core::marker::Sync + ::core::clone::Clone + 'static>(
     wrpc: &'a T,
-    handler: impl Handler<T::Context> + {resource_traits} ::core::marker::Send + ::core::marker::Sync + ::core::clone::Clone + 'static,
+    handler: H,
 ) -> impl ::core::future::Future<
         Output = {anyhow}::Result<
             [
@@ -171,7 +171,7 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve>(
                 {n}
             ] 
         >
-    > + ::core::marker::Send + {wrpc_transport}::Captures<'a> {{
+    > + ::core::marker::Send + use<'a, T, H> {{
     async move {{
         let ("#,
             resource_traits = trait_names.join(""),
@@ -602,8 +602,7 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve>(
                 if async_params || !paths.is_empty() {
                     uwrite!(
                         self.src,
-                        ", ::core::option::Option<impl ::core::future::Future<Output = {anyhow}::Result<()>> + ::core::marker::Send + 'static + {wrpc_transport}::Captures<'a>>)",
-                        wrpc_transport = self.r#gen.wrpc_transport_path(),
+                        ", ::core::option::Option<impl ::core::future::Future<Output = {anyhow}::Result<()>> + ::core::marker::Send + 'static + use<'a, C__>>)",
                     );
                 }
                 uwrite!(self.src, ">> + Send + 'a");
@@ -620,8 +619,7 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve>(
                 if async_params || !paths.is_empty() {
                     uwrite!(
                         self.src,
-                        "::core::option::Option<impl ::core::future::Future<Output = {anyhow}::Result<()>> + ::core::marker::Send + 'static + {wrpc_transport}::Captures<'a>>",
-                        wrpc_transport = self.r#gen.wrpc_transport_path(),
+                        "::core::option::Option<impl ::core::future::Future<Output = {anyhow}::Result<()>> + ::core::marker::Send + 'static + use<'a, C__>>",
                     );
                 }
                 uwrite!(self.src, ")>> + Send + 'a");

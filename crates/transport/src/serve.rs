@@ -156,8 +156,6 @@ mod tests {
     use bytes::Bytes;
     use futures::{StreamExt as _, TryStreamExt as _, stream};
 
-    use crate::Captures;
-
     use super::*;
 
     async fn call_serve<T: Serve>(s: &T) -> anyhow::Result<Vec<(T::Context, Outgoing, Incoming)>> {
@@ -198,7 +196,7 @@ mod tests {
         s: &T,
     ) -> impl Future<
         Output = anyhow::Result<Pin<Box<dyn Stream<Item = anyhow::Result<T::Context>> + 'static>>>,
-    > + Captures<'_> {
+    > {
         let fut = s.serve(
             "foo",
             "bar",
@@ -215,7 +213,7 @@ mod tests {
         s: &T,
     ) -> impl Future<
         Output = anyhow::Result<Pin<Box<dyn Stream<Item = anyhow::Result<T::Context>> + 'static>>>,
-    > + crate::Captures<'_> {
+    > {
         let fut = s.serve_values::<(Bytes,), (Bytes,)>(
             "foo",
             "bar",

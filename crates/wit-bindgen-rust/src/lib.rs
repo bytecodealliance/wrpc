@@ -428,9 +428,9 @@ with: {{\n\t{with_name:?}: generate\n}}
             self.src,
             r#"
 #[allow(clippy::manual_async_fn)]
-pub fn serve<'a, T: {wrpc_transport}::Serve>(
+pub fn serve<'a, T: {wrpc_transport}::Serve, H: {bound} + ::core::marker::Send + ::core::marker::Sync + ::core::clone::Clone + 'static>(
     wrpc: &'a T,
-    handler: impl {bound} + ::core::marker::Send + ::core::marker::Sync + ::core::clone::Clone + 'static,
+    handler: H,
 ) -> impl ::core::future::Future<
         Output = {anyhow}::Result<
             ::std::vec::Vec<
@@ -455,7 +455,7 @@ pub fn serve<'a, T: {wrpc_transport}::Serve>(
                 )
             >
         >
-    > + ::core::marker::Send + {wrpc_transport}::Captures<'a> {{
+    > + ::core::marker::Send + use<'a, T, H> {{
     async move {{
         let interfaces = {tokio}::try_join!("#
         );
