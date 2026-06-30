@@ -189,11 +189,11 @@ mod newtyped_list {
 
     macro_rules! impl_codec {
         ($t:ty) => {
-            impl<W> Encode<W> for $t {
+            impl Encode for $t {
                 type Encoder = Codec<Self>;
             }
 
-            impl<R> Decode<R> for $t {
+            impl Decode for $t {
                 type Decoder = Codec<Self>;
                 type ListDecoder = Codec<Vec<Self>>;
             }
