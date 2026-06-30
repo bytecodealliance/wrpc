@@ -31,7 +31,7 @@ use wasm_tokio::{
     Leb128Encoder, Utf8Codec,
 };
 
-use crate::Incoming;
+use crate::BufferedIncoming;
 use crate::frame::Outgoing;
 
 /// Borrowed resource handle, represented as an opaque byte blob
@@ -381,7 +381,7 @@ macro_rules! impl_handle_deferred {
 }
 
 impl_handle_deferred!(handle_deferred_tx, Outgoing);
-impl_handle_deferred!(handle_deferred_rx, Incoming);
+impl_handle_deferred!(handle_deferred_rx, BufferedIncoming);
 
 /// Defines value encoding
 pub trait Encode: Sized {
@@ -505,7 +505,7 @@ pub trait Encode: Sized {
 pub trait Decode: Sized {
     /// Decoder used to decode value
     type Decoder: tokio_util::codec::Decoder<Item = Self>
-        + Deferred<Incoming>
+        + Deferred<BufferedIncoming>
         + Default
         + Send
         + 'static;
@@ -740,7 +740,7 @@ where
     dec: T,
     ret: Vec<T::Item>,
     cap: usize,
-    deferred: Vec<Option<DeferredFn<Incoming>>>,
+    deferred: Vec<Option<DeferredFn<BufferedIncoming>>>,
 }
 
 impl<T> ListDecoder<T>
@@ -767,11 +767,11 @@ where
     }
 }
 
-impl<T> Deferred<Incoming> for ListDecoder<T>
+impl<T> Deferred<BufferedIncoming> for ListDecoder<T>
 where
     T: tokio_util::codec::Decoder,
 {
-    fn take_deferred(&mut self) -> Option<DeferredFn<Incoming>> {
+    fn take_deferred(&mut self) -> Option<DeferredFn<BufferedIncoming>> {
         let deferred = mem::take(&mut self.deferred);
         if deferred.iter().any(Option::is_some) {
             Some(Box::new(|r, path| {
@@ -785,7 +785,7 @@ where
 
 impl<T> tokio_util::codec::Decoder for ListDecoder<T>
 where
-    T: tokio_util::codec::Decoder + Deferred<Incoming>,
+    T: tokio_util::codec::Decoder + Deferred<BufferedIncoming>,
 {
     type Item = Vec<T::Item>;
     type Error = T::Error;
@@ -821,7 +821,7 @@ where
 impl<T> Decode for Vec<T>
 where
     T: Decode + Send,
-    T::ListDecoder: Deferred<Incoming> + Send,
+    T::ListDecoder: Deferred<BufferedIncoming> + Send,
 {
     type Decoder = T::ListDecoder;
     type ListDecoder = ListDecoder<Self::Decoder>;
@@ -1250,14 +1250,14 @@ impl<T: ?Sized> Default for ResourceBorrowDecoder<T> {
     }
 }
 
-impl<T: ?Sized> Deferred<Incoming> for ResourceBorrowDecoder<T> {
-    fn take_deferred(&mut self) -> Option<DeferredFn<Incoming>> {
+impl<T: ?Sized> Deferred<BufferedIncoming> for ResourceBorrowDecoder<T> {
+    fn take_deferred(&mut self) -> Option<DeferredFn<BufferedIncoming>> {
         None
     }
 }
 
-impl<T: ?Sized> Deferred<Incoming> for CoreVecDecoder<ResourceBorrowDecoder<T>> {
-    fn take_deferred(&mut self) -> Option<DeferredFn<Incoming>> {
+impl<T: ?Sized> Deferred<BufferedIncoming> for CoreVecDecoder<ResourceBorrowDecoder<T>> {
+    fn take_deferred(&mut self) -> Option<DeferredFn<BufferedIncoming>> {
         None
     }
 }
@@ -1295,14 +1295,14 @@ impl<T: ?Sized> Default for ResourceOwnDecoder<T> {
     }
 }
 
-impl<T: ?Sized> Deferred<Incoming> for ResourceOwnDecoder<T> {
-    fn take_deferred(&mut self) -> Option<DeferredFn<Incoming>> {
+impl<T: ?Sized> Deferred<BufferedIncoming> for ResourceOwnDecoder<T> {
+    fn take_deferred(&mut self) -> Option<DeferredFn<BufferedIncoming>> {
         None
     }
 }
 
-impl<T: ?Sized> Deferred<Incoming> for CoreVecDecoder<ResourceOwnDecoder<T>> {
-    fn take_deferred(&mut self) -> Option<DeferredFn<Incoming>> {
+impl<T: ?Sized> Deferred<BufferedIncoming> for CoreVecDecoder<ResourceOwnDecoder<T>> {
+    fn take_deferred(&mut self) -> Option<DeferredFn<BufferedIncoming>> {
         None
     }
 }
@@ -1424,11 +1424,11 @@ macro_rules! impl_tuple_codec {
             type Encoder = TupleEncoder::<($($vt::Encoder),+,)>;
         }
 
-        impl<$($vt),+> Deferred<Incoming> for TupleDecoder::<($($vt::Decoder),+,), ($(Option<$vt>),+,)>
+        impl<$($vt),+> Deferred<BufferedIncoming> for TupleDecoder::<($($vt::Decoder),+,), ($(Option<$vt>),+,)>
         where
             $($vt: Decode),+
         {
-            fn take_deferred(&mut self) -> Option<DeferredFn<Incoming>> {
+            fn take_deferred(&mut self) -> Option<DeferredFn<BufferedIncoming>> {
                 let ($(mut $cn),+,) = mem::take(self).into_inner();
                 let deferred = [ $($cn.take_deferred()),+ ];
                 if deferred.iter().any(Option::is_some) {
@@ -1638,7 +1638,7 @@ where
     T: Decode,
 {
     dec: OptionDecoder<T::Decoder>,
-    deferred: Option<DeferredFn<Incoming>>,
+    deferred: Option<DeferredFn<BufferedIncoming>>,
     _ty: PhantomData<T>,
 }
 
@@ -1655,11 +1655,11 @@ where
     }
 }
 
-impl<T> Deferred<Incoming> for FutureDecoder<T>
+impl<T> Deferred<BufferedIncoming> for FutureDecoder<T>
 where
     T: Decode,
 {
-    fn take_deferred(&mut self) -> Option<DeferredFn<Incoming>> {
+    fn take_deferred(&mut self) -> Option<DeferredFn<BufferedIncoming>> {
         self.deferred.take()
     }
 }
@@ -2004,7 +2004,7 @@ where
     T: Decode,
 {
     dec: T::ListDecoder,
-    deferred: Option<DeferredFn<Incoming>>,
+    deferred: Option<DeferredFn<BufferedIncoming>>,
     _ty: PhantomData<T>,
 }
 
@@ -2021,11 +2021,11 @@ where
     }
 }
 
-impl<T> Deferred<Incoming> for StreamDecoder<T>
+impl<T> Deferred<BufferedIncoming> for StreamDecoder<T>
 where
     T: Decode,
 {
-    fn take_deferred(&mut self) -> Option<DeferredFn<Incoming>> {
+    fn take_deferred(&mut self) -> Option<DeferredFn<BufferedIncoming>> {
         self.deferred.take()
     }
 }
@@ -2033,12 +2033,12 @@ where
 #[instrument(level = "trace", skip(dec, r, tx), ret)]
 async fn handle_deferred_stream<C, T>(
     dec: C,
-    mut r: Incoming,
+    mut r: BufferedIncoming,
     path: Vec<usize>,
     tx: mpsc::Sender<Vec<T>>,
 ) -> std::io::Result<()>
 where
-    C: tokio_util::codec::Decoder<Item = T> + Deferred<Incoming>,
+    C: tokio_util::codec::Decoder<Item = T> + Deferred<BufferedIncoming>,
     std::io::Error: From<C::Error>,
 {
     let dec = ListDecoder::new(dec);
@@ -2094,7 +2094,7 @@ where
 impl<T> tokio_util::codec::Decoder for StreamDecoder<T>
 where
     T: Decode + Send + 'static,
-    T::ListDecoder: Deferred<Incoming>,
+    T::ListDecoder: Deferred<BufferedIncoming>,
     <T::Decoder as tokio_util::codec::Decoder>::Error: Send,
     std::io::Error: From<<T::Decoder as tokio_util::codec::Decoder>::Error>,
 {
@@ -2125,7 +2125,7 @@ where
 impl<T> Decode for Pin<Box<dyn Stream<Item = Vec<T>> + Send>>
 where
     T: Decode + Send + 'static,
-    T::ListDecoder: Deferred<Incoming> + Send,
+    T::ListDecoder: Deferred<BufferedIncoming> + Send,
     <T::Decoder as tokio_util::codec::Decoder>::Error: Send,
     std::io::Error: From<<T::Decoder as tokio_util::codec::Decoder>::Error>,
 {
@@ -2137,11 +2137,11 @@ where
 #[derive(Default)]
 pub struct StreamDecoderBytes {
     dec: CoreVecDecoderBytes,
-    deferred: Option<DeferredFn<Incoming>>,
+    deferred: Option<DeferredFn<BufferedIncoming>>,
 }
 
-impl Deferred<Incoming> for StreamDecoderBytes {
-    fn take_deferred(&mut self) -> Option<DeferredFn<Incoming>> {
+impl Deferred<BufferedIncoming> for StreamDecoderBytes {
+    fn take_deferred(&mut self) -> Option<DeferredFn<BufferedIncoming>> {
         self.deferred.take()
     }
 }
@@ -2201,11 +2201,11 @@ impl Decode for Pin<Box<dyn Stream<Item = Bytes> + Send>> {
 #[derive(Default)]
 pub struct StreamDecoderRead {
     dec: CoreVecDecoderBytes,
-    deferred: Option<DeferredFn<Incoming>>,
+    deferred: Option<DeferredFn<BufferedIncoming>>,
 }
 
-impl Deferred<Incoming> for StreamDecoderRead {
-    fn take_deferred(&mut self) -> Option<DeferredFn<Incoming>> {
+impl Deferred<BufferedIncoming> for StreamDecoderRead {
+    fn take_deferred(&mut self) -> Option<DeferredFn<BufferedIncoming>> {
         self.deferred.take()
     }
 }

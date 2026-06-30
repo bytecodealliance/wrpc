@@ -13,7 +13,7 @@ use tokio_util::codec::{FramedRead, FramedWrite};
 use tracing::{Instrument as _, Span, debug, instrument, trace};
 
 use crate::frame::{Incoming, Outgoing};
-use crate::{Deferred as _, TupleDecode, TupleEncode};
+use crate::{BufferedIncoming, Deferred as _, TupleDecode, TupleEncode};
 
 /// Server-side handle to a wRPC transport
 ///
@@ -107,7 +107,7 @@ pub trait ServeExt: Serve {
                         params,
                         rx.map(|f| {
                             f(
-                                crate::Incoming {
+                                BufferedIncoming {
                                     buffer,
                                     inner: dec.into_inner(),
                                 },

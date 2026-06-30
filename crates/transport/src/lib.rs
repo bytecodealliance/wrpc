@@ -53,12 +53,12 @@ impl<T: ?Sized> Captures<'_> for T {}
 ///
 /// This wraps the multiplexed framed [`frame::Incoming`] stream with a read buffer used to
 /// hold bytes that were read ahead while decoding synchronous values.
-pub struct Incoming {
+pub struct BufferedIncoming {
     buffer: BytesMut,
     inner: frame::Incoming,
 }
 
-impl Incoming {
+impl BufferedIncoming {
     /// Index the incoming stream using a structural `path`, returning a handle to the
     /// multiplexed sub-stream addressed by it.
     pub fn index(&self, path: &[usize]) -> anyhow::Result<Self> {
@@ -70,7 +70,7 @@ impl Incoming {
     }
 }
 
-impl AsyncRead for Incoming {
+impl AsyncRead for BufferedIncoming {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
