@@ -8,23 +8,22 @@ use core::time::Duration;
 use anyhow::Context as _;
 use bytes::{Bytes, BytesMut};
 use futures::TryStreamExt as _;
-use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt as _};
+use tokio::io::AsyncWriteExt as _;
 use tokio::{select, try_join};
 use tokio_util::codec::{Encoder as _, FramedRead};
 use tracing::{Instrument as _, debug, instrument, trace};
 
-use crate::{Deferred as _, Incoming, Index, TupleDecode, TupleEncode};
+use crate::frame::{Incoming, Outgoing};
+use crate::{Deferred as _, TupleDecode, TupleEncode};
 
 /// Client-side handle to a wRPC transport
+///
+/// Invocations are always multiplexed over the wRPC framing layer, so the outgoing and
+/// incoming byte streams are the framed [`Outgoing`] and [`Incoming`] streams regardless of
+/// the underlying transport.
 pub trait Invoke: Send + Sync {
     /// Transport-specific invocation context
     type Context: Send + Sync;
-
-    /// Outgoing multiplexed byte stream
-    type Outgoing: AsyncWrite + Index<Self::Outgoing> + Send + Sync + Unpin + 'static;
-
-    /// Incoming multiplexed byte stream
-    type Incoming: AsyncRead + Index<Self::Incoming> + Send + Sync + Unpin + 'static;
 
     /// Invoke function `func` on instance `instance`
     fn invoke<P>(
@@ -34,7 +33,7 @@ pub trait Invoke: Send + Sync {
         func: &str,
         params: Bytes,
         paths: impl AsRef<[P]> + Send,
-    ) -> impl Future<Output = anyhow::Result<(Self::Outgoing, Self::Incoming)>> + Send
+    ) -> impl Future<Output = anyhow::Result<(Outgoing, Incoming)>> + Send
     where
         P: AsRef<[Option<usize>]> + Send + Sync;
 }
@@ -50,8 +49,6 @@ pub struct Timeout<'a, T: ?Sized> {
 
 impl<T: Invoke> Invoke for Timeout<'_, T> {
     type Context = T::Context;
-    type Outgoing = T::Outgoing;
-    type Incoming = T::Incoming;
 
     #[instrument(level = "trace", skip(self, cx, params, paths))]
     async fn invoke<P>(
@@ -61,7 +58,7 @@ impl<T: Invoke> Invoke for Timeout<'_, T> {
         func: &str,
         params: Bytes,
         paths: impl AsRef<[P]> + Send,
-    ) -> anyhow::Result<(Self::Outgoing, Self::Incoming)>
+    ) -> anyhow::Result<(Outgoing, Incoming)>
     where
         P: AsRef<[Option<usize>]> + Send + Sync,
     {
@@ -85,8 +82,6 @@ pub struct TimeoutOwned<T> {
 
 impl<T: Invoke> Invoke for TimeoutOwned<T> {
     type Context = T::Context;
-    type Outgoing = T::Outgoing;
-    type Incoming = T::Incoming;
 
     #[instrument(level = "trace", skip(self, cx, params, paths))]
     async fn invoke<P>(
@@ -96,7 +91,7 @@ impl<T: Invoke> Invoke for TimeoutOwned<T> {
         func: &str,
         params: Bytes,
         paths: impl AsRef<[P]> + Send,
-    ) -> anyhow::Result<(Self::Outgoing, Self::Incoming)>
+    ) -> anyhow::Result<(Outgoing, Incoming)>
     where
         P: AsRef<[Option<usize>]> + Send + Sync,
     {
@@ -132,8 +127,8 @@ pub trait InvokeExt: Invoke {
     where
         Paths: AsRef<[P]> + Send,
         P: AsRef<[Option<usize>]> + Send + Sync,
-        Params: TupleEncode<Self::Outgoing> + Send,
-        Results: TupleDecode<Self::Incoming> + Send,
+        Params: TupleEncode + Send,
+        Results: TupleDecode + Send,
         <Params::Encoder as tokio_util::codec::Encoder<Params>>::Error:
             std::error::Error + Send + Sync + 'static,
         <Results::Decoder as tokio_util::codec::Decoder>::Error:
@@ -194,7 +189,7 @@ pub trait InvokeExt: Invoke {
             trace!("received sync results");
             let buffer = mem::take(dec.read_buffer_mut());
             let rx = dec.decoder_mut().take_deferred();
-            let incoming = Incoming {
+            let incoming = crate::Incoming {
                 buffer,
                 inner: dec.into_inner(),
             };
@@ -248,8 +243,8 @@ pub trait InvokeExt: Invoke {
     ) -> impl Future<Output = anyhow::Result<Results>> + Send
     where
         P: AsRef<[Option<usize>]> + Send + Sync,
-        Params: TupleEncode<Self::Outgoing> + Send,
-        Results: TupleDecode<Self::Incoming> + Send,
+        Params: TupleEncode + Send,
+        Results: TupleDecode + Send,
         <Params::Encoder as tokio_util::codec::Encoder<Params>>::Error:
             std::error::Error + Send + Sync + 'static,
         <Results::Decoder as tokio_util::codec::Decoder>::Error:
@@ -331,7 +326,7 @@ mod tests {
         i: &T,
         cx: T::Context,
         paths: Arc<[Arc<[Option<usize>]>]>,
-    ) -> anyhow::Result<(T::Outgoing, T::Incoming)> {
+    ) -> anyhow::Result<(Outgoing, Incoming)> {
         i.invoke(cx, "foo", "bar", Bytes::default(), &paths).await
     }
 

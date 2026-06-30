@@ -9,7 +9,7 @@ use wasmtime_wasi::p2::bindings::io::poll::Pollable;
 use wasmtime_wasi::p2::bindings::io::streams::{InputStream, OutputStream};
 use wasmtime_wasi::p2::pipe::{AsyncReadStream, AsyncWriteStream};
 use wasmtime_wasi::p2::subscribe;
-use wrpc_transport::{Index as _, Invoke};
+use wrpc_transport::frame::{Incoming, Outgoing};
 
 use crate::bindings::rpc::error::Error;
 use crate::bindings::rpc::transport::{
@@ -77,7 +77,7 @@ impl<T: WrpcView> HostIncomingChannel for WrpcRpcImpl<T> {
             .push_child(
                 Box::new(AsyncReadStream::new(IncomingChannelStream {
                     incoming: IncomingChannel(stream),
-                    _ty: PhantomData::<<T::Invoke as Invoke>::Incoming>,
+                    _ty: PhantomData::<Incoming>,
                 })) as InputStream,
                 &incoming,
             )
@@ -106,7 +106,7 @@ impl<T: WrpcView> HostIncomingChannel for WrpcRpcImpl<T> {
                 bail!("lock poisoned");
             };
             let incoming = incoming
-                .downcast_ref::<<T::Invoke as Invoke>::Incoming>()
+                .downcast_ref::<Incoming>()
                 .context("invalid incoming channel type")?;
             incoming.index(&path)
         };
@@ -152,7 +152,7 @@ impl<T: WrpcView> HostOutgoingChannel for WrpcRpcImpl<T> {
                     8192,
                     OutgoingChannelStream {
                         outgoing: OutgoingChannel(stream),
-                        _ty: PhantomData::<<T::Invoke as Invoke>::Outgoing>,
+                        _ty: PhantomData::<Outgoing>,
                     },
                 )) as OutputStream,
                 &outgoing,
@@ -182,7 +182,7 @@ impl<T: WrpcView> HostOutgoingChannel for WrpcRpcImpl<T> {
                 bail!("lock poisoned");
             };
             let outgoing = outgoing
-                .downcast_ref::<<T::Invoke as Invoke>::Outgoing>()
+                .downcast_ref::<Outgoing>()
                 .context("invalid outgoing channel type")?;
             outgoing.index(&path)
         };

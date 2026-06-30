@@ -22,4 +22,4 @@ pub mod runtime {
     pub use wrpc_wasmtime as wasmtime;
 }
 
-pub use transport::{Index, Invoke, Serve};
+pub use transport::{Invoke, Serve};

@@ -6,50 +6,9 @@
 //!
 //! This crate is maintained on a best-effort basis.
 
-use core::pin::Pin;
-use core::task::{Context, Poll};
-
 use bytes::BytesMut;
-use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_util::codec::{Decoder, Encoder};
 use wrpc_transport::{Decode, Deferred as _, Encode};
-
-/// A stream, which fails on each operation, this type should only ever be used in trait bounds
-pub struct NoopStream;
-
-impl AsyncRead for NoopStream {
-    fn poll_read(
-        self: Pin<&mut Self>,
-        _: &mut Context<'_>,
-        _: &mut tokio::io::ReadBuf<'_>,
-    ) -> Poll<std::io::Result<()>> {
-        Poll::Ready(Err(std::io::Error::other("should not be called")))
-    }
-}
-
-impl AsyncWrite for NoopStream {
-    fn poll_write(
-        self: Pin<&mut Self>,
-        _: &mut Context<'_>,
-        _: &[u8],
-    ) -> Poll<std::io::Result<usize>> {
-        Poll::Ready(Err(std::io::Error::other("should not be called")))
-    }
-
-    fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        Poll::Ready(Err(std::io::Error::other("should not be called")))
-    }
-
-    fn poll_shutdown(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        Poll::Ready(Err(std::io::Error::other("should not be called")))
-    }
-}
-
-impl wrpc_transport::Index<Self> for NoopStream {
-    fn index(&self, _: &[usize]) -> anyhow::Result<Self> {
-        anyhow::bail!("should not be called")
-    }
-}
 
 /// Pack a [`wrpc_transport::Encode`] into a singular byte buffer `dst`.
 ///
@@ -58,10 +17,7 @@ impl wrpc_transport::Index<Self> for NoopStream {
 ///
 /// This is unstable API, which will be deprecated once feature-complete "packing" functionality is available in [`wrpc_transport`].
 /// Track <https://github.com/bytecodealliance/wrpc/issues/25> for updates.
-pub fn pack<T: Encode<NoopStream>>(
-    v: T,
-    dst: &mut BytesMut,
-) -> Result<(), <T::Encoder as Encoder<T>>::Error> {
+pub fn pack<T: Encode>(v: T, dst: &mut BytesMut) -> Result<(), <T::Encoder as Encoder<T>>::Error> {
     let mut enc = T::Encoder::default();
     enc.encode(v, dst)?;
     if enc.take_deferred().is_some() {
@@ -82,9 +38,7 @@ pub fn pack<T: Encode<NoopStream>>(
 ///
 /// This is unstable API, which will be deprecated once feature-complete "unpacking" functionality is available in [`wrpc_transport`].
 /// Track <https://github.com/bytecodealliance/wrpc/issues/25> for updates.
-pub fn unpack<T: Decode<NoopStream>>(
-    buf: &mut BytesMut,
-) -> Result<T, <T::Decoder as Decoder>::Error> {
+pub fn unpack<T: Decode>(buf: &mut BytesMut) -> Result<T, <T::Decoder as Decoder>::Error> {
     let mut dec = T::Decoder::default();
     let v = dec.decode(buf)?;
     let v = v.ok_or_else(|| {

@@ -14,7 +14,7 @@ use tracing::{Instrument as _, Span, debug, instrument, trace, warn};
 use wasmtime::component::{LinkerInstance, ResourceType, Type, Val, types};
 use wasmtime::error::Context as _;
 use wasmtime::{AsContextMut, Engine, StoreContextMut, bail, ensure};
-use wrpc_transport::{Index as _, Invoke, InvokeExt as _};
+use wrpc_transport::{Invoke, InvokeExt as _};
 
 use crate::rpc::Error;
 use crate::{ValEncoder, WrpcView, WrpcViewExt as _, read_value, rpc_func_name, rpc_result_type};

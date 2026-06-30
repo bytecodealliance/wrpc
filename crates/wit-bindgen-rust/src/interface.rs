@@ -1264,36 +1264,28 @@ impl<'a> wit_bindgen_core::InterfaceGenerator<'a> for InterfaceGenerator<'a> {
                 uwriteln!(
                     self.src,
                     r"
-impl<W> {wrpc_transport}::Encode<W> for &self::{name}
-where
-    W: ::core::marker::Send + ::core::marker::Sync + {wrpc_transport}::Index<W> + {tokio}::io::AsyncWrite + ::core::marker::Unpin + 'static,
+impl {wrpc_transport}::Encode for &self::{name}
 {{
-    type Encoder = {mod_name}::Encoder<W>;
+    type Encoder = {mod_name}::Encoder;
 }}",
                 );
             }
             uwriteln!(
                 self.src,
                 r"
-impl<W> {wrpc_transport}::Encode<W> for self::{name}
-where
-    W: ::core::marker::Send + ::core::marker::Sync + {wrpc_transport}::Index<W> + {tokio}::io::AsyncWrite + ::core::marker::Unpin + 'static,
+impl {wrpc_transport}::Encode for self::{name}
 {{
-    type Encoder = {mod_name}::Encoder<W>;
+    type Encoder = {mod_name}::Encoder;
 }}
 
-impl<R> {wrpc_transport}::Decode<R> for self::{name}
-where
-    R: ::core::marker::Send + ::core::marker::Sync + {wrpc_transport}::Index<R> + {tokio}::io::AsyncRead + ::core::marker::Unpin + 'static,
+impl {wrpc_transport}::Decode for self::{name}
 {{
-    type Decoder = {mod_name}::Decoder<R>;
-    type ListDecoder = {wrpc_transport}::ListDecoder<Self::Decoder, R>;
+    type Decoder = {mod_name}::Decoder;
+    type ListDecoder = {wrpc_transport}::ListDecoder<Self::Decoder>;
 }}
 
 mod {mod_name} {{
-    pub struct Encoder<W> 
-    where
-        W: ::core::marker::Send + ::core::marker::Sync + {wrpc_transport}::Index<W> + {tokio}::io::AsyncWrite + ::core::marker::Unpin + 'static,
+    pub struct Encoder 
     {{",
             );
 
@@ -1302,18 +1294,16 @@ mod {mod_name} {{
                     let name = to_rust_ident(name);
                     uwrite!(self.src, "{name}: <");
                     self.print_ty(ty, true, true);
-                    uwriteln!(self.src, " as {wrpc_transport}::Encode<W>>::Encoder,");
+                    uwriteln!(self.src, " as {wrpc_transport}::Encode>::Encoder,");
                 }
             } else {
-                uwriteln!(self.src, "_ty: ::core::marker::PhantomData<W>,");
+                uwriteln!(self.src, "_ty: ::core::marker::PhantomData<()>,");
             }
             uwriteln!(
                 self.src,
                 r"}}
     #[automatically_derived]
-    impl<W> ::core::default::Default for Encoder<W>
-    where
-        W: ::core::marker::Send + ::core::marker::Sync + {wrpc_transport}::Index<W> + {tokio}::io::AsyncWrite + ::core::marker::Unpin + 'static,
+    impl ::core::default::Default for Encoder
     {{
         fn default() -> Self {{
             Self{{"
@@ -1333,11 +1323,9 @@ mod {mod_name} {{
     }}
 
     #[automatically_derived]
-    impl<W> {wrpc_transport}::Deferred<W> for Encoder<W>
-    where
-        W: ::core::marker::Send + ::core::marker::Sync + {wrpc_transport}::Index<W> + {tokio}::io::AsyncWrite + ::core::marker::Unpin + 'static,
+    impl {wrpc_transport}::Deferred<{wrpc_transport}::frame::Outgoing> for Encoder
     {{
-        fn take_deferred(&mut self) -> ::core::option::Option<{wrpc_transport}::DeferredFn<W>> {{"
+        fn take_deferred(&mut self) -> ::core::option::Option<{wrpc_transport}::DeferredFn<{wrpc_transport}::frame::Outgoing>> {{"
             );
             if !fields.is_empty() {
                 for Field { name, .. } in fields {
@@ -1362,7 +1350,7 @@ mod {mod_name} {{
                         r"
                         let f_{name} = f_{name}.map(|f| {{
                             path.push({i});
-                            let w = {wrpc_transport}::Index::index(&w, &path);
+                            let w = w.index(&path);
                             path.pop();
                             (f, w)
                         }});"
@@ -1405,9 +1393,7 @@ mod {mod_name} {{
         }}
     }}
 
-    pub struct Decoder<R>
-    where
-        R: ::core::marker::Send + ::core::marker::Sync + {wrpc_transport}::Index<R> + {tokio}::io::AsyncRead + ::core::marker::Unpin + 'static,
+    pub struct Decoder
     {{"
             );
 
@@ -1416,21 +1402,19 @@ mod {mod_name} {{
                     let name = to_rust_ident(name);
                     uwrite!(self.src, "c_{name}: <");
                     self.print_ty(ty, true, true);
-                    uwriteln!(self.src, " as {wrpc_transport}::Decode<R>>::Decoder,");
+                    uwriteln!(self.src, " as {wrpc_transport}::Decode>::Decoder,");
                     uwrite!(self.src, "v_{name}: ::core::option::Option<");
                     self.print_ty(ty, true, true);
                     uwriteln!(self.src, ">,");
                 }
             } else {
-                uwriteln!(self.src, "_ty: ::core::marker::PhantomData<R>,");
+                uwriteln!(self.src, "_ty: ::core::marker::PhantomData<()>,");
             }
             uwriteln!(
                 self.src,
                 r"}}
     #[automatically_derived]
-    impl<R> ::core::default::Default for Decoder<R>
-    where
-        R: ::core::marker::Send + ::core::marker::Sync + {wrpc_transport}::Index<R> + {tokio}::io::AsyncRead + ::core::marker::Unpin + 'static,
+    impl ::core::default::Default for Decoder
     {{
         fn default() -> Self {{
             Self{{"
@@ -1451,11 +1435,9 @@ mod {mod_name} {{
     }}
 
     #[automatically_derived]
-    impl<R> {wrpc_transport}::Deferred<{wrpc_transport}::Incoming<R>> for Decoder<R>
-    where
-        R: ::core::marker::Send + ::core::marker::Sync + {wrpc_transport}::Index<R> + {tokio}::io::AsyncRead + ::core::marker::Unpin + 'static,
+    impl {wrpc_transport}::Deferred<{wrpc_transport}::Incoming> for Decoder
     {{
-        fn take_deferred(&mut self) -> ::core::option::Option<{wrpc_transport}::DeferredFn<{wrpc_transport}::Incoming<R>>> {{"
+        fn take_deferred(&mut self) -> ::core::option::Option<{wrpc_transport}::DeferredFn<{wrpc_transport}::Incoming>> {{"
             );
             if !fields.is_empty() {
                 for Field { name, .. } in fields {
@@ -1480,7 +1462,7 @@ mod {mod_name} {{
                         r"
                         let f_{name} = f_{name}.map(|f| {{
                             path.push({i});
-                            let r = {wrpc_transport}::Index::index(&r, &path);
+                            let r = r.index(&path);
                             path.pop();
                             (f, r)
                         }});"
@@ -1524,9 +1506,7 @@ mod {mod_name} {{
     }}
 
     #[automatically_derived]
-    impl<R> {tokio_util}::codec::Decoder for Decoder<R> 
-    where
-        R: ::core::marker::Send + ::core::marker::Sync + {wrpc_transport}::Index<R> + {tokio}::io::AsyncRead + ::core::marker::Unpin + 'static,
+    impl {tokio_util}::codec::Decoder for Decoder 
     {{
         type Item = super::{name};
         type Error = ::std::io::Error;
@@ -1564,9 +1544,7 @@ mod {mod_name} {{
                     self.src,
                     r#"
     #[automatically_derived]
-    impl<W> {tokio_util}::codec::Encoder<{name}> for Encoder<W> 
-    where
-        W: ::core::marker::Send + ::core::marker::Sync + {wrpc_transport}::Index<W> + {tokio}::io::AsyncWrite + ::core::marker::Unpin + 'static,
+    impl {tokio_util}::codec::Encoder<{name}> for Encoder 
     {{
         type Error = ::std::io::Error;
 
@@ -1699,19 +1677,19 @@ pub struct {}(());",
             uwriteln!(
                 self.src,
                 r#"
-impl<W> {wrpc_transport}::Encode<W> for self::{name} {{
+impl {wrpc_transport}::Encode for self::{name} {{
     type Encoder = {mod_name}::Codec;
 }}
 
-impl<W> {wrpc_transport}::Encode<W> for &self::{name} {{
+impl {wrpc_transport}::Encode for &self::{name} {{
     type Encoder = {mod_name}::Codec;
 }}
 
-impl<W> {wrpc_transport}::Encode<W> for &&self::{name} {{
+impl {wrpc_transport}::Encode for &&self::{name} {{
     type Encoder = {mod_name}::Codec;
 }}
 
-impl<R> {wrpc_transport}::Decode<R> for self::{name} {{
+impl {wrpc_transport}::Decode for self::{name} {{
     type Decoder = {mod_name}::Codec;
     type ListDecoder = {wrpc_transport}::SyncCodec<{wasm_tokio}::CoreVecDecoder<Self::Decoder>>;
 }}
@@ -1875,19 +1853,19 @@ mod {mod_name} {{
                 uwriteln!(
                     self.src,
                     r#"
-impl<W> {wrpc_transport}::Encode<W> for self::{name} {{
+impl {wrpc_transport}::Encode for self::{name} {{
     type Encoder = {mod_name}::Codec;
 }}
 
-impl<W> {wrpc_transport}::Encode<W> for &self::{name} {{
+impl {wrpc_transport}::Encode for &self::{name} {{
     type Encoder = {mod_name}::Codec;
 }}
 
-impl<W> {wrpc_transport}::Encode<W> for &&self::{name} {{
+impl {wrpc_transport}::Encode for &&self::{name} {{
     type Encoder = {mod_name}::Codec;
 }}
 
-impl<R> {wrpc_transport}::Decode<R> for self::{name} {{
+impl {wrpc_transport}::Decode for self::{name} {{
     type Decoder = {mod_name}::Codec;
     type ListDecoder = {wrpc_transport}::SyncCodec<{wasm_tokio}::CoreVecDecoder<Self::Decoder>>;
 }}
@@ -1963,25 +1941,19 @@ mod {mod_name} {{
 }}"#,
                 );
             } else {
-                let tokio = self.r#gen.tokio_path().to_string();
-
                 let (paths, _) = async_paths_tyid(self.resolve, id);
                 if paths.is_empty() {
                     uwrite!(
                         self.src,
                         r#"
-impl<W> {wrpc_transport}::Encode<W> for &self::{name}
-where
-    W: ::core::marker::Send + ::core::marker::Sync + {wrpc_transport}::Index<W> + {tokio}::io::AsyncWrite + ::core::marker::Unpin + 'static,
+impl {wrpc_transport}::Encode for &self::{name}
 {{
-    type Encoder = {mod_name}::Encoder<W>;
+    type Encoder = {mod_name}::Encoder;
 }}
 
-impl<W> {wrpc_transport}::Encode<W> for &&self::{name}
-where
-    W: ::core::marker::Send + ::core::marker::Sync + {wrpc_transport}::Index<W> + {tokio}::io::AsyncWrite + ::core::marker::Unpin + 'static,
+impl {wrpc_transport}::Encode for &&self::{name}
 {{
-    type Encoder = {mod_name}::Encoder<W>;
+    type Encoder = {mod_name}::Encoder;
 }}
 "#
                     );
@@ -1990,34 +1962,30 @@ where
                 uwrite!(
                     self.src,
                     r#"
-impl<W> {wrpc_transport}::Encode<W> for self::{name}
-where
-    W: ::core::marker::Send + ::core::marker::Sync + {wrpc_transport}::Index<W> + {tokio}::io::AsyncWrite + ::core::marker::Unpin + 'static,
+impl {wrpc_transport}::Encode for self::{name}
 {{
-    type Encoder = {mod_name}::Encoder<W>;
+    type Encoder = {mod_name}::Encoder;
 }}
 
-impl<R> {wrpc_transport}::Decode<R> for self::{name}
-where
-    R: ::core::marker::Send + ::core::marker::Sync + {wrpc_transport}::Index<R> + {tokio}::io::AsyncRead + ::core::marker::Unpin + 'static,
+impl {wrpc_transport}::Decode for self::{name}
 {{
-    type Decoder = {mod_name}::Decoder<R>;
-    type ListDecoder = {wrpc_transport}::ListDecoder<Self::Decoder, R>;
+    type Decoder = {mod_name}::Decoder;
+    type ListDecoder = {wrpc_transport}::ListDecoder<Self::Decoder>;
 }}
 
 mod {mod_name} {{
-    pub struct Encoder<W>(::core::option::Option<{wrpc_transport}::DeferredFn<W>>);
+    pub struct Encoder(::core::option::Option<{wrpc_transport}::DeferredFn<{wrpc_transport}::frame::Outgoing>>);
 
     #[automatically_derived]
-    impl<W> ::core::default::Default for Encoder<W> {{
+    impl ::core::default::Default for Encoder {{
         fn default() -> Self {{ 
             Self(None)
         }}
     }}
 
     #[automatically_derived]
-    impl<W> {wrpc_transport}::Deferred<W> for Encoder<W> {{
-        fn take_deferred(&mut self) -> ::core::option::Option<{wrpc_transport}::DeferredFn<W>> {{
+    impl {wrpc_transport}::Deferred<{wrpc_transport}::frame::Outgoing> for Encoder {{
+        fn take_deferred(&mut self) -> ::core::option::Option<{wrpc_transport}::DeferredFn<{wrpc_transport}::frame::Outgoing>> {{
             self.0.take()
         }}
     }}"#
@@ -2035,9 +2003,7 @@ mod {mod_name} {{
                         self.src,
                         r#"
     #[automatically_derived]
-    impl<W> {tokio_util}::codec::Encoder<{ty}> for Encoder<W> 
-    where
-        W: ::core::marker::Send + ::core::marker::Sync + {wrpc_transport}::Index<W> + {tokio}::io::AsyncWrite + ::core::marker::Unpin + 'static,
+    impl {tokio_util}::codec::Encoder<{ty}> for Encoder 
     {{
         type Error = ::std::io::Error;
 
@@ -2060,7 +2026,7 @@ mod {mod_name} {{
                                 r"
                 super::{name}::{case}(payload) => {{
                     {wasm_tokio}::Leb128Encoder.encode({i}_u32, dst)?;
-                    self.0 = {wrpc_transport}::Encode::<W>::encode(payload, &mut ::core::default::Default::default(), dst)?;
+                    self.0 = {wrpc_transport}::Encode::encode(payload, &mut ::core::default::Default::default(), dst)?;
                     Ok(())
                 }},"
                             );
@@ -2084,9 +2050,7 @@ mod {mod_name} {{
                 uwrite!(
                     self.src,
                     r"
-    pub enum PayloadDecoder<R>
-    where
-        R: ::core::marker::Send + ::core::marker::Sync + {wrpc_transport}::Index<R> + {tokio}::io::AsyncRead + ::core::marker::Unpin + 'static,
+    pub enum PayloadDecoder
     {{"
                 );
 
@@ -2104,7 +2068,7 @@ mod {mod_name} {{
                 {case}(<"
                         );
                         self.print_ty(ty, true, true);
-                        uwriteln!(self.src, " as {wrpc_transport}::Decode<R>>::Decoder),");
+                        uwriteln!(self.src, " as {wrpc_transport}::Decode>::Decoder),");
                     }
                 }
 
@@ -2113,18 +2077,14 @@ mod {mod_name} {{
                     r#"
     }}
 
-    pub enum Decoder<R>
-    where
-        R: ::core::marker::Send + ::core::marker::Sync + {wrpc_transport}::Index<R> + {tokio}::io::AsyncRead + ::core::marker::Unpin + 'static,
+    pub enum Decoder
     {{
-        Payload(::core::option::Option<PayloadDecoder<R>>),
-        Deferred(::core::option::Option<{wrpc_transport}::DeferredFn<{wrpc_transport}::Incoming<R>>>)
+        Payload(::core::option::Option<PayloadDecoder>),
+        Deferred(::core::option::Option<{wrpc_transport}::DeferredFn<{wrpc_transport}::Incoming>>)
     }}
 
     #[automatically_derived]
-    impl<R> ::core::default::Default for Decoder<R>
-    where
-        R: ::core::marker::Send + ::core::marker::Sync + {wrpc_transport}::Index<R> + {tokio}::io::AsyncRead + ::core::marker::Unpin + 'static,
+    impl ::core::default::Default for Decoder
     {{
         fn default() -> Self {{
             Self::Payload(None)
@@ -2132,11 +2092,9 @@ mod {mod_name} {{
     }}
 
     #[automatically_derived]
-    impl<R> {wrpc_transport}::Deferred<{wrpc_transport}::Incoming<R>> for Decoder<R>
-    where
-        R: ::core::marker::Send + ::core::marker::Sync + {wrpc_transport}::Index<R> + {tokio}::io::AsyncRead + ::core::marker::Unpin + 'static,
+    impl {wrpc_transport}::Deferred<{wrpc_transport}::Incoming> for Decoder
     {{
-        fn take_deferred(&mut self) -> ::core::option::Option<{wrpc_transport}::DeferredFn<{wrpc_transport}::Incoming<R>>> {{
+        fn take_deferred(&mut self) -> ::core::option::Option<{wrpc_transport}::DeferredFn<{wrpc_transport}::Incoming>> {{
             match self {{
                 Self::Payload(None) => None,"#
                 );
@@ -2168,9 +2126,7 @@ mod {mod_name} {{
     }}
 
     #[automatically_derived]
-    impl<R> {tokio_util}::codec::Decoder for Decoder<R> 
-    where
-        R: ::core::marker::Send + ::core::marker::Sync + {wrpc_transport}::Index<R> + {tokio}::io::AsyncRead + ::core::marker::Unpin + 'static,
+    impl {tokio_util}::codec::Decoder for Decoder 
     {{
         type Item = super::{name};
         type Error = ::std::io::Error;
@@ -2238,7 +2194,7 @@ mod {mod_name} {{
                             let Some(payload) = dec.decode(src)? else {{
                                 return Ok(None)
                             }};
-                            *self = Self::Deferred({wrpc_transport}::Deferred::<{wrpc_transport}::Incoming<R>>::take_deferred(dec));
+                            *self = Self::Deferred({wrpc_transport}::Deferred::<{wrpc_transport}::Incoming>::take_deferred(dec));
                             Ok(Some(super::{name}::{case}(payload)))
                         }},"
                         );
@@ -2399,15 +2355,15 @@ mod {mod_name} {{
             uwriteln!(
                 self.src,
                 r#"
-impl<W> {wrpc_transport}::Encode<W> for self::{name} {{
+impl {wrpc_transport}::Encode for self::{name} {{
     type Encoder = {mod_name}::Codec;
 }}
 
-impl<W> {wrpc_transport}::Encode<W> for &self::{name} {{
+impl {wrpc_transport}::Encode for &self::{name} {{
     type Encoder = {mod_name}::Codec;
 }}
 
-impl<R> {wrpc_transport}::Decode<R> for self::{name} {{
+impl {wrpc_transport}::Decode for self::{name} {{
     type Decoder = {mod_name}::Codec;
     type ListDecoder = {wrpc_transport}::SyncCodec<{wasm_tokio}::CoreVecDecoder<Self::Decoder>>;
 }}

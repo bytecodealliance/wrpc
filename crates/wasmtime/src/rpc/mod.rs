@@ -48,10 +48,11 @@ where
 pub enum Error {
     /// Error originating from [Invoke::invoke] call
     Invoke(anyhow::Error),
-    /// Error originating from [Index::index](wrpc_transport::Index::index) call on [Invoke::Incoming].
+    /// Error originating from an [`index`](wrpc_transport::frame::Incoming::index) call on the
+    /// incoming framed stream.
     IncomingIndex(anyhow::Error),
-    /// Error originating from [Index::index](wrpc_transport::Index::index) call on
-    /// [Invoke::Outgoing].
+    /// Error originating from an [`index`](wrpc_transport::frame::Outgoing::index) call on the
+    /// outgoing framed stream.
     OutgoingIndex(anyhow::Error),
     /// Error originating from a `wasi:io` stream provided by this crate.
     Stream(StreamError),

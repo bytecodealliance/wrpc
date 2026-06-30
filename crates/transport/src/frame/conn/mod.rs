@@ -19,8 +19,6 @@ use tokio_util::sync::PollSender;
 use tracing::{Instrument as _, Span, debug, error, instrument, trace};
 use wasm_tokio::{AsyncReadLeb128 as _, Leb128Encoder};
 
-use crate::Index;
-
 mod client;
 mod server;
 
@@ -293,9 +291,11 @@ pin_project! {
     }
 }
 
-impl Index<Self> for Incoming {
+impl Incoming {
+    /// Index the incoming stream using a structural `path`, returning a handle to the
+    /// multiplexed sub-stream addressed by it.
     #[instrument(level = "trace", skip(self), fields(path = ?self.path))]
-    fn index(&self, path: &[usize]) -> anyhow::Result<Self> {
+    pub fn index(&self, path: &[usize]) -> anyhow::Result<Self> {
         ensure!(!path.is_empty());
         let path = if self.path.is_empty() {
             Arc::from(path)
@@ -356,9 +356,11 @@ pin_project! {
     }
 }
 
-impl Index<Self> for Outgoing {
+impl Outgoing {
+    /// Index the outgoing stream using a structural `path`, returning a handle that writes
+    /// to the multiplexed sub-stream addressed by it.
     #[instrument(level = "trace", skip(self), fields(path = ?self.path))]
-    fn index(&self, path: &[usize]) -> anyhow::Result<Self> {
+    pub fn index(&self, path: &[usize]) -> anyhow::Result<Self> {
         ensure!(!path.is_empty());
         let path: Arc<[usize]> = if self.path.is_empty() {
             Arc::from(path)

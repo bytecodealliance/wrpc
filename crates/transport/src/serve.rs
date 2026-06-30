@@ -8,22 +8,21 @@ use std::sync::Arc;
 
 use anyhow::{Context as _, bail};
 use futures::{SinkExt as _, Stream, TryStreamExt as _};
-use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt as _};
+use tokio::io::AsyncWriteExt as _;
 use tokio_util::codec::{FramedRead, FramedWrite};
 use tracing::{Instrument as _, Span, debug, instrument, trace};
 
-use crate::{Deferred as _, Incoming, Index, TupleDecode, TupleEncode};
+use crate::frame::{Incoming, Outgoing};
+use crate::{Deferred as _, TupleDecode, TupleEncode};
 
 /// Server-side handle to a wRPC transport
+///
+/// Invocations are always multiplexed over the wRPC framing layer, so the outgoing and
+/// incoming byte streams are the framed [`Outgoing`] and [`Incoming`] streams regardless of
+/// the underlying transport.
 pub trait Serve: Sync {
     /// Transport-specific invocation context
     type Context: Send + Sync + 'static;
-
-    /// Outgoing multiplexed byte stream
-    type Outgoing: AsyncWrite + Index<Self::Outgoing> + Send + Sync + Unpin + 'static;
-
-    /// Incoming multiplexed byte stream
-    type Incoming: AsyncRead + Index<Self::Incoming> + Send + Sync + Unpin + 'static;
 
     /// Serve function `func` from instance `instance`
     fn serve(
@@ -33,7 +32,7 @@ pub trait Serve: Sync {
         paths: Arc<[Box<[Option<usize>]>]>,
     ) -> impl Future<
         Output = anyhow::Result<
-            impl Stream<Item = anyhow::Result<(Self::Context, Self::Outgoing, Self::Incoming)>>
+            impl Stream<Item = anyhow::Result<(Self::Context, Outgoing, Incoming)>>
             + Send
             + 'static
             + use<Self>,
@@ -78,8 +77,8 @@ pub trait ServeExt: Serve {
         >,
     > + Send
     where
-        Params: TupleDecode<Self::Incoming> + Send + 'static,
-        Results: TupleEncode<Self::Outgoing> + Send + 'static,
+        Params: TupleDecode + Send + 'static,
+        Results: TupleEncode + Send + 'static,
         <Params::Decoder as tokio_util::codec::Decoder>::Error:
             std::error::Error + Send + Sync + 'static,
         <Results::Encoder as tokio_util::codec::Encoder<Results>>::Error:
@@ -108,7 +107,7 @@ pub trait ServeExt: Serve {
                         params,
                         rx.map(|f| {
                             f(
-                                Incoming {
+                                crate::Incoming {
                                     buffer,
                                     inner: dec.into_inner(),
                                 },
@@ -161,9 +160,7 @@ mod tests {
 
     use super::*;
 
-    async fn call_serve<T: Serve>(
-        s: &T,
-    ) -> anyhow::Result<Vec<(T::Context, T::Outgoing, T::Incoming)>> {
+    async fn call_serve<T: Serve>(s: &T) -> anyhow::Result<Vec<(T::Context, Outgoing, Incoming)>> {
         let st = stream::empty()
             .chain({
                 s.serve(

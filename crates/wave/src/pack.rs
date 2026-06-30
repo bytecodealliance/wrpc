@@ -7,8 +7,8 @@ use bytes::BytesMut;
 use tokio_util::codec::Encoder;
 use wasm_wave::value::{Type, Value};
 use wasm_wave::wasm::{WasmType, WasmValue};
-use wrpc_pack::NoopStream;
 use wrpc_transport::Deferred;
+use wrpc_transport::frame::Outgoing;
 
 use crate::core::encode::WaveEncoder;
 
@@ -20,9 +20,9 @@ use crate::core::encode::WaveEncoder;
 #[derive(Debug, Default)]
 pub struct TypedWaveEncoder;
 
-impl Deferred<NoopStream> for TypedWaveEncoder {
-    fn take_deferred(&mut self) -> Option<wrpc_transport::DeferredFn<NoopStream>> {
-        // NoopStream doesn't support async operations, so we never have deferred values
+impl Deferred<Outgoing> for TypedWaveEncoder {
+    fn take_deferred(&mut self) -> Option<wrpc_transport::DeferredFn<Outgoing>> {
+        // wave values are always fully synchronous, so we never have deferred values
         None
     }
 }
@@ -91,7 +91,7 @@ impl<V: WasmValue, T: WasmType> From<WasmTypedValue<V, T>> for (V, T) {
 }
 
 // Generic implementations for wrpc_transport::Encode
-impl<V, T> wrpc_transport::Encode<NoopStream> for WasmTypedValue<V, T>
+impl<V, T> wrpc_transport::Encode for WasmTypedValue<V, T>
 where
     V: WasmValue<Type = T>,
     T: WasmType,
@@ -99,7 +99,7 @@ where
     type Encoder = TypedWaveEncoder;
 }
 
-impl<V, T> wrpc_transport::Encode<NoopStream> for &WasmTypedValue<V, T>
+impl<V, T> wrpc_transport::Encode for &WasmTypedValue<V, T>
 where
     V: WasmValue<Type = T>,
     T: WasmType,
