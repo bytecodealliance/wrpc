@@ -123,7 +123,7 @@ where
     let mut futs: FuturesUnordered<_> = zip(0.., deferred)
         .filter_map(|(i, f)| f.map(|f| (w.index(&[i]), f)))
         .map(|(w, f)| async move {
-            let w = w.map_err(wasmtime::Error::from_anyhow)?;
+            let w = w.map_err(wasmtime::Error::from)?;
             f(w).await
         })
         .collect();

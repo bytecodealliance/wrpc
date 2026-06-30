@@ -5,7 +5,6 @@ use core::task::{Context, Poll, ready};
 
 use std::sync::Arc;
 
-use anyhow::ensure;
 use bytes::{Buf as _, BufMut as _, Bytes, BytesMut};
 use futures::Sink as _;
 use pin_project_lite::pin_project;
@@ -295,8 +294,13 @@ impl Incoming {
     /// Index the incoming stream using a structural `path`, returning a handle to the
     /// multiplexed sub-stream addressed by it.
     #[instrument(level = "trace", skip(self), fields(path = ?self.path))]
-    pub fn index(&self, path: &[usize]) -> anyhow::Result<Self> {
-        ensure!(!path.is_empty());
+    pub fn index(&self, path: &[usize]) -> std::io::Result<Self> {
+        if path.is_empty() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "path cannot be empty",
+            ));
+        }
         let path = if self.path.is_empty() {
             Arc::from(path)
         } else {
@@ -360,8 +364,13 @@ impl Outgoing {
     /// Index the outgoing stream using a structural `path`, returning a handle that writes
     /// to the multiplexed sub-stream addressed by it.
     #[instrument(level = "trace", skip(self), fields(path = ?self.path))]
-    pub fn index(&self, path: &[usize]) -> anyhow::Result<Self> {
-        ensure!(!path.is_empty());
+    pub fn index(&self, path: &[usize]) -> std::io::Result<Self> {
+        if path.is_empty() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "path cannot be empty",
+            ));
+        }
         let path: Arc<[usize]> = if self.path.is_empty() {
             Arc::from(path)
         } else {
