@@ -6,6 +6,9 @@
 pub mod transport {
     pub use wrpc_transport::*;
 
+    #[cfg(feature = "http")]
+    pub use wrpc_http as http;
+
     #[cfg(feature = "quic")]
     pub use wrpc_quic as quic;
 

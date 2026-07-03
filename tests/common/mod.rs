@@ -5,7 +5,8 @@ use tokio::join;
 use tracing::info;
 
 #[allow(dead_code)]
-pub async fn assert_async<C: Default>(
+pub async fn assert_async<C: Clone>(
+    cx: C,
     client: &impl wrpc_transport::Invoke<Context = C>,
 ) -> anyhow::Result<()> {
     wit_bindgen_wrpc::generate!({
@@ -14,7 +15,7 @@ pub async fn assert_async<C: Default>(
     });
 
     info!("calling `wrpc-test:integration/async.with-streams`");
-    let ((a, b), io) = wrpc_test::integration::async_::with_streams(client, C::default())
+    let ((a, b), io) = wrpc_test::integration::async_::with_streams(client, cx.clone())
         .await
         .context("failed to call `wrpc-test:integration/async.with-streams`")?;
     join!(
@@ -40,7 +41,7 @@ pub async fn assert_async<C: Default>(
     info!("calling `wrpc-test:integration/async.with-future`");
     let (fut, io) = wrpc_test::integration::async_::with_future(
         client,
-        C::default(),
+        cx.clone(),
         &wrpc_test::integration::async_::Something {
             foo: "bar".to_string(),
         },

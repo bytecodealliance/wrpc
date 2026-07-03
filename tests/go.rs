@@ -255,7 +255,7 @@ async fn go_bindgen() -> anyhow::Result<()> {
         sleep(Duration::from_secs(1)).await;
 
         let client = wrpc_transport::frame::tcp::Client::from(addr);
-        assert_async(&client).await?;
+        assert_async((), &client).await?;
 
         server
             .start_kill()

@@ -6,7 +6,7 @@ use wrpc_websockets::{Client, split};
 async fn loopback() -> anyhow::Result<()> {
     let srv = Server::default();
     wrpc_test::with_websockets(|clt, server, lis| async move {
-        wrpc_test::assert_single_invocation(&Client::from(clt), &srv, async {
+        wrpc_test::assert_single_invocation((), &Client::from(clt), &srv, async {
             let (stream, addr) = lis
                 .accept()
                 .await

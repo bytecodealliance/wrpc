@@ -27,7 +27,15 @@ members = [
 ]
 
 [features]
-default = ["bin", "net", "quic", "wasmtime", "webtransport", "websockets"]
+default = [
+    "bin",
+    "http",
+    "net",
+    "quic",
+    "wasmtime",
+    "webtransport",
+    "websockets",
+]
 
 bin = ["bin-bindgen", "bin-wasmtime"]
 bin-bindgen = [
@@ -39,6 +47,7 @@ bin-bindgen = [
     "wit-bindgen-wrpc-rust/clap",
 ]
 bin-wasmtime = ["dep:tokio", "dep:wrpc-wasmtime-cli", "tokio/rt-multi-thread"]
+http = ["dep:wrpc-http"]
 net = ["wrpc-transport/net"]
 quic = ["dep:wrpc-quic"]
 wasmtime = ["dep:wrpc-wasmtime"]
@@ -83,6 +92,7 @@ wit-bindgen-wrpc-go = { workspace = true, optional = true }
 wit-bindgen-wrpc-rust = { workspace = true, optional = true }
 wit-bindgen-wrpc-test = { workspace = true, optional = true }
 wrpc-cli = { workspace = true, optional = true }
+wrpc-http = { workspace = true, optional = true }
 wrpc-quic = { workspace = true, optional = true }
 wrpc-transport = { workspace = true }
 wrpc-wasmtime = { workspace = true, optional = true }
@@ -120,10 +130,12 @@ wasmtime-cli-flags = { workspace = true, features = [
     "threads",
 ] }
 wrpc-test = { workspace = true, features = [
+    "http",
     "quic",
     "webtransport",
     "websockets",
 ] }
+wrpc-http = { workspace = true, features = ["client", "http2"] }
 wrpc-transport = { workspace = true, features = ["net"] }
 
 [workspace.dependencies]
@@ -136,6 +148,8 @@ criterion = { version = "0.8", default-features = false }
 futures = { version = "0.3", default-features = false }
 heck = { version = "0.5", default-features = false }
 http = { version = "1", default-features = false }
+http-body = { version = "1", default-features = false }
+http-body-util = { version = "0.1", default-features = false }
 humantime = { version = "2.1", default-features = false }
 hyper = { version = "1", default-features = false }
 hyper-util = { version = "0.1", default-features = false }
@@ -188,6 +202,7 @@ wit-bindgen-wrpc-test = { version = "0.1", default-features = false, path = "./c
 wit-component = { version = "0.252", default-features = false }
 wit-parser = { version = "0.251", default-features = false }
 wrpc-cli = { version = "0.8", path = "./crates/cli", default-features = false }
+wrpc-http = { version = "0.1", path = "./crates/http", default-features = false }
 wrpc-introspect = { version = "0.7", default-features = false, path = "./crates/introspect" }
 wrpc-pack = { version = "0.4", path = "./crates/pack", default-features = false }
 wrpc-quic = { version = "0.1", path = "./crates/quic", default-features = false }
