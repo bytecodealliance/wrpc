@@ -291,6 +291,44 @@ pin_project! {
 }
 
 impl Incoming {
+    /// Creates a new [Incoming] given an [AsyncRead], [ConnHandler] and a set of async paths.
+    /// `on_ingress` will be called once data ingress is complete.
+    pub fn new<T, P, Fut>(
+        mut rx: T,
+        paths: impl IntoIterator<Item = P>,
+        on_ingress: impl FnOnce(T, std::io::Result<()>) -> Fut + Send + 'static,
+    ) -> Self
+    where
+        T: AsyncRead + Unpin + Send + 'static,
+        P: AsRef<[Option<usize>]>,
+        Fut: Future<Output = ()> + Send,
+    {
+        let index = Arc::new(std::sync::Mutex::new(paths.into_iter().collect()));
+        let (rx_tx, rx_rx) = mpsc::channel(128);
+        let mut rx_io = JoinSet::new();
+        let span = Span::current();
+        rx_io.spawn({
+            let index = Arc::clone(&index);
+            async move {
+                let res = ingress(&mut rx, &index, rx_tx).await;
+                on_ingress(rx, res).await;
+                let Ok(mut index) = index.lock() else {
+                    error!("failed to lock index trie");
+                    return;
+                };
+                trace!("shutting down index trie");
+                index.close_tx();
+            }
+            .instrument(span.clone())
+        });
+        Self {
+            rx: Some(StreamReader::new(ReceiverStream::new(rx_rx))),
+            path: Arc::from([]),
+            index: Arc::clone(&index),
+            io: Arc::new(rx_io),
+        }
+    }
+
     /// Index the incoming stream using a structural `path`, returning a handle to the
     /// multiplexed sub-stream addressed by it.
     #[instrument(level = "trace", skip(self), fields(path = ?self.path))]
@@ -361,6 +399,31 @@ pin_project! {
 }
 
 impl Outgoing {
+    /// Creates a new [Outgoing] given an [AsyncWrite].
+    pub fn new<T, Fut>(
+        mut tx: T,
+        on_egress: impl FnOnce(T, std::io::Result<()>) -> Fut + Send + 'static,
+    ) -> Self
+    where
+        T: AsyncWrite + Unpin + Send + 'static,
+        Fut: Future<Output = ()> + Send,
+    {
+        let span = Span::current();
+        let (tx_tx, tx_rx) = mpsc::channel(128);
+        tokio::spawn(
+            async {
+                let res = egress(&mut tx, tx_rx).await;
+                on_egress(tx, res).await;
+            }
+            .instrument(span.clone()),
+        );
+        Self {
+            tx: PollSender::new(tx_tx),
+            path: Arc::from([]),
+            path_buf: Bytes::from_static(&[0]),
+        }
+    }
+
     /// Index the outgoing stream using a structural `path`, returning a handle that writes
     /// to the multiplexed sub-stream addressed by it.
     #[instrument(level = "trace", skip(self), fields(path = ?self.path))]
@@ -534,60 +597,3 @@ pub trait ConnHandler<Rx, Tx> {
 }
 
 impl<Rx, Tx> ConnHandler<Rx, Tx> for () {}
-
-/// Peer connection
-pub(crate) struct Conn {
-    rx: Incoming,
-    tx: Outgoing,
-}
-
-impl Conn {
-    /// Creates a new [Conn] given an [AsyncRead], [ConnHandler] and a set of async paths
-    fn new<H, Rx, Tx, P>(mut rx: Rx, mut tx: Tx, paths: impl IntoIterator<Item = P>) -> Self
-    where
-        Rx: AsyncRead + Unpin + Send + 'static,
-        Tx: AsyncWrite + Unpin + Send + 'static,
-        H: ConnHandler<Rx, Tx>,
-        P: AsRef<[Option<usize>]>,
-    {
-        let index = Arc::new(std::sync::Mutex::new(paths.into_iter().collect()));
-        let (rx_tx, rx_rx) = mpsc::channel(128);
-        let mut rx_io = JoinSet::new();
-        let span = Span::current();
-        rx_io.spawn({
-            let index = Arc::clone(&index);
-            async move {
-                let res = ingress(&mut rx, &index, rx_tx).await;
-                H::on_ingress(rx, res).await;
-                let Ok(mut index) = index.lock() else {
-                    error!("failed to lock index trie");
-                    return;
-                };
-                trace!("shutting down index trie");
-                index.close_tx();
-            }
-            .instrument(span.clone())
-        });
-        let (tx_tx, tx_rx) = mpsc::channel(128);
-        tokio::spawn(
-            async {
-                let res = egress(&mut tx, tx_rx).await;
-                H::on_egress(tx, res).await;
-            }
-            .instrument(span.clone()),
-        );
-        Conn {
-            tx: Outgoing {
-                tx: PollSender::new(tx_tx),
-                path: Arc::from([]),
-                path_buf: Bytes::from_static(&[0]),
-            },
-            rx: Incoming {
-                rx: Some(StreamReader::new(ReceiverStream::new(rx_rx))),
-                path: Arc::from([]),
-                index: Arc::clone(&index),
-                io: Arc::new(rx_io),
-            },
-        }
-    }
-}

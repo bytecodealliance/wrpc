@@ -1,14 +1,38 @@
 use core::marker::PhantomData;
 
 use anyhow::Context as _;
-use bytes::{BufMut as _, Bytes, BytesMut};
+use bytes::{BufMut as _, BytesMut};
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt as _};
 use tokio_util::codec::Encoder;
 use tracing::{instrument, trace};
 use wasm_tokio::{CoreNameEncoder, CoreVecEncoderBytes};
 
 use crate::frame::conn::{Incoming, Outgoing};
-use crate::frame::{Conn, ConnHandler, PROTOCOL};
+use crate::frame::{ConnHandler, PROTOCOL};
+
+/// Encodes an invocation to a `BytesMut`
+///
+/// This is low-level API, most users should use [`invoke`].
+#[instrument(level = "trace", skip_all)]
+pub fn encode_invocation(
+    mut buf: &mut BytesMut,
+    instance: &str,
+    func: &str,
+    params: &[u8],
+) -> std::io::Result<()> {
+    buf.reserve(
+        17_usize // len(PROTOCOL) + len(instance) + len(func) + len([]) + len(params)
+            .saturating_add(instance.len())
+            .saturating_add(func.len())
+            .saturating_add(params.len()),
+    );
+    buf.put_u8(PROTOCOL);
+    CoreNameEncoder.encode(instance, &mut buf)?;
+    CoreNameEncoder.encode(func, &mut buf)?;
+    buf.put_u8(0);
+    CoreVecEncoderBytes.encode(params, &mut buf)?;
+    Ok(())
+}
 
 /// Defines invocation behavior
 #[derive(Clone)]
@@ -25,7 +49,7 @@ impl<H> InvokeBuilder<H> {
         rx: I,
         instance: &str,
         func: &str,
-        params: Bytes,
+        params: impl AsRef<[u8]>,
         paths: impl AsRef<[P]> + Send,
     ) -> anyhow::Result<(Outgoing, Incoming)>
     where
@@ -34,24 +58,17 @@ impl<H> InvokeBuilder<H> {
         O: AsyncWrite + Unpin + Send + 'static,
         H: ConnHandler<I, O>,
     {
-        let mut buf = BytesMut::with_capacity(
-            17_usize // len(PROTOCOL) + len(instance) + len(func) + len([]) + len(params)
-                .saturating_add(instance.len())
-                .saturating_add(func.len())
-                .saturating_add(params.len()),
-        );
-        buf.put_u8(PROTOCOL);
-        CoreNameEncoder.encode(instance, &mut buf)?;
-        CoreNameEncoder.encode(func, &mut buf)?;
-        buf.put_u8(0);
-        CoreVecEncoderBytes.encode(params, &mut buf)?;
+        let mut buf = BytesMut::default();
+        encode_invocation(&mut buf, instance, func, params.as_ref())
+            .context("failed to encode invocation")?;
         trace!(?buf, "writing invocation");
         tx.write_all(&buf)
             .await
             .context("failed to initialize connection")?;
         tx.flush().await.context("failed to flush invocation")?;
 
-        let Conn { tx, rx } = Conn::new::<H, _, _, _>(rx, tx, paths.as_ref());
+        let tx = Outgoing::new(tx, |tx, res| H::on_egress(tx, res));
+        let rx = Incoming::new(rx, paths.as_ref(), |rx, res| H::on_ingress(rx, res));
         Ok((tx, rx))
     }
 }
@@ -69,7 +86,7 @@ pub async fn invoke<P, I, O>(
     rx: I,
     instance: &str,
     func: &str,
-    params: Bytes,
+    params: impl AsRef<[u8]>,
     paths: impl AsRef<[P]> + Send,
 ) -> anyhow::Result<(Outgoing, Incoming)>
 where
