@@ -19,7 +19,7 @@ use crate::{WrpcView, bindings};
 
 mod host;
 
-/// Wrapper struct, for which [crate::bindings::wrpc::transport::transport::Host] is implemented
+/// Wrapper struct, for which [`crate::bindings::wrpc::transport::transport::Host`] is implemented
 #[repr(transparent)]
 pub struct WrpcRpcImpl<T>(pub T);
 
@@ -46,7 +46,7 @@ where
 
 /// RPC error
 pub enum Error {
-    /// Error originating from [Invoke::invoke] call
+    /// Error originating from [`Invoke::invoke`] call
     Invoke(anyhow::Error),
     /// Error originating from an [`index`](wrpc_transport::frame::Incoming::index) call on the
     /// incoming framed stream.

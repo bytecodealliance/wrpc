@@ -39,13 +39,13 @@ impl wrpc_transport::frame::ConnHandler<RecvStream, SendStream> for ConnHandler 
         }
         match tx.stopped().await {
             Ok(None) => {
-                trace!("stream successfully closed")
+                trace!("stream successfully closed");
             }
             Ok(Some(code)) => {
                 if code == DONE {
-                    trace!("stream successfully closed")
+                    trace!("stream successfully closed");
                 } else {
-                    warn!(?code, "stream closed with code")
+                    warn!(?code, "stream closed with code");
                 }
             }
             Err(err) => {

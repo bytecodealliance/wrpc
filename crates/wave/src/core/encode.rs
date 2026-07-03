@@ -90,7 +90,7 @@ fn flag_bits<'a, T: BitOrAssign + Shl<u8, Output = T> + From<u8>>(
 }
 
 // Generic implementation for any type implementing WasmValue and WasmType
-impl<'a, V, T> Encoder<&V> for WaveEncoder<'a, T>
+impl<V, T> Encoder<&V> for WaveEncoder<'_, T>
 where
     V: WasmValue<Type = T>,
     T: WasmType,

@@ -1,4 +1,4 @@
-//! wRPC WebSocket transport using [tokio_websockets]
+//! wRPC WebSocket transport using [`tokio_websockets`]
 
 use core::pin::Pin;
 use core::task::{Context, Poll, ready};

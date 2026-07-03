@@ -482,15 +482,15 @@ pub fn collect_item_resource_exports(
         | types::ComponentItem::Module(_)
         | types::ComponentItem::Type(_) => {}
         types::ComponentItem::Component(ty) => {
-            collect_component_resource_exports(engine, &ty, resources)
+            collect_component_resource_exports(engine, &ty, resources);
         }
 
         types::ComponentItem::ComponentInstance(ty) => {
-            collect_instance_resource_exports(engine, &ty, resources)
+            collect_instance_resource_exports(engine, &ty, resources);
         }
         types::ComponentItem::Resource(ty) => {
             debug!(?ty, "collect resource export");
-            resources.extend([ty])
+            resources.extend([ty]);
         }
     }
 }

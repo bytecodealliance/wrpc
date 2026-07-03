@@ -24,6 +24,7 @@ pub struct Server<C, I, O, H = ()> {
 
 impl<C, I, O, H> Server<C, I, O, H> {
     /// Constructs a new [Server]
+    #[must_use]
     pub fn new() -> Self {
         Self {
             handlers: Mutex::default(),
