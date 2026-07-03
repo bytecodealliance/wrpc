@@ -6,6 +6,9 @@
 pub mod transport {
     pub use wrpc_transport::*;
 
+    #[cfg(feature = "message-channel")]
+    pub use wrpc_message_channel as message_channel;
+
     #[cfg(feature = "quic")]
     pub use wrpc_quic as quic;
 
