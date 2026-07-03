@@ -291,7 +291,7 @@ pin_project! {
 }
 
 impl Incoming {
-    /// Creates a new [Incoming] given an [AsyncRead], [ConnHandler] and a set of async paths.
+    /// Creates a new [Incoming] given an [`AsyncRead`], [`ConnHandler`] and a set of async paths.
     /// `on_ingress` will be called once data ingress is complete.
     pub fn new<T, P, Fut>(
         mut rx: T,
@@ -399,7 +399,7 @@ pin_project! {
 }
 
 impl Outgoing {
-    /// Creates a new [Outgoing] given an [AsyncWrite].
+    /// Creates a new [Outgoing] given an [`AsyncWrite`].
     pub fn new<T, Fut>(
         mut tx: T,
         on_egress: impl FnOnce(T, std::io::Result<()>) -> Fut + Send + 'static,
@@ -570,7 +570,7 @@ async fn egress(
 
 /// Connection handler defines the connection I/O behavior.
 /// It is mostly useful for transports that may require additional clean up not already covered
-/// by [AsyncWrite::shutdown], for example.
+/// by [`AsyncWrite::shutdown`], for example.
 /// This API is experimental and may change in backwards-incompatible ways in the future.
 pub trait ConnHandler<Rx, Tx> {
     /// Handle ingress completion

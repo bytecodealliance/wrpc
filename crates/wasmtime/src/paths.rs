@@ -25,6 +25,7 @@ use wasmtime::component::types::{self, Type};
 ///
 /// A `Vec` is used rather than a set because [`ResourceType`] is neither `Ord`
 /// nor `Hash`; the collection holds at most two entries.
+#[must_use]
 pub fn wasi_io_stream_resources(
     engine: &Engine,
     component: &types::Component,

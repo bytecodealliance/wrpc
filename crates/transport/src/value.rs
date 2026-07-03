@@ -566,9 +566,10 @@ where
             (None, Some(err)) => Some(err),
             (Some(ok), Some(_)) => {
                 if cfg!(debug_assertions) {
-                    panic!("both `result::ok` and `result::err` deferred function set")
+                    panic!("both `result::ok` and `result::err` deferred function set");
+                } else {
+                    Some(ok)
                 }
-                Some(ok)
             }
         }
     }
@@ -609,9 +610,10 @@ where
             (None, Some(err)) => Some(err),
             (Some(ok), Some(_)) => {
                 if cfg!(debug_assertions) {
-                    panic!("both `result::ok` and `result::err` deferred function set")
+                    panic!("both `result::ok` and `result::err` deferred function set");
+                } else {
+                    Some(ok)
                 }
-                Some(ok)
             }
         }
     }
@@ -1606,7 +1608,7 @@ where
                 async move {
                     if !path.is_empty() {
                         w = w.index(&path).map_err(std::io::Error::other)?;
-                    };
+                    }
                     let item = item.await;
                     let mut enc = T::Encoder::default();
                     let mut buf = BytesMut::default();
@@ -1691,7 +1693,7 @@ where
                 async move {
                     if !path.is_empty() {
                         r = r.index(&path).map_err(std::io::Error::other)?;
-                    };
+                    }
                     let mut dec = FramedRead::new(r, dec);
                     trace!(?path, "receiving future element");
                     let Some(item) = dec.next().await else {
@@ -1705,10 +1707,10 @@ where
                     if let Some(rx) = dec.decoder_mut().take_deferred() {
                         let buf = mem::take(dec.read_buffer_mut());
                         let mut r = dec.into_inner();
-                        if !r.buffer.is_empty() {
-                            r.buffer.unsplit(buf);
-                        } else {
+                        if r.buffer.is_empty() {
                             r.buffer = buf;
+                        } else {
+                            r.buffer.unsplit(buf);
                         }
                         rx(r, Vec::default()).await?;
                     }
@@ -1766,7 +1768,7 @@ where
             Box::pin(async move {
                 if !path.is_empty() {
                     w = w.index(&path).map_err(std::io::Error::other)?;
-                };
+                }
                 let mut enc = T::Encoder::default();
                 let mut buf = BytesMut::default();
                 let mut tasks = JoinSet::new();
@@ -1864,7 +1866,7 @@ where
             Box::pin(async move {
                 if !path.is_empty() {
                     w = w.index(&path).map_err(std::io::Error::other)?;
-                };
+                }
                 let mut buf = BytesMut::default();
                 loop {
                     select! {
@@ -1925,7 +1927,7 @@ where
             Box::pin(async move {
                 if !path.is_empty() {
                     w = w.index(&path).map_err(std::io::Error::other)?;
-                };
+                }
                 let mut buf = BytesMut::default();
                 let mut chunk = BytesMut::default();
                 loop {
@@ -2044,7 +2046,7 @@ where
     let dec = ListDecoder::new(dec);
     if !path.is_empty() {
         r = r.index(&path).map_err(std::io::Error::other)?;
-    };
+    }
     let mut framed = FramedRead::new(r, dec);
     let mut tasks = JoinSet::new();
     let mut i = 0_usize;
@@ -2168,7 +2170,7 @@ impl tokio_util::codec::Decoder for StreamDecoderBytes {
                 async move {
                     if !path.is_empty() {
                         r = r.index(&path).map_err(std::io::Error::other)?;
-                    };
+                    }
                     let mut framed = FramedRead::new(r, dec);
                     trace!(?path, "receiving pending byte stream chunk");
                     while let Some(chunk) = framed.next().await {
@@ -2230,7 +2232,7 @@ impl tokio_util::codec::Decoder for StreamDecoderRead {
             Box::pin(async move {
                 if !path.is_empty() {
                     r = r.index(&path).map_err(std::io::Error::other)?;
-                };
+                }
                 let mut framed = FramedRead::new(r, dec);
                 trace!("receiving pending byte stream chunk");
                 while let Some(chunk) = framed.next().await {

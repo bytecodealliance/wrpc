@@ -401,7 +401,7 @@ where
     )?;
     assert!(addr.ip().is_loopback());
 
-    let (parts, _) = http::Request::new(()).into_parts();
+    let (parts, ()) = http::Request::new(()).into_parts();
     let (res, (), ()) = try_join!(
         async { f(parts, sender).await.context("closure failed") },
         async {
@@ -440,7 +440,7 @@ where
         .context("failed to query listener local address")?;
     let clt = hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::new())
         .build_http();
-    let (mut parts, _) = http::Request::new(()).into_parts();
+    let (mut parts, ()) = http::Request::new(()).into_parts();
     parts.uri = format!("http://{addr}").parse().unwrap();
     f(parts, clt, lis).await.context("closure failed")
 }

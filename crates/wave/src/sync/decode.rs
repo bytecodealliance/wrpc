@@ -1,4 +1,4 @@
-//! Synchronous wrapper for value decoder using futures::executor
+//! Synchronous wrapper for value decoder using `futures::executor`
 //!
 //! This module provides a synchronous wrapper around the async
 //! `read_value` function. It uses `futures::executor::block_on` which works

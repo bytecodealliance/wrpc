@@ -39,6 +39,7 @@ pin_project! {
 }
 
 impl OutgoingBody {
+    #[must_use]
     pub fn new(buffer: BytesMut) -> (Self, OutgoingBodyDataWriter) {
         let (rx, tx) = simplex(buffer.len().max(DEFAULT_BODY_BUFFER_SIZE));
         (Self { buffer, stream: rx }, tx)
@@ -77,6 +78,7 @@ pub fn new_request(
     (http::Request::from_parts(parts, rx), tx)
 }
 
+#[must_use]
 pub fn io_error_from_hyper(err: hyper::Error) -> std::io::Error {
     if err.is_timeout() {
         std::io::Error::new(std::io::ErrorKind::TimedOut, err)
@@ -91,6 +93,7 @@ pub fn data_stream_from_incoming(
     body.map_err(io_error_from_hyper).into_data_stream()
 }
 
+#[must_use]
 pub fn data_reader_from_incoming(
     body: hyper::body::Incoming,
 ) -> IncomingBodyDataReader<impl FnMut(hyper::Error) -> std::io::Error> {
@@ -157,6 +160,7 @@ where
 
 impl Server {
     /// Construct a new [Server]
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }

@@ -499,7 +499,7 @@ where
                         // receiver has read. That means that some kind of callback would be required from
                         // the receiver. This is not trivial and generally should be a very rare use case.
                         bail!("encoding borrowed `wasi:io/input-stream` not supported yet");
-                    };
+                    }
                     Ok(())
                 } else if resource.ty() == ResourceType::host::<RemoteResource>() {
                     let resource = resource

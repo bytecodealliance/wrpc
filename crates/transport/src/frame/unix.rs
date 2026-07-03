@@ -17,7 +17,7 @@ use crate::frame::{Incoming, Outgoing, invoke};
 pub type Oneshot = super::Oneshot<OwnedReadHalf, OwnedWriteHalf>;
 
 impl Oneshot {
-    /// Creates a pair of connected [Oneshot] using [UnixStream::pair].
+    /// Creates a pair of connected [Oneshot] using [`UnixStream::pair`].
     pub fn unix_pair() -> std::io::Result<(Oneshot, UnixStream)> {
         let (clt, srv) = UnixStream::pair()?;
         Ok((clt.into(), srv))

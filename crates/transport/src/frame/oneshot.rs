@@ -29,7 +29,8 @@ impl From<DuplexStream> for Oneshot<ReadHalf<DuplexStream>, WriteHalf<DuplexStre
 }
 
 impl Oneshot<ReadHalf<DuplexStream>, WriteHalf<DuplexStream>> {
-    /// Creates a pair of [Oneshot] and server-side [DuplexStream] using [tokio::io::duplex].
+    /// Creates a pair of [Oneshot] and server-side [`DuplexStream`] using [`tokio::io::duplex`].
+    #[must_use]
     pub fn duplex(max_buf_size: usize) -> (Self, DuplexStream) {
         let (clt, srv) = duplex(max_buf_size);
         (clt.into(), srv)

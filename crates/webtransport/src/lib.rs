@@ -62,13 +62,13 @@ impl wrpc_transport::frame::ConnHandler<RecvStream, SendStream> for ConnHandler 
         }
         match tx.quic_stream_mut().stopped().await {
             Ok(None) => {
-                trace!("stream successfully closed")
+                trace!("stream successfully closed");
             }
             Ok(Some(code)) => {
                 if u64::from(code) == 0x52e4a40fa8db {
-                    trace!("stream successfully closed")
+                    trace!("stream successfully closed");
                 } else {
-                    warn!(?code, "stream closed with code")
+                    warn!(?code, "stream closed with code");
                 }
             }
             Err(err) => {

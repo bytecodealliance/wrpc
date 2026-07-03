@@ -15,7 +15,7 @@ use crate::frame::{ConnHandler, PROTOCOL};
 /// This is low-level API, most users should use [`invoke`].
 #[instrument(level = "trace", skip_all)]
 pub fn encode_invocation(
-    mut buf: &mut BytesMut,
+    buf: &mut BytesMut,
     instance: &str,
     func: &str,
     params: &[u8],
@@ -27,10 +27,10 @@ pub fn encode_invocation(
             .saturating_add(params.len()),
     );
     buf.put_u8(PROTOCOL);
-    CoreNameEncoder.encode(instance, &mut buf)?;
-    CoreNameEncoder.encode(func, &mut buf)?;
+    CoreNameEncoder.encode(instance, buf)?;
+    CoreNameEncoder.encode(func, buf)?;
     buf.put_u8(0);
-    CoreVecEncoderBytes.encode(params, &mut buf)?;
+    CoreVecEncoderBytes.encode(params, buf)?;
     Ok(())
 }
 
