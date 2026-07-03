@@ -13,9 +13,10 @@ use tracing::{instrument, trace};
 use wasm_tokio::AsyncReadCore as _;
 
 use crate::Serve;
-use crate::frame::{Conn, ConnHandler, Incoming, Outgoing};
+use crate::frame::{ConnHandler, Incoming, Outgoing};
 
 /// wRPC server for framed transports
+#[derive(Debug)]
 pub struct Server<C, I, O, H = ()> {
     handlers: Mutex<HashMap<String, HashMap<String, mpsc::Sender<(C, I, O)>>>>,
     conn_handler: PhantomData<H>,
@@ -80,7 +81,7 @@ impl<C, I, O> Display for AcceptError<C, I, O> {
     }
 }
 
-impl<C, I, O> std::error::Error for AcceptError<C, I, O> {}
+impl<C, I, O> core::error::Error for AcceptError<C, I, O> {}
 
 impl<C, I, O, H> Server<C, I, O, H>
 where
@@ -148,7 +149,8 @@ where
     }
     Ok(ReceiverStream::new(rx).map(move |(cx, rx, tx)| {
         trace!("received invocation");
-        let Conn { tx, rx } = Conn::new::<H, _, _, _>(rx, tx, paths.iter());
+        let rx = Incoming::new(rx, paths.as_ref(), |rx, res| H::on_ingress(rx, res));
+        let tx = Outgoing::new(tx, |tx, res| H::on_egress(tx, res));
         Ok((cx, tx, rx))
     }))
 }
