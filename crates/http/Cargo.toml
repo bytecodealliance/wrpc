@@ -1,0 +1,49 @@
+[package]
+name = "wrpc-http"
+version = "0.1.0"
+description = "wRPC HTTP transport"
+
+authors.workspace = true
+categories.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = ["client", "client-legacy", "http1", "http2"]
+client = ["hyper/client"]
+client-legacy = [
+    "client",
+    "dep:hyper-util",
+    "hyper-util/client-legacy",
+    "hyper-util/http2",
+]
+http1 = ["hyper-util?/http1"]
+http2 = ["hyper/http2"]
+
+[dependencies]
+anyhow = { workspace = true }
+bytes = { workspace = true }
+http = { workspace = true }
+http-body = { workspace = true }
+http-body-util = { workspace = true }
+hyper = { workspace = true }
+hyper-util = { workspace = true, optional = true }
+pin-project-lite = { workspace = true }
+tokio = { workspace = true, features = ["rt", "sync"] }
+tokio-util = { workspace = true }
+tracing = { workspace = true }
+wrpc-transport = { workspace = true }
+
+[dev-dependencies]
+hyper-util = { workspace = true, features = [
+    "client",
+    "client-legacy",
+    "http1",
+    "http2",
+    "server",
+    "tokio",
+] }
+test-log = { workspace = true, features = ["color", "log", "trace"] }
+tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread"] }
+wrpc-test = { workspace = true, features = ["http"] }

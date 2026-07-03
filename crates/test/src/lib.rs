@@ -40,13 +40,13 @@ pub async fn free_port() -> anyhow::Result<u16> {
 /// connections into `srv` (e.g. accepting a bidirectional stream); transports
 /// that subscribe internally can pass a future that resolves immediately.
 pub async fn assert_single_invocation<C, S>(
+    cx: C::Context,
     clt: &C,
     srv: &S,
     accept: impl Future<Output = anyhow::Result<()>>,
 ) -> anyhow::Result<S::Context>
 where
     C: Invoke,
-    C::Context: Default,
     S: Serve,
 {
     let invocations = srv
@@ -57,13 +57,7 @@ where
     let ((), cx) = try_join!(
         async {
             let (mut outgoing, mut incoming) = clt
-                .invoke(
-                    C::Context::default(),
-                    "foo",
-                    "bar",
-                    "test".into(),
-                    &[&[Some(0), Some(42)]],
-                )
+                .invoke(cx, "foo", "bar", "test".into(), &[&[Some(0), Some(42)]])
                 .await
                 .context("failed to invoke `foo.bar`")?;
             let mut nested_tx = outgoing.index(&[42, 0]).context("failed to index `42.0`")?;
@@ -292,7 +286,7 @@ where
     .context("failed to create server endpoint")?;
     let srv_addr = srv_ep
         .local_addr()
-        .context("failed to query server address")?;
+        .context("failed to query listener local address")?;
 
     f(srv_addr, clt_ep, srv_ep).await.context("closure failed")
 }
@@ -347,7 +341,9 @@ where
             .build(),
     )
     .context("failed to create client endpoint")?;
-    let addr = srv.local_addr().context("failed to query server address")?;
+    let addr = srv
+        .local_addr()
+        .context("failed to query listener local address")?;
     let (clt, srv) = tokio::try_join!(
         async move {
             clt.connect(format!("https://localhost:{}", addr.port()))
@@ -366,6 +362,87 @@ where
         }
     )?;
     f(clt, srv).await.context("closure failed")
+}
+
+#[cfg(feature = "http")]
+pub async fn with_http2<S, B, T, Fut>(
+    svc: S,
+    f: impl FnOnce(http::request::Parts, hyper::client::conn::http2::SendRequest<B>) -> Fut,
+) -> anyhow::Result<T>
+where
+    S: hyper::service::HttpService<hyper::body::Incoming> + Send,
+    S::ResBody: Send + 'static,
+    S::Future: Send + 'static,
+    <S::ResBody as hyper::body::Body>::Data: Send + 'static,
+    <S::ResBody as hyper::body::Body>::Error: Send + Sync + core::error::Error + 'static,
+    B: hyper::body::Body + Send + Unpin + 'static,
+    B::Data: Send + Sync + 'static,
+    B::Error: Send + Sync + core::error::Error + 'static,
+    Fut: Future<Output = anyhow::Result<T>>,
+{
+    use hyper_util::rt::tokio::WithHyperIo;
+    let exe = hyper_util::rt::TokioExecutor::new();
+
+    let lis = tcp_bind().await?;
+    let addr = lis
+        .local_addr()
+        .context("failed to query listener local address")?;
+
+    let ((sender, clt), (srv, addr)) = try_join!(
+        async {
+            let conn = tokio::net::TcpStream::connect(addr)
+                .await
+                .context("failed to connect to server")?;
+            hyper::client::conn::http2::handshake(exe.clone(), WithHyperIo::new(conn))
+                .await
+                .context("failed to establish HTTP/2 connection")
+        },
+        async { lis.accept().await.context("failed to accept connection") }
+    )?;
+    assert!(addr.ip().is_loopback());
+
+    let (parts, _) = http::Request::new(()).into_parts();
+    let (res, (), ()) = try_join!(
+        async { f(parts, sender).await.context("closure failed") },
+        async {
+            hyper::server::conn::http2::Builder::new(exe)
+                .serve_connection(WithHyperIo::new(srv), svc)
+                .await
+                .context("failed to serve connection")
+        },
+        async { clt.await.context("client connection failed") }
+    )?;
+    Ok(res)
+}
+
+#[cfg(feature = "http")]
+pub async fn with_http_pooling<B, T, Fut>(
+    f: impl FnOnce(
+        http::request::Parts,
+        hyper_util::client::legacy::Client<
+            hyper_util::client::legacy::connect::HttpConnector<
+                hyper_util::client::legacy::connect::dns::GaiResolver,
+            >,
+            B,
+        >,
+        TcpListener,
+    ) -> Fut,
+) -> anyhow::Result<T>
+where
+    B: hyper::body::Body + Send + 'static,
+    B::Data: Send + Sync + 'static,
+    B::Error: Send + Sync + core::error::Error + 'static,
+    Fut: Future<Output = anyhow::Result<T>>,
+{
+    let lis = tcp_bind().await?;
+    let addr = lis
+        .local_addr()
+        .context("failed to query listener local address")?;
+    let clt = hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::new())
+        .build_http();
+    let (mut parts, _) = http::Request::new(()).into_parts();
+    parts.uri = format!("http://{addr}").parse().unwrap();
+    f(parts, clt, lis).await.context("closure failed")
 }
 
 #[cfg(feature = "websockets")]

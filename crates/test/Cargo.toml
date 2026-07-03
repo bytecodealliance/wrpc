@@ -11,7 +11,8 @@ license.workspace = true
 repository.workspace = true
 
 [features]
-default = ["quic", "webtransport", "websockets"]
+default = ["http", "quic", "webtransport", "websockets"]
+http = ["dep:http", "dep:hyper", "dep:hyper-util"]
 quic = ["dep:quinn"]
 webtransport = ["dep:wtransport"]
 websockets = ["dep:tokio-websockets"]
@@ -19,6 +20,13 @@ websockets = ["dep:tokio-websockets"]
 [dependencies]
 anyhow = { workspace = true }
 futures = { workspace = true }
+http = { workspace = true, optional = true }
+hyper = { workspace = true, features = [
+    "client",
+    "http2",
+    "server",
+], optional = true }
+hyper-util = { workspace = true, features = ["tokio"], optional = true }
 quinn = { workspace = true, features = [
     "log",
     "platform-verifier",

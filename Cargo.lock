@@ -5085,6 +5085,7 @@ dependencies = [
  "wit-bindgen-wrpc-rust",
  "wit-bindgen-wrpc-test",
  "wrpc-cli",
+ "wrpc-http",
  "wrpc-quic",
  "wrpc-test",
  "wrpc-transport",
@@ -5099,6 +5100,26 @@ name = "wrpc-cli"
 version = "0.8.0"
 dependencies = [
  "tracing-subscriber",
+]
+
+[[package]]
+name = "wrpc-http"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "http",
+ "http-body",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "pin-project-lite",
+ "test-log",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "wrpc-test",
+ "wrpc-transport",
 ]
 
 [[package]]
@@ -5140,6 +5161,9 @@ version = "0.3.0"
 dependencies = [
  "anyhow",
  "futures",
+ "http",
+ "hyper",
+ "hyper-util",
  "quinn",
  "rcgen",
  "rustls",
