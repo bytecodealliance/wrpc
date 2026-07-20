@@ -28,10 +28,10 @@ fn explicit() {
                     println!(
                         "explicit call result: {}",
                         String::from_utf8_lossy(greeting)
-                    )
+                    );
                 }
                 Err(bindings::wasi::io::streams::StreamError::Closed) => {
-                    eprintln!("failed to read `hello` results: stream closed")
+                    eprintln!("failed to read `hello` results: stream closed");
                 }
                 Err(bindings::wasi::io::streams::StreamError::LastOperationFailed(err)) => {
                     match rpc::error::Error::from_io_error(err) {
@@ -45,13 +45,13 @@ fn explicit() {
                         ),
                     }
                 }
-            };
+            }
         }
         Err(err) => {
             eprintln!(
                 "failed to invoke `hello` explicitly: {}",
                 err.to_debug_string()
-            )
+            );
         }
     }
 }

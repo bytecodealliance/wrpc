@@ -240,7 +240,7 @@ where
             Bound::Included("wasi:io/error@0.2"),
             Bound::Excluded("wasi:io/error@0.3"),
         ))
-        .flat_map(|(_, instance)| instance.get("error"))
+        .filter_map(|(_, instance)| instance.get("error"))
         .copied()
         .collect::<Box<[_]>>();
     let io_pollable_tys = host_resources
@@ -248,7 +248,7 @@ where
             Bound::Included("wasi:io/poll@0.2"),
             Bound::Excluded("wasi:io/poll@0.3"),
         ))
-        .flat_map(|(_, instance)| instance.get("pollable"))
+        .filter_map(|(_, instance)| instance.get("pollable"))
         .copied()
         .collect::<Box<[_]>>();
     let io_input_stream_tys = host_resources
@@ -256,7 +256,7 @@ where
             Bound::Included("wasi:io/streams@0.2"),
             Bound::Excluded("wasi:io/streams@0.3"),
         ))
-        .flat_map(|(_, instance)| instance.get("input-stream"))
+        .filter_map(|(_, instance)| instance.get("input-stream"))
         .copied()
         .collect::<Box<[_]>>();
     let io_output_stream_tys = host_resources
@@ -264,7 +264,7 @@ where
             Bound::Included("wasi:io/streams@0.2"),
             Bound::Excluded("wasi:io/streams@0.3"),
         ))
-        .flat_map(|(_, instance)| instance.get("output-stream"))
+        .filter_map(|(_, instance)| instance.get("output-stream"))
         .copied()
         .collect::<Box<[_]>>();
     let rpc_err_ty = host_resources

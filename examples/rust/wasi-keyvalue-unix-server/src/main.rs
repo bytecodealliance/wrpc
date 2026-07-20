@@ -30,7 +30,7 @@ async fn main() -> anyhow::Result<()> {
     {
         fs::create_dir_all(dir)
             .await
-            .with_context(|| format!("failed to create `{}`", dir.display()))?
+            .with_context(|| format!("failed to create `{}`", dir.display()))?;
     }
     let lis = tokio::net::UnixListener::bind(&path)
         .with_context(|| format!("failed to bind Unix listener on `{}`", path.display()))?;
@@ -87,7 +87,7 @@ async fn main() -> anyhow::Result<()> {
             }
             Some(res) = tasks.join_next() => {
                 if let Err(err) = res {
-                    error!(?err, "failed to join task")
+                    error!(?err, "failed to join task");
                 }
             }
             res = &mut shutdown => {
@@ -95,7 +95,7 @@ async fn main() -> anyhow::Result<()> {
                 // wait for all invocations to complete
                 while let Some(res) = tasks.join_next().await {
                     if let Err(err) = res {
-                        error!(?err, "failed to join task")
+                        error!(?err, "failed to join task");
                     }
                 }
                 return res.context("failed to listen for ^C")

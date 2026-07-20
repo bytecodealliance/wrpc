@@ -49,7 +49,7 @@ async fn main() -> anyhow::Result<()> {
     {
         fs::create_dir_all(dir)
             .await
-            .with_context(|| format!("failed to create `{}`", dir.display()))?
+            .with_context(|| format!("failed to create `{}`", dir.display()))?;
     }
     let lis = tokio::net::UnixListener::bind(&path)
         .with_context(|| format!("failed to bind Unix listener on `{}`", path.display()))?;
