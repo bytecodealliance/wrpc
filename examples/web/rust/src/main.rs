@@ -187,7 +187,7 @@ impl<C: Send + Sync> store::Handler<C> for Handler {
                 let san = url.path();
                 let mut san = san.strip_prefix('/').unwrap_or(san);
                 if san.is_empty() {
-                    san = "localhost"
+                    san = "localhost";
                 }
                 let conf: QuicClientConfig = client_tls_config()
                     .try_into()
@@ -662,7 +662,7 @@ export const PORT = "{port}"
                 }
                 Some(res) = tasks.join_next() => {
                     if let Err(err) = res {
-                        error!(?err, "failed to join task")
+                        error!(?err, "failed to join task");
                     }
                 }
                 else => {
@@ -717,10 +717,10 @@ export const PORT = "{port}"
                 match res {
                     Ok(Ok(())) => {}
                     Ok(Err(err)) => {
-                        warn!(?err, "failed to serve WebTransport invocation")
+                        warn!(?err, "failed to serve WebTransport invocation");
                     }
                     Err(err) => {
-                        error!(?err, "failed to join WebTransport invocation task")
+                        error!(?err, "failed to join WebTransport invocation task");
                     }
                 }
             }
@@ -732,7 +732,7 @@ export const PORT = "{port}"
                 // wait for all WebTransport invocations to complete
                 while let Some(res) = tasks.join_next().await {
                     if let Err(err) = res {
-                        error!(?err, "failed to WebTransport invocation task")
+                        error!(?err, "failed to WebTransport invocation task");
                     }
                 }
                 http.await.context("HTTP server failed")?;

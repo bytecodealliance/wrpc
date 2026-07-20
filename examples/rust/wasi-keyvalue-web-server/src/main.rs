@@ -71,10 +71,10 @@ async fn main() -> anyhow::Result<()> {
                         match res {
                             Ok(Ok(())) => {}
                             Ok(Err(err)) => {
-                                warn!(?err, "failed to serve connection")
+                                warn!(?err, "failed to serve connection");
                             }
                             Err(err) => {
-                                error!(?err, "failed to join task")
+                                error!(?err, "failed to join task");
                             }
                         }
                     }
@@ -118,7 +118,7 @@ async fn main() -> anyhow::Result<()> {
             }
             Some(res) = tasks.join_next() => {
                 if let Err(err) = res {
-                    error!(?err, "failed to join task")
+                    error!(?err, "failed to join task");
                 }
             }
             res = &mut shutdown => {
@@ -126,7 +126,7 @@ async fn main() -> anyhow::Result<()> {
                 // wait for all invocations to complete
                 while let Some(res) = tasks.join_next().await {
                     if let Err(err) = res {
-                        error!(?err, "failed to join task")
+                        error!(?err, "failed to join task");
                     }
                 }
                 return res.context("failed to listen for ^C")

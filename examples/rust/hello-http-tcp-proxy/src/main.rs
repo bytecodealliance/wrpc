@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use anyhow::Context as _;
 use clap::Parser;
+use http::uri::PathAndQuery;
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use tokio::net::TcpListener;
 use tracing::{error, info};
@@ -38,7 +39,10 @@ async fn main() -> anyhow::Result<()> {
         let wrpc = Arc::clone(&wrpc);
         async move {
             let (http::request::Parts { method, uri, .. }, _) = req.into_parts();
-            match (method.as_str(), uri.path_and_query().map(|pq| pq.as_str())) {
+            match (
+                method.as_str(),
+                uri.path_and_query().map(PathAndQuery::as_str),
+            ) {
                 ("GET", Some("/hello")) => {
                     match bindings::wrpc_examples::hello::handler::hello(wrpc.as_ref(), ())
                         .await
