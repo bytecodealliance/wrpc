@@ -6,14 +6,13 @@ use std::sync::Arc;
 
 use anyhow::bail;
 use futures::{Stream, StreamExt as _};
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::{Mutex, mpsc};
 use tokio_stream::wrappers::ReceiverStream;
 use tracing::{instrument, trace};
-use wasm_tokio::AsyncReadCore as _;
 
 use crate::Serve;
-use crate::frame::{ConnHandler, Incoming, Outgoing};
+use crate::frame::{ConnHandler, Header, HeaderReadError, Incoming, Outgoing};
 
 /// wRPC server for framed transports
 #[derive(Debug)]
@@ -41,10 +40,8 @@ impl<C, I, O> Default for Server<C, I, O> {
 
 /// Error returned by [`Server::accept`]
 pub enum AcceptError<C, I, O> {
-    /// I/O error
-    IO(std::io::Error),
-    /// Protocol version is not supported
-    UnsupportedVersion(u8),
+    /// Header read error
+    HeaderRead(HeaderReadError),
     /// Function was not handled
     UnhandledFunction {
         /// Instance
@@ -56,15 +53,26 @@ pub enum AcceptError<C, I, O> {
     Send(mpsc::error::SendError<(C, I, O)>),
 }
 
+impl<C, I, O> From<HeaderReadError> for AcceptError<C, I, O> {
+    fn from(err: HeaderReadError) -> Self {
+        Self::HeaderRead(err)
+    }
+}
+
+impl<C, I, O> From<mpsc::error::SendError<(C, I, O)>> for AcceptError<C, I, O> {
+    fn from(err: mpsc::error::SendError<(C, I, O)>) -> Self {
+        Self::Send(err)
+    }
+}
+
 impl<C, I, O> Debug for AcceptError<C, I, O> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            AcceptError::IO(err) => Debug::fmt(err, f),
-            AcceptError::UnsupportedVersion(v) => write!(f, "unsupported version byte: {v}"),
-            AcceptError::UnhandledFunction { instance, name } => {
+            Self::HeaderRead(err) => Debug::fmt(err, f),
+            Self::UnhandledFunction { instance, name } => {
                 write!(f, "`{instance}#{name}` does not have a handler registered")
             }
-            AcceptError::Send(err) => Debug::fmt(err, f),
+            Self::Send(err) => Debug::fmt(err, f),
         }
     }
 }
@@ -72,12 +80,11 @@ impl<C, I, O> Debug for AcceptError<C, I, O> {
 impl<C, I, O> Display for AcceptError<C, I, O> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            AcceptError::IO(err) => Display::fmt(err, f),
-            AcceptError::UnsupportedVersion(v) => write!(f, "unsupported version byte: {v}"),
-            AcceptError::UnhandledFunction { instance, name } => {
+            Self::HeaderRead(err) => Display::fmt(err, f),
+            Self::UnhandledFunction { instance, name } => {
                 write!(f, "`{instance}#{name}` does not have a handler registered")
             }
-            AcceptError::Send(err) => Display::fmt(err, f),
+            Self::Send(err) => Display::fmt(err, f),
         }
     }
 }
@@ -96,25 +103,13 @@ where
     /// Returns an error if handling the invocation fails
     #[instrument(level = "trace", skip_all, ret(level = "trace"))]
     pub async fn accept(&self, cx: C, tx: O, mut rx: I) -> Result<(), AcceptError<C, I, O>> {
-        let mut instance = String::default();
-        let mut name = String::default();
-        match rx.read_u8().await.map_err(AcceptError::IO)? {
-            0x00 => {
-                rx.read_core_name(&mut instance)
-                    .await
-                    .map_err(AcceptError::IO)?;
-                rx.read_core_name(&mut name)
-                    .await
-                    .map_err(AcceptError::IO)?;
-            }
-            v => return Err(AcceptError::UnsupportedVersion(v)),
-        }
+        let Header { instance, name } = Header::read(&mut rx).await?;
         let h = self.handlers.lock().await;
         let h = h
             .get(&instance)
             .and_then(|h| h.get(&name))
             .ok_or_else(|| AcceptError::UnhandledFunction { instance, name })?;
-        h.send((cx, rx, tx)).await.map_err(AcceptError::Send)?;
+        h.send((cx, rx, tx)).await?;
         Ok(())
     }
 }
