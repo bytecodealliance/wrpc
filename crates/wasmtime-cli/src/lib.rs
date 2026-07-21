@@ -1,6 +1,5 @@
 #![allow(clippy::type_complexity)]
 
-use core::iter;
 use core::ops::Bound;
 use core::pin::pin;
 use core::time::Duration;
@@ -162,8 +161,7 @@ where
     C: Invoke + Clone + 'static,
     C::Context: Clone + 'static,
 {
-    let mut opts = wasmtime_cli_flags::CommonOptions::try_parse_from(iter::empty::<&'static str>())
-        .context("failed to construct common Wasmtime options")?;
+    let mut opts = wasmtime_cli_flags::CommonOptions::new();
     let mut config = opts
         .config(use_pooling_allocator_by_default().unwrap_or(None))
         .map_err(anyhow::Error::from)
