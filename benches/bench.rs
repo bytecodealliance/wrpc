@@ -1,4 +1,3 @@
-use core::iter;
 use core::net::Ipv6Addr;
 
 use std::fs;
@@ -7,7 +6,6 @@ use std::process::Command;
 use std::sync::Arc;
 
 use anyhow::{Context as _, bail};
-use clap::Parser as _;
 use criterion::measurement::Measurement;
 use criterion::{BenchmarkGroup, Criterion};
 use futures::StreamExt as _;
@@ -122,9 +120,7 @@ impl WasmHandler {
 
     #[allow(clippy::unused_async)]
     pub async fn new(wasm: &[u8]) -> anyhow::Result<Self> {
-        let mut opts =
-            wasmtime_cli_flags::CommonOptions::try_parse_from(iter::empty::<&'static str>())
-                .context("failed to construct common Wasmtime options")?;
+        let mut opts = wasmtime_cli_flags::CommonOptions::new();
         let mut config = opts
             .config(Self::use_pooling_allocator_by_default().unwrap_or(None))
             .map_err(anyhow::Error::from)
