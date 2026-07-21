@@ -1,3 +1,4 @@
+use core::fmt::{Debug, Display};
 use core::future::Future;
 use core::mem;
 use core::pin::Pin;
@@ -16,13 +17,76 @@ use tokio_util::codec::Encoder;
 use tokio_util::io::StreamReader;
 use tokio_util::sync::PollSender;
 use tracing::{Instrument as _, Span, debug, error, instrument, trace};
-use wasm_tokio::{AsyncReadLeb128 as _, Leb128Encoder};
+use wasm_tokio::{AsyncReadCore as _, AsyncReadLeb128 as _, Leb128Encoder};
 
 mod client;
 mod server;
 
 pub use client::*;
 pub use server::*;
+
+/// Error returned by [`Header::read`]
+pub enum HeaderReadError {
+    /// I/O error
+    IO(std::io::Error),
+    /// Protocol version is not supported
+    UnsupportedVersion(u8),
+}
+
+impl Debug for HeaderReadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::IO(err) => Debug::fmt(err, f),
+            Self::UnsupportedVersion(v) => write!(f, "unsupported version byte: {v}"),
+        }
+    }
+}
+
+impl Display for HeaderReadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::IO(err) => Display::fmt(err, f),
+            Self::UnsupportedVersion(v) => write!(f, "unsupported version byte: {v}"),
+        }
+    }
+}
+
+impl core::error::Error for HeaderReadError {}
+
+/// wRPC invocation header
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct Header {
+    /// Instance name of the function being called
+    pub instance: String,
+
+    /// Name of the function being called
+    pub name: String,
+}
+
+impl Header {
+    /// Reads the wRPC header from a byte stream
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if reading the header fails
+    #[instrument(level = "trace", skip_all, ret(level = "trace"))]
+    pub async fn read(mut rx: impl AsyncRead + Unpin) -> Result<Self, HeaderReadError> {
+        let mut instance = String::default();
+        let mut name = String::default();
+        match rx.read_u8().await.map_err(HeaderReadError::IO)? {
+            0x00 => {
+                rx.read_core_name(&mut instance)
+                    .await
+                    .map_err(HeaderReadError::IO)?;
+                rx.read_core_name(&mut name)
+                    .await
+                    .map_err(HeaderReadError::IO)?;
+            }
+            v => return Err(HeaderReadError::UnsupportedVersion(v)),
+        }
+        Ok(Self { instance, name })
+    }
+}
 
 /// Index trie containing async stream subscriptions
 #[derive(Debug, Default)]
