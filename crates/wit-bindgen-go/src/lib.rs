@@ -465,7 +465,7 @@ fn gofmt(src: &mut String) {
         .unwrap()
         .write_all(src.as_bytes())
         .unwrap();
-    src.truncate(0);
+    src.clear();
     child.stdout.take().unwrap().read_to_string(src).unwrap();
     let status = child.wait().unwrap();
     assert!(status.success(), "\n\n\n\n{buf}\n\n\n\n");
