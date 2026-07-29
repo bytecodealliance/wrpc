@@ -102,6 +102,14 @@ world resources-client {
     }
 }
 
+world root-server {
+    export ping: func() -> string;
+}
+
+world root-client {
+    import ping: func() -> string;
+}
+
 interface get-types {
     flags feature-flags {
         show-a,

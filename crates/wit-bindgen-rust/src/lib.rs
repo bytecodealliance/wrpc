@@ -5,8 +5,8 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::{self, Write as _};
 use std::mem;
 use wit_bindgen_core::wit_parser::{
-    Flags, FlagsRepr, Function, Int, InterfaceId, Resolve, SizeAlign, TypeId, TypeOwner, World,
-    WorldId, WorldItem, WorldKey,
+    Flags, FlagsRepr, Function, Int, InterfaceId, Resolve, SizeAlign, TypeId, TypeOwner, WorldId,
+    WorldItem, WorldKey,
 };
 use wit_bindgen_core::{
     Files, InterfaceGenerator as _, Source, Types, WorldGenerator, dealias, name_package_module,
@@ -596,22 +596,14 @@ impl WorldGenerator for RustWrpc {
     fn import_funcs(
         &mut self,
         resolve: &Resolve,
-        world: WorldId,
+        _world: WorldId,
         funcs: &[(&str, &Function)],
         _files: &mut Files,
     ) {
         self.import_funcs_called = true;
 
-        let mut r#gen = self.interface(Identifier::World(world), resolve, true);
-        let World {
-            ref name, package, ..
-        } = resolve.worlds[world];
-        let instance = if let Some(package) = package {
-            resolve.id_of_name(package, name)
-        } else {
-            name.to_string()
-        };
-        r#gen.generate_imports(&instance, funcs.iter().map(|(_, func)| *func));
+        let mut r#gen = self.interface(Identifier::World, resolve, true);
+        r#gen.generate_imports("", funcs.iter().map(|(_, func)| *func));
 
         let src = r#gen.finish();
         self.src.push_str(&src);
@@ -660,12 +652,12 @@ impl WorldGenerator for RustWrpc {
     fn export_funcs(
         &mut self,
         resolve: &Resolve,
-        world: WorldId,
+        _world: WorldId,
         funcs: &[(&str, &Function)],
         _files: &mut Files,
     ) -> Result<()> {
-        let mut r#gen = self.interface(Identifier::World(world), resolve, false);
-        let exports = r#gen.generate_exports(Identifier::World(world), funcs.iter().map(|f| f.1));
+        let mut r#gen = self.interface(Identifier::World, resolve, false);
+        let exports = r#gen.generate_exports(Identifier::World, funcs.iter().map(|f| f.1));
         let src = r#gen.finish();
         self.src.push_str(&src);
         if exports {
@@ -677,7 +669,7 @@ impl WorldGenerator for RustWrpc {
     fn import_types(
         &mut self,
         resolve: &Resolve,
-        world: WorldId,
+        _world: WorldId,
         types: &[(&str, TypeId)],
         _files: &mut Files,
     ) {
@@ -694,7 +686,7 @@ impl WorldGenerator for RustWrpc {
             }
             self.generated_types.insert(full_name);
         }
-        let mut r#gen = self.interface(Identifier::World(world), resolve, true);
+        let mut r#gen = self.interface(Identifier::World, resolve, true);
         for (name, ty) in to_define {
             r#gen.define_type(name, *ty);
         }
@@ -778,7 +770,7 @@ fn compute_module_path(name: &WorldKey, resolve: &Resolve, is_export: bool) -> V
 }
 
 enum Identifier<'a> {
-    World(WorldId),
+    World,
     Interface(InterfaceId, &'a WorldKey),
 }
 

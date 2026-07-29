@@ -7,7 +7,7 @@ use heck::ToUpperCamelCase;
 use wit_bindgen_core::wit_parser::{
     Case, Docs, Enum, EnumCase, Field, Flag, Flags, Function, FunctionKind, Handle, Int,
     InterfaceId, Param, Record, Resolve, Result_, Tuple, Type, TypeDefKind, TypeId, TypeOwner,
-    Variant, World, WorldKey,
+    Variant, WorldKey,
 };
 use wit_bindgen_core::{Source, TypeInfo, uwrite, uwriteln};
 use wrpc_introspect::{async_paths_ty, is_list_of, is_tuple, is_ty, rpc_func_name};
@@ -2542,19 +2542,15 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
                     name
                 }
             }
-            Identifier::World(world) => {
-                let World {
-                    ref name, package, ..
-                } = self.resolve.worlds[world];
-                if let Some(package) = package {
-                    self.resolve.id_of_name(package, name)
-                } else {
-                    name.to_string()
-                }
-            }
+            Identifier::World => String::new(),
         };
         for (i, func) in funcs_to_export.iter().enumerate() {
             let name = rpc_func_name(func);
+            let fqn = if instance.is_empty() {
+                name.to_string()
+            } else {
+                format!("{instance}.{name}")
+            };
 
             let bytes = self.deps.bytes();
             let context = self.deps.context();
@@ -2595,7 +2591,7 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
             uwriteln!(
                 self.src,
                 r#"
-        {slog}.DebugContext(ctx, "calling `{instance}.{name}` handler")"#,
+        {slog}.DebugContext(ctx, "calling `{fqn}` handler")"#,
             );
             let results: Box<[Type]> = func
                 .result
@@ -2652,7 +2648,7 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
             uwrite!(
                 self.src,
                 r#"
-        {slog}.DebugContext(ctx, "transmitting `{instance}.{name}` result")
+        {slog}.DebugContext(ctx, "transmitting `{fqn}` result")
         _, err = w.Write(buf.Bytes())
         if err != nil {{
             {slog}.WarnContext(ctx, "failed to write result", "instance", "{instance}", "name", "{name}", "err", err)
@@ -2725,7 +2721,7 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
                 self.src,
                 r#")
              if err != nil {{
-                 return nil, {fmt}.Errorf("failed to serve `{instance}.{name}`: %w", err)
+                 return nil, {fmt}.Errorf("failed to serve `{fqn}`: %w", err)
              }}
              stops = append(stops, stop{i})"#,
             );

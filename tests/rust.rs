@@ -679,6 +679,89 @@ where
 }
 
 #[instrument(skip_all, ret)]
+async fn assert_bindgen_root<IC, SC, I, S>(cx: IC, clt: Arc<I>, srv: Arc<S>) -> anyhow::Result<()>
+where
+    IC: Clone + Send + Sync,
+    SC: Send + Sync,
+    I: wrpc::Invoke<Context = IC> + 'static,
+    S: wrpc::Serve<Context = SC> + Send + 'static,
+{
+    let span = Span::current();
+    let (shutdown_tx, shutdown_rx) = oneshot::channel();
+    let shutdown_rx = async move { shutdown_rx.await.expect("shutdown sender dropped") }.shared();
+    try_join!(
+        async {
+            mod bindings {
+                wit_bindgen_wrpc::generate!({
+                    world: "root-server",
+                    path: "tests/wit",
+                });
+            }
+
+            #[derive(Clone, Default)]
+            struct Component {}
+
+            impl<C: Send + Sync> bindings::Handler<C> for Component {
+                async fn ping(&self, _cx: C) -> anyhow::Result<String> {
+                    Ok("pong".to_string())
+                }
+            }
+
+            let srv = Arc::clone(&srv);
+            let shutdown_rx = shutdown_rx.clone();
+            tokio::spawn(async move {
+                let invocations = bindings::serve(srv.as_ref(), Component::default())
+                    .await
+                    .context("failed to serve `root-server` world exports")?;
+                let mut invocations = stream::select_all(invocations.into_iter().map(
+                    |(instance, name, invocations)| {
+                        assert_eq!(instance, "");
+                        invocations.map(move |res| (instance, name, res))
+                    },
+                ));
+                loop {
+                    let shutdown_rx = shutdown_rx.clone();
+                    select! {
+                        Some((instance, name, invocation)) = invocations.next() => {
+                            info!(instance, name, "serving invocation");
+                            invocation
+                                .unwrap_or_else(|err| panic!("failed to accept `{instance}#{name}` invocation: {err:?}"))
+                                .await
+                                .expect("failed to serve invocation");
+                        }
+                        () = shutdown_rx => {
+                            info!("shutting down");
+                            return anyhow::Ok(())
+                        }
+                    }
+                }
+            }.instrument(span.clone()))
+            .await?
+        },
+        async {
+            mod bindings {
+                wit_bindgen_wrpc::generate!({
+                    world: "root-client",
+                    path: "tests/wit",
+                });
+            }
+
+            // TODO: Remove the need for this
+            sleep(Duration::from_secs(1)).await;
+
+            let v = bindings::ping(clt.as_ref(), cx.clone())
+                .await
+                .context("failed to call `ping`")?;
+            assert_eq!(v, "pong");
+
+            shutdown_tx.send(()).expect("failed to send shutdown");
+            Ok(())
+        },
+    )?;
+    Ok(())
+}
+
+#[instrument(skip_all, ret)]
 async fn assert_dynamic<IC, SC, I, S>(cx: IC, clt: Arc<I>, srv: Arc<S>) -> anyhow::Result<()>
 where
     IC: Clone + Send + Sync + 'static,
@@ -1373,6 +1456,44 @@ async fn rust_bindgen_tcp_sync() -> anyhow::Result<()> {
     let mut fut = pin!(
         async {
             assert_bindgen_sync(
+                (),
+                Arc::new(wrpc_transport::frame::tcp::Client::from(addr)),
+                Arc::clone(&srv),
+            )
+            .await
+        }
+        .instrument(span.clone())
+    );
+    loop {
+        let accept = async {
+            let (stream, addr) = lis.accept().await.expect("failed to accept connection");
+            assert!(addr.ip().is_loopback());
+            let (rx, tx) = stream.into_split();
+            srv.accept((), tx, rx)
+                .await
+                .expect("failed to accept connection");
+        }
+        .instrument(span.clone());
+        select! {
+            res = &mut fut => return res,
+            () = accept => continue,
+        }
+    }
+}
+
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+#[instrument(ret)]
+async fn rust_bindgen_tcp_root() -> anyhow::Result<()> {
+    let lis = tokio::net::TcpListener::bind((Ipv6Addr::LOCALHOST, 0))
+        .await
+        .context("failed to start TCP listener")?;
+    let addr = lis.local_addr().context("failed to get server address")?;
+
+    let srv = Arc::new(wrpc_transport::frame::Server::default());
+    let span = Span::current();
+    let mut fut = pin!(
+        async {
+            assert_bindgen_root(
                 (),
                 Arc::new(wrpc_transport::frame::tcp::Client::from(addr)),
                 Arc::clone(&srv),
