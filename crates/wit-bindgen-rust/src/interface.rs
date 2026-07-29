@@ -8,8 +8,7 @@ use std::fmt::Write as _;
 use std::mem;
 use wit_bindgen_core::wit_parser::{
     Case, Docs, Enum, Field, Flags, Function, FunctionKind, Handle, Int, InterfaceId, Param,
-    Record, Resolve, Result_, Tuple, Type, TypeDefKind, TypeId, TypeOwner, Variant, World,
-    WorldKey,
+    Record, Resolve, Result_, Tuple, Type, TypeDefKind, TypeId, TypeOwner, Variant, WorldKey,
 };
 use wit_bindgen_core::{Source, TypeInfo, dealias, uwrite, uwriteln};
 use wrpc_introspect::{async_paths_ty, async_paths_tyid, is_ty, rpc_func_name};
@@ -214,18 +213,14 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve, H: Handler<T::Context> + 
                     name
                 }
             }
-            Identifier::World(world) => {
-                let World {
-                    ref name, package, ..
-                } = self.resolve.worlds[world];
-                if let Some(package) = package {
-                    self.resolve.id_of_name(package, name)
-                } else {
-                    name.to_string()
-                }
-            }
+            Identifier::World => String::new(),
         };
         for func in &funcs_to_export {
+            let fqn = if instance.is_empty() {
+                func.name.to_string()
+            } else {
+                format!("{instance}.{}", func.name)
+            };
             let paths = func.params.iter().enumerate().fold(
                 BTreeSet::default(),
                 |mut paths, (i, param)| {
@@ -283,9 +278,8 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve, H: Handler<T::Context> + 
                 r#")
                 )
                 .await,
-                "failed to serve `{instance}.{}`")
+                "failed to serve `{fqn}`")
             }},"#,
-                func.name,
             );
         }
         self.push_str(")?;\n");
@@ -297,6 +291,11 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve, H: Handler<T::Context> + 
         );
         for func in &funcs_to_export {
             let name = to_rust_ident(&func.name);
+            let fqn = if instance.is_empty() {
+                func.name.to_string()
+            } else {
+                format!("{instance}.{}", func.name)
+            };
             uwrite!(
                 self.src,
                 r#"
@@ -381,11 +380,11 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve, H: Handler<T::Context> + 
                                                     {tracing}::trace!(instance = "{instance}", func = "{wit_name}", "receiving async invocation parameters");
                                                     let rx = {anyhow}::Context::context(
                                                         rx.await,
-                                                        "`{instance}.{wit_name}` async parameter receipt task failed",
+                                                        "`{fqn}` async parameter receipt task failed",
                                                     )?;
                                                     {anyhow}::Context::context(
                                                         rx,
-                                                        "failed to receive `{instance}.{wit_name}` async parameters",
+                                                        "failed to receive `{fqn}` async parameters",
                                                     )
                                                 }} else {{
                                                     {anyhow}::Ok(())
@@ -395,7 +394,7 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve, H: Handler<T::Context> + 
                                                 if let Some(rx) = rx {{
                                                     rx.abort();
                                                 }}
-                                                {anyhow}::bail!(err.context("failed to transmit `{instance}.{wit_name}` invocation results"))
+                                                {anyhow}::bail!(err.context("failed to transmit `{fqn}` invocation results"))
                                             }},
                                         }}
                                     }},
@@ -403,7 +402,7 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve, H: Handler<T::Context> + 
                                         if let Some(rx) = rx {{
                                             rx.abort();
                                         }}
-                                        {anyhow}::bail!(err.context("failed to serve `{instance}.{wit_name}` invocation"))
+                                        {anyhow}::bail!(err.context("failed to serve `{fqn}` invocation"))
                                     }},
                                 }}
                             }})
@@ -526,6 +525,12 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve, H: Handler<T::Context> + 
         if self.r#gen.skip.contains(&func.name) {
             return;
         }
+
+        let fqn = if instance.is_empty() {
+            func.name.to_string()
+        } else {
+            format!("{instance}.{}", func.name)
+        };
 
         let mut sig = FnSig::default();
         match func.kind {
@@ -661,8 +666,7 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve, H: Handler<T::Context> + 
             uwriteln!(
                 self.src,
                 r#"
-                    "failed to invoke `{instance}.{}`")?;"#,
-                func.name,
+                    "failed to invoke `{fqn}`")?;"#,
             );
             if func.result.iter().len() == 1 {
                 self.push_str("let (wrpc__,) = wrpc__;\n");
@@ -698,8 +702,7 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve, H: Handler<T::Context> + 
             uwriteln!(
                 self.src,
                 r#"
-                    "failed to invoke `{instance}.{}`")?;"#,
-                func.name,
+                    "failed to invoke `{fqn}`")?;"#,
             );
             if func.result.iter().len() == 1 {
                 self.push_str("let (wrpc__,) = wrpc__;\n");
