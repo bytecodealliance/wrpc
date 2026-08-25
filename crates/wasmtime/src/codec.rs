@@ -548,6 +548,12 @@ where
             (_, Type::Future(..) | Type::Stream(..) | Type::ErrorContext) => {
                 bail!("async not supported")
             }
+            (_, Type::Map(..)) => {
+                bail!("maps not supported")
+            }
+            (_, Type::FixedLengthList(..)) => {
+                bail!("fixed-length lists not supported")
+            }
             _ => bail!("value type mismatch"),
         }
     }
@@ -922,7 +928,11 @@ where
         )),
         Type::Map(..) => Err(std::io::Error::new(
             std::io::ErrorKind::Unsupported,
-            "`map` type not supported",
+            "maps not supported",
+        )),
+        Type::FixedLengthList(..) => Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "fixed-length lists not supported",
         )),
     }
 }

@@ -22,8 +22,7 @@ use wasi_preview1_component_adapter_provider::{
 use wasmtime::component::{Component, InstancePre, Linker, ResourceTable, ResourceType, types};
 use wasmtime::{Engine, Store};
 use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
-use wasmtime_wasi_http::WasiHttpCtx;
-use wasmtime_wasi_http::p2::{WasiHttpCtxView, WasiHttpView};
+use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpCtxView, WasiHttpView};
 use wrpc_transport::{Invoke, Serve};
 use wrpc_wasmtime::{
     RemoteResource, ServeExt as _, SharedResourceTable, WrpcCtxView, WrpcView,
@@ -111,7 +110,7 @@ impl<C: Invoke> WasiHttpView for Ctx<C> {
         WasiHttpCtxView {
             ctx: &mut self.http,
             table: &mut self.table,
-            hooks: wasmtime_wasi_http::p2::default_hooks(),
+            hooks: wasmtime_wasi_http::default_hooks(),
         }
     }
 }
