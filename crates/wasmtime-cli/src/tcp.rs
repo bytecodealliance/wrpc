@@ -24,8 +24,23 @@ pub struct RunArgs {
     #[arg(long, default_value = DEFAULT_ADDR)]
     import: String,
 
+    /// Pass an environment variable to the program.
+    ///
+    /// `--env NAME=VALUE` sets the environment variable `NAME` to `VALUE`
+    /// for the guest. Host environment variables are already inherited by
+    /// default, so only the `NAME=VALUE` form is accepted.
+    #[arg(long = "env", number_of_values = 1, value_name = "NAME=VALUE", value_parser = parse_env_var)]
+    vars: Vec<(String, String)>,
+
     /// Path or URL to Wasm command component
     workload: String,
+}
+
+fn parse_env_var(s: &str) -> Result<(String, String), String> {
+    let (key, val) = s
+        .split_once('=')
+        .ok_or_else(|| format!("invalid `--env` value `{s}`: expected `NAME=VALUE`"))?;
+    Ok((key.to_string(), val.to_string()))
 }
 
 /// Serve a reactor component
@@ -52,6 +67,7 @@ pub async fn handle_run(
     RunArgs {
         timeout,
         import,
+        vars,
         ref workload,
     }: RunArgs,
 ) -> anyhow::Result<()> {
@@ -59,6 +75,7 @@ pub async fn handle_run(
         wrpc_transport::tcp::Client::from(import),
         (),
         *timeout,
+        vars,
         workload,
     )
     .await
