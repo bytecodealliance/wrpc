@@ -599,6 +599,7 @@ pub async fn serve_stateless<C, S>(
     host_resources: Arc<HashMap<Box<str>, HashMap<Box<str>, (ResourceType, ResourceType)>>>,
     engine: &Engine,
     timeout: Duration,
+    vars: Vec<(String, String)>,
 ) -> anyhow::Result<()>
 where
     C: Invoke + Clone + 'static,
@@ -614,6 +615,7 @@ where
                 let clt = clt.clone();
                 let cx = cx.clone();
                 let engine = engine.clone();
+                let vars = vars.clone();
                 info!(?name, "serving root function");
                 let invocations = srv
                     .serve_function(
@@ -624,7 +626,7 @@ where
                                 cx.clone(),
                                 "reactor.wasm",
                                 timeout,
-                                std::iter::empty(),
+                                vars.iter().map(|(k, v)| (k.as_str(), v.as_str())),
                             )
                         },
                         pre.clone(),
@@ -675,6 +677,7 @@ where
                             let clt = clt.clone();
                             let engine = engine.clone();
                             let cx = cx.clone();
+                            let vars = vars.clone();
                             info!(?name, "serving instance function");
                             let invocations = srv
                                 .serve_function(
@@ -685,7 +688,7 @@ where
                                             cx.clone(),
                                             "reactor.wasm",
                                             timeout,
-                                            std::iter::empty(),
+                                            vars.iter().map(|(k, v)| (k.as_str(), v.as_str())),
                                         )
                                     },
                                     pre.clone(),
@@ -762,6 +765,7 @@ pub async fn handle_serve<C, S>(
     clt: C,
     cx: C::Context,
     timeout: Duration,
+    vars: Vec<(String, String)>,
     workload: &str,
 ) -> anyhow::Result<()>
 where
@@ -783,20 +787,22 @@ where
             host_resources,
             &engine,
             timeout,
+            vars,
         )
         .await?;
     } else {
+        let store = new_store(
+            &engine,
+            clt,
+            cx,
+            "reactor.wasm",
+            timeout,
+            vars.iter().map(|(k, v)| (k.as_str(), v.as_str())),
+        );
         serve_shared(
             &mut handlers,
             srv,
-            new_store(
-                &engine,
-                clt,
-                cx,
-                "reactor.wasm",
-                timeout,
-                std::iter::empty(),
-            ),
+            store,
             pre,
             guest_resources,
             host_resources,
