@@ -58,6 +58,14 @@ pub struct ServeArgs {
     #[arg(long, default_value = DEFAULT_ADDR)]
     export: String,
 
+    /// Pass an environment variable to the program.
+    ///
+    /// `--env NAME=VALUE` sets the environment variable `NAME` to `VALUE`
+    /// for the guest. Host environment variables are already inherited by
+    /// default, so only the `NAME=VALUE` form is accepted.
+    #[arg(long = "env", number_of_values = 1, value_name = "NAME=VALUE", value_parser = parse_env_var)]
+    vars: Vec<(String, String)>,
+
     /// Path or URL to Wasm command component
     workload: String,
 }
@@ -87,6 +95,7 @@ pub async fn handle_serve(
         timeout,
         export,
         import,
+        vars,
         ref workload,
     }: ServeArgs,
 ) -> anyhow::Result<()> {
@@ -115,6 +124,7 @@ pub async fn handle_serve(
         wrpc_transport::tcp::Client::from(import),
         (),
         *timeout,
+        vars,
         workload,
     )
     .await;
