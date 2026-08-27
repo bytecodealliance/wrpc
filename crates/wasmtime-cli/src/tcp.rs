@@ -24,23 +24,12 @@ pub struct RunArgs {
     #[arg(long, default_value = DEFAULT_ADDR)]
     import: String,
 
-    /// Pass an environment variable to the program.
-    ///
-    /// `--env NAME=VALUE` sets the environment variable `NAME` to `VALUE`
-    /// for the guest. Host environment variables are already inherited by
-    /// default, so only the `NAME=VALUE` form is accepted.
-    #[arg(long = "env", number_of_values = 1, value_name = "NAME=VALUE", value_parser = parse_env_var)]
-    vars: Vec<(String, String)>,
+    /// Environment variable to set for the component, in `NAME=VALUE` form
+    #[arg(long = "env", value_name = "NAME=VALUE", value_parser = parse_env)]
+    envs: Vec<(Box<str>, Box<str>)>,
 
     /// Path or URL to Wasm command component
-    workload: String,
-}
-
-fn parse_env_var(s: &str) -> Result<(String, String), String> {
-    let (key, val) = s
-        .split_once('=')
-        .ok_or_else(|| format!("invalid `--env` value `{s}`: expected `NAME=VALUE`"))?;
-    Ok((key.to_string(), val.to_string()))
+    workload: Box<str>,
 }
 
 /// Serve a reactor component
@@ -58,16 +47,19 @@ pub struct ServeArgs {
     #[arg(long, default_value = DEFAULT_ADDR)]
     export: String,
 
-    /// Pass an environment variable to the program.
-    ///
-    /// `--env NAME=VALUE` sets the environment variable `NAME` to `VALUE`
-    /// for the guest. Host environment variables are already inherited by
-    /// default, so only the `NAME=VALUE` form is accepted.
-    #[arg(long = "env", number_of_values = 1, value_name = "NAME=VALUE", value_parser = parse_env_var)]
-    vars: Vec<(String, String)>,
+    /// Environment variable to set for the component, in `NAME=VALUE` form
+    #[arg(long = "env", value_name = "NAME=VALUE", value_parser = parse_env)]
+    envs: Vec<(Box<str>, Box<str>)>,
 
     /// Path or URL to Wasm command component
-    workload: String,
+    workload: Box<str>,
+}
+
+fn parse_env(s: &str) -> anyhow::Result<(Box<str>, Box<str>)> {
+    let (key, val) = s
+        .split_once('=')
+        .with_context(|| "invalid `--env` value `{s}`: expected `NAME=VALUE`")?;
+    Ok((key.into(), val.into()))
 }
 
 #[instrument(level = "trace", ret(level = "trace"))]
@@ -75,7 +67,7 @@ pub async fn handle_run(
     RunArgs {
         timeout,
         import,
-        vars,
+        envs,
         ref workload,
     }: RunArgs,
 ) -> anyhow::Result<()> {
@@ -83,7 +75,7 @@ pub async fn handle_run(
         wrpc_transport::tcp::Client::from(import),
         (),
         *timeout,
-        vars,
+        envs,
         workload,
     )
     .await
@@ -95,7 +87,7 @@ pub async fn handle_serve(
         timeout,
         export,
         import,
-        vars,
+        envs,
         ref workload,
     }: ServeArgs,
 ) -> anyhow::Result<()> {
@@ -124,7 +116,7 @@ pub async fn handle_serve(
         wrpc_transport::tcp::Client::from(import),
         (),
         *timeout,
-        vars,
+        envs,
         workload,
     )
     .await;

@@ -359,30 +359,29 @@ where
     Ok((pre, engine, guest_resources, host_resources))
 }
 
-fn new_store<'a, C: Invoke>(
+fn new_store<C: Invoke>(
     engine: &Engine,
     wrpc: C,
     cx: C::Context,
+    envs: impl IntoIterator<Item = (impl AsRef<str>, impl AsRef<str>)>,
     arg0: &str,
     timeout: Duration,
-    vars: impl IntoIterator<Item = (&'a str, &'a str)>,
 ) -> wasmtime::Store<Ctx<C>> {
-    let mut builder = WasiCtxBuilder::new();
-    builder
-        .inherit_env()
+    let mut wasi = WasiCtxBuilder::new();
+    wasi.inherit_env()
         .inherit_stdio()
         .inherit_network()
         .allow_ip_name_lookup(true)
         .allow_tcp(true)
         .allow_udp(true)
         .args(&[arg0]);
-    for (k, v) in vars {
-        builder.env(k, v);
+    for (k, v) in envs {
+        wasi.env(k, v);
     }
     Store::new(
         engine,
         Ctx {
-            wasi: builder.build(),
+            wasi: wasi.build(),
             http: WasiHttpCtx::new(),
             table: ResourceTable::new(),
             wrpc: WrpcCtx {
@@ -400,7 +399,7 @@ pub async fn handle_run<C>(
     clt: C,
     cx: C::Context,
     timeout: Duration,
-    vars: Vec<(String, String)>,
+    envs: Vec<(Box<str>, Box<str>)>,
     workload: &str,
 ) -> anyhow::Result<()>
 where
@@ -409,14 +408,7 @@ where
 {
     let (pre, engine, _, _) =
         instantiate_pre(WASI_SNAPSHOT_PREVIEW1_COMMAND_ADAPTER, workload).await?;
-    let mut store = new_store(
-        &engine,
-        clt,
-        cx,
-        "command.wasm",
-        timeout,
-        vars.iter().map(|(k, v)| (k.as_str(), v.as_str())),
-    );
+    let mut store = new_store(&engine, clt, cx, envs, "command.wasm", timeout);
     let cmd = wasmtime_wasi::p2::bindings::CommandPre::new(pre)
         .map_err(anyhow::Error::from)
         .context("failed to construct `command` instance")?
@@ -599,7 +591,7 @@ pub async fn serve_stateless<C, S>(
     host_resources: Arc<HashMap<Box<str>, HashMap<Box<str>, (ResourceType, ResourceType)>>>,
     engine: &Engine,
     timeout: Duration,
-    vars: Vec<(String, String)>,
+    envs: Vec<(Box<str>, Box<str>)>,
 ) -> anyhow::Result<()>
 where
     C: Invoke + Clone + 'static,
@@ -615,7 +607,7 @@ where
                 let clt = clt.clone();
                 let cx = cx.clone();
                 let engine = engine.clone();
-                let vars = vars.clone();
+                let envs = envs.clone();
                 info!(?name, "serving root function");
                 let invocations = srv
                     .serve_function(
@@ -624,9 +616,9 @@ where
                                 &engine,
                                 clt.clone(),
                                 cx.clone(),
+                                envs.iter().map(|(k, v)| (k, v)),
                                 "reactor.wasm",
                                 timeout,
-                                vars.iter().map(|(k, v)| (k.as_str(), v.as_str())),
                             )
                         },
                         pre.clone(),
@@ -677,7 +669,7 @@ where
                             let clt = clt.clone();
                             let engine = engine.clone();
                             let cx = cx.clone();
-                            let vars = vars.clone();
+                            let envs = envs.clone();
                             info!(?name, "serving instance function");
                             let invocations = srv
                                 .serve_function(
@@ -686,9 +678,9 @@ where
                                             &engine,
                                             clt.clone(),
                                             cx.clone(),
+                                            envs.iter().map(|(k, v)| (k, v)),
                                             "reactor.wasm",
                                             timeout,
-                                            vars.iter().map(|(k, v)| (k.as_str(), v.as_str())),
                                         )
                                     },
                                     pre.clone(),
@@ -765,7 +757,7 @@ pub async fn handle_serve<C, S>(
     clt: C,
     cx: C::Context,
     timeout: Duration,
-    vars: Vec<(String, String)>,
+    envs: Vec<(Box<str>, Box<str>)>,
     workload: &str,
 ) -> anyhow::Result<()>
 where
@@ -787,22 +779,14 @@ where
             host_resources,
             &engine,
             timeout,
-            vars,
+            envs,
         )
         .await?;
     } else {
-        let store = new_store(
-            &engine,
-            clt,
-            cx,
-            "reactor.wasm",
-            timeout,
-            vars.iter().map(|(k, v)| (k.as_str(), v.as_str())),
-        );
         serve_shared(
             &mut handlers,
             srv,
-            store,
+            new_store(&engine, clt, cx, envs, "reactor.wasm", timeout),
             pre,
             guest_resources,
             host_resources,
