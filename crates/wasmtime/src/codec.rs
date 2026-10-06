@@ -902,10 +902,13 @@ where
             } else {
                 let mut store = store.as_context_mut();
                 let n = r.read_u32_leb128().await?;
+                let mut r = r.take(n.into());
                 let n = usize::try_from(n)
                     .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
-                let mut buf = Vec::with_capacity(n);
-                r.read_to_end(&mut buf).await?;
+                let mut buf = Vec::default();
+                if r.read_to_end(&mut buf).await? != n {
+                    return Err(std::io::ErrorKind::UnexpectedEof.into());
+                }
                 let table = store.data_mut().wrpc().table;
                 let resource = table
                     .push(RemoteResource(buf.into()))
