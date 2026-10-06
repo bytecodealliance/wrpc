@@ -28,6 +28,4 @@ wrpc-pack = { workspace = true, optional = true }
 wrpc-transport = { workspace = true }
 
 [dev-dependencies]
-futures = { workspace = true, features = ["executor"] }
-tokio = { workspace = true, features = ["net"] }
-wit-bindgen-wrpc = { workspace = true }
+wasmtime = { workspace = true, features = ["runtime", "wave"] }
