@@ -3,6 +3,7 @@
 use core::iter::zip;
 use core::ops::{BitOrAssign, Shl};
 
+use std::borrow::Cow;
 use std::collections::HashSet;
 
 use anyhow::{Context as _, bail};
@@ -151,7 +152,7 @@ where
                 .encode(val.unwrap_string().as_ref(), dst)
                 .context("failed to encode string"),
             WasmTypeKind::List => {
-                let elements: Vec<_> = val.unwrap_list().map(|v| v.into_owned()).collect();
+                let elements: Vec<_> = val.unwrap_list().map(Cow::into_owned).collect();
                 let n = u32::try_from(elements.len()).context("list length does not fit in u32")?;
                 dst.reserve(5 + elements.len());
                 Leb128Encoder
@@ -183,7 +184,7 @@ where
                 Ok(())
             }
             WasmTypeKind::Tuple => {
-                let elements: Vec<_> = val.unwrap_tuple().map(|v| v.into_owned()).collect();
+                let elements: Vec<_> = val.unwrap_tuple().map(Cow::into_owned).collect();
                 let element_types: Vec<_> = self.ty.tuple_element_types().collect();
                 dst.reserve(elements.len());
                 for (element, element_type) in elements.iter().zip(element_types.iter()) {
@@ -250,11 +251,11 @@ where
                 let case_name = val.unwrap_enum().into_owned();
 
                 // Get the type to find the discriminant index
-                let names: Vec<_> = self.ty.enum_cases().map(|s| s.into_owned()).collect();
+                let names: Vec<_> = self.ty.enum_cases().map(Cow::into_owned).collect();
 
                 let discriminant_idx = find_enum_discriminant(
                     0u32..,
-                    names.iter().map(|s| s.as_str()),
+                    names.iter().map(String::as_str),
                     case_name.as_str(),
                 )?;
 
@@ -343,111 +344,111 @@ where
                 }
             }
             WasmTypeKind::Flags => {
-                let flag_names: Vec<_> = val.unwrap_flags().map(|s| s.into_owned()).collect();
+                let flag_names: Vec<_> = val.unwrap_flags().map(Cow::into_owned).collect();
 
                 // Get the type to know all possible flag names for bit encoding
-                let all_names: Vec<_> = self.ty.flags_names().map(|s| s.into_owned()).collect();
+                let all_names: Vec<_> = self.ty.flags_names().map(Cow::into_owned).collect();
 
-                let flags_set: HashSet<&str> = flag_names.iter().map(|s| s.as_str()).collect();
+                let flags_set: HashSet<&str> = flag_names.iter().map(String::as_str).collect();
                 let vs = flag_names.iter().map(String::as_str);
 
                 match all_names.len() {
                     ..=8 => {
                         dst.reserve(1);
-                        dst.put_u8(flag_bits(all_names.iter().map(|s| s.as_str()), vs));
+                        dst.put_u8(flag_bits(all_names.iter().map(String::as_str), vs));
                     }
                     9..=16 => {
                         dst.reserve(2);
-                        dst.put_u16_le(flag_bits(all_names.iter().map(|s| s.as_str()), vs));
+                        dst.put_u16_le(flag_bits(all_names.iter().map(String::as_str), vs));
                     }
                     17..=24 => {
                         dst.reserve(3);
                         dst.put_slice(
-                            &u32::to_le_bytes(flag_bits(all_names.iter().map(|s| s.as_str()), vs))
+                            &u32::to_le_bytes(flag_bits(all_names.iter().map(String::as_str), vs))
                                 [..3],
                         );
                     }
                     25..=32 => {
                         dst.reserve(4);
-                        dst.put_u32_le(flag_bits(all_names.iter().map(|s| s.as_str()), vs));
+                        dst.put_u32_le(flag_bits(all_names.iter().map(String::as_str), vs));
                     }
                     33..=40 => {
                         dst.reserve(5);
                         dst.put_slice(
-                            &u64::to_le_bytes(flag_bits(all_names.iter().map(|s| s.as_str()), vs))
+                            &u64::to_le_bytes(flag_bits(all_names.iter().map(String::as_str), vs))
                                 [..5],
                         );
                     }
                     41..=48 => {
                         dst.reserve(6);
                         dst.put_slice(
-                            &u64::to_le_bytes(flag_bits(all_names.iter().map(|s| s.as_str()), vs))
+                            &u64::to_le_bytes(flag_bits(all_names.iter().map(String::as_str), vs))
                                 [..6],
                         );
                     }
                     49..=56 => {
                         dst.reserve(7);
                         dst.put_slice(
-                            &u64::to_le_bytes(flag_bits(all_names.iter().map(|s| s.as_str()), vs))
+                            &u64::to_le_bytes(flag_bits(all_names.iter().map(String::as_str), vs))
                                 [..7],
                         );
                     }
                     57..=64 => {
                         dst.reserve(8);
-                        dst.put_u64_le(flag_bits(all_names.iter().map(|s| s.as_str()), vs));
+                        dst.put_u64_le(flag_bits(all_names.iter().map(String::as_str), vs));
                     }
                     65..=72 => {
                         dst.reserve(9);
                         dst.put_slice(
-                            &u128::to_le_bytes(flag_bits(all_names.iter().map(|s| s.as_str()), vs))
+                            &u128::to_le_bytes(flag_bits(all_names.iter().map(String::as_str), vs))
                                 [..9],
                         );
                     }
                     73..=80 => {
                         dst.reserve(10);
                         dst.put_slice(
-                            &u128::to_le_bytes(flag_bits(all_names.iter().map(|s| s.as_str()), vs))
+                            &u128::to_le_bytes(flag_bits(all_names.iter().map(String::as_str), vs))
                                 [..10],
                         );
                     }
                     81..=88 => {
                         dst.reserve(11);
                         dst.put_slice(
-                            &u128::to_le_bytes(flag_bits(all_names.iter().map(|s| s.as_str()), vs))
+                            &u128::to_le_bytes(flag_bits(all_names.iter().map(String::as_str), vs))
                                 [..11],
                         );
                     }
                     89..=96 => {
                         dst.reserve(12);
                         dst.put_slice(
-                            &u128::to_le_bytes(flag_bits(all_names.iter().map(|s| s.as_str()), vs))
+                            &u128::to_le_bytes(flag_bits(all_names.iter().map(String::as_str), vs))
                                 [..12],
                         );
                     }
                     97..=104 => {
                         dst.reserve(13);
                         dst.put_slice(
-                            &u128::to_le_bytes(flag_bits(all_names.iter().map(|s| s.as_str()), vs))
+                            &u128::to_le_bytes(flag_bits(all_names.iter().map(String::as_str), vs))
                                 [..13],
                         );
                     }
                     105..=112 => {
                         dst.reserve(14);
                         dst.put_slice(
-                            &u128::to_le_bytes(flag_bits(all_names.iter().map(|s| s.as_str()), vs))
+                            &u128::to_le_bytes(flag_bits(all_names.iter().map(String::as_str), vs))
                                 [..14],
                         );
                     }
                     113..=120 => {
                         dst.reserve(15);
                         dst.put_slice(
-                            &u128::to_le_bytes(flag_bits(all_names.iter().map(|s| s.as_str()), vs))
+                            &u128::to_le_bytes(flag_bits(all_names.iter().map(String::as_str), vs))
                                 [..15],
                         );
                     }
                     121..=128 => {
                         dst.reserve(16);
-                        dst.put_u128_le(flag_bits(all_names.iter().map(|s| s.as_str()), vs));
+                        dst.put_u128_le(flag_bits(all_names.iter().map(String::as_str), vs));
                     }
                     bits @ 129.. => {
                         let mut cap = bits / 8;
@@ -476,7 +477,6 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bytes::BytesMut;
     use wasm_wave::value::{Type, Value};
 
     #[test]

@@ -110,8 +110,6 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bytes::BytesMut;
-    use wasm_wave::value::Value;
     use wrpc_pack::pack;
 
     #[test]

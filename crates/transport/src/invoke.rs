@@ -129,9 +129,9 @@ pub trait InvokeExt: Invoke {
         Params: TupleEncode + Send,
         Results: TupleDecode + Send,
         <Params::Encoder as tokio_util::codec::Encoder<Params>>::Error:
-            std::error::Error + Send + Sync + 'static,
+            core::error::Error + Send + Sync + 'static,
         <Results::Decoder as tokio_util::codec::Decoder>::Error:
-            std::error::Error + Send + Sync + 'static,
+            core::error::Error + Send + Sync + 'static,
     {
         async {
             let mut buf = BytesMut::default();
@@ -245,9 +245,9 @@ pub trait InvokeExt: Invoke {
         Params: TupleEncode + Send,
         Results: TupleDecode + Send,
         <Params::Encoder as tokio_util::codec::Encoder<Params>>::Error:
-            std::error::Error + Send + Sync + 'static,
+            core::error::Error + Send + Sync + 'static,
         <Results::Decoder as tokio_util::codec::Decoder>::Error:
-            std::error::Error + Send + Sync + 'static,
+            core::error::Error + Send + Sync + 'static,
     {
         async {
             let (ret, io) = self
@@ -291,7 +291,6 @@ mod tests {
 
     use std::sync::Arc;
 
-    use bytes::Bytes;
     use futures::{Stream, StreamExt as _};
 
     use super::*;
