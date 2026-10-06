@@ -4,7 +4,7 @@ use bytes::{Bytes, BytesMut};
 use tracing::{instrument, trace};
 use wasm_tokio::{Leb128DecoderU32, Leb128DecoderU64, Leb128Encoder};
 
-use super::{Frame, FrameRef};
+use crate::frame::{Frame, FrameRef, MAX_INITIAL_DATA_CAPACITY};
 
 /// [Frame] decoder
 pub struct Decoder {
@@ -111,9 +111,8 @@ impl tokio_util::codec::Decoder for Decoder {
                 }));
             }
         }
-        let n = self.data_len.saturating_sub(src.len());
-        if n > 0 {
-            src.reserve(n);
+        if src.len() < self.data_len {
+            src.reserve((self.data_len - src.len()).min(MAX_INITIAL_DATA_CAPACITY));
             self.path = Some(path);
             return Ok(None);
         }
