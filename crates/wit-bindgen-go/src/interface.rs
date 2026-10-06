@@ -508,11 +508,13 @@ impl InterfaceGenerator<'_> {
             if x == 0 {{
                 return "", nil
             }}
-            buf := make([]byte, x)
             {slog}.Debug("reading string bytes", "len", x)
-            _, err = r.Read(buf)
+            buf, err := {io}.ReadAll({io}.LimitReader(r, int64(x)))
             if err != nil {{
                 return "", {fmt}.Errorf("failed to read string bytes: %w", err)
+            }}
+            if uint32(len(buf)) != x {{
+                return "", {fmt}.Errorf("failed to read string bytes: %w", {io}.ErrUnexpectedEOF)
             }}
             if !{utf8}.Valid(buf) {{
                 return string(buf), {errors}.New("string is not valid UTF-8")
@@ -554,11 +556,13 @@ impl InterfaceGenerator<'_> {
             if x == 0 {{
                 return nil, nil
             }}
-            buf := make([]byte, x)
             {slog}.Debug("reading byte list contents", "len", x)
-            _, err = {io}.ReadFull(r, buf)
+            buf, err := {io}.ReadAll({io}.LimitReader(r, int64(x)))
             if err != nil {{
                 return nil, {fmt}.Errorf("failed to read byte list contents: %w", err)
+            }}
+            if uint32(len(buf)) != x {{
+                return nil, {fmt}.Errorf("failed to read byte list contents: %w", {io}.ErrUnexpectedEOF)
             }}
             return buf, nil
         }}
@@ -604,15 +608,15 @@ impl InterfaceGenerator<'_> {
             if x == 0 {{
                 return nil, nil
             }}
-            vs := make("#,
+            var vs "#,
         );
         self.print_list(ty);
         uwrite!(
             self.src,
-            r#", x)
-            for i := range vs {{
+            r#"
+            for i := range x {{
                 {slog}.Debug("reading list element", "i", i)
-                vs[i], err = "#,
+                v, err := "#,
         );
         self.print_read_ty(ty, "r", "append(path, uint32(i))");
         self.push_str("\n");
@@ -621,6 +625,7 @@ impl InterfaceGenerator<'_> {
             r#"if err != nil {{
                     return nil, {fmt}.Errorf("failed to read list element %d: %w", i, err)
                 }}
+                vs = append(vs, v)
             }}
             return vs, nil
         }}
@@ -1202,13 +1207,13 @@ impl InterfaceGenerator<'_> {
             if {math}.MaxUint32 - n < total {{
                 return nil, {errors}.New("total incoming pending stream element count would overflow a 32-bit unsigned integer")
             }}
-            vs := make("#
+            var vs "#
                 );
                 self.print_list(ty);
                 uwrite!(
                     self.src,
-                    r#", n)
-            for i := range vs {{
+                    r#"
+            for i := range n {{
                 {slog}.Debug("reading pending stream element", "i", total)
                 v, err := "#
                 );
@@ -1219,7 +1224,7 @@ impl InterfaceGenerator<'_> {
                 if err != nil {{
                     return nil, {fmt}.Errorf("failed to read pending stream chunk element %d: %w", i, err)
                 }}
-                vs[i] = v
+                vs = append(vs, v)
                 total++
             }}
             return vs, nil
@@ -1282,11 +1287,13 @@ impl InterfaceGenerator<'_> {
                 return nil, {errors}.New("owned resource handle length overflows a 32-bit integer")
             }}
             x = x | uint32(b)<<s
-            buf := make([]byte, x)
             {slog}.Debug("reading owned resource handle bytes", "len", x)
-            _, err = r.Read(buf)
+            buf, err := {io}.ReadAll({io}.LimitReader(r, int64(x)))
             if err != nil {{
                 return nil, {fmt}.Errorf("failed to read owned resource handle bytes: %w", err)
+            }}
+            if uint32(len(buf)) != x {{
+                return nil, {fmt}.Errorf("failed to read owned resource handle bytes: %w", {io}.ErrUnexpectedEOF)
             }}
             return "#,
         );
@@ -1332,11 +1339,13 @@ impl InterfaceGenerator<'_> {
                 return nil, {errors}.New("borrowed resource handle length overflows a 32-bit integer")
             }}
             x = x | uint32(b)<<s
-            buf := make([]byte, x)
             {slog}.Debug("reading borrowed resource handle bytes", "len", x)
-            _, err = r.Read(buf)
+            buf, err := {io}.ReadAll({io}.LimitReader(r, int64(x)))
             if err != nil {{
                 return nil, {fmt}.Errorf("failed to read borrowed resource handle bytes: %w", err)
+            }}
+            if uint32(len(buf)) != x {{
+                return nil, {fmt}.Errorf("failed to read borrowed resource handle bytes: %w", {io}.ErrUnexpectedEOF)
             }}
             return "#,
         );
