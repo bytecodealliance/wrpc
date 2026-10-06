@@ -111,8 +111,8 @@ export class Mux {
       // Stop cleanly at a frame boundary once the peer closes the stream.
       if (m.remaining().length === 0 && !(await m.more())) break;
       const depth = Number(await m.varU());
-      const path = new Array(depth);
-      for (let i = 0; i < depth; i++) path[i] = Number(await m.varU());
+      const path = [];
+      for (let i = 0; i < depth; i++) path.push(Number(await m.varU()));
       const len = Number(await m.varU());
       const data = await m.take(len);
       this._route(path, data);
