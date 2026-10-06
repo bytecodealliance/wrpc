@@ -2,7 +2,6 @@
 
 mod common;
 
-use core::future::Future;
 use core::net::Ipv6Addr;
 use core::pin::{Pin, pin};
 use core::str;

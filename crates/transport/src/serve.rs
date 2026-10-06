@@ -1,6 +1,5 @@
 //! wRPC transport server handle
 
-use core::future::Future;
 use core::mem;
 use core::pin::Pin;
 

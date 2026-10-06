@@ -1,6 +1,5 @@
 //! wRPC transport client handle
 
-use core::future::Future;
 use core::mem;
 use core::pin::pin;
 use core::time::Duration;
@@ -288,7 +287,6 @@ impl<T: Invoke> InvokeExt for T {}
 #[allow(dead_code)]
 #[cfg(test)]
 mod tests {
-    use core::future::Future;
     use core::pin::Pin;
 
     use std::sync::Arc;

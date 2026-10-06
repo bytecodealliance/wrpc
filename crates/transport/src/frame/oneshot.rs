@@ -1,7 +1,5 @@
 //! wRPC transport stream framing
 
-use core::future::Future;
-
 use bytes::Bytes;
 use tokio::io::{AsyncRead, AsyncWrite, DuplexStream, ReadHalf, WriteHalf, duplex, split};
 use tracing::instrument;
