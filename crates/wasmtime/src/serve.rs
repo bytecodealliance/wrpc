@@ -1,6 +1,7 @@
 use core::pin::Pin;
 
-use std::{collections::HashMap, sync::Arc};
+use std::collections::HashMap;
+use std::sync::Arc;
 
 use anyhow::Context as _;
 use futures::{Stream, TryStreamExt as _};
