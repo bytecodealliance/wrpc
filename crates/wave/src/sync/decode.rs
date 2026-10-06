@@ -49,15 +49,13 @@ use crate::core::decode::read_value;
 /// ```
 pub fn read_value_sync(ty: &Type, data: &[u8]) -> anyhow::Result<Value> {
     let mut cursor = Cursor::new(data);
-
     let value = block_on(async {
         let mut pinned = std::pin::pin!(&mut cursor);
         read_value(&mut pinned, ty).await
     })
     .context("failed to decode value")?;
 
-    // Safety: Error on unconsumed data
-    let consumed = cursor.position() as usize;
+    let consumed = usize::try_from(cursor.position()).context("position does not fit in usize")?;
     if consumed < data.len() {
         bail!(
             "unconsumed data: {} of {} bytes remain",

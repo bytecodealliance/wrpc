@@ -16,7 +16,7 @@
 //!
 //! # async fn example<R: AsyncRead + Unpin>(reader: &mut R) -> std::io::Result<()> {
 //! let mut pinned = std::pin::pin!(reader);
-//! let value = read_value(&mut pinned, &wasm_wave::value::Type::U32).await?;
+//! let value = read_value(&mut pinned, &Type::U32).await?;
 //! # Ok(())
 //! # }
 //! ```
@@ -180,9 +180,7 @@ where
             Value::make_enum(ty, name).map_err(io_error)
         }
         WasmTypeKind::Option => {
-            let ok = r.read_u8().await?;
-
-            if ok != 0 {
+            if r.read_option_status().await? {
                 let inner_type = ty
                     .option_some_type()
                     .ok_or_else(|| io_error("option type missing some type"))?;
@@ -193,40 +191,34 @@ where
             }
         }
         WasmTypeKind::Result => {
-            let ok = r.read_u8().await?;
+            let ok = r.read_result_status().await?;
             let (ok_type, err_type) = ty
                 .result_types()
                 .ok_or_else(|| io_error("result type missing ok/err types"))?;
 
-            if ok == 0 {
-                // Ok variant
+            if ok {
                 if let Some(ok_ty) = ok_type {
                     let value = Box::pin(read_value(r, &ok_ty)).await?;
                     Value::make_result(ty, Ok(Some(value)))
                 } else {
                     Value::make_result(ty, Ok(None))
                 }
-            } else if ok == 1 {
-                // Err variant
-                if let Some(err_ty) = err_type {
-                    let value = Box::pin(read_value(r, &err_ty)).await?;
-                    Value::make_result(ty, Err(Some(value)))
-                } else {
-                    Value::make_result(ty, Err(None))
-                }
+            } else if let Some(err_ty) = err_type {
+                let value = Box::pin(read_value(r, &err_ty)).await?;
+                Value::make_result(ty, Err(Some(value)))
             } else {
-                return Err(io_error(format!("invalid result discriminant: {ok}")));
+                Value::make_result(ty, Err(None))
             }
             .map_err(io_error)
         }
         WasmTypeKind::Flags => {
             let names: Vec<_> = ty.flags_names().collect();
-            let byte_count = names.len().div_ceil(8);
+            let byte_count = names.len().div_ceil(8).max(1);
 
             let mut buf = vec![0u8; byte_count];
             r.read_exact(&mut buf).await?;
 
-            let mut flag_names = Vec::new();
+            let mut flag_names = Vec::default();
             for (i, name) in names.iter().enumerate() {
                 if buf[i / 8] & (1 << (i % 8)) != 0 {
                     flag_names.push(name.as_ref());
@@ -235,8 +227,7 @@ where
 
             Value::make_flags(ty, flag_names).map_err(io_error)
         }
-        WasmTypeKind::Unsupported => Err(io_error("unsupported value type")),
-        _ => Err(io_error(format!("unsupported value type: {:?}", ty.kind()))),
+        kind => Err(io_error(format!("unsupported value type: {kind:?}"))),
     }
 }
 
@@ -340,15 +331,15 @@ mod tests {
     // Float types
     #[test]
     fn test_decode_f32() -> anyhow::Result<()> {
-        let value = decode_sync(&Type::F32, &3.14f32.to_le_bytes())?;
-        assert!((value.unwrap_f32() - 3.14).abs() < 0.01);
+        let value = decode_sync(&Type::F32, &1.5f32.to_le_bytes())?;
+        assert_eq!(value.unwrap_f32(), 1.5);
         Ok(())
     }
 
     #[test]
     fn test_decode_f64() -> anyhow::Result<()> {
-        let value = decode_sync(&Type::F64, &3.14159265359f64.to_le_bytes())?;
-        assert!((value.unwrap_f64() - 3.14159265359).abs() < 0.00000001);
+        let value = decode_sync(&Type::F64, &2.5f64.to_le_bytes())?;
+        assert_eq!(value.unwrap_f64(), 2.5);
         Ok(())
     }
 
@@ -586,6 +577,19 @@ mod tests {
     }
 
     // Error cases
+    #[test]
+    fn test_decode_option_invalid_status() {
+        let err = decode_sync(&Type::option(Type::U32), &[2, 42]).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn test_decode_result_invalid_status() {
+        let result_type = Type::result(Some(Type::U32), Some(Type::U32));
+        let err = decode_sync(&result_type, &[2, 42]).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    }
+
     #[test]
     fn test_incomplete_data_eof() {
         let result = decode_sync(&Type::U32, &[]);
