@@ -1,13 +1,14 @@
 //! wRPC HTTP transport
 
+use core::future::Future;
 use core::ops::{Deref, DerefMut};
 use core::pin::Pin;
 use core::task::{Context, Poll, ready};
 
 use std::sync::Arc;
 
-use anyhow::ensure;
 use bytes::{Bytes, BytesMut};
+use futures::{Stream, TryStreamExt as _, stream};
 use http_body::Frame;
 use http_body_util::BodyExt as _;
 use http_body_util::combinators::MapErr;
@@ -100,12 +101,29 @@ pub fn data_reader_from_incoming(
     StreamReader::new(data_stream_from_incoming(body))
 }
 
-pub fn handle_response(
-    res: http::Response<hyper::body::Incoming>,
-) -> anyhow::Result<IncomingBodyDataReader<impl FnMut(hyper::Error) -> std::io::Error>> {
-    let (http::response::Parts { status, .. }, rx) = res.into_parts();
-    ensure!(status.is_success(), "HTTP request failed");
-    Ok(data_reader_from_incoming(rx))
+/// Returns a reader of the body of the response `res` resolves to.
+///
+/// The response is awaited lazily, on first read, so that the request body
+/// can be completed independently of the response.
+/// Response status codes other than 2xx surface as an [`std::io::Error`] on read.
+pub fn data_reader_from_response<E>(
+    res: impl Future<Output = Result<http::Response<hyper::body::Incoming>, E>> + Send + 'static,
+) -> StreamReader<impl Stream<Item = std::io::Result<Bytes>> + Send + Unpin, Bytes>
+where
+    E: std::error::Error + Send + Sync + 'static,
+{
+    let body = stream::once(Box::pin(async move {
+        let res = res.await.map_err(std::io::Error::other)?;
+        let (http::response::Parts { status, .. }, body) = res.into_parts();
+        if !status.is_success() {
+            return Err(std::io::Error::other(format!(
+                "HTTP request failed with status `{status}`"
+            )));
+        }
+        Ok(data_stream_from_incoming(body))
+    }))
+    .try_flatten();
+    StreamReader::new(body)
 }
 
 /// wRPC Server
@@ -255,11 +273,7 @@ impl wrpc_transport::Invoke for Client<hyper::client::conn::http2::SendRequest<O
             .context("failed to encode invocation")?;
         let (req, tx) = new_request(cx, buf);
 
-        let res = sender
-            .send_request(req)
-            .await
-            .context("failed to send HTTP request")?;
-        let rx = handle_response(res)?;
+        let rx = data_reader_from_response(sender.send_request(req));
 
         Ok((
             wrpc_transport::frame::Outgoing::new(tx, |_, _| async {}),
@@ -297,12 +311,7 @@ where
             .context("failed to encode invocation")?;
         let (req, tx) = new_request(cx, buf);
 
-        let res = self
-            .0
-            .request(req)
-            .await
-            .context("failed to send HTTP request")?;
-        let rx = handle_response(res)?;
+        let rx = data_reader_from_response(self.0.request(req));
 
         Ok((
             wrpc_transport::frame::Outgoing::new(tx, |_, _| async {}),

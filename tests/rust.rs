@@ -1443,6 +1443,43 @@ async fn rust_dynamic_http() -> anyhow::Result<()> {
     .await
 }
 
+#[cfg(feature = "http")]
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+#[instrument(ret)]
+async fn rust_http_error_response() -> anyhow::Result<()> {
+    use http_body_util::{BodyExt as _, Empty};
+    use hyper::service::service_fn;
+    use tokio::io::AsyncReadExt as _;
+    use wrpc::Invoke as _;
+    use wrpc::transport::http::Client;
+
+    let svc = service_fn(|req: hyper::Request<hyper::body::Incoming>| async {
+        req.into_body()
+            .collect()
+            .await
+            .context("failed to receive request body")?;
+        let mut res = hyper::Response::new(Empty::<Bytes>::new());
+        *res.status_mut() = hyper::StatusCode::INTERNAL_SERVER_ERROR;
+        anyhow::Ok(res)
+    });
+    let fut = wrpc_test::with_http2(svc, |parts, sender| async move {
+        let (tx, mut rx) = Client::from(sender)
+            .invoke(parts, "foo", "bar", "test".into(), [[None; 0]; 0])
+            .await
+            .context("failed to invoke `foo.bar`")?;
+        drop(tx);
+        let err = rx
+            .read_to_end(&mut vec![])
+            .await
+            .expect_err("reading results should fail");
+        assert!(err.to_string().contains("500"), "unexpected error: {err}");
+        Ok(())
+    });
+    tokio::time::timeout(Duration::from_secs(10), fut)
+        .await
+        .context("invocation timed out")?
+}
+
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 #[instrument(ret)]
 async fn rust_bindgen_tcp_sync() -> anyhow::Result<()> {

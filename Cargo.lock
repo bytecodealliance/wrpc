@@ -4856,6 +4856,8 @@ dependencies = [
  "clap",
  "criterion",
  "futures",
+ "http-body-util",
+ "hyper",
  "tempfile",
  "test-log",
  "tokio",
@@ -4893,6 +4895,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bytes",
+ "futures",
  "http",
  "http-body",
  "http-body-util",

@@ -154,7 +154,7 @@ impl<T: Serve> ServeExt for T {}
 #[cfg(test)]
 mod tests {
     use bytes::Bytes;
-    use futures::{StreamExt as _, TryStreamExt as _, stream};
+    use futures::{StreamExt as _, stream};
 
     use super::*;
 

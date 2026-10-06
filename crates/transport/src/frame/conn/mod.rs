@@ -351,6 +351,7 @@ pin_project! {
         path: Arc<[usize]>,
         index: Arc<std::sync::Mutex<IndexTrie>>,
         io: Arc<JoinSet<()>>,
+        err: Arc<std::sync::OnceLock<std::io::Error>>,
     }
 }
 
@@ -369,12 +370,18 @@ impl Incoming {
     {
         let index = Arc::new(std::sync::Mutex::new(paths.into_iter().collect()));
         let (rx_tx, rx_rx) = mpsc::channel(128);
+        let err = Arc::new(std::sync::OnceLock::default());
         let mut rx_io = JoinSet::new();
         let span = Span::current();
         rx_io.spawn({
             let index = Arc::clone(&index);
+            let err = Arc::clone(&err);
             async move {
-                let res = ingress(&mut rx, &index, rx_tx).await;
+                let res = ingress(&mut rx, &index, &rx_tx).await;
+                if let Err(e) = &res {
+                    _ = err.set(copy_io_error(e));
+                }
+                drop(rx_tx);
                 on_ingress(rx, res).await;
                 let Ok(mut index) = index.lock() else {
                     error!("failed to lock index trie");
@@ -390,6 +397,7 @@ impl Incoming {
             path: Arc::from([]),
             index: Arc::clone(&index),
             io: Arc::new(rx_io),
+            err,
         }
     }
 
@@ -422,6 +430,7 @@ impl Incoming {
             path,
             index: Arc::clone(&self.index),
             io: Arc::clone(&self.io),
+            err: Arc::clone(&self.err),
         })
     }
 }
@@ -446,6 +455,9 @@ impl AsyncRead for Incoming {
         trace!(buf = ?buf.filled(), "read buffer");
         if buf.filled().is_empty() {
             self.rx.take();
+            if let Some(err) = self.err.get() {
+                return Poll::Ready(Err(copy_io_error(err)));
+            }
         }
         Poll::Ready(Ok(()))
     }
@@ -550,11 +562,15 @@ impl AsyncWrite for Outgoing {
     }
 }
 
+fn copy_io_error(err: &std::io::Error) -> std::io::Error {
+    std::io::Error::new(err.kind(), err.to_string())
+}
+
 #[instrument(level = "trace", skip_all, ret(level = "trace"))]
 async fn ingress(
     mut rx: impl AsyncRead + Unpin,
     index: &std::sync::Mutex<IndexTrie>,
-    param_tx: mpsc::Sender<std::io::Result<Bytes>>,
+    param_tx: &mpsc::Sender<std::io::Result<Bytes>>,
 ) -> std::io::Result<()> {
     loop {
         trace!("reading path length");
@@ -571,7 +587,7 @@ async fn ingress(
             .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
         trace!(n, "read path length");
         let tx = if n == 0 {
-            &param_tx
+            param_tx
         } else {
             let mut path = Vec::with_capacity(n);
             for i in 0..n {
