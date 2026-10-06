@@ -80,8 +80,8 @@ function checkInt(v, kind, min, max) {
  */
 function readChunk(r, elem, n, sink, path) {
   if (elem.kind === "u8") return r.take(n).slice();
-  const out = new Array(n);
-  for (let i = 0; i < n; i++) out[i] = decodeValue(r, elem, sink, childPath(sink, path, i));
+  const out = [];
+  for (let i = 0; i < n; i++) out.push(decodeValue(r, elem, sink, childPath(sink, path, i)));
   return out;
 }
 

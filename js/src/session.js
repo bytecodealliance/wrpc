@@ -194,10 +194,10 @@ async function readStream(ar, elem, queue) {
       if (elem.kind === "u8") {
         queue.push(await ar.take(len));
       } else {
-        const chunk = new Array(len);
+        const chunk = [];
         for (let k = 0; k < len; k++) {
           const { value, sink } = await decodeOne(ar, elem);
-          chunk[k] = value;
+          chunk.push(value);
           for (const e of sink) tasks.push(readDeferred(ar.index([base + k, ...e.path]), e));
         }
         queue.push(chunk);
