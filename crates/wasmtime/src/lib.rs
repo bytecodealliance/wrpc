@@ -3,7 +3,6 @@
 use core::any::Any;
 use core::borrow::Borrow;
 use core::fmt;
-use core::future::Future;
 use core::iter::zip;
 use core::pin::pin;
 use core::time::Duration;

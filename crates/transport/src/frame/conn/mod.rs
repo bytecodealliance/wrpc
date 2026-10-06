@@ -1,5 +1,4 @@
 use core::fmt::{Debug, Display};
-use core::future::Future;
 use core::mem;
 use core::pin::Pin;
 use core::task::{Context, Poll, ready};

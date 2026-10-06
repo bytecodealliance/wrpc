@@ -2,7 +2,6 @@
 
 use core::any::Any;
 use core::fmt;
-use core::future::Future;
 use core::marker::PhantomData;
 use core::pin::Pin;
 use core::task::{Context, Poll};

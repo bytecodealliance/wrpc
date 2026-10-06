@@ -1,4 +1,3 @@
-use core::future::Future;
 use core::net::Ipv6Addr;
 use core::pin::pin;
 
@@ -454,7 +453,7 @@ pub async fn with_websockets<T, Fut>(
     ) -> Fut,
 ) -> anyhow::Result<T>
 where
-    Fut: core::future::Future<Output = anyhow::Result<T>>,
+    Fut: Future<Output = anyhow::Result<T>>,
 {
     use tokio_websockets::{ClientBuilder, ServerBuilder};
 

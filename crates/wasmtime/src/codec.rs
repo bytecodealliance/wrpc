@@ -1,4 +1,3 @@
-use core::future::Future;
 use core::iter::zip;
 use core::ops::{BitOrAssign, Shl};
 use core::pin::{Pin, pin};

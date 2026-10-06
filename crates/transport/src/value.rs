@@ -1,6 +1,6 @@
 use core::any::TypeId;
 use core::fmt::{self, Debug};
-use core::future::{Future, pending};
+use core::future::pending;
 use core::hash::{Hash, Hasher};
 use core::iter::zip;
 use core::marker::PhantomData;
