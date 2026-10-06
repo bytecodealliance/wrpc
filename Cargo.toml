@@ -111,6 +111,8 @@ criterion = { workspace = true, features = [
     "rayon",
 ] }
 futures = { workspace = true, features = ["async-await"] }
+http-body-util = { workspace = true }
+hyper = { workspace = true }
 tempfile = { workspace = true }
 test-log = { workspace = true, features = ["color", "log", "trace"] }
 tokio = { workspace = true, features = ["net", "process", "rt-multi-thread"] }
