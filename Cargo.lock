@@ -3994,8 +3994,10 @@ version = "0.258.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "95f32f2123fc8790a3796a3648aaab8628daca0363826dce1c03bcc3a3553456"
 dependencies = [
+ "anyhow",
  "logos",
  "thiserror 2.0.20",
+ "wit-parser 0.258.3",
 ]
 
 [[package]]
@@ -4079,6 +4081,7 @@ dependencies = [
  "smallvec",
  "target-lexicon",
  "wasm-encoder 0.258.3",
+ "wasm-wave",
  "wasmparser 0.258.3",
  "wasmtime-environ",
  "wasmtime-internal-cache",
@@ -5021,7 +5024,7 @@ dependencies = [
  "tracing",
  "wasm-tokio",
  "wasm-wave",
- "wit-bindgen-wrpc",
+ "wasmtime",
  "wrpc-pack",
  "wrpc-transport",
 ]
