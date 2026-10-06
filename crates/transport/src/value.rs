@@ -2267,7 +2267,7 @@ mod tests {
 
     #[test_log::test(tokio::test)]
     async fn codec() -> anyhow::Result<()> {
-        let mut buf = BytesMut::new();
+        let mut buf = BytesMut::default();
         let mut enc = <(u8, u32) as Encode>::Encoder::default();
         enc.encode((0x42, 0x42), &mut buf)?;
         if let Some(_f) = Deferred::<Outgoing>::take_deferred(&mut enc) {
@@ -2282,17 +2282,17 @@ mod tests {
         let mut enc = <f32 as Encode>::Encoder::default();
 
         // A non-canonical (e.g. signalling) `NaN` is canonicalized on encode.
-        let mut buf = BytesMut::new();
+        let mut buf = BytesMut::default();
         enc.encode(f32::from_bits(0x7f80_0001), &mut buf).unwrap();
         assert_eq!(buf.as_ref(), CANONICAL_NAN_F32.to_le_bytes());
 
         // A negative `NaN` is canonicalized to the (positive) canonical `NaN`.
-        let mut buf = BytesMut::new();
+        let mut buf = BytesMut::default();
         enc.encode(f32::from_bits(0xffc0_0000), &mut buf).unwrap();
         assert_eq!(buf.as_ref(), CANONICAL_NAN_F32.to_le_bytes());
 
         // Non-`NaN` values are encoded unchanged.
-        let mut buf = BytesMut::new();
+        let mut buf = BytesMut::default();
         enc.encode(1.5_f32, &mut buf).unwrap();
         assert_eq!(buf.as_ref(), 1.5_f32.to_bits().to_le_bytes());
     }
@@ -2301,17 +2301,17 @@ mod tests {
     fn canonical_nan_f64() {
         let mut enc = <f64 as Encode>::Encoder::default();
 
-        let mut buf = BytesMut::new();
+        let mut buf = BytesMut::default();
         enc.encode(f64::from_bits(0x7ff0_0000_0000_0001), &mut buf)
             .unwrap();
         assert_eq!(buf.as_ref(), CANONICAL_NAN_F64.to_le_bytes());
 
-        let mut buf = BytesMut::new();
+        let mut buf = BytesMut::default();
         enc.encode(f64::from_bits(0xfff8_0000_0000_0000), &mut buf)
             .unwrap();
         assert_eq!(buf.as_ref(), CANONICAL_NAN_F64.to_le_bytes());
 
-        let mut buf = BytesMut::new();
+        let mut buf = BytesMut::default();
         enc.encode(1.5_f64, &mut buf).unwrap();
         assert_eq!(buf.as_ref(), 1.5_f64.to_bits().to_le_bytes());
     }

@@ -7,7 +7,7 @@ use wrpc_wave::{WaveEncoder, read_value_sync};
 
 #[test]
 fn wasmtime_compat() -> anyhow::Result<()> {
-    let mut buf = BytesMut::new();
+    let mut buf = BytesMut::default();
     WaveEncoder::new(&wasmtime::component::Type::U32).encode(&Val::U32(42), &mut buf)?;
     let v = read_value_sync(&Type::U32, &buf)?;
     assert_eq!(v.unwrap_u32(), 42);

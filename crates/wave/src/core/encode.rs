@@ -28,7 +28,7 @@ use wasm_wave::wasm::{WasmType, WasmTypeKind, WasmValue};
 /// let value = Value::make_u32(42);
 /// let ty = Type::U32;
 /// let mut encoder = WaveEncoder::new(&ty);
-/// let mut buf = BytesMut::new();
+/// let mut buf = BytesMut::default();
 /// encoder.encode(&value, &mut buf).unwrap();
 /// assert_eq!(buf.as_ref(), [42]);
 /// ```
@@ -400,7 +400,7 @@ mod tests {
         let value = Value::make_bool(true);
         let ty = Type::BOOL;
         let mut encoder = WaveEncoder::new(&ty);
-        let mut buf = BytesMut::new();
+        let mut buf = BytesMut::default();
         encoder.encode(&value, &mut buf)?;
 
         assert_eq!(buf.as_ref(), &[1u8]);
@@ -412,7 +412,7 @@ mod tests {
         let value = Value::make_bool(false);
         let ty = Type::BOOL;
         let mut encoder = WaveEncoder::new(&ty);
-        let mut buf = BytesMut::new();
+        let mut buf = BytesMut::default();
         encoder.encode(&value, &mut buf)?;
 
         assert_eq!(buf.as_ref(), &[0u8]);
@@ -426,7 +426,7 @@ mod tests {
         let value = Value::make_s8(42);
         let ty = Type::S8;
         let mut encoder = WaveEncoder::new(&ty);
-        let mut buf = BytesMut::new();
+        let mut buf = BytesMut::default();
         encoder.encode(&value, &mut buf)?;
 
         assert_eq!(buf.as_ref(), &[42u8]);
@@ -438,7 +438,7 @@ mod tests {
         let value = Value::make_s8(-42);
         let ty = Type::S8;
         let mut encoder = WaveEncoder::new(&ty);
-        let mut buf = BytesMut::new();
+        let mut buf = BytesMut::default();
         encoder.encode(&value, &mut buf)?;
 
         assert_eq!(buf.as_ref(), &[(-42i8) as u8]);
@@ -450,7 +450,7 @@ mod tests {
         let value = Value::make_u8(255);
         let ty = Type::U8;
         let mut encoder = WaveEncoder::new(&ty);
-        let mut buf = BytesMut::new();
+        let mut buf = BytesMut::default();
         encoder.encode(&value, &mut buf)?;
 
         assert_eq!(buf.as_ref(), &[255u8]);
@@ -462,7 +462,7 @@ mod tests {
         let value = Value::make_s16(1000);
         let ty = Type::S16;
         let mut encoder = WaveEncoder::new(&ty);
-        let mut buf = BytesMut::new();
+        let mut buf = BytesMut::default();
         encoder.encode(&value, &mut buf)?;
 
         // 1000 in LEB128: 0xE8 0x07
@@ -475,7 +475,7 @@ mod tests {
         let value = Value::make_u16(1000);
         let ty = Type::U16;
         let mut encoder = WaveEncoder::new(&ty);
-        let mut buf = BytesMut::new();
+        let mut buf = BytesMut::default();
         encoder.encode(&value, &mut buf)?;
 
         // 1000 in LEB128: 0xE8 0x07
@@ -488,7 +488,7 @@ mod tests {
         let value = Value::make_s32(100000);
         let ty = Type::S32;
         let mut encoder = WaveEncoder::new(&ty);
-        let mut buf = BytesMut::new();
+        let mut buf = BytesMut::default();
         encoder.encode(&value, &mut buf)?;
 
         // 100000 in LEB128: 0xA0 0x8D 0x06
@@ -501,7 +501,7 @@ mod tests {
         let value = Value::make_u32(42);
         let ty = Type::U32;
         let mut encoder = WaveEncoder::new(&ty);
-        let mut buf = BytesMut::new();
+        let mut buf = BytesMut::default();
         encoder.encode(&value, &mut buf)?;
 
         // 42 in LEB128 is just [42]
@@ -514,7 +514,7 @@ mod tests {
         let value = Value::make_s64(-1);
         let ty = Type::S64;
         let mut encoder = WaveEncoder::new(&ty);
-        let mut buf = BytesMut::new();
+        let mut buf = BytesMut::default();
         encoder.encode(&value, &mut buf)?;
 
         // -1 in LEB128: 0x7F
@@ -527,7 +527,7 @@ mod tests {
         let value = Value::make_u64(12345);
         let ty = Type::U64;
         let mut encoder = WaveEncoder::new(&ty);
-        let mut buf = BytesMut::new();
+        let mut buf = BytesMut::default();
         encoder.encode(&value, &mut buf)?;
 
         // 12345 in LEB128: 0xB9 0x60
@@ -542,7 +542,7 @@ mod tests {
         let value = Value::make_f32(1.5);
         let ty = Type::F32;
         let mut encoder = WaveEncoder::new(&ty);
-        let mut buf = BytesMut::new();
+        let mut buf = BytesMut::default();
         encoder.encode(&value, &mut buf)?;
 
         assert_eq!(buf.as_ref(), &1.5f32.to_le_bytes());
@@ -554,7 +554,7 @@ mod tests {
         let value = Value::make_f64(2.5);
         let ty = Type::F64;
         let mut encoder = WaveEncoder::new(&ty);
-        let mut buf = BytesMut::new();
+        let mut buf = BytesMut::default();
         encoder.encode(&value, &mut buf)?;
 
         assert_eq!(buf.as_ref(), &2.5f64.to_le_bytes());
@@ -568,7 +568,7 @@ mod tests {
         let value = Value::make_char('A');
         let ty = Type::CHAR;
         let mut encoder = WaveEncoder::new(&ty);
-        let mut buf = BytesMut::new();
+        let mut buf = BytesMut::default();
         encoder.encode(&value, &mut buf)?;
 
         // UTF-8 encoding of 'A' (0x41)
@@ -581,7 +581,7 @@ mod tests {
         let value = Value::make_char('😀');
         let ty = Type::CHAR;
         let mut encoder = WaveEncoder::new(&ty);
-        let mut buf = BytesMut::new();
+        let mut buf = BytesMut::default();
         encoder.encode(&value, &mut buf)?;
 
         // UTF-8 encoding of '😀' (U+1F600): 0xF0 0x9F 0x98 0x80
@@ -595,7 +595,7 @@ mod tests {
         let value = Value::make_string(Cow::Borrowed("hello"));
         let ty = Type::STRING;
         let mut encoder = WaveEncoder::new(&ty);
-        let mut buf = BytesMut::new();
+        let mut buf = BytesMut::default();
         encoder.encode(&value, &mut buf)?;
 
         // String encoding: length (5 in LEB128) + "hello"
@@ -613,7 +613,7 @@ mod tests {
         let list_value = Value::make_list(&list_type, values)?;
 
         let mut encoder = WaveEncoder::new(&list_type);
-        let mut buf = BytesMut::new();
+        let mut buf = BytesMut::default();
         encoder.encode(&list_value, &mut buf)?;
 
         // Empty list: length 0
@@ -629,7 +629,7 @@ mod tests {
         let list_value = Value::make_list(&list_type, values)?;
 
         let mut encoder = WaveEncoder::new(&list_type);
-        let mut buf = BytesMut::new();
+        let mut buf = BytesMut::default();
         encoder.encode(&list_value, &mut buf)?;
 
         // List encoding: length (3) + elements (1, 2, 3 in LEB128)
@@ -649,7 +649,7 @@ mod tests {
         )?;
 
         let mut encoder = WaveEncoder::new(&record_type);
-        let mut buf = BytesMut::new();
+        let mut buf = BytesMut::default();
         encoder.encode(&record_value, &mut buf)?;
 
         // Record with x=10, y=20 (LEB128)
@@ -667,7 +667,7 @@ mod tests {
             Value::make_tuple(&tuple_type, [Value::make_u32(42), Value::make_bool(true)])?;
 
         let mut encoder = WaveEncoder::new(&tuple_type);
-        let mut buf = BytesMut::new();
+        let mut buf = BytesMut::default();
         encoder.encode(&tuple_value, &mut buf)?;
 
         // Tuple with (42, true)
@@ -684,7 +684,7 @@ mod tests {
         let variant_value = Value::make_variant(&variant_type, "none", None)?;
 
         let mut encoder = WaveEncoder::new(&variant_type);
-        let mut buf = BytesMut::new();
+        let mut buf = BytesMut::default();
         encoder.encode(&variant_value, &mut buf)?;
 
         // Variant "none" (discriminant 0, no payload)
@@ -699,7 +699,7 @@ mod tests {
         let variant_value = Value::make_variant(&variant_type, "some", Some(Value::make_u32(42)))?;
 
         let mut encoder = WaveEncoder::new(&variant_type);
-        let mut buf = BytesMut::new();
+        let mut buf = BytesMut::default();
         encoder.encode(&variant_value, &mut buf)?;
 
         // Variant "some" with payload 42 (discriminant 1, payload 42)
@@ -715,7 +715,7 @@ mod tests {
         let enum_value = Value::make_enum(&enum_type, "red")?;
 
         let mut encoder = WaveEncoder::new(&enum_type);
-        let mut buf = BytesMut::new();
+        let mut buf = BytesMut::default();
         encoder.encode(&enum_value, &mut buf)?;
 
         // First enum case should encode as discriminant 0
@@ -732,7 +732,7 @@ mod tests {
         let option_value = Value::make_option(&option_type, None)?;
 
         let mut encoder = WaveEncoder::new(&option_type);
-        let mut buf = BytesMut::new();
+        let mut buf = BytesMut::default();
         encoder.encode(&option_value, &mut buf)?;
 
         // None is encoded as 0
@@ -748,7 +748,7 @@ mod tests {
         let option_value = Value::make_option(&option_type, Some(inner_value))?;
 
         let mut encoder = WaveEncoder::new(&option_type);
-        let mut buf = BytesMut::new();
+        let mut buf = BytesMut::default();
         encoder.encode(&option_value, &mut buf)?;
 
         // Some(42) is encoded as 1 (discriminant) + 42 (value)
@@ -764,7 +764,7 @@ mod tests {
         let result_value = Value::make_result(&result_type, Ok(Some(Value::make_u32(42))))?;
 
         let mut encoder = WaveEncoder::new(&result_type);
-        let mut buf = BytesMut::new();
+        let mut buf = BytesMut::default();
         encoder.encode(&result_value, &mut buf)?;
 
         // Ok(42): discriminant 0, value 42
@@ -778,7 +778,7 @@ mod tests {
         let result_value = Value::make_result(&result_type, Ok(None))?;
 
         let mut encoder = WaveEncoder::new(&result_type);
-        let mut buf = BytesMut::new();
+        let mut buf = BytesMut::default();
         encoder.encode(&result_value, &mut buf)?;
 
         // Ok(none): discriminant 0
@@ -796,7 +796,7 @@ mod tests {
         )?;
 
         let mut encoder = WaveEncoder::new(&result_type);
-        let mut buf = BytesMut::new();
+        let mut buf = BytesMut::default();
         encoder.encode(&result_value, &mut buf)?;
 
         // Err("fail"): discriminant 1, length 4, "fail"
@@ -810,7 +810,7 @@ mod tests {
         let result_value = Value::make_result(&result_type, Err(None))?;
 
         let mut encoder = WaveEncoder::new(&result_type);
-        let mut buf = BytesMut::new();
+        let mut buf = BytesMut::default();
         encoder.encode(&result_value, &mut buf)?;
 
         // Err(none): discriminant 1
@@ -827,7 +827,7 @@ mod tests {
         let flags_value = Value::make_flags(&flags_type, [])?;
 
         let mut encoder = WaveEncoder::new(&flags_type);
-        let mut buf = BytesMut::new();
+        let mut buf = BytesMut::default();
         encoder.encode(&flags_value, &mut buf)?;
 
         // No flags set: 0b00000000 = 0
@@ -842,7 +842,7 @@ mod tests {
         let flags_value = Value::make_flags(&flags_type, ["read", "write"])?;
 
         let mut encoder = WaveEncoder::new(&flags_type);
-        let mut buf = BytesMut::new();
+        let mut buf = BytesMut::default();
         encoder.encode(&flags_value, &mut buf)?;
 
         // read=bit0, write=bit1 -> 0b00000011 = 3
@@ -859,7 +859,7 @@ mod tests {
         let flags_value = Value::make_flags(&flags_type, ["f0", "f9"])?;
 
         let mut encoder = WaveEncoder::new(&flags_type);
-        let mut buf = BytesMut::new();
+        let mut buf = BytesMut::default();
         encoder.encode(&flags_value, &mut buf)?;
 
         // f0 and f9 set: bit 0 in byte 0, bit 1 in byte 1
@@ -879,7 +879,7 @@ mod tests {
         let flags_value = Value::make_flags(&flags_type, ["f0", "f8", "f16"])?;
 
         let mut encoder = WaveEncoder::new(&flags_type);
-        let mut buf = BytesMut::new();
+        let mut buf = BytesMut::default();
         encoder.encode(&flags_value, &mut buf)?;
 
         // f0, f8, f16 set: bit 0 in byte 0, bit 0 in byte 1, bit 0 in byte 2

@@ -19,7 +19,7 @@
 //! let value = Value::make_u32(42);
 //! let ty = Type::U32;
 //! let mut encoder = WaveEncoder::new(&ty);
-//! let mut buf = BytesMut::new();
+//! let mut buf = BytesMut::default();
 //! encoder.encode(&value, &mut buf).unwrap();
 //! assert_eq!(buf.as_ref(), [42]);
 //! ```
@@ -39,7 +39,7 @@
 //!
 //! let value = Value::make_u32(42);
 //! let typed_value = WasmTypedValue(value, Type::U32);
-//! let mut buf = BytesMut::new();
+//! let mut buf = BytesMut::default();
 //! pack(typed_value, &mut buf).unwrap();
 //! # }
 //! ```
