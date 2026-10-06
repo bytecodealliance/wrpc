@@ -7,7 +7,7 @@ use syn::parse::{Error, Parse, ParseStream, Result};
 use syn::punctuated::Punctuated;
 use syn::spanned::Spanned;
 use syn::{LitStr, Token, braced, token};
-use wit_bindgen_core::wit_parser::{PackageId, Resolve, UnresolvedPackageGroup, WorldId};
+use wit_bindgen_core::wit_parser::{PackageId, Resolve, WorldId};
 use wit_bindgen_wrpc_rust::{Opts, WithOption};
 
 #[proc_macro]
@@ -236,7 +236,7 @@ fn parse_source(
             if let Some(p) = path {
                 parse(p)?;
             }
-            pkgs.push(resolve.push_group(UnresolvedPackageGroup::parse("macro-input", s)?)?);
+            pkgs.push(resolve.push_str("macro-input", s)?);
         }
         Some(Source::Paths(p)) => parse(p)?,
         None => parse(&[root.join("wit")])?,

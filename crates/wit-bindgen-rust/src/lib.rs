@@ -492,7 +492,7 @@ pub fn serve<'a, T: {wrpc_transport}::Serve, H: {bound} + ::core::marker::Send +
 }
 
 impl WorldGenerator for RustWrpc {
-    fn preprocess(&mut self, resolve: &Resolve, world: WorldId) {
+    fn preprocess(&mut self, resolve: &Resolve, world: WorldId) -> Result<()> {
         wit_bindgen_core::generated_preamble(&mut self.src_preamble, env!("CARGO_PKG_VERSION"));
 
         // Render some generator options to assist with debugging and/or to help
@@ -537,6 +537,7 @@ impl WorldGenerator for RustWrpc {
             self.with.insert(k.clone(), v.clone().into());
         }
         self.with.generate_by_default = self.opts.generate_all;
+        Ok(())
     }
 
     fn import_interface(

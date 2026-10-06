@@ -470,7 +470,7 @@ fn gofmt(src: &mut String) {
 }
 
 impl WorldGenerator for GoWrpc {
-    fn preprocess(&mut self, resolve: &Resolve, world: WorldId) {
+    fn preprocess(&mut self, resolve: &Resolve, world: WorldId) -> Result<()> {
         self.types.analyze(resolve);
         self.world = Some(world);
 
@@ -490,6 +490,7 @@ impl WorldGenerator for GoWrpc {
             self.with.insert(k.clone(), v.clone().into());
         }
         self.with.generate_by_default = self.opts.generate_all;
+        Ok(())
     }
 
     fn import_interface(
