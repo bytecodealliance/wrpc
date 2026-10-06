@@ -109,7 +109,7 @@ where
                 .list_element_type()
                 .ok_or_else(|| io_error("list type missing element type"))?;
 
-            let mut elements = Vec::with_capacity(n);
+            let mut elements = Vec::default();
             for _ in 0..n {
                 let element = Box::pin(read_value(r, &element_type)).await?;
                 elements.push(element);
@@ -588,6 +588,12 @@ mod tests {
         let result_type = Type::result(Some(Type::U32), Some(Type::U32));
         let err = decode_sync(&result_type, &[2, 42]).unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn test_decode_list_truncated() {
+        let err = decode_sync(&Type::list(Type::U8), &[0xff, 0xff, 0xff, 0xff, 0x0f]).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
     }
 
     #[test]

@@ -650,7 +650,7 @@ where
         Type::List(ty) => {
             let n = r.read_u32_leb128().await?;
             let n = n.try_into().unwrap_or(usize::MAX);
-            let mut vs = Vec::with_capacity(n);
+            let mut vs = Vec::default();
             let ty = ty.ty();
             let mut path = path.to_vec();
             for i in 0..n {
