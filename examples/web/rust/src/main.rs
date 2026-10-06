@@ -1,4 +1,3 @@
-use core::future::IntoFuture as _;
 use core::net::{Ipv6Addr, SocketAddr};
 use core::pin::pin;
 use core::time::Duration;
