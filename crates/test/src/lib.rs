@@ -195,7 +195,7 @@ where
     Ok(cx)
 }
 
-pub async fn spawn_server(
+pub fn spawn_server(
     cmd: &mut Command,
 ) -> anyhow::Result<(JoinHandle<anyhow::Result<ExitStatus>>, oneshot::Sender<()>)> {
     let mut child = cmd

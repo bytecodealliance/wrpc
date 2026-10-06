@@ -33,7 +33,7 @@ pub enum HeaderReadError {
 }
 
 impl Debug for HeaderReadError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::IO(err) => Debug::fmt(err, f),
             Self::UnsupportedVersion(v) => write!(f, "unsupported version byte: {v}"),
@@ -42,7 +42,7 @@ impl Debug for HeaderReadError {
 }
 
 impl Display for HeaderReadError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::IO(err) => Display::fmt(err, f),
             Self::UnsupportedVersion(v) => write!(f, "unsupported version byte: {v}"),

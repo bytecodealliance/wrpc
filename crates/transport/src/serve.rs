@@ -79,9 +79,9 @@ pub trait ServeExt: Serve {
         Params: TupleDecode + Send + 'static,
         Results: TupleEncode + Send + 'static,
         <Params::Decoder as tokio_util::codec::Decoder>::Error:
-            std::error::Error + Send + Sync + 'static,
+            core::error::Error + Send + Sync + 'static,
         <Results::Encoder as tokio_util::codec::Encoder<Results>>::Error:
-            std::error::Error + Send + Sync + 'static,
+            core::error::Error + Send + Sync + 'static,
     {
         let span = Span::current();
         async {
@@ -153,7 +153,7 @@ impl<T: Serve> ServeExt for T {}
 #[cfg(test)]
 mod tests {
     use bytes::Bytes;
-    use futures::{StreamExt as _, TryStreamExt as _, stream};
+    use futures::{StreamExt as _, stream};
 
     use super::*;
 

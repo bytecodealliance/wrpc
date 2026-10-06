@@ -66,7 +66,7 @@ impl<C, I, O> From<mpsc::error::SendError<(C, I, O)>> for AcceptError<C, I, O> {
 }
 
 impl<C, I, O> Debug for AcceptError<C, I, O> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::HeaderRead(err) => Debug::fmt(err, f),
             Self::UnhandledFunction { instance, name } => {
@@ -78,7 +78,7 @@ impl<C, I, O> Debug for AcceptError<C, I, O> {
 }
 
 impl<C, I, O> Display for AcceptError<C, I, O> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::HeaderRead(err) => Display::fmt(err, f),
             Self::UnhandledFunction { instance, name } => {

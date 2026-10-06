@@ -21,8 +21,9 @@
 //! # }
 //! ```
 
+use core::pin::Pin;
+
 use std::borrow::Cow;
-use std::pin::Pin;
 
 use tokio::io::{AsyncRead, AsyncReadExt as _};
 use wasm_tokio::{
@@ -128,7 +129,7 @@ where
             }
 
             // Create the fields iterator from owned strings
-            let fields = field_names.iter().map(|s| s.as_str()).zip(field_values);
+            let fields = field_names.iter().map(String::as_str).zip(field_values);
 
             Value::make_record(ty, fields).map_err(io_error)
         }
@@ -240,14 +241,13 @@ where
 }
 
 // Helper to convert any error to io::Error with InvalidData kind
-fn io_error(err: impl std::fmt::Display) -> std::io::Error {
+fn io_error(err: impl core::fmt::Display) -> std::io::Error {
     std::io::Error::new(std::io::ErrorKind::InvalidData, err.to_string())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wasm_wave::value::Type;
 
     // Test helper - uses futures::executor (no tokio runtime needed in tests)
     fn decode_sync(ty: &Type, data: &[u8]) -> std::io::Result<Value> {
