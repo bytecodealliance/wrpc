@@ -9,7 +9,7 @@
 //! This approach mirrors the `ValEncoder` from `wrpc-wasmtime`,
 //! where you create an encoder with a type reference and then encode values directly:
 //!
-//! ```no_run
+//! ```
 //! use wrpc_wave::WaveEncoder;
 //! use wasm_wave::value::{Value, Type};
 //! use wasm_wave::wasm::WasmValue;
@@ -21,6 +21,7 @@
 //! let mut encoder = WaveEncoder::new(&ty);
 //! let mut buf = BytesMut::new();
 //! encoder.encode(&value, &mut buf).unwrap();
+//! assert_eq!(buf.as_ref(), [42]);
 //! ```
 //!
 //! ### 2. `wrpc-pack` compatibility layer
@@ -51,16 +52,18 @@
 //!
 //! Use [`read_value`] for async decoding from any `AsyncRead` source:
 //!
-//! ```no_run
+//! ```
 //! use wrpc_wave::read_value;
 //! use wasm_wave::value::Type;
+//! use wasm_wave::wasm::WasmValue;
 //!
-//! # async fn example() -> std::io::Result<()> {
+//! # futures::executor::block_on(async {
 //! let data = [42u8];
 //! let mut reader = std::pin::pin!(&data[..]);
 //! let value = read_value(&mut reader, &Type::U8).await?;
-//! # Ok(())
-//! # }
+//! assert_eq!(value.unwrap_u8(), 42);
+//! # Ok::<_, std::io::Error>(())
+//! # }).unwrap();
 //! ```
 //!
 //! ### 2. Sync API

@@ -28,4 +28,5 @@ wrpc-pack = { workspace = true, optional = true }
 wrpc-transport = { workspace = true }
 
 [dev-dependencies]
+futures = { workspace = true, features = ["executor"] }
 wasmtime = { workspace = true, features = ["runtime", "wave"] }
