@@ -18,7 +18,7 @@ use wasm_wave::wasm::{WasmType, WasmTypeKind, WasmValue};
 ///
 /// ## Usage
 ///
-/// ```no_run
+/// ```
 /// use wrpc_wave::WaveEncoder;
 /// use wasm_wave::value::{Value, Type};
 /// use wasm_wave::wasm::WasmValue;
@@ -30,6 +30,7 @@ use wasm_wave::wasm::{WasmType, WasmTypeKind, WasmValue};
 /// let mut encoder = WaveEncoder::new(&ty);
 /// let mut buf = BytesMut::new();
 /// encoder.encode(&value, &mut buf).unwrap();
+/// assert_eq!(buf.as_ref(), [42]);
 /// ```
 ///
 /// Note:
@@ -47,50 +48,43 @@ impl<'a, T: WasmType> WaveEncoder<'a, T> {
     pub fn new(ty: &'a T) -> Self {
         Self { ty }
     }
-
-    /// Creates a new encoder with a different type, reusing the current encoder's context.
-    /// This is useful for encoding nested values with different types.
-    #[must_use]
-    pub fn with_type<'b>(&'b mut self, ty: &'b T) -> WaveEncoder<'b, T> {
-        WaveEncoder { ty }
-    }
 }
+
 fn find_enum_discriminant<'a, T>(
     iter: impl IntoIterator<Item = T>,
-    names: impl IntoIterator<Item = &'a str>,
+    names: impl IntoIterator<Item = Cow<'a, str>>,
     discriminant: &str,
 ) -> anyhow::Result<T> {
-    zip(iter, names)
-        .find_map(|(i, name)| (name == discriminant).then_some(i))
+    zip(names, iter)
+        .find_map(|(name, i)| (name == discriminant).then_some(i))
         .context("unknown enum discriminant")
 }
 
-fn find_variant_discriminant<'a, T>(
+fn find_variant_discriminant<'a, T, U>(
     iter: impl IntoIterator<Item = T>,
-    cases: impl IntoIterator<Item = (&'a str, Option<&'a str>)>,
+    cases: impl IntoIterator<Item = (Cow<'a, str>, Option<U>)>,
     discriminant: &str,
-) -> anyhow::Result<(T, Option<&'a str>)> {
-    zip(iter, cases)
-        .find_map(|(i, (name, ty))| (name == discriminant).then_some((i, ty)))
+) -> anyhow::Result<(T, Option<U>)> {
+    zip(cases, iter)
+        .find_map(|((name, ty), i)| (name == discriminant).then_some((i, ty)))
         .context("unknown variant discriminant")
 }
 
 #[inline]
 fn flag_bits<'a, T: BitOrAssign + Shl<u8, Output = T> + From<u8>>(
-    names: impl IntoIterator<Item = &'a str>,
-    flags: impl IntoIterator<Item = &'a str>,
+    names: &[Cow<'_, str>],
+    flags: impl IntoIterator<Item = Cow<'a, str>>,
 ) -> T {
     let mut v = T::from(0);
-    let flags: HashSet<&str> = flags.into_iter().collect();
+    let flags: HashSet<Cow<str>> = flags.into_iter().collect();
     for (i, name) in zip(0u8.., names) {
-        if flags.contains(name) {
+        if flags.contains(name.as_ref()) {
             v |= T::from(1) << i;
         }
     }
     v
 }
 
-// Generic implementation for any type implementing WasmValue and WasmType
 impl<V, T> Encoder<&V> for WaveEncoder<'_, T>
 where
     V: WasmValue<Type = T>,
@@ -99,7 +93,7 @@ where
     type Error = anyhow::Error;
 
     #[allow(clippy::too_many_lines)]
-    #[instrument(level = "trace", skip(self, val))]
+    #[instrument(level = "trace", skip_all)]
     fn encode(&mut self, val: &V, dst: &mut BytesMut) -> Result<(), Self::Error> {
         match val.kind() {
             WasmTypeKind::Bool => {
@@ -152,129 +146,101 @@ where
                 .encode(val.unwrap_string().as_ref(), dst)
                 .context("failed to encode string"),
             WasmTypeKind::List => {
-                let elements: Vec<_> = val.unwrap_list().map(Cow::into_owned).collect();
+                let elements: Vec<_> = val.unwrap_list().collect();
                 let n = u32::try_from(elements.len()).context("list length does not fit in u32")?;
                 dst.reserve(5 + elements.len());
                 Leb128Encoder
                     .encode(n, dst)
                     .context("failed to encode list length")?;
-                let element_type = self
+                let ty = self
                     .ty
                     .list_element_type()
                     .context("list type should have element type")?;
                 for element in elements {
-                    let mut enc = self.with_type(&element_type);
-                    enc.encode(&element, dst)
+                    WaveEncoder::new(&ty)
+                        .encode(&*element, dst)
                         .context("failed to encode list element")?;
                 }
                 Ok(())
             }
             WasmTypeKind::Record => {
-                let fields: Vec<_> = val
-                    .unwrap_record()
-                    .map(|(name, v)| (name.into_owned(), v.into_owned()))
-                    .collect();
-                let field_types: Vec<_> = self.ty.record_fields().map(|(_, ty)| ty).collect();
-                dst.reserve(fields.len());
-                for ((_name, field_value), field_type) in fields.iter().zip(field_types.iter()) {
-                    let mut enc = self.with_type(field_type);
-                    enc.encode(field_value, dst)
-                        .context("failed to encode record field")?;
+                for ((name, v), (_, ty)) in zip(val.unwrap_record(), self.ty.record_fields()) {
+                    WaveEncoder::new(&ty)
+                        .encode(&*v, dst)
+                        .with_context(|| format!("failed to encode `{name}` field"))?;
                 }
                 Ok(())
             }
             WasmTypeKind::Tuple => {
-                let elements: Vec<_> = val.unwrap_tuple().map(Cow::into_owned).collect();
-                let element_types: Vec<_> = self.ty.tuple_element_types().collect();
-                dst.reserve(elements.len());
-                for (element, element_type) in elements.iter().zip(element_types.iter()) {
-                    let mut enc = self.with_type(element_type);
-                    enc.encode(element, dst)
+                for (v, ty) in zip(val.unwrap_tuple(), self.ty.tuple_element_types()) {
+                    WaveEncoder::new(&ty)
+                        .encode(&*v, dst)
                         .context("failed to encode tuple element")?;
                 }
                 Ok(())
             }
             WasmTypeKind::Variant => {
-                let (case_name, payload) = val.unwrap_variant();
-                let case_name = case_name.into_owned();
-
-                // Get the type to find the discriminant index
-                let cases: Vec<_> = self
-                    .ty
-                    .variant_cases()
-                    .map(|(name, payload_ty)| (name.into_owned(), payload_ty))
-                    .collect();
-
-                let (discriminant_idx, _case_ty) = find_variant_discriminant(
-                    0u32..,
-                    cases
-                        .iter()
-                        .map(|(name, _ty)| (name.as_str(), None::<&str>)),
-                    case_name.as_str(),
-                )?;
-
-                match cases.len() {
+                let (case, payload) = val.unwrap_variant();
+                let cases: Vec<_> = self.ty.variant_cases().collect();
+                let ty = match cases.len() {
                     ..=0x0000_00ff => {
+                        let (discriminant, ty) = find_variant_discriminant(0u8.., cases, &case)?;
                         dst.reserve(2 + usize::from(payload.is_some()));
-                        Leb128Encoder.encode(discriminant_idx as u8, dst)?;
+                        Leb128Encoder.encode(discriminant, dst)?;
+                        ty
                     }
                     0x0000_0100..=0x0000_ffff => {
+                        let (discriminant, ty) = find_variant_discriminant(0u16.., cases, &case)?;
                         dst.reserve(3 + usize::from(payload.is_some()));
-                        Leb128Encoder.encode(discriminant_idx as u16, dst)?;
+                        Leb128Encoder.encode(discriminant, dst)?;
+                        ty
                     }
                     0x0001_0000..=0x00ff_ffff => {
+                        let (discriminant, ty) = find_variant_discriminant(0u32.., cases, &case)?;
                         dst.reserve(4 + usize::from(payload.is_some()));
-                        Leb128Encoder.encode(discriminant_idx, dst)?;
+                        Leb128Encoder.encode(discriminant, dst)?;
+                        ty
                     }
                     0x0100_0000..=0xffff_ffff => {
+                        let (discriminant, ty) = find_variant_discriminant(0u32.., cases, &case)?;
                         dst.reserve(5 + usize::from(payload.is_some()));
-                        Leb128Encoder.encode(discriminant_idx, dst)?;
+                        Leb128Encoder.encode(discriminant, dst)?;
+                        ty
                     }
                     _ => bail!("case count does not fit in u32"),
+                };
+                match (payload, ty) {
+                    (Some(v), Some(ty)) => WaveEncoder::new(&ty)
+                        .encode(&*v, dst)
+                        .with_context(|| format!("failed to encode `{case}` payload")),
+                    (None, None) => Ok(()),
+                    (Some(_), None) => bail!("variant case `{case}` does not have a payload"),
+                    (None, Some(_)) => bail!("variant case `{case}` payload missing"),
                 }
-
-                if let Some(payload_val) = payload {
-                    // Find the payload type for this variant case
-                    let payload_type = self
-                        .ty
-                        .variant_cases()
-                        .find_map(|(name, payload_ty)| (name == case_name).then_some(payload_ty))
-                        .flatten()
-                        .context("variant case should have payload type")?;
-                    let mut enc = self.with_type(&payload_type);
-                    enc.encode(&*payload_val, dst)
-                        .context("failed to encode variant payload")?;
-                }
-                Ok(())
             }
             WasmTypeKind::Enum => {
-                let case_name = val.unwrap_enum().into_owned();
-
-                // Get the type to find the discriminant index
-                let names: Vec<_> = self.ty.enum_cases().map(Cow::into_owned).collect();
-
-                let discriminant_idx = find_enum_discriminant(
-                    0u32..,
-                    names.iter().map(String::as_str),
-                    case_name.as_str(),
-                )?;
-
+                let case = val.unwrap_enum();
+                let names: Vec<_> = self.ty.enum_cases().collect();
                 match names.len() {
                     ..=0x0000_00ff => {
+                        let discriminant = find_enum_discriminant(0u8.., names, &case)?;
                         dst.reserve(2);
-                        Leb128Encoder.encode(discriminant_idx as u8, dst)?;
+                        Leb128Encoder.encode(discriminant, dst)?;
                     }
                     0x0000_0100..=0x0000_ffff => {
+                        let discriminant = find_enum_discriminant(0u16.., names, &case)?;
                         dst.reserve(3);
-                        Leb128Encoder.encode(discriminant_idx as u16, dst)?;
+                        Leb128Encoder.encode(discriminant, dst)?;
                     }
                     0x0001_0000..=0x00ff_ffff => {
+                        let discriminant = find_enum_discriminant(0u32.., names, &case)?;
                         dst.reserve(4);
-                        Leb128Encoder.encode(discriminant_idx, dst)?;
+                        Leb128Encoder.encode(discriminant, dst)?;
                     }
                     0x0100_0000..=0xffff_ffff => {
+                        let discriminant = find_enum_discriminant(0u32.., names, &case)?;
                         dst.reserve(5);
-                        Leb128Encoder.encode(discriminant_idx, dst)?;
+                        Leb128Encoder.encode(discriminant, dst)?;
                     }
                     _ => bail!("name count does not fit in u32"),
                 }
@@ -286,178 +252,131 @@ where
                     dst.put_u8(0);
                     Ok(())
                 }
-                Some(inner) => {
+                Some(v) => {
                     dst.reserve(2);
                     dst.put_u8(1);
-                    let inner_type = self
+                    let ty = self
                         .ty
                         .option_some_type()
                         .context("option type should have some type")?;
-                    let mut enc = self.with_type(&inner_type);
-                    enc.encode(&*inner, dst)
-                        .context("failed to encode `option::some` value")?;
-                    Ok(())
+                    WaveEncoder::new(&ty)
+                        .encode(&*v, dst)
+                        .context("failed to encode `option::some` value")
                 }
             },
             WasmTypeKind::Result => {
-                let (ok_type, err_type) = self
+                let (ok_ty, err_ty) = self
                     .ty
                     .result_types()
                     .context("result type should have ok and err types")?;
                 match val.unwrap_result() {
-                    Ok(ok_val) => {
-                        match ok_val {
-                            Some(val) => {
-                                dst.reserve(2);
-                                dst.put_u8(0);
-                                if let Some(ok_ty) = ok_type {
-                                    let mut enc = self.with_type(&ok_ty);
-                                    enc.encode(&*val, dst)
-                                        .context("failed to encode `result::ok` value")?;
-                                }
-                            }
-                            None => {
-                                dst.reserve(1);
-                                dst.put_u8(0);
-                            }
+                    Ok(v) => match (v, ok_ty) {
+                        (Some(v), Some(ty)) => {
+                            dst.reserve(2);
+                            dst.put_u8(0);
+                            WaveEncoder::new(&ty)
+                                .encode(&*v, dst)
+                                .context("failed to encode `result::ok` value")
                         }
-                        Ok(())
-                    }
-                    Err(err_val) => {
-                        match err_val {
-                            Some(val) => {
-                                dst.reserve(2);
-                                dst.put_u8(1);
-                                if let Some(err_ty) = err_type {
-                                    let mut enc = self.with_type(&err_ty);
-                                    enc.encode(&*val, dst)
-                                        .context("failed to encode `result::err` value")?;
-                                }
-                            }
-                            None => {
-                                dst.reserve(1);
-                                dst.put_u8(1);
-                            }
+                        (None, None) => {
+                            dst.reserve(1);
+                            dst.put_u8(0);
+                            Ok(())
                         }
-                        Ok(())
-                    }
+                        (Some(_), None) => bail!("`result::ok` value of unknown type"),
+                        (None, Some(_)) => bail!("`result::ok` value missing"),
+                    },
+                    Err(v) => match (v, err_ty) {
+                        (Some(v), Some(ty)) => {
+                            dst.reserve(2);
+                            dst.put_u8(1);
+                            WaveEncoder::new(&ty)
+                                .encode(&*v, dst)
+                                .context("failed to encode `result::err` value")
+                        }
+                        (None, None) => {
+                            dst.reserve(1);
+                            dst.put_u8(1);
+                            Ok(())
+                        }
+                        (Some(_), None) => bail!("`result::err` value of unknown type"),
+                        (None, Some(_)) => bail!("`result::err` value missing"),
+                    },
                 }
             }
             WasmTypeKind::Flags => {
-                let flag_names: Vec<_> = val.unwrap_flags().map(Cow::into_owned).collect();
-
-                // Get the type to know all possible flag names for bit encoding
-                let all_names: Vec<_> = self.ty.flags_names().map(Cow::into_owned).collect();
-
-                let flags_set: HashSet<&str> = flag_names.iter().map(String::as_str).collect();
-                let vs = flag_names.iter().map(String::as_str);
-
-                match all_names.len() {
+                let names: Vec<_> = self.ty.flags_names().collect();
+                let vs = val.unwrap_flags();
+                match names.len() {
                     ..=8 => {
                         dst.reserve(1);
-                        dst.put_u8(flag_bits(all_names.iter().map(String::as_str), vs));
+                        dst.put_u8(flag_bits(&names, vs));
                     }
                     9..=16 => {
                         dst.reserve(2);
-                        dst.put_u16_le(flag_bits(all_names.iter().map(String::as_str), vs));
+                        dst.put_u16_le(flag_bits(&names, vs));
                     }
                     17..=24 => {
                         dst.reserve(3);
-                        dst.put_slice(
-                            &u32::to_le_bytes(flag_bits(all_names.iter().map(String::as_str), vs))
-                                [..3],
-                        );
+                        dst.put_slice(&u32::to_le_bytes(flag_bits(&names, vs))[..3]);
                     }
                     25..=32 => {
                         dst.reserve(4);
-                        dst.put_u32_le(flag_bits(all_names.iter().map(String::as_str), vs));
+                        dst.put_u32_le(flag_bits(&names, vs));
                     }
                     33..=40 => {
                         dst.reserve(5);
-                        dst.put_slice(
-                            &u64::to_le_bytes(flag_bits(all_names.iter().map(String::as_str), vs))
-                                [..5],
-                        );
+                        dst.put_slice(&u64::to_le_bytes(flag_bits(&names, vs))[..5]);
                     }
                     41..=48 => {
                         dst.reserve(6);
-                        dst.put_slice(
-                            &u64::to_le_bytes(flag_bits(all_names.iter().map(String::as_str), vs))
-                                [..6],
-                        );
+                        dst.put_slice(&u64::to_le_bytes(flag_bits(&names, vs))[..6]);
                     }
                     49..=56 => {
                         dst.reserve(7);
-                        dst.put_slice(
-                            &u64::to_le_bytes(flag_bits(all_names.iter().map(String::as_str), vs))
-                                [..7],
-                        );
+                        dst.put_slice(&u64::to_le_bytes(flag_bits(&names, vs))[..7]);
                     }
                     57..=64 => {
                         dst.reserve(8);
-                        dst.put_u64_le(flag_bits(all_names.iter().map(String::as_str), vs));
+                        dst.put_u64_le(flag_bits(&names, vs));
                     }
                     65..=72 => {
                         dst.reserve(9);
-                        dst.put_slice(
-                            &u128::to_le_bytes(flag_bits(all_names.iter().map(String::as_str), vs))
-                                [..9],
-                        );
+                        dst.put_slice(&u128::to_le_bytes(flag_bits(&names, vs))[..9]);
                     }
                     73..=80 => {
                         dst.reserve(10);
-                        dst.put_slice(
-                            &u128::to_le_bytes(flag_bits(all_names.iter().map(String::as_str), vs))
-                                [..10],
-                        );
+                        dst.put_slice(&u128::to_le_bytes(flag_bits(&names, vs))[..10]);
                     }
                     81..=88 => {
                         dst.reserve(11);
-                        dst.put_slice(
-                            &u128::to_le_bytes(flag_bits(all_names.iter().map(String::as_str), vs))
-                                [..11],
-                        );
+                        dst.put_slice(&u128::to_le_bytes(flag_bits(&names, vs))[..11]);
                     }
                     89..=96 => {
                         dst.reserve(12);
-                        dst.put_slice(
-                            &u128::to_le_bytes(flag_bits(all_names.iter().map(String::as_str), vs))
-                                [..12],
-                        );
+                        dst.put_slice(&u128::to_le_bytes(flag_bits(&names, vs))[..12]);
                     }
                     97..=104 => {
                         dst.reserve(13);
-                        dst.put_slice(
-                            &u128::to_le_bytes(flag_bits(all_names.iter().map(String::as_str), vs))
-                                [..13],
-                        );
+                        dst.put_slice(&u128::to_le_bytes(flag_bits(&names, vs))[..13]);
                     }
                     105..=112 => {
                         dst.reserve(14);
-                        dst.put_slice(
-                            &u128::to_le_bytes(flag_bits(all_names.iter().map(String::as_str), vs))
-                                [..14],
-                        );
+                        dst.put_slice(&u128::to_le_bytes(flag_bits(&names, vs))[..14]);
                     }
                     113..=120 => {
                         dst.reserve(15);
-                        dst.put_slice(
-                            &u128::to_le_bytes(flag_bits(all_names.iter().map(String::as_str), vs))
-                                [..15],
-                        );
+                        dst.put_slice(&u128::to_le_bytes(flag_bits(&names, vs))[..15]);
                     }
                     121..=128 => {
                         dst.reserve(16);
-                        dst.put_u128_le(flag_bits(all_names.iter().map(String::as_str), vs));
+                        dst.put_u128_le(flag_bits(&names, vs));
                     }
                     bits @ 129.. => {
-                        let mut cap = bits / 8;
-                        if bits % 8 != 0 {
-                            cap = cap.saturating_add(1);
-                        }
-                        let mut buf = vec![0; cap];
-                        for (i, name) in all_names.iter().enumerate() {
-                            if flags_set.contains(name.as_str()) {
+                        let mut buf = vec![0; bits.div_ceil(8)];
+                        let flags: HashSet<Cow<str>> = vs.collect();
+                        for (i, name) in names.iter().enumerate() {
+                            if flags.contains(name.as_ref()) {
                                 buf[i / 8] |= 1 << (i % 8);
                             }
                         }
@@ -466,10 +385,7 @@ where
                 }
                 Ok(())
             }
-            WasmTypeKind::Unsupported => {
-                bail!("unsupported value type")
-            }
-            _ => bail!("unsupported value type: {:?}", val.kind()),
+            kind => bail!("unsupported value type: {kind:?}"),
         }
     }
 }
@@ -623,25 +539,25 @@ mod tests {
 
     #[test]
     fn test_encode_f32() -> anyhow::Result<()> {
-        let value = Value::make_f32(3.14);
+        let value = Value::make_f32(1.5);
         let ty = Type::F32;
         let mut encoder = WaveEncoder::new(&ty);
         let mut buf = BytesMut::new();
         encoder.encode(&value, &mut buf)?;
 
-        assert_eq!(buf.as_ref(), &3.14f32.to_le_bytes());
+        assert_eq!(buf.as_ref(), &1.5f32.to_le_bytes());
         Ok(())
     }
 
     #[test]
     fn test_encode_f64() -> anyhow::Result<()> {
-        let value = Value::make_f64(3.14159265359);
+        let value = Value::make_f64(2.5);
         let ty = Type::F64;
         let mut encoder = WaveEncoder::new(&ty);
         let mut buf = BytesMut::new();
         encoder.encode(&value, &mut buf)?;
 
-        assert_eq!(buf.as_ref(), &3.14159265359f64.to_le_bytes());
+        assert_eq!(buf.as_ref(), &2.5f64.to_le_bytes());
         Ok(())
     }
 

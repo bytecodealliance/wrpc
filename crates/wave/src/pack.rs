@@ -286,9 +286,9 @@ mod tests {
     #[test]
     fn test_pack_f32() -> anyhow::Result<()> {
         let mut params_bytes_regular = BytesMut::new();
-        pack(3.14f32, &mut params_bytes_regular)?;
+        pack(1.5f32, &mut params_bytes_regular)?;
 
-        let value = Value::make_f32(3.14);
+        let value = Value::make_f32(1.5);
         let ty = Type::F32;
         let wrpc_value = WasmTypedValue(value, ty);
         let mut params_bytes_wave = BytesMut::new();
@@ -305,9 +305,9 @@ mod tests {
     #[test]
     fn test_pack_f64() -> anyhow::Result<()> {
         let mut params_bytes_regular = BytesMut::new();
-        pack(3.14159f64, &mut params_bytes_regular)?;
+        pack(2.5f64, &mut params_bytes_regular)?;
 
-        let value = Value::make_f64(3.14159);
+        let value = Value::make_f64(2.5);
         let ty = Type::F64;
         let wrpc_value = WasmTypedValue(value, ty);
         let mut params_bytes_wave = BytesMut::new();
