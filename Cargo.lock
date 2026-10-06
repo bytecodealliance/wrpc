@@ -3977,9 +3977,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-tokio"
-version = "0.6.1"
+version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a89e5174a1312bd31d081a1dd6db8e48e2dc680b2988aba43befabb8459ea999"
+checksum = "4ce28c280526480abfd9f25de53118d9aa1d4e59bab254e29702804ee97dab4c"
 dependencies = [
  "leb128-tokio",
  "tokio",
