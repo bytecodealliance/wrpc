@@ -23,7 +23,7 @@ use wasm_wave::wasm::{WasmType, WasmTypeKind, WasmValue};
 /// use wasm_wave::value::{Value, Type};
 /// use wasm_wave::wasm::WasmValue;
 /// use bytes::BytesMut;
-/// use wit_bindgen_wrpc::tokio_util::codec::Encoder;
+/// use tokio_util::codec::Encoder;
 ///
 /// let value = Value::make_u32(42);
 /// let ty = Type::U32;

@@ -14,7 +14,7 @@
 //! use wasm_wave::value::{Value, Type};
 //! use wasm_wave::wasm::WasmValue;
 //! use bytes::BytesMut;
-//! use wit_bindgen_wrpc::tokio_util::codec::Encoder;
+//! use tokio_util::codec::Encoder;
 //!
 //! let value = Value::make_u32(42);
 //! let ty = Type::U32;
@@ -56,9 +56,9 @@
 //! use wasm_wave::value::Type;
 //!
 //! # async fn example() -> std::io::Result<()> {
-//! let mut stream = tokio::net::TcpStream::connect("127.0.0.1:8080").await?;
-//! let mut pinned = std::pin::pin!(&mut stream);
-//! let value = read_value(&mut pinned, &Type::U32).await?;
+//! let data = [42u8];
+//! let mut reader = std::pin::pin!(&data[..]);
+//! let value = read_value(&mut reader, &Type::U8).await?;
 //! # Ok(())
 //! # }
 //! ```
