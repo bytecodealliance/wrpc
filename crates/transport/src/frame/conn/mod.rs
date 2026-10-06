@@ -5,7 +5,7 @@ use core::task::{Context, Poll, ready};
 
 use std::sync::Arc;
 
-use bytes::{Buf as _, BufMut as _, Bytes, BytesMut};
+use bytes::{Buf as _, Bytes, BytesMut};
 use futures::Sink as _;
 use pin_project_lite::pin_project;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt as _};
@@ -17,6 +17,8 @@ use tokio_util::io::StreamReader;
 use tokio_util::sync::PollSender;
 use tracing::{Instrument as _, Span, debug, error, instrument, trace};
 use wasm_tokio::{AsyncReadCore as _, AsyncReadLeb128 as _, Leb128Encoder};
+
+use crate::frame::MAX_INITIAL_DATA_CAPACITY;
 
 mod client;
 mod server;
@@ -581,14 +583,14 @@ async fn ingress(
         let n = AsyncReadExt::chain([b].as_slice(), &mut rx)
             .read_u32_leb128()
             .await?;
-        let n = n
+        let n: usize = n
             .try_into()
             .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
         trace!(n, "read path length");
         let tx = if n == 0 {
             param_tx
         } else {
-            let mut path = Vec::with_capacity(n);
+            let mut path = Vec::default();
             for i in 0..n {
                 trace!(i, "reading path element");
                 let p = rx.read_u32_leb128().await?;
@@ -611,16 +613,14 @@ async fn ingress(
         };
         trace!("reading data length");
         let n = rx.read_u32_leb128().await?;
-        let n = n
-            .try_into()
-            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
         trace!(n, "read data length");
-        let mut buf = BytesMut::with_capacity(n);
-        buf.put_bytes(0, n);
+        let mut buf = Vec::with_capacity((n as usize).min(MAX_INITIAL_DATA_CAPACITY));
         trace!("reading data");
-        rx.read_exact(&mut buf).await?;
+        if (&mut rx).take(n.into()).read_to_end(&mut buf).await? != n as usize {
+            return Err(std::io::ErrorKind::UnexpectedEof.into());
+        }
         trace!(?buf, "read data");
-        tx.send(Ok(buf.freeze())).await.map_err(|_| {
+        tx.send(Ok(buf.into())).await.map_err(|_| {
             std::io::Error::new(std::io::ErrorKind::BrokenPipe, "stream receiver closed")
         })?;
     }
@@ -676,3 +676,32 @@ pub trait ConnHandler<Rx, Tx> {
 }
 
 impl<Rx, Tx> ConnHandler<Rx, Tx> for () {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test_log::test(tokio::test)]
+    async fn ingress_truncated_path() {
+        let index = std::sync::Mutex::new(IndexTrie::Empty);
+        let (tx, _rx) = mpsc::channel(1);
+        let err = ingress([0xff, 0xff, 0xff, 0xff, 0x0f].as_slice(), &index, &tx)
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn ingress_truncated_data() {
+        let index = std::sync::Mutex::new(IndexTrie::Empty);
+        let (tx, _rx) = mpsc::channel(1);
+        let err = ingress(
+            [0x00, 0xff, 0xff, 0xff, 0xff, 0x0f, 0x42].as_slice(),
+            &index,
+            &tx,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
+    }
+}
