@@ -59,8 +59,7 @@ impl tokio_util::codec::Decoder for Decoder {
                     ),
                 ));
             }
-            let n = n
-                .try_into()
+            let n = usize::try_from(n)
                 .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
             self.path_cap = n;
             Vec::with_capacity(n)
@@ -78,8 +77,7 @@ impl tokio_util::codec::Decoder for Decoder {
                 return Ok(None);
             };
             trace!(i, "decoded path element");
-            let i = i
-                .try_into()
+            let i = usize::try_from(i)
                 .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
             path.push(i);
             self.path_cap -= 1;
@@ -100,8 +98,7 @@ impl tokio_util::codec::Decoder for Decoder {
                     ),
                 ));
             }
-            let n = n
-                .try_into()
+            let n = usize::try_from(n)
                 .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
             self.data_len = n;
             if n == 0 {

@@ -649,7 +649,7 @@ where
         }
         Type::List(ty) => {
             let n = r.read_u32_leb128().await?;
-            let n = n.try_into().unwrap_or(usize::MAX);
+            let n = usize::try_from(n).unwrap_or(usize::MAX);
             let mut vs = Vec::default();
             let ty = ty.ty();
             let mut path = path.to_vec();
@@ -705,8 +705,7 @@ where
         }
         Type::Variant(ty) => {
             let discriminant = r.read_u32_leb128().await?;
-            let discriminant = discriminant
-                .try_into()
+            let discriminant = usize::try_from(discriminant)
                 .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
             let Case { name, ty } = ty.cases().nth(discriminant).ok_or_else(|| {
                 std::io::Error::new(
@@ -730,8 +729,7 @@ where
         }
         Type::Enum(ty) => {
             let discriminant = r.read_u32_leb128().await?;
-            let discriminant = discriminant
-                .try_into()
+            let discriminant = usize::try_from(discriminant)
                 .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
             let name = ty.names().nth(discriminant).ok_or_else(|| {
                 std::io::Error::new(
@@ -817,10 +815,7 @@ where
                     let mut buf = vec![0; cap];
                     r.read_exact(&mut buf).await?;
                     let mut vs = Vec::with_capacity(
-                        buf.iter()
-                            .map(|b| b.count_ones())
-                            .sum::<u32>()
-                            .try_into()
+                        usize::try_from(buf.iter().map(|b| b.count_ones()).sum::<u32>())
                             .unwrap_or(usize::MAX),
                     );
                     for (i, name) in names.enumerate() {
@@ -832,7 +827,8 @@ where
                     return Ok(());
                 }
             };
-            let mut vs = Vec::with_capacity(flags.count_ones().try_into().unwrap_or(usize::MAX));
+            let mut vs =
+                Vec::with_capacity(usize::try_from(flags.count_ones()).unwrap_or(usize::MAX));
             for (i, name) in zip(0.., names) {
                 if flags & (1 << i) != 0 {
                     vs.push(name.to_string());
