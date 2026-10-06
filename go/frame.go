@@ -23,15 +23,15 @@ func ReadFrame(r ByteReader) (Frame, error) {
 		}
 		return Frame{}, fmt.Errorf("failed to read path length: %w", err)
 	}
-	path := make([]uint32, n)
+	var path []uint32
 	slog.Debug("reading path elements", "len", n)
-	for i := range path {
+	for i := range n {
 		slog.Debug("reading path element", "index", i)
 		v, err := ReadUint32(r)
 		if err != nil {
 			return Frame{}, fmt.Errorf("failed to read path element %d: %w", i, err)
 		}
-		path[i] = v
+		path = append(path, v)
 	}
 	data, err := ReadByteList(r)
 	if err != nil {

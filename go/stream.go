@@ -168,13 +168,13 @@ func ReadStream[T any](r IndexReader, f func(IndexReader) (T, error), path ...ui
 				slog.Debug("pending stream EOF chunk received")
 				return nil, io.EOF
 			}
-			vs := make([]T, n)
-			for i := range vs {
+			var vs []T
+			for i := range n {
 				v, err := f(r)
 				if err != nil {
 					return nil, fmt.Errorf("failed to read pending stream chunk element %d: %w", i, err)
 				}
-				vs[i] = v
+				vs = append(vs, v)
 			}
 			return vs, nil
 		}), nil

@@ -3,6 +3,7 @@ package wrpc
 import (
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"math"
 )
@@ -65,14 +66,13 @@ func ReadByteList(r ByteReader) ([]byte, error) {
 		return nil, fmt.Errorf("failed to read list length: %w", err)
 	}
 
-	b := make([]byte, n)
 	slog.Debug("reading bytes", "len", n)
-	rn, err := r.Read(b)
+	b, err := io.ReadAll(io.LimitReader(r, int64(n)))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read list bytes: %w", err)
 	}
-	if rn > int(n) {
-		return nil, fmt.Errorf("invalid amount of list bytes read, expected %d, got %d", n, rn)
+	if len(b) != int(n) {
+		return nil, fmt.Errorf("failed to read list bytes: %w", io.ErrUnexpectedEOF)
 	}
 	return b, nil
 }
@@ -84,15 +84,15 @@ func ReadList[T any](r IndexReader, f func(IndexReader) (T, error)) ([]T, error)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read list length: %w", err)
 	}
-	vs := make([]T, n)
+	var vs []T
 	slog.Debug("reading list elements", "len", n)
-	for i := range vs {
+	for i := range n {
 		slog.Debug("reading list element", "index", i)
 		v, err := f(r)
 		if err != nil {
 			return nil, fmt.Errorf("failed to read list element %d: %w", i, err)
 		}
-		vs[i] = v
+		vs = append(vs, v)
 	}
 	return vs, nil
 }
