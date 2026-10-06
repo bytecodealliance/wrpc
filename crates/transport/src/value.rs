@@ -804,8 +804,8 @@ where
             let len = len
                 .try_into()
                 .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
-            self.ret = Vec::with_capacity(len);
-            self.deferred = Vec::with_capacity(len);
+            self.ret = Vec::default();
+            self.deferred = Vec::default();
             self.cap = len;
         }
         while self.cap > 0 {
