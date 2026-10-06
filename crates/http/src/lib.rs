@@ -1,6 +1,5 @@
 //! wRPC HTTP transport
 
-use core::future::Future;
 use core::ops::{Deref, DerefMut};
 use core::pin::Pin;
 use core::task::{Context, Poll, ready};
