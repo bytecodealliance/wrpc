@@ -801,8 +801,7 @@ where
             if len == 0 {
                 return Ok(Some(Vec::default()));
             }
-            let len = len
-                .try_into()
+            let len = usize::try_from(len)
                 .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
             self.ret = Vec::default();
             self.deferred = Vec::default();
@@ -1804,8 +1803,7 @@ where
                             for (i, item) in zip(i.., chunk) {
                                 enc.encode(item, &mut buf)?;
                                 if let Some(f) = enc.take_deferred() {
-                                    let i = i
-                                        .try_into()
+                                    let i = usize::try_from(i)
                                         .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
                                     let w = w.index(&[i]).map_err(std::io::Error::other)?;
                                     trace!("spawning transmit task");

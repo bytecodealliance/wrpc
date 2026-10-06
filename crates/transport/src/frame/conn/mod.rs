@@ -583,8 +583,7 @@ async fn ingress(
         let n = AsyncReadExt::chain([b].as_slice(), &mut rx)
             .read_u32_leb128()
             .await?;
-        let n: usize = n
-            .try_into()
+        let n = usize::try_from(n)
             .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
         trace!(n, "read path length");
         let tx = if n == 0 {
@@ -614,9 +613,11 @@ async fn ingress(
         trace!("reading data length");
         let n = rx.read_u32_leb128().await?;
         trace!(n, "read data length");
-        let mut buf = Vec::with_capacity((n as usize).min(MAX_INITIAL_DATA_CAPACITY));
+        let len = usize::try_from(n)
+            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
+        let mut buf = Vec::with_capacity(len.min(MAX_INITIAL_DATA_CAPACITY));
         trace!("reading data");
-        if (&mut rx).take(n.into()).read_to_end(&mut buf).await? != n as usize {
+        if (&mut rx).take(n.into()).read_to_end(&mut buf).await? != len {
             return Err(std::io::ErrorKind::UnexpectedEof.into());
         }
         trace!(?buf, "read data");

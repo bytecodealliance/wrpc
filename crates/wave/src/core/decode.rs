@@ -104,7 +104,7 @@ where
         }
         WasmTypeKind::List => {
             let n = r.read_u32_leb128().await?;
-            let n = n.try_into().unwrap_or(usize::MAX);
+            let n = usize::try_from(n).unwrap_or(usize::MAX);
             let element_type = ty
                 .list_element_type()
                 .ok_or_else(|| io_error("list type missing element type"))?;
@@ -148,8 +148,7 @@ where
             let discriminant = r.read_u32_leb128().await?;
             let cases: Vec<_> = ty.variant_cases().collect();
 
-            let discriminant_idx: usize = discriminant
-                .try_into()
+            let discriminant_idx = usize::try_from(discriminant)
                 .map_err(|_| io_error("variant discriminant too large"))?;
 
             let (case_name, payload_type) = cases
@@ -169,8 +168,7 @@ where
             let discriminant = r.read_u32_leb128().await?;
             let names: Vec<_> = ty.enum_cases().collect();
 
-            let discriminant_idx: usize = discriminant
-                .try_into()
+            let discriminant_idx = usize::try_from(discriminant)
                 .map_err(|_| io_error("enum discriminant too large"))?;
 
             let name = names
