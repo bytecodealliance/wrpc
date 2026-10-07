@@ -108,8 +108,9 @@ impl tokio_util::codec::Decoder for Decoder {
                 }));
             }
         }
-        if src.len() < self.data_len {
-            src.reserve((self.data_len - src.len()).min(MAX_INITIAL_DATA_CAPACITY));
+        let n = self.data_len.saturating_sub(src.len());
+        if n > 0 {
+            src.reserve(n.min(MAX_INITIAL_DATA_CAPACITY));
             self.path = Some(path);
             return Ok(None);
         }
