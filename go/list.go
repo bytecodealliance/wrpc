@@ -16,15 +16,15 @@ const maxInitialCapacity = 1 << 20
 // preallocating at most `maxInitialCapacity` bytes
 func NewSlice[S ~[]E, E any](n uint32) S {
 	var v E
-	return make(S, 0, min(int(n), maxInitialCapacity/max(1, int(unsafe.Sizeof(v)))))
+	return make(S, 0, int(min(n, uint32(maxInitialCapacity/max(1, unsafe.Sizeof(v))))))
 }
 
 // ReadBytes reads exactly `n` bytes from `r` and returns them,
 // preallocating at most `maxInitialCapacity` bytes up front
 func ReadBytes(r io.Reader, n uint32) ([]byte, error) {
-	b := make([]byte, 0, min(int(n), maxInitialCapacity))
-	for len(b) < int(n) {
-		k := min(int(n)-len(b), maxInitialCapacity)
+	b := make([]byte, 0, int(min(n, maxInitialCapacity)))
+	for n > 0 {
+		k := int(min(n, maxInitialCapacity))
 		b = slices.Grow(b, k)
 		if _, err := io.ReadFull(r, b[len(b):len(b)+k]); err != nil {
 			if err == io.EOF {
@@ -33,6 +33,7 @@ func ReadBytes(r io.Reader, n uint32) ([]byte, error) {
 			return nil, err
 		}
 		b = b[:len(b)+k]
+		n -= uint32(k)
 	}
 	return b, nil
 }
