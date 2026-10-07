@@ -278,6 +278,8 @@ where
                     if let Some(f) = enc.deferred {
                         self.deferred = Some(f);
                     }
+                } else if ty.is_some() {
+                    bail!("payload missing for variant `{discriminant}`");
                 }
                 Ok(())
             }
