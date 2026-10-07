@@ -1,4 +1,5 @@
 use core::iter::zip;
+use core::mem;
 use core::ops::{BitOrAssign, Shl};
 use core::pin::{Pin, pin};
 
@@ -15,7 +16,7 @@ use uuid::Uuid;
 use wasm_tokio::cm::AsyncReadValue as _;
 use wasm_tokio::{
     AsyncReadCore as _, AsyncReadLeb128 as _, AsyncReadUtf8 as _, CoreNameEncoder,
-    CoreVecEncoderBytes, Leb128Encoder, Utf8Codec,
+    CoreVecEncoderBytes, DEFAULT_MAX_INITIAL_CAPACITY, Leb128Encoder, Utf8Codec,
 };
 use wasmtime::bail;
 use wasmtime::component::types::{Case, Field};
@@ -650,7 +651,8 @@ where
         Type::List(ty) => {
             let n = r.read_u32_leb128().await?;
             let n = usize::try_from(n).unwrap_or(usize::MAX);
-            let mut vs = Vec::default();
+            let mut vs =
+                Vec::with_capacity(n.min(DEFAULT_MAX_INITIAL_CAPACITY / mem::size_of::<Val>()));
             let ty = ty.ty();
             let mut path = path.to_vec();
             for i in 0..n {
