@@ -16,9 +16,11 @@ use tokio_util::codec::Encoder;
 use tokio_util::io::StreamReader;
 use tokio_util::sync::PollSender;
 use tracing::{Instrument as _, Span, debug, error, instrument, trace};
-use wasm_tokio::{AsyncReadCore as _, AsyncReadLeb128 as _, Leb128Encoder};
+use wasm_tokio::{
+    AsyncReadCore as _, AsyncReadLeb128 as _, DEFAULT_MAX_INITIAL_CAPACITY, Leb128Encoder,
+};
 
-use crate::frame::{MAX_INITIAL_DATA_CAPACITY, MAX_INITIAL_PATH_CAPACITY};
+use crate::frame::MAX_DEPTH;
 
 mod client;
 mod server;
@@ -583,13 +585,19 @@ async fn ingress(
         let n = AsyncReadExt::chain([b].as_slice(), &mut rx)
             .read_u32_leb128()
             .await?;
+        if n > MAX_DEPTH {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("path length of `{n}` exceeds maximum of `{MAX_DEPTH}`"),
+            ));
+        }
         let n = usize::try_from(n)
             .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
         trace!(n, "read path length");
         let tx = if n == 0 {
             param_tx
         } else {
-            let mut path = Vec::with_capacity(n.min(MAX_INITIAL_PATH_CAPACITY));
+            let mut path = Vec::with_capacity(n);
             for i in 0..n {
                 trace!(i, "reading path element");
                 let p = rx.read_u32_leb128().await?;
@@ -613,17 +621,18 @@ async fn ingress(
         trace!("reading data length");
         let n = rx.read_u32_leb128().await?;
         trace!(n, "read data length");
-        let len = usize::try_from(n)
+        let mut n = usize::try_from(n)
             .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
-        let mut buf = Vec::with_capacity(len.min(MAX_INITIAL_DATA_CAPACITY));
-        trace!("reading data");
-        if (&mut rx).take(n.into()).read_to_end(&mut buf).await? != len {
-            return Err(std::io::ErrorKind::UnexpectedEof.into());
+        while n > 0 {
+            let mut buf = vec![0; n.min(DEFAULT_MAX_INITIAL_CAPACITY)];
+            trace!(len = buf.len(), "reading data chunk");
+            rx.read_exact(&mut buf).await?;
+            n -= buf.len();
+            trace!(?buf, "read data chunk");
+            tx.send(Ok(buf.into())).await.map_err(|_| {
+                std::io::Error::new(std::io::ErrorKind::BrokenPipe, "stream receiver closed")
+            })?;
         }
-        trace!(?buf, "read data");
-        tx.send(Ok(buf.into())).await.map_err(|_| {
-            std::io::Error::new(std::io::ErrorKind::BrokenPipe, "stream receiver closed")
-        })?;
     }
 }
 
@@ -686,10 +695,36 @@ mod tests {
     async fn ingress_truncated_path() {
         let index = std::sync::Mutex::new(IndexTrie::Empty);
         let (tx, _rx) = mpsc::channel(1);
-        let err = ingress([0xff, 0xff, 0xff, 0xff, 0x0f].as_slice(), &index, &tx)
+        let err = ingress([0x02, 0x00].as_slice(), &index, &tx)
             .await
             .unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn ingress_path_too_long() {
+        let index = std::sync::Mutex::new(IndexTrie::Empty);
+        let (tx, _rx) = mpsc::channel(1);
+        let err = ingress([0xff, 0xff, 0xff, 0xff, 0x0f].as_slice(), &index, &tx)
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn ingress_chunked_data() {
+        let index = std::sync::Mutex::new(IndexTrie::Empty);
+        let (tx, mut rx) = mpsc::channel(4);
+        let n = DEFAULT_MAX_INITIAL_CAPACITY + 1;
+        let mut frame = vec![0x00, 0x81, 0x80, 0x40];
+        frame.resize(frame.len() + n, 0x42);
+        ingress(frame.as_slice(), &index, &tx).await.unwrap();
+        drop(tx);
+        let mut chunks = vec![];
+        while let Some(chunk) = rx.recv().await {
+            chunks.push(chunk.unwrap().len());
+        }
+        assert_eq!(chunks, [DEFAULT_MAX_INITIAL_CAPACITY, 1]);
     }
 
     #[test_log::test(tokio::test)]
