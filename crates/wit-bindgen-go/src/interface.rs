@@ -412,8 +412,7 @@ impl InterfaceGenerator<'_> {
             r#"func(r {io}.Reader) (float32, error) {{
     var b [4]byte
     {slog}.Debug("reading f32 bytes")
-    _, err := r.Read(b[:])
-    if err != nil {{
+    if _, err := {io}.ReadFull(r, b[:]); err != nil {{
         return 0, {fmt}.Errorf("failed to read f32: %w", err)
     }}
     return {math}.Float32frombits({binary}.LittleEndian.Uint32(b[:])), nil
@@ -432,8 +431,7 @@ impl InterfaceGenerator<'_> {
             r#"func(r {io}.Reader) (float64, error) {{
     var b [8]byte
     {slog}.Debug("reading f64 bytes")
-    _, err := r.Read(b[:])
-    if err != nil {{
+    if _, err := {io}.ReadFull(r, b[:]); err != nil {{
         return 0, {fmt}.Errorf("failed to read f64: %w", err)
     }}
     return {math}.Float64frombits({binary}.LittleEndian.Uint64(b[:])), nil
@@ -3546,6 +3544,7 @@ func (v *{name}) WriteToIndex(w {wrpc}.ByteWriter) (func({wrpc}.IndexWriter) err
             let strings = self.deps.strings();
             let wrpc = self.deps.wrpc();
             let errors = self.deps.errors();
+            let io = self.deps.io();
 
             // Struct
             self.godoc(docs);
@@ -3609,7 +3608,7 @@ func (v *{name}) WriteToIndex(w {wrpc}.ByteWriter) (func({wrpc}.IndexWriter) err
                 self.src,
                 r#"func (v *{name}) ReadFromIndex(r {wrpc}.IndexReader) error {{
         var p [{buf_len}]byte
-        if _, err := r.Read(p[:]); err != nil {{
+        if _, err := {io}.ReadFull(r, p[:]); err != nil {{
             return err
         }}
     
