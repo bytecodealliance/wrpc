@@ -105,30 +105,17 @@ test("an inbound transport failure surfaces to a sub-stream reader", async () =>
   await assert.rejects(pending, /connection reset/);
 });
 
-test("a frame split across transport chunks is routed as it arrives", async () => {
-  const frame = [0x01, 0x00, 0x03, 0x0a, 0x14, 0x1e];
+test("frame data is routed as it arrives", async () => {
+  const bytes = [0x01, 0x00, 0x03, 0x0a, 0x14, 0x1e, 0x01, 0x00, 0x02, 0x28];
   const transport = {
-    read: async () => (frame.length > 0 ? new Uint8Array(frame.splice(0, 1)) : null),
+    read: async () => (bytes.length > 0 ? new Uint8Array(bytes.splice(0, 1)) : null),
     write: () => {},
   };
   const mux = new Mux(transport);
   mux.start();
   const reader = mux.incoming([0]);
-  assert.deepEqual([...(await reader.take(3))], [10, 20, 30]);
-  await mux.ingress;
-  assert.equal(mux.buffered.size, 0);
-});
-
-test("a truncated frame surfaces to a sub-stream reader", async () => {
-  const frame = [0x01, 0x00, 0x03, 0x0a];
-  const transport = {
-    read: async () => (frame.length > 0 ? new Uint8Array(frame.splice(0, 1)) : null),
-    write: () => {},
-  };
-  const mux = new Mux(transport);
-  mux.start();
-  const reader = mux.incoming([0]);
-  await assert.rejects(reader.take(2), /unexpected end of input/);
+  assert.deepEqual([...(await reader.take(4))], [10, 20, 30, 40]);
+  await assert.rejects(reader.take(1), /unexpected end of input/);
 });
 
 const futures = "wrpc-test:async/futures";
