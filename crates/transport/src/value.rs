@@ -26,9 +26,9 @@ use wasm_tokio::cm::{
 };
 use wasm_tokio::{
     CoreNameDecoder, CoreNameEncoder, CoreVecDecoder, CoreVecDecoderBytes, CoreVecEncoderBytes,
-    Leb128DecoderI8, Leb128DecoderI16, Leb128DecoderI32, Leb128DecoderI64, Leb128DecoderI128,
-    Leb128DecoderU8, Leb128DecoderU16, Leb128DecoderU32, Leb128DecoderU64, Leb128DecoderU128,
-    Leb128Encoder, Utf8Codec,
+    DEFAULT_MAX_INITIAL_CAPACITY, Leb128DecoderI8, Leb128DecoderI16, Leb128DecoderI32,
+    Leb128DecoderI64, Leb128DecoderI128, Leb128DecoderU8, Leb128DecoderU16, Leb128DecoderU32,
+    Leb128DecoderU64, Leb128DecoderU128, Leb128Encoder, Utf8Codec,
 };
 
 use crate::BufferedIncoming;
@@ -803,13 +803,23 @@ where
             }
             let len = usize::try_from(len)
                 .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
-            self.ret = Vec::default();
-            self.deferred = Vec::default();
+            self.ret = Vec::with_capacity(
+                len.min(DEFAULT_MAX_INITIAL_CAPACITY / mem::size_of::<T::Item>().max(1)),
+            );
+            self.deferred = Vec::with_capacity(len.min(
+                DEFAULT_MAX_INITIAL_CAPACITY
+                    / mem::size_of::<Option<DeferredFn<BufferedIncoming>>>(),
+            ));
             self.cap = len;
         }
         while self.cap > 0 {
-            let Some(v) = self.dec.decode(src)? else {
-                return Ok(None);
+            let v = match self.dec.decode(src) {
+                Ok(Some(v)) => v,
+                Ok(None) => return Ok(None),
+                Err(err) => {
+                    self.cap = 0;
+                    return Err(err);
+                }
             };
             self.ret.push(v);
             self.deferred.push(self.dec.take_deferred());
@@ -2262,6 +2272,19 @@ mod tests {
     use anyhow::bail;
 
     use super::*;
+
+    #[test_log::test(tokio::test)]
+    async fn list_decoder_reset_on_error() -> anyhow::Result<()> {
+        let mut dec = <Vec<Vec<String>> as Decode>::Decoder::default();
+        let mut buf = BytesMut::from(&[0x02, 0x01, 0x01, b'a', 0x01, 0x01, 0xff][..]);
+        assert!(tokio_util::codec::Decoder::decode(&mut dec, &mut buf).is_err());
+        let mut buf = BytesMut::from(&[0x01, 0x01, 0x01, b'b'][..]);
+        assert_eq!(
+            tokio_util::codec::Decoder::decode(&mut dec, &mut buf)?,
+            Some(vec![vec!["b".to_string()]])
+        );
+        Ok(())
+    }
 
     #[test_log::test(tokio::test)]
     async fn codec() -> anyhow::Result<()> {

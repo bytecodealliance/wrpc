@@ -21,13 +21,15 @@
 //! # }
 //! ```
 
+use core::mem;
 use core::pin::Pin;
 
 use std::borrow::Cow;
 
 use tokio::io::{AsyncRead, AsyncReadExt as _};
 use wasm_tokio::{
-    AsyncReadCore as _, AsyncReadLeb128 as _, AsyncReadUtf8 as _, cm::AsyncReadValue as _,
+    AsyncReadCore as _, AsyncReadLeb128 as _, AsyncReadUtf8 as _, DEFAULT_MAX_INITIAL_CAPACITY,
+    cm::AsyncReadValue as _,
 };
 use wasm_wave::value::{Type, Value};
 use wasm_wave::wasm::{WasmType, WasmTypeKind, WasmValue as _};
@@ -109,7 +111,8 @@ where
                 .list_element_type()
                 .ok_or_else(|| io_error("list type missing element type"))?;
 
-            let mut elements = Vec::default();
+            let mut elements =
+                Vec::with_capacity(n.min(DEFAULT_MAX_INITIAL_CAPACITY / mem::size_of::<Value>()));
             for _ in 0..n {
                 let element = Box::pin(read_value(r, &element_type)).await?;
                 elements.push(element);
