@@ -8,7 +8,7 @@
 // `path` is a `list<u32>` index identifying the (sub-)stream; incoming frames
 // are demultiplexed back to the reader registered for their path.
 
-import { AsyncReader, Chan, Writer } from "./io.js";
+import { AsyncReader, Chan, UNEXPECTED_EOF, Writer } from "./io.js";
 
 /** The wRPC framing protocol version byte. */
 export const PROTOCOL = 0x00;
@@ -113,9 +113,14 @@ export class Mux {
       const depth = Number(await m.varU());
       const path = [];
       for (let i = 0; i < depth; i++) path.push(Number(await m.varU()));
-      const len = Number(await m.varU());
-      const data = await m.take(len);
-      this._route(path, data);
+      let len = Number(await m.varU());
+      while (len > 0) {
+        if (m.remaining().length === 0 && !(await m.more())) throw new RangeError(UNEXPECTED_EOF);
+        const data = m.remaining().slice(0, len);
+        m.consume(data.length);
+        len -= data.length;
+        this._route(path, data);
+      }
     }
     this._closeInbound();
   }
