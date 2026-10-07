@@ -20,7 +20,7 @@ use wasm_tokio::{
     AsyncReadCore as _, AsyncReadLeb128 as _, DEFAULT_MAX_INITIAL_CAPACITY, Leb128Encoder,
 };
 
-use crate::frame::MAX_DEPTH;
+use crate::frame::MAX_INITIAL_PATH_CAPACITY;
 
 mod client;
 mod server;
@@ -585,19 +585,13 @@ async fn ingress(
         let n = AsyncReadExt::chain([b].as_slice(), &mut rx)
             .read_u32_leb128()
             .await?;
-        if n > MAX_DEPTH {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                format!("path length of `{n}` exceeds maximum of `{MAX_DEPTH}`"),
-            ));
-        }
         let n = usize::try_from(n)
             .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
         trace!(n, "read path length");
         let tx = if n == 0 {
             param_tx
         } else {
-            let mut path = Vec::with_capacity(n);
+            let mut path = Vec::with_capacity(n.min(MAX_INITIAL_PATH_CAPACITY));
             for i in 0..n {
                 trace!(i, "reading path element");
                 let p = rx.read_u32_leb128().await?;
@@ -621,15 +615,20 @@ async fn ingress(
         trace!("reading data length");
         let n = rx.read_u32_leb128().await?;
         trace!(n, "read data length");
-        let mut n = usize::try_from(n)
-            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
-        while n > 0 {
-            let mut buf = vec![0; n.min(DEFAULT_MAX_INITIAL_CAPACITY)];
-            trace!(len = buf.len(), "reading data chunk");
-            rx.read_exact(&mut buf).await?;
-            n -= buf.len();
+        let mut data = (&mut rx).take(n.into());
+        while data.limit() > 0 {
+            let k = usize::try_from(data.limit())
+                .unwrap_or(usize::MAX)
+                .min(DEFAULT_MAX_INITIAL_CAPACITY);
+            let mut buf = BytesMut::with_capacity(k);
+            trace!(len = k, "reading data chunk");
+            while buf.len() < k {
+                if data.read_buf(&mut buf).await? == 0 {
+                    return Err(std::io::ErrorKind::UnexpectedEof.into());
+                }
+            }
             trace!(?buf, "read data chunk");
-            tx.send(Ok(buf.into())).await.map_err(|_| {
+            tx.send(Ok(buf.freeze())).await.map_err(|_| {
                 std::io::Error::new(std::io::ErrorKind::BrokenPipe, "stream receiver closed")
             })?;
         }
@@ -699,16 +698,6 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
-    }
-
-    #[test_log::test(tokio::test)]
-    async fn ingress_path_too_long() {
-        let index = std::sync::Mutex::new(IndexTrie::Empty);
-        let (tx, _rx) = mpsc::channel(1);
-        let err = ingress([0xff, 0xff, 0xff, 0xff, 0x0f].as_slice(), &index, &tx)
-            .await
-            .unwrap_err();
-        assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
     }
 
     #[test_log::test(tokio::test)]
