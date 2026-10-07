@@ -4,7 +4,7 @@ use bytes::{Bytes, BytesMut};
 use tracing::{instrument, trace};
 use wasm_tokio::{DEFAULT_MAX_INITIAL_CAPACITY, Leb128DecoderU32, Leb128DecoderU64, Leb128Encoder};
 
-use crate::frame::{Frame, FrameRef, MAX_DEPTH, MAX_INITIAL_PATH_CAPACITY};
+use crate::frame::{Frame, FrameRef, MAX_INITIAL_PATH_CAPACITY};
 
 /// [Frame] decoder
 pub struct Decoder {
@@ -31,7 +31,7 @@ impl Decoder {
 
 impl Default for Decoder {
     fn default() -> Self {
-        Self::new(MAX_DEPTH, u32::MAX.into())
+        Self::new(u32::MAX, u32::MAX.into())
     }
 }
 
