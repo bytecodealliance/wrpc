@@ -818,6 +818,8 @@ where
                 Ok(None) => return Ok(None),
                 Err(err) => {
                     self.cap = 0;
+                    self.ret.clear();
+                    self.deferred.clear();
                     return Err(err);
                 }
             };
@@ -2283,6 +2285,21 @@ mod tests {
             tokio_util::codec::Decoder::decode(&mut dec, &mut buf)?,
             Some(vec![vec!["b".to_string()]])
         );
+        Ok(())
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn list_decoder_reset_deferred_on_error() -> anyhow::Result<()> {
+        let mut dec =
+            <Vec<Pin<Box<dyn Stream<Item = Bytes> + Send>>> as Decode>::Decoder::default();
+        let mut buf = BytesMut::from(&[0x02, 0x00, 0xff, 0xff, 0xff, 0xff, 0xff][..]);
+        assert!(tokio_util::codec::Decoder::decode(&mut dec, &mut buf).is_err());
+        let mut buf = BytesMut::from(&[0x00][..]);
+        let vs = tokio_util::codec::Decoder::decode(&mut dec, &mut buf)?;
+        assert!(vs.is_some_and(|vs| vs.is_empty()));
+        if let Some(_f) = Deferred::<BufferedIncoming>::take_deferred(&mut dec) {
+            bail!("no deferred read should have been returned");
+        }
         Ok(())
     }
 
