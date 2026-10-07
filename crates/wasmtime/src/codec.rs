@@ -482,6 +482,7 @@ where
                                         }
                                         Err(StreamError::Closed) => {
                                             w.write_all(&[0x00]).await?;
+                                            return Ok(());
                                         }
                                         Err(err) => return Err(err.into()),
                                     }
