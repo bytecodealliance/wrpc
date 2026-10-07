@@ -21,7 +21,6 @@ pub use oneshot::*;
 /// Framing protocol version
 pub const PROTOCOL: u8 = 0;
 
-const MAX_DEPTH: u32 = 32;
 const MAX_INITIAL_PATH_CAPACITY: usize = 32;
 
 /// Owned wRPC frame
