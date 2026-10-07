@@ -210,6 +210,13 @@ where
                 Ok(())
             }
             (Val::Record(vs), Type::Record(ty)) => {
+                if vs.len() != ty.fields().len() {
+                    bail!(
+                        "record has {} fields, expected {}",
+                        vs.len(),
+                        ty.fields().len()
+                    );
+                }
                 dst.reserve(vs.len());
                 let mut deferred = Vec::with_capacity(vs.len());
                 for ((name, v), Field { ref ty, .. }) in zip(vs, ty.fields()) {
@@ -224,6 +231,13 @@ where
                 Ok(())
             }
             (Val::Tuple(vs), Type::Tuple(ty)) => {
+                if vs.len() != ty.types().len() {
+                    bail!(
+                        "tuple has {} elements, expected {}",
+                        vs.len(),
+                        ty.types().len()
+                    );
+                }
                 dst.reserve(vs.len());
                 let mut deferred = Vec::with_capacity(vs.len());
                 for (v, ref ty) in zip(vs, ty.types()) {
