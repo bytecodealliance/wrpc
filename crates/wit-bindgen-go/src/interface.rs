@@ -483,6 +483,7 @@ impl InterfaceGenerator<'_> {
         let fmt = self.deps.fmt();
         let io = self.deps.io();
         let slog = self.deps.slog();
+        let wrpc = self.deps.wrpc();
         let utf8 = self.deps.utf8();
         uwrite!(
             self.src,
@@ -507,12 +508,9 @@ impl InterfaceGenerator<'_> {
                 return "", nil
             }}
             {slog}.Debug("reading string bytes", "len", x)
-            buf, err := {io}.ReadAll({io}.LimitReader(r, int64(x)))
+            buf, err := {wrpc}.ReadBytes(r, x)
             if err != nil {{
                 return "", {fmt}.Errorf("failed to read string bytes: %w", err)
-            }}
-            if uint32(len(buf)) != x {{
-                return "", {fmt}.Errorf("failed to read string bytes: %w", {io}.ErrUnexpectedEOF)
             }}
             if !{utf8}.Valid(buf) {{
                 return string(buf), {errors}.New("string is not valid UTF-8")
@@ -532,6 +530,7 @@ impl InterfaceGenerator<'_> {
         let fmt = self.deps.fmt();
         let io = self.deps.io();
         let slog = self.deps.slog();
+        let wrpc = self.deps.wrpc();
         uwrite!(
             self.src,
             r#"func(r interface {{ {io}.ByteReader; {io}.Reader }}) ([]byte, error) {{
@@ -555,12 +554,9 @@ impl InterfaceGenerator<'_> {
                 return nil, nil
             }}
             {slog}.Debug("reading byte list contents", "len", x)
-            buf, err := {io}.ReadAll({io}.LimitReader(r, int64(x)))
+            buf, err := {wrpc}.ReadBytes(r, x)
             if err != nil {{
                 return nil, {fmt}.Errorf("failed to read byte list contents: %w", err)
-            }}
-            if uint32(len(buf)) != x {{
-                return nil, {fmt}.Errorf("failed to read byte list contents: %w", {io}.ErrUnexpectedEOF)
             }}
             return buf, nil
         }}
@@ -606,12 +602,12 @@ impl InterfaceGenerator<'_> {
             if x == 0 {{
                 return nil, nil
             }}
-            var vs "#,
+            vs := {wrpc}.NewSlice["#,
         );
         self.print_list(ty);
         uwrite!(
             self.src,
-            r#"
+            r#"](x)
             for i := range x {{
                 {slog}.Debug("reading list element", "i", i)
                 v, err := "#,
@@ -1205,12 +1201,12 @@ impl InterfaceGenerator<'_> {
             if {math}.MaxUint32 - n < total {{
                 return nil, {errors}.New("total incoming pending stream element count would overflow a 32-bit unsigned integer")
             }}
-            var vs "#
+            vs := {wrpc}.NewSlice["#
                 );
                 self.print_list(ty);
                 uwrite!(
                     self.src,
-                    r#"
+                    r#"](n)
             for i := range n {{
                 {slog}.Debug("reading pending stream element", "i", total)
                 v, err := "#
@@ -1261,6 +1257,7 @@ impl InterfaceGenerator<'_> {
         let fmt = self.deps.fmt();
         let io = self.deps.io();
         let slog = self.deps.slog();
+        let wrpc = self.deps.wrpc();
         uwrite!(
             self.src,
             "func(r interface {{ {io}.ByteReader; {io}.Reader }}) (",
@@ -1286,12 +1283,9 @@ impl InterfaceGenerator<'_> {
             }}
             x = x | uint32(b)<<s
             {slog}.Debug("reading owned resource handle bytes", "len", x)
-            buf, err := {io}.ReadAll({io}.LimitReader(r, int64(x)))
+            buf, err := {wrpc}.ReadBytes(r, x)
             if err != nil {{
                 return nil, {fmt}.Errorf("failed to read owned resource handle bytes: %w", err)
-            }}
-            if uint32(len(buf)) != x {{
-                return nil, {fmt}.Errorf("failed to read owned resource handle bytes: %w", {io}.ErrUnexpectedEOF)
             }}
             return "#,
         );
@@ -1313,6 +1307,7 @@ impl InterfaceGenerator<'_> {
         let fmt = self.deps.fmt();
         let io = self.deps.io();
         let slog = self.deps.slog();
+        let wrpc = self.deps.wrpc();
         uwrite!(
             self.src,
             "func(r interface {{ {io}.ByteReader; {io}.Reader }}) (",
@@ -1338,12 +1333,9 @@ impl InterfaceGenerator<'_> {
             }}
             x = x | uint32(b)<<s
             {slog}.Debug("reading borrowed resource handle bytes", "len", x)
-            buf, err := {io}.ReadAll({io}.LimitReader(r, int64(x)))
+            buf, err := {wrpc}.ReadBytes(r, x)
             if err != nil {{
                 return nil, {fmt}.Errorf("failed to read borrowed resource handle bytes: %w", err)
-            }}
-            if uint32(len(buf)) != x {{
-                return nil, {fmt}.Errorf("failed to read borrowed resource handle bytes: %w", {io}.ErrUnexpectedEOF)
             }}
             return "#,
         );

@@ -104,12 +104,9 @@ func ReadString(r ByteReader) (string, error) {
 	}
 
 	slog.Debug("reading string bytes", "len", n)
-	b, err := io.ReadAll(io.LimitReader(r, int64(n)))
+	b, err := ReadBytes(r, n)
 	if err != nil {
 		return "", fmt.Errorf("failed to read string: %w", err)
-	}
-	if len(b) != int(n) {
-		return "", fmt.Errorf("failed to read string: %w", io.ErrUnexpectedEOF)
 	}
 	slog.Debug("read string bytes", "buf", b)
 	return string(b), nil
