@@ -471,6 +471,7 @@ where
                                 loop {
                                     stream.ready().await;
                                     match stream.read(8096) {
+                                        Ok(buf) if buf.is_empty() => {}
                                         Ok(buf) => {
                                             let mut chunk = BytesMut::with_capacity(
                                                 buf.len().saturating_add(5),
