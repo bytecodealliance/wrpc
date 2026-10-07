@@ -168,7 +168,7 @@ func ReadStream[T any](r IndexReader, f func(IndexReader) (T, error), path ...ui
 				slog.Debug("pending stream EOF chunk received")
 				return nil, io.EOF
 			}
-			var vs []T
+			vs := NewSlice[[]T](n)
 			for i := range n {
 				v, err := f(r)
 				if err != nil {

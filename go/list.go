@@ -6,7 +6,36 @@ import (
 	"io"
 	"log/slog"
 	"math"
+	"slices"
+	"unsafe"
 )
+
+const maxInitialCapacity = 1 << 20
+
+// NewSlice returns an empty, non-nil slice with capacity for `n` elements,
+// preallocating at most `maxInitialCapacity` bytes
+func NewSlice[S ~[]E, E any](n uint32) S {
+	var v E
+	return make(S, 0, min(int(n), maxInitialCapacity/max(1, int(unsafe.Sizeof(v)))))
+}
+
+// ReadBytes reads exactly `n` bytes from `r` and returns them,
+// preallocating at most `maxInitialCapacity` bytes up front
+func ReadBytes(r io.Reader, n uint32) ([]byte, error) {
+	b := make([]byte, 0, min(int(n), maxInitialCapacity))
+	for len(b) < int(n) {
+		k := min(int(n)-len(b), maxInitialCapacity)
+		b = slices.Grow(b, k)
+		if _, err := io.ReadFull(r, b[len(b):len(b)+k]); err != nil {
+			if err == io.EOF {
+				err = io.ErrUnexpectedEOF
+			}
+			return nil, err
+		}
+		b = b[:len(b)+k]
+	}
+	return b, nil
+}
 
 func Slice[T any](v []T) *[]T {
 	if v == nil {
@@ -67,12 +96,9 @@ func ReadByteList(r ByteReader) ([]byte, error) {
 	}
 
 	slog.Debug("reading bytes", "len", n)
-	b, err := io.ReadAll(io.LimitReader(r, int64(n)))
+	b, err := ReadBytes(r, n)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read list bytes: %w", err)
-	}
-	if len(b) != int(n) {
-		return nil, fmt.Errorf("failed to read list bytes: %w", io.ErrUnexpectedEOF)
 	}
 	return b, nil
 }
@@ -84,7 +110,7 @@ func ReadList[T any](r IndexReader, f func(IndexReader) (T, error)) ([]T, error)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read list length: %w", err)
 	}
-	var vs []T
+	vs := NewSlice[[]T](n)
 	slog.Debug("reading list elements", "len", n)
 	for i := range n {
 		slog.Debug("reading list element", "index", i)
