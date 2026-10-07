@@ -18,7 +18,7 @@ use tokio_util::sync::PollSender;
 use tracing::{Instrument as _, Span, debug, error, instrument, trace};
 use wasm_tokio::{AsyncReadCore as _, AsyncReadLeb128 as _, Leb128Encoder};
 
-use crate::frame::MAX_INITIAL_DATA_CAPACITY;
+use crate::frame::{MAX_INITIAL_DATA_CAPACITY, MAX_INITIAL_PATH_CAPACITY};
 
 mod client;
 mod server;
@@ -589,7 +589,7 @@ async fn ingress(
         let tx = if n == 0 {
             param_tx
         } else {
-            let mut path = Vec::default();
+            let mut path = Vec::with_capacity(n.min(MAX_INITIAL_PATH_CAPACITY));
             for i in 0..n {
                 trace!(i, "reading path element");
                 let p = rx.read_u32_leb128().await?;
