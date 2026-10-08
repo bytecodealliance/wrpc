@@ -18,6 +18,7 @@ pub struct Client(Connection);
 pub struct ConnHandler;
 
 const DONE: VarInt = VarInt::from_u32(1);
+const FAILED: VarInt = VarInt::from_u32(2);
 
 impl wrpc_transport::frame::ConnHandler<RecvStream, SendStream> for ConnHandler {
     async fn on_ingress(mut rx: RecvStream, res: std::io::Result<()>) {
@@ -31,9 +32,12 @@ impl wrpc_transport::frame::ConnHandler<RecvStream, SendStream> for ConnHandler 
         }
     }
 
-    async fn on_egress(tx: SendStream, res: std::io::Result<()>) {
+    async fn on_egress(mut tx: SendStream, res: std::io::Result<()>) {
         if let Err(err) = res {
             error!(?err, "egress failed");
+            if let Err(err) = tx.reset(FAILED) {
+                debug!(?err, "failed to reset outgoing stream");
+            }
         } else {
             debug!("egress successfully complete");
         }

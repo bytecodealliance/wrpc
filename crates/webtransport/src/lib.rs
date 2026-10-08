@@ -57,6 +57,11 @@ impl wrpc_transport::frame::ConnHandler<RecvStream, SendStream> for ConnHandler 
     async fn on_egress(mut tx: SendStream, res: std::io::Result<()>) {
         if let Err(err) = res {
             error!(?err, "egress failed");
+            if let Ok(code) = VarInt::from_u64(0x52e4a40fa8dc)
+                && let Err(err) = tx.quic_stream_mut().reset(code)
+            {
+                debug!(?err, "failed to reset outgoing stream");
+            }
         } else {
             debug!("egress successfully complete");
         }
