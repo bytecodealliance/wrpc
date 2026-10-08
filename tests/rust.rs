@@ -19,7 +19,7 @@ use tokio::time::sleep;
 use tokio::{join, select, spawn, try_join};
 use tracing::{Instrument, Span, info, info_span, instrument};
 use wrpc_transport::frame::Oneshot;
-use wrpc_transport::{InvokeExt as _, ResourceBorrow, ResourceOwn, ServeExt as _};
+use wrpc_transport::{InvokeExt as _, ResourceBorrow, ResourceOwn, Serve as _, ServeExt as _};
 
 #[instrument(skip_all, ret)]
 async fn assert_bindgen_async<IC, SC, I, S>(cx: IC, clt: Arc<I>, srv: Arc<S>) -> anyhow::Result<()>
@@ -1644,6 +1644,45 @@ async fn rust_oneshot_duplex() -> anyhow::Result<()> {
     let (clt, srv) = Oneshot::duplex(1024);
     let (rx, tx) = split(srv);
     assert_oneshot(clt, rx, tx).await
+}
+
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+#[instrument(ret)]
+async fn rust_oneshot_invoke_io_timeout() -> anyhow::Result<()> {
+    let (clt, srv_io) = Oneshot::duplex(1024);
+    let (rx, tx) = split(srv_io);
+    let srv = Arc::new(wrpc_transport::frame::Server::default());
+    let invocations = srv.serve("foo", "bar", Arc::default()).await?;
+    tokio::time::timeout(Duration::from_secs(10), async {
+        join!(
+            async {
+                let err = clt
+                    .io_timeout(Duration::from_millis(100))
+                    .invoke_values_blocking::<_, _, (String,)>((), "foo", "bar", (42,), &[[]; 0])
+                    .await
+                    .expect_err("invocation without a response should fail");
+                assert!(
+                    format!("{err:#}").contains("read timed out"),
+                    "unexpected error: {err:#}"
+                );
+            },
+            async {
+                srv.accept((), tx, rx)
+                    .await
+                    .expect("failed to accept connection");
+                let ((), tx, rx) = pin!(invocations)
+                    .try_next()
+                    .await
+                    .expect("failed to accept invocation")
+                    .expect("unexpected end of stream");
+                sleep(Duration::from_secs(1)).await;
+                drop((tx, rx));
+            }
+        );
+    })
+    .await
+    .context("test timed out")?;
+    Ok(())
 }
 
 #[cfg(unix)]

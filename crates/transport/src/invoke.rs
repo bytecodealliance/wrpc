@@ -101,6 +101,69 @@ impl<T: Invoke> Invoke for TimeoutOwned<T> {
     }
 }
 
+/// Wrapper struct returned by [`InvokeExt::io_timeout`]
+///
+/// The timeout applies to I/O on the [`Outgoing`] and [`Incoming`] streams returned by
+/// [`Invoke::invoke`], see [`Outgoing::with_timeout`] and [`Incoming::with_timeout`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct IoTimeout<'a, T: ?Sized> {
+    /// Inner [Invoke]
+    pub inner: &'a T,
+    /// Invocation I/O timeout
+    pub timeout: Duration,
+}
+
+impl<T: Invoke> Invoke for IoTimeout<'_, T> {
+    type Context = T::Context;
+
+    #[instrument(level = "trace", skip(self, cx, params, paths))]
+    async fn invoke<P>(
+        &self,
+        cx: Self::Context,
+        instance: &str,
+        func: &str,
+        params: Bytes,
+        paths: impl AsRef<[P]> + Send,
+    ) -> anyhow::Result<(Outgoing, Incoming)>
+    where
+        P: AsRef<[Option<usize>]> + Send + Sync,
+    {
+        let (tx, rx) = self.inner.invoke(cx, instance, func, params, paths).await?;
+        Ok((tx.with_timeout(self.timeout), rx.with_timeout(self.timeout)))
+    }
+}
+
+/// Wrapper struct returned by [`InvokeExt::io_timeout_owned`]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct IoTimeoutOwned<T> {
+    /// Inner [Invoke]
+    pub inner: T,
+    /// Invocation I/O timeout
+    pub timeout: Duration,
+}
+
+impl<T: Invoke> Invoke for IoTimeoutOwned<T> {
+    type Context = T::Context;
+
+    #[instrument(level = "trace", skip(self, cx, params, paths))]
+    async fn invoke<P>(
+        &self,
+        cx: Self::Context,
+        instance: &str,
+        func: &str,
+        params: Bytes,
+        paths: impl AsRef<[P]> + Send,
+    ) -> anyhow::Result<(Outgoing, Incoming)>
+    where
+        P: AsRef<[Option<usize>]> + Send + Sync,
+    {
+        self.inner
+            .io_timeout(self.timeout)
+            .invoke(cx, instance, func, params, paths)
+            .await
+    }
+}
+
 /// Extension trait for [Invoke]
 pub trait InvokeExt: Invoke {
     /// Invoke function `func` on instance `instance` using typed `Params` and `Results`
@@ -276,6 +339,32 @@ pub trait InvokeExt: Invoke {
         Self: Sized,
     {
         TimeoutOwned {
+            inner: self,
+            timeout,
+        }
+    }
+
+    /// Returns an [`IoTimeout`], wrapping [Self] with an implementation of [Invoke], which
+    /// applies `timeout` to reads and writes on the [`Incoming`] and [`Outgoing`] streams
+    /// returned by [`Invoke::invoke`]. Reading results fails instead of hanging if the server
+    /// stops sending data, and the connection is released instead of blocking forever if the
+    /// server stops accepting parameters.
+    ///
+    /// The timeout also applies to the sub-streams backing async `stream` and `future`
+    /// parameters and results, which must therefore not idle for longer than `timeout`.
+    fn io_timeout(&self, timeout: Duration) -> IoTimeout<'_, Self> {
+        IoTimeout {
+            inner: self,
+            timeout,
+        }
+    }
+
+    /// This is like [`InvokeExt::io_timeout`], but moves [Self] and returns corresponding [`IoTimeoutOwned`]
+    fn io_timeout_owned(self, timeout: Duration) -> IoTimeoutOwned<Self>
+    where
+        Self: Sized,
+    {
+        IoTimeoutOwned {
             inner: self,
             timeout,
         }
