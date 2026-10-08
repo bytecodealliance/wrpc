@@ -13,13 +13,15 @@ use anyhow::Context;
 use bytes::Bytes;
 use common::assert_async;
 use futures::{FutureExt as _, Stream, StreamExt as _, TryStreamExt as _, stream};
-use tokio::io::split;
+use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _, split};
 use tokio::sync::{RwLock, oneshot};
 use tokio::time::sleep;
 use tokio::{join, select, spawn, try_join};
 use tracing::{Instrument, Span, info, info_span, instrument};
 use wrpc_transport::frame::Oneshot;
-use wrpc_transport::{InvokeExt as _, ResourceBorrow, ResourceOwn, Serve as _, ServeExt as _};
+use wrpc_transport::{
+    Invoke as _, InvokeExt as _, ResourceBorrow, ResourceOwn, Serve as _, ServeExt as _,
+};
 
 #[instrument(skip_all, ret)]
 async fn assert_bindgen_async<IC, SC, I, S>(cx: IC, clt: Arc<I>, srv: Arc<S>) -> anyhow::Result<()>
@@ -1648,6 +1650,45 @@ async fn rust_oneshot_duplex() -> anyhow::Result<()> {
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 #[instrument(ret)]
+async fn rust_oneshot_serve_read_timeout() -> anyhow::Result<()> {
+    let (clt, srv_io) = Oneshot::duplex(1024);
+    let (rx, tx) = split(srv_io);
+    let srv = Arc::new(wrpc_transport::frame::Server::default());
+    let invocations = srv
+        .io_timeout(Duration::from_millis(100))
+        .serve_values::<(u32,), (&str,)>("foo", "bar", Arc::default())
+        .await?;
+    tokio::time::timeout(Duration::from_secs(10), async {
+        join!(
+            async {
+                let (tx, rx) = clt
+                    .invoke((), "foo", "bar", Bytes::default(), &[[]; 0])
+                    .await
+                    .expect("failed to invoke `foo.bar`");
+                sleep(Duration::from_secs(1)).await;
+                drop((tx, rx));
+            },
+            async {
+                srv.accept((), tx, rx)
+                    .await
+                    .expect("failed to accept connection");
+                let Err(err) = pin!(invocations).try_next().await else {
+                    panic!("invocation with missing parameters should fail")
+                };
+                assert!(
+                    format!("{err:#}").contains("read timed out"),
+                    "unexpected error: {err:#}"
+                );
+            }
+        );
+    })
+    .await
+    .context("test timed out")?;
+    Ok(())
+}
+
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+#[instrument(ret)]
 async fn rust_oneshot_invoke_io_timeout() -> anyhow::Result<()> {
     let (clt, srv_io) = Oneshot::duplex(1024);
     let (rx, tx) = split(srv_io);
@@ -1677,6 +1718,71 @@ async fn rust_oneshot_invoke_io_timeout() -> anyhow::Result<()> {
                     .expect("unexpected end of stream");
                 sleep(Duration::from_secs(1)).await;
                 drop((tx, rx));
+            }
+        );
+    })
+    .await
+    .context("test timed out")?;
+    Ok(())
+}
+
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+#[instrument(ret)]
+async fn rust_oneshot_serve_write_timeout() -> anyhow::Result<()> {
+    let (mut clt, srv_io) = tokio::io::duplex(1024);
+    let (rx, tx) = split(srv_io);
+    let srv = Arc::new(wrpc_transport::frame::Server::default());
+    let invocations = srv
+        .io_timeout(Duration::from_millis(100))
+        .serve("foo", "bar", Arc::default())
+        .await?;
+    tokio::time::timeout(Duration::from_secs(10), async {
+        join!(
+            async {
+                clt.write_all(&[0x00, 3, b'f', b'o', b'o', 3, b'b', b'a', b'r', 0, 1, 42])
+                    .await
+                    .expect("failed to write invocation");
+                clt.shutdown().await.expect("failed to shutdown");
+                sleep(Duration::from_secs(1)).await;
+                let mut buf = vec![];
+                clt.read_to_end(&mut buf)
+                    .await
+                    .expect("failed to read results");
+                assert!(
+                    buf.len() < 1 << 16,
+                    "results should be truncated after server write timeout"
+                );
+            },
+            async {
+                srv.accept((), tx, rx)
+                    .await
+                    .expect("failed to accept connection");
+                let ((), mut tx, mut rx) = pin!(invocations)
+                    .try_next()
+                    .await
+                    .expect("failed to accept invocation")
+                    .expect("unexpected end of stream");
+                let mut params = vec![];
+                rx.read_to_end(&mut params)
+                    .await
+                    .expect("failed to read parameters");
+                assert_eq!(params, [42]);
+                tx.write_all(&vec![b'x'; 1 << 16])
+                    .await
+                    .expect("buffered write should succeed");
+                sleep(Duration::from_millis(500)).await;
+                for res in [
+                    tx.write_all(b"x").await,
+                    tx.flush().await,
+                    tx.shutdown().await,
+                ] {
+                    let err = res.expect_err("write after timeout should fail");
+                    assert_eq!(err.kind(), std::io::ErrorKind::TimedOut, "{err}");
+                    assert!(
+                        err.to_string().contains("connection write timed out"),
+                        "unexpected error: {err}"
+                    );
+                }
             }
         );
     })

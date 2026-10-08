@@ -2,6 +2,7 @@
 
 use core::mem;
 use core::pin::Pin;
+use core::time::Duration;
 
 use std::sync::Arc;
 
@@ -37,6 +38,71 @@ pub trait Serve: Sync {
             + use<Self>,
         >,
     > + Send;
+}
+
+/// Wrapper struct returned by [`ServeExt::io_timeout`]
+///
+/// The timeout applies to I/O on the [`Outgoing`] and [`Incoming`] streams of every accepted
+/// invocation, see [`Outgoing::with_timeout`] and [`Incoming::with_timeout`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct IoTimeout<'a, T: ?Sized> {
+    /// Inner [Serve]
+    pub inner: &'a T,
+    /// Invocation I/O timeout
+    pub timeout: Duration,
+}
+
+impl<'a, T: Serve> Serve for IoTimeout<'a, T> {
+    type Context = T::Context;
+
+    #[instrument(level = "trace", skip(self, paths))]
+    async fn serve(
+        &self,
+        instance: &str,
+        func: &str,
+        paths: Arc<[Box<[Option<usize>]>]>,
+    ) -> anyhow::Result<
+        impl Stream<Item = anyhow::Result<(T::Context, Outgoing, Incoming)>>
+        + Send
+        + 'static
+        + use<'a, T>,
+    > {
+        let invocations = self.inner.serve(instance, func, paths).await?;
+        Ok(with_io_timeout(invocations, self.timeout))
+    }
+}
+
+/// Wrapper struct returned by [`ServeExt::io_timeout_owned`]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct IoTimeoutOwned<T> {
+    /// Inner [Serve]
+    pub inner: T,
+    /// Invocation I/O timeout
+    pub timeout: Duration,
+}
+
+impl<T: Serve> Serve for IoTimeoutOwned<T> {
+    type Context = T::Context;
+
+    #[instrument(level = "trace", skip(self, paths))]
+    async fn serve(
+        &self,
+        instance: &str,
+        func: &str,
+        paths: Arc<[Box<[Option<usize>]>]>,
+    ) -> anyhow::Result<
+        impl Stream<Item = anyhow::Result<(T::Context, Outgoing, Incoming)>> + Send + 'static + use<T>,
+    > {
+        let invocations = self.inner.serve(instance, func, paths).await?;
+        Ok(with_io_timeout(invocations, self.timeout))
+    }
+}
+
+fn with_io_timeout<C>(
+    invocations: impl Stream<Item = anyhow::Result<(C, Outgoing, Incoming)>>,
+    timeout: Duration,
+) -> impl Stream<Item = anyhow::Result<(C, Outgoing, Incoming)>> {
+    invocations.map_ok(move |(cx, tx, rx)| (cx, tx.with_timeout(timeout), rx.with_timeout(timeout)))
 }
 
 /// Extension trait for [Serve]
@@ -143,6 +209,32 @@ pub trait ServeExt: Serve {
                 }
                 .instrument(span.clone())
             }))
+        }
+    }
+
+    /// Returns an [`IoTimeout`], wrapping [Self] with an implementation of [Serve], which applies
+    /// `timeout` to reads and writes on the [`Incoming`] and [`Outgoing`] streams of every
+    /// accepted invocation. Reading parameters fails instead of hanging if the client stops
+    /// sending data, and the connection is released instead of blocking forever if the client
+    /// stops accepting results.
+    ///
+    /// The timeout also applies to the sub-streams backing async `stream` and `future`
+    /// parameters and results, which must therefore not idle for longer than `timeout`.
+    fn io_timeout(&self, timeout: Duration) -> IoTimeout<'_, Self> {
+        IoTimeout {
+            inner: self,
+            timeout,
+        }
+    }
+
+    /// This is like [`ServeExt::io_timeout`], but moves [Self] and returns corresponding [`IoTimeoutOwned`]
+    fn io_timeout_owned(self, timeout: Duration) -> IoTimeoutOwned<Self>
+    where
+        Self: Sized,
+    {
+        IoTimeoutOwned {
+            inner: self,
+            timeout,
         }
     }
 }
