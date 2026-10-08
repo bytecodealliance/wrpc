@@ -1728,6 +1728,32 @@ async fn rust_oneshot_invoke_io_timeout() -> anyhow::Result<()> {
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 #[instrument(ret)]
+async fn rust_oneshot_invoke_write_timeout() -> anyhow::Result<()> {
+    let (clt, _srv_io) = Oneshot::duplex(1024);
+    tokio::time::timeout(Duration::from_secs(10), async {
+        let err = clt
+            .io_timeout(Duration::from_millis(100))
+            .invoke_values_blocking::<_, _, (String,)>(
+                (),
+                "foo",
+                "bar",
+                (vec![0u8; 1 << 16],),
+                &[[]; 0],
+            )
+            .await
+            .expect_err("invocation with unread parameters should fail");
+        assert!(
+            format!("{err:#}").contains("invocation timed out"),
+            "unexpected error: {err:#}"
+        );
+    })
+    .await
+    .context("test timed out")?;
+    Ok(())
+}
+
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+#[instrument(ret)]
 async fn rust_oneshot_serve_write_timeout() -> anyhow::Result<()> {
     let (mut clt, srv_io) = tokio::io::duplex(1024);
     let (rx, tx) = split(srv_io);

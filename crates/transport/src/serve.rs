@@ -214,9 +214,10 @@ pub trait ServeExt: Serve {
 
     /// Returns an [`IoTimeout`], wrapping [Self] with an implementation of [Serve], which applies
     /// `timeout` to reads and writes on the [`Incoming`] and [`Outgoing`] streams of every
-    /// accepted invocation. Reading parameters fails instead of hanging if the client stops
-    /// sending data, and the connection is released instead of blocking forever if the client
-    /// stops accepting results.
+    /// accepted invocation. A read fails instead of hanging if the client does not send any
+    /// data for `timeout`, which includes the time a client takes to produce the first byte of
+    /// a lazily written async parameter, and the connection is released instead of blocking
+    /// forever if the client does not accept any data for `timeout`.
     ///
     /// The timeout also applies to the sub-streams backing async `stream` and `future`
     /// parameters and results, which must therefore not idle for longer than `timeout`.

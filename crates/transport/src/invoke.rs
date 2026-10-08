@@ -103,8 +103,9 @@ impl<T: Invoke> Invoke for TimeoutOwned<T> {
 
 /// Wrapper struct returned by [`InvokeExt::io_timeout`]
 ///
-/// The timeout applies to I/O on the [`Outgoing`] and [`Incoming`] streams returned by
-/// [`Invoke::invoke`], see [`Outgoing::with_timeout`] and [`Incoming::with_timeout`].
+/// The timeout bounds the [`Invoke::invoke`] call and applies to I/O on the [`Outgoing`] and
+/// [`Incoming`] streams it returns, see [`Outgoing::with_timeout`] and
+/// [`Incoming::with_timeout`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct IoTimeout<'a, T: ?Sized> {
     /// Inner [Invoke]
@@ -128,7 +129,12 @@ impl<T: Invoke> Invoke for IoTimeout<'_, T> {
     where
         P: AsRef<[Option<usize>]> + Send + Sync,
     {
-        let (tx, rx) = self.inner.invoke(cx, instance, func, params, paths).await?;
+        let (tx, rx) = tokio::time::timeout(
+            self.timeout,
+            self.inner.invoke(cx, instance, func, params, paths),
+        )
+        .await
+        .context("invocation timed out")??;
         Ok((tx.with_timeout(self.timeout), rx.with_timeout(self.timeout)))
     }
 }
@@ -345,10 +351,12 @@ pub trait InvokeExt: Invoke {
     }
 
     /// Returns an [`IoTimeout`], wrapping [Self] with an implementation of [Invoke], which
-    /// applies `timeout` to reads and writes on the [`Incoming`] and [`Outgoing`] streams
-    /// returned by [`Invoke::invoke`]. Reading results fails instead of hanging if the server
-    /// stops sending data, and the connection is released instead of blocking forever if the
-    /// server stops accepting parameters.
+    /// bounds the [`Invoke::invoke`] call, including the write of synchronous parameters, by
+    /// `timeout` and applies `timeout` to reads and writes on the [`Incoming`] and
+    /// [`Outgoing`] streams it returns. A read fails instead of hanging if the server does not
+    /// send any data for `timeout`, which includes the time a handler takes to produce its
+    /// first result byte, and the connection is released instead of blocking forever if the
+    /// server does not accept any data for `timeout`.
     ///
     /// The timeout also applies to the sub-streams backing async `stream` and `future`
     /// parameters and results, which must therefore not idle for longer than `timeout`.

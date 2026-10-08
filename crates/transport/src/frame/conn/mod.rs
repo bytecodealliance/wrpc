@@ -412,10 +412,13 @@ impl Incoming {
 
     /// Sets the read timeout.
     ///
-    /// Once set, [`AsyncRead::poll_read`] will fail with [`std::io::ErrorKind::TimedOut`]
-    /// if no data arrives within `timeout` of the previous read. The timeout is inherited by
-    /// sub-streams returned by [`Self::index`], including those backing async `stream` and
-    /// `future` values, which must therefore not idle for longer than `timeout`.
+    /// Once set, a read that stays pending for longer than `timeout` fails with
+    /// [`std::io::ErrorKind::TimedOut`]. The deadline is armed when a read first returns
+    /// [`Poll::Pending`] and cleared once it completes, so a stream that is not being polled
+    /// does not time out. The timeout is inherited by sub-streams returned by [`Self::index`]
+    /// after this call, including those backing async `stream` and `future` values, which must
+    /// therefore not idle for longer than `timeout`; sub-streams indexed before this call are
+    /// unaffected.
     #[must_use]
     pub fn with_timeout(mut self, timeout: Duration) -> Self {
         self.timeout = Some(timeout);
@@ -572,8 +575,10 @@ impl Outgoing {
     /// Once set, that task fails with [`std::io::ErrorKind::TimedOut`] if the connection does
     /// not accept any buffered data within `timeout`, after which the result is passed to
     /// `on_egress` and all subsequent writes, flushes and shutdowns on this stream fail with
-    /// the same error. The timeout is shared by all sub-streams of this connection, including
-    /// those returned by [`Self::index`].
+    /// the same error. Flushes and shutdowns do not wait for the background task, so they only
+    /// report a timeout that has already occurred and data buffered before it is lost. The
+    /// timeout is shared by all sub-streams of this connection, including those returned by
+    /// [`Self::index`].
     #[must_use]
     pub fn with_timeout(self, timeout: Duration) -> Self {
         let waker = {
@@ -683,7 +688,9 @@ impl<T: AsyncWrite> TimeoutWriter<T> {
         }
         let duration = {
             let mut t = this.timeout.lock().unwrap_or_else(PoisonError::into_inner);
-            t.waker = Some(cx.waker().clone());
+            if !t.waker.as_ref().is_some_and(|w| w.will_wake(cx.waker())) {
+                t.waker = Some(cx.waker().clone());
+            }
             t.duration
         };
         if duration != *this.duration {

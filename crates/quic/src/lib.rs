@@ -38,9 +38,9 @@ impl wrpc_transport::frame::ConnHandler<RecvStream, SendStream> for ConnHandler 
             if let Err(err) = tx.reset(FAILED) {
                 debug!(?err, "failed to reset outgoing stream");
             }
-        } else {
-            debug!("egress successfully complete");
+            return;
         }
+        debug!("egress successfully complete");
         match tx.stopped().await {
             Ok(None) => {
                 trace!("stream successfully closed");
