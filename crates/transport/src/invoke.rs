@@ -129,12 +129,11 @@ impl<T: Invoke> Invoke for IoTimeout<'_, T> {
     where
         P: AsRef<[Option<usize>]> + Send + Sync,
     {
-        let (tx, rx) = tokio::time::timeout(
-            self.timeout,
-            self.inner.invoke(cx, instance, func, params, paths),
-        )
-        .await
-        .context("invocation timed out")??;
+        let (tx, rx) = self
+            .inner
+            .timeout(self.timeout)
+            .invoke(cx, instance, func, params, paths)
+            .await?;
         Ok((tx.with_timeout(self.timeout), rx.with_timeout(self.timeout)))
     }
 }

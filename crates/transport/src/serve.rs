@@ -221,6 +221,10 @@ pub trait ServeExt: Serve {
     ///
     /// The timeout also applies to the sub-streams backing async `stream` and `future`
     /// parameters and results, which must therefore not idle for longer than `timeout`.
+    ///
+    /// The timeout does not apply to anything a transport reads before yielding an invocation,
+    /// such as the invocation header read by [`crate::frame::Server::accept`], which callers
+    /// must bound separately, e.g. using [`tokio::time::timeout`].
     fn io_timeout(&self, timeout: Duration) -> IoTimeout<'_, Self> {
         IoTimeout {
             inner: self,

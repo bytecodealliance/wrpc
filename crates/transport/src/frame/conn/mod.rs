@@ -414,8 +414,9 @@ impl Incoming {
     ///
     /// Once set, a read that stays pending for longer than `timeout` fails with
     /// [`std::io::ErrorKind::TimedOut`]. The deadline is armed when a read first returns
-    /// [`Poll::Pending`] and cleared once it completes, so a stream that is not being polled
-    /// does not time out. The timeout is inherited by sub-streams returned by [`Self::index`]
+    /// [`Poll::Pending`] and cleared once a read completes or times out. Dropping a pending
+    /// read does not clear it, so the next read fails as soon as the deadline elapses unless
+    /// data arrives first. The timeout is inherited by sub-streams returned by [`Self::index`]
     /// after this call, including those backing async `stream` and `future` values, which must
     /// therefore not idle for longer than `timeout`; sub-streams indexed before this call are
     /// unaffected.
@@ -488,6 +489,7 @@ impl AsyncRead for Incoming {
                 .deadline
                 .get_or_insert_with(|| Box::pin(tokio::time::sleep(timeout)));
             ready!(sleep.as_mut().poll(cx));
+            *this.deadline = None;
             trace!("read timed out");
             return Poll::Ready(Err(std::io::Error::new(
                 std::io::ErrorKind::TimedOut,
@@ -576,9 +578,9 @@ impl Outgoing {
     /// not accept any buffered data within `timeout`, after which the result is passed to
     /// `on_egress` and all subsequent writes, flushes and shutdowns on this stream fail with
     /// the same error. Flushes and shutdowns do not wait for the background task, so they only
-    /// report a timeout that has already occurred and data buffered before it is lost. The
-    /// timeout is shared by all sub-streams of this connection, including those returned by
-    /// [`Self::index`].
+    /// report a timeout that has already occurred and data buffered before it is lost. Other
+    /// background write errors are only reported by subsequent writes. The timeout is shared
+    /// by all sub-streams of this connection, including those returned by [`Self::index`].
     #[must_use]
     pub fn with_timeout(self, timeout: Duration) -> Self {
         let waker = {
@@ -646,18 +648,24 @@ impl AsyncWrite for Outgoing {
 
     #[instrument(level = "trace", skip_all, fields(path = ?self.path), ret(level = "trace"))]
     fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        Poll::Ready(self.err.get().map_or(Ok(()), |err| Err(copy_io_error(err))))
+        Poll::Ready(timeout_error(&self.err).map_or(Ok(()), Err))
     }
 
     #[instrument(level = "trace", skip_all, fields(path = ?self.path), ret(level = "trace"))]
     fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        Poll::Ready(self.err.get().map_or(Ok(()), |err| Err(copy_io_error(err))))
+        Poll::Ready(timeout_error(&self.err).map_or(Ok(()), Err))
     }
+}
+
+fn timeout_error(err: &std::sync::OnceLock<std::io::Error>) -> Option<std::io::Error> {
+    err.get()
+        .filter(|err| err.kind() == std::io::ErrorKind::TimedOut)
+        .map(copy_io_error)
 }
 
 fn egress_error(
     err: &std::sync::OnceLock<std::io::Error>,
-    e: impl Into<Box<dyn std::error::Error + Send + Sync>>,
+    e: impl Into<Box<dyn core::error::Error + Send + Sync>>,
 ) -> std::io::Error {
     err.get().map_or_else(
         || std::io::Error::new(std::io::ErrorKind::BrokenPipe, e),
@@ -875,6 +883,23 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn incoming_read_after_timeout() {
+        let (mut tx, rx) = tokio::io::duplex(16);
+        let mut rx =
+            Incoming::new(rx, [[]; 0], |_, _| async {}).with_timeout(Duration::from_millis(50));
+        let mut buf = [0; 1];
+        let err = rx.read_exact(&mut buf).await.unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::TimedOut);
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            tx.write_all(&[0x00, 0x01, 0x2a]).await.unwrap();
+            tx
+        });
+        rx.read_exact(&mut buf).await.unwrap();
+        assert_eq!(buf, [0x2a]);
     }
 
     #[test_log::test(tokio::test)]
