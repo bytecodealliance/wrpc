@@ -1889,7 +1889,16 @@ version = "0.14.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7251356ef8cb7aec833ddf598c6cb24d17b689d20b993f9d11a3d764e34e6458"
 dependencies = [
- "logos-derive",
+ "logos-derive 0.14.4",
+]
+
+[[package]]
+name = "logos"
+version = "0.16.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eb2c55a318a87600ea870ff8c2012148b44bf18b74fad48d0f835c38c7d07c5f"
+dependencies = [
+ "logos-derive 0.16.1",
 ]
 
 [[package]]
@@ -1908,12 +1917,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "logos-codegen"
+version = "0.16.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "58b3ffaa284e1350d017a57d04ada118c4583cf260c8fb01e0fe28a2e9cf8970"
+dependencies = [
+ "fnv",
+ "proc-macro2",
+ "quote",
+ "regex-automata",
+ "regex-syntax",
+ "syn 2.0.119",
+]
+
+[[package]]
 name = "logos-derive"
 version = "0.14.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "24fb722b06a9dc12adb0963ed585f19fc61dc5413e6a9be9422ef92c091e731d"
 dependencies = [
- "logos-codegen",
+ "logos-codegen 0.14.4",
+]
+
+[[package]]
+name = "logos-derive"
+version = "0.16.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "52d3a9855747c17eaf4383823f135220716ab49bea5fbea7dd42cc9a92f8aa31"
+dependencies = [
+ "logos-codegen 0.16.1",
 ]
 
 [[package]]
@@ -3995,9 +4027,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "95f32f2123fc8790a3796a3648aaab8628daca0363826dce1c03bcc3a3553456"
 dependencies = [
  "anyhow",
- "logos",
+ "logos 0.14.4",
  "thiserror 2.0.20",
  "wit-parser 0.258.3",
+]
+
+[[package]]
+name = "wasm-wave"
+version = "0.261.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2c3077ed029568755b5d3557bc27688360f7daa19cb182aa32ff2a1035c818d0"
+dependencies = [
+ "logos 0.16.1",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -4081,7 +4123,7 @@ dependencies = [
  "smallvec",
  "target-lexicon",
  "wasm-encoder 0.258.3",
- "wasm-wave",
+ "wasm-wave 0.258.3",
  "wasmparser 0.258.3",
  "wasmtime-environ",
  "wasmtime-internal-cache",
@@ -5023,7 +5065,7 @@ dependencies = [
  "tokio-util",
  "tracing",
  "wasm-tokio",
- "wasm-wave",
+ "wasm-wave 0.261.0",
  "wasmtime",
  "wrpc-pack",
  "wrpc-transport",
