@@ -483,6 +483,24 @@ test("element data arriving ahead of a large chunk is kept", { timeout: 5000 }, 
   await done;
 });
 
+test("more data than a sub-stream buffers arriving ahead of its declaration is kept", { timeout: 1000 }, async () => {
+  const n = 40;
+  const frames = [];
+  const peer = new Mux({ read: async () => null, write: (bytes) => void frames.push(bytes) });
+  await peer.outgoing([]).write(Uint8Array.of(0));
+  for (let i = 0; i < n; i++) await peer.outgoing([0, 0]).write(Uint8Array.of(1, i & 0xff));
+  await peer.outgoing([0, 0]).write(Uint8Array.of(0));
+  await peer.outgoing([0]).write(Uint8Array.of(1, 0));
+  await peer.outgoing([0]).write(Uint8Array.of(0));
+  const transport = { read: async () => frames.shift() ?? null, write: () => {} };
+  const { results, done } = await invoke(transport, STREAMS, "get", [], [], [t.stream(t.stream(t.u8))]);
+  const inner = [];
+  for await (const chunk of results[0]) inner.push(...chunk);
+  assert.equal(inner.length, 1);
+  assert.deepEqual(await collect(inner[0]), Array.from({ length: n }, (_, i) => i & 0xff));
+  await done;
+});
+
 test("data for a sub-stream the reply does not carry fails it", { timeout: 1000 }, async () => {
   const frames = [];
   const peer = new Mux({ read: async () => null, write: (bytes) => void frames.push(bytes) });
