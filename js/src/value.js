@@ -438,7 +438,7 @@ function decodeScalar(r, ty) {
     case "u16":
       return Number(r.varU(16));
     case "u32":
-      return Number(r.varU(32));
+      return readVarU32(r);
     case "s16":
       return Number(r.varS(16));
     case "s32":
@@ -460,7 +460,7 @@ function decodeScalar(r, ty) {
     case "string":
       return r.name();
     case "enum": {
-      const i = Number(r.varU(32));
+      const i = readVarU32(r);
       const name = ty.names[i];
       if (name === undefined) throw new RangeError(`unknown enum discriminant ${i}`);
       return name;
@@ -476,7 +476,7 @@ function decodeScalar(r, ty) {
     }
     case "own":
     case "borrow":
-      return r.take(Number(r.varU(32))).slice();
+      return r.take(readVarU32(r)).slice();
     default:
       throw new Error(`decoding \`${/** @type {any} */ (ty).kind}\` is not supported`);
   }

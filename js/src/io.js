@@ -175,8 +175,7 @@ export class Reader {
 
   /** Read a `core:name`. @returns {string} */
   name() {
-    const len = Number(this.varU(32));
-    return textDecoder.decode(this.take(len));
+    return textDecoder.decode(this.take(readVarU32(this)));
   }
 }
 
