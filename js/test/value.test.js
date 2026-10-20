@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import * as t from "../src/types.js";
-import { Reader, Writer } from "../src/io.js";
-import { encodeValue, decodeValue } from "../src/value.js";
+import { AsyncReader, Chan, Reader, Writer } from "../src/io.js";
+import { encodeValue, decodeSteps, decodeValue } from "../src/value.js";
 
 /** Encode a single value against `ty` to bytes. */
 function encode(ty, v) {
@@ -204,4 +204,78 @@ test("the wasi:keyvalue store types", () => {
   roundtrip(get, { tag: "ok", val: undefined });
   roundtrip(get, { tag: "err", val: { tag: "no-such-store" } });
   assert.deepEqual(decode(set, encode(set, { tag: "ok" })), { tag: "ok", val: undefined });
+});
+
+test("a bounded channel makes senders wait for room", async () => {
+  const chan = new Chan(1);
+  assert.equal(await chan.send(1), true);
+  let sent = false;
+  const sending = chan.send(2).then((ok) => (sent = ok));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(sent, false);
+  assert.deepEqual(await chan.next(), { value: 1, done: false });
+  assert.equal(await sending, true);
+  chan.close();
+  assert.equal(await chan.send(3), false);
+  assert.deepEqual(await chan.next(), { value: 2, done: false });
+  assert.deepEqual(await chan.next(), { value: undefined, done: true });
+});
+
+test("leaving a loop over a channel early cancels it", async () => {
+  const chan = new Chan();
+  let cancelled = false;
+  chan.onCancel(() => (cancelled = true));
+  chan.push(1);
+  chan.push(2);
+  for await (const v of chan) {
+    assert.equal(v, 1);
+    break;
+  }
+  assert.ok(cancelled);
+  assert.deepEqual(await chan.next(), { value: undefined, done: true });
+  assert.equal(await chan.send(3), false);
+});
+
+test("cancelling a failed channel keeps its error", async () => {
+  const chan = new Chan();
+  chan.close(new Error("boom"));
+  chan.cancel(new Error("discarded"));
+  await assert.rejects(chan.next(), /boom/);
+});
+
+test("values decode resumably across chunk boundaries", async () => {
+  const strings = Array.from({ length: 100 }, (_, i) => `s${i}`.repeat(i % 5));
+  for (const [ty, v] of [
+    [t.list(t.string), strings],
+    [
+      t.list(t.tuple(t.string, t.u64, t.f64, t.char)),
+      strings.map((s, i) => [s, BigInt(i) << 40n, i / 3, "é"]),
+    ],
+  ]) {
+    const chunks = Array.from(encode(ty, v), (b) => Uint8Array.of(b));
+    const ar = new AsyncReader(async () => chunks.shift() ?? null);
+    assert.deepEqual(await ar.decode((r) => decodeSteps(r, ty)), v);
+  }
+});
+
+test("a channel drops its cancel hooks once its end is received", async () => {
+  for (const consume of [
+    async (chan) => {
+      chan.push(1);
+      chan.close();
+      for await (const v of chan) assert.equal(v, 1);
+    },
+    async (chan) => {
+      const end = chan.next();
+      chan.close();
+      await end;
+    },
+  ]) {
+    const chan = new Chan();
+    let cancelled = false;
+    chan.onCancel(() => (cancelled = true));
+    await consume(chan);
+    chan.cancel();
+    assert.equal(cancelled, false);
+  }
 });

@@ -23,10 +23,23 @@
 //   flags               -> { [name]: boolean }
 //   own<R> / borrow<R>  -> Uint8Array (the opaque handle bytes)
 
-import { Chan, Reader, Writer, textEncoder, textDecoder } from "./io.js";
+import {
+  Chan,
+  Reader,
+  UNEXPECTED_EOF,
+  Writer,
+  atomic,
+  isUnexpectedEof,
+  readVarU32,
+  textEncoder,
+  textDecoder,
+} from "./io.js";
 
 /** @typedef {import("./index.d.ts").Type} Type */
 /** @typedef {import("./index.d.ts").Value} Value */
+
+/** The number of received chunks a pending `stream` buffers. */
+const STREAM_CAPACITY = 128;
 
 /** @param {Type} ty */
 const isBytes = (ty) => ty.kind === "list" && ty.elem.kind === "u8";
@@ -75,6 +88,18 @@ function checkFloat(v, kind) {
   return v;
 }
 
+/** The kinds of the types whose values contain other values. */
+const COMPOSITE = new Set([
+  "list",
+  "tuple",
+  "record",
+  "option",
+  "result",
+  "variant",
+  "future",
+  "stream",
+]);
+
 /**
  * Decode a single stream/list chunk of `n` elements of type `elem` from `r`.
  * `stream<u8>` chunks are returned as a `Uint8Array`; all others as an array.
@@ -83,12 +108,29 @@ function checkFloat(v, kind) {
  * @param {number} n
  * @param {import("./index.d.ts").DecodeDeferred[]} [sink]
  * @param {number[]} [path]
+ * @returns {Generator<number, any, void>}
  */
-function readChunk(r, elem, n, sink, path) {
-  if (elem.kind === "u8") return r.take(n).slice();
+export function* readChunk(r, elem, n, sink, path) {
+  if (elem.kind === "u8") return yield* atomic(r, (r) => r.take(n).slice());
   const out = [];
-  for (let i = 0; i < n; i++) out.push(decodeValue(r, elem, sink, childPath(sink, path, i)));
-  return out;
+  if (COMPOSITE.has(elem.kind)) {
+    for (let i = 0; i < n; i++) {
+      out.push(yield* decodeSteps(r, elem, sink, childPath(sink, path, i)));
+    }
+    return out;
+  }
+  // Resume from the last whole element rather than one generator step per element.
+  for (;;) {
+    let pos = r.pos;
+    try {
+      for (; out.length < n; pos = r.pos) out.push(decodeScalar(r, elem));
+      return out;
+    } catch (err) {
+      if (!isUnexpectedEof(err)) throw err;
+      r.pos = pos;
+      yield r.need - pos;
+    }
+  }
 }
 
 /**
@@ -273,7 +315,9 @@ export function encodeValue(w, ty, v, sink, path) {
  * machinery), a placeholder is returned — a `Promise` for a `future`, an async
  * iterable of chunks for a `stream` — and a descriptor recording the relative
  * `path` and the placeholder's resolver/queue is appended to `sink`. Without a
- * `sink`, encountering one throws.
+ * `sink`, encountering one throws. A `stream` sent inline as a single ready
+ * chunk is decoded either way, and recorded in `sink` as `inline` if its
+ * elements carry pending values.
  *
  * @param {Reader} r
  * @param {Type} ty
@@ -282,6 +326,106 @@ export function encodeValue(w, ty, v, sink, path) {
  * @returns {any}
  */
 export function decodeValue(r, ty, sink, path) {
+  const step = decodeSteps(r, ty, sink, path).next();
+  if (!step.done) throw new RangeError(UNEXPECTED_EOF);
+  return step.value;
+}
+
+/**
+ * {@link decodeValue} as a resumable decoder: when `r` runs out, it yields the
+ * number of bytes it needs from `r.pos` on, and continues once `r` holds them.
+ * @param {Reader} r
+ * @param {Type} ty
+ * @param {import("./index.d.ts").DecodeDeferred[]} [sink]
+ * @param {number[]} [path]
+ * @returns {Generator<number, any, void>}
+ */
+export function* decodeSteps(r, ty, sink, path) {
+  switch (ty.kind) {
+    case "list":
+      return yield* readChunk(r, ty.elem, yield* atomic(r, readVarU32), sink, path);
+    case "tuple": {
+      const out = [];
+      for (let i = 0; i < ty.elems.length; i++) {
+        out.push(yield* decodeSteps(r, ty.elems[i], sink, childPath(sink, path, i)));
+      }
+      return out;
+    }
+    case "record": {
+      /** @type {Record<string, any>} */
+      const out = {};
+      for (let i = 0; i < ty.fields.length; i++) {
+        const { name, ty: fty } = ty.fields[i];
+        out[name] = yield* decodeSteps(r, fty, sink, childPath(sink, path, i));
+      }
+      return out;
+    }
+    case "option": {
+      const nested = ty.some.kind === "option";
+      if ((yield* atomic(r, (r) => r.u8())) === 0) return nested ? { tag: "none" } : undefined;
+      const val = yield* decodeSteps(r, ty.some, sink, path);
+      return nested ? { tag: "some", val } : val;
+    }
+    case "result": {
+      const err = (yield* atomic(r, (r) => r.u8())) !== 0;
+      const vty = err ? ty.err : ty.ok;
+      return {
+        tag: err ? "err" : "ok",
+        val: vty ? yield* decodeSteps(r, vty, sink, path) : undefined,
+      };
+    }
+    case "variant": {
+      const i = yield* atomic(r, readVarU32);
+      const c = ty.cases[i];
+      if (!c) throw new RangeError(`unknown variant discriminant ${i}`);
+      return c.ty ? { tag: c.name, val: yield* decodeSteps(r, c.ty, sink, path) } : { tag: c.name };
+    }
+    case "future": {
+      const ready = (yield* atomic(r, (r) => r.u8())) !== 0;
+      if (ready) return Promise.resolve(yield* decodeSteps(r, ty.some, sink, path));
+      if (!sink) throw new Error(asyncRequired(ty.kind));
+      /** @type {(value: any) => void} */
+      let resolve = () => {};
+      /** @type {(err: unknown) => void} */
+      let reject = () => {};
+      const promise = new Promise((res, rej) => {
+        resolve = res;
+        reject = rej;
+      });
+      // The failure also surfaces through `done`, so an ignored future must not be unhandled.
+      promise.catch(() => {});
+      sink.push({ path: path ?? [], kind: "future", ty: ty.some, resolve, reject });
+      return promise;
+    }
+    case "stream": {
+      const n = yield* atomic(r, readVarU32);
+      if (n > 0) {
+        // A stream sent inline as a single ready chunk.
+        const before = sink?.length ?? 0;
+        const chunk = yield* readChunk(r, ty.elem, n, sink, path);
+        const q = new Chan();
+        q.push(chunk);
+        q.close();
+        if (sink && sink.length > before) sink.push({ path: path ?? [], kind: "inline", queue: q });
+        return q;
+      }
+      if (!sink) throw new Error(asyncRequired(ty.kind));
+      const queue = new Chan(STREAM_CAPACITY);
+      sink.push({ path: path ?? [], kind: "stream", ty: ty.elem, queue });
+      return queue;
+    }
+    default:
+      return yield* atomic(r, (r) => decodeScalar(r, ty));
+  }
+}
+
+/**
+ * Decode a value of a type that is not {@link COMPOSITE} from `r`.
+ * @param {Reader} r
+ * @param {Type} ty
+ * @returns {any}
+ */
+function decodeScalar(r, ty) {
   switch (ty.kind) {
     case "bool":
       return r.u8() !== 0;
@@ -315,71 +459,11 @@ export function decodeValue(r, ty, sink, path) {
     }
     case "string":
       return r.name();
-    case "list":
-      return readChunk(r, ty.elem, Number(r.varU(32)), sink, path);
-    case "tuple":
-      return ty.elems.map((et, i) => decodeValue(r, et, sink, childPath(sink, path, i)));
-    case "record": {
-      /** @type {Record<string, any>} */
-      const out = {};
-      ty.fields.forEach(({ name, ty: fty }, i) => {
-        out[name] = decodeValue(r, fty, sink, childPath(sink, path, i));
-      });
-      return out;
-    }
-    case "option": {
-      const nested = ty.some.kind === "option";
-      if (r.u8() === 0) return nested ? { tag: "none" } : undefined;
-      const val = decodeValue(r, ty.some, sink, path);
-      return nested ? { tag: "some", val } : val;
-    }
-    case "result":
-      return r.u8() !== 0
-        ? { tag: "err", val: ty.err ? decodeValue(r, ty.err, sink, path) : undefined }
-        : { tag: "ok", val: ty.ok ? decodeValue(r, ty.ok, sink, path) : undefined };
     case "enum": {
       const i = Number(r.varU(32));
       const name = ty.names[i];
       if (name === undefined) throw new RangeError(`unknown enum discriminant ${i}`);
       return name;
-    }
-    case "variant": {
-      const i = Number(r.varU(32));
-      const c = ty.cases[i];
-      if (!c) throw new RangeError(`unknown variant discriminant ${i}`);
-      return c.ty ? { tag: c.name, val: decodeValue(r, c.ty, sink, path) } : { tag: c.name };
-    }
-    case "future": {
-      const ready = r.u8() !== 0;
-      if (ready) return Promise.resolve(decodeValue(r, ty.some, sink, path));
-      if (!sink) throw new Error(asyncRequired(ty.kind));
-      /** @type {(value: any) => void} */
-      let resolve = () => {};
-      /** @type {(err: unknown) => void} */
-      let reject = () => {};
-      const promise = new Promise((res, rej) => {
-        resolve = res;
-        reject = rej;
-      });
-      // The failure also surfaces through `done`, so an ignored future must not be unhandled.
-      promise.catch(() => {});
-      sink.push({ path: path ?? [], kind: "future", ty: ty.some, resolve, reject });
-      return promise;
-    }
-    case "stream": {
-      const n = Number(r.varU(32));
-      if (n > 0) {
-        // A stream sent inline as a single ready chunk.
-        const chunk = readChunk(r, ty.elem, n, sink, path);
-        const q = new Chan();
-        q.push(chunk);
-        q.close();
-        return q;
-      }
-      if (!sink) throw new Error(asyncRequired(ty.kind));
-      const queue = new Chan();
-      sink.push({ path: path ?? [], kind: "stream", ty: ty.elem, queue });
-      return queue;
     }
     case "flags": {
       const bytes = r.take(Math.ceil(Math.max(ty.names.length, 1) / 8));
@@ -395,6 +479,32 @@ export function decodeValue(r, ty, sink, path) {
       return r.take(Number(r.varU(32))).slice();
     default:
       throw new Error(`decoding \`${/** @type {any} */ (ty).kind}\` is not supported`);
+  }
+}
+
+/**
+ * Whether values of `ty` can carry pending `stream`/`future` values.
+ * @param {Type} ty @returns {boolean}
+ */
+export function hasAsync(ty) {
+  switch (ty.kind) {
+    case "future":
+    case "stream":
+      return true;
+    case "list":
+      return hasAsync(ty.elem);
+    case "option":
+      return hasAsync(ty.some);
+    case "result":
+      return (!!ty.ok && hasAsync(ty.ok)) || (!!ty.err && hasAsync(ty.err));
+    case "tuple":
+      return ty.elems.some(hasAsync);
+    case "record":
+      return ty.fields.some((f) => hasAsync(f.ty));
+    case "variant":
+      return ty.cases.some((c) => !!c.ty && hasAsync(c.ty));
+    default:
+      return false;
   }
 }
 
