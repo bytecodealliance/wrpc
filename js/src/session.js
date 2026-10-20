@@ -11,7 +11,7 @@
 
 import { Reader, Writer, isUnexpectedEof } from "./io.js";
 import { Mux, PROTOCOL } from "./mux.js";
-import { decodeValue, encodeValue } from "./value.js";
+import { decodeValue, encodeValue, toBytes } from "./value.js";
 
 /** @typedef {import("./index.d.ts").Type} Type */
 /** @typedef {import("./mux.js").Transport} Transport */
@@ -50,13 +50,6 @@ async function* streamChunks(src, elem) {
   throw new TypeError("expected a `stream` source: an iterable or async-iterable of chunks");
 }
 
-/** @param {any} chunk @param {Type} elem @returns {any[]} */
-function chunkItems(chunk, elem) {
-  if (elem.kind === "u8") return Array.from(chunk);
-  if (!Array.isArray(chunk)) throw new TypeError("expected an array for a `stream` chunk");
-  return chunk;
-}
-
 /**
  * Transmit one deferred value descriptor over `out`.
  * @param {Outgoing} out
@@ -87,17 +80,17 @@ async function writeStream(out, elem, src) {
   for await (const chunk of streamChunks(src, elem)) {
     const w = new Writer();
     if (elem.kind === "u8") {
-      const bytes = chunk instanceof Uint8Array ? chunk : Uint8Array.from(chunk);
+      const bytes = toBytes(chunk);
       // An empty chunk is indistinguishable from the stream terminator.
       if (bytes.length === 0) continue;
       w.varU(bytes.length);
       w.bytes(bytes);
       base += bytes.length;
     } else {
-      const items = chunkItems(chunk, elem);
-      if (items.length === 0) continue;
-      w.varU(items.length);
-      items.forEach((item, k) => {
+      if (!Array.isArray(chunk)) throw new TypeError("expected an array for a `stream` chunk");
+      if (chunk.length === 0) continue;
+      w.varU(chunk.length);
+      chunk.forEach((item, k) => {
         /** @type {any[]} */
         const sink = [];
         encodeValue(w, elem, item, sink, []);
@@ -107,7 +100,7 @@ async function writeStream(out, elem, src) {
           tasks.push(task);
         }
       });
-      base += items.length;
+      base += chunk.length;
     }
     await out.write(w.finish());
   }
@@ -263,14 +256,14 @@ export async function invoke(transport, instance, func, paramTypes, args, result
   if (args.length !== paramTypes.length) {
     throw new RangeError(`expected ${paramTypes.length} argument(s), got ${args.length}`);
   }
-  const mux = new Mux(transport);
-  await mux.writeHeader(instance, func);
-  mux.start();
-
   const w = new Writer();
   /** @type {any[]} */
   const psink = [];
   paramTypes.forEach((ty, i) => encodeValue(w, ty, args[i], psink, [i]));
+
+  const mux = new Mux(transport);
+  await mux.writeHeader(instance, func);
+  mux.start();
   await mux.outgoing([]).write(w.finish());
   const tx = Promise.all(psink.map((e) => writeDeferred(mux.outgoing(e.path), e))).then(() =>
     mux.closeWrite(),
@@ -342,6 +335,9 @@ export async function accept(transport) {
      * @param {any[]} values
      */
     async sendResults(resultTypes, values) {
+      if (values.length !== resultTypes.length) {
+        throw new RangeError(`expected ${resultTypes.length} result(s), got ${values.length}`);
+      }
       const w = new Writer();
       /** @type {any[]} */
       const sink = [];

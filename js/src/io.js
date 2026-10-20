@@ -4,7 +4,7 @@
 // definition encoding.
 
 const textEncoder = new TextEncoder();
-const textDecoder = new TextDecoder();
+const textDecoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 
 /** A growable little-endian byte writer. */
 export class Writer {

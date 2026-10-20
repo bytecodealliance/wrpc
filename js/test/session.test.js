@@ -197,6 +197,37 @@ test("frame data is routed as it arrives", async () => {
   await assert.rejects(reader.take(1), /unexpected end of input/);
 });
 
+test("invalid arguments fail before anything is written", async () => {
+  const writes = [];
+  const transport = { read: async () => null, write: (bytes) => void writes.push(bytes) };
+  await assert.rejects(invoke(transport, STREAMS, "get", [t.u32], [-1], []), /out of range/);
+  assert.deepEqual(writes, []);
+});
+
+test("stream<u8> chunks must be bytes", async () => {
+  const transport = {
+    read: () => new Promise((resolve) => setTimeout(() => resolve(null), 10)),
+    write: () => {},
+  };
+  await assert.rejects(
+    invoke(transport, STREAMS, "echo", [t.stream(t.u8)], [[1, 2, 3]], [t.u8]),
+    /expected `Uint8Array`/,
+  );
+});
+
+test("sending a mismatched number of results is rejected", async () => {
+  const [client, server] = duplexPair();
+  const serving = (async () => {
+    const inv = await accept(server);
+    await inv.receiveParams([]);
+    await assert.rejects(inv.sendResults([t.string], []), /expected 1 result/);
+    await inv.sendResults([t.string], ["ok"]);
+  })();
+  const { results, done } = await invoke(client, STREAMS, "get", [], [], [t.string]);
+  assert.deepEqual(results, ["ok"]);
+  await Promise.all([done, serving]);
+});
+
 const futures = "wrpc-test:async/futures";
 const fut = t.future(t.string);
 
