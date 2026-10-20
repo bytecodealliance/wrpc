@@ -14,9 +14,11 @@ import { AsyncReader, Chan, UNEXPECTED_EOF, Writer, atomic, readVarU32 } from ".
 export const PROTOCOL = 0x00;
 
 /**
- * The number of inbound data chunks buffered per sub-stream. Once a
+ * The number of inbound data chunks buffered per expected sub-stream. Once a
  * sub-stream's buffer is full, reading from the transport waits for it to be
- * consumed.
+ * consumed. Data for a sub-stream not yet declared is buffered without bound,
+ * since nothing consumes it before the frame declaring it, behind it on the
+ * transport, is read.
  */
 const CAPACITY = 16;
 
@@ -264,7 +266,7 @@ export class Mux {
     if (found === null) return undefined;
     if (found instanceof Chan) return found;
     let pending = found.at.pending?.get(found.i)?.get(key(path));
-    if (!pending) attach(found, (pending = { path, chan: new Chan(CAPACITY), empty }));
+    if (!pending) attach(found, (pending = { path, chan: new Chan(), empty }));
     pending.empty &&= empty;
     return pending.chan;
   }
