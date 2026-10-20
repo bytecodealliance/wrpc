@@ -112,10 +112,10 @@ export class Mux {
     for (;;) {
       // Stop cleanly at a frame boundary once the peer closes the stream.
       if (m.remaining().length === 0 && !(await m.more())) break;
-      const depth = Number(await m.varU());
+      const depth = Number(await m.varU(32));
       const path = [];
-      for (let i = 0; i < depth; i++) path.push(Number(await m.varU()));
-      let len = Number(await m.varU());
+      for (let i = 0; i < depth; i++) path.push(Number(await m.varU(32)));
+      let len = Number(await m.varU(32));
       while (len > 0) {
         if (m.remaining().length === 0 && !(await m.more())) throw new RangeError(UNEXPECTED_EOF);
         const data = m.remaining().slice(0, len);

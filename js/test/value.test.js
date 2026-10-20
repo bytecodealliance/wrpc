@@ -65,6 +65,17 @@ test("encoding rejects values of the wrong JavaScript type", () => {
   assert.throws(() => encode(t.list(t.u8), [256]), /out of range/);
 });
 
+test("integer decoding rejects out-of-range and overlong encodings", () => {
+  assert.throws(() => decode(t.u32, Uint8Array.of(0x80, 0x80, 0x80, 0x80, 0x10)), /overflows/);
+  assert.throws(() => decode(t.u32, Uint8Array.of(0x80, 0x80, 0x80, 0x80, 0x80, 0x00)), /overflows/);
+  assert.throws(() => decode(t.u16, Uint8Array.of(0x80, 0x80, 0x04)), /overflows/);
+  assert.throws(() => decode(t.s8, new Uint8Array(0)), /unexpected end of input/);
+  assert.throws(() => decode(t.s16, Uint8Array.of(0x80, 0x80, 0x02)), /overflows/);
+  assert.throws(() => decode(t.s64, new Uint8Array(11).fill(0xff)), /overflows/);
+  assert.equal(decode(t.u32, Uint8Array.of(0xff, 0xff, 0xff, 0xff, 0x0f)), 4294967295);
+  assert.equal(decode(t.s32, Uint8Array.of(0x80, 0x80, 0x80, 0x80, 0x78)), -2147483648);
+});
+
 test("64-bit integers are bigint", () => {
   roundtrip(t.u64, 0n);
   roundtrip(t.u64, 18446744073709551615n);

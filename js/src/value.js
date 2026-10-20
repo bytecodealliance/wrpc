@@ -289,15 +289,17 @@ export function decodeValue(r, ty, sink, path) {
       return b >= 0x80 ? b - 0x100 : b;
     }
     case "u16":
+      return Number(r.varU(16));
     case "u32":
-      return Number(r.varU());
+      return Number(r.varU(32));
     case "s16":
+      return Number(r.varS(16));
     case "s32":
-      return Number(r.varS());
+      return Number(r.varS(32));
     case "u64":
-      return r.varU();
+      return r.varU(64);
     case "s64":
-      return r.varS();
+      return r.varS(64);
     case "f32":
       return new DataView(r.take(4).slice().buffer).getFloat32(0, true);
     case "f64":
@@ -311,7 +313,7 @@ export function decodeValue(r, ty, sink, path) {
     case "string":
       return r.name();
     case "list":
-      return readChunk(r, ty.elem, Number(r.varU()), sink, path);
+      return readChunk(r, ty.elem, Number(r.varU(32)), sink, path);
     case "tuple":
       return ty.elems.map((et, i) => decodeValue(r, et, sink, childPath(sink, path, i)));
     case "record": {
@@ -329,13 +331,13 @@ export function decodeValue(r, ty, sink, path) {
         ? { tag: "err", val: ty.err ? decodeValue(r, ty.err, sink, path) : undefined }
         : { tag: "ok", val: ty.ok ? decodeValue(r, ty.ok, sink, path) : undefined };
     case "enum": {
-      const i = Number(r.varU());
+      const i = Number(r.varU(32));
       const name = ty.names[i];
       if (name === undefined) throw new RangeError(`unknown enum discriminant ${i}`);
       return name;
     }
     case "variant": {
-      const i = Number(r.varU());
+      const i = Number(r.varU(32));
       const c = ty.cases[i];
       if (!c) throw new RangeError(`unknown variant discriminant ${i}`);
       return c.ty ? { tag: c.name, val: decodeValue(r, c.ty, sink, path) } : { tag: c.name };
@@ -358,7 +360,7 @@ export function decodeValue(r, ty, sink, path) {
       return promise;
     }
     case "stream": {
-      const n = Number(r.varU());
+      const n = Number(r.varU(32));
       if (n > 0) {
         // A stream sent inline as a single ready chunk.
         const chunk = readChunk(r, ty.elem, n, sink, path);
@@ -383,7 +385,7 @@ export function decodeValue(r, ty, sink, path) {
     }
     case "own":
     case "borrow":
-      return r.take(Number(r.varU())).slice();
+      return r.take(Number(r.varU(32))).slice();
     default:
       throw new Error(`decoding \`${/** @type {any} */ (ty).kind}\` is not supported`);
   }

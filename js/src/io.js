@@ -6,6 +6,12 @@
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 
+/** The message thrown by readers when the input is exhausted mid-value. */
+export const UNEXPECTED_EOF = "unexpected end of input";
+
+/** @param {string} sign @param {number} bits */
+const overflow = (sign, bits) => new RangeError(`LEB128 integer overflows ${sign} ${bits}-bit range`);
+
 /** A growable little-endian byte writer. */
 export class Writer {
   constructor() {
@@ -120,42 +126,49 @@ export class Reader {
     return slice;
   }
 
-  /** Read an unsigned LEB128 integer. @returns {bigint} */
-  varU() {
+  /**
+   * Read an unsigned LEB128 integer of at most `bits` bits.
+   * @param {number} [bits] @returns {bigint}
+   */
+  varU(bits = 64) {
     let result = 0n;
-    let shift = 0n;
+    let shift = 0;
     let byte;
     do {
+      if (shift >= bits) throw overflow("unsigned", bits);
       byte = this.u8();
-      result |= BigInt(byte & 0x7f) << shift;
-      shift += 7n;
+      result |= BigInt(byte & 0x7f) << BigInt(shift);
+      shift += 7;
     } while (byte & 0x80);
+    if (result >> BigInt(bits)) throw overflow("unsigned", bits);
     return result;
   }
 
-  /** Read a signed LEB128 integer. @returns {bigint} */
-  varS() {
+  /**
+   * Read a signed LEB128 integer of at most `bits` bits.
+   * @param {number} [bits] @returns {bigint}
+   */
+  varS(bits = 64) {
     let result = 0n;
-    let shift = 0n;
+    let shift = 0;
     let byte;
     do {
+      if (shift >= bits) throw overflow("signed", bits);
       byte = this.u8();
-      result |= BigInt(byte & 0x7f) << shift;
-      shift += 7n;
+      result |= BigInt(byte & 0x7f) << BigInt(shift);
+      shift += 7;
     } while (byte & 0x80);
-    if (byte & 0x40) result |= -1n << shift; // sign-extend
+    if (byte & 0x40) result |= -1n << BigInt(shift); // sign-extend
+    if (BigInt.asIntN(bits, result) !== result) throw overflow("signed", bits);
     return result;
   }
 
   /** Read a `core:name`. @returns {string} */
   name() {
-    const len = Number(this.varU());
+    const len = Number(this.varU(32));
     return textDecoder.decode(this.take(len));
   }
 }
-
-/** The message thrown by readers when the input is exhausted mid-value. */
-export const UNEXPECTED_EOF = "unexpected end of input";
 
 /** @param {unknown} err @returns {boolean} whether `err` is an end-of-input underflow */
 export function isUnexpectedEof(err) {
@@ -292,22 +305,27 @@ export class AsyncReader {
     return slice;
   }
 
-  /** Read an unsigned LEB128 integer. @returns {Promise<bigint>} */
-  async varU() {
+  /**
+   * Read an unsigned LEB128 integer of at most `bits` bits.
+   * @param {number} [bits] @returns {Promise<bigint>}
+   */
+  async varU(bits = 64) {
     let result = 0n;
-    let shift = 0n;
+    let shift = 0;
     let byte;
     do {
+      if (shift >= bits) throw overflow("unsigned", bits);
       byte = await this.u8();
-      result |= BigInt(byte & 0x7f) << shift;
-      shift += 7n;
+      result |= BigInt(byte & 0x7f) << BigInt(shift);
+      shift += 7;
     } while (byte & 0x80);
+    if (result >> BigInt(bits)) throw overflow("unsigned", bits);
     return result;
   }
 
   /** Read a `core:name`. @returns {Promise<string>} */
   async name() {
-    const len = Number(await this.varU());
+    const len = Number(await this.varU(32));
     return textDecoder.decode(await this.take(len));
   }
 }
