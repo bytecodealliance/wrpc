@@ -1,4 +1,4 @@
-// The wRPC client for JavaScript: a transport-agnostic, component-native RPC
+// wRPC for JavaScript: a transport-agnostic, component-native RPC
 // implementation of the wRPC wire format and its mandatory framing.
 //
 // `types` (re-exported as `t`) builds the structural type tree; `value`
