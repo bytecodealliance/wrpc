@@ -97,6 +97,10 @@ The server MUST listen on a TCP socket and client MUST establish a new connectio
 
 The write side of the stream MUST be shutdown as soon as data transfer is done, for example, once the client is done sending encoded parameter buffer and all asynchronous parameters, it MUST shutdown the write side of the stream to signal EOF to the server.
 
+This mapping is deliberate: a TCP connection provides exactly one byte stream and no stream-level multiplexing, so the TCP transport does not multiplex invocations over a connection itself. Since the client shuts down its write side first, the client performs the active close and holds a `TIME_WAIT` socket per invocation, which bounds the sustained invocation rate from a single client to a single server address by the size of the client's ephemeral port range.
+
+Peers that need many concurrent invocations over a single long-lived connection, or per-invocation metadata, SHOULD use a transport that natively multiplexes streams, such as [QUIC](#quic), [WebTransport](#webtransport) or [HTTP](#http) over HTTP/2.
+
 ### Unix domain sockets
 
 Unix domain sockets follow the [TCP](#tcp) transport specification, using a stream-oriented (`SOCK_STREAM`) socket in place of a TCP socket.
