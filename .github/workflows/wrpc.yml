@@ -200,24 +200,6 @@ jobs:
         if: ${{ matrix.check == 'nextest' }}
       - run: nix build -L .#checks.x86_64-linux.${{ matrix.check }}
 
-  js:
-    if: ${{ !startsWith(github.ref, 'refs/tags/go/') }}
-    name: js
-    runs-on: ubuntu-24.04
-    defaults:
-      run:
-        working-directory: ./js
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: js/package-lock.json
-      - run: npm ci
-      - run: npm run check
-      - run: npm test
-
   crates:
     if: ${{ !startsWith(github.ref, 'refs/tags/go/') }}
     strategy:

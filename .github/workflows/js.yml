@@ -1,0 +1,74 @@
+name: js
+
+on:
+  merge_group:
+  pull_request:
+  push:
+    branches:
+      - main
+    tags:
+      - 'js/v[0-9].[0-9]+.[0-9]+'
+      - 'js/v[0-9].[0-9]+.[0-9]+-*'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: ./js
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: js/package-lock.json
+      - run: npm ci
+      - run: npm run check
+      - run: npm test
+
+  publish:
+    name: publish to npm
+    needs: test
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - name: publish to npm
+        env:
+          IS_TAG: ${{ startsWith(github.ref, 'refs/tags/js/v') }}
+        run: |
+          pkgver=$(node -p 'require("./package.json").version')
+          args=(--provenance)
+          if [[ $pkgver == *"-"* ]]; then
+            echo "version ${pkgver} is a pre-release"
+            args+=(--tag next)
+          fi
+          if [ "$IS_TAG" = "true" ]; then
+            tagver=${GITHUB_REF_NAME#js/v}
+            if ! [ "$pkgver" = "$tagver" ]; then
+              echo "version mismatch, $pkgver (package) != $tagver (tag)"
+              exit 1
+            fi
+          else
+            args+=(--dry-run)
+          fi
+          npm publish "${args[@]}"
