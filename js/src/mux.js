@@ -62,6 +62,19 @@ function eachChan(n, f) {
   for (const child of n.children.values()) eachChan(child, f);
 }
 
+/**
+ * Read a frame header: the sub-stream path and the data length.
+ * @param {import("./io.js").Reader} r
+ * @returns {Generator<number, [number[], number], void>}
+ */
+function* readFrameHeader(r) {
+  const path = [];
+  for (let depth = yield* atomic(r, readVarU32); depth > 0; depth--) {
+    path.push(yield* atomic(r, readVarU32));
+  }
+  return [path, yield* atomic(r, readVarU32)];
+}
+
 /** @param {number[]} path @returns {never} */
 function unexpected(path) {
   throw new Error(`unexpected data for sub-stream [${path}]`);
@@ -176,16 +189,10 @@ export class Mux {
     while (!this.aborted) {
       // Stop cleanly at a frame boundary once the peer closes the stream.
       if (!(await m.fill(1))) break;
-      const [path, n] = await m.decode(function* (r) {
-        const path = [];
-        for (let depth = yield* atomic(r, readVarU32); depth > 0; depth--) {
-          path.push(yield* atomic(r, readVarU32));
-        }
-        return [path, yield* atomic(r, readVarU32)];
-      });
+      const [path, n] = await m.decode(readFrameHeader);
       if (n === 0) {
         // Peers may send empty frames, even for sub-streams that are finished.
-        if (this._find(path, true) === UNDECIDED) this._route(path, true);
+        this._route(path, true);
         continue;
       }
       const chan = this._route(path);
