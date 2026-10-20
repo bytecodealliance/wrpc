@@ -3,7 +3,7 @@ import { test } from "node:test";
 
 import * as t from "../src/types.js";
 import { Chan, Writer } from "../src/io.js";
-import { Mux } from "../src/mux.js";
+import { Mux, fromWebStreams } from "../src/mux.js";
 import { invoke, accept } from "../src/session.js";
 import { encodeValue } from "../src/value.js";
 
@@ -146,6 +146,50 @@ test("a failed parameter write takes precedence over the reply's failure", async
     invoke(transport, STREAMS, "echo", [t.stream(t.u8)], [new Uint8Array([1])], [t.u8]),
     /broken pipe/,
   );
+});
+
+test("a failed parameter stream aborts the transport", { timeout: 1000 }, async () => {
+  let aborted;
+  let release = () => {};
+  const transport = {
+    read: () => new Promise((resolve) => (release = resolve)),
+    write: () => {},
+    abort: (reason) => {
+      aborted = reason;
+      release(null);
+    },
+  };
+  async function* numbers() {
+    yield [1n];
+    throw new Error("source failed");
+  }
+  await assert.rejects(
+    invoke(transport, STREAMS, "echo", [t.stream(t.u64)], [numbers()], [t.u8]),
+    /source failed/,
+  );
+  assert.match(aborted.message, /source failed/);
+});
+
+test("an invalid invocation header aborts the transport", async () => {
+  let aborted;
+  const transport = {
+    read: async () => Uint8Array.of(0x42),
+    write: () => {},
+    abort: (reason) => void (aborted = reason),
+  };
+  await assert.rejects(accept(transport), /unsupported wRPC framing version byte 0x42/);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.match(aborted.message, /unsupported/);
+});
+
+test("aborting a web stream transport cancels and aborts both sides", async () => {
+  const reasons = [];
+  const transport = fromWebStreams({
+    readable: new ReadableStream({ cancel: (reason) => void reasons.push(["cancel", reason]) }),
+    writable: new WritableStream({ abort: (reason) => void reasons.push(["abort", reason]) }),
+  });
+  await transport.abort("boom");
+  assert.deepEqual(reasons.sort(), [["abort", "boom"], ["cancel", "boom"]]);
 });
 
 test("a failed stream<future<T>> parameter leaves no unhandled rejection", async () => {

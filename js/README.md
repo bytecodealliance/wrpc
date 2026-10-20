@@ -55,7 +55,8 @@ and resolves with the decoded `results` as soon as the synchronous reply
 arrives. `stream` results are async iterables of chunks and `future` results
 are promises — both fed as their data arrives over the multiplexed
 sub-streams — and `done` resolves once every asynchronous parameter and result
-has been transmitted.
+has been transmitted. If any of that I/O fails, the invocation fails and the
+transport is aborted.
 
 ### Streams and futures
 
@@ -130,6 +131,8 @@ Component-model values map to JavaScript following the same conventions as
 - `invoke(transport, instance, func, paramTypes, args, resultTypes?)` — invoke a function; resolves to `{ results, done }`.
 - `accept(transport)` — accept an invocation; resolves to `{ instance, func, receiveParams, sendResults, mux }`.
 - `fromWebStreams({ readable, writable })` — adapt a WHATWG stream duplex to a transport.
+  A transport is `{ read, write, closeWrite?, abort? }`; `abort(reason)` is called to tear
+  it down when an invocation fails.
 - `encodeValue(writer, ty, value, sink?, path?)` / `decodeValue(reader, ty, sink?, path?)` — the low-level value codec.
 - `Mux` / `Outgoing` — the framing multiplexer, for custom session control.
 - `Writer` / `Reader` / `AsyncReader` / `Chan` — byte and async primitives.

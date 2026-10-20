@@ -142,6 +142,8 @@ export interface Transport {
   read(): Promise<Uint8Array | null | undefined>;
   write(bytes: Uint8Array): Promise<void> | void;
   closeWrite?(): Promise<void> | void;
+  /** Tear down both directions after a failure. */
+  abort?(reason: unknown): Promise<void> | void;
 }
 
 export function fromWebStreams(duplex: {
@@ -165,7 +167,7 @@ export class Mux {
   start(): void;
   incoming(path: number[]): AsyncReader;
   outgoing(path: number[]): Outgoing;
-  abortWrite(err: unknown): void;
+  abort(err?: unknown): void;
   closeWrite(): Promise<void>;
 }
 
