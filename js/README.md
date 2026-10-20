@@ -153,7 +153,8 @@ Component-model values map to JavaScript following the same conventions as
   A transport is `{ read, write, closeWrite?, abort? }`; `abort(reason)` is called to tear
   it down when an invocation fails.
 - `encodeValue(writer, ty, value, sink?, path?)` / `decodeValue(reader, ty, sink?, path?)` — the low-level value codec.
-- `Mux` / `Outgoing` — the framing multiplexer, for custom session control.
+- `decodeSteps(reader, ty, sink?, path?)` / `atomic(reader, f)` — the resumable form of the decoder, driven by `AsyncReader.decode` across chunk boundaries.
+- `Mux` / `Outgoing` — the framing multiplexer, for custom session control; `DISCARDED` is the error the reader of a discarded sub-stream fails with.
 - `Writer` / `Reader` / `AsyncReader` / `Chan` — byte and async primitives.
 
 ## Development
