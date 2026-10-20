@@ -322,10 +322,15 @@ export function decodeValue(r, ty, sink, path) {
       if (!sink) throw new Error(asyncRequired(ty.kind));
       /** @type {(value: any) => void} */
       let resolve = () => {};
-      const promise = new Promise((res) => {
+      /** @type {(err: unknown) => void} */
+      let reject = () => {};
+      const promise = new Promise((res, rej) => {
         resolve = res;
+        reject = rej;
       });
-      sink.push({ path: path ?? [], kind: "future", ty: ty.some, resolve });
+      // The failure also surfaces through `done`, so an ignored future must not be unhandled.
+      promise.catch(() => {});
+      sink.push({ path: path ?? [], kind: "future", ty: ty.some, resolve, reject });
       return promise;
     }
     case "stream": {

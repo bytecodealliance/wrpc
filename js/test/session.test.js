@@ -114,6 +114,76 @@ test("a failed invocation leaves no unhandled rejection", async () => {
   await assert.rejects(invoke(transport, STREAMS, "get", [], [], [t.u8]), /connection refused/);
 });
 
+test("a failed reply stops sending stream parameters", { timeout: 1000 }, async () => {
+  let stop = () => {};
+  const stopped = new Promise((resolve) => (stop = resolve));
+  async function* numbers() {
+    try {
+      for (;;) {
+        yield [1n];
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+    } finally {
+      stop();
+    }
+  }
+  const transport = { read: async () => null, write: () => {} };
+  await assert.rejects(
+    invoke(transport, STREAMS, "echo", [t.stream(t.u64)], [numbers()], [t.u8]),
+    /unexpected end of input/,
+  );
+  await stopped;
+});
+
+test("a failed parameter write takes precedence over the reply's failure", async () => {
+  let writes = 0;
+  const transport = {
+    read: () => new Promise((resolve) => setTimeout(() => resolve(null), 10)),
+    write: () => (++writes > 2 ? Promise.reject(new Error("broken pipe")) : undefined),
+  };
+  await assert.rejects(
+    invoke(transport, STREAMS, "echo", [t.stream(t.u8)], [new Uint8Array([1])], [t.u8]),
+    /broken pipe/,
+  );
+});
+
+test("a failed stream<future<T>> parameter leaves no unhandled rejection", async () => {
+  async function* chunks() {
+    yield [
+      () => {
+        throw new Error("future failed");
+      },
+    ];
+    throw new Error("stream failed");
+  }
+  const transport = {
+    read: () => new Promise((resolve) => setTimeout(() => resolve(null), 10)),
+    write: () => {},
+  };
+  await assert.rejects(
+    invoke(transport, STREAMS, "echo", [t.stream(t.future(t.string))], [chunks()], [t.u8]),
+    /stream failed/,
+  );
+});
+
+test("a transport failure rejects pending stream<future<T>> parameters", { timeout: 1000 }, async () => {
+  const frames = [];
+  const peer = new Mux({ read: async () => null, write: (bytes) => void frames.push(bytes) });
+  await peer.writeHeader(STREAMS, "echo");
+  await peer.outgoing([]).write(Uint8Array.of(0));
+  await peer.outgoing([0]).write(Uint8Array.of(1, 0));
+  const transport = {
+    read: async () => frames.shift() ?? Promise.reject(new Error("connection reset")),
+    write: () => {},
+  };
+  const inv = await accept(transport);
+  const { params } = await inv.receiveParams([t.stream(t.future(t.string))]);
+  const chunks = params[0][Symbol.asyncIterator]();
+  const { value: chunk } = await chunks.next();
+  await assert.rejects(chunk[0], /connection reset/);
+  await assert.rejects(chunks.next(), /connection reset/);
+});
+
 test("frame data is routed as it arrives", async () => {
   const bytes = [0x01, 0x00, 0x03, 0x0a, 0x14, 0x1e, 0x01, 0x00, 0x02, 0x28];
   const transport = {
