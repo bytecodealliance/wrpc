@@ -241,7 +241,7 @@ function runReadSink(root, sink) {
  * arrives — `stream` results are async iterables of chunks and `future`
  * results are promises, both fed as their data arrives — together with a
  * `done` promise that resolves once all asynchronous I/O (parameters and
- * results) has completed.
+ * results) has completed. If any of it fails, the transport is aborted.
  *
  * @param {Transport} transport
  * @param {string} instance
@@ -261,9 +261,14 @@ export async function invoke(transport, instance, func, paramTypes, args, result
   paramTypes.forEach((ty, i) => encodeValue(w, ty, args[i], psink, [i]));
 
   const mux = new Mux(transport);
-  await mux.writeHeader(instance, func);
-  mux.start();
-  await mux.outgoing([]).write(w.finish());
+  try {
+    await mux.writeHeader(instance, func);
+    mux.start();
+    await mux.outgoing([]).write(w.finish());
+  } catch (err) {
+    mux.abort(err);
+    throw err;
+  }
   const tx = Promise.all(psink.map((e) => writeDeferred(mux.outgoing(e.path), e))).then(() =>
     mux.closeWrite(),
   );
@@ -271,6 +276,7 @@ export async function invoke(transport, instance, func, paramTypes, args, result
   let txFailure;
   tx.catch((err) => {
     txFailure = { err };
+    mux.abort(err);
   });
 
   const root = mux.incoming([]);
@@ -278,12 +284,12 @@ export async function invoke(transport, instance, func, paramTypes, args, result
   try {
     decoded = await decodeTuple(root, resultTypes);
   } catch (err) {
-    if (txFailure) throw txFailure.err;
-    mux.abortWrite(err);
-    throw err;
+    mux.abort(err);
+    throw txFailure ? txFailure.err : err;
   }
   const { values, sink } = decoded;
   const rx = runReadSink(root, sink);
+  rx.catch((err) => mux.abort(err));
 
   const done = Promise.all([tx, rx]).then(() => undefined);
   // Avoid an unhandled rejection if the caller uses `results` without `done`.
@@ -294,18 +300,26 @@ export async function invoke(transport, instance, func, paramTypes, args, result
 /**
  * Accept a single invocation on `transport`: read its header and return a
  * handle exposing the invoked `instance`/`func`, methods to receive the
- * parameters and send the results, and the underlying multiplexer.
+ * parameters and send the results, and the underlying multiplexer. If any
+ * I/O fails, the transport is aborted.
  *
  * @param {Transport} transport
  */
 export async function accept(transport) {
   const mux = new Mux(transport);
-  const version = await mux.master.u8();
-  if (version !== PROTOCOL) {
-    throw new Error(`unsupported wRPC framing version byte 0x${version.toString(16)}`);
+  let instance;
+  let func;
+  try {
+    const version = await mux.master.u8();
+    if (version !== PROTOCOL) {
+      throw new Error(`unsupported wRPC framing version byte 0x${version.toString(16)}`);
+    }
+    instance = await mux.master.name();
+    func = await mux.master.name();
+  } catch (err) {
+    mux.abort(err);
+    throw err;
   }
-  const instance = await mux.master.name();
-  const func = await mux.master.name();
   mux.start();
   const root = mux.incoming([]);
 
@@ -320,10 +334,16 @@ export async function accept(transport) {
      * @param {Type[]} paramTypes
      */
     async receiveParams(paramTypes) {
-      const { values, sink } = await decodeTuple(root, paramTypes);
+      let decoded;
+      try {
+        decoded = await decodeTuple(root, paramTypes);
+      } catch (err) {
+        mux.abort(err);
+        throw err;
+      }
+      const { values, sink } = decoded;
       const done = runReadSink(root, sink);
-      // Avoid an unhandled rejection if the handler uses `params` without `done`.
-      done.catch(() => {});
+      done.catch((err) => mux.abort(err));
       return { params: values, done };
     },
 
@@ -341,9 +361,14 @@ export async function accept(transport) {
       /** @type {any[]} */
       const sink = [];
       resultTypes.forEach((ty, i) => encodeValue(w, ty, values[i], sink, [i]));
-      await mux.outgoing([]).write(w.finish());
-      await Promise.all(sink.map((e) => writeDeferred(mux.outgoing(e.path), e)));
-      await mux.closeWrite();
+      try {
+        await mux.outgoing([]).write(w.finish());
+        await Promise.all(sink.map((e) => writeDeferred(mux.outgoing(e.path), e)));
+        await mux.closeWrite();
+      } catch (err) {
+        mux.abort(err);
+        throw err;
+      }
     },
   };
 }

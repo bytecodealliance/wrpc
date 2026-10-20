@@ -22,6 +22,8 @@ const key = (path) => path.join(",");
  * @property {() => Promise<Uint8Array | null | undefined>} read next inbound chunk, `null` at EOF
  * @property {(bytes: Uint8Array) => Promise<void> | void} write send an outbound chunk
  * @property {() => Promise<void> | void} [closeWrite] half-close the write side
+ * @property {(reason: unknown) => Promise<void> | void} [abort] tear down both
+ *   directions after a failure
  */
 
 /**
@@ -40,6 +42,9 @@ export function fromWebStreams({ readable, writable }) {
     },
     write: (bytes) => writer.write(bytes),
     closeWrite: () => writer.close(),
+    abort: async (reason) => {
+      await Promise.allSettled([reader.cancel(reason), writer.abort(reason)]);
+    },
   };
 }
 
@@ -85,6 +90,7 @@ export class Mux {
     /** @type {unknown} */
     this.writeError = undefined;
     this.inboundClosed = false;
+    this.aborted = false;
     /** @type {Promise<void> | undefined} */
     this.ingress = undefined;
   }
@@ -140,8 +146,9 @@ export class Mux {
     else this.buffered.set(k, [data]);
   }
 
-  /** @param {Error} [err] */
+  /** @param {unknown} [err] */
   _closeInbound(err) {
+    if (this.inboundClosed) return;
     this.inboundClosed = true;
     this.inboundError = err;
     for (const chan of this.channels.values()) chan.close(err);
@@ -200,9 +207,19 @@ export class Mux {
     return this.writeChain;
   }
 
-  /** Fail every subsequent write with `err`. @param {unknown} err */
-  abortWrite(err) {
+  /**
+   * Abort the invocation: fail every subsequent write and pending or future
+   * read with `err`, and abort the transport.
+   * @param {unknown} [err]
+   */
+  abort(err = new Error("invocation aborted")) {
+    if (this.aborted) return;
+    this.aborted = true;
     this.writeError = err;
+    this._closeInbound(err);
+    Promise.resolve()
+      .then(() => this.transport.abort?.(err))
+      .catch(() => {});
   }
 
   /** Flush pending writes and half-close the write side. @returns {Promise<void>} */
