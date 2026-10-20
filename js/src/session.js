@@ -101,7 +101,11 @@ async function writeStream(out, elem, src) {
         /** @type {any[]} */
         const sink = [];
         encodeValue(w, elem, item, sink, []);
-        for (const e of sink) tasks.push(writeDeferred(out.index([base + k, ...e.path]), e));
+        for (const e of sink) {
+          const task = writeDeferred(out.index([base + k, ...e.path]), e);
+          task.catch(() => {});
+          tasks.push(task);
+        }
       });
       base += items.length;
     }
@@ -167,7 +171,14 @@ async function decodeTuple(root, types) {
  */
 async function readDeferred(ar, entry) {
   if (entry.kind === "future") {
-    const { value, sink } = await decodeOne(ar, entry.ty);
+    let decoded;
+    try {
+      decoded = await decodeOne(ar, entry.ty);
+    } catch (err) {
+      entry.reject(err);
+      throw err;
+    }
+    const { value, sink } = decoded;
     entry.resolve(value);
     await Promise.all(sink.map((e) => readDeferred(e.path.length ? ar.index(e.path) : ar, e)));
     return;
@@ -198,7 +209,11 @@ async function readStream(ar, elem, queue) {
         for (let k = 0; k < len; k++) {
           const { value, sink } = await decodeOne(ar, elem);
           chunk.push(value);
-          for (const e of sink) tasks.push(readDeferred(ar.index([base + k, ...e.path]), e));
+          for (const e of sink) {
+            const task = readDeferred(ar.index([base + k, ...e.path]), e);
+            task.catch(() => {});
+            tasks.push(task);
+          }
         }
         queue.push(chunk);
       }
@@ -260,11 +275,22 @@ export async function invoke(transport, instance, func, paramTypes, args, result
   const tx = Promise.all(psink.map((e) => writeDeferred(mux.outgoing(e.path), e))).then(() =>
     mux.closeWrite(),
   );
-  // Avoid an unhandled rejection if decoding the results fails first.
-  tx.catch(() => {});
+  /** @type {{ err: unknown } | undefined} */
+  let txFailure;
+  tx.catch((err) => {
+    txFailure = { err };
+  });
 
   const root = mux.incoming([]);
-  const { values, sink } = await decodeTuple(root, resultTypes);
+  let decoded;
+  try {
+    decoded = await decodeTuple(root, resultTypes);
+  } catch (err) {
+    if (txFailure) throw txFailure.err;
+    mux.abortWrite(err);
+    throw err;
+  }
+  const { values, sink } = decoded;
   const rx = runReadSink(root, sink);
 
   const done = Promise.all([tx, rx]).then(() => undefined);
@@ -303,7 +329,10 @@ export async function accept(transport) {
      */
     async receiveParams(paramTypes) {
       const { values, sink } = await decodeTuple(root, paramTypes);
-      return { params: values, done: runReadSink(root, sink) };
+      const done = runReadSink(root, sink);
+      // Avoid an unhandled rejection if the handler uses `params` without `done`.
+      done.catch(() => {});
+      return { params: values, done };
     },
 
     /**

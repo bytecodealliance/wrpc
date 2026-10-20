@@ -82,6 +82,8 @@ export class Mux {
     this.buffered = new Map();
     /** Serializes outbound writes so each frame is emitted atomically. */
     this.writeChain = Promise.resolve();
+    /** @type {unknown} */
+    this.writeError = undefined;
     this.inboundClosed = false;
     /** @type {Promise<void> | undefined} */
     this.ingress = undefined;
@@ -193,8 +195,14 @@ export class Mux {
 
   /** @param {Uint8Array} bytes */
   _write(bytes) {
+    if (this.writeError !== undefined) return Promise.reject(this.writeError);
     this.writeChain = this.writeChain.then(() => this.transport.write(bytes));
     return this.writeChain;
+  }
+
+  /** Fail every subsequent write with `err`. @param {unknown} err */
+  abortWrite(err) {
+    this.writeError = err;
   }
 
   /** Flush pending writes and half-close the write side. @returns {Promise<void>} */

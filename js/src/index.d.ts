@@ -34,7 +34,7 @@ export type Value =
  * value, naming the relative sub-stream `path` and the placeholder to feed.
  */
 export type DecodeDeferred =
-  | { path: number[]; kind: "future"; ty: Type; resolve: (value: Value) => void }
+  | { path: number[]; kind: "future"; ty: Type; resolve: (value: Value) => void; reject: (err: unknown) => void }
   | { path: number[]; kind: "stream"; ty: Type; queue: Chan<Value[] | Uint8Array> };
 
 // ----- types.js -------------------------------------------------------------
@@ -163,6 +163,7 @@ export class Mux {
   start(): void;
   incoming(path: number[]): AsyncReader;
   outgoing(path: number[]): Outgoing;
+  abortWrite(err: unknown): void;
   closeWrite(): Promise<void>;
 }
 
