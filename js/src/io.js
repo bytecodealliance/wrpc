@@ -180,36 +180,116 @@ export class Reader {
   }
 }
 
+/** Read an unsigned LEB128 `u32` as a number. @param {Reader} r */
+export const readVarU32 = (r) => Number(r.varU(32));
+
 /** @param {unknown} err @returns {boolean} whether `err` is an end-of-input underflow */
 export function isUnexpectedEof(err) {
   return err instanceof RangeError && err.message.startsWith(UNEXPECTED_EOF);
 }
 
 /**
- * An unbounded async FIFO queue. Producers `push` values (or `close` the
- * queue); consumers `await next()` or iterate it with `for await`. Once
- * closed, pending and subsequent `next()` calls resolve to `{ done: true }`,
- * or reject with the error passed to `close` if the channel was failed.
+ * Run the synchronous read `f` as one step of a resumable decoder: if the
+ * input runs out partway, rewind `r` and yield the number of bytes the step
+ * needs from there, then retry it once they are buffered.
+ * @template T
+ * @param {Reader} r
+ * @param {(r: Reader) => T} f
+ * @returns {Generator<number, T, void>}
+ */
+export function* atomic(r, f) {
+  for (;;) {
+    const pos = r.pos;
+    try {
+      return f(r);
+    } catch (err) {
+      if (!isUnexpectedEof(err)) throw err;
+      r.pos = pos;
+      yield r.need - pos;
+    }
+  }
+}
+
+/**
+ * An async FIFO queue. Producers `push` values, or `send` them to wait while
+ * `capacity` values are buffered, and `close` the queue; consumers
+ * `await next()` or iterate it with `for await`, and `cancel` it to stop
+ * consuming. Once closed, pending and subsequent `next()` calls resolve to
+ * `{ done: true }`, or reject with the error passed to `close` if the channel
+ * was failed.
  *
  * @template T
  */
 export class Chan {
-  constructor() {
+  /** @param {number} [capacity] the number of values `send` buffers */
+  constructor(capacity = Infinity) {
+    this.capacity = capacity;
     /** @type {T[]} */
     this.queue = [];
     /** @type {{ resolve: (r: { value: T | undefined, done: boolean }) => void, reject: (e: unknown) => void }[]} */
     this.waiters = [];
+    /** @type {(() => void)[]} */
+    this.senders = [];
     this.closed = false;
+    this.cancelled = false;
+    /** The number of values handed to the consumer. */
+    this.taken = 0;
     /** @type {unknown} */
     this.error = undefined;
+  }
+
+  /** @type {(() => void)[]} */
+  #cancelHooks = [];
+
+  /**
+   * Call `f` once the consumer cancels the channel, or now if it already has.
+   * Hooks are dropped once the consumer has received the end of the channel:
+   * cancelling then drops nothing.
+   * @param {() => void} f
+   */
+  onCancel(f) {
+    if (this.cancelled) f();
+    else this.#cancelHooks.push(f);
   }
 
   /** Push a value. Ignored once the channel is closed. @param {T} value */
   push(value) {
     if (this.closed) return;
     const w = this.waiters.shift();
-    if (w) w.resolve({ value, done: false });
-    else this.queue.push(value);
+    if (!w) {
+      this.queue.push(value);
+      return;
+    }
+    this.taken++;
+    w.resolve({ value, done: false });
+  }
+
+  /**
+   * Push a value once fewer than `capacity` values are buffered.
+   * @param {T} value
+   * @returns {Promise<boolean>} `false` if the channel was closed instead
+   */
+  async send(value) {
+    while (!this.closed && this.queue.length >= this.capacity) {
+      await new Promise((resolve) => this.senders.push(() => resolve(undefined)));
+    }
+    if (this.closed) return false;
+    this.push(value);
+    return true;
+  }
+
+  /**
+   * Stop consuming: drop the buffered values, close (failed with `err`, if
+   * given and it has not already failed), and call the `onCancel` hooks.
+   * @param {unknown} [err]
+   */
+  cancel(err) {
+    if (this.cancelled) return;
+    this.cancelled = true;
+    this.queue.length = 0;
+    this.close(err);
+    this.error ??= err;
+    for (const f of this.#cancelHooks.splice(0)) f();
   }
 
   /**
@@ -222,17 +302,25 @@ export class Chan {
     if (this.closed) return;
     this.closed = true;
     this.error = err;
+    if (this.waiters.length && !this.cancelled) this.#cancelHooks.length = 0;
     let w;
     while ((w = this.waiters.shift())) {
       if (err !== undefined) w.reject(err);
       else w.resolve({ value: undefined, done: true });
     }
+    for (const wake of this.senders.splice(0)) wake();
   }
 
   /** @returns {Promise<{ value: T | undefined, done: boolean }>} */
   next() {
-    if (this.queue.length) return Promise.resolve({ value: this.queue.shift(), done: false });
+    if (this.queue.length) {
+      const value = /** @type {T} */ (this.queue.shift());
+      this.taken++;
+      this.senders.shift()?.();
+      return Promise.resolve({ value, done: false });
+    }
     if (this.closed) {
+      this.#cancelHooks.length = 0;
       return this.error !== undefined
         ? Promise.reject(this.error)
         : Promise.resolve({ value: undefined, done: true });
@@ -240,8 +328,15 @@ export class Chan {
     return new Promise((resolve, reject) => this.waiters.push({ resolve, reject }));
   }
 
+  /** Iterating it to the end consumes it; leaving the loop early cancels it. */
   [Symbol.asyncIterator]() {
-    return { next: () => this.next() };
+    return {
+      next: () => this.next(),
+      return: async () => {
+        this.cancel();
+        return /** @type {const} */ ({ value: undefined, done: true });
+      },
+    };
   }
 }
 
@@ -319,22 +414,22 @@ export class AsyncReader {
   }
 
   /**
-   * Run the synchronous `decode` over the buffered bytes, pulling more input
-   * and retrying while it runs out.
+   * Run the resumable decoder `decode` over the buffered bytes: each time it
+   * yields the number of bytes it needs next, consume what it has read so far
+   * and pull more input.
    * @template T
-   * @param {(r: Reader) => T} decode
+   * @param {(r: Reader) => Generator<number, T, void>} decode
    * @returns {Promise<T>}
    */
   async decode(decode) {
-    for (;;) {
-      const r = new Reader(this.remaining());
-      try {
-        const value = decode(r);
-        this.consume(r.pos);
-        return value;
-      } catch (err) {
-        if (!isUnexpectedEof(err) || !(await this.fill(r.need))) throw err;
-      }
+    const r = new Reader(this.remaining());
+    const steps = decode(r);
+    for (let step = steps.next(); ; step = steps.next()) {
+      this.consume(r.pos);
+      if (step.done) return step.value;
+      if (!(await this.fill(step.value))) throw new RangeError(UNEXPECTED_EOF);
+      r.bytes = this.remaining();
+      r.pos = 0;
     }
   }
 
@@ -343,12 +438,12 @@ export class AsyncReader {
    * @param {number} [bits] @returns {Promise<bigint>}
    */
   varU(bits = 64) {
-    return this.decode((r) => r.varU(bits));
+    return this.decode((r) => atomic(r, (r) => r.varU(bits)));
   }
 
   /** Read a `core:name`. @returns {Promise<string>} */
   name() {
-    return this.decode((r) => r.name());
+    return this.decode((r) => atomic(r, (r) => r.name()));
   }
 }
 

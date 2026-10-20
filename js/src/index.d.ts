@@ -31,11 +31,14 @@ export type Value =
 
 /**
  * A descriptor recorded by {@link decodeValue} for a pending `stream`/`future`
- * value, naming the relative sub-stream `path` and the placeholder to feed.
+ * value, naming the relative sub-stream `path` and the placeholder to feed, or
+ * for a `stream` sent `inline` as a single ready chunk whose elements carry
+ * pending values.
  */
 export type DecodeDeferred =
   | { path: number[]; kind: "future"; ty: Type; resolve: (value: Value) => void; reject: (err: unknown) => void }
-  | { path: number[]; kind: "stream"; ty: Type; queue: Chan<Value[] | Uint8Array> };
+  | { path: number[]; kind: "stream"; ty: Type; queue: Chan<Value[] | Uint8Array> }
+  | { path: number[]; kind: "inline"; queue: Chan<Value[] | Uint8Array> };
 
 // ----- types.js -------------------------------------------------------------
 
@@ -97,11 +100,34 @@ export class Reader {
   name(): string;
 }
 
-/** An unbounded async FIFO queue. */
+/**
+ * Run the synchronous read `f` as one step of a resumable decoder: if the
+ * input runs out partway, rewind `r` and yield the number of bytes the step
+ * needs from there, then retry it once they are buffered.
+ */
+export function atomic<T>(r: Reader, f: (r: Reader) => T): Generator<number, T, void>;
+
+/**
+ * An async FIFO queue. Leaving a `for await` loop over it early cancels it.
+ */
 export class Chan<T> implements AsyncIterable<T> {
-  constructor();
+  constructor(capacity?: number);
+  readonly capacity: number;
+  readonly closed: boolean;
+  readonly cancelled: boolean;
+  /** The number of values handed to the consumer. */
+  readonly taken: number;
+  /**
+   * Call `f` once the consumer cancels the channel, or now if it already has.
+   * Hooks are dropped once the consumer has received the end of the channel.
+   */
+  onCancel(f: () => void): void;
   push(value: T): void;
+  /** Push `value` once fewer than `capacity` values are buffered; `false` if closed instead. */
+  send(value: T): Promise<boolean>;
   close(err?: unknown): void;
+  /** Stop consuming: drop the buffered values, close (failed with `err`, if given and not already failed), and call the `onCancel` hooks. */
+  cancel(err?: unknown): void;
   next(): Promise<{ value: T | undefined; done: boolean }>;
   [Symbol.asyncIterator](): AsyncIterator<T>;
 }
@@ -112,6 +138,11 @@ export class AsyncReader {
   remaining(): Uint8Array;
   consume(n: number): void;
   fill(n: number): Promise<boolean>;
+  /**
+   * Run the resumable decoder `decode` over the buffered bytes: each time it
+   * yields the number of bytes it needs next, pull more input.
+   */
+  decode<T>(decode: (r: Reader) => Generator<number, T, void>): Promise<T>;
   u8(): Promise<number>;
   take(n: number): Promise<Uint8Array>;
   varU(bits?: number): Promise<bigint>;
@@ -120,8 +151,8 @@ export class AsyncReader {
 
 // ----- value.js -------------------------------------------------------------
 //
-// The low-level value codec. `stream`/`future` values require the session's
-// `sink` (collected by `invoke`/`accept`); without it they throw.
+// The low-level value codec. Pending `stream`/`future` values require the
+// session's `sink` (collected by `invoke`/`accept`); without it they throw.
 
 export function encodeValue(
   w: Writer,
@@ -131,11 +162,24 @@ export function encodeValue(
   path?: number[],
 ): void;
 export function decodeValue(r: Reader, ty: Type, sink?: DecodeDeferred[], path?: number[]): Value;
+/**
+ * {@link decodeValue} as a resumable decoder: when `r` runs out, it yields the
+ * number of bytes it needs from `r.pos` on, and continues once `r` holds them.
+ */
+export function decodeSteps(
+  r: Reader,
+  ty: Type,
+  sink?: DecodeDeferred[],
+  path?: number[],
+): Generator<number, Value, void>;
 
 // ----- mux.js ---------------------------------------------------------------
 
 /** The wRPC framing protocol version byte. */
 export const PROTOCOL: number;
+
+/** The error a discarded sub-stream's reader fails with. */
+export const DISCARDED: Error;
 
 /** A byte-stream transport: a duplex of `Uint8Array` chunks. */
 export interface Transport {
@@ -159,13 +203,29 @@ export class Outgoing {
   index(rel: number[]): Outgoing;
 }
 
-/** The framing multiplexer over a {@link Transport}. */
+/**
+ * The framing multiplexer over a {@link Transport}. Inbound data is accepted
+ * only for the root sub-stream `[]` and the sub-streams declared with `seal`.
+ */
 export class Mux {
   constructor(transport: Transport);
   master: AsyncReader;
   writeHeader(instance: string, func: string): Promise<void>;
   start(): void;
+  /** The reader for the expected sub-stream at `path`. */
   incoming(path: number[]): AsyncReader;
+  /**
+   * Declare the sub-streams of the pending values in the value decoded at
+   * `path` (the root tuple, a future's value, or a stream's element, in
+   * order), with paths relative to it.
+   */
+  seal(path: number[], expected: { path: number[]; nested: boolean }[]): void;
+  /** Declare that the sub-stream at `path` has no more data: its stream ended, or its future's value was decoded. */
+  finish(path: number[]): void;
+  /** Discard the sub-stream at `path` and those nested in its children from index `from` (default 0) on. */
+  discard(path: number[], from?: number): void;
+  /** Call `f` once the sub-stream at `path` is discarded. */
+  ondiscard(path: number[], f: () => void): void;
   outgoing(path: number[]): Outgoing;
   abort(err?: unknown): void;
   closeWrite(): Promise<void>;

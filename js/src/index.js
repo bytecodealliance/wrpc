@@ -9,7 +9,7 @@
 export * as t from "./types.js";
 export * as types from "./types.js";
 
-export { Reader, Writer, AsyncReader, Chan } from "./io.js";
-export { encodeValue, decodeValue } from "./value.js";
-export { Mux, Outgoing, PROTOCOL, fromWebStreams } from "./mux.js";
+export { Reader, Writer, AsyncReader, Chan, atomic } from "./io.js";
+export { encodeValue, decodeValue, decodeSteps } from "./value.js";
+export { DISCARDED, Mux, Outgoing, PROTOCOL, fromWebStreams } from "./mux.js";
 export { invoke, accept } from "./session.js";
