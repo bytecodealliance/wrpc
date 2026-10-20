@@ -87,6 +87,8 @@ export class Reader {
   readonly done: boolean;
   bytes: Uint8Array;
   pos: number;
+  /** The buffer length the last end-of-input underflow needed. */
+  need: number;
   u8(): number;
   peek(): number;
   take(n: number): Uint8Array;
@@ -109,7 +111,7 @@ export class AsyncReader {
   constructor(pull: () => Promise<Uint8Array | null | undefined>);
   remaining(): Uint8Array;
   consume(n: number): void;
-  more(): Promise<boolean>;
+  fill(n: number): Promise<boolean>;
   u8(): Promise<number>;
   take(n: number): Promise<Uint8Array>;
   varU(bits?: number): Promise<bigint>;

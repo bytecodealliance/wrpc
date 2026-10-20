@@ -2,9 +2,10 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import * as t from "../src/types.js";
-import { Chan } from "../src/io.js";
+import { Chan, Writer } from "../src/io.js";
 import { Mux } from "../src/mux.js";
 import { invoke, accept } from "../src/session.js";
+import { encodeValue } from "../src/value.js";
 
 /**
  * A pair of in-memory transports wired back to back, modelling a single
@@ -195,6 +196,26 @@ test("frame data is routed as it arrives", async () => {
   const reader = mux.incoming([0]);
   assert.deepEqual([...(await reader.take(4))], [10, 20, 30, 40]);
   await assert.rejects(reader.take(1), /unexpected end of input/);
+});
+
+test("a value split across many frames and chunks decodes", async () => {
+  const frames = [];
+  const peer = new Mux({ read: async () => null, write: (bytes) => void frames.push(bytes) });
+  const big = new Uint8Array(70000).map((_, i) => i);
+  const w = new Writer();
+  encodeValue(w, t.string, "hello");
+  encodeValue(w, t.list(t.u8), big);
+  const reply = w.finish();
+  for (let i = 0; i < reply.length; i += 1000) await peer.outgoing([]).write(reply.subarray(i, i + 1000));
+  const bytes = frames.flatMap((frame) => [...frame]);
+  const transport = {
+    read: async () => (bytes.length > 0 ? new Uint8Array(bytes.splice(0, 7)) : null),
+    write: () => {},
+  };
+  const { results, done } = await invoke(transport, STREAMS, "get", [], [], [t.string, t.list(t.u8)]);
+  assert.equal(results[0], "hello");
+  assert.deepEqual(results[1], big);
+  await done;
 });
 
 test("invalid arguments fail before anything is written", async () => {

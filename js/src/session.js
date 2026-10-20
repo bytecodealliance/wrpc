@@ -130,11 +130,10 @@ async function decodeOne(ar, ty) {
       ar.consume(r.pos);
       return { value, sink };
     } catch (err) {
-      if (isUnexpectedEof(err) && (await ar.more())) continue;
-      if (isUnexpectedEof(err)) {
+      if (!isUnexpectedEof(err)) throw err;
+      if (!(await ar.fill(r.need))) {
         throw new RangeError("unexpected end of input while decoding a value");
       }
-      throw err;
     }
   }
 }
