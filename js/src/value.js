@@ -221,7 +221,7 @@ export function encodeValue(w, ty, v, sink, path) {
       }
       if (!Array.isArray(v)) throw new TypeError("expected an array for a `list`");
       w.varU(v.length);
-      v.forEach((x, i) => encodeValue(w, ty.elem, x, sink, childPath(sink, path, i)));
+      for (let i = 0; i < v.length; i++) encodeValue(w, ty.elem, v[i], sink, childPath(sink, path, i));
       return;
     }
     case "tuple": {

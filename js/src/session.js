@@ -92,16 +92,16 @@ async function writeStream(out, elem, src) {
       if (!Array.isArray(chunk)) throw new TypeError("expected an array for a `stream` chunk");
       if (chunk.length === 0) continue;
       w.varU(chunk.length);
-      chunk.forEach((item, k) => {
+      for (let k = 0; k < chunk.length; k++) {
         /** @type {any[]} */
         const sink = [];
-        encodeValue(w, elem, item, sink, []);
+        encodeValue(w, elem, chunk[k], sink, []);
         for (const e of sink) {
           const task = writeDeferred(out.index([base + k, ...e.path]), e);
           task.catch(() => {});
           tasks.push(task);
         }
-      });
+      }
       base += chunk.length;
     }
     await out.write(w.finish());
