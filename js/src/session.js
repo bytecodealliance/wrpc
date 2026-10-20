@@ -131,21 +131,32 @@ function decodeOne(ar, ty) {
 }
 
 /**
- * Decode a tuple of `types` from the root channel reader, returning the decoded
- * values and the absolute-path descriptors of pending sub-streams.
+ * Receive a tuple of `types` from the root channel reader: the decoded
+ * `values`, and a `done` promise for the pending sub-streams they carry. If
+ * any of it fails, `mux` is aborted.
+ * @param {Mux} mux
  * @param {AsyncReader} root
  * @param {Type[]} types
  */
-async function decodeTuple(root, types) {
+async function receiveTuple(mux, root, types) {
   const values = [];
   /** @type {DecodeDeferred[]} */
   const sink = [];
-  for (let i = 0; i < types.length; i++) {
-    const { value, sink: nested } = await decodeOne(root, types[i]);
-    values.push(value);
-    for (const e of nested) sink.push({ ...e, path: [i, ...e.path] });
+  try {
+    for (let i = 0; i < types.length; i++) {
+      const { value, sink: nested } = await decodeOne(root, types[i]);
+      values.push(value);
+      for (const e of nested) sink.push({ ...e, path: [i, ...e.path] });
+    }
+  } catch (err) {
+    mux.abort(err);
+    throw err;
   }
-  return { values, sink };
+  expect(mux, [], sink);
+  mux.finish([]);
+  const done = readNested(mux, [], sink).then(() => undefined);
+  done.catch((err) => mux.abort(err));
+  return { values, done };
 }
 
 /**
@@ -333,19 +344,13 @@ export async function invoke(transport, instance, func, paramTypes, args, result
     mux.abort(err);
   });
 
-  const root = mux.incoming([]);
-  let decoded;
+  let received;
   try {
-    decoded = await decodeTuple(root, resultTypes);
+    received = await receiveTuple(mux, mux.incoming([]), resultTypes);
   } catch (err) {
-    mux.abort(err);
     throw txFailure ? txFailure.err : err;
   }
-  const { values, sink } = decoded;
-  expect(mux, [], sink);
-  mux.finish([]);
-  const rx = readNested(mux, [], sink);
-  rx.catch((err) => mux.abort(err));
+  const { values, done: rx } = received;
 
   const done = Promise.all([tx, rx]).then(() => undefined);
   // Avoid an unhandled rejection if the caller uses `results` without `done`.
@@ -390,18 +395,7 @@ export async function accept(transport) {
      * @param {Type[]} paramTypes
      */
     async receiveParams(paramTypes) {
-      let decoded;
-      try {
-        decoded = await decodeTuple(root, paramTypes);
-      } catch (err) {
-        mux.abort(err);
-        throw err;
-      }
-      const { values, sink } = decoded;
-      expect(mux, [], sink);
-      mux.finish([]);
-      const done = readNested(mux, [], sink).then(() => undefined);
-      done.catch((err) => mux.abort(err));
+      const { values, done } = await receiveTuple(mux, root, paramTypes);
       return { params: values, done };
     },
 
