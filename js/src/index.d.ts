@@ -90,8 +90,8 @@ export class Reader {
   u8(): number;
   peek(): number;
   take(n: number): Uint8Array;
-  varU(): bigint;
-  varS(): bigint;
+  varU(bits?: number): bigint;
+  varS(bits?: number): bigint;
   name(): string;
 }
 
@@ -112,7 +112,7 @@ export class AsyncReader {
   more(): Promise<boolean>;
   u8(): Promise<number>;
   take(n: number): Promise<Uint8Array>;
-  varU(): Promise<bigint>;
+  varU(bits?: number): Promise<bigint>;
   name(): Promise<string>;
 }
 

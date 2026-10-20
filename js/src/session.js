@@ -188,7 +188,7 @@ async function readStream(ar, elem, queue) {
     for (;;) {
       let len;
       try {
-        len = Number(await ar.varU());
+        len = Number(await ar.varU(32));
       } catch (err) {
         // The peer closed the connection without an explicit empty terminator.
         if (isUnexpectedEof(err)) break;
