@@ -136,6 +136,19 @@ test("options", () => {
   assert.equal(decode(ty, encode(ty, null)), undefined);
 });
 
+test("nested options keep some(none) distinct from none", () => {
+  const ty = t.option(t.option(t.u32));
+  roundtrip(ty, { tag: "some", val: 1 });
+  roundtrip(ty, { tag: "some", val: undefined });
+  roundtrip(ty, { tag: "none" });
+  assert.deepEqual(encode(ty, { tag: "some", val: undefined }), Uint8Array.of(1, 0));
+  assert.deepEqual(encode(ty, { tag: "none" }), Uint8Array.of(0));
+  assert.throws(() => encode(ty, undefined), /nested `option`/);
+  const deep = t.option(t.option(t.option(t.string)));
+  roundtrip(deep, { tag: "some", val: { tag: "some", val: "x" } });
+  roundtrip(deep, { tag: "some", val: { tag: "none" } });
+});
+
 test("results", () => {
   const ty = t.result(t.string, t.u32);
   roundtrip(ty, { tag: "ok", val: "fine" });

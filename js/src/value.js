@@ -15,7 +15,8 @@
 //   list<T>             -> Array
 //   tuple               -> Array
 //   record              -> object keyed by field name
-//   option<T>           -> T | undefined (none is `undefined`/`null`)
+//   option<T>           -> T | undefined (none is `undefined`/`null`), or
+//                          { tag: "some", val } | { tag: "none" } if T is an option
 //   result<O, E>        -> { tag: "ok", val } | { tag: "err", val }
 //   variant             -> { tag: caseName, val? }
 //   enum                -> string (the case name)
@@ -196,14 +197,16 @@ export function encodeValue(w, ty, v, sink, path) {
       });
       return;
     }
-    case "option":
-      if (v === null || v === undefined) {
+    case "option": {
+      const { tag, val } = asOption(ty, v);
+      if (tag === "none") {
         w.u8(0);
       } else {
         w.u8(1);
-        encodeValue(w, ty.some, v, sink, path);
+        encodeValue(w, ty.some, val, sink, path);
       }
       return;
+    }
     case "result": {
       const { tag, val } = asResult(v);
       if (tag === "ok") {
@@ -324,8 +327,12 @@ export function decodeValue(r, ty, sink, path) {
       });
       return out;
     }
-    case "option":
-      return r.u8() !== 0 ? decodeValue(r, ty.some, sink, path) : undefined;
+    case "option": {
+      const nested = ty.some.kind === "option";
+      if (r.u8() === 0) return nested ? { tag: "none" } : undefined;
+      const val = decodeValue(r, ty.some, sink, path);
+      return nested ? { tag: "some", val } : val;
+    }
     case "result":
       return r.u8() !== 0
         ? { tag: "err", val: ty.err ? decodeValue(r, ty.err, sink, path) : undefined }
@@ -398,6 +405,21 @@ export function toBytes(v) {
   if (ArrayBuffer.isView(v)) return new Uint8Array(v.buffer, v.byteOffset, v.byteLength);
   if (Array.isArray(v)) return Uint8Array.from(v, (b) => Number(checkInt(b, "u8", 0n, 0xffn)));
   throw new TypeError("expected `Uint8Array`, `ArrayBuffer`, or `number[]` for a byte list");
+}
+
+/**
+ * An `option` is `T | undefined`, unless `T` is itself an `option`: then the
+ * outer one is tagged, so that `some(none)` is distinct from `none`.
+ * @param {{ some: Type }} ty @param {any} v
+ */
+function asOption(ty, v) {
+  if (ty.some.kind !== "option") {
+    return v === null || v === undefined ? { tag: "none" } : { tag: "some", val: v };
+  }
+  if (v && typeof v === "object" && (v.tag === "some" || v.tag === "none")) {
+    return { tag: v.tag, val: v.val };
+  }
+  throw new TypeError('expected `{ tag: "some", val } | { tag: "none" }` for a nested `option`');
 }
 
 /** @param {any} v */

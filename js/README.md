@@ -115,6 +115,7 @@ Component-model values map to JavaScript following the same conventions as
 | `tuple<...>`              | `Array`                                      |
 | `record`                  | object keyed by field name                   |
 | `option<T>`               | `T \| undefined`                             |
+| `option<option<T>>`       | `{ tag: "some", val } \| { tag: "none" }`    |
 | `result<O, E>`            | `{ tag: "ok", val } \| { tag: "err", val }`  |
 | `variant`                 | `{ tag: caseName, val? }`                    |
 | `enum`                    | `string` (the case name)                     |
