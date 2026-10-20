@@ -48,9 +48,9 @@ const asyncRequired = (kind, op = "decode") =>
   `not the synchronous \`${op}\``;
 
 /**
- * Coerce `v` to an integer `bigint` and assert it is within `[min, max]`,
- * rejecting fractional, non-numeric, or out-of-range inputs instead of
- * silently wrapping them on the wire.
+ * Convert the integer `number` or `bigint` `v` to a `bigint` and assert it is
+ * within `[min, max]`, rejecting fractional, non-numeric, or out-of-range
+ * inputs instead of silently coercing or wrapping them on the wire.
  * @param {any} v @param {string} kind @param {bigint} min @param {bigint} max
  * @returns {bigint}
  */
@@ -59,14 +59,19 @@ function checkInt(v, kind, min, max) {
   if (typeof v === "bigint") {
     b = v;
   } else {
-    const n = Number(v);
-    if (!Number.isInteger(n)) throw new TypeError(`expected an integer for \`${kind}\`, got ${v}`);
-    b = BigInt(n);
+    if (!Number.isInteger(v)) throw new TypeError(`expected an integer for \`${kind}\`, got ${v}`);
+    b = BigInt(v);
   }
   if (b < min || b > max) {
     throw new RangeError(`\`${kind}\` value ${b} out of range [${min}, ${max}]`);
   }
   return b;
+}
+
+/** @param {any} v @param {string} kind @returns {number} */
+function checkFloat(v, kind) {
+  if (typeof v !== "number") throw new TypeError(`expected a number for \`${kind}\`, got ${v}`);
+  return v;
 }
 
 /**
@@ -104,6 +109,7 @@ function readChunk(r, elem, n, sink, path) {
 export function encodeValue(w, ty, v, sink, path) {
   switch (ty.kind) {
     case "bool":
+      if (typeof v !== "boolean") throw new TypeError(`expected a boolean for a \`bool\`, got ${v}`);
       w.u8(v ? 1 : 0);
       return;
     case "u8":
@@ -131,22 +137,37 @@ export function encodeValue(w, ty, v, sink, path) {
       w.varS(checkInt(v, "s64", -(1n << 63n), (1n << 63n) - 1n));
       return;
     case "f32": {
-      const buf = new ArrayBuffer(4);
-      new DataView(buf).setFloat32(0, Number(v), true);
-      w.bytes(new Uint8Array(buf));
+      const view = new DataView(new ArrayBuffer(4));
+      const n = checkFloat(v, "f32");
+      if (Number.isNaN(n)) view.setUint32(0, 0x7fc00000, true);
+      else view.setFloat32(0, n, true);
+      w.bytes(new Uint8Array(view.buffer));
       return;
     }
     case "f64": {
-      const buf = new ArrayBuffer(8);
-      new DataView(buf).setFloat64(0, Number(v), true);
-      w.bytes(new Uint8Array(buf));
+      const view = new DataView(new ArrayBuffer(8));
+      const n = checkFloat(v, "f64");
+      if (Number.isNaN(n)) view.setBigUint64(0, 0x7ff8000000000000n, true);
+      else view.setFloat64(0, n, true);
+      w.bytes(new Uint8Array(view.buffer));
       return;
     }
-    case "char":
-      w.bytes(textEncoder.encode(String(v)));
+    case "char": {
+      const cp = typeof v === "string" ? v.codePointAt(0) : undefined;
+      if (
+        cp === undefined ||
+        v.length !== (cp > 0xffff ? 2 : 1) ||
+        (cp >= 0xd800 && cp <= 0xdfff)
+      ) {
+        throw new TypeError(`expected a single Unicode scalar value for a \`char\`, got ${v}`);
+      }
+      w.bytes(textEncoder.encode(v));
       return;
+    }
     case "string":
-      w.name(String(v));
+      if (typeof v !== "string") throw new TypeError(`expected a string for a \`string\`, got ${v}`);
+      if (/\p{Surrogate}/u.test(v)) throw new TypeError("a `string` cannot contain lone surrogates");
+      w.name(v);
       return;
     case "list": {
       if (isBytes(ty)) {
@@ -195,7 +216,7 @@ export function encodeValue(w, ty, v, sink, path) {
       return;
     }
     case "enum": {
-      const i = ty.names.indexOf(String(v));
+      const i = ty.names.indexOf(v);
       if (i < 0) throw new RangeError(`unknown enum case \`${v}\``);
       w.varU(i);
       return;
@@ -219,6 +240,9 @@ export function encodeValue(w, ty, v, sink, path) {
     }
     case "flags": {
       const set = toFlagSet(v);
+      for (const name of set) {
+        if (!ty.names.includes(name)) throw new RangeError(`unknown flag \`${name}\``);
+      }
       const bytes = new Uint8Array(Math.ceil(Math.max(ty.names.length, 1) / 8));
       ty.names.forEach((name, i) => {
         if (set.has(name)) bytes[i >> 3] |= 1 << (i & 7);
@@ -365,12 +389,12 @@ export function decodeValue(r, ty, sink, path) {
   }
 }
 
-/** @param {any} v */
-function toBytes(v) {
+/** @param {any} v @returns {Uint8Array} */
+export function toBytes(v) {
   if (v instanceof Uint8Array) return v;
   if (v instanceof ArrayBuffer) return new Uint8Array(v);
   if (ArrayBuffer.isView(v)) return new Uint8Array(v.buffer, v.byteOffset, v.byteLength);
-  if (Array.isArray(v)) return Uint8Array.from(v);
+  if (Array.isArray(v)) return Uint8Array.from(v, (b) => Number(checkInt(b, "u8", 0n, 0xffn)));
   throw new TypeError("expected `Uint8Array`, `ArrayBuffer`, or `number[]` for a byte list");
 }
 

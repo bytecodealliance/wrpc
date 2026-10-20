@@ -53,6 +53,18 @@ test("integer encoding rejects out-of-range and non-integer values", () => {
   roundtrip(t.s8, -128);
 });
 
+test("encoding rejects values of the wrong JavaScript type", () => {
+  assert.throws(() => encode(t.u32, null), /expected an integer/);
+  assert.throws(() => encode(t.u32, "1"), /expected an integer/);
+  assert.throws(() => encode(t.f64, null), /expected a number/);
+  assert.throws(() => encode(t.string, undefined), /expected a string/);
+  assert.throws(() => encode(t.bool, undefined), /expected a boolean/);
+  assert.throws(() => encode(t.bool, "false"), /expected a boolean/);
+  assert.throws(() => encode(t.enum(["red"]), ["red"]), /unknown enum case/);
+  assert.throws(() => encode(t.string, 1), /expected a string/);
+  assert.throws(() => encode(t.list(t.u8), [256]), /out of range/);
+});
+
 test("64-bit integers are bigint", () => {
   roundtrip(t.u64, 0n);
   roundtrip(t.u64, 18446744073709551615n);
@@ -65,12 +77,30 @@ test("floats", () => {
   roundtrip(t.f32, 1.5);
 });
 
+test("NaNs are encoded canonically", () => {
+  const nan = new DataView(new ArrayBuffer(8));
+  nan.setBigUint64(0, 0x7ff0000000000001n, true);
+  const payload = nan.getFloat64(0, true);
+  assert.deepEqual(encode(t.f64, payload), Uint8Array.of(0, 0, 0, 0, 0, 0, 0xf8, 0x7f));
+  assert.deepEqual(encode(t.f32, payload), Uint8Array.of(0, 0, 0xc0, 0x7f));
+  assert.ok(Number.isNaN(decode(t.f64, encode(t.f64, NaN))));
+});
+
 test("char and string", () => {
   roundtrip(t.char, "a");
   roundtrip(t.char, "€");
   roundtrip(t.char, "😀");
   roundtrip(t.string, "");
   roundtrip(t.string, "hello, wRPC 👋");
+  roundtrip(t.string, "\uFEFFbom");
+  roundtrip(t.list(t.char), ["\uFEFF"]);
+  assert.throws(() => encode(t.char, "ab"), /single Unicode scalar/);
+  assert.throws(() => encode(t.char, ""), /single Unicode scalar/);
+  assert.throws(() => encode(t.char, "\uD800"), /single Unicode scalar/);
+  assert.throws(() => encode(t.string, "a\uD800"), /lone surrogates/);
+  assert.throws(() => encode(t.string, "\uDE00\uD83D"), /lone surrogates/);
+  assert.throws(() => decode(t.string, Uint8Array.of(1, 0xff)), TypeError);
+  assert.throws(() => decode(t.char, Uint8Array.of(0x80, 0x80)), TypeError);
 });
 
 test("byte lists round-trip as Uint8Array", () => {
@@ -119,6 +149,8 @@ test("flags", () => {
   roundtrip(ty, { read: true, write: false, exec: true });
   // arrays and sets are also accepted on encode
   assert.deepEqual(decode(ty, encode(ty, ["read", "exec"])), { read: true, write: false, exec: true });
+  assert.throws(() => encode(ty, { read: true, wirte: true }), /unknown flag `wirte`/);
+  assert.throws(() => encode(ty, new Set(["exe"])), /unknown flag `exe`/);
 });
 
 test("resource handles round-trip as bytes", () => {
