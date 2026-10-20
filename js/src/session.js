@@ -260,6 +260,8 @@ export async function invoke(transport, instance, func, paramTypes, args, result
   const tx = Promise.all(psink.map((e) => writeDeferred(mux.outgoing(e.path), e))).then(() =>
     mux.closeWrite(),
   );
+  // Avoid an unhandled rejection if decoding the results fails first.
+  tx.catch(() => {});
 
   const root = mux.incoming([]);
   const { values, sink } = await decodeTuple(root, resultTypes);

@@ -105,6 +105,15 @@ test("an inbound transport failure surfaces to a sub-stream reader", async () =>
   await assert.rejects(pending, /connection reset/);
 });
 
+test("a failed invocation leaves no unhandled rejection", async () => {
+  const transport = {
+    read: () => Promise.reject(new Error("connection refused")),
+    write: () => {},
+    closeWrite: () => Promise.reject(new Error("connection refused")),
+  };
+  await assert.rejects(invoke(transport, STREAMS, "get", [], [], [t.u8]), /connection refused/);
+});
+
 test("frame data is routed as it arrives", async () => {
   const bytes = [0x01, 0x00, 0x03, 0x0a, 0x14, 0x1e, 0x01, 0x00, 0x02, 0x28];
   const transport = {
