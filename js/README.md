@@ -1,6 +1,6 @@
 # `@bytecodealliance/wrpc`
 
-A [wRPC](https://github.com/bytecodealliance/wrpc) client for JavaScript: a
+A [wRPC](https://github.com/bytecodealliance/wrpc) client and server for JavaScript: a
 transport-agnostic, component-native implementation of the wRPC wire format and
 its mandatory framing. It encodes and decodes [component model] values against a
 WIT type tree and invokes (or serves) functions over a single bidirectional
