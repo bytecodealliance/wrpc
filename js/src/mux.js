@@ -26,8 +26,19 @@ const key = (path) => path.join(",");
 /** The error a discarded sub-stream's reader fails with. */
 export const DISCARDED = new Error("sub-stream discarded");
 
-/** {@link Mux._find}'s result for a path that may still be expected. */
-const UNDECIDED = Symbol("undecided");
+/**
+ * The data buffered for a path that may still be expected.
+ * @typedef {object} Pending
+ * @property {number[]} path
+ * @property {Chan<Uint8Array>} chan
+ * @property {boolean} empty whether only empty frames arrived for it
+ */
+
+/**
+ * Where {@link Mux._find} stopped for a path that may still be expected: the
+ * node whose child `i` is missing.
+ * @typedef {{ at: Node, i: number }} Undecided
+ */
 
 /**
  * A node of the trie of expected inbound sub-streams, addressed by path.
@@ -43,6 +54,8 @@ const UNDECIDED = Symbol("undecided");
  *   forgotten once finished, beyond those of the `decided` stream elements
  * @property {number} discardFrom `Infinity`, unless the node is discarded: then
  *   its own data and that of its children from this index on is dropped
+ * @property {Map<number, Map<string, Pending>> | undefined} pending the data
+ *   buffered for the paths through each missing child, by path key
  */
 
 /** @param {boolean} sealed @returns {Node} */
@@ -54,12 +67,21 @@ const node = (sealed) => ({
   done: false,
   pruned: undefined,
   discardFrom: Infinity,
+  pending: undefined,
 });
 
 /** @param {Node} n @param {(chan: Chan<Uint8Array>) => void} f */
 function eachChan(n, f) {
   if (n.chan) f(n.chan);
+  for (const group of n.pending?.values() ?? []) for (const { chan } of group.values()) f(chan);
   for (const child of n.children.values()) eachChan(child, f);
+}
+
+/** @param {Undecided} at @param {Pending} pending */
+function attach({ at, i }, pending) {
+  let group = at.pending?.get(i);
+  if (!group) (at.pending ??= new Map()).set(i, (group = new Map()));
+  group.set(key(pending.path), pending);
 }
 
 /**
@@ -154,8 +176,6 @@ export class Mux {
     /** The expected sub-streams, rooted at the one carrying the synchronous values. */
     this.root = node(false);
     this.root.chan = new Chan(CAPACITY);
-    /** @type {Map<string, { path: number[], chan: Chan<Uint8Array>, empty: boolean }>} data for undecided paths */
-    this.pending = new Map();
     /** Serializes outbound writes so each frame is emitted atomically. */
     this.writeChain = Promise.resolve();
     /** @type {unknown} */
@@ -209,11 +229,11 @@ export class Mux {
 
   /**
    * The channel of the sub-stream at `path`, `null` if its data is discarded,
-   * or {@link UNDECIDED} if it is not yet known whether it is expected. With
-   * `empty`, for an empty frame, a finished sub-stream also gives `null`.
+   * or where the lookup stopped if it is not yet known whether it is expected.
+   * With `empty`, for an empty frame, a finished sub-stream also gives `null`.
    * @param {number[]} path
    * @param {boolean} [empty]
-   * @returns {Chan<Uint8Array> | null | typeof UNDECIDED}
+   * @returns {Chan<Uint8Array> | null | Undecided}
    */
   _find(path, empty = false) {
     let n = this.root;
@@ -223,13 +243,13 @@ export class Mux {
       if (!child) {
         const finished = i < n.decided || !!n.pruned?.has(i);
         if (empty && finished) return null;
-        return n.sealed || finished ? unexpected(path) : UNDECIDED;
+        return n.sealed || finished ? unexpected(path) : { at: n, i };
       }
       n = child;
     }
     if (n.done) return empty ? null : unexpected(path);
     if (n.discardFrom !== Infinity) return null;
-    return n.chan ?? (n.sealed ? unexpected(path) : UNDECIDED);
+    return n.chan ?? unexpected(path);
   }
 
   /**
@@ -242,15 +262,34 @@ export class Mux {
   _route(path, empty = false) {
     const found = this._find(path, empty);
     if (found === null) return undefined;
-    if (found !== UNDECIDED) return found;
-    const k = key(path);
-    let pending = this.pending.get(k);
-    if (!pending) {
-      pending = { path, chan: new Chan(CAPACITY), empty };
-      this.pending.set(k, pending);
-    }
+    if (found instanceof Chan) return found;
+    let pending = found.at.pending?.get(found.i)?.get(key(path));
+    if (!pending) attach(found, (pending = { path, chan: new Chan(CAPACITY), empty }));
     pending.empty &&= empty;
     return pending.chan;
+  }
+
+  /**
+   * Take the data buffered for `path` before it was declared, if any, and
+   * name the group it was in, to settle once the path's nodes exist.
+   * @param {number[]} path
+   * @returns {(Undecided & { pending: Pending | undefined }) | undefined}
+   */
+  _takePending(path) {
+    let n = this.root;
+    for (const i of path) {
+      if (i >= n.discardFrom) return undefined;
+      const child = n.children.get(i);
+      if (!child) {
+        const group = n.pending?.get(i);
+        const k = key(path);
+        const pending = group?.get(k);
+        group?.delete(k);
+        return { at: n, i, pending };
+      }
+      n = child;
+    }
+    return undefined;
   }
 
   /**
@@ -285,24 +324,34 @@ export class Mux {
    * @param {{ path: number[], nested: boolean }[]} expected
    */
   seal(path, expected) {
+    /** @type {Undecided[]} */
+    const settle = [];
     if (path.length) {
       const parent = this._get(path.slice(0, -1));
-      if (parent) parent.decided = Math.max(parent.decided, path[path.length - 1] + 1);
+      if (parent && !parent.sealed) {
+        const from = parent.decided;
+        parent.decided = Math.max(from, path[path.length - 1] + 1);
+        for (let i = from; i < parent.decided; i++) settle.push({ at: parent, i });
+      }
     }
+    const taken = expected.map((e) => this._takePending([...path, ...e.path]));
     const scope = this._get(path, expected.length > 0);
     if (scope) scope.sealed = true;
-    for (const e of expected) {
-      const abs = [...path, ...e.path];
-      const n = this._get(abs, true);
-      if (!n) continue;
+    expected.forEach((e, j) => {
+      const t = taken[j];
+      if (t) settle.push(t);
+      const n = this._get([...path, ...e.path], true);
+      if (!n) {
+        t?.pending?.chan.cancel(DISCARDED);
+        return;
+      }
       n.sealed = !e.nested;
-      if (n.chan) continue;
-      const k = key(abs);
-      n.chan = this.pending.get(k)?.chan ?? new Chan(CAPACITY);
-      this.pending.delete(k);
+      if (n.chan) return;
+      n.chan = t?.pending?.chan ?? new Chan(CAPACITY);
       if (this.inboundClosed) n.chan.close(this.inboundError);
-    }
-    this._settle();
+    });
+    if (scope) for (const i of scope.pending?.keys() ?? []) settle.push({ at: scope, i });
+    for (const at of settle) this._settle(at);
   }
 
   /**
@@ -317,8 +366,8 @@ export class Mux {
     if (!n) return;
     n.sealed = true;
     n.done = true;
+    for (const i of [...(n.pending?.keys() ?? [])]) this._settle({ at: n, i });
     this._prune(path);
-    this._settle();
   }
 
   /**
@@ -355,12 +404,16 @@ export class Mux {
     if (!n || (n.done && ![...n.children.keys()].some((i) => i >= from))) return;
     n.discardFrom = Math.min(n.discardFrom, from);
     n.chan?.cancel(DISCARDED);
+    for (const [i, group] of n.pending ?? []) {
+      if (i < from) continue;
+      for (const { chan } of group.values()) chan.cancel(DISCARDED);
+      n.pending?.delete(i);
+    }
     for (const [i, child] of n.children) {
       if (i < from) continue;
       eachChan(child, (chan) => chan.cancel(DISCARDED));
       n.children.delete(i);
     }
-    this._settle();
   }
 
   /**
@@ -373,19 +426,25 @@ export class Mux {
     else f();
   }
 
-  /** Drop or reject the buffered data of the paths decided since it arrived. */
-  _settle() {
-    for (const [k, { path, chan, empty }] of this.pending) {
+  /**
+   * Look up the paths buffered in the group at `at` again: drop or reject
+   * those decided since, and keep the rest where their lookup stops now.
+   * @param {Undecided} at
+   */
+  _settle(at) {
+    const group = at.at.pending?.get(at.i);
+    if (!group) return;
+    at.at.pending?.delete(at.i);
+    for (const pending of group.values()) {
       let found;
       try {
-        found = this._find(path, empty);
+        found = this._find(pending.path, pending.empty);
       } catch (err) {
         this.abort(err);
         return;
       }
-      if (found === UNDECIDED) continue;
-      this.pending.delete(k);
-      chan.cancel(DISCARDED);
+      if (found === null || found instanceof Chan) pending.chan.cancel(DISCARDED);
+      else attach(found, pending);
     }
   }
 
@@ -395,7 +454,6 @@ export class Mux {
     this.inboundClosed = true;
     this.inboundError = err;
     eachChan(this.root, (chan) => chan.close(err));
-    for (const { chan } of this.pending.values()) chan.close(err);
   }
 
   /**
