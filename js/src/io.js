@@ -99,6 +99,8 @@ export class Reader {
   constructor(bytes) {
     this.bytes = bytes;
     this.pos = 0;
+    /** The buffer length the last end-of-input underflow needed. */
+    this.need = 0;
   }
 
   /** @returns {boolean} whether the cursor is at the end of the buffer */
@@ -108,22 +110,30 @@ export class Reader {
 
   /** Read a single byte. @returns {number} */
   u8() {
-    if (this.pos >= this.bytes.length) throw new RangeError("unexpected end of input");
+    this.#ensure(1);
     return this.bytes[this.pos++];
   }
 
   /** Read the next byte without consuming it. @returns {number} */
   peek() {
-    if (this.pos >= this.bytes.length) throw new RangeError("unexpected end of input");
+    this.#ensure(1);
     return this.bytes[this.pos];
   }
 
   /** Read `n` raw bytes. @param {number} n @returns {Uint8Array} */
   take(n) {
-    if (this.pos + n > this.bytes.length) throw new RangeError("unexpected end of input");
+    this.#ensure(n);
     const slice = this.bytes.subarray(this.pos, this.pos + n);
     this.pos += n;
     return slice;
+  }
+
+  /** @param {number} n */
+  #ensure(n) {
+    if (this.pos + n > this.bytes.length) {
+      this.need = this.pos + n;
+      throw new RangeError(UNEXPECTED_EOF);
+    }
   }
 
   /**
@@ -131,17 +141,7 @@ export class Reader {
    * @param {number} [bits] @returns {bigint}
    */
   varU(bits = 64) {
-    let result = 0n;
-    let shift = 0;
-    let byte;
-    do {
-      if (shift >= bits) throw overflow("unsigned", bits);
-      byte = this.u8();
-      result |= BigInt(byte & 0x7f) << BigInt(shift);
-      shift += 7;
-    } while (byte & 0x80);
-    if (result >> BigInt(bits)) throw overflow("unsigned", bits);
-    return result;
+    return this.#leb128(bits, false);
   }
 
   /**
@@ -149,17 +149,27 @@ export class Reader {
    * @param {number} [bits] @returns {bigint}
    */
   varS(bits = 64) {
+    return this.#leb128(bits, true);
+  }
+
+  /** @param {number} bits @param {boolean} signed @returns {bigint} */
+  #leb128(bits, signed) {
+    const sign = signed ? "signed" : "unsigned";
     let result = 0n;
     let shift = 0;
     let byte;
     do {
-      if (shift >= bits) throw overflow("signed", bits);
+      if (shift >= bits) throw overflow(sign, bits);
       byte = this.u8();
       result |= BigInt(byte & 0x7f) << BigInt(shift);
       shift += 7;
     } while (byte & 0x80);
+    if (!signed) {
+      if (result >> BigInt(bits)) throw overflow(sign, bits);
+      return result;
+    }
     if (byte & 0x40) result |= -1n << BigInt(shift); // sign-extend
-    if (BigInt.asIntN(bits, result) !== result) throw overflow("signed", bits);
+    if (BigInt.asIntN(bits, result) !== result) throw overflow(sign, bits);
     return result;
   }
 
@@ -262,71 +272,83 @@ export class AsyncReader {
   }
 
   /**
-   * Pull one more chunk into the buffer.
-   * @returns {Promise<boolean>} `false` once the input is exhausted
+   * Pull chunks until at least `n` unconsumed bytes are buffered, joining them
+   * with a single copy.
+   * @param {number} n
+   * @returns {Promise<boolean>} `false` if the input ended first
    */
-  async more() {
-    if (this.eof) return false;
-    const chunk = await this.pull();
-    if (chunk === null || chunk === undefined) {
-      this.eof = true;
-      return false;
+  async fill(n) {
+    let have = this.buf.length - this.pos;
+    if (have >= n) return true;
+    const chunks = have > 0 ? [this.remaining()] : [];
+    while (have < n && !this.eof) {
+      const chunk = await this.pull();
+      if (chunk === null || chunk === undefined) {
+        this.eof = true;
+      } else if (chunk.length > 0) {
+        chunks.push(chunk);
+        have += chunk.length;
+      }
     }
-    if (chunk.length === 0) return this.more();
-    const rem = this.remaining();
-    if (rem.length === 0) {
-      this.buf = chunk;
-      this.pos = 0;
+    if (chunks.length === 1) {
+      this.buf = chunks[0];
     } else {
-      const merged = new Uint8Array(rem.length + chunk.length);
-      merged.set(rem, 0);
-      merged.set(chunk, rem.length);
-      this.buf = merged;
-      this.pos = 0;
+      this.buf = new Uint8Array(have);
+      let off = 0;
+      for (const chunk of chunks) {
+        this.buf.set(chunk, off);
+        off += chunk.length;
+      }
     }
-    return true;
+    this.pos = 0;
+    return have >= n;
   }
 
   /** Read a single byte, awaiting input if needed. @returns {Promise<number>} */
   async u8() {
-    while (this.pos >= this.buf.length) {
-      if (!(await this.more())) throw new RangeError(UNEXPECTED_EOF);
-    }
+    if (!(await this.fill(1))) throw new RangeError(UNEXPECTED_EOF);
     return this.buf[this.pos++];
   }
 
   /** Read `n` bytes, awaiting input if needed. @param {number} n @returns {Promise<Uint8Array>} */
   async take(n) {
-    while (this.buf.length - this.pos < n) {
-      if (!(await this.more())) throw new RangeError(UNEXPECTED_EOF);
-    }
+    if (!(await this.fill(n))) throw new RangeError(UNEXPECTED_EOF);
     const slice = this.buf.slice(this.pos, this.pos + n);
     this.pos += n;
     return slice;
   }
 
   /**
+   * Run the synchronous `decode` over the buffered bytes, pulling more input
+   * and retrying while it runs out.
+   * @template T
+   * @param {(r: Reader) => T} decode
+   * @returns {Promise<T>}
+   */
+  async decode(decode) {
+    for (;;) {
+      const r = new Reader(this.remaining());
+      try {
+        const value = decode(r);
+        this.consume(r.pos);
+        return value;
+      } catch (err) {
+        if (!isUnexpectedEof(err) || !(await this.fill(r.need))) throw err;
+      }
+    }
+  }
+
+  /**
    * Read an unsigned LEB128 integer of at most `bits` bits.
    * @param {number} [bits] @returns {Promise<bigint>}
    */
-  async varU(bits = 64) {
-    let result = 0n;
-    let shift = 0;
-    let byte;
-    do {
-      if (shift >= bits) throw overflow("unsigned", bits);
-      byte = await this.u8();
-      result |= BigInt(byte & 0x7f) << BigInt(shift);
-      shift += 7;
-    } while (byte & 0x80);
-    if (result >> BigInt(bits)) throw overflow("unsigned", bits);
-    return result;
+  varU(bits = 64) {
+    return this.decode((r) => r.varU(bits));
   }
 
   /** Read a `core:name`. @returns {Promise<string>} */
-  async name() {
-    const len = Number(await this.varU(32));
-    return textDecoder.decode(await this.take(len));
+  name() {
+    return this.decode((r) => r.name());
   }
 }
 
