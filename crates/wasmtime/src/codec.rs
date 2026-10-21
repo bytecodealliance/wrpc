@@ -1,3 +1,4 @@
+use core::future::ready;
 use core::iter::zip;
 use core::mem;
 use core::ops::{BitOrAssign, Shl};
@@ -860,13 +861,12 @@ where
             if *ty == ResourceType::host::<DynInputStream>() || io_streams.contains(ty) {
                 let mut store = store.as_context_mut();
                 let r = r.index(path).map_err(std::io::Error::other)?;
-                // TODO: Implement a custom reader, this approach ignores the stream end (`\0`),
-                // which will could potentially break/hang with some transports
                 // The stream must be typed as `DynInputStream` (the host resource type),
                 // otherwise the resulting resource handle carries the concrete reader type
                 // and fails the guest's `own<input-stream>` type check.
                 let stream: DynInputStream = Box::new(AsyncReadStream::new(
                     FramedRead::new(r, ListDecoderU8::default())
+                        .try_take_while(|chunk| ready(Ok(!chunk.is_empty())))
                         .into_async_read()
                         .compat(),
                 ));
