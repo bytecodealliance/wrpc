@@ -55,8 +55,8 @@ and resolves with the decoded `results` as soon as the synchronous reply
 arrives. `stream` results are async iterables of chunks and `future` results
 are promises — both fed as their data arrives over the multiplexed
 sub-streams — and `done` resolves once every asynchronous parameter and result
-has been transmitted. If any of that I/O fails, the invocation fails and the
-transport is aborted.
+has been transmitted. If the arguments do not match their types, or any of
+that I/O fails, the invocation fails and the transport is aborted.
 
 ### Streams and futures
 

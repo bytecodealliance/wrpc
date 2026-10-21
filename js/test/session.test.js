@@ -297,11 +297,19 @@ test("a value split across many frames and chunks decodes", async () => {
   await done;
 });
 
-test("invalid arguments fail before anything is written", async () => {
+test("invalid arguments fail before anything is written and abort the transport", async () => {
   const writes = [];
-  const transport = { read: async () => null, write: (bytes) => void writes.push(bytes) };
+  const aborted = [];
+  const transport = {
+    read: async () => null,
+    write: (bytes) => void writes.push(bytes),
+    abort: (reason) => void aborted.push(reason),
+  };
   await assert.rejects(invoke(transport, STREAMS, "get", [t.u32], [-1], []), /out of range/);
+  await assert.rejects(invoke(transport, STREAMS, "get", [t.u32], [], []), /expected 1 argument/);
+  await new Promise(setImmediate);
   assert.deepEqual(writes, []);
+  assert.equal(aborted.length, 2);
 });
 
 test("stream<u8> chunks must be bytes", async () => {
