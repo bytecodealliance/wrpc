@@ -54,6 +54,16 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    runs-on: ubuntu-24.04
+    outputs:
+      build: ${{ steps.changes.outputs.build }}
+      test: ${{ steps.changes.outputs.test }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/changes
+        id: changes
+
   build-bin:
     strategy:
       matrix:
@@ -108,27 +118,34 @@ jobs:
               docker run --rm wrpc:$(nix eval --raw .#wrpc-x86_64-unknown-linux-musl-oci.imageTag) wrpc-wasmtime --version
 
     name: wrpc-${{ matrix.config.target }}
+    needs: changes
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: ${{ needs.changes.outputs.build == 'true' }}
       - uses: ./.github/actions/install-nix
+        if: ${{ needs.changes.outputs.build == 'true' }}
         with:
           cachixAuthToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
       - uses: ./.github/actions/build-nix
+        if: ${{ needs.changes.outputs.build == 'true' }}
         with:
           package: wrpc-${{ matrix.config.target }}
       - run: ${{ matrix.config.test-bin }}
+        if: ${{ needs.changes.outputs.build == 'true' }}
       - uses: ./.github/actions/build-nix
-        if: ${{ !endsWith(matrix.config.target, 'fhs') }}
+        if: ${{ needs.changes.outputs.build == 'true' && !endsWith(matrix.config.target, 'fhs') }}
         with:
           package: wrpc-${{ matrix.config.target }}-oci
       - run: ${{ matrix.config.test-oci }}
-        if: ${{ !endsWith(matrix.config.target, 'fhs') }}
+        if: ${{ needs.changes.outputs.build == 'true' && !endsWith(matrix.config.target, 'fhs') }}
 
   build-lipo:
-    if: ${{ !startsWith(github.ref, 'refs/tags/go/') }}
+    if: ${{ !startsWith(github.ref, 'refs/tags/go/') && needs.changes.outputs.build == 'true' }}
     name: wrpc-universal-darwin
-    needs: build-bin
+    needs:
+      - build-bin
+      - changes
     runs-on: macos-latest
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -159,9 +176,11 @@ jobs:
           path: artifact
 
   test-linux:
-    if: ${{ !startsWith(github.ref, 'refs/tags/go/') }}
+    if: ${{ !startsWith(github.ref, 'refs/tags/go/') && needs.changes.outputs.build == 'true' }}
     runs-on: ubuntu-24.04
-    needs: build-bin
+    needs:
+      - build-bin
+      - changes
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -172,9 +191,11 @@ jobs:
       - run: ./bin/wrpc-wasmtime --version
 
   test-windows:
-    if: ${{ !startsWith(github.ref, 'refs/tags/go/') }}
+    if: ${{ !startsWith(github.ref, 'refs/tags/go/') && needs.changes.outputs.build == 'true' }}
     runs-on: windows-latest
-    needs: build-bin
+    needs:
+      - build-bin
+      - changes
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -192,20 +213,24 @@ jobs:
           - nextest
 
     name: cargo ${{ matrix.check }}
+    needs: changes
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: ${{ needs.changes.outputs.build == 'true' || matrix.check == 'nextest' && needs.changes.outputs.test == 'true' }}
       - uses: ./.github/actions/install-nix
+        if: ${{ needs.changes.outputs.build == 'true' || matrix.check == 'nextest' && needs.changes.outputs.test == 'true' }}
         with:
           cachixAuthToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
       - run: go work vendor -e -v
-        if: ${{ matrix.check == 'nextest' }}
+        if: ${{ matrix.check == 'nextest' && needs.changes.outputs.test == 'true' }}
       - run: git add .
-        if: ${{ matrix.check == 'nextest' }}
+        if: ${{ matrix.check == 'nextest' && needs.changes.outputs.test == 'true' }}
       - run: nix build -L .#checks.x86_64-linux.${{ matrix.check }}
+        if: ${{ needs.changes.outputs.build == 'true' || matrix.check == 'nextest' && needs.changes.outputs.test == 'true' }}
 
   crates:
-    if: ${{ !startsWith(github.ref, 'refs/tags/go/') }}
+    if: ${{ !startsWith(github.ref, 'refs/tags/go/') && needs.changes.outputs.build == 'true' }}
     strategy:
       matrix:
         include:
@@ -263,7 +288,9 @@ jobs:
           - crate: wit-bindgen-test
 
     name: publish ${{ matrix.crate }} to crates.io
-    needs: cargo
+    needs:
+      - cargo
+      - changes
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -299,6 +326,8 @@ jobs:
         working-directory: ./crates/${{ matrix.crate }}
 
   build-doc:
+    if: ${{ needs.changes.outputs.build == 'true' }}
+    needs: changes
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

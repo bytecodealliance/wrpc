@@ -12,7 +12,19 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    runs-on: ubuntu-24.04
+    outputs:
+      build: ${{ steps.changes.outputs.build }}
+      nix: ${{ steps.changes.outputs.nix }}
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - uses: ./.github/actions/changes
+      id: changes
+
   fmt:
+    if: ${{ needs.changes.outputs.nix == 'true' }}
+    needs: changes
     runs-on: ubuntu-24.04
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -22,6 +34,8 @@ jobs:
     - run: nix fmt -L $(find . -type f -name '*.nix')
 
   shell:
+    if: ${{ needs.changes.outputs.build == 'true' }}
+    needs: changes
     runs-on: ubuntu-24.04
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -34,6 +48,8 @@ jobs:
         wrpc-wasmtime --version
 
   develop:
+    if: ${{ needs.changes.outputs.build == 'true' }}
+    needs: changes
     runs-on: ubuntu-24.04
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

@@ -1,0 +1,70 @@
+name: detect changes
+description: detect which parts of the repository a pull request or merge group changes
+
+outputs:
+  build:
+    description: whether the Rust build may be affected
+    value: ${{ steps.changes.outputs.build }}
+  test:
+    description: whether the Rust test suite may be affected
+    value: ${{ steps.changes.outputs.test }}
+  js:
+    description: whether the JavaScript package may be affected
+    value: ${{ steps.changes.outputs.js }}
+  nix:
+    description: whether Nix expressions may be affected
+    value: ${{ steps.changes.outputs.nix }}
+
+runs:
+  using: composite
+  steps:
+  - id: changes
+    shell: bash
+    env:
+      BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+    run: |
+      build=false
+      test=false
+      js=false
+      nix=false
+      if [ -z "$BASE" ] || ! git fetch --depth=1 origin "$BASE"; then
+        build=true
+        test=true
+        js=true
+        nix=true
+      else
+        while read -r path; do
+          case "$path" in
+            .github/actions/* | .github/workflows/*)
+              build=true
+              test=true
+              js=true
+              nix=true
+              ;;
+            .github/* | .envrc | .gitignore | LICENSE | *.md)
+              ;;
+            js/*)
+              js=true
+              test=true
+              ;;
+            go/* | go.work | go.work.sum | examples/go/* | tests/go/* | tests/js/*)
+              test=true
+              ;;
+            *.nix | flake.lock)
+              build=true
+              test=true
+              nix=true
+              ;;
+            *)
+              build=true
+              test=true
+              ;;
+          esac
+        done < <(git diff --name-only "$BASE" HEAD)
+      fi
+      {
+        echo "build=$build"
+        echo "test=$test"
+        echo "js=$js"
+        echo "nix=$nix"
+      } | tee -a "$GITHUB_OUTPUT"
