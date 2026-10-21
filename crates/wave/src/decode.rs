@@ -50,9 +50,9 @@ where
             let element_type = ty
                 .list_element_type()
                 .ok_or_else(|| io_error("list type missing element type"))?;
-            debug_assert_ne!(mem::size_of::<V>(), 0);
-            let mut elements =
-                Vec::with_capacity(n.min(DEFAULT_MAX_INITIAL_CAPACITY / mem::size_of::<V>()));
+            let mut elements = Vec::with_capacity(
+                n.min(DEFAULT_MAX_INITIAL_CAPACITY / mem::size_of::<V>().max(1)),
+            );
             for _ in 0..n {
                 elements.push(Box::pin(read_value(r, &element_type)).await?);
             }
