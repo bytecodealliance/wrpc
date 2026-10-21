@@ -223,7 +223,8 @@ export class Mux {
         const data = m.remaining().slice(0, len);
         m.consume(data.length);
         len -= data.length;
-        if (chan) await chan.send(data);
+        // A finished sub-stream's reader is gone: the rest of the frame overruns it.
+        if (chan && !(await chan.send(data)) && !chan.cancelled && !this.aborted) unexpected(path);
       }
     }
     this._closeInbound();
@@ -368,6 +369,7 @@ export class Mux {
     if (!n) return;
     n.sealed = true;
     n.done = true;
+    n.chan?.close();
     for (const i of [...(n.pending?.keys() ?? [])]) this._settle({ at: n, i });
     this._prune(path);
   }
