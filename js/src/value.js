@@ -104,7 +104,8 @@ function checkInt(v, kind, min, max) {
 function checkSmallInt(v, kind, min, max) {
   const n = typeof v === "bigint" ? Number(v) : v;
   if (!Number.isInteger(n)) throw new TypeError(`expected an integer for \`${kind}\`, got ${v}`);
-  if (n < min || n > max) throw new RangeError(`\`${kind}\` value ${v} out of range [${min}, ${max}]`);
+  if (n < min || n > max)
+    throw new RangeError(`\`${kind}\` value ${v} out of range [${min}, ${max}]`);
   return n;
 }
 
@@ -182,7 +183,8 @@ export function* readChunk(r, elem, n, sink, path) {
 export function encodeValue(w, ty, v, sink, path) {
   switch (ty.kind) {
     case "bool":
-      if (typeof v !== "boolean") throw new TypeError(`expected a boolean for a \`bool\`, got ${v}`);
+      if (typeof v !== "boolean")
+        throw new TypeError(`expected a boolean for a \`bool\`, got ${v}`);
       w.u8(v ? 1 : 0);
       return;
     case "u8":
@@ -236,8 +238,10 @@ export function encodeValue(w, ty, v, sink, path) {
       return;
     }
     case "string":
-      if (typeof v !== "string") throw new TypeError(`expected a string for a \`string\`, got ${v}`);
-      if (/\p{Surrogate}/u.test(v)) throw new TypeError("a `string` cannot contain lone surrogates");
+      if (typeof v !== "string")
+        throw new TypeError(`expected a string for a \`string\`, got ${v}`);
+      if (/\p{Surrogate}/u.test(v))
+        throw new TypeError("a `string` cannot contain lone surrogates");
       w.name(v);
       return;
     case "list": {
@@ -249,7 +253,8 @@ export function encodeValue(w, ty, v, sink, path) {
       }
       if (!Array.isArray(v)) throw new TypeError("expected an array for a `list`");
       w.varU(v.length);
-      for (let i = 0; i < v.length; i++) encodeValue(w, ty.elem, v[i], sink, childPath(sink, path, i));
+      for (let i = 0; i < v.length; i++)
+        encodeValue(w, ty.elem, v[i], sink, childPath(sink, path, i));
       return;
     }
     case "tuple": {
@@ -260,7 +265,8 @@ export function encodeValue(w, ty, v, sink, path) {
       return;
     }
     case "record": {
-      if (typeof v !== "object" || v === null) throw new TypeError("expected an object for a `record`");
+      if (typeof v !== "object" || v === null)
+        throw new TypeError("expected an object for a `record`");
       ty.fields.forEach(({ name, ty: fty }, i) => {
         if (!(name in v)) throw new TypeError(`missing record field \`${name}\``);
         encodeValue(w, fty, v[name], sink, childPath(sink, path, i));
@@ -499,7 +505,8 @@ function decodeScalar(r, ty) {
     case "flags": {
       const n = ty.names.length;
       const bytes = r.take(Math.ceil(Math.max(n, 1) / 8));
-      if (bytes[bytes.length - 1] >> (((n - 1) % 8) + 1)) throw new RangeError("invalid flags bits");
+      if (bytes[bytes.length - 1] >> (((n - 1) % 8) + 1))
+        throw new RangeError("invalid flags bits");
       /** @type {Record<string, boolean>} */
       const out = {};
       ty.names.forEach((name, i) => {

@@ -69,7 +69,10 @@ test("encoding rejects values of the wrong JavaScript type", () => {
 
 test("integer decoding rejects out-of-range and overlong encodings", () => {
   assert.throws(() => decode(t.u32, Uint8Array.of(0x80, 0x80, 0x80, 0x80, 0x10)), /overflows/);
-  assert.throws(() => decode(t.u32, Uint8Array.of(0x80, 0x80, 0x80, 0x80, 0x80, 0x00)), /overflows/);
+  assert.throws(
+    () => decode(t.u32, Uint8Array.of(0x80, 0x80, 0x80, 0x80, 0x80, 0x00)),
+    /overflows/,
+  );
   assert.throws(() => decode(t.u16, Uint8Array.of(0x80, 0x80, 0x04)), /overflows/);
   assert.throws(() => decode(t.s8, new Uint8Array(0)), /unexpected end of input/);
   assert.throws(() => decode(t.s16, Uint8Array.of(0x80, 0x80, 0x02)), /overflows/);
@@ -80,9 +83,15 @@ test("integer decoding rejects out-of-range and overlong encodings", () => {
 
 test("decoding rejects status bytes other than 0 and 1", () => {
   assert.throws(() => decode(t.bool, Uint8Array.of(2)), /invalid bool value byte `2`/);
-  assert.throws(() => decode(t.option(t.u8), Uint8Array.of(2, 0)), /invalid option status byte `2`/);
+  assert.throws(
+    () => decode(t.option(t.u8), Uint8Array.of(2, 0)),
+    /invalid option status byte `2`/,
+  );
   assert.throws(() => decode(t.result(), Uint8Array.of(0xff)), /invalid result status byte `255`/);
-  assert.throws(() => decode(t.future(t.u8), Uint8Array.of(2, 0)), /invalid option status byte `2`/);
+  assert.throws(
+    () => decode(t.future(t.u8), Uint8Array.of(2, 0)),
+    /invalid option status byte `2`/,
+  );
   assert.equal(decode(t.bool, Uint8Array.of(1)), true);
 });
 
@@ -93,12 +102,30 @@ test("integers encode the same as a number and as a bigint", () => {
     return w.finish();
   };
   for (const v of [0, 1, 63, 64, 127, 128, 8191, 8192, 2 ** 31 - 1, 2 ** 31, 2 ** 32 - 1]) {
-    assert.deepEqual(bytes((w) => w.varU(v)), bytes((w) => w.varU(BigInt(v))));
-    assert.equal(decode(t.u32, bytes((w) => w.varU(v))), v);
+    assert.deepEqual(
+      bytes((w) => w.varU(v)),
+      bytes((w) => w.varU(BigInt(v))),
+    );
+    assert.equal(
+      decode(
+        t.u32,
+        bytes((w) => w.varU(v)),
+      ),
+      v,
+    );
   }
   for (const v of [0, 1, -1, 63, 64, -64, -65, 8191, 8192, -8192, -8193, 2 ** 31 - 1, -(2 ** 31)]) {
-    assert.deepEqual(bytes((w) => w.varS(v)), bytes((w) => w.varS(BigInt(v))));
-    assert.equal(decode(t.s32, bytes((w) => w.varS(v))), v);
+    assert.deepEqual(
+      bytes((w) => w.varS(v)),
+      bytes((w) => w.varS(BigInt(v))),
+    );
+    assert.equal(
+      decode(
+        t.s32,
+        bytes((w) => w.varS(v)),
+      ),
+      v,
+    );
   }
   assert.deepEqual(encode(t.u32, 300n), encode(t.u32, 300));
   assert.throws(() => encode(t.u32, 1n << 70n), /out of range/);
@@ -146,7 +173,10 @@ test("byte lists round-trip as Uint8Array", () => {
   const out = roundtrip(t.list(t.u8), new Uint8Array([1, 2, 3, 255]));
   assert.ok(out instanceof Uint8Array);
   // encoding also accepts a plain array
-  assert.deepEqual(decode(t.list(t.u8), encode(t.list(t.u8), [1, 2, 3])), new Uint8Array([1, 2, 3]));
+  assert.deepEqual(
+    decode(t.list(t.u8), encode(t.list(t.u8), [1, 2, 3])),
+    new Uint8Array([1, 2, 3]),
+  );
 });
 
 test("lists, tuples, records", () => {
@@ -200,7 +230,11 @@ test("flags", () => {
   const ty = t.flags(["read", "write", "exec"]);
   roundtrip(ty, { read: true, write: false, exec: true });
   // arrays and sets are also accepted on encode
-  assert.deepEqual(decode(ty, encode(ty, ["read", "exec"])), { read: true, write: false, exec: true });
+  assert.deepEqual(decode(ty, encode(ty, ["read", "exec"])), {
+    read: true,
+    write: false,
+    exec: true,
+  });
   assert.throws(() => encode(ty, { read: true, wirte: true }), /unknown flag `wirte`/);
   assert.throws(() => encode(ty, new Set(["exe"])), /unknown flag `exe`/);
   assert.throws(() => decode(ty, Uint8Array.of(0b1000)), /invalid flags bits/);

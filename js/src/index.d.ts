@@ -2,7 +2,22 @@
 
 /** A structural wRPC/WIT type. */
 export type Type =
-  | { kind: "bool" | "s8" | "u8" | "s16" | "u16" | "s32" | "u32" | "s64" | "u64" | "f32" | "f64" | "char" | "string" }
+  | {
+      kind:
+        | "bool"
+        | "s8"
+        | "u8"
+        | "s16"
+        | "u16"
+        | "s32"
+        | "u32"
+        | "s64"
+        | "u64"
+        | "f32"
+        | "f64"
+        | "char"
+        | "string";
+    }
   | { kind: "list"; elem: Type }
   | { kind: "option"; some: Type }
   | { kind: "result"; ok: Type | null; err: Type | null }
@@ -36,7 +51,13 @@ export type Value =
  * pending values.
  */
 export type DecodeDeferred =
-  | { path: number[]; kind: "future"; ty: Type; resolve: (value: Value) => void; reject: (err: unknown) => void }
+  | {
+      path: number[];
+      kind: "future";
+      ty: Type;
+      resolve: (value: Value) => void;
+      reject: (err: unknown) => void;
+    }
   | { path: number[]; kind: "stream"; ty: Type; queue: Chan<Value[] | Uint8Array> }
   | { path: number[]; kind: "inline"; queue: Chan<Value[] | Uint8Array> };
 
@@ -63,7 +84,9 @@ export namespace types {
   export function result(ok?: Type | null, err?: Type | null): Type;
   export function tuple(...elems: Type[]): Type;
   export function record(fields: Record<string, Type> | { name: string; ty: Type }[]): Type;
-  export function variant(cases: Record<string, Type | null> | { name: string; ty: Type | null }[]): Type;
+  export function variant(
+    cases: Record<string, Type | null> | { name: string; ty: Type | null }[],
+  ): Type;
   function enumType(names: string[]): Type;
   export { enumType as enum };
   export function flags(names: string[]): Type;

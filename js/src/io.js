@@ -10,7 +10,8 @@ const textDecoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 export const UNEXPECTED_EOF = "unexpected end of input";
 
 /** @param {string} sign @param {number} bits */
-const overflow = (sign, bits) => new RangeError(`LEB128 integer overflows ${sign} ${bits}-bit range`);
+const overflow = (sign, bits) =>
+  new RangeError(`LEB128 integer overflows ${sign} ${bits}-bit range`);
 
 /** A growable little-endian byte writer. */
 export class Writer {
