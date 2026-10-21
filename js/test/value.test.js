@@ -101,6 +101,7 @@ test("integers encode the same as a number and as a bigint", () => {
   }
   assert.deepEqual(encode(t.u32, 300n), encode(t.u32, 300));
   assert.throws(() => encode(t.u32, 1n << 70n), /out of range/);
+  assert.throws(() => new Writer().varU(1.5), RangeError);
 });
 
 test("64-bit integers are bigint", () => {
