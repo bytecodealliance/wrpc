@@ -30,6 +30,7 @@ import {
   Writer,
   atomic,
   isUnexpectedEof,
+  readVarInt,
   readVarU32,
   textEncoder,
   textDecoder,
@@ -94,6 +95,22 @@ function checkInt(v, kind, min, max) {
   }
   return b;
 }
+
+/**
+ * {@link checkInt} for the integer kinds of at most 32 bits, as a `number`.
+ * @param {any} v @param {string} kind @param {number} min @param {number} max
+ * @returns {number}
+ */
+function checkSmallInt(v, kind, min, max) {
+  const n = typeof v === "bigint" ? Number(v) : v;
+  if (!Number.isInteger(n)) throw new TypeError(`expected an integer for \`${kind}\`, got ${v}`);
+  if (n < min || n > max) throw new RangeError(`\`${kind}\` value ${v} out of range [${min}, ${max}]`);
+  return n;
+}
+
+/** Scratch space to convert floats to and from their little-endian bytes. */
+const floatView = new DataView(new ArrayBuffer(8));
+const floatBytes = new Uint8Array(floatView.buffer);
 
 /** @param {any} v @param {string} kind @returns {number} */
 function checkFloat(v, kind) {
@@ -169,43 +186,41 @@ export function encodeValue(w, ty, v, sink, path) {
       w.u8(v ? 1 : 0);
       return;
     case "u8":
-      w.u8(Number(checkInt(v, "u8", 0n, 0xffn)));
+      w.u8(checkSmallInt(v, "u8", 0, 0xff));
       return;
     case "s8":
-      w.u8(Number(checkInt(v, "s8", -0x80n, 0x7fn)) & 0xff);
+      w.u8(checkSmallInt(v, "s8", -0x80, 0x7f) & 0xff);
       return;
     case "u16":
-      w.varU(checkInt(v, "u16", 0n, 0xffffn));
+      w.varU(checkSmallInt(v, "u16", 0, 0xffff));
       return;
     case "u32":
-      w.varU(checkInt(v, "u32", 0n, 0xffffffffn));
+      w.varU(checkSmallInt(v, "u32", 0, 0xffffffff));
       return;
     case "u64":
       w.varU(checkInt(v, "u64", 0n, (1n << 64n) - 1n));
       return;
     case "s16":
-      w.varS(checkInt(v, "s16", -0x8000n, 0x7fffn));
+      w.varS(checkSmallInt(v, "s16", -0x8000, 0x7fff));
       return;
     case "s32":
-      w.varS(checkInt(v, "s32", -0x80000000n, 0x7fffffffn));
+      w.varS(checkSmallInt(v, "s32", -0x80000000, 0x7fffffff));
       return;
     case "s64":
       w.varS(checkInt(v, "s64", -(1n << 63n), (1n << 63n) - 1n));
       return;
     case "f32": {
-      const view = new DataView(new ArrayBuffer(4));
       const n = checkFloat(v, "f32");
-      if (Number.isNaN(n)) view.setUint32(0, 0x7fc00000, true);
-      else view.setFloat32(0, n, true);
-      w.bytes(new Uint8Array(view.buffer));
+      if (Number.isNaN(n)) floatView.setUint32(0, 0x7fc00000, true);
+      else floatView.setFloat32(0, n, true);
+      w.bytes(floatBytes.subarray(0, 4));
       return;
     }
     case "f64": {
-      const view = new DataView(new ArrayBuffer(8));
       const n = checkFloat(v, "f64");
-      if (Number.isNaN(n)) view.setBigUint64(0, 0x7ff8000000000000n, true);
-      else view.setFloat64(0, n, true);
-      w.bytes(new Uint8Array(view.buffer));
+      if (Number.isNaN(n)) floatView.setBigUint64(0, 0x7ff8000000000000n, true);
+      else floatView.setFloat64(0, n, true);
+      w.bytes(floatBytes);
       return;
     }
     case "char": {
@@ -450,21 +465,23 @@ function decodeScalar(r, ty) {
       return b >= 0x80 ? b - 0x100 : b;
     }
     case "u16":
-      return Number(r.varU(16));
+      return readVarInt(r, 16, false);
     case "u32":
       return readVarU32(r);
     case "s16":
-      return Number(r.varS(16));
+      return readVarInt(r, 16, true);
     case "s32":
-      return Number(r.varS(32));
+      return readVarInt(r, 32, true);
     case "u64":
       return r.varU(64);
     case "s64":
       return r.varS(64);
     case "f32":
-      return new DataView(r.take(4).slice().buffer).getFloat32(0, true);
+      floatBytes.set(r.take(4));
+      return floatView.getFloat32(0, true);
     case "f64":
-      return new DataView(r.take(8).slice().buffer).getFloat64(0, true);
+      floatBytes.set(r.take(8));
+      return floatView.getFloat64(0, true);
     case "char": {
       // Read one UTF-8 scalar value: the lead byte determines the length.
       const lead = r.peek();
@@ -529,7 +546,7 @@ export function toBytes(v) {
   if (v instanceof Uint8Array) return v;
   if (v instanceof ArrayBuffer) return new Uint8Array(v);
   if (ArrayBuffer.isView(v)) return new Uint8Array(v.buffer, v.byteOffset, v.byteLength);
-  if (Array.isArray(v)) return Uint8Array.from(v, (b) => Number(checkInt(b, "u8", 0n, 0xffn)));
+  if (Array.isArray(v)) return Uint8Array.from(v, (b) => checkSmallInt(b, "u8", 0, 0xff));
   throw new TypeError("expected `Uint8Array`, `ArrayBuffer`, or `number[]` for a byte list");
 }
 
