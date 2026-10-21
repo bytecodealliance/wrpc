@@ -3,6 +3,9 @@ use std::sync::Arc;
 use anyhow::Context as _;
 use clap::Parser;
 use tokio::io::BufReader;
+use tokio::select;
+use tokio::task::JoinSet;
+use tokio::time;
 use tracing::{error, instrument, warn};
 
 pub const DEFAULT_ADDR: &str = "[::1]:7761";
@@ -36,7 +39,8 @@ pub struct RunArgs {
 /// Serve a reactor component
 #[derive(Parser, Debug)]
 pub struct ServeArgs {
-    /// Invocation timeout
+    /// Invocation timeout, also limiting how long an accepted connection may take to send its
+    /// invocation header
     #[arg(long, default_value = crate::DEFAULT_TIMEOUT)]
     timeout: humantime::Duration,
 
@@ -96,11 +100,12 @@ pub async fn handle_serve(
         .await
         .with_context(|| format!("failed to bind TCP listener on `{export}`"))?;
     let srv = Arc::new(wrpc_transport::Server::default());
+    let timeout = *timeout;
     let mut handlers = crate::serve(
         srv.as_ref(),
         wrpc_transport::tcp::Client::from(import),
         (),
-        *timeout,
+        timeout,
         envs,
         workload,
     )
@@ -108,18 +113,32 @@ pub async fn handle_serve(
     let accept = tokio::spawn({
         let srv = Arc::clone(&srv);
         async move {
+            let mut conns = JoinSet::default();
             loop {
-                match lis.accept().await {
-                    Ok((stream, addr)) => {
-                        if let Err(err) = stream.set_nodelay(true) {
-                            warn!(?err, "failed to set TCP_NODELAY");
+                select! {
+                    res = lis.accept() => match res {
+                        Ok((stream, addr)) => {
+                            if let Err(err) = stream.set_nodelay(true) {
+                                warn!(?err, "failed to set TCP_NODELAY");
+                            }
+                            let (rx, tx) = stream.into_split();
+                            let rx = BufReader::new(rx);
+                            let srv = Arc::clone(&srv);
+                            conns.spawn(async move {
+                                match time::timeout(timeout, srv.accept(addr, tx, rx)).await {
+                                    Ok(Ok(())) => {}
+                                    Ok(Err(err)) => error!(?err, "failed to serve TCP connection"),
+                                    Err(..) => error!(?addr, "timed out accepting TCP connection"),
+                                }
+                            });
                         }
-                        let (rx, tx) = stream.into_split();
-                        if let Err(err) = srv.accept(addr, tx, BufReader::new(rx)).await {
-                            error!(?err, "failed to serve TCP connection");
+                        Err(err) => error!(?err, "failed to accept TCP connection"),
+                    },
+                    Some(res) = conns.join_next() => {
+                        if let Err(err) = res {
+                            error!(?err, "failed to join TCP connection task");
                         }
                     }
-                    Err(err) => error!(?err, "failed to accept TCP connection"),
                 }
             }
         }

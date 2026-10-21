@@ -39,15 +39,26 @@ async fn main() -> anyhow::Result<()> {
     let accept = tokio::spawn({
         let srv = Arc::clone(&srv);
         async move {
+            let mut conns = JoinSet::default();
             loop {
-                match lis.accept().await {
-                    Ok((stream, addr)) => {
-                        let (rx, tx) = stream.into_split();
-                        if let Err(err) = srv.accept(addr, tx, BufReader::new(rx)).await {
-                            error!(?err, "failed to serve Unix connection");
+                select! {
+                    res = lis.accept() => match res {
+                        Ok((stream, addr)) => {
+                            let (rx, tx) = stream.into_split();
+                            let srv = Arc::clone(&srv);
+                            conns.spawn(async move {
+                                if let Err(err) = srv.accept(addr, tx, BufReader::new(rx)).await {
+                                    error!(?err, "failed to serve Unix connection");
+                                }
+                            });
+                        }
+                        Err(err) => error!(?err, "failed to accept Unix connection"),
+                    },
+                    Some(res) = conns.join_next() => {
+                        if let Err(err) = res {
+                            error!(?err, "failed to join Unix connection task");
                         }
                     }
-                    Err(err) => error!(?err, "failed to accept Unix connection"),
                 }
             }
         }

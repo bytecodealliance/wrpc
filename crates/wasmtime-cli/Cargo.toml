@@ -25,7 +25,7 @@ futures = { workspace = true }
 humantime = { workspace = true }
 reqwest = { workspace = true }
 semver = { workspace = true }
-tokio = { workspace = true, features = ["fs"] }
+tokio = { workspace = true, features = ["fs", "macros", "time"] }
 tokio-util = { workspace = true, features = ["codec"] }
 tracing = { workspace = true, features = ["attributes"] }
 url = { workspace = true }
