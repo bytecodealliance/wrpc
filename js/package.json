@@ -1,6 +1,6 @@
 {
   "name": "@bytecodealliance/wrpc",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Transport-agnostic, component-native wRPC client and server for JavaScript",
   "type": "module",
   "license": "Apache-2.0 WITH LLVM-exception",
