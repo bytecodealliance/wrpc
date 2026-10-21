@@ -466,7 +466,7 @@ test(
   async () => {
     const frames = [];
     const peer = new Mux({ read: async () => null, write: (bytes) => void frames.push(bytes) });
-    await peer.outgoing([]).write(Uint8Array.of(1, 0, 0));
+    await peer.outgoing([]).write(Uint8Array.of(1, 1, 0, 0));
     for (let i = 0; i < 1000; i++) await peer.outgoing([0, 0]).write(Uint8Array.of(1, i & 0xff));
     await peer.outgoing([0, 0]).write(Uint8Array.of(0));
     await peer.outgoing([1]).write(Uint8Array.of(1, 7));

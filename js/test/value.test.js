@@ -92,6 +92,10 @@ test("decoding rejects status bytes other than 0 and 1", () => {
     () => decode(t.future(t.u8), Uint8Array.of(2, 0)),
     /invalid option status byte `2`/,
   );
+  assert.throws(
+    () => decode(t.stream(t.u8), Uint8Array.of(2, 0)),
+    /invalid option status byte `2`/,
+  );
   assert.equal(decode(t.bool, Uint8Array.of(1)), true);
 });
 
@@ -258,6 +262,21 @@ test("stream and future cannot be encoded or decoded synchronously", () => {
   // a pending marker (`0x00`) decoded on its own is likewise rejected
   assert.throws(() => decode(t.stream(t.u8), new Uint8Array([0])), /async session API/);
   assert.throws(() => decode(t.future(t.string), new Uint8Array([0])), /async session API/);
+});
+
+test("ready streams are decoded synchronously", async () => {
+  const collect = async (chunks) => {
+    const out = [];
+    for await (const chunk of chunks) out.push(chunk);
+    return out;
+  };
+  assert.deepEqual(await collect(decode(t.stream(t.u8), Uint8Array.of(1, 2, 7, 8))), [
+    Uint8Array.of(7, 8),
+  ]);
+  assert.deepEqual(await collect(decode(t.stream(t.string), Uint8Array.of(1, 1, 1, 0x61))), [
+    ["a"],
+  ]);
+  assert.deepEqual(await collect(decode(t.stream(t.u8), Uint8Array.of(1, 0))), []);
 });
 
 test("the wasi:keyvalue store types", () => {
