@@ -114,7 +114,7 @@ A `ready` stream contains all of the stream's elements, i.e. the stream is finis
 
 In case a stream is pending, it is transmitted as a sequence of `list<T>` chunks using the parent's index.
 
-Each pending stream MUST finish with an empty `list<T>`.
+Each pending stream MUST finish with an empty `list<T>`. Because an empty chunk marks the end of the stream, a sender MUST NOT send an empty chunk before the stream is finished.
 
 ### Resources
 
