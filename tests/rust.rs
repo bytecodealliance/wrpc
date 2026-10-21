@@ -1042,15 +1042,17 @@ where
                 }
             );
             let a: Pin<Box<dyn Stream<Item = Vec<u32>> + Send>> =
-                Box::pin(stream::iter([vec![0xc0, 0xff], vec![0xee]]));
+                Box::pin(stream::iter([vec![0xc0, 0xff], vec![], vec![0xee]]));
 
             let b: Pin<Box<dyn Stream<Item = Vec<&str>> + Send>> =
-                Box::pin(stream::iter([vec!["foo"], vec!["bar"]]));
+                Box::pin(stream::iter([vec!["foo"], vec![], vec!["bar"]]));
             let c: Pin<Box<dyn AsyncRead + Send>> = Box::pin(b"test".as_slice());
             let d: Pin<Box<dyn Future<Output = Vec<u64>> + Send>> =
                 Box::pin(async { vec![1, 2, 3] });
-            let e: Pin<Box<dyn Stream<Item = Bytes> + Send>> =
-                Box::pin(stream::repeat(Bytes::from("abcd".repeat(1 << 13))).take(1 << 3));
+            let e: Pin<Box<dyn Stream<Item = Bytes> + Send>> = Box::pin(
+                stream::iter([Bytes::default()])
+                    .chain(stream::repeat(Bytes::from("abcd".repeat(1 << 13))).take(1 << 3)),
+            );
             info!("transmitting `test.async` returns");
             tx((a, b, c, d, e)).await.expect("failed to send response");
         }

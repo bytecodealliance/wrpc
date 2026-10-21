@@ -44,7 +44,7 @@ mod newtyped_list {
 
     use wit_bindgen_wrpc::bytes::BytesMut;
     use wit_bindgen_wrpc::tokio_util::codec::{Decoder, Encoder};
-    use wit_bindgen_wrpc::wrpc_transport::{Decode, Deferred, DeferredFn, Encode};
+    use wit_bindgen_wrpc::wrpc_transport::{Decode, Deferred, DeferredFn, Encode, Sink};
 
     wit_bindgen_wrpc::generate!({
         inline: r#"
@@ -189,7 +189,7 @@ mod newtyped_list {
 
     macro_rules! impl_codec {
         ($t:ty) => {
-            impl Encode for $t {
+            impl<W: Sink> Encode<W> for $t {
                 type Encoder = Codec<Self>;
             }
 
