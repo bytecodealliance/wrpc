@@ -16,7 +16,7 @@ import (
 type Foo interface{}
 type Handler interface {
 	Foo(ctx__ context.Context) (wrpc.Own[Foo], error)
-	Foo_Foo(ctx__ context.Context, v wrpc.Own[Foo]) (string, error)
+	Foo_Baz(ctx__ context.Context, v wrpc.Own[Foo]) (string, error)
 	Foo_Bar(ctx__ context.Context, self wrpc.Borrow[Foo]) (string, error)
 	Bar(ctx__ context.Context, v wrpc.Borrow[Foo]) (string, error)
 }
@@ -110,10 +110,10 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 	}
 	stops = append(stops, stop0)
 
-	stop1, err := s.Serve("wrpc-examples:resources/resources", "foo.foo", func(ctx context.Context, w wrpc.IndexWriteCloser, r wrpc.IndexReadCloser) {
+	stop1, err := s.Serve("wrpc-examples:resources/resources", "foo.baz", func(ctx context.Context, w wrpc.IndexWriteCloser, r wrpc.IndexReadCloser) {
 		defer func() {
 			if err := w.Close(); err != nil {
-				slog.DebugContext(ctx, "failed to close writer", "instance", "wrpc-examples:resources/resources", "name", "foo.foo", "err", err)
+				slog.DebugContext(ctx, "failed to close writer", "instance", "wrpc-examples:resources/resources", "name", "foo.baz", "err", err)
 			}
 		}()
 		slog.DebugContext(ctx, "reading parameter", "i", 0)
@@ -151,19 +151,19 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 		}(r)
 
 		if err != nil {
-			slog.WarnContext(ctx, "failed to read parameter", "i", 0, "instance", "wrpc-examples:resources/resources", "name", "foo.foo", "err", err)
+			slog.WarnContext(ctx, "failed to read parameter", "i", 0, "instance", "wrpc-examples:resources/resources", "name", "foo.baz", "err", err)
 			if err := r.Close(); err != nil {
-				slog.ErrorContext(ctx, "failed to close reader", "instance", "wrpc-examples:resources/resources", "name", "foo.foo", "err", err)
+				slog.ErrorContext(ctx, "failed to close reader", "instance", "wrpc-examples:resources/resources", "name", "foo.baz", "err", err)
 			}
 			return
 		}
-		slog.DebugContext(ctx, "calling `wrpc-examples:resources/resources.foo.foo` handler")
-		r0, err := h.Foo_Foo(ctx, p0)
+		slog.DebugContext(ctx, "calling `wrpc-examples:resources/resources.foo.baz` handler")
+		r0, err := h.Foo_Baz(ctx, p0)
 		if cErr := r.Close(); cErr != nil {
-			slog.ErrorContext(ctx, "failed to close reader", "instance", "wrpc-examples:resources/resources", "name", "foo.foo", "err", err)
+			slog.ErrorContext(ctx, "failed to close reader", "instance", "wrpc-examples:resources/resources", "name", "foo.baz", "err", err)
 		}
 		if err != nil {
-			slog.WarnContext(ctx, "failed to handle invocation", "instance", "wrpc-examples:resources/resources", "name", "foo.foo", "err", err)
+			slog.WarnContext(ctx, "failed to handle invocation", "instance", "wrpc-examples:resources/resources", "name", "foo.baz", "err", err)
 			return
 		}
 
@@ -192,16 +192,16 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 			return nil
 		}(r0, &buf)
 		if err != nil {
-			slog.WarnContext(ctx, "failed to write result value", "i", 0, "instance", "wrpc-examples:resources/resources", "name", "foo.foo", "err", err)
+			slog.WarnContext(ctx, "failed to write result value", "i", 0, "instance", "wrpc-examples:resources/resources", "name", "foo.baz", "err", err)
 			return
 		}
 		if write0 != nil {
 			writes[0] = write0
 		}
-		slog.DebugContext(ctx, "transmitting `wrpc-examples:resources/resources.foo.foo` result")
+		slog.DebugContext(ctx, "transmitting `wrpc-examples:resources/resources.foo.baz` result")
 		_, err = w.Write(buf.Bytes())
 		if err != nil {
-			slog.WarnContext(ctx, "failed to write result", "instance", "wrpc-examples:resources/resources", "name", "foo.foo", "err", err)
+			slog.WarnContext(ctx, "failed to write result", "instance", "wrpc-examples:resources/resources", "name", "foo.baz", "err", err)
 			return
 		}
 		if len(writes) > 0 {
@@ -211,13 +211,13 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 				case 0:
 					w, err := w.Index(0)
 					if err != nil {
-						slog.ErrorContext(ctx, "failed to index result writer", "instance", "wrpc-examples:resources/resources", "name", "foo.foo", "err", err)
+						slog.ErrorContext(ctx, "failed to index result writer", "instance", "wrpc-examples:resources/resources", "name", "foo.baz", "err", err)
 						return
 					}
 					write := write
 					go func() {
 						if err := write(w); err != nil {
-							slog.WarnContext(ctx, "failed to write nested result value", "instance", "wrpc-examples:resources/resources", "name", "foo.foo", "err", err)
+							slog.WarnContext(ctx, "failed to write nested result value", "instance", "wrpc-examples:resources/resources", "name", "foo.baz", "err", err)
 						}
 					}()
 				}
@@ -225,7 +225,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 		}
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to serve `wrpc-examples:resources/resources.foo.foo`: %w", err)
+		return nil, fmt.Errorf("failed to serve `wrpc-examples:resources/resources.foo.baz`: %w", err)
 	}
 	stops = append(stops, stop1)
 

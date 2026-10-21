@@ -3,7 +3,7 @@ package wrpc-examples:resources;
 interface resources {
     resource foo {
         constructor();
-        foo: static func(v: foo) -> string;
+        baz: static func(v: foo) -> string;
         bar: func() -> string;
     }
 

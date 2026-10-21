@@ -52,14 +52,14 @@ func (h *Handler) Foo(ctx context.Context) (wrpc.Own[resources.Foo], error) {
 	return wrpc.Own[resources.Foo](id.String()), nil
 }
 
-func (h *Handler) Foo_Foo(ctx context.Context, v wrpc.Own[resources.Foo]) (string, error) {
+func (h *Handler) Foo_Baz(ctx context.Context, v wrpc.Own[resources.Foo]) (string, error) {
 	stored, ok := h.Load(string(v))
 	if !ok {
 		return "", fmt.Errorf("unknown resource ID `%s`", string(v))
 	}
 	foo := stored.(Foo)
 	foo.cancel()
-	return "foo", nil
+	return "baz", nil
 }
 
 func (h *Handler) Foo_Bar(ctx context.Context, v wrpc.Borrow[resources.Foo]) (string, error) {
