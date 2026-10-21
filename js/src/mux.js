@@ -221,7 +221,7 @@ export class Mux {
         continue;
       }
       const chan = this._route(path);
-      for (let len = n; len > 0; ) {
+      for (let len = n; len > 0;) {
         if (!(await m.fill(1))) throw new RangeError(UNEXPECTED_EOF);
         const data = m.remaining().slice(0, len);
         m.consume(data.length);

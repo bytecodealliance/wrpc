@@ -115,7 +115,10 @@ import { t, accept } from "@bytecodealliance/wrpc";
 
 const inv = await accept(transport); // { instance, func, ... }
 const { params, done: rx } = await inv.receiveParams([t.string]);
-await Promise.all([rx, inv.sendResults([t.result(t.own("bucket"), error)], [{ tag: "ok", val: handle }])]);
+await Promise.all([
+  rx,
+  inv.sendResults([t.result(t.own("bucket"), error)], [{ tag: "ok", val: handle }]),
+]);
 ```
 
 ## Value mapping
@@ -123,26 +126,26 @@ await Promise.all([rx, inv.sendResults([t.result(t.own("bucket"), error)], [{ ta
 Component-model values map to JavaScript following the same conventions as
 [`jco`](https://github.com/bytecodealliance/jco):
 
-| WIT                       | JavaScript                                   |
-| ------------------------- | -------------------------------------------- |
-| `bool`                    | `boolean`                                    |
-| `s8`–`s32`, `u8`–`u32`    | `number`                                     |
-| `s64`, `u64`              | `bigint`                                     |
-| `f32`, `f64`              | `number`                                     |
-| `char`, `string`          | `string`                                     |
-| `list<u8>`                | `Uint8Array`                                 |
-| `list<T>`                 | `Array`                                      |
-| `tuple<...>`              | `Array`                                      |
-| `record`                  | object keyed by field name                   |
-| `option<T>`               | `T \| undefined`                             |
-| `option<option<T>>`       | `{ tag: "some", val } \| { tag: "none" }`    |
-| `result<O, E>`            | `{ tag: "ok", val } \| { tag: "err", val }`  |
-| `variant`                 | `{ tag: caseName, val? }`                    |
-| `enum`                    | `string` (the case name)                     |
-| `flags`                   | `{ [name]: boolean }`                        |
-| `future<T>`               | `Promise<T>` (or, when sending, a thunk)     |
-| `stream<T>`               | async iterable of chunks (`Uint8Array` for `stream<u8>`) |
-| `own<R>` / `borrow<R>`    | `Uint8Array` (the opaque handle bytes)       |
+| WIT                    | JavaScript                                               |
+| ---------------------- | -------------------------------------------------------- |
+| `bool`                 | `boolean`                                                |
+| `s8`–`s32`, `u8`–`u32` | `number`                                                 |
+| `s64`, `u64`           | `bigint`                                                 |
+| `f32`, `f64`           | `number`                                                 |
+| `char`, `string`       | `string`                                                 |
+| `list<u8>`             | `Uint8Array`                                             |
+| `list<T>`              | `Array`                                                  |
+| `tuple<...>`           | `Array`                                                  |
+| `record`               | object keyed by field name                               |
+| `option<T>`            | `T \| undefined`                                         |
+| `option<option<T>>`    | `{ tag: "some", val } \| { tag: "none" }`                |
+| `result<O, E>`         | `{ tag: "ok", val } \| { tag: "err", val }`              |
+| `variant`              | `{ tag: caseName, val? }`                                |
+| `enum`                 | `string` (the case name)                                 |
+| `flags`                | `{ [name]: boolean }`                                    |
+| `future<T>`            | `Promise<T>` (or, when sending, a thunk)                 |
+| `stream<T>`            | async iterable of chunks (`Uint8Array` for `stream<u8>`) |
+| `own<R>` / `borrow<R>` | `Uint8Array` (the opaque handle bytes)                   |
 
 ## API
 
