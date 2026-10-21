@@ -25,9 +25,7 @@
 
 import {
   Chan,
-  Reader,
   UNEXPECTED_EOF,
-  Writer,
   atomic,
   isUnexpectedEof,
   readVarInt,
@@ -38,6 +36,8 @@ import {
 
 /** @typedef {import("./index.d.ts").Type} Type */
 /** @typedef {import("./index.d.ts").Value} Value */
+/** @typedef {import("./io.js").Reader} Reader */
+/** @typedef {import("./io.js").Writer} Writer */
 
 /** The number of received chunks a pending `stream` buffers. */
 const STREAM_CAPACITY = 128;
