@@ -220,8 +220,12 @@ export class Mux {
    * order), with paths relative to it.
    */
   seal(path: number[], expected: { path: number[]; nested: boolean }[]): void;
-  /** Declare that the sub-stream at `path` has no more data: its stream ended, or its future's value was decoded. */
-  finish(path: number[]): void;
+  /**
+   * Declare that the sub-stream at `path` has no more data: its stream ended,
+   * or its future's value was decoded. Data of it left unread in `reader`
+   * fails the invocation.
+   */
+  finish(path: number[], reader?: AsyncReader): void;
   /** Discard the sub-stream at `path` and those nested in its children from index `from` (default 0) on. */
   discard(path: number[], from?: number): void;
   /** Call `f` once the sub-stream at `path` is discarded. */
