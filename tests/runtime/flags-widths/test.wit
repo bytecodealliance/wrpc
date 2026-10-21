@@ -1,0 +1,30 @@
+package test:flags-widths;
+
+interface to-test {
+  flags flag17 {
+    b0, b1, b2, b3, b4, b5, b6, b7,
+    b8, b9, b10, b11, b12, b13, b14, b15,
+    b16,
+  }
+
+  flags flag40 {
+    b0, b1, b2, b3, b4, b5, b6, b7,
+    b8, b9, b10, b11, b12, b13, b14, b15,
+    b16, b17, b18, b19, b20, b21, b22, b23,
+    b24, b25, b26, b27, b28, b29, b30, b31,
+    b32, b33, b34, b35, b36, b37, b38, b39,
+  }
+
+  roundtrip-flag17: func(a: flag17, b: u8) -> tuple<flag17, u8>;
+  roundtrip-flag40: func(a: flag40, b: u8) -> tuple<flag40, u8>;
+}
+
+world test {
+  export to-test;
+}
+
+world runner {
+  import to-test;
+
+  export run: func();
+}
