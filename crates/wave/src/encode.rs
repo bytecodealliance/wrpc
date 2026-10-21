@@ -1,4 +1,4 @@
-//! Value encoder for wasm-wave traits that works similarly to `ValEncoder`
+//! Value encoding
 
 use core::iter::zip;
 use core::ops::{BitOrAssign, Shl};
@@ -13,37 +13,28 @@ use tracing::instrument;
 use wasm_tokio::{CoreNameEncoder, Leb128Encoder, Utf8Codec};
 use wasm_wave::wasm::{WasmType, WasmTypeKind, WasmValue};
 
-/// Encoder for wasm-wave values with type information stored in the encoder.
-/// This mirrors the `ValEncoder` from `wrpc-wasmtime`.
+/// [Encoder] of values of type `T`
 ///
-/// ## Usage
+/// Resources, futures and streams are not supported.
 ///
 /// ```
-/// use wrpc_wave::WaveEncoder;
-/// use wasm_wave::value::{Value, Type};
-/// use wasm_wave::wasm::WasmValue;
 /// use bytes::BytesMut;
-/// use tokio_util::codec::Encoder;
+/// use tokio_util::codec::Encoder as _;
+/// use wasm_wave::value::{Type, Value};
+/// use wasm_wave::wasm::WasmValue as _;
+/// use wrpc_wave::ValueEncoder;
 ///
-/// let value = Value::make_u32(42);
-/// let ty = Type::U32;
-/// let mut encoder = WaveEncoder::new(&ty);
 /// let mut buf = BytesMut::default();
-/// encoder.encode(&value, &mut buf).unwrap();
+/// ValueEncoder::new(&Type::U32).encode(&Value::make_u32(42), &mut buf).unwrap();
 /// assert_eq!(buf.as_ref(), [42]);
 /// ```
-///
-/// Note:
-/// this crate is runtime-agnostic, which means it has no access to a "store"
-/// This means it cannot handle resources or any async encoding
 #[derive(Debug)]
-pub struct WaveEncoder<'a, T: WasmType> {
-    /// The type information for encoding
-    pub ty: &'a T,
+pub struct ValueEncoder<'a, T: WasmType> {
+    ty: &'a T,
 }
 
-impl<'a, T: WasmType> WaveEncoder<'a, T> {
-    /// Creates a new `WaveEncoder` with the given type information.
+impl<'a, T: WasmType> ValueEncoder<'a, T> {
+    /// Creates a new [`ValueEncoder`] of values of type `ty`
     #[must_use]
     pub fn new(ty: &'a T) -> Self {
         Self { ty }
@@ -85,7 +76,7 @@ fn flag_bits<'a, T: BitOrAssign + Shl<u8, Output = T> + From<u8>>(
     v
 }
 
-impl<V, T> Encoder<&V> for WaveEncoder<'_, T>
+impl<V, T> Encoder<&V> for ValueEncoder<'_, T>
 where
     V: WasmValue<Type = T>,
     T: WasmType,
@@ -157,7 +148,7 @@ where
                     .list_element_type()
                     .context("list type should have element type")?;
                 for element in elements {
-                    WaveEncoder::new(&ty)
+                    ValueEncoder::new(&ty)
                         .encode(&*element, dst)
                         .context("failed to encode list element")?;
                 }
@@ -165,7 +156,7 @@ where
             }
             WasmTypeKind::Record => {
                 for ((name, v), (_, ty)) in zip(val.unwrap_record(), self.ty.record_fields()) {
-                    WaveEncoder::new(&ty)
+                    ValueEncoder::new(&ty)
                         .encode(&*v, dst)
                         .with_context(|| format!("failed to encode `{name}` field"))?;
                 }
@@ -173,7 +164,7 @@ where
             }
             WasmTypeKind::Tuple => {
                 for (v, ty) in zip(val.unwrap_tuple(), self.ty.tuple_element_types()) {
-                    WaveEncoder::new(&ty)
+                    ValueEncoder::new(&ty)
                         .encode(&*v, dst)
                         .context("failed to encode tuple element")?;
                 }
@@ -210,7 +201,7 @@ where
                     _ => bail!("case count does not fit in u32"),
                 };
                 match (payload, ty) {
-                    (Some(v), Some(ty)) => WaveEncoder::new(&ty)
+                    (Some(v), Some(ty)) => ValueEncoder::new(&ty)
                         .encode(&*v, dst)
                         .with_context(|| format!("failed to encode `{case}` payload")),
                     (None, None) => Ok(()),
@@ -259,7 +250,7 @@ where
                         .ty
                         .option_some_type()
                         .context("option type should have some type")?;
-                    WaveEncoder::new(&ty)
+                    ValueEncoder::new(&ty)
                         .encode(&*v, dst)
                         .context("failed to encode `option::some` value")
                 }
@@ -274,7 +265,7 @@ where
                         (Some(v), Some(ty)) => {
                             dst.reserve(2);
                             dst.put_u8(0);
-                            WaveEncoder::new(&ty)
+                            ValueEncoder::new(&ty)
                                 .encode(&*v, dst)
                                 .context("failed to encode `result::ok` value")
                         }
@@ -290,7 +281,7 @@ where
                         (Some(v), Some(ty)) => {
                             dst.reserve(2);
                             dst.put_u8(1);
-                            WaveEncoder::new(&ty)
+                            ValueEncoder::new(&ty)
                                 .encode(&*v, dst)
                                 .context("failed to encode `result::err` value")
                         }
@@ -399,7 +390,7 @@ mod tests {
     fn test_encode_bool_true() -> anyhow::Result<()> {
         let value = Value::make_bool(true);
         let ty = Type::BOOL;
-        let mut encoder = WaveEncoder::new(&ty);
+        let mut encoder = ValueEncoder::new(&ty);
         let mut buf = BytesMut::default();
         encoder.encode(&value, &mut buf)?;
 
@@ -411,7 +402,7 @@ mod tests {
     fn test_encode_bool_false() -> anyhow::Result<()> {
         let value = Value::make_bool(false);
         let ty = Type::BOOL;
-        let mut encoder = WaveEncoder::new(&ty);
+        let mut encoder = ValueEncoder::new(&ty);
         let mut buf = BytesMut::default();
         encoder.encode(&value, &mut buf)?;
 
@@ -425,7 +416,7 @@ mod tests {
     fn test_encode_s8_positive() -> anyhow::Result<()> {
         let value = Value::make_s8(42);
         let ty = Type::S8;
-        let mut encoder = WaveEncoder::new(&ty);
+        let mut encoder = ValueEncoder::new(&ty);
         let mut buf = BytesMut::default();
         encoder.encode(&value, &mut buf)?;
 
@@ -437,7 +428,7 @@ mod tests {
     fn test_encode_s8_negative() -> anyhow::Result<()> {
         let value = Value::make_s8(-42);
         let ty = Type::S8;
-        let mut encoder = WaveEncoder::new(&ty);
+        let mut encoder = ValueEncoder::new(&ty);
         let mut buf = BytesMut::default();
         encoder.encode(&value, &mut buf)?;
 
@@ -449,7 +440,7 @@ mod tests {
     fn test_encode_u8() -> anyhow::Result<()> {
         let value = Value::make_u8(255);
         let ty = Type::U8;
-        let mut encoder = WaveEncoder::new(&ty);
+        let mut encoder = ValueEncoder::new(&ty);
         let mut buf = BytesMut::default();
         encoder.encode(&value, &mut buf)?;
 
@@ -461,7 +452,7 @@ mod tests {
     fn test_encode_s16() -> anyhow::Result<()> {
         let value = Value::make_s16(1000);
         let ty = Type::S16;
-        let mut encoder = WaveEncoder::new(&ty);
+        let mut encoder = ValueEncoder::new(&ty);
         let mut buf = BytesMut::default();
         encoder.encode(&value, &mut buf)?;
 
@@ -474,7 +465,7 @@ mod tests {
     fn test_encode_u16() -> anyhow::Result<()> {
         let value = Value::make_u16(1000);
         let ty = Type::U16;
-        let mut encoder = WaveEncoder::new(&ty);
+        let mut encoder = ValueEncoder::new(&ty);
         let mut buf = BytesMut::default();
         encoder.encode(&value, &mut buf)?;
 
@@ -487,7 +478,7 @@ mod tests {
     fn test_encode_s32() -> anyhow::Result<()> {
         let value = Value::make_s32(100000);
         let ty = Type::S32;
-        let mut encoder = WaveEncoder::new(&ty);
+        let mut encoder = ValueEncoder::new(&ty);
         let mut buf = BytesMut::default();
         encoder.encode(&value, &mut buf)?;
 
@@ -500,7 +491,7 @@ mod tests {
     fn test_encode_u32() -> anyhow::Result<()> {
         let value = Value::make_u32(42);
         let ty = Type::U32;
-        let mut encoder = WaveEncoder::new(&ty);
+        let mut encoder = ValueEncoder::new(&ty);
         let mut buf = BytesMut::default();
         encoder.encode(&value, &mut buf)?;
 
@@ -513,7 +504,7 @@ mod tests {
     fn test_encode_s64() -> anyhow::Result<()> {
         let value = Value::make_s64(-1);
         let ty = Type::S64;
-        let mut encoder = WaveEncoder::new(&ty);
+        let mut encoder = ValueEncoder::new(&ty);
         let mut buf = BytesMut::default();
         encoder.encode(&value, &mut buf)?;
 
@@ -526,7 +517,7 @@ mod tests {
     fn test_encode_u64() -> anyhow::Result<()> {
         let value = Value::make_u64(12345);
         let ty = Type::U64;
-        let mut encoder = WaveEncoder::new(&ty);
+        let mut encoder = ValueEncoder::new(&ty);
         let mut buf = BytesMut::default();
         encoder.encode(&value, &mut buf)?;
 
@@ -541,7 +532,7 @@ mod tests {
     fn test_encode_f32() -> anyhow::Result<()> {
         let value = Value::make_f32(1.5);
         let ty = Type::F32;
-        let mut encoder = WaveEncoder::new(&ty);
+        let mut encoder = ValueEncoder::new(&ty);
         let mut buf = BytesMut::default();
         encoder.encode(&value, &mut buf)?;
 
@@ -553,7 +544,7 @@ mod tests {
     fn test_encode_f64() -> anyhow::Result<()> {
         let value = Value::make_f64(2.5);
         let ty = Type::F64;
-        let mut encoder = WaveEncoder::new(&ty);
+        let mut encoder = ValueEncoder::new(&ty);
         let mut buf = BytesMut::default();
         encoder.encode(&value, &mut buf)?;
 
@@ -567,7 +558,7 @@ mod tests {
     fn test_encode_char() -> anyhow::Result<()> {
         let value = Value::make_char('A');
         let ty = Type::CHAR;
-        let mut encoder = WaveEncoder::new(&ty);
+        let mut encoder = ValueEncoder::new(&ty);
         let mut buf = BytesMut::default();
         encoder.encode(&value, &mut buf)?;
 
@@ -580,7 +571,7 @@ mod tests {
     fn test_encode_char_unicode() -> anyhow::Result<()> {
         let value = Value::make_char('😀');
         let ty = Type::CHAR;
-        let mut encoder = WaveEncoder::new(&ty);
+        let mut encoder = ValueEncoder::new(&ty);
         let mut buf = BytesMut::default();
         encoder.encode(&value, &mut buf)?;
 
@@ -594,7 +585,7 @@ mod tests {
         use std::borrow::Cow;
         let value = Value::make_string(Cow::Borrowed("hello"));
         let ty = Type::STRING;
-        let mut encoder = WaveEncoder::new(&ty);
+        let mut encoder = ValueEncoder::new(&ty);
         let mut buf = BytesMut::default();
         encoder.encode(&value, &mut buf)?;
 
@@ -612,7 +603,7 @@ mod tests {
         let values: Vec<Value> = vec![];
         let list_value = Value::make_list(&list_type, values)?;
 
-        let mut encoder = WaveEncoder::new(&list_type);
+        let mut encoder = ValueEncoder::new(&list_type);
         let mut buf = BytesMut::default();
         encoder.encode(&list_value, &mut buf)?;
 
@@ -628,7 +619,7 @@ mod tests {
         let values = vec![Value::make_u32(1), Value::make_u32(2), Value::make_u32(3)];
         let list_value = Value::make_list(&list_type, values)?;
 
-        let mut encoder = WaveEncoder::new(&list_type);
+        let mut encoder = ValueEncoder::new(&list_type);
         let mut buf = BytesMut::default();
         encoder.encode(&list_value, &mut buf)?;
 
@@ -648,7 +639,7 @@ mod tests {
             [("x", Value::make_u32(10)), ("y", Value::make_u32(20))],
         )?;
 
-        let mut encoder = WaveEncoder::new(&record_type);
+        let mut encoder = ValueEncoder::new(&record_type);
         let mut buf = BytesMut::default();
         encoder.encode(&record_value, &mut buf)?;
 
@@ -666,7 +657,7 @@ mod tests {
         let tuple_value =
             Value::make_tuple(&tuple_type, [Value::make_u32(42), Value::make_bool(true)])?;
 
-        let mut encoder = WaveEncoder::new(&tuple_type);
+        let mut encoder = ValueEncoder::new(&tuple_type);
         let mut buf = BytesMut::default();
         encoder.encode(&tuple_value, &mut buf)?;
 
@@ -683,7 +674,7 @@ mod tests {
             .context("failed to create variant type")?;
         let variant_value = Value::make_variant(&variant_type, "none", None)?;
 
-        let mut encoder = WaveEncoder::new(&variant_type);
+        let mut encoder = ValueEncoder::new(&variant_type);
         let mut buf = BytesMut::default();
         encoder.encode(&variant_value, &mut buf)?;
 
@@ -698,7 +689,7 @@ mod tests {
             .context("failed to create variant type")?;
         let variant_value = Value::make_variant(&variant_type, "some", Some(Value::make_u32(42)))?;
 
-        let mut encoder = WaveEncoder::new(&variant_type);
+        let mut encoder = ValueEncoder::new(&variant_type);
         let mut buf = BytesMut::default();
         encoder.encode(&variant_value, &mut buf)?;
 
@@ -714,7 +705,7 @@ mod tests {
         let enum_type = Type::enum_ty(["red", "blue"]).expect("enum type should be valid");
         let enum_value = Value::make_enum(&enum_type, "red")?;
 
-        let mut encoder = WaveEncoder::new(&enum_type);
+        let mut encoder = ValueEncoder::new(&enum_type);
         let mut buf = BytesMut::default();
         encoder.encode(&enum_value, &mut buf)?;
 
@@ -731,7 +722,7 @@ mod tests {
         let option_type = Type::option(inner_type);
         let option_value = Value::make_option(&option_type, None)?;
 
-        let mut encoder = WaveEncoder::new(&option_type);
+        let mut encoder = ValueEncoder::new(&option_type);
         let mut buf = BytesMut::default();
         encoder.encode(&option_value, &mut buf)?;
 
@@ -747,7 +738,7 @@ mod tests {
         let inner_value = Value::make_u32(42);
         let option_value = Value::make_option(&option_type, Some(inner_value))?;
 
-        let mut encoder = WaveEncoder::new(&option_type);
+        let mut encoder = ValueEncoder::new(&option_type);
         let mut buf = BytesMut::default();
         encoder.encode(&option_value, &mut buf)?;
 
@@ -763,7 +754,7 @@ mod tests {
         let result_type = Type::result(Some(Type::U32), Some(Type::STRING));
         let result_value = Value::make_result(&result_type, Ok(Some(Value::make_u32(42))))?;
 
-        let mut encoder = WaveEncoder::new(&result_type);
+        let mut encoder = ValueEncoder::new(&result_type);
         let mut buf = BytesMut::default();
         encoder.encode(&result_value, &mut buf)?;
 
@@ -777,7 +768,7 @@ mod tests {
         let result_type = Type::result(None, Some(Type::STRING));
         let result_value = Value::make_result(&result_type, Ok(None))?;
 
-        let mut encoder = WaveEncoder::new(&result_type);
+        let mut encoder = ValueEncoder::new(&result_type);
         let mut buf = BytesMut::default();
         encoder.encode(&result_value, &mut buf)?;
 
@@ -795,7 +786,7 @@ mod tests {
             Err(Some(Value::make_string(Cow::Borrowed("fail")))),
         )?;
 
-        let mut encoder = WaveEncoder::new(&result_type);
+        let mut encoder = ValueEncoder::new(&result_type);
         let mut buf = BytesMut::default();
         encoder.encode(&result_value, &mut buf)?;
 
@@ -809,7 +800,7 @@ mod tests {
         let result_type = Type::result(Some(Type::U32), None);
         let result_value = Value::make_result(&result_type, Err(None))?;
 
-        let mut encoder = WaveEncoder::new(&result_type);
+        let mut encoder = ValueEncoder::new(&result_type);
         let mut buf = BytesMut::default();
         encoder.encode(&result_value, &mut buf)?;
 
@@ -826,7 +817,7 @@ mod tests {
             Type::flags(["read", "write", "execute"]).expect("flags type should be valid");
         let flags_value = Value::make_flags(&flags_type, [])?;
 
-        let mut encoder = WaveEncoder::new(&flags_type);
+        let mut encoder = ValueEncoder::new(&flags_type);
         let mut buf = BytesMut::default();
         encoder.encode(&flags_value, &mut buf)?;
 
@@ -841,7 +832,7 @@ mod tests {
             Type::flags(["read", "write", "execute"]).expect("flags type should be valid");
         let flags_value = Value::make_flags(&flags_type, ["read", "write"])?;
 
-        let mut encoder = WaveEncoder::new(&flags_type);
+        let mut encoder = ValueEncoder::new(&flags_type);
         let mut buf = BytesMut::default();
         encoder.encode(&flags_value, &mut buf)?;
 
@@ -858,7 +849,7 @@ mod tests {
         .context("failed to create flags type")?;
         let flags_value = Value::make_flags(&flags_type, ["f0", "f9"])?;
 
-        let mut encoder = WaveEncoder::new(&flags_type);
+        let mut encoder = ValueEncoder::new(&flags_type);
         let mut buf = BytesMut::default();
         encoder.encode(&flags_value, &mut buf)?;
 
@@ -878,7 +869,7 @@ mod tests {
         .context("failed to create flags type")?;
         let flags_value = Value::make_flags(&flags_type, ["f0", "f8", "f16"])?;
 
-        let mut encoder = WaveEncoder::new(&flags_type);
+        let mut encoder = ValueEncoder::new(&flags_type);
         let mut buf = BytesMut::default();
         encoder.encode(&flags_value, &mut buf)?;
 
