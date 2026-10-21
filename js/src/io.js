@@ -48,6 +48,11 @@ export class Writer {
    * @param {number | bigint} value non-negative integer
    */
   varU(value) {
+    if (typeof value === "number" && value >= 0 && value <= 0xffffffff) {
+      for (; value >= 0x80; value >>>= 7) this.u8((value & 0x7f) | 0x80);
+      this.u8(value);
+      return;
+    }
     let v = BigInt(value);
     if (v < 0n) throw new RangeError(`expected a non-negative integer, got ${v}`);
     do {
@@ -63,6 +68,17 @@ export class Writer {
    * @param {number | bigint} value
    */
   varS(value) {
+    if (typeof value === "number" && (value | 0) === value) {
+      for (;;) {
+        const byte = value & 0x7f;
+        value >>= 7;
+        if ((value === 0 && !(byte & 0x40)) || (value === -1 && byte & 0x40)) {
+          this.u8(byte);
+          return;
+        }
+        this.u8(byte | 0x80);
+      }
+    }
     let v = BigInt(value);
     for (;;) {
       const byte = Number(v & 0x7fn);
@@ -154,6 +170,7 @@ export class Reader {
 
   /** @param {number} bits @param {boolean} signed @returns {bigint} */
   #leb128(bits, signed) {
+    if (bits <= 32) return BigInt(readVarInt(this, bits, signed));
     const sign = signed ? "signed" : "unsigned";
     let result = 0n;
     let shift = 0;
@@ -179,8 +196,28 @@ export class Reader {
   }
 }
 
+/**
+ * Read a LEB128 integer of at most 32 bits as a number.
+ * @param {Reader} r @param {number} bits @param {boolean} signed @returns {number}
+ */
+export function readVarInt(r, bits, signed) {
+  let result = 0;
+  let shift = 0;
+  let byte;
+  do {
+    if (shift >= bits) throw overflow(signed ? "signed" : "unsigned", bits);
+    byte = r.u8();
+    result += (byte & 0x7f) * 2 ** shift;
+    shift += 7;
+  } while (byte & 0x80);
+  if (signed && byte & 0x40) result -= 2 ** shift; // sign-extend
+  const [min, max] = signed ? [-(2 ** (bits - 1)), 2 ** (bits - 1)] : [0, 2 ** bits];
+  if (result < min || result >= max) throw overflow(signed ? "signed" : "unsigned", bits);
+  return result;
+}
+
 /** Read an unsigned LEB128 `u32` as a number. @param {Reader} r */
-export const readVarU32 = (r) => Number(r.varU(32));
+export const readVarU32 = (r) => readVarInt(r, 32, false);
 
 /** @param {unknown} err @returns {boolean} whether `err` is an end-of-input underflow */
 export function isUnexpectedEof(err) {

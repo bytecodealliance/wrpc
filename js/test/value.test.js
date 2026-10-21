@@ -85,6 +85,24 @@ test("decoding rejects status bytes other than 0 and 1", () => {
   assert.equal(decode(t.bool, Uint8Array.of(1)), true);
 });
 
+test("integers encode the same as a number and as a bigint", () => {
+  const bytes = (f) => {
+    const w = new Writer();
+    f(w);
+    return w.finish();
+  };
+  for (const v of [0, 1, 63, 64, 127, 128, 8191, 8192, 2 ** 31 - 1, 2 ** 31, 2 ** 32 - 1]) {
+    assert.deepEqual(bytes((w) => w.varU(v)), bytes((w) => w.varU(BigInt(v))));
+    assert.equal(decode(t.u32, bytes((w) => w.varU(v))), v);
+  }
+  for (const v of [0, 1, -1, 63, 64, -64, -65, 8191, 8192, -8192, -8193, 2 ** 31 - 1, -(2 ** 31)]) {
+    assert.deepEqual(bytes((w) => w.varS(v)), bytes((w) => w.varS(BigInt(v))));
+    assert.equal(decode(t.s32, bytes((w) => w.varS(v))), v);
+  }
+  assert.deepEqual(encode(t.u32, 300n), encode(t.u32, 300));
+  assert.throws(() => encode(t.u32, 1n << 70n), /out of range/);
+});
+
 test("64-bit integers are bigint", () => {
   roundtrip(t.u64, 0n);
   roundtrip(t.u64, 18446744073709551615n);
