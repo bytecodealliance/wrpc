@@ -2193,7 +2193,7 @@ impl InterfaceGenerator<'_> {
                     {slog}.Debug("receiving outgoing pending stream contents")
                     chunk, err := v.Receive()
                     n := len(chunk)
-                    if n == 0 || err == {io}.EOF {{
+                    if err == {io}.EOF {{
                         end = true
                         {slog}.Debug("outgoing pending stream reached EOF")
                     }} else if err != nil {{
