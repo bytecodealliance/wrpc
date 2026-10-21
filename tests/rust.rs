@@ -1,6 +1,6 @@
 #![allow(clippy::type_complexity)]
 
-mod common;
+pub mod common;
 
 use core::net::Ipv6Addr;
 use core::pin::{Pin, pin};

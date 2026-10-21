@@ -1,0 +1,61 @@
+package wrpc-test:js;
+
+interface echo {
+    enum color { red, green, blue }
+
+    flags small { a, b, c }
+
+    flags wide {
+        f0, f1, f2, f3, f4, f5, f6, f7,
+        f8, f9, f10, f11, f12, f13, f14, f15,
+        f16,
+    }
+
+    variant v {
+        empty,
+        num(u32),
+        str(string),
+        nested(option<option<u8>>),
+    }
+
+    record values {
+        b: bool,
+        i8: s8,
+        %u8: u8,
+        i16: s16,
+        %u16: u16,
+        i32: s32,
+        %u32: u32,
+        i64: s64,
+        %u64: u64,
+        x32: f32,
+        x64: f64,
+        c: char,
+        s: string,
+        wide: wide,
+        bytes: list<u8>,
+        strs: list<string>,
+        opt: option<option<string>>,
+        res: result<u32, string>,
+        unit: result,
+        vs: list<v>,
+        color: color,
+        small: small,
+        tup: tuple<u8, string>,
+        lists: list<list<u16>>,
+    }
+
+    record asyncs {
+        bytes: stream<u8>,
+        lists: stream<list<string>>,
+        str: future<string>,
+        nested: future<future<u32>>,
+    }
+
+    echo: func(v: values) -> values;
+    echo-async: func(v: asyncs) -> asyncs;
+}
+
+world echo-server {
+    export echo;
+}

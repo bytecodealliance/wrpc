@@ -164,6 +164,9 @@ npm test       # codec / framing / session tests (node --test)
 npm run check  # type-check the sources and declarations (tsc)
 ```
 
+Interoperability with the Rust implementation is tested from the repository
+root with `cargo test --test js`.
+
 ## License
 
 Apache-2.0 WITH LLVM-exception

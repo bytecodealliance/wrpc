@@ -113,6 +113,7 @@
               nativeCheckInputs =
                 nativeCheckInputs
                 ++ [
+                  pkgs.nodejs
                   pkgs.pkgsUnstable.go
                 ];
             };
@@ -201,6 +202,7 @@
             buildInputs = [
               pkgs.cargo-audit
               pkgs.cargo-nextest
+              pkgs.nodejs
               pkgs.wit-deps
 
               pkgs.pkgsUnstable.go
