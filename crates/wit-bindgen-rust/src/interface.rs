@@ -1099,6 +1099,24 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve, H: Handler<T::Context> + 
         .then(|| to_upper_camel_case(self.resolve.types[ty].name.as_ref().unwrap()))
     }
 
+    fn has_debug(&self, ty: &Type) -> bool {
+        let Type::Id(id) = ty else {
+            return true;
+        };
+        match &self.resolve.types[*id].kind {
+            TypeDefKind::Future(..) | TypeDefKind::Stream(..) => false,
+            TypeDefKind::List(ty)
+            | TypeDefKind::FixedLengthList(ty, ..)
+            | TypeDefKind::Option(ty)
+            | TypeDefKind::Type(ty) => self.has_debug(ty),
+            TypeDefKind::Result(Result_ { ok, err }) => {
+                ok.iter().chain(err).all(|ty| self.has_debug(ty))
+            }
+            TypeDefKind::Tuple(Tuple { types }) => types.iter().all(|ty| self.has_debug(ty)),
+            _ => true,
+        }
+    }
+
     fn print_rust_enum_debug<'b>(
         &mut self,
         name: &str,
@@ -1118,9 +1136,9 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve, H: Handler<T::Context> + 
             self.push_str(name);
             self.push_str("::");
             self.push_str(&case_name);
-            let is_async = payload.is_some_and(|ty| async_paths_ty(self.resolve, ty).1);
+            let elide = payload.is_some_and(|ty| !self.has_debug(ty));
             if payload.is_some() {
-                if is_async {
+                if elide {
                     self.push_str("(_)");
                 } else {
                     self.push_str("(e)");
@@ -1129,7 +1147,7 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve, H: Handler<T::Context> + 
             self.push_str(" => {\n");
             self.push_str(&format!("f.debug_tuple(\"{name}::{case_name}\")"));
             if payload.is_some() {
-                if is_async {
+                if elide {
                     self.push_str(r#".field(&"<async>")"#);
                 } else {
                     self.push_str(".field(e)");
@@ -1586,8 +1604,7 @@ mod {mod_name} {{
             );
             self.push_str(&format!("f.debug_struct(\"{name}\")"));
             for field in fields {
-                let (_, fut) = async_paths_ty(self.resolve, &field.ty);
-                if fut {
+                if !self.has_debug(&field.ty) {
                     self.push_str(&format!(r#".field("{}", &"<async>")"#, field.name));
                 } else {
                     self.push_str(&format!(
