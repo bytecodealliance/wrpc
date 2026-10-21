@@ -63,6 +63,7 @@ test("encoding rejects values of the wrong JavaScript type", () => {
   assert.throws(() => encode(t.enum(["red"]), ["red"]), /unknown enum case/);
   assert.throws(() => encode(t.string, 1), /expected a string/);
   assert.throws(() => encode(t.list(t.u8), [256]), /out of range/);
+  // eslint-disable-next-line no-sparse-arrays
   assert.throws(() => encode(t.list(t.string), ["a", , "c"]), /expected a string/);
 });
 
