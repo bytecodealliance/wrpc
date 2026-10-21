@@ -1734,7 +1734,7 @@ mod {mod_name} {{
         type Error = ::std::io::Error;
 
         fn encode(&mut self, item: super::{name}, dst: &mut {bytes}::BytesMut) -> ::core::result::Result<(), Self::Error> {{
-            dst.extend_from_slice(&item.bits().to_le_bytes());
+            dst.extend_from_slice(&item.bits().to_le_bytes()[..{n}]);
             Ok(())
         }}
     }}
