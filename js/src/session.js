@@ -306,7 +306,8 @@ async function readStream(mux, path, elem, queue, ar) {
  * arrives — `stream` results are async iterables of chunks and `future`
  * results are promises, both fed as their data arrives — together with a
  * `done` promise that resolves once all asynchronous I/O (parameters and
- * results) has completed. If any of it fails, the transport is aborted.
+ * results) has completed. If the arguments do not match `paramTypes`, or any
+ * of it fails, the transport is aborted.
  *
  * @param {Transport} transport
  * @param {string} instance
@@ -317,16 +318,15 @@ async function readStream(mux, path, elem, queue, ar) {
  * @returns {Promise<{ results: any[], done: Promise<void> }>}
  */
 export async function invoke(transport, instance, func, paramTypes, args, resultTypes = []) {
-  if (args.length !== paramTypes.length) {
-    throw new RangeError(`expected ${paramTypes.length} argument(s), got ${args.length}`);
-  }
+  const mux = new Mux(transport);
   const w = new Writer();
   /** @type {any[]} */
   const psink = [];
-  paramTypes.forEach((ty, i) => encodeValue(w, ty, args[i], psink, [i]));
-
-  const mux = new Mux(transport);
   try {
+    if (args.length !== paramTypes.length) {
+      throw new RangeError(`expected ${paramTypes.length} argument(s), got ${args.length}`);
+    }
+    paramTypes.forEach((ty, i) => encodeValue(w, ty, args[i], psink, [i]));
     await mux.writeHeader(instance, func);
     mux.start();
     await mux.outgoing([]).write(w.finish());
