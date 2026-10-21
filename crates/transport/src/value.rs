@@ -2015,7 +2015,7 @@ pub struct StreamDecoder<T>
 where
     T: Decode,
 {
-    dec: T::ListDecoder,
+    dec: OptionDecoder<T::ListDecoder>,
     deferred: Option<DeferredFn<BufferedIncoming>>,
     _ty: PhantomData<T>,
 }
@@ -2026,7 +2026,7 @@ where
 {
     fn default() -> Self {
         Self {
-            dec: T::ListDecoder::default(),
+            dec: OptionDecoder::default(),
             deferred: None,
             _ty: PhantomData,
         }
@@ -2118,8 +2118,11 @@ where
         let Some(chunk) = self.dec.decode(src)? else {
             return Ok(None);
         };
-        if !chunk.is_empty() {
+        if let Some(chunk) = chunk {
             self.deferred = self.dec.take_deferred();
+            if chunk.is_empty() {
+                return Ok(Some(Box::pin(stream::empty())));
+            }
             return Ok(Some(Box::pin(stream::iter([chunk]))));
         }
 
@@ -2148,7 +2151,7 @@ where
 /// Decoder for `stream<list<u8>>`
 #[derive(Default)]
 pub struct StreamDecoderBytes {
-    dec: CoreVecDecoderBytes,
+    dec: OptionDecoder<CoreVecDecoderBytes>,
     deferred: Option<DeferredFn<BufferedIncoming>>,
 }
 
@@ -2167,13 +2170,16 @@ impl tokio_util::codec::Decoder for StreamDecoderBytes {
         let Some(chunk) = self.dec.decode(src)? else {
             return Ok(None);
         };
-        if !chunk.is_empty() {
+        if let Some(chunk) = chunk {
+            if chunk.is_empty() {
+                return Ok(Some(Box::pin(stream::empty())));
+            }
             return Ok(Some(Box::pin(stream::iter([chunk]))));
         }
 
         // stream is pending
         let (tx, rx) = mpsc::channel(128);
-        let dec = mem::take(&mut self.dec);
+        let dec = mem::take(&mut self.dec).into_inner();
         let span = Span::current();
         self.deferred = Some(Box::new(|mut r, path| {
             Box::pin(
@@ -2212,7 +2218,7 @@ impl Decode for Pin<Box<dyn Stream<Item = Bytes> + Send>> {
 /// Decoder for `stream<list<u8>>` with [`AsyncRead`] support
 #[derive(Default)]
 pub struct StreamDecoderRead {
-    dec: CoreVecDecoderBytes,
+    dec: OptionDecoder<CoreVecDecoderBytes>,
     deferred: Option<DeferredFn<BufferedIncoming>>,
 }
 
@@ -2231,13 +2237,13 @@ impl tokio_util::codec::Decoder for StreamDecoderRead {
         let Some(chunk) = self.dec.decode(src)? else {
             return Ok(None);
         };
-        if !chunk.is_empty() {
+        if let Some(chunk) = chunk {
             return Ok(Some(Box::pin(std::io::Cursor::new(chunk))));
         }
 
         // stream is pending
         let (tx, rx) = mpsc::channel(128);
-        let dec = mem::take(&mut self.dec);
+        let dec = mem::take(&mut self.dec).into_inner();
         self.deferred = Some(Box::new(|mut r, path| {
             Box::pin(async move {
                 if !path.is_empty() {
@@ -2300,6 +2306,51 @@ mod tests {
         if let Some(_f) = Deferred::<BufferedIncoming>::take_deferred(&mut dec) {
             bail!("no deferred read should have been returned");
         }
+        Ok(())
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn stream_decoder_ready() -> anyhow::Result<()> {
+        let mut dec =
+            <Pin<Box<dyn Stream<Item = Vec<String>> + Send>> as Decode>::Decoder::default();
+        let mut buf = BytesMut::from(&b"\x01\x02\x03foo\x03bar\x01\x00"[..]);
+        let Some(s) = tokio_util::codec::Decoder::decode(&mut dec, &mut buf)? else {
+            bail!("stream not decoded");
+        };
+        assert_eq!(s.concat().await, ["foo", "bar"]);
+        let Some(s) = tokio_util::codec::Decoder::decode(&mut dec, &mut buf)? else {
+            bail!("stream not decoded");
+        };
+        assert_eq!(s.count().await, 0);
+        if let Some(_f) = Deferred::<BufferedIncoming>::take_deferred(&mut dec) {
+            bail!("no deferred read should have been returned");
+        }
+
+        let mut dec = <Pin<Box<dyn Stream<Item = Bytes> + Send>> as Decode>::Decoder::default();
+        let mut buf = BytesMut::from(&b"\x01\x03foo\x01\x00"[..]);
+        let Some(s) = tokio_util::codec::Decoder::decode(&mut dec, &mut buf)? else {
+            bail!("stream not decoded");
+        };
+        assert_eq!(s.collect::<Vec<_>>().await, [Bytes::from("foo")]);
+        let Some(s) = tokio_util::codec::Decoder::decode(&mut dec, &mut buf)? else {
+            bail!("stream not decoded");
+        };
+        assert_eq!(s.count().await, 0);
+
+        let mut dec = <Pin<Box<dyn AsyncRead + Send>> as Decode>::Decoder::default();
+        let mut buf = BytesMut::from(&b"\x01\x03foo\x01\x00"[..]);
+        let Some(mut r) = tokio_util::codec::Decoder::decode(&mut dec, &mut buf)? else {
+            bail!("stream not decoded");
+        };
+        let mut v = vec![];
+        r.read_to_end(&mut v).await?;
+        assert_eq!(v, b"foo");
+        let Some(mut r) = tokio_util::codec::Decoder::decode(&mut dec, &mut buf)? else {
+            bail!("stream not decoded");
+        };
+        let mut v = vec![];
+        r.read_to_end(&mut v).await?;
+        assert!(v.is_empty());
         Ok(())
     }
 

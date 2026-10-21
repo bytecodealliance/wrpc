@@ -41,9 +41,9 @@ interface example {
 
 A path to field `a` in `foo` parameter `v` is defined as a sequence: `[0, 0]`.
 
-The invoker of `foo` MAY choose to send the whole contents of parameter `v`, i.e. `rec` encoded using [component model value definition encoding] on the "root" (synchronous) parameter data channel, in which case `stream<u8>` is sent as `list<u8>`, otherwise, the invoker MAY mark `rec.a` as pending in the encoding of `v` and instead, send it asynchnously over data channel identified by `[0, 0]` (first field in the first parameter).
+The invoker of `foo` MAY choose to send the whole contents of parameter `v`, i.e. `rec` encoded using [component model value definition encoding] on the "root" (synchronous) parameter data channel, in which case `stream<u8>` is sent as `ready` `list<u8>` (see [Streams](#streams)), otherwise, the invoker MAY mark `rec.a` as pending in the encoding of `v` and instead, send it asynchnously over data channel identified by `[0, 0]` (first field in the first parameter).
 
-Similarly, the handler of `foo` MAY either send the complete resulting `stream<u8>` contents as encoded `list<u8>` over the "root" (synchronous) result data channel or asynchronously over data channel identified by `0` (first return value).
+Similarly, the handler of `foo` MAY either send the complete resulting `stream<u8>` contents as encoded `ready` `list<u8>` over the "root" (synchronous) result data channel or asynchronously over data channel identified by `0` (first return value).
 
 The indexing rules are as follows:
 
@@ -108,12 +108,13 @@ If `v` is pending, encoded `bool` value is sent on index `0` (corresponding to f
 
 ### Streams
 
-`stream<T>` values are encoded as `list<T>` .
+`stream<T>` values are encoded as `variant stream<T> { pending, ready(list<T>) }`.
+
+A `ready` stream contains all of the stream's elements, i.e. the stream is finished. An empty `ready` stream is a finished stream containing no elements.
 
 In case a stream is pending, it is transmitted as a sequence of `list<T>` chunks using the parent's index.
 
-
-Each stream MUST finish with an empty `list<T>`.
+Each pending stream MUST finish with an empty `list<T>`.
 
 ### Resources
 

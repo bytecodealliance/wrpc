@@ -434,13 +434,13 @@ export function* decodeSteps(r, ty, sink, path) {
       return promise;
     }
     case "stream": {
-      const n = yield* atomic(r, readVarU32);
-      if (n > 0) {
+      if (yield* atomic(r, optionStatus)) {
         // A stream sent inline as a single ready chunk.
+        const n = yield* atomic(r, readVarU32);
         const before = sink?.length ?? 0;
         const chunk = yield* readChunk(r, ty.elem, n, sink, path);
         const q = new Chan();
-        q.push(chunk);
+        if (n > 0) q.push(chunk);
         q.close();
         if (sink && sink.length > before) sink.push({ path: path ?? [], kind: "inline", queue: q });
         return q;
