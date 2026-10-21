@@ -48,7 +48,7 @@ export class Writer {
    * @param {number | bigint} value non-negative integer
    */
   varU(value) {
-    if (typeof value === "number" && value >= 0 && value <= 0xffffffff) {
+    if (typeof value === "number" && value >>> 0 === value) {
       for (; value >= 0x80; value >>>= 7) this.u8((value & 0x7f) | 0x80);
       this.u8(value);
       return;
