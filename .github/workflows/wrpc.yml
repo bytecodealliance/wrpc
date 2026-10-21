@@ -9,6 +9,8 @@ on:
     tags:
       - 'crates/cli/v[0-9].[0-9]+.[0-9]+'
       - 'crates/cli/v[0-9].[0-9]+.[0-9]+-*'
+      - 'crates/http/v[0-9].[0-9]+.[0-9]+'
+      - 'crates/http/v[0-9].[0-9]+.[0-9]+-*'
       - 'crates/introspect/v[0-9].[0-9]+.[0-9]+'
       - 'crates/introspect/v[0-9].[0-9]+.[0-9]+-*'
       - 'crates/quic/v[0-9].[0-9]+.[0-9]+'
@@ -29,10 +31,14 @@ on:
       - 'crates/wasmtime/v[0-9].[0-9]+.[0-9]+-*'
       - 'crates/wave/v[0-9].[0-9]+.[0-9]+'
       - 'crates/wave/v[0-9].[0-9]+.[0-9]+-*'
+      - 'crates/websockets/v[0-9].[0-9]+.[0-9]+'
+      - 'crates/websockets/v[0-9].[0-9]+.[0-9]+-*'
       - 'crates/webtransport/v[0-9].[0-9]+.[0-9]+'
       - 'crates/webtransport/v[0-9].[0-9]+.[0-9]+-*'
       - 'crates/wit-bindgen-go/v[0-9].[0-9]+.[0-9]+'
       - 'crates/wit-bindgen-go/v[0-9].[0-9]+.[0-9]+-*'
+      - 'crates/wit-bindgen-test/v[0-9].[0-9]+.[0-9]+'
+      - 'crates/wit-bindgen-test/v[0-9].[0-9]+.[0-9]+-*'
       - 'crates/wit-bindgen-rust-macro/v[0-9].[0-9]+.[0-9]+'
       - 'crates/wit-bindgen-rust-macro/v[0-9].[0-9]+.[0-9]+-*'
       - 'crates/wit-bindgen-rust/v[0-9].[0-9]+.[0-9]+'
@@ -205,6 +211,9 @@ jobs:
         include:
           - crate: cli
 
+          - crate: http
+            workspace-dependencies: true
+
           - crate: introspect
 
           - crate: test
@@ -233,6 +242,9 @@ jobs:
           - crate: wave
             workspace-dependencies: true
 
+          - crate: websockets
+            workspace-dependencies: true
+
           - crate: webtransport
             workspace-dependencies: true
 
@@ -247,6 +259,8 @@ jobs:
 
           - crate: wit-bindgen-rust-macro
             workspace-dependencies: true
+
+          - crate: wit-bindgen-test
 
     name: publish ${{ matrix.crate }} to crates.io
     needs: cargo
