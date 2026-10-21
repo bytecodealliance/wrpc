@@ -21,8 +21,8 @@ impl bindings::exports::wrpc_examples::resources::resources::GuestFoo for Foo {
         Self
     }
 
-    fn foo(_: bindings::exports::wrpc_examples::resources::resources::Foo) -> String {
-        "foo".to_string()
+    fn baz(_: bindings::exports::wrpc_examples::resources::resources::Foo) -> String {
+        "baz".to_string()
     }
 
     fn bar(&self) -> String {
