@@ -1760,3 +1760,64 @@ async fn rust_bindgen_uds_async() -> anyhow::Result<()> {
         }
     }
 }
+
+#[test_log::test(tokio::test)]
+async fn rust_pack() -> anyhow::Result<()> {
+    mod bindings {
+        wit_bindgen_wrpc::generate!({
+            inline: "
+                package wrpc-test:pack;
+
+                interface types {
+                    record rec {
+                        a: future<u32>,
+                        b: stream<string>,
+                        c: stream<u8>,
+                        d: list<future<string>>,
+                        e: tuple<u8, future<u8>>,
+                    }
+
+                    f: func(v: rec);
+                }
+
+                world pack {
+                    import types;
+                }"
+        });
+    }
+    use bindings::wrpc_test::pack::types::Rec;
+
+    let (tx, rx) = oneshot::channel();
+    let v = Rec {
+        a: Box::pin(async { rx.await.expect("sender dropped") }),
+        b: Box::pin(stream::iter([
+            vec!["foo".to_string()],
+            vec!["bar".to_string(), "baz".to_string()],
+        ])),
+        c: Box::pin(stream::iter([Bytes::from("foo"), Bytes::from("bar")])),
+        d: vec![Box::pin(async { "foo".to_string() })],
+        e: (0x01, Box::pin(async { 0x02 })),
+    };
+    let mut buf = bytes::BytesMut::default();
+    let (res, ()) = join!(wrpc_transport::pack(v, &mut buf), async {
+        tx.send(42).expect("receiver dropped");
+    });
+    res.context("failed to pack value")?;
+    assert_eq!(
+        buf.as_ref(),
+        b"\x01\x2a\x01\x03\x03foo\x03bar\x03baz\x01\x06foobar\x01\x01\x03foo\x01\x01\x02"
+    );
+
+    let Rec { a, b, c, d, e } =
+        wrpc_transport::unpack::<Rec>(&mut buf).context("failed to unpack value")?;
+    assert_eq!(a.await, 42);
+    assert_eq!(b.concat().await, ["foo", "bar", "baz"]);
+    let c: Vec<Bytes> = c.collect().await;
+    assert_eq!(c.concat(), b"foobar");
+    let [d] = <[_; 1]>::try_from(d).ok().context("invalid list length")?;
+    assert_eq!(d.await, "foo");
+    let (e0, e1) = e;
+    assert_eq!(e0, 0x01);
+    assert_eq!(e1.await, 0x02);
+    Ok(())
+}
