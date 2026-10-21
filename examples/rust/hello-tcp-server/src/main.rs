@@ -47,6 +47,9 @@ async fn main() -> anyhow::Result<()> {
         .await
         .with_context(|| format!("failed to bind TCP listener on `{addr}`"))?;
     let srv = Arc::new(wrpc_transport::Server::default());
+    let invocations = bindings::serve(srv.as_ref(), Server)
+        .await
+        .context("failed to serve `wrpc-examples.hello/handler.hello`")?;
     let accept = tokio::spawn({
         let srv = Arc::clone(&srv);
         async move {
@@ -78,9 +81,6 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
-    let invocations = bindings::serve(srv.as_ref(), Server)
-        .await
-        .context("failed to serve `wrpc-examples.hello/handler.hello`")?;
     // NOTE: This will conflate all invocation streams into a single stream via `futures::stream::SelectAll`,
     // to customize this, iterate over the returned `invocations` and set up custom handling per export
     let mut invocations = select_all(

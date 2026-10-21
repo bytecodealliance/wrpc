@@ -36,6 +36,10 @@ async fn main() -> anyhow::Result<()> {
     let lis = tokio::net::UnixListener::bind(&path)
         .with_context(|| format!("failed to bind Unix listener on `{}`", path.display()))?;
     let srv = Arc::new(wrpc_transport::Server::default());
+    let invocations =
+        wrpc_wasi_keyvalue::serve(srv.as_ref(), wrpc_wasi_keyvalue_mem::Handler::default())
+            .await
+            .context("failed to serve `wasi:keyvalue`")?;
     let accept = tokio::spawn({
         let srv = Arc::clone(&srv);
         async move {
@@ -64,10 +68,6 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
-    let invocations =
-        wrpc_wasi_keyvalue::serve(srv.as_ref(), wrpc_wasi_keyvalue_mem::Handler::default())
-            .await
-            .context("failed to serve `wasi:keyvalue`")?;
     // NOTE: This will conflate all invocation streams into a single stream via `futures::stream::SelectAll`,
     // to customize this, iterate over the returned `invocations` and set up custom handling per export
     let mut invocations = select_all(
