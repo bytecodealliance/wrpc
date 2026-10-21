@@ -751,14 +751,14 @@ where
 }
 
 #[instrument(level = "trace", skip(srv, clt, cx), ret(level = "trace"))]
-pub async fn handle_serve<C, S>(
+pub async fn serve<C, S>(
     srv: S,
     clt: C,
     cx: C::Context,
     timeout: Duration,
     envs: Vec<(Box<str>, Box<str>)>,
     workload: &str,
-) -> anyhow::Result<()>
+) -> anyhow::Result<JoinSet<()>>
 where
     C: Invoke + Clone + 'static,
     C::Context: Clone + 'static,
@@ -792,12 +792,7 @@ where
         )
         .await?;
     }
-    while let Some(res) = handlers.join_next().await {
-        if let Err(err) = res {
-            error!(?err, "handler failed");
-        }
-    }
-    Ok(())
+    Ok(handlers)
 }
 
 #[instrument(level = "trace", ret(level = "trace"))]

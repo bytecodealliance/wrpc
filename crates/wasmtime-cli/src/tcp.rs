@@ -96,6 +96,15 @@ pub async fn handle_serve(
         .await
         .with_context(|| format!("failed to bind TCP listener on `{export}`"))?;
     let srv = Arc::new(wrpc_transport::Server::default());
+    let mut handlers = crate::serve(
+        srv.as_ref(),
+        wrpc_transport::tcp::Client::from(import),
+        (),
+        *timeout,
+        envs,
+        workload,
+    )
+    .await?;
     let accept = tokio::spawn({
         let srv = Arc::clone(&srv);
         async move {
@@ -115,17 +124,13 @@ pub async fn handle_serve(
             }
         }
     });
-    let res = crate::handle_serve(
-        srv.as_ref(),
-        wrpc_transport::tcp::Client::from(import),
-        (),
-        *timeout,
-        envs,
-        workload,
-    )
-    .await;
+    while let Some(res) = handlers.join_next().await {
+        if let Err(err) = res {
+            error!(?err, "handler failed");
+        }
+    }
     accept.abort();
-    res
+    Ok(())
 }
 
 #[instrument(level = "trace", ret(level = "trace"))]
