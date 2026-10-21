@@ -52,7 +52,7 @@ func (v *Req) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, err
 				slog.Debug("receiving outgoing pending stream contents")
 				chunk, err := v.Receive()
 				n := len(chunk)
-				if n == 0 || err == io.EOF {
+				if err == io.EOF {
 					end = true
 					slog.Debug("outgoing pending stream reached EOF")
 				} else if err != nil {
@@ -508,7 +508,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 					slog.Debug("receiving outgoing pending stream contents")
 					chunk, err := v.Receive()
 					n := len(chunk)
-					if n == 0 || err == io.EOF {
+					if err == io.EOF {
 						end = true
 						slog.Debug("outgoing pending stream reached EOF")
 					} else if err != nil {

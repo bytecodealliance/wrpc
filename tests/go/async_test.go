@@ -19,6 +19,23 @@ import (
 	"wrpc.io/tests/go/internal"
 )
 
+type chunkReceiver[T any] struct {
+	chunks [][]T
+}
+
+func (r *chunkReceiver[T]) Receive() ([]T, error) {
+	if len(r.chunks) == 0 {
+		return nil, io.EOF
+	}
+	var v []T
+	v, r.chunks = r.chunks[0], r.chunks[1:]
+	return v, nil
+}
+
+func (r *chunkReceiver[T]) Close() error {
+	return nil
+}
+
 func TestAsync(t *testing.T) {
 	var cancel func()
 	ctx := context.Background()
@@ -87,9 +104,7 @@ func TestAsync(t *testing.T) {
 			wrpc.NewNestedReceiver(wrpc.NewCompleteReceiver(
 				wrpc.NewCompleteReceiver(
 					wrpc.NewNestedReceiver(wrpc.NewCompleteReceiver(
-						wrpc.NewCompleteReceiver(
-							[]string{"foo", "bar", "baz"},
-						),
+						&chunkReceiver[string]{[][]string{{"foo"}, {}, {"bar", "baz"}}},
 					)),
 				),
 			)),
