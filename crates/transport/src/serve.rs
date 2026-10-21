@@ -5,11 +5,11 @@ use core::pin::Pin;
 
 use std::sync::Arc;
 
-use anyhow::{Context as _, bail};
+use anyhow::Context as _;
 use bytes::BytesMut;
 use futures::{Stream, TryStreamExt as _};
 use tokio::io::AsyncWriteExt as _;
-use tokio_util::codec::{Encoder as _, FramedRead};
+use tokio_util::codec::{Decoder as _, Encoder as _, FramedRead};
 use tracing::{Instrument as _, Span, debug, instrument, trace};
 
 use crate::frame::{Incoming, Outgoing};
@@ -91,12 +91,19 @@ pub trait ServeExt: Serve {
                 async {
                     let mut dec = FramedRead::new(incoming, Params::Decoder::default());
                     debug!("receiving sync parameters");
-                    let Some(params) = dec
-                        .try_next()
-                        .await
-                        .context("failed to receive sync parameters")?
-                    else {
-                        bail!("incomplete sync parameters")
+                    let params = match dec
+                        .decoder_mut()
+                        .decode(&mut BytesMut::default())
+                        .context("failed to decode sync parameters")?
+                    {
+                        Some(params) => params,
+                        None => {
+                            let params = dec
+                                .try_next()
+                                .await
+                                .context("failed to receive sync parameters")?;
+                            params.context("incomplete sync parameters")?
+                        }
                     };
                     trace!("received sync parameters");
                     let rx = dec.decoder_mut().take_deferred();

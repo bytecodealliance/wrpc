@@ -1595,6 +1595,51 @@ where
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 #[instrument(ret)]
+async fn rust_oneshot_no_params_open_outgoing() -> anyhow::Result<()> {
+    use tokio::io::AsyncReadExt as _;
+    use wrpc::Invoke as _;
+
+    let (clt, srv) = Oneshot::duplex(1024);
+    let (rx, tx) = split(srv);
+    let srv = Arc::new(wrpc_transport::frame::Server::default());
+    let invocations = srv
+        .serve_values::<(), (&str,)>("foo", "bar", Arc::default())
+        .await?;
+    let fut = async {
+        join!(
+            async {
+                let (_tx, mut rx) = clt
+                    .invoke((), "foo", "bar", Bytes::default(), &[[]; 0])
+                    .await
+                    .expect("failed to invoke `foo.bar`");
+                let mut res = Vec::default();
+                rx.read_to_end(&mut res)
+                    .await
+                    .expect("failed to read results");
+                assert_eq!(res, b"\x04test");
+            },
+            async {
+                srv.accept((), tx, BufReader::new(rx))
+                    .await
+                    .expect("failed to accept connection");
+                let ((), (), rx, tx) = pin!(invocations)
+                    .try_next()
+                    .await
+                    .expect("failed to accept invocation")
+                    .expect("unexpected end of stream");
+                assert!(rx.is_none());
+                tx(("test",)).await.expect("failed to transmit response");
+            }
+        )
+    };
+    tokio::time::timeout(Duration::from_secs(10), fut)
+        .await
+        .context("invocation timed out")?;
+    Ok(())
+}
+
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+#[instrument(ret)]
 async fn rust_oneshot_raw() -> anyhow::Result<()> {
     let (clt, mut srv) = tokio::io::duplex(1024);
 
