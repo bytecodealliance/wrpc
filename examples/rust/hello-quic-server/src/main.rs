@@ -28,7 +28,7 @@ mod bindings {
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
-    /// Address to serve `wasi:keyvalue` on
+    /// Address to serve `wrpc-examples:hello/handler.hello` on
     #[arg(default_value = "[::1]:4433")]
     addr: SocketAddr,
 }
