@@ -104,10 +104,13 @@ where
     #[instrument(level = "trace", skip_all, ret(level = "trace"))]
     pub async fn accept(&self, cx: C, tx: O, mut rx: I) -> Result<(), AcceptError<C, I, O>> {
         let Header { instance, name } = Header::read(&mut rx).await?;
-        let h = self.handlers.lock().await;
-        let h = h
+        let h = self
+            .handlers
+            .lock()
+            .await
             .get(&instance)
             .and_then(|h| h.get(&name))
+            .cloned()
             .ok_or_else(|| AcceptError::UnhandledFunction { instance, name })?;
         h.send((cx, rx, tx)).await?;
         Ok(())
