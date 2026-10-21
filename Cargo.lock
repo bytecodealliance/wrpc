@@ -4893,17 +4893,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "wrpc-pack"
-version = "0.4.0"
-dependencies = [
- "anyhow",
- "bytes",
- "tokio",
- "tokio-util",
- "wrpc-transport",
-]
-
-[[package]]
 name = "wrpc-quic"
 version = "0.1.0"
 dependencies = [
@@ -5036,7 +5025,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc-wave"
-version = "0.2.0"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -5047,7 +5036,6 @@ dependencies = [
  "wasm-tokio",
  "wasm-wave",
  "wasmtime",
- "wrpc-pack",
  "wrpc-transport",
 ]
 

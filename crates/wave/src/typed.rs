@@ -1,116 +1,78 @@
-//! Typed value wrapper for use with wrpc-pack
-//!
-//! This module provides `WasmTypedValue` which bundles a value and its type together,
-//! allowing it to be used with the `wrpc_pack::pack` function.
+//! [`wrpc_transport::Encode`] support
 
 use bytes::BytesMut;
 use tokio_util::codec::Encoder;
-use wasm_wave::value::{Type, Value};
-use wasm_wave::wasm::{WasmType, WasmValue};
-use wrpc_transport::Deferred;
-use wrpc_transport::frame::Outgoing;
+use wasm_wave::value::Value;
+use wasm_wave::wasm::WasmValue;
+use wrpc_transport::{Deferred, DeferredFn, Encode, Sink};
 
-use crate::core::encode::WaveEncoder;
+use crate::ValueEncoder;
 
-/// Encoder that implements the necessary traits for use with `pack`.
+/// Value paired with its type, which implements [`Encode`]
 ///
-/// Unlike `WaveEncoder` which stores a reference to the type,
-/// this encoder is stateless and implements `Default`, which is required by the
-/// `wrpc_transport::Encode` trait.
-#[derive(Debug, Default)]
-pub struct TypedWaveEncoder;
+/// ```
+/// use bytes::BytesMut;
+/// use wasm_wave::value::{Type, Value};
+/// use wasm_wave::wasm::WasmValue as _;
+/// use wrpc_wave::TypedValue;
+///
+/// let mut buf = BytesMut::default();
+/// futures::executor::block_on(wrpc_transport::pack(
+///     TypedValue(Value::make_u32(42), Type::U32),
+///     &mut buf,
+/// ))
+/// .unwrap();
+/// assert_eq!(buf.as_ref(), [42]);
+/// ```
+#[derive(Clone, Debug)]
+pub struct TypedValue<V: WasmValue = Value>(pub V, pub V::Type);
 
-impl Deferred<Outgoing> for TypedWaveEncoder {
-    fn take_deferred(&mut self) -> Option<wrpc_transport::DeferredFn<Outgoing>> {
-        // wave values are always fully synchronous, so we never have deferred values
+/// [Encoder] of [`TypedValue`]
+#[derive(Debug, Default)]
+pub struct TypedValueEncoder;
+
+impl<W> Deferred<W> for TypedValueEncoder {
+    fn take_deferred(&mut self) -> Option<DeferredFn<W>> {
         None
     }
 }
 
-// Generic implementation for any WasmValue + WasmType pair (owned)
-impl<V, T> Encoder<WasmTypedValue<V, T>> for TypedWaveEncoder
-where
-    V: WasmValue<Type = T>,
-    T: WasmType,
-{
+impl<V: WasmValue> Encoder<&TypedValue<V>> for TypedValueEncoder {
     type Error = anyhow::Error;
 
-    fn encode(&mut self, v: WasmTypedValue<V, T>, dst: &mut BytesMut) -> Result<(), Self::Error> {
-        let mut encoder = WaveEncoder::new(&v.1);
-        encoder.encode(&v.0, dst)
+    fn encode(&mut self, v: &TypedValue<V>, dst: &mut BytesMut) -> Result<(), Self::Error> {
+        ValueEncoder::new(&v.1).encode(&v.0, dst)
     }
 }
 
-// Generic implementation for any WasmValue + WasmType pair (borrowed)
-impl<V, T> Encoder<&WasmTypedValue<V, T>> for TypedWaveEncoder
-where
-    V: WasmValue<Type = T>,
-    T: WasmType,
-{
+impl<V: WasmValue> Encoder<TypedValue<V>> for TypedValueEncoder {
     type Error = anyhow::Error;
 
-    fn encode(&mut self, v: &WasmTypedValue<V, T>, dst: &mut BytesMut) -> Result<(), Self::Error> {
-        let mut encoder = WaveEncoder::new(&v.1);
-        encoder.encode(&v.0, dst)
+    fn encode(&mut self, v: TypedValue<V>, dst: &mut BytesMut) -> Result<(), Self::Error> {
+        self.encode(&v, dst)
     }
 }
 
-/// This wrapper contains both a value implementing [`WasmValue`] and its type implementing [`WasmType`].
-/// Both are required for proper encoding of complex types like variants, enums, and flags.
-///
-/// The generic parameters allow this wrapper to work with any implementations of the traits,
-/// such as `wasm_wave::value::Value` and `wasm_wave::value::Type`, or `wasmtime::component::Val`.
-///
-/// # Examples
-///
-/// Using with the default `Value` and `Type`:
-/// ```
-/// use wrpc_wave::WasmTypedValue;
-/// use wasm_wave::value::{Value, Type};
-/// use wasm_wave::wasm::WasmValue;
-///
-/// let value = Value::make_u32(42);
-/// let ty = Type::U32;
-/// let typed_value = WasmTypedValue(value, ty);
-/// ```
-///
-/// Due to default type parameters, this is equivalent to `WasmTypedValue<Value, Type>`.
-#[derive(Debug, Clone)]
-pub struct WasmTypedValue<V: WasmValue = Value, T: WasmType = Type>(pub V, pub T);
-
-impl<V: WasmValue, T: WasmType> From<(V, T)> for WasmTypedValue<V, T> {
-    fn from((value, ty): (V, T)) -> Self {
-        WasmTypedValue(value, ty)
-    }
+impl<V: WasmValue, W: Sink> Encode<W> for TypedValue<V> {
+    type Encoder = TypedValueEncoder;
 }
 
-impl<V: WasmValue, T: WasmType> From<WasmTypedValue<V, T>> for (V, T) {
-    fn from(wrpc_value: WasmTypedValue<V, T>) -> Self {
-        (wrpc_value.0, wrpc_value.1)
-    }
-}
-
-// Generic implementations for wrpc_transport::Encode
-impl<V, T> wrpc_transport::Encode for WasmTypedValue<V, T>
-where
-    V: WasmValue<Type = T>,
-    T: WasmType,
-{
-    type Encoder = TypedWaveEncoder;
-}
-
-impl<V, T> wrpc_transport::Encode for &WasmTypedValue<V, T>
-where
-    V: WasmValue<Type = T>,
-    T: WasmType,
-{
-    type Encoder = TypedWaveEncoder;
+impl<V: WasmValue, W: Sink> Encode<W> for &TypedValue<V> {
+    type Encoder = TypedValueEncoder;
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wrpc_pack::pack;
+    use wasm_wave::value::Type;
+    use wrpc_transport::Packer;
+
+    fn pack<T: Encode<Packer>>(
+        v: T,
+        dst: &mut BytesMut,
+    ) -> Result<(), <T::Encoder as Encoder<T>>::Error> {
+        futures::executor::block_on(wrpc_transport::pack(v, dst))
+    }
 
     #[test]
     fn test_pack_bool() -> anyhow::Result<()> {
@@ -119,7 +81,7 @@ mod tests {
 
         let value = Value::make_bool(true);
         let ty = Type::BOOL;
-        let wrpc_value = WasmTypedValue(value, ty);
+        let wrpc_value = TypedValue(value, ty);
         let mut params_bytes_wave = BytesMut::default();
         pack(wrpc_value, &mut params_bytes_wave)?;
 
@@ -138,7 +100,7 @@ mod tests {
 
         let value = Value::make_s8(42);
         let ty = Type::S8;
-        let wrpc_value = WasmTypedValue(value, ty);
+        let wrpc_value = TypedValue(value, ty);
         let mut params_bytes_wave = BytesMut::default();
         pack(wrpc_value, &mut params_bytes_wave)?;
 
@@ -157,7 +119,7 @@ mod tests {
 
         let value = Value::make_u8(42);
         let ty = Type::U8;
-        let wrpc_value = WasmTypedValue(value, ty);
+        let wrpc_value = TypedValue(value, ty);
         let mut params_bytes_wave = BytesMut::default();
         pack(wrpc_value, &mut params_bytes_wave)?;
 
@@ -176,7 +138,7 @@ mod tests {
 
         let value = Value::make_s16(1234);
         let ty = Type::S16;
-        let wrpc_value = WasmTypedValue(value, ty);
+        let wrpc_value = TypedValue(value, ty);
         let mut params_bytes_wave = BytesMut::default();
         pack(wrpc_value, &mut params_bytes_wave)?;
 
@@ -195,7 +157,7 @@ mod tests {
 
         let value = Value::make_u16(1234);
         let ty = Type::U16;
-        let wrpc_value = WasmTypedValue(value, ty);
+        let wrpc_value = TypedValue(value, ty);
         let mut params_bytes_wave = BytesMut::default();
         pack(wrpc_value, &mut params_bytes_wave)?;
 
@@ -214,7 +176,7 @@ mod tests {
 
         let value = Value::make_s32(123456);
         let ty = Type::S32;
-        let wrpc_value = WasmTypedValue(value, ty);
+        let wrpc_value = TypedValue(value, ty);
         let mut params_bytes_wave = BytesMut::default();
         pack(wrpc_value, &mut params_bytes_wave)?;
 
@@ -233,7 +195,7 @@ mod tests {
 
         let value = Value::make_u32(123456);
         let ty = Type::U32;
-        let wrpc_value = WasmTypedValue(value, ty);
+        let wrpc_value = TypedValue(value, ty);
         let mut params_bytes_wave = BytesMut::default();
         pack(wrpc_value, &mut params_bytes_wave)?;
 
@@ -252,7 +214,7 @@ mod tests {
 
         let value = Value::make_s64(1234567890);
         let ty = Type::S64;
-        let wrpc_value = WasmTypedValue(value, ty);
+        let wrpc_value = TypedValue(value, ty);
         let mut params_bytes_wave = BytesMut::default();
         pack(wrpc_value, &mut params_bytes_wave)?;
 
@@ -271,7 +233,7 @@ mod tests {
 
         let value = Value::make_u64(1234567890);
         let ty = Type::U64;
-        let wrpc_value = WasmTypedValue(value, ty);
+        let wrpc_value = TypedValue(value, ty);
         let mut params_bytes_wave = BytesMut::default();
         pack(wrpc_value, &mut params_bytes_wave)?;
 
@@ -290,7 +252,7 @@ mod tests {
 
         let value = Value::make_f32(1.5);
         let ty = Type::F32;
-        let wrpc_value = WasmTypedValue(value, ty);
+        let wrpc_value = TypedValue(value, ty);
         let mut params_bytes_wave = BytesMut::default();
         pack(wrpc_value, &mut params_bytes_wave)?;
 
@@ -309,7 +271,7 @@ mod tests {
 
         let value = Value::make_f64(2.5);
         let ty = Type::F64;
-        let wrpc_value = WasmTypedValue(value, ty);
+        let wrpc_value = TypedValue(value, ty);
         let mut params_bytes_wave = BytesMut::default();
         pack(wrpc_value, &mut params_bytes_wave)?;
 
@@ -328,7 +290,7 @@ mod tests {
 
         let value = Value::make_char('A');
         let ty = Type::CHAR;
-        let wrpc_value = WasmTypedValue(value, ty);
+        let wrpc_value = TypedValue(value, ty);
         let mut params_bytes_wave = BytesMut::default();
         pack(wrpc_value, &mut params_bytes_wave)?;
 
@@ -348,7 +310,7 @@ mod tests {
         use std::borrow::Cow;
         let value = Value::make_string(Cow::Borrowed("hello"));
         let ty = Type::STRING;
-        let wrpc_value = WasmTypedValue(value, ty);
+        let wrpc_value = TypedValue(value, ty);
         let mut params_bytes_wave = BytesMut::default();
         pack(wrpc_value, &mut params_bytes_wave)?;
 
@@ -369,7 +331,7 @@ mod tests {
         let list_type = Type::list(element_type.clone());
         let values = vec![Value::make_u32(1), Value::make_u32(2), Value::make_u32(3)];
         let list_value = Value::make_list(&list_type, values)?;
-        let wrpc_value = WasmTypedValue(list_value, list_type);
+        let wrpc_value = TypedValue(list_value, list_type);
         let mut params_bytes_wave = BytesMut::default();
         pack(wrpc_value, &mut params_bytes_wave)?;
 
@@ -395,7 +357,7 @@ mod tests {
             &record_type,
             [("a", Value::make_u32(42)), ("b", Value::make_u32(100))],
         )?;
-        let wrpc_value = WasmTypedValue(record_value, record_type);
+        let wrpc_value = TypedValue(record_value, record_type);
         let mut params_bytes_wave = BytesMut::default();
         pack(wrpc_value, &mut params_bytes_wave)?;
 
@@ -417,7 +379,7 @@ mod tests {
         let value_5 = Value::make_u32(5);
         let tuple_type = Type::tuple([Type::U32]).expect("tuple type should be valid");
         let tuple_value = Value::make_tuple(&tuple_type, [value_5])?;
-        let wrpc_tuple_value = WasmTypedValue(tuple_value, tuple_type);
+        let wrpc_tuple_value = TypedValue(tuple_value, tuple_type);
         let mut params_bytes_wave = BytesMut::default();
         pack(wrpc_tuple_value, &mut params_bytes_wave)?;
 
@@ -445,7 +407,7 @@ mod tests {
         pack(Some(42u32), &mut params_bytes_regular)?;
 
         let variant_value = Value::make_variant(&variant_type, "some", Some(Value::make_u32(42)))?;
-        let wrpc_value = WasmTypedValue(variant_value, variant_type);
+        let wrpc_value = TypedValue(variant_value, variant_type);
         let mut params_bytes_wave = BytesMut::default();
         pack(wrpc_value, &mut params_bytes_wave)?;
 
@@ -469,7 +431,7 @@ mod tests {
         // For comparison, we can't directly compare with a Rust enum easily
         // So we'll just test that it encodes without error and produces some bytes
         let enum_value = Value::make_enum(&enum_type, "red")?;
-        let wrpc_value = WasmTypedValue(enum_value, enum_type);
+        let wrpc_value = TypedValue(enum_value, enum_type);
         let mut params_bytes_wave = BytesMut::default();
         pack(wrpc_value, &mut params_bytes_wave)?;
 
@@ -499,7 +461,7 @@ mod tests {
         let inner_type = Type::U32;
         let option_type = Type::option(inner_type);
         let option_value = Value::make_option(&option_type, None)?;
-        let wrpc_value = WasmTypedValue(option_value, option_type);
+        let wrpc_value = TypedValue(option_value, option_type);
         let mut params_bytes_wave = BytesMut::default();
         pack(wrpc_value, &mut params_bytes_wave)?;
 
@@ -520,7 +482,7 @@ mod tests {
         let option_type = Type::option(inner_type.clone());
         let inner_value = Value::make_u32(42);
         let option_value = Value::make_option(&option_type, Some(inner_value))?;
-        let wrpc_value = WasmTypedValue(option_value, option_type);
+        let wrpc_value = TypedValue(option_value, option_type);
         let mut params_bytes_wave = BytesMut::default();
         pack(wrpc_value, &mut params_bytes_wave)?;
 
@@ -542,7 +504,7 @@ mod tests {
         let result_type = Type::result(ok_type.clone(), err_type);
         let ok_value = Value::make_u32(42);
         let result_value = Value::make_result(&result_type, Ok(Some(ok_value)))?;
-        let wrpc_value = WasmTypedValue(result_value, result_type);
+        let wrpc_value = TypedValue(result_value, result_type);
         let mut params_bytes_wave = BytesMut::default();
         pack(wrpc_value, &mut params_bytes_wave)?;
 
@@ -568,7 +530,7 @@ mod tests {
         use std::borrow::Cow;
         let err_value = Value::make_string(Cow::Borrowed("error"));
         let result_value = Value::make_result(&result_type, Err(Some(err_value)))?;
-        let wrpc_value = WasmTypedValue(result_value, result_type);
+        let wrpc_value = TypedValue(result_value, result_type);
         let mut params_bytes_wave = BytesMut::default();
         pack(wrpc_value, &mut params_bytes_wave)?;
 
@@ -591,7 +553,7 @@ mod tests {
         // For comparison, we can't directly compare with a Rust type easily
         // So we'll test that it encodes correctly
         let flags_value = Value::make_flags(&flags_type, ["read", "write"])?;
-        let wrpc_value = WasmTypedValue(flags_value, flags_type);
+        let wrpc_value = TypedValue(flags_value, flags_type);
         let mut params_bytes_wave = BytesMut::default();
         pack(wrpc_value, &mut params_bytes_wave)?;
 

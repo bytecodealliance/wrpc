@@ -1,28 +1,8 @@
-//! Async value decoder for wasm-wave types
-//!
-//! This module provides `read_value`, which mirrors `wrpc_wasmtime::codec::read_value`
-//! but works with `wasm_wave::value::Value` instead of `wasmtime::component::Val`.
-//!
-//! ## Design
-//!
-//! This decoder uses async reads that block until complete data is available
-//!
-//! ## Usage
-//!
-//! ```no_run
-//! use wrpc_wave::read_value;
-//! use wasm_wave::value::Type;
-//! use tokio::io::AsyncRead;
-//!
-//! # async fn example<R: AsyncRead + Unpin>(reader: &mut R) -> std::io::Result<()> {
-//! let mut pinned = std::pin::pin!(reader);
-//! let value = read_value(&mut pinned, &Type::U32).await?;
-//! # Ok(())
-//! # }
-//! ```
+//! Value decoding
 
 use core::mem;
-use core::pin::Pin;
+use core::pin::pin;
+use core::task::{Context, Poll, Waker};
 
 use std::borrow::Cow;
 
@@ -31,78 +11,38 @@ use wasm_tokio::{
     AsyncReadCore as _, AsyncReadLeb128 as _, AsyncReadUtf8 as _, DEFAULT_MAX_INITIAL_CAPACITY,
     cm::AsyncReadValue as _,
 };
-use wasm_wave::value::{Type, Value};
-use wasm_wave::wasm::{WasmType, WasmTypeKind, WasmValue as _};
+use wasm_wave::wasm::{WasmType, WasmTypeKind, WasmValue};
 
-/// Read a wasm-wave `Value` from an async reader
-///
-/// This mirrors `wrpc_wasmtime::codec::read_value`
-/// but without the `Index<R>` trait bound and `path` parameter,
-/// since wasm-wave doesn't support resources, async or streams
+/// Read a value of type `ty` from `r`
 ///
 /// # Errors
 ///
-/// - `UnexpectedEof` - Not enough data in stream
-/// - `InvalidData` - Malformed encoding (invalid UTF-8, discriminant, etc.)
-/// - Other `io::Error` from underlying reader
+/// - [`UnexpectedEof`](std::io::ErrorKind::UnexpectedEof) if `r` ends before the value is complete
+/// - [`InvalidData`](std::io::ErrorKind::InvalidData) if the encoding is malformed
+/// - Any error returned by `r`
 #[allow(clippy::too_many_lines)]
-pub async fn read_value<R>(r: &mut Pin<&mut R>, ty: &Type) -> std::io::Result<Value>
+pub async fn read_value<V, R>(r: &mut R, ty: &V::Type) -> std::io::Result<V>
 where
+    V: WasmValue,
     R: AsyncRead + Unpin,
 {
     match ty.kind() {
-        WasmTypeKind::Bool => {
-            let v = r.read_bool().await?;
-            Ok(Value::make_bool(v))
-        }
-        WasmTypeKind::S8 => {
-            let v = r.read_i8().await?;
-            Ok(Value::make_s8(v))
-        }
-        WasmTypeKind::U8 => {
-            let v = r.read_u8().await?;
-            Ok(Value::make_u8(v))
-        }
-        WasmTypeKind::S16 => {
-            let v = r.read_i16_leb128().await?;
-            Ok(Value::make_s16(v))
-        }
-        WasmTypeKind::U16 => {
-            let v = r.read_u16_leb128().await?;
-            Ok(Value::make_u16(v))
-        }
-        WasmTypeKind::S32 => {
-            let v = r.read_i32_leb128().await?;
-            Ok(Value::make_s32(v))
-        }
-        WasmTypeKind::U32 => {
-            let v = r.read_u32_leb128().await?;
-            Ok(Value::make_u32(v))
-        }
-        WasmTypeKind::S64 => {
-            let v = r.read_i64_leb128().await?;
-            Ok(Value::make_s64(v))
-        }
-        WasmTypeKind::U64 => {
-            let v = r.read_u64_leb128().await?;
-            Ok(Value::make_u64(v))
-        }
-        WasmTypeKind::F32 => {
-            let v = r.read_f32_le().await?;
-            Ok(Value::make_f32(v))
-        }
-        WasmTypeKind::F64 => {
-            let v = r.read_f64_le().await?;
-            Ok(Value::make_f64(v))
-        }
-        WasmTypeKind::Char => {
-            let v = r.read_char_utf8().await?;
-            Ok(Value::make_char(v))
-        }
+        WasmTypeKind::Bool => Ok(V::make_bool(r.read_bool().await?)),
+        WasmTypeKind::S8 => Ok(V::make_s8(r.read_i8().await?)),
+        WasmTypeKind::U8 => Ok(V::make_u8(r.read_u8().await?)),
+        WasmTypeKind::S16 => Ok(V::make_s16(r.read_i16_leb128().await?)),
+        WasmTypeKind::U16 => Ok(V::make_u16(r.read_u16_leb128().await?)),
+        WasmTypeKind::S32 => Ok(V::make_s32(r.read_i32_leb128().await?)),
+        WasmTypeKind::U32 => Ok(V::make_u32(r.read_u32_leb128().await?)),
+        WasmTypeKind::S64 => Ok(V::make_s64(r.read_i64_leb128().await?)),
+        WasmTypeKind::U64 => Ok(V::make_u64(r.read_u64_leb128().await?)),
+        WasmTypeKind::F32 => Ok(V::make_f32(r.read_f32_le().await?)),
+        WasmTypeKind::F64 => Ok(V::make_f64(r.read_f64_le().await?)),
+        WasmTypeKind::Char => Ok(V::make_char(r.read_char_utf8().await?)),
         WasmTypeKind::String => {
             let mut s = String::default();
             r.read_core_name(&mut s).await?;
-            Ok(Value::make_string(Cow::Owned(s)))
+            Ok(V::make_string(Cow::Owned(s)))
         }
         WasmTypeKind::List => {
             let n = r.read_u32_leb128().await?;
@@ -110,129 +50,109 @@ where
             let element_type = ty
                 .list_element_type()
                 .ok_or_else(|| io_error("list type missing element type"))?;
-
+            debug_assert_ne!(mem::size_of::<V>(), 0);
             let mut elements =
-                Vec::with_capacity(n.min(DEFAULT_MAX_INITIAL_CAPACITY / mem::size_of::<Value>()));
+                Vec::with_capacity(n.min(DEFAULT_MAX_INITIAL_CAPACITY / mem::size_of::<V>()));
             for _ in 0..n {
-                let element = Box::pin(read_value(r, &element_type)).await?;
-                elements.push(element);
+                elements.push(Box::pin(read_value(r, &element_type)).await?);
             }
-
-            Value::make_list(ty, elements).map_err(io_error)
+            V::make_list(ty, elements).map_err(io_error)
         }
         WasmTypeKind::Record => {
-            let field_types: Vec<_> = ty.record_fields().collect();
-            let mut field_names = Vec::with_capacity(field_types.len());
-            let mut field_values = Vec::with_capacity(field_types.len());
-
-            for (name, field_type) in field_types {
-                let value = Box::pin(read_value(r, &field_type)).await?;
-                field_names.push(name.to_string());
-                field_values.push(value);
+            let (names, types): (Vec<_>, Vec<_>) = ty.record_fields().unzip();
+            let mut values = Vec::with_capacity(types.len());
+            for ty in types {
+                values.push(Box::pin(read_value(r, &ty)).await?);
             }
-
-            // Create the fields iterator from owned strings
-            let fields = field_names.iter().map(String::as_str).zip(field_values);
-
-            Value::make_record(ty, fields).map_err(io_error)
+            V::make_record(ty, names.iter().map(AsRef::as_ref).zip(values)).map_err(io_error)
         }
         WasmTypeKind::Tuple => {
             let element_types: Vec<_> = ty.tuple_element_types().collect();
             let mut elements = Vec::with_capacity(element_types.len());
-
             for element_type in element_types {
-                let element = Box::pin(read_value(r, &element_type)).await?;
-                elements.push(element);
+                elements.push(Box::pin(read_value(r, &element_type)).await?);
             }
-
-            Value::make_tuple(ty, elements).map_err(io_error)
+            V::make_tuple(ty, elements).map_err(io_error)
         }
         WasmTypeKind::Variant => {
             let discriminant = r.read_u32_leb128().await?;
             let cases: Vec<_> = ty.variant_cases().collect();
-
-            let discriminant_idx = usize::try_from(discriminant)
-                .map_err(|_| io_error("variant discriminant too large"))?;
-
-            let (case_name, payload_type) = cases
-                .get(discriminant_idx)
+            let (name, payload_type) = usize::try_from(discriminant)
+                .ok()
+                .and_then(|i| cases.get(i))
                 .ok_or_else(|| io_error(format!("unknown variant discriminant: {discriminant}")))?;
-
-            let payload = if let Some(payload_type) = payload_type {
-                let value = Box::pin(read_value(r, payload_type)).await?;
-                Some(value)
-            } else {
-                None
+            let payload = match payload_type {
+                Some(payload_type) => Some(Box::pin(read_value(r, payload_type)).await?),
+                None => None,
             };
-
-            Value::make_variant(ty, case_name, payload).map_err(io_error)
+            V::make_variant(ty, name, payload).map_err(io_error)
         }
         WasmTypeKind::Enum => {
             let discriminant = r.read_u32_leb128().await?;
             let names: Vec<_> = ty.enum_cases().collect();
-
-            let discriminant_idx = usize::try_from(discriminant)
-                .map_err(|_| io_error("enum discriminant too large"))?;
-
-            let name = names
-                .get(discriminant_idx)
+            let name = usize::try_from(discriminant)
+                .ok()
+                .and_then(|i| names.get(i))
                 .ok_or_else(|| io_error(format!("unknown enum discriminant: {discriminant}")))?;
-
-            Value::make_enum(ty, name).map_err(io_error)
+            V::make_enum(ty, name).map_err(io_error)
         }
         WasmTypeKind::Option => {
-            if r.read_option_status().await? {
-                let inner_type = ty
+            let v = if r.read_option_status().await? {
+                let ty = ty
                     .option_some_type()
                     .ok_or_else(|| io_error("option type missing some type"))?;
-                let value = Box::pin(read_value(r, &inner_type)).await?;
-                Value::make_option(ty, Some(value)).map_err(io_error)
+                Some(Box::pin(read_value(r, &ty)).await?)
             } else {
-                Value::make_option(ty, None).map_err(io_error)
-            }
+                None
+            };
+            V::make_option(ty, v).map_err(io_error)
         }
         WasmTypeKind::Result => {
             let ok = r.read_result_status().await?;
             let (ok_type, err_type) = ty
                 .result_types()
                 .ok_or_else(|| io_error("result type missing ok/err types"))?;
-
-            if ok {
-                if let Some(ok_ty) = ok_type {
-                    let value = Box::pin(read_value(r, &ok_ty)).await?;
-                    Value::make_result(ty, Ok(Some(value)))
-                } else {
-                    Value::make_result(ty, Ok(None))
-                }
-            } else if let Some(err_ty) = err_type {
-                let value = Box::pin(read_value(r, &err_ty)).await?;
-                Value::make_result(ty, Err(Some(value)))
-            } else {
-                Value::make_result(ty, Err(None))
-            }
-            .map_err(io_error)
+            let payload_type = if ok { ok_type } else { err_type };
+            let payload = match payload_type {
+                Some(ty) => Some(Box::pin(read_value(r, &ty)).await?),
+                None => None,
+            };
+            V::make_result(ty, if ok { Ok(payload) } else { Err(payload) }).map_err(io_error)
         }
         WasmTypeKind::Flags => {
             let names: Vec<_> = ty.flags_names().collect();
-            let byte_count = names.len().div_ceil(8).max(1);
-
-            let mut buf = vec![0u8; byte_count];
+            let mut buf = vec![0u8; names.len().div_ceil(8).max(1)];
             r.read_exact(&mut buf).await?;
-
-            let mut flag_names = Vec::default();
-            for (i, name) in names.iter().enumerate() {
-                if buf[i / 8] & (1 << (i % 8)) != 0 {
-                    flag_names.push(name.as_ref());
-                }
-            }
-
-            Value::make_flags(ty, flag_names).map_err(io_error)
+            let set = names
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| buf[i / 8] & (1 << (i % 8)) != 0)
+                .map(|(_, name)| name.as_ref());
+            V::make_flags(ty, set).map_err(io_error)
         }
         kind => Err(io_error(format!("unsupported value type: {kind:?}"))),
     }
 }
 
-// Helper to convert any error to io::Error with InvalidData kind
+/// Decode a value of type `ty` from `buf`
+///
+/// # Errors
+///
+/// Returns the errors of [`read_value`] and [`InvalidData`](std::io::ErrorKind::InvalidData) if
+/// `buf` is not fully consumed.
+pub fn decode_value<V: WasmValue>(mut buf: &[u8], ty: &V::Type) -> std::io::Result<V> {
+    let Poll::Ready(v) =
+        pin!(read_value(&mut buf, ty)).poll(&mut Context::from_waker(Waker::noop()))
+    else {
+        return Err(std::io::ErrorKind::WouldBlock.into());
+    };
+    let v = v?;
+    if !buf.is_empty() {
+        return Err(io_error("buffer contains trailing bytes"));
+    }
+    Ok(v)
+}
+
 fn io_error(err: impl core::fmt::Display) -> std::io::Error {
     std::io::Error::new(std::io::ErrorKind::InvalidData, err.to_string())
 }
@@ -241,13 +161,10 @@ fn io_error(err: impl core::fmt::Display) -> std::io::Error {
 mod tests {
     use super::*;
 
-    // Test helper - uses futures::executor (no tokio runtime needed in tests)
+    use wasm_wave::value::{Type, Value};
+
     fn decode_sync(ty: &Type, data: &[u8]) -> std::io::Result<Value> {
-        let mut cursor = std::io::Cursor::new(data);
-        futures::executor::block_on(async {
-            let mut pinned = std::pin::pin!(&mut cursor);
-            read_value(&mut pinned, ty).await
-        })
+        decode_value(data, ty)
     }
 
     // Bool types
@@ -595,6 +512,12 @@ mod tests {
     fn test_decode_list_truncated() {
         let err = decode_sync(&Type::list(Type::U8), &[0xff, 0xff, 0xff, 0xff, 0x0f]).unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
+    }
+
+    #[test]
+    fn test_decode_trailing_bytes() {
+        let err = decode_sync(&Type::U8, &[42, 99, 100]).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
     }
 
     #[test]
