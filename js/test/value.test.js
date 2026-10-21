@@ -77,6 +77,14 @@ test("integer decoding rejects out-of-range and overlong encodings", () => {
   assert.equal(decode(t.s32, Uint8Array.of(0x80, 0x80, 0x80, 0x80, 0x78)), -2147483648);
 });
 
+test("decoding rejects status bytes other than 0 and 1", () => {
+  assert.throws(() => decode(t.bool, Uint8Array.of(2)), /invalid bool value byte `2`/);
+  assert.throws(() => decode(t.option(t.u8), Uint8Array.of(2, 0)), /invalid option status byte `2`/);
+  assert.throws(() => decode(t.result(), Uint8Array.of(0xff)), /invalid result status byte `255`/);
+  assert.throws(() => decode(t.future(t.u8), Uint8Array.of(2, 0)), /invalid option status byte `2`/);
+  assert.equal(decode(t.bool, Uint8Array.of(1)), true);
+});
+
 test("64-bit integers are bigint", () => {
   roundtrip(t.u64, 0n);
   roundtrip(t.u64, 18446744073709551615n);
@@ -176,6 +184,10 @@ test("flags", () => {
   assert.deepEqual(decode(ty, encode(ty, ["read", "exec"])), { read: true, write: false, exec: true });
   assert.throws(() => encode(ty, { read: true, wirte: true }), /unknown flag `wirte`/);
   assert.throws(() => encode(ty, new Set(["exe"])), /unknown flag `exe`/);
+  assert.throws(() => decode(ty, Uint8Array.of(0b1000)), /invalid flags bits/);
+  const wide = t.flags(Array.from({ length: 9 }, (_, i) => `f${i}`));
+  assert.equal(decode(wide, Uint8Array.of(0, 1)).f8, true);
+  assert.throws(() => decode(wide, Uint8Array.of(0, 2)), /invalid flags bits/);
 });
 
 test("resource handles round-trip as bytes", () => {
