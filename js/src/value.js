@@ -56,6 +56,19 @@ const isBytes = (ty) => ty.kind === "list" && ty.elem.kind === "u8";
  */
 const childPath = (sink, path, i) => (sink ? [...(path ?? []), i] : undefined);
 
+/**
+ * Read a status byte, rejecting any but `0` and `1` like the Rust codec.
+ * @param {string} what @returns {(r: Reader) => boolean} whether it is `1`
+ */
+const status = (what) => (r) => {
+  const b = r.u8();
+  if (b > 1) throw new RangeError(`invalid ${what} byte \`${b}\``);
+  return b === 1;
+};
+const optionStatus = status("option status");
+const resultStatus = status("result status");
+const boolStatus = status("bool value");
+
 /** @param {string} kind @param {string} [op] */
 const asyncRequired = (kind, op = "decode") =>
   `\`${kind}\` values require the async session API (\`invoke\`/\`accept\`), ` +
@@ -362,12 +375,12 @@ export function* decodeSteps(r, ty, sink, path) {
     }
     case "option": {
       const nested = ty.some.kind === "option";
-      if ((yield* atomic(r, (r) => r.u8())) === 0) return nested ? { tag: "none" } : undefined;
+      if (!(yield* atomic(r, optionStatus))) return nested ? { tag: "none" } : undefined;
       const val = yield* decodeSteps(r, ty.some, sink, path);
       return nested ? { tag: "some", val } : val;
     }
     case "result": {
-      const err = (yield* atomic(r, (r) => r.u8())) !== 0;
+      const err = yield* atomic(r, resultStatus);
       const vty = err ? ty.err : ty.ok;
       return {
         tag: err ? "err" : "ok",
@@ -381,8 +394,9 @@ export function* decodeSteps(r, ty, sink, path) {
       return c.ty ? { tag: c.name, val: yield* decodeSteps(r, c.ty, sink, path) } : { tag: c.name };
     }
     case "future": {
-      const ready = (yield* atomic(r, (r) => r.u8())) !== 0;
-      if (ready) return Promise.resolve(yield* decodeSteps(r, ty.some, sink, path));
+      if (yield* atomic(r, optionStatus)) {
+        return Promise.resolve(yield* decodeSteps(r, ty.some, sink, path));
+      }
       if (!sink) throw new Error(asyncRequired(ty.kind));
       /** @type {(value: any) => void} */
       let resolve = () => {};
@@ -428,7 +442,7 @@ export function* decodeSteps(r, ty, sink, path) {
 function decodeScalar(r, ty) {
   switch (ty.kind) {
     case "bool":
-      return r.u8() !== 0;
+      return boolStatus(r);
     case "u8":
       return r.u8();
     case "s8": {
@@ -466,7 +480,9 @@ function decodeScalar(r, ty) {
       return name;
     }
     case "flags": {
-      const bytes = r.take(Math.ceil(Math.max(ty.names.length, 1) / 8));
+      const n = ty.names.length;
+      const bytes = r.take(Math.ceil(Math.max(n, 1) / 8));
+      if (bytes[bytes.length - 1] >> (((n - 1) % 8) + 1)) throw new RangeError("invalid flags bits");
       /** @type {Record<string, boolean>} */
       const out = {};
       ty.names.forEach((name, i) => {
