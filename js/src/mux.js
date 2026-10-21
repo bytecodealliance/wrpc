@@ -362,12 +362,16 @@ export class Mux {
    * Declare that the sub-stream at `path` has no more data: its stream ended,
    * or its future's value was decoded. Once the sub-streams nested in it
    * finish too, it is forgotten, and any further data for it fails the
-   * invocation.
+   * invocation, as does any data of it left unread in `reader`.
    * @param {number[]} path
+   * @param {AsyncReader} [reader] the reader it was read over
    */
-  finish(path) {
+  finish(path, reader) {
     const n = this._get(path);
     if (!n) return;
+    if (reader?.remaining().length || n.chan?.queue.length) {
+      this.abort(new Error(`unexpected data for sub-stream [${path}]`));
+    }
     n.sealed = true;
     n.done = true;
     n.chan?.close();

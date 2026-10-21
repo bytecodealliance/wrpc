@@ -615,25 +615,26 @@ test("data for a stream after its end fails it, even once cancelled", { timeout:
 });
 
 test("frame data beyond the end of a sub-stream fails it", { timeout: 1000 }, async () => {
-  for (const [ty, value] of [
-    [t.future(t.u8), [5]],
-    [t.stream(t.u8), [1, 5, 0]],
+  for (const [ty, value, extra, split] of [
+    [t.future(t.u8), [5], 40, true],
+    [t.stream(t.u8), [1, 5, 0], 40, true],
+    [t.future(t.u8), [5], 3, true],
+    [t.stream(t.u8), [1, 5, 0], 3, true],
+    [t.future(t.u8), [5], 3, false],
+    [t.stream(t.u8), [1, 5, 0], 3, false],
   ]) {
     const w = new Writer();
     w.varU(1);
     w.varU(0);
-    w.varU(value.length + 40);
-    w.bytes([...value, ...new Array(40).fill(9)]);
+    w.varU(value.length + extra);
+    w.bytes([...value, ...new Array(extra).fill(9)]);
     const frame = w.finish();
     const bytes = [0, 1, 0, ...frame];
+    const chunks = split ? bytes.map((b) => Uint8Array.of(b)) : [Uint8Array.from(bytes)];
     /** @type {(reason: unknown) => void} */
     let abort = () => {};
     const aborted = new Promise((resolve) => (abort = resolve));
-    const transport = {
-      read: async () => (bytes.length ? Uint8Array.of(bytes.shift()) : null),
-      write: () => {},
-      abort,
-    };
+    const transport = { read: async () => chunks.shift() ?? null, write: () => {}, abort };
     const { results } = await invoke(transport, STREAMS, "get", [], [], [ty]);
     assert.deepEqual(ty.kind === "future" ? [await results[0]] : await collect(results[0]), [5]);
     assert.match(String(await aborted), /unexpected data for sub-stream \[0\]/);

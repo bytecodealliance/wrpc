@@ -153,7 +153,7 @@ async function receiveTuple(mux, root, types) {
     throw err;
   }
   expect(mux, [], sink);
-  mux.finish([]);
+  mux.finish([], root);
   const done = readNested(mux, [], sink).then(() => undefined);
   done.catch((err) => mux.abort(err));
   return { values, done };
@@ -222,7 +222,7 @@ async function readFuture(mux, path, entry, ar) {
   const { value, sink } = decoded;
   expect(mux, path, sink);
   // A value nested at the future's own path continues reading it.
-  if (!sink.some((e) => e.kind !== "inline" && e.path.length === 0)) mux.finish(path);
+  if (!sink.some((e) => e.kind !== "inline" && e.path.length === 0)) mux.finish(path, ar);
   const nested = readNested(mux, path, sink, ar);
   entry.resolve(value);
   await nested;
@@ -255,7 +255,7 @@ async function readStream(mux, path, elem, queue, ar) {
       }
       const len = Number(await ar.varU(32));
       if (len === 0) {
-        mux.finish(path);
+        mux.finish(path, ar);
         break;
       }
       if (nested) {
