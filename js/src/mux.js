@@ -350,7 +350,8 @@ export class Mux {
       }
       n.sealed = !e.nested;
       if (n.chan) return;
-      n.chan = t?.pending?.chan ?? new Chan(CAPACITY);
+      n.chan = t?.pending?.chan ?? new Chan();
+      n.chan.capacity = CAPACITY;
       if (this.inboundClosed) n.chan.close(this.inboundError);
     });
     if (scope) for (const i of scope.pending?.keys() ?? []) settle.push({ at: scope, i });

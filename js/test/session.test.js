@@ -640,6 +640,21 @@ test("frame data beyond the end of a sub-stream fails it", { timeout: 1000 }, as
   }
 });
 
+test("a sub-stream buffered ahead of its declaration is bounded once declared", { timeout: 1000 }, async () => {
+  const frames = [];
+  const peer = new Mux({ read: async () => null, write: (bytes) => void frames.push(bytes) });
+  await peer.outgoing([]).write(Uint8Array.of(0));
+  await peer.outgoing([0, 0]).write(Uint8Array.of(1, 0));
+  await peer.outgoing([0]).write(Uint8Array.of(1, 0));
+  for (let i = 0; i < 1000; i++) await peer.outgoing([0, 0]).write(Uint8Array.of(1, i & 0xff));
+  let reads = 0;
+  const transport = { read: async () => (reads++, frames.shift() ?? null), write: () => {} };
+  const { results } = await invoke(transport, STREAMS, "get", [], [], [t.stream(t.stream(t.u8))]);
+  await results[0][Symbol.asyncIterator]().next();
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.ok(reads < 500, `read ${reads} frames`);
+});
+
 test("data for the root after the reply fails it", { timeout: 1000 }, async () => {
   const frames = [];
   const peer = new Mux({ read: async () => null, write: (bytes) => void frames.push(bytes) });
