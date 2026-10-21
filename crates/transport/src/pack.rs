@@ -111,7 +111,7 @@ async fn fill(deferred: Option<DeferredFn<Packer>>, dst: &mut BytesMut) -> std::
 ///
 /// All asynchronous values contained in `v` are awaited and encoded as ready values:
 ///
-/// - `future<T>` is encoded as `option::some` variant of `option<T>`
+/// - `future<T>` is encoded as `ready` variant of `future<T>`
 /// - `stream<T>` is encoded as `ready` variant of `stream<T>` containing all elements of the stream
 ///
 /// Note, that this function will never complete if any of the asynchronous values contained in
@@ -165,7 +165,6 @@ mod tests {
     use core::pin::Pin;
     use core::time::Duration;
 
-    use futures::future::ready;
     use futures::stream;
     use tokio::sync::oneshot;
 
