@@ -111,6 +111,7 @@ function checkSmallInt(v, kind, min, max) {
 /** Scratch space to convert floats to and from their little-endian bytes. */
 const floatView = new DataView(new ArrayBuffer(8));
 const floatBytes = new Uint8Array(floatView.buffer);
+const f32Bytes = floatBytes.subarray(0, 4);
 
 /** @param {any} v @param {string} kind @returns {number} */
 function checkFloat(v, kind) {
@@ -213,7 +214,7 @@ export function encodeValue(w, ty, v, sink, path) {
       const n = checkFloat(v, "f32");
       if (Number.isNaN(n)) floatView.setUint32(0, 0x7fc00000, true);
       else floatView.setFloat32(0, n, true);
-      w.bytes(floatBytes.subarray(0, 4));
+      w.bytes(f32Bytes);
       return;
     }
     case "f64": {

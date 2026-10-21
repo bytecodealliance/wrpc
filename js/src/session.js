@@ -9,7 +9,7 @@
 // such value; the helpers below walk those descriptors, spawning a reader or
 // writer task per sub-stream.
 
-import { Writer } from "./io.js";
+import { Writer, atomic, readVarU32 } from "./io.js";
 import { DISCARDED, Mux, PROTOCOL } from "./mux.js";
 import { decodeSteps, encodeValue, hasAsync, readChunk, toBytes } from "./value.js";
 
@@ -253,7 +253,7 @@ async function readStream(mux, path, elem, queue, ar) {
         mux.finish(path);
         break;
       }
-      const len = Number(await ar.varU(32));
+      const len = await ar.decode((r) => atomic(r, readVarU32));
       if (len === 0) {
         mux.finish(path, ar);
         break;
