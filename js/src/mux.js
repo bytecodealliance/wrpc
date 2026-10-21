@@ -99,9 +99,12 @@ function* readFrameHeader(r) {
   return [path, yield* atomic(r, readVarU32)];
 }
 
+/** @param {number[]} path */
+const unexpectedError = (path) => new Error(`unexpected data for sub-stream [${path}]`);
+
 /** @param {number[]} path @returns {never} */
 function unexpected(path) {
-  throw new Error(`unexpected data for sub-stream [${path}]`);
+  throw unexpectedError(path);
 }
 
 /**
@@ -370,7 +373,7 @@ export class Mux {
     const n = this._get(path);
     if (!n) return;
     if (reader?.remaining().length || n.chan?.queue.length) {
-      this.abort(new Error(`unexpected data for sub-stream [${path}]`));
+      this.abort(unexpectedError(path));
     }
     n.sealed = true;
     n.done = true;
