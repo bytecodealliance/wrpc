@@ -10,6 +10,7 @@ license.workspace = true
 repository.workspace = true
 
 [features]
+default = ["rand", "ring"]
 aws_lc_rs = ["tokio-websockets/aws_lc_rs"]
 fastrand = ["tokio-websockets/fastrand"]
 getrandom = ["tokio-websockets/getrandom"]
