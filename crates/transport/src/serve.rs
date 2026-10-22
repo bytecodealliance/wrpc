@@ -6,9 +6,10 @@ use core::pin::Pin;
 use std::sync::Arc;
 
 use anyhow::{Context as _, bail};
-use futures::{SinkExt as _, Stream, TryStreamExt as _};
+use bytes::BytesMut;
+use futures::{Stream, TryStreamExt as _};
 use tokio::io::AsyncWriteExt as _;
-use tokio_util::codec::{FramedRead, FramedWrite};
+use tokio_util::codec::{Encoder as _, FramedRead};
 use tracing::{Instrument as _, Span, debug, instrument, trace};
 
 use crate::frame::{Incoming, Outgoing};
@@ -86,7 +87,7 @@ pub trait ServeExt: Serve {
         let span = Span::current();
         async {
             let invocations = self.serve(instance, func, paths).await?;
-            Ok(invocations.and_then(move |(cx, outgoing, incoming)| {
+            Ok(invocations.and_then(move |(cx, mut outgoing, incoming)| {
                 async {
                     let mut dec = FramedRead::new(incoming, Params::Decoder::default());
                     debug!("receiving sync parameters");
@@ -115,15 +116,17 @@ pub trait ServeExt: Serve {
                         }),
                         move |results| {
                             Box::pin(
-                                async {
-                                    let mut enc =
-                                        FramedWrite::new(outgoing, Results::Encoder::default());
+                                async move {
+                                    let mut enc = Results::Encoder::default();
+                                    let mut buf = BytesMut::default();
+                                    enc.encode(results, &mut buf)
+                                        .context("failed to encode synchronous results")?;
                                     debug!("transmitting sync results");
-                                    enc.send(results)
+                                    outgoing
+                                        .write_bytes(buf.freeze())
                                         .await
                                         .context("failed to transmit synchronous results")?;
-                                    let tx = enc.encoder_mut().take_deferred();
-                                    let mut outgoing = enc.into_inner();
+                                    let tx = enc.take_deferred();
                                     outgoing
                                         .shutdown()
                                         .await

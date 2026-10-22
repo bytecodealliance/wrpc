@@ -8,10 +8,10 @@ use core::mem;
 use core::ops::{Deref, DerefMut};
 use core::pin::Pin;
 
-use bytes::{Buf as _, BufMut as _, Bytes, BytesMut};
+use bytes::{BufMut as _, Bytes, BytesMut};
 use futures::stream::{self, FuturesUnordered};
 use futures::{FutureExt as _, Stream, StreamExt as _, TryStreamExt as _};
-use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _};
+use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite};
 use tokio::select;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinSet;
@@ -450,7 +450,7 @@ impl Sink for Outgoing {
         let mut enc = T::Encoder::default();
         let mut buf = BytesMut::default();
         enc.encode(item, &mut buf)?;
-        self.write_all(&buf).await?;
+        self.write_bytes(buf.freeze()).await?;
         match enc.take_deferred() {
             Some(f) => f(self, Vec::default()).await,
             _ => Ok(()),
@@ -477,7 +477,7 @@ impl Sink for Outgoing {
                         trace!("writing stream end");
                         buf.reserve(1);
                         buf.put_u8(0x00);
-                        self.write_all(&buf).await?;
+                        self.write_bytes(buf.split().freeze()).await?;
                         while let Some(res) = tasks.join_next().await {
                             trace!(?res, "receiver task finished");
                             res??;
@@ -517,10 +517,10 @@ impl Sink for Outgoing {
                     trace!(?res, "receiver task finished");
                     res??;
                 }
-                res = self.write(&buf), if !buf.is_empty() => {
-                    let n = res?;
-                    trace!(?buf, n, "wrote bytes from buffer");
-                    buf.advance(n);
+                res = self.reserve(), if !buf.is_empty() => {
+                    res?;
+                    trace!(?buf, "writing bytes from buffer");
+                    self.send_reserved(buf.split().freeze())?;
                 }
             }
         }
@@ -539,7 +539,7 @@ impl Sink for Outgoing {
                         trace!("writing stream end");
                         buf.reserve(1);
                         buf.put_u8(0x00);
-                        return self.write_all(&buf).await
+                        return self.write_bytes(buf.split().freeze()).await
                     };
                     if chunk.is_empty() {
                         continue;
@@ -551,9 +551,9 @@ impl Sink for Outgoing {
                     Leb128Encoder.encode(n, &mut buf)?;
                     buf.extend_from_slice(&chunk);
                 }
-                res = self.write(&buf), if !buf.is_empty() => {
-                    let n = res?;
-                    buf.advance(n);
+                res = self.reserve(), if !buf.is_empty() => {
+                    res?;
+                    self.send_reserved(buf.split().freeze())?;
                 }
             }
         }
@@ -571,7 +571,7 @@ impl Sink for Outgoing {
             trace!(n, "writing ready chunk length");
             let mut header = BytesMut::default();
             Leb128Encoder.encode(n, &mut header)?;
-            self.write_all(&header).await?;
+            self.write_bytes(header.freeze()).await?;
         }
         let mut chunk = BytesMut::with_capacity(READ_CHUNK_SIZE);
         loop {
@@ -582,7 +582,7 @@ impl Sink for Outgoing {
                         trace!("writing stream end");
                         buf.reserve(1);
                         buf.put_u8(0x00);
-                        return self.write_all(&buf).await
+                        return self.write_bytes(buf.split().freeze()).await
                     }
                     let n = u32::try_from(n).map_err(|err| {
                         std::io::Error::new(std::io::ErrorKind::InvalidInput, err)
@@ -592,9 +592,9 @@ impl Sink for Outgoing {
                     buf.extend_from_slice(&chunk);
                     chunk.clear();
                 }
-                res = self.write(&buf), if !buf.is_empty() => {
-                    let n = res?;
-                    buf.advance(n);
+                res = self.reserve(), if !buf.is_empty() => {
+                    res?;
+                    self.send_reserved(buf.split().freeze())?;
                 }
             }
         }
