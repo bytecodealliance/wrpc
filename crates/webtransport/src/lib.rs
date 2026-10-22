@@ -8,7 +8,7 @@ use quinn::VarInt;
 use tokio::io::BufReader;
 use tracing::{debug, error, trace, warn};
 use wrpc_transport::Invoke;
-use wrpc_transport::frame::{Incoming, Outgoing, invoke};
+use wrpc_transport::frame::{Incoming, InvokeBuilder, Outgoing};
 use wtransport::{Connection, RecvStream, SendStream};
 
 /// WebTransport server with graceful stream shutdown handling
@@ -99,7 +99,9 @@ impl Invoke for &Client {
             .await
             .context("failed to initialize parameter stream")?;
         let (tx, rx) = stream.await.context("failed to open parameter stream")?;
-        invoke(tx, BufReader::new(rx), instance, func, params, paths).await
+        InvokeBuilder::<ConnHandler>::default()
+            .invoke(tx, BufReader::new(rx), instance, func, params, paths)
+            .await
     }
 }
 
