@@ -2,7 +2,7 @@ use core::marker::PhantomData;
 
 use anyhow::Context as _;
 use bytes::{BufMut as _, BytesMut};
-use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt as _};
+use tokio::io::{AsyncBufRead, AsyncWrite, AsyncWriteExt as _};
 use tokio_util::codec::Encoder;
 use tracing::{instrument, trace};
 use wasm_tokio::{CoreNameEncoder, CoreVecEncoderBytes};
@@ -54,7 +54,7 @@ impl<H> InvokeBuilder<H> {
     ) -> anyhow::Result<(Outgoing, Incoming)>
     where
         P: AsRef<[Option<usize>]> + Send + Sync,
-        I: AsyncRead + Unpin + Send + 'static,
+        I: AsyncBufRead + Unpin + Send + 'static,
         O: AsyncWrite + Unpin + Send + 'static,
         H: ConnHandler<I, O>,
     {
@@ -91,7 +91,7 @@ pub async fn invoke<P, I, O>(
 ) -> anyhow::Result<(Outgoing, Incoming)>
 where
     P: AsRef<[Option<usize>]> + Send + Sync,
-    I: AsyncRead + Unpin + Send + 'static,
+    I: AsyncBufRead + Unpin + Send + 'static,
     O: AsyncWrite + Unpin + Send + 'static,
 {
     InvokeBuilder::<()>::default()

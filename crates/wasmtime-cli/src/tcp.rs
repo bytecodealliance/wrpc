@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use anyhow::Context as _;
 use clap::Parser;
+use tokio::io::BufReader;
 use tracing::{error, instrument};
 
 pub const DEFAULT_ADDR: &str = "[::1]:7761";
@@ -102,7 +103,7 @@ pub async fn handle_serve(
                 match lis.accept().await {
                     Ok((stream, addr)) => {
                         let (rx, tx) = stream.into_split();
-                        if let Err(err) = srv.accept(addr, tx, rx).await {
+                        if let Err(err) = srv.accept(addr, tx, BufReader::new(rx)).await {
                             error!(?err, "failed to serve TCP connection");
                         }
                     }

@@ -3,12 +3,13 @@
 use anyhow::Context as _;
 use bytes::Bytes;
 use quinn::{Connection, RecvStream, SendStream, VarInt};
+use tokio::io::BufReader;
 use tracing::{debug, error, trace, warn};
 use wrpc_transport::Invoke;
 use wrpc_transport::frame::{Incoming, InvokeBuilder, Outgoing};
 
 /// QUIC server with graceful stream shutdown handling
-pub type Server = wrpc_transport::Server<(), RecvStream, SendStream, ConnHandler>;
+pub type Server = wrpc_transport::Server<(), BufReader<RecvStream>, SendStream, ConnHandler>;
 
 /// QUIC wRPC client
 #[derive(Clone, Debug)]
@@ -19,14 +20,14 @@ pub struct ConnHandler;
 
 const DONE: VarInt = VarInt::from_u32(1);
 
-impl wrpc_transport::frame::ConnHandler<RecvStream, SendStream> for ConnHandler {
-    async fn on_ingress(mut rx: RecvStream, res: std::io::Result<()>) {
+impl wrpc_transport::frame::ConnHandler<BufReader<RecvStream>, SendStream> for ConnHandler {
+    async fn on_ingress(mut rx: BufReader<RecvStream>, res: std::io::Result<()>) {
         if let Err(err) = res {
             error!(?err, "ingress failed");
         } else {
             debug!("ingress successfully complete");
         }
-        if let Err(err) = rx.stop(DONE) {
+        if let Err(err) = rx.get_mut().stop(DONE) {
             debug!(?err, "failed to close incoming stream");
         }
     }
@@ -81,7 +82,7 @@ impl Invoke for &Client {
             .await
             .context("failed to open parameter stream")?;
         InvokeBuilder::<ConnHandler>::default()
-            .invoke(tx, rx, instance, func, params, paths)
+            .invoke(tx, BufReader::new(rx), instance, func, params, paths)
             .await
     }
 }

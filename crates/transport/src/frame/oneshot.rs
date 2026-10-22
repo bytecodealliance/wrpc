@@ -1,7 +1,9 @@
 //! wRPC transport stream framing
 
 use bytes::Bytes;
-use tokio::io::{AsyncRead, AsyncWrite, DuplexStream, ReadHalf, WriteHalf, duplex, split};
+use tokio::io::{
+    AsyncRead, AsyncWrite, BufReader, DuplexStream, ReadHalf, WriteHalf, duplex, split,
+};
 use tracing::instrument;
 
 use crate::Invoke;
@@ -95,7 +97,7 @@ where
         let stream = self.try_take_inner();
         async move {
             let (rx, tx) = stream?;
-            invoke(tx, rx, instance, func, params, paths).await
+            invoke(tx, BufReader::new(rx), instance, func, params, paths).await
         }
     }
 }

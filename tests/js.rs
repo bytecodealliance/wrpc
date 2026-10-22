@@ -102,7 +102,7 @@ async fn js_client() -> anyhow::Result<()> {
             res = lis.accept() => {
                 let (stream, addr) = res.expect("failed to accept connection");
                 let (rx, tx) = stream.into_split();
-                srv.accept(addr, tx, rx).await.expect("failed to accept invocation");
+                srv.accept(addr, tx, BufReader::new(rx)).await.expect("failed to accept invocation");
             }
             Some((instance, name, invocation)) = invocations.next() => {
                 let invocation = invocation

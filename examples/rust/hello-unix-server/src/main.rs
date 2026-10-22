@@ -7,6 +7,7 @@ use anyhow::Context as _;
 use clap::Parser;
 use futures::StreamExt as _;
 use futures::stream::select_all;
+use tokio::io::BufReader;
 use tokio::task::JoinSet;
 use tokio::{fs, select, signal};
 use tracing::{debug, error, info, warn};
@@ -61,7 +62,7 @@ async fn main() -> anyhow::Result<()> {
                 match lis.accept().await {
                     Ok((stream, addr)) => {
                         let (rx, tx) = stream.into_split();
-                        if let Err(err) = srv.accept(addr, tx, rx).await {
+                        if let Err(err) = srv.accept(addr, tx, BufReader::new(rx)).await {
                             error!(?err, "failed to serve Unix connection");
                         }
                     }

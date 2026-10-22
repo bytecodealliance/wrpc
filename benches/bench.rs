@@ -9,6 +9,7 @@ use anyhow::{Context as _, bail};
 use criterion::measurement::Measurement;
 use criterion::{BenchmarkGroup, Criterion};
 use futures::StreamExt as _;
+use tokio::io::BufReader;
 use tokio::select;
 use tokio::sync::oneshot;
 use wasmtime::component::{Component, Linker, ResourceTable};
@@ -262,7 +263,7 @@ fn bench_wasm_ping_wrpc(
                     conn = lis.accept() => {
                         let (stream, _) = conn.expect("failed to accept TCP connection");
                         let (rx, tx) = stream.into_split();
-                        srv.accept((), tx, rx)
+                        srv.accept((), tx, BufReader::new(rx))
                             .await
                             .expect("failed to accept connection");
                     }
@@ -324,7 +325,7 @@ fn bench_wasm_greet_wrpc(
                     conn = lis.accept() => {
                         let (stream, _) = conn.expect("failed to accept TCP connection");
                         let (rx, tx) = stream.into_split();
-                        srv.accept((), tx, rx)
+                        srv.accept((), tx, BufReader::new(rx))
                             .await
                             .expect("failed to accept connection");
                     }
@@ -380,7 +381,7 @@ fn bench_wrpc_ping(g: &mut BenchmarkGroup<impl Measurement>) -> anyhow::Result<(
                     conn = lis.accept() => {
                         let (stream, _) = conn.expect("failed to accept TCP connection");
                         let (rx, tx) = stream.into_split();
-                        srv.accept((), tx, rx)
+                        srv.accept((), tx, BufReader::new(rx))
                             .await
                             .expect("failed to accept connection");
                     }
@@ -436,7 +437,7 @@ fn bench_wrpc_greet(g: &mut BenchmarkGroup<impl Measurement>) -> anyhow::Result<
                     conn = lis.accept() => {
                         let (stream, _) = conn.expect("failed to accept TCP connection");
                         let (rx, tx) = stream.into_split();
-                        srv.accept((), tx, rx)
+                        srv.accept((), tx, BufReader::new(rx))
                             .await
                             .expect("failed to accept connection");
                     }
