@@ -63,6 +63,9 @@ async fn main() -> anyhow::Result<()> {
             loop {
                 match lis.accept().await {
                     Ok((stream, addr)) => {
+                        if let Err(err) = stream.set_nodelay(true) {
+                            warn!(?err, "failed to set TCP_NODELAY");
+                        }
                         let (rx, tx) = stream.into_split();
                         if let Err(err) = srv.accept(addr, tx, BufReader::new(rx)).await {
                             error!(?err, "failed to serve TCP connection");
