@@ -68,6 +68,7 @@ impl http_body::Body for OutgoingBody {
         }
 
         let this = self.as_mut().project();
+        this.buffer.reserve(DEFAULT_BODY_BUFFER_SIZE);
         ready!(poll_read_buf(this.stream, cx, this.buffer))?;
         let buf = self.buffer.split().freeze();
         if buf.is_empty() {
