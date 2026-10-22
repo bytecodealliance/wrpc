@@ -17,11 +17,7 @@ use crate::ValueEncoder;
 /// use wrpc_wave::TypedValue;
 ///
 /// let mut buf = BytesMut::default();
-/// futures::executor::block_on(wrpc_transport::pack(
-///     TypedValue(Value::make_u32(42), Type::U32),
-///     &mut buf,
-/// ))
-/// .unwrap();
+/// wrpc_transport::pack_ready(TypedValue(Value::make_u32(42), Type::U32), &mut buf).unwrap();
 /// assert_eq!(buf.as_ref(), [42]);
 /// ```
 #[derive(Clone, Debug)]
@@ -65,25 +61,18 @@ impl<V: WasmValue, W: Sink> Encode<W> for &TypedValue<V> {
 mod tests {
     use super::*;
     use wasm_wave::value::Type;
-    use wrpc_transport::Packer;
-
-    fn pack<T: Encode<Packer>>(
-        v: T,
-        dst: &mut BytesMut,
-    ) -> Result<(), <T::Encoder as Encoder<T>>::Error> {
-        futures::executor::block_on(wrpc_transport::pack(v, dst))
-    }
+    use wrpc_transport::pack_ready;
 
     #[test]
     fn test_pack_bool() -> anyhow::Result<()> {
         let mut params_bytes_regular = BytesMut::default();
-        pack(true, &mut params_bytes_regular)?;
+        pack_ready(true, &mut params_bytes_regular)?;
 
         let value = Value::make_bool(true);
         let ty = Type::BOOL;
         let wrpc_value = TypedValue(value, ty);
         let mut params_bytes_wave = BytesMut::default();
-        pack(wrpc_value, &mut params_bytes_wave)?;
+        pack_ready(wrpc_value, &mut params_bytes_wave)?;
 
         assert_eq!(
             params_bytes_regular.as_ref(),
@@ -96,13 +85,13 @@ mod tests {
     #[test]
     fn test_pack_s8() -> anyhow::Result<()> {
         let mut params_bytes_regular = BytesMut::default();
-        pack(42i8, &mut params_bytes_regular)?;
+        pack_ready(42i8, &mut params_bytes_regular)?;
 
         let value = Value::make_s8(42);
         let ty = Type::S8;
         let wrpc_value = TypedValue(value, ty);
         let mut params_bytes_wave = BytesMut::default();
-        pack(wrpc_value, &mut params_bytes_wave)?;
+        pack_ready(wrpc_value, &mut params_bytes_wave)?;
 
         assert_eq!(
             params_bytes_regular.as_ref(),
@@ -115,13 +104,13 @@ mod tests {
     #[test]
     fn test_pack_u8() -> anyhow::Result<()> {
         let mut params_bytes_regular = BytesMut::default();
-        pack(42u8, &mut params_bytes_regular)?;
+        pack_ready(42u8, &mut params_bytes_regular)?;
 
         let value = Value::make_u8(42);
         let ty = Type::U8;
         let wrpc_value = TypedValue(value, ty);
         let mut params_bytes_wave = BytesMut::default();
-        pack(wrpc_value, &mut params_bytes_wave)?;
+        pack_ready(wrpc_value, &mut params_bytes_wave)?;
 
         assert_eq!(
             params_bytes_regular.as_ref(),
@@ -134,13 +123,13 @@ mod tests {
     #[test]
     fn test_pack_s16() -> anyhow::Result<()> {
         let mut params_bytes_regular = BytesMut::default();
-        pack(1234i16, &mut params_bytes_regular)?;
+        pack_ready(1234i16, &mut params_bytes_regular)?;
 
         let value = Value::make_s16(1234);
         let ty = Type::S16;
         let wrpc_value = TypedValue(value, ty);
         let mut params_bytes_wave = BytesMut::default();
-        pack(wrpc_value, &mut params_bytes_wave)?;
+        pack_ready(wrpc_value, &mut params_bytes_wave)?;
 
         assert_eq!(
             params_bytes_regular.as_ref(),
@@ -153,13 +142,13 @@ mod tests {
     #[test]
     fn test_pack_u16() -> anyhow::Result<()> {
         let mut params_bytes_regular = BytesMut::default();
-        pack(1234u16, &mut params_bytes_regular)?;
+        pack_ready(1234u16, &mut params_bytes_regular)?;
 
         let value = Value::make_u16(1234);
         let ty = Type::U16;
         let wrpc_value = TypedValue(value, ty);
         let mut params_bytes_wave = BytesMut::default();
-        pack(wrpc_value, &mut params_bytes_wave)?;
+        pack_ready(wrpc_value, &mut params_bytes_wave)?;
 
         assert_eq!(
             params_bytes_regular.as_ref(),
@@ -172,13 +161,13 @@ mod tests {
     #[test]
     fn test_pack_s32() -> anyhow::Result<()> {
         let mut params_bytes_regular = BytesMut::default();
-        pack(123456i32, &mut params_bytes_regular)?;
+        pack_ready(123456i32, &mut params_bytes_regular)?;
 
         let value = Value::make_s32(123456);
         let ty = Type::S32;
         let wrpc_value = TypedValue(value, ty);
         let mut params_bytes_wave = BytesMut::default();
-        pack(wrpc_value, &mut params_bytes_wave)?;
+        pack_ready(wrpc_value, &mut params_bytes_wave)?;
 
         assert_eq!(
             params_bytes_regular.as_ref(),
@@ -191,13 +180,13 @@ mod tests {
     #[test]
     fn test_pack_u32() -> anyhow::Result<()> {
         let mut params_bytes_regular = BytesMut::default();
-        pack(123456u32, &mut params_bytes_regular)?;
+        pack_ready(123456u32, &mut params_bytes_regular)?;
 
         let value = Value::make_u32(123456);
         let ty = Type::U32;
         let wrpc_value = TypedValue(value, ty);
         let mut params_bytes_wave = BytesMut::default();
-        pack(wrpc_value, &mut params_bytes_wave)?;
+        pack_ready(wrpc_value, &mut params_bytes_wave)?;
 
         assert_eq!(
             params_bytes_regular.as_ref(),
@@ -210,13 +199,13 @@ mod tests {
     #[test]
     fn test_pack_s64() -> anyhow::Result<()> {
         let mut params_bytes_regular = BytesMut::default();
-        pack(1234567890i64, &mut params_bytes_regular)?;
+        pack_ready(1234567890i64, &mut params_bytes_regular)?;
 
         let value = Value::make_s64(1234567890);
         let ty = Type::S64;
         let wrpc_value = TypedValue(value, ty);
         let mut params_bytes_wave = BytesMut::default();
-        pack(wrpc_value, &mut params_bytes_wave)?;
+        pack_ready(wrpc_value, &mut params_bytes_wave)?;
 
         assert_eq!(
             params_bytes_regular.as_ref(),
@@ -229,13 +218,13 @@ mod tests {
     #[test]
     fn test_pack_u64() -> anyhow::Result<()> {
         let mut params_bytes_regular = BytesMut::default();
-        pack(1234567890u64, &mut params_bytes_regular)?;
+        pack_ready(1234567890u64, &mut params_bytes_regular)?;
 
         let value = Value::make_u64(1234567890);
         let ty = Type::U64;
         let wrpc_value = TypedValue(value, ty);
         let mut params_bytes_wave = BytesMut::default();
-        pack(wrpc_value, &mut params_bytes_wave)?;
+        pack_ready(wrpc_value, &mut params_bytes_wave)?;
 
         assert_eq!(
             params_bytes_regular.as_ref(),
@@ -248,13 +237,13 @@ mod tests {
     #[test]
     fn test_pack_f32() -> anyhow::Result<()> {
         let mut params_bytes_regular = BytesMut::default();
-        pack(1.5f32, &mut params_bytes_regular)?;
+        pack_ready(1.5f32, &mut params_bytes_regular)?;
 
         let value = Value::make_f32(1.5);
         let ty = Type::F32;
         let wrpc_value = TypedValue(value, ty);
         let mut params_bytes_wave = BytesMut::default();
-        pack(wrpc_value, &mut params_bytes_wave)?;
+        pack_ready(wrpc_value, &mut params_bytes_wave)?;
 
         assert_eq!(
             params_bytes_regular.as_ref(),
@@ -267,13 +256,13 @@ mod tests {
     #[test]
     fn test_pack_f64() -> anyhow::Result<()> {
         let mut params_bytes_regular = BytesMut::default();
-        pack(2.5f64, &mut params_bytes_regular)?;
+        pack_ready(2.5f64, &mut params_bytes_regular)?;
 
         let value = Value::make_f64(2.5);
         let ty = Type::F64;
         let wrpc_value = TypedValue(value, ty);
         let mut params_bytes_wave = BytesMut::default();
-        pack(wrpc_value, &mut params_bytes_wave)?;
+        pack_ready(wrpc_value, &mut params_bytes_wave)?;
 
         assert_eq!(
             params_bytes_regular.as_ref(),
@@ -286,13 +275,13 @@ mod tests {
     #[test]
     fn test_pack_char() -> anyhow::Result<()> {
         let mut params_bytes_regular = BytesMut::default();
-        pack('A', &mut params_bytes_regular)?;
+        pack_ready('A', &mut params_bytes_regular)?;
 
         let value = Value::make_char('A');
         let ty = Type::CHAR;
         let wrpc_value = TypedValue(value, ty);
         let mut params_bytes_wave = BytesMut::default();
-        pack(wrpc_value, &mut params_bytes_wave)?;
+        pack_ready(wrpc_value, &mut params_bytes_wave)?;
 
         assert_eq!(
             params_bytes_regular.as_ref(),
@@ -305,14 +294,14 @@ mod tests {
     #[test]
     fn test_pack_string() -> anyhow::Result<()> {
         let mut params_bytes_regular = BytesMut::default();
-        pack("hello", &mut params_bytes_regular)?;
+        pack_ready("hello", &mut params_bytes_regular)?;
 
         use std::borrow::Cow;
         let value = Value::make_string(Cow::Borrowed("hello"));
         let ty = Type::STRING;
         let wrpc_value = TypedValue(value, ty);
         let mut params_bytes_wave = BytesMut::default();
-        pack(wrpc_value, &mut params_bytes_wave)?;
+        pack_ready(wrpc_value, &mut params_bytes_wave)?;
 
         assert_eq!(
             params_bytes_regular.as_ref(),
@@ -325,7 +314,7 @@ mod tests {
     #[test]
     fn test_pack_list() -> anyhow::Result<()> {
         let mut params_bytes_regular = BytesMut::default();
-        pack(vec![1u32, 2u32, 3u32], &mut params_bytes_regular)?;
+        pack_ready(vec![1u32, 2u32, 3u32], &mut params_bytes_regular)?;
 
         let element_type = Type::U32;
         let list_type = Type::list(element_type.clone());
@@ -333,7 +322,7 @@ mod tests {
         let list_value = Value::make_list(&list_type, values)?;
         let wrpc_value = TypedValue(list_value, list_type);
         let mut params_bytes_wave = BytesMut::default();
-        pack(wrpc_value, &mut params_bytes_wave)?;
+        pack_ready(wrpc_value, &mut params_bytes_wave)?;
 
         assert_eq!(
             params_bytes_regular.as_ref(),
@@ -349,7 +338,7 @@ mod tests {
         // So we'll test with a record that has two u32 fields
         // This should encode the same as a tuple (u32, u32)
         let mut params_bytes_regular = BytesMut::default();
-        pack((42u32, 100u32), &mut params_bytes_regular)?;
+        pack_ready((42u32, 100u32), &mut params_bytes_regular)?;
 
         let record_type = Type::record([("a", Type::U32), ("b", Type::U32)])
             .expect("record type should be valid");
@@ -359,7 +348,7 @@ mod tests {
         )?;
         let wrpc_value = TypedValue(record_value, record_type);
         let mut params_bytes_wave = BytesMut::default();
-        pack(wrpc_value, &mut params_bytes_wave)?;
+        pack_ready(wrpc_value, &mut params_bytes_wave)?;
 
         assert_eq!(
             params_bytes_regular.as_ref(),
@@ -373,7 +362,7 @@ mod tests {
     fn test_pack_tuple() -> anyhow::Result<()> {
         // Test 1: Pack (5,) using regular pack
         let mut params_bytes_regular = BytesMut::default();
-        pack((5u32,), &mut params_bytes_regular)?;
+        pack_ready((5u32,), &mut params_bytes_regular)?;
 
         // Test 2: Pack a wasm-wave Value representing (5,) as a tuple
         let value_5 = Value::make_u32(5);
@@ -381,7 +370,7 @@ mod tests {
         let tuple_value = Value::make_tuple(&tuple_type, [value_5])?;
         let wrpc_tuple_value = TypedValue(tuple_value, tuple_type);
         let mut params_bytes_wave = BytesMut::default();
-        pack(wrpc_tuple_value, &mut params_bytes_wave)?;
+        pack_ready(wrpc_tuple_value, &mut params_bytes_wave)?;
 
         // Test 3: Verify both produce the same bytes
         assert_eq!(
@@ -404,12 +393,12 @@ mod tests {
 
         // For comparison, we'll use Option<u32>::Some(42) which encodes similarly
         let mut params_bytes_regular = BytesMut::default();
-        pack(Some(42u32), &mut params_bytes_regular)?;
+        pack_ready(Some(42u32), &mut params_bytes_regular)?;
 
         let variant_value = Value::make_variant(&variant_type, "some", Some(Value::make_u32(42)))?;
         let wrpc_value = TypedValue(variant_value, variant_type);
         let mut params_bytes_wave = BytesMut::default();
-        pack(wrpc_value, &mut params_bytes_wave)?;
+        pack_ready(wrpc_value, &mut params_bytes_wave)?;
 
         // Note: Variant encoding is similar to Option but uses discriminant index
         // The bytes should match for a simple case like this
@@ -433,7 +422,7 @@ mod tests {
         let enum_value = Value::make_enum(&enum_type, "red")?;
         let wrpc_value = TypedValue(enum_value, enum_type);
         let mut params_bytes_wave = BytesMut::default();
-        pack(wrpc_value, &mut params_bytes_wave)?;
+        pack_ready(wrpc_value, &mut params_bytes_wave)?;
 
         // Enum should encode as a single byte (discriminant 0 for first case in small enum)
         assert!(
@@ -456,14 +445,14 @@ mod tests {
     #[test]
     fn test_pack_option_none() -> anyhow::Result<()> {
         let mut params_bytes_regular = BytesMut::default();
-        pack(Option::<u32>::None, &mut params_bytes_regular)?;
+        pack_ready(Option::<u32>::None, &mut params_bytes_regular)?;
 
         let inner_type = Type::U32;
         let option_type = Type::option(inner_type);
         let option_value = Value::make_option(&option_type, None)?;
         let wrpc_value = TypedValue(option_value, option_type);
         let mut params_bytes_wave = BytesMut::default();
-        pack(wrpc_value, &mut params_bytes_wave)?;
+        pack_ready(wrpc_value, &mut params_bytes_wave)?;
 
         assert_eq!(
             params_bytes_regular.as_ref(),
@@ -476,7 +465,7 @@ mod tests {
     #[test]
     fn test_pack_option_some() -> anyhow::Result<()> {
         let mut params_bytes_regular = BytesMut::default();
-        pack(Some(42u32), &mut params_bytes_regular)?;
+        pack_ready(Some(42u32), &mut params_bytes_regular)?;
 
         let inner_type = Type::U32;
         let option_type = Type::option(inner_type.clone());
@@ -484,7 +473,7 @@ mod tests {
         let option_value = Value::make_option(&option_type, Some(inner_value))?;
         let wrpc_value = TypedValue(option_value, option_type);
         let mut params_bytes_wave = BytesMut::default();
-        pack(wrpc_value, &mut params_bytes_wave)?;
+        pack_ready(wrpc_value, &mut params_bytes_wave)?;
 
         assert_eq!(
             params_bytes_regular.as_ref(),
@@ -497,7 +486,7 @@ mod tests {
     #[test]
     fn test_pack_result_ok() -> anyhow::Result<()> {
         let mut params_bytes_regular = BytesMut::default();
-        pack(Result::<u32, String>::Ok(42), &mut params_bytes_regular)?;
+        pack_ready(Result::<u32, String>::Ok(42), &mut params_bytes_regular)?;
 
         let ok_type = Some(Type::U32);
         let err_type = Some(Type::STRING);
@@ -506,7 +495,7 @@ mod tests {
         let result_value = Value::make_result(&result_type, Ok(Some(ok_value)))?;
         let wrpc_value = TypedValue(result_value, result_type);
         let mut params_bytes_wave = BytesMut::default();
-        pack(wrpc_value, &mut params_bytes_wave)?;
+        pack_ready(wrpc_value, &mut params_bytes_wave)?;
 
         assert_eq!(
             params_bytes_regular.as_ref(),
@@ -519,7 +508,7 @@ mod tests {
     #[test]
     fn test_pack_result_err() -> anyhow::Result<()> {
         let mut params_bytes_regular = BytesMut::default();
-        pack(
+        pack_ready(
             Result::<u32, String>::Err("error".to_string()),
             &mut params_bytes_regular,
         )?;
@@ -532,7 +521,7 @@ mod tests {
         let result_value = Value::make_result(&result_type, Err(Some(err_value)))?;
         let wrpc_value = TypedValue(result_value, result_type);
         let mut params_bytes_wave = BytesMut::default();
-        pack(wrpc_value, &mut params_bytes_wave)?;
+        pack_ready(wrpc_value, &mut params_bytes_wave)?;
 
         assert_eq!(
             params_bytes_regular.as_ref(),
@@ -555,7 +544,7 @@ mod tests {
         let flags_value = Value::make_flags(&flags_type, ["read", "write"])?;
         let wrpc_value = TypedValue(flags_value, flags_type);
         let mut params_bytes_wave = BytesMut::default();
-        pack(wrpc_value, &mut params_bytes_wave)?;
+        pack_ready(wrpc_value, &mut params_bytes_wave)?;
 
         // For 3 flags, it should use u8 encoding (1 byte)
         assert_eq!(
