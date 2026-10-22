@@ -13,6 +13,7 @@ use crate::frame::{Incoming, Outgoing, invoke};
 pub struct Client<T> {
     addr: T,
     nodelay: Option<bool>,
+    zero_linger: bool,
 }
 
 impl<T> Client<T> {
@@ -24,6 +25,19 @@ impl<T> Client<T> {
     pub fn nodelay(self, nodelay: Option<bool>) -> Self {
         Self { nodelay, ..self }
     }
+
+    /// Sets `SO_LINGER` to zero on connections established by this client, so that closing
+    /// them aborts the connection instead of leaving it in `TIME_WAIT`.
+    /// Aborting the connection discards any data not yet sent to the peer, so this should only be
+    /// used if the peer does not depend on receiving all data, for example in benchmarks.
+    /// It is not set by default.
+    #[must_use]
+    pub fn set_zero_linger(self) -> Self {
+        Self {
+            zero_linger: true,
+            ..self
+        }
+    }
 }
 
 impl<T> From<T> for Client<T>
@@ -34,6 +48,7 @@ where
         Self {
             addr,
             nodelay: Some(true),
+            zero_linger: false,
         }
     }
 }
@@ -59,6 +74,9 @@ where
         let stream = TcpStream::connect(self.addr.clone()).await?;
         if let Some(nodelay) = self.nodelay {
             stream.set_nodelay(nodelay)?;
+        }
+        if self.zero_linger {
+            stream.set_zero_linger()?;
         }
         let (rx, tx) = stream.into_split();
         invoke(tx, BufReader::new(rx), instance, func, params, paths).await
