@@ -21,6 +21,8 @@ pub struct ConnHandler;
 const DONE: VarInt = VarInt::from_u32(1);
 
 impl wrpc_transport::frame::ConnHandler<BufReader<RecvStream>, SendStream> for ConnHandler {
+    const DRAIN: bool = false;
+
     async fn on_ingress(mut rx: BufReader<RecvStream>, res: std::io::Result<()>) {
         if let Err(err) = res {
             error!(?err, "ingress failed");

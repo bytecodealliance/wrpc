@@ -19,7 +19,7 @@ use tokio::{select, spawn, try_join};
 use tracing::info;
 use wrpc_transport::{Invoke, Serve};
 
-async fn tcp_bind() -> anyhow::Result<TcpListener> {
+pub async fn tcp_bind() -> anyhow::Result<TcpListener> {
     TcpListener::bind((Ipv6Addr::LOCALHOST, 0))
         .await
         .context("failed to start TCP listener")

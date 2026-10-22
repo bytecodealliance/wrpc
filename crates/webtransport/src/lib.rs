@@ -42,6 +42,8 @@ impl DerefMut for Client {
 pub struct ConnHandler;
 
 impl wrpc_transport::frame::ConnHandler<BufReader<RecvStream>, SendStream> for ConnHandler {
+    const DRAIN: bool = false;
+
     async fn on_ingress(mut rx: BufReader<RecvStream>, res: std::io::Result<()>) {
         if let Err(err) = res {
             error!(?err, "ingress failed");

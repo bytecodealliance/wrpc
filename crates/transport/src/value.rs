@@ -18,7 +18,7 @@ use tokio::task::JoinSet;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::codec::{Encoder as _, FramedRead};
 use tokio_util::io::StreamReader;
-use tracing::{Instrument as _, Span, debug, error, instrument, trace};
+use tracing::{Instrument as _, Span, error, instrument, trace};
 use wasm_tokio::cm::{
     BoolCodec, F32Codec, F64Codec, OptionDecoder, OptionEncoder, PrimValEncoder, ResultDecoder,
     ResultEncoder, S8Codec, S16Codec, S32Codec, S64Codec, TupleDecoder, TupleEncoder, U8Codec,
@@ -1930,8 +1930,7 @@ where
                     };
                     let item = item?;
                     if tx.send(item).is_err() {
-                        debug!("future receiver closed, discard data");
-                        return Ok(());
+                        return Err(crate::frame::receiver_closed());
                     }
                     if let Some(rx) = dec.decoder_mut().take_deferred() {
                         let mut buf = mem::take(dec.read_buffer_mut());
@@ -1939,6 +1938,8 @@ where
                         buf.unsplit(mem::take(&mut r.buffer));
                         r.buffer = buf;
                         rx(r, Vec::default()).await?;
+                    } else {
+                        ensure_processed(&dec)?;
                     }
                     Ok(())
                 }
@@ -2214,6 +2215,14 @@ where
     }
 }
 
+fn ensure_processed<D>(framed: &FramedRead<BufferedIncoming, D>) -> std::io::Result<()> {
+    if framed.read_buffer().is_empty() && framed.get_ref().buffer.is_empty() {
+        Ok(())
+    } else {
+        Err(crate::frame::unprocessed())
+    }
+}
+
 #[instrument(level = "trace", skip(dec, r, tx), ret)]
 async fn handle_deferred_stream<C, T>(
     dec: C,
@@ -2239,6 +2248,7 @@ where
                 let chunk = chunk?;
                 if chunk.is_empty() {
                     trace!("received stream end");
+                    ensure_processed(&framed)?;
                     while let Some(res) = tasks.join_next().await {
                         res??;
                     }
@@ -2252,8 +2262,7 @@ where
                 })?;
                 trace!(i, end, "received stream chunk");
                 if tx.send(chunk).await.is_err() {
-                    debug!("stream receiver closed, discard data");
-                    return Ok(())
+                    return Err(crate::frame::receiver_closed());
                 }
                 for (i, deferred) in zip(i.., mem::take(&mut framed.decoder_mut().deferred)) {
                     if let Some(deferred) = deferred {
@@ -2269,7 +2278,7 @@ where
                 res??;
             }
             else => {
-                return Ok(());
+                return Err(std::io::ErrorKind::UnexpectedEof.into());
             }
         }
     }
@@ -2365,15 +2374,14 @@ impl tokio_util::codec::Decoder for StreamDecoderBytes {
                         let chunk = chunk?;
                         if chunk.is_empty() {
                             trace!("received stream end");
-                            return Ok(());
+                            return ensure_processed(&framed);
                         }
                         trace!(?chunk, "received pending byte stream chunk");
                         if tx.send(chunk).await.is_err() {
-                            debug!("stream receiver closed, discard data");
-                            return Ok(());
+                            return Err(crate::frame::receiver_closed());
                         }
                     }
-                    Ok(())
+                    Err(std::io::ErrorKind::UnexpectedEof.into())
                 }
                 .instrument(span),
             )
@@ -2427,15 +2435,14 @@ impl tokio_util::codec::Decoder for StreamDecoderRead {
                     let chunk = chunk?;
                     if chunk.is_empty() {
                         trace!("received stream end");
-                        return Ok(());
+                        return ensure_processed(&framed);
                     }
                     trace!(?chunk, "received byte stream chunk");
                     if tx.send(std::io::Result::Ok(chunk)).await.is_err() {
-                        debug!("stream receiver closed, discard data");
-                        return Ok(());
+                        return Err(crate::frame::receiver_closed());
                     }
                 }
-                Ok(())
+                Err(std::io::ErrorKind::UnexpectedEof.into())
             })
         }));
         Ok(Some(Box::pin(StreamReader::new(ReceiverStream::new(rx)))))
@@ -2585,6 +2592,82 @@ mod tests {
         Ok(())
     }
 
+    fn buffered(buffer: &[u8]) -> BufferedIncoming {
+        BufferedIncoming {
+            buffer: BytesMut::from(buffer),
+            inner: crate::frame::Incoming::new(
+                tokio::io::empty(),
+                Vec::<Vec<Option<usize>>>::default(),
+                true,
+                |_, _| async {},
+            ),
+        }
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn future_rejects_unprocessed() -> anyhow::Result<()> {
+        let mut dec = <Pin<Box<dyn Future<Output = Bytes> + Send>> as Decode>::Decoder::default();
+        let fut = dec.decode(&mut BytesMut::from(&[0x00][..]))?;
+        let _fut = fut.context("future not decoded")?;
+        let f = dec.take_deferred().context("deferred read missing")?;
+        let err = f(buffered(b"\x03foo\x2a"), Vec::default())
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::BrokenPipe);
+        Ok(())
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn future_rejects_unprocessed_buffered() -> anyhow::Result<()> {
+        let data: Bytes = (0..2 * READ_CHUNK_SIZE).map(|i| i as u8).collect();
+        let mut buffer = BytesMut::default();
+        CoreVecEncoderBytes.encode(&data, &mut buffer)?;
+        buffer.extend_from_slice(&[0x2a; READ_CHUNK_SIZE]);
+
+        let mut dec = <Pin<Box<dyn Future<Output = Bytes> + Send>> as Decode>::Decoder::default();
+        let fut = dec.decode(&mut BytesMut::from(&[0x00][..]))?;
+        let _fut = fut.context("future not decoded")?;
+        let f = dec.take_deferred().context("deferred read missing")?;
+        let err = f(buffered(&buffer), Vec::default()).await.unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::BrokenPipe);
+        Ok(())
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn future_rejects_dropped_receiver() -> anyhow::Result<()> {
+        let mut dec = <Pin<Box<dyn Future<Output = Bytes> + Send>> as Decode>::Decoder::default();
+        let fut = dec.decode(&mut BytesMut::from(&[0x00][..]))?;
+        drop(fut.context("future not decoded")?);
+        let f = dec.take_deferred().context("deferred read missing")?;
+        let err = f(buffered(b"\x03foo"), Vec::default()).await.unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::BrokenPipe);
+        Ok(())
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn stream_rejects_unprocessed() -> anyhow::Result<()> {
+        let mut dec = <Pin<Box<dyn Stream<Item = Bytes> + Send>> as Decode>::Decoder::default();
+        let stream = dec.decode(&mut BytesMut::from(&[0x00][..]))?;
+        let _stream = stream.context("stream not decoded")?;
+        let f = dec.take_deferred().context("deferred read missing")?;
+        let err = f(buffered(b"\x03foo\x00\x2a"), Vec::default())
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::BrokenPipe);
+        Ok(())
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn stream_rejects_truncated() -> anyhow::Result<()> {
+        let mut dec = <Pin<Box<dyn Stream<Item = Bytes> + Send>> as Decode>::Decoder::default();
+        let stream = dec.decode(&mut BytesMut::from(&[0x00][..]))?;
+        let _stream = stream.context("stream not decoded")?;
+        let f = dec.take_deferred().context("deferred read missing")?;
+        let err = f(buffered(b"\x03foo"), Vec::default()).await.unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
+        Ok(())
+    }
+
     #[test_log::test(tokio::test)]
     async fn future_nested_buffered() -> anyhow::Result<()> {
         let data: Bytes = (0..2 * READ_CHUNK_SIZE).map(|i| i as u8).collect();
@@ -2602,6 +2685,7 @@ mod tests {
             inner: crate::frame::Incoming::new(
                 tokio::io::empty(),
                 Vec::<Vec<Option<usize>>>::default(),
+                true,
                 |_, _| async {},
             ),
         };
