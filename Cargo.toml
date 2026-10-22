@@ -111,8 +111,10 @@ criterion = { workspace = true, features = [
     "rayon",
 ] }
 futures = { workspace = true, features = ["async-await", "executor"] }
+http = { workspace = true }
 http-body-util = { workspace = true }
-hyper = { workspace = true }
+hyper = { workspace = true, features = ["client", "http1", "http2", "server"] }
+hyper-util = { workspace = true, features = ["tokio"] }
 tempfile = { workspace = true }
 test-log = { workspace = true, features = ["color", "log", "trace"] }
 tokio = { workspace = true, features = ["net", "process", "rt-multi-thread"] }
@@ -137,7 +139,7 @@ wrpc-test = { workspace = true, features = [
     "webtransport",
     "websockets",
 ] }
-wrpc-http = { workspace = true, features = ["client", "http2"] }
+wrpc-http = { workspace = true, features = ["client", "client-legacy", "http1", "http2"] }
 wrpc-transport = { workspace = true, features = ["net"] }
 
 [workspace.dependencies]

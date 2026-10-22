@@ -11,7 +11,7 @@ use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
 use rustls::version::TLS13;
 use rustls::{ClientConfig, RootCertStore, ServerConfig};
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
-use tokio::net::TcpListener;
+use tokio::net::{TcpListener, TcpStream, ToSocketAddrs};
 use tokio::process::Command;
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
@@ -23,6 +23,16 @@ pub async fn tcp_bind() -> anyhow::Result<TcpListener> {
     TcpListener::bind((Ipv6Addr::LOCALHOST, 0))
         .await
         .context("failed to start TCP listener")
+}
+
+pub async fn tcp_connect(addr: impl ToSocketAddrs) -> anyhow::Result<TcpStream> {
+    let stream = TcpStream::connect(addr)
+        .await
+        .context("failed to connect to server")?;
+    stream
+        .set_nodelay(true)
+        .context("failed to set TCP_NODELAY")?;
+    Ok(stream)
 }
 
 pub async fn free_port() -> anyhow::Result<u16> {
@@ -389,9 +399,7 @@ where
 
     let ((sender, clt), (srv, addr)) = try_join!(
         async {
-            let conn = tokio::net::TcpStream::connect(addr)
-                .await
-                .context("failed to connect to server")?;
+            let conn = tcp_connect(addr).await?;
             hyper::client::conn::http2::handshake(exe.clone(), WithHyperIo::new(conn))
                 .await
                 .context("failed to establish HTTP/2 connection")
@@ -437,8 +445,10 @@ where
     let addr = lis
         .local_addr()
         .context("failed to query listener local address")?;
+    let mut conn = hyper_util::client::legacy::connect::HttpConnector::new();
+    conn.set_nodelay(true);
     let clt = hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::new())
-        .build_http();
+        .build(conn);
     let (mut parts, ()) = http::Request::new(()).into_parts();
     parts.uri = format!("http://{addr}").parse().unwrap();
     f(parts, clt, lis).await.context("closure failed")
