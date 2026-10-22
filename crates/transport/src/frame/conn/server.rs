@@ -145,7 +145,9 @@ where
     }
     Ok(ReceiverStream::new(rx).map(move |(cx, rx, tx)| {
         trace!("received invocation");
-        let rx = Incoming::new(rx, paths.as_ref(), |rx, res| H::on_ingress(rx, res));
+        let rx = Incoming::new(rx, paths.as_ref(), H::DRAIN, |rx, res| {
+            H::on_ingress(rx, res)
+        });
         let tx = Outgoing::new(tx, |tx, res| H::on_egress(tx, res));
         Ok((cx, tx, rx))
     }))

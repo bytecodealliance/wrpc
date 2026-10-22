@@ -1640,6 +1640,51 @@ async fn rust_oneshot_no_params_open_outgoing() -> anyhow::Result<()> {
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 #[instrument(ret)]
+async fn rust_tcp_unprocessed_stream() -> anyhow::Result<()> {
+    use tokio::io::AsyncWriteExt as _;
+    use wrpc::{Invoke as _, Serve as _};
+
+    let lis = wrpc_test::tcp_bind().await?;
+    let addr = lis.local_addr().context("failed to get server address")?;
+    let srv = wrpc_transport::frame::Server::default();
+    let invocations = srv
+        .serve("foo", "bar", Arc::from([Box::from([Some(0)])]))
+        .await?;
+    let clt = wrpc_transport::frame::tcp::Client::from(addr);
+    let fut = async {
+        join!(
+            async {
+                let (tx, _rx) = clt
+                    .invoke((), "foo", "bar", Bytes::default(), [[Some(0)]])
+                    .await
+                    .expect("failed to invoke `foo.bar`");
+                let mut tx = tx.index(&[0]).expect("failed to index stream");
+                while tx.write_all(b"test").await.is_ok() {}
+            },
+            async {
+                let (stream, _) = lis.accept().await.expect("failed to accept connection");
+                let (rx, tx) = stream.into_split();
+                srv.accept((), tx, BufReader::new(rx))
+                    .await
+                    .expect("failed to accept connection");
+                let ((), tx, rx) = pin!(invocations)
+                    .try_next()
+                    .await
+                    .expect("failed to accept invocation")
+                    .expect("unexpected end of stream");
+                drop(rx);
+                drop(tx);
+            }
+        )
+    };
+    tokio::time::timeout(Duration::from_secs(10), fut)
+        .await
+        .context("unprocessed stream data did not fail the invocation")?;
+    Ok(())
+}
+
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+#[instrument(ret)]
 async fn rust_oneshot_raw() -> anyhow::Result<()> {
     let (clt, mut srv) = tokio::io::duplex(1024);
 

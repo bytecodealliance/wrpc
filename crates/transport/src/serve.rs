@@ -107,20 +107,15 @@ pub trait ServeExt: Serve {
                     };
                     trace!("received sync parameters");
                     let rx = dec.decoder_mut().take_deferred();
-                    let buffer = mem::take(dec.read_buffer_mut());
+                    let incoming = BufferedIncoming {
+                        buffer: mem::take(dec.read_buffer_mut()),
+                        inner: dec.into_inner(),
+                    };
                     let span = Span::current();
                     Ok((
                         cx,
                         params,
-                        rx.map(|f| {
-                            f(
-                                BufferedIncoming {
-                                    buffer,
-                                    inner: dec.into_inner(),
-                                },
-                                Vec::default(),
-                            )
-                        }),
+                        rx.map(|f| f(incoming, Vec::default())),
                         move |results| {
                             Box::pin(
                                 async move {

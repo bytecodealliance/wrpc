@@ -63,6 +63,14 @@ impl BufferedIncoming {
     }
 }
 
+impl Drop for BufferedIncoming {
+    fn drop(&mut self) {
+        if !self.buffer.is_empty() {
+            self.inner.mark_unprocessed();
+        }
+    }
+}
+
 impl AsyncRead for BufferedIncoming {
     fn poll_read(
         mut self: Pin<&mut Self>,

@@ -71,7 +71,9 @@ impl<H> InvokeBuilder<H> {
         tx.flush().await.context("failed to flush invocation")?;
 
         let tx = Outgoing::new(tx, |tx, res| H::on_egress(tx, res));
-        let rx = Incoming::new(rx, paths.as_ref(), |rx, res| H::on_ingress(rx, res));
+        let rx = Incoming::new(rx, paths.as_ref(), H::DRAIN, |rx, res| {
+            H::on_ingress(rx, res)
+        });
         Ok((tx, rx))
     }
 }

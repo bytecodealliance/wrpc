@@ -1,7 +1,8 @@
 use core::fmt::{Debug, Display};
 use core::future::poll_fn;
 use core::mem;
-use core::pin::Pin;
+use core::pin::{Pin, pin};
+use core::sync::atomic::{AtomicBool, Ordering};
 use core::task::{Context, Poll, ready};
 
 use std::sync::Arc;
@@ -9,8 +10,9 @@ use std::sync::Arc;
 use bytes::{Buf as _, Bytes, BytesMut};
 use pin_project_lite::pin_project;
 use tokio::io::{AsyncBufRead, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt as _};
-use tokio::sync::mpsc;
-use tokio::task::JoinSet;
+use tokio::select;
+use tokio::sync::{mpsc, oneshot};
+use tokio::task::AbortHandle;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::codec::Encoder;
 use tokio_util::io::StreamReader;
@@ -187,6 +189,42 @@ impl<P: AsRef<[Option<usize>]>> FromIterator<P> for IndexTrie {
 }
 
 impl IndexTrie {
+    /// Calls `f` with the sender and receiver of each node in the trie
+    fn for_each(
+        &mut self,
+        f: &mut impl FnMut(
+            &mut Option<mpsc::Sender<std::io::Result<Bytes>>>,
+            &mut Option<mpsc::Receiver<std::io::Result<Bytes>>>,
+        ),
+    ) {
+        match self {
+            Self::Empty => {}
+            Self::Leaf { tx, rx } => f(tx, rx),
+            Self::IndexNode { tx, rx, nested } => {
+                f(tx, rx);
+                for nested in nested.iter_mut().flatten() {
+                    nested.for_each(f);
+                }
+            }
+            Self::WildcardNode { tx, rx, nested } => {
+                f(tx, rx);
+                if let Some(nested) = nested {
+                    nested.for_each(f);
+                }
+            }
+        }
+    }
+
+    /// Closes all receivers in the trie, returning `true` if any of them held data
+    #[instrument(level = "trace", skip(self), ret(level = "trace"))]
+    fn close_rx(&mut self) -> bool {
+        let mut pending = false;
+        self.for_each(&mut |_, rx| {
+            pending |= rx.take().is_some_and(|rx| !rx.is_empty());
+        });
+        pending
+    }
+
     /// Takes the receiver
     #[instrument(level = "trace", skip(self), ret(level = "trace"))]
     fn take_rx(&mut self, path: &[usize]) -> Option<mpsc::Receiver<std::io::Result<Bytes>>> {
@@ -248,24 +286,9 @@ impl IndexTrie {
     /// Closes all senders in the trie
     #[instrument(level = "trace", skip(self), ret(level = "trace"))]
     fn close_tx(&mut self) {
-        match self {
-            Self::Empty => {}
-            Self::Leaf { tx, .. } => {
-                mem::take(tx);
-            }
-            Self::IndexNode { tx, nested, .. } => {
-                mem::take(tx);
-                for nested in nested.iter_mut().flatten() {
-                    nested.close_tx();
-                }
-            }
-            Self::WildcardNode { tx, nested, .. } => {
-                mem::take(tx);
-                if let Some(nested) = nested {
-                    nested.close_tx();
-                }
-            }
-        }
+        self.for_each(&mut |tx, _| {
+            tx.take();
+        });
     }
 
     /// Inserts `sender` and `receiver` under a `path` - returns `false` if it failed and `true` if it succeeded.
@@ -353,17 +376,34 @@ pin_project! {
         rx: Option<StreamReader<ReceiverStream<std::io::Result<Bytes>>, Bytes>>,
         path: Arc<[usize]>,
         index: Arc<std::sync::Mutex<IndexTrie>>,
-        io: Arc<JoinSet<()>>,
-        err: Arc<std::sync::OnceLock<std::io::Error>>,
+        io: Arc<IngressGuard>,
+        state: Arc<IngressState>,
+    }
+
+    impl PinnedDrop for Incoming {
+        fn drop(this: Pin<&mut Self>) {
+            let this = Pin::into_inner(this);
+            if let Some(rx) = this.rx.take() {
+                let (mut rx, chunk) = rx.into_inner_with_chunk();
+                rx.close();
+                if chunk.is_some() || !rx.as_ref().is_empty() {
+                    this.mark_unprocessed();
+                }
+            }
+        }
     }
 }
 
 impl Incoming {
     /// Creates a new [Incoming] given an [`AsyncBufRead`], [`ConnHandler`] and a set of async paths.
     /// `on_ingress` will be called once data ingress is complete.
+    /// If `drain` is `true`, data ingress continues after all handles are dropped until the peer
+    /// closes the stream, failing on any data received or not processed, otherwise data ingress
+    /// is aborted, see [`ConnHandler::DRAIN`].
     pub fn new<T, P, Fut>(
         mut rx: T,
         paths: impl IntoIterator<Item = P>,
+        drain: bool,
         on_ingress: impl FnOnce(T, std::io::Result<()>) -> Fut + Send + 'static,
     ) -> Self
     where
@@ -373,35 +413,66 @@ impl Incoming {
     {
         let index = Arc::new(std::sync::Mutex::new(paths.into_iter().collect()));
         let (rx_tx, rx_rx) = mpsc::channel(128);
-        let err = Arc::new(std::sync::OnceLock::default());
-        let mut rx_io = JoinSet::new();
+        let state = Arc::new(IngressState::default());
+        let (dropped_tx, dropped_rx) = drain.then(oneshot::channel).unzip();
         let span = Span::current();
-        rx_io.spawn({
+        let task = tokio::spawn({
             let index = Arc::clone(&index);
-            let err = Arc::clone(&err);
+            let state = Arc::clone(&state);
             async move {
-                let res = ingress(&mut rx, &index, &rx_tx).await;
-                if let Err(e) = &res {
-                    _ = err.set(copy_io_error(e));
+                let res = async {
+                    let mut io = pin!(async {
+                        let res = ingress(&mut rx, &index, &rx_tx).await;
+                        if let Err(err) = &res {
+                            _ = state.err.set(copy_io_error(err));
+                        }
+                        drop(rx_tx);
+                        if let Ok(mut index) = index.lock() {
+                            trace!("shutting down index trie");
+                            index.close_tx();
+                        } else {
+                            error!("failed to lock index trie");
+                        }
+                        res
+                    });
+                    let Some(mut dropped) = dropped_rx else {
+                        return io.await;
+                    };
+                    select! {
+                        res = &mut io => {
+                            res?;
+                            _ = dropped.await;
+                            close_rx(&index, &state)
+                        }
+                        _ = &mut dropped => {
+                            close_rx(&index, &state)?;
+                            io.await
+                        }
+                    }
                 }
-                drop(rx_tx);
+                .await;
                 on_ingress(rx, res).await;
-                let Ok(mut index) = index.lock() else {
-                    error!("failed to lock index trie");
-                    return;
-                };
-                trace!("shutting down index trie");
-                index.close_tx();
             }
             .instrument(span.clone())
         });
         Self {
             rx: Some(StreamReader::new(ReceiverStream::new(rx_rx))),
             path: Arc::from([]),
-            index: Arc::clone(&index),
-            io: Arc::new(rx_io),
-            err,
+            index,
+            io: Arc::new(match dropped_tx {
+                // TODO: Bound draining by a deadline or a byte limit
+                Some(dropped) => IngressGuard::Drain { _dropped: dropped },
+                None => IngressGuard::Abort(task.abort_handle()),
+            }),
+            state,
         }
+    }
+
+    /// Marks data received by this handle as not processed, which fails ingress once all
+    /// handles are dropped
+    pub(crate) fn mark_unprocessed(&self) {
+        trace!(path = ?self.path, "dropping handle with unprocessed data");
+        self.state.unprocessed.store(true, Ordering::Relaxed);
     }
 
     /// Index the incoming stream using a structural `path`, returning a handle to the
@@ -433,7 +504,7 @@ impl Incoming {
             path,
             index: Arc::clone(&self.index),
             io: Arc::clone(&self.io),
-            err: Arc::clone(&self.err),
+            state: Arc::clone(&self.state),
         })
     }
 }
@@ -458,11 +529,31 @@ impl AsyncRead for Incoming {
         trace!(buf = ?buf.filled(), "read buffer");
         if buf.filled().is_empty() {
             self.rx.take();
-            if let Some(err) = self.err.get() {
+            if let Some(err) = self.state.err.get() {
                 return Poll::Ready(Err(copy_io_error(err)));
             }
         }
         Poll::Ready(Ok(()))
+    }
+}
+
+#[derive(Default)]
+struct IngressState {
+    err: std::sync::OnceLock<std::io::Error>,
+    unprocessed: AtomicBool,
+}
+
+enum IngressGuard {
+    Abort(AbortHandle),
+    Drain { _dropped: oneshot::Sender<()> },
+}
+
+impl Drop for IngressGuard {
+    fn drop(&mut self) {
+        if let Self::Abort(task) = self {
+            trace!("aborting ingress");
+            task.abort();
+        }
     }
 }
 
@@ -649,11 +740,37 @@ async fn ingress(
                 }
             }
             trace!(?buf, "read data chunk");
-            tx.send(Ok(buf.freeze())).await.map_err(|_| {
-                std::io::Error::new(std::io::ErrorKind::BrokenPipe, "stream receiver closed")
-            })?;
+            tx.send(Ok(buf.freeze()))
+                .await
+                .map_err(|_| receiver_closed())?;
         }
     }
+}
+
+/// Closes all receivers in the `index` trie once all [Incoming] handles were dropped,
+/// failing if any of them or any of the dropped handles held data, which was not processed
+fn close_rx(index: &std::sync::Mutex<IndexTrie>, state: &IngressState) -> std::io::Result<()> {
+    let mut index = index
+        .lock()
+        .map_err(|err| std::io::Error::other(err.to_string()))?;
+    trace!("all handles dropped, closing index trie receivers");
+    if index.close_rx() || state.unprocessed.load(Ordering::Relaxed) {
+        return Err(unprocessed());
+    }
+    Ok(())
+}
+
+/// Returns the error for data received for a closed receiver
+pub(crate) fn receiver_closed() -> std::io::Error {
+    std::io::Error::new(std::io::ErrorKind::BrokenPipe, "stream receiver closed")
+}
+
+/// Returns the error for received data, which was not processed
+pub(crate) fn unprocessed() -> std::io::Error {
+    std::io::Error::new(
+        std::io::ErrorKind::BrokenPipe,
+        "received data was not processed",
+    )
 }
 
 #[instrument(level = "trace", skip_all)]
@@ -690,6 +807,14 @@ async fn egress(
 /// by [`AsyncWrite::shutdown`], for example.
 /// This API is experimental and may change in backwards-incompatible ways in the future.
 pub trait ConnHandler<Rx, Tx> {
+    /// Whether to keep reading once all [Incoming] handles are dropped until the peer closes
+    /// the stream, rather than aborting ingress and dropping the reader.
+    /// Any data received after all handles are dropped, or received for a registered path, which
+    /// was never indexed, fails ingress with [`std::io::ErrorKind::BrokenPipe`].
+    /// Draining is required for transports that reset the connection when closed with
+    /// unread data, like TCP, discarding data not yet received by the peer.
+    const DRAIN: bool = true;
+
     /// Handle ingress completion
     fn on_ingress(rx: Rx, res: std::io::Result<()>) -> impl Future<Output = ()> + Send {
         _ = rx;
@@ -717,7 +842,128 @@ impl<Rx, Tx> ConnHandler<Rx, Tx> for () {}
 
 #[cfg(test)]
 mod tests {
+    use core::time::Duration;
+
+    use tokio::io::{BufReader, DuplexStream};
+
     use super::*;
+
+    const FRAME: [u8; 4] = [0x01, 0x00, 0x01, 0x2a];
+
+    fn incoming(
+        drain: bool,
+    ) -> (
+        DuplexStream,
+        Incoming,
+        oneshot::Receiver<std::io::Result<()>>,
+    ) {
+        let (tx, rx) = tokio::io::duplex(16);
+        let (done_tx, done_rx) = oneshot::channel();
+        let rx = Incoming::new(BufReader::new(rx), [[Some(0)]], drain, |_, res| async {
+            _ = done_tx.send(res);
+        });
+        (tx, rx, done_rx)
+    }
+
+    async fn done(rx: oneshot::Receiver<std::io::Result<()>>) -> std::io::Result<()> {
+        tokio::time::timeout(Duration::from_secs(5), rx)
+            .await
+            .expect("ingress timed out")
+            .expect("ingress aborted")
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn incoming_drop_aborts() {
+        let (_tx, rx, done_rx) = incoming(false);
+        drop(rx);
+        tokio::time::timeout(Duration::from_secs(5), done_rx)
+            .await
+            .unwrap()
+            .unwrap_err();
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn incoming_drop_waits_for_eof() {
+        let (tx, rx, mut done_rx) = incoming(true);
+        drop(rx);
+        tokio::task::yield_now().await;
+        assert!(done_rx.try_recv().is_err());
+        drop(tx);
+        done(done_rx).await.unwrap();
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn incoming_drop_accepts_empty_frame() {
+        let (mut tx, rx, done_rx) = incoming(true);
+        drop(rx);
+        tx.write_all(&[0x00, 0x00]).await.unwrap();
+        drop(tx);
+        done(done_rx).await.unwrap();
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn incoming_drop_rejects_data() {
+        let (mut tx, rx, done_rx) = incoming(true);
+        drop(rx);
+        tx.write_all(&FRAME).await.unwrap();
+        let err = done(done_rx).await.unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::BrokenPipe);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn incoming_drop_rejects_pending() {
+        let (mut tx, rx, done_rx) = incoming(true);
+        tx.write_all(&FRAME).await.unwrap();
+        tokio::task::yield_now().await;
+        drop(rx);
+        let err = done(done_rx).await.unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::BrokenPipe);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn incoming_drop_rejects_unread() {
+        let (mut tx, rx, done_rx) = incoming(true);
+        let sub = rx.index(&[0]).unwrap();
+        tx.write_all(&FRAME).await.unwrap();
+        tokio::task::yield_now().await;
+        drop(sub);
+        drop(rx);
+        let err = done(done_rx).await.unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::BrokenPipe);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn buffered_drop_rejects_unread() {
+        let (tx, rx, done_rx) = incoming(true);
+        drop(crate::BufferedIncoming {
+            buffer: BytesMut::from(&FRAME[..]),
+            inner: rx,
+        });
+        drop(tx);
+        let err = done(done_rx).await.unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::BrokenPipe);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn incoming_eof_waits_for_drop() {
+        let (tx, mut rx, mut done_rx) = incoming(true);
+        drop(tx);
+        rx.read_to_end(&mut Vec::default()).await.unwrap();
+        assert!(done_rx.try_recv().is_err());
+        drop(rx);
+        done(done_rx).await.unwrap();
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn incoming_eof_rejects_pending() {
+        let (mut tx, rx, done_rx) = incoming(true);
+        tx.write_all(&FRAME).await.unwrap();
+        drop(tx);
+        tokio::task::yield_now().await;
+        drop(rx);
+        let err = done(done_rx).await.unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::BrokenPipe);
+    }
 
     #[test_log::test(tokio::test)]
     async fn ingress_truncated_path() {
