@@ -4,6 +4,7 @@ use core::ops::{Deref, DerefMut};
 use core::pin::Pin;
 use core::task::{Context, Poll, ready};
 
+use std::collections::VecDeque;
 use std::sync::Arc;
 
 use bytes::{Bytes, BytesMut};
@@ -32,6 +33,7 @@ pin_project! {
     #[project = OutgoingBodyProj]
     #[derive(Debug)]
     pub struct OutgoingBody {
+        chunks: VecDeque<Bytes>,
         buffer: BytesMut,
         #[pin]
         stream: ReadHalf<SimplexStream>,
@@ -40,9 +42,16 @@ pin_project! {
 
 impl OutgoingBody {
     #[must_use]
-    pub fn new(buffer: BytesMut) -> (Self, OutgoingBodyDataWriter) {
-        let (rx, tx) = simplex(buffer.len().max(DEFAULT_BODY_BUFFER_SIZE));
-        (Self { buffer, stream: rx }, tx)
+    pub fn new(chunks: impl IntoIterator<Item = Bytes>) -> (Self, OutgoingBodyDataWriter) {
+        let (rx, tx) = simplex(DEFAULT_BODY_BUFFER_SIZE);
+        (
+            Self {
+                chunks: chunks.into_iter().filter(|buf| !buf.is_empty()).collect(),
+                buffer: BytesMut::with_capacity(DEFAULT_BODY_BUFFER_SIZE),
+                stream: rx,
+            },
+            tx,
+        )
     }
 }
 
@@ -54,8 +63,8 @@ impl http_body::Body for OutgoingBody {
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
-        if !self.buffer.is_empty() {
-            return Poll::Ready(Some(Ok(Frame::data(self.buffer.split().freeze()))));
+        if let Some(buf) = self.chunks.pop_front() {
+            return Poll::Ready(Some(Ok(Frame::data(buf))));
         }
 
         let this = self.as_mut().project();
@@ -71,9 +80,9 @@ impl http_body::Body for OutgoingBody {
 
 pub fn new_request(
     mut parts: http::request::Parts,
-    buffer: BytesMut,
+    chunks: impl IntoIterator<Item = Bytes>,
 ) -> (http::Request<OutgoingBody>, OutgoingBodyDataWriter) {
-    let (rx, tx) = OutgoingBody::new(buffer);
+    let (rx, tx) = OutgoingBody::new(chunks);
     parts.method = http::Method::POST;
     (http::Request::from_parts(parts, rx), tx)
 }
@@ -198,7 +207,7 @@ impl hyper::service::Service<http::Request<hyper::body::Incoming>> for Server {
             Box::new(io_error_from_hyper);
         let body = body.map_err(map_err).into_data_stream();
         let body = StreamReader::new(body);
-        let (rx, tx) = OutgoingBody::new(BytesMut::default());
+        let (rx, tx) = OutgoingBody::new([]);
         let srv = Arc::clone(&self.0);
         Box::pin(async move {
             srv.accept(parts, tx, body).await?;
@@ -267,11 +276,10 @@ impl wrpc_transport::Invoke for Client<hyper::client::conn::http2::SendRequest<O
         let mut sender = self.0.clone();
         sender.ready().await.context("HTTP connection closed")?;
 
-        let mut buf = BytesMut::with_capacity(DEFAULT_BODY_BUFFER_SIZE);
+        let mut buf = BytesMut::default();
         wrpc_transport::frame::encode_invocation(&mut buf, instance, func, params.len())
             .context("failed to encode invocation")?;
-        buf.extend_from_slice(&params);
-        let (req, tx) = new_request(cx, buf);
+        let (req, tx) = new_request(cx, [buf.freeze(), params]);
 
         let rx = data_reader_from_response(sender.send_request(req));
 
@@ -306,11 +314,10 @@ where
     {
         use anyhow::Context as _;
 
-        let mut buf = BytesMut::with_capacity(DEFAULT_BODY_BUFFER_SIZE);
+        let mut buf = BytesMut::default();
         wrpc_transport::frame::encode_invocation(&mut buf, instance, func, params.len())
             .context("failed to encode invocation")?;
-        buf.extend_from_slice(&params);
-        let (req, tx) = new_request(cx, buf);
+        let (req, tx) = new_request(cx, [buf.freeze(), params]);
 
         let rx = data_reader_from_response(self.0.request(req));
 
