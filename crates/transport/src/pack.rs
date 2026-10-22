@@ -1,5 +1,7 @@
 //! Packing and unpacking of wRPC values to/from singular, flat byte buffers
 
+use std::collections::VecDeque;
+
 use bytes::{BufMut as _, Bytes, BytesMut};
 use futures::{Stream, StreamExt as _};
 use tokio::io::{AsyncRead, AsyncReadExt as _};
@@ -11,19 +13,19 @@ use crate::{Decode, Deferred as _, DeferredFn, Encode, Index, Sink};
 
 /// [Sink] used by [pack], which collects the packed asynchronous values
 #[derive(Clone)]
-pub struct Packer(mpsc::UnboundedSender<(usize, Vec<Bytes>)>);
+pub struct Packer(mpsc::UnboundedSender<(usize, VecDeque<Bytes>)>);
 
 impl Packer {
-    fn push(&self, offset: usize, bufs: Vec<Bytes>) -> std::io::Result<()> {
+    fn push(&self, offset: usize, bufs: VecDeque<Bytes>) -> std::io::Result<()> {
         self.0
             .send((offset, bufs))
             .map_err(|_| std::io::Error::from(std::io::ErrorKind::BrokenPipe))
     }
 
-    fn push_bytes(&self, offset: usize, mut chunks: Vec<Bytes>) -> std::io::Result<()> {
+    fn push_bytes(&self, offset: usize, mut chunks: VecDeque<Bytes>) -> std::io::Result<()> {
         let mut header = BytesMut::default();
         encode_ready_bytes_header(chunks.iter().map(Bytes::len).sum(), &mut header)?;
-        chunks.insert(0, header.freeze());
+        chunks.push_front(header.freeze());
         self.push(offset, chunks)
     }
 }
@@ -48,7 +50,7 @@ impl Sink for Packer {
         buf.put_u8(0x01);
         let deferred = T::encode(item.await, &mut T::Encoder::default(), &mut buf)?;
         fill(deferred, &mut buf).await?;
-        self.push(offset, vec![buf.freeze()])
+        self.push(offset, VecDeque::from([buf.freeze()]))
     }
 
     async fn write_stream<T>(
@@ -78,7 +80,7 @@ impl Sink for Packer {
         mut items: impl AsyncRead + Send + Unpin + 'static,
     ) -> std::io::Result<()> {
         while items.read_buf(&mut ready).await? > 0 {}
-        self.push_bytes(offset, vec![ready.freeze()])
+        self.push_bytes(offset, VecDeque::from([ready.freeze()]))
     }
 }
 
