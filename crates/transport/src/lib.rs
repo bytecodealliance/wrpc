@@ -14,7 +14,7 @@
 //! wRPC layers its [framing](frame) protocol to multiplex the nested async parameter and result
 //! sub-streams. Both therefore yield the framed [`frame::Outgoing`] and [`frame::Incoming`]
 //! streams regardless of the underlying transport, which only needs to provide any
-//! [`AsyncWrite`](tokio::io::AsyncWrite)/[`AsyncRead`](tokio::io::AsyncRead) byte stream.
+//! [`AsyncWrite`](tokio::io::AsyncWrite)/[`AsyncBufRead`](tokio::io::AsyncBufRead) byte stream.
 
 pub mod frame;
 pub mod invoke;
