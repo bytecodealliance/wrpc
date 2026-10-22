@@ -268,8 +268,9 @@ impl wrpc_transport::Invoke for Client<hyper::client::conn::http2::SendRequest<O
         sender.ready().await.context("HTTP connection closed")?;
 
         let mut buf = BytesMut::with_capacity(DEFAULT_BODY_BUFFER_SIZE);
-        wrpc_transport::frame::encode_invocation(&mut buf, instance, func, &params)
+        wrpc_transport::frame::encode_invocation(&mut buf, instance, func, params.len())
             .context("failed to encode invocation")?;
+        buf.extend_from_slice(&params);
         let (req, tx) = new_request(cx, buf);
 
         let rx = data_reader_from_response(sender.send_request(req));
@@ -306,8 +307,9 @@ where
         use anyhow::Context as _;
 
         let mut buf = BytesMut::with_capacity(DEFAULT_BODY_BUFFER_SIZE);
-        wrpc_transport::frame::encode_invocation(&mut buf, instance, func, &params)
+        wrpc_transport::frame::encode_invocation(&mut buf, instance, func, params.len())
             .context("failed to encode invocation")?;
+        buf.extend_from_slice(&params);
         let (req, tx) = new_request(cx, buf);
 
         let rx = data_reader_from_response(self.0.request(req));
