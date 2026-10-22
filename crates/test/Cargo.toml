@@ -26,7 +26,7 @@ hyper = { workspace = true, features = [
     "http2",
     "server",
 ], optional = true }
-hyper-util = { workspace = true, features = ["tokio"], optional = true }
+hyper-util = { workspace = true, features = ["client-legacy", "http1", "tokio"], optional = true }
 quinn = { workspace = true, features = [
     "log",
     "platform-verifier",
