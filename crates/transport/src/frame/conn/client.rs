@@ -1,16 +1,17 @@
 use core::marker::PhantomData;
 
 use anyhow::Context as _;
-use bytes::{BufMut as _, BytesMut};
+use bytes::{Buf as _, BufMut as _, BytesMut};
 use tokio::io::{AsyncBufRead, AsyncWrite, AsyncWriteExt as _};
 use tokio_util::codec::Encoder;
 use tracing::{instrument, trace};
-use wasm_tokio::{CoreNameEncoder, CoreVecEncoderBytes};
+use wasm_tokio::{CoreNameEncoder, Leb128Encoder};
 
 use crate::frame::conn::{Incoming, Outgoing};
 use crate::frame::{ConnHandler, PROTOCOL};
 
-/// Encodes an invocation to a `BytesMut`
+/// Encodes the header of an invocation, which is followed by `params_len` bytes of
+/// parameters, to a `BytesMut`
 ///
 /// This is low-level API, most users should use [`invoke`].
 #[instrument(level = "trace", skip_all)]
@@ -18,19 +19,20 @@ pub fn encode_invocation(
     buf: &mut BytesMut,
     instance: &str,
     func: &str,
-    params: &[u8],
+    params_len: usize,
 ) -> std::io::Result<()> {
+    let params_len = u32::try_from(params_len)
+        .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
     buf.reserve(
         17_usize // len(PROTOCOL) + len(instance) + len(func) + len([]) + len(params)
             .saturating_add(instance.len())
-            .saturating_add(func.len())
-            .saturating_add(params.len()),
+            .saturating_add(func.len()),
     );
     buf.put_u8(PROTOCOL);
     CoreNameEncoder.encode(instance, buf)?;
     CoreNameEncoder.encode(func, buf)?;
     buf.put_u8(0);
-    CoreVecEncoderBytes.encode(params, buf)?;
+    Leb128Encoder.encode(params_len, buf)?;
     Ok(())
 }
 
@@ -58,11 +60,12 @@ impl<H> InvokeBuilder<H> {
         O: AsyncWrite + Unpin + Send + 'static,
         H: ConnHandler<I, O>,
     {
+        let params = params.as_ref();
         let mut buf = BytesMut::default();
-        encode_invocation(&mut buf, instance, func, params.as_ref())
+        encode_invocation(&mut buf, instance, func, params.len())
             .context("failed to encode invocation")?;
         trace!(?buf, "writing invocation");
-        tx.write_all(&buf)
+        tx.write_all_buf(&mut buf.chain(params))
             .await
             .context("failed to initialize connection")?;
         tx.flush().await.context("failed to flush invocation")?;
