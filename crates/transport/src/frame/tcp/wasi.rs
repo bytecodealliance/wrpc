@@ -86,10 +86,10 @@ impl AsyncRead for IncomingStream {
         cx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<std::io::Result<()>> {
-        if buf.capacity() == 0 {
+        if buf.remaining() == 0 {
             return Poll::Ready(Ok(()));
         }
-        let len = buf.capacity().try_into().unwrap_or(u64::MAX);
+        let len = buf.remaining().try_into().unwrap_or(u64::MAX);
         let chunk = match self.rx.read(len) {
             Ok(chunk) => chunk,
             Err(StreamError::Closed) => return Poll::Ready(Ok(())),
