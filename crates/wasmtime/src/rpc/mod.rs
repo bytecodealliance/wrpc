@@ -18,7 +18,7 @@ use crate::{WrpcView, bindings};
 
 mod host;
 
-/// Wrapper struct, for which [`crate::bindings::wrpc::transport::transport::Host`] is implemented
+/// Wrapper struct, for which [`crate::bindings::rpc::transport::Host`] is implemented
 #[repr(transparent)]
 pub struct WrpcRpcImpl<T>(pub T);
 
