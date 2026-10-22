@@ -566,6 +566,9 @@ impl AsyncWrite for Outgoing {
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<std::io::Result<usize>> {
+        if buf.is_empty() {
+            return Poll::Ready(Ok(0));
+        }
         trace!("writing outgoing chunk");
         ready!(self.poll_reserve(cx))?;
         self.send_reserved(Bytes::copy_from_slice(buf))?;

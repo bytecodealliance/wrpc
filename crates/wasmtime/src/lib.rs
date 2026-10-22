@@ -444,7 +444,7 @@ where
     }
 
     debug!("transmitting results");
-    tx.write_all(&buf)
+    tx.write_bytes(buf.freeze())
         .await
         .context("failed to transmit results")
         .map_err(CallError::Write)?;
