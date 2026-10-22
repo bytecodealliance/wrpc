@@ -1,4 +1,5 @@
 use core::fmt::{Debug, Display};
+use core::future::poll_fn;
 use core::mem;
 use core::pin::Pin;
 use core::task::{Context, Poll, ready};
@@ -6,7 +7,6 @@ use core::task::{Context, Poll, ready};
 use std::sync::Arc;
 
 use bytes::{Buf as _, Bytes, BytesMut};
-use futures::Sink as _;
 use pin_project_lite::pin_project;
 use tokio::io::{AsyncBufRead, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt as _};
 use tokio::sync::mpsc;
@@ -466,15 +466,11 @@ impl AsyncRead for Incoming {
     }
 }
 
-pin_project! {
-    /// Outgoing framed stream
-    #[project = OutgoingProj]
-    pub struct Outgoing {
-        #[pin]
-        tx: PollSender<(Bytes, Bytes)>,
-        path: Arc<[usize]>,
-        path_buf: Bytes,
-    }
+/// Outgoing framed stream
+pub struct Outgoing {
+    tx: PollSender<(Bytes, Bytes)>,
+    path: Arc<[usize]>,
+    path_buf: Bytes,
 }
 
 impl Outgoing {
@@ -535,22 +531,44 @@ impl Outgoing {
             path_buf: buf.freeze(),
         })
     }
+
+    pub(crate) fn poll_reserve(&mut self, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        self.tx
+            .poll_reserve(cx)
+            .map_err(|err| std::io::Error::new(std::io::ErrorKind::BrokenPipe, err))
+    }
+
+    pub(crate) async fn reserve(&mut self) -> std::io::Result<()> {
+        poll_fn(|cx| self.poll_reserve(cx)).await
+    }
+
+    pub(crate) fn send_reserved(&mut self, buf: Bytes) -> std::io::Result<()> {
+        trace!(path = ?self.path, ?buf, "sending outgoing frame");
+        self.tx
+            .send_item((self.path_buf.clone(), buf))
+            .map_err(|err| std::io::Error::new(std::io::ErrorKind::BrokenPipe, err))
+    }
+
+    /// Writes `buf` to the stream as a single frame, without copying it.
+    pub async fn write_bytes(&mut self, buf: Bytes) -> std::io::Result<()> {
+        if buf.is_empty() {
+            return Ok(());
+        }
+        self.reserve().await?;
+        self.send_reserved(buf)
+    }
 }
 
 impl AsyncWrite for Outgoing {
     #[instrument(level = "trace", skip_all, fields(path = ?self.path, buf = format!("{buf:02x?}")), ret(level = "trace"))]
     fn poll_write(
-        self: Pin<&mut Self>,
+        mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<std::io::Result<usize>> {
         trace!("writing outgoing chunk");
-        let mut this = self.project();
-        ready!(this.tx.as_mut().poll_ready(cx))
-            .map_err(|err| std::io::Error::new(std::io::ErrorKind::BrokenPipe, err))?;
-        this.tx
-            .start_send((this.path_buf.clone(), Bytes::copy_from_slice(buf)))
-            .map_err(|err| std::io::Error::new(std::io::ErrorKind::BrokenPipe, err))?;
+        ready!(self.poll_reserve(cx))?;
+        self.send_reserved(Bytes::copy_from_slice(buf))?;
         Poll::Ready(Ok(buf.len()))
     }
 
