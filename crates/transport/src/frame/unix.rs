@@ -3,6 +3,7 @@
 use std::path::{Path, PathBuf};
 
 use bytes::Bytes;
+use tokio::io::BufReader;
 use tokio::net::UnixStream;
 use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
 use tracing::instrument;
@@ -75,7 +76,7 @@ impl Invoke for Client<PathBuf> {
     {
         let stream = UnixStream::connect(&self.0).await?;
         let (rx, tx) = stream.into_split();
-        invoke(tx, rx, instance, func, params, paths).await
+        invoke(tx, BufReader::new(rx), instance, func, params, paths).await
     }
 }
 
@@ -96,7 +97,7 @@ impl Invoke for Client<&Path> {
     {
         let stream = UnixStream::connect(self.0).await?;
         let (rx, tx) = stream.into_split();
-        invoke(tx, rx, instance, func, params, paths).await
+        invoke(tx, BufReader::new(rx), instance, func, params, paths).await
     }
 }
 
@@ -118,7 +119,7 @@ impl Invoke for Client<&std::os::unix::net::SocketAddr> {
         let stream = std::os::unix::net::UnixStream::connect_addr(self.0)?;
         let stream = UnixStream::from_std(stream)?;
         let (rx, tx) = stream.into_split();
-        invoke(tx, rx, instance, func, params, paths).await
+        invoke(tx, BufReader::new(rx), instance, func, params, paths).await
     }
 }
 
@@ -140,6 +141,6 @@ impl Invoke for Client<std::os::unix::net::SocketAddr> {
         let stream = std::os::unix::net::UnixStream::connect_addr(&self.0)?;
         let stream = UnixStream::from_std(stream)?;
         let (rx, tx) = stream.into_split();
-        invoke(tx, rx, instance, func, params, paths).await
+        invoke(tx, BufReader::new(rx), instance, func, params, paths).await
     }
 }

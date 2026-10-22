@@ -8,7 +8,7 @@ use std::sync::Arc;
 use bytes::{Buf as _, Bytes, BytesMut};
 use futures::Sink as _;
 use pin_project_lite::pin_project;
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt as _};
+use tokio::io::{AsyncBufRead, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt as _};
 use tokio::sync::mpsc;
 use tokio::task::JoinSet;
 use tokio_stream::wrappers::ReceiverStream;
@@ -359,7 +359,7 @@ pin_project! {
 }
 
 impl Incoming {
-    /// Creates a new [Incoming] given an [`AsyncRead`], [`ConnHandler`] and a set of async paths.
+    /// Creates a new [Incoming] given an [`AsyncBufRead`], [`ConnHandler`] and a set of async paths.
     /// `on_ingress` will be called once data ingress is complete.
     pub fn new<T, P, Fut>(
         mut rx: T,
@@ -367,7 +367,7 @@ impl Incoming {
         on_ingress: impl FnOnce(T, std::io::Result<()>) -> Fut + Send + 'static,
     ) -> Self
     where
-        T: AsyncRead + Unpin + Send + 'static,
+        T: AsyncBufRead + Unpin + Send + 'static,
         P: AsRef<[Option<usize>]>,
         Fut: Future<Output = ()> + Send,
     {

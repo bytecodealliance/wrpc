@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use anyhow::{Context as _, bail};
 use bytes::Bytes;
-use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+use tokio::io::{AsyncRead, AsyncWrite, BufReader, ReadBuf};
 use tokio::sync::mpsc;
 use tracing::{debug, instrument, trace};
 use wasi::io::poll::Pollable;
@@ -196,11 +196,11 @@ where
             socket: Arc::clone(&socket),
             pollables: pollables.clone(),
         },
-        IncomingStream {
+        BufReader::new(IncomingStream {
             rx,
             socket,
             pollables,
-        },
+        }),
         instance,
         func,
         params,

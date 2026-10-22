@@ -249,6 +249,7 @@ async fn main() -> anyhow::Result<()> {
     use std::sync::Arc;
 
     use futures::{stream, StreamExt as _};
+    use tokio::io::BufReader;
     use wrpc_transport::frame::{tcp, Server};
 
     let lis = tokio::net::TcpListener::bind((Ipv6Addr::LOCALHOST, 0))
@@ -285,7 +286,7 @@ async fn main() -> anyhow::Result<()> {
                 let (rx, tx) = stream.into_split();
                 let srv = Arc::clone(&srv);
                 tokio::spawn(async move {
-                    srv.accept((), tx, rx)
+                    srv.accept((), tx, BufReader::new(rx))
                         .await
                         .expect("failed to accept connection");
                 });

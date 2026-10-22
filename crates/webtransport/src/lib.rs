@@ -5,13 +5,14 @@ use core::ops::{Deref, DerefMut};
 use anyhow::Context as _;
 use bytes::Bytes;
 use quinn::VarInt;
+use tokio::io::BufReader;
 use tracing::{debug, error, trace, warn};
 use wrpc_transport::Invoke;
 use wrpc_transport::frame::{Incoming, Outgoing, invoke};
 use wtransport::{Connection, RecvStream, SendStream};
 
 /// WebTransport server with graceful stream shutdown handling
-pub type Server = wrpc_transport::Server<(), RecvStream, SendStream, ConnHandler>;
+pub type Server = wrpc_transport::Server<(), BufReader<RecvStream>, SendStream, ConnHandler>;
 
 /// WebTransport wRPC client
 #[derive(Clone, Debug)]
@@ -40,15 +41,15 @@ impl DerefMut for Client {
 /// Graceful stream shutdown handler
 pub struct ConnHandler;
 
-impl wrpc_transport::frame::ConnHandler<RecvStream, SendStream> for ConnHandler {
-    async fn on_ingress(mut rx: RecvStream, res: std::io::Result<()>) {
+impl wrpc_transport::frame::ConnHandler<BufReader<RecvStream>, SendStream> for ConnHandler {
+    async fn on_ingress(mut rx: BufReader<RecvStream>, res: std::io::Result<()>) {
         if let Err(err) = res {
             error!(?err, "ingress failed");
         } else {
             debug!("ingress successfully complete");
         }
         if let Ok(code) = VarInt::from_u64(0x52e4a40fa8db)
-            && let Err(err) = rx.quic_stream_mut().stop(code)
+            && let Err(err) = rx.get_mut().quic_stream_mut().stop(code)
         {
             debug!(?err, "failed to close incoming stream");
         }
@@ -98,7 +99,7 @@ impl Invoke for &Client {
             .await
             .context("failed to initialize parameter stream")?;
         let (tx, rx) = stream.await.context("failed to open parameter stream")?;
-        invoke(tx, rx, instance, func, params, paths).await
+        invoke(tx, BufReader::new(rx), instance, func, params, paths).await
     }
 }
 

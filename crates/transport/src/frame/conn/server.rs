@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use anyhow::bail;
 use futures::{Stream, StreamExt as _};
-use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::io::{AsyncBufRead, AsyncWrite};
 use tokio::sync::{Mutex, mpsc};
 use tokio_stream::wrappers::ReceiverStream;
 use tracing::{instrument, trace};
@@ -93,7 +93,7 @@ impl<C, I, O> core::error::Error for AcceptError<C, I, O> {}
 
 impl<C, I, O, H> Server<C, I, O, H>
 where
-    I: AsyncRead + Unpin,
+    I: AsyncBufRead + Unpin,
     H: ConnHandler<I, O>,
 {
     /// Accept an already-established connection.
@@ -125,7 +125,7 @@ async fn serve<C, I, O, H>(
 >
 where
     C: Send + Sync + 'static,
-    I: AsyncRead + Send + Sync + Unpin + 'static,
+    I: AsyncBufRead + Send + Sync + Unpin + 'static,
     O: AsyncWrite + Send + Sync + Unpin + 'static,
     H: ConnHandler<I, O>,
 {
@@ -154,7 +154,7 @@ where
 impl<C, I, O, H> Serve for Server<C, I, O, H>
 where
     C: Send + Sync + 'static,
-    I: AsyncRead + Send + Sync + Unpin + 'static,
+    I: AsyncBufRead + Send + Sync + Unpin + 'static,
     O: AsyncWrite + Send + Sync + Unpin + 'static,
     H: ConnHandler<I, O> + Send + Sync,
 {
@@ -177,7 +177,7 @@ where
 impl<'a, C, I, O, H> Serve for &'a Server<C, I, O, H>
 where
     C: Send + Sync + 'static,
-    I: AsyncRead + Send + Sync + Unpin + 'static,
+    I: AsyncBufRead + Send + Sync + Unpin + 'static,
     O: AsyncWrite + Send + Sync + Unpin + 'static,
     H: ConnHandler<I, O> + Send + Sync,
 {

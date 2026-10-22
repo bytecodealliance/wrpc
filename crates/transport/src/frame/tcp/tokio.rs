@@ -2,6 +2,7 @@
 
 use anyhow::{Context as _, bail};
 use bytes::Bytes;
+use tokio::io::BufReader;
 use tokio::net::{TcpStream, ToSocketAddrs};
 use tracing::instrument;
 
@@ -53,7 +54,7 @@ where
     {
         let stream = TcpStream::connect(self.0.clone()).await?;
         let (rx, tx) = stream.into_split();
-        invoke(tx, rx, instance, func, params, paths).await
+        invoke(tx, BufReader::new(rx), instance, func, params, paths).await
     }
 }
 
@@ -79,6 +80,6 @@ impl Invoke for Invocation {
             Err(_) => bail!("stream lock poisoned"),
         };
         let (rx, tx) = stream.into_split();
-        invoke(tx, rx, instance, func, params, paths).await
+        invoke(tx, BufReader::new(rx), instance, func, params, paths).await
     }
 }

@@ -13,7 +13,7 @@ use anyhow::Context;
 use bytes::Bytes;
 use common::assert_async;
 use futures::{FutureExt as _, Stream, StreamExt as _, TryStreamExt as _, stream};
-use tokio::io::split;
+use tokio::io::{BufReader, split};
 use tokio::sync::{RwLock, oneshot};
 use tokio::time::sleep;
 use tokio::{join, select, spawn, try_join};
@@ -1145,7 +1145,7 @@ async fn rust_bindgen_quic_sync() -> anyhow::Result<()> {
             loop {
                 let accept = async {
                     let (tx, rx) = sc.accept_bi().await.expect("failed to accept connection");
-                    srv.accept((), tx, rx)
+                    srv.accept((), tx, BufReader::new(rx))
                         .await
                         .expect("failed to accept connection");
                 };
@@ -1176,7 +1176,7 @@ async fn rust_bindgen_quic_async() -> anyhow::Result<()> {
         loop {
             let accept = async {
                 let (tx, rx) = sc.accept_bi().await.expect("failed to accept connection");
-                srv.accept((), tx, rx)
+                srv.accept((), tx, BufReader::new(rx))
                     .await
                     .expect("failed to accept connection");
             };
@@ -1205,7 +1205,7 @@ async fn rust_dynamic_quic() -> anyhow::Result<()> {
             loop {
                 let accept = async {
                     let (tx, rx) = sc.accept_bi().await.expect("failed to accept connection");
-                    srv.accept((), tx, rx)
+                    srv.accept((), tx, BufReader::new(rx))
                         .await
                         .expect("failed to accept connection");
                 };
@@ -1238,7 +1238,7 @@ async fn rust_bindgen_webtransport_sync() -> anyhow::Result<()> {
             loop {
                 let accept = async {
                     let (tx, rx) = sc.accept_bi().await.expect("failed to accept connection");
-                    srv.accept((), tx, rx)
+                    srv.accept((), tx, BufReader::new(rx))
                         .await
                         .expect("failed to accept connection");
                 };
@@ -1273,7 +1273,7 @@ async fn rust_bindgen_webtransport_async() -> anyhow::Result<()> {
         loop {
             let accept = async {
                 let (tx, rx) = sc.accept_bi().await.expect("failed to accept connection");
-                srv.accept((), tx, rx)
+                srv.accept((), tx, BufReader::new(rx))
                     .await
                     .expect("failed to accept connection");
             };
@@ -1302,7 +1302,7 @@ async fn rust_dynamic_webtransport() -> anyhow::Result<()> {
             loop {
                 let accept = async {
                     let (tx, rx) = sc.accept_bi().await.expect("failed to accept connection");
-                    srv.accept((), tx, rx)
+                    srv.accept((), tx, BufReader::new(rx))
                         .await
                         .expect("failed to accept connection");
                 };
@@ -1507,7 +1507,7 @@ async fn rust_bindgen_tcp_sync() -> anyhow::Result<()> {
             let (stream, addr) = lis.accept().await.expect("failed to accept connection");
             assert!(addr.ip().is_loopback());
             let (rx, tx) = stream.into_split();
-            srv.accept((), tx, rx)
+            srv.accept((), tx, BufReader::new(rx))
                 .await
                 .expect("failed to accept connection");
         }
@@ -1545,7 +1545,7 @@ async fn rust_bindgen_tcp_root() -> anyhow::Result<()> {
             let (stream, addr) = lis.accept().await.expect("failed to accept connection");
             assert!(addr.ip().is_loopback());
             let (rx, tx) = stream.into_split();
-            srv.accept((), tx, rx)
+            srv.accept((), tx, BufReader::new(rx))
                 .await
                 .expect("failed to accept connection");
         }
@@ -1577,7 +1577,7 @@ where
             assert_eq!(a, "test");
         },
         async {
-            srv.accept((), tx, rx)
+            srv.accept((), tx, BufReader::new(rx))
                 .await
                 .expect("failed to accept connection");
             let ((), params, rx, tx) = pin!(invocations)
@@ -1677,7 +1677,7 @@ async fn rust_bindgen_tcp_async() -> anyhow::Result<()> {
             let (stream, addr) = lis.accept().await.expect("failed to accept connection");
             assert!(addr.ip().is_loopback());
             let (rx, tx) = stream.into_split();
-            srv.accept((), tx, rx)
+            srv.accept((), tx, BufReader::new(rx))
                 .await
                 .expect("failed to accept connection");
         }
@@ -1713,7 +1713,7 @@ async fn rust_bindgen_uds_sync() -> anyhow::Result<()> {
             let (stream, addr) = lis.accept().await.expect("failed to accept connection");
             assert!(addr.is_unnamed());
             let (rx, tx) = stream.into_split();
-            srv.accept((), tx, rx)
+            srv.accept((), tx, BufReader::new(rx))
                 .await
                 .expect("failed to accept connection");
         }
@@ -1749,7 +1749,7 @@ async fn rust_bindgen_uds_async() -> anyhow::Result<()> {
             let (stream, addr) = lis.accept().await.expect("failed to accept connection");
             assert!(addr.is_unnamed());
             let (rx, tx) = stream.into_split();
-            srv.accept((), tx, rx)
+            srv.accept((), tx, BufReader::new(rx))
                 .await
                 .expect("failed to accept connection");
         }
