@@ -1934,13 +1934,10 @@ where
                         return Ok(());
                     }
                     if let Some(rx) = dec.decoder_mut().take_deferred() {
-                        let buf = mem::take(dec.read_buffer_mut());
+                        let mut buf = mem::take(dec.read_buffer_mut());
                         let mut r = dec.into_inner();
-                        if r.buffer.is_empty() {
-                            r.buffer = buf;
-                        } else {
-                            r.buffer.unsplit(buf);
-                        }
+                        buf.unsplit(mem::take(&mut r.buffer));
+                        r.buffer = buf;
                         rx(r, Vec::default()).await?;
                     }
                     Ok(())
@@ -2452,7 +2449,8 @@ impl Decode for Pin<Box<dyn AsyncRead + Send>> {
 
 #[cfg(test)]
 mod tests {
-    use anyhow::bail;
+    use anyhow::{Context as _, bail};
+    use tokio_util::codec::Decoder as _;
 
     use super::*;
 
@@ -2584,6 +2582,31 @@ mod tests {
                 .await?;
             assert_eq!(read_frames(rx).await?, expected);
         }
+        Ok(())
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn future_nested_buffered() -> anyhow::Result<()> {
+        let data: Bytes = (0..2 * READ_CHUNK_SIZE).map(|i| i as u8).collect();
+        let mut buffer = BytesMut::from(&[0x00][..]);
+        CoreVecEncoderBytes.encode(&data, &mut buffer)?;
+
+        let mut dec = <Pin<
+            Box<dyn Future<Output = Pin<Box<dyn Future<Output = Bytes> + Send>>> + Send>,
+        > as Decode>::Decoder::default();
+        let fut = dec.decode(&mut BytesMut::from(&[0x00][..]))?;
+        let fut = fut.context("future not decoded")?;
+        let f = dec.take_deferred().context("deferred read missing")?;
+        let r = BufferedIncoming {
+            buffer,
+            inner: crate::frame::Incoming::new(
+                tokio::io::empty(),
+                Vec::<Vec<Option<usize>>>::default(),
+                |_, _| async {},
+            ),
+        };
+        f(r, Vec::default()).await?;
+        assert_eq!(fut.await.await, data);
         Ok(())
     }
 
