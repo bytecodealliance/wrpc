@@ -1,14 +1,14 @@
 use core::iter::zip;
 use core::mem;
 use core::ops::{BitOrAssign, Shl};
-use core::pin::{Pin, pin};
+use core::pin::Pin;
 
 use std::collections::HashSet;
 
-use bytes::{BufMut as _, BytesMut};
+use bytes::{BufMut as _, Bytes, BytesMut};
 use futures::TryStreamExt as _;
 use futures::stream::FuturesUnordered;
-use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWriteExt as _};
+use tokio::io::{AsyncRead, AsyncReadExt as _};
 use tokio_util::codec::{Encoder, FramedRead};
 use tokio_util::compat::FuturesAsyncReadCompatExt as _;
 use tracing::{error, instrument, trace, warn};
@@ -481,9 +481,8 @@ where
                             .table
                             .delete(stream)
                             .context("failed to delete input stream")?;
-                        self.deferred = Some(Box::new(|w| {
+                        self.deferred = Some(Box::new(|mut w| {
                             Box::pin(async move {
-                                let mut w = pin!(w);
                                 loop {
                                     stream.ready().await;
                                     match stream.read(8096) {
@@ -495,10 +494,10 @@ where
                                             CoreVecEncoderBytes
                                                 .encode(buf, &mut chunk)
                                                 .context("failed to encode input stream chunk")?;
-                                            w.write_all(&chunk).await?;
+                                            w.write_bytes(chunk.freeze()).await?;
                                         }
                                         Err(StreamError::Closed) => {
-                                            w.write_all(&[0x00]).await?;
+                                            w.write_bytes(Bytes::from_static(&[0x00])).await?;
                                             return Ok(());
                                         }
                                         Err(err) => return Err(err.into()),
