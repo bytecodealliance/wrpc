@@ -10,14 +10,31 @@ use crate::frame::{Incoming, Outgoing, invoke};
 
 /// [Invoke] implementation of a TCP transport using [tokio]
 #[derive(Clone, Debug)]
-pub struct Client<T>(T);
+pub struct Client<T> {
+    addr: T,
+    nodelay: Option<bool>,
+}
+
+impl<T> Client<T> {
+    /// Sets whether `TCP_NODELAY` is enabled on connections established by this client,
+    /// `None` leaves the system default unchanged.
+    /// It is enabled by default, since invocations consist of small writes that are each
+    /// waited on by the peer.
+    #[must_use]
+    pub fn nodelay(self, nodelay: Option<bool>) -> Self {
+        Self { nodelay, ..self }
+    }
+}
 
 impl<T> From<T> for Client<T>
 where
     T: ToSocketAddrs + Clone,
 {
     fn from(addr: T) -> Self {
-        Self(addr)
+        Self {
+            addr,
+            nodelay: Some(true),
+        }
     }
 }
 
@@ -39,7 +56,10 @@ where
     where
         P: AsRef<[Option<usize>]> + Send + Sync,
     {
-        let stream = TcpStream::connect(self.0.clone()).await?;
+        let stream = TcpStream::connect(self.addr.clone()).await?;
+        if let Some(nodelay) = self.nodelay {
+            stream.set_nodelay(nodelay)?;
+        }
         let (rx, tx) = stream.into_split();
         invoke(tx, BufReader::new(rx), instance, func, params, paths).await
     }
