@@ -660,7 +660,8 @@ async fn egress(
 ) -> std::io::Result<()> {
     let mut buf = BytesMut::with_capacity(5);
     trace!("waiting for next frame");
-    while let Some((path, data)) = rx.recv().await {
+    let mut next = rx.recv().await;
+    while let Some((path, data)) = next {
         let data_len = u32::try_from(data.len())
             .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
         buf.clear();
@@ -668,7 +669,14 @@ async fn egress(
         let mut frame = path.chain(&mut buf).chain(data);
         trace!(?frame, "writing egress frame");
         tx.write_all_buf(&mut frame).await?;
-        tx.flush().await?;
+        next = match rx.try_recv() {
+            Ok(frame) => Some(frame),
+            Err(..) => {
+                tx.flush().await?;
+                trace!("waiting for next frame");
+                rx.recv().await
+            }
+        };
     }
     trace!("shutting down outgoing stream");
     tx.shutdown().await
