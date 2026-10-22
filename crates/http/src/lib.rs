@@ -47,7 +47,7 @@ impl OutgoingBody {
         (
             Self {
                 chunks: chunks.into_iter().filter(|buf| !buf.is_empty()).collect(),
-                buffer: BytesMut::with_capacity(DEFAULT_BODY_BUFFER_SIZE),
+                buffer: BytesMut::default(),
                 stream: rx,
             },
             tx,
