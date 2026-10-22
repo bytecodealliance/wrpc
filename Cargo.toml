@@ -61,10 +61,12 @@ websockets = [
 [[bin]]
 name = "wit-bindgen-wrpc"
 required-features = ["bin-bindgen"]
+doc = false
 
 [[bin]]
 name = "wrpc-wasmtime"
 required-features = ["bin-wasmtime"]
+doc = false
 
 [[bench]]
 name = "bench"

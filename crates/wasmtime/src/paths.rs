@@ -8,7 +8,8 @@
 //!
 //! Note that at serve time the component has not been instantiated, so a
 //! `wasi:io` stream parameter appears as the component's own *uninstantiated*
-//! resource type rather than the host [`DynInputStream`]/[`DynOutputStream`]
+//! resource type rather than the host [`DynInputStream`](wasmtime_wasi::p2::DynInputStream)/
+//! [`DynOutputStream`](wasmtime_wasi::p2::DynOutputStream)
 //! type. We therefore identify those resources by collecting the component's
 //! `wasi:io/streams` imports up front and comparing against them.
 

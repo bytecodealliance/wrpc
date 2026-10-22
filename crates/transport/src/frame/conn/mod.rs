@@ -804,7 +804,7 @@ async fn egress(
 
 /// Connection handler defines the connection I/O behavior.
 /// It is mostly useful for transports that may require additional clean up not already covered
-/// by [`AsyncWrite::shutdown`], for example.
+/// by [`AsyncWriteExt::shutdown`](tokio::io::AsyncWriteExt::shutdown), for example.
 /// This API is experimental and may change in backwards-incompatible ways in the future.
 pub trait ConnHandler<Rx, Tx> {
     /// Whether to keep reading once all [Incoming] handles are dropped until the peer closes
