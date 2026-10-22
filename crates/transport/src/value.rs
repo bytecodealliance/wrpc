@@ -10,7 +10,7 @@ use core::pin::Pin;
 
 use bytes::{Buf as _, BufMut as _, Bytes, BytesMut};
 use futures::stream::{self, FuturesUnordered};
-use futures::{Stream, StreamExt as _, TryStreamExt as _};
+use futures::{FutureExt as _, Stream, StreamExt as _, TryStreamExt as _};
 use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _};
 use tokio::select;
 use tokio::sync::{mpsc, oneshot};
@@ -33,6 +33,26 @@ use wasm_tokio::{
 
 use crate::BufferedIncoming;
 use crate::frame::Outgoing;
+
+const READ_CHUNK_SIZE: usize = 8192;
+
+pub(crate) fn encode_ready_bytes_header(n: usize, dst: &mut BytesMut) -> std::io::Result<()> {
+    let n = u32::try_from(n)
+        .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
+    dst.reserve(1);
+    dst.put_u8(0x01);
+    Leb128Encoder.encode(n, dst)
+}
+
+fn encode_ready_bytes<T: AsRef<[u8]>>(chunks: &[T], dst: &mut BytesMut) -> std::io::Result<()> {
+    let n = chunks.iter().map(|chunk| chunk.as_ref().len()).sum();
+    encode_ready_bytes_header(n, dst)?;
+    dst.reserve(n);
+    for chunk in chunks {
+        dst.extend_from_slice(chunk.as_ref());
+    }
+    Ok(())
+}
 
 /// Borrowed resource handle, represented as an opaque byte blob
 #[repr(transparent)]
@@ -407,10 +427,11 @@ pub trait Sink: Index + Send + 'static {
         items: impl Stream<Item = Bytes> + Send + Unpin + 'static,
     ) -> impl Future<Output = std::io::Result<()>> + Send;
 
-    /// Transmits the elements of a `stream<u8>` from an [AsyncRead]
+    /// Transmits the elements of a `stream<u8>` from `ready` followed by an [AsyncRead]
     fn write_stream_read(
         self,
         offset: usize,
+        ready: BytesMut,
         items: impl AsyncRead + Send + Unpin + 'static,
     ) -> impl Future<Output = std::io::Result<()>> + Send;
 }
@@ -541,10 +562,18 @@ impl Sink for Outgoing {
     async fn write_stream_read(
         mut self,
         _offset: usize,
+        mut buf: BytesMut,
         mut items: impl AsyncRead + Send + Unpin + 'static,
     ) -> std::io::Result<()> {
-        let mut buf = BytesMut::default();
-        let mut chunk = BytesMut::default();
+        if !buf.is_empty() {
+            let n = u32::try_from(buf.len())
+                .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
+            trace!(n, "writing ready chunk length");
+            let mut header = BytesMut::default();
+            Leb128Encoder.encode(n, &mut header)?;
+            self.write_all(&header).await?;
+        }
+        let mut chunk = BytesMut::with_capacity(READ_CHUNK_SIZE);
         loop {
             select! {
                 res = items.read_buf(&mut chunk) => {
@@ -1793,14 +1822,20 @@ impl<T, W, Fut> tokio_util::codec::Encoder<Fut> for FutureEncoder<W>
 where
     T: Encode<W>,
     W: Sink,
-    Fut: Future<Output = T> + Send + 'static,
+    Fut: Future<Output = T> + Send + Unpin + 'static,
     std::io::Error: From<<T::Encoder as tokio_util::codec::Encoder<T>>::Error>,
 {
     type Error = std::io::Error;
 
     #[instrument(level = "trace", skip(self, item), fields(ty = "future"))]
-    fn encode(&mut self, item: Fut, dst: &mut BytesMut) -> std::io::Result<()> {
-        // TODO: Check if future is resolved
+    fn encode(&mut self, mut item: Fut, dst: &mut BytesMut) -> std::io::Result<()> {
+        self.deferred = None;
+        if let Some(item) = (&mut item).now_or_never() {
+            dst.reserve(1);
+            dst.put_u8(0x01);
+            self.deferred = item.encode(&mut T::Encoder::default(), dst)?;
+            return Ok(());
+        }
         let offset = dst.len();
         dst.reserve(1);
         dst.put_u8(0x00);
@@ -1959,8 +1994,23 @@ where
     type Error = std::io::Error;
 
     #[instrument(level = "trace", skip(self, items), fields(ty = "stream"))]
-    fn encode(&mut self, items: S, dst: &mut BytesMut) -> std::io::Result<()> {
-        // TODO: Check if stream is resolved
+    fn encode(&mut self, mut items: S, dst: &mut BytesMut) -> std::io::Result<()> {
+        self.deferred = None;
+        let mut ready = Vec::default();
+        loop {
+            match items.next().now_or_never() {
+                Some(Some(chunk)) if ready.is_empty() => ready = chunk,
+                Some(Some(chunk)) => ready.extend(chunk),
+                Some(None) => {
+                    dst.reserve(1);
+                    dst.put_u8(0x01);
+                    self.deferred = ready.encode(&mut ListEncoder::default(), dst)?;
+                    return Ok(());
+                }
+                None => break,
+            }
+        }
+        let items = stream::iter([ready]).chain(items);
         let offset = dst.len();
         dst.reserve(1);
         dst.put_u8(0x00);
@@ -2013,8 +2063,17 @@ where
     type Error = std::io::Error;
 
     #[instrument(level = "trace", skip(self, items), fields(ty = "stream<u8>"))]
-    fn encode(&mut self, items: S, dst: &mut BytesMut) -> std::io::Result<()> {
-        // TODO: Check if reader is resolved
+    fn encode(&mut self, mut items: S, dst: &mut BytesMut) -> std::io::Result<()> {
+        self.deferred = None;
+        let mut ready = Vec::default();
+        loop {
+            match items.next().now_or_never() {
+                Some(Some(chunk)) => ready.push(chunk),
+                Some(None) => return encode_ready_bytes(&ready, dst),
+                None => break,
+            }
+        }
+        let items = stream::iter(ready).chain(items);
         let offset = dst.len();
         dst.reserve(1);
         dst.put_u8(0x00);
@@ -2059,8 +2118,18 @@ where
     type Error = std::io::Error;
 
     #[instrument(level = "trace", skip(self, items), fields(ty = "stream<u8>"))]
-    fn encode(&mut self, items: S, dst: &mut BytesMut) -> std::io::Result<()> {
-        // TODO: Check if reader is resolved
+    fn encode(&mut self, mut items: S, dst: &mut BytesMut) -> std::io::Result<()> {
+        self.deferred = None;
+        let mut ready = BytesMut::default();
+        loop {
+            ready.reserve(READ_CHUNK_SIZE);
+            match items.read_buf(&mut ready).now_or_never() {
+                Some(Ok(0)) => return encode_ready_bytes(&[ready], dst),
+                Some(Ok(..)) => {}
+                Some(Err(err)) => return Err(err),
+                None => break,
+            }
+        }
         let offset = dst.len();
         dst.reserve(1);
         dst.put_u8(0x00);
@@ -2069,7 +2138,7 @@ where
                 if !path.is_empty() {
                     w = w.index(&path)?;
                 }
-                w.write_stream_read(offset, items).await
+                w.write_stream_read(offset, ready, items).await
             })
         }));
         Ok(())
@@ -2457,6 +2526,64 @@ mod tests {
         let mut v = vec![];
         r.read_to_end(&mut v).await?;
         assert!(v.is_empty());
+        Ok(())
+    }
+
+    async fn read_frames(mut rx: impl AsyncRead + Unpin) -> anyhow::Result<Vec<u8>> {
+        let mut buf = vec![];
+        rx.read_to_end(&mut buf).await?;
+        let mut buf = buf.as_slice();
+        let mut data = vec![];
+        while let [0x01, 0x00, n, rest @ ..] = buf {
+            let (chunk, rest) = rest.split_at(usize::from(*n));
+            data.extend_from_slice(chunk);
+            buf = rest;
+        }
+        if !buf.is_empty() {
+            bail!("unexpected trailing bytes: {buf:02x?}");
+        }
+        Ok(data)
+    }
+
+    #[test]
+    fn stream_ready_after_pending() -> anyhow::Result<()> {
+        let mut buf = BytesMut::default();
+        let mut enc = StreamEncoderBytes::<Outgoing>::default();
+        enc.encode(stream::pending::<Bytes>(), &mut buf)?;
+        enc.encode(stream::empty::<Bytes>(), &mut buf)?;
+        assert!(enc.take_deferred().is_none());
+
+        let (_tx, rx) = tokio::io::duplex(1);
+        let mut enc = StreamEncoderRead::<Outgoing>::default();
+        enc.encode(rx, &mut buf)?;
+        enc.encode(tokio::io::empty(), &mut buf)?;
+        assert!(enc.take_deferred().is_none());
+
+        let (_tx, rx) = tokio::io::duplex(1);
+        enc.encode(rx, &mut buf)?;
+        let err = tokio_util::io::StreamReader::new(stream::iter([Err::<Bytes, _>(
+            std::io::Error::from(std::io::ErrorKind::ConnectionReset),
+        )]));
+        assert!(enc.encode(err, &mut buf).is_err());
+        assert!(enc.take_deferred().is_none());
+        Ok(())
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn outgoing_stream_ready() -> anyhow::Result<()> {
+        for (ready, expected) in [("foo", &b"\x03foo\x03bar\x00"[..]), ("", b"\x03bar\x00")] {
+            let (tx, rx) = tokio::io::duplex(1024);
+            let w = Outgoing::new(tx, |_, _| async {}).index(&[0])?;
+            w.write_stream_bytes(0, stream::iter([ready, "bar"].map(Bytes::from)))
+                .await?;
+            assert_eq!(read_frames(rx).await?, expected);
+
+            let (tx, rx) = tokio::io::duplex(1024);
+            let w = Outgoing::new(tx, |_, _| async {}).index(&[0])?;
+            w.write_stream_read(0, ready.into(), b"bar".as_slice())
+                .await?;
+            assert_eq!(read_frames(rx).await?, expected);
+        }
         Ok(())
     }
 

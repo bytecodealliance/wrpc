@@ -1,24 +1,30 @@
 //! Packing and unpacking of wRPC values to/from singular, flat byte buffers
 
-use core::future::ready;
-
 use bytes::{BufMut as _, Bytes, BytesMut};
 use futures::{Stream, StreamExt as _};
 use tokio::io::{AsyncRead, AsyncReadExt as _};
 use tokio::sync::mpsc;
 use tokio_util::codec::{Decoder, Encoder};
 
+use crate::value::encode_ready_bytes_header;
 use crate::{Decode, Deferred as _, DeferredFn, Encode, Index, Sink};
 
 /// [Sink] used by [pack], which collects the packed asynchronous values
 #[derive(Clone)]
-pub struct Packer(mpsc::UnboundedSender<(usize, BytesMut)>);
+pub struct Packer(mpsc::UnboundedSender<(usize, Vec<Bytes>)>);
 
 impl Packer {
-    fn push(&self, offset: usize, buf: BytesMut) -> std::io::Result<()> {
+    fn push(&self, offset: usize, bufs: Vec<Bytes>) -> std::io::Result<()> {
         self.0
-            .send((offset, buf))
+            .send((offset, bufs))
             .map_err(|_| std::io::Error::from(std::io::ErrorKind::BrokenPipe))
+    }
+
+    fn push_bytes(&self, offset: usize, mut chunks: Vec<Bytes>) -> std::io::Result<()> {
+        let mut header = BytesMut::default();
+        encode_ready_bytes_header(chunks.iter().map(Bytes::len).sum(), &mut header)?;
+        chunks.insert(0, header.freeze());
+        self.push(offset, chunks)
     }
 }
 
@@ -42,7 +48,7 @@ impl Sink for Packer {
         buf.put_u8(0x01);
         let deferred = T::encode(item.await, &mut T::Encoder::default(), &mut buf)?;
         fill(deferred, &mut buf).await?;
-        self.push(offset, buf)
+        self.push(offset, vec![buf.freeze()])
     }
 
     async fn write_stream<T>(
@@ -62,18 +68,17 @@ impl Sink for Packer {
         offset: usize,
         items: impl Stream<Item = Bytes> + Send + Unpin + 'static,
     ) -> std::io::Result<()> {
-        self.write_future(offset, async { items.collect::<Vec<_>>().await.concat() })
-            .await
+        self.push_bytes(offset, items.collect().await)
     }
 
     async fn write_stream_read(
         self,
         offset: usize,
+        mut ready: BytesMut,
         mut items: impl AsyncRead + Send + Unpin + 'static,
     ) -> std::io::Result<()> {
-        let mut payload = Vec::default();
-        items.read_to_end(&mut payload).await?;
-        self.write_future(offset, ready(payload)).await
+        while items.read_buf(&mut ready).await? > 0 {}
+        self.push_bytes(offset, vec![ready.freeze()])
     }
 }
 
@@ -88,10 +93,14 @@ async fn fill(deferred: Option<DeferredFn<Packer>>, dst: &mut BytesMut) -> std::
         holes.push(hole);
     }
     holes.sort_unstable_by_key(|(offset, _)| *offset);
-    let n = holes.iter().map(|(_, buf)| buf.len()).sum::<usize>();
+    let n = holes
+        .iter()
+        .flat_map(|(_, bufs)| bufs)
+        .map(Bytes::len)
+        .sum::<usize>();
     let mut out = BytesMut::with_capacity(dst.len() + n);
     let mut prev = 0;
-    for (offset, buf) in holes {
+    for (offset, bufs) in holes {
         if offset < prev || dst.get(offset) != Some(&0x00) {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
@@ -99,7 +108,9 @@ async fn fill(deferred: Option<DeferredFn<Packer>>, dst: &mut BytesMut) -> std::
             ));
         }
         out.extend_from_slice(&dst[prev..offset]);
-        out.extend_from_slice(&buf);
+        for buf in bufs {
+            out.extend_from_slice(&buf);
+        }
         prev = offset + 1;
     }
     out.extend_from_slice(&dst[prev..]);
@@ -131,7 +142,32 @@ pub async fn pack<T: Encode<Packer>>(
     Ok(())
 }
 
-/// Unpack a [`Decode`] from a byte buffer `buf` produced by [`pack`].
+/// Synchronously pack a [`Encode`] into a singular byte buffer `dst`.
+///
+/// All asynchronous values contained in `v` must be ready, this function returns an error of
+/// kind [`std::io::ErrorKind::WouldBlock`] if any of them is pending.
+///
+/// Futures are polled exactly once and streams are polled until they are pending or finished,
+/// so values backed by Tokio I/O types (e.g. `tokio::fs::File`) are typically pending and require
+/// this function to be called within the context of a Tokio runtime.
+///
+/// If this function returns an error, contents of `dst` are undefined.
+pub fn pack_ready<T: Encode<Packer>>(
+    v: T,
+    dst: &mut BytesMut,
+) -> Result<(), <T::Encoder as Encoder<T>>::Error> {
+    let deferred = v.encode(&mut T::Encoder::default(), dst)?;
+    if deferred.is_some() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::WouldBlock,
+            "asynchronous value is pending",
+        )
+        .into());
+    }
+    Ok(())
+}
+
+/// Unpack a [`Decode`] from a byte buffer `buf` produced by [`pack`] or [`pack_ready`].
 ///
 /// This function returns an error if `buf` contains pending asynchronous values or if `buf` is
 /// not fully consumed.
@@ -139,9 +175,11 @@ pub async fn pack<T: Encode<Packer>>(
 /// If this function returns an error, contents of `buf` are undefined.
 pub fn unpack<T: Decode>(buf: &mut BytesMut) -> Result<T, <T::Decoder as Decoder>::Error> {
     let mut dec = T::Decoder::default();
-    let v = dec.decode(buf)?.ok_or_else(|| {
-        std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "buffer is incomplete")
-    })?;
+    let Some(v) = dec.decode(buf)? else {
+        return Err(
+            std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "buffer is incomplete").into(),
+        );
+    };
     if dec.take_deferred().is_some() {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
@@ -161,12 +199,15 @@ pub fn unpack<T: Decode>(buf: &mut BytesMut) -> Result<T, <T::Decoder as Decoder
 
 #[cfg(test)]
 mod tests {
-    use core::future::pending;
+    use core::future::{pending, ready};
     use core::pin::Pin;
     use core::time::Duration;
 
-    use futures::stream;
+    use futures::FutureExt as _;
+    use futures::stream::{self, BoxStream};
     use tokio::sync::oneshot;
+    use tokio::task::yield_now;
+    use tokio_util::io::StreamReader;
 
     use super::*;
 
@@ -274,6 +315,31 @@ mod tests {
         Ok(())
     }
 
+    fn ready_then_pending<T: Send + 'static>(ready: T, pending: T) -> BoxStream<'static, T> {
+        stream::iter([ready])
+            .chain(stream::once(async {
+                yield_now().await;
+                pending
+            }))
+            .boxed()
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn stream_partial() -> anyhow::Result<()> {
+        let s = ready_then_pending(vec![1_u8, 2], vec![3]);
+        let b = ready_then_pending(Bytes::from("foo"), Bytes::from("bar"));
+        let r: Pin<Box<dyn AsyncRead + Send>> = Box::pin(StreamReader::new(
+            ready_then_pending(Bytes::from("foo"), Bytes::from("bar")).map(Ok::<_, std::io::Error>),
+        ));
+        let mut buf = BytesMut::default();
+        pack((s, b, r), &mut buf).await?;
+        assert_eq!(
+            buf.as_ref(),
+            b"\x01\x03\x01\x02\x03\x01\x06foobar\x01\x06foobar"
+        );
+        Ok(())
+    }
+
     #[test_log::test(tokio::test)]
     async fn pending_future() -> anyhow::Result<()> {
         let fut: Pin<Box<dyn Future<Output = u8> + Send>> = Box::pin(pending());
@@ -281,6 +347,37 @@ mod tests {
         let res = tokio::time::timeout(Duration::from_millis(10), pack(fut, &mut buf)).await;
         assert!(res.is_err());
         Ok(())
+    }
+
+    #[test]
+    fn ready_values() -> anyhow::Result<()> {
+        let fut = ready(0x42_u8).boxed();
+        let s = stream::iter([Bytes::from("foo")]).boxed();
+        let mut buf = BytesMut::default();
+        pack_ready((0x01_u8, fut, s), &mut buf)?;
+        assert_eq!(buf.as_ref(), b"\x01\x01\x42\x01\x03foo");
+        Ok(())
+    }
+
+    #[test]
+    fn ready_nested() -> anyhow::Result<()> {
+        let s = stream::iter((0..=255_u8).map(|i| vec![ready(i).boxed()])).boxed();
+        let mut buf = BytesMut::default();
+        pack_ready(s, &mut buf)?;
+        let expected: Vec<u8> = [0x01, 0x80, 0x02]
+            .into_iter()
+            .chain((0..=255).flat_map(|i| [0x01, i]))
+            .collect();
+        assert_eq!(buf.as_ref(), expected);
+        Ok(())
+    }
+
+    #[test]
+    fn ready_pending() {
+        let fut = ready(pending::<u8>().boxed()).boxed();
+        let mut buf = BytesMut::default();
+        let err = pack_ready(fut, &mut buf).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::WouldBlock);
     }
 
     #[test]
