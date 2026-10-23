@@ -95,6 +95,10 @@ func NewFrameStreamReader(ctx context.Context, r ByteReadCloser, paths ...Subscr
 			slog.DebugContext(ctx, "read frame",
 				"frame", frame,
 			)
+			if len(frame.Data) == 0 {
+				slog.ErrorContext(ctx, "received an empty frame", "path", frame.Path)
+				break outer
+			}
 			p := indexPath(frame.Path...)
 			nestMu.Lock()
 			ch, ok := nest[p]
@@ -103,32 +107,26 @@ func NewFrameStreamReader(ctx context.Context, r ByteReadCloser, paths ...Subscr
 				nestMu.Unlock()
 				break outer
 			}
-			if len(frame.Data) == 0 {
-				slog.DebugContext(ctx, "received shutdown frame, closing channel", "path", frame.Path)
-				delete(nest, p)
-				close(ch)
-			} else {
-				slog.DebugContext(ctx, "received data frame, sending frame data",
+			slog.DebugContext(ctx, "received data frame, sending frame data",
+				"frame", frame,
+			)
+			select {
+			case <-ctx.Done():
+				slog.DebugContext(ctx, "context done, stop reading frames",
+					"err", ctx.Err(),
+				)
+				nestMu.Unlock()
+				break outer
+			case ch <- frame.Data:
+				slog.DebugContext(ctx, "sent received frame data",
 					"frame", frame,
 				)
-				select {
-				case <-ctx.Done():
-					slog.DebugContext(ctx, "context done, stop reading frames",
-						"err", ctx.Err(),
-					)
-					nestMu.Unlock()
-					break outer
-				case ch <- frame.Data:
-					slog.DebugContext(ctx, "sent received frame data",
-						"frame", frame,
-					)
-				default:
-					slog.ErrorContext(ctx, "reader too slow, dropping frame",
-						"frame", frame,
-					)
-					nestMu.Unlock()
-					break outer
-				}
+			default:
+				slog.ErrorContext(ctx, "reader too slow, dropping frame",
+					"frame", frame,
+				)
+				nestMu.Unlock()
+				break outer
 			}
 			nestMu.Unlock()
 		}
