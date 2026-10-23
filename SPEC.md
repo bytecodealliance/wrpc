@@ -79,7 +79,9 @@ record frame {
 }
 ```
 
-It is assumed that streams using this framing protocol can communicate "closing" to peers using some out-of-band mechanism.
+Frames do not carry any notion of closing the data sent on a `path`: the end of that data is determined by its encoding, for example, a pending stream ends with an empty `list<T>` chunk (see [Streams](#streams)), which is encoded as non-empty `data`.
+
+The `data` of a frame MUST NOT be empty: a sender MUST NOT send a frame with empty `data`, and a receiver MUST treat such a frame as an error. Frames therefore cannot communicate the end of transmit, i.e. that no more frames follow. Each transport MUST communicate it using its own mechanism, for example, TCP shutdown or finishing a QUIC stream.
 
 ## Transport specifications
 
