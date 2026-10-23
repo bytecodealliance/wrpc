@@ -142,6 +142,10 @@ func (w *FrameStreamWriter) WriteByte(c byte) error {
 	})
 }
 
+func (w *FrameStreamWriter) ClosePath() error {
+	return sendFrame(w.ctx, w.ch, Frame{Path: w.path})
+}
+
 func (w *FrameStreamWriter) Index(path ...uint32) (IndexWriteCloser, error) {
 	p := make([]uint32, 0, len(w.path)+len(path))
 	p = append(p, w.path...)

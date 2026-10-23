@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"runtime"
@@ -38,6 +39,9 @@ type FrameStreamReader struct {
 	readers *atomic.Int64
 	nestMu  *sync.Mutex
 	nest    map[string]chan []byte
+	closed  map[string]struct{}
+	dropped map[string]struct{}
+	err     *atomic.Pointer[error]
 	path    string
 	buf     []byte
 }
@@ -67,11 +71,16 @@ func NewFrameStreamReader(ctx context.Context, r ByteReadCloser, paths ...Subscr
 	var readers atomic.Int64
 	readers.Add(1)
 
+	closed := make(map[string]struct{})
+	dropped := make(map[string]struct{})
+	var ingressErr atomic.Pointer[error]
 	go func() {
 		defer func() {
 			nestMu.Lock()
-			for _, ch := range nest {
-				close(ch)
+			for p, ch := range nest {
+				if _, ok := closed[p]; !ok {
+					close(ch)
+				}
 			}
 			nestMu.Unlock()
 
@@ -80,57 +89,58 @@ func NewFrameStreamReader(ctx context.Context, r ByteReadCloser, paths ...Subscr
 			}
 		}()
 
-	outer:
+		handle := func(frame Frame) error {
+			p := indexPath(frame.Path...)
+			nestMu.Lock()
+			defer nestMu.Unlock()
+			ch, ok := nest[p]
+			if !ok {
+				return fmt.Errorf("received a frame for unknown path `%v`", frame.Path)
+			}
+			if _, ok := closed[p]; ok {
+				return fmt.Errorf("received a frame for closed path `%v`", frame.Path)
+			}
+			if _, ok := dropped[p]; ok && len(frame.Data) > 0 {
+				return fmt.Errorf("received data for a closed reader on path `%v`", frame.Path)
+			}
+			if len(frame.Data) == 0 {
+				slog.DebugContext(ctx, "received empty frame, closing path", "path", frame.Path)
+				closed[p] = struct{}{}
+				close(ch)
+				return nil
+			}
+			slog.DebugContext(ctx, "received data frame, sending frame data",
+				"frame", frame,
+			)
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case ch <- frame.Data:
+				slog.DebugContext(ctx, "sent received frame data",
+					"frame", frame,
+				)
+				return nil
+			default:
+				return fmt.Errorf("reader too slow, dropped a frame for path `%v`", frame.Path)
+			}
+		}
 		for readers.Load() > 0 {
 			slog.DebugContext(ctx, "reading frame")
 			frame, err := ReadFrame(r)
-			if err != nil {
-				if err == io.EOF {
-					break outer
-				}
-				slog.ErrorContext(ctx, "failed to read frame", "err", err)
-				break outer
+			if err == io.EOF {
+				break
 			}
-
-			slog.DebugContext(ctx, "read frame",
-				"frame", frame,
-			)
-			p := indexPath(frame.Path...)
-			nestMu.Lock()
-			ch, ok := nest[p]
-			if !ok {
-				slog.ErrorContext(ctx, "received a frame for unknown path", "path", frame.Path)
-				nestMu.Unlock()
-				break outer
-			}
-			if len(frame.Data) == 0 {
-				slog.DebugContext(ctx, "received shutdown frame, closing channel", "path", frame.Path)
-				delete(nest, p)
-				close(ch)
-			} else {
-				slog.DebugContext(ctx, "received data frame, sending frame data",
+			if err == nil {
+				slog.DebugContext(ctx, "read frame",
 					"frame", frame,
 				)
-				select {
-				case <-ctx.Done():
-					slog.DebugContext(ctx, "context done, stop reading frames",
-						"err", ctx.Err(),
-					)
-					nestMu.Unlock()
-					break outer
-				case ch <- frame.Data:
-					slog.DebugContext(ctx, "sent received frame data",
-						"frame", frame,
-					)
-				default:
-					slog.ErrorContext(ctx, "reader too slow, dropping frame",
-						"frame", frame,
-					)
-					nestMu.Unlock()
-					break outer
-				}
+				err = handle(frame)
 			}
-			nestMu.Unlock()
+			if err != nil {
+				slog.ErrorContext(ctx, "failed to process frame", "err", err)
+				ingressErr.Store(&err)
+				break
+			}
 		}
 	}()
 	return newFrameStreamReader(&FrameStreamReader{
@@ -139,6 +149,9 @@ func NewFrameStreamReader(ctx context.Context, r ByteReadCloser, paths ...Subscr
 		readers: &readers,
 		nestMu:  &nestMu,
 		nest:    nest,
+		closed:  closed,
+		dropped: dropped,
+		err:     &ingressErr,
 	})
 }
 
@@ -166,7 +179,7 @@ func (r *FrameStreamReader) Read(p []byte) (int, error) {
 		return 0, r.ctx.Err()
 	case buf, ok := <-r.ch:
 		if !ok {
-			return 0, io.ErrUnexpectedEOF
+			return 0, r.closedErr()
 		}
 		slog.DebugContext(r.ctx, "received data frame",
 			"path", r.path,
@@ -197,7 +210,7 @@ func (r *FrameStreamReader) ReadByte() (byte, error) {
 		return 0, r.ctx.Err()
 	case buf, ok := <-r.ch:
 		if !ok {
-			return 0, io.ErrUnexpectedEOF
+			return 0, r.closedErr()
 		}
 		slog.DebugContext(r.ctx, "received data frame", "path", r.path)
 		if len(buf) > 1 {
@@ -209,6 +222,16 @@ func (r *FrameStreamReader) ReadByte() (byte, error) {
 
 func (r *FrameStreamReader) Buffered() int {
 	return len(r.buf)
+}
+
+func (r *FrameStreamReader) closedErr() error {
+	r.nestMu.Lock()
+	_, closed := r.closed[r.path]
+	r.nestMu.Unlock()
+	if err := r.err.Load(); err != nil && !closed {
+		return *err
+	}
+	return io.EOF
 }
 
 func (r *FrameStreamReader) Index(path ...uint32) (IndexReadCloser, error) {
@@ -231,6 +254,9 @@ func (r *FrameStreamReader) Index(path ...uint32) (IndexReadCloser, error) {
 		readers: r.readers,
 		nestMu:  r.nestMu,
 		nest:    r.nest,
+		closed:  r.closed,
+		dropped: r.dropped,
+		err:     r.err,
 		path:    p,
 	}), nil
 }
@@ -245,7 +271,7 @@ func (r *FrameStreamReader) drop() {
 	r.nestMu.Lock()
 	defer r.nestMu.Unlock()
 
-	delete(r.nest, r.path)
+	r.dropped[r.path] = struct{}{}
 }
 
 func (r *FrameStreamReader) Close() error {

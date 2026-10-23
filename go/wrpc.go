@@ -14,7 +14,6 @@ type Invoker interface {
 	// Initial, encoded payload must be specified in `b`.
 	// `paths` define the async result paths to subscribe on.
 	// On success, `Invoke` returns two handles used for writing and reading encoded parameters and results respectively.
-	// NOTE: if the returned handle is used for writing, `b` must be non-empty.
 	Invoke(ctx context.Context, instance string, name string, b []byte, paths ...SubscribePath) (IndexWriteCloser, IndexReadCloser, error)
 }
 
@@ -91,6 +90,9 @@ type IndexReader interface {
 type IndexWriter interface {
 	io.Writer
 	io.ByteWriter
+
+	// ClosePath closes the path by sending an empty frame, after which no more data may be written to it.
+	ClosePath() error
 
 	Index[IndexWriteCloser]
 
