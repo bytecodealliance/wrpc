@@ -279,6 +279,11 @@ test("ready streams are decoded synchronously", async () => {
   assert.deepEqual(await collect(decode(t.stream(t.u8), Uint8Array.of(1, 0))), []);
 });
 
+test("ready futures are decoded synchronously", async () => {
+  assert.equal(await decode(t.future(t.u8), Uint8Array.of(1, 7)), 7);
+  assert.equal(await decode(t.future(), Uint8Array.of(1)), undefined);
+});
+
 test("the wasi:keyvalue store types", () => {
   const error = t.variant({ "no-such-store": null, "access-denied": null, other: t.string });
   const open = t.result(t.own("bucket"), error);

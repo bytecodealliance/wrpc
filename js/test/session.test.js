@@ -633,10 +633,10 @@ test("an invocation with empty parameters sends just the header", async () => {
   assert.deepEqual(Buffer.concat(frames), Buffer.from("\x00\x03foo\x03bar", "latin1"));
 });
 
-test("a future with an empty value encoding closes its sub-stream", async () => {
+test("a future without a payload closes its sub-stream", async () => {
   const frames = [];
   const transport = { read: async () => null, write: (bytes) => void frames.push(bytes) };
-  const { done } = await invoke(transport, "foo", "bar", [t.future(t.tuple())], [[]], []);
+  const { done } = await invoke(transport, "foo", "bar", [t.future()], [Promise.resolve()], []);
   await done;
   assert.deepEqual(
     Buffer.concat(frames),
@@ -660,12 +660,12 @@ function feed() {
 }
 
 test(
-  "a future with an empty value encoding resolves once its sub-stream is closed",
+  "a future without a payload resolves once its sub-stream is closed",
   { timeout: 1000 },
   async () => {
     const { inbound, peer, transport } = feed();
     await peer.outgoing([]).write(Uint8Array.of(0));
-    const ty = [t.future(t.tuple())];
+    const ty = [t.future()];
     const { results, done } = await invoke(transport, STREAMS, "get", [], [], ty);
     let resolved = false;
     results[0].then(() => (resolved = true));
@@ -673,7 +673,7 @@ test(
     await tick();
     assert.equal(resolved, false);
     await peer.outgoing([0]).close();
-    assert.deepEqual(await results[0], []);
+    assert.equal(await results[0], undefined);
     inbound.close();
     await done;
   },
@@ -709,7 +709,7 @@ test(
     await peer.outgoing([0]).write(Uint8Array.of(1, 1, 0));
     await peer.outgoing([0]).write(Uint8Array.of(0));
     inbound.close();
-    const ty = [t.stream(t.option(t.future(t.tuple())))];
+    const ty = [t.stream(t.option(t.future()))];
     await invoke(transport, STREAMS, "get", [], [], ty);
     assert.match(String(await aborted), /unexpected data for sub-stream \[0,0\]/);
   },
