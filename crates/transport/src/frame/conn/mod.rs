@@ -661,6 +661,7 @@ enum IngressGuard {
 }
 
 /// Outgoing framed stream
+#[derive(Clone)]
 pub struct Outgoing {
     tx: PollSender<(Bytes, Bytes)>,
     path: Arc<[usize]>,
