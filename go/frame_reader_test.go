@@ -31,7 +31,7 @@ func TestFrameStreamReader(t *testing.T) {
 			t.Fatalf("failed to index reader: %s", err)
 		}
 		buf, err := io.ReadAll(r)
-		if !errors.Is(err, io.ErrUnexpectedEOF) {
+		if err != nil {
 			t.Fatalf("expected empty frame to close the path, got `%v`", err)
 		}
 		if string(buf) != "hello" {

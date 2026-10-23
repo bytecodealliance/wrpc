@@ -39,6 +39,7 @@ type FrameStreamReader struct {
 	readers *atomic.Int64
 	nestMu  *sync.Mutex
 	nest    map[string]chan []byte
+	closed  map[string]struct{}
 	err     *atomic.Pointer[error]
 	path    string
 	buf     []byte
@@ -69,9 +70,9 @@ func NewFrameStreamReader(ctx context.Context, r ByteReadCloser, paths ...Subscr
 	var readers atomic.Int64
 	readers.Add(1)
 
+	closed := make(map[string]struct{})
 	var ingressErr atomic.Pointer[error]
 	go func() {
-		closed := make(map[string]struct{})
 		defer func() {
 			nestMu.Lock()
 			for p, ch := range nest {
@@ -157,6 +158,7 @@ func NewFrameStreamReader(ctx context.Context, r ByteReadCloser, paths ...Subscr
 		readers: &readers,
 		nestMu:  &nestMu,
 		nest:    nest,
+		closed:  closed,
 		err:     &ingressErr,
 	})
 }
@@ -227,6 +229,12 @@ func (r *FrameStreamReader) ReadByte() (byte, error) {
 }
 
 func (r *FrameStreamReader) closedErr() error {
+	r.nestMu.Lock()
+	_, ok := r.closed[r.path]
+	r.nestMu.Unlock()
+	if ok {
+		return io.EOF
+	}
 	if err := r.err.Load(); err != nil {
 		return *err
 	}
@@ -253,6 +261,7 @@ func (r *FrameStreamReader) Index(path ...uint32) (IndexReadCloser, error) {
 		readers: r.readers,
 		nestMu:  r.nestMu,
 		nest:    r.nest,
+		closed:  r.closed,
 		err:     r.err,
 		path:    p,
 	}), nil
