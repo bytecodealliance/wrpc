@@ -191,13 +191,13 @@ url = { version = "2" }
 uuid = { version = "1", default-features = false }
 wasi = { version = "0.14", default-features = false }
 wasi-preview1-component-adapter-provider = { version = "49", default-features = false }
-wasm-tokio = { version = "0.8.0", default-features = false }
-wasm-wave = { version = "0.258", default-features = false }
+wasm-tokio = { version = "0.8.1", default-features = false }
+wasm-wave = { version = "0.261", default-features = false }
 wasmparser = { version = "0.262", default-features = false }
-wasmtime = { version = "49", default-features = false }
-wasmtime-cli-flags = { version = "49", default-features = false }
-wasmtime-wasi = { version = "49", default-features = false }
-wasmtime-wasi-http = { version = "49", default-features = false }
+wasmtime = { version = "50", default-features = false }
+wasmtime-cli-flags = { version = "50", default-features = false }
+wasmtime-wasi = { version = "50", default-features = false }
+wasmtime-wasi-http = { version = "50", default-features = false }
 wit-bindgen = { version = "0.59", default-features = false }
 wit-bindgen-core = { version = "0.59", default-features = false }
 wit-bindgen-wrpc = { version = "0.12", default-features = false, path = "./crates/wit-bindgen" }
