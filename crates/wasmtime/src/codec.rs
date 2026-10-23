@@ -8,10 +8,11 @@ use std::collections::HashSet;
 
 use bytes::{BufMut as _, Bytes, BytesMut};
 use futures::TryStreamExt as _;
-use futures::stream::FuturesUnordered;
+use futures::stream::{self, FuturesUnordered};
 use tokio::io::{AsyncRead, AsyncReadExt as _};
 use tokio_util::codec::{Encoder, FramedRead};
 use tokio_util::compat::FuturesAsyncReadCompatExt as _;
+use tokio_util::io::StreamReader;
 use tracing::{error, instrument, trace, warn};
 use uuid::Uuid;
 use wasm_tokio::cm::AsyncReadValue as _;
@@ -24,10 +25,10 @@ use wasmtime::component::types::{Case, Field};
 use wasmtime::component::{ResourceType, Type, Val};
 use wasmtime::error::Context as _;
 use wasmtime::{AsContextMut, StoreContextMut};
-use wasmtime_wasi::p2::pipe::AsyncReadStream;
+use wasmtime_wasi::p2::pipe::{AsyncReadStream, MemoryInputPipe};
 use wasmtime_wasi::p2::{DynInputStream, StreamError};
-use wrpc_transport::ListDecoderU8;
 use wrpc_transport::frame::{Incoming, Outgoing};
+use wrpc_transport::{Deferred as _, ListDecoderU8, READ_CHUNK_SIZE, StreamEncoderRead};
 
 use crate::{RemoteResource, WrpcView};
 
@@ -475,37 +476,34 @@ where
                         .try_into_resource::<DynInputStream>(&mut self.store)
                         .context("failed to downcast `wasi:io/input-stream`")?;
                     if stream.owned() {
-                        let mut stream = self
+                        let stream = self
                             .store
                             .data_mut()
                             .wrpc()
                             .table
                             .delete(stream)
                             .context("failed to delete input stream")?;
-                        self.deferred = Some(Box::new(|mut w| {
-                            Box::pin(async move {
+                        let items: Pin<Box<dyn AsyncRead + Send>> = Box::pin(StreamReader::new(
+                            stream::try_unfold(stream, |mut stream| async move {
                                 loop {
                                     stream.ready().await;
-                                    match stream.read(8096) {
+                                    match stream.read(READ_CHUNK_SIZE) {
                                         Ok(buf) if buf.is_empty() => {}
-                                        Ok(buf) => {
-                                            let mut chunk = BytesMut::with_capacity(
-                                                buf.len().saturating_add(5),
-                                            );
-                                            CoreVecEncoderBytes
-                                                .encode(buf, &mut chunk)
-                                                .context("failed to encode input stream chunk")?;
-                                            w.write_bytes(chunk.freeze()).await?;
-                                        }
-                                        Err(StreamError::Closed) => {
-                                            w.write_bytes(Bytes::from_static(&[0x00])).await?;
-                                            return Ok(());
-                                        }
-                                        Err(err) => return Err(err.into()),
+                                        Ok(buf) => return Ok(Some((buf, stream))),
+                                        Err(StreamError::Closed) => return Ok(None),
+                                        Err(err) => return Err(std::io::Error::other(err)),
                                     }
                                 }
-                            })
-                        }));
+                            }),
+                        ));
+                        let mut enc = StreamEncoderRead::<Outgoing, READ_CHUNK_SIZE>::default();
+                        enc.encode(items, dst)
+                            .context("failed to encode input stream")?;
+                        if let Some(f) = enc.take_deferred() {
+                            self.deferred = Some(Box::new(|w| {
+                                Box::pin(async move { Ok(f(w, Vec::default()).await?) })
+                            }));
+                        }
                     } else {
                         self.store
                             .data_mut()
@@ -582,6 +580,16 @@ async fn read_flags(n: usize, r: &mut (impl AsyncRead + Unpin)) -> std::io::Resu
     let mut buf = 0u128.to_le_bytes();
     r.read_exact(&mut buf[..n]).await?;
     Ok(u128::from_le_bytes(buf))
+}
+
+async fn read_bytes(r: &mut (impl AsyncRead + Unpin)) -> std::io::Result<Bytes> {
+    let n = r.read_u32_leb128().await?;
+    let len = usize::try_from(n).unwrap_or(usize::MAX);
+    let mut buf = Vec::with_capacity(len.min(DEFAULT_MAX_INITIAL_CAPACITY));
+    if r.take(n.into()).read_to_end(&mut buf).await? != len {
+        return Err(std::io::ErrorKind::UnexpectedEof.into());
+    }
+    Ok(buf.into())
 }
 
 /// Read encoded value of type [`Type`] from an [`AsyncRead`] into a [`Val`]
@@ -860,16 +868,30 @@ where
         Type::Own(ty) | Type::Borrow(ty) => {
             if *ty == ResourceType::host::<DynInputStream>() || io_streams.contains(ty) {
                 let mut store = store.as_context_mut();
-                let r = r.index(path).map_err(std::io::Error::other)?;
                 // The stream must be typed as `DynInputStream` (the host resource type),
                 // otherwise the resulting resource handle carries the concrete reader type
                 // and fails the guest's `own<input-stream>` type check.
-                let stream: DynInputStream = Box::new(AsyncReadStream::new(
-                    FramedRead::new(r, ListDecoderU8::default())
-                        .try_take_while(|chunk| ready(Ok(!chunk.is_empty())))
-                        .into_async_read()
-                        .compat(),
-                ));
+                let stream: DynInputStream = match r.read_u8().await? {
+                    0 => {
+                        let r = r.index(path).map_err(std::io::Error::other)?;
+                        Box::new(AsyncReadStream::new(
+                            FramedRead::new(r, ListDecoderU8::default())
+                                .try_take_while(|chunk| ready(Ok(!chunk.is_empty())))
+                                .into_async_read()
+                                .compat(),
+                        ))
+                    }
+                    1 => {
+                        let buf = read_bytes(r).await?;
+                        Box::new(MemoryInputPipe::new(buf))
+                    }
+                    status => {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            format!("invalid stream status byte value `{status}`"),
+                        ));
+                    }
+                };
                 let res = store
                     .data_mut()
                     .wrpc()
@@ -920,17 +942,10 @@ where
                 Ok(())
             } else {
                 let mut store = store.as_context_mut();
-                let n = r.read_u32_leb128().await?;
-                let mut r = r.take(n.into());
-                let n = usize::try_from(n)
-                    .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
-                let mut buf = Vec::default();
-                if r.read_to_end(&mut buf).await? != n {
-                    return Err(std::io::ErrorKind::UnexpectedEof.into());
-                }
+                let buf = read_bytes(r).await?;
                 let table = store.data_mut().wrpc().table;
                 let resource = table
-                    .push(RemoteResource(buf.into()))
+                    .push(RemoteResource(buf))
                     .map_err(|err| std::io::Error::new(std::io::ErrorKind::OutOfMemory, err))?;
                 let resource = resource
                     .try_into_resource_any(store)
