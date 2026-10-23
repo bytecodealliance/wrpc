@@ -1844,13 +1844,13 @@ async fn rust_oneshot_serve_read_timeout() -> anyhow::Result<()> {
 #[instrument(ret)]
 async fn rust_oneshot_invoke_read_timeout() -> anyhow::Result<()> {
     let (clt, _srv_io) = Oneshot::duplex(1024);
-    let err = tokio::time::timeout(
+    let res = tokio::time::timeout(
         Duration::from_secs(10),
         clt.io_timeout(Duration::from_millis(100))
             .invoke_values_blocking::<_, _, (String,)>((), "foo", "bar", (42,), &[[]; 0]),
     )
-    .await?
-    .expect_err("invocation without a response should fail");
+    .await?;
+    let err = res.expect_err("invocation without a response should fail");
     assert!(
         format!("{err:#}").contains("read timed out"),
         "unexpected error: {err:#}"
@@ -1862,24 +1862,11 @@ async fn rust_oneshot_invoke_read_timeout() -> anyhow::Result<()> {
 #[instrument(ret)]
 async fn rust_oneshot_invoke_write_timeout() -> anyhow::Result<()> {
     let (clt, _srv_io) = Oneshot::duplex(1024);
-    let err = tokio::time::timeout(
-        Duration::from_secs(10),
-        clt.io_timeout(Duration::from_millis(100))
-            .invoke_values_blocking::<_, _, (String,)>(
-                (),
-                "foo",
-                "bar",
-                (vec![0u8; 1 << 16],),
-                &[[]; 0],
-            ),
-    )
-    .await?
-    .expect_err("invocation with unread parameters should fail");
-    assert!(
-        format!("{err:#}").contains("invocation timed out"),
-        "unexpected error: {err:#}"
-    );
-    Ok(())
+    let (tx, _rx) = clt
+        .io_timeout(Duration::from_millis(100))
+        .invoke((), "foo", "bar", Bytes::default(), &[[]; 0])
+        .await?;
+    assert_write_timeout(tx).await
 }
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
@@ -1894,17 +1881,23 @@ async fn rust_oneshot_serve_write_timeout() -> anyhow::Result<()> {
         .await?;
     clt.write_all(b"\x00\x03foo\x03bar").await?;
     srv.accept((), tx, BufReader::new(rx)).await?;
-    let ((), mut tx, _rx) = pin!(invocations)
-        .try_next()
-        .await?
-        .context("unexpected end of stream")?;
+    let invocation = pin!(invocations).try_next().await?;
+    let ((), tx, _rx) = invocation.context("unexpected end of stream")?;
+    assert_write_timeout(tx).await
+}
+
+async fn assert_write_timeout(mut tx: wrpc_transport::frame::Outgoing) -> anyhow::Result<()> {
     tx.write_all(&[0; 1 << 16]).await?;
-    sleep(Duration::from_millis(500)).await;
-    for res in [
-        tx.write_all(&[0]).await,
-        tx.flush().await,
-        tx.shutdown().await,
-    ] {
+    let err = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            if let Err(err) = tx.write_all(&[0]).await {
+                break err;
+            }
+        }
+    })
+    .await?;
+    assert_eq!(err.kind(), std::io::ErrorKind::TimedOut, "{err}");
+    for res in [tx.flush().await, tx.shutdown().await] {
         let err = res.expect_err("I/O after a write timeout should fail");
         assert_eq!(err.kind(), std::io::ErrorKind::TimedOut, "{err}");
     }

@@ -225,8 +225,9 @@ pub trait ServeExt: Serve {
     /// forever if the client does not accept any data for `timeout`.
     ///
     /// The timeout also applies to the sub-streams backing async `stream` and `future`
-    /// parameters and results, which must therefore not idle for longer than `timeout`, and bounds draining of the connection once the invocation is
-    /// complete, see [`Incoming::with_timeout`].
+    /// parameters and results, which must therefore not idle for longer than `timeout`, and
+    /// bounds draining of the connection once the invocation is complete, see
+    /// [`Incoming::with_timeout`].
     ///
     /// The timeout does not apply to anything a transport reads before yielding an invocation,
     /// such as the invocation header read by [`crate::frame::Server::accept`], which callers
