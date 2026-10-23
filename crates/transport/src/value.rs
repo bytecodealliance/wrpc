@@ -444,9 +444,10 @@ impl Sink for Outgoing {
         let mut buf = BytesMut::default();
         enc.encode(item, &mut buf)?;
         if buf.is_empty() {
-            return self.close().await;
+            self.close().await?;
+        } else {
+            self.write_bytes(buf.freeze()).await?;
         }
-        self.write_bytes(buf.freeze()).await?;
         match enc.take_deferred() {
             Some(f) => f(self, Vec::default()).await,
             _ => Ok(()),

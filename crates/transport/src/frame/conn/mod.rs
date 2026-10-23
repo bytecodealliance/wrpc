@@ -692,7 +692,7 @@ async fn ingress(
     index: &std::sync::Mutex<IndexTrie>,
     param_tx: &mut Option<mpsc::Sender<std::io::Result<Bytes>>>,
 ) -> std::io::Result<()> {
-    let mut closed = HashSet::new();
+    let mut closed: HashSet<_> = HashSet::default();
     loop {
         trace!("reading path length");
         let b = match rx.read_u8().await {
