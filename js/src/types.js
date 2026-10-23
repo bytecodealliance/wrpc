@@ -40,10 +40,11 @@ export const option = (some) => ({ kind: "option", some });
 /**
  * `future<some>`. Carries a single asynchronous value, multiplexed over the
  * invocation's framed stream. Requires the async session API (`invoke` /
- * `accept`); the synchronous `encode`/`decode` cannot transmit it.
- * @param {Type} some
+ * `accept`); the synchronous `encode`/`decode` cannot transmit it. Pass no
+ * type for a bare `future` without a payload.
+ * @param {Type | null} [some]
  */
-export const future = (some) => ({ kind: "future", some });
+export const future = (some = null) => ({ kind: "future", some });
 
 /**
  * `stream<elem>`. Carries an asynchronous sequence of `elem` chunks,

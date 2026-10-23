@@ -26,7 +26,7 @@ export type Type =
   | { kind: "variant"; cases: { name: string; ty: Type | null }[] }
   | { kind: "enum"; names: string[] }
   | { kind: "flags"; names: string[] }
-  | { kind: "future"; some: Type }
+  | { kind: "future"; some: Type | null }
   | { kind: "stream"; elem: Type }
   | { kind: "own" | "borrow"; name: string };
 
@@ -54,7 +54,7 @@ export type DecodeDeferred =
   | {
       path: number[];
       kind: "future";
-      ty: Type;
+      ty: Type | null;
       resolve: (value: Value) => void;
       reject: (err: unknown) => void;
     }
@@ -79,7 +79,7 @@ export namespace types {
   export const string: Type;
   export function list(elem: Type): Type;
   export function option(some: Type): Type;
-  export function future(some: Type): Type;
+  export function future(some?: Type | null): Type;
   export function stream(elem: Type): Type;
   export function result(ok?: Type | null, err?: Type | null): Type;
   export function tuple(...elems: Type[]): Type;
@@ -181,7 +181,7 @@ export function encodeValue(
   w: Writer,
   ty: Type,
   v: Value,
-  sink?: { path: number[]; kind: "stream" | "future"; ty: Type; value: Value }[],
+  sink?: { path: number[]; kind: "stream" | "future"; ty: Type | null; value: Value }[],
   path?: number[],
 ): void;
 export function decodeValue(r: Reader, ty: Type, sink?: DecodeDeferred[], path?: number[]): Value;
