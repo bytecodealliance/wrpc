@@ -659,6 +659,26 @@ function feed() {
   return { inbound, peer, transport, aborted };
 }
 
+test(
+  "a future with an empty value encoding resolves once its sub-stream is closed",
+  { timeout: 1000 },
+  async () => {
+    const { inbound, peer, transport } = feed();
+    await peer.outgoing([]).write(Uint8Array.of(0));
+    const ty = [t.future(t.tuple())];
+    const { results, done } = await invoke(transport, STREAMS, "get", [], [], ty);
+    let resolved = false;
+    results[0].then(() => (resolved = true));
+    await tick();
+    await tick();
+    assert.equal(resolved, false);
+    await peer.outgoing([0]).close();
+    assert.deepEqual(await results[0], []);
+    inbound.close();
+    await done;
+  },
+);
+
 test("an empty frame for a finished sub-stream is accepted", { timeout: 1000 }, async () => {
   const { inbound, peer, transport, aborted } = feed();
   await peer.outgoing([]).write(Uint8Array.of(0));

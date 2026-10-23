@@ -214,6 +214,7 @@ async function readDeferred(mux, path, entry, ar) {
 async function readFuture(mux, path, entry, ar) {
   let decoded;
   try {
+    await ar.fill(1);
     decoded = await decodeOne(ar, entry.ty);
   } catch (err) {
     entry.reject(err);
