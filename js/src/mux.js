@@ -33,7 +33,6 @@ export const DISCARDED = new Error("sub-stream discarded");
  * @typedef {object} Pending
  * @property {number[]} path
  * @property {Chan<Uint8Array>} chan
- * @property {boolean} empty whether only empty frames arrived for it
  */
 
 /**
@@ -150,8 +149,13 @@ export class Outgoing {
     this.path = path;
   }
 
-  /** @param {Uint8Array} data @returns {Promise<void>} */
+  /**
+   * Write `data` as a frame, unless it is empty, since frames must not be
+   * empty.
+   * @param {Uint8Array} data @returns {Promise<void>}
+   */
   write(data) {
+    if (data.length === 0) return Promise.resolve();
     return this.mux._writeFrame(this.path, data);
   }
 
@@ -215,11 +219,7 @@ export class Mux {
       // Stop cleanly at a frame boundary once the peer closes the stream.
       if (!(await m.fill(1))) break;
       const [path, n] = await m.decode(readFrameHeader);
-      if (n === 0) {
-        // Peers may send empty frames, even for sub-streams that are finished.
-        this._route(path, true);
-        continue;
-      }
+      if (n === 0) throw new RangeError("received an empty frame");
       const chan = this._route(path);
       for (let len = n; len > 0;) {
         if (!(await m.fill(1))) throw new RangeError(UNEXPECTED_EOF);
@@ -236,42 +236,36 @@ export class Mux {
   /**
    * The channel of the sub-stream at `path`, `null` if its data is discarded,
    * or where the lookup stopped if it is not yet known whether it is expected.
-   * With `empty`, for an empty frame, a finished sub-stream also gives `null`.
    * @param {number[]} path
-   * @param {boolean} [empty]
    * @returns {Chan<Uint8Array> | null | Undecided}
    */
-  _find(path, empty = false) {
+  _find(path) {
     let n = this.root;
     for (const i of path) {
       if (i >= n.discardFrom) return null;
       const child = n.children.get(i);
       if (!child) {
         const finished = i < n.decided || !!n.pruned?.has(i);
-        if (empty && finished) return null;
         return n.sealed || finished ? unexpected(path) : { at: n, i };
       }
       n = child;
     }
-    if (n.done) return empty ? null : unexpected(path);
+    if (n.done) return unexpected(path);
     if (n.discardFrom !== Infinity) return null;
     return n.chan ?? unexpected(path);
   }
 
   /**
    * The channel to route the data of the sub-stream at `path` to, or
-   * `undefined` to drop it. With `empty`, for an empty frame, the data of a
-   * path that may still be expected is buffered as if it were finished.
+   * `undefined` to drop it.
    * @param {number[]} path
-   * @param {boolean} [empty]
    */
-  _route(path, empty = false) {
-    const found = this._find(path, empty);
+  _route(path) {
+    const found = this._find(path);
     if (found === null) return undefined;
     if (found instanceof Chan) return found;
     let pending = found.at.pending?.get(found.i)?.get(key(path));
-    if (!pending) attach(found, (pending = { path, chan: new Chan(), empty }));
-    pending.empty &&= empty;
+    if (!pending) attach(found, (pending = { path, chan: new Chan() }));
     return pending.chan;
   }
 
@@ -450,7 +444,7 @@ export class Mux {
     for (const pending of group.values()) {
       let found;
       try {
-        found = this._find(pending.path, pending.empty);
+        found = this._find(pending.path);
       } catch (err) {
         this.abort(err);
         return;
