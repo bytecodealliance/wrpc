@@ -9,7 +9,10 @@ pub mod common;
 async fn go_bindgen() -> anyhow::Result<()> {
     use core::time::Duration;
 
+    use std::env::consts::EXE_SUFFIX;
+
     use anyhow::{anyhow, bail};
+    use tempfile::tempdir;
     use tokio::fs;
     use tokio::time::sleep;
     use tracing::info;
@@ -39,6 +42,19 @@ async fn go_bindgen() -> anyhow::Result<()> {
         .context("failed to call `go test`")?;
     ensure!(status.success(), "`go test` failed");
 
+    let bin = tempdir().context("failed to create temporary directory")?;
+    let status = Command::new("go")
+        .current_dir("tests/go")
+        .arg("build")
+        .arg("-o")
+        .arg(bin.path())
+        .args(["./cmd/sync-server-tcp", "./cmd/async-server-tcp"])
+        .kill_on_drop(true)
+        .status()
+        .await
+        .context("failed to call `go build`")?;
+    ensure!(status.success(), "`go build` failed");
+
     {
         let port = wrpc_test::free_port()
             .await
@@ -46,9 +62,8 @@ async fn go_bindgen() -> anyhow::Result<()> {
         let addr = format!("[::1]:{port}");
 
         info!("starting `sync-server-tcp`");
-        let mut server = Command::new("go")
-            .current_dir("tests/go")
-            .args(["run", "./cmd/sync-server-tcp", &addr])
+        let mut server = Command::new(bin.path().join(format!("sync-server-tcp{EXE_SUFFIX}")))
+            .arg(&addr)
             .kill_on_drop(true)
             .spawn()
             .context("failed to run `sync-server-tcp`")?;
@@ -76,9 +91,8 @@ async fn go_bindgen() -> anyhow::Result<()> {
         let addr = format!("[::1]:{port}");
 
         info!("starting `async-server-tcp`");
-        let mut server = Command::new("go")
-            .current_dir("tests/go")
-            .args(["run", "./cmd/async-server-tcp", &addr])
+        let mut server = Command::new(bin.path().join(format!("async-server-tcp{EXE_SUFFIX}")))
+            .arg(&addr)
             .kill_on_drop(true)
             .spawn()
             .context("failed to run `async-server-tcp`")?;
