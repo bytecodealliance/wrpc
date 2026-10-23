@@ -41,6 +41,9 @@ impl DerefMut for Client {
 /// Graceful stream shutdown handler
 pub struct ConnHandler;
 
+const DONE: u64 = 0x52e4a40fa8db;
+const FAILED: u64 = 0x52e4a40fa8dc;
+
 impl wrpc_transport::frame::ConnHandler<BufReader<RecvStream>, SendStream> for ConnHandler {
     const DRAIN: bool = false;
 
@@ -50,7 +53,7 @@ impl wrpc_transport::frame::ConnHandler<BufReader<RecvStream>, SendStream> for C
         } else {
             debug!("ingress successfully complete");
         }
-        if let Ok(code) = VarInt::from_u64(0x52e4a40fa8db)
+        if let Ok(code) = VarInt::from_u64(DONE)
             && let Err(err) = rx.get_mut().quic_stream_mut().stop(code)
         {
             debug!(?err, "failed to close incoming stream");
@@ -60,15 +63,20 @@ impl wrpc_transport::frame::ConnHandler<BufReader<RecvStream>, SendStream> for C
     async fn on_egress(mut tx: SendStream, res: std::io::Result<()>) {
         if let Err(err) = res {
             error!(?err, "egress failed");
-        } else {
-            debug!("egress successfully complete");
+            if let Ok(code) = VarInt::from_u64(FAILED)
+                && let Err(err) = tx.quic_stream_mut().reset(code)
+            {
+                debug!(?err, "failed to reset outgoing stream");
+            }
+            return;
         }
+        debug!("egress successfully complete");
         match tx.quic_stream_mut().stopped().await {
             Ok(None) => {
                 trace!("stream successfully closed");
             }
             Ok(Some(code)) => {
-                if u64::from(code) == 0x52e4a40fa8db {
+                if u64::from(code) == DONE {
                     trace!("stream successfully closed");
                 } else {
                     warn!(?code, "stream closed with code");
