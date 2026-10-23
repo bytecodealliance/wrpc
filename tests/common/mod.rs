@@ -1,7 +1,11 @@
+use core::time::Duration;
+
 use anyhow::{Context as _, ensure};
 use bytes::Bytes;
 use futures::{StreamExt as _, stream};
-use tokio::join;
+use tokio::sync::oneshot;
+use tokio::time::timeout;
+use tokio::{join, try_join};
 use tracing::info;
 
 pub async fn assert_async<C: Clone>(
@@ -60,6 +64,35 @@ pub async fn assert_async<C: Clone>(
             }
         }
     );
+
+    info!("calling `wrpc-test:integration/async.identity-future`");
+    let (tx, rx) = oneshot::channel();
+    let (mut fut, io) = wrpc_test::integration::async_::identity_future(
+        client,
+        cx.clone(),
+        Box::pin(async { rx.await.expect("sender dropped") }),
+    )
+    .await
+    .context("failed to call `wrpc-test:integration/async.identity-future`")?;
+    try_join!(
+        async {
+            info!("receiving results");
+            ensure!(
+                timeout(Duration::from_millis(100), &mut fut).await.is_err(),
+                "future resolved before its parameter"
+            );
+            tx.send(()).expect("receiver dropped");
+            fut.await;
+            Ok(())
+        },
+        async {
+            if let Some(io) = io {
+                info!("performing I/O");
+                io.await.context("failed to complete async I/O")?;
+            }
+            Ok(())
+        }
+    )?;
 
     Ok(())
 }
