@@ -4529,7 +4529,7 @@ dependencies = [
 
 [[package]]
 name = "wit-bindgen-wrpc"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "anyhow",
  "bitflags",
@@ -4724,7 +4724,7 @@ checksum = "3ad82d2a33cdc9674dc7465672f271e096168fcdbe0f799d9e6db8c5892679dc"
 
 [[package]]
 name = "wrpc"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -4768,7 +4768,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc-http"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -4796,7 +4796,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc-quic"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -4811,7 +4811,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc-test"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "futures",
@@ -4830,7 +4830,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc-transport"
-version = "0.30.0"
+version = "0.31.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -4847,14 +4847,14 @@ dependencies = [
 
 [[package]]
 name = "wrpc-wasi-keyvalue"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "wit-bindgen-wrpc",
 ]
 
 [[package]]
 name = "wrpc-wasi-keyvalue-mem"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -4867,7 +4867,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc-wasi-keyvalue-redis"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -4882,7 +4882,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc-wasmtime"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -4901,7 +4901,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc-wasmtime-cli"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -4942,7 +4942,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc-websockets"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -4958,7 +4958,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc-webtransport"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "bytes",
