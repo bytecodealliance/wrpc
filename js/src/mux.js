@@ -34,6 +34,7 @@ export const DISCARDED = new Error("sub-stream discarded");
  * @property {number[]} path
  * @property {Chan<Uint8Array>} chan
  * @property {boolean} empty whether only empty frames arrived for it
+ * @property {boolean} closed whether an empty frame closed it
  */
 
 /**
@@ -52,6 +53,7 @@ export const DISCARDED = new Error("sub-stream discarded");
  * @property {number} decided the number of stream elements known, whose
  *   children are all in the trie
  * @property {boolean} done whether all its own data has been read
+ * @property {boolean} closed whether an empty frame closed it
  * @property {Set<number> | undefined} pruned the indices of the children
  *   forgotten once finished, beyond those of the `decided` stream elements
  * @property {number} discardFrom `Infinity`, unless the node is discarded: then
@@ -67,6 +69,7 @@ const node = (sealed) => ({
   sealed,
   decided: 0,
   done: false,
+  closed: false,
   pruned: undefined,
   discardFrom: Infinity,
   pending: undefined,
@@ -150,9 +153,24 @@ export class Outgoing {
     this.path = path;
   }
 
-  /** @param {Uint8Array} data @returns {Promise<void>} */
+  /**
+   * Write `data` as a frame, unless it is empty, since an empty frame closes
+   * the sub-stream.
+   * @param {Uint8Array} data @returns {Promise<void>}
+   */
   write(data) {
-    return this.mux._writeFrame(this.path, data);
+    if (data.length > 0) return this.mux._writeFrame(this.path, data);
+    const err = this.mux.writeError;
+    return err === undefined ? Promise.resolve() : Promise.reject(err);
+  }
+
+  /**
+   * Close the sub-stream by writing an empty frame. No more data may be
+   * written to it afterwards.
+   * @returns {Promise<void>}
+   */
+  close() {
+    return this.mux._writeFrame(this.path, new Uint8Array(0));
   }
 
   /** @param {number[]} rel @returns {Outgoing} */
@@ -216,8 +234,10 @@ export class Mux {
       if (!(await m.fill(1))) break;
       const [path, n] = await m.decode(readFrameHeader);
       if (n === 0) {
-        // Peers may send empty frames, even for sub-streams that are finished.
-        this._route(path, true);
+        // An empty frame closes its sub-stream, which may already be finished.
+        this._route(path, true)?.close();
+        const closed = this._get(path);
+        if (closed) closed.closed = true;
         continue;
       }
       const chan = this._route(path);
@@ -253,6 +273,7 @@ export class Mux {
       }
       n = child;
     }
+    if (n.closed) unexpected(path);
     if (n.done) return empty ? null : unexpected(path);
     if (n.discardFrom !== Infinity) return null;
     return n.chan ?? unexpected(path);
@@ -270,8 +291,10 @@ export class Mux {
     if (found === null) return undefined;
     if (found instanceof Chan) return found;
     let pending = found.at.pending?.get(found.i)?.get(key(path));
-    if (!pending) attach(found, (pending = { path, chan: new Chan(), empty }));
+    if (pending?.closed) unexpected(path);
+    if (!pending) attach(found, (pending = { path, chan: new Chan(), empty, closed: false }));
     pending.empty &&= empty;
+    pending.closed ||= empty;
     return pending.chan;
   }
 
@@ -354,6 +377,7 @@ export class Mux {
       n.sealed = !e.nested;
       if (n.chan) return;
       n.chan = t?.pending?.chan ?? new Chan();
+      n.closed = t?.pending?.closed ?? false;
       n.chan.capacity = CAPACITY;
       if (this.inboundClosed) n.chan.close(this.inboundError);
     });

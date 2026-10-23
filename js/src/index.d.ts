@@ -223,6 +223,7 @@ export class Outgoing {
   constructor(mux: Mux, path: number[]);
   path: number[];
   write(data: Uint8Array): Promise<void>;
+  close(): Promise<void>;
   index(rel: number[]): Outgoing;
 }
 
