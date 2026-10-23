@@ -6,28 +6,23 @@ use core::pin::Pin;
 use std::collections::HashSet;
 
 use bytes::{BufMut as _, Bytes, BytesMut};
-use futures::stream::{self, FuturesUnordered};
-use futures::{StreamExt as _, TryStreamExt as _};
+use futures::TryStreamExt as _;
+use futures::stream::FuturesUnordered;
 use tokio::io::{AsyncRead, AsyncReadExt as _};
-use tokio_util::codec::{Encoder, FramedRead};
-use tokio_util::io::StreamReader;
+use tokio_util::codec::Encoder;
 use tracing::{error, instrument, trace, warn};
 use uuid::Uuid;
 use wasm_tokio::cm::AsyncReadValue as _;
 use wasm_tokio::{
     AsyncReadCore as _, AsyncReadLeb128 as _, AsyncReadUtf8 as _, CoreNameEncoder,
-    CoreVecDecoderBytes, CoreVecEncoderBytes, DEFAULT_MAX_INITIAL_CAPACITY, Leb128Encoder,
-    Utf8Codec,
+    CoreVecEncoderBytes, DEFAULT_MAX_INITIAL_CAPACITY, Leb128Encoder, Utf8Codec,
 };
 use wasmtime::bail;
 use wasmtime::component::types::{Case, Field};
 use wasmtime::component::{ResourceType, Type, Val};
 use wasmtime::error::Context as _;
 use wasmtime::{AsContextMut, StoreContextMut};
-use wasmtime_wasi::p2::pipe::{AsyncReadStream, MemoryInputPipe};
-use wasmtime_wasi::p2::{DynInputStream, StreamError};
 use wrpc_transport::frame::{Incoming, Outgoing};
-use wrpc_transport::{Deferred as _, READ_CHUNK_SIZE, StreamEncoderRead};
 
 use crate::{RemoteResource, WrpcView};
 
@@ -470,9 +465,12 @@ where
                 Ok(())
             }
             (Val::Resource(resource), Type::Own(ty) | Type::Borrow(ty)) => {
-                if *ty == ResourceType::host::<DynInputStream>() || self.io_streams.contains(ty) {
+                #[cfg(feature = "wasmtime-wasi")]
+                if *ty == ResourceType::host::<wasmtime_wasi::p2::DynInputStream>()
+                    || self.io_streams.contains(ty)
+                {
                     let stream = resource
-                        .try_into_resource::<DynInputStream>(&mut self.store)
+                        .try_into_resource::<wasmtime_wasi::p2::DynInputStream>(&mut self.store)
                         .context("failed to downcast `wasi:io/input-stream`")?;
                     if stream.owned() {
                         let stream = self
@@ -482,23 +480,29 @@ where
                             .table
                             .delete(stream)
                             .context("failed to delete input stream")?;
-                        let items: Pin<Box<dyn AsyncRead + Send>> = Box::pin(StreamReader::new(
-                            stream::try_unfold(stream, |mut stream| async move {
-                                loop {
-                                    stream.ready().await;
-                                    match stream.read(READ_CHUNK_SIZE) {
-                                        Ok(buf) if buf.is_empty() => {}
-                                        Ok(buf) => return Ok(Some((buf, stream))),
-                                        Err(StreamError::Closed) => return Ok(None),
-                                        Err(err) => return Err(std::io::Error::other(err)),
+                        let items: Pin<Box<dyn AsyncRead + Send>> =
+                            Box::pin(tokio_util::io::StreamReader::new(
+                                futures::stream::try_unfold(stream, |mut stream| async move {
+                                    loop {
+                                        stream.ready().await;
+                                        match stream.read(wrpc_transport::READ_CHUNK_SIZE) {
+                                            Ok(buf) if buf.is_empty() => {}
+                                            Ok(buf) => return Ok(Some((buf, stream))),
+                                            Err(wasmtime_wasi::p2::StreamError::Closed) => {
+                                                return Ok(None);
+                                            }
+                                            Err(err) => return Err(std::io::Error::other(err)),
+                                        }
                                     }
-                                }
-                            }),
-                        ));
-                        let mut enc = StreamEncoderRead::<Outgoing, READ_CHUNK_SIZE>::default();
+                                }),
+                            ));
+                        let mut enc = wrpc_transport::StreamEncoderRead::<
+                            Outgoing,
+                            { wrpc_transport::READ_CHUNK_SIZE },
+                        >::default();
                         enc.encode(items, dst)
                             .context("failed to encode input stream")?;
-                        if let Some(f) = enc.take_deferred() {
+                        if let Some(f) = wrpc_transport::Deferred::take_deferred(&mut enc) {
                             self.deferred = Some(Box::new(|w| {
                                 Box::pin(async move { Ok(f(w, Vec::default()).await?) })
                             }));
@@ -515,8 +519,9 @@ where
                         // the receiver. This is not trivial and generally should be a very rare use case.
                         bail!("encoding borrowed `wasi:io/input-stream` not supported yet");
                     }
-                    Ok(())
-                } else if resource.ty() == ResourceType::host::<RemoteResource>() {
+                    return Ok(());
+                }
+                if resource.ty() == ResourceType::host::<RemoteResource>() {
                     let resource = resource
                         .try_into_resource(&mut self.store)
                         .context("resource type mismatch")?;
@@ -865,49 +870,57 @@ where
             Ok(())
         }
         Type::Own(ty) | Type::Borrow(ty) => {
-            if *ty == ResourceType::host::<DynInputStream>() || io_streams.contains(ty) {
+            #[cfg(feature = "wasmtime-wasi")]
+            if *ty == ResourceType::host::<wasmtime_wasi::p2::DynInputStream>()
+                || io_streams.contains(ty)
+            {
                 let mut store = store.as_context_mut();
                 // The stream must be typed as `DynInputStream` (the host resource type),
                 // otherwise the resulting resource handle carries the concrete reader type
                 // and fails the guest's `own<input-stream>` type check.
-                let stream: DynInputStream = match r.read_u8().await? {
-                    0 => {
-                        let r = r.index(path).map_err(std::io::Error::other)?;
-                        Box::new(AsyncReadStream::new(StreamReader::new(stream::try_unfold(
-                            FramedRead::new(
-                                r,
-                                CoreVecDecoderBytes::<DEFAULT_MAX_INITIAL_CAPACITY>::default(),
-                            ),
-                            |mut framed| async move {
-                                match framed.next().await {
-                                    Some(Ok(chunk)) if chunk.is_empty() => {
-                                        if framed.read_buffer().is_empty() {
-                                            Ok(None)
-                                        } else {
-                                            Err(std::io::Error::new(
-                                                std::io::ErrorKind::InvalidData,
-                                                "received data after stream end",
-                                            ))
+                let stream: wasmtime_wasi::p2::DynInputStream =
+                    match r.read_u8().await? {
+                        0 => {
+                            let r = r.index(path).map_err(std::io::Error::other)?;
+                            Box::new(wasmtime_wasi::p2::pipe::AsyncReadStream::new(
+                                tokio_util::io::StreamReader::new(futures::stream::try_unfold(
+                                    tokio_util::codec::FramedRead::new(
+                                        r,
+                                        wasm_tokio::CoreVecDecoderBytes::<
+                                            DEFAULT_MAX_INITIAL_CAPACITY,
+                                        >::default(),
+                                    ),
+                                    |mut framed| async move {
+                                        match futures::StreamExt::next(&mut framed).await {
+                                            Some(Ok(chunk)) if chunk.is_empty() => {
+                                                if framed.read_buffer().is_empty() {
+                                                    Ok(None)
+                                                } else {
+                                                    Err(std::io::Error::new(
+                                                        std::io::ErrorKind::InvalidData,
+                                                        "received data after stream end",
+                                                    ))
+                                                }
+                                            }
+                                            Some(Ok(chunk)) => Ok(Some((chunk, framed))),
+                                            Some(Err(err)) => Err(err),
+                                            None => Err(std::io::ErrorKind::UnexpectedEof.into()),
                                         }
-                                    }
-                                    Some(Ok(chunk)) => Ok(Some((chunk, framed))),
-                                    Some(Err(err)) => Err(err),
-                                    None => Err(std::io::ErrorKind::UnexpectedEof.into()),
-                                }
-                            },
-                        ))))
-                    }
-                    1 => {
-                        let buf = read_bytes(r).await?;
-                        Box::new(MemoryInputPipe::new(buf))
-                    }
-                    status => {
-                        return Err(std::io::Error::new(
-                            std::io::ErrorKind::InvalidData,
-                            format!("invalid stream status byte value `{status}`"),
-                        ));
-                    }
-                };
+                                    },
+                                )),
+                            ))
+                        }
+                        1 => {
+                            let buf = read_bytes(r).await?;
+                            Box::new(wasmtime_wasi::p2::pipe::MemoryInputPipe::new(buf))
+                        }
+                        status => {
+                            return Err(std::io::Error::new(
+                                std::io::ErrorKind::InvalidData,
+                                format!("invalid stream status byte value `{status}`"),
+                            ));
+                        }
+                    };
                 let res = store
                     .data_mut()
                     .wrpc()
@@ -918,8 +931,9 @@ where
                     .try_into_resource_any(store)
                     .map_err(std::io::Error::other)?;
                 *val = Val::Resource(v);
-                Ok(())
-            } else if resources.contains(ty) {
+                return Ok(());
+            }
+            if resources.contains(ty) {
                 let mut store = store.as_context_mut();
                 let mut id = uuid::Bytes::default();
                 debug_assert_eq!(id.len(), 16);

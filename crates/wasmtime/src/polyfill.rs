@@ -14,7 +14,6 @@ use tracing::{Instrument as _, Span, debug, instrument, trace, warn};
 use wasmtime::component::{LinkerInstance, ResourceType, Type, Val, types};
 use wasmtime::error::Context as _;
 use wasmtime::{AsContextMut, Engine, StoreContextMut, bail, ensure};
-use wasmtime_wasi::p2::DynInputStream;
 use wrpc_transport::{Invoke, InvokeExt as _};
 
 use crate::paths::params_async_paths;
@@ -158,7 +157,11 @@ async fn invoke<T: WrpcView>(
     let timeout = view.ctx.timeout();
     let buf = buf.freeze();
     let results_ty: Vec<_> = results_ty.into_iter().collect();
-    let paths = params_async_paths(&results_ty, &[ResourceType::host::<DynInputStream>()]);
+    #[cfg(feature = "wasmtime-wasi")]
+    let io_streams = [ResourceType::host::<wasmtime_wasi::p2::DynInputStream>()];
+    #[cfg(not(feature = "wasmtime-wasi"))]
+    let io_streams: [ResourceType; 0] = [];
+    let paths = params_async_paths(&results_ty, &io_streams);
     let rpc_name = rpc_func_name(&name);
     let start = Instant::now();
     let invocation = if let Some(timeout) = timeout {

@@ -10,6 +10,9 @@ homepage.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+default = ["wasmtime-wasi"]
+
 [dependencies]
 anyhow = { workspace = true, features = ["std"] }
 bytes = { workspace = true }
@@ -19,8 +22,8 @@ tokio-util = { workspace = true, features = ["codec", "io"] }
 tracing = { workspace = true, features = ["attributes"] }
 uuid = { workspace = true, features = ["std", "v7"] }
 wasm-tokio = { workspace = true }
-wasmtime = { workspace = true, features = ["anyhow"] }
-wasmtime-wasi = { workspace = true, features = ["p2"] }
+wasmtime = { workspace = true, features = ["anyhow", "async", "component-model", "runtime"] }
+wasmtime-wasi = { workspace = true, features = ["p2"], optional = true }
 wit-parser = { workspace = true }
 wrpc-introspect = { workspace = true }
 wrpc-transport = { workspace = true }
