@@ -1736,6 +1736,48 @@ async fn rust_oneshot_duplex() -> anyhow::Result<()> {
     assert_oneshot(clt, rx, tx).await
 }
 
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+#[instrument(ret)]
+async fn rust_oneshot_invoke_read_timeout() -> anyhow::Result<()> {
+    let (clt, _srv_io) = Oneshot::duplex(1024);
+    let err = tokio::time::timeout(
+        Duration::from_secs(10),
+        clt.io_timeout(Duration::from_millis(100))
+            .invoke_values_blocking::<_, _, (String,)>((), "foo", "bar", (42,), &[[]; 0]),
+    )
+    .await?
+    .expect_err("invocation without a response should fail");
+    assert!(
+        format!("{err:#}").contains("read timed out"),
+        "unexpected error: {err:#}"
+    );
+    Ok(())
+}
+
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+#[instrument(ret)]
+async fn rust_oneshot_invoke_write_timeout() -> anyhow::Result<()> {
+    let (clt, _srv_io) = Oneshot::duplex(1024);
+    let err = tokio::time::timeout(
+        Duration::from_secs(10),
+        clt.io_timeout(Duration::from_millis(100))
+            .invoke_values_blocking::<_, _, (String,)>(
+                (),
+                "foo",
+                "bar",
+                (vec![0u8; 1 << 16],),
+                &[[]; 0],
+            ),
+    )
+    .await?
+    .expect_err("invocation with unread parameters should fail");
+    assert!(
+        format!("{err:#}").contains("invocation timed out"),
+        "unexpected error: {err:#}"
+    );
+    Ok(())
+}
+
 #[cfg(unix)]
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 #[instrument(ret)]
