@@ -34,7 +34,8 @@ use wasm_tokio::{
 use crate::frame::Outgoing;
 use crate::{BufferedIncoming, copy_io_error, encode_ready_bytes_header, error_receiver_closed};
 
-const READ_CHUNK_SIZE: usize = 8192;
+/// Size of chunks read from byte streams
+pub const READ_CHUNK_SIZE: usize = 8192;
 
 fn encode_ready_bytes<T: AsRef<[u8]>>(chunks: &[T], dst: &mut BytesMut) -> std::io::Result<()> {
     let n = chunks.iter().map(|chunk| chunk.as_ref().len()).sum();
@@ -2084,23 +2085,26 @@ impl<W: Sink> Encode<W> for Pin<Box<dyn Stream<Item = Bytes> + Send>> {
 }
 
 /// Encoder for `stream<list<u8>>` with [`AsyncRead`] support
-pub struct StreamEncoderRead<W = Outgoing> {
+///
+/// At most `MAX_READY` bytes are read from the stream on encode, any remaining
+/// bytes are transmitted asynchronously.
+pub struct StreamEncoderRead<W = Outgoing, const MAX_READY: usize = { usize::MAX }> {
     deferred: Option<DeferredFn<W>>,
 }
 
-impl<W> Default for StreamEncoderRead<W> {
+impl<W, const MAX_READY: usize> Default for StreamEncoderRead<W, MAX_READY> {
     fn default() -> Self {
         Self { deferred: None }
     }
 }
 
-impl<W> Deferred<W> for StreamEncoderRead<W> {
+impl<W, const MAX_READY: usize> Deferred<W> for StreamEncoderRead<W, MAX_READY> {
     fn take_deferred(&mut self) -> Option<DeferredFn<W>> {
         self.deferred.take()
     }
 }
 
-impl<W, S> tokio_util::codec::Encoder<S> for StreamEncoderRead<W>
+impl<W, S, const MAX_READY: usize> tokio_util::codec::Encoder<S> for StreamEncoderRead<W, MAX_READY>
 where
     W: Sink,
     S: AsyncRead + Send + Unpin + 'static,
@@ -2112,8 +2116,12 @@ where
         self.deferred = None;
         let mut ready = BytesMut::default();
         loop {
-            ready.reserve(READ_CHUNK_SIZE);
-            match items.read_buf(&mut ready).now_or_never() {
+            let n = MAX_READY.saturating_sub(ready.len());
+            if n == 0 {
+                break;
+            }
+            ready.reserve(n.min(READ_CHUNK_SIZE));
+            match items.read_buf(&mut (&mut ready).limit(n)).now_or_never() {
                 Some(Ok(0)) => return encode_ready_bytes(&[ready], dst),
                 Some(Ok(..)) => {}
                 Some(Err(err)) => return Err(err),
@@ -2576,6 +2584,11 @@ mod tests {
         enc.encode(tokio::io::empty(), &mut buf)?;
         assert!(enc.take_deferred().is_none());
 
+        let mut enc = StreamEncoderRead::<Outgoing, 2>::default();
+        enc.encode(b"fo".as_slice(), &mut buf)?;
+        assert!(enc.take_deferred().is_some());
+
+        let mut enc = StreamEncoderRead::<Outgoing>::default();
         let (_tx, rx) = tokio::io::duplex(1);
         enc.encode(rx, &mut buf)?;
         let err = tokio_util::io::StreamReader::new(stream::iter([Err::<Bytes, _>(
