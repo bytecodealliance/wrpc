@@ -14,8 +14,10 @@ use tracing::{Instrument as _, Span, debug, instrument, trace, warn};
 use wasmtime::component::{LinkerInstance, ResourceType, Type, Val, types};
 use wasmtime::error::Context as _;
 use wasmtime::{AsContextMut, Engine, StoreContextMut, bail, ensure};
+use wasmtime_wasi::p2::DynInputStream;
 use wrpc_transport::{Invoke, InvokeExt as _};
 
+use crate::paths::params_async_paths;
 use crate::rpc::Error;
 use crate::{ValEncoder, WrpcView, WrpcViewExt as _, read_value, rpc_func_name, rpc_result_type};
 
@@ -155,16 +157,16 @@ async fn invoke<T: WrpcView>(
     let cx = view.ctx.context();
     let timeout = view.ctx.timeout();
     let buf = buf.freeze();
-    // TODO: set paths
-    let paths = &[[]; 0];
+    let results_ty: Vec<_> = results_ty.into_iter().collect();
+    let paths = params_async_paths(&results_ty, &[ResourceType::host::<DynInputStream>()]);
     let rpc_name = rpc_func_name(&name);
     let start = Instant::now();
     let invocation = if let Some(timeout) = timeout {
         clt.timeout(timeout)
-            .invoke(cx, &instance, rpc_name, buf, paths)
+            .invoke(cx, &instance, rpc_name, buf, &paths)
             .await
     } else {
-        clt.invoke(cx, &instance, rpc_name, buf, paths).await
+        clt.invoke(cx, &instance, rpc_name, buf, &paths).await
     };
     let (outgoing, incoming) = match invocation {
         Ok((outgoing, incoming)) => (outgoing, incoming),
