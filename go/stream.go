@@ -10,6 +10,9 @@ import (
 	"math"
 )
 
+// ReadChunkSize is the size of chunks read from byte streams
+const ReadChunkSize = 8192
+
 type ByteStreamWriter struct {
 	r     io.Reader
 	chunk []byte
@@ -17,7 +20,7 @@ type ByteStreamWriter struct {
 
 func (v *ByteStreamWriter) WriteTo(w ByteWriter) (err error) {
 	if len(v.chunk) == 0 {
-		v.chunk = make([]byte, 8096)
+		v.chunk = make([]byte, ReadChunkSize)
 	}
 	buf := bufio.NewWriter(w)
 	defer func() {

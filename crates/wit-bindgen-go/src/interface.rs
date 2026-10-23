@@ -2120,7 +2120,7 @@ impl InterfaceGenerator<'_> {
                            }}
                        }}
                     }}()
-                    chunk := make([]byte, 8096)
+                    chunk := make([]byte, {wrpc}.ReadChunkSize)
                     for {{
                         var end bool
                         {slog}.Debug("reading pending byte stream contents")
