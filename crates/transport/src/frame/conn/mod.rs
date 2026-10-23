@@ -439,6 +439,8 @@ impl Incoming {
                         return io.await;
                     };
                     select! {
+                        biased;
+
                         res = &mut io => {
                             res?;
                             _ = dropped.await;
@@ -908,6 +910,16 @@ mod tests {
         tx.write_all(&FRAME).await.unwrap();
         let err = done(done_rx).await.unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::BrokenPipe);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn incoming_drop_reports_ingress_error() {
+        let (mut tx, rx, done_rx) = incoming(true);
+        tx.write_all(&FRAME).await.unwrap();
+        tx.write_all(&[0x01, 0x01, 0x01, 0x2a]).await.unwrap();
+        drop(rx);
+        let err = done(done_rx).await.unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
     }
 
     #[test_log::test(tokio::test)]
