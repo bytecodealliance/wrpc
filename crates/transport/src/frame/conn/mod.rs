@@ -23,6 +23,7 @@ use wasm_tokio::{
 };
 
 use crate::frame::MAX_INITIAL_PATH_CAPACITY;
+use crate::{copy_io_error, error_receiver_closed};
 
 mod client;
 mod server;
@@ -672,10 +673,6 @@ impl AsyncWrite for Outgoing {
     }
 }
 
-fn copy_io_error(err: &std::io::Error) -> std::io::Error {
-    std::io::Error::new(err.kind(), err.to_string())
-}
-
 #[instrument(level = "trace", skip_all, ret(level = "trace"))]
 async fn ingress(
     mut rx: impl AsyncRead + Unpin,
@@ -737,7 +734,7 @@ async fn ingress(
             trace!(?buf, "read data chunk");
             tx.send(Ok(buf.freeze()))
                 .await
-                .map_err(|_| receiver_closed())?;
+                .map_err(|_| error_receiver_closed())?;
         }
     }
 }
@@ -748,18 +745,13 @@ fn close_rx(state: &IngressState) -> std::io::Result<()> {
     trace!("all handles dropped, closing index trie receivers");
     let mut index = state.index.lock().unwrap_or_else(PoisonError::into_inner);
     if index.close_rx() || state.unprocessed.load(Ordering::Relaxed) {
-        return Err(unprocessed());
+        return Err(error_unprocessed());
     }
     Ok(())
 }
 
-/// Returns the error for data received for a closed receiver
-pub(crate) fn receiver_closed() -> std::io::Error {
-    std::io::Error::new(std::io::ErrorKind::BrokenPipe, "stream receiver closed")
-}
-
 /// Returns the error for received data, which was not processed
-fn unprocessed() -> std::io::Error {
+fn error_unprocessed() -> std::io::Error {
     std::io::Error::new(
         std::io::ErrorKind::BrokenPipe,
         "received data was not processed",

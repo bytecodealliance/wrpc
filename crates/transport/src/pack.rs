@@ -8,8 +8,7 @@ use tokio::io::{AsyncRead, AsyncReadExt as _};
 use tokio::sync::mpsc;
 use tokio_util::codec::{Decoder, Encoder};
 
-use crate::value::encode_ready_bytes_header;
-use crate::{Decode, Deferred as _, DeferredFn, Encode, Index, Sink};
+use crate::{Decode, Deferred as _, DeferredFn, Encode, Index, Sink, encode_ready_bytes_header};
 
 /// [Sink] used by [pack], which collects the packed asynchronous values
 #[derive(Clone)]
