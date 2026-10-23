@@ -79,7 +79,9 @@ record frame {
 }
 ```
 
-It is assumed that streams using this framing protocol can communicate "closing" to peers using some out-of-band mechanism.
+An empty frame, i.e. a frame with empty `data`, closes its `path`: the sender MUST NOT send any more frames on that `path`, including another empty frame, and a receiver MUST treat a frame received on a closed `path` as an error. Closing a `path` does not close the paths nested in it. A sender MAY leave a `path` open, unless stated otherwise (see [Futures](#futures)).
+
+Frames do not communicate the end of transmit, i.e. that no more frames follow. Each transport MUST communicate it using its own mechanism, for example, TCP shutdown or finishing a QUIC stream. The end of transmit closes every `path`.
 
 ## Transport specifications
 
@@ -105,6 +107,8 @@ For example:
 ```
 
 If `v` is pending, encoded `bool` value is sent on index `0` (corresponding to first parameter)
+
+A `future` without a payload type has an empty value encoding, so once such a pending future resolves, the sender MUST close its index, either with an empty frame or by ending transmit (see [Framed stream specification](#framed-stream-specification)), and the receiver MUST consider it resolved once the index is closed.
 
 ### Streams
 
