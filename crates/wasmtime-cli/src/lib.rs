@@ -398,12 +398,11 @@ where
     let (pre, engine, _, _) =
         instantiate_pre(WASI_SNAPSHOT_PREVIEW1_COMMAND_ADAPTER, workload).await?;
     let mut store = new_store(&engine, clt, cx, envs, "command.wasm", timeout);
-    let is_p3 = pre
+    if pre
         .component()
-        .component_type()
-        .exports(&engine)
-        .any(|(name, _)| name.strip_prefix("wasi:cli/run@").is_some_and(is_0_3));
-    if is_p3 {
+        .get_export_index(None, "wasi:cli/run@0.3.0")
+        .is_some()
+    {
         let cmd = wasmtime_wasi::p3::bindings::CommandPre::new(pre)
             .map_err(anyhow::Error::from)
             .context("failed to construct `command` instance")?;
