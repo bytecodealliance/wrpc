@@ -22,7 +22,7 @@ futures = { workspace = true, features = ["std"] }
 pin-project-lite = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt", "time"] }
 tokio-stream = { workspace = true }
-tokio-util = { workspace = true, features = ["codec", "io"] }
+tokio-util = { workspace = true, features = ["codec", "io", "rt"] }
 tracing = { workspace = true, features = ["attributes"] }
 wasm-tokio = { workspace = true, features = ["tracing"] }
 
