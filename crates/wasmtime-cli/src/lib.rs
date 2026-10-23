@@ -133,7 +133,7 @@ fn use_pooling_allocator_by_default() -> anyhow::Result<Option<bool>> {
     }
 }
 
-fn is_0_2(version: &str, min_patch: u64) -> bool {
+fn is_0_x(version: &str, x: u64, min_patch: u64) -> bool {
     match version.parse() {
         Ok(semver::Version {
             major,
@@ -141,22 +141,17 @@ fn is_0_2(version: &str, min_patch: u64) -> bool {
             patch,
             pre,
             build,
-        }) => major == 0 && minor == 2 && patch >= min_patch && pre.is_empty() && build.is_empty(),
+        }) => major == 0 && minor == x && patch >= min_patch && pre.is_empty() && build.is_empty(),
         _ => false,
     }
 }
 
+fn is_0_2(version: &str, min_patch: u64) -> bool {
+    is_0_x(version, 2, min_patch)
+}
+
 fn is_0_3(version: &str) -> bool {
-    match version.parse() {
-        Ok(semver::Version {
-            major,
-            minor,
-            pre,
-            build,
-            ..
-        }) => major == 0 && minor == 3 && pre.is_empty() && build.is_empty(),
-        _ => false,
-    }
+    is_0_x(version, 3, 0)
 }
 
 #[instrument(level = "trace", skip(adapter))]
