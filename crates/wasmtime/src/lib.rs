@@ -25,10 +25,9 @@ use wasmtime::{AsContextMut, Engine, bail};
 use wrpc_transport::Invoke;
 use wrpc_transport::frame::{Incoming, Outgoing};
 
-use crate::bindings::rpc::context::Context;
-use crate::bindings::rpc::error::Error;
-use crate::bindings::rpc::transport::{IncomingChannel, Invocation, OutgoingChannel};
+use crate::rpc::{Context, Error, IncomingChannel, Invocation, OutgoingChannel};
 
+#[cfg(feature = "wasmtime-wasi")]
 pub mod bindings;
 mod codec;
 pub mod paths;

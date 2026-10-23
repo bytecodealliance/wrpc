@@ -50,7 +50,7 @@ bin-wasmtime = ["dep:tokio", "dep:wrpc-wasmtime-cli", "tokio/rt-multi-thread"]
 http = ["dep:wrpc-http"]
 net = ["wrpc-transport/net"]
 quic = ["dep:wrpc-quic"]
-wasmtime = ["dep:wrpc-wasmtime"]
+wasmtime = ["dep:wrpc-wasmtime", "wrpc-wasmtime/wasmtime-wasi"]
 webtransport = ["dep:wrpc-webtransport"]
 websockets = [
     "dep:wrpc-websockets",
