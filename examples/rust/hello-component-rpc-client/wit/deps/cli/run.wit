@@ -1,0 +1,8 @@
+package wasi:cli@0.3.0;
+
+@since(version = 0.3.0)
+interface run {
+  /// Run the program.
+  @since(version = 0.3.0)
+  run: async func() -> result;
+}

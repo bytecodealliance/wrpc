@@ -1,6 +1,5 @@
 #![allow(clippy::type_complexity)] // TODO: https://github.com/bytecodealliance/wrpc/issues/2
 
-use core::any::Any;
 use core::borrow::Borrow;
 use core::fmt;
 use core::iter::zip;
@@ -8,9 +7,7 @@ use core::pin::pin;
 use core::time::Duration;
 
 use std::collections::{BTreeMap, HashMap};
-use std::sync::Arc;
 
-use anyhow::anyhow;
 use bytes::{Bytes, BytesMut};
 use futures::future::try_join_all;
 use tokio::io::AsyncWriteExt as _;
@@ -21,13 +18,12 @@ use wasmtime::component::{
     Accessor, Func, Resource, ResourceAny, ResourceTable, ResourceType, Type, Val, types,
 };
 use wasmtime::error::Context as _;
-use wasmtime::{AsContextMut, Engine, bail};
+use wasmtime::{AsContextMut, Engine};
 use wrpc_transport::Invoke;
 use wrpc_transport::frame::{Incoming, Outgoing};
 
 use crate::bindings::rpc::context::Context;
 use crate::bindings::rpc::error::Error;
-use crate::bindings::rpc::transport::{IncomingChannel, Invocation, OutgoingChannel};
 
 pub mod bindings;
 mod codec;
@@ -60,7 +56,7 @@ fn rpc_result_type<T: Borrow<Type>>(
     results_ty: impl IntoIterator<Item = T>,
 ) -> Option<Option<Type>> {
     let rpc_err_ty = host_resources
-        .get("wrpc:rpc/error@0.1.0")
+        .get("wrpc:rpc/error@0.2.0")
         .and_then(|instance| instance.get("error"));
     let mut results_ty = results_ty.into_iter();
     match (
@@ -99,7 +95,16 @@ pub trait WrpcCtx<T: Invoke>: Send {
     fn timeout(&self) -> Option<Duration> {
         None
     }
+
+    /// Maximum total number of indices in the async paths declared by a `wrpc:rpc`
+    /// invocation, which bounds the memory used to track them. Invocations declaring more fail.
+    fn max_path_indices(&self) -> usize {
+        DEFAULT_MAX_PATH_INDICES
+    }
 }
+
+/// Default of [`WrpcCtx::max_path_indices`]
+pub const DEFAULT_MAX_PATH_INDICES: usize = 4096;
 
 pub struct WrpcCtxView<'a, T: Invoke> {
     pub ctx: &'a mut dyn WrpcCtx<T>,
@@ -121,122 +126,6 @@ impl<T: WrpcView> WrpcView for &mut T {
 }
 
 pub trait WrpcViewExt: WrpcView {
-    fn push_invocation(
-        &mut self,
-        invocation: impl Future<Output = anyhow::Result<(Outgoing, Incoming)>> + Send + 'static,
-    ) -> wasmtime::Result<Resource<Invocation>> {
-        self.wrpc()
-            .table
-            .push(Invocation::Future(Box::pin(async move {
-                let res = invocation.await;
-                Box::new(res) as Box<dyn Any + Send>
-            })))
-            .context("failed to push invocation to table")
-    }
-
-    fn get_invocation_result(
-        &mut self,
-        invocation: &Resource<Invocation>,
-    ) -> wasmtime::Result<Option<&Box<anyhow::Result<(Outgoing, Incoming)>>>> {
-        let invocation = self
-            .wrpc()
-            .table
-            .get(invocation)
-            .context("failed to get invocation from table")?;
-        match invocation {
-            Invocation::Future(..) => Ok(None),
-            Invocation::Ready(res) => {
-                let res = res.downcast_ref().context("invalid invocation type")?;
-                Ok(Some(res))
-            }
-        }
-    }
-
-    fn delete_invocation(
-        &mut self,
-        invocation: Resource<Invocation>,
-    ) -> wasmtime::Result<impl Future<Output = anyhow::Result<(Outgoing, Incoming)>>> {
-        let invocation = self
-            .wrpc()
-            .table
-            .delete(invocation)
-            .context("failed to delete invocation from table")?;
-        Ok(async move {
-            let res = match invocation {
-                Invocation::Future(fut) => fut.await,
-                Invocation::Ready(res) => res,
-            };
-            let res = res
-                .downcast()
-                .map_err(|_| anyhow!("invalid invocation type"))?;
-            *res
-        })
-    }
-
-    fn push_outgoing_channel(
-        &mut self,
-        outgoing: Outgoing,
-    ) -> wasmtime::Result<Resource<OutgoingChannel>> {
-        self.wrpc()
-            .table
-            .push(OutgoingChannel(Arc::new(std::sync::RwLock::new(Box::new(
-                outgoing,
-            )))))
-            .context("failed to push outgoing channel to table")
-    }
-
-    fn delete_outgoing_channel(
-        &mut self,
-        outgoing: Resource<OutgoingChannel>,
-    ) -> wasmtime::Result<Outgoing> {
-        let OutgoingChannel(outgoing) = self
-            .wrpc()
-            .table
-            .delete(outgoing)
-            .context("failed to delete outgoing channel from table")?;
-        let outgoing =
-            Arc::into_inner(outgoing).context("outgoing channel has an active stream")?;
-        let Ok(outgoing) = outgoing.into_inner() else {
-            bail!("lock poisoned");
-        };
-        let outgoing = outgoing
-            .downcast()
-            .map_err(|_| wasmtime::Error::msg("invalid outgoing channel type"))?;
-        Ok(*outgoing)
-    }
-
-    fn push_incoming_channel(
-        &mut self,
-        incoming: Incoming,
-    ) -> wasmtime::Result<Resource<IncomingChannel>> {
-        self.wrpc()
-            .table
-            .push(IncomingChannel(Arc::new(std::sync::RwLock::new(Box::new(
-                incoming,
-            )))))
-            .context("failed to push incoming channel to table")
-    }
-
-    fn delete_incoming_channel(
-        &mut self,
-        incoming: Resource<IncomingChannel>,
-    ) -> wasmtime::Result<Incoming> {
-        let IncomingChannel(incoming) = self
-            .wrpc()
-            .table
-            .delete(incoming)
-            .context("failed to delete incoming channel from table")?;
-        let incoming =
-            Arc::into_inner(incoming).context("incoming channel has an active stream")?;
-        let Ok(incoming) = incoming.into_inner() else {
-            bail!("lock poisoned");
-        };
-        let incoming = incoming
-            .downcast()
-            .map_err(|_| wasmtime::Error::msg("invalid incoming channel type"))?;
-        Ok(*incoming)
-    }
-
     fn push_error(&mut self, error: Error) -> wasmtime::Result<Resource<Error>> {
         self.wrpc()
             .table

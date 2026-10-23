@@ -1,7 +1,8 @@
 package wrpc-examples:hello-component-rpc-client;
 
 world client {
-    include wrpc:rpc/imports@0.1.0;
-
+    include wrpc:rpc/imports@0.2.0;
     include wrpc-examples:hello/client;
+
+    export wasi:cli/run@0.3.0;
 }

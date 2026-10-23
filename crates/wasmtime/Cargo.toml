@@ -24,3 +24,7 @@ wasmtime-wasi = { workspace = true, features = ["p2"] }
 wit-parser = { workspace = true }
 wrpc-introspect = { workspace = true }
 wrpc-transport = { workspace = true }
+
+[dev-dependencies]
+test-log = { workspace = true, features = ["trace"] }
+tokio = { workspace = true, features = ["io-util", "rt"] }

@@ -4973,6 +4973,7 @@ dependencies = [
  "anyhow",
  "bytes",
  "futures",
+ "test-log",
  "tokio",
  "tokio-util",
  "tracing",

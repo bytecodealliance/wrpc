@@ -240,32 +240,26 @@ const LINKED_RESOURCES: &[(Bound<&str>, Bound<&str>, &str, fn() -> ResourceType)
         ResourceType::host::<wasmtime_wasi::p3::bindings::sockets::types::UdpSocket>,
     ),
     (
-        Bound::Included("wrpc:rpc/context@0.1.0"),
-        Bound::Included("wrpc:rpc/context@0.1.0"),
+        Bound::Included("wrpc:rpc/context@0.2.0"),
+        Bound::Included("wrpc:rpc/context@0.2.0"),
         "context",
         ResourceType::host::<wrpc_wasmtime::bindings::rpc::context::Context>,
     ),
     (
-        Bound::Included("wrpc:rpc/error@0.1.0"),
-        Bound::Included("wrpc:rpc/error@0.1.0"),
+        Bound::Included("wrpc:rpc/error@0.2.0"),
+        Bound::Included("wrpc:rpc/error@0.2.0"),
         "error",
         ResourceType::host::<wrpc_wasmtime::bindings::rpc::error::Error>,
     ),
     (
-        Bound::Included("wrpc:rpc/transport@0.1.0"),
-        Bound::Included("wrpc:rpc/transport@0.1.0"),
+        Bound::Included("wrpc:rpc/transport@0.2.0"),
+        Bound::Included("wrpc:rpc/transport@0.2.0"),
         "incoming-channel",
         ResourceType::host::<wrpc_wasmtime::bindings::rpc::transport::IncomingChannel>,
     ),
     (
-        Bound::Included("wrpc:rpc/transport@0.1.0"),
-        Bound::Included("wrpc:rpc/transport@0.1.0"),
-        "invocation",
-        ResourceType::host::<wrpc_wasmtime::bindings::rpc::transport::Invocation>,
-    ),
-    (
-        Bound::Included("wrpc:rpc/transport@0.1.0"),
-        Bound::Included("wrpc:rpc/transport@0.1.0"),
+        Bound::Included("wrpc:rpc/transport@0.2.0"),
+        Bound::Included("wrpc:rpc/transport@0.2.0"),
         "outgoing-channel",
         ResourceType::host::<wrpc_wasmtime::bindings::rpc::transport::OutgoingChannel>,
     ),
@@ -400,7 +394,7 @@ fn is_linked(name: &str) -> bool {
                 (pkg, iface, Some(version))
             })
     }) {
-        Some(("wrpc:rpc", "transport" | "error" | "context" | "invoker", Some("0.1.0"))) => {}
+        Some(("wrpc:rpc", "transport" | "error" | "context" | "invoker", Some("0.2.0"))) => {}
         Some((
             "wasi:cli",
             "environment" | "exit" | "stderr" | "stdin" | "stdout" | "terminal-input"
