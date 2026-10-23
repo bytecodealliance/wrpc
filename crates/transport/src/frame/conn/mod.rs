@@ -515,7 +515,21 @@ impl Incoming {
                         }
                         _ = &mut dropped => {
                             close_rx(&state)?;
-                            io.await
+                            let timeout = *state
+                                .timeout
+                                .lock()
+                                .unwrap_or_else(PoisonError::into_inner);
+                            match timeout {
+                                Some(timeout) => tokio::time::timeout(timeout, io)
+                                    .await
+                                    .map_err(|_| {
+                                        std::io::Error::new(
+                                            std::io::ErrorKind::TimedOut,
+                                            "drain timed out",
+                                        )
+                                    })?,
+                                None => io.await,
+                            }
                         }
                     }
                 }
@@ -532,7 +546,6 @@ impl Incoming {
             subscribed: true,
             path: Arc::from([]),
             io: Arc::new(match dropped_tx {
-                // TODO: Bound draining by a deadline or a byte limit
                 Some(dropped) => IngressGuard::Drain { _dropped: dropped },
                 None => IngressGuard::Abort {
                     _task: AbortOnDropHandle::new(task),
@@ -552,6 +565,10 @@ impl Incoming {
     /// data arrives first. The timeout is shared by all sub-streams of this connection,
     /// including those returned by [`Self::index`] and backing async `stream` and `future`
     /// values, which must therefore not idle for longer than `timeout`.
+    ///
+    /// If ingress is drained, see [`ConnHandler::DRAIN`], the peer must also close the stream
+    /// within `timeout` once all handles are dropped, otherwise ingress fails with
+    /// [`std::io::ErrorKind::TimedOut`].
     #[must_use]
     pub fn with_timeout(self, timeout: Duration) -> Self {
         *self
@@ -1179,6 +1196,7 @@ pub trait ConnHandler<Rx, Tx> {
     /// reusing the connection, like HTTP/1, require.
     /// Transports, which signal the peer to stop sending once the reader is dropped, like QUIC,
     /// may abort ingress instead.
+    /// Draining is bounded by the read timeout, if one is set, see [`Incoming::with_timeout`].
     const DRAIN: bool = true;
 
     /// Handle ingress completion
@@ -1367,6 +1385,13 @@ mod tests {
         tx.write_all(&[0x01, 0x01, 0x01, 0x2a]).await.unwrap();
         drop(rx);
         assert_eq!(failed(done_rx).await, ErrorKind::NotFound);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn incoming_drop_drain_times_out() {
+        let (_tx, rx, done_rx) = incoming(true);
+        drop(rx.with_timeout(Duration::from_millis(10)));
+        assert_eq!(failed(done_rx).await, ErrorKind::TimedOut);
     }
 
     #[test_log::test(tokio::test)]
