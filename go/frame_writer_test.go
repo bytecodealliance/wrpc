@@ -82,6 +82,46 @@ func TestFrameStreamWriter(t *testing.T) {
 		}
 	})
 
+	t.Run("empty write", func(t *testing.T) {
+		t.Parallel()
+		ctx := context.Background()
+		var dst sink
+		w := wrpc.NewFrameStreamWriter(ctx, &dst)
+
+		assertWriteString(t, w, "")
+		assertClose(t, w)
+
+		if n := dst.Len(); n > 0 {
+			t.Fatalf("%v bytes written: %v", n, dst.Bytes())
+		}
+	})
+
+	t.Run("close path", func(t *testing.T) {
+		t.Parallel()
+		ctx := context.Background()
+		var dst sink
+		w := wrpc.NewFrameStreamWriter(ctx, &dst)
+
+		w0 := assertIndex(t, w, 0)
+		assertWriteString(t, w0, "hello")
+		if err := w0.ClosePath(); err != nil {
+			t.Fatalf("failed to close path: %s", err)
+		}
+		assertClose(t, w0)
+		if err := w.ClosePath(); err != nil {
+			t.Fatalf("failed to close path: %s", err)
+		}
+		assertClose(t, w)
+
+		r := bytes.NewBuffer(dst.Bytes())
+		assertReadFrame(t, r, []byte("hello"), 0)
+		assertReadFrame(t, r, nil, 0)
+		assertReadFrame(t, r, nil)
+		if n := r.Len(); n > 0 {
+			t.Fatalf("%v trailing bytes left in buffer: %s", n, r.String())
+		}
+	})
+
 	t.Run("nested", func(t *testing.T) {
 		t.Parallel()
 		ctx := context.Background()
