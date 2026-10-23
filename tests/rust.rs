@@ -1667,13 +1667,11 @@ async fn rust_tcp_unprocessed_stream() -> anyhow::Result<()> {
                 srv.accept((), tx, BufReader::new(rx))
                     .await
                     .expect("failed to accept connection");
-                let ((), tx, rx) = pin!(invocations)
+                _ = pin!(invocations)
                     .try_next()
                     .await
                     .expect("failed to accept invocation")
                     .expect("unexpected end of stream");
-                drop(rx);
-                drop(tx);
             }
         )
     };

@@ -180,7 +180,7 @@ test-helpers = { default-features = false, path = "./crates/test-helpers" }
 test-log = { version = "0.2", default-features = false }
 tokio = { version = "1.50", default-features = false }
 tokio-stream = { version = "0.1", default-features = false }
-tokio-util = { version = "0.7", default-features = false }
+tokio-util = { version = "0.7.12", default-features = false }
 tokio-websockets = { version = "0.13", default-features = false }
 toml = { version = "1.1", default-features = false }
 tower = { version = "0.5", default-features = false }

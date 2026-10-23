@@ -5,18 +5,18 @@ use core::pin::{Pin, pin};
 use core::sync::atomic::{AtomicBool, Ordering};
 use core::task::{Context, Poll, ready};
 
-use std::sync::Arc;
+use std::sync::{Arc, PoisonError};
 
 use bytes::{Buf as _, Bytes, BytesMut};
 use pin_project_lite::pin_project;
 use tokio::io::{AsyncBufRead, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt as _};
 use tokio::select;
 use tokio::sync::{mpsc, oneshot};
-use tokio::task::AbortHandle;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::codec::Encoder;
 use tokio_util::io::StreamReader;
 use tokio_util::sync::PollSender;
+use tokio_util::task::AbortOnDropHandle;
 use tracing::{Instrument as _, Span, debug, error, instrument, trace};
 use wasm_tokio::{
     AsyncReadCore as _, AsyncReadLeb128 as _, DEFAULT_MAX_INITIAL_CAPACITY, Leb128Encoder,
@@ -375,7 +375,6 @@ pin_project! {
         #[pin]
         rx: Option<StreamReader<ReceiverStream<std::io::Result<Bytes>>, Bytes>>,
         path: Arc<[usize]>,
-        index: Arc<std::sync::Mutex<IndexTrie>>,
         io: Arc<IngressGuard>,
         state: Arc<IngressState>,
     }
@@ -411,28 +410,30 @@ impl Incoming {
         P: AsRef<[Option<usize>]>,
         Fut: Future<Output = ()> + Send,
     {
-        let index = Arc::new(std::sync::Mutex::new(paths.into_iter().collect()));
         let (rx_tx, rx_rx) = mpsc::channel(128);
-        let state = Arc::new(IngressState::default());
+        let state = Arc::new(IngressState {
+            index: std::sync::Mutex::new(paths.into_iter().collect()),
+            err: std::sync::OnceLock::default(),
+            unprocessed: AtomicBool::default(),
+        });
         let (dropped_tx, dropped_rx) = drain.then(oneshot::channel).unzip();
         let span = Span::current();
         let task = tokio::spawn({
-            let index = Arc::clone(&index);
             let state = Arc::clone(&state);
             async move {
                 let res = async {
                     let mut io = pin!(async {
-                        let res = ingress(&mut rx, &index, &rx_tx).await;
+                        let res = ingress(&mut rx, &state.index, &rx_tx).await;
                         if let Err(err) = &res {
                             _ = state.err.set(copy_io_error(err));
                         }
                         drop(rx_tx);
-                        if let Ok(mut index) = index.lock() {
-                            trace!("shutting down index trie");
-                            index.close_tx();
-                        } else {
-                            error!("failed to lock index trie");
-                        }
+                        trace!("shutting down index trie");
+                        state
+                            .index
+                            .lock()
+                            .unwrap_or_else(PoisonError::into_inner)
+                            .close_tx();
                         res
                     });
                     let Some(mut dropped) = dropped_rx else {
@@ -444,10 +445,10 @@ impl Incoming {
                         res = &mut io => {
                             res?;
                             _ = dropped.await;
-                            close_rx(&index, &state)
+                            close_rx(&state)
                         }
                         _ = &mut dropped => {
-                            close_rx(&index, &state)?;
+                            close_rx(&state)?;
                             io.await
                         }
                     }
@@ -460,11 +461,12 @@ impl Incoming {
         Self {
             rx: Some(StreamReader::new(ReceiverStream::new(rx_rx))),
             path: Arc::from([]),
-            index,
             io: Arc::new(match dropped_tx {
                 // TODO: Bound draining by a deadline or a byte limit
                 Some(dropped) => IngressGuard::Drain { _dropped: dropped },
-                None => IngressGuard::Abort(task.abort_handle()),
+                None => IngressGuard::Abort {
+                    _task: AbortOnDropHandle::new(task),
+                },
             }),
             state,
         }
@@ -494,6 +496,7 @@ impl Incoming {
         };
         trace!("locking index trie");
         let mut index = self
+            .state
             .index
             .lock()
             .map_err(|err| std::io::Error::other(err.to_string()))?;
@@ -504,7 +507,6 @@ impl Incoming {
         Ok(Self {
             rx,
             path,
-            index: Arc::clone(&self.index),
             io: Arc::clone(&self.io),
             state: Arc::clone(&self.state),
         })
@@ -539,24 +541,15 @@ impl AsyncRead for Incoming {
     }
 }
 
-#[derive(Default)]
 struct IngressState {
+    index: std::sync::Mutex<IndexTrie>,
     err: std::sync::OnceLock<std::io::Error>,
     unprocessed: AtomicBool,
 }
 
 enum IngressGuard {
-    Abort(AbortHandle),
+    Abort { _task: AbortOnDropHandle<()> },
     Drain { _dropped: oneshot::Sender<()> },
-}
-
-impl Drop for IngressGuard {
-    fn drop(&mut self) {
-        if let Self::Abort(task) = self {
-            trace!("aborting ingress");
-            task.abort();
-        }
-    }
 }
 
 /// Outgoing framed stream
@@ -749,13 +742,11 @@ async fn ingress(
     }
 }
 
-/// Closes all receivers in the `index` trie once all [Incoming] handles were dropped,
+/// Closes all receivers in the index trie once all [Incoming] handles were dropped,
 /// failing if any of them or any of the dropped handles held data, which was not processed
-fn close_rx(index: &std::sync::Mutex<IndexTrie>, state: &IngressState) -> std::io::Result<()> {
-    let mut index = index
-        .lock()
-        .map_err(|err| std::io::Error::other(err.to_string()))?;
+fn close_rx(state: &IngressState) -> std::io::Result<()> {
     trace!("all handles dropped, closing index trie receivers");
+    let mut index = state.index.lock().unwrap_or_else(PoisonError::into_inner);
     if index.close_rx() || state.unprocessed.load(Ordering::Relaxed) {
         return Err(unprocessed());
     }
@@ -846,6 +837,8 @@ impl<Rx, Tx> ConnHandler<Rx, Tx> for () {}
 mod tests {
     use core::time::Duration;
 
+    use std::io::ErrorKind;
+
     use tokio::io::{BufReader, DuplexStream};
 
     use super::*;
@@ -872,6 +865,10 @@ mod tests {
             .await
             .expect("ingress timed out")
             .expect("ingress aborted")
+    }
+
+    async fn failed(rx: oneshot::Receiver<std::io::Result<()>>) -> ErrorKind {
+        done(rx).await.unwrap_err().kind()
     }
 
     #[test_log::test(tokio::test)]
@@ -908,8 +905,7 @@ mod tests {
         let (mut tx, rx, done_rx) = incoming(true);
         drop(rx);
         tx.write_all(&FRAME).await.unwrap();
-        let err = done(done_rx).await.unwrap_err();
-        assert_eq!(err.kind(), std::io::ErrorKind::BrokenPipe);
+        assert_eq!(failed(done_rx).await, ErrorKind::BrokenPipe);
     }
 
     #[test_log::test(tokio::test)]
@@ -918,8 +914,7 @@ mod tests {
         tx.write_all(&FRAME).await.unwrap();
         tx.write_all(&[0x01, 0x01, 0x01, 0x2a]).await.unwrap();
         drop(rx);
-        let err = done(done_rx).await.unwrap_err();
-        assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
+        assert_eq!(failed(done_rx).await, ErrorKind::NotFound);
     }
 
     #[test_log::test(tokio::test)]
@@ -928,8 +923,7 @@ mod tests {
         tx.write_all(&FRAME).await.unwrap();
         tokio::task::yield_now().await;
         drop(rx);
-        let err = done(done_rx).await.unwrap_err();
-        assert_eq!(err.kind(), std::io::ErrorKind::BrokenPipe);
+        assert_eq!(failed(done_rx).await, ErrorKind::BrokenPipe);
     }
 
     #[test_log::test(tokio::test)]
@@ -940,8 +934,7 @@ mod tests {
         tokio::task::yield_now().await;
         drop(sub);
         drop(rx);
-        let err = done(done_rx).await.unwrap_err();
-        assert_eq!(err.kind(), std::io::ErrorKind::BrokenPipe);
+        assert_eq!(failed(done_rx).await, ErrorKind::BrokenPipe);
     }
 
     #[test_log::test(tokio::test)]
@@ -952,8 +945,7 @@ mod tests {
             inner: rx,
         });
         drop(tx);
-        let err = done(done_rx).await.unwrap_err();
-        assert_eq!(err.kind(), std::io::ErrorKind::BrokenPipe);
+        assert_eq!(failed(done_rx).await, ErrorKind::BrokenPipe);
     }
 
     #[test_log::test(tokio::test)]
@@ -973,8 +965,7 @@ mod tests {
         drop(tx);
         tokio::task::yield_now().await;
         drop(rx);
-        let err = done(done_rx).await.unwrap_err();
-        assert_eq!(err.kind(), std::io::ErrorKind::BrokenPipe);
+        assert_eq!(failed(done_rx).await, ErrorKind::BrokenPipe);
     }
 
     #[test_log::test(tokio::test)]
