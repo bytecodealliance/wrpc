@@ -248,11 +248,6 @@ async function readStream(mux, path, elem, queue, ar) {
   const tasks = [];
   try {
     for (;;) {
-      // The peer may close the connection instead of sending the empty terminator.
-      if (!(await ar.fill(1))) {
-        mux.finish(path);
-        break;
-      }
       const len = await ar.decode((r) => atomic(r, readVarU32));
       if (len === 0) {
         mux.finish(path, ar);
