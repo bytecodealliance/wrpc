@@ -1,6 +1,7 @@
 #![allow(clippy::type_complexity)]
 
 use core::future::poll_fn;
+use core::ops::Bound;
 use core::pin::pin;
 use core::time::Duration;
 
@@ -32,6 +33,245 @@ use wrpc_wasmtime::{
 mod tcp;
 
 const DEFAULT_TIMEOUT: &str = "10s";
+
+const LINKED_RESOURCES: &[(Bound<&str>, Bound<&str>, &str, fn() -> ResourceType)] = &[
+    (
+        Bound::Included("wasi:cli/terminal-input@0.2"),
+        Bound::Excluded("wasi:cli/terminal-input@0.3"),
+        "terminal-input",
+        ResourceType::host::<wasmtime_wasi::p2::bindings::cli::terminal_input::TerminalInput>,
+    ),
+    (
+        Bound::Included("wasi:cli/terminal-output@0.2"),
+        Bound::Excluded("wasi:cli/terminal-output@0.3"),
+        "terminal-output",
+        ResourceType::host::<wasmtime_wasi::p2::bindings::cli::terminal_output::TerminalOutput>,
+    ),
+    (
+        Bound::Included("wasi:cli/terminal-input@0.3"),
+        Bound::Excluded("wasi:cli/terminal-input@0.4"),
+        "terminal-input",
+        ResourceType::host::<wasmtime_wasi::p3::bindings::cli::terminal_input::TerminalInput>,
+    ),
+    (
+        Bound::Included("wasi:cli/terminal-output@0.3"),
+        Bound::Excluded("wasi:cli/terminal-output@0.4"),
+        "terminal-output",
+        ResourceType::host::<wasmtime_wasi::p3::bindings::cli::terminal_output::TerminalOutput>,
+    ),
+    (
+        Bound::Included("wasi:filesystem/types@0.2"),
+        Bound::Excluded("wasi:filesystem/types@0.3"),
+        "descriptor",
+        ResourceType::host::<wasmtime_wasi::p2::bindings::filesystem::types::Descriptor>,
+    ),
+    (
+        Bound::Included("wasi:filesystem/types@0.2"),
+        Bound::Excluded("wasi:filesystem/types@0.3"),
+        "directory-entry-stream",
+        ResourceType::host::<wasmtime_wasi::p2::bindings::filesystem::types::DirectoryEntryStream>,
+    ),
+    (
+        Bound::Included("wasi:filesystem/types@0.3"),
+        Bound::Excluded("wasi:filesystem/types@0.4"),
+        "descriptor",
+        ResourceType::host::<wasmtime_wasi::p3::bindings::filesystem::types::Descriptor>,
+    ),
+    (
+        Bound::Included("wasi:http/types@0.2"),
+        Bound::Excluded("wasi:http/types@0.3"),
+        "fields",
+        ResourceType::host::<wasmtime_wasi_http::p2::bindings::http::types::Fields>,
+    ),
+    (
+        Bound::Included("wasi:http/types@0.2"),
+        Bound::Excluded("wasi:http/types@0.3"),
+        "future-incoming-response",
+        ResourceType::host::<wasmtime_wasi_http::p2::bindings::http::types::FutureIncomingResponse>,
+    ),
+    (
+        Bound::Included("wasi:http/types@0.2"),
+        Bound::Excluded("wasi:http/types@0.3"),
+        "future-trailers",
+        ResourceType::host::<wasmtime_wasi_http::p2::bindings::http::types::FutureTrailers>,
+    ),
+    (
+        Bound::Included("wasi:http/types@0.2"),
+        Bound::Excluded("wasi:http/types@0.3"),
+        "incoming-body",
+        ResourceType::host::<wasmtime_wasi_http::p2::bindings::http::types::IncomingBody>,
+    ),
+    (
+        Bound::Included("wasi:http/types@0.2"),
+        Bound::Excluded("wasi:http/types@0.3"),
+        "incoming-request",
+        ResourceType::host::<wasmtime_wasi_http::p2::bindings::http::types::IncomingRequest>,
+    ),
+    (
+        Bound::Included("wasi:http/types@0.2"),
+        Bound::Excluded("wasi:http/types@0.3"),
+        "incoming-response",
+        ResourceType::host::<wasmtime_wasi_http::p2::bindings::http::types::IncomingResponse>,
+    ),
+    (
+        Bound::Included("wasi:http/types@0.2"),
+        Bound::Excluded("wasi:http/types@0.3"),
+        "outgoing-body",
+        ResourceType::host::<wasmtime_wasi_http::p2::bindings::http::types::OutgoingBody>,
+    ),
+    (
+        Bound::Included("wasi:http/types@0.2"),
+        Bound::Excluded("wasi:http/types@0.3"),
+        "outgoing-request",
+        ResourceType::host::<wasmtime_wasi_http::p2::bindings::http::types::OutgoingRequest>,
+    ),
+    (
+        Bound::Included("wasi:http/types@0.2"),
+        Bound::Excluded("wasi:http/types@0.3"),
+        "outgoing-response",
+        ResourceType::host::<wasmtime_wasi_http::p2::bindings::http::types::OutgoingResponse>,
+    ),
+    (
+        Bound::Included("wasi:http/types@0.2"),
+        Bound::Excluded("wasi:http/types@0.3"),
+        "request-options",
+        ResourceType::host::<wasmtime_wasi_http::p2::bindings::http::types::RequestOptions>,
+    ),
+    (
+        Bound::Included("wasi:http/types@0.2"),
+        Bound::Excluded("wasi:http/types@0.3"),
+        "response-outparam",
+        ResourceType::host::<wasmtime_wasi_http::p2::bindings::http::types::ResponseOutparam>,
+    ),
+    (
+        Bound::Included("wasi:http/types@0.3"),
+        Bound::Excluded("wasi:http/types@0.4"),
+        "fields",
+        ResourceType::host::<wasmtime_wasi_http::p3::bindings::http::types::Fields>,
+    ),
+    (
+        Bound::Included("wasi:http/types@0.3"),
+        Bound::Excluded("wasi:http/types@0.4"),
+        "request",
+        ResourceType::host::<wasmtime_wasi_http::p3::bindings::http::types::Request>,
+    ),
+    (
+        Bound::Included("wasi:http/types@0.3"),
+        Bound::Excluded("wasi:http/types@0.4"),
+        "request-options",
+        ResourceType::host::<wasmtime_wasi_http::p3::bindings::http::types::RequestOptions>,
+    ),
+    (
+        Bound::Included("wasi:http/types@0.3"),
+        Bound::Excluded("wasi:http/types@0.4"),
+        "response",
+        ResourceType::host::<wasmtime_wasi_http::p3::bindings::http::types::Response>,
+    ),
+    (
+        Bound::Included("wasi:io/error@0.2"),
+        Bound::Excluded("wasi:io/error@0.3"),
+        "error",
+        ResourceType::host::<wasmtime_wasi::p2::bindings::io::error::Error>,
+    ),
+    (
+        Bound::Included("wasi:io/poll@0.2"),
+        Bound::Excluded("wasi:io/poll@0.3"),
+        "pollable",
+        ResourceType::host::<wasmtime_wasi::p2::bindings::io::poll::Pollable>,
+    ),
+    (
+        Bound::Included("wasi:io/streams@0.2"),
+        Bound::Excluded("wasi:io/streams@0.3"),
+        "input-stream",
+        ResourceType::host::<wasmtime_wasi::p2::bindings::io::streams::InputStream>,
+    ),
+    (
+        Bound::Included("wasi:io/streams@0.2"),
+        Bound::Excluded("wasi:io/streams@0.3"),
+        "output-stream",
+        ResourceType::host::<wasmtime_wasi::p2::bindings::io::streams::OutputStream>,
+    ),
+    (
+        Bound::Included("wasi:sockets/ip-name-lookup@0.2"),
+        Bound::Excluded("wasi:sockets/ip-name-lookup@0.3"),
+        "resolve-address-stream",
+        ResourceType::host::<
+            wasmtime_wasi::p2::bindings::sockets::ip_name_lookup::ResolveAddressStream,
+        >,
+    ),
+    (
+        Bound::Included("wasi:sockets/network@0.2"),
+        Bound::Excluded("wasi:sockets/network@0.3"),
+        "network",
+        ResourceType::host::<wasmtime_wasi::p2::bindings::sockets::network::Network>,
+    ),
+    (
+        Bound::Included("wasi:sockets/tcp@0.2"),
+        Bound::Excluded("wasi:sockets/tcp@0.3"),
+        "tcp-socket",
+        ResourceType::host::<wasmtime_wasi::p2::bindings::sockets::tcp::TcpSocket>,
+    ),
+    (
+        Bound::Included("wasi:sockets/udp@0.2"),
+        Bound::Excluded("wasi:sockets/udp@0.3"),
+        "incoming-datagram-stream",
+        ResourceType::host::<wasmtime_wasi::p2::bindings::sockets::udp::IncomingDatagramStream>,
+    ),
+    (
+        Bound::Included("wasi:sockets/udp@0.2"),
+        Bound::Excluded("wasi:sockets/udp@0.3"),
+        "outgoing-datagram-stream",
+        ResourceType::host::<wasmtime_wasi::p2::bindings::sockets::udp::OutgoingDatagramStream>,
+    ),
+    (
+        Bound::Included("wasi:sockets/udp@0.2"),
+        Bound::Excluded("wasi:sockets/udp@0.3"),
+        "udp-socket",
+        ResourceType::host::<wasmtime_wasi::p2::bindings::sockets::udp::UdpSocket>,
+    ),
+    (
+        Bound::Included("wasi:sockets/types@0.3"),
+        Bound::Excluded("wasi:sockets/types@0.4"),
+        "tcp-socket",
+        ResourceType::host::<wasmtime_wasi::p3::bindings::sockets::types::TcpSocket>,
+    ),
+    (
+        Bound::Included("wasi:sockets/types@0.3"),
+        Bound::Excluded("wasi:sockets/types@0.4"),
+        "udp-socket",
+        ResourceType::host::<wasmtime_wasi::p3::bindings::sockets::types::UdpSocket>,
+    ),
+    (
+        Bound::Included("wrpc:rpc/context@0.1.0"),
+        Bound::Included("wrpc:rpc/context@0.1.0"),
+        "context",
+        ResourceType::host::<wrpc_wasmtime::bindings::rpc::context::Context>,
+    ),
+    (
+        Bound::Included("wrpc:rpc/error@0.1.0"),
+        Bound::Included("wrpc:rpc/error@0.1.0"),
+        "error",
+        ResourceType::host::<wrpc_wasmtime::bindings::rpc::error::Error>,
+    ),
+    (
+        Bound::Included("wrpc:rpc/transport@0.1.0"),
+        Bound::Included("wrpc:rpc/transport@0.1.0"),
+        "incoming-channel",
+        ResourceType::host::<wrpc_wasmtime::bindings::rpc::transport::IncomingChannel>,
+    ),
+    (
+        Bound::Included("wrpc:rpc/transport@0.1.0"),
+        Bound::Included("wrpc:rpc/transport@0.1.0"),
+        "invocation",
+        ResourceType::host::<wrpc_wasmtime::bindings::rpc::transport::Invocation>,
+    ),
+    (
+        Bound::Included("wrpc:rpc/transport@0.1.0"),
+        Bound::Included("wrpc:rpc/transport@0.1.0"),
+        "outgoing-channel",
+        ResourceType::host::<wrpc_wasmtime::bindings::rpc::transport::OutgoingChannel>,
+    ),
+];
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -241,34 +481,30 @@ where
         .map_err(anyhow::Error::from)
         .context("failed to link `wrpc:rpc`")?;
 
-    let mut stubbed = linker.clone();
-    stubbed
-        .define_unknown_imports_as_traps(&component)
-        .map_err(anyhow::Error::from)
-        .context("failed to stub unknown imports")?;
-    let linked_ty = stubbed
-        .substituted_component_type(&component)
-        .map_err(anyhow::Error::from)
-        .context("failed to substitute linked resource types")?;
-    let mut linked_resources = BTreeMap::default();
-    collect_component_resource_imports(&engine, &linked_ty, &mut linked_resources);
-
     let ty = component.component_type();
     let mut host_resources = BTreeMap::default();
     let mut guest_resources = Vec::new();
     collect_component_resource_imports(&engine, &ty, &mut host_resources);
     collect_component_resource_exports(&engine, &ty, &mut guest_resources);
+    let linked_resources = LINKED_RESOURCES
+        .iter()
+        .flat_map(|(start, end, name, host_ty)| {
+            host_resources
+                .range::<str, _>((*start, *end))
+                .filter_map(move |(_, instance)| instance.get(*name))
+                .map(move |ty| (*ty, host_ty()))
+        })
+        .collect::<Box<[_]>>();
     let host_resources = host_resources
         .into_iter()
         .map(|(instance, resources)| {
-            let linked = linked_resources.get(&instance);
             let resources = resources
                 .into_iter()
                 .map(|(name, ty)| {
-                    let host_ty = match linked.and_then(|linked| linked.get(&name)) {
-                        Some(host_ty) if *host_ty != ResourceType::host::<()>() => *host_ty,
-                        _ => ResourceType::host::<RemoteResource>(),
-                    };
+                    let host_ty = linked_resources
+                        .iter()
+                        .find_map(|(linked_ty, host_ty)| (*linked_ty == ty).then_some(*host_ty))
+                        .unwrap_or_else(ResourceType::host::<RemoteResource>);
                     (name, (ty, host_ty))
                 })
                 .collect::<HashMap<_, _>>();
