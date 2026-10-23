@@ -138,7 +138,7 @@ func (v *Req) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, err
 					}
 				}
 			}()
-			chunk := make([]byte, 8096)
+			chunk := make([]byte, wrpc.ReadChunkSize)
 			for {
 				var end bool
 				slog.Debug("reading pending byte stream contents")
@@ -594,7 +594,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 						}
 					}
 				}()
-				chunk := make([]byte, 8096)
+				chunk := make([]byte, wrpc.ReadChunkSize)
 				for {
 					var end bool
 					slog.Debug("reading pending byte stream contents")

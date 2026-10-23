@@ -23,7 +23,7 @@ impl Guest for Handler {
         let mut total: u64 = 0;
         loop {
             // `blocking-read` waits for at least one byte, then returns up to `len`.
-            match data.blocking_read(8096) {
+            match data.blocking_read(8192) {
                 Ok(chunk) => total += chunk.len() as u64,
                 Err(StreamError::Closed) => return total,
                 Err(StreamError::LastOperationFailed(err)) => {
