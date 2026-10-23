@@ -29,7 +29,7 @@ pub use pack::{Packer, pack, pack_ready, unpack};
 pub use serve::{Serve, ServeExt};
 pub use value::*;
 
-#[cfg(any(all(target_family = "wasm", feature = "wasi-net"), feature = "net"))]
+#[cfg(any(all(target_family = "wasm", feature = "wasi"), feature = "net"))]
 pub use frame::tcp;
 #[cfg(all(unix, feature = "net"))]
 pub use frame::unix;
