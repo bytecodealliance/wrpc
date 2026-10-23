@@ -5,7 +5,7 @@ pub mod tokio;
 #[cfg(feature = "net")]
 pub use tokio::*;
 
-#[cfg(target_family = "wasm")]
+#[cfg(all(target_family = "wasm", feature = "wasi-net"))]
 pub mod wasi;
-#[cfg(all(target_family = "wasm", not(feature = "net")))]
+#[cfg(all(target_family = "wasm", feature = "wasi-net", not(feature = "net")))]
 pub use wasi::*;

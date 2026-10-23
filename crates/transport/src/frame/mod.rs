@@ -8,7 +8,7 @@ mod codec;
 mod conn;
 mod oneshot;
 
-#[cfg(any(target_family = "wasm", feature = "net"))]
+#[cfg(any(all(target_family = "wasm", feature = "wasi-net"), feature = "net"))]
 pub mod tcp;
 
 #[cfg(all(unix, feature = "net"))]

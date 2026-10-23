@@ -14,6 +14,7 @@ default = ["fs", "net", "io-std"]
 fs = ["tokio/fs"]
 net = ["tokio/net"]
 io-std = ["tokio/io-std"]
+wasi-net = ["dep:wasi"]
 
 [dependencies]
 anyhow = { workspace = true, features = ["std"] }
@@ -27,7 +28,7 @@ tracing = { workspace = true, features = ["attributes"] }
 wasm-tokio = { workspace = true, features = ["tracing"] }
 
 [target.'cfg(target_family = "wasm")'.dependencies]
-wasi = { workspace = true, features = ["std"] }
+wasi = { workspace = true, features = ["std"], optional = true }
 
 [dev-dependencies]
 test-log = { workspace = true, features = ["color", "log", "trace"] }
