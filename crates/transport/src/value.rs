@@ -444,7 +444,11 @@ impl Sink for Outgoing {
         let mut enc = T::Encoder::default();
         let mut buf = BytesMut::default();
         enc.encode(item, &mut buf)?;
-        self.write_bytes(buf.freeze()).await?;
+        if buf.is_empty() {
+            self.close().await?;
+        } else {
+            self.write_bytes(buf.freeze()).await?;
+        }
         match enc.take_deferred() {
             Some(f) => f(self, Vec::default()).await,
             _ => Ok(()),
@@ -1923,17 +1927,19 @@ where
                         return Err(std::io::ErrorKind::UnexpectedEof.into());
                     };
                     let item = item?;
+                    let rx = dec.decoder_mut().take_deferred();
+                    if rx.is_none() {
+                        ensure_processed(&dec)?;
+                    }
                     if tx.send(item).is_err() {
                         return Err(error_receiver_closed());
                     }
-                    if let Some(rx) = dec.decoder_mut().take_deferred() {
+                    if let Some(rx) = rx {
                         let mut buf = mem::take(dec.read_buffer_mut());
                         let mut r = dec.into_inner();
                         buf.unsplit(mem::take(&mut r.buffer));
                         r.buffer = buf;
                         rx(r, Vec::default()).await?;
-                    } else {
-                        ensure_processed(&dec)?;
                     }
                     Ok(())
                 }
@@ -2626,6 +2632,11 @@ mod tests {
         let (_fut, f) = pending::<FutureBytes>();
         let err = f(buffered(b"\x03foo\x2a"), Vec::default()).await;
         assert_eq!(err.unwrap_err().kind(), ErrorKind::InvalidData);
+
+        let (fut, f) = pending::<Pin<Box<dyn Future<Output = ()> + Send>>>();
+        let err = f(buffered(b"\x2a"), Vec::default()).await;
+        assert_eq!(err.unwrap_err().kind(), ErrorKind::InvalidData);
+        assert!(fut.now_or_never().is_none());
     }
 
     #[test_log::test(tokio::test)]
@@ -2637,6 +2648,13 @@ mod tests {
         let (_fut, f) = pending::<FutureBytes>();
         let err = f(buffered(&buffer), Vec::default()).await;
         assert_eq!(err.unwrap_err().kind(), ErrorKind::InvalidData);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn future_unit_resolves_on_end() {
+        let (fut, f) = pending::<Pin<Box<dyn Future<Output = ()> + Send>>>();
+        f(buffered(b""), Vec::default()).await.unwrap();
+        fut.await;
     }
 
     #[test_log::test(tokio::test)]

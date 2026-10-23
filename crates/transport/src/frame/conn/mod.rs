@@ -94,23 +94,30 @@ impl Header {
     }
 }
 
+/// Sender of a subscribed path
+#[derive(Debug)]
+enum TxSlot {
+    Open(mpsc::Sender<std::io::Result<Bytes>>),
+    Closed,
+}
+
 /// Index trie containing async stream subscriptions
 #[derive(Debug, Default)]
 enum IndexTrie {
     #[default]
     Empty,
     Leaf {
-        tx: Option<mpsc::Sender<std::io::Result<Bytes>>>,
+        tx: Option<TxSlot>,
         rx: Option<mpsc::Receiver<std::io::Result<Bytes>>>,
     },
     IndexNode {
-        tx: Option<mpsc::Sender<std::io::Result<Bytes>>>,
+        tx: Option<TxSlot>,
         rx: Option<mpsc::Receiver<std::io::Result<Bytes>>>,
         nested: Vec<Option<IndexTrie>>,
     },
     // TODO: Add partially-indexed `WildcardIndexNode`
     WildcardNode {
-        tx: Option<mpsc::Sender<std::io::Result<Bytes>>>,
+        tx: Option<TxSlot>,
         rx: Option<mpsc::Receiver<std::io::Result<Bytes>>>,
         nested: Option<Box<IndexTrie>>,
     },
@@ -131,7 +138,10 @@ impl<'a>
         ),
     ) -> Self {
         match path {
-            [] => Self::Leaf { tx: Some(tx), rx },
+            [] => Self::Leaf {
+                tx: Some(TxSlot::Open(tx)),
+                rx,
+            },
             [None, path @ ..] => Self::WildcardNode {
                 tx: None,
                 rx: None,
@@ -176,27 +186,34 @@ impl<'a> From<(&'a [Option<usize>], mpsc::Sender<std::io::Result<Bytes>>)> for I
     }
 }
 
-impl<P: AsRef<[Option<usize>]>> FromIterator<P> for IndexTrie {
-    fn from_iter<T: IntoIterator<Item = P>>(iter: T) -> Self {
-        let mut root = Self::Empty;
-        for path in iter {
+impl IndexTrie {
+    /// Builds a trie of `paths`, which sends frames received on the root path to `tx`
+    fn new<P: AsRef<[Option<usize>]>>(
+        paths: impl IntoIterator<Item = P>,
+        tx: mpsc::Sender<std::io::Result<Bytes>>,
+    ) -> std::io::Result<Self> {
+        let mut index = Self::Empty;
+        for path in paths {
+            let path = path.as_ref();
+            if path.is_empty() {
+                continue;
+            }
             let (tx, rx) = mpsc::channel(16);
-            if !root.insert(path.as_ref(), tx, Some(rx)) {
-                return Self::Empty;
+            if !index.insert(path, tx, Some(rx)) {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!("conflicting subscription path {path:?}"),
+                ));
             }
         }
-        root
+        index.insert(&[], tx, None);
+        Ok(index)
     }
-}
 
-impl IndexTrie {
     /// Calls `f` with the sender and receiver of each node in the trie
     fn for_each(
         &mut self,
-        f: &mut impl FnMut(
-            &mut Option<mpsc::Sender<std::io::Result<Bytes>>>,
-            &mut Option<mpsc::Receiver<std::io::Result<Bytes>>>,
-        ),
+        f: &mut impl FnMut(&mut Option<TxSlot>, &mut Option<mpsc::Receiver<std::io::Result<Bytes>>>),
     ) {
         match self {
             Self::Empty => {}
@@ -226,26 +243,30 @@ impl IndexTrie {
         pending
     }
 
-    /// Takes the receiver
+    /// Takes the receiver, returning `None` if neither `path` nor any path nested under it
+    /// is subscribed to
     #[instrument(level = "trace", skip(self), ret(level = "trace"))]
-    fn take_rx(&mut self, path: &[usize]) -> Option<mpsc::Receiver<std::io::Result<Bytes>>> {
+    fn take_rx(
+        &mut self,
+        path: &[usize],
+    ) -> Option<Option<mpsc::Receiver<std::io::Result<Bytes>>>> {
         let Some((i, path)) = path.split_first() else {
             return match self {
                 Self::Empty => None,
-                Self::Leaf { rx, .. } => rx.take(),
+                Self::Leaf { rx, .. } => rx.take().map(Some),
                 Self::IndexNode { tx, rx, nested } => {
                     let rx = rx.take();
                     if nested.is_empty() && tx.is_none() {
                         *self = Self::Empty;
                     }
-                    rx
+                    Some(rx)
                 }
                 Self::WildcardNode { tx, rx, nested } => {
                     let rx = rx.take();
                     if nested.is_none() && tx.is_none() {
                         *self = Self::Empty;
                     }
-                    rx
+                    Some(rx)
                 }
             };
         };
@@ -261,14 +282,15 @@ impl IndexTrie {
         }
     }
 
-    /// Gets a sender
-    #[instrument(level = "trace", skip(self), ret(level = "trace"))]
-    fn get_tx(&mut self, path: &[usize]) -> Option<mpsc::Sender<std::io::Result<Bytes>>> {
+    /// Gets the sender slot of a subscription
+    #[instrument(level = "trace", skip(self))]
+    fn get_tx_mut(&mut self, path: &[usize]) -> Option<&mut TxSlot> {
         let Some((i, path)) = path.split_first() else {
             return match self {
                 Self::Empty => None,
-                Self::Leaf { tx, .. } => tx.clone(),
-                Self::IndexNode { tx, .. } | Self::WildcardNode { tx, .. } => tx.clone(),
+                Self::Leaf { tx, .. }
+                | Self::IndexNode { tx, .. }
+                | Self::WildcardNode { tx, .. } => tx.as_mut(),
             };
         };
         match self {
@@ -276,7 +298,7 @@ impl IndexTrie {
             Self::IndexNode { nested, .. } => {
                 let nested = nested.get_mut(*i)?;
                 let nested = nested.as_mut()?;
-                nested.get_tx(path)
+                nested.get_tx_mut(path)
             } // TODO: Demux the subscription
               //Self::WildcardNode { ref mut nested, .. } => {
               //    nested.as_mut().and_then(|nested| nested.take(path))
@@ -284,11 +306,13 @@ impl IndexTrie {
         }
     }
 
-    /// Closes all senders in the trie
+    /// Closes all open senders in the trie
     #[instrument(level = "trace", skip(self), ret(level = "trace"))]
     fn close_tx(&mut self) {
         self.for_each(&mut |tx, _| {
-            tx.take();
+            if let Some(TxSlot::Open(..)) = tx {
+                tx.take();
+            }
         });
     }
 
@@ -330,7 +354,7 @@ impl IndexTrie {
             }
             Self::IndexNode { tx, rx, nested } => match (&tx, &rx, path) {
                 (None, None, []) => {
-                    *tx = Some(sender);
+                    *tx = Some(TxSlot::Open(sender));
                     *rx = receiver;
                     true
                 }
@@ -351,7 +375,7 @@ impl IndexTrie {
             },
             Self::WildcardNode { tx, rx, nested } => match (&tx, &rx, path) {
                 (None, None, []) => {
-                    *tx = Some(sender);
+                    *tx = Some(TxSlot::Open(sender));
                     *rx = receiver;
                     true
                 }
@@ -375,6 +399,7 @@ pin_project! {
     pub struct Incoming {
         #[pin]
         rx: Option<StreamReader<ReceiverStream<std::io::Result<Bytes>>, Bytes>>,
+        subscribed: bool,
         path: Arc<[usize]>,
         io: Arc<IngressGuard>,
         state: Arc<IngressState>,
@@ -412,8 +437,13 @@ impl Incoming {
         Fut: Future<Output = ()> + Send,
     {
         let (rx_tx, rx_rx) = mpsc::channel(128);
+        let (index, conflict) = match IndexTrie::new(paths, rx_tx.clone()) {
+            Ok(index) => (index, None),
+            Err(err) => (IndexTrie::from((&[][..], rx_tx)), Some(err)),
+        };
         let state = Arc::new(IngressState {
-            index: std::sync::Mutex::new(paths.into_iter().collect()),
+            index: std::sync::Mutex::new(index),
+            conflict,
             err: std::sync::OnceLock::default(),
             unprocessed: AtomicBool::default(),
         });
@@ -424,11 +454,10 @@ impl Incoming {
             async move {
                 let res = async {
                     let mut io = pin!(async {
-                        let res = ingress(&mut rx, &state.index, &rx_tx).await;
+                        let res = ingress(&mut rx, &state.index).await;
                         if let Err(err) = &res {
                             _ = state.err.set(copy_io_error(err));
                         }
-                        drop(rx_tx);
                         trace!("shutting down index trie");
                         state
                             .index
@@ -461,6 +490,7 @@ impl Incoming {
         });
         Self {
             rx: Some(StreamReader::new(ReceiverStream::new(rx_rx))),
+            subscribed: true,
             path: Arc::from([]),
             io: Arc::new(match dropped_tx {
                 // TODO: Bound draining by a deadline or a byte limit
@@ -490,6 +520,9 @@ impl Incoming {
                 "path cannot be empty",
             ));
         }
+        if let Some(err) = &self.state.conflict {
+            return Err(copy_io_error(err));
+        }
         let path = if self.path.is_empty() {
             Arc::from(path)
         } else {
@@ -502,11 +535,10 @@ impl Incoming {
             .lock()
             .map_err(|err| std::io::Error::other(err.to_string()))?;
         trace!(?path, "taking index subscription");
-        let rx = index
-            .take_rx(&path)
-            .map(|rx| StreamReader::new(ReceiverStream::new(rx)));
+        let rx = index.take_rx(&path).ok_or_else(|| error_not_found(&path))?;
         Ok(Self {
-            rx,
+            subscribed: rx.is_some(),
+            rx: rx.map(|rx| StreamReader::new(ReceiverStream::new(rx))),
             path,
             io: Arc::clone(&self.io),
             state: Arc::clone(&self.state),
@@ -527,6 +559,9 @@ impl AsyncRead for Incoming {
         trace!("reading");
         let this = self.as_mut().project();
         let Some(rx) = this.rx.as_pin_mut() else {
+            if !*this.subscribed {
+                return Poll::Ready(Err(error_not_found(this.path)));
+            }
             trace!("reader is closed");
             return Poll::Ready(Ok(()));
         };
@@ -534,7 +569,9 @@ impl AsyncRead for Incoming {
         trace!(buf = ?buf.filled(), "read buffer");
         if buf.filled().is_empty() {
             self.rx.take();
-            if let Some(err) = self.state.err.get() {
+            if let Some(err) = self.state.err.get()
+                && !self.state.is_closed(&self.path)
+            {
                 return Poll::Ready(Err(copy_io_error(err)));
             }
         }
@@ -544,8 +581,17 @@ impl AsyncRead for Incoming {
 
 struct IngressState {
     index: std::sync::Mutex<IndexTrie>,
+    conflict: Option<std::io::Error>,
     err: std::sync::OnceLock<std::io::Error>,
     unprocessed: AtomicBool,
+}
+
+impl IngressState {
+    /// Returns whether an empty frame closed the `path`
+    fn is_closed(&self, path: &[usize]) -> bool {
+        let mut index = self.index.lock().unwrap_or_else(PoisonError::into_inner);
+        matches!(index.get_tx_mut(path), Some(TxSlot::Closed))
+    }
 }
 
 enum IngressGuard {
@@ -637,12 +683,19 @@ impl Outgoing {
     }
 
     /// Writes `buf` to the stream as a single frame, without copying it.
+    /// Empty `buf` is not written, since an empty frame closes the stream, see [`Self::close`].
     pub async fn write_bytes(&mut self, buf: Bytes) -> std::io::Result<()> {
         if buf.is_empty() {
             return Ok(());
         }
         self.reserve().await?;
         self.send_reserved(buf)
+    }
+
+    /// Closes the stream by writing an empty frame. No more data may be written to it afterwards.
+    pub async fn close(&mut self) -> std::io::Result<()> {
+        self.reserve().await?;
+        self.send_reserved(Bytes::default())
     }
 }
 
@@ -677,7 +730,6 @@ impl AsyncWrite for Outgoing {
 async fn ingress(
     mut rx: impl AsyncRead + Unpin,
     index: &std::sync::Mutex<IndexTrie>,
-    param_tx: &mpsc::Sender<std::io::Result<Bytes>>,
 ) -> std::io::Result<()> {
     loop {
         trace!("reading path length");
@@ -692,8 +744,8 @@ async fn ingress(
         let n = usize::try_from(n)
             .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
         trace!(n, "read path length");
-        let tx = if n == 0 {
-            param_tx
+        let path = if n == 0 {
+            Vec::default()
         } else {
             let mut path = Vec::with_capacity(n.min(MAX_INITIAL_PATH_CAPACITY));
             for i in 0..n {
@@ -704,21 +756,31 @@ async fn ingress(
                 path.push(p);
             }
             trace!(?path, "read path");
-
-            trace!("locking index trie");
-            let mut index = index
-                .lock()
-                .map_err(|err| std::io::Error::other(err.to_string()))?;
-            &index.get_tx(&path).ok_or_else(|| {
-                std::io::Error::new(
-                    std::io::ErrorKind::NotFound,
-                    format!("`{path:?}` subscription not found"),
-                )
-            })?
+            path
         };
         trace!("reading data length");
         let n = rx.read_u32_leb128().await?;
         trace!(n, "read data length");
+        let tx = {
+            trace!("locking index trie");
+            let mut trie = index
+                .lock()
+                .map_err(|err| std::io::Error::other(err.to_string()))?;
+            let tx = trie
+                .get_tx_mut(&path)
+                .ok_or_else(|| error_not_found(&path))?;
+            if n == 0 {
+                trace!(?path, "closing path");
+                if let TxSlot::Closed = mem::replace(tx, TxSlot::Closed) {
+                    return Err(error_closed(&path));
+                }
+                continue;
+            }
+            let TxSlot::Open(tx) = tx else {
+                return Err(error_closed(&path));
+            };
+            tx.clone()
+        };
         let mut data = (&mut rx).take(n.into());
         while data.limit() > 0 {
             let k = usize::try_from(data.limit())
@@ -748,6 +810,22 @@ fn close_rx(state: &IngressState) -> std::io::Result<()> {
         return Err(error_unprocessed());
     }
     Ok(())
+}
+
+/// Returns the error for a frame received on a closed `path`
+fn error_closed(path: &[usize]) -> std::io::Error {
+    std::io::Error::new(
+        std::io::ErrorKind::InvalidData,
+        format!("received a frame on closed path `{path:?}`"),
+    )
+}
+
+/// Returns the error for a `path`, which is not subscribed to
+fn error_not_found(path: &[usize]) -> std::io::Error {
+    std::io::Error::new(
+        std::io::ErrorKind::NotFound,
+        format!("`{path:?}` subscription not found"),
+    )
 }
 
 /// Returns the error for received data, which was not processed
@@ -864,6 +942,59 @@ mod tests {
     }
 
     #[test_log::test(tokio::test)]
+    async fn incoming_rejects_unsubscribed_paths() {
+        let (_tx, rx) = tokio::io::duplex(16);
+        let rx = Incoming::new(
+            BufReader::new(rx),
+            [&[Some(0)][..], &[Some(1)], &[Some(1), Some(0)]],
+            false,
+            |_, _| async {},
+        );
+        rx.index(&[0]).unwrap();
+        for path in [&[0][..], &[2], &[1, 1]] {
+            let Err(err) = rx.index(path) else {
+                panic!("indexing `{path:?}` should fail");
+            };
+            assert_eq!(err.kind(), ErrorKind::NotFound);
+        }
+        let (_tx, rx) = tokio::io::duplex(16);
+        let rx = Incoming::new(
+            BufReader::new(rx),
+            [[Some(0), Some(0)]],
+            false,
+            |_, _| async {},
+        );
+        let mut sub = rx.index(&[0]).unwrap();
+        sub.index(&[0]).unwrap();
+        let err = sub.read_to_end(&mut Vec::default()).await.unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::NotFound);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn incoming_rejects_conflicting_paths() {
+        let (mut tx, rx) = tokio::io::duplex(16);
+        let (done_tx, done_rx) = oneshot::channel();
+        let mut rx = Incoming::new(
+            BufReader::new(rx),
+            [vec![Some(0), None], vec![Some(0), Some(1)]],
+            false,
+            |_, res| async {
+                _ = done_tx.send(res);
+            },
+        );
+        let Err(err) = rx.index(&[0, 1]) else {
+            panic!("indexing a conflicting path should fail");
+        };
+        assert_eq!(err.kind(), ErrorKind::InvalidInput);
+        tx.write_all(&[0x00, 0x01, 0x42]).await.unwrap();
+        drop(tx);
+        let mut buf = Vec::default();
+        rx.read_to_end(&mut buf).await.unwrap();
+        assert_eq!(buf, [0x42]);
+        done_rx.await.unwrap().unwrap();
+    }
+
+    #[test_log::test(tokio::test)]
     async fn incoming_drop_aborts() {
         let (_tx, rx, done_rx) = incoming(false);
         drop(rx);
@@ -890,6 +1021,21 @@ mod tests {
         tx.write_all(&[0x00, 0x00]).await.unwrap();
         drop(tx);
         done(done_rx).await.unwrap();
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn incoming_empty_frame_closes_path() {
+        let (mut tx, mut rx, done_rx) = incoming(true);
+        let mut sub = rx.index(&[0]).unwrap();
+        tx.write_all(&[0x00, 0x00]).await.unwrap();
+        tx.write_all(&FRAME).await.unwrap();
+        tx.write_all(&[0x01, 0x00, 0x00]).await.unwrap();
+        tx.write_all(&[0x01, 0x01, 0x01, 0x2a]).await.unwrap();
+        assert_eq!(failed(done_rx).await, ErrorKind::NotFound);
+        let mut buf = vec![];
+        sub.read_to_end(&mut buf).await.unwrap();
+        assert_eq!(buf, [0x2a]);
+        assert_eq!(rx.read_to_end(&mut Vec::default()).await.unwrap(), 0);
     }
 
     #[test_log::test(tokio::test)]
@@ -961,42 +1107,48 @@ mod tests {
     }
 
     #[test_log::test(tokio::test)]
-    async fn ingress_truncated_path() {
-        let index = std::sync::Mutex::new(IndexTrie::Empty);
-        let (tx, _rx) = mpsc::channel(1);
-        let err = ingress([0x02, 0x00].as_slice(), &index, &tx)
-            .await
-            .unwrap_err();
-        assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
+    async fn ingress_rejects_invalid_frames() {
+        for (frames, kind) in [
+            ([0x02, 0x00].as_slice(), ErrorKind::UnexpectedEof),
+            (
+                &[0x00, 0xff, 0xff, 0xff, 0xff, 0x0f, 0x42],
+                ErrorKind::UnexpectedEof,
+            ),
+            (&[0x00, 0x00, 0x00, 0x01, 0x2a], ErrorKind::InvalidData),
+            (&[0x00, 0x00, 0x00, 0x00], ErrorKind::InvalidData),
+            (
+                &[0x01, 0x00, 0x00, 0x01, 0x00, 0x01, 0x2a],
+                ErrorKind::InvalidData,
+            ),
+            (
+                &[0x01, 0x00, 0x00, 0x01, 0x00, 0x00],
+                ErrorKind::InvalidData,
+            ),
+            (&[0x01, 0x01, 0x00], ErrorKind::NotFound),
+            (&[0x01, 0x01, 0x01, 0x2a], ErrorKind::NotFound),
+        ] {
+            let (tx, _rx) = mpsc::channel(1);
+            let index = std::sync::Mutex::new(
+                IndexTrie::new([[Some(0)].as_slice(), &[Some(1), Some(0)]], tx).unwrap(),
+            );
+            let err = ingress(frames, &index).await.unwrap_err();
+            assert_eq!(err.kind(), kind, "{frames:02x?}");
+        }
     }
 
     #[test_log::test(tokio::test)]
     async fn ingress_chunked_data() {
-        let index = std::sync::Mutex::new(IndexTrie::Empty);
         let (tx, mut rx) = mpsc::channel(4);
+        let index = std::sync::Mutex::new(IndexTrie::new::<[_; 0]>([], tx).unwrap());
         let n = DEFAULT_MAX_INITIAL_CAPACITY + 1;
         let mut frame = vec![0x00, 0x81, 0x80, 0x40];
         frame.resize(frame.len() + n, 0x42);
-        ingress(frame.as_slice(), &index, &tx).await.unwrap();
-        drop(tx);
+        ingress(frame.as_slice(), &index).await.unwrap();
+        drop(index);
         let mut chunks = vec![];
         while let Some(chunk) = rx.recv().await {
             chunks.push(chunk.unwrap().len());
         }
         assert_eq!(chunks, [DEFAULT_MAX_INITIAL_CAPACITY, 1]);
-    }
-
-    #[test_log::test(tokio::test)]
-    async fn ingress_truncated_data() {
-        let index = std::sync::Mutex::new(IndexTrie::Empty);
-        let (tx, _rx) = mpsc::channel(1);
-        let err = ingress(
-            [0x00, 0xff, 0xff, 0xff, 0xff, 0x0f, 0x42].as_slice(),
-            &index,
-            &tx,
-        )
-        .await
-        .unwrap_err();
-        assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
     }
 }
