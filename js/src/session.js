@@ -70,7 +70,8 @@ async function writeFuture(out, ty, value) {
   /** @type {any[]} */
   const sink = [];
   encodeValue(w, ty, v, sink, []);
-  await out.write(w.finish());
+  const bytes = w.finish();
+  await (bytes.length > 0 ? out.write(bytes) : out.close());
   await Promise.all(sink.map((e) => writeDeferred(out.index(e.path), e)));
 }
 

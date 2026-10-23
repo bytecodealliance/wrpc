@@ -633,6 +633,17 @@ test("an invocation with empty parameters sends just the header", async () => {
   assert.deepEqual(Buffer.concat(frames), Buffer.from("\x00\x03foo\x03bar", "latin1"));
 });
 
+test("a future with an empty value encoding closes its sub-stream", async () => {
+  const frames = [];
+  const transport = { read: async () => null, write: (bytes) => void frames.push(bytes) };
+  const { done } = await invoke(transport, "foo", "bar", [t.future(t.tuple())], [[]], []);
+  await done;
+  assert.deepEqual(
+    Buffer.concat(frames),
+    Buffer.from("\x00\x03foo\x03bar\x00\x01\x00\x01\x00\x00", "latin1"),
+  );
+});
+
 /** A transport fed by the frames a peer writes, until `inbound` is closed. */
 function feed() {
   const inbound = new Chan();

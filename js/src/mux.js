@@ -236,8 +236,7 @@ export class Mux {
       if (n === 0) {
         // An empty frame closes its sub-stream, which may already be finished.
         this.closed.add(k);
-        const chan = this._route(path, true);
-        if (chan && !chan.cancelled) chan.close();
+        this._route(path, true)?.close();
         continue;
       }
       const chan = this._route(path);
