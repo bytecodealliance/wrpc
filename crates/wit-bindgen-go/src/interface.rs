@@ -1092,7 +1092,44 @@ impl InterfaceGenerator<'_> {
                 }
                 self.src.push_str(")");
             }
-            None => panic!("futures with no element types are not supported"),
+            None => {
+                let fmt = self.deps.fmt();
+                let slog = self.deps.slog();
+                let wrpc = self.deps.wrpc();
+
+                uwrite!(
+                    self.src,
+                    r#"func(r {wrpc}.IndexReadCloser, path ...uint32) ({wrpc}.Receiver[struct{{}}], error) {{
+    {slog}.Debug("reading future status byte")
+    status, err := r.ReadByte()
+    if err != nil {{
+        return nil, {fmt}.Errorf("failed to read future status byte: %w", err)
+    }}
+    switch status {{
+    case 0:
+        {slog}.Debug("indexing pending future reader")
+        if len(path) > 0 {{
+            var err error
+            r, err = r.Index(path...)
+            if err != nil {{
+                return nil, {fmt}.Errorf("failed to index nested future reader: %w", err)
+            }}
+        }}
+        return {wrpc}.NewDecodeReceiver(r, {wrpc}.ReadFutureClose), nil
+    case 1:
+        return {wrpc}.NewCompleteReceiver(struct{{}}{{}}), nil
+    default:
+        return nil, {fmt}.Errorf("invalid future status byte %d", status)
+    }}
+}}({reader}"#
+                );
+                if !path.is_empty() {
+                    self.src.push_str(", ");
+                    self.src.push_str(path);
+                    self.src.push_str("...");
+                }
+                self.src.push_str(")");
+            }
         }
     }
 
@@ -2090,7 +2127,39 @@ impl InterfaceGenerator<'_> {
         }}({name}, {writer})"#,
                 );
             }
-            None => panic!("streams with no element types are not supported"),
+            None => {
+                let fmt = self.deps.fmt();
+                let io = self.deps.io();
+                let slog = self.deps.slog();
+                let wrpc = self.deps.wrpc();
+                uwrite!(
+                    self.src,
+                    r#"func(v {wrpc}.Receiver[struct{{}}], w interface {{ {io}.ByteWriter; {io}.Writer }}) (write func({wrpc}.IndexWriter) error, err error) {{
+            {slog}.Debug("writing future `future::pending` status byte")
+            if err := w.WriteByte(0); err != nil {{
+                return nil, {fmt}.Errorf("failed to write `future::pending` byte: %w", err)
+            }}
+            return func(w {wrpc}.IndexWriter) (err error) {{
+                defer func() {{
+                   {slog}.Debug("closing future writer")
+                   if cErr := v.Close(); cErr != nil {{
+                       if err == nil {{
+                           err = {fmt}.Errorf("failed to close pending future: %w", cErr)
+                       }} else {{
+                           {slog}.Warn("failed to close pending future", "err", cErr)
+                       }}
+                   }}
+                }}()
+                {slog}.Debug("receiving outgoing pending future")
+                if _, err := v.Receive(); err != nil {{
+                    return {fmt}.Errorf("failed to receive outgoing pending future: %w", err)
+                }}
+                {slog}.Debug("closing pending future path")
+                return w.ClosePath()
+            }}, nil
+        }}({name}, {writer})"#,
+                );
+            }
         }
     }
 
@@ -3300,7 +3369,9 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
                 self.push_str("]");
             }
             None => {
-                panic!("futures with no element types are not supported")
+                let wrpc = self.deps.wrpc();
+                self.push_str(wrpc);
+                self.push_str(".Receiver[struct{}]");
             }
         }
     }
