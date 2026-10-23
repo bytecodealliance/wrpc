@@ -1,4 +1,3 @@
-use core::future::ready;
 use core::iter::zip;
 use core::mem;
 use core::ops::{BitOrAssign, Shl};
@@ -7,18 +6,18 @@ use core::pin::Pin;
 use std::collections::HashSet;
 
 use bytes::{BufMut as _, Bytes, BytesMut};
-use futures::TryStreamExt as _;
 use futures::stream::{self, FuturesUnordered};
+use futures::{StreamExt as _, TryStreamExt as _};
 use tokio::io::{AsyncRead, AsyncReadExt as _};
 use tokio_util::codec::{Encoder, FramedRead};
-use tokio_util::compat::FuturesAsyncReadCompatExt as _;
 use tokio_util::io::StreamReader;
 use tracing::{error, instrument, trace, warn};
 use uuid::Uuid;
 use wasm_tokio::cm::AsyncReadValue as _;
 use wasm_tokio::{
     AsyncReadCore as _, AsyncReadLeb128 as _, AsyncReadUtf8 as _, CoreNameEncoder,
-    CoreVecEncoderBytes, DEFAULT_MAX_INITIAL_CAPACITY, Leb128Encoder, Utf8Codec,
+    CoreVecDecoderBytes, CoreVecEncoderBytes, DEFAULT_MAX_INITIAL_CAPACITY, Leb128Encoder,
+    Utf8Codec,
 };
 use wasmtime::bail;
 use wasmtime::component::types::{Case, Field};
@@ -28,7 +27,7 @@ use wasmtime::{AsContextMut, StoreContextMut};
 use wasmtime_wasi::p2::pipe::{AsyncReadStream, MemoryInputPipe};
 use wasmtime_wasi::p2::{DynInputStream, StreamError};
 use wrpc_transport::frame::{Incoming, Outgoing};
-use wrpc_transport::{Deferred as _, ListDecoderU8, READ_CHUNK_SIZE, StreamEncoderRead};
+use wrpc_transport::{Deferred as _, READ_CHUNK_SIZE, StreamEncoderRead};
 
 use crate::{RemoteResource, WrpcView};
 
@@ -874,12 +873,29 @@ where
                 let stream: DynInputStream = match r.read_u8().await? {
                     0 => {
                         let r = r.index(path).map_err(std::io::Error::other)?;
-                        Box::new(AsyncReadStream::new(
-                            FramedRead::new(r, ListDecoderU8::default())
-                                .try_take_while(|chunk| ready(Ok(!chunk.is_empty())))
-                                .into_async_read()
-                                .compat(),
-                        ))
+                        Box::new(AsyncReadStream::new(StreamReader::new(stream::try_unfold(
+                            FramedRead::new(
+                                r,
+                                CoreVecDecoderBytes::<DEFAULT_MAX_INITIAL_CAPACITY>::default(),
+                            ),
+                            |mut framed| async move {
+                                match framed.next().await {
+                                    Some(Ok(chunk)) if chunk.is_empty() => {
+                                        if framed.read_buffer().is_empty() {
+                                            Ok(None)
+                                        } else {
+                                            Err(std::io::Error::new(
+                                                std::io::ErrorKind::InvalidData,
+                                                "received data after stream end",
+                                            ))
+                                        }
+                                    }
+                                    Some(Ok(chunk)) => Ok(Some((chunk, framed))),
+                                    Some(Err(err)) => Err(err),
+                                    None => Err(std::io::ErrorKind::UnexpectedEof.into()),
+                                }
+                            },
+                        ))))
                     }
                     1 => {
                         let buf = read_bytes(r).await?;
