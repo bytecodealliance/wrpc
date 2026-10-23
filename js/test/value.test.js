@@ -264,7 +264,7 @@ test("stream and future cannot be encoded or decoded synchronously", () => {
   assert.throws(() => decode(t.future(t.string), new Uint8Array([0])), /async session API/);
 });
 
-test("ready streams are decoded synchronously", async () => {
+test("ready streams and futures are decoded synchronously", async () => {
   const collect = async (chunks) => {
     const out = [];
     for await (const chunk of chunks) out.push(chunk);
@@ -277,6 +277,8 @@ test("ready streams are decoded synchronously", async () => {
     ["a"],
   ]);
   assert.deepEqual(await collect(decode(t.stream(t.u8), Uint8Array.of(1, 0))), []);
+  assert.equal(await decode(t.future(t.u8), Uint8Array.of(1, 7)), 7);
+  assert.equal(await decode(t.future(), Uint8Array.of(1)), undefined);
 });
 
 test("the wasi:keyvalue store types", () => {

@@ -10,7 +10,7 @@
 // writer task per sub-stream.
 
 import { Writer, atomic, readVarU32 } from "./io.js";
-import { DISCARDED, Mux, PROTOCOL } from "./mux.js";
+import { DISCARDED, Mux, PROTOCOL, unexpectedError } from "./mux.js";
 import { decodeSteps, encodeValue, hasAsync, readChunk, toBytes } from "./value.js";
 
 /** @typedef {import("./index.d.ts").Type} Type */
@@ -63,14 +63,15 @@ function writeDeferred(out, entry) {
     : writeStream(out, entry.ty, entry.value);
 }
 
-/** @param {Outgoing} out @param {Type} ty @param {any} value */
+/** @param {Outgoing} out @param {Type | null} ty @param {any} value */
 async function writeFuture(out, ty, value) {
   const v = await resolveFuture(value);
   const w = new Writer();
   /** @type {any[]} */
   const sink = [];
-  encodeValue(w, ty, v, sink, []);
-  await out.write(w.finish());
+  if (ty) encodeValue(w, ty, v, sink, []);
+  const bytes = w.finish();
+  await (bytes.length > 0 ? out.write(bytes) : out.close());
   await Promise.all(sink.map((e) => writeDeferred(out.index(e.path), e)));
 }
 
@@ -167,7 +168,9 @@ async function receiveTuple(mux, root, types) {
 function expect(mux, path, sink) {
   mux.seal(
     path,
-    sink.flatMap((e) => (e.kind === "inline" ? [] : [{ path: e.path, nested: hasAsync(e.ty) }])),
+    sink.flatMap((e) =>
+      e.kind === "inline" ? [] : [{ path: e.path, nested: !!e.ty && hasAsync(e.ty) }],
+    ),
   );
 }
 
@@ -213,7 +216,9 @@ async function readDeferred(mux, path, entry, ar) {
 async function readFuture(mux, path, entry, ar) {
   let decoded;
   try {
-    decoded = await decodeOne(ar, entry.ty);
+    if (entry.ty) decoded = await decodeOne(ar, entry.ty);
+    else if (await ar.fill(1)) throw unexpectedError(path);
+    else decoded = { value: undefined, sink: [] };
   } catch (err) {
     entry.reject(err);
     if (err === DISCARDED) return;

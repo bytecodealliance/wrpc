@@ -103,7 +103,7 @@ function* readFrameHeader(r) {
 }
 
 /** @param {number[]} path */
-const unexpectedError = (path) => new Error(`unexpected data for sub-stream [${path}]`);
+export const unexpectedError = (path) => new Error(`unexpected data for sub-stream [${path}]`);
 
 /** @param {number[]} path @returns {never} */
 function unexpected(path) {
