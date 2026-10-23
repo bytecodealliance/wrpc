@@ -11,7 +11,8 @@ use crate::frame::conn::{Incoming, Outgoing};
 use crate::frame::{ConnHandler, PROTOCOL};
 
 /// Encodes the header of an invocation, which is followed by `params_len` bytes of
-/// parameters, to a `BytesMut`
+/// parameters, to a `BytesMut`. If `params_len` is 0, only the header is encoded, since frames must
+/// not be empty.
 ///
 /// This is low-level API, most users should use [`invoke`].
 #[instrument(level = "trace", skip_all)]
@@ -31,8 +32,10 @@ pub fn encode_invocation(
     buf.put_u8(PROTOCOL);
     CoreNameEncoder.encode(instance, buf)?;
     CoreNameEncoder.encode(func, buf)?;
-    buf.put_u8(0);
-    Leb128Encoder.encode(params_len, buf)?;
+    if params_len > 0 {
+        buf.put_u8(0);
+        Leb128Encoder.encode(params_len, buf)?;
+    }
     Ok(())
 }
 

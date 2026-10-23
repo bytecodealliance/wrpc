@@ -692,8 +692,8 @@ async fn ingress(
         let n = usize::try_from(n)
             .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
         trace!(n, "read path length");
-        let tx = if n == 0 {
-            param_tx
+        let path = if n == 0 {
+            None
         } else {
             let mut path = Vec::with_capacity(n.min(MAX_INITIAL_PATH_CAPACITY));
             for i in 0..n {
@@ -704,21 +704,34 @@ async fn ingress(
                 path.push(p);
             }
             trace!(?path, "read path");
-
-            trace!("locking index trie");
-            let mut index = index
-                .lock()
-                .map_err(|err| std::io::Error::other(err.to_string()))?;
-            &index.get_tx(&path).ok_or_else(|| {
-                std::io::Error::new(
-                    std::io::ErrorKind::NotFound,
-                    format!("`{path:?}` subscription not found"),
-                )
-            })?
+            Some(path)
         };
         trace!("reading data length");
         let n = rx.read_u32_leb128().await?;
         trace!(n, "read data length");
+        if n == 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "received an empty frame",
+            ));
+        }
+        let sub_tx = match &path {
+            None => None,
+            Some(path) => {
+                trace!("locking index trie");
+                let mut index = index
+                    .lock()
+                    .map_err(|err| std::io::Error::other(err.to_string()))?;
+                let Some(tx) = index.get_tx(path) else {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::NotFound,
+                        format!("`{path:?}` subscription not found"),
+                    ));
+                };
+                Some(tx)
+            }
+        };
+        let tx = sub_tx.as_ref().unwrap_or(param_tx);
         let mut data = (&mut rx).take(n.into());
         while data.limit() > 0 {
             let k = usize::try_from(data.limit())
@@ -884,12 +897,12 @@ mod tests {
     }
 
     #[test_log::test(tokio::test)]
-    async fn incoming_drop_accepts_empty_frame() {
+    async fn incoming_drop_rejects_empty_frame() {
         let (mut tx, rx, done_rx) = incoming(true);
         drop(rx);
         tx.write_all(&[0x00, 0x00]).await.unwrap();
         drop(tx);
-        done(done_rx).await.unwrap();
+        assert_eq!(failed(done_rx).await, ErrorKind::InvalidData);
     }
 
     #[test_log::test(tokio::test)]
@@ -958,6 +971,26 @@ mod tests {
         tokio::task::yield_now().await;
         drop(rx);
         assert_eq!(failed(done_rx).await, ErrorKind::BrokenPipe);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn ingress_rejects_empty_frame() {
+        let index = std::sync::Mutex::new(IndexTrie::Empty);
+        let (tx, _rx) = mpsc::channel(1);
+        for frame in [[0x00, 0x00].as_slice(), &[0x01, 0x05, 0x00]] {
+            let err = ingress(frame, &index, &tx).await.unwrap_err();
+            assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+        }
+    }
+
+    #[test]
+    fn encode_invocation_empty_params() {
+        let mut buf = BytesMut::default();
+        encode_invocation(&mut buf, "foo", "bar", 0).unwrap();
+        assert_eq!(buf.as_ref(), b"\x00\x03foo\x03bar");
+        buf.clear();
+        encode_invocation(&mut buf, "foo", "bar", 1).unwrap();
+        assert_eq!(buf.as_ref(), b"\x00\x03foo\x03bar\x00\x01");
     }
 
     #[test_log::test(tokio::test)]
