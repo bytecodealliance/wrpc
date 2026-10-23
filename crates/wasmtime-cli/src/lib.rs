@@ -146,6 +146,19 @@ fn is_0_2(version: &str, min_patch: u64) -> bool {
     }
 }
 
+fn is_0_3(version: &str) -> bool {
+    match version.parse() {
+        Ok(semver::Version {
+            major,
+            minor,
+            pre,
+            build,
+            ..
+        }) => major == 0 && minor == 3 && pre.is_empty() && build.is_empty(),
+        _ => false,
+    }
+}
+
 #[instrument(level = "trace", skip(adapter))]
 async fn instantiate_pre<C>(
     adapter: &[u8],
@@ -219,10 +232,16 @@ where
     let mut linker = Linker::<Ctx<C>>::new(&engine);
     wasmtime_wasi::p2::add_to_linker_async(&mut linker)
         .map_err(anyhow::Error::from)
-        .context("failed to link WASI")?;
+        .context("failed to link WASI 0.2")?;
+    wasmtime_wasi::p3::add_to_linker(&mut linker)
+        .map_err(anyhow::Error::from)
+        .context("failed to link WASI 0.3")?;
     wasmtime_wasi_http::p2::add_only_http_to_linker_async(&mut linker)
         .map_err(anyhow::Error::from)
-        .context("failed to link `wasi:http`")?;
+        .context("failed to link `wasi:http` 0.2")?;
+    wasmtime_wasi_http::p3::add_to_linker(&mut linker)
+        .map_err(anyhow::Error::from)
+        .context("failed to link `wasi:http` 0.3")?;
     wrpc_wasmtime::rpc::add_to_linker(&mut linker)
         .map_err(anyhow::Error::from)
         .context("failed to link `wrpc:rpc`")?;
@@ -315,26 +334,38 @@ where
                 | "terminal-output" | "terminal-stderr" | "terminal-stdin" | "terminal-stdout",
                 Some(version),
             )) if is_0_2(version, 0) => {}
+            Some((
+                "wasi:cli",
+                "environment" | "exit" | "stderr" | "stdin" | "stdout" | "terminal-input"
+                | "terminal-output" | "terminal-stderr" | "terminal-stdin" | "terminal-stdout"
+                | "types",
+                Some(version),
+            )) if is_0_3(version) => {}
             Some(("wasi:clocks", "monotonic-clock" | "wall-clock", Some(version)))
                 if is_0_2(version, 0) => {}
             Some(("wasi:clocks", "timezone", Some(version))) if is_0_2(version, 1) => {}
+            Some(("wasi:clocks", "monotonic-clock" | "system-clock" | "types", Some(version)))
+                if is_0_3(version) => {}
             Some(("wasi:filesystem", "preopens" | "types", Some(version)))
-                if is_0_2(version, 0) => {}
+                if is_0_2(version, 0) || is_0_3(version) => {}
             Some((
                 "wasi:http",
                 "incoming-handler" | "outgoing-handler" | "types",
                 Some(version),
             )) if is_0_2(version, 0) => {}
+            Some(("wasi:http", "client" | "types", Some(version))) if is_0_3(version) => {}
             Some(("wasi:io", "error" | "poll" | "streams", Some(version)))
                 if is_0_2(version, 0) => {}
             Some(("wasi:random", "insecure-seed" | "insecure" | "random", Some(version)))
-                if is_0_2(version, 0) => {}
+                if is_0_2(version, 0) || is_0_3(version) => {}
             Some((
                 "wasi:sockets",
                 "instance-network" | "ip-name-lookup" | "network" | "tcp-create-socket" | "tcp"
                 | "udp-create-socket" | "udp",
                 Some(version),
             )) if is_0_2(version, 0) => {}
+            Some(("wasi:sockets", "ip-name-lookup" | "types", Some(version)))
+                if is_0_3(version) => {}
             _ => {
                 if let Err(err) = link_item(
                     &engine,
@@ -408,19 +439,45 @@ where
     let (pre, engine, _, _) =
         instantiate_pre(WASI_SNAPSHOT_PREVIEW1_COMMAND_ADAPTER, workload).await?;
     let mut store = new_store(&engine, clt, cx, envs, "command.wasm", timeout);
+    let is_p3 = pre
+        .component()
+        .component_type()
+        .exports(&engine)
+        .any(|(name, _)| name.strip_prefix("wasi:cli/run@").is_some_and(is_0_3));
+    if is_p3 {
+        let cmd = wasmtime_wasi::p3::bindings::CommandPre::new(pre)
+            .map_err(anyhow::Error::from)
+            .context("failed to construct `command` instance")?;
+        let cmd = cmd
+            .instantiate_async(&mut store)
+            .await
+            .map_err(anyhow::Error::from)
+            .context("failed to instantiate `command`")?;
+        let res = store
+            .run_concurrent(async move |store| cmd.wasi_cli_run().call_run(store).await)
+            .await
+            .map_err(anyhow::Error::from)
+            .context("failed to run concurrent event loop")?;
+        let res = res
+            .map_err(anyhow::Error::from)
+            .context("failed to run component")?;
+        return res.map_err(|()| anyhow!("component failed"));
+    }
     let cmd = wasmtime_wasi::p2::bindings::CommandPre::new(pre)
         .map_err(anyhow::Error::from)
-        .context("failed to construct `command` instance")?
+        .context("failed to construct `command` instance")?;
+    let cmd = cmd
         .instantiate_async(&mut store)
         .await
         .map_err(anyhow::Error::from)
         .context("failed to instantiate `command`")?;
-    cmd.wasi_cli_run()
+    let res = cmd
+        .wasi_cli_run()
         .call_run(&mut store)
         .await
         .map_err(anyhow::Error::from)
-        .context("failed to run component")?
-        .map_err(|()| anyhow!("component failed"))
+        .context("failed to run component")?;
+    res.map_err(|()| anyhow!("component failed"))
 }
 
 #[instrument(level = "trace", skip_all, ret(level = "trace"))]
