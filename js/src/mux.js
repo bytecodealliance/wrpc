@@ -34,6 +34,7 @@ export const DISCARDED = new Error("sub-stream discarded");
  * @property {number[]} path
  * @property {Chan<Uint8Array>} chan
  * @property {boolean} empty whether only empty frames arrived for it
+ * @property {boolean} closed whether an empty frame closed it
  */
 
 /**
@@ -52,6 +53,7 @@ export const DISCARDED = new Error("sub-stream discarded");
  * @property {number} decided the number of stream elements known, whose
  *   children are all in the trie
  * @property {boolean} done whether all its own data has been read
+ * @property {boolean} closed whether an empty frame closed it
  * @property {Set<number> | undefined} pruned the indices of the children
  *   forgotten once finished, beyond those of the `decided` stream elements
  * @property {number} discardFrom `Infinity`, unless the node is discarded: then
@@ -67,6 +69,7 @@ const node = (sealed) => ({
   sealed,
   decided: 0,
   done: false,
+  closed: false,
   pruned: undefined,
   discardFrom: Infinity,
   pending: undefined,
@@ -195,8 +198,6 @@ export class Mux {
     /** The expected sub-streams, rooted at the one carrying the synchronous values. */
     this.root = node(false);
     this.root.chan = new Chan(CAPACITY);
-    /** The keys of the paths closed by an empty frame. @type {Set<string>} */
-    this.closed = new Set();
     /** Serializes outbound writes so each frame is emitted atomically. */
     this.writeChain = Promise.resolve();
     /** @type {unknown} */
@@ -231,12 +232,11 @@ export class Mux {
       // Stop cleanly at a frame boundary once the peer closes the stream.
       if (!(await m.fill(1))) break;
       const [path, n] = await m.decode(readFrameHeader);
-      const k = key(path);
-      if (this.closed.has(k)) unexpected(path);
       if (n === 0) {
         // An empty frame closes its sub-stream, which may already be finished.
-        this.closed.add(k);
         this._route(path, true)?.close();
+        const closed = this._get(path);
+        if (closed) closed.closed = true;
         continue;
       }
       const chan = this._route(path);
@@ -272,6 +272,7 @@ export class Mux {
       }
       n = child;
     }
+    if (n.closed) unexpected(path);
     if (n.done) return empty ? null : unexpected(path);
     if (n.discardFrom !== Infinity) return null;
     return n.chan ?? unexpected(path);
@@ -289,8 +290,10 @@ export class Mux {
     if (found === null) return undefined;
     if (found instanceof Chan) return found;
     let pending = found.at.pending?.get(found.i)?.get(key(path));
-    if (!pending) attach(found, (pending = { path, chan: new Chan(), empty }));
+    if (pending?.closed) unexpected(path);
+    if (!pending) attach(found, (pending = { path, chan: new Chan(), empty, closed: false }));
     pending.empty &&= empty;
+    pending.closed = empty;
     return pending.chan;
   }
 
@@ -373,6 +376,7 @@ export class Mux {
       n.sealed = !e.nested;
       if (n.chan) return;
       n.chan = t?.pending?.chan ?? new Chan();
+      n.closed = t?.pending?.closed ?? false;
       n.chan.capacity = CAPACITY;
       if (this.inboundClosed) n.chan.close(this.inboundError);
     });

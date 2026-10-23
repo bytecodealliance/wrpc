@@ -678,19 +678,39 @@ test("an empty frame for a finished sub-stream is accepted", { timeout: 1000 }, 
   assert.equal(outcome, "ok");
 });
 
-test("an empty frame for a finished closed sub-stream fails it", { timeout: 1000 }, async () => {
-  const { inbound, peer, transport, aborted } = feed();
-  await peer.outgoing([]).write(Uint8Array.of(0));
-  await peer.outgoing([0]).write(Uint8Array.of(1, 7));
-  await peer.outgoing([0]).write(Uint8Array.of(0));
-  const { results, done } = await invoke(transport, STREAMS, "get", [], [], [t.stream(t.u8)]);
-  assert.deepEqual(await collect(results[0]), [7]);
-  await done;
-  await peer.outgoing([0]).close();
-  await peer.outgoing([0]).close();
-  inbound.close();
-  assert.match(String(await aborted), /unexpected data for sub-stream \[0\]/);
-});
+test(
+  "a second empty frame for a sub-stream not yet declared fails it",
+  { timeout: 1000 },
+  async () => {
+    const { inbound, peer, transport, aborted } = feed();
+    await peer.outgoing([]).write(Uint8Array.of(0));
+    await peer.outgoing([0, 0]).close();
+    await peer.outgoing([0, 0]).close();
+    await peer.outgoing([0]).write(Uint8Array.of(1, 1, 0));
+    await peer.outgoing([0]).write(Uint8Array.of(0));
+    inbound.close();
+    const ty = [t.stream(t.option(t.future(t.tuple())))];
+    await invoke(transport, STREAMS, "get", [], [], ty);
+    assert.match(String(await aborted), /unexpected data for sub-stream \[0,0\]/);
+  },
+);
+
+test(
+  "data after an empty frame for a sub-stream not yet declared fails it",
+  { timeout: 1000 },
+  async () => {
+    const { inbound, peer, transport, aborted } = feed();
+    await peer.outgoing([]).write(Uint8Array.of(0));
+    await peer.outgoing([0, 0]).close();
+    await peer.outgoing([0, 0]).write(Uint8Array.of(7));
+    await peer.outgoing([0]).write(Uint8Array.of(1, 1, 0));
+    await peer.outgoing([0]).write(Uint8Array.of(0));
+    inbound.close();
+    const ty = [t.stream(t.option(t.future(t.u8)))];
+    await invoke(transport, STREAMS, "get", [], [], ty);
+    assert.match(String(await aborted), /unexpected data for sub-stream \[0,0\]/);
+  },
+);
 
 test(
   "an empty frame for a sub-stream the reply does not carry fails it after a sibling's",
