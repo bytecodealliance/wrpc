@@ -150,9 +150,23 @@ export class Outgoing {
     this.path = path;
   }
 
-  /** @param {Uint8Array} data @returns {Promise<void>} */
+  /**
+   * Write `data` as a frame, unless it is empty, since an empty frame closes
+   * the sub-stream.
+   * @param {Uint8Array} data @returns {Promise<void>}
+   */
   write(data) {
+    if (data.length === 0) return Promise.resolve();
     return this.mux._writeFrame(this.path, data);
+  }
+
+  /**
+   * Close the sub-stream by writing an empty frame. No more data may be
+   * written to it afterwards.
+   * @returns {Promise<void>}
+   */
+  close() {
+    return this.mux._writeFrame(this.path, new Uint8Array(0));
   }
 
   /** @param {number[]} rel @returns {Outgoing} */
@@ -181,6 +195,8 @@ export class Mux {
     /** The expected sub-streams, rooted at the one carrying the synchronous values. */
     this.root = node(false);
     this.root.chan = new Chan(CAPACITY);
+    /** The keys of the paths closed by an empty frame. @type {Set<string>} */
+    this.closed = new Set();
     /** Serializes outbound writes so each frame is emitted atomically. */
     this.writeChain = Promise.resolve();
     /** @type {unknown} */
@@ -215,9 +231,13 @@ export class Mux {
       // Stop cleanly at a frame boundary once the peer closes the stream.
       if (!(await m.fill(1))) break;
       const [path, n] = await m.decode(readFrameHeader);
+      const k = key(path);
+      if (this.closed.has(k)) unexpected(path);
       if (n === 0) {
-        // Peers may send empty frames, even for sub-streams that are finished.
-        this._route(path, true);
+        // An empty frame closes its sub-stream, which may already be finished.
+        this.closed.add(k);
+        const chan = this._route(path, true);
+        if (chan && !chan.cancelled) chan.close();
         continue;
       }
       const chan = this._route(path);
