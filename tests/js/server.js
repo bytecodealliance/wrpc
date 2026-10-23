@@ -57,6 +57,7 @@ const handlers = {
       [t.future(t.stream(t.u8))],
       ([x, s]) => (x.foo === "bar" ? [s] : fail(`expected \`bar\`, got \`${x.foo}\``)),
     ],
+    "identity-future": [[t.future()], [t.future()], ([v]) => [v]],
   },
 };
 

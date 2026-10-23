@@ -102,6 +102,40 @@ func TestAsync(t *testing.T) {
 		}
 	})
 
+	t.Run("identity-future", func(t *testing.T) {
+		slog.DebugContext(ctx, "calling `wrpc-test:integration/async.identity-future`")
+		ch := make(chan struct{}, 1)
+		fut, errCh, err := async.IdentityFuture(ctx, client, ch)
+		require.NoError(t, err, "failed to call `wrpc-test:integration/async.identity-future`")
+		select {
+		case <-fut:
+			t.Fatal("future resolved before its parameter")
+		case <-time.After(100 * time.Millisecond):
+		}
+		ch <- struct{}{}
+		select {
+		case _, ok := <-fut:
+			require.True(t, ok, "future closed without resolving")
+		case <-ctx.Done():
+			t.Fatal("future did not resolve")
+		}
+		for err := range errCh {
+			require.NoError(t, err, "failed to exchange async values with peer")
+		}
+
+		fut, errCh, err = async.IdentityFuture(ctx, client, internal.Ready(struct{}{}))
+		require.NoError(t, err, "failed to call `wrpc-test:integration/async.identity-future`")
+		select {
+		case _, ok := <-fut:
+			require.True(t, ok, "future closed without resolving")
+		default:
+			t.Fatal("expected a ready future")
+		}
+		for err := range errCh {
+			require.NoError(t, err, "failed to exchange async values with peer")
+		}
+	})
+
 	if err = stop(); err != nil {
 		t.Errorf("failed to stop serving `async-server` world: %s", err)
 		return

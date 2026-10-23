@@ -26,6 +26,11 @@ func (AsyncHandler) WithFuture(ctx context.Context, x *async.Something, s <-chan
 	return internal.Ready(s), nil
 }
 
+func (AsyncHandler) IdentityFuture(ctx context.Context, v <-chan struct{}) (<-chan struct{}, error) {
+	slog.DebugContext(ctx, "handling `identity-future`")
+	return v, nil
+}
+
 func (AsyncHandler) IdentityNestedAsync(ctx context.Context, v <-chan <-chan <-chan <-chan []string) (<-chan <-chan <-chan <-chan []string, error) {
 	slog.DebugContext(ctx, "handling `identity-nested-async`")
 	return v, nil
