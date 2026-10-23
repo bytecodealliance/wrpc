@@ -1,5 +1,6 @@
 #![allow(clippy::type_complexity)]
 
+use core::future::poll_fn;
 use core::ops::Bound;
 use core::pin::pin;
 use core::time::Duration;
@@ -454,7 +455,11 @@ where
             .map_err(anyhow::Error::from)
             .context("failed to instantiate `command`")?;
         let res = store
-            .run_concurrent(async move |store| cmd.wasi_cli_run().call_run(store).await)
+            .run_concurrent(async move |store| -> wasmtime::Result<_> {
+                let res = cmd.wasi_cli_run().call_run(store).await?;
+                poll_fn(|cx| store.poll_no_interesting_tasks(cx)).await;
+                Ok(res)
+            })
             .await
             .map_err(anyhow::Error::from)
             .context("failed to run concurrent event loop")?;
