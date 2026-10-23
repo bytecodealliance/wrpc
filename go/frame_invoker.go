@@ -14,7 +14,7 @@ import (
 // Initial, encoded payload must be specified in `buf`.
 // `paths` define the async result paths to subscribe on.
 // On success, `InvokeFramed` returns two handles used for writing and reading encoded parameters and results respectively.
-// NOTE: if the returned handle is used for writing, `b` must be non-empty.
+// If `buf` is empty, no initial frame is sent, since frames must not be empty.
 func InvokeFramed(ctx context.Context, w io.WriteCloser, r io.ReadCloser, instance string, name string, buf []byte, paths ...SubscribePath) (IndexWriteCloser, IndexReadCloser, error) {
 	if len(instance) > math.MaxUint32 {
 		return nil, nil, errors.New("instance length overflows uint32")
@@ -43,10 +43,12 @@ func InvokeFramed(ctx context.Context, w io.WriteCloser, r io.ReadCloser, instan
 	i = i + PutUint32(payload[i:], uint32(len(name)))
 	i = i + copy(payload[i:], name)
 
-	i = i + 1 // path == []
+	if len(buf) > 0 {
+		i = i + 1 // path == []
 
-	i = i + binary.PutUvarint(payload[i:], uint64(len(buf)))
-	i = i + copy(payload[i:], buf)
+		i = i + binary.PutUvarint(payload[i:], uint64(len(buf)))
+		i = i + copy(payload[i:], buf)
+	}
 
 	_, err := w.Write(payload[:i])
 	if err != nil {

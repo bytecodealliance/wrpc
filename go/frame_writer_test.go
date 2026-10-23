@@ -82,6 +82,20 @@ func TestFrameStreamWriter(t *testing.T) {
 		}
 	})
 
+	t.Run("empty write", func(t *testing.T) {
+		t.Parallel()
+		ctx := context.Background()
+		var dst sink
+		w := wrpc.NewFrameStreamWriter(ctx, &dst)
+
+		assertWriteString(t, w, "")
+		assertClose(t, w)
+
+		if n := dst.Len(); n > 0 {
+			t.Fatalf("%v bytes written: %v", n, dst.Bytes())
+		}
+	})
+
 	t.Run("nested", func(t *testing.T) {
 		t.Parallel()
 		ctx := context.Background()
