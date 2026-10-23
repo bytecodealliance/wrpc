@@ -1,7 +1,6 @@
 #![allow(clippy::type_complexity)]
 
 use core::future::poll_fn;
-use core::ops::Bound;
 use core::pin::pin;
 use core::time::Duration;
 
@@ -27,7 +26,7 @@ use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpCtxView, WasiHttpView};
 use wrpc_transport::{Invoke, Serve};
 use wrpc_wasmtime::{
     RemoteResource, ServeExt as _, SharedResourceTable, WrpcCtxView, WrpcView,
-    collect_component_resource_exports, collect_component_resource_imports, link_item, rpc,
+    collect_component_resource_exports, collect_component_resource_imports, link_item,
 };
 
 mod tcp;
@@ -247,74 +246,38 @@ where
         .map_err(anyhow::Error::from)
         .context("failed to link `wrpc:rpc`")?;
 
+    let mut stubbed = linker.clone();
+    stubbed
+        .define_unknown_imports_as_traps(&component)
+        .map_err(anyhow::Error::from)
+        .context("failed to stub unknown imports")?;
+    let linked_ty = stubbed
+        .substituted_component_type(&component)
+        .map_err(anyhow::Error::from)
+        .context("failed to substitute linked resource types")?;
+    let mut linked_resources = BTreeMap::default();
+    collect_component_resource_imports(&engine, &linked_ty, &mut linked_resources);
+
     let ty = component.component_type();
     let mut host_resources = BTreeMap::default();
     let mut guest_resources = Vec::new();
     collect_component_resource_imports(&engine, &ty, &mut host_resources);
     collect_component_resource_exports(&engine, &ty, &mut guest_resources);
-    let io_err_tys = host_resources
-        .range::<str, _>((
-            Bound::Included("wasi:io/error@0.2"),
-            Bound::Excluded("wasi:io/error@0.3"),
-        ))
-        .filter_map(|(_, instance)| instance.get("error"))
-        .copied()
-        .collect::<Box<[_]>>();
-    let io_pollable_tys = host_resources
-        .range::<str, _>((
-            Bound::Included("wasi:io/poll@0.2"),
-            Bound::Excluded("wasi:io/poll@0.3"),
-        ))
-        .filter_map(|(_, instance)| instance.get("pollable"))
-        .copied()
-        .collect::<Box<[_]>>();
-    let io_input_stream_tys = host_resources
-        .range::<str, _>((
-            Bound::Included("wasi:io/streams@0.2"),
-            Bound::Excluded("wasi:io/streams@0.3"),
-        ))
-        .filter_map(|(_, instance)| instance.get("input-stream"))
-        .copied()
-        .collect::<Box<[_]>>();
-    let io_output_stream_tys = host_resources
-        .range::<str, _>((
-            Bound::Included("wasi:io/streams@0.2"),
-            Bound::Excluded("wasi:io/streams@0.3"),
-        ))
-        .filter_map(|(_, instance)| instance.get("output-stream"))
-        .copied()
-        .collect::<Box<[_]>>();
-    let rpc_err_ty = host_resources
-        .get("wrpc:rpc/error@0.1.0")
-        .and_then(|instance| instance.get("error"))
-        .copied();
-    // TODO: This should include `wasi:http` resources
     let host_resources = host_resources
         .into_iter()
-        .map(|(name, instance)| {
-            let instance = instance
+        .map(|(instance, resources)| {
+            let linked = linked_resources.get(&instance);
+            let resources = resources
                 .into_iter()
                 .map(|(name, ty)| {
-                    let host_ty = match ty {
-                        ty if Some(ty) == rpc_err_ty => ResourceType::host::<rpc::Error>(),
-                        ty if io_err_tys.contains(&ty) => {
-                            ResourceType::host::<wasmtime_wasi::p2::bindings::io::error::Error>()
-                        }
-                        ty if io_input_stream_tys.contains(&ty) => ResourceType::host::<
-                            wasmtime_wasi::p2::bindings::io::streams::InputStream,
-                        >(),
-                        ty if io_output_stream_tys.contains(&ty) => ResourceType::host::<
-                            wasmtime_wasi::p2::bindings::io::streams::OutputStream,
-                        >(),
-                        ty if io_pollable_tys.contains(&ty) => {
-                            ResourceType::host::<wasmtime_wasi::p2::bindings::io::poll::Pollable>()
-                        }
+                    let host_ty = match linked.and_then(|linked| linked.get(&name)) {
+                        Some(host_ty) if *host_ty != ResourceType::host::<()>() => *host_ty,
                         _ => ResourceType::host::<RemoteResource>(),
                     };
                     (name, (ty, host_ty))
                 })
                 .collect::<HashMap<_, _>>();
-            (name, instance)
+            (instance, resources)
         })
         .collect::<HashMap<_, _>>();
     let host_resources = Arc::from(host_resources);
