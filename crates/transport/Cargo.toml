@@ -14,7 +14,6 @@ default = ["fs", "net", "io-std"]
 fs = ["tokio/fs"]
 net = ["tokio/net"]
 io-std = ["tokio/io-std"]
-wasi-net = ["dep:wasi"]
 
 [dependencies]
 anyhow = { workspace = true, features = ["std"] }
