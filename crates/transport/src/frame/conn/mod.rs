@@ -759,7 +759,7 @@ pub(crate) fn receiver_closed() -> std::io::Error {
 }
 
 /// Returns the error for received data, which was not processed
-pub(crate) fn unprocessed() -> std::io::Error {
+fn unprocessed() -> std::io::Error {
     std::io::Error::new(
         std::io::ErrorKind::BrokenPipe,
         "received data was not processed",

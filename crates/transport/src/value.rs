@@ -2219,7 +2219,10 @@ fn ensure_processed<D>(framed: &FramedRead<BufferedIncoming, D>) -> std::io::Res
     if framed.read_buffer().is_empty() && framed.get_ref().buffer.is_empty() {
         Ok(())
     } else {
-        Err(crate::frame::unprocessed())
+        Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "received data after value end",
+        ))
     }
 }
 
@@ -2621,7 +2624,7 @@ mod tests {
     async fn future_rejects_unprocessed() {
         let (_fut, f) = pending::<FutureBytes>();
         let err = f(buffered(b"\x03foo\x2a"), Vec::default()).await;
-        assert_eq!(err.unwrap_err().kind(), ErrorKind::BrokenPipe);
+        assert_eq!(err.unwrap_err().kind(), ErrorKind::InvalidData);
     }
 
     #[test_log::test(tokio::test)]
@@ -2632,7 +2635,7 @@ mod tests {
         buffer.extend_from_slice(&[0x2a; READ_CHUNK_SIZE]);
         let (_fut, f) = pending::<FutureBytes>();
         let err = f(buffered(&buffer), Vec::default()).await;
-        assert_eq!(err.unwrap_err().kind(), ErrorKind::BrokenPipe);
+        assert_eq!(err.unwrap_err().kind(), ErrorKind::InvalidData);
     }
 
     #[test_log::test(tokio::test)]
@@ -2647,7 +2650,7 @@ mod tests {
     async fn stream_rejects_unprocessed() {
         let (_stream, f) = pending::<StreamBytes>();
         let err = f(buffered(b"\x03foo\x00\x2a"), Vec::default()).await;
-        assert_eq!(err.unwrap_err().kind(), ErrorKind::BrokenPipe);
+        assert_eq!(err.unwrap_err().kind(), ErrorKind::InvalidData);
     }
 
     #[test_log::test(tokio::test)]
