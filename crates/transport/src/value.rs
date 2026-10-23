@@ -31,18 +31,10 @@ use wasm_tokio::{
     Leb128DecoderU64, Leb128DecoderU128, Leb128Encoder, Utf8Codec,
 };
 
-use crate::BufferedIncoming;
 use crate::frame::Outgoing;
+use crate::{BufferedIncoming, encode_ready_bytes_header, error_receiver_closed};
 
 const READ_CHUNK_SIZE: usize = 8192;
-
-pub(crate) fn encode_ready_bytes_header(n: usize, dst: &mut BytesMut) -> std::io::Result<()> {
-    let n = u32::try_from(n)
-        .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
-    dst.reserve(1);
-    dst.put_u8(0x01);
-    Leb128Encoder.encode(n, dst)
-}
 
 fn encode_ready_bytes<T: AsRef<[u8]>>(chunks: &[T], dst: &mut BytesMut) -> std::io::Result<()> {
     let n = chunks.iter().map(|chunk| chunk.as_ref().len()).sum();
@@ -1930,7 +1922,7 @@ where
                     };
                     let item = item?;
                     if tx.send(item).is_err() {
-                        return Err(crate::frame::receiver_closed());
+                        return Err(error_receiver_closed());
                     }
                     if let Some(rx) = dec.decoder_mut().take_deferred() {
                         let mut buf = mem::take(dec.read_buffer_mut());
@@ -2265,7 +2257,7 @@ where
                 })?;
                 trace!(i, end, "received stream chunk");
                 if tx.send(chunk).await.is_err() {
-                    return Err(crate::frame::receiver_closed());
+                    return Err(error_receiver_closed());
                 }
                 for (i, deferred) in zip(i.., mem::take(&mut framed.decoder_mut().deferred)) {
                     if let Some(deferred) = deferred {
@@ -2381,7 +2373,7 @@ impl tokio_util::codec::Decoder for StreamDecoderBytes {
                         }
                         trace!(?chunk, "received pending byte stream chunk");
                         if tx.send(chunk).await.is_err() {
-                            return Err(crate::frame::receiver_closed());
+                            return Err(error_receiver_closed());
                         }
                     }
                     Err(std::io::ErrorKind::UnexpectedEof.into())
@@ -2442,7 +2434,7 @@ impl tokio_util::codec::Decoder for StreamDecoderRead {
                     }
                     trace!(?chunk, "received byte stream chunk");
                     if tx.send(std::io::Result::Ok(chunk)).await.is_err() {
-                        return Err(crate::frame::receiver_closed());
+                        return Err(error_receiver_closed());
                     }
                 }
                 Err(std::io::ErrorKind::UnexpectedEof.into())

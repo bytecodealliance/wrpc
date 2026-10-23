@@ -38,9 +38,11 @@ use core::mem;
 use core::pin::{Pin, pin};
 use core::task::{Context, Poll};
 
-use bytes::BytesMut;
+use bytes::{BufMut as _, BytesMut};
 use tokio::io::{AsyncRead, ReadBuf};
+use tokio_util::codec::Encoder as _;
 use tracing::trace;
+use wasm_tokio::Leb128Encoder;
 
 /// Buffered incoming stream used for decoding values
 ///
@@ -94,4 +96,21 @@ impl AsyncRead for BufferedIncoming {
         }
         pin!(&mut self.inner).poll_read(cx, buf)
     }
+}
+
+fn encode_ready_bytes_header(n: usize, dst: &mut BytesMut) -> std::io::Result<()> {
+    let n = u32::try_from(n)
+        .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
+    dst.reserve(1);
+    dst.put_u8(0x01);
+    Leb128Encoder.encode(n, dst)
+}
+
+fn copy_io_error(err: &std::io::Error) -> std::io::Error {
+    std::io::Error::new(err.kind(), err.to_string())
+}
+
+/// Returns the error for data received for a closed receiver
+fn error_receiver_closed() -> std::io::Error {
+    std::io::Error::new(std::io::ErrorKind::BrokenPipe, "stream receiver closed")
 }
