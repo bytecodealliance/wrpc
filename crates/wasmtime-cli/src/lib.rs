@@ -394,6 +394,53 @@ fn is_0_3(version: &str) -> bool {
     is_0_x(version, 3, 0)
 }
 
+fn is_linked(name: &str) -> bool {
+    match name.split_once('/').map(|(pkg, suffix)| {
+        suffix
+            .split_once('@')
+            .map_or((pkg, suffix, None), |(iface, version)| {
+                (pkg, iface, Some(version))
+            })
+    }) {
+        Some(("wrpc:rpc", "transport" | "error" | "context" | "invoker", Some("0.1.0"))) => {}
+        Some((
+            "wasi:cli",
+            "environment" | "exit" | "stderr" | "stdin" | "stdout" | "terminal-input"
+            | "terminal-output" | "terminal-stderr" | "terminal-stdin" | "terminal-stdout",
+            Some(version),
+        )) if is_0_2(version, 0) => {}
+        Some((
+            "wasi:cli",
+            "environment" | "exit" | "stderr" | "stdin" | "stdout" | "terminal-input"
+            | "terminal-output" | "terminal-stderr" | "terminal-stdin" | "terminal-stdout"
+            | "types",
+            Some(version),
+        )) if is_0_3(version) => {}
+        Some(("wasi:clocks", "monotonic-clock" | "wall-clock", Some(version)))
+            if is_0_2(version, 0) => {}
+        Some(("wasi:clocks", "timezone", Some(version))) if is_0_2(version, 1) => {}
+        Some(("wasi:clocks", "monotonic-clock" | "system-clock" | "types", Some(version)))
+            if is_0_3(version) => {}
+        Some(("wasi:filesystem", "preopens" | "types", Some(version)))
+            if is_0_2(version, 0) || is_0_3(version) => {}
+        Some(("wasi:http", "incoming-handler" | "outgoing-handler" | "types", Some(version)))
+            if is_0_2(version, 0) => {}
+        Some(("wasi:http", "client" | "types", Some(version))) if is_0_3(version) => {}
+        Some(("wasi:io", "error" | "poll" | "streams", Some(version))) if is_0_2(version, 0) => {}
+        Some(("wasi:random", "insecure-seed" | "insecure" | "random", Some(version)))
+            if is_0_2(version, 0) || is_0_3(version) => {}
+        Some((
+            "wasi:sockets",
+            "instance-network" | "ip-name-lookup" | "network" | "tcp-create-socket" | "tcp"
+            | "udp-create-socket" | "udp",
+            Some(version),
+        )) if is_0_2(version, 0) => {}
+        Some(("wasi:sockets", "ip-name-lookup" | "types", Some(version))) if is_0_3(version) => {}
+        _ => return false,
+    }
+    true
+}
+
 #[instrument(level = "trace", skip(adapter))]
 async fn instantiate_pre<C>(
     adapter: &[u8],
@@ -491,6 +538,7 @@ where
         .flat_map(|(start, end, name, host_ty)| {
             host_resources
                 .range::<str, _>((*start, *end))
+                .filter(|(instance, _)| is_linked(instance))
                 .filter_map(move |(_, instance)| instance.get(*name))
                 .map(move |ty| (*ty, host_ty()))
         })
@@ -514,66 +562,19 @@ where
     let host_resources = Arc::from(host_resources);
     let guest_resources = Arc::from(guest_resources);
     for (name, types::ComponentExtern { ty: item, .. }) in ty.imports(&engine) {
-        // Avoid polyfilling instances, for which static bindings are linked
-        match name.split_once('/').map(|(pkg, suffix)| {
-            suffix
-                .split_once('@')
-                .map_or((pkg, suffix, None), |(iface, version)| {
-                    (pkg, iface, Some(version))
-                })
-        }) {
-            Some(("wrpc:rpc", "transport" | "error" | "context" | "invoker", Some("0.1.0"))) => {}
-            Some((
-                "wasi:cli",
-                "environment" | "exit" | "stderr" | "stdin" | "stdout" | "terminal-input"
-                | "terminal-output" | "terminal-stderr" | "terminal-stdin" | "terminal-stdout",
-                Some(version),
-            )) if is_0_2(version, 0) => {}
-            Some((
-                "wasi:cli",
-                "environment" | "exit" | "stderr" | "stdin" | "stdout" | "terminal-input"
-                | "terminal-output" | "terminal-stderr" | "terminal-stdin" | "terminal-stdout"
-                | "types",
-                Some(version),
-            )) if is_0_3(version) => {}
-            Some(("wasi:clocks", "monotonic-clock" | "wall-clock", Some(version)))
-                if is_0_2(version, 0) => {}
-            Some(("wasi:clocks", "timezone", Some(version))) if is_0_2(version, 1) => {}
-            Some(("wasi:clocks", "monotonic-clock" | "system-clock" | "types", Some(version)))
-                if is_0_3(version) => {}
-            Some(("wasi:filesystem", "preopens" | "types", Some(version)))
-                if is_0_2(version, 0) || is_0_3(version) => {}
-            Some((
-                "wasi:http",
-                "incoming-handler" | "outgoing-handler" | "types",
-                Some(version),
-            )) if is_0_2(version, 0) => {}
-            Some(("wasi:http", "client" | "types", Some(version))) if is_0_3(version) => {}
-            Some(("wasi:io", "error" | "poll" | "streams", Some(version)))
-                if is_0_2(version, 0) => {}
-            Some(("wasi:random", "insecure-seed" | "insecure" | "random", Some(version)))
-                if is_0_2(version, 0) || is_0_3(version) => {}
-            Some((
-                "wasi:sockets",
-                "instance-network" | "ip-name-lookup" | "network" | "tcp-create-socket" | "tcp"
-                | "udp-create-socket" | "udp",
-                Some(version),
-            )) if is_0_2(version, 0) => {}
-            Some(("wasi:sockets", "ip-name-lookup" | "types", Some(version)))
-                if is_0_3(version) => {}
-            _ => {
-                if let Err(err) = link_item(
-                    &engine,
-                    &mut linker.root(),
-                    Arc::clone(&guest_resources),
-                    Arc::clone(&host_resources),
-                    item,
-                    "",
-                    name,
-                ) {
-                    error!(?err, "failed to polyfill instance");
-                }
-            }
+        if is_linked(name) {
+            continue;
+        }
+        if let Err(err) = link_item(
+            &engine,
+            &mut linker.root(),
+            Arc::clone(&guest_resources),
+            Arc::clone(&host_resources),
+            item,
+            "",
+            name,
+        ) {
+            error!(?err, "failed to polyfill instance");
         }
     }
 
