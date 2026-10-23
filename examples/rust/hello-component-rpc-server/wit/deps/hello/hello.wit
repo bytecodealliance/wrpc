@@ -1,7 +1,7 @@
 package wrpc-examples:hello;
 
 interface handler {
-    use wrpc:rpc/error@0.1.0.{error};
+    use wrpc:rpc/error@0.2.0.{error};
 
     hello: func() -> result<string, error>;
 }

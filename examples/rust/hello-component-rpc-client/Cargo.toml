@@ -9,5 +9,8 @@ homepage.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[lib]
+crate-type = ["cdylib"]
+
 [dependencies]
-wit-bindgen = { workspace = true, features = ["realloc", "macros"] }
+wit-bindgen = { workspace = true, features = ["async", "realloc", "macros"] }
