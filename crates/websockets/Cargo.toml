@@ -1,6 +1,6 @@
 [package]
 name = "wrpc-websockets"
-version = "0.1.0"
+version = "0.2.0"
 description = "wRPC WebSockets integration"
 
 authors.workspace = true
