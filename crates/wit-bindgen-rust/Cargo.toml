@@ -17,9 +17,6 @@ repository.workspace = true
 test = false
 doctest = false
 
-[features]
-serde = ["dep:serde"]
-
 [dependencies]
 anyhow = { workspace = true }
 clap = { workspace = true, features = ["derive", "std"], optional = true }
