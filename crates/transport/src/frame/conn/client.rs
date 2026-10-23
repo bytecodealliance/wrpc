@@ -1,4 +1,5 @@
 use core::marker::PhantomData;
+use core::num::NonZeroUsize;
 
 use anyhow::Context as _;
 use bytes::{Buf as _, BufMut as _, BytesMut};
@@ -11,7 +12,8 @@ use crate::frame::conn::{Incoming, Outgoing};
 use crate::frame::{ConnHandler, PROTOCOL};
 
 /// Encodes the header of an invocation, which is followed by `params_len` bytes of
-/// parameters, to a `BytesMut`
+/// parameters, to a `BytesMut`. If `params_len` is `None`, only the header is encoded, since frames
+/// must not be empty.
 ///
 /// This is low-level API, most users should use [`invoke`].
 #[instrument(level = "trace", skip_all)]
@@ -19,9 +21,11 @@ pub fn encode_invocation(
     buf: &mut BytesMut,
     instance: &str,
     func: &str,
-    params_len: usize,
+    params_len: Option<NonZeroUsize>,
 ) -> std::io::Result<()> {
-    let params_len = u32::try_from(params_len)
+    let params_len = params_len
+        .map(|n| u32::try_from(n.get()))
+        .transpose()
         .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
     buf.reserve(
         17_usize // len(PROTOCOL) + len(instance) + len(func) + len([]) + len(params)
@@ -31,8 +35,10 @@ pub fn encode_invocation(
     buf.put_u8(PROTOCOL);
     CoreNameEncoder.encode(instance, buf)?;
     CoreNameEncoder.encode(func, buf)?;
-    buf.put_u8(0);
-    Leb128Encoder.encode(params_len, buf)?;
+    if let Some(params_len) = params_len {
+        buf.put_u8(0);
+        Leb128Encoder.encode(params_len, buf)?;
+    }
     Ok(())
 }
 
@@ -62,7 +68,7 @@ impl<H> InvokeBuilder<H> {
     {
         let params = params.as_ref();
         let mut buf = BytesMut::default();
-        encode_invocation(&mut buf, instance, func, params.len())
+        encode_invocation(&mut buf, instance, func, NonZeroUsize::new(params.len()))
             .context("failed to encode invocation")?;
         trace!(?buf, "writing invocation");
         tx.write_all_buf(&mut buf.chain(params))
