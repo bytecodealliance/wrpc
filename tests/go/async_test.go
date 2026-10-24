@@ -36,6 +36,18 @@ func (r *chunkReceiver[T]) Close() error {
 	return nil
 }
 
+type chanReceiver[T any] struct {
+	ch <-chan T
+}
+
+func (r chanReceiver[T]) Receive() (T, error) {
+	return <-r.ch, nil
+}
+
+func (r chanReceiver[T]) Close() error {
+	return nil
+}
+
 func TestAsync(t *testing.T) {
 	var cancel func()
 	ctx := context.Background()
@@ -140,6 +152,30 @@ func TestAsync(t *testing.T) {
 			t.Errorf("failed to close async value receiver: %s", err)
 			return
 		}
+	})
+
+	t.Run("identity-future", func(t *testing.T) {
+		slog.DebugContext(ctx, "calling `wrpc-test:integration/async.identity-future`")
+		ch := make(chan struct{})
+		fut, errCh, err := async.IdentityFuture(ctx, client, chanReceiver[struct{}]{ch})
+		require.NoError(t, err, "failed to call `wrpc-test:integration/async.identity-future`")
+
+		done := make(chan error, 1)
+		go func() {
+			_, err := fut.Receive()
+			done <- err
+		}()
+		select {
+		case err := <-done:
+			t.Fatalf("future resolved before its parameter: %v", err)
+		case <-time.After(100 * time.Millisecond):
+		}
+		close(ch)
+		require.NoError(t, <-done, "failed to receive future")
+		for err := range errCh {
+			require.NoError(t, err, "failed to send async value to peer")
+		}
+		require.NoError(t, fut.Close(), "failed to close future")
 	})
 
 	if err = stop(); err != nil {

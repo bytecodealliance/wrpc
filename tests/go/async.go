@@ -30,6 +30,11 @@ func (AsyncHandler) WithFuture(ctx context.Context, x *async.Something, s io.Rea
 	return wrpc.NewCompleteReceiver(s), nil
 }
 
+func (AsyncHandler) IdentityFuture(ctx context.Context, v wrpc.Receiver[struct{}]) (wrpc.Receiver[struct{}], error) {
+	slog.DebugContext(ctx, "handling `identity-future`")
+	return v, nil
+}
+
 func (AsyncHandler) IdentityNestedAsync(ctx context.Context, v wrpc.Receiver[wrpc.Receiver[wrpc.Receiver[wrpc.Receiver[[]string]]]]) (wrpc.Receiver[wrpc.Receiver[wrpc.Receiver[wrpc.Receiver[[]string]]]], error) {
 	slog.DebugContext(ctx, "handling `identity-nested-async`")
 	return v, nil

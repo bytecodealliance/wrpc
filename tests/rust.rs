@@ -140,6 +140,14 @@ where
                 > {
                     Ok(v)
                 }
+
+                async fn identity_future(
+                    &self,
+                    _cx: C,
+                    v: Pin<Box<dyn Future<Output = ()> + Send>>,
+                ) -> anyhow::Result<Pin<Box<dyn Future<Output = ()> + Send>>> {
+                    Ok(v)
+                }
             }
 
             let srv = Arc::clone(&srv);

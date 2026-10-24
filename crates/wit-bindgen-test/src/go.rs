@@ -34,8 +34,8 @@ impl LanguageMethods for Go {
         _config: &crate::config::WitConfig,
         _args: &[String],
     ) -> bool {
-        // The wRPC Go generator does not yet support bare `stream`/`future`
-        // types, `error-context`, or futures held by resources.
+        // The wRPC Go generator does not yet support bare `stream` types,
+        // futures of primitives, `error-context`, or futures held by resources.
         matches!(
             name,
             "streams.wit"

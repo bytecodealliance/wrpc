@@ -60,11 +60,12 @@ that I/O fails, the invocation fails and the transport is aborted.
 
 ### Streams and futures
 
-`t.stream(elem)` and `t.future(some)` describe asynchronous values. A `stream`
-parameter is given as an (async-)iterable of chunks (a `Uint8Array` for
-`stream<u8>`, an array of elements otherwise); a `future` as a value, a promise,
-or a thunk. Decoded `stream` results are async iterables of chunks and `future`
-results are promises:
+`t.stream(elem)` and `t.future(some)` describe asynchronous values, and
+`t.future()` a bare `future` without a payload. A `stream` parameter is given as
+an (async-)iterable of chunks (a `Uint8Array` for `stream<u8>`, an array of
+elements otherwise); a `future` as a value, a promise, or a thunk. Decoded
+`stream` results are async iterables of chunks and `future` results are
+promises, resolving to `undefined` for a bare `future`:
 
 ```js
 import { t, invoke, fromWebStreams } from "@bytecodealliance/wrpc";

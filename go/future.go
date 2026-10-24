@@ -1,7 +1,9 @@
 package wrpc
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 )
 
@@ -44,4 +46,17 @@ func ReadFuture[T any](r IndexReadCloser, f func(IndexReadCloser) (T, error), pa
 		return nil, err
 	}
 	return NewCompleteReceiver(v), nil
+}
+
+// ReadFutureClose waits for the path read by `r` to be closed, which resolves a pending `future` without a payload
+func ReadFutureClose(r IndexReadCloser) (struct{}, error) {
+	_, err := r.ReadByte()
+	switch err {
+	case nil:
+		return struct{}{}, errors.New("received data for a `future` without a payload")
+	case io.EOF:
+		return struct{}{}, nil
+	default:
+		return struct{}{}, fmt.Errorf("failed to wait for `future` path to close: %w", err)
+	}
 }

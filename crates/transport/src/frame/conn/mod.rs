@@ -5,6 +5,7 @@ use core::pin::{Pin, pin};
 use core::sync::atomic::{AtomicBool, Ordering};
 use core::task::{Context, Poll, ready};
 
+use std::collections::HashSet;
 use std::sync::{Arc, PoisonError};
 
 use bytes::{Buf as _, Bytes, BytesMut};
@@ -261,14 +262,18 @@ impl IndexTrie {
         }
     }
 
-    /// Gets a sender
-    #[instrument(level = "trace", skip(self), ret(level = "trace"))]
-    fn get_tx(&mut self, path: &[usize]) -> Option<mpsc::Sender<std::io::Result<Bytes>>> {
+    /// Gets the sender slot of a subscription, which is empty once the path is closed
+    #[instrument(level = "trace", skip(self))]
+    fn get_tx_mut(
+        &mut self,
+        path: &[usize],
+    ) -> Option<&mut Option<mpsc::Sender<std::io::Result<Bytes>>>> {
         let Some((i, path)) = path.split_first() else {
             return match self {
                 Self::Empty => None,
-                Self::Leaf { tx, .. } => tx.clone(),
-                Self::IndexNode { tx, .. } | Self::WildcardNode { tx, .. } => tx.clone(),
+                Self::Leaf { tx, .. }
+                | Self::IndexNode { tx, .. }
+                | Self::WildcardNode { tx, .. } => Some(tx),
             };
         };
         match self {
@@ -276,7 +281,7 @@ impl IndexTrie {
             Self::IndexNode { nested, .. } => {
                 let nested = nested.get_mut(*i)?;
                 let nested = nested.as_mut()?;
-                nested.get_tx(path)
+                nested.get_tx_mut(path)
             } // TODO: Demux the subscription
               //Self::WildcardNode { ref mut nested, .. } => {
               //    nested.as_mut().and_then(|nested| nested.take(path))
@@ -424,7 +429,8 @@ impl Incoming {
             async move {
                 let res = async {
                     let mut io = pin!(async {
-                        let res = ingress(&mut rx, &state.index, &rx_tx).await;
+                        let mut rx_tx = Some(rx_tx);
+                        let res = ingress(&mut rx, &state.index, &mut rx_tx).await;
                         if let Err(err) = &res {
                             _ = state.err.set(copy_io_error(err));
                         }
@@ -637,12 +643,19 @@ impl Outgoing {
     }
 
     /// Writes `buf` to the stream as a single frame, without copying it.
+    /// Empty `buf` is not written, since an empty frame closes the stream, see [`Self::close`].
     pub async fn write_bytes(&mut self, buf: Bytes) -> std::io::Result<()> {
         if buf.is_empty() {
             return Ok(());
         }
         self.reserve().await?;
         self.send_reserved(buf)
+    }
+
+    /// Closes the stream by writing an empty frame. No more data may be written to it afterwards.
+    pub async fn close(&mut self) -> std::io::Result<()> {
+        self.reserve().await?;
+        self.send_reserved(Bytes::default())
     }
 }
 
@@ -677,8 +690,9 @@ impl AsyncWrite for Outgoing {
 async fn ingress(
     mut rx: impl AsyncRead + Unpin,
     index: &std::sync::Mutex<IndexTrie>,
-    param_tx: &mpsc::Sender<std::io::Result<Bytes>>,
+    param_tx: &mut Option<mpsc::Sender<std::io::Result<Bytes>>>,
 ) -> std::io::Result<()> {
+    let mut closed: HashSet<_> = HashSet::default();
     loop {
         trace!("reading path length");
         let b = match rx.read_u8().await {
@@ -692,8 +706,8 @@ async fn ingress(
         let n = usize::try_from(n)
             .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
         trace!(n, "read path length");
-        let tx = if n == 0 {
-            param_tx
+        let path = if n == 0 {
+            None
         } else {
             let mut path = Vec::with_capacity(n.min(MAX_INITIAL_PATH_CAPACITY));
             for i in 0..n {
@@ -704,21 +718,40 @@ async fn ingress(
                 path.push(p);
             }
             trace!(?path, "read path");
-
-            trace!("locking index trie");
-            let mut index = index
-                .lock()
-                .map_err(|err| std::io::Error::other(err.to_string()))?;
-            &index.get_tx(&path).ok_or_else(|| {
-                std::io::Error::new(
-                    std::io::ErrorKind::NotFound,
-                    format!("`{path:?}` subscription not found"),
-                )
-            })?
+            Some(path)
         };
         trace!("reading data length");
         let n = rx.read_u32_leb128().await?;
         trace!(n, "read data length");
+        let tx = {
+            let mut trie;
+            let tx = match &path {
+                None => &mut *param_tx,
+                Some(path) => {
+                    trace!("locking index trie");
+                    trie = index
+                        .lock()
+                        .map_err(|err| std::io::Error::other(err.to_string()))?;
+                    trie.get_tx_mut(path)
+                        .filter(|tx| tx.is_some() || closed.contains(path))
+                        .ok_or_else(|| {
+                            std::io::Error::new(
+                                std::io::ErrorKind::NotFound,
+                                format!("`{path:?}` subscription not found"),
+                            )
+                        })?
+                }
+            };
+            if n == 0 {
+                trace!(?path, "closing path");
+                if tx.take().is_none() {
+                    return Err(error_closed(path.as_deref()));
+                }
+                closed.extend(path);
+                continue;
+            }
+            tx.clone().ok_or_else(|| error_closed(path.as_deref()))?
+        };
         let mut data = (&mut rx).take(n.into());
         while data.limit() > 0 {
             let k = usize::try_from(data.limit())
@@ -748,6 +781,17 @@ fn close_rx(state: &IngressState) -> std::io::Result<()> {
         return Err(error_unprocessed());
     }
     Ok(())
+}
+
+/// Returns the error for a frame received on a closed `path`, which is `None` for the root
+fn error_closed(path: Option<&[usize]>) -> std::io::Error {
+    std::io::Error::new(
+        std::io::ErrorKind::InvalidData,
+        format!(
+            "received a frame on closed path `{:?}`",
+            path.unwrap_or_default()
+        ),
+    )
 }
 
 /// Returns the error for received data, which was not processed
@@ -893,6 +937,21 @@ mod tests {
     }
 
     #[test_log::test(tokio::test)]
+    async fn incoming_empty_frame_closes_path() {
+        let (mut tx, rx, done_rx) = incoming(true);
+        let mut sub = rx.index(&[0]).unwrap();
+        tx.write_all(&FRAME).await.unwrap();
+        tx.write_all(&[0x01, 0x00, 0x00]).await.unwrap();
+        let mut buf = vec![];
+        sub.read_to_end(&mut buf).await.unwrap();
+        assert_eq!(buf, [0x2a]);
+        drop(tx);
+        drop(sub);
+        drop(rx);
+        done(done_rx).await.unwrap();
+    }
+
+    #[test_log::test(tokio::test)]
     async fn incoming_drop_rejects_data() {
         let (mut tx, rx, done_rx) = incoming(true);
         drop(rx);
@@ -961,10 +1020,47 @@ mod tests {
     }
 
     #[test_log::test(tokio::test)]
+    async fn ingress_rejects_frame_on_closed_path() {
+        for frames in [
+            [[0x00, 0x00].as_slice(), &[0x00, 0x01, 0x2a]],
+            [&[0x00, 0x00], &[0x00, 0x00]],
+            [&[0x01, 0x00, 0x00], &[0x01, 0x00, 0x01, 0x2a]],
+            [&[0x01, 0x00, 0x00], &[0x01, 0x00, 0x00]],
+        ] {
+            let index = std::sync::Mutex::new(IndexTrie::from_iter([[Some(0)]]));
+            let (tx, _rx) = mpsc::channel(1);
+            let err = ingress(frames.concat().as_slice(), &index, &mut Some(tx))
+                .await
+                .unwrap_err();
+            assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+        }
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn ingress_rejects_frame_on_unsubscribed_path() {
+        for frame in [[0x01, 0x00, 0x00].as_slice(), &[0x01, 0x00, 0x01, 0x2a]] {
+            let index = std::sync::Mutex::new(IndexTrie::from_iter([[Some(0), Some(0)]]));
+            let (tx, _rx) = mpsc::channel(1);
+            let err = ingress(frame, &index, &mut Some(tx)).await.unwrap_err();
+            assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
+        }
+    }
+
+    #[test]
+    fn encode_invocation_empty_params() {
+        let mut buf = BytesMut::default();
+        encode_invocation(&mut buf, "foo", "bar", 0).unwrap();
+        assert_eq!(buf.as_ref(), b"\x00\x03foo\x03bar");
+        buf.clear();
+        encode_invocation(&mut buf, "foo", "bar", 1).unwrap();
+        assert_eq!(buf.as_ref(), b"\x00\x03foo\x03bar\x00\x01");
+    }
+
+    #[test_log::test(tokio::test)]
     async fn ingress_truncated_path() {
         let index = std::sync::Mutex::new(IndexTrie::Empty);
         let (tx, _rx) = mpsc::channel(1);
-        let err = ingress([0x02, 0x00].as_slice(), &index, &tx)
+        let err = ingress([0x02, 0x00].as_slice(), &index, &mut Some(tx))
             .await
             .unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
@@ -977,8 +1073,9 @@ mod tests {
         let n = DEFAULT_MAX_INITIAL_CAPACITY + 1;
         let mut frame = vec![0x00, 0x81, 0x80, 0x40];
         frame.resize(frame.len() + n, 0x42);
-        ingress(frame.as_slice(), &index, &tx).await.unwrap();
-        drop(tx);
+        ingress(frame.as_slice(), &index, &mut Some(tx))
+            .await
+            .unwrap();
         let mut chunks = vec![];
         while let Some(chunk) = rx.recv().await {
             chunks.push(chunk.unwrap().len());
@@ -993,7 +1090,7 @@ mod tests {
         let err = ingress(
             [0x00, 0xff, 0xff, 0xff, 0xff, 0x0f, 0x42].as_slice(),
             &index,
-            &tx,
+            &mut Some(tx),
         )
         .await
         .unwrap_err();

@@ -443,7 +443,11 @@ impl Sink for Outgoing {
         let mut enc = T::Encoder::default();
         let mut buf = BytesMut::default();
         enc.encode(item, &mut buf)?;
-        self.write_bytes(buf.freeze()).await?;
+        if buf.is_empty() {
+            self.close().await?;
+        } else {
+            self.write_bytes(buf.freeze()).await?;
+        }
         match enc.take_deferred() {
             Some(f) => f(self, Vec::default()).await,
             _ => Ok(()),
@@ -2477,6 +2481,7 @@ mod tests {
     use std::io::ErrorKind;
 
     use anyhow::{Context as _, bail};
+    use tokio::io::AsyncWriteExt as _;
     use tokio_util::codec::Decoder as _;
 
     use super::*;
@@ -2716,6 +2721,44 @@ mod tests {
         };
         f(r, Vec::default()).await?;
         assert_eq!(fut.await.await, data);
+        Ok(())
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn future_unit_closes_path() -> anyhow::Result<()> {
+        let (tx, mut rx) = tokio::io::duplex(1024);
+        let w = Outgoing::new(tx, |_, _| async {}).index(&[0])?;
+        w.write_future(0, async {}).await?;
+        let mut buf = vec![];
+        rx.read_to_end(&mut buf).await?;
+        assert_eq!(buf, b"\x01\x00\x00");
+        Ok(())
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn future_unit_resolves_on_close() -> anyhow::Result<()> {
+        let (mut tx, rx) = tokio::io::duplex(1024);
+        let rx = crate::frame::Incoming::new(
+            tokio::io::BufReader::new(rx),
+            [[Some(0)]],
+            true,
+            |_, _| async {},
+        );
+        let (mut fut, f) = pending::<Pin<Box<dyn Future<Output = ()> + Send>>>();
+        let task = tokio::spawn(f(
+            BufferedIncoming {
+                buffer: BytesMut::default(),
+                inner: rx.index(&[0])?,
+            },
+            Vec::default(),
+        ));
+        for _ in 0..8 {
+            tokio::task::yield_now().await;
+        }
+        assert!((&mut fut).now_or_never().is_none());
+        tx.write_all(b"\x01\x00\x00").await?;
+        tokio::time::timeout(core::time::Duration::from_secs(5), fut).await?;
+        task.await??;
         Ok(())
     }
 

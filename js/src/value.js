@@ -178,7 +178,7 @@ export function* readChunk(r, elem, n, sink, path) {
  * @param {Writer} w
  * @param {Type} ty
  * @param {any} v
- * @param {{ path: number[], kind: "stream" | "future", ty: Type, value: any }[]} [sink]
+ * @param {{ path: number[], kind: "stream" | "future", ty: Type | null, value: any }[]} [sink]
  * @param {number[]} [path] relative index path to `v` (only tracked with `sink`)
  */
 export function encodeValue(w, ty, v, sink, path) {
@@ -417,7 +417,7 @@ export function* decodeSteps(r, ty, sink, path) {
     }
     case "future": {
       if (yield* atomic(r, optionStatus)) {
-        return Promise.resolve(yield* decodeSteps(r, ty.some, sink, path));
+        return Promise.resolve(ty.some ? yield* decodeSteps(r, ty.some, sink, path) : undefined);
       }
       if (!sink) throw new Error(asyncRequired(ty.kind));
       /** @type {(value: any) => void} */
