@@ -7,6 +7,7 @@ use bytes::Bytes;
 mod codec;
 mod conn;
 mod oneshot;
+mod ready;
 
 #[cfg(any(all(target_family = "wasm", feature = "wasi"), feature = "net"))]
 pub mod tcp;
@@ -17,6 +18,7 @@ pub mod unix;
 pub use codec::*;
 pub use conn::*;
 pub use oneshot::*;
+pub use ready::*;
 
 /// Framing protocol version
 pub const PROTOCOL: u8 = 0;

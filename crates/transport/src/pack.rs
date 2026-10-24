@@ -8,7 +8,7 @@ use tokio::io::{AsyncRead, AsyncReadExt as _};
 use tokio::sync::mpsc;
 use tokio_util::codec::{Decoder, Encoder};
 
-use crate::{Decode, Deferred as _, DeferredFn, Encode, Index, Sink, encode_ready_bytes_header};
+use crate::{Decode, Deferred, DeferredFn, Encode, Index, Sink, encode_ready_bytes_header};
 
 /// [Sink] used by [pack], which collects the packed asynchronous values
 #[derive(Clone)]
@@ -166,6 +166,48 @@ pub fn pack_ready<T: Encode<Packer>>(
         .into());
     }
     Ok(())
+}
+
+/// Value packed with [`pack`] or [`pack_ready`], which is encoded verbatim
+///
+/// This allows values to be encoded once and embedded in other values, e.g. to cache encoded
+/// values.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct Packed(pub Bytes);
+
+/// [Encoder] of [`Packed`]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct PackedEncoder;
+
+impl<W> Deferred<W> for PackedEncoder {
+    fn take_deferred(&mut self) -> Option<DeferredFn<W>> {
+        None
+    }
+}
+
+impl Encoder<&Packed> for PackedEncoder {
+    type Error = std::io::Error;
+
+    fn encode(&mut self, Packed(v): &Packed, dst: &mut BytesMut) -> std::io::Result<()> {
+        dst.extend_from_slice(v);
+        Ok(())
+    }
+}
+
+impl Encoder<Packed> for PackedEncoder {
+    type Error = std::io::Error;
+
+    fn encode(&mut self, v: Packed, dst: &mut BytesMut) -> std::io::Result<()> {
+        self.encode(&v, dst)
+    }
+}
+
+impl<W: Sink> Encode<W> for Packed {
+    type Encoder = PackedEncoder;
+}
+
+impl<W: Sink> Encode<W> for &Packed {
+    type Encoder = PackedEncoder;
 }
 
 /// Unpack a [`Decode`] from a byte buffer `buf` produced by [`pack`] or [`pack_ready`].
@@ -379,6 +421,21 @@ mod tests {
         let mut buf = BytesMut::default();
         let err = pack_ready(fut, &mut buf).unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::WouldBlock);
+    }
+
+    #[test]
+    fn packed() -> anyhow::Result<()> {
+        let mut buf = BytesMut::default();
+        pack_ready("foo", &mut buf)?;
+        let v = Packed(buf.freeze());
+
+        let mut buf = BytesMut::default();
+        pack_ready((0x42_u8, Ok::<_, ()>(&v)), &mut buf)?;
+        assert_eq!(buf.as_ref(), b"\x42\x00\x03foo");
+        let (a, b) = unpack::<(u8, Result<String, ()>)>(&mut buf)?;
+        assert_eq!(a, 0x42);
+        assert_eq!(b.as_deref(), Ok("foo"));
+        Ok(())
     }
 
     #[test]
