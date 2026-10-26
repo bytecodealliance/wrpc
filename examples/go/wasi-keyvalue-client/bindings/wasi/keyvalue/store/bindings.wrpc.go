@@ -156,16 +156,7 @@ func (v *Error) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, e
 		if err != nil {
 			return nil, fmt.Errorf("failed to write payload: %w", err)
 		}
-
-		if write != nil {
-			return func(w wrpc.IndexWriter) error {
-				w, err := w.Index(2)
-				if err != nil {
-					return fmt.Errorf("failed to index nested variant writer: %w", err)
-				}
-				return write(w)
-			}, nil
-		}
+		return write, nil
 	default:
 		return nil, errors.New("invalid variant")
 	}

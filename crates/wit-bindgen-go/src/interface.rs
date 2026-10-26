@@ -891,7 +891,7 @@ impl InterfaceGenerator<'_> {
             self.push_str(":\n");
             if let Some(ty) = ty {
                 self.push_str("payload, err := ");
-                self.print_read_ty(ty, "r", path);
+                self.print_read_ty(ty, "r", "path");
                 self.push_str("\n");
                 self.push_str("if err != nil { return nil, ");
                 self.push_str(fmt);
@@ -3775,14 +3775,11 @@ func (v *{name}) WriteToIndex(w {wrpc}.ByteWriter) (func({wrpc}.IndexWriter) err
             self.push_str(".Errorf(\"failed to write discriminant: %w\", err)\n}\n");
             let errors = self.deps.errors();
             self.push_str("switch v.discriminant {\n");
-            for (
-                i,
-                Case {
-                    name: case_name,
-                    ty,
-                    ..
-                },
-            ) in variant.cases.iter().enumerate()
+            for Case {
+                name: case_name,
+                ty,
+                ..
+            } in &variant.cases
             {
                 self.push_str("case ");
                 self.push_str(&name);
@@ -3801,19 +3798,7 @@ func (v *{name}) WriteToIndex(w {wrpc}.ByteWriter) (func({wrpc}.IndexWriter) err
                     self.push_str("if err != nil { return nil, ");
                     self.push_str(fmt);
                     self.push_str(".Errorf(\"failed to write payload: %w\", err)\n}\n");
-                    uwriteln!(
-                        self.src,
-                        r#"
-                    if write != nil {{
-                        return func(w {wrpc}.IndexWriter) error {{
-                            w, err := w.Index({i})
-                            if err != nil {{
-                                return {fmt}.Errorf("failed to index nested variant writer: %w", err)
-                            }}
-                            return write(w)
-                        }}, nil
-                    }} "#
-                    );
+                    self.push_str("return write, nil\n");
                 }
             }
             self.push_str("default: return nil, ");
