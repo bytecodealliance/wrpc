@@ -208,7 +208,7 @@ func (r *FrameStreamReader) ReadByte() (byte, error) {
 }
 
 func (r *FrameStreamReader) Index(path ...uint32) (IndexReadCloser, error) {
-	p := indexPath(path...)
+	p := r.path + indexPath(path...)
 	readers := r.readers.Add(1)
 	slog.DebugContext(r.ctx, "indexing reader",
 		"readers", readers,
