@@ -130,7 +130,7 @@ func (w *FrameStreamWriter) WriteByte(c byte) error {
 }
 
 func (w *FrameStreamWriter) Index(path ...uint32) (IndexWriteCloser, error) {
-	p := make([]uint32, 0, len(w.path))
+	p := make([]uint32, 0, len(w.path)+len(path))
 	p = append(p, w.path...)
 	p = append(p, path...)
 	writers := w.writers.Add(1)
