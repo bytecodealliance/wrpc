@@ -40,6 +40,13 @@ async function collect(stream) {
   return out;
 }
 
+/** Assert that `stream`, once drained, stays pending instead of ending. */
+async function assertPending(stream) {
+  const pending = Symbol("pending");
+  const end = new Promise((resolve) => setImmediate(resolve, pending));
+  assert.equal(await Promise.race([collect(stream), end]), pending);
+}
+
 const STREAMS = "wrpc-examples:streams/handler";
 const req = t.record({ numbers: t.stream(t.u64), bytes: t.stream(t.u8) });
 const echoResult = t.tuple(t.stream(t.u64), t.stream(t.u8));
@@ -453,8 +460,9 @@ test("a future without a payload resolves at the end of the transport", async ()
     inbound.close();
     const { results, done } = await invoke(transport, STREAMS, "get", [], [], [t.future()]);
     if (data) {
-      await assert.rejects(results[0], /unexpected data for sub-stream \[0\]/);
       await assert.rejects(done, /unexpected data for sub-stream \[0\]/);
+      const pending = Symbol("pending");
+      assert.equal(await Promise.race([results[0], pending]), pending);
     } else {
       assert.equal(await results[0], undefined);
       await done;
@@ -554,8 +562,8 @@ test("data for the root after the reply fails it", { timeout: 1000 }, async () =
   await peer.outgoing([0]).write(Uint8Array.of(0));
   const transport = { read: async () => frames.shift() ?? null, write: () => {} };
   const { results, done } = await invoke(transport, STREAMS, "get", [], [], [t.stream(t.u8)]);
-  await assert.rejects(collect(results[0]), /unexpected data for sub-stream \[\]/);
   await assert.rejects(done, /unexpected data for sub-stream \[\]/);
+  await assertPending(results[0]);
 });
 
 test("a truncated stream fails", { timeout: 1000 }, async () => {
@@ -573,8 +581,8 @@ test("a truncated stream fails", { timeout: 1000 }, async () => {
     await send(peer, frames);
     const transport = { read: async () => frames.shift() ?? null, write: () => {} };
     const { results, done } = await invoke(transport, STREAMS, "get", [], [], [t.stream(t.u8)]);
-    await assert.rejects(collect(results[0]), /unexpected end of input/);
     await assert.rejects(done, /unexpected end of input/);
+    await assertPending(results[0]);
   }
 });
 
@@ -669,9 +677,11 @@ for (const [kind, ty, chunk] of [
     await peer.outgoing([0]).write(Uint8Array.of(1, 0));
     inbound.close();
     const invoked = invoke(transport, STREAMS, "get", [], [], [ty]);
-    if (kind === "stream")
-      await assert.rejects(collect((await invoked).results[0]), /not supported/);
-    else await assert.rejects(invoked, /not supported/);
+    if (kind === "stream") {
+      const { results, done } = await invoked;
+      await assert.rejects(done, /not supported/);
+      await assertPending(results[0]);
+    } else await assert.rejects(invoked, /not supported/);
     assert.match(String(await aborted), /not supported/);
   });
 }
@@ -711,8 +721,8 @@ for (const [name, frame] of [
       inbound.close();
       const ty = [t.option(t.stream(t.u8)), t.stream(t.u8)];
       const { results, done } = await invoke(transport, STREAMS, "get", [], [], ty);
-      await assert.rejects(collect(results[1]), /unexpected data for sub-stream \[0\]/);
       await assert.rejects(done, /unexpected data for sub-stream \[0\]/);
+      await assertPending(results[1]);
       assert.match(String(await aborted), /unexpected data/);
     },
   );

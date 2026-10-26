@@ -108,6 +108,10 @@ invocation.
 Data the peer sends for a sub-stream that the decoded values do not carry —
 for a `stream` in an `option` that is `none`, say — fails the invocation.
 
+Received values never fail: if receiving a `future` or `stream` fails, it stays
+pending forever. The failure is reported by `done`, as in the Rust
+implementation.
+
 ### Serving
 
 `accept` is the server-side counterpart: read an invocation's header off a

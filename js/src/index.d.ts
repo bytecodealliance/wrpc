@@ -54,7 +54,6 @@ export type DecodeDeferred =
       kind: "future";
       ty: Type | null;
       resolve: (value: Value) => void;
-      reject: (err: unknown) => void;
     }
   | { path: number[]; kind: "stream"; ty: Type; queue: Chan<Value[] | Uint8Array> };
 
