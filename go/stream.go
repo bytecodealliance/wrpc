@@ -10,6 +10,8 @@ import (
 	"sync"
 )
 
+const maxPendingStreamBatch = 1 << 20
+
 // ReadStreamStatus reads a single byte from `r` and returns:
 // - `true` if stream is "ready"
 // - `false` if stream is "pending"
@@ -197,27 +199,13 @@ func WriteByteStream(v <-chan []byte, w ByteWriter) (func(IndexWriter) error, er
 		return nil, fmt.Errorf("failed to write `stream::pending` byte: %w", err)
 	}
 	return func(w IndexWriter) error {
-		var buf bytes.Buffer
-		for chunk := range v {
-			if len(chunk) == 0 {
-				continue
-			}
-			slog.Debug("writing pending byte stream chunk", "len", len(chunk))
-			buf.Reset()
-			if _, err := WriteByteList(chunk, &buf); err != nil {
-				go drain(v)
+		return writeStreamChunks(v, w, func(chunk []byte, buf *bytes.Buffer) error {
+			slog.Debug("encoding pending byte stream chunk", "len", len(chunk))
+			if _, err := WriteByteList(chunk, buf); err != nil {
 				return fmt.Errorf("failed to encode pending byte stream chunk: %w", err)
 			}
-			if _, err := w.Write(buf.Bytes()); err != nil {
-				go drain(v)
-				return fmt.Errorf("failed to write pending byte stream chunk: %w", err)
-			}
-		}
-		slog.Debug("writing pending byte stream end")
-		if err := w.WriteByte(0); err != nil {
-			return fmt.Errorf("failed to write pending byte stream end byte: %w", err)
-		}
-		return nil
+			return nil
+		})
 	}, nil
 }
 
@@ -234,39 +222,23 @@ func WriteStream[T any](v <-chan []T, w ByteWriter, f func(T, ByteWriter) (func(
 		var wg sync.WaitGroup
 		var errMu sync.Mutex
 		var errs []error
-		err := func() error {
-			var total uint32
-			var buf bytes.Buffer
-			writes := make(map[uint32]func(IndexWriter) error)
-			for chunk := range v {
-				n := len(chunk)
-				if n == 0 {
-					continue
+		var total uint32
+		err := writeStreamChunks(v, w, func(chunk []T, buf *bytes.Buffer) error {
+			n := len(chunk)
+			if n > math.MaxUint32 || math.MaxUint32-uint32(n) < total {
+				return errors.New("total pending stream element count would overflow a 32-bit unsigned integer")
+			}
+			slog.Debug("encoding pending stream chunk", "len", n)
+			if _, err := WriteUint32(uint32(n), buf); err != nil {
+				return fmt.Errorf("failed to encode pending stream chunk length of %d: %w", n, err)
+			}
+			for _, v := range chunk {
+				write, err := f(v, buf)
+				if err != nil {
+					return fmt.Errorf("failed to encode pending stream element %d: %w", total, err)
 				}
-				if n > math.MaxUint32 || math.MaxUint32-uint32(n) < total {
-					return errors.New("total pending stream element count would overflow a 32-bit unsigned integer")
-				}
-				slog.Debug("writing pending stream chunk", "len", n)
-				buf.Reset()
-				if _, err := WriteUint32(uint32(n), &buf); err != nil {
-					return fmt.Errorf("failed to encode pending stream chunk length of %d: %w", n, err)
-				}
-				clear(writes)
-				for _, v := range chunk {
-					write, err := f(v, &buf)
-					if err != nil {
-						return fmt.Errorf("failed to encode pending stream element %d: %w", total, err)
-					}
-					if write != nil {
-						writes[total] = write
-					}
-					total++
-				}
-				if _, err := w.Write(buf.Bytes()); err != nil {
-					return fmt.Errorf("failed to write pending stream chunk: %w", err)
-				}
-				for i, write := range writes {
-					w, err := w.Index(i)
+				if write != nil {
+					w, err := w.Index(total)
 					if err != nil {
 						return fmt.Errorf("failed to index nested stream writer: %w", err)
 					}
@@ -280,19 +252,69 @@ func WriteStream[T any](v <-chan []T, w ByteWriter, f func(T, ByteWriter) (func(
 						}
 					}()
 				}
-			}
-			slog.Debug("writing pending stream end")
-			if err := w.WriteByte(0); err != nil {
-				return fmt.Errorf("failed to write pending stream end byte: %w", err)
+				total++
 			}
 			return nil
-		}()
-		if err != nil {
-			go drain(v)
-		}
+		})
 		wg.Wait()
 		return errors.Join(append(errs, err)...)
 	}, nil
+}
+
+func writeStreamChunks[T any](v <-chan []T, w IndexWriter, f func([]T, *bytes.Buffer) error) error {
+	bufs := make(chan []byte)
+	writeErr := make(chan error, 1)
+	go func() {
+		defer close(writeErr)
+		for buf := range bufs {
+			if err := w.WriteBytes(buf); err != nil {
+				writeErr <- fmt.Errorf("failed to write pending stream chunks: %w", err)
+				return
+			}
+		}
+	}()
+	var buf bytes.Buffer
+	err := func() error {
+		for {
+			recv := v
+			var send chan<- []byte
+			if buf.Len() > 0 {
+				send = bufs
+				if buf.Len() >= maxPendingStreamBatch {
+					recv = nil
+				}
+			}
+			select {
+			case chunk, ok := <-recv:
+				if !ok {
+					slog.Debug("writing pending stream end")
+					buf.WriteByte(0)
+					select {
+					case bufs <- buf.Bytes():
+						return nil
+					case err := <-writeErr:
+						return err
+					}
+				}
+				if len(chunk) == 0 {
+					continue
+				}
+				if err := f(chunk, &buf); err != nil {
+					return err
+				}
+			case send <- buf.Bytes():
+				buf = bytes.Buffer{}
+			case err := <-writeErr:
+				return err
+			}
+		}
+	}()
+	close(bufs)
+	if err != nil {
+		go drain(v)
+		return err
+	}
+	return <-writeErr
 }
 
 func closeNested(r IndexReadCloser) {

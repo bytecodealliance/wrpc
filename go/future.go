@@ -98,7 +98,7 @@ func WriteFuture[T any](v <-chan T, w ByteWriter, f func(T, ByteWriter) (func(In
 		if err != nil {
 			return fmt.Errorf("failed to encode pending future value: %w", err)
 		}
-		if _, err := w.Write(buf.Bytes()); err != nil {
+		if err := w.WriteBytes(buf.Bytes()); err != nil {
 			return fmt.Errorf("failed to write pending future value: %w", err)
 		}
 		if write != nil {

@@ -122,6 +122,13 @@ func (w *FrameStreamWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
+func (w *FrameStreamWriter) WriteBytes(p []byte) error {
+	return sendFrame(w.ctx, w.ch, Frame{
+		Path: w.path,
+		Data: p,
+	})
+}
+
 func (w *FrameStreamWriter) WriteByte(c byte) error {
 	return sendFrame(w.ctx, w.ch, Frame{
 		Path: w.path,
