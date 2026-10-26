@@ -1064,7 +1064,7 @@ impl InterfaceGenerator<'_> {
                     self.src,
                     r#"
                 if err != nil {{
-                    return nil, {fmt}.Errorf("failed to read pending future element: %w", err)
+                    return v, {fmt}.Errorf("failed to read pending future element: %w", err)
                 }}
             return v, nil
         }}), nil
@@ -3144,7 +3144,8 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
                 | TypeDefKind::Enum(..)
                 | TypeDefKind::Resource
                 | TypeDefKind::Handle(..) => {}
-                TypeDefKind::List(..) if result => {}
+                TypeDefKind::List(..) | TypeDefKind::Future(..) | TypeDefKind::Stream(..)
+                    if result => {}
                 TypeDefKind::Tuple(Tuple { types }) if types.len() == 1 => {
                     return self.nillable_ptr(&types[0], result, decl);
                 }
@@ -3237,11 +3238,18 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
     }
 
     fn print_option(&mut self, ty: &Type, decl: bool) {
-        if let Type::Id(id) = ty
-            && let TypeDefKind::List(t) = self.resolve.types[*id].kind
+        let mut inner = ty;
+        while let Type::Id(id) = inner
+            && let TypeDefKind::Type(ty) = &self.resolve.types[*id].kind
         {
-            // Go slices are pointer types
-            self.print_list(&t);
+            inner = ty;
+        }
+        if let Type::Id(id) = inner
+            && let TypeDefKind::List(..) | TypeDefKind::Future(..) | TypeDefKind::Stream(..) =
+                self.resolve.types[*id].kind
+        {
+            // Go slices, channels and interfaces are nillable
+            self.print_ty(ty, true);
             return;
         }
         if decl {
