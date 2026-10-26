@@ -2287,7 +2287,7 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
                 self.src,
                 r#")
         if cErr := r.Close(); cErr != nil {{
-            {slog}.ErrorContext(ctx, "failed to close reader", "instance", "{instance}", "name", "{name}", "err", err)
+            {slog}.ErrorContext(ctx, "failed to close reader", "instance", "{instance}", "name", "{name}", "err", cErr)
         }}
         if err != nil {{
             {slog}.WarnContext(ctx, "failed to handle invocation", "instance", "{instance}", "name", "{name}", "err", err){abort12}
