@@ -32,7 +32,7 @@ use wasm_tokio::{
 };
 
 use crate::frame::Outgoing;
-use crate::{BufferedIncoming, copy_io_error, encode_ready_bytes_header, error_receiver_closed};
+use crate::{BufferedIncoming, encode_ready_bytes_header, error_receiver_closed};
 
 /// Size of chunks read from byte streams
 pub const READ_CHUNK_SIZE: usize = 8192;
@@ -2426,11 +2426,11 @@ impl tokio_util::codec::Decoder for StreamDecoderRead {
 
         // stream is pending
         let (tx, rx) = mpsc::channel(128);
-        let (done_tx, done_rx) = oneshot::channel();
         let dec = mem::take(&mut self.dec).into_inner();
+        let span = Span::current();
         self.deferred = Some(Box::new(|mut r, path| {
-            Box::pin(async move {
-                let res = async {
+            Box::pin(
+                async move {
                     if !path.is_empty() {
                         r = r.index(&path).map_err(std::io::Error::other)?;
                     }
@@ -2449,20 +2449,11 @@ impl tokio_util::codec::Decoder for StreamDecoderRead {
                     }
                     Err(std::io::ErrorKind::UnexpectedEof.into())
                 }
-                .await;
-                _ = done_tx.send(res.as_ref().copied().map_err(copy_io_error));
-                res
-            })
+                .instrument(span),
+            )
         }));
-        let done = stream::once(done_rx).filter_map(|res| async move {
-            match res {
-                Ok(Ok(())) => None,
-                Ok(Err(err)) => Some(Err(err)),
-                Err(..) => Some(Err(std::io::ErrorKind::UnexpectedEof.into())),
-            }
-        });
         Ok(Some(Box::pin(StreamReader::new(
-            ReceiverStream::new(rx).map(Ok).chain(done),
+            ReceiverStream::new(rx).map(Ok::<_, std::io::Error>),
         ))))
     }
 }
@@ -2683,14 +2674,8 @@ mod tests {
         let err = f(buffered(b"\x03foo"), Vec::default()).await;
         assert_eq!(err.unwrap_err().kind(), ErrorKind::UnexpectedEof);
         let mut buf = Vec::default();
-        let err = r.read_to_end(&mut buf).await;
-        assert_eq!(err.unwrap_err().kind(), ErrorKind::UnexpectedEof);
+        r.read_to_end(&mut buf).await.unwrap();
         assert_eq!(buf, b"foo");
-
-        let (mut r, f) = pending::<Pin<Box<dyn AsyncRead + Send>>>();
-        drop(f);
-        let err = r.read_to_end(&mut Vec::default()).await;
-        assert_eq!(err.unwrap_err().kind(), ErrorKind::UnexpectedEof);
     }
 
     #[test_log::test(tokio::test)]
