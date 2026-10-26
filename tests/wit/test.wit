@@ -41,10 +41,16 @@ interface %async {
         foo: string,
     }
 
+    variant async-case {
+        empty,
+        fut(future<string>),
+    }
+
     with-streams: func() -> tuple<stream<u8>, stream<list<string>>>;
     with-future: func(x: something, s: stream<u8>) -> future<stream<u8>>;
     identity-nested-async: func(v: future<future<future<stream<string>>>>) -> future<future<future<stream<string>>>>;
     identity-future: func(v: future) -> future;
+    identity-cases: func(o: option<future>, r: result<stream<u8>, future<u32>>, v: async-case) -> tuple<option<future>, result<stream<u8>, future<u32>>, async-case>;
 }
 
 interface resources {

@@ -1,6 +1,6 @@
 use core::time::Duration;
 
-use anyhow::{Context as _, ensure};
+use anyhow::{Context as _, bail, ensure};
 use bytes::Bytes;
 use futures::{StreamExt as _, stream};
 use tokio::sync::oneshot;
@@ -83,6 +83,54 @@ pub async fn assert_async<C: Clone>(
             );
             tx.send(()).expect("receiver dropped");
             fut.await;
+            Ok(())
+        },
+        async {
+            if let Some(io) = io {
+                info!("performing I/O");
+                io.await.context("failed to complete async I/O")?;
+            }
+            Ok(())
+        }
+    )?;
+
+    info!("calling `wrpc-test:integration/async.identity-cases`");
+    let (o_tx, o_rx) = oneshot::channel();
+    let (r_tx, r_rx) = oneshot::channel();
+    let (v_tx, v_rx) = oneshot::channel();
+    let ((o, r, v), io) = wrpc_test::integration::async_::identity_cases(
+        client,
+        cx.clone(),
+        Some(Box::pin(async { o_rx.await.expect("sender dropped") })),
+        Err(Box::pin(async { r_rx.await.expect("sender dropped") })),
+        wrpc_test::integration::async_::AsyncCase::Fut(Box::pin(async {
+            v_rx.await.expect("sender dropped")
+        })),
+    )
+    .await
+    .context("failed to call `wrpc-test:integration/async.identity-cases`")?;
+    try_join!(
+        async {
+            info!("receiving results");
+            let Some(mut o) = o else {
+                bail!("expected `option::some`");
+            };
+            let Err(r) = r else {
+                bail!("expected `result::err`");
+            };
+            let wrpc_test::integration::async_::AsyncCase::Fut(v) = v else {
+                bail!("expected `async-case::fut`");
+            };
+            ensure!(
+                timeout(Duration::from_millis(100), &mut o).await.is_err(),
+                "future resolved before its parameter"
+            );
+            o_tx.send(()).expect("receiver dropped");
+            r_tx.send(42).expect("receiver dropped");
+            v_tx.send("foo".to_string()).expect("receiver dropped");
+            o.await;
+            ensure!(r.await == 42);
+            ensure!(v.await == "foo");
             Ok(())
         },
         async {

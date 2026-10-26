@@ -7,6 +7,7 @@ import (
 	"errors"
 	"log/slog"
 
+	wrpc "wrpc.io/go"
 	"wrpc.io/tests/go/bindings/async_server/exports/wrpc_test/integration/async"
 	"wrpc.io/tests/go/internal"
 )
@@ -29,6 +30,11 @@ func (AsyncHandler) WithFuture(ctx context.Context, x *async.Something, s <-chan
 func (AsyncHandler) IdentityFuture(ctx context.Context, v <-chan struct{}) (<-chan struct{}, error) {
 	slog.DebugContext(ctx, "handling `identity-future`")
 	return v, nil
+}
+
+func (AsyncHandler) IdentityCases(ctx context.Context, o <-chan struct{}, r *wrpc.Result[<-chan []byte, <-chan uint32], v *async.AsyncCase) (<-chan struct{}, *wrpc.Result[<-chan []byte, <-chan uint32], *async.AsyncCase, error) {
+	slog.DebugContext(ctx, "handling `identity-cases`")
+	return o, r, v, nil
 }
 
 func (AsyncHandler) IdentityNestedAsync(ctx context.Context, v <-chan <-chan <-chan <-chan []string) (<-chan <-chan <-chan <-chan []string, error) {
