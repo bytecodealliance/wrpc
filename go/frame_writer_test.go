@@ -71,6 +71,10 @@ func TestFrameStreamWriter(t *testing.T) {
 		var dst sink
 		w := wrpc.NewFrameStreamWriter(ctx, &dst)
 
+		assertWriteString(t, w, "")
+		if err := w.WriteBytes(nil); err != nil {
+			t.Fatalf("failed to write empty bytes: %s", err)
+		}
 		assertWriteString(t, w, "hello")
 		assertClose(t, w)
 
