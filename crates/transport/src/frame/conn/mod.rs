@@ -13,7 +13,7 @@ use bytes::{Buf as _, Bytes, BytesMut};
 use pin_project_lite::pin_project;
 use tokio::io::{AsyncBufRead, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt as _};
 use tokio::select;
-use tokio::sync::{Notify, OwnedSemaphorePermit, Semaphore, mpsc, oneshot};
+use tokio::sync::{Notify, OwnedSemaphorePermit, Semaphore, mpsc, oneshot, watch};
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::codec::Encoder;
 use tokio_util::io::StreamReader;
@@ -481,6 +481,7 @@ impl Incoming {
             index: std::sync::Mutex::new(index),
             err: std::sync::OnceLock::default(),
             unprocessed: AtomicBool::default(),
+            done: watch::Sender::new(None),
         });
         let (dropped_tx, dropped_rx) = drain.then(oneshot::channel).unzip();
         let span = Span::current();
@@ -519,6 +520,9 @@ impl Incoming {
                     }
                 }
                 .await;
+                state
+                    .done
+                    .send_replace(Some(res.as_ref().copied().map_err(copy_io_error)));
                 on_ingress(rx, res).await;
             }
             .instrument(span.clone())
@@ -584,6 +588,13 @@ impl Incoming {
         })
     }
 
+    /// Returns a future, which resolves to the result of ingress once it is complete.
+    /// Ingress aborted once all handles are dropped, see [`ConnHandler::DRAIN`], resolves to
+    /// success.
+    pub fn finished(&self) -> impl Future<Output = std::io::Result<()>> + Send + 'static {
+        finished(self.state.done.subscribe())
+    }
+
     /// Takes the data of this handle, returning a handle reading it, if this handle reads any.
     /// This handle keeps addressing the same position for [`Self::index`], but reads no data.
     pub fn take_reader(&mut self) -> Option<Self> {
@@ -642,6 +653,7 @@ struct IngressState {
     index: std::sync::Mutex<Subscriptions>,
     err: std::sync::OnceLock<std::io::Error>,
     unprocessed: AtomicBool,
+    done: watch::Sender<Option<std::io::Result<()>>>,
 }
 
 impl IngressState {
@@ -666,6 +678,7 @@ pub struct Outgoing {
     tx: PollSender<(Bytes, Bytes)>,
     path: Arc<[usize]>,
     path_buf: Bytes,
+    done: watch::Receiver<Option<std::io::Result<()>>>,
 }
 
 impl Outgoing {
@@ -680,9 +693,11 @@ impl Outgoing {
     {
         let span = Span::current();
         let (tx_tx, tx_rx) = mpsc::channel(128);
+        let (done_tx, done_rx) = watch::channel(None);
         tokio::spawn(
-            async {
+            async move {
                 let res = egress(&mut tx, tx_rx).await;
+                done_tx.send_replace(Some(res.as_ref().copied().map_err(copy_io_error)));
                 on_egress(tx, res).await;
             }
             .instrument(span.clone()),
@@ -691,6 +706,7 @@ impl Outgoing {
             tx: PollSender::new(tx_tx),
             path: Arc::from([]),
             path_buf: Bytes::from_static(&[0]),
+            done: done_rx,
         }
     }
 
@@ -724,7 +740,13 @@ impl Outgoing {
             tx: self.tx.clone(),
             path,
             path_buf: buf.freeze(),
+            done: self.done.clone(),
         })
+    }
+
+    /// Returns a future, which resolves to the result of egress once it is complete.
+    pub fn finished(&self) -> impl Future<Output = std::io::Result<()>> + Send + 'static {
+        finished(self.done.clone())
     }
 
     pub(crate) fn poll_reserve(&mut self, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
@@ -944,6 +966,17 @@ async fn egress(
     tx.shutdown().await
 }
 
+/// Waits for the result of ingress or egress, which is success if it was aborted
+async fn finished(mut done: watch::Receiver<Option<std::io::Result<()>>>) -> std::io::Result<()> {
+    let Ok(res) = done.wait_for(Option::is_some).await else {
+        return Ok(());
+    };
+    match &*res {
+        Some(Err(err)) => Err(copy_io_error(err)),
+        _ => Ok(()),
+    }
+}
+
 /// Connection handler defines the connection I/O behavior.
 /// It is mostly useful for transports that may require additional clean up not already covered
 /// by [`AsyncWriteExt::shutdown`](tokio::io::AsyncWriteExt::shutdown), for example.
@@ -1053,11 +1086,13 @@ mod tests {
     #[test_log::test(tokio::test)]
     async fn incoming_drop_aborts() {
         let (_tx, rx, done_rx) = incoming(false);
+        let finished = rx.finished();
         drop(rx);
         tokio::time::timeout(Duration::from_secs(5), done_rx)
             .await
             .unwrap()
             .unwrap_err();
+        finished.await.unwrap();
     }
 
     #[test_log::test(tokio::test)]
@@ -1101,9 +1136,11 @@ mod tests {
     #[test_log::test(tokio::test)]
     async fn incoming_rejects_unprocessed_data() {
         let (mut tx, rx, done_rx) = incoming(true);
+        let finished = rx.finished();
         drop(rx);
         tx.write_all(&FRAME).await.unwrap();
         assert_eq!(failed(done_rx).await, ErrorKind::BrokenPipe);
+        assert_eq!(finished.await.unwrap_err().kind(), ErrorKind::BrokenPipe);
 
         let (mut tx, rx, done_rx) = incoming(true);
         tx.write_all(&FRAME).await.unwrap();
@@ -1139,6 +1176,17 @@ mod tests {
         tx.write_all(&[0x01, 0x01, 0x01, 0x2a]).await.unwrap();
         drop(rx);
         assert_eq!(failed(done_rx).await, ErrorKind::NotFound);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn outgoing_finished() {
+        let (tx, rx) = tokio::io::duplex(16);
+        drop(rx);
+        let mut tx = Outgoing::new(tx, |_, _| async {});
+        let finished = tx.finished();
+        tx.write_all(&[0x2a]).await.unwrap();
+        drop(tx);
+        assert_eq!(finished.await.unwrap_err().kind(), ErrorKind::BrokenPipe);
     }
 
     #[test_log::test(tokio::test)]
