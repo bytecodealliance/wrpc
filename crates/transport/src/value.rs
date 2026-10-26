@@ -15,7 +15,6 @@ use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite};
 use tokio::select;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinSet;
-use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::codec::{Encoder as _, FramedRead};
 use tokio_util::io::StreamReader;
 use tracing::{Instrument as _, Span, error, instrument, trace};
@@ -2226,12 +2225,29 @@ fn ensure_processed<D>(framed: &FramedRead<BufferedIncoming, D>) -> std::io::Res
     }
 }
 
-#[instrument(level = "trace", skip(dec, r, tx), ret)]
+fn receive_pending_stream<T: Send + 'static>(
+    rx: mpsc::Receiver<T>,
+    end: oneshot::Receiver<()>,
+) -> impl Stream<Item = T> + Send {
+    stream::unfold((rx, end), |(mut rx, end)| async move {
+        if let Some(item) = rx.recv().await {
+            return Some((item, (rx, end)));
+        }
+        if end.await.is_err() {
+            error!("stream I/O dropped");
+            return pending().await;
+        }
+        None
+    })
+}
+
+#[instrument(level = "trace", skip(dec, r, tx, end_tx), ret)]
 async fn handle_deferred_stream<C, T>(
     dec: C,
     mut r: BufferedIncoming,
     path: Vec<usize>,
     tx: mpsc::Sender<Vec<T>>,
+    end_tx: oneshot::Sender<()>,
 ) -> std::io::Result<()>
 where
     C: tokio_util::codec::Decoder<Item = T> + Deferred<BufferedIncoming>,
@@ -2252,6 +2268,7 @@ where
                 if chunk.is_empty() {
                     trace!("received stream end");
                     ensure_processed(&framed)?;
+                    _ = end_tx.send(());
                     while let Some(res) = tasks.join_next().await {
                         res??;
                     }
@@ -2312,12 +2329,13 @@ where
 
         // stream is pending
         let (tx, rx) = mpsc::channel(128);
+        let (end_tx, end_rx) = oneshot::channel();
         self.deferred = Some(Box::new(|r, path| {
-            Box::pin(
-                async move { handle_deferred_stream(T::Decoder::default(), r, path, tx).await },
-            )
+            Box::pin(async move {
+                handle_deferred_stream(T::Decoder::default(), r, path, tx, end_tx).await
+            })
         }));
-        Ok(Some(Box::pin(ReceiverStream::new(rx))))
+        Ok(Some(Box::pin(receive_pending_stream(rx, end_rx))))
     }
 }
 
@@ -2363,6 +2381,7 @@ impl tokio_util::codec::Decoder for StreamDecoderBytes {
 
         // stream is pending
         let (tx, rx) = mpsc::channel(128);
+        let (end_tx, end_rx) = oneshot::channel();
         let dec = mem::take(&mut self.dec).into_inner();
         let span = Span::current();
         self.deferred = Some(Box::new(|mut r, path| {
@@ -2377,7 +2396,9 @@ impl tokio_util::codec::Decoder for StreamDecoderBytes {
                         let chunk = chunk?;
                         if chunk.is_empty() {
                             trace!("received stream end");
-                            return ensure_processed(&framed);
+                            ensure_processed(&framed)?;
+                            _ = end_tx.send(());
+                            return Ok(());
                         }
                         trace!(?chunk, "received pending byte stream chunk");
                         if tx.send(chunk).await.is_err() {
@@ -2389,7 +2410,7 @@ impl tokio_util::codec::Decoder for StreamDecoderBytes {
                 .instrument(span),
             )
         }));
-        Ok(Some(Box::pin(ReceiverStream::new(rx))))
+        Ok(Some(Box::pin(receive_pending_stream(rx, end_rx))))
     }
 }
 
@@ -2426,6 +2447,7 @@ impl tokio_util::codec::Decoder for StreamDecoderRead {
 
         // stream is pending
         let (tx, rx) = mpsc::channel(128);
+        let (end_tx, end_rx) = oneshot::channel();
         let dec = mem::take(&mut self.dec).into_inner();
         let span = Span::current();
         self.deferred = Some(Box::new(|mut r, path| {
@@ -2440,7 +2462,9 @@ impl tokio_util::codec::Decoder for StreamDecoderRead {
                         let chunk = chunk?;
                         if chunk.is_empty() {
                             trace!("received stream end");
-                            return ensure_processed(&framed);
+                            ensure_processed(&framed)?;
+                            _ = end_tx.send(());
+                            return Ok(());
                         }
                         trace!(?chunk, "received byte stream chunk");
                         if tx.send(chunk).await.is_err() {
@@ -2453,7 +2477,7 @@ impl tokio_util::codec::Decoder for StreamDecoderRead {
             )
         }));
         Ok(Some(Box::pin(StreamReader::new(
-            ReceiverStream::new(rx).map(Ok::<_, std::io::Error>),
+            receive_pending_stream(rx, end_rx).map(Ok::<_, std::io::Error>),
         ))))
     }
 }
@@ -2666,16 +2690,25 @@ mod tests {
 
     #[test_log::test(tokio::test)]
     async fn stream_rejects_truncated() {
-        let (_stream, f) = pending::<StreamBytes>();
+        let (mut s, f) = pending::<StreamBytes>();
         let err = f(buffered(b"\x03foo"), Vec::default()).await;
         assert_eq!(err.unwrap_err().kind(), ErrorKind::UnexpectedEof);
+        assert_eq!(s.next().await.unwrap(), "foo");
+        assert!(s.next().now_or_never().is_none());
+
+        let (mut s, f) = pending::<Pin<Box<dyn Stream<Item = Vec<String>> + Send>>>();
+        let err = f(buffered(b"\x01\x03foo"), Vec::default()).await;
+        assert_eq!(err.unwrap_err().kind(), ErrorKind::UnexpectedEof);
+        assert_eq!(s.next().await.unwrap(), ["foo"]);
+        assert!(s.next().now_or_never().is_none());
 
         let (mut r, f) = pending::<Pin<Box<dyn AsyncRead + Send>>>();
         let err = f(buffered(b"\x03foo"), Vec::default()).await;
         assert_eq!(err.unwrap_err().kind(), ErrorKind::UnexpectedEof);
-        let mut buf = Vec::default();
-        r.read_to_end(&mut buf).await.unwrap();
-        assert_eq!(buf, b"foo");
+        let mut buf = [0; 3];
+        r.read_exact(&mut buf).await.unwrap();
+        assert_eq!(&buf, b"foo");
+        assert!(r.read(&mut buf).now_or_never().is_none());
     }
 
     #[test_log::test(tokio::test)]
