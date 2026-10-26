@@ -170,7 +170,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 		slog.DebugContext(ctx, "calling `wrpc-examples:streams/handler.echo` handler")
 		r0, r1, err := h.Echo(ctx, p0)
 		if cErr := r.Close(); cErr != nil {
-			slog.ErrorContext(ctx, "failed to close reader", "instance", "wrpc-examples:streams/handler", "name", "echo", "err", err)
+			slog.ErrorContext(ctx, "failed to close reader", "instance", "wrpc-examples:streams/handler", "name", "echo", "err", cErr)
 		}
 		if err != nil {
 			slog.WarnContext(ctx, "failed to handle invocation", "instance", "wrpc-examples:streams/handler", "name", "echo", "err", err)

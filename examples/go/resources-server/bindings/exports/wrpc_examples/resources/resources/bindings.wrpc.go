@@ -41,7 +41,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 		slog.DebugContext(ctx, "calling `wrpc-examples:resources/resources.foo` handler")
 		r0, err := h.Foo(ctx)
 		if cErr := r.Close(); cErr != nil {
-			slog.ErrorContext(ctx, "failed to close reader", "instance", "wrpc-examples:resources/resources", "name", "foo", "err", err)
+			slog.ErrorContext(ctx, "failed to close reader", "instance", "wrpc-examples:resources/resources", "name", "foo", "err", cErr)
 		}
 		if err != nil {
 			slog.WarnContext(ctx, "failed to handle invocation", "instance", "wrpc-examples:resources/resources", "name", "foo", "err", err)
@@ -160,7 +160,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 		slog.DebugContext(ctx, "calling `wrpc-examples:resources/resources.foo.baz` handler")
 		r0, err := h.Foo_Baz(ctx, p0)
 		if cErr := r.Close(); cErr != nil {
-			slog.ErrorContext(ctx, "failed to close reader", "instance", "wrpc-examples:resources/resources", "name", "foo.baz", "err", err)
+			slog.ErrorContext(ctx, "failed to close reader", "instance", "wrpc-examples:resources/resources", "name", "foo.baz", "err", cErr)
 		}
 		if err != nil {
 			slog.WarnContext(ctx, "failed to handle invocation", "instance", "wrpc-examples:resources/resources", "name", "foo.baz", "err", err)
@@ -279,7 +279,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 		slog.DebugContext(ctx, "calling `wrpc-examples:resources/resources.foo.bar` handler")
 		r0, err := h.Foo_Bar(ctx, p0)
 		if cErr := r.Close(); cErr != nil {
-			slog.ErrorContext(ctx, "failed to close reader", "instance", "wrpc-examples:resources/resources", "name", "foo.bar", "err", err)
+			slog.ErrorContext(ctx, "failed to close reader", "instance", "wrpc-examples:resources/resources", "name", "foo.bar", "err", cErr)
 		}
 		if err != nil {
 			slog.WarnContext(ctx, "failed to handle invocation", "instance", "wrpc-examples:resources/resources", "name", "foo.bar", "err", err)
@@ -398,7 +398,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 		slog.DebugContext(ctx, "calling `wrpc-examples:resources/resources.bar` handler")
 		r0, err := h.Bar(ctx, p0)
 		if cErr := r.Close(); cErr != nil {
-			slog.ErrorContext(ctx, "failed to close reader", "instance", "wrpc-examples:resources/resources", "name", "bar", "err", err)
+			slog.ErrorContext(ctx, "failed to close reader", "instance", "wrpc-examples:resources/resources", "name", "bar", "err", cErr)
 		}
 		if err != nil {
 			slog.WarnContext(ctx, "failed to handle invocation", "instance", "wrpc-examples:resources/resources", "name", "bar", "err", err)

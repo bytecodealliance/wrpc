@@ -473,7 +473,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 		slog.DebugContext(ctx, "calling `wasi:keyvalue/store@0.2.0-draft2.open` handler")
 		r0, err := h.Open(ctx, p0)
 		if cErr := r.Close(); cErr != nil {
-			slog.ErrorContext(ctx, "failed to close reader", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "open", "err", err)
+			slog.ErrorContext(ctx, "failed to close reader", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "open", "err", cErr)
 		}
 		if err != nil {
 			slog.WarnContext(ctx, "failed to handle invocation", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "open", "err", err)
@@ -678,7 +678,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 		slog.DebugContext(ctx, "calling `wasi:keyvalue/store@0.2.0-draft2.bucket.get` handler")
 		r0, err := h.Bucket_Get(ctx, p0, p1)
 		if cErr := r.Close(); cErr != nil {
-			slog.ErrorContext(ctx, "failed to close reader", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.get", "err", err)
+			slog.ErrorContext(ctx, "failed to close reader", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.get", "err", cErr)
 		}
 		if err != nil {
 			slog.WarnContext(ctx, "failed to handle invocation", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.get", "err", err)
@@ -985,7 +985,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 		slog.DebugContext(ctx, "calling `wasi:keyvalue/store@0.2.0-draft2.bucket.set` handler")
 		r0, err := h.Bucket_Set(ctx, p0, p1, p2)
 		if cErr := r.Close(); cErr != nil {
-			slog.ErrorContext(ctx, "failed to close reader", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.set", "err", err)
+			slog.ErrorContext(ctx, "failed to close reader", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.set", "err", cErr)
 		}
 		if err != nil {
 			slog.WarnContext(ctx, "failed to handle invocation", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.set", "err", err)
@@ -1162,7 +1162,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 		slog.DebugContext(ctx, "calling `wasi:keyvalue/store@0.2.0-draft2.bucket.delete` handler")
 		r0, err := h.Bucket_Delete(ctx, p0, p1)
 		if cErr := r.Close(); cErr != nil {
-			slog.ErrorContext(ctx, "failed to close reader", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.delete", "err", err)
+			slog.ErrorContext(ctx, "failed to close reader", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.delete", "err", cErr)
 		}
 		if err != nil {
 			slog.WarnContext(ctx, "failed to handle invocation", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.delete", "err", err)
@@ -1339,7 +1339,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 		slog.DebugContext(ctx, "calling `wasi:keyvalue/store@0.2.0-draft2.bucket.exists` handler")
 		r0, err := h.Bucket_Exists(ctx, p0, p1)
 		if cErr := r.Close(); cErr != nil {
-			slog.ErrorContext(ctx, "failed to close reader", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.exists", "err", err)
+			slog.ErrorContext(ctx, "failed to close reader", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.exists", "err", cErr)
 		}
 		if err != nil {
 			slog.WarnContext(ctx, "failed to handle invocation", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.exists", "err", err)
@@ -1550,7 +1550,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 		slog.DebugContext(ctx, "calling `wasi:keyvalue/store@0.2.0-draft2.bucket.list-keys` handler")
 		r0, err := h.Bucket_ListKeys(ctx, p0, p1)
 		if cErr := r.Close(); cErr != nil {
-			slog.ErrorContext(ctx, "failed to close reader", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.list-keys", "err", err)
+			slog.ErrorContext(ctx, "failed to close reader", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.list-keys", "err", cErr)
 		}
 		if err != nil {
 			slog.WarnContext(ctx, "failed to handle invocation", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.list-keys", "err", err)
