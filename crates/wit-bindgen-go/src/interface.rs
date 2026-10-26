@@ -1049,12 +1049,13 @@ impl InterfaceGenerator<'_> {
     }
 
     fn print_read_future(&mut self, ty: &Option<Type>, reader: &str, path: &str) {
-        let Some(ty) = ty else {
-            panic!("futures with no element types are not supported")
-        };
         let wrpc = self.deps.wrpc();
-        uwrite!(self.src, "{wrpc}.ReadFuture({reader}, ");
-        self.print_read_element(ty);
+        if let Some(ty) = ty {
+            uwrite!(self.src, "{wrpc}.ReadFuture({reader}, ");
+            self.print_read_element(ty);
+        } else {
+            uwrite!(self.src, "{wrpc}.ReadFutureUnit({reader}");
+        }
         if !path.is_empty() {
             self.src.push_str(", ");
             self.src.push_str(path);
@@ -1798,13 +1799,14 @@ impl InterfaceGenerator<'_> {
     }
 
     fn print_write_future(&mut self, ty: &Option<Type>, name: &str, writer: &str) {
-        let Some(ty) = ty else {
-            panic!("futures with no element types are not supported")
-        };
         let wrpc = self.deps.wrpc();
-        uwrite!(self.src, "{wrpc}.WriteFuture({name}, {writer}, ");
-        self.print_write_element(ty);
-        self.push_str(")");
+        if let Some(ty) = ty {
+            uwrite!(self.src, "{wrpc}.WriteFuture({name}, {writer}, ");
+            self.print_write_element(ty);
+            self.push_str(")");
+        } else {
+            uwrite!(self.src, "{wrpc}.WriteFutureUnit({name}, {writer})");
+        }
     }
 
     fn print_write_element(&mut self, ty: &Type) {
@@ -2989,11 +2991,12 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
     }
 
     fn print_future(&mut self, ty: &Option<Type>) {
-        let Some(ty) = ty else {
-            panic!("futures with no element types are not supported")
-        };
         self.push_str("<-chan ");
-        self.print_opt_ty(ty, true);
+        if let Some(ty) = ty {
+            self.print_opt_ty(ty, true);
+        } else {
+            self.push_str("struct{}");
+        }
     }
 
     fn print_stream(&mut self, element: &Option<Type>) {
