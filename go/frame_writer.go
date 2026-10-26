@@ -22,6 +22,7 @@ type FrameStreamWriter struct {
 	writers *atomic.Int64
 	ch      chan<- Frame
 	path    []uint32
+	gone    atomic.Bool
 }
 
 func newFrameStreamWriter(w *FrameStreamWriter) *FrameStreamWriter {
@@ -166,6 +167,9 @@ func (w *FrameStreamWriter) Index(path ...uint32) (IndexWriteCloser, error) {
 }
 
 func (w *FrameStreamWriter) drop() {
+	if w.gone.Swap(true) {
+		return
+	}
 	writers := w.writers.Add(-1)
 	slog.DebugContext(w.ctx, "dropped frame stream writer",
 		"writers", writers,
