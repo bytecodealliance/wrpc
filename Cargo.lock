@@ -1214,6 +1214,7 @@ dependencies = [
 name = "hello-component-rpc-client"
 version = "0.1.0"
 dependencies = [
+ "futures",
  "wit-bindgen 0.59.0",
 ]
 

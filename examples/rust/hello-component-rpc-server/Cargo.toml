@@ -13,4 +13,4 @@ repository.workspace = true
 crate-type = ["cdylib"]
 
 [dependencies]
-wit-bindgen = { workspace = true, features = ["realloc", "macros"] }
+wit-bindgen = { workspace = true, features = ["async", "realloc", "macros"] }

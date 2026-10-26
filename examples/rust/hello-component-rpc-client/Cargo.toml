@@ -13,4 +13,5 @@ repository.workspace = true
 crate-type = ["cdylib"]
 
 [dependencies]
+futures = { workspace = true, features = ["async-await"] }
 wit-bindgen = { workspace = true, features = ["async", "realloc", "macros"] }

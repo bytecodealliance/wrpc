@@ -3,7 +3,7 @@ package wrpc-examples:hello;
 interface handler {
     use wrpc:rpc/error@0.2.0.{error};
 
-    hello: func() -> result<string, error>;
+    hello: async func() -> result<string, error>;
 }
 
 world client {
