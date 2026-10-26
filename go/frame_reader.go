@@ -207,6 +207,10 @@ func (r *FrameStreamReader) ReadByte() (byte, error) {
 	}
 }
 
+func (r *FrameStreamReader) Buffered() int {
+	return len(r.buf)
+}
+
 func (r *FrameStreamReader) Index(path ...uint32) (IndexReadCloser, error) {
 	p := r.path + indexPath(path...)
 	readers := r.readers.Add(1)

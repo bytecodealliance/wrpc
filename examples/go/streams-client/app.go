@@ -4,8 +4,8 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
 	"sync"
@@ -26,57 +26,27 @@ func init() {
 	})))
 }
 
-type ThrottleStream[T any] struct {
-	tick   *time.Ticker
-	values []T
-}
-
-func (s *ThrottleStream[T]) Receive() ([]T, error) {
-	if len(s.values) == 0 {
-		return nil, io.EOF
-	}
-	<-s.tick.C
-	var v T
-	v, s.values = s.values[0], s.values[1:]
-	return []T{v}, nil
-}
-
-func (s *ThrottleStream[T]) Close() error {
-	s.tick.Stop()
-	return nil
-}
-
-type ThrottleReader struct {
-	tick *time.Ticker
-	buf  []byte
-}
-
-func (s *ThrottleReader) Read(p []byte) (int, error) {
-	if len(s.buf) == 0 {
-		return 0, io.EOF
-	}
-	<-s.tick.C
-	var b byte
-	b, s.buf = s.buf[0], s.buf[1:]
-	p[0] = b
-	return 1, nil
-}
-
-func (s *ThrottleReader) Close() error {
-	s.tick.Stop()
-	return nil
+func throttle[T any](values []T, d time.Duration) <-chan []T {
+	ch := make(chan []T)
+	go func() {
+		defer close(ch)
+		tick := time.NewTicker(d)
+		defer tick.Stop()
+		for _, v := range values {
+			<-tick.C
+			ch <- []T{v}
+		}
+	}()
+	return ch
 }
 
 func Run(prefix string, client wrpc.Invoker) error {
-	numbers, bytes, errCh, err := handler.Echo(context.Background(), client, &handler.Req{
-		Numbers: &ThrottleStream[uint64]{
-			tick:   time.NewTicker(time.Second),
-			values: []uint64{1, 2, 3, 4, 5, 6, 7, 8, 9, 10},
-		},
-		Bytes: &ThrottleReader{
-			tick: time.NewTicker(time.Second),
-			buf:  []byte("foo bar baz"),
-		},
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	numbers, bytes, errCh, err := handler.Echo(ctx, client, &handler.Req{
+		Numbers: throttle([]uint64{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}, time.Second),
+		Bytes:   throttle([]byte("foo bar baz"), time.Second),
 	})
 	if err != nil {
 		return fmt.Errorf("failed to call `wrpc-examples:streams/handler.echo`: %w", err)
@@ -87,38 +57,40 @@ func Run(prefix string, client wrpc.Invoker) error {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		defer numbers.Close()
 		for {
-			chunk, err := numbers.Receive()
-			if err == io.EOF {
+			select {
+			case <-ctx.Done():
 				return
+			case chunk, ok := <-numbers:
+				if !ok {
+					return
+				}
+				fmt.Printf("%s numbers: %v\n", prefix, chunk)
 			}
-			if err != nil {
-				slog.Error("failed to receive number chunk", "err", err)
-				return
-			}
-			fmt.Printf("%s numbers: %v\n", prefix, chunk)
 		}
 	}()
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		defer bytes.Close()
-		var chunk [128]byte
 		for {
-			n, err := bytes.Read(chunk[:])
-			if err == io.EOF {
+			select {
+			case <-ctx.Done():
 				return
+			case chunk, ok := <-bytes:
+				if !ok {
+					return
+				}
+				fmt.Printf("%s bytes: %s\n", prefix, chunk)
 			}
-			if err != nil {
-				slog.Error("failed to receive byte chunk", "err", err)
-				return
-			}
-			fmt.Printf("%s bytes: %s\n", prefix, chunk[:n])
 		}
 	}()
+	var errs []error
 	for err := range errCh {
-		slog.Error("failed to transmit async parameters", "err", err)
+		errs = append(errs, err)
+		cancel()
+	}
+	if err := errors.Join(errs...); err != nil {
+		return fmt.Errorf("failed to exchange async values: %w", err)
 	}
 	return nil
 }

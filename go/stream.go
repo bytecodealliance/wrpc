@@ -1,112 +1,14 @@
 package wrpc
 
 import (
-	"bufio"
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"math"
+	"sync"
 )
-
-// ReadChunkSize is the size of chunks read from byte streams
-const ReadChunkSize = 8192
-
-type ByteStreamWriter struct {
-	r     io.Reader
-	chunk []byte
-}
-
-func (v *ByteStreamWriter) WriteTo(w ByteWriter) (err error) {
-	if len(v.chunk) == 0 {
-		v.chunk = make([]byte, ReadChunkSize)
-	}
-	buf := bufio.NewWriter(w)
-	defer func() {
-		if fErr := buf.Flush(); fErr != nil {
-			if err == nil {
-				err = fmt.Errorf("failed to flush pending byte stream writer: %w", fErr)
-			} else {
-				slog.Warn("failed to flush pending byte stream writer", "err", fErr)
-			}
-		}
-	}()
-	for {
-		var end bool
-		slog.Debug("reading pending byte stream contents")
-		n, err := v.r.Read(v.chunk)
-		if err == io.EOF {
-			end = true
-			slog.Debug("pending byte stream reached EOF")
-		} else if err != nil {
-			return fmt.Errorf("failed to read pending byte stream chunk: %w", err)
-		}
-		if n > math.MaxUint32 {
-			return fmt.Errorf("pending byte stream chunk length of %d overflows a 32-bit integer", n)
-		}
-		if n > 0 {
-			slog.Debug("writing pending byte stream chunk length", "len", n)
-			_, err = WriteUint32(uint32(n), buf)
-			if err != nil {
-				return fmt.Errorf("failed to write pending byte stream chunk length of %d: %w", n, err)
-			}
-			_, err = buf.Write(v.chunk[:n])
-			if err != nil {
-				return fmt.Errorf("failed to write pending byte stream chunk contents: %w", err)
-			}
-		}
-		if end {
-			if err := buf.WriteByte(0); err != nil {
-				return fmt.Errorf("failed to write pending byte stream end byte: %w", err)
-			}
-			return nil
-		}
-	}
-}
-
-type ByteStreamReader struct {
-	r   ByteReadCloser
-	buf uint32
-}
-
-func (r *ByteStreamReader) Read(p []byte) (int, error) {
-	n := r.buf
-	if n == 0 {
-		slog.Debug("reading pending byte stream chunk length")
-		var err error
-		n, err = ReadUint32(r.r)
-		if err != nil {
-			return 0, fmt.Errorf("failed to read pending byte stream chunk length: %w", err)
-		}
-		if n == 0 {
-			return 0, io.EOF
-		}
-	}
-	if len(p) > int(n) {
-		p = p[:n]
-	}
-	slog.Debug("reading pending byte stream chunk contents", "len", n)
-	rn, err := r.r.Read(p)
-	if err != nil {
-		return rn, fmt.Errorf("failed to read pending stream chunk bytes: %w", err)
-	}
-	if rn > int(n) {
-		return rn, errors.New("read more bytes than requested")
-	}
-	r.buf = n - uint32(rn)
-	return rn, nil
-}
-
-func (r *ByteStreamReader) Close() error {
-	return r.r.Close()
-}
-
-func NewByteStreamReader(r ByteReadCloser) *ByteStreamReader {
-	return &ByteStreamReader{
-		r: r,
-	}
-}
 
 // ReadStreamStatus reads a single byte from `r` and returns:
 // - `true` if stream is "ready"
@@ -126,92 +28,280 @@ func ReadStreamStatus(r ByteReader) (bool, error) {
 	}
 }
 
-// ReadByteStream reads a stream of bytes from `r`
-func ReadByteStream(r IndexReader, path ...uint32) (io.ReadCloser, error) {
+// ReadByteStream reads a `stream<u8>` from `r`.
+// The returned channel receives the chunks of the stream and is closed once the stream ends.
+// If the stream is pending, the returned function reads it and must be called. If reading fails or `ctx`
+// is done, the channel is never closed.
+func ReadByteStream(r IndexReadCloser, path ...uint32) (<-chan []byte, func(context.Context) error, error) {
 	slog.Debug("reading byte stream status byte")
 	ok, err := ReadStreamStatus(r)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	if !ok {
-		r, err := r.Index(path...)
+	if ok {
+		slog.Debug("reading ready byte stream")
+		buf, err := ReadByteList(r)
 		if err != nil {
-			return nil, fmt.Errorf("failed to index reader: %w", err)
+			return nil, nil, fmt.Errorf("failed to read ready byte stream: %w", err)
 		}
-		return NewByteStreamReader(r), nil
+		ch := make(chan []byte, 1)
+		if len(buf) > 0 {
+			ch <- buf
+		}
+		close(ch)
+		return ch, nil, nil
 	}
-	slog.Debug("reading ready byte stream")
-	buf, err := ReadByteList(r)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read bytes: %w", err)
+	if len(path) > 0 {
+		slog.Debug("indexing pending byte stream reader")
+		r, err = r.Index(path...)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to index nested byte stream reader: %w", err)
+		}
 	}
-	slog.Debug("read ready byte stream", "len", len(buf))
-	return io.NopCloser(bytes.NewReader(buf)), nil
+	ch := make(chan []byte)
+	return ch, func(ctx context.Context) error {
+		if len(path) > 0 {
+			defer closeNested(r)
+		}
+		for {
+			slog.Debug("reading pending byte stream chunk")
+			buf, err := ReadByteList(r)
+			if err != nil {
+				return fmt.Errorf("failed to read pending byte stream chunk: %w", err)
+			}
+			if len(buf) == 0 {
+				slog.Debug("pending byte stream ended")
+				if r.Buffered() > 0 {
+					return errors.New("received data after pending byte stream end")
+				}
+				close(ch)
+				return nil
+			}
+			select {
+			case ch <- buf:
+			case <-ctx.Done():
+				return fmt.Errorf("failed to send pending byte stream chunk: %w", context.Cause(ctx))
+			}
+		}
+	}, nil
 }
 
-// ReadStream reads a stream from `r`
-func ReadStream[T any](r IndexReader, f func(IndexReader) (T, error), path ...uint32) (Receiver[[]T], error) {
+// ReadStream reads a `stream` from `r` using `f` to read its elements.
+// The returned channel receives the chunks of the stream and is closed once the stream ends.
+// If the stream is pending, the returned function reads it and must be called. If reading fails or `ctx`
+// is done, the channel is never closed.
+func ReadStream[T any](r IndexReadCloser, f func(IndexReadCloser, ...uint32) (T, func(context.Context) error, error), path ...uint32) (<-chan []T, func(context.Context) error, error) {
 	slog.Debug("reading stream status byte")
 	ok, err := ReadStreamStatus(r)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	if !ok {
-		r, err := r.Index(path...)
+	if ok {
+		slog.Debug("reading ready stream length")
+		n, err := ReadUint32(r)
 		if err != nil {
-			return nil, fmt.Errorf("failed to index reader: %w", err)
+			return nil, nil, fmt.Errorf("failed to read ready stream length: %w", err)
 		}
-		return NewDecodeReceiver(r, func(r IndexReadCloser) ([]T, error) {
-			slog.Debug("reading pending stream chunk length")
-			n, err := ReadUint32(r)
+		vs := NewSlice[[]T](n)
+		var ds []func(context.Context) error
+		for i := range n {
+			v, deferred, err := f(r, append(path, i)...)
 			if err != nil {
-				return nil, fmt.Errorf("failed to read pending stream chunk length: %w", err)
+				return nil, nil, fmt.Errorf("failed to read ready stream element %d: %w", i, err)
 			}
-			if n == 0 {
-				slog.Debug("pending stream EOF chunk received")
-				return nil, io.EOF
+			vs = append(vs, v)
+			if deferred != nil {
+				ds = append(ds, deferred)
 			}
-			vs := NewSlice[[]T](n)
-			for i := range n {
-				v, err := f(r)
+		}
+		ch := make(chan []T, 1)
+		if len(vs) > 0 {
+			ch <- vs
+		}
+		close(ch)
+		return ch, JoinDeferred(ds...), nil
+	}
+	if len(path) > 0 {
+		slog.Debug("indexing pending stream reader")
+		r, err = r.Index(path...)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to index nested stream reader: %w", err)
+		}
+	}
+	ch := make(chan []T)
+	return ch, func(ctx context.Context) error {
+		if len(path) > 0 {
+			defer closeNested(r)
+		}
+		var wg sync.WaitGroup
+		var errMu sync.Mutex
+		var errs []error
+		err := func() error {
+			var total uint32
+			for {
+				slog.Debug("reading pending stream chunk length")
+				n, err := ReadUint32(r)
 				if err != nil {
-					return nil, fmt.Errorf("failed to read pending stream chunk element %d: %w", i, err)
+					return fmt.Errorf("failed to read pending stream chunk length: %w", err)
 				}
-				vs = append(vs, v)
+				if n == 0 {
+					slog.Debug("pending stream ended")
+					if r.Buffered() > 0 {
+						return errors.New("received data after pending stream end")
+					}
+					close(ch)
+					return nil
+				}
+				if math.MaxUint32-n < total {
+					return errors.New("total pending stream element count would overflow a 32-bit unsigned integer")
+				}
+				vs := NewSlice[[]T](n)
+				for range n {
+					v, deferred, err := f(r, total)
+					if err != nil {
+						return fmt.Errorf("failed to read pending stream element %d: %w", total, err)
+					}
+					if deferred != nil {
+						wg.Add(1)
+						go func() {
+							defer wg.Done()
+							if err := deferred(ctx); err != nil {
+								errMu.Lock()
+								errs = append(errs, err)
+								errMu.Unlock()
+							}
+						}()
+					}
+					vs = append(vs, v)
+					total++
+				}
+				select {
+				case ch <- vs:
+				case <-ctx.Done():
+					return fmt.Errorf("failed to send pending stream chunk: %w", context.Cause(ctx))
+				}
 			}
-			return vs, nil
-		}), nil
-	}
-	slog.Debug("reading ready stream")
-	vs, err := ReadList(r, f)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read ready stream: %w", err)
-	}
-	slog.Debug("read ready stream", "len", len(vs))
-	return NewCompleteReceiver(vs), nil
+		}()
+		wg.Wait()
+		return errors.Join(append(errs, err)...)
+	}, nil
 }
 
-func WriteByteStream(r io.Reader, w IndexWriter, chunk []byte, path ...uint32) (err error) {
-	slog.Debug("writing byte stream `stream::pending` status byte")
+// WriteByteStream writes a `stream<u8>` with chunks received from `v` to `w`
+func WriteByteStream(v <-chan []byte, w ByteWriter) (func(IndexWriter) error, error) {
+	if v == nil {
+		return nil, errors.New("outgoing byte stream channel is nil")
+	}
+	slog.Debug("writing `stream::pending` status byte")
 	if err := w.WriteByte(0); err != nil {
-		return fmt.Errorf("failed to write `stream::pending` byte: %w", err)
+		return nil, fmt.Errorf("failed to write `stream::pending` byte: %w", err)
 	}
-	wi, err := w.Index(path...)
-	if err != nil {
-		return fmt.Errorf("failed to index reader: %w", err)
-	}
-	s := &ByteStreamWriter{r, chunk}
-	defer func() {
-		if cErr := wi.Close(); cErr != nil {
-			if err == nil {
-				err = fmt.Errorf("failed to close pending byte stream: %w", cErr)
-			} else {
-				slog.Warn("failed to close pending byte stream", "err", cErr)
+	return func(w IndexWriter) error {
+		var buf bytes.Buffer
+		for chunk := range v {
+			if len(chunk) == 0 {
+				continue
+			}
+			slog.Debug("writing pending byte stream chunk", "len", len(chunk))
+			buf.Reset()
+			if _, err := WriteByteList(chunk, &buf); err != nil {
+				go drain(v)
+				return fmt.Errorf("failed to encode pending byte stream chunk: %w", err)
+			}
+			if _, err := w.Write(buf.Bytes()); err != nil {
+				go drain(v)
+				return fmt.Errorf("failed to write pending byte stream chunk: %w", err)
 			}
 		}
-	}()
-	if err := s.WriteTo(wi); err != nil {
-		return fmt.Errorf("failed to write stream contents: %w", err)
+		slog.Debug("writing pending byte stream end")
+		if err := w.WriteByte(0); err != nil {
+			return fmt.Errorf("failed to write pending byte stream end byte: %w", err)
+		}
+		return nil
+	}, nil
+}
+
+// WriteStream writes a `stream` with chunks received from `v` to `w` using `f` to write its elements
+func WriteStream[T any](v <-chan []T, w ByteWriter, f func(T, ByteWriter) (func(IndexWriter) error, error)) (func(IndexWriter) error, error) {
+	if v == nil {
+		return nil, errors.New("outgoing stream channel is nil")
 	}
-	return nil
+	slog.Debug("writing `stream::pending` status byte")
+	if err := w.WriteByte(0); err != nil {
+		return nil, fmt.Errorf("failed to write `stream::pending` byte: %w", err)
+	}
+	return func(w IndexWriter) error {
+		var wg sync.WaitGroup
+		var errMu sync.Mutex
+		var errs []error
+		err := func() error {
+			var total uint32
+			var buf bytes.Buffer
+			writes := make(map[uint32]func(IndexWriter) error)
+			for chunk := range v {
+				n := len(chunk)
+				if n == 0 {
+					continue
+				}
+				if n > math.MaxUint32 || math.MaxUint32-uint32(n) < total {
+					return errors.New("total pending stream element count would overflow a 32-bit unsigned integer")
+				}
+				slog.Debug("writing pending stream chunk", "len", n)
+				buf.Reset()
+				if _, err := WriteUint32(uint32(n), &buf); err != nil {
+					return fmt.Errorf("failed to encode pending stream chunk length of %d: %w", n, err)
+				}
+				clear(writes)
+				for _, v := range chunk {
+					write, err := f(v, &buf)
+					if err != nil {
+						return fmt.Errorf("failed to encode pending stream element %d: %w", total, err)
+					}
+					if write != nil {
+						writes[total] = write
+					}
+					total++
+				}
+				if _, err := w.Write(buf.Bytes()); err != nil {
+					return fmt.Errorf("failed to write pending stream chunk: %w", err)
+				}
+				for i, write := range writes {
+					w, err := w.Index(i)
+					if err != nil {
+						return fmt.Errorf("failed to index nested stream writer: %w", err)
+					}
+					wg.Add(1)
+					go func() {
+						defer wg.Done()
+						if err := write(w); err != nil {
+							errMu.Lock()
+							errs = append(errs, err)
+							errMu.Unlock()
+						}
+					}()
+				}
+			}
+			slog.Debug("writing pending stream end")
+			if err := w.WriteByte(0); err != nil {
+				return fmt.Errorf("failed to write pending stream end byte: %w", err)
+			}
+			return nil
+		}()
+		if err != nil {
+			go drain(v)
+		}
+		wg.Wait()
+		return errors.Join(append(errs, err)...)
+	}, nil
+}
+
+func closeNested(r IndexReadCloser) {
+	if err := r.Close(); err != nil {
+		slog.Debug("failed to close nested reader", "err", err)
+	}
+}
+
+func drain[T any](v <-chan T) {
+	for range v {
+	}
 }

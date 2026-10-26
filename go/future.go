@@ -1,6 +1,9 @@
 package wrpc
 
 import (
+	"bytes"
+	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 )
@@ -23,27 +26,84 @@ func ReadFutureStatus(r ByteReader) (bool, error) {
 	}
 }
 
-// ReadFuture reads a future from `r`
-func ReadFuture[T any](r IndexReadCloser, f func(IndexReadCloser) (T, error), path ...uint32) (Receiver[T], error) {
+// ReadFuture reads a `future` from `r` using `f` to read its value.
+// The returned channel receives the value once the future resolves and is closed afterwards.
+// If the future is pending, the returned function reads it and must be called. If reading fails,
+// the channel never receives a value and is never closed.
+func ReadFuture[T any](r IndexReadCloser, f func(IndexReadCloser, ...uint32) (T, func(context.Context) error, error), path ...uint32) (<-chan T, func(context.Context) error, error) {
 	slog.Debug("reading future status byte")
 	ok, err := ReadFutureStatus(r)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	if !ok {
+	ch := make(chan T, 1)
+	if ok {
+		slog.Debug("reading ready future")
+		v, deferred, err := f(r, path...)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to read ready future: %w", err)
+		}
+		ch <- v
+		close(ch)
+		return ch, deferred, nil
+	}
+	if len(path) > 0 {
+		slog.Debug("indexing pending future reader")
+		r, err = r.Index(path...)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to index nested future reader: %w", err)
+		}
+	}
+	return ch, func(ctx context.Context) error {
 		if len(path) > 0 {
-			slog.Debug("indexing pending future reader")
-			r, err = r.Index(path...)
-			if err != nil {
-				return nil, fmt.Errorf("failed to index nested future reader: %w", err)
+			defer closeNested(r)
+		}
+		slog.Debug("reading pending future")
+		v, deferred, err := f(r)
+		if err != nil {
+			return fmt.Errorf("failed to read pending future: %w", err)
+		}
+		ch <- v
+		close(ch)
+		if deferred != nil {
+			if err := deferred(ctx); err != nil {
+				return err
 			}
 		}
-		return NewDecodeReceiver(r, f), nil
+		if r.Buffered() > 0 {
+			return errors.New("received data after pending future value end")
+		}
+		return nil
+	}, nil
+}
+
+// WriteFuture writes a `future` received from `v` to `w` using `f` to write its value
+func WriteFuture[T any](v <-chan T, w ByteWriter, f func(T, ByteWriter) (func(IndexWriter) error, error)) (func(IndexWriter) error, error) {
+	if v == nil {
+		return nil, errors.New("outgoing future channel is nil")
 	}
-	slog.Debug("reading ready future")
-	v, err := f(r)
-	if err != nil {
-		return nil, err
+	slog.Debug("writing `future::pending` status byte")
+	if err := w.WriteByte(0); err != nil {
+		return nil, fmt.Errorf("failed to write `future::pending` byte: %w", err)
 	}
-	return NewCompleteReceiver(v), nil
+	return func(w IndexWriter) error {
+		slog.Debug("receiving outgoing pending future")
+		x, ok := <-v
+		if !ok {
+			return errors.New("outgoing pending future closed without a value")
+		}
+		slog.Debug("writing pending future value")
+		var buf bytes.Buffer
+		write, err := f(x, &buf)
+		if err != nil {
+			return fmt.Errorf("failed to encode pending future value: %w", err)
+		}
+		if _, err := w.Write(buf.Bytes()); err != nil {
+			return fmt.Errorf("failed to write pending future value: %w", err)
+		}
+		if write != nil {
+			return write(w)
+		}
+		return nil
+	}, nil
 }

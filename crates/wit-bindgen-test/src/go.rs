@@ -35,14 +35,12 @@ impl LanguageMethods for Go {
         _args: &[String],
     ) -> bool {
         // The wRPC Go generator does not yet support bare `stream`/`future`
-        // types, `error-context`, or futures held by resources.
+        // types, `error-context`, named fixed-length lists, or `map`.
         matches!(
             name,
             "streams.wit"
                 | "futures.wit"
                 | "error-context.wit"
-                | "resources-with-futures.wit"
-                | "future-same-type-different-names.wit"
                 | "named-fixed-length-list.wit"
                 | "map.wit"
         )

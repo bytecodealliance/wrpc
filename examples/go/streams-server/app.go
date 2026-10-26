@@ -4,12 +4,10 @@ package app
 
 import (
 	"context"
-	"io"
 	"log/slog"
 	"os"
 
 	"wrpc.io/examples/go/streams-server/bindings/exports/wrpc_examples/streams/handler"
-	wrpc "wrpc.io/go"
 )
 
 func init() {
@@ -25,7 +23,7 @@ func init() {
 
 type Handler struct{}
 
-func (Handler) Echo(ctx context.Context, req *handler.Req) (wrpc.Receiver[[]uint64], io.ReadCloser, error) {
+func (Handler) Echo(ctx context.Context, req *handler.Req) (<-chan []uint64, <-chan []byte, error) {
 	slog.InfoContext(ctx, "handling `wrpc-examples:streams/handler.echo`")
 	return req.Numbers, req.Bytes, nil
 }

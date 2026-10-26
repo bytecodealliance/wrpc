@@ -3,7 +3,10 @@ package wrpc
 import (
 	"bufio"
 	"context"
+	"errors"
 	"io"
+	"slices"
+	"sync"
 )
 
 // Invoke is the client-side transport handle
@@ -81,6 +84,9 @@ type IndexReader interface {
 	io.ByteReader
 
 	Index[IndexReadCloser]
+
+	// Buffered returns the number of bytes, which were received, but not read yet
+	Buffered() int
 }
 
 type IndexWriter interface {
@@ -110,73 +116,34 @@ type ByteReader interface {
 	io.Reader
 }
 
-type Receiver[T any] interface {
-	Receive() (T, error)
-	io.Closer
+// JoinDeferred returns a function, which calls all non-nil `fs` concurrently and returns their joined errors.
+// It returns `nil` if all `fs` are `nil`.
+func JoinDeferred(fs ...func(context.Context) error) func(context.Context) error {
+	fs = slices.DeleteFunc(fs, func(f func(context.Context) error) bool { return f == nil })
+	switch len(fs) {
+	case 0:
+		return nil
+	case 1:
+		return fs[0]
+	}
+	return func(ctx context.Context) error {
+		errs := make([]error, len(fs))
+		var wg sync.WaitGroup
+		for i, f := range fs {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				errs[i] = f(ctx)
+			}()
+		}
+		wg.Wait()
+		return errors.Join(errs...)
+	}
 }
 
 type ByteReadCloser interface {
 	ByteReader
 	io.Closer
-}
-
-type CompleteReceiver[T any] struct {
-	v     T
-	ready bool
-}
-
-func (r *CompleteReceiver[T]) Receive() (T, error) {
-	defer func() {
-		r.ready = false
-	}()
-	if !r.ready {
-		return CompleteReceiver[T]{}.v, io.EOF
-	}
-	return r.v, nil
-}
-
-func (r *CompleteReceiver[T]) Close() error {
-	if c, ok := (any)(r.v).(io.Closer); ok {
-		return c.Close()
-	}
-	return nil
-}
-
-func NewCompleteReceiver[T any](v T) *CompleteReceiver[T] {
-	return &CompleteReceiver[T]{v, true}
-}
-
-type DecodeReceiver[T any] struct {
-	r      IndexReadCloser
-	decode func(IndexReadCloser) (T, error)
-}
-
-func (r *DecodeReceiver[T]) Receive() (T, error) {
-	return r.decode(r.r)
-}
-
-func (r *DecodeReceiver[T]) Close() error {
-	return r.r.Close()
-}
-
-func NewDecodeReceiver[T any](r IndexReadCloser, decode func(IndexReadCloser) (T, error)) *DecodeReceiver[T] {
-	return &DecodeReceiver[T]{r, decode}
-}
-
-type nestedReceiver[T any, A Receiver[B], B Receiver[T]] struct {
-	rx A
-}
-
-func (r nestedReceiver[T, A, B]) Receive() (Receiver[T], error) {
-	return r.rx.Receive()
-}
-
-func (r nestedReceiver[T, A, B]) Close() error {
-	return r.rx.Close()
-}
-
-func NewNestedReceiver[T any, A Receiver[B], B Receiver[T]](rx A) Receiver[Receiver[T]] {
-	return nestedReceiver[T, A, B]{rx}
 }
 
 type BufReadCloser struct {

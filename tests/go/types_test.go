@@ -19,6 +19,10 @@ func (r *indexReader) Index(path ...uint32) (wrpc.IndexReadCloser, error) {
 	panic("not implemented")
 }
 
+func (r *indexReader) Buffered() int {
+	return r.Len()
+}
+
 func TestTypes_Flags(t *testing.T) {
 	t.Run("WriteToIndex", func(t *testing.T) {
 		check := assert.New(t)
