@@ -210,13 +210,13 @@ func (r *FrameStreamReader) ReadByte() (byte, error) {
 func (r *FrameStreamReader) Index(path ...uint32) (IndexReadCloser, error) {
 	p := r.path + indexPath(path...)
 	readers := r.readers.Add(1)
+	r.nestMu.Lock()
+	defer r.nestMu.Unlock()
 	slog.DebugContext(r.ctx, "indexing reader",
 		"readers", readers,
 		"nested", r.nest,
 		"path", p,
 	)
-	r.nestMu.Lock()
-	defer r.nestMu.Unlock()
 	ch, ok := r.nest[p]
 	if !ok {
 		return nil, errors.New("unknown subscription")
