@@ -2269,6 +2269,7 @@ where
                     trace!("received stream end");
                     ensure_processed(&framed)?;
                     _ = end_tx.send(());
+                    drop(tx);
                     while let Some(res) = tasks.join_next().await {
                         res??;
                     }
