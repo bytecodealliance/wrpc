@@ -31,10 +31,12 @@ func ReadFuture[T any](r IndexReadCloser, f func(IndexReadCloser) (T, error), pa
 		return nil, err
 	}
 	if !ok {
-		slog.Debug("indexing pending future reader")
-		r, err := r.Index(append(path, 0)...)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get future reader: %w", err)
+		if len(path) > 0 {
+			slog.Debug("indexing pending future reader")
+			r, err = r.Index(path...)
+			if err != nil {
+				return nil, fmt.Errorf("failed to index nested future reader: %w", err)
+			}
 		}
 		return NewDecodeReceiver(r, f), nil
 	}
