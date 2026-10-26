@@ -90,4 +90,50 @@ func TestFrameStreamReader(t *testing.T) {
 		}
 		assertClose(t, r)
 	})
+
+	t.Run("close twice", func(t *testing.T) {
+		t.Parallel()
+		ctx := context.Background()
+		pr, pw := io.Pipe()
+		r := wrpc.NewFrameStreamReader(ctx, struct {
+			*bufio.Reader
+			io.Closer
+		}{bufio.NewReader(pr), pr},
+			wrpc.NewSubscribePath().Index(0),
+			wrpc.NewSubscribePath().Index(1),
+		)
+		sub0, err := r.Index(0)
+		if err != nil {
+			t.Fatalf("failed to index reader: %s", err)
+		}
+		sub1, err := r.Index(1)
+		if err != nil {
+			t.Fatalf("failed to index reader: %s", err)
+		}
+		assertClose(t, r)
+		assertClose(t, sub0)
+		assertClose(t, sub0)
+		var src sink
+		for _, frame := range []wrpc.Frame{
+			{Path: []uint32{0}},
+			{Path: []uint32{1}, Data: []byte("hello")},
+			{Path: []uint32{1}, Data: []byte("world")},
+		} {
+			if _, err := wrpc.WriteFrame(frame, &src); err != nil {
+				t.Fatalf("failed to write frame: %s", err)
+			}
+		}
+		go func() {
+			_, err := src.WriteTo(pw)
+			pw.CloseWithError(err)
+		}()
+		buf, err := io.ReadAll(sub1)
+		if err != nil {
+			t.Fatalf("failed to read: %s", err)
+		}
+		if string(buf) != "helloworld" {
+			t.Fatalf("expected `helloworld`, got `%s`", buf)
+		}
+		assertClose(t, sub1)
+	})
 }

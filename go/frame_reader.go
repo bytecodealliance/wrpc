@@ -44,6 +44,7 @@ type FrameStreamReader struct {
 	err     *atomic.Pointer[error]
 	path    string
 	buf     []byte
+	gone    atomic.Bool
 }
 
 func newFrameStreamReader(r *FrameStreamReader) *FrameStreamReader {
@@ -262,6 +263,9 @@ func (r *FrameStreamReader) Index(path ...uint32) (IndexReadCloser, error) {
 }
 
 func (r *FrameStreamReader) drop() {
+	if r.gone.Swap(true) {
+		return
+	}
 	readers := r.readers.Add(-1)
 	slog.DebugContext(r.ctx, "dropped frame stream reader",
 		"readers", readers,
