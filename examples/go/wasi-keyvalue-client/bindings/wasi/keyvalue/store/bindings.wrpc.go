@@ -228,7 +228,7 @@ func (v *KeyResponse) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) er
 		if len(writes) > 0 {
 			return func(w wrpc.IndexWriter) error {
 				var wg sync.WaitGroup
-				var wgErr atomic.Value
+				var wgErr atomic.Pointer[error]
 				for index, write := range writes {
 					wg.Add(1)
 					w, err := w.Index(index)
@@ -239,16 +239,15 @@ func (v *KeyResponse) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) er
 					go func() {
 						defer wg.Done()
 						if err := write(w); err != nil {
-							wgErr.Store(err)
+							wgErr.Store(&err)
 						}
 					}()
 				}
 				wg.Wait()
-				err := wgErr.Load()
-				if err == nil {
-					return nil
+				if err := wgErr.Load(); err != nil {
+					return *err
 				}
-				return err.(error)
+				return nil
 			}, nil
 		}
 		return nil, nil
@@ -312,7 +311,7 @@ func (v *KeyResponse) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) er
 	if len(writes) > 0 {
 		return func(w wrpc.IndexWriter) error {
 			var wg sync.WaitGroup
-			var wgErr atomic.Value
+			var wgErr atomic.Pointer[error]
 			for index, write := range writes {
 				wg.Add(1)
 				w, err := w.Index(index)
@@ -323,16 +322,15 @@ func (v *KeyResponse) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) er
 				go func() {
 					defer wg.Done()
 					if err := write(w); err != nil {
-						wgErr.Store(err)
+						wgErr.Store(&err)
 					}
 				}()
 			}
 			wg.Wait()
-			err := wgErr.Load()
-			if err == nil {
-				return nil
+			if err := wgErr.Load(); err != nil {
+				return *err
 			}
-			return err.(error)
+			return nil
 		}, nil
 	}
 	return nil, nil
@@ -886,7 +884,7 @@ func Bucket_Set(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borrow[Buc
 		if len(writes) > 0 {
 			return func(w wrpc.IndexWriter) error {
 				var wg sync.WaitGroup
-				var wgErr atomic.Value
+				var wgErr atomic.Pointer[error]
 				for index, write := range writes {
 					wg.Add(1)
 					w, err := w.Index(index)
@@ -897,16 +895,15 @@ func Bucket_Set(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borrow[Buc
 					go func() {
 						defer wg.Done()
 						if err := write(w); err != nil {
-							wgErr.Store(err)
+							wgErr.Store(&err)
 						}
 					}()
 				}
 				wg.Wait()
-				err := wgErr.Load()
-				if err == nil {
-					return nil
+				if err := wgErr.Load(); err != nil {
+					return *err
 				}
-				return err.(error)
+				return nil
 			}, nil
 		}
 		return nil, nil

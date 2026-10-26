@@ -4,37 +4,17 @@ package integration_test
 
 import (
 	"context"
-	"io"
 	"log/slog"
-	"reflect"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	wrpc "wrpc.io/go"
 	integration "wrpc.io/tests/go"
 	"wrpc.io/tests/go/bindings/async_client/wrpc_test/integration/async"
 	"wrpc.io/tests/go/bindings/async_server"
 	"wrpc.io/tests/go/internal"
 )
-
-type chunkReceiver[T any] struct {
-	chunks [][]T
-}
-
-func (r *chunkReceiver[T]) Receive() ([]T, error) {
-	if len(r.chunks) == 0 {
-		return nil, io.EOF
-	}
-	var v []T
-	v, r.chunks = r.chunks[0], r.chunks[1:]
-	return v, nil
-}
-
-func (r *chunkReceiver[T]) Close() error {
-	return nil
-}
 
 func TestAsync(t *testing.T) {
 	var cancel func()
@@ -58,87 +38,67 @@ func TestAsync(t *testing.T) {
 
 	t.Run("with-streams", func(t *testing.T) {
 		slog.DebugContext(ctx, "calling `wrpc-test:integration/async.with-streams`")
-		byteRx, stringListRx, err := async.WithStreams(ctx, client)
-		if err != nil {
-			t.Errorf("failed to call `wrpc-test:integration/async.with-streams`: %s", err)
-			return
+		byteRx, stringListRx, errCh, err := async.WithStreams(ctx, client)
+		require.NoError(t, err, "failed to call `wrpc-test:integration/async.with-streams`")
+		var b []byte
+		for chunk := range byteRx {
+			b = append(b, chunk...)
 		}
-		b, err := io.ReadAll(byteRx)
-		if err != nil {
-			t.Errorf("failed to read from stream: %s", err)
-			return
+		assert.Equal(t, "test", string(b))
+		var ss [][]string
+		for chunk := range stringListRx {
+			ss = append(ss, chunk...)
 		}
-		if string(b) != "test" {
-			t.Errorf("expected: `test`, got: %s", string(b))
-			return
+		assert.Equal(t, [][]string{{"foo"}, {"bar", "baz"}}, ss)
+		for err := range errCh {
+			require.NoError(t, err, "failed to receive async value from peer")
 		}
-		if err := byteRx.Close(); err != nil {
-			t.Errorf("failed to close byte reader: %s", err)
-			return
-		}
+	})
 
-		ss, err := stringListRx.Receive()
-		if err != nil {
-			t.Errorf("failed to receive ready list<string> stream: %s", err)
-			return
+	t.Run("with-streams-cancel", func(t *testing.T) {
+		callCtx, callCancel := context.WithCancel(ctx)
+		_, stringListRx, errCh, err := async.WithStreams(callCtx, client)
+		require.NoError(t, err, "failed to call `wrpc-test:integration/async.with-streams`")
+		for range stringListRx {
 		}
-		expected := [][]string{{"foo"}, {"bar", "baz"}}
-		if !reflect.DeepEqual(ss, expected) {
-			t.Errorf("expected: `%#v`, got: %#v", expected, ss)
-			return
-		}
-		ss, err = stringListRx.Receive()
-		if ss != nil || err != io.EOF {
-			t.Errorf("ready list<string> should have returned (nil, io.EOF), got: (%#v, %v)", ss, err)
-			return
-		}
-		if err := stringListRx.Close(); err != nil {
-			t.Errorf("failed to close string list receiver: %s", err)
-			return
+		callCancel()
+		timeout := time.After(5 * time.Second)
+		for {
+			select {
+			case _, ok := <-errCh:
+				if !ok {
+					return
+				}
+			case <-timeout:
+				t.Fatal("error channel not closed after cancellation")
+			}
 		}
 	})
 
 	t.Run("identity-nested-async", func(t *testing.T) {
 		slog.DebugContext(ctx, "calling `wrpc-test:integration/async.identity-nested-async`")
+		stream := make(chan []string, 3)
+		stream <- []string{"foo"}
+		stream <- []string{}
+		stream <- []string{"bar", "baz"}
+		close(stream)
 		fut0, errCh, err := async.IdentityNestedAsync(ctx, client,
-			wrpc.NewNestedReceiver(wrpc.NewCompleteReceiver(
-				wrpc.NewCompleteReceiver(
-					wrpc.NewNestedReceiver(wrpc.NewCompleteReceiver(
-						&chunkReceiver[string]{[][]string{{"foo"}, {}, {"bar", "baz"}}},
-					)),
-				),
-			)),
+			internal.Ready(internal.Ready(internal.Ready((<-chan []string)(stream)))),
 		)
-		if err != nil {
-			t.Errorf("failed to call `wrpc-test:integration/async.identity-nested-async`: %s", err)
-			return
-		}
-		for err := range errCh {
-			t.Errorf("failed to send async value to peer: %s", err)
-			return
-		}
-		fut1, err := fut0.Receive()
-		require.NoError(t, err, "failed to receive future 0")
-		fut2, err := fut1.Receive()
-		require.NoError(t, err, "failed to receive future 1")
-
-		stream, err := fut2.Receive()
-		require.NoError(t, err, "failed to receive future 2")
-
+		require.NoError(t, err, "failed to call `wrpc-test:integration/async.identity-nested-async`")
+		fut1, ok := <-fut0
+		require.True(t, ok, "failed to receive future 0")
+		fut2, ok := <-fut1
+		require.True(t, ok, "failed to receive future 1")
+		rx, ok := <-fut2
+		require.True(t, ok, "failed to receive future 2")
 		var ss []string
-		for err != io.EOF {
-			var v []string
-			v, err = stream.Receive()
-			if err != io.EOF {
-				require.NoError(t, err, "failed to receive stream element")
-			}
-			ss = append(ss, v...)
+		for chunk := range rx {
+			ss = append(ss, chunk...)
 		}
-		assert.Equal(t, ss, []string{"foo", "bar", "baz"})
-
-		if err := fut0.Close(); err != nil {
-			t.Errorf("failed to close async value receiver: %s", err)
-			return
+		assert.Equal(t, []string{"foo", "bar", "baz"}, ss)
+		for err := range errCh {
+			require.NoError(t, err, "failed to exchange async values with peer")
 		}
 	})
 

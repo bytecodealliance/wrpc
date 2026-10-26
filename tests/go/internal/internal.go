@@ -64,3 +64,11 @@ func Accept(ctx context.Context, srv *wrpctcp.Server) {
 		}
 	}()
 }
+
+// Ready returns a closed channel, which contains `v`
+func Ready[T any](v T) <-chan T {
+	ch := make(chan T, 1)
+	ch <- v
+	close(ch)
+	return ch
+}

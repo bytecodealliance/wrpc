@@ -10,7 +10,7 @@ use wit_bindgen_core::wit_parser::{
     Variant, WorldKey,
 };
 use wit_bindgen_core::{Source, TypeInfo, uwrite, uwriteln};
-use wrpc_introspect::{async_paths_ty, is_list_of, is_tuple, is_ty, rpc_func_name};
+use wrpc_introspect::{async_paths_ty, is_tuple, is_ty, rpc_func_name};
 
 use crate::{
     Deps, GoWrpc, Identifier, InterfaceName, to_go_ident, to_package_ident, to_upper_camel_case,
@@ -578,8 +578,11 @@ impl InterfaceGenerator<'_> {
         let errors = self.deps.errors();
         let slog = self.deps.slog();
         let wrpc = self.deps.wrpc();
+        let deferred = self.is_async(ty);
+        let d = if deferred { "nil, " } else { "" };
         uwrite!(self.src, "func(r {wrpc}.IndexReadCloser, path ...uint32) (");
         self.print_list(ty);
+        self.print_deferred_ret(deferred);
         uwrite!(
             self.src,
             r#", error) {{
@@ -592,41 +595,62 @@ impl InterfaceGenerator<'_> {
             if i > 0 && err == {io}.EOF {{
                 err = {io}.ErrUnexpectedEOF
             }}
-            return nil, {fmt}.Errorf("failed to read list length byte: %w", err)
+            return nil, {d}{fmt}.Errorf("failed to read list length byte: %w", err)
         }}
         if s == 28 && b > 0x0f {{
-            return nil, {errors}.New("list length overflows a 32-bit integer")
+            return nil, {d}{errors}.New("list length overflows a 32-bit integer")
         }}
         if b < 0x80 {{
             x = x | uint32(b)<<s
             if x == 0 {{
-                return nil, nil
+                return nil, {d}nil
             }}
             vs := {wrpc}.NewSlice["#,
         );
         self.print_list(ty);
+        uwrite!(self.src, "](x)\n");
+        if deferred {
+            let context = self.deps.context();
+            uwrite!(self.src, "var ds []func({context}.Context) error\n");
+        }
         uwrite!(
             self.src,
-            r#"](x)
-            for i := range x {{
+            r#"for i := range x {{
                 {slog}.Debug("reading list element", "i", i)
-                v, err := "#,
+                v, "#,
         );
+        if deferred {
+            self.push_str("d, ");
+        }
+        self.push_str("err := ");
         self.print_read_ty(ty, "r", "append(path, uint32(i))");
         self.push_str("\n");
         uwrite!(
             self.src,
             r#"if err != nil {{
-                    return nil, {fmt}.Errorf("failed to read list element %d: %w", i, err)
+                    return nil, {d}{fmt}.Errorf("failed to read list element %d: %w", i, err)
                 }}
                 vs = append(vs, v)
+"#,
+        );
+        if deferred {
+            uwrite!(
+                self.src,
+                r#"ds = append(ds, d)
             }}
-            return vs, nil
-        }}
+            return vs, {wrpc}.JoinDeferred(ds...), nil
+"#
+            );
+        } else {
+            self.push_str("}\nreturn vs, nil\n");
+        }
+        uwrite!(
+            self.src,
+            r#"}}
         x |= uint32(b&0x7f) << s
         s += 7
     }}
-    return nil, {errors}.New("list length overflows a 32-bit integer")
+    return nil, {d}{errors}.New("list length overflows a 32-bit integer")
 }}({reader}"#,
         );
         if !path.is_empty() {
@@ -641,38 +665,41 @@ impl InterfaceGenerator<'_> {
         let fmt = self.deps.fmt();
         let slog = self.deps.slog();
         let wrpc = self.deps.wrpc();
+        let deferred = self.is_async(ty);
+        let (d, dv) = if deferred { ("nil, ", "d, ") } else { ("", "") };
         uwrite!(self.src, "func(r {wrpc}.IndexReadCloser, path ...uint32) (");
         self.print_option(ty, true);
+        self.print_deferred_ret(deferred);
         uwrite!(
             self.src,
             r#", error) {{
     {slog}.Debug("reading option status byte")
     status, err := r.ReadByte()
     if err != nil {{
-        return nil, {fmt}.Errorf("failed to read option status byte: %w", err)
+        return nil, {d}{fmt}.Errorf("failed to read option status byte: %w", err)
     }}
     switch status {{
     case 0:
-        return nil, nil
+        return nil, {d}nil
     case 1:
         {slog}.Debug("reading `option::some` payload")
-        v, err := "#,
+        v, {dv}err := "#,
         );
         self.print_read_ty(ty, "r", "path");
         self.push_str("\n");
         uwrite!(
             self.src,
             r#"if err != nil {{
-            return nil, {fmt}.Errorf("failed to read `option::some` value: %w", err)
+            return nil, {d}{fmt}.Errorf("failed to read `option::some` value: %w", err)
         }}
         return "#,
         );
         self.print_nillable_ptr(ty, false, false);
         uwrite!(
             self.src,
-            r#"v, nil
+            r#"v, {dv}nil
     default:
-        return nil, {fmt}.Errorf("invalid option status byte %d", status)
+        return nil, {d}{fmt}.Errorf("invalid option status byte %d", status)
     }}
 }}({reader}"#,
         );
@@ -688,71 +715,65 @@ impl InterfaceGenerator<'_> {
         let fmt = self.deps.fmt();
         let slog = self.deps.slog();
         let wrpc = self.deps.wrpc();
+        let deferred = ty.ok.iter().chain(&ty.err).any(|ty| self.is_async(ty));
+        let d = if deferred { "nil, " } else { "" };
         uwrite!(
             self.src,
             "func(r {wrpc}.IndexReadCloser, path ...uint32) (*"
         );
         self.print_result(ty);
+        self.print_deferred_ret(deferred);
         uwriteln!(
             self.src,
             r#", error) {{
     {slog}.Debug("reading result status byte")
     status, err := r.ReadByte()
     if err != nil {{
-        return nil, {fmt}.Errorf("failed to read result status byte: %w", err)
+        return nil, {d}{fmt}.Errorf("failed to read result status byte: %w", err)
     }}"#,
         );
         self.push_str("switch status {\n");
-        self.push_str("case 0:\n");
-        if let Some(ref ok) = ty.ok {
-            uwriteln!(self.src, r#"{slog}.Debug("reading `result::ok` payload")"#);
-            self.push_str("v, err := ");
-            self.print_read_ty(ok, "r", "path");
-            self.push_str("\n");
-            uwriteln!(
-                self.src,
-                r#"if err != nil {{
-            return nil, fmt.Errorf("failed to read `result::ok` value: %w", err)
+        for (i, (case, field, payload)) in [("ok", "Ok", &ty.ok), ("err", "Err", &ty.err)]
+            .into_iter()
+            .enumerate()
+        {
+            uwriteln!(self.src, "case {i}:");
+            let mut ret = d;
+            if let Some(payload) = payload {
+                uwriteln!(
+                    self.src,
+                    r#"{slog}.Debug("reading `result::{case}` payload")"#
+                );
+                if self.is_async(payload) {
+                    self.push_str("v, d, err := ");
+                    ret = "d, ";
+                } else {
+                    self.push_str("v, err := ");
+                }
+                self.print_read_ty(payload, "r", "path");
+                self.push_str("\n");
+                uwriteln!(
+                    self.src,
+                    r#"if err != nil {{
+            return nil, {d}{fmt}.Errorf("failed to read `result::{case}` value: %w", err)
         }}"#,
-            );
-            self.push_str("return &");
-            self.print_result(ty);
-            self.push_str("{ Ok: ");
-            self.print_nillable_ptr(ok, true, false);
-        } else {
-            self.push_str("var v struct{}\n");
-            self.push_str("return &");
-            self.print_result(ty);
-            self.push_str("{ Ok: &");
-        }
-        self.push_str("v }, nil\n");
-        self.push_str("case 1:\n");
-        if let Some(ref err) = ty.err {
-            uwriteln!(self.src, r#"{slog}.Debug("reading `result::err` payload")"#);
-            self.push_str("v, err := ");
-            self.print_read_ty(err, "r", "path");
-            self.push_str("\n");
-            uwriteln!(
-                self.src,
-                r#"if err != nil {{
-            return nil, {fmt}.Errorf("failed to read `result::err` value: %w", err)
-        }}"#,
-            );
-            self.push_str("return &");
-            self.print_result(ty);
-            self.push_str("{ Err: ");
-            self.print_nillable_ptr(err, true, false);
-        } else {
-            self.push_str("var v struct{}\n");
-            self.push_str("return &");
-            self.print_result(ty);
-            self.push_str("{ Err: &");
+                );
+                self.push_str("return &");
+                self.print_result(ty);
+                uwrite!(self.src, "{{ {field}: ");
+                self.print_nillable_ptr(payload, true, false);
+            } else {
+                self.push_str("var v struct{}\n");
+                self.push_str("return &");
+                self.print_result(ty);
+                uwrite!(self.src, "{{ {field}: &");
+            }
+            uwriteln!(self.src, "v }}, {ret}nil");
         }
         uwrite!(
             self.src,
-            r#"v }}, nil
-    default:
-        return nil, {fmt}.Errorf("invalid result status byte %d", status)
+            r#"default:
+        return nil, {d}{fmt}.Errorf("invalid result status byte %d", status)
     }}
 }}({reader}"#
         );
@@ -772,32 +793,57 @@ impl InterfaceGenerator<'_> {
         name: &str,
     ) {
         let wrpc = self.deps.wrpc();
-
+        let deferred = fields.iter().any(|Field { ty, .. }| self.is_async(ty));
+        let d = if deferred { "nil, " } else { "" };
+        uwrite!(
+            self.src,
+            "func(r {wrpc}.IndexReadCloser, path ...uint32) (*{name}"
+        );
+        self.print_deferred_ret(deferred);
         uwriteln!(
             self.src,
-            r#"func(r {wrpc}.IndexReadCloser, path ...uint32) (*{name}, error) {{
+            r#", error) {{
     v := &{name}{{}}
     var err error"#
         );
+        if deferred {
+            let context = self.deps.context();
+            uwrite!(
+                self.src,
+                "var d func({context}.Context) error\nvar ds []func({context}.Context) error\n"
+            );
+        }
         for (i, Field { name, ty, .. }) in fields.iter().enumerate() {
             let fmt = self.deps.fmt();
             let slog = self.deps.slog();
             let ident = name.to_upper_camel_case();
+            let field_deferred = self.is_async(ty);
             uwrite!(
                 self.src,
                 r#"{slog}.Debug("reading field", "name", "{name}")
-    v.{ident}, err = "#
+    v.{ident}, "#
             );
+            if field_deferred {
+                self.push_str("d, ");
+            }
+            self.push_str("err = ");
             self.print_read_ty(ty, "r", &format!("append(path, {i})"));
             self.push_str("\n");
             uwriteln!(
                 self.src,
                 r#"if err != nil {{
-            return nil, {fmt}.Errorf("failed to read `{name}` field: %w", err)
+            return nil, {d}{fmt}.Errorf("failed to read `{name}` field: %w", err)
         }}"#
             );
+            if field_deferred {
+                self.push_str("ds = append(ds, d)\n");
+            }
         }
-        self.push_str("return v, nil\n");
+        if deferred {
+            uwriteln!(self.src, "return v, {wrpc}.JoinDeferred(ds...), nil");
+        } else {
+            self.push_str("return v, nil\n");
+        }
         uwrite!(self.src, "}}({reader}");
         if !path.is_empty() {
             self.src.push_str(", ");
@@ -864,19 +910,30 @@ impl InterfaceGenerator<'_> {
     fn print_read_variant(&mut self, ty: &Variant, reader: &str, path: &str, name: &str) {
         let fmt = self.deps.fmt();
         let wrpc = self.deps.wrpc();
-
+        let deferred = ty
+            .cases
+            .iter()
+            .any(|Case { ty, .. }| ty.as_ref().is_some_and(|ty| self.is_async(ty)));
+        let d = if deferred { "nil, " } else { "" };
         uwrite!(
             self.src,
-            r#"func(r {wrpc}.IndexReadCloser, path ...uint32) (*{name}, error) {{
+            "func(r {wrpc}.IndexReadCloser, path ...uint32) (*{name}"
+        );
+        self.print_deferred_ret(deferred);
+        uwrite!(
+            self.src,
+            r#", error) {{
     v := &{name}{{}}
     n, err := "#
         );
         self.print_read_discriminant(ty.tag(), "r");
         self.push_str("\n");
-        self.push_str("if err != nil {\n");
-        self.push_str("return nil, ");
-        self.push_str(fmt);
-        self.push_str(".Errorf(\"failed to read discriminant: %w\", err)\n}\n");
+        uwriteln!(
+            self.src,
+            r#"if err != nil {{
+        return nil, {d}{fmt}.Errorf("failed to read discriminant: %w", err)
+    }}"#
+        );
         uwriteln!(self.src, "switch {name}Discriminant(n) {{");
         for Case {
             name: case_name,
@@ -885,28 +942,29 @@ impl InterfaceGenerator<'_> {
         } in &ty.cases
         {
             let camel = case_name.to_upper_camel_case();
-            self.push_str("case ");
-            self.push_str(name);
-            self.push_str(&camel);
-            self.push_str(":\n");
+            uwriteln!(self.src, "case {name}{camel}:");
             if let Some(ty) = ty {
-                self.push_str("payload, err := ");
+                let ret = if self.is_async(ty) {
+                    self.push_str("payload, d, err := ");
+                    "d, "
+                } else {
+                    self.push_str("payload, err := ");
+                    d
+                };
                 self.print_read_ty(ty, "r", "path");
                 self.push_str("\n");
-                self.push_str("if err != nil { return nil, ");
-                self.push_str(fmt);
                 uwriteln!(
                     self.src,
-                    r#".Errorf("failed to read `{case_name}` payload: %w", err) }}"#
+                    r#"if err != nil {{ return nil, {d}{fmt}.Errorf("failed to read `{case_name}` payload: %w", err) }}"#
                 );
-                uwriteln!(self.src, "return v.Set{camel}(payload), nil");
+                uwriteln!(self.src, "return v.Set{camel}(payload), {ret}nil");
             } else {
-                uwriteln!(self.src, "return v.Set{camel}(), nil");
+                uwriteln!(self.src, "return v.Set{camel}(), {d}nil");
             }
         }
         uwriteln!(
             self.src,
-            r#"default: return nil, {fmt}.Errorf("unknown discriminant value %d", n) }}"#
+            r#"default: return nil, {d}{fmt}.Errorf("unknown discriminant value %d", n) }}"#
         );
         uwrite!(self.src, "}}({reader}");
         if !path.is_empty() {
@@ -929,35 +987,56 @@ impl InterfaceGenerator<'_> {
             }
             _ => {
                 let wrpc = self.deps.wrpc();
-
+                let deferred = ty.types.iter().any(|ty| self.is_async(ty));
+                let d = if deferred { "nil, " } else { "" };
                 uwrite!(
                     self.src,
                     "func(r {wrpc}.IndexReadCloser, path ...uint32) (*"
                 );
                 self.print_tuple(ty, true);
+                self.print_deferred_ret(deferred);
                 self.push_str(", error) {\n");
                 self.push_str("v := &");
                 self.print_tuple(ty, false);
                 self.push_str("{}\n");
                 self.push_str("var err error\n");
+                if deferred {
+                    let context = self.deps.context();
+                    uwrite!(
+                        self.src,
+                        "var d func({context}.Context) error\nvar ds []func({context}.Context) error\n"
+                    );
+                }
                 for (i, ty) in ty.types.iter().enumerate() {
                     let fmt = self.deps.fmt();
                     let slog = self.deps.slog();
+                    let elem_deferred = self.is_async(ty);
                     uwrite!(
                         self.src,
                         r#"{slog}.Debug("reading tuple element {i}")
-        v.V{i}, err = "#
+        v.V{i}, "#
                     );
+                    if elem_deferred {
+                        self.push_str("d, ");
+                    }
+                    self.push_str("err = ");
                     self.print_read_ty(ty, "r", &format!("append(path, {i})"));
                     self.push_str("\n");
                     uwriteln!(
                         self.src,
                         r#"if err != nil {{
-            return nil, {fmt}.Errorf("failed to read tuple element {i}: %w", err)
+            return nil, {d}{fmt}.Errorf("failed to read tuple element {i}: %w", err)
         }}"#
                     );
+                    if elem_deferred {
+                        self.push_str("ds = append(ds, d)\n");
+                    }
                 }
-                self.push_str("return v, nil\n");
+                if deferred {
+                    uwriteln!(self.src, "return v, {wrpc}.JoinDeferred(ds...), nil");
+                } else {
+                    self.push_str("return v, nil\n");
+                }
                 uwrite!(self.src, "}}({reader}");
                 if !path.is_empty() {
                     self.src.push_str(", ");
@@ -970,286 +1049,56 @@ impl InterfaceGenerator<'_> {
     }
 
     fn print_read_future(&mut self, ty: &Option<Type>, reader: &str, path: &str) {
-        match ty {
-            Some(ty) if is_list_of(self.resolve, Type::U8, ty) => {
-                let bytes = self.deps.bytes();
-                let io = self.deps.io();
-                let fmt = self.deps.fmt();
-                let slog = self.deps.slog();
-                let wrpc = self.deps.wrpc();
-
-                uwriteln!(
-                    self.src,
-                    r#"func(r {wrpc}.IndexReadCloser, path ...uint32) ({io}.ReadCloser, error) {{
-    {slog}.Debug("reading byte list future status byte")
-    status, err := r.ReadByte()
-    if err != nil {{
-        return nil, {fmt}.Errorf("failed to read byte list future status byte: %w", err)
-    }}
-    switch status {{
-    case 0:
-        {slog}.Debug("indexing pending byte list future reader")
-        if len(path) > 0 {{
-            var err error
-            r, err = r.Index(path...)
-            if err != nil {{
-                return nil, {fmt}.Errorf("failed to index nested byte list future reader: %w", err)
-            }}
-        }}
-        return {wrpc}.NewByteStreamReader(r), nil
-    case 1:
-        {slog}.Debug("reading ready byte list future contents")
-        buf, err := "#
-                );
-                self.print_read_byte_list("r");
-                uwrite!(
-                    self.src,
-                    r#"
-        if err != nil {{
-            return nil, {fmt}.Errorf("failed to read ready byte list future contents: %w", err)
-        }}
-        {slog}.Debug("read ready byte list future contents", "len", len(buf))
-        return {io}.NopCloser({bytes}.NewReader(buf)), nil
-    default:
-        return nil, {fmt}.Errorf("invalid byte list future status byte %d", status)
-    }}
-}}({reader}"#
-                );
-                if !path.is_empty() {
-                    self.src.push_str(", ");
-                    self.src.push_str(path);
-                    self.src.push_str("...");
-                }
-                self.src.push_str(")\n");
-            }
-            Some(ty) => {
-                let fmt = self.deps.fmt();
-                let slog = self.deps.slog();
-                let wrpc = self.deps.wrpc();
-
-                uwrite!(
-                    self.src,
-                    r#"func(r {wrpc}.IndexReadCloser, path ...uint32) ({wrpc}.Receiver["#
-                );
-                self.print_opt_ty(ty, true);
-                uwrite!(
-                    self.src,
-                    r#"], error) {{
-    {slog}.Debug("reading future status byte")
-    status, err := r.ReadByte()
-    if err != nil {{
-        return nil, {fmt}.Errorf("failed to read future status byte: %w", err)
-    }}
-    switch status {{
-    case 0:
-        {slog}.Debug("indexing pending future reader")
-        if len(path) > 0 {{
-            var err error
-            r, err = r.Index(path...)
-            if err != nil {{
-                return nil, {fmt}.Errorf("failed to index nested future reader: %w", err)
-            }}
-        }}
-        return {wrpc}.NewDecodeReceiver(r, func(r {wrpc}.IndexReadCloser) ("#
-                );
-                self.print_opt_ty(ty, true);
-                uwrite!(
-                    self.src,
-                    r#", error) {{
-                {slog}.Debug("reading pending future element")
-                v, err := "#
-                );
-                self.print_read_ty(ty, "r", "");
-                uwriteln!(
-                    self.src,
-                    r#"
-                if err != nil {{
-                    return v, {fmt}.Errorf("failed to read pending future element: %w", err)
-                }}
-            return v, nil
-        }}), nil
-    case 1:
-        {slog}.Debug("reading ready future contents")
-        v, err := "#
-                );
-                self.print_read_ty(ty, "r", "path");
-                uwrite!(
-                    self.src,
-                    r#"
-        if err != nil {{
-            return nil, {fmt}.Errorf("failed to read ready future contents: %w", err)
-        }}
-        return {wrpc}.NewCompleteReceiver(v), nil
-    default:
-        return nil, {fmt}.Errorf("invalid future status byte %d", status)
-    }}
-}}({reader}"#
-                );
-                if !path.is_empty() {
-                    self.src.push_str(", ");
-                    self.src.push_str(path);
-                    self.src.push_str("...");
-                }
-                self.src.push_str(")");
-            }
-            None => panic!("futures with no element types are not supported"),
+        let Some(ty) = ty else {
+            panic!("futures with no element types are not supported")
+        };
+        let wrpc = self.deps.wrpc();
+        uwrite!(self.src, "{wrpc}.ReadFuture({reader}, ");
+        self.print_read_element(ty);
+        if !path.is_empty() {
+            self.src.push_str(", ");
+            self.src.push_str(path);
+            self.src.push_str("...");
         }
+        self.src.push_str(")");
+    }
+
+    fn print_read_element(&mut self, ty: &Type) {
+        let wrpc = self.deps.wrpc();
+        uwrite!(self.src, "func(r {wrpc}.IndexReadCloser, path ...uint32) (");
+        self.print_opt_ty(ty, true);
+        let context = self.deps.context();
+        uwrite!(self.src, ", func({context}.Context) error, error) {{\n");
+        if self.is_async(ty) {
+            self.push_str("return ");
+            self.print_read_ty(ty, "r", "path");
+            self.push_str("\n");
+        } else {
+            self.push_str("v, err := ");
+            self.print_read_ty(ty, "r", "path");
+            self.push_str("\nreturn v, nil, err\n");
+        }
+        self.push_str("}");
     }
 
     fn print_read_stream(&mut self, element: &Option<Type>, reader: &str, path: &str) {
+        let wrpc = self.deps.wrpc();
         match element {
             Some(ty) if is_ty(self.resolve, Type::U8, ty) => {
-                let bytes = self.deps.bytes();
-                let io = self.deps.io();
-                let fmt = self.deps.fmt();
-                let slog = self.deps.slog();
-                let wrpc = self.deps.wrpc();
-
-                uwriteln!(
-                    self.src,
-                    r#"func(r {wrpc}.IndexReadCloser, path ...uint32) ({io}.ReadCloser, error) {{
-    {slog}.Debug("reading byte stream status byte")
-    status, err := r.ReadByte()
-    if err != nil {{
-        return nil, {fmt}.Errorf("failed to read byte stream status byte: %w", err)
-    }}
-    switch status {{
-    case 0:
-        if len(path) > 0 {{
-            var err error
-            r, err = r.Index(path...)
-            if err != nil {{
-                return nil, {fmt}.Errorf("failed to index nested byte stream reader: %w", err)
-            }}
-        }}
-        return {wrpc}.NewByteStreamReader(r), nil
-    case 1:
-        {slog}.Debug("reading ready byte stream contents")
-        buf, err := "#
-                );
-                self.print_read_byte_list("r");
-                uwrite!(
-                    self.src,
-                    r#"
-        if err != nil {{
-            return nil, {fmt}.Errorf("failed to read ready byte stream contents: %w", err)
-        }}
-        {slog}.Debug("read ready byte stream contents", "len", len(buf))
-        return {io}.NopCloser({bytes}.NewReader(buf)), nil
-    default:
-        return nil, {fmt}.Errorf("invalid stream status byte %d", status)
-    }}
-}}({reader}"#
-                );
-                if !path.is_empty() {
-                    self.src.push_str(", ");
-                    self.src.push_str(path);
-                    self.src.push_str("...");
-                }
-                self.src.push_str(")");
+                uwrite!(self.src, "{wrpc}.ReadByteStream({reader}");
             }
             Some(ty) => {
-                let errors = self.deps.errors();
-                let fmt = self.deps.fmt();
-                let io = self.deps.io();
-                let math = self.deps.math();
-                let slog = self.deps.slog();
-                let wrpc = self.deps.wrpc();
-
-                uwrite!(
-                    self.src,
-                    r#"func(r {wrpc}.IndexReadCloser, path ...uint32) ({wrpc}.Receiver["#
-                );
-                self.print_list(ty);
-                uwrite!(
-                    self.src,
-                    r#"], error) {{
-    {slog}.Debug("reading stream status byte")
-    status, err := r.ReadByte()
-    if err != nil {{
-        return nil, {fmt}.Errorf("failed to read stream status byte: %w", err)
-    }}
-    switch status {{
-    case 0:
-        if len(path) > 0 {{ 
-            var err error
-            r, err = r.Index(path...)
-            if err != nil {{
-                return nil, {fmt}.Errorf("failed to index nested stream reader: %w", err)
-            }}
-        }}
-        var total uint32
-        return {wrpc}.NewDecodeReceiver(r, func(r {wrpc}.IndexReadCloser) ("#
-                );
-                self.print_list(ty);
-                uwrite!(
-                    self.src,
-                    r#", error) {{
-            {slog}.Debug("reading pending stream chunk length")
-            n, err := "#
-                );
-                self.print_read_u32("r");
-                uwrite!(
-                    self.src,
-                    r#"
-            if err != nil {{
-                return nil, {fmt}.Errorf("failed to read pending stream chunk length: %w", err)
-            }}
-            if n == 0 {{
-                return nil, {io}.EOF
-            }}
-            if {math}.MaxUint32 - n < total {{
-                return nil, {errors}.New("total incoming pending stream element count would overflow a 32-bit unsigned integer")
-            }}
-            vs := {wrpc}.NewSlice["#
-                );
-                self.print_list(ty);
-                uwrite!(
-                    self.src,
-                    r#"](n)
-            for i := range n {{
-                {slog}.Debug("reading pending stream element", "i", total)
-                v, err := "#
-                );
-                self.print_read_ty(ty, "r", "[]uint32{total}");
-                uwriteln!(
-                    self.src,
-                    r#"
-                if err != nil {{
-                    return nil, {fmt}.Errorf("failed to read pending stream chunk element %d: %w", i, err)
-                }}
-                vs = append(vs, v)
-                total++
-            }}
-            return vs, nil
-        }}), nil
-    case 1:
-        {slog}.Debug("reading ready stream contents")
-        vs, err := "#
-                );
-                self.print_read_list(ty, "r", "path");
-                uwrite!(
-                    self.src,
-                    r#"
-        if err != nil {{
-            return nil, {fmt}.Errorf("failed to read ready stream contents: %w", err)
-        }}
-        {slog}.Debug("read ready stream contents", "len", len(vs))
-        return {wrpc}.NewCompleteReceiver(vs), nil
-    default:
-        return nil, {fmt}.Errorf("invalid stream status byte %d", status)
-    }}
-}}({reader}"#
-                );
-                if !path.is_empty() {
-                    self.src.push_str(", ");
-                    self.src.push_str(path);
-                    self.src.push_str("...");
-                }
-                self.src.push_str(")");
+                uwrite!(self.src, "{wrpc}.ReadStream({reader}, ");
+                self.print_read_element(ty);
             }
             None => panic!("streams with no element types are not supported"),
         }
+        if !path.is_empty() {
+            self.src.push_str(", ");
+            self.src.push_str(path);
+            self.src.push_str("...");
+        }
+        self.src.push_str(")");
     }
 
     fn print_read_own(&mut self, reader: &str, id: TypeId) {
@@ -1404,17 +1253,27 @@ impl InterfaceGenerator<'_> {
             TypeDefKind::Stream(ty) => self.print_read_stream(ty, reader, path),
             TypeDefKind::Type(ty) => {
                 if let Some(name) = name {
+                    let deferred = self.is_async(ty);
                     self.push_str("func() (");
                     self.print_opt_ptr(ty, true);
                     self.push_str(&name);
+                    self.print_deferred_ret(deferred);
                     self.push_str(", error) {\n");
-                    self.push_str("v, err :=");
+                    if deferred {
+                        self.push_str("v, d, err :=");
+                    } else {
+                        self.push_str("v, err :=");
+                    }
                     self.print_read_ty(ty, reader, path);
                     self.push_str("\n");
                     self.push_str("return (");
                     self.print_opt_ptr(ty, true);
                     self.push_str(&name);
-                    self.push_str(")(v), err\n");
+                    if deferred {
+                        self.push_str(")(v), d, err\n");
+                    } else {
+                        self.push_str(")(v), err\n");
+                    }
                     self.push_str("}()\n");
                 } else {
                     self.print_read_ty(ty, reader, path);
@@ -1734,7 +1593,7 @@ impl InterfaceGenerator<'_> {
         if len(writes) > 0 {{
             return func(w {wrpc}.IndexWriter) error {{
                 var wg {sync}.WaitGroup
-                var wgErr {atomic}.Value
+                var wgErr {atomic}.Pointer[error]
                 for index, write := range writes {{
                     wg.Add(1)
                     w, err := w.Index(index)
@@ -1745,16 +1604,15 @@ impl InterfaceGenerator<'_> {
                     go func() {{
                         defer wg.Done()
                         if err := write(w); err != nil {{
-                            wgErr.Store(err)
+                            wgErr.Store(&err)
                         }}
                     }}()
                 }}
                 wg.Wait()
-                err := wgErr.Load()
-                if err == nil {{
-                    return nil
+                if err := wgErr.Load(); err != nil {{
+                    return *err
                 }}
-                return err.(error)
+                return nil
             }}, nil
         }}
         return nil, nil
@@ -1961,7 +1819,7 @@ impl InterfaceGenerator<'_> {
                     r#"if len(writes) > 0 {{
             return func(w {wrpc}.IndexWriter) error {{
                 var wg {sync}.WaitGroup
-                var wgErr {atomic}.Value
+                var wgErr {atomic}.Pointer[error]
                 for index, write := range writes {{
                     wg.Add(1)
                     w, err := w.Index(index)
@@ -1972,16 +1830,15 @@ impl InterfaceGenerator<'_> {
                     go func() {{
                         defer wg.Done()
                         if err := write(w); err != nil {{
-                            wgErr.Store(err)
+                            wgErr.Store(&err)
                         }}
                     }}()
                 }}
                 wg.Wait()
-                err := wgErr.Load()
-                if err == nil {{
-                    return nil
+                if err := wgErr.Load(); err != nil {{
+                    return *err
                 }}
-                return err.(error)
+                return nil
             }}, nil
         }}
         return nil, nil
@@ -1992,267 +1849,37 @@ impl InterfaceGenerator<'_> {
     }
 
     fn print_write_future(&mut self, ty: &Option<Type>, name: &str, writer: &str) {
-        match ty {
-            Some(ty) if is_list_of(self.resolve, Type::U8, ty) => {
-                let fmt = self.deps.fmt();
-                let io = self.deps.io();
-                let math = self.deps.math();
-                let slog = self.deps.slog();
-                let wrpc = self.deps.wrpc();
-                uwrite!(
-                    self.src,
-                    r#"func(v {io}.Reader, w interface {{ {io}.ByteWriter; {io}.Writer }}) (write func({wrpc}.IndexWriter) error, err error) {{
-                {slog}.Debug("writing byte list future `future::pending` status byte")
-                if err = w.WriteByte(0); err != nil {{
-                    return nil, fmt.Errorf("failed to write `future::pending` byte: %w", err)
-                }}
-                return func(w {wrpc}.IndexWriter) (err error) {{
-                    defer func() {{
-                        body, ok := v.({io}.Closer)
-                        if ok {{
-                            {slog}.Debug("closing byte list future reader")
-                            if cErr := body.Close(); cErr != nil {{
-                                if err == nil {{
-                                    err = {fmt}.Errorf("failed to close pending byte list future: %w", cErr)
-                                }} else {{
-                                    {slog}.Warn("failed to close pending byte list future", "err", cErr)
-                                }}
-                            }}
-                        }}
-                    }}()
-                    {slog}.Debug("reading pending byte list future contents")
-                    chunk, err := {io}.ReadAll(chunk)
-                    if err != nil {{
-                        return {fmt}.Errorf("failed to read pending byte list future: %w", err)
-                    }}
-                    if n > {math}.MaxUint32 {{
-                        return {fmt}.Errorf("pending byte list future length of %d overflows a 32-bit integer", n)
-                    }}
-                    {slog}.Debug("writing pending byte list future length", "len", n)
-                    _, err = {wrpc}.WriteUint32(uint32(n), w)
-                    if err != nil {{
-                        return {fmt}.Errorf("failed to write pending byte list future length of %d: %w", n, err)
-                    }}
-                    {slog}.Debug("writing pending byte list future contents", "buf", chunk[:n])
-                    _, err = w.Write(chunk[:n])
-                    if err != nil {{
-                        return {fmt}.Errorf("failed to write pending byte list future contents: %w", err)
-                    }}
-                }}, nil
-            }}({name}, {writer})"#,
-                );
-            }
-            Some(ty) => {
-                let fmt = self.deps.fmt();
-                let io = self.deps.io();
-                let slog = self.deps.slog();
-                let wrpc = self.deps.wrpc();
-                uwrite!(self.src, "func(v {wrpc}.Receiver[",);
-                self.print_opt_ty(ty, true);
-                uwrite!(
-                    self.src,
-                    r#"], w interface {{ {io}.ByteWriter; {io}.Writer }}) (write func({wrpc}.IndexWriter) error, err error) {{
-            {slog}.Debug("writing future `future::pending` status byte")
-            if err := w.WriteByte(0); err != nil {{
-                return nil, fmt.Errorf("failed to write `future::pending` byte: %w", err)
-            }}
-            return func(w {wrpc}.IndexWriter) (err error) {{
-                defer func() {{
-                   {slog}.Debug("closing future writer")
-                   if cErr := v.Close(); cErr != nil {{
-                       if err == nil {{
-                           err = {fmt}.Errorf("failed to close pending future: %w", cErr)
-                       }} else {{
-                           {slog}.Warn("failed to close pending future", "err", cErr)
-                       }}
-                   }}
-                }}()
-                {slog}.Debug("receiving outgoing pending future contents")
-                rx, err := v.Receive()
-                if err != nil {{
-                    return {fmt}.Errorf("failed to receive outgoing pending future: %w", err)
-                }}
-                {slog}.Debug("writing pending future element")
-                write, err :="#,
-                );
-                self.print_write_ty(ty, "rx", "w");
-                uwrite!(
-                    self.src,
-                    r#"
-                if err != nil {{
-                    return {fmt}.Errorf("failed to write pending future element: %w", err)
-                }}
-                if write != nil {{
-                    return write(w)
-                }}
-                return nil
-            }}, nil
-        }}({name}, {writer})"#,
-                );
-            }
-            None => panic!("streams with no element types are not supported"),
-        }
+        let Some(ty) = ty else {
+            panic!("futures with no element types are not supported")
+        };
+        let wrpc = self.deps.wrpc();
+        uwrite!(self.src, "{wrpc}.WriteFuture({name}, {writer}, ");
+        self.print_write_element(ty);
+        self.push_str(")");
+    }
+
+    fn print_write_element(&mut self, ty: &Type) {
+        let wrpc = self.deps.wrpc();
+        self.push_str("func(v ");
+        self.print_opt_ty(ty, true);
+        uwrite!(
+            self.src,
+            ", w {wrpc}.ByteWriter) (func({wrpc}.IndexWriter) error, error) {{\nreturn "
+        );
+        self.print_write_ty(ty, "v", "w");
+        self.push_str("\n}");
     }
 
     fn print_write_stream(&mut self, element: &Option<Type>, name: &str, writer: &str) {
+        let wrpc = self.deps.wrpc();
         match element {
             Some(ty) if is_ty(self.resolve, Type::U8, ty) => {
-                let fmt = self.deps.fmt();
-                let io = self.deps.io();
-                let math = self.deps.math();
-                let slog = self.deps.slog();
-                let wrpc = self.deps.wrpc();
-                uwrite!(
-                    self.src,
-                    r#"func(v {io}.ReadCloser, w interface {{ {io}.ByteWriter; {io}.Writer }}) (write func({wrpc}.IndexWriter) error, err error) {{
-                {slog}.Debug("writing byte stream `stream::pending` status byte")
-                if err = w.WriteByte(0); err != nil {{
-                    return nil, fmt.Errorf("failed to write `stream::pending` byte: %w", err)
-                }}
-                return func(w {wrpc}.IndexWriter) (err error) {{
-                    defer func() {{
-                       {slog}.Debug("closing byte list stream writer")
-                       if cErr := v.Close(); cErr != nil {{
-                           if err == nil {{
-                               err = {fmt}.Errorf("failed to close pending byte stream: %w", cErr)
-                           }} else {{
-                               {slog}.Warn("failed to close pending byte stream", "err", cErr)
-                           }}
-                       }}
-                    }}()
-                    chunk := make([]byte, {wrpc}.ReadChunkSize)
-                    for {{
-                        var end bool
-                        {slog}.Debug("reading pending byte stream contents")
-                        n, err := v.Read(chunk)
-                        if err == {io}.EOF {{
-                            end = true
-                            {slog}.Debug("pending byte stream reached EOF")
-                        }} else if err != nil {{
-                            return {fmt}.Errorf("failed to read pending byte stream chunk: %w", err)
-                        }}
-                        if n > {math}.MaxUint32 {{
-                            return {fmt}.Errorf("pending byte stream chunk length of %d overflows a 32-bit integer", n)
-                        }}
-                        if n > 0 {{
-                            {slog}.Debug("writing pending byte stream chunk length", "len", n)
-                            _, err = {wrpc}.WriteUint32(uint32(n), w)
-                            if err != nil {{
-                                return {fmt}.Errorf("failed to write pending byte stream chunk length of %d: %w", n, err)
-                            }}
-                            _, err = w.Write(chunk[:n])
-                            if err != nil {{
-                                return {fmt}.Errorf("failed to write pending byte stream chunk contents: %w", err)
-                            }}
-                        }}
-                        if end {{
-                            if err := w.WriteByte(0); err != nil {{
-                                return {fmt}.Errorf("failed to write pending byte stream end byte: %w", err)
-                            }}
-                            return nil
-                        }}
-                    }}
-                }}, nil
-            }}({name}, {writer})"#,
-                );
+                uwrite!(self.src, "{wrpc}.WriteByteStream({name}, {writer})");
             }
             Some(ty) => {
-                let atomic = self.deps.atomic();
-                let errors = self.deps.errors();
-                let fmt = self.deps.fmt();
-                let io = self.deps.io();
-                let math = self.deps.math();
-                let slog = self.deps.slog();
-                let sync = self.deps.sync();
-                let wrpc = self.deps.wrpc();
-                uwrite!(self.src, "func(v {wrpc}.Receiver[",);
-                self.print_list(ty);
-                uwrite!(
-                    self.src,
-                    r#"], w interface {{ {io}.ByteWriter; {io}.Writer }}) (write func({wrpc}.IndexWriter) error, err error) {{
-            {slog}.Debug("writing stream `stream::pending` status byte")
-            if err := w.WriteByte(0); err != nil {{
-                return nil, fmt.Errorf("failed to write `stream::pending` byte: %w", err)
-            }}
-            return func(w {wrpc}.IndexWriter) (err error) {{
-                defer func() {{
-                    {slog}.Debug("closing outgoing pending stream")
-                    if cErr := v.Close(); cErr != nil {{
-                        if err == nil {{
-                            err = {fmt}.Errorf("failed to close outgoing pending stream: %w", cErr)
-                        }} else {{
-                            {slog}.Warn("failed to close outgoing pending stream", "err", cErr)
-                        }}
-                    }}
-                }}()
-                var wg {sync}.WaitGroup
-                var wgErr {atomic}.Value
-                var total uint32
-                for {{
-                    var end bool
-                    {slog}.Debug("receiving outgoing pending stream contents")
-                    chunk, err := v.Receive()
-                    n := len(chunk)
-                    if err == {io}.EOF {{
-                        end = true
-                        {slog}.Debug("outgoing pending stream reached EOF")
-                    }} else if err != nil {{
-                        return {fmt}.Errorf("failed to receive outgoing pending stream chunk: %w", err)
-                    }}
-                    if n > {math}.MaxUint32 {{
-                        return {fmt}.Errorf("outgoing pending stream chunk length of %d overflows a 32-bit integer", n)
-                    }}
-                    if {math}.MaxUint32 - uint32(n) < total {{
-                        return {errors}.New("total outgoing pending stream element count would overflow a 32-bit unsigned integer")
-                    }}
-                    if n > 0 {{
-                        {slog}.Debug("writing pending stream chunk length", "len", n)
-                        _, err = {wrpc}.WriteUint32(uint32(n), w)
-                        if err != nil {{
-                            return {fmt}.Errorf("failed to write pending stream chunk length of %d: %w", n, err)
-                        }}
-                        for _, v := range chunk {{
-                            {slog}.Debug("writing pending stream element", "i", total)
-                            write, err :="#,
-                );
-                self.print_write_ty(ty, "v", "w");
-                uwrite!(
-                    self.src,
-                    r#"
-                            if err != nil {{
-                                return {fmt}.Errorf("failed to write pending stream chunk element %d: %w", total, err)
-                            }}
-                            if write != nil {{
-                                wg.Add(1)
-                                w, err := w.Index(total)
-                                if err != nil {{
-                                    return {fmt}.Errorf("failed to index nested stream writer: %w", err)
-                                }}
-                                go func() {{
-                                    defer wg.Done()
-                                    if err := write(w); err != nil {{
-                                        wgErr.Store(err)
-                                    }}
-                                }}()
-                            }}
-                            total++
-                        }}
-                    }}
-                    if end {{
-                        if err := w.WriteByte(0); err != nil {{
-                            return {fmt}.Errorf("failed to write pending stream end byte: %w", err)
-                        }}
-                        wg.Wait()
-                        err := wgErr.Load()
-                        if err == nil {{
-                            return nil
-                        }}
-                        return err.(error)
-                    }}
-                }}
-            }}, nil
-        }}({name}, {writer})"#,
-                );
+                uwrite!(self.src, "{wrpc}.WriteStream({name}, {writer}, ");
+                self.print_write_element(ty);
+                self.push_str(")");
             }
             None => panic!("streams with no element types are not supported"),
         }
@@ -2566,12 +2193,40 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
             }}
         }}()"#,
             );
+            let async_params = func.params.iter().any(|Param { ty, .. }| self.is_async(ty));
+            let abort = |indent: usize| {
+                if async_params {
+                    format!("\n{:indent$}cancel()", "")
+                } else {
+                    String::new()
+                }
+            };
+            if async_params {
+                let sync = self.deps.sync();
+                uwrite!(
+                    self.src,
+                    r#"
+        deferredCtx, cancel := {context}.WithCancel(ctx)
+        var wg {sync}.WaitGroup
+        defer func() {{
+            go func() {{
+                wg.Wait()
+                cancel()
+            }}()
+        }}()"#,
+                );
+            }
             for (i, Param { ty, .. }) in func.params.iter().enumerate() {
+                let d = if self.is_async(ty) {
+                    format!("d{i}, ")
+                } else {
+                    String::new()
+                };
                 uwrite!(
                     self.src,
                     r#"
         {slog}.DebugContext(ctx, "reading parameter", "i", {i})
-        p{i}, err := "#
+        p{i}, {d}err := "#
                 );
                 self.print_read_ty(ty, "r", &format!("[]uint32{{ {i} }}"));
                 self.push_str("\n");
@@ -2586,6 +2241,23 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
             return
         }}"#,
                 );
+            }
+            for (i, Param { ty, .. }) in func.params.iter().enumerate() {
+                if self.is_async(ty) {
+                    uwrite!(
+                        self.src,
+                        r#"
+        if d{i} != nil {{
+            wg.Add(1)
+            go func() {{
+                defer wg.Done()
+                if err := d{i}(deferredCtx); err != nil {{
+                    {slog}.WarnContext(ctx, "failed to read deferred parameter", "i", {i}, "instance", "{instance}", "name", "{name}", "err", err)
+                }}
+            }}()
+        }}"#,
+                    );
+                }
             }
             uwriteln!(
                 self.src,
@@ -2610,6 +2282,7 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
             for (i, _) in func.params.iter().enumerate() {
                 uwrite!(self.src, ", p{i}");
             }
+            let abort12 = abort(12);
             uwriteln!(
                 self.src,
                 r#")
@@ -2617,7 +2290,7 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
             {slog}.ErrorContext(ctx, "failed to close reader", "instance", "{instance}", "name", "{name}", "err", err)
         }}
         if err != nil {{
-            {slog}.WarnContext(ctx, "failed to handle invocation", "instance", "{instance}", "name", "{name}", "err", err)
+            {slog}.WarnContext(ctx, "failed to handle invocation", "instance", "{instance}", "name", "{name}", "err", err){abort12}
             return
         }}
 
@@ -2636,7 +2309,7 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
                     self.src,
                     r#"
         if err != nil {{
-            {slog}.WarnContext(ctx, "failed to write result value", "i", {i}, "instance", "{instance}", "name", "{name}", "err", err)
+            {slog}.WarnContext(ctx, "failed to write result value", "i", {i}, "instance", "{instance}", "name", "{name}", "err", err){abort12}
             return
         }}
         if write{i} != nil {{
@@ -2650,7 +2323,7 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
         {slog}.DebugContext(ctx, "transmitting `{fqn}` result")
         _, err = w.Write(buf.Bytes())
         if err != nil {{
-            {slog}.WarnContext(ctx, "failed to write result", "instance", "{instance}", "name", "{name}", "err", err)
+            {slog}.WarnContext(ctx, "failed to write result", "instance", "{instance}", "name", "{name}", "err", err){abort12}
             return
         }}
         if len(writes) > 0 {{
@@ -2671,17 +2344,38 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
                     if is_tuple(self.resolve, ty) {
                         uwrite!(self.src, ", {j}");
                     }
+                    let abort28 = abort(28);
                     uwrite!(
                         self.src,
                         r#")
                         if err != nil {{
-                            {slog}.ErrorContext(ctx, "failed to index result writer", "instance", "{instance}", "name", "{name}", "err", err)
+                            {slog}.ErrorContext(ctx, "failed to index result writer", "instance", "{instance}", "name", "{name}", "err", err){abort28}
                             return
                         }}
-                        write := write
-                        go func() {{
+                        write := write"#,
+                    );
+                    if async_params {
+                        self.push_str(
+                            r#"
+                        wg.Add(1)"#,
+                        );
+                    }
+                    self.push_str(
+                        r#"
+                        go func() {"#,
+                    );
+                    if async_params {
+                        self.push_str(
+                            r#"
+                            defer wg.Done()"#,
+                        );
+                    }
+                    let abort32 = abort(32);
+                    uwrite!(
+                        self.src,
+                        r#"
                             if err := write(w); err != nil {{
-                                {slog}.WarnContext(ctx, "failed to write nested result value", "instance", "{instance}", "name", "{name}", "err", err)
+                                {slog}.WarnContext(ctx, "failed to write nested result value", "instance", "{instance}", "name", "{name}", "err", err){abort32}
                             }}
                         }}()"#,
                     );
@@ -2758,12 +2452,10 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
                 self.src.push_str(", ");
             }
 
-            let async_params = func.params.iter().any(|param| {
-                let (paths, fut) = async_paths_ty(self.resolve, &param.ty);
-                fut || !paths.is_empty()
-            });
-            if async_params {
-                self.push_str("writeErrs__ <-chan error, ");
+            let async_params = func.params.iter().any(|param| self.is_async(&param.ty));
+            let async_results = results.iter().filter(|ty| self.is_async(ty)).count();
+            if async_params || async_results > 0 {
+                self.push_str("errs__ <-chan error, ");
             }
             self.push_str("err__ error) {");
             if !func.params.is_empty() {
@@ -2888,17 +2580,33 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
     }}()"#,
                 name = func.name,
             );
-            if async_params {
+            if async_params || async_results > 0 {
                 let sync = self.deps.sync();
+                let count = if async_params {
+                    format!("uint(writeCount__) + {async_results}")
+                } else {
+                    async_results.to_string()
+                };
+                uwrite!(
+                    self.src,
+                    r#"
+    errCh__ := make(chan error, {count})
+    errs__ = errCh__
+    var wg__ {sync}.WaitGroup
+    defer func() {{
+        go func() {{
+            wg__.Wait()
+            close(errCh__)
+        }}()
+    }}()"#
+                );
+            }
+            if async_params {
                 uwrite!(
                     self.src,
                     r#"
     if writeCount__ > 0 {{
-        writeErrCh__ := make(chan error, uint(writeCount__))
-        writeErrs__ = writeErrCh__
-        var wg__ {sync}.WaitGroup
         for index, write := range writes__ {{
-            wg__.Add(1)
             w, err := w__.Index(index)
             if err != nil {{
                 if cErr := w__.Close(); cErr != nil {{
@@ -2907,18 +2615,15 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
                 err__ = {fmt}.Errorf("failed to index param writer at index `%v`: %w", index, err)
                 return
             }}
+            wg__.Add(1)
             write := write
             go func() {{
                 defer wg__.Done()
                 if err := write(w); err != nil {{
-                    writeErrCh__ <- err
+                    errCh__ <- err
                 }}
             }}()
         }}
-        go func() {{
-            wg__.Wait()
-            close(writeErrCh__)
-        }}()
     }}"#,
                     func.name,
                 );
@@ -2933,13 +2638,25 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
             );
 
             let mut idx = 0usize;
+            let mut deferreds = Vec::default();
             for (i, rty) in func.result.iter().enumerate() {
                 for (j, ty) in flatten_ty(self.resolve, rty).enumerate() {
-                    uwrite!(
-                        self.src,
-                        "
+                    let deferred = self.is_async(&ty);
+                    if deferred {
+                        let context = self.deps.context();
+                        uwrite!(
+                            self.src,
+                            "
+    var d{idx}__ func({context}.Context) error
+    r{idx}__, d{idx}__, err__ = "
+                        );
+                    } else {
+                        uwrite!(
+                            self.src,
+                            "
     r{idx}__, err__ = "
-                    );
+                        );
+                    }
                     let path = if is_tuple(self.resolve, rty) {
                         format!("[]uint32{{ {i}, {j} }}")
                     } else {
@@ -2954,8 +2671,26 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
         return 
     }}"#,
                     );
+                    if deferred {
+                        deferreds.push(idx);
+                    }
                     idx = idx.saturating_add(1);
                 }
+            }
+            for idx in deferreds {
+                uwrite!(
+                    self.src,
+                    r#"
+    if d{idx}__ != nil {{
+        wg__.Add(1)
+        go func() {{
+            defer wg__.Done()
+            if err := d{idx}__(ctx__); err != nil {{
+                errCh__ <- err
+            }}
+        }}()
+    }}"#,
+                );
             }
             if func.result.is_none() {
                 // A function with no results still completes with an (empty)
@@ -3137,6 +2872,18 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
         name
     }
 
+    fn print_deferred_ret(&mut self, deferred: bool) {
+        if deferred {
+            let context = self.deps.context();
+            uwrite!(self.src, ", func({context}.Context) error");
+        }
+    }
+
+    fn is_async(&self, ty: &Type) -> bool {
+        let (paths, fut) = async_paths_ty(self.resolve, ty);
+        fut || !paths.is_empty()
+    }
+
     fn nillable_ptr(&self, ty: &Type, result: bool, decl: bool) -> &'static str {
         if let Type::Id(id) = ty {
             match &self.resolve.types[*id].kind {
@@ -3248,7 +2995,7 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
             && let TypeDefKind::List(..) | TypeDefKind::Future(..) | TypeDefKind::Stream(..) =
                 self.resolve.types[*id].kind
         {
-            // Go slices, channels and interfaces are nillable
+            // Go slices and channels are nillable
             self.print_ty(ty, true);
             return;
         }
@@ -3294,43 +3041,19 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
     }
 
     fn print_future(&mut self, ty: &Option<Type>) {
-        match ty {
-            Some(ty) if is_ty(self.resolve, Type::U8, ty) => {
-                let io = self.deps.io();
-                self.push_str(io);
-                self.push_str(".ReadCloser");
-            }
-            Some(ty) => {
-                let wrpc = self.deps.wrpc();
-                self.push_str(wrpc);
-                self.push_str(".Receiver[");
-                self.print_opt_ty(ty, true);
-                self.push_str("]");
-            }
-            None => {
-                panic!("futures with no element types are not supported")
-            }
-        }
+        let Some(ty) = ty else {
+            panic!("futures with no element types are not supported")
+        };
+        self.push_str("<-chan ");
+        self.print_opt_ty(ty, true);
     }
 
     fn print_stream(&mut self, element: &Option<Type>) {
-        match element {
-            Some(ty) if is_ty(self.resolve, Type::U8, ty) => {
-                let io = self.deps.io();
-                self.push_str(io);
-                self.push_str(".ReadCloser");
-            }
-            Some(ty) => {
-                let wrpc = self.deps.wrpc();
-                self.push_str(wrpc);
-                self.push_str(".Receiver[");
-                self.print_list(ty);
-                self.push_str("]");
-            }
-            None => {
-                panic!("streams with no element types are not supported")
-            }
-        }
+        let Some(ty) = element else {
+            panic!("streams with no element types are not supported")
+        };
+        self.push_str("<-chan ");
+        self.print_list(ty);
     }
 
     fn print_own(&mut self, id: TypeId) {
@@ -3485,7 +3208,7 @@ func (v *{name}) WriteToIndex(w {wrpc}.ByteWriter) (func({wrpc}.IndexWriter) err
     if len(writes) > 0 {{
         return func(w {wrpc}.IndexWriter) error {{
             var wg {sync}.WaitGroup
-            var wgErr {atomic}.Value
+            var wgErr {atomic}.Pointer[error]
             for index, write := range writes {{
                 wg.Add(1)
                 w, err := w.Index(index)
@@ -3496,16 +3219,15 @@ func (v *{name}) WriteToIndex(w {wrpc}.ByteWriter) (func({wrpc}.IndexWriter) err
                 go func() {{
                     defer wg.Done()
                     if err := write(w); err != nil {{
-                        wgErr.Store(err)
+                        wgErr.Store(&err)
                     }}
                 }}()
             }}
             wg.Wait()
-            err := wgErr.Load()
-            if err == nil {{
-                return nil
+            if err := wgErr.Load(); err != nil {{
+                return *err
             }}
-            return err.(error)
+            return nil
         }}, nil
     }}
     return nil, nil
