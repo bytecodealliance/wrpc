@@ -49,7 +49,7 @@ The indexing rules are as follows:
 
 - Record fields are indexed in order of their WIT declaration
 - Tuple members are indexed in order of their WIT declaration
-- Variant members elements are indexed in order of their WIT declaration
+- Variant, option and result payloads are not indexed
 - List elements are indexed in the order they appear in the list
 - Stream elements are indexed in the order they appear in the stream
 
