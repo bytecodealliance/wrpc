@@ -36,6 +36,8 @@ use crate::{BufferedIncoming, encode_ready_bytes_header, error_receiver_closed};
 /// Size of chunks read from byte streams
 pub const READ_CHUNK_SIZE: usize = 8192;
 
+const MAX_PENDING_STREAM_BATCH: usize = 1 << 20;
+
 fn encode_ready_bytes<T: AsRef<[u8]>>(chunks: &[T], dst: &mut BytesMut) -> std::io::Result<()> {
     let n = chunks.iter().map(|chunk| chunk.as_ref().len()).sum();
     encode_ready_bytes_header(n, dst)?;
@@ -464,7 +466,7 @@ impl Sink for Outgoing {
         let mut i = 0_u64;
         loop {
             select! {
-                chunk = items.next() => {
+                chunk = items.next(), if buf.len() < MAX_PENDING_STREAM_BATCH => {
                     let Some(chunk) = chunk else {
                         trace!("writing stream end");
                         buf.reserve(1);
@@ -526,7 +528,7 @@ impl Sink for Outgoing {
         let mut buf = BytesMut::default();
         loop {
             select! {
-                chunk = items.next() => {
+                chunk = items.next(), if buf.len() < MAX_PENDING_STREAM_BATCH => {
                     let Some(chunk) = chunk else {
                         trace!("writing stream end");
                         buf.reserve(1);
@@ -568,7 +570,7 @@ impl Sink for Outgoing {
         let mut chunk = BytesMut::with_capacity(READ_CHUNK_SIZE);
         loop {
             select! {
-                res = items.read_buf(&mut chunk) => {
+                res = items.read_buf(&mut chunk), if buf.len() < MAX_PENDING_STREAM_BATCH => {
                     let n = res?;
                     if n == 0 {
                         trace!("writing stream end");
