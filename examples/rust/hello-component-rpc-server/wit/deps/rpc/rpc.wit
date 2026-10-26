@@ -41,6 +41,11 @@ interface context {
 /// element of a list or stream. The positions of the async values to be sent
 /// are not declared.
 ///
+/// The elements of a list or stream must be indexed in order: returning the
+/// channel for a position within an element discards the preceding elements,
+/// for which no channel has been returned, along with any data received for
+/// them.
+///
 /// `index` returns the channel for the position at `path`, relative to the
 /// position of the channel it is called on. The returned channel is independent
 /// of the channel it is called on: it remains valid after that channel is
@@ -64,19 +69,20 @@ interface context {
 /// future without a payload: its position must be closed once it resolves,
 /// either by `close` or by ending the outgoing direction.
 ///
-/// Data received for a position is not buffered, so the peer is subject to
-/// backpressure until it is read. Backpressure applies to all channels of the
-/// invocation, so a position whose data is not being read, either because its
-/// channel has not been returned yet or because its data has been taken but
-/// is not being read, can stall all other positions, including the root. The
-/// caller should therefore index nested positions as soon as they are known,
-/// rather than first reading the entire data of the channel they are nested
-/// in, and read the data taken from all channels concurrently.
+/// Only a bounded amount of data received for a position is buffered, so the
+/// peer is subject to backpressure until it is read. Backpressure applies to
+/// all channels of the invocation, so a position whose data is not being read,
+/// either because its channel has not been returned yet or because its data
+/// has been taken but is not being read, can stall all other positions,
+/// including the root. The caller should therefore index nested positions as
+/// soon as they are known, rather than first reading the entire data of the
+/// channel they are nested in, and read the data taken from all channels
+/// concurrently.
 ///
 /// Data received for a position whose data is not taken, whether because its
 /// channel was dropped without taking it or because it was never returned, is
-/// discarded and fails the invocation once all incoming channels of the
-/// invocation have been dropped.
+/// discarded and fails the invocation, at the latest once all incoming
+/// channels of the invocation have been dropped.
 ///
 /// Failures of an invocation are reported by the future returned by `invoke`.
 interface transport {
@@ -93,10 +99,13 @@ interface transport {
         /// stream before its readable end is dropped is discarded, which fails
         /// the invocation.
         ///
-        /// The future resolves once the position of this channel is closed: to
-        /// an error if receiving fails or if unread data has been discarded,
-        /// and to success otherwise. Dropping the returned future
-        /// does not cancel the read.
+        /// The future resolves once the stream has been read to its end: to
+        /// an error if receiving fails, and to success otherwise. If the
+        /// stream's readable end is dropped before the position is closed, the
+        /// future instead resolves once the incoming direction of the invocation
+        /// ends, to an error if it fails, including because unread data has
+        /// been discarded. Dropping the returned future does not cancel the
+        /// read.
         ///
         /// Returns an error if the data of this channel has already been taken,
         /// or if this channel is neither the root channel nor at the position
@@ -109,7 +118,10 @@ interface transport {
         /// prefix of one, so that nested async values can be indexed
         /// incrementally. Returns an error if it is neither, or if it is that of
         /// a declared async value whose channel has already been returned for
-        /// the invocation.
+        /// the invocation, or within a discarded element. If the invocation
+        /// has not been transmitted yet, the latter two errors for the
+        /// positions within list or stream elements instead fail reading the
+        /// data of the returned channel.
         index: func(path: list<u32>) -> result<incoming-channel, error>;
     }
 
@@ -160,9 +172,11 @@ interface invoker {
 
     /// Invoke a function.
     ///
-    /// The invocation is transmitted asynchronously. Until the underlying
-    /// transport is ready, the streams written to the returned outgoing
-    /// channels are not read from.
+    /// The invocation is transmitted asynchronously, once any stream taken from
+    /// the returned channels, any `close` call or the returned future is first
+    /// polled. Dropping all of them, and the returned channels, before that
+    /// cancels the invocation. Until the underlying transport is ready, the
+    /// streams written to the returned outgoing channels are not read from.
     ///
     /// `params` is the beginning of the encoded parameter tuple, sent along with
     /// the invocation. The rest of it, if any, is written to the returned root
@@ -172,6 +186,8 @@ interface invoker {
     /// The data of the returned root `incoming-channel` is the encoded result
     /// tuple. `paths` declares the positions of the async values within the
     /// results, which are read from the channels returned by `index` on it.
+    /// The host may limit the total number of indices in `paths`, failing the
+    /// invocation and declaring no positions if they exceed it.
     ///
     /// The returned future resolves once the invocation has completed, which
     /// is once both of its directions have ended and all of its channels and
@@ -179,8 +195,8 @@ interface invoker {
     /// if the invocation has failed at any point, including transmitting the
     /// invocation itself and after all `read-via-stream` and
     /// `write-via-stream` futures and `close` calls have completed, and to
-    /// success otherwise. Dropping the returned future does not cancel the
-    /// invocation.
+    /// success otherwise. Once the invocation is transmitted, dropping the
+    /// returned future does not cancel it.
     invoke: func(cx: context, instance: string, name: string, params: list<u8>, paths: list<list<option<u32>>>) -> tuple<outgoing-channel, incoming-channel, future<result<_, error>>>;
 }
 
