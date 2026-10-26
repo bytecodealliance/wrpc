@@ -94,6 +94,9 @@ type IndexWriter interface {
 	io.ByteWriter
 
 	Index[IndexWriteCloser]
+
+	// WriteBytes writes `p` without copying it, `p` must not be modified afterwards
+	WriteBytes(p []byte) error
 }
 
 type IndexReadCloser interface {
