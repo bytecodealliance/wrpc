@@ -3,10 +3,8 @@ package wrpc
 import (
 	"bufio"
 	"context"
-	"errors"
 	"io"
 	"slices"
-	"sync"
 )
 
 // Invoke is the client-side transport handle
@@ -130,17 +128,11 @@ func JoinDeferred(fs ...func(context.Context) error) func(context.Context) error
 		return fs[0]
 	}
 	return func(ctx context.Context) error {
-		errs := make([]error, len(fs))
-		var wg sync.WaitGroup
-		for i, f := range fs {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				errs[i] = f(ctx)
-			}()
+		var g errGroup
+		for _, f := range fs {
+			g.Go(func() error { return f(ctx) })
 		}
-		wg.Wait()
-		return errors.Join(errs...)
+		return g.Wait(nil)
 	}
 }
 

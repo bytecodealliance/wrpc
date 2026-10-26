@@ -135,9 +135,7 @@ func ReadStream[T any](r IndexReadCloser, f func(IndexReadCloser, ...uint32) (T,
 		if len(path) > 0 {
 			defer closeNested(r)
 		}
-		var wg sync.WaitGroup
-		var errMu sync.Mutex
-		var errs []error
+		var g errGroup
 		err := func() error {
 			var total uint32
 			for {
@@ -164,15 +162,7 @@ func ReadStream[T any](r IndexReadCloser, f func(IndexReadCloser, ...uint32) (T,
 						return fmt.Errorf("failed to read pending stream element %d: %w", total, err)
 					}
 					if deferred != nil {
-						wg.Add(1)
-						go func() {
-							defer wg.Done()
-							if err := deferred(ctx); err != nil {
-								errMu.Lock()
-								errs = append(errs, err)
-								errMu.Unlock()
-							}
-						}()
+						g.Go(func() error { return deferred(ctx) })
 					}
 					vs = append(vs, v)
 					total++
@@ -184,8 +174,7 @@ func ReadStream[T any](r IndexReadCloser, f func(IndexReadCloser, ...uint32) (T,
 				}
 			}
 		}()
-		wg.Wait()
-		return errors.Join(append(errs, err)...)
+		return g.Wait(err)
 	}, nil
 }
 
@@ -219,9 +208,7 @@ func WriteStream[T any](v <-chan []T, w ByteWriter, f func(T, ByteWriter) (func(
 		return nil, fmt.Errorf("failed to write `stream::pending` byte: %w", err)
 	}
 	return func(w IndexWriter) error {
-		var wg sync.WaitGroup
-		var errMu sync.Mutex
-		var errs []error
+		var g errGroup
 		var total uint32
 		err := writeStreamChunks(v, w, func(chunk []T, buf *bytes.Buffer) error {
 			n := len(chunk)
@@ -242,22 +229,13 @@ func WriteStream[T any](v <-chan []T, w ByteWriter, f func(T, ByteWriter) (func(
 					if err != nil {
 						return fmt.Errorf("failed to index nested stream writer: %w", err)
 					}
-					wg.Add(1)
-					go func() {
-						defer wg.Done()
-						if err := write(w); err != nil {
-							errMu.Lock()
-							errs = append(errs, err)
-							errMu.Unlock()
-						}
-					}()
+					g.Go(func() error { return write(w) })
 				}
 				total++
 			}
 			return nil
 		})
-		wg.Wait()
-		return errors.Join(append(errs, err)...)
+		return g.Wait(err)
 	}, nil
 }
 
@@ -326,4 +304,25 @@ func closeNested(r IndexReadCloser) {
 func drain[T any](v <-chan T) {
 	for range v {
 	}
+}
+
+type errGroup struct {
+	wg   sync.WaitGroup
+	mu   sync.Mutex
+	errs []error
+}
+
+func (g *errGroup) Go(f func() error) {
+	g.wg.Go(func() {
+		if err := f(); err != nil {
+			g.mu.Lock()
+			g.errs = append(g.errs, err)
+			g.mu.Unlock()
+		}
+	})
+}
+
+func (g *errGroup) Wait(err error) error {
+	g.wg.Wait()
+	return errors.Join(append(g.errs, err)...)
 }
