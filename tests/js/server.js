@@ -6,6 +6,11 @@ import { listen } from "./tcp.js";
 
 const rec = t.record({ nested: t.record({ foo: t.string }) });
 const v = t.variant({ var: rec, empty: null });
+const cases = [
+  t.option(t.future()),
+  t.result(t.stream(t.u8), t.future(t.u32)),
+  t.variant({ empty: null, fut: t.future(t.string) }),
+];
 /** @param {string} foo */
 const r = (foo) => ({ nested: { foo } });
 
@@ -58,6 +63,7 @@ const handlers = {
       ([x, s]) => (x.foo === "bar" ? [s] : fail(`expected \`bar\`, got \`${x.foo}\``)),
     ],
     "identity-future": [[t.future()], [t.future()], ([v]) => [v]],
+    "identity-cases": [cases, [t.tuple(...cases)], (params) => [params]],
   },
 };
 

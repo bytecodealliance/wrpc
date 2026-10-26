@@ -148,6 +148,26 @@ where
                 ) -> anyhow::Result<Pin<Box<dyn Future<Output = ()> + Send>>> {
                     Ok(v)
                 }
+
+                async fn identity_cases(
+                    &self,
+                    _cx: C,
+                    o: Option<Pin<Box<dyn Future<Output = ()> + Send>>>,
+                    r: Result<
+                        Pin<Box<dyn Stream<Item = Bytes> + Send>>,
+                        Pin<Box<dyn Future<Output = u32> + Send>>,
+                    >,
+                    v: exports::wrpc_test::integration::async_::AsyncCase,
+                ) -> anyhow::Result<(
+                    Option<Pin<Box<dyn Future<Output = ()> + Send>>>,
+                    Result<
+                        Pin<Box<dyn Stream<Item = Bytes> + Send>>,
+                        Pin<Box<dyn Future<Output = u32> + Send>>,
+                    >,
+                    exports::wrpc_test::integration::async_::AsyncCase,
+                )> {
+                    Ok((o, r, v))
+                }
             }
 
             let srv = Arc::clone(&srv);
