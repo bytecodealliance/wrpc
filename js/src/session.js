@@ -199,7 +199,6 @@ async function readFuture(mux, path, entry, ar) {
     else if (await ar.fill(1)) throw unexpectedError(path);
     else decoded = { value: undefined, sink: [] };
   } catch (err) {
-    entry.reject(err);
     if (err === DISCARDED) return;
     throw err;
   }
@@ -232,12 +231,7 @@ async function readStream(mux, path, elem, queue, ar) {
       if (!(await queue.send(chunk))) break;
     }
   } catch (err) {
-    if (!queue.cancelled && err !== DISCARDED) {
-      // Surface a transport/decode failure to whoever is consuming the stream,
-      // rather than leaving the consumer hanging on a queue that never closes.
-      queue.close(err);
-      throw err;
-    }
+    if (!queue.cancelled && err !== DISCARDED) throw err;
   }
   queue.close();
 }
