@@ -99,6 +99,7 @@ func TestFrameStreamWriter(t *testing.T) {
 			t.Fatalf("failed to close path: %s", err)
 		}
 		assertClose(t, w0)
+		assertClose(t, w0)
 		if err := w.ClosePath(); err != nil {
 			t.Fatalf("failed to close path: %s", err)
 		}
