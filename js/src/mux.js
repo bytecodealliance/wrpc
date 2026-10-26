@@ -50,14 +50,9 @@ export const DISCARDED = new Error("sub-stream discarded");
  * @property {Chan<Uint8Array> | undefined} chan the data of the sub-stream at
  *   this path, if one is expected here
  * @property {boolean} sealed whether every sub-stream nested in it is known
- * @property {number} decided the number of stream elements known, whose
- *   children are all in the trie
  * @property {boolean} done whether all its own data has been read
  * @property {boolean} closed whether an empty frame closed it
- * @property {Set<number> | undefined} pruned the indices of the children
- *   forgotten once finished, beyond those of the `decided` stream elements
- * @property {number} discardFrom `Infinity`, unless the node is discarded: then
- *   its own data and that of its children from this index on is dropped
+ * @property {boolean} discarded whether its data is dropped
  * @property {Map<number, Map<string, Pending>> | undefined} pending the data
  *   buffered for the paths through each missing child, by path key
  */
@@ -67,11 +62,9 @@ const node = (sealed) => ({
   children: new Map(),
   chan: undefined,
   sealed,
-  decided: 0,
   done: false,
   closed: false,
-  pruned: undefined,
-  discardFrom: Infinity,
+  discarded: false,
   pending: undefined,
 });
 
@@ -188,7 +181,9 @@ export class Outgoing {
  * the root sub-stream `[]`, and those declared with {@link Mux.seal} as each
  * value carrying pending `stream`/`future` values is decoded, until they are
  * {@link Mux.finish finished}. Data for a path that may still be declared is
- * buffered until it is; data for any other path fails the invocation.
+ * buffered until it is; data for any other path fails the invocation. Pending
+ * values nested in `list` or `stream` elements are not supported, so the
+ * expected sub-streams are bounded by the types of the decoded values.
  */
 export class Mux {
   /** @param {Transport} transport */
@@ -236,8 +231,6 @@ export class Mux {
       if (n === 0) {
         // An empty frame closes its sub-stream, which may already be finished.
         this._route(path, true)?.close();
-        const closed = this._get(path);
-        if (closed) closed.closed = true;
         continue;
       }
       const chan = this._route(path);
@@ -254,42 +247,38 @@ export class Mux {
   }
 
   /**
-   * The channel of the sub-stream at `path`, `null` if its data is discarded,
-   * or where the lookup stopped if it is not yet known whether it is expected.
-   * With `empty`, for an empty frame, a finished sub-stream also gives `null`.
+   * The node of the expected sub-stream at `path`, or where the lookup
+   * stopped if it is not yet known whether it is expected. With `empty`, for
+   * an empty frame, a finished sub-stream is found too.
    * @param {number[]} path
    * @param {boolean} [empty]
-   * @returns {Chan<Uint8Array> | null | Undecided}
+   * @returns {Node | Undecided}
    */
   _find(path, empty = false) {
     let n = this.root;
     for (const i of path) {
-      if (i >= n.discardFrom) return null;
       const child = n.children.get(i);
-      if (!child) {
-        const finished = i < n.decided || !!n.pruned?.has(i);
-        if (empty && finished) return null;
-        return n.sealed || finished ? unexpected(path) : { at: n, i };
-      }
+      if (!child) return n.sealed ? unexpected(path) : { at: n, i };
       n = child;
     }
-    if (n.closed) unexpected(path);
-    if (n.done) return empty ? null : unexpected(path);
-    if (n.discardFrom !== Infinity) return null;
-    return n.chan ?? unexpected(path);
+    if (!n.chan || n.closed || (n.done && !empty)) unexpected(path);
+    return n;
   }
 
   /**
    * The channel to route the data of the sub-stream at `path` to, or
-   * `undefined` to drop it. With `empty`, for an empty frame, the data of a
-   * path that may still be expected is buffered as if it were finished.
+   * `undefined` to drop it. With `empty`, for an empty frame, the sub-stream
+   * is closed, and the data of a path that may still be expected is buffered
+   * as if it were finished.
    * @param {number[]} path
    * @param {boolean} [empty]
    */
   _route(path, empty = false) {
     const found = this._find(path, empty);
-    if (found === null) return undefined;
-    if (found instanceof Chan) return found;
+    if (!("at" in found)) {
+      found.closed ||= empty;
+      return found.done || found.discarded ? undefined : found.chan;
+    }
     let pending = found.at.pending?.get(found.i)?.get(key(path));
     if (pending?.closed) unexpected(path);
     if (!pending) attach(found, (pending = { path, chan: new Chan(), empty, closed: false }));
@@ -307,7 +296,6 @@ export class Mux {
   _takePending(path) {
     let n = this.root;
     for (const i of path) {
-      if (i >= n.discardFrom) return undefined;
       const child = n.children.get(i);
       if (!child) {
         const group = n.pending?.get(i);
@@ -322,15 +310,14 @@ export class Mux {
   }
 
   /**
-   * The node at `path`, `undefined` if there is none, or `null` if it is
-   * discarded by an ancestor. With `create`, missing nodes are created.
+   * The node at `path`, `undefined` if there is none. With `create`, missing
+   * nodes are created.
    * @param {number[]} path
    * @param {boolean} [create]
    */
   _get(path, create = false) {
     let n = this.root;
     for (const i of path) {
-      if (i >= n.discardFrom) return null;
       let child = n.children.get(i);
       if (!child) {
         if (!create) return undefined;
@@ -344,36 +331,23 @@ export class Mux {
 
   /**
    * Declare the sub-streams nested in the value at `path` once it is decoded:
-   * the root tuple at `[]`, a future's value at its own path, or element `k`
-   * of a stream at `[...stream, k]`, decoded in order. `expected` lists the
-   * paths, relative to `path`, of the value's pending `stream`/`future`
-   * values, and whether each may nest sub-streams of its own. Data for any
-   * other path nested in the value fails the invocation.
+   * the root tuple at `[]`, or a future's value at its own path. `expected`
+   * lists the paths, relative to `path`, of the value's pending
+   * `stream`/`future` values, and whether each may nest sub-streams of its
+   * own. Data for any other path nested in the value fails the invocation.
    * @param {number[]} path
    * @param {{ path: number[], nested: boolean }[]} expected
    */
   seal(path, expected) {
     /** @type {Undecided[]} */
     const settle = [];
-    if (path.length) {
-      const parent = this._get(path.slice(0, -1));
-      if (parent && !parent.sealed) {
-        const from = parent.decided;
-        parent.decided = Math.max(from, path[path.length - 1] + 1);
-        for (let i = from; i < parent.decided; i++) settle.push({ at: parent, i });
-      }
-    }
     const taken = expected.map((e) => this._takePending([...path, ...e.path]));
     const scope = this._get(path, expected.length > 0);
     if (scope) scope.sealed = true;
     expected.forEach((e, j) => {
       const t = taken[j];
       if (t) settle.push(t);
-      const n = this._get([...path, ...e.path], true);
-      if (!n) {
-        t?.pending?.chan.cancel(DISCARDED);
-        return;
-      }
+      const n = /** @type {Node} */ (this._get([...path, ...e.path], true));
       n.sealed = !e.nested;
       if (n.chan) return;
       n.chan = t?.pending?.chan ?? new Chan();
@@ -387,8 +361,7 @@ export class Mux {
 
   /**
    * Declare that the sub-stream at `path` has no more data: its stream ended,
-   * or its future's value was decoded. Once the sub-streams nested in it
-   * finish too, it is forgotten, and any further data for it fails the
+   * or its future's value was decoded. Any further data for it fails the
    * invocation, as does any data of it left unread in `reader`.
    * @param {number[]} path
    * @param {AsyncReader} [reader] the reader it was read over
@@ -403,68 +376,23 @@ export class Mux {
     n.done = true;
     n.chan?.close();
     for (const i of [...(n.pending?.keys() ?? [])]) this._settle({ at: n, i });
-    this._prune(path);
   }
 
   /**
-   * Forget the node at `path` and its ancestors as long as they are finished,
-   * without children, and not discarded.
+   * Discard the sub-stream at `path`: drop its buffered and future data, and
+   * fail its reader with {@link DISCARDED}.
    * @param {number[]} path
    */
-  _prune(path) {
-    const nodes = [this.root];
-    for (const i of path) {
-      const child = nodes[nodes.length - 1].children.get(i);
-      if (!child) return;
-      nodes.push(child);
-    }
-    for (let d = path.length; d > 0; d--) {
-      const n = nodes[d];
-      if (n.children.size || n.discardFrom !== Infinity || (n.chan && !n.done)) return;
-      const parent = nodes[d - 1];
-      const i = path[d - 1];
-      parent.children.delete(i);
-      if (i >= parent.decided) (parent.pruned ??= new Set()).add(i);
-    }
-  }
-
-  /**
-   * Discard the sub-stream at `path` and those nested in its children from
-   * index `from` on: drop their buffered and future data, and fail their
-   * readers with {@link DISCARDED}.
-   * @param {number[]} path
-   * @param {number} [from]
-   */
-  discard(path, from = 0) {
+  discard(path) {
     const n = this._get(path);
-    if (!n || (n.done && ![...n.children.keys()].some((i) => i >= from))) return;
-    n.discardFrom = Math.min(n.discardFrom, from);
+    if (!n || n.done) return;
+    n.discarded = true;
     n.chan?.cancel(DISCARDED);
-    for (const [i, group] of n.pending ?? []) {
-      if (i < from) continue;
-      for (const { chan } of group.values()) chan.cancel(DISCARDED);
-      n.pending?.delete(i);
-    }
-    for (const [i, child] of n.children) {
-      if (i < from) continue;
-      eachChan(child, (chan) => chan.cancel(DISCARDED));
-      n.children.delete(i);
-    }
-  }
-
-  /**
-   * Call `f` once the sub-stream at `path` is discarded.
-   * @param {number[]} path @param {() => void} f
-   */
-  ondiscard(path, f) {
-    const chan = this._get(path)?.chan;
-    if (chan) chan.onCancel(f);
-    else f();
   }
 
   /**
    * Look up the paths buffered in the group at `at` again: drop or reject
-   * those decided since, and keep the rest where their lookup stops now.
+   * those declared since, and keep the rest where their lookup stops now.
    * @param {Undecided} at
    */
   _settle(at) {
@@ -479,8 +407,8 @@ export class Mux {
         this.abort(err);
         return;
       }
-      if (found === null || found instanceof Chan) pending.chan.cancel(DISCARDED);
-      else attach(found, pending);
+      if ("at" in found) attach(found, pending);
+      else pending.chan.cancel(DISCARDED);
     }
   }
 
@@ -493,17 +421,14 @@ export class Mux {
   }
 
   /**
-   * The reader for the expected sub-stream at `path` (the root is `[]`). The
-   * reader of a discarded sub-stream fails with {@link DISCARDED}.
+   * The reader for the expected sub-stream at `path` (the root is `[]`).
    * @param {number[]} path
    * @returns {AsyncReader}
    */
   incoming(path) {
-    const n = this._get(path);
-    if (n !== null && !n?.chan) throw new Error(`no sub-stream is expected at [${path}]`);
-    const chan = n?.chan;
+    const chan = this._get(path)?.chan;
+    if (!chan) throw new Error(`no sub-stream is expected at [${path}]`);
     return new AsyncReader(async () => {
-      if (!chan) throw DISCARDED;
       const { value, done } = await chan.next();
       return done ? null : value;
     });

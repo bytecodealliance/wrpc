@@ -77,9 +77,6 @@ async function writeFuture(out, ty, value) {
 
 /** @param {Outgoing} out @param {Type} elem @param {any} src */
 async function writeStream(out, elem, src) {
-  let base = 0;
-  /** @type {Promise<void>[]} */
-  const tasks = [];
   for await (const chunk of streamChunks(src, elem)) {
     const w = new Writer();
     if (elem.kind === "u8") {
@@ -88,29 +85,21 @@ async function writeStream(out, elem, src) {
       if (bytes.length === 0) continue;
       w.varU(bytes.length);
       w.bytes(bytes);
-      base += bytes.length;
     } else {
       if (!Array.isArray(chunk)) throw new TypeError("expected an array for a `stream` chunk");
       if (chunk.length === 0) continue;
       w.varU(chunk.length);
-      for (let k = 0; k < chunk.length; k++) {
-        /** @type {any[]} */
-        const sink = [];
-        encodeValue(w, elem, chunk[k], sink, []);
-        for (const e of sink) {
-          const task = writeDeferred(out.index([base + k, ...e.path]), e);
-          task.catch(() => {});
-          tasks.push(task);
-        }
-      }
-      base += chunk.length;
+      /** @type {any[]} */
+      const sink = [];
+      for (const v of chunk) encodeValue(w, elem, v, sink, []);
+      if (sink.length)
+        throw new Error("pending values in `list` or `stream` elements are not supported");
     }
     await out.write(w.finish());
   }
   const end = new Writer();
   end.varU(0); // a stream is terminated by an empty chunk
   await out.write(end.finish());
-  await Promise.all(tasks);
 }
 
 // ----- decoding side --------------------------------------------------------
@@ -168,9 +157,7 @@ async function receiveTuple(mux, root, types) {
 function expect(mux, path, sink) {
   mux.seal(
     path,
-    sink.flatMap((e) =>
-      e.kind === "inline" ? [] : [{ path: e.path, nested: !!e.ty && hasAsync(e.ty) }],
-    ),
+    sink.map((e) => ({ path: e.path, nested: e.kind === "future" && !!e.ty && hasAsync(e.ty) })),
   );
 }
 
@@ -194,14 +181,6 @@ function readNested(mux, path, sink, ar) {
  */
 async function readDeferred(mux, path, entry, ar) {
   switch (entry.kind) {
-    case "inline": {
-      // Discard the sub-streams nested in the chunk unless the consumer received it.
-      const queue = entry.queue;
-      queue.onCancel(() => {
-        if (queue.taken === 0) mux.discard(path);
-      });
-      return;
-    }
     case "future":
       return readFuture(mux, path, entry, ar ?? mux.incoming(path));
     case "stream":
@@ -227,7 +206,7 @@ async function readFuture(mux, path, entry, ar) {
   const { value, sink } = decoded;
   expect(mux, path, sink);
   // A value nested at the future's own path continues reading it.
-  if (!sink.some((e) => e.kind !== "inline" && e.path.length === 0)) mux.finish(path, ar);
+  if (!sink.some((e) => e.path.length === 0)) mux.finish(path, ar);
   const nested = readNested(mux, path, sink, ar);
   entry.resolve(value);
   await nested;
@@ -235,22 +214,12 @@ async function readFuture(mux, path, entry, ar) {
 
 /**
  * Receive a stream's chunks over `ar` into `queue`, waiting while it is full.
- * If the consumer cancels the queue, the rest of the stream is discarded,
- * along with the sub-streams nested in the elements it did not receive.
+ * If the consumer cancels the queue, the rest of the stream is discarded.
  * @param {Mux} mux @param {number[]} path @param {Type} elem
  * @param {import("./index.d.ts").Chan<any>} queue @param {AsyncReader} ar
  */
 async function readStream(mux, path, elem, queue, ar) {
-  const nested = hasAsync(elem);
-  /** @type {number[]} the index of the first element of each chunk not yet taken */
-  const starts = [];
-  let taken = 0;
-  let base = 0;
-  queue.onCancel(() => mux.discard(path, starts[queue.taken - taken] ?? base));
-  // Nobody receives the rest of a discarded stream.
-  mux.ondiscard(path, () => queue.cancel());
-  /** @type {Promise<unknown>[]} */
-  const tasks = [];
+  queue.onCancel(() => mux.discard(path));
   try {
     for (;;) {
       const len = await ar.decode((r) => atomic(r, readVarU32));
@@ -258,30 +227,8 @@ async function readStream(mux, path, elem, queue, ar) {
         mux.finish(path, ar);
         break;
       }
-      if (nested) {
-        starts.splice(0, queue.taken - taken);
-        taken = queue.taken;
-        starts.push(base);
-      }
-      let chunk;
-      if (elem.kind === "u8") {
-        chunk = await ar.take(len);
-      } else if (!nested) {
-        chunk = await ar.decode((r) => readChunk(r, elem, len));
-      } else {
-        chunk = [];
-        for (let k = 0; k < len; k++) {
-          const { value, sink } = await decodeOne(ar, elem);
-          chunk.push(value);
-          const at = [...path, base + k];
-          expect(mux, at, sink);
-          if (!sink.length) continue;
-          const task = readNested(mux, at, sink);
-          task.catch(() => {});
-          tasks.push(task);
-        }
-      }
-      base += len;
+      const chunk =
+        elem.kind === "u8" ? await ar.take(len) : await ar.decode((r) => readChunk(r, elem, len));
       if (!(await queue.send(chunk))) break;
     }
   } catch (err) {
@@ -293,7 +240,6 @@ async function readStream(mux, path, elem, queue, ar) {
     }
   }
   queue.close();
-  await Promise.all(tasks);
 }
 
 // ----- public API -----------------------------------------------------------

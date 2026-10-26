@@ -99,9 +99,11 @@ consumed, as in the Rust implementation. So consume streams concurrently with
 each other, with awaiting futures, and with `done`: awaiting a future while an
 earlier stream is left unread can wait forever, since the future's data may be
 queued behind the stream's on the transport. Leave a `for await` loop early (or call
-`cancel()`) to discard the rest of a stream you no longer need, including the
-streams and futures nested in the chunks you did not receive. Those nested in
-the chunks you did receive stay live, so consume or cancel them too.
+`cancel()`) to discard the rest of a stream you no longer need.
+
+As in the Rust implementation, `list` and `stream` elements may not carry
+pending `stream` or `future` values: sending or receiving one fails the
+invocation.
 
 Data the peer sends for a sub-stream that the decoded values do not carry —
 for a `stream` in an `option` that is `none`, say — fails the invocation.
