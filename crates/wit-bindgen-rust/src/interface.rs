@@ -1795,7 +1795,7 @@ mod {mod_name} {{
             .cloned()
             .collect();
         if let Some(name) = self.name_of(id) {
-            let (paths, _) = async_paths_tyid(self.resolve, id);
+            let (paths, fut) = async_paths_tyid(self.resolve, id);
 
             self.rustdoc(docs);
             let mut derives = BTreeSet::new();
@@ -1807,13 +1807,13 @@ mod {mod_name} {{
             {
                 derives.extend(additional_derives.clone());
             }
-            if info.is_copy() && paths.is_empty() {
+            if info.is_copy() && paths.is_empty() && !fut {
                 derives.extend(
                     ["::core::marker::Copy", "::core::clone::Clone"]
                         .into_iter()
                         .map(std::string::ToString::to_string),
                 );
-            } else if info.is_clone() && paths.is_empty() {
+            } else if info.is_clone() && paths.is_empty() && !fut {
                 derives.insert("::core::clone::Clone".to_string());
             }
             if !derives.is_empty() {
@@ -1959,8 +1959,8 @@ mod {mod_name} {{
 }}"#,
                 );
             } else {
-                let (paths, _) = async_paths_tyid(self.resolve, id);
-                if paths.is_empty() {
+                let (paths, fut) = async_paths_tyid(self.resolve, id);
+                if paths.is_empty() && !fut {
                     uwrite!(
                         self.src,
                         r#"
@@ -2010,7 +2010,7 @@ mod {mod_name} {{
                 );
 
                 let mut names = vec![format!("super::{name}")];
-                if paths.is_empty() {
+                if paths.is_empty() && !fut {
                     names.extend_from_slice(&[
                         format!("&super::{name}"),
                         format!("&&super::{name}"),

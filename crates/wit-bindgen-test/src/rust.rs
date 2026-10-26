@@ -68,14 +68,9 @@ impl LanguageMethods for Rust {
         if !args.is_empty() {
             return true;
         }
-        // The wRPC Rust generator does not yet support bare `stream`/`future`
-        // types, named fixed-length lists, or `map`. Other async constructs
-        // (`error-context`, futures/streams behind resources) generate
-        // successfully.
-        matches!(
-            name,
-            "streams.wit" | "futures.wit" | "named-fixed-length-list.wit" | "map.wit"
-        )
+        // The wRPC Rust generator does not yet support named fixed-length
+        // lists or `map`.
+        matches!(name, "named-fixed-length-list.wit" | "map.wit")
     }
 
     fn codegen_test_variants(&self) -> &[(&str, &[&str])] {
