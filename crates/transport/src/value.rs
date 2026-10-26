@@ -2423,13 +2423,12 @@ impl Decode for Pin<Box<dyn Stream<Item = Bytes> + Send>> {
 /// Decoder for `stream<list<u8>>` with [`AsyncRead`] support
 #[derive(Default)]
 pub struct StreamDecoderRead {
-    dec: OptionDecoder<CoreVecDecoderBytes>,
-    deferred: Option<DeferredFn<BufferedIncoming>>,
+    dec: StreamDecoderBytes,
 }
 
 impl Deferred<BufferedIncoming> for StreamDecoderRead {
     fn take_deferred(&mut self) -> Option<DeferredFn<BufferedIncoming>> {
-        self.deferred.take()
+        self.dec.take_deferred()
     }
 }
 
@@ -2437,48 +2436,12 @@ impl tokio_util::codec::Decoder for StreamDecoderRead {
     type Item = Pin<Box<dyn AsyncRead + Send>>;
     type Error = std::io::Error;
 
-    #[instrument(level = "trace", skip(self), fields(ty = "stream<u8>"))]
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-        let Some(chunk) = self.dec.decode(src)? else {
+        let Some(s) = self.dec.decode(src)? else {
             return Ok(None);
         };
-        if let Some(chunk) = chunk {
-            return Ok(Some(Box::pin(std::io::Cursor::new(chunk))));
-        }
-
-        // stream is pending
-        let (tx, rx) = mpsc::channel(128);
-        let (end_tx, end_rx) = oneshot::channel();
-        let dec = mem::take(&mut self.dec).into_inner();
-        let span = Span::current();
-        self.deferred = Some(Box::new(|mut r, path| {
-            Box::pin(
-                async move {
-                    if !path.is_empty() {
-                        r = r.index(&path).map_err(std::io::Error::other)?;
-                    }
-                    let mut framed = FramedRead::new(r, dec);
-                    trace!("receiving pending byte stream chunk");
-                    while let Some(chunk) = framed.next().await {
-                        let chunk = chunk?;
-                        if chunk.is_empty() {
-                            trace!("received stream end");
-                            ensure_processed(&framed)?;
-                            _ = end_tx.send(());
-                            return Ok(());
-                        }
-                        trace!(?chunk, "received byte stream chunk");
-                        if tx.send(chunk).await.is_err() {
-                            return Err(error_receiver_closed());
-                        }
-                    }
-                    Err(std::io::ErrorKind::UnexpectedEof.into())
-                }
-                .instrument(span),
-            )
-        }));
         Ok(Some(Box::pin(StreamReader::new(
-            receive_pending_stream(rx, end_rx).map(Ok::<_, std::io::Error>),
+            s.map(Ok::<_, std::io::Error>).fuse(),
         ))))
     }
 }
