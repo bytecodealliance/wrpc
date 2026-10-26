@@ -128,26 +128,6 @@ test("aborting after the peer closed fails the sub-streams declared later", asyn
   await assert.rejects(mux.incoming([0]).u8(), /boom/);
 });
 
-test("finished sub-streams are forgotten", { timeout: 1000 }, async () => {
-  const [client, server] = duplexPair();
-  const ty = t.stream(t.option(t.future(t.u8)));
-  const elems = Array.from({ length: 1000 }, (_, i) => (i % 2 ? i & 0xff : undefined));
-  const serving = (async () => {
-    const inv = await accept(server);
-    const { params, done } = await inv.receiveParams([ty]);
-    const futures = [];
-    for await (const chunk of params[0]) futures.push(...chunk);
-    const values = await Promise.all(futures);
-    await done;
-    assert.equal(inv.mux.root.children.size, 0);
-    await inv.sendResults([], []);
-    return values;
-  })();
-  const { done } = await invoke(client, STREAMS, "get", [ty], [[elems]], []);
-  await done;
-  assert.deepEqual(await serving, elems);
-});
-
 test("a failed invocation leaves no unhandled rejection", async () => {
   const transport = {
     read: () => Promise.reject(new Error("connection refused")),
@@ -237,47 +217,6 @@ test("aborting a web stream transport cancels and aborts both sides", async () =
   ]);
 });
 
-test("a failed stream<future<T>> parameter leaves no unhandled rejection", async () => {
-  async function* chunks() {
-    yield [
-      () => {
-        throw new Error("future failed");
-      },
-    ];
-    throw new Error("stream failed");
-  }
-  const transport = {
-    read: () => new Promise((resolve) => setTimeout(() => resolve(null), 10)),
-    write: () => {},
-  };
-  await assert.rejects(
-    invoke(transport, STREAMS, "echo", [t.stream(t.future(t.string))], [chunks()], [t.u8]),
-    /stream failed/,
-  );
-});
-
-test(
-  "a transport failure rejects pending stream<future<T>> parameters",
-  { timeout: 1000 },
-  async () => {
-    const frames = [];
-    const peer = new Mux({ read: async () => null, write: (bytes) => void frames.push(bytes) });
-    await peer.writeHeader(STREAMS, "echo");
-    await peer.outgoing([]).write(Uint8Array.of(0));
-    await peer.outgoing([0]).write(Uint8Array.of(1, 0));
-    const transport = {
-      read: async () => frames.shift() ?? Promise.reject(new Error("connection reset")),
-      write: () => {},
-    };
-    const inv = await accept(transport);
-    const { params } = await inv.receiveParams([t.stream(t.future(t.string))]);
-    const chunks = params[0][Symbol.asyncIterator]();
-    const { value: chunk } = await chunks.next();
-    await assert.rejects(chunk[0], /connection reset/);
-    await assert.rejects(chunks.next(), /connection reset/);
-  },
-);
-
 test("frame data is routed as it arrives", async () => {
   const bytes = [0x01, 0x00, 0x03, 0x0a, 0x14, 0x1e, 0x01, 0x00, 0x02, 0x28];
   const transport = {
@@ -330,20 +269,24 @@ test("invalid arguments fail before anything is written and abort the transport"
   };
   await assert.rejects(invoke(transport, STREAMS, "get", [t.u32], [-1], []), /out of range/);
   await assert.rejects(invoke(transport, STREAMS, "get", [t.u32], [], []), /expected 1 argument/);
+  const ty = t.list(t.future(t.u32));
+  await assert.rejects(invoke(transport, STREAMS, "get", [ty], [[1]], []), /not supported/);
   await new Promise(setImmediate);
   assert.deepEqual(writes, []);
-  assert.equal(aborted.length, 2);
+  assert.equal(aborted.length, 3);
 });
 
-test("stream<u8> chunks must be bytes", async () => {
-  const transport = {
-    read: () => new Promise((resolve) => setTimeout(() => resolve(null), 10)),
-    write: () => {},
-  };
-  await assert.rejects(
-    invoke(transport, STREAMS, "echo", [t.stream(t.u8)], [[1, 2, 3]], [t.u8]),
-    /expected `Uint8Array`/,
-  );
+test("invalid stream chunks fail the invocation", async () => {
+  for (const [ty, chunks, error] of [
+    [t.stream(t.u8), [1, 2, 3], /expected `Uint8Array`/],
+    [t.stream(t.future(t.string)), [["foo"]], /not supported/],
+  ]) {
+    const transport = {
+      read: () => new Promise((resolve) => setTimeout(() => resolve(null), 10)),
+      write: () => {},
+    };
+    await assert.rejects(invoke(transport, STREAMS, "echo", [ty], [chunks], [t.u8]), error);
+  }
 });
 
 for (const [name, values, error] of [
@@ -409,77 +352,6 @@ test("a cancelled stream result is discarded", { timeout: 1000 }, async () => {
   assert.deepEqual(await results[0].next(), { value: undefined, done: true });
 });
 
-test(
-  "cancelling a stream keeps the streams nested in the chunks it delivered",
-  { timeout: 1000 },
-  async () => {
-    const ty = t.tuple(t.stream(t.stream(t.u8)), t.stream(t.u8));
-    const bytes = function* () {
-      for (let i = 0; i < 1000; i++) yield Uint8Array.of(i & 0xff);
-    };
-    const { result, done, serving } = await echo(ty, [[[bytes(), bytes()], [bytes()]], bytes()]);
-    const [nested, sibling] = result;
-    let kept = [];
-    for await (const chunk of nested) {
-      kept = chunk;
-      break;
-    }
-    assert.equal(kept.length, 2);
-    kept[1].cancel();
-    // Undiscarded nested data would stop the transport from being read.
-    const [received, siblings] = await Promise.all([collect(kept[0]), collect(sibling)]);
-    assert.equal(received.length, 1000);
-    assert.equal(siblings.length, 1000);
-    await Promise.all([done, serving]);
-  },
-);
-
-test(
-  "cancelling a received stream discards the streams nested in it",
-  { timeout: 1000 },
-  async () => {
-    const frames = [];
-    const peer = new Mux({ read: async () => null, write: (bytes) => void frames.push(bytes) });
-    await peer.outgoing([]).write(Uint8Array.of(0, 0));
-    await peer.outgoing([0]).write(Uint8Array.of(1, 0));
-    await peer.outgoing([0]).write(Uint8Array.of(0));
-    for (let i = 0; i < 1000; i++) await peer.outgoing([0, 0]).write(Uint8Array.of(1, i & 0xff));
-    await peer.outgoing([0, 0]).write(Uint8Array.of(0));
-    await peer.outgoing([1]).write(Uint8Array.of(1, 7));
-    await peer.outgoing([1]).write(Uint8Array.of(0));
-    const transport = { read: async () => frames.shift() ?? null, write: () => {} };
-    const ty = [t.stream(t.stream(t.u8)), t.stream(t.u8)];
-    const { results, done } = await invoke(transport, STREAMS, "get", [], [], ty);
-    while (!results[0].closed) await tick();
-    let hooked = false;
-    results[0].onCancel(() => (hooked = true));
-    results[0].cancel();
-    assert.ok(hooked);
-    assert.deepEqual(await collect(results[1]), [7]);
-    await done;
-  },
-);
-
-test(
-  "cancelling an inline stream discards the streams nested in it",
-  { timeout: 1000 },
-  async () => {
-    const frames = [];
-    const peer = new Mux({ read: async () => null, write: (bytes) => void frames.push(bytes) });
-    await peer.outgoing([]).write(Uint8Array.of(1, 1, 0, 0));
-    for (let i = 0; i < 1000; i++) await peer.outgoing([0, 0]).write(Uint8Array.of(1, i & 0xff));
-    await peer.outgoing([0, 0]).write(Uint8Array.of(0));
-    await peer.outgoing([1]).write(Uint8Array.of(1, 7));
-    await peer.outgoing([1]).write(Uint8Array.of(0));
-    const transport = { read: async () => frames.shift() ?? null, write: () => {} };
-    const ty = [t.stream(t.stream(t.u8)), t.stream(t.u8)];
-    const { results, done } = await invoke(transport, STREAMS, "get", [], [], ty);
-    results[0].cancel();
-    assert.deepEqual(await collect(results[1]), [7]);
-    await done;
-  },
-);
-
 test("data arriving before its sub-stream is decoded is kept", { timeout: 1000 }, async () => {
   const frames = [];
   const peer = new Mux({ read: async () => null, write: (bytes) => void frames.push(bytes) });
@@ -511,35 +383,6 @@ test(
   },
 );
 
-test("element data arriving ahead of a large chunk is kept", { timeout: 5000 }, async () => {
-  const n = 4000;
-  const frames = [];
-  const peer = new Mux({ read: async () => null, write: (bytes) => void frames.push(bytes) });
-  await peer.outgoing([]).write(Uint8Array.of(0));
-  for (let i = 0; i < n; i++) await peer.outgoing([0, i]).write(Uint8Array.of(i & 0xff));
-  const w = new Writer();
-  w.varU(n);
-  for (let i = 0; i < n; i++) w.u8(0);
-  await peer.outgoing([0]).write(w.finish());
-  await peer.outgoing([0]).write(Uint8Array.of(0));
-  const transport = { read: async () => frames.shift() ?? null, write: () => {} };
-  const { results, done } = await invoke(
-    transport,
-    STREAMS,
-    "get",
-    [],
-    [],
-    [t.stream(t.future(t.u8))],
-  );
-  const out = [];
-  for await (const chunk of results[0]) out.push(...(await Promise.all(chunk)));
-  assert.deepEqual(
-    out,
-    Array.from({ length: n }, (_, i) => i & 0xff),
-  );
-  await done;
-});
-
 test(
   "more data than a sub-stream buffers arriving ahead of its declaration is kept",
   { timeout: 1000 },
@@ -550,104 +393,41 @@ test(
     await peer.outgoing([]).write(Uint8Array.of(0));
     for (let i = 0; i < n; i++) await peer.outgoing([0, 0]).write(Uint8Array.of(1, i & 0xff));
     await peer.outgoing([0, 0]).write(Uint8Array.of(0));
-    await peer.outgoing([0]).write(Uint8Array.of(1, 0));
     await peer.outgoing([0]).write(Uint8Array.of(0));
     const transport = { read: async () => frames.shift() ?? null, write: () => {} };
-    const { results, done } = await invoke(
-      transport,
-      STREAMS,
-      "get",
-      [],
-      [],
-      [t.stream(t.stream(t.u8))],
-    );
-    const inner = [];
-    for await (const chunk of results[0]) inner.push(...chunk);
-    assert.equal(inner.length, 1);
+    const ty = [t.future(t.tuple(t.stream(t.u8)))];
+    const { results, done } = await invoke(transport, STREAMS, "get", [], [], ty);
+    const [inner] = await results[0];
     assert.deepEqual(
-      await collect(inner[0]),
+      await collect(inner),
       Array.from({ length: n }, (_, i) => i & 0xff),
     );
     await done;
   },
 );
-
-test("data for a sub-stream the reply does not carry fails it", { timeout: 1000 }, async () => {
-  const frames = [];
-  const peer = new Mux({ read: async () => null, write: (bytes) => void frames.push(bytes) });
-  await peer.outgoing([]).write(Uint8Array.of(0, 0));
-  for (let i = 0; i < 100; i++) await peer.outgoing([0]).write(Uint8Array.of(1, i));
-  await peer.outgoing([1]).write(Uint8Array.of(1, 7));
-  await peer.outgoing([1]).write(Uint8Array.of(0));
-  let aborted;
-  const transport = {
-    read: async () => frames.shift() ?? null,
-    write: () => {},
-    abort: (reason) => void (aborted = reason),
-  };
-  const ty = [t.option(t.stream(t.u8)), t.stream(t.u8)];
-  const { results, done } = await invoke(transport, STREAMS, "get", [], [], ty);
-  assert.equal(results[0], undefined);
-  await assert.rejects(collect(results[1]), /unexpected data for sub-stream \[0\]/);
-  await assert.rejects(done, /unexpected data for sub-stream \[0\]/);
-  assert.match(aborted.message, /unexpected data/);
-});
-
-test(
-  "an empty frame for a sub-stream the reply does not carry fails it",
-  { timeout: 1000 },
-  async () => {
+test("an invocation sends no frames for empty data", async () => {
+  for (const [types, args, expected] of [
+    [[], [], "\x00\x03foo\x03bar"],
+    [[t.future()], [Promise.resolve()], "\x00\x03foo\x03bar\x00\x01\x00\x01\x00\x00"],
+  ]) {
     const frames = [];
-    const peer = new Mux({ read: async () => null, write: (bytes) => void frames.push(bytes) });
-    await peer.outgoing([]).write(Uint8Array.of(0, 0));
-    await peer.outgoing([0]).close();
-    await peer.outgoing([1]).write(Uint8Array.of(1, 7));
-    await peer.outgoing([1]).write(Uint8Array.of(0));
-    const transport = { read: async () => frames.shift() ?? null, write: () => {} };
-    const ty = [t.option(t.stream(t.u8)), t.stream(t.u8)];
-    const { results, done } = await invoke(transport, STREAMS, "get", [], [], ty);
-    await assert.rejects(collect(results[1]), /unexpected data for sub-stream \[0\]/);
-    await assert.rejects(done, /unexpected data for sub-stream \[0\]/);
-  },
-);
-
-test("empty writes send no frames", async () => {
-  const frames = [];
-  const mux = new Mux({ read: async () => null, write: (bytes) => void frames.push(bytes) });
-  await mux.outgoing([]).write(new Uint8Array(0));
-  await mux.outgoing([0]).write(new Uint8Array(0));
-  assert.deepEqual(frames, []);
-});
-
-test("an invocation with empty parameters sends just the header", async () => {
-  const frames = [];
-  let closed = false;
-  const transport = {
-    read: async () => null,
-    write: (bytes) => void frames.push(bytes),
-    closeWrite: () => void (closed = true),
-  };
-  const { done } = await invoke(transport, "foo", "bar", [], [], []);
-  await done;
-  assert.ok(closed);
-  assert.deepEqual(Buffer.concat(frames), Buffer.from("\x00\x03foo\x03bar", "latin1"));
+    let closed = false;
+    const transport = {
+      read: async () => null,
+      write: (bytes) => void frames.push(bytes),
+      closeWrite: () => void (closed = true),
+    };
+    const { done } = await invoke(transport, "foo", "bar", types, args, []);
+    await done;
+    assert.ok(closed);
+    assert.deepEqual(Buffer.concat(frames), Buffer.from(expected, "latin1"));
+  }
 });
 
 test("writing empty data fails once aborted", async () => {
   const mux = new Mux({ read: async () => null, write: () => {} });
   mux.abort(new Error("boom"));
   await assert.rejects(mux.outgoing([]).write(new Uint8Array(0)), /boom/);
-});
-
-test("a future without a payload closes its sub-stream", async () => {
-  const frames = [];
-  const transport = { read: async () => null, write: (bytes) => void frames.push(bytes) };
-  const { done } = await invoke(transport, "foo", "bar", [t.future()], [Promise.resolve()], []);
-  await done;
-  assert.deepEqual(
-    Buffer.concat(frames),
-    Buffer.from("\x00\x03foo\x03bar\x00\x01\x00\x01\x00\x00", "latin1"),
-  );
 });
 
 /** A transport fed by the frames a peer writes, until `inbound` is closed. */
@@ -665,43 +445,21 @@ function feed() {
   return { inbound, peer, transport, aborted };
 }
 
-test(
-  "a future without a payload resolves once its sub-stream is closed",
-  { timeout: 1000 },
-  async () => {
+test("a future without a payload resolves at the end of the transport", async () => {
+  for (const data of [false, true]) {
     const { inbound, peer, transport } = feed();
     await peer.outgoing([]).write(Uint8Array.of(0));
-    const ty = [t.future()];
-    const { results, done } = await invoke(transport, STREAMS, "get", [], [], ty);
-    let resolved = false;
-    results[0].then(() => (resolved = true));
-    await tick();
-    await tick();
-    assert.equal(resolved, false);
-    await peer.outgoing([0]).close();
-    assert.equal(await results[0], undefined);
+    if (data) await peer.outgoing([0]).write(Uint8Array.of(0));
     inbound.close();
-    await done;
-  },
-);
-
-test("a future without a payload resolves once the transport ends", { timeout: 1000 }, async () => {
-  const { inbound, peer, transport } = feed();
-  await peer.outgoing([]).write(Uint8Array.of(0));
-  inbound.close();
-  const { results, done } = await invoke(transport, STREAMS, "get", [], [], [t.future()]);
-  assert.equal(await results[0], undefined);
-  await done;
-});
-
-test("a future without a payload fails if data arrives on it", { timeout: 1000 }, async () => {
-  const { inbound, peer, transport } = feed();
-  await peer.outgoing([]).write(Uint8Array.of(0));
-  await peer.outgoing([0]).write(Uint8Array.of(0));
-  inbound.close();
-  const { results, done } = await invoke(transport, STREAMS, "get", [], [], [t.future()]);
-  await assert.rejects(results[0], /unexpected data for sub-stream \[0\]/);
-  await assert.rejects(done, /unexpected data for sub-stream \[0\]/);
+    const { results, done } = await invoke(transport, STREAMS, "get", [], [], [t.future()]);
+    if (data) {
+      await assert.rejects(results[0], /unexpected data for sub-stream \[0\]/);
+      await assert.rejects(done, /unexpected data for sub-stream \[0\]/);
+    } else {
+      assert.equal(await results[0], undefined);
+      await done;
+    }
+  }
 });
 
 test("an empty frame for a finished sub-stream is accepted", { timeout: 1000 }, async () => {
@@ -724,92 +482,22 @@ test("an empty frame for a finished sub-stream is accepted", { timeout: 1000 }, 
 });
 
 test(
-  "a second empty frame for a sub-stream not yet declared fails it",
-  { timeout: 1000 },
-  async () => {
-    const { inbound, peer, transport, aborted } = feed();
-    await peer.outgoing([]).write(Uint8Array.of(0));
-    await peer.outgoing([0, 0]).close();
-    await peer.outgoing([0, 0]).close();
-    await peer.outgoing([0]).write(Uint8Array.of(1, 1, 0));
-    await peer.outgoing([0]).write(Uint8Array.of(0));
-    inbound.close();
-    const ty = [t.stream(t.option(t.future()))];
-    await invoke(transport, STREAMS, "get", [], [], ty);
-    assert.match(String(await aborted), /unexpected data for sub-stream \[0,0\]/);
-  },
-);
-
-test(
-  "data after an empty frame for a sub-stream not yet declared fails it",
-  { timeout: 1000 },
-  async () => {
-    const { inbound, peer, transport, aborted } = feed();
-    await peer.outgoing([]).write(Uint8Array.of(0));
-    await peer.outgoing([0, 0]).close();
-    await peer.outgoing([0, 0]).write(Uint8Array.of(7));
-    await peer.outgoing([0]).write(Uint8Array.of(1, 1, 0));
-    await peer.outgoing([0]).write(Uint8Array.of(0));
-    inbound.close();
-    const ty = [t.stream(t.option(t.future(t.u8)))];
-    await invoke(transport, STREAMS, "get", [], [], ty);
-    assert.match(String(await aborted), /unexpected data for sub-stream \[0,0\]/);
-  },
-);
-
-test(
-  "an empty frame for a sub-stream the reply does not carry fails it after a sibling's",
-  { timeout: 1000 },
-  async () => {
-    const { inbound, peer, transport, aborted } = feed();
-    await peer.outgoing([]).write(Uint8Array.of(0, 0));
-    await peer.outgoing([1]).write(Uint8Array.of(7));
-    const ty = [t.option(t.stream(t.u8)), t.future(t.u8)];
-    const { results } = await invoke(transport, STREAMS, "get", [], [], ty);
-    assert.equal(await results[1], 7);
-    await peer.outgoing([0]).close();
-    inbound.close();
-    assert.match(String(await aborted), /unexpected data for sub-stream \[0\]/);
-  },
-);
-
-test(
-  "an empty frame arriving before its sub-stream finishes is accepted",
+  "an empty frame arriving before its sub-stream is declared closes it",
   { timeout: 1000 },
   async () => {
     const frames = [];
     const peer = new Mux({ read: async () => null, write: (bytes) => void frames.push(bytes) });
     await peer.outgoing([]).write(Uint8Array.of(0));
     await peer.outgoing([0, 0]).close();
-    await peer.outgoing([0]).write(Uint8Array.of(1, 0));
     await peer.outgoing([0]).write(Uint8Array.of(0));
     const transport = { read: async () => frames.shift() ?? null, write: () => {} };
-    const ty = [t.stream(t.option(t.future(t.u8)))];
+    const ty = [t.future(t.tuple(t.future()))];
     const { results, done } = await invoke(transport, STREAMS, "get", [], [], ty);
-    assert.deepEqual(await collect(results[0]), [undefined]);
+    const [inner] = await results[0];
+    assert.equal(await inner, undefined);
     await done;
   },
 );
-
-test(
-  "data for a stream after its end fails it, even once cancelled",
-  { timeout: 1000 },
-  async () => {
-    const { inbound, peer, transport, aborted } = feed();
-    await peer.outgoing([]).write(Uint8Array.of(0));
-    await peer.outgoing([0]).write(Uint8Array.of(1, 0));
-    await peer.outgoing([0]).write(Uint8Array.of(0));
-    const ty = [t.stream(t.future(t.u8))];
-    const { results } = await invoke(transport, STREAMS, "get", [], [], ty);
-    while (!results[0].closed) await tick();
-    results[0].cancel();
-    await peer.outgoing([0, 0]).write(Uint8Array.of(5));
-    await peer.outgoing([0]).write(Uint8Array.of(1, 0));
-    inbound.close();
-    assert.match(String(await aborted), /unexpected data for sub-stream \[0\]/);
-  },
-);
-
 test("frame data beyond the end of a sub-stream fails it", { timeout: 1000 }, async () => {
   for (const [ty, value, extra, split] of [
     [t.future(t.u8), [5], 40, true],
@@ -845,17 +533,18 @@ test(
     const peer = new Mux({ read: async () => null, write: (bytes) => void frames.push(bytes) });
     await peer.outgoing([]).write(Uint8Array.of(0));
     await peer.outgoing([0, 0]).write(Uint8Array.of(1, 0));
-    await peer.outgoing([0]).write(Uint8Array.of(1, 0));
+    await peer.outgoing([0]).write(Uint8Array.of(0));
     for (let i = 0; i < 1000; i++) await peer.outgoing([0, 0]).write(Uint8Array.of(1, i & 0xff));
     let reads = 0;
     const transport = { read: async () => (reads++, frames.shift() ?? null), write: () => {} };
-    const { results } = await invoke(transport, STREAMS, "get", [], [], [t.stream(t.stream(t.u8))]);
-    await results[0][Symbol.asyncIterator]().next();
+    const ty = [t.future(t.tuple(t.stream(t.u8)))];
+    const { results } = await invoke(transport, STREAMS, "get", [], [], ty);
+    const [inner] = await results[0];
+    await inner[Symbol.asyncIterator]().next();
     await new Promise((resolve) => setTimeout(resolve, 50));
     assert.ok(reads < 500, `read ${reads} frames`);
   },
 );
-
 test("data for the root after the reply fails it", { timeout: 1000 }, async () => {
   const frames = [];
   const peer = new Mux({ read: async () => null, write: (bytes) => void frames.push(bytes) });
@@ -869,37 +558,24 @@ test("data for the root after the reply fails it", { timeout: 1000 }, async () =
   await assert.rejects(done, /unexpected data for sub-stream \[\]/);
 });
 
-test("cancelling an inline stream discards the sub-streams nested in it", () => {
-  const mux = new Mux({ read: () => new Promise(() => {}), write: () => {} });
-  mux.seal([], [{ path: [0], nested: true }]);
-  mux.seal([0], [{ path: [0], nested: false }]);
-  mux.finish([0]);
-  const nested = mux.incoming([0, 0]);
-  mux.discard([0]);
-  return assert.rejects(nested.u8(), /sub-stream discarded/);
-});
-
-test("a stream truncated mid-frame fails", { timeout: 1000 }, async () => {
-  const frames = [];
-  const peer = new Mux({ read: async () => null, write: (bytes) => void frames.push(bytes) });
-  await peer.outgoing([]).write(Uint8Array.of(0));
-  frames.push(Uint8Array.of(1, 0, 5, 1, 6));
-  const transport = { read: async () => frames.shift() ?? null, write: () => {} };
-  const { results, done } = await invoke(transport, STREAMS, "get", [], [], [t.stream(t.u8)]);
-  await assert.rejects(collect(results[0]), /unexpected end of input/);
-  await assert.rejects(done, /unexpected end of input/);
-});
-
-test("a stream truncated mid-length fails", { timeout: 1000 }, async () => {
-  const frames = [];
-  const peer = new Mux({ read: async () => null, write: (bytes) => void frames.push(bytes) });
-  await peer.outgoing([]).write(Uint8Array.of(0));
-  await peer.outgoing([0]).write(Uint8Array.of(1, 5));
-  await peer.outgoing([0]).write(Uint8Array.of(0x80));
-  const transport = { read: async () => frames.shift() ?? null, write: () => {} };
-  const { results, done } = await invoke(transport, STREAMS, "get", [], [], [t.stream(t.u8)]);
-  await assert.rejects(collect(results[0]), /unexpected end of input/);
-  await assert.rejects(done, /unexpected end of input/);
+test("a truncated stream fails", { timeout: 1000 }, async () => {
+  for (const send of [
+    (peer, frames) => frames.push(Uint8Array.of(1, 0, 5, 1, 6)),
+    (peer) => peer.outgoing([0]).write(Uint8Array.of(1, 5, 0x80)),
+    async (peer) => {
+      await peer.outgoing([0]).write(Uint8Array.of(1, 7));
+      await peer.outgoing([0]).close();
+    },
+  ]) {
+    const frames = [];
+    const peer = new Mux({ read: async () => null, write: (bytes) => void frames.push(bytes) });
+    await peer.outgoing([]).write(Uint8Array.of(0));
+    await send(peer, frames);
+    const transport = { read: async () => frames.shift() ?? null, write: () => {} };
+    const { results, done } = await invoke(transport, STREAMS, "get", [], [], [t.stream(t.u8)]);
+    await assert.rejects(collect(results[0]), /unexpected end of input/);
+    await assert.rejects(done, /unexpected end of input/);
+  }
 });
 
 const futures = "wrpc-test:async/futures";
@@ -983,63 +659,85 @@ test("future<stream<u8>> resolves to a byte stream", async () => {
   await Promise.all([done, serving]);
 });
 
-test("stream<future<T>> yields chunks of promises", async () => {
-  const ty = t.stream(t.future(t.string));
-  const { result, done, serving } = await echo(ty, [["a", "b"], ["c"]]);
-  const out = [];
-  for await (const chunk of result) out.push(...(await Promise.all(chunk)));
-  assert.deepEqual(out, ["a", "b", "c"]);
-  await Promise.all([done, serving]);
-});
+for (const [kind, ty, chunk] of [
+  ["list", t.list(t.future(t.u8)), Uint8Array.of(1, 0)],
+  ["stream", t.stream(t.future(t.u8)), Uint8Array.of(0)],
+]) {
+  test(`pending values in ${kind} elements are not supported`, { timeout: 1000 }, async () => {
+    const { inbound, peer, transport, aborted } = feed();
+    await peer.outgoing([]).write(chunk);
+    await peer.outgoing([0]).write(Uint8Array.of(1, 0));
+    inbound.close();
+    const invoked = invoke(transport, STREAMS, "get", [], [], [ty]);
+    if (kind === "stream")
+      await assert.rejects(collect((await invoked).results[0]), /not supported/);
+    else await assert.rejects(invoked, /not supported/);
+    assert.match(String(await aborted), /not supported/);
+  });
+}
 
-test("stream<stream<u8>> yields chunks of byte streams", async () => {
-  const ty = t.stream(t.stream(t.u8));
-  // one outer chunk carrying two inner byte streams
-  const { result, done, serving } = await echo(ty, [
-    [new Uint8Array([1, 2]), new Uint8Array([3, 4])],
-  ]);
-  const out = [];
-  for await (const chunk of result) {
-    for (const inner of chunk) out.push(await collect(inner));
-  }
-  assert.deepEqual(out, [
-    [1, 2],
-    [3, 4],
-  ]);
-  await Promise.all([done, serving]);
-});
-
-test("an empty frame closes its sub-stream", { timeout: 1000 }, async () => {
-  const { peer, transport } = feed();
-  await peer.outgoing([]).write(Uint8Array.of(0));
-  await peer.outgoing([0]).write(Uint8Array.of(1, 7, 0));
-  await peer.outgoing([0]).close();
-  const { results } = await invoke(transport, STREAMS, "get", [], [], [t.stream(t.u8)]);
-  assert.deepEqual(await collect(results[0]), [7]);
-});
-
-test("a stream closed before its terminator fails", { timeout: 1000 }, async () => {
+test("data nested in list elements of a future fails it", { timeout: 1000 }, async () => {
   const { peer, transport, aborted } = feed();
   await peer.outgoing([]).write(Uint8Array.of(0));
-  await peer.outgoing([0]).write(Uint8Array.of(1, 7));
-  await peer.outgoing([0]).close();
-  const { results } = await invoke(transport, STREAMS, "get", [], [], [t.stream(t.u8)]);
-  await assert.rejects(collect(results[0]), /unexpected end of input/);
-  assert.match(String(await aborted), /unexpected end of input/);
+  await peer.outgoing([0, 0]).write(Uint8Array.of(7));
+  await invoke(transport, STREAMS, "get", [], [], [t.future(t.list(t.future(t.u8)))]);
+  assert.match(String(await aborted), /unexpected data for sub-stream \[0,0\]/);
+});
+
+test("ready values in stream elements are received", { timeout: 1000 }, async () => {
+  const { inbound, peer, transport } = feed();
+  await peer.outgoing([]).write(Uint8Array.of(0));
+  await peer.outgoing([0]).write(Uint8Array.of(2, 1, 5, 1, 6));
+  await peer.outgoing([0]).write(Uint8Array.of(0));
+  inbound.close();
+  const ty = [t.stream(t.future(t.u8))];
+  const { results, done } = await invoke(transport, STREAMS, "get", [], [], ty);
+  assert.deepEqual(await Promise.all(await collect(results[0])), [5, 6]);
+  await done;
 });
 
 for (const [name, frame] of [
-  ["data", (out) => out.write(Uint8Array.of(0))],
+  ["data", (out) => out.write(Uint8Array.of(7))],
   ["an empty frame", (out) => out.close()],
 ]) {
-  test(`${name} for a closed sub-stream fails it`, { timeout: 1000 }, async () => {
-    const { inbound, peer, transport, aborted } = feed();
-    await peer.outgoing([]).write(Uint8Array.of(0));
-    await peer.outgoing([0]).write(Uint8Array.of(1, 7));
-    await peer.outgoing([0]).close();
-    await frame(peer.outgoing([0]));
-    inbound.close();
-    await invoke(transport, STREAMS, "get", [], [], [t.stream(t.u8)]);
-    assert.match(String(await aborted), /unexpected data for sub-stream \[0\]/);
-  });
+  test(
+    `${name} for a sub-stream the reply does not carry fails it`,
+    { timeout: 1000 },
+    async () => {
+      const { inbound, peer, transport, aborted } = feed();
+      await peer.outgoing([]).write(Uint8Array.of(0, 0));
+      await frame(peer.outgoing([0]));
+      await peer.outgoing([1]).write(Uint8Array.of(1, 7, 0));
+      inbound.close();
+      const ty = [t.option(t.stream(t.u8)), t.stream(t.u8)];
+      const { results, done } = await invoke(transport, STREAMS, "get", [], [], ty);
+      await assert.rejects(collect(results[1]), /unexpected data for sub-stream \[0\]/);
+      await assert.rejects(done, /unexpected data for sub-stream \[0\]/);
+      assert.match(String(await aborted), /unexpected data/);
+    },
+  );
+
+  for (const [declared, path, ty, init] of [
+    [true, [0], t.stream(t.u8), [[[0], Uint8Array.of(1, 7, 0)]]],
+    [false, [0, 0], t.future(t.tuple(t.future(t.u8))), []],
+  ]) {
+    test(
+      `${name} for a closed sub-stream ${declared ? "" : "not yet declared "}fails it`,
+      { timeout: 1000 },
+      async () => {
+        const { inbound, peer, transport, aborted } = feed();
+        await peer.outgoing([]).write(Uint8Array.of(0));
+        for (const [p, bytes] of init) await peer.outgoing(p).write(bytes);
+        await peer.outgoing(path).close();
+        await frame(peer.outgoing(path));
+        if (!declared) await peer.outgoing([0]).write(Uint8Array.of(0));
+        inbound.close();
+        await invoke(transport, STREAMS, "get", [], [], [ty]);
+        assert.match(
+          String(await aborted),
+          new RegExp(`unexpected data for sub-stream \\[${path}\\]`),
+        );
+      },
+    );
+  }
 }
