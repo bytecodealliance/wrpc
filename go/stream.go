@@ -295,6 +295,7 @@ func writeStreamChunks[T any](ctx context.Context, v <-chan []T, w IndexWriter, 
 	close(bufs)
 	if err != nil {
 		go drain(v)
+		<-writeErr
 		return err
 	}
 	return <-writeErr
