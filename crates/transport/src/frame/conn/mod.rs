@@ -302,6 +302,36 @@ impl Subscriptions {
         Some(self.subscribe(path, &pattern).rx.take())
     }
 
+    /// Removes the elements preceding the ones in `path`, which were subscribed to, but not
+    /// indexed, returning `true` if any of them held data, which was not processed
+    #[instrument(level = "trace", skip(self), ret(level = "trace"))]
+    fn skip(&mut self, path: &[usize]) -> bool {
+        let Some((.., pattern)) = self.resolve(path) else {
+            return false;
+        };
+        let mut pending = false;
+        for (k, ..) in pattern.iter().enumerate().filter(|(.., p)| p.is_none()) {
+            let next = self.next(&path[..k]);
+            if next >= path[k] {
+                continue;
+            }
+            let start = [&path[..k], &[next]].concat();
+            let skipped: Vec<_> = self
+                .subs
+                .range::<[usize], _>((
+                    Bound::Included(start.as_slice()),
+                    Bound::Excluded(&path[..=k]),
+                ))
+                .filter(|(p, sub)| p.len() == k + 1 && sub.handles == 0)
+                .map(|(p, ..)| p.clone())
+                .collect();
+            for p in skipped {
+                pending |= self.remove(&p);
+            }
+        }
+        pending
+    }
+
     /// Accounts for a dropped handle of `path`, removing the elements without handles,
     /// returning `true` if any of them held data, which was not processed
     #[instrument(level = "trace", skip(self), ret(level = "trace"))]
@@ -524,6 +554,9 @@ impl Incoming {
             .index
             .lock()
             .map_err(|err| std::io::Error::other(err.to_string()))?;
+        if index.skip(&path) {
+            self.mark_unprocessed();
+        }
         trace!(?path, "taking index subscription");
         let rx = index.take_rx(&path).ok_or_else(|| error_not_found(&path))?;
         Ok(Self {
@@ -1130,8 +1163,10 @@ mod tests {
     #[test_log::test(tokio::test)]
     async fn incoming_wildcard_elements() {
         let (mut tx, rx, done_rx) = incoming_paths(true, [[None]]);
+        tx.write_all(&FRAME).await.unwrap();
         tx.write_all(&[0x01, 0x03, 0x01, 0x2b]).await.unwrap();
         tx.write_all(&[0x01, 0x01, 0x01, 0x2a]).await.unwrap();
+        tokio::task::yield_now().await;
         let mut buf = [0; 1];
         rx.index(&[1]).unwrap().read_exact(&mut buf).await.unwrap();
         assert_eq!(buf, [0x2a]);
@@ -1144,7 +1179,8 @@ mod tests {
         assert_eq!(err.kind(), ErrorKind::NotFound);
         drop(sub);
         tx.write_all(&[0x01, 0x03, 0x00]).await.unwrap();
-        tx.write_all(&[0x01, 0x03, 0x01, 0x2c]).await.unwrap();
+        tx.write_all(&[0x01, 0x00, 0x00]).await.unwrap();
+        tx.write_all(&FRAME).await.unwrap();
         assert_eq!(failed(done_rx).await, ErrorKind::BrokenPipe);
         let err = tokio::time::timeout(
             Duration::from_secs(5),
