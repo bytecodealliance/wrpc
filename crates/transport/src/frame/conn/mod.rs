@@ -1,17 +1,19 @@
 use core::fmt::{Debug, Display};
 use core::future::poll_fn;
 use core::mem;
+use core::ops::Bound;
 use core::pin::{Pin, pin};
 use core::sync::atomic::{AtomicBool, Ordering};
 use core::task::{Context, Poll, ready};
 
+use std::collections::BTreeMap;
 use std::sync::{Arc, PoisonError};
 
 use bytes::{Buf as _, Bytes, BytesMut};
 use pin_project_lite::pin_project;
 use tokio::io::{AsyncBufRead, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt as _};
 use tokio::select;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{Notify, OwnedSemaphorePermit, Semaphore, mpsc, oneshot};
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::codec::Encoder;
 use tokio_util::io::StreamReader;
@@ -101,295 +103,288 @@ enum TxSlot {
     Closed,
 }
 
-/// Index trie containing async stream subscriptions
-#[derive(Debug, Default)]
-enum IndexTrie {
-    #[default]
-    Empty,
-    Leaf {
-        tx: Option<TxSlot>,
-        rx: Option<mpsc::Receiver<std::io::Result<Bytes>>>,
-    },
-    IndexNode {
-        tx: Option<TxSlot>,
-        rx: Option<mpsc::Receiver<std::io::Result<Bytes>>>,
-        nested: Vec<Option<IndexTrie>>,
-    },
-    // TODO: Add partially-indexed `WildcardIndexNode`
-    WildcardNode {
-        tx: Option<TxSlot>,
-        rx: Option<mpsc::Receiver<std::io::Result<Bytes>>>,
-        nested: Option<Box<IndexTrie>>,
-    },
+/// Maximum number of elements, i.e. positions matched by a wildcard, which data is received for
+/// before they are indexed
+const MAX_UNCLAIMED_ELEMENTS: usize = 64;
+
+/// Declared path or a prefix of one
+#[derive(Clone, Copy, Debug, Default)]
+struct Pattern {
+    /// Whether the path is declared
+    declared: bool,
+    /// Whether the positions nested in the path are matched by a wildcard, if there are any
+    wildcard: Option<bool>,
 }
 
-impl<'a>
-    From<(
-        &'a [Option<usize>],
-        mpsc::Sender<std::io::Result<Bytes>>,
-        Option<mpsc::Receiver<std::io::Result<Bytes>>>,
-    )> for IndexTrie
-{
-    fn from(
-        (path, tx, rx): (
-            &'a [Option<usize>],
-            mpsc::Sender<std::io::Result<Bytes>>,
-            Option<mpsc::Receiver<std::io::Result<Bytes>>>,
-        ),
-    ) -> Self {
-        match path {
-            [] => Self::Leaf {
-                tx: Some(TxSlot::Open(tx)),
-                rx,
-            },
-            [None, path @ ..] => Self::WildcardNode {
-                tx: None,
-                rx: None,
-                nested: Some(Box::new(Self::from((path, tx, rx)))),
-            },
-            [Some(i), path @ ..] => Self::IndexNode {
-                tx: None,
-                rx: None,
-                nested: {
-                    let n = i.saturating_add(1);
-                    let mut nested = Vec::with_capacity(n);
-                    nested.resize_with(n, Option::default);
-                    nested[*i] = Some(Self::from((path, tx, rx)));
-                    nested
-                },
-            },
+/// Subscriptions of the declared async paths and the root.
+///
+/// Elements, i.e. positions matched by a wildcard, are subscribed to once indexed or once data
+/// is received for them, and removed once all handles within them are dropped. Indexing an
+/// element releases the preceding ones, which were not subscribed to. At most
+/// [`MAX_UNCLAIMED_ELEMENTS`] elements are subscribed to before being indexed, after which
+/// ingress waits for them to be indexed.
+#[derive(Debug)]
+struct Subscriptions {
+    /// Declared paths and their prefixes
+    patterns: BTreeMap<Box<[Option<usize>]>, Pattern>,
+    /// Subscriptions keyed by path
+    subs: BTreeMap<Box<[usize]>, Subscription>,
+    /// Lowest index of an element, which is not released, keyed by the path containing it
+    next: BTreeMap<Box<[usize]>, usize>,
+    /// Permits of elements subscribed to before being indexed
+    unclaimed: Arc<Semaphore>,
+    /// Notified once elements are indexed
+    indexed: Arc<Notify>,
+    /// Whether all senders are closed
+    closed: bool,
+}
+
+#[derive(Debug, Default)]
+struct Subscription {
+    tx: Option<TxSlot>,
+    rx: Option<mpsc::Receiver<std::io::Result<Bytes>>>,
+    /// Number of handles within an element
+    handles: usize,
+    /// Permit of an element subscribed to before being indexed
+    permit: Option<OwnedSemaphorePermit>,
+}
+
+impl Subscription {
+    /// Creates a subscription, which receives data if the path is `declared`
+    fn new(declared: bool) -> Self {
+        if !declared {
+            return Self::default();
+        }
+        let (tx, rx) = mpsc::channel(16);
+        Self {
+            tx: Some(TxSlot::Open(tx)),
+            rx: Some(rx),
+            ..Self::default()
         }
     }
 }
 
-impl<'a>
-    From<(
-        &'a [Option<usize>],
-        mpsc::Sender<std::io::Result<Bytes>>,
-        mpsc::Receiver<std::io::Result<Bytes>>,
-    )> for IndexTrie
-{
-    fn from(
-        (path, tx, rx): (
-            &'a [Option<usize>],
-            mpsc::Sender<std::io::Result<Bytes>>,
-            mpsc::Receiver<std::io::Result<Bytes>>,
-        ),
-    ) -> Self {
-        Self::from((path, tx, Some(rx)))
-    }
+/// Destination of a received frame
+enum Route<'a> {
+    /// Sender slot of the subscription
+    Tx(&'a mut TxSlot),
+    /// The frame is for an element, which was released
+    Released,
+    /// The frame is for an element, which can only be subscribed to using a permit
+    Unclaimed,
 }
 
-impl<'a> From<(&'a [Option<usize>], mpsc::Sender<std::io::Result<Bytes>>)> for IndexTrie {
-    fn from((path, tx): (&'a [Option<usize>], mpsc::Sender<std::io::Result<Bytes>>)) -> Self {
-        Self::from((path, tx, None))
-    }
-}
-
-impl IndexTrie {
-    /// Builds a trie of `paths`, which sends frames received on the root path to `tx`
+impl Subscriptions {
+    /// Declares `paths`, with the data of the root sent to `tx`, ignoring the paths, which
+    /// declare both a wildcard and an index at the same position as a preceding one
     fn new<P: AsRef<[Option<usize>]>>(
         paths: impl IntoIterator<Item = P>,
         tx: mpsc::Sender<std::io::Result<Bytes>>,
-    ) -> std::io::Result<Self> {
-        let mut index = Self::Empty;
-        for path in paths {
+    ) -> Self {
+        let mut subs = Self {
+            patterns: BTreeMap::from([(
+                Box::default(),
+                Pattern {
+                    declared: true,
+                    wildcard: None,
+                },
+            )]),
+            subs: BTreeMap::from([(
+                Box::default(),
+                Subscription {
+                    tx: Some(TxSlot::Open(tx)),
+                    ..Subscription::default()
+                },
+            )]),
+            next: BTreeMap::default(),
+            unclaimed: Arc::new(Semaphore::new(MAX_UNCLAIMED_ELEMENTS)),
+            indexed: Arc::default(),
+            closed: false,
+        };
+        'paths: for path in paths {
             let path = path.as_ref();
             if path.is_empty() {
                 continue;
             }
-            let (tx, rx) = mpsc::channel(16);
-            if !index.insert(path, tx, Some(rx)) {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidInput,
-                    format!("conflicting subscription path {path:?}"),
-                ));
-            }
-        }
-        index.insert(&[], tx, None);
-        Ok(index)
-    }
-
-    /// Calls `f` with the sender and receiver of each node in the trie
-    fn for_each(
-        &mut self,
-        f: &mut impl FnMut(&mut Option<TxSlot>, &mut Option<mpsc::Receiver<std::io::Result<Bytes>>>),
-    ) {
-        match self {
-            Self::Empty => {}
-            Self::Leaf { tx, rx } => f(tx, rx),
-            Self::IndexNode { tx, rx, nested } => {
-                f(tx, rx);
-                for nested in nested.iter_mut().flatten() {
-                    nested.for_each(f);
+            for (k, i) in path.iter().enumerate() {
+                let parent = subs.patterns.entry(Box::from(&path[..k])).or_default();
+                if *parent.wildcard.get_or_insert(i.is_none()) != i.is_none() {
+                    continue 'paths;
                 }
             }
-            Self::WildcardNode { tx, rx, nested } => {
-                f(tx, rx);
-                if let Some(nested) = nested {
-                    nested.for_each(f);
-                }
+            subs.patterns.entry(Box::from(path)).or_default().declared = true;
+            if let Some(path) = path.iter().copied().collect() {
+                subs.subs.insert(path, Subscription::new(true));
             }
         }
+        subs
     }
 
-    /// Closes all receivers in the trie, returning `true` if any of them held data
+    /// Resolves `path` to the declared path or prefix matching it
+    fn resolve(&self, path: &[usize]) -> Option<(Pattern, Vec<Option<usize>>)> {
+        let mut pattern = Vec::with_capacity(path.len());
+        let mut node = self.patterns.get::<[_]>(&[])?;
+        for i in path {
+            pattern.push(if node.wildcard? { None } else { Some(*i) });
+            node = self.patterns.get(pattern.as_slice())?;
+        }
+        Some((*node, pattern))
+    }
+
+    /// Returns the lowest index of an element in `path`, which is not released
+    fn next(&self, path: &[usize]) -> usize {
+        self.next.get(path).copied().unwrap_or_default()
+    }
+
+    /// Subscribes to `path` matching `pattern`, if it is not subscribed to yet
+    fn subscribe(&mut self, path: &[usize], pattern: &[Option<usize>]) -> &mut Subscription {
+        let declared = self.patterns.get(pattern).is_some_and(|p| p.declared);
+        let closed = self.closed;
+        self.subs.entry(Box::from(path)).or_insert_with(|| {
+            let mut sub = Subscription::new(declared);
+            if closed {
+                sub.tx = None;
+            }
+            sub
+        })
+    }
+
+    /// Closes all receivers, returning `true` if any of them held data
     #[instrument(level = "trace", skip(self), ret(level = "trace"))]
     fn close_rx(&mut self) -> bool {
+        self.unclaimed.close();
         let mut pending = false;
-        self.for_each(&mut |_, rx| {
-            pending |= rx.take().is_some_and(|rx| !rx.is_empty());
-        });
+        for sub in self.subs.values_mut() {
+            pending |= sub.rx.take().is_some_and(|rx| !rx.is_empty());
+        }
         pending
     }
 
-    /// Takes the receiver, returning `None` if neither `path` nor any path nested under it
-    /// is subscribed to
+    /// Closes all open senders
+    #[instrument(level = "trace", skip(self), ret(level = "trace"))]
+    fn close_tx(&mut self) {
+        self.closed = true;
+        for sub in self.subs.values_mut() {
+            if let Some(TxSlot::Open(..)) = sub.tx {
+                sub.tx.take();
+            }
+        }
+    }
+
+    /// Takes the receiver for a new handle, returning `None` if neither `path` nor any path
+    /// nested under it is subscribed to
     #[instrument(level = "trace", skip(self), ret(level = "trace"))]
     fn take_rx(
         &mut self,
         path: &[usize],
     ) -> Option<Option<mpsc::Receiver<std::io::Result<Bytes>>>> {
-        let Some((i, path)) = path.split_first() else {
-            return match self {
-                Self::Empty => None,
-                Self::Leaf { rx, .. } => rx.take().map(Some),
-                Self::IndexNode { tx, rx, nested } => {
-                    let rx = rx.take();
-                    if nested.is_empty() && tx.is_none() {
-                        *self = Self::Empty;
-                    }
-                    Some(rx)
-                }
-                Self::WildcardNode { tx, rx, nested } => {
-                    let rx = rx.take();
-                    if nested.is_none() && tx.is_none() {
-                        *self = Self::Empty;
-                    }
-                    Some(rx)
-                }
-            };
-        };
-        match self {
-            Self::Empty | Self::Leaf { .. } | Self::WildcardNode { .. } => None,
-            Self::IndexNode { nested, .. } => nested
-                .get_mut(*i)
-                .and_then(|nested| nested.as_mut().and_then(|nested| nested.take_rx(path))),
-            // TODO: Demux the subscription
-            //Self::WildcardNode { ref mut nested, .. } => {
-            //    nested.as_mut().and_then(|nested| nested.take(path))
-            //}
+        let (Pattern { declared, wildcard }, pattern) = self.resolve(path)?;
+        for (k, ..) in pattern.iter().enumerate().filter(|(.., p)| p.is_none()) {
+            if !self.subs.contains_key(&path[..=k]) && path[k] < self.next(&path[..k]) {
+                return None;
+            }
         }
+        if declared && wildcard.is_none() && self.subs.get(path).is_some_and(|sub| sub.rx.is_none())
+        {
+            return None;
+        }
+        for (k, ..) in pattern.iter().enumerate().filter(|(.., p)| p.is_none()) {
+            let element = self.subscribe(&path[..=k], &pattern[..=k]);
+            element.handles += 1;
+            element.permit = None;
+            let next = self.next.entry(Box::from(&path[..k])).or_default();
+            *next = (*next).max(path[k].saturating_add(1));
+            self.indexed.notify_one();
+        }
+        if !declared {
+            return Some(None);
+        }
+        Some(self.subscribe(path, &pattern).rx.take())
+    }
+
+    /// Accounts for a dropped handle of `path`, removing the elements without handles,
+    /// returning `true` if any of them held data, which was not processed
+    #[instrument(level = "trace", skip(self), ret(level = "trace"))]
+    fn release(&mut self, path: &[usize]) -> bool {
+        let Some((.., pattern)) = self.resolve(path) else {
+            return false;
+        };
+        for (k, ..) in pattern.iter().enumerate().filter(|(.., p)| p.is_none()) {
+            let Some(element) = self.subs.get_mut(&path[..=k]) else {
+                return false;
+            };
+            element.handles = element.handles.saturating_sub(1);
+            if element.handles == 0 {
+                return self.remove(&path[..=k]);
+            }
+        }
+        false
+    }
+
+    /// Removes the element at `path` and everything nested in it, returning `true` if any of
+    /// the removed subscriptions held data, which was not processed
+    fn remove(&mut self, path: &[usize]) -> bool {
+        let subs: Vec<_> = self
+            .subs
+            .range::<[usize], _>((Bound::Included(path), Bound::Unbounded))
+            .map(|(p, ..)| p)
+            .take_while(|p| p.starts_with(path))
+            .cloned()
+            .collect();
+        let mut pending = false;
+        for p in subs {
+            if let Some(sub) = self.subs.remove(&p) {
+                pending |= sub.rx.is_some_and(|rx| !rx.is_empty());
+            }
+        }
+        let next: Vec<_> = self
+            .next
+            .range::<[usize], _>((Bound::Included(path), Bound::Unbounded))
+            .map(|(p, ..)| p)
+            .take_while(|p| p.starts_with(path))
+            .cloned()
+            .collect();
+        for p in next {
+            self.next.remove(&p);
+        }
+        pending
+    }
+
+    /// Routes a frame received on `path`, subscribing to the elements in it using `permit`
+    fn route(
+        &mut self,
+        path: &[usize],
+        permit: &mut Option<OwnedSemaphorePermit>,
+    ) -> std::io::Result<Route<'_>> {
+        if self.subs.get(path).is_none_or(|sub| sub.tx.is_none()) {
+            let Some((Pattern { declared: true, .. }, pattern)) = self.resolve(path) else {
+                return Err(error_not_found(path));
+            };
+            for (k, ..) in pattern.iter().enumerate().filter(|(.., p)| p.is_none()) {
+                if self.subs.contains_key(&path[..=k]) {
+                    continue;
+                }
+                if path[k] < self.next(&path[..k]) {
+                    return Ok(Route::Released);
+                }
+                let Some(permit) = permit.take() else {
+                    return Ok(Route::Unclaimed);
+                };
+                trace!(path = ?&path[..=k], "subscribing to unclaimed element");
+                self.subscribe(&path[..=k], &pattern[..=k]).permit = Some(permit);
+            }
+            self.subscribe(path, &pattern);
+        }
+        self.get_tx_mut(path)
+            .map(Route::Tx)
+            .ok_or_else(|| error_not_found(path))
     }
 
     /// Gets the sender slot of a subscription
     #[instrument(level = "trace", skip(self))]
     fn get_tx_mut(&mut self, path: &[usize]) -> Option<&mut TxSlot> {
-        let Some((i, path)) = path.split_first() else {
-            return match self {
-                Self::Empty => None,
-                Self::Leaf { tx, .. }
-                | Self::IndexNode { tx, .. }
-                | Self::WildcardNode { tx, .. } => tx.as_mut(),
-            };
-        };
-        match self {
-            Self::Empty | Self::Leaf { .. } | Self::WildcardNode { .. } => None,
-            Self::IndexNode { nested, .. } => {
-                let nested = nested.get_mut(*i)?;
-                let nested = nested.as_mut()?;
-                nested.get_tx_mut(path)
-            } // TODO: Demux the subscription
-              //Self::WildcardNode { ref mut nested, .. } => {
-              //    nested.as_mut().and_then(|nested| nested.take(path))
-              //}
-        }
-    }
-
-    /// Closes all open senders in the trie
-    #[instrument(level = "trace", skip(self), ret(level = "trace"))]
-    fn close_tx(&mut self) {
-        self.for_each(&mut |tx, _| {
-            if let Some(TxSlot::Open(..)) = tx {
-                tx.take();
-            }
-        });
-    }
-
-    /// Inserts `sender` and `receiver` under a `path` - returns `false` if it failed and `true` if it succeeded.
-    /// Tree state after `false` is returned is undefined
-    #[instrument(level = "trace", skip(self, sender, receiver), ret(level = "trace"))]
-    fn insert(
-        &mut self,
-        path: &[Option<usize>],
-        sender: mpsc::Sender<std::io::Result<Bytes>>,
-        receiver: Option<mpsc::Receiver<std::io::Result<Bytes>>>,
-    ) -> bool {
-        match self {
-            Self::Empty => {
-                *self = Self::from((path, sender, receiver));
-                true
-            }
-            Self::Leaf { .. } => {
-                let Some((i, path)) = path.split_first() else {
-                    return false;
-                };
-                let Self::Leaf { tx, rx } = mem::take(self) else {
-                    return false;
-                };
-                if let Some(i) = i {
-                    let n = i.saturating_add(1);
-                    let mut nested = Vec::with_capacity(n);
-                    nested.resize_with(n, Option::default);
-                    nested[*i] = Some(Self::from((path, sender, receiver)));
-                    *self = Self::IndexNode { tx, rx, nested };
-                } else {
-                    *self = Self::WildcardNode {
-                        tx,
-                        rx,
-                        nested: Some(Box::new(Self::from((path, sender, receiver)))),
-                    };
-                }
-                true
-            }
-            Self::IndexNode { tx, rx, nested } => match (&tx, &rx, path) {
-                (None, None, []) => {
-                    *tx = Some(TxSlot::Open(sender));
-                    *rx = receiver;
-                    true
-                }
-                (_, _, [Some(i), path @ ..]) => {
-                    let cap = i.saturating_add(1);
-                    if nested.len() < cap {
-                        nested.resize_with(cap, Option::default);
-                    }
-                    let nested = &mut nested[*i];
-                    if let Some(nested) = nested {
-                        nested.insert(path, sender, receiver)
-                    } else {
-                        *nested = Some(Self::from((path, sender, receiver)));
-                        true
-                    }
-                }
-                _ => false,
-            },
-            Self::WildcardNode { tx, rx, nested } => match (&tx, &rx, path) {
-                (None, None, []) => {
-                    *tx = Some(TxSlot::Open(sender));
-                    *rx = receiver;
-                    true
-                }
-                (_, _, [None, path @ ..]) => {
-                    if let Some(nested) = nested {
-                        nested.insert(path, sender, receiver)
-                    } else {
-                        *nested = Some(Box::new(Self::from((path, sender, receiver))));
-                        true
-                    }
-                }
-                _ => false,
-            },
-        }
+        let sub = self.subs.get_mut(path)?;
+        sub.tx.as_mut()
     }
 }
 
@@ -415,6 +410,12 @@ pin_project! {
                     this.mark_unprocessed();
                 }
             }
+            if !this.path.is_empty() {
+                let mut index = this.state.index.lock().unwrap_or_else(PoisonError::into_inner);
+                if index.release(&this.path) {
+                    this.mark_unprocessed();
+                }
+            }
         }
     }
 }
@@ -437,13 +438,9 @@ impl Incoming {
         Fut: Future<Output = ()> + Send,
     {
         let (rx_tx, rx_rx) = mpsc::channel(128);
-        let (index, conflict) = match IndexTrie::new(paths, rx_tx.clone()) {
-            Ok(index) => (index, None),
-            Err(err) => (IndexTrie::from((&[][..], rx_tx)), Some(err)),
-        };
+        let index = Subscriptions::new(paths, rx_tx);
         let state = Arc::new(IngressState {
             index: std::sync::Mutex::new(index),
-            conflict,
             err: std::sync::OnceLock::default(),
             unprocessed: AtomicBool::default(),
         });
@@ -458,7 +455,7 @@ impl Incoming {
                         if let Err(err) = &res {
                             _ = state.err.set(copy_io_error(err));
                         }
-                        trace!("shutting down index trie");
+                        trace!("shutting down subscriptions");
                         state
                             .index
                             .lock()
@@ -512,6 +509,10 @@ impl Incoming {
 
     /// Index the incoming stream using a structural `path`, returning a handle to the
     /// multiplexed sub-stream addressed by it.
+    ///
+    /// Elements, i.e. positions matched by a wildcard in the async paths, must be indexed in
+    /// order, since indexing an element releases the preceding ones, which were not indexed yet.
+    /// An element is released once all handles within it are dropped.
     #[instrument(level = "trace", skip(self), fields(path = ?self.path))]
     pub fn index(&self, path: &[usize]) -> std::io::Result<Self> {
         if path.is_empty() {
@@ -520,15 +521,12 @@ impl Incoming {
                 "path cannot be empty",
             ));
         }
-        if let Some(err) = &self.state.conflict {
-            return Err(copy_io_error(err));
-        }
         let path = if self.path.is_empty() {
             Arc::from(path)
         } else {
             Arc::from([self.path.as_ref(), path].concat())
         };
-        trace!("locking index trie");
+        trace!("locking subscriptions");
         let mut index = self
             .state
             .index
@@ -580,8 +578,7 @@ impl AsyncRead for Incoming {
 }
 
 struct IngressState {
-    index: std::sync::Mutex<IndexTrie>,
-    conflict: Option<std::io::Error>,
+    index: std::sync::Mutex<Subscriptions>,
     err: std::sync::OnceLock<std::io::Error>,
     unprocessed: AtomicBool,
 }
@@ -729,9 +726,9 @@ impl AsyncWrite for Outgoing {
 #[instrument(level = "trace", skip_all, ret(level = "trace"))]
 async fn ingress(
     mut rx: impl AsyncRead + Unpin,
-    index: &std::sync::Mutex<IndexTrie>,
+    index: &std::sync::Mutex<Subscriptions>,
 ) -> std::io::Result<()> {
-    loop {
+    'frames: loop {
         trace!("reading path length");
         let b = match rx.read_u8().await {
             Ok(b) => b,
@@ -761,26 +758,43 @@ async fn ingress(
         trace!("reading data length");
         let n = rx.read_u32_leb128().await?;
         trace!(n, "read data length");
-        let tx = {
-            trace!("locking index trie");
-            let mut trie = index
-                .lock()
-                .map_err(|err| std::io::Error::other(err.to_string()))?;
-            let tx = trie
-                .get_tx_mut(&path)
-                .ok_or_else(|| error_not_found(&path))?;
-            if n == 0 {
-                trace!(?path, "closing path");
-                if let TxSlot::Closed = mem::replace(tx, TxSlot::Closed) {
-                    return Err(error_closed(&path));
+        let mut permit = None;
+        let tx = loop {
+            let (unclaimed, indexed) = {
+                trace!("locking subscriptions");
+                let mut subs = index
+                    .lock()
+                    .map_err(|err| std::io::Error::other(err.to_string()))?;
+                match subs.route(&path, &mut permit)? {
+                    Route::Tx(tx) => {
+                        if n == 0 {
+                            trace!(?path, "closing path");
+                            if let TxSlot::Closed = mem::replace(tx, TxSlot::Closed) {
+                                return Err(error_closed(&path));
+                            }
+                            continue 'frames;
+                        }
+                        let TxSlot::Open(tx) = tx else {
+                            return Err(error_closed(&path));
+                        };
+                        break tx.clone();
+                    }
+                    Route::Released if n == 0 => continue 'frames,
+                    Route::Released => return Err(error_receiver_closed()),
+                    Route::Unclaimed => (Arc::clone(&subs.unclaimed), Arc::clone(&subs.indexed)),
                 }
-                continue;
-            }
-            let TxSlot::Open(tx) = tx else {
-                return Err(error_closed(&path));
             };
-            tx.clone()
+            trace!(?path, "waiting for elements to be indexed");
+            select! {
+                res = unclaimed.acquire_owned() => match res {
+                    Ok(p) => permit = Some(p),
+                    Err(..) if n == 0 => continue 'frames,
+                    Err(..) => return Err(error_receiver_closed()),
+                },
+                () = indexed.notified() => {}
+            }
         };
+        drop(permit);
         let mut data = (&mut rx).take(n.into());
         while data.limit() > 0 {
             let k = usize::try_from(data.limit())
@@ -801,10 +815,10 @@ async fn ingress(
     }
 }
 
-/// Closes all receivers in the index trie once all [Incoming] handles were dropped,
+/// Closes all receivers of the subscriptions once all [Incoming] handles were dropped,
 /// failing if any of them or any of the dropped handles held data, which was not processed
 fn close_rx(state: &IngressState) -> std::io::Result<()> {
-    trace!("all handles dropped, closing index trie receivers");
+    trace!("all handles dropped, closing subscription receivers");
     let mut index = state.index.lock().unwrap_or_else(PoisonError::into_inner);
     if index.close_rx() || state.unprocessed.load(Ordering::Relaxed) {
         return Err(error_unprocessed());
@@ -909,6 +923,7 @@ mod tests {
 
     use std::io::ErrorKind;
 
+    use futures::FutureExt as _;
     use tokio::io::{BufReader, DuplexStream};
 
     use super::*;
@@ -922,9 +937,20 @@ mod tests {
         Incoming,
         oneshot::Receiver<std::io::Result<()>>,
     ) {
+        incoming_paths(drain, [[Some(0)]])
+    }
+
+    fn incoming_paths<P: AsRef<[Option<usize>]>>(
+        drain: bool,
+        paths: impl IntoIterator<Item = P>,
+    ) -> (
+        DuplexStream,
+        Incoming,
+        oneshot::Receiver<std::io::Result<()>>,
+    ) {
         let (tx, rx) = tokio::io::duplex(16);
         let (done_tx, done_rx) = oneshot::channel();
-        let rx = Incoming::new(BufReader::new(rx), [[Some(0)]], drain, |_, res| async {
+        let rx = Incoming::new(BufReader::new(rx), paths, drain, |_, res| async {
             _ = done_tx.send(res);
         });
         (tx, rx, done_rx)
@@ -968,30 +994,6 @@ mod tests {
         sub.index(&[0]).unwrap();
         let err = sub.read_to_end(&mut Vec::default()).await.unwrap_err();
         assert_eq!(err.kind(), ErrorKind::NotFound);
-    }
-
-    #[test_log::test(tokio::test)]
-    async fn incoming_rejects_conflicting_paths() {
-        let (mut tx, rx) = tokio::io::duplex(16);
-        let (done_tx, done_rx) = oneshot::channel();
-        let mut rx = Incoming::new(
-            BufReader::new(rx),
-            [vec![Some(0), None], vec![Some(0), Some(1)]],
-            false,
-            |_, res| async {
-                _ = done_tx.send(res);
-            },
-        );
-        let Err(err) = rx.index(&[0, 1]) else {
-            panic!("indexing a conflicting path should fail");
-        };
-        assert_eq!(err.kind(), ErrorKind::InvalidInput);
-        tx.write_all(&[0x00, 0x01, 0x42]).await.unwrap();
-        drop(tx);
-        let mut buf = Vec::default();
-        rx.read_to_end(&mut buf).await.unwrap();
-        assert_eq!(buf, [0x42]);
-        done_rx.await.unwrap().unwrap();
     }
 
     #[test_log::test(tokio::test)]
@@ -1107,6 +1109,33 @@ mod tests {
     }
 
     #[test_log::test(tokio::test)]
+    async fn incoming_declared_paths() {
+        let (mut tx, rx, done_rx) = incoming_paths(
+            true,
+            [
+                &[Some(0)][..],
+                &[Some(0)],
+                &[Some(0xffff_ffff)],
+                &[Some(1), None],
+                &[Some(1), Some(0)],
+            ],
+        );
+        tx.write_all(&FRAME).await.unwrap();
+        tx.write_all(&[0x01, 0xff, 0xff, 0xff, 0xff, 0x0f, 0x01, 0x2b])
+            .await
+            .unwrap();
+        tx.write_all(&[0x02, 0x01, 0x05, 0x01, 0x2c]).await.unwrap();
+        drop(tx);
+        for (path, data) in [(&[0][..], 0x2a), (&[0xffff_ffff], 0x2b), (&[1, 5], 0x2c)] {
+            let mut buf = Vec::default();
+            rx.index(path).unwrap().read_to_end(&mut buf).await.unwrap();
+            assert_eq!(buf, [data]);
+        }
+        drop(rx);
+        done(done_rx).await.unwrap();
+    }
+
+    #[test_log::test(tokio::test)]
     async fn ingress_rejects_invalid_frames() {
         for (frames, kind) in [
             ([0x02, 0x00].as_slice(), ErrorKind::UnexpectedEof),
@@ -1126,20 +1155,101 @@ mod tests {
             ),
             (&[0x01, 0x01, 0x00], ErrorKind::NotFound),
             (&[0x01, 0x01, 0x01, 0x2a], ErrorKind::NotFound),
+            (&[0x03, 0x02, 0x03, 0x00, 0x01, 0x2a], ErrorKind::NotFound),
         ] {
             let (tx, _rx) = mpsc::channel(1);
-            let index = std::sync::Mutex::new(
-                IndexTrie::new([[Some(0)].as_slice(), &[Some(1), Some(0)]], tx).unwrap(),
-            );
+            let index = std::sync::Mutex::new(Subscriptions::new(
+                [[Some(0)].as_slice(), &[Some(1), Some(0)], &[Some(2), None]],
+                tx,
+            ));
             let err = ingress(frames, &index).await.unwrap_err();
             assert_eq!(err.kind(), kind, "{frames:02x?}");
         }
     }
 
     #[test_log::test(tokio::test)]
+    async fn incoming_wildcard_elements() {
+        let (mut tx, rx, done_rx) = incoming_paths(true, [[None]]);
+        tx.write_all(&[0x01, 0x03, 0x01, 0x2b]).await.unwrap();
+        tx.write_all(&[0x01, 0x01, 0x01, 0x2a]).await.unwrap();
+        let mut buf = [0; 1];
+        rx.index(&[1]).unwrap().read_exact(&mut buf).await.unwrap();
+        assert_eq!(buf, [0x2a]);
+        let mut sub = rx.index(&[3]).unwrap();
+        sub.read_exact(&mut buf).await.unwrap();
+        assert_eq!(buf, [0x2b]);
+        let Err(err) = rx.index(&[2]) else {
+            panic!("indexing a released element should fail");
+        };
+        assert_eq!(err.kind(), ErrorKind::NotFound);
+        drop(sub);
+        tx.write_all(&[0x01, 0x03, 0x00]).await.unwrap();
+        tx.write_all(&[0x01, 0x03, 0x01, 0x2c]).await.unwrap();
+        assert_eq!(failed(done_rx).await, ErrorKind::BrokenPipe);
+        let err = tokio::time::timeout(
+            Duration::from_secs(5),
+            rx.index(&[4]).unwrap().read_to_end(&mut Vec::default()),
+        )
+        .await
+        .expect("read timed out")
+        .unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::BrokenPipe);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn incoming_nested_wildcard_elements() {
+        let (mut tx, rx, done_rx) = incoming_paths(true, [[None, Some(0), None]]);
+        let element = rx.index(&[1]).unwrap();
+        let mut buf = [0; 1];
+        for i in 0..100 {
+            tx.write_all(&[0x03, 0x01, 0x00, i, 0x01, i]).await.unwrap();
+            let mut sub = element.index(&[0, i.into()]).unwrap();
+            sub.read_exact(&mut buf).await.unwrap();
+            assert_eq!(buf, [i]);
+            drop(sub);
+            let index = rx.state.index.lock().unwrap();
+            assert_eq!(index.subs.len(), 2, "{index:?}");
+            assert_eq!(index.next.len(), 2, "{index:?}");
+        }
+        drop(element);
+        {
+            let index = rx.state.index.lock().unwrap();
+            assert_eq!(index.subs.len(), 1, "{index:?}");
+            assert_eq!(index.next.len(), 1, "{index:?}");
+        }
+        drop(rx);
+        drop(tx);
+        done(done_rx).await.unwrap();
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn ingress_waits_for_unclaimed_elements() {
+        let (tx, _rx) = mpsc::channel(1);
+        let index = std::sync::Mutex::new(Subscriptions::new([[None]], tx));
+        let frames: Vec<u8> = (1..=MAX_UNCLAIMED_ELEMENTS)
+            .chain([0, MAX_UNCLAIMED_ELEMENTS + 1])
+            .flat_map(|i| [0x01, u8::try_from(i).unwrap(), 0x01, 0x2a])
+            .collect();
+        let mut ingress = pin!(tokio::task::unconstrained(ingress(
+            frames.as_slice(),
+            &index
+        )));
+        assert!(ingress.as_mut().now_or_never().is_none());
+        let mut rx = index.lock().unwrap().take_rx(&[0]).unwrap().unwrap();
+        assert!(ingress.as_mut().now_or_never().is_none());
+        assert_eq!(rx.try_recv().unwrap().unwrap(), [0x2a].as_slice());
+        let rx = index.lock().unwrap().take_rx(&[1]).unwrap();
+        tokio::time::timeout(Duration::from_secs(5), ingress)
+            .await
+            .expect("ingress timed out")
+            .unwrap();
+        drop(rx);
+    }
+
+    #[test_log::test(tokio::test)]
     async fn ingress_chunked_data() {
         let (tx, mut rx) = mpsc::channel(4);
-        let index = std::sync::Mutex::new(IndexTrie::new::<[_; 0]>([], tx).unwrap());
+        let index = std::sync::Mutex::new(Subscriptions::new::<[_; 0]>([], tx));
         let n = DEFAULT_MAX_INITIAL_CAPACITY + 1;
         let mut frame = vec![0x00, 0x81, 0x80, 0x40];
         frame.resize(frame.len() + n, 0x42);
