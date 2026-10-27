@@ -81,6 +81,8 @@ record frame {
 
 An empty frame, i.e. a frame with empty `data`, closes its `path`: the sender MUST NOT send any more frames on that `path`, including another empty frame, and a receiver MUST treat a frame received on a closed `path` as an error. Closing a `path` does not close the paths nested in it. A sender MAY leave a `path` open, unless stated otherwise (see [Futures](#futures)).
 
+A sender MUST send the data of a pending value only after the data carrying it, for example, the data of a pending value in a stream element after the stream chunk containing that element, since a receiver MAY bound the data it buffers for a `path`, which no value it decoded carries yet.
+
 Frames do not communicate the end of transmit, i.e. that no more frames follow. Each transport MUST communicate it using its own mechanism, for example, TCP shutdown or finishing a QUIC stream. The end of transmit closes every `path`.
 
 ## Transport specifications

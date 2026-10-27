@@ -466,6 +466,7 @@ impl Sink for Outgoing {
     {
         let mut enc = T::Encoder::default();
         let mut buf = BytesMut::default();
+        let mut deferred = Vec::default();
         let mut tasks = JoinSet::default();
         let mut i = 0_u64;
         loop {
@@ -476,6 +477,9 @@ impl Sink for Outgoing {
                         buf.reserve(1);
                         buf.put_u8(0x00);
                         self.write_bytes(buf.split().freeze()).await?;
+                        for f in deferred.drain(..) {
+                            tasks.spawn(f);
+                        }
                         while let Some(res) = tasks.join_next().await {
                             trace!(?res, "receiver task finished");
                             res??;
@@ -505,8 +509,7 @@ impl Sink for Outgoing {
                             let i = usize::try_from(i)
                                 .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
                             let w = self.index(&[i])?;
-                            trace!("spawning transmit task");
-                            tasks.spawn(f(w, Vec::default()));
+                            deferred.push(f(w, Vec::default()));
                         }
                     }
                     i = end;
@@ -519,6 +522,10 @@ impl Sink for Outgoing {
                     res?;
                     trace!(?buf, "writing bytes from buffer");
                     self.send_reserved(buf.split().freeze())?;
+                    for f in deferred.drain(..) {
+                        trace!("spawning transmit task");
+                        tasks.spawn(f);
+                    }
                 }
             }
         }

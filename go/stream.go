@@ -189,7 +189,7 @@ func WriteByteStream(v <-chan []byte, w ByteWriter) (func(context.Context, Index
 		return nil, fmt.Errorf("failed to write `stream::pending` byte: %w", err)
 	}
 	return func(ctx context.Context, w IndexWriter) error {
-		return writeStreamChunks(ctx, v, w, func(chunk []byte, buf *bytes.Buffer) error {
+		return writeStreamChunks(ctx, v, w, func(chunk []byte, buf *bytes.Buffer, _ *[]func()) error {
 			slog.Debug("encoding pending byte stream chunk", "len", len(chunk))
 			if _, err := WriteByteList(chunk, buf); err != nil {
 				return fmt.Errorf("failed to encode pending byte stream chunk: %w", err)
@@ -211,7 +211,7 @@ func WriteStream[T any](v <-chan []T, w ByteWriter, f func(T, ByteWriter) (func(
 	return func(ctx context.Context, w IndexWriter) error {
 		var g errGroup
 		var total uint32
-		err := writeStreamChunks(ctx, v, w, func(chunk []T, buf *bytes.Buffer) error {
+		err := writeStreamChunks(ctx, v, w, func(chunk []T, buf *bytes.Buffer, nested *[]func()) error {
 			n := len(chunk)
 			if n > math.MaxUint32 || math.MaxUint32-uint32(n) < total {
 				return errors.New("total pending stream element count would overflow a 32-bit unsigned integer")
@@ -230,7 +230,9 @@ func WriteStream[T any](v <-chan []T, w ByteWriter, f func(T, ByteWriter) (func(
 					if err != nil {
 						return fmt.Errorf("failed to index nested stream writer: %w", err)
 					}
-					g.Go(func() error { return writeNested(ctx, w, write) })
+					*nested = append(*nested, func() {
+						g.Go(func() error { return writeNested(ctx, w, write) })
+					})
 				}
 				total++
 			}
@@ -240,23 +242,34 @@ func WriteStream[T any](v <-chan []T, w ByteWriter, f func(T, ByteWriter) (func(
 	}, nil
 }
 
-func writeStreamChunks[T any](ctx context.Context, v <-chan []T, w IndexWriter, f func([]T, *bytes.Buffer) error) error {
-	bufs := make(chan []byte)
+// streamBatch is a batch of encoded stream chunks and the functions starting
+// the writes of the values nested in their elements, called once it is written
+type streamBatch struct {
+	buf    []byte
+	nested []func()
+}
+
+func writeStreamChunks[T any](ctx context.Context, v <-chan []T, w IndexWriter, f func([]T, *bytes.Buffer, *[]func()) error) error {
+	bufs := make(chan streamBatch)
 	writeErr := make(chan error, 1)
 	go func() {
 		defer close(writeErr)
-		for buf := range bufs {
-			if err := w.WriteBytes(buf); err != nil {
+		for b := range bufs {
+			if err := w.WriteBytes(b.buf); err != nil {
 				writeErr <- fmt.Errorf("failed to write pending stream chunks: %w", err)
 				return
+			}
+			for _, f := range b.nested {
+				f()
 			}
 		}
 	}()
 	var buf bytes.Buffer
+	var nested []func()
 	err := func() error {
 		for {
 			recv := v
-			var send chan<- []byte
+			var send chan<- streamBatch
 			if buf.Len() > 0 {
 				send = bufs
 				if buf.Len() >= maxPendingStreamBatch {
@@ -269,7 +282,7 @@ func writeStreamChunks[T any](ctx context.Context, v <-chan []T, w IndexWriter, 
 					slog.Debug("writing pending stream end")
 					buf.WriteByte(0)
 					select {
-					case bufs <- buf.Bytes():
+					case bufs <- streamBatch{buf.Bytes(), nested}:
 						return nil
 					case err := <-writeErr:
 						return err
@@ -280,11 +293,12 @@ func writeStreamChunks[T any](ctx context.Context, v <-chan []T, w IndexWriter, 
 				if len(chunk) == 0 {
 					continue
 				}
-				if err := f(chunk, &buf); err != nil {
+				if err := f(chunk, &buf, &nested); err != nil {
 					return err
 				}
-			case send <- buf.Bytes():
+			case send <- streamBatch{buf.Bytes(), nested}:
 				buf = bytes.Buffer{}
+				nested = nil
 			case err := <-writeErr:
 				return err
 			case <-ctx.Done():
