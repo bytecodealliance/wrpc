@@ -213,18 +213,18 @@ func (r *FrameStreamReader) Buffered() int {
 
 func (r *FrameStreamReader) Index(path ...uint32) (IndexReadCloser, error) {
 	p := r.path + indexPath(path...)
-	readers := r.readers.Add(1)
 	r.nestMu.Lock()
 	defer r.nestMu.Unlock()
+	ch, ok := r.nest[p]
+	if !ok {
+		return nil, errors.New("unknown subscription")
+	}
+	readers := r.readers.Add(1)
 	slog.DebugContext(r.ctx, "indexing reader",
 		"readers", readers,
 		"nested", r.nest,
 		"path", p,
 	)
-	ch, ok := r.nest[p]
-	if !ok {
-		return nil, errors.New("unknown subscription")
-	}
 	return newFrameStreamReader(&FrameStreamReader{
 		ctx:     r.ctx,
 		ch:      ch,
