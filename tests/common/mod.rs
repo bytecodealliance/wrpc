@@ -1,9 +1,11 @@
+use core::pin::Pin;
 use core::time::Duration;
 
 use anyhow::{Context as _, bail, ensure};
 use bytes::Bytes;
-use futures::{StreamExt as _, stream};
+use futures::{StreamExt as _, future, stream};
 use tokio::sync::oneshot;
+use tokio::task::yield_now;
 use tokio::time::timeout;
 use tokio::{join, try_join};
 use tracing::info;
@@ -16,6 +18,13 @@ pub async fn assert_async<C: Clone>(
         world: "async-client",
         path: "tests/wit",
     });
+
+    fn pending(s: &'static str) -> Pin<Box<dyn Future<Output = String> + Send>> {
+        Box::pin(async move {
+            yield_now().await;
+            s.to_string()
+        })
+    }
 
     info!("calling `wrpc-test:integration/async.with-streams`");
     let ((a, b), io) = wrpc_test::integration::async_::with_streams(client, cx.clone())
@@ -142,43 +151,60 @@ pub async fn assert_async<C: Clone>(
         }
     )?;
 
-    info!("calling `wrpc-test:integration/async.identity-cases` with `async-case::pair`");
-    let (v_tx, v_rx) = oneshot::channel();
-    let ((o, r, v), io) = wrpc_test::integration::async_::identity_cases(
-        client,
-        cx.clone(),
-        None,
-        Err(Box::pin(async { 42 })),
-        wrpc_test::integration::async_::AsyncCase::Pair((
-            1,
-            Box::pin(async { v_rx.await.expect("sender dropped") }),
-        )),
-    )
-    .await
-    .context("failed to call `wrpc-test:integration/async.identity-cases`")?;
-    try_join!(
-        async {
-            info!("receiving results");
-            ensure!(o.is_none(), "expected `option::none`");
-            let Err(r) = r else {
-                bail!("expected `result::err`");
-            };
-            let wrpc_test::integration::async_::AsyncCase::Pair((1, v)) = v else {
-                bail!("expected `async-case::pair`");
-            };
-            v_tx.send("foo".to_string()).expect("receiver dropped");
-            ensure!(r.await == 42);
-            ensure!(v.await == "foo");
-            Ok(())
-        },
-        async {
-            if let Some(io) = io {
-                info!("performing I/O");
-                io.await.context("failed to complete async I/O")?;
+    for v in [
+        wrpc_test::integration::async_::AsyncCase::Elements(vec![pending("foo"), pending("bar")]),
+        wrpc_test::integration::async_::AsyncCase::Pair((1, pending("baz"))),
+        wrpc_test::integration::async_::AsyncCase::Chunks(Box::pin(stream::iter([
+            vec![pending("foo")],
+            vec![pending("bar"), pending("baz")],
+        ]))),
+    ] {
+        info!(?v, "calling `wrpc-test:integration/async.identity-cases`");
+        let ((o, r, v), io) = wrpc_test::integration::async_::identity_cases(
+            client,
+            cx.clone(),
+            None,
+            Err(Box::pin(async { 42 })),
+            v,
+        )
+        .await
+        .context("failed to call `wrpc-test:integration/async.identity-cases`")?;
+        try_join!(
+            async {
+                info!("receiving results");
+                ensure!(o.is_none(), "expected `option::none`");
+                let Err(r) = r else {
+                    bail!("expected `result::err`");
+                };
+                ensure!(r.await == 42);
+                match v {
+                    wrpc_test::integration::async_::AsyncCase::Elements(v) => {
+                        ensure!(future::join_all(v).await == ["foo", "bar"])
+                    }
+                    wrpc_test::integration::async_::AsyncCase::Pair((1, v)) => {
+                        ensure!(v.await == "baz")
+                    }
+                    wrpc_test::integration::async_::AsyncCase::Chunks(v) => {
+                        let v = v
+                            .flat_map(stream::iter)
+                            .then(|v| v)
+                            .collect::<Vec<_>>()
+                            .await;
+                        ensure!(v == ["foo", "bar", "baz"])
+                    }
+                    _ => bail!("unexpected `async-case`"),
+                }
+                Ok(())
+            },
+            async {
+                if let Some(io) = io {
+                    info!("performing I/O");
+                    io.await.context("failed to complete async I/O")?;
+                }
+                Ok(())
             }
-            Ok(())
-        }
-    )?;
+        )?;
+    }
 
     Ok(())
 }

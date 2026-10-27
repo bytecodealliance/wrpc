@@ -269,6 +269,8 @@ export class Chan {
     this.senders = [];
     this.closed = false;
     this.cancelled = false;
+    /** The number of values handed to the consumer. */
+    this.taken = 0;
     /** @type {unknown} */
     this.error = undefined;
   }
@@ -295,6 +297,7 @@ export class Chan {
       this.queue.push(value);
       return;
     }
+    this.taken++;
     w.resolve({ value, done: false });
   }
 
@@ -349,6 +352,7 @@ export class Chan {
   next() {
     if (this.queue.length) {
       const value = /** @type {T} */ (this.queue.shift());
+      this.taken++;
       this.senders.shift()?.();
       return Promise.resolve({ value, done: false });
     }

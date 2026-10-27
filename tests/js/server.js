@@ -14,6 +14,7 @@ const cases = [
     fut: t.future(t.string),
     elements: t.list(t.future(t.string)),
     pair: t.tuple(t.u8, t.future(t.string)),
+    chunks: t.stream(t.future(t.string)),
   }),
 ];
 /** @param {string} foo */

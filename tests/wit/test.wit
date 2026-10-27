@@ -46,6 +46,7 @@ interface %async {
         fut(future<string>),
         elements(list<future<string>>),
         pair(tuple<u8, future<string>>),
+        chunks(stream<future<string>>),
     }
 
     with-streams: func() -> tuple<stream<u8>, stream<list<string>>>;

@@ -46,7 +46,9 @@ export type Value =
 
 /**
  * A descriptor recorded by {@link decodeValue} for a pending `stream`/`future`
- * value, naming the relative sub-stream `path` and the placeholder to feed.
+ * value, naming the relative sub-stream `path` and the placeholder to feed, or
+ * for a `stream` sent `inline` as a single ready chunk whose elements carry
+ * pending values.
  */
 export type DecodeDeferred =
   | {
@@ -55,7 +57,8 @@ export type DecodeDeferred =
       ty: Type | null;
       resolve: (value: Value) => void;
     }
-  | { path: number[]; kind: "stream"; ty: Type; queue: Chan<Value[] | Uint8Array> };
+  | { path: number[]; kind: "stream"; ty: Type; queue: Chan<Value[] | Uint8Array> }
+  | { path: number[]; kind: "inline"; queue: Chan<Value[] | Uint8Array> };
 
 // ----- types.js -------------------------------------------------------------
 
@@ -134,6 +137,8 @@ export class Chan<T> implements AsyncIterable<T> {
   readonly capacity: number;
   readonly closed: boolean;
   readonly cancelled: boolean;
+  /** The number of values handed to the consumer. */
+  readonly taken: number;
   /**
    * Call `f` once the consumer cancels the channel, or now if it already has.
    * Hooks are dropped once the consumer has received the end of the channel.
@@ -234,7 +239,8 @@ export class Mux {
   incoming(path: number[]): AsyncReader;
   /**
    * Declare the sub-streams of the pending values in the value decoded at
-   * `path` (the root tuple, or a future's value), with paths relative to it.
+   * `path` (the root tuple, a future's value, or a stream's element, in
+   * order), with paths relative to it.
    */
   seal(path: number[], expected: { path: number[]; nested: boolean }[]): void;
   /**
@@ -243,8 +249,10 @@ export class Mux {
    * fails the invocation.
    */
   finish(path: number[], reader?: AsyncReader): void;
-  /** Discard the sub-stream at `path`. */
-  discard(path: number[]): void;
+  /** Discard the sub-stream at `path` and those nested in its children from index `from` (default 0) on. */
+  discard(path: number[], from?: number): void;
+  /** Call `f` once the sub-stream at `path` is discarded. */
+  ondiscard(path: number[], f: () => void): void;
   outgoing(path: number[]): Outgoing;
   abort(err?: unknown): void;
   closeWrite(): Promise<void>;

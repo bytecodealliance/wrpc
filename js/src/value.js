@@ -135,22 +135,19 @@ const COMPOSITE = new Set([
 /**
  * Decode a single stream/list chunk of `n` elements of type `elem` from `r`.
  * `stream<u8>` chunks are returned as a `Uint8Array`; all others as an array.
- * Elements carrying pending `stream`/`future` values are not supported.
  * @param {Reader} r
  * @param {Type} elem
  * @param {number} n
+ * @param {import("./index.d.ts").DecodeDeferred[]} [sink]
+ * @param {number[]} [path]
  * @returns {Generator<number, any, void>}
  */
-export function* readChunk(r, elem, n) {
+export function* readChunk(r, elem, n, sink, path) {
   if (elem.kind === "u8") return yield* atomic(r, (r) => r.take(n).slice());
   const out = [];
   if (COMPOSITE.has(elem.kind)) {
-    /** @type {import("./index.d.ts").DecodeDeferred[]} */
-    const sink = [];
     for (let i = 0; i < n; i++) {
-      out.push(yield* decodeSteps(r, elem, sink, []));
-      if (sink.length)
-        throw new Error("pending values in `list` or `stream` elements are not supported");
+      out.push(yield* decodeSteps(r, elem, sink, childPath(sink, path, i)));
     }
     return out;
   }
@@ -257,10 +254,8 @@ export function encodeValue(w, ty, v, sink, path) {
       }
       if (!Array.isArray(v)) throw new TypeError("expected an array for a `list`");
       w.varU(v.length);
-      const elems = sink && [];
-      for (const e of v) encodeValue(w, ty.elem, e, elems, []);
-      if (elems?.length)
-        throw new Error("pending values in `list` or `stream` elements are not supported");
+      for (let i = 0; i < v.length; i++)
+        encodeValue(w, ty.elem, v[i], sink, childPath(sink, path, i));
       return;
     }
     case "tuple": {
@@ -356,8 +351,8 @@ export function encodeValue(w, ty, v, sink, path) {
  * iterable of chunks for a `stream` — and a descriptor recording the relative
  * `path` and the placeholder's resolver/queue is appended to `sink`. Without a
  * `sink`, encountering one throws. A `stream` sent inline as a single ready
- * chunk is decoded either way. Pending values nested in `list` or `stream`
- * elements are not supported.
+ * chunk is decoded either way, and recorded in `sink` as `inline` if its
+ * elements carry pending values.
  *
  * @param {Reader} r
  * @param {Type} ty
@@ -383,7 +378,7 @@ export function decodeValue(r, ty, sink, path) {
 export function* decodeSteps(r, ty, sink, path) {
   switch (ty.kind) {
     case "list":
-      return yield* readChunk(r, ty.elem, yield* atomic(r, readVarU32));
+      return yield* readChunk(r, ty.elem, yield* atomic(r, readVarU32), sink, path);
     case "tuple": {
       const out = [];
       for (let i = 0; i < ty.elems.length; i++) {
@@ -435,10 +430,12 @@ export function* decodeSteps(r, ty, sink, path) {
       if (yield* atomic(r, optionStatus)) {
         // A stream sent inline as a single ready chunk.
         const n = yield* atomic(r, readVarU32);
-        const chunk = yield* readChunk(r, ty.elem, n);
+        const before = sink?.length ?? 0;
+        const chunk = yield* readChunk(r, ty.elem, n, sink, path);
         const q = new Chan();
         if (n > 0) q.push(chunk);
         q.close();
+        if (sink && sink.length > before) sink.push({ path: path ?? [], kind: "inline", queue: q });
         return q;
       }
       if (!sink) throw new Error(asyncRequired(ty.kind));
@@ -528,6 +525,8 @@ export function hasAsync(ty) {
     case "future":
     case "stream":
       return true;
+    case "list":
+      return hasAsync(ty.elem);
     case "option":
       return hasAsync(ty.some);
     case "result":
