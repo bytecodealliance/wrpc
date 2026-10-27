@@ -142,6 +142,44 @@ pub async fn assert_async<C: Clone>(
         }
     )?;
 
+    info!("calling `wrpc-test:integration/async.identity-cases` with `async-case::pair`");
+    let (v_tx, v_rx) = oneshot::channel();
+    let ((o, r, v), io) = wrpc_test::integration::async_::identity_cases(
+        client,
+        cx.clone(),
+        None,
+        Err(Box::pin(async { 42 })),
+        wrpc_test::integration::async_::AsyncCase::Pair((
+            1,
+            Box::pin(async { v_rx.await.expect("sender dropped") }),
+        )),
+    )
+    .await
+    .context("failed to call `wrpc-test:integration/async.identity-cases`")?;
+    try_join!(
+        async {
+            info!("receiving results");
+            ensure!(o.is_none(), "expected `option::none`");
+            let Err(r) = r else {
+                bail!("expected `result::err`");
+            };
+            let wrpc_test::integration::async_::AsyncCase::Pair((1, v)) = v else {
+                bail!("expected `async-case::pair`");
+            };
+            v_tx.send("foo".to_string()).expect("receiver dropped");
+            ensure!(r.await == 42);
+            ensure!(v.await == "foo");
+            Ok(())
+        },
+        async {
+            if let Some(io) = io {
+                info!("performing I/O");
+                io.await.context("failed to complete async I/O")?;
+            }
+            Ok(())
+        }
+    )?;
+
     Ok(())
 }
 
