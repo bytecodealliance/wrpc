@@ -30,7 +30,9 @@ quinn = { workspace = true, features = [
     "runtime-tokio",
     "rustls",
 ] }
+rcgen = { workspace = true, features = ["crypto", "ring", "zeroize"] }
 rustls = { workspace = true, features = ["ring"] }
+time = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = [
     "macros",
     "rt-multi-thread",
@@ -49,6 +51,7 @@ tracing-subscriber = { workspace = true, features = [
 ] }
 url = { workspace = true }
 uuid = { workspace = true, features = ["std", "v7"] }
+web-transport-quinn = { workspace = true, features = ["ring"] }
 wit-bindgen-wrpc = { workspace = true }
 wrpc-transport = { workspace = true, features = ["net"] }
 wrpc-quic = { workspace = true }
@@ -56,4 +59,3 @@ wrpc-webtransport = { workspace = true }
 wrpc-wasi-keyvalue = { workspace = true }
 wrpc-wasi-keyvalue-mem = { workspace = true }
 wrpc-wasi-keyvalue-redis = { workspace = true }
-wtransport = { workspace = true, features = ["self-signed"] }

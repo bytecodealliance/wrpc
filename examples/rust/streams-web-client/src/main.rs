@@ -1,20 +1,14 @@
 use core::time::Duration;
 
-use std::sync::Arc;
-
 use anyhow::Context as _;
 use bytes::Bytes;
 use clap::Parser;
 use futures::{StreamExt as _, stream};
-use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
-use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
-use rustls::version::TLS13;
-use rustls::{DigitallySignedStruct, SignatureScheme};
 use tokio::{time, try_join};
 use tokio_stream::wrappers::IntervalStream;
 use tracing::debug;
 use url::Url;
-use wtransport::{ClientConfig, Endpoint};
+use web_transport_quinn::ClientBuilder;
 
 mod bindings {
     wit_bindgen_wrpc::generate!({
@@ -34,65 +28,18 @@ struct Args {
     addr: Url,
 }
 
-#[derive(Debug)]
-struct Insecure;
-
-impl ServerCertVerifier for Insecure {
-    fn verify_server_cert(
-        &self,
-        _end_entity: &CertificateDer<'_>,
-        _intermediates: &[CertificateDer<'_>],
-        _server_name: &ServerName<'_>,
-        _ocsp_response: &[u8],
-        _now: UnixTime,
-    ) -> Result<ServerCertVerified, rustls::Error> {
-        Ok(ServerCertVerified::assertion())
-    }
-
-    fn verify_tls12_signature(
-        &self,
-        _message: &[u8],
-        _cert: &CertificateDer<'_>,
-        _dss: &DigitallySignedStruct,
-    ) -> Result<HandshakeSignatureValid, rustls::Error> {
-        Ok(HandshakeSignatureValid::assertion())
-    }
-
-    fn verify_tls13_signature(
-        &self,
-        _message: &[u8],
-        _cert: &CertificateDer<'_>,
-        _dss: &DigitallySignedStruct,
-    ) -> Result<HandshakeSignatureValid, rustls::Error> {
-        Ok(HandshakeSignatureValid::assertion())
-    }
-
-    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
-        vec![SignatureScheme::ECDSA_NISTP256_SHA256]
-    }
-}
-
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt().init();
 
     let Args { addr } = Args::parse();
 
-    let conf = rustls::ClientConfig::builder_with_protocol_versions(&[&TLS13])
+    let ep = ClientBuilder::default()
         .dangerous()
-        .with_custom_certificate_verifier(Arc::new(Insecure))
-        .with_no_client_auth();
-
-    let ep = Endpoint::client(
-        ClientConfig::builder()
-            .with_bind_default()
-            .with_custom_tls(conf)
-            .build(),
-    )
-    .context("failed to create endpoint")?;
-
+        .with_no_certificate_verification()
+        .context("failed to create endpoint")?;
     let session = ep
-        .connect(&addr)
+        .connect(addr)
         .await
         .context("failed to connect to server")?;
     let wrpc = wrpc_webtransport::Client::from(session);

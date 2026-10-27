@@ -265,20 +265,19 @@ pub fn cert_pair() -> anyhow::Result<(rustls::ServerConfig, rustls::ClientConfig
     Ok((srv_cnf, clt_cnf))
 }
 
-#[cfg(feature = "quic")]
-pub async fn with_quic_endpoints<T, Fut>(
-    f: impl FnOnce(core::net::SocketAddr, quinn::Endpoint, quinn::Endpoint) -> Fut,
-) -> anyhow::Result<T>
-where
-    Fut: Future<Output = anyhow::Result<T>>,
-{
+#[cfg(any(feature = "quic", feature = "webtransport"))]
+fn quic_endpoints(
+    alpn: Vec<Vec<u8>>,
+) -> anyhow::Result<(core::net::SocketAddr, quinn::Endpoint, quinn::Endpoint)> {
     use quinn::crypto::rustls::{QuicClientConfig, QuicServerConfig};
     use quinn::{ClientConfig, ServerConfig};
 
     let mut clt_ep = quinn::Endpoint::client((Ipv6Addr::LOCALHOST, 0).into())
         .context("failed to create client endpoint")?;
 
-    let (srv_cnf, clt_cnf) = cert_pair().context("failed to generate certificates")?;
+    let (mut srv_cnf, mut clt_cnf) = cert_pair().context("failed to generate certificates")?;
+    srv_cnf.alpn_protocols.clone_from(&alpn);
+    clt_cnf.alpn_protocols = alpn;
 
     let clt_cnf: QuicClientConfig = clt_cnf
         .try_into()
@@ -296,7 +295,17 @@ where
     let srv_addr = srv_ep
         .local_addr()
         .context("failed to query listener local address")?;
+    Ok((srv_addr, clt_ep, srv_ep))
+}
 
+#[cfg(feature = "quic")]
+pub async fn with_quic_endpoints<T, Fut>(
+    f: impl FnOnce(core::net::SocketAddr, quinn::Endpoint, quinn::Endpoint) -> Fut,
+) -> anyhow::Result<T>
+where
+    Fut: Future<Output = anyhow::Result<T>>,
+{
+    let (srv_addr, clt_ep, srv_ep) = quic_endpoints(Vec::default())?;
     f(srv_addr, clt_ep, srv_ep).await.context("closure failed")
 }
 
@@ -327,47 +336,35 @@ where
 
 #[cfg(feature = "webtransport")]
 pub async fn with_webtransport<T, Fut>(
-    f: impl FnOnce(wtransport::Connection, wtransport::Connection) -> Fut,
+    f: impl FnOnce(web_transport_quinn::Session, web_transport_quinn::Session) -> Fut,
 ) -> anyhow::Result<T>
 where
     Fut: Future<Output = anyhow::Result<T>>,
 {
-    use wtransport::Endpoint;
-
-    let (srv_cnf, clt_cnf) = cert_pair().context("failed to generate certificates")?;
-
-    let srv = Endpoint::server(
-        wtransport::ServerConfig::builder()
-            .with_bind_default(0)
-            .with_custom_tls(srv_cnf)
-            .build(),
-    )
-    .context("failed to build server endpoint")?;
-    let clt = Endpoint::client(
-        wtransport::ClientConfig::builder()
-            .with_bind_default()
-            .with_custom_tls(clt_cnf)
-            .build(),
-    )
-    .context("failed to create client endpoint")?;
-    let addr = srv
-        .local_addr()
-        .context("failed to query listener local address")?;
-    let (clt, srv) = tokio::try_join!(
+    let (addr, clt, srv) = quic_endpoints(vec![web_transport_quinn::ALPN.as_bytes().to_vec()])?;
+    let url = url::Url::parse(&format!("https://localhost:{}", addr.port()))
+        .context("failed to construct session URL")?;
+    let (clt, srv) = try_join!(
         async move {
-            clt.connect(format!("https://localhost:{}", addr.port()))
+            let conn = clt
+                .connect(addr, "localhost")
+                .context("failed to connect to server")?;
+            let conn = conn
                 .await
-                .context("failed to connect to server")
+                .context("failed to establish client connection")?;
+            web_transport_quinn::Session::connect(conn, url)
+                .await
+                .context("failed to establish WebTransport session")
         },
         async move {
-            let req = srv
-                .accept()
+            let conn = srv.accept().await.context("failed to accept connection")?;
+            let conn = conn
                 .await
+                .context("failed to establish server connection")?;
+            let req = web_transport_quinn::Request::accept(conn)
                 .await
                 .context("failed to receive session request")?;
-            req.accept()
-                .await
-                .context("failed to accept client connection")
+            req.ok().await.context("failed to accept session request")
         }
     )?;
     f(clt, srv).await.context("closure failed")

@@ -21,7 +21,6 @@ clap = { workspace = true, features = [
     "usage",
 ] }
 futures = { workspace = true }
-rustls = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread"] }
 tokio-stream = { workspace = true, features = ["time"] }
 tracing = { workspace = true }
@@ -31,7 +30,7 @@ tracing-subscriber = { workspace = true, features = [
     "fmt",
 ] }
 url = { workspace = true }
+web-transport-quinn = { workspace = true, features = ["ring"] }
 wit-bindgen-wrpc = { workspace = true }
 wrpc-transport = { workspace = true }
 wrpc-webtransport = { workspace = true }
-wtransport = { workspace = true }
