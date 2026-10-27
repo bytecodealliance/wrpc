@@ -14,7 +14,7 @@ repository.workspace = true
 default = ["http", "quic", "webtransport", "websockets"]
 http = ["dep:http", "dep:hyper", "dep:hyper-util"]
 quic = ["dep:quinn"]
-webtransport = ["dep:wtransport"]
+webtransport = ["dep:quinn", "dep:url", "dep:web-transport-quinn"]
 websockets = ["dep:tokio-websockets"]
 
 [dependencies]
@@ -44,8 +44,6 @@ tokio-websockets = { workspace = true, features = [
     "server",
 ], optional = true }
 tracing = { workspace = true }
+url = { workspace = true, optional = true }
+web-transport-quinn = { workspace = true, optional = true }
 wrpc-transport = { workspace = true }
-wtransport = { workspace = true, features = [
-    "ring",
-    "self-signed",
-], optional = true }

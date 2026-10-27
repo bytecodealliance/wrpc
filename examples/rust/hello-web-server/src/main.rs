@@ -8,13 +8,12 @@ use clap::Parser;
 use futures::StreamExt as _;
 use futures::stream::select_all;
 use rcgen::{CertifiedKey, generate_simple_self_signed};
-use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
-use rustls::version::TLS13;
+use rustls::pki_types::PrivatePkcs8KeyDer;
 use tokio::io::BufReader;
 use tokio::task::JoinSet;
 use tokio::{select, signal};
 use tracing::{debug, error, info, warn};
-use wtransport::{Endpoint, ServerConfig};
+use web_transport_quinn::{Request, ServerBuilder, quinn};
 
 mod bindings {
     wit_bindgen_wrpc::generate!({
@@ -53,23 +52,14 @@ async fn main() -> anyhow::Result<()> {
         "127.0.0.1".to_string(),
     ])
     .context("failed to generate server certificate")?;
-    let cert = CertificateDer::from(cert);
 
-    let conf = rustls::ServerConfig::builder_with_protocol_versions(&[&TLS13])
-        .with_no_client_auth() // TODO: verify client cert
-        .with_single_cert(
-            vec![cert],
+    let ep = ServerBuilder::default()
+        .with_addr(addr)
+        .with_certificate(
+            vec![cert.into()],
             PrivatePkcs8KeyDer::from(signing_key.serialize_der()).into(),
         )
-        .context("failed to create server config")?;
-
-    let ep = Endpoint::server(
-        ServerConfig::builder()
-            .with_bind_address(addr)
-            .with_custom_tls(conf)
-            .build(),
-    )
-    .context("failed to create server endpoint")?;
+        .context("failed to create server endpoint")?;
 
     let srv = Arc::new(wrpc_webtransport::Server::new());
     let invocations = bindings::serve(srv.as_ref(), Handler)
@@ -78,15 +68,15 @@ async fn main() -> anyhow::Result<()> {
 
     let accept = tokio::spawn(async move {
         let mut tasks = JoinSet::<anyhow::Result<()>>::new();
-        loop {
-            let conn = ep.accept().await;
+        while let Some(conn) = quinn::Endpoint::accept(&ep).await {
             let srv = Arc::clone(&srv);
             tasks.spawn(async move {
-                let req = conn
+                let conn = conn.await.context("failed to accept QUIC connection")?;
+                let req = Request::accept(conn)
                     .await
-                    .context("failed to accept WebTransport connection")?;
+                    .context("failed to accept WebTransport session request")?;
                 let conn = req
-                    .accept()
+                    .ok()
                     .await
                     .context("failed to establish WebTransport connection")?;
                 loop {

@@ -184,6 +184,7 @@ syn = { version = "2", default-features = false, features = ["printing"] }
 tempfile = { version = "3", default-features = false }
 test-helpers = { default-features = false, path = "./crates/test-helpers" }
 test-log = { version = "0.2", default-features = false }
+time = { version = "0.3", default-features = false }
 tokio = { version = "1.50", default-features = false }
 tokio-stream = { version = "0.1", default-features = false }
 tokio-util = { version = "0.7.12", default-features = false }
@@ -204,6 +205,7 @@ wasmtime = { version = "50", default-features = false }
 wasmtime-cli-flags = { version = "50", default-features = false }
 wasmtime-wasi = { version = "50", default-features = false }
 wasmtime-wasi-http = { version = "50", default-features = false }
+web-transport-quinn = { version = "0.13.5", default-features = false }
 wit-bindgen = { version = "0.59", default-features = false }
 wit-bindgen-core = { version = "0.59", default-features = false }
 wit-bindgen-wrpc = { version = "0.13", default-features = false, path = "./crates/wit-bindgen" }
@@ -226,4 +228,3 @@ wrpc-wasmtime = { version = "0.2", path = "./crates/wasmtime", default-features 
 wrpc-wasmtime-cli = { version = "0.11", path = "./crates/wasmtime-cli", default-features = false }
 wrpc-webtransport = { version = "0.2", path = "./crates/webtransport", default-features = false }
 wrpc-websockets = { version = "0.2", path = "./crates/websockets", default-features = false }
-wtransport = { version = "0.7.0", default-features = false }

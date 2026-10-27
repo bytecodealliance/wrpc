@@ -30,7 +30,7 @@ tracing-subscriber = { workspace = true, features = [
     "env-filter",
     "fmt",
 ] }
+web-transport-quinn = { workspace = true, features = ["ring"] }
 wit-bindgen-wrpc = { workspace = true }
 wrpc-transport = { workspace = true }
 wrpc-webtransport = { workspace = true }
-wtransport = { workspace = true }

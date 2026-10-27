@@ -14,9 +14,10 @@ use bytes::Bytes;
 use clap::Parser;
 use futures::StreamExt as _;
 use futures::stream::select_all;
-use quinn::crypto::rustls::QuicClientConfig;
+use quinn::crypto::rustls::{QuicClientConfig, QuicServerConfig};
+use rcgen::{CertificateParams, KeyPair};
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
-use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
+use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer, ServerName, UnixTime};
 use rustls::version::TLS13;
 use rustls::{DigitallySignedStruct, SignatureScheme};
 use tokio::io::BufReader;
@@ -30,10 +31,9 @@ use tracing_subscriber::layer::SubscriberExt as _;
 use tracing_subscriber::util::SubscriberInitExt as _;
 use url::Url;
 use uuid::Uuid;
+use web_transport_quinn::Request;
 use wrpc_transport::{ResourceBorrow, ResourceOwn};
 use wrpc_wasi_keyvalue::exports::wasi::keyvalue::store;
-use wtransport::tls::{Sha256DigestFmt, WEBTRANSPORT_ALPN};
-use wtransport::{Endpoint, Identity, ServerConfig, VarInt};
 
 pub type Result<T, E = store::Error> = core::result::Result<T, E>;
 
@@ -96,7 +96,7 @@ enum Bucket {
     ),
     Web(
         ResourceOwn<wrpc_wasi_keyvalue::wasi::keyvalue::store::Bucket>,
-        wrpc_webtransport::Client,
+        Box<wrpc_webtransport::Client>,
     ),
 }
 
@@ -235,21 +235,27 @@ impl<C: Send + Sync> store::Handler<C> for Handler {
                 }
             }
             "wrpc+web" => {
-                let mut conf = client_tls_config();
-                conf.alpn_protocols.push(WEBTRANSPORT_ALPN.to_vec());
-                let ep = match wtransport::Endpoint::client(
-                    wtransport::ClientConfig::builder()
-                        .with_bind_default()
-                        .with_custom_tls(conf)
-                        .build(),
-                )
-                .context("failed to create WebTransport endpoint")
+                let session_url = match Url::parse(&format!("https://{}", url.authority()))
+                    .context("failed to construct WebTransport session URL")
+                {
+                    Ok(url) => url,
+                    Err(err) => return Ok(Err(store::Error::Other(format!("{err:#}")))),
+                };
+                let ep = match quinn::Endpoint::client((Ipv6Addr::UNSPECIFIED, 0).into())
+                    .context("failed to create WebTransport endpoint")
                 {
                     Ok(ep) => ep,
                     Err(err) => return Ok(Err(store::Error::Other(format!("{err:#}")))),
                 };
+                let mut conf = client_tls_config();
+                conf.alpn_protocols = vec![web_transport_quinn::ALPN.as_bytes().to_vec()];
+                let conf: QuicClientConfig = conf
+                    .try_into()
+                    .context("failed to convert rustls client config to QUIC client config")?;
+                let ep =
+                    web_transport_quinn::Client::new(ep, quinn::ClientConfig::new(Arc::new(conf)));
                 let conn = match ep
-                    .connect(format!("https://{}", url.authority()))
+                    .connect(session_url)
                     .await
                     .context("failed to establish WebTransport connection")
                 {
@@ -258,7 +264,7 @@ impl<C: Send + Sync> store::Handler<C> for Handler {
                 };
                 let wrpc = wrpc_webtransport::Client::from(conn);
                 match wrpc_wasi_keyvalue::wasi::keyvalue::store::open(&wrpc, (), suffix).await? {
-                    Ok(bucket) => Bucket::Web(bucket, wrpc),
+                    Ok(bucket) => Bucket::Web(bucket, Box::new(wrpc)),
                     Err(err) => return Ok(Err(err.into())),
                 }
             }
@@ -317,7 +323,7 @@ impl<C: Send + Sync> store::HandlerBucket<C> for Handler {
             }
             Bucket::Web(bucket, wrpc) => {
                 wrpc_wasi_keyvalue::wasi::keyvalue::store::Bucket::get(
-                    &wrpc,
+                    wrpc.as_ref(),
                     (),
                     &bucket.as_borrow(),
                     &key,
@@ -377,7 +383,7 @@ impl<C: Send + Sync> store::HandlerBucket<C> for Handler {
             }
             Bucket::Web(bucket, wrpc) => {
                 wrpc_wasi_keyvalue::wasi::keyvalue::store::Bucket::set(
-                    &wrpc,
+                    wrpc.as_ref(),
                     (),
                     &bucket.as_borrow(),
                     &key,
@@ -432,7 +438,7 @@ impl<C: Send + Sync> store::HandlerBucket<C> for Handler {
             }
             Bucket::Web(bucket, wrpc) => {
                 wrpc_wasi_keyvalue::wasi::keyvalue::store::Bucket::delete(
-                    &wrpc,
+                    wrpc.as_ref(),
                     (),
                     &bucket.as_borrow(),
                     &key,
@@ -486,7 +492,7 @@ impl<C: Send + Sync> store::HandlerBucket<C> for Handler {
             }
             Bucket::Web(bucket, wrpc) => {
                 wrpc_wasi_keyvalue::wasi::keyvalue::store::Bucket::exists(
-                    &wrpc,
+                    wrpc.as_ref(),
                     (),
                     &bucket.as_borrow(),
                     &key,
@@ -542,7 +548,7 @@ impl<C: Send + Sync> store::HandlerBucket<C> for Handler {
             }
             Bucket::Web(bucket, wrpc) => {
                 wrpc_wasi_keyvalue::wasi::keyvalue::store::Bucket::list_keys(
-                    &wrpc,
+                    wrpc.as_ref(),
                     (),
                     &bucket.as_borrow(),
                     cursor.as_deref(),
@@ -581,20 +587,42 @@ async fn main() -> anyhow::Result<()> {
         .await
         .with_context(|| format!("failed to bind TCP listener on `{addr}`"))?;
 
-    let id = Identity::self_signed(["localhost", "127.0.0.1", "::1"])
+    let mut params = CertificateParams::new([
+        "localhost".to_string(),
+        "127.0.0.1".to_string(),
+        "::1".to_string(),
+    ])
+    .context("failed to construct certificate parameters")?;
+    params.not_before = time::OffsetDateTime::now_utc();
+    params.not_after = params.not_before + time::Duration::days(14);
+    let key = KeyPair::generate().context("failed to generate server key")?;
+    let cert = params
+        .self_signed(&key)
         .context("failed to generate server certificate")?;
-    let digest = id.certificate_chain().as_slice()[0]
-        .hash()
-        .fmt(Sha256DigestFmt::BytesArray);
+    let cert = CertificateDer::from(cert);
+    let digest = web_transport_quinn::crypto::sha256(
+        &web_transport_quinn::crypto::default_provider(),
+        &cert,
+    );
+    let digest = format!("{:?}", digest.as_ref());
 
-    let ep = Endpoint::server(
-        ServerConfig::builder()
-            .with_bind_default(0)
-            .with_identity(id)
-            .keep_alive_interval(Some(Duration::from_secs(3)))
-            .build(),
-    )
-    .context("failed to create server endpoint")?;
+    let mut tls = rustls::ServerConfig::builder_with_protocol_versions(&[&TLS13])
+        .with_no_client_auth()
+        .with_single_cert(
+            vec![cert],
+            PrivatePkcs8KeyDer::from(key.serialize_der()).into(),
+        )
+        .context("failed to create server config")?;
+    tls.alpn_protocols = vec![web_transport_quinn::ALPN.as_bytes().to_vec()];
+    let tls: QuicServerConfig = tls
+        .try_into()
+        .context("failed to convert rustls server config to QUIC server config")?;
+    let mut transport = quinn::TransportConfig::default();
+    transport.keep_alive_interval(Some(Duration::from_secs(3)));
+    let mut conf = quinn::ServerConfig::with_crypto(Arc::new(tls));
+    conf.transport_config(Arc::new(transport));
+    let ep = quinn::Endpoint::server(conf, (Ipv6Addr::UNSPECIFIED, 0).into())
+        .context("failed to create server endpoint")?;
     let ep_addr = ep
         .local_addr()
         .context("failed to query WebTransport socket address")?;
@@ -692,14 +720,15 @@ export const PORT = "{port}"
                 trace!("wRPC serving task stopped");
                 return res.context("failed to serve wRPC invocations");
             }
-            conn = ep.accept() => {
+            Some(conn) = ep.accept() => {
                 let srv = Arc::clone(&srv);
                 tasks.spawn(async move {
-                    let req = conn
+                    let conn = conn.await.context("failed to accept QUIC connection")?;
+                    let req = Request::accept(conn)
                         .await
-                        .context("failed to accept WebTransport connection")?;
+                        .context("failed to accept WebTransport session request")?;
                     let conn = req
-                        .accept()
+                        .ok()
                         .await
                         .context("failed to establish WebTransport connection")?;
                     loop {
@@ -727,7 +756,7 @@ export const PORT = "{port}"
             res = &mut shutdown => {
                 trace!("^C received");
                 http_shutdown.notify_waiters();
-                ep.close(VarInt::from_u32(0), b"shutdown");
+                ep.close(quinn::VarInt::from_u32(0), b"shutdown");
                 ep.wait_idle().await;
                 // wait for all WebTransport invocations to complete
                 while let Some(res) = tasks.join_next().await {
