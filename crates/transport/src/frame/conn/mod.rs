@@ -133,7 +133,7 @@ struct Subscriptions {
     next: BTreeMap<Box<[usize]>, usize>,
     /// Permits of elements subscribed to before being indexed
     unclaimed: Arc<Semaphore>,
-    /// Notified once elements are indexed
+    /// Notified once elements are indexed or removed
     indexed: Arc<Notify>,
     /// Whether all senders are closed
     closed: bool,
@@ -324,30 +324,11 @@ impl Subscriptions {
     /// Removes the element at `path` and everything nested in it, returning `true` if any of
     /// the removed subscriptions held data, which was not processed
     fn remove(&mut self, path: &[usize]) -> bool {
-        let subs: Vec<_> = self
-            .subs
-            .range::<[usize], _>((Bound::Included(path), Bound::Unbounded))
-            .map(|(p, ..)| p)
-            .take_while(|p| p.starts_with(path))
-            .cloned()
-            .collect();
-        let mut pending = false;
-        for p in subs {
-            if let Some(sub) = self.subs.remove(&p) {
-                pending |= sub.rx.is_some_and(|rx| !rx.is_empty());
-            }
-        }
-        let next: Vec<_> = self
-            .next
-            .range::<[usize], _>((Bound::Included(path), Bound::Unbounded))
-            .map(|(p, ..)| p)
-            .take_while(|p| p.starts_with(path))
-            .cloned()
-            .collect();
-        for p in next {
-            self.next.remove(&p);
-        }
-        pending
+        remove_nested(&mut self.next, path);
+        self.indexed.notify_one();
+        remove_nested(&mut self.subs, path)
+            .into_iter()
+            .any(|sub| sub.rx.is_some_and(|rx| !rx.is_empty()))
     }
 
     /// Routes a frame received on `path`, subscribing to the elements in it using `permit`
@@ -386,6 +367,17 @@ impl Subscriptions {
         let sub = self.subs.get_mut(path)?;
         sub.tx.as_mut()
     }
+}
+
+/// Removes the entries of `map` at `path` and nested in it
+fn remove_nested<V>(map: &mut BTreeMap<Box<[usize]>, V>, path: &[usize]) -> Vec<V> {
+    let keys: Vec<_> = map
+        .range::<[usize], _>((Bound::Included(path), Bound::Unbounded))
+        .map(|(p, ..)| p)
+        .take_while(|p| p.starts_with(path))
+        .cloned()
+        .collect();
+    keys.iter().filter_map(|p| map.remove(p)).collect()
 }
 
 pin_project! {
@@ -1188,6 +1180,19 @@ mod tests {
         drop(rx);
         drop(tx);
         done(done_rx).await.unwrap();
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn incoming_released_element_fails_unclaimed_frame() {
+        let (mut tx, rx, done_rx) = incoming_paths(true, [[None, None]]);
+        let element = rx.index(&[0]).unwrap();
+        for i in 1..=32 {
+            tx.write_all(&[0x02, i, 0x00, 0x01, 0x2a]).await.unwrap();
+        }
+        tx.write_all(&[0x02, 0x00, 0x05, 0x01, 0x2a]).await.unwrap();
+        tokio::task::yield_now().await;
+        drop(element);
+        assert_eq!(failed(done_rx).await, ErrorKind::BrokenPipe);
     }
 
     #[test_log::test(tokio::test)]
