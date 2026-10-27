@@ -9,7 +9,12 @@ const v = t.variant({ var: rec, empty: null });
 const cases = [
   t.option(t.future()),
   t.result(t.stream(t.u8), t.future(t.u32)),
-  t.variant({ empty: null, fut: t.future(t.string) }),
+  t.variant({
+    empty: null,
+    fut: t.future(t.string),
+    elements: t.list(t.future(t.string)),
+    pair: t.tuple(t.u8, t.future(t.string)),
+  }),
 ];
 /** @param {string} foo */
 const r = (foo) => ({ nested: { foo } });
