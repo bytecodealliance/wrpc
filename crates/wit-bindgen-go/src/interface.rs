@@ -1839,120 +1839,55 @@ impl InterfaceGenerator<'_> {
         match ty {
             Type::Id(t) => self.print_write_tyid(*t, name, writer),
             Type::Bool => {
-                let context = self.deps.context();
-                let wrpc = self.deps.wrpc();
-                uwrite!(
-                    self.src,
-                    "(func({context}.Context, {wrpc}.IndexWriter) error)(nil), "
-                );
+                self.print_nil_write();
                 self.print_write_bool(name, writer);
             }
             Type::U8 => {
-                let context = self.deps.context();
-                let wrpc = self.deps.wrpc();
-                uwrite!(
-                    self.src,
-                    "(func({context}.Context, {wrpc}.IndexWriter) error)(nil), "
-                );
+                self.print_nil_write();
                 self.print_write_u8(name, writer);
             }
             Type::U16 => {
-                let context = self.deps.context();
-                let wrpc = self.deps.wrpc();
-                uwrite!(
-                    self.src,
-                    "(func({context}.Context, {wrpc}.IndexWriter) error)(nil), "
-                );
+                self.print_nil_write();
                 self.print_write_u16(name, writer);
             }
             Type::U32 => {
-                let context = self.deps.context();
-                let wrpc = self.deps.wrpc();
-                uwrite!(
-                    self.src,
-                    "(func({context}.Context, {wrpc}.IndexWriter) error)(nil), "
-                );
+                self.print_nil_write();
                 self.print_write_u32(name, writer);
             }
             Type::U64 => {
-                let context = self.deps.context();
-                let wrpc = self.deps.wrpc();
-                uwrite!(
-                    self.src,
-                    "(func({context}.Context, {wrpc}.IndexWriter) error)(nil), "
-                );
+                self.print_nil_write();
                 self.print_write_u64(name, writer);
             }
             Type::S8 => {
-                let context = self.deps.context();
-                let wrpc = self.deps.wrpc();
-                uwrite!(
-                    self.src,
-                    "(func({context}.Context, {wrpc}.IndexWriter) error)(nil), "
-                );
+                self.print_nil_write();
                 self.print_write_s8(name, writer);
             }
             Type::S16 => {
-                let context = self.deps.context();
-                let wrpc = self.deps.wrpc();
-                uwrite!(
-                    self.src,
-                    "(func({context}.Context, {wrpc}.IndexWriter) error)(nil), "
-                );
+                self.print_nil_write();
                 self.print_write_s16(name, writer);
             }
             Type::S32 => {
-                let context = self.deps.context();
-                let wrpc = self.deps.wrpc();
-                uwrite!(
-                    self.src,
-                    "(func({context}.Context, {wrpc}.IndexWriter) error)(nil), "
-                );
+                self.print_nil_write();
                 self.print_write_s32(name, writer);
             }
             Type::S64 => {
-                let context = self.deps.context();
-                let wrpc = self.deps.wrpc();
-                uwrite!(
-                    self.src,
-                    "(func({context}.Context, {wrpc}.IndexWriter) error)(nil), "
-                );
+                self.print_nil_write();
                 self.print_write_s64(name, writer);
             }
             Type::F32 => {
-                let context = self.deps.context();
-                let wrpc = self.deps.wrpc();
-                uwrite!(
-                    self.src,
-                    "(func({context}.Context, {wrpc}.IndexWriter) error)(nil), "
-                );
+                self.print_nil_write();
                 self.print_write_f32(name, writer);
             }
             Type::F64 => {
-                let context = self.deps.context();
-                let wrpc = self.deps.wrpc();
-                uwrite!(
-                    self.src,
-                    "(func({context}.Context, {wrpc}.IndexWriter) error)(nil), "
-                );
+                self.print_nil_write();
                 self.print_write_f64(name, writer);
             }
             Type::Char => {
-                let context = self.deps.context();
-                let wrpc = self.deps.wrpc();
-                uwrite!(
-                    self.src,
-                    "(func({context}.Context, {wrpc}.IndexWriter) error)(nil), "
-                );
+                self.print_nil_write();
                 self.print_write_char(name, writer);
             }
             Type::String => {
-                let context = self.deps.context();
-                let wrpc = self.deps.wrpc();
-                uwrite!(
-                    self.src,
-                    "(func({context}.Context, {wrpc}.IndexWriter) error)(nil), "
-                );
+                self.print_nil_write();
                 self.print_write_string(name, writer);
             }
             Type::ErrorContext => panic!("error-context is not supported"),
@@ -1963,21 +1898,11 @@ impl InterfaceGenerator<'_> {
         let ty = &self.resolve.types[id];
         match &ty.kind {
             TypeDefKind::Handle(Handle::Own(_id)) => {
-                let context = self.deps.context();
-                let wrpc = self.deps.wrpc();
-                uwrite!(
-                    self.src,
-                    "(func({context}.Context, {wrpc}.IndexWriter) error)(nil), "
-                );
+                self.print_nil_write();
                 self.print_write_string(&format!("string({name})"), writer);
             }
             TypeDefKind::Handle(Handle::Borrow(_id)) => {
-                let context = self.deps.context();
-                let wrpc = self.deps.wrpc();
-                uwrite!(
-                    self.src,
-                    "(func({context}.Context, {wrpc}.IndexWriter) error)(nil), "
-                );
+                self.print_nil_write();
                 self.print_write_string(&format!("string({name})"), writer);
             }
             TypeDefKind::Tuple(ty) => self.print_write_tuple(ty, name, writer),
@@ -2887,6 +2812,15 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
             return format!("{path}.{name}");
         }
         name
+    }
+
+    fn print_nil_write(&mut self) {
+        let context = self.deps.context();
+        let wrpc = self.deps.wrpc();
+        uwrite!(
+            self.src,
+            "(func({context}.Context, {wrpc}.IndexWriter) error)(nil), "
+        );
     }
 
     fn print_deferred_ret(&mut self, deferred: bool) {
