@@ -180,7 +180,7 @@ func ReadStream[T any](r IndexReadCloser, f func(IndexReadCloser, ...uint32) (T,
 }
 
 // WriteByteStream writes a `stream<u8>` with chunks received from `v` to `w`
-func WriteByteStream(v <-chan []byte, w ByteWriter) (func(IndexWriter) error, error) {
+func WriteByteStream(v <-chan []byte, w ByteWriter) (func(context.Context, IndexWriter) error, error) {
 	if v == nil {
 		return nil, errors.New("outgoing byte stream channel is nil")
 	}
@@ -188,8 +188,8 @@ func WriteByteStream(v <-chan []byte, w ByteWriter) (func(IndexWriter) error, er
 	if err := w.WriteByte(0); err != nil {
 		return nil, fmt.Errorf("failed to write `stream::pending` byte: %w", err)
 	}
-	return func(w IndexWriter) error {
-		return writeStreamChunks(v, w, func(chunk []byte, buf *bytes.Buffer) error {
+	return func(ctx context.Context, w IndexWriter) error {
+		return writeStreamChunks(ctx, v, w, func(chunk []byte, buf *bytes.Buffer) error {
 			slog.Debug("encoding pending byte stream chunk", "len", len(chunk))
 			if _, err := WriteByteList(chunk, buf); err != nil {
 				return fmt.Errorf("failed to encode pending byte stream chunk: %w", err)
@@ -200,7 +200,7 @@ func WriteByteStream(v <-chan []byte, w ByteWriter) (func(IndexWriter) error, er
 }
 
 // WriteStream writes a `stream` with chunks received from `v` to `w` using `f` to write its elements
-func WriteStream[T any](v <-chan []T, w ByteWriter, f func(T, ByteWriter) (func(IndexWriter) error, error)) (func(IndexWriter) error, error) {
+func WriteStream[T any](v <-chan []T, w ByteWriter, f func(T, ByteWriter) (func(context.Context, IndexWriter) error, error)) (func(context.Context, IndexWriter) error, error) {
 	if v == nil {
 		return nil, errors.New("outgoing stream channel is nil")
 	}
@@ -208,10 +208,10 @@ func WriteStream[T any](v <-chan []T, w ByteWriter, f func(T, ByteWriter) (func(
 	if err := w.WriteByte(0); err != nil {
 		return nil, fmt.Errorf("failed to write `stream::pending` byte: %w", err)
 	}
-	return func(w IndexWriter) error {
+	return func(ctx context.Context, w IndexWriter) error {
 		var g errGroup
 		var total uint32
-		err := writeStreamChunks(v, w, func(chunk []T, buf *bytes.Buffer) error {
+		err := writeStreamChunks(ctx, v, w, func(chunk []T, buf *bytes.Buffer) error {
 			n := len(chunk)
 			if n > math.MaxUint32 || math.MaxUint32-uint32(n) < total {
 				return errors.New("total pending stream element count would overflow a 32-bit unsigned integer")
@@ -230,7 +230,7 @@ func WriteStream[T any](v <-chan []T, w ByteWriter, f func(T, ByteWriter) (func(
 					if err != nil {
 						return fmt.Errorf("failed to index nested stream writer: %w", err)
 					}
-					g.Go(func() error { return writeNested(w, write) })
+					g.Go(func() error { return writeNested(ctx, w, write) })
 				}
 				total++
 			}
@@ -240,7 +240,7 @@ func WriteStream[T any](v <-chan []T, w ByteWriter, f func(T, ByteWriter) (func(
 	}, nil
 }
 
-func writeStreamChunks[T any](v <-chan []T, w IndexWriter, f func([]T, *bytes.Buffer) error) error {
+func writeStreamChunks[T any](ctx context.Context, v <-chan []T, w IndexWriter, f func([]T, *bytes.Buffer) error) error {
 	bufs := make(chan []byte)
 	writeErr := make(chan error, 1)
 	go func() {
@@ -273,6 +273,8 @@ func writeStreamChunks[T any](v <-chan []T, w IndexWriter, f func([]T, *bytes.Bu
 						return nil
 					case err := <-writeErr:
 						return err
+					case <-ctx.Done():
+						return fmt.Errorf("failed to write pending stream end: %w", context.Cause(ctx))
 					}
 				}
 				if len(chunk) == 0 {
@@ -285,6 +287,8 @@ func writeStreamChunks[T any](v <-chan []T, w IndexWriter, f func([]T, *bytes.Bu
 				buf = bytes.Buffer{}
 			case err := <-writeErr:
 				return err
+			case <-ctx.Done():
+				return fmt.Errorf("failed to receive pending stream chunk: %w", context.Cause(ctx))
 			}
 		}
 	}()
@@ -302,9 +306,9 @@ func closeNested(c io.Closer) {
 	}
 }
 
-func writeNested(w IndexWriteCloser, write func(IndexWriter) error) error {
+func writeNested(ctx context.Context, w IndexWriteCloser, write func(context.Context, IndexWriter) error) error {
 	defer closeNested(w)
-	return write(w)
+	return write(ctx, w)
 }
 
 func drain[T any](v <-chan T) {
