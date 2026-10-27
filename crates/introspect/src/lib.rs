@@ -96,6 +96,29 @@ pub fn is_tuple(resolve: &Resolve, ty: &Type) -> bool {
     }
 }
 
+/// Merges `paths`, such that a position, which is matched by a wildcard in any of them, is
+/// matched by a wildcard in all of them
+#[must_use]
+pub fn merge_wildcards<T: Clone + Ord>(
+    paths: BTreeSet<VecDeque<Option<T>>>,
+) -> BTreeSet<VecDeque<Option<T>>> {
+    let mut paths: Vec<Vec<_>> = paths.into_iter().map(Vec::from).collect();
+    let depth = paths.iter().map(Vec::len).max().unwrap_or_default();
+    for k in 0..depth {
+        let wildcards: BTreeSet<_> = paths
+            .iter()
+            .filter(|path| path.get(k) == Some(&None))
+            .map(|path| path[..k].to_vec())
+            .collect();
+        for path in &mut paths {
+            if path.len() > k && wildcards.contains(&path[..k]) {
+                path[k] = None;
+            }
+        }
+    }
+    paths.into_iter().map(VecDeque::from).collect()
+}
+
 #[must_use]
 pub fn async_paths_ty(resolve: &Resolve, ty: &Type) -> (BTreeSet<VecDeque<Option<u32>>>, bool) {
     if let Type::Id(ty) = ty {
@@ -154,7 +177,7 @@ pub fn async_paths_tyid(resolve: &Resolve, id: TypeId) -> (BTreeSet<VecDeque<Opt
                     is_fut = true;
                 }
             }
-            (paths, is_fut)
+            (merge_wildcards(paths), is_fut)
         }
         TypeDefKind::Variant(ty) => {
             let mut paths = BTreeSet::default();
@@ -170,7 +193,7 @@ pub fn async_paths_tyid(resolve: &Resolve, id: TypeId) -> (BTreeSet<VecDeque<Opt
                     }
                 }
             }
-            (paths, is_fut)
+            (merge_wildcards(paths), is_fut)
         }
         TypeDefKind::Tuple(ty) => {
             let mut paths = BTreeSet::default();

@@ -19,6 +19,7 @@ use std::sync::Arc;
 use wasmtime::Engine;
 use wasmtime::component::ResourceType;
 use wasmtime::component::types::{self, Type};
+use wrpc_introspect::merge_wildcards;
 
 /// Collect the (uninstantiated) resource types of the component's imported
 /// `wasi:io/streams` `input-stream` and `output-stream`, against which
@@ -82,7 +83,7 @@ fn async_paths(ty: &Type, streams: &[ResourceType]) -> (BTreeSet<VecDeque<Option
                 paths.extend(nested);
                 is_fut |= fut;
             }
-            (paths, is_fut)
+            (merge_wildcards(paths), is_fut)
         }
         Type::Variant(ty) => {
             let mut is_fut = false;
@@ -93,7 +94,7 @@ fn async_paths(ty: &Type, streams: &[ResourceType]) -> (BTreeSet<VecDeque<Option
                     is_fut |= fut;
                 }
             }
-            (paths, is_fut)
+            (merge_wildcards(paths), is_fut)
         }
         Type::Tuple(ty) => {
             for (i, ty) in ty.types().enumerate() {
