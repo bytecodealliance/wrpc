@@ -78,7 +78,7 @@ func ReadFuture[T any](r IndexReadCloser, f func(IndexReadCloser, ...uint32) (T,
 }
 
 // WriteFuture writes a `future` received from `v` to `w` using `f` to write its value
-func WriteFuture[T any](v <-chan T, w ByteWriter, f func(T, ByteWriter) (func(IndexWriter) error, error)) (func(IndexWriter) error, error) {
+func WriteFuture[T any](v <-chan T, w ByteWriter, f func(T, ByteWriter) (func(context.Context, IndexWriter) error, error)) (func(context.Context, IndexWriter) error, error) {
 	if v == nil {
 		return nil, errors.New("outgoing future channel is nil")
 	}
@@ -86,11 +86,17 @@ func WriteFuture[T any](v <-chan T, w ByteWriter, f func(T, ByteWriter) (func(In
 	if err := w.WriteByte(0); err != nil {
 		return nil, fmt.Errorf("failed to write `future::pending` byte: %w", err)
 	}
-	return func(w IndexWriter) error {
+	return func(ctx context.Context, w IndexWriter) error {
 		slog.Debug("receiving outgoing pending future")
-		x, ok := <-v
-		if !ok {
-			return errors.New("outgoing pending future closed without a value")
+		var x T
+		select {
+		case v, ok := <-v:
+			if !ok {
+				return errors.New("outgoing pending future closed without a value")
+			}
+			x = v
+		case <-ctx.Done():
+			return fmt.Errorf("failed to receive outgoing pending future: %w", context.Cause(ctx))
 		}
 		slog.Debug("writing pending future value")
 		var buf bytes.Buffer
@@ -102,7 +108,7 @@ func WriteFuture[T any](v <-chan T, w ByteWriter, f func(T, ByteWriter) (func(In
 			return fmt.Errorf("failed to write pending future value: %w", err)
 		}
 		if write != nil {
-			return write(w)
+			return write(ctx, w)
 		}
 		return nil
 	}, nil

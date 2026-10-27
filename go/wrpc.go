@@ -139,34 +139,34 @@ func JoinDeferred(fs ...func(context.Context) error) func(context.Context) error
 
 // IndexWrite returns a function, which calls `write` with the writer indexed by `path` and closes the indexed writer afterwards.
 // It returns `nil` if `write` is `nil`.
-func IndexWrite(write func(IndexWriter) error, path ...uint32) func(IndexWriter) error {
+func IndexWrite(write func(context.Context, IndexWriter) error, path ...uint32) func(context.Context, IndexWriter) error {
 	if write == nil {
 		return nil
 	}
-	return func(w IndexWriter) error {
+	return func(ctx context.Context, w IndexWriter) error {
 		wi, err := w.Index(path...)
 		if err != nil {
 			return fmt.Errorf("failed to index nested writer: %w", err)
 		}
-		return writeNested(wi, write)
+		return writeNested(ctx, wi, write)
 	}
 }
 
 // JoinWrites returns a function, which calls all `writes` concurrently with the writer indexed by their key,
 // closes the indexed writers afterwards and returns the joined errors.
 // It returns `nil` if `writes` is empty.
-func JoinWrites(writes map[uint32]func(IndexWriter) error) func(IndexWriter) error {
+func JoinWrites(writes map[uint32]func(context.Context, IndexWriter) error) func(context.Context, IndexWriter) error {
 	if len(writes) == 0 {
 		return nil
 	}
-	return func(w IndexWriter) error {
+	return func(ctx context.Context, w IndexWriter) error {
 		var g errGroup
 		for index, write := range writes {
 			wi, err := w.Index(index)
 			if err != nil {
 				return g.Wait(fmt.Errorf("failed to index nested writer at index `%d`: %w", index, err))
 			}
-			g.Go(func() error { return writeNested(wi, write) })
+			g.Go(func() error { return writeNested(ctx, wi, write) })
 		}
 		return g.Wait(nil)
 	}

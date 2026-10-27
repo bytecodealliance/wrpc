@@ -112,7 +112,7 @@ func NewErrorOther(payload string) *Error {
 		payload)
 }
 func (v *Error) Error() string { return v.String() }
-func (v *Error) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, error) {
+func (v *Error) WriteToIndex(w wrpc.ByteWriter) (func(context.Context, wrpc.IndexWriter) error, error) {
 	if err := func(v uint8, w io.Writer) error {
 		b := make([]byte, 2)
 		i := binary.PutUvarint(b, uint64(v))
@@ -130,7 +130,7 @@ func (v *Error) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, e
 		if !ok {
 			return nil, errors.New("invalid payload")
 		}
-		write, err := (func(wrpc.IndexWriter) error)(nil), func(v string, w io.Writer) (err error) {
+		write, err := (func(context.Context, wrpc.IndexWriter) error)(nil), func(v string, w io.Writer) (err error) {
 			n := len(v)
 			if n > math.MaxUint32 {
 				return fmt.Errorf("string byte length of %d overflows a 32-bit integer", n)
@@ -172,13 +172,13 @@ type KeyResponse struct {
 
 func (v *KeyResponse) String() string { return "KeyResponse" }
 
-func (v *KeyResponse) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, error) {
-	writes := make(map[uint32]func(wrpc.IndexWriter) error, 2)
+func (v *KeyResponse) WriteToIndex(w wrpc.ByteWriter) (func(context.Context, wrpc.IndexWriter) error, error) {
+	writes := make(map[uint32]func(context.Context, wrpc.IndexWriter) error, 2)
 	slog.Debug("writing field", "name", "keys")
 	write0, err := func(v []string, w interface {
 		io.ByteWriter
 		io.Writer
-	}) (write func(wrpc.IndexWriter) error, err error) {
+	}) (write func(context.Context, wrpc.IndexWriter) error, err error) {
 		n := len(v)
 		if n > math.MaxUint32 {
 			return nil, fmt.Errorf("list length of %d overflows a 32-bit integer", n)
@@ -193,9 +193,9 @@ func (v *KeyResponse) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) er
 			return nil, fmt.Errorf("failed to write list length of %d: %w", n, err)
 		}
 		slog.Debug("writing list elements")
-		writes := make(map[uint32]func(wrpc.IndexWriter) error, n)
+		writes := make(map[uint32]func(context.Context, wrpc.IndexWriter) error, n)
 		for i, e := range v {
-			write, err := (func(wrpc.IndexWriter) error)(nil), func(v string, w io.Writer) (err error) {
+			write, err := (func(context.Context, wrpc.IndexWriter) error)(nil), func(v string, w io.Writer) (err error) {
 				n := len(v)
 				if n > math.MaxUint32 {
 					return fmt.Errorf("string byte length of %d overflows a 32-bit integer", n)
@@ -235,7 +235,7 @@ func (v *KeyResponse) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) er
 	write1, err := func(v *string, w interface {
 		io.ByteWriter
 		io.Writer
-	}) (func(wrpc.IndexWriter) error, error) {
+	}) (func(context.Context, wrpc.IndexWriter) error, error) {
 		if v == nil {
 			slog.Debug("writing `option::none` status byte")
 			if err := w.WriteByte(0); err != nil {
@@ -248,7 +248,7 @@ func (v *KeyResponse) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) er
 			return nil, fmt.Errorf("failed to write `option::some` status byte: %w", err)
 		}
 		slog.Debug("writing `option::some` payload")
-		write, err := (func(wrpc.IndexWriter) error)(nil), func(v string, w io.Writer) (err error) {
+		write, err := (func(context.Context, wrpc.IndexWriter) error)(nil), func(v string, w io.Writer) (err error) {
 			n := len(v)
 			if n > math.MaxUint32 {
 				return fmt.Errorf("string byte length of %d overflows a 32-bit integer", n)
@@ -308,7 +308,7 @@ type Bucket interface{}
 // `error::no-such-store` will be raised if the `identifier` is not recognized.
 func Open(ctx__ context.Context, wrpc__ wrpc.Invoker, identifier string) (r0__ *wrpc.Result[wrpc.Own[Bucket], Error], err__ error) {
 	var buf__ bytes.Buffer
-	write0__, err__ := (func(wrpc.IndexWriter) error)(nil), func(v string, w io.Writer) (err error) {
+	write0__, err__ := (func(context.Context, wrpc.IndexWriter) error)(nil), func(v string, w io.Writer) (err error) {
 		n := len(v)
 		if n > math.MaxUint32 {
 			return fmt.Errorf("string byte length of %d overflows a 32-bit integer", n)
@@ -503,7 +503,7 @@ func Open(ctx__ context.Context, wrpc__ wrpc.Invoker, identifier string) (r0__ *
 // If any other error occurs, it returns an `Err(error)`.
 func Bucket_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borrow[Bucket], key string) (r0__ *wrpc.Result[[]uint8, Error], err__ error) {
 	var buf__ bytes.Buffer
-	write0__, err__ := (func(wrpc.IndexWriter) error)(nil), func(v string, w io.Writer) (err error) {
+	write0__, err__ := (func(context.Context, wrpc.IndexWriter) error)(nil), func(v string, w io.Writer) (err error) {
 		n := len(v)
 		if n > math.MaxUint32 {
 			return fmt.Errorf("string byte length of %d overflows a 32-bit integer", n)
@@ -528,7 +528,7 @@ func Bucket_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borrow[Buc
 		err__ = fmt.Errorf("failed to write `self` parameter: %w", err__)
 		return
 	}
-	write1__, err__ := (func(wrpc.IndexWriter) error)(nil), func(v string, w io.Writer) (err error) {
+	write1__, err__ := (func(context.Context, wrpc.IndexWriter) error)(nil), func(v string, w io.Writer) (err error) {
 		n := len(v)
 		if n > math.MaxUint32 {
 			return fmt.Errorf("string byte length of %d overflows a 32-bit integer", n)
@@ -748,7 +748,7 @@ func Bucket_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borrow[Buc
 // If any other error occurs, it returns an `Err(error)`.
 func Bucket_Set(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borrow[Bucket], key string, value []uint8) (r0__ *wrpc.Result[struct{}, Error], err__ error) {
 	var buf__ bytes.Buffer
-	write0__, err__ := (func(wrpc.IndexWriter) error)(nil), func(v string, w io.Writer) (err error) {
+	write0__, err__ := (func(context.Context, wrpc.IndexWriter) error)(nil), func(v string, w io.Writer) (err error) {
 		n := len(v)
 		if n > math.MaxUint32 {
 			return fmt.Errorf("string byte length of %d overflows a 32-bit integer", n)
@@ -773,7 +773,7 @@ func Bucket_Set(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borrow[Buc
 		err__ = fmt.Errorf("failed to write `self` parameter: %w", err__)
 		return
 	}
-	write1__, err__ := (func(wrpc.IndexWriter) error)(nil), func(v string, w io.Writer) (err error) {
+	write1__, err__ := (func(context.Context, wrpc.IndexWriter) error)(nil), func(v string, w io.Writer) (err error) {
 		n := len(v)
 		if n > math.MaxUint32 {
 			return fmt.Errorf("string byte length of %d overflows a 32-bit integer", n)
@@ -801,7 +801,7 @@ func Bucket_Set(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borrow[Buc
 	write2__, err__ := func(v []uint8, w interface {
 		io.ByteWriter
 		io.Writer
-	}) (write func(wrpc.IndexWriter) error, err error) {
+	}) (write func(context.Context, wrpc.IndexWriter) error, err error) {
 		n := len(v)
 		if n > math.MaxUint32 {
 			return nil, fmt.Errorf("list length of %d overflows a 32-bit integer", n)
@@ -816,9 +816,9 @@ func Bucket_Set(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borrow[Buc
 			return nil, fmt.Errorf("failed to write list length of %d: %w", n, err)
 		}
 		slog.Debug("writing list elements")
-		writes := make(map[uint32]func(wrpc.IndexWriter) error, n)
+		writes := make(map[uint32]func(context.Context, wrpc.IndexWriter) error, n)
 		for i, e := range v {
-			write, err := (func(wrpc.IndexWriter) error)(nil), func(v uint8, w io.ByteWriter) error {
+			write, err := (func(context.Context, wrpc.IndexWriter) error)(nil), func(v uint8, w io.ByteWriter) error {
 				slog.Debug("writing u8 byte")
 				return w.WriteByte(v)
 			}(e, w)
@@ -976,7 +976,7 @@ func Bucket_Set(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borrow[Buc
 // If any other error occurs, it returns an `Err(error)`.
 func Bucket_Delete(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borrow[Bucket], key string) (r0__ *wrpc.Result[struct{}, Error], err__ error) {
 	var buf__ bytes.Buffer
-	write0__, err__ := (func(wrpc.IndexWriter) error)(nil), func(v string, w io.Writer) (err error) {
+	write0__, err__ := (func(context.Context, wrpc.IndexWriter) error)(nil), func(v string, w io.Writer) (err error) {
 		n := len(v)
 		if n > math.MaxUint32 {
 			return fmt.Errorf("string byte length of %d overflows a 32-bit integer", n)
@@ -1001,7 +1001,7 @@ func Bucket_Delete(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borrow[
 		err__ = fmt.Errorf("failed to write `self` parameter: %w", err__)
 		return
 	}
-	write1__, err__ := (func(wrpc.IndexWriter) error)(nil), func(v string, w io.Writer) (err error) {
+	write1__, err__ := (func(context.Context, wrpc.IndexWriter) error)(nil), func(v string, w io.Writer) (err error) {
 		n := len(v)
 		if n > math.MaxUint32 {
 			return fmt.Errorf("string byte length of %d overflows a 32-bit integer", n)
@@ -1164,7 +1164,7 @@ func Bucket_Delete(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borrow[
 // If any other error occurs, it returns an `Err(error)`.
 func Bucket_Exists(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borrow[Bucket], key string) (r0__ *wrpc.Result[bool, Error], err__ error) {
 	var buf__ bytes.Buffer
-	write0__, err__ := (func(wrpc.IndexWriter) error)(nil), func(v string, w io.Writer) (err error) {
+	write0__, err__ := (func(context.Context, wrpc.IndexWriter) error)(nil), func(v string, w io.Writer) (err error) {
 		n := len(v)
 		if n > math.MaxUint32 {
 			return fmt.Errorf("string byte length of %d overflows a 32-bit integer", n)
@@ -1189,7 +1189,7 @@ func Bucket_Exists(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borrow[
 		err__ = fmt.Errorf("failed to write `self` parameter: %w", err__)
 		return
 	}
-	write1__, err__ := (func(wrpc.IndexWriter) error)(nil), func(v string, w io.Writer) (err error) {
+	write1__, err__ := (func(context.Context, wrpc.IndexWriter) error)(nil), func(v string, w io.Writer) (err error) {
 		n := len(v)
 		if n > math.MaxUint32 {
 			return fmt.Errorf("string byte length of %d overflows a 32-bit integer", n)
@@ -1381,7 +1381,7 @@ func Bucket_Exists(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borrow[
 // If any error occurs, it returns an `Err(error)`.
 func Bucket_ListKeys(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borrow[Bucket], cursor *string) (r0__ *wrpc.Result[KeyResponse, Error], err__ error) {
 	var buf__ bytes.Buffer
-	write0__, err__ := (func(wrpc.IndexWriter) error)(nil), func(v string, w io.Writer) (err error) {
+	write0__, err__ := (func(context.Context, wrpc.IndexWriter) error)(nil), func(v string, w io.Writer) (err error) {
 		n := len(v)
 		if n > math.MaxUint32 {
 			return fmt.Errorf("string byte length of %d overflows a 32-bit integer", n)
@@ -1409,7 +1409,7 @@ func Bucket_ListKeys(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borro
 	write1__, err__ := func(v *string, w interface {
 		io.ByteWriter
 		io.Writer
-	}) (func(wrpc.IndexWriter) error, error) {
+	}) (func(context.Context, wrpc.IndexWriter) error, error) {
 		if v == nil {
 			slog.Debug("writing `option::none` status byte")
 			if err := w.WriteByte(0); err != nil {
@@ -1422,7 +1422,7 @@ func Bucket_ListKeys(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borro
 			return nil, fmt.Errorf("failed to write `option::some` status byte: %w", err)
 		}
 		slog.Debug("writing `option::some` payload")
-		write, err := (func(wrpc.IndexWriter) error)(nil), func(v string, w io.Writer) (err error) {
+		write, err := (func(context.Context, wrpc.IndexWriter) error)(nil), func(v string, w io.Writer) (err error) {
 			n := len(v)
 			if n > math.MaxUint32 {
 				return fmt.Errorf("string byte length of %d overflows a 32-bit integer", n)

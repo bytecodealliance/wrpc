@@ -44,9 +44,9 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 		}
 
 		var buf bytes.Buffer
-		writes := make(map[uint32]func(wrpc.IndexWriter) error, 1)
+		writes := make(map[uint32]func(context.Context, wrpc.IndexWriter) error, 1)
 
-		write0, err := (func(wrpc.IndexWriter) error)(nil), func(v string, w io.Writer) (err error) {
+		write0, err := (func(context.Context, wrpc.IndexWriter) error)(nil), func(v string, w io.Writer) (err error) {
 			n := len(v)
 			if n > math.MaxUint32 {
 				return fmt.Errorf("string byte length of %d overflows a 32-bit integer", n)
@@ -92,7 +92,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 					}
 					write := write
 					go func() {
-						if err := write(w); err != nil {
+						if err := write(ctx, w); err != nil {
 							slog.WarnContext(ctx, "failed to write nested result value", "instance", "wrpc-examples:hello/handler", "name", "hello", "err", err)
 						}
 						if err := w.Close(); err != nil {

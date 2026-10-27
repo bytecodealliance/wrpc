@@ -20,11 +20,11 @@ type Req struct {
 
 func (v *Req) String() string { return "Req" }
 
-func (v *Req) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, error) {
-	writes := make(map[uint32]func(wrpc.IndexWriter) error, 2)
+func (v *Req) WriteToIndex(w wrpc.ByteWriter) (func(context.Context, wrpc.IndexWriter) error, error) {
+	writes := make(map[uint32]func(context.Context, wrpc.IndexWriter) error, 2)
 	slog.Debug("writing field", "name", "numbers")
-	write0, err := wrpc.WriteStream(v.Numbers, w, func(v uint64, w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, error) {
-		return (func(wrpc.IndexWriter) error)(nil), func(v uint64, w io.Writer) (err error) {
+	write0, err := wrpc.WriteStream(v.Numbers, w, func(v uint64, w wrpc.ByteWriter) (func(context.Context, wrpc.IndexWriter) error, error) {
+		return (func(context.Context, wrpc.IndexWriter) error)(nil), func(v uint64, w io.Writer) (err error) {
 			b := make([]byte, binary.MaxVarintLen64)
 			i := binary.PutUvarint(b, uint64(v))
 			slog.Debug("writing u64")
@@ -153,10 +153,10 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 		}
 
 		var buf bytes.Buffer
-		writes := make(map[uint32]func(wrpc.IndexWriter) error, 2)
+		writes := make(map[uint32]func(context.Context, wrpc.IndexWriter) error, 2)
 
-		write0, err := wrpc.WriteStream(r0, &buf, func(v uint64, w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, error) {
-			return (func(wrpc.IndexWriter) error)(nil), func(v uint64, w io.Writer) (err error) {
+		write0, err := wrpc.WriteStream(r0, &buf, func(v uint64, w wrpc.ByteWriter) (func(context.Context, wrpc.IndexWriter) error, error) {
+			return (func(context.Context, wrpc.IndexWriter) error)(nil), func(v uint64, w io.Writer) (err error) {
 				b := make([]byte, binary.MaxVarintLen64)
 				i := binary.PutUvarint(b, uint64(v))
 				slog.Debug("writing u64")
@@ -203,7 +203,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 					wg.Add(1)
 					go func() {
 						defer wg.Done()
-						if err := write(w); err != nil {
+						if err := write(ctx, w); err != nil {
 							slog.WarnContext(ctx, "failed to write nested result value", "instance", "wrpc-examples:streams/handler", "name", "echo", "err", err)
 							cancel()
 						}
@@ -222,7 +222,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 					wg.Add(1)
 					go func() {
 						defer wg.Done()
-						if err := write(w); err != nil {
+						if err := write(ctx, w); err != nil {
 							slog.WarnContext(ctx, "failed to write nested result value", "instance", "wrpc-examples:streams/handler", "name", "echo", "err", err)
 							cancel()
 						}

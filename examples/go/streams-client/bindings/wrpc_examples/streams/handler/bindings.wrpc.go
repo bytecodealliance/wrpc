@@ -20,11 +20,11 @@ type Req struct {
 
 func (v *Req) String() string { return "Req" }
 
-func (v *Req) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, error) {
-	writes := make(map[uint32]func(wrpc.IndexWriter) error, 2)
+func (v *Req) WriteToIndex(w wrpc.ByteWriter) (func(context.Context, wrpc.IndexWriter) error, error) {
+	writes := make(map[uint32]func(context.Context, wrpc.IndexWriter) error, 2)
 	slog.Debug("writing field", "name", "numbers")
-	write0, err := wrpc.WriteStream(v.Numbers, w, func(v uint64, w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, error) {
-		return (func(wrpc.IndexWriter) error)(nil), func(v uint64, w io.Writer) (err error) {
+	write0, err := wrpc.WriteStream(v.Numbers, w, func(v uint64, w wrpc.ByteWriter) (func(context.Context, wrpc.IndexWriter) error, error) {
+		return (func(context.Context, wrpc.IndexWriter) error)(nil), func(v uint64, w io.Writer) (err error) {
 			b := make([]byte, binary.MaxVarintLen64)
 			i := binary.PutUvarint(b, uint64(v))
 			slog.Debug("writing u64")
@@ -60,7 +60,7 @@ func Echo(ctx__ context.Context, wrpc__ wrpc.Invoker, r *Req) (r0__ <-chan []uin
 	if write0__ != nil {
 		writeCount__++
 	}
-	writes__ := make(map[uint32]func(wrpc.IndexWriter) error, uint(writeCount__))
+	writes__ := make(map[uint32]func(context.Context, wrpc.IndexWriter) error, uint(writeCount__))
 	if write0__ != nil {
 		writes__[0] = write0__
 	}
@@ -101,7 +101,7 @@ func Echo(ctx__ context.Context, wrpc__ wrpc.Invoker, r *Req) (r0__ <-chan []uin
 			write := write
 			go func() {
 				defer wg__.Done()
-				if err := write(w); err != nil {
+				if err := write(ctx__, w); err != nil {
 					errCh__ <- err
 				}
 				if err := w.Close(); err != nil {

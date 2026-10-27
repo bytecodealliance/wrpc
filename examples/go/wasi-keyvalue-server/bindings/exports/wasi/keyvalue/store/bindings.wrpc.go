@@ -112,7 +112,7 @@ func NewErrorOther(payload string) *Error {
 		payload)
 }
 func (v *Error) Error() string { return v.String() }
-func (v *Error) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, error) {
+func (v *Error) WriteToIndex(w wrpc.ByteWriter) (func(context.Context, wrpc.IndexWriter) error, error) {
 	if err := func(v uint8, w io.Writer) error {
 		b := make([]byte, 2)
 		i := binary.PutUvarint(b, uint64(v))
@@ -130,7 +130,7 @@ func (v *Error) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, e
 		if !ok {
 			return nil, errors.New("invalid payload")
 		}
-		write, err := (func(wrpc.IndexWriter) error)(nil), func(v string, w io.Writer) (err error) {
+		write, err := (func(context.Context, wrpc.IndexWriter) error)(nil), func(v string, w io.Writer) (err error) {
 			n := len(v)
 			if n > math.MaxUint32 {
 				return fmt.Errorf("string byte length of %d overflows a 32-bit integer", n)
@@ -172,13 +172,13 @@ type KeyResponse struct {
 
 func (v *KeyResponse) String() string { return "KeyResponse" }
 
-func (v *KeyResponse) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, error) {
-	writes := make(map[uint32]func(wrpc.IndexWriter) error, 2)
+func (v *KeyResponse) WriteToIndex(w wrpc.ByteWriter) (func(context.Context, wrpc.IndexWriter) error, error) {
+	writes := make(map[uint32]func(context.Context, wrpc.IndexWriter) error, 2)
 	slog.Debug("writing field", "name", "keys")
 	write0, err := func(v []string, w interface {
 		io.ByteWriter
 		io.Writer
-	}) (write func(wrpc.IndexWriter) error, err error) {
+	}) (write func(context.Context, wrpc.IndexWriter) error, err error) {
 		n := len(v)
 		if n > math.MaxUint32 {
 			return nil, fmt.Errorf("list length of %d overflows a 32-bit integer", n)
@@ -193,9 +193,9 @@ func (v *KeyResponse) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) er
 			return nil, fmt.Errorf("failed to write list length of %d: %w", n, err)
 		}
 		slog.Debug("writing list elements")
-		writes := make(map[uint32]func(wrpc.IndexWriter) error, n)
+		writes := make(map[uint32]func(context.Context, wrpc.IndexWriter) error, n)
 		for i, e := range v {
-			write, err := (func(wrpc.IndexWriter) error)(nil), func(v string, w io.Writer) (err error) {
+			write, err := (func(context.Context, wrpc.IndexWriter) error)(nil), func(v string, w io.Writer) (err error) {
 				n := len(v)
 				if n > math.MaxUint32 {
 					return fmt.Errorf("string byte length of %d overflows a 32-bit integer", n)
@@ -235,7 +235,7 @@ func (v *KeyResponse) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) er
 	write1, err := func(v *string, w interface {
 		io.ByteWriter
 		io.Writer
-	}) (func(wrpc.IndexWriter) error, error) {
+	}) (func(context.Context, wrpc.IndexWriter) error, error) {
 		if v == nil {
 			slog.Debug("writing `option::none` status byte")
 			if err := w.WriteByte(0); err != nil {
@@ -248,7 +248,7 @@ func (v *KeyResponse) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) er
 			return nil, fmt.Errorf("failed to write `option::some` status byte: %w", err)
 		}
 		slog.Debug("writing `option::some` payload")
-		write, err := (func(wrpc.IndexWriter) error)(nil), func(v string, w io.Writer) (err error) {
+		write, err := (func(context.Context, wrpc.IndexWriter) error)(nil), func(v string, w io.Writer) (err error) {
 			n := len(v)
 			if n > math.MaxUint32 {
 				return fmt.Errorf("string byte length of %d overflows a 32-bit integer", n)
@@ -429,12 +429,12 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 		}
 
 		var buf bytes.Buffer
-		writes := make(map[uint32]func(wrpc.IndexWriter) error, 1)
+		writes := make(map[uint32]func(context.Context, wrpc.IndexWriter) error, 1)
 
 		write0, err := func(v *wrpc.Result[wrpc.Own[Bucket], Error], w interface {
 			io.ByteWriter
 			io.Writer
-		}) (func(wrpc.IndexWriter) error, error) {
+		}) (func(context.Context, wrpc.IndexWriter) error, error) {
 			switch {
 			case v.Ok == nil && v.Err == nil:
 				return nil, errors.New("both result variants cannot be nil")
@@ -447,7 +447,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 					return nil, fmt.Errorf("failed to write `result::ok` status byte: %w", err)
 				}
 				slog.Debug("writing `result::ok` payload")
-				write, err := (func(wrpc.IndexWriter) error)(nil), func(v string, w io.Writer) (err error) {
+				write, err := (func(context.Context, wrpc.IndexWriter) error)(nil), func(v string, w io.Writer) (err error) {
 					n := len(v)
 					if n > math.MaxUint32 {
 						return fmt.Errorf("string byte length of %d overflows a 32-bit integer", n)
@@ -516,7 +516,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 					}
 					write := write
 					go func() {
-						if err := write(w); err != nil {
+						if err := write(ctx, w); err != nil {
 							slog.WarnContext(ctx, "failed to write nested result value", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "open", "err", err)
 						}
 						if err := w.Close(); err != nil {
@@ -637,12 +637,12 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 		}
 
 		var buf bytes.Buffer
-		writes := make(map[uint32]func(wrpc.IndexWriter) error, 1)
+		writes := make(map[uint32]func(context.Context, wrpc.IndexWriter) error, 1)
 
 		write0, err := func(v *wrpc.Result[[]uint8, Error], w interface {
 			io.ByteWriter
 			io.Writer
-		}) (func(wrpc.IndexWriter) error, error) {
+		}) (func(context.Context, wrpc.IndexWriter) error, error) {
 			switch {
 			case v.Ok == nil && v.Err == nil:
 				return nil, errors.New("both result variants cannot be nil")
@@ -658,7 +658,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 				write, err := func(v []uint8, w interface {
 					io.ByteWriter
 					io.Writer
-				}) (func(wrpc.IndexWriter) error, error) {
+				}) (func(context.Context, wrpc.IndexWriter) error, error) {
 					if v == nil {
 						slog.Debug("writing `option::none` status byte")
 						if err := w.WriteByte(0); err != nil {
@@ -674,7 +674,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 					write, err := func(v []uint8, w interface {
 						io.ByteWriter
 						io.Writer
-					}) (write func(wrpc.IndexWriter) error, err error) {
+					}) (write func(context.Context, wrpc.IndexWriter) error, err error) {
 						n := len(v)
 						if n > math.MaxUint32 {
 							return nil, fmt.Errorf("list length of %d overflows a 32-bit integer", n)
@@ -689,9 +689,9 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 							return nil, fmt.Errorf("failed to write list length of %d: %w", n, err)
 						}
 						slog.Debug("writing list elements")
-						writes := make(map[uint32]func(wrpc.IndexWriter) error, n)
+						writes := make(map[uint32]func(context.Context, wrpc.IndexWriter) error, n)
 						for i, e := range v {
-							write, err := (func(wrpc.IndexWriter) error)(nil), func(v uint8, w io.ByteWriter) error {
+							write, err := (func(context.Context, wrpc.IndexWriter) error)(nil), func(v uint8, w io.ByteWriter) error {
 								slog.Debug("writing u8 byte")
 								return w.WriteByte(v)
 							}(e, w)
@@ -757,7 +757,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 					}
 					write := write
 					go func() {
-						if err := write(w); err != nil {
+						if err := write(ctx, w); err != nil {
 							slog.WarnContext(ctx, "failed to write nested result value", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.get", "err", err)
 						}
 						if err := w.Close(); err != nil {
@@ -922,12 +922,12 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 		}
 
 		var buf bytes.Buffer
-		writes := make(map[uint32]func(wrpc.IndexWriter) error, 1)
+		writes := make(map[uint32]func(context.Context, wrpc.IndexWriter) error, 1)
 
 		write0, err := func(v *wrpc.Result[struct{}, Error], w interface {
 			io.ByteWriter
 			io.Writer
-		}) (func(wrpc.IndexWriter) error, error) {
+		}) (func(context.Context, wrpc.IndexWriter) error, error) {
 			switch {
 			case v.Ok == nil && v.Err == nil:
 				return nil, errors.New("both result variants cannot be nil")
@@ -981,7 +981,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 					}
 					write := write
 					go func() {
-						if err := write(w); err != nil {
+						if err := write(ctx, w); err != nil {
 							slog.WarnContext(ctx, "failed to write nested result value", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.set", "err", err)
 						}
 						if err := w.Close(); err != nil {
@@ -1102,12 +1102,12 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 		}
 
 		var buf bytes.Buffer
-		writes := make(map[uint32]func(wrpc.IndexWriter) error, 1)
+		writes := make(map[uint32]func(context.Context, wrpc.IndexWriter) error, 1)
 
 		write0, err := func(v *wrpc.Result[struct{}, Error], w interface {
 			io.ByteWriter
 			io.Writer
-		}) (func(wrpc.IndexWriter) error, error) {
+		}) (func(context.Context, wrpc.IndexWriter) error, error) {
 			switch {
 			case v.Ok == nil && v.Err == nil:
 				return nil, errors.New("both result variants cannot be nil")
@@ -1161,7 +1161,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 					}
 					write := write
 					go func() {
-						if err := write(w); err != nil {
+						if err := write(ctx, w); err != nil {
 							slog.WarnContext(ctx, "failed to write nested result value", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.delete", "err", err)
 						}
 						if err := w.Close(); err != nil {
@@ -1282,12 +1282,12 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 		}
 
 		var buf bytes.Buffer
-		writes := make(map[uint32]func(wrpc.IndexWriter) error, 1)
+		writes := make(map[uint32]func(context.Context, wrpc.IndexWriter) error, 1)
 
 		write0, err := func(v *wrpc.Result[bool, Error], w interface {
 			io.ByteWriter
 			io.Writer
-		}) (func(wrpc.IndexWriter) error, error) {
+		}) (func(context.Context, wrpc.IndexWriter) error, error) {
 			switch {
 			case v.Ok == nil && v.Err == nil:
 				return nil, errors.New("both result variants cannot be nil")
@@ -1300,7 +1300,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 					return nil, fmt.Errorf("failed to write `result::ok` status byte: %w", err)
 				}
 				slog.Debug("writing `result::ok` payload")
-				write, err := (func(wrpc.IndexWriter) error)(nil), func(v bool, w io.ByteWriter) error {
+				write, err := (func(context.Context, wrpc.IndexWriter) error)(nil), func(v bool, w io.ByteWriter) error {
 					if !v {
 						slog.Debug("writing `false` byte")
 						return w.WriteByte(0)
@@ -1356,7 +1356,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 					}
 					write := write
 					go func() {
-						if err := write(w); err != nil {
+						if err := write(ctx, w); err != nil {
 							slog.WarnContext(ctx, "failed to write nested result value", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.exists", "err", err)
 						}
 						if err := w.Close(); err != nil {
@@ -1496,12 +1496,12 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 		}
 
 		var buf bytes.Buffer
-		writes := make(map[uint32]func(wrpc.IndexWriter) error, 1)
+		writes := make(map[uint32]func(context.Context, wrpc.IndexWriter) error, 1)
 
 		write0, err := func(v *wrpc.Result[KeyResponse, Error], w interface {
 			io.ByteWriter
 			io.Writer
-		}) (func(wrpc.IndexWriter) error, error) {
+		}) (func(context.Context, wrpc.IndexWriter) error, error) {
 			switch {
 			case v.Ok == nil && v.Err == nil:
 				return nil, errors.New("both result variants cannot be nil")
@@ -1563,7 +1563,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 					}
 					write := write
 					go func() {
-						if err := write(w); err != nil {
+						if err := write(ctx, w); err != nil {
 							slog.WarnContext(ctx, "failed to write nested result value", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.list-keys", "err", err)
 						}
 						if err := w.Close(); err != nil {
