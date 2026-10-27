@@ -100,6 +100,9 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 						if err := write(w); err != nil {
 							slog.WarnContext(ctx, "failed to write nested result value", "instance", "wrpc-examples:resources/resources", "name", "foo", "err", err)
 						}
+						if err := w.Close(); err != nil {
+							slog.DebugContext(ctx, "failed to close nested result writer", "instance", "wrpc-examples:resources/resources", "name", "foo", "err", err)
+						}
 					}()
 				}
 			}
@@ -218,6 +221,9 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 					go func() {
 						if err := write(w); err != nil {
 							slog.WarnContext(ctx, "failed to write nested result value", "instance", "wrpc-examples:resources/resources", "name", "foo.baz", "err", err)
+						}
+						if err := w.Close(); err != nil {
+							slog.DebugContext(ctx, "failed to close nested result writer", "instance", "wrpc-examples:resources/resources", "name", "foo.baz", "err", err)
 						}
 					}()
 				}
@@ -338,6 +344,9 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 						if err := write(w); err != nil {
 							slog.WarnContext(ctx, "failed to write nested result value", "instance", "wrpc-examples:resources/resources", "name", "foo.bar", "err", err)
 						}
+						if err := w.Close(); err != nil {
+							slog.DebugContext(ctx, "failed to close nested result writer", "instance", "wrpc-examples:resources/resources", "name", "foo.bar", "err", err)
+						}
 					}()
 				}
 			}
@@ -456,6 +465,9 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 					go func() {
 						if err := write(w); err != nil {
 							slog.WarnContext(ctx, "failed to write nested result value", "instance", "wrpc-examples:resources/resources", "name", "bar", "err", err)
+						}
+						if err := w.Close(); err != nil {
+							slog.DebugContext(ctx, "failed to close nested result writer", "instance", "wrpc-examples:resources/resources", "name", "bar", "err", err)
 						}
 					}()
 				}

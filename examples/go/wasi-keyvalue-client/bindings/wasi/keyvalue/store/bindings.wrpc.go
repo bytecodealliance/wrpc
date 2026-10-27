@@ -10,8 +10,6 @@ import (
 	io "io"
 	slog "log/slog"
 	math "math"
-	sync "sync"
-	atomic "sync/atomic"
 	utf8 "unicode/utf8"
 	wrpc "wrpc.io/go"
 )
@@ -225,32 +223,7 @@ func (v *KeyResponse) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) er
 				writes[uint32(i)] = write
 			}
 		}
-		if len(writes) > 0 {
-			return func(w wrpc.IndexWriter) error {
-				var wg sync.WaitGroup
-				var wgErr atomic.Pointer[error]
-				for index, write := range writes {
-					wg.Add(1)
-					w, err := w.Index(index)
-					if err != nil {
-						return fmt.Errorf("failed to index nested list writer: %w", err)
-					}
-					write := write
-					go func() {
-						defer wg.Done()
-						if err := write(w); err != nil {
-							wgErr.Store(&err)
-						}
-					}()
-				}
-				wg.Wait()
-				if err := wgErr.Load(); err != nil {
-					return *err
-				}
-				return nil
-			}, nil
-		}
-		return nil, nil
+		return wrpc.JoinWrites(writes), nil
 	}(v.Keys, w)
 	if err != nil {
 		return nil, fmt.Errorf("failed to write `keys` field: %w", err)
@@ -308,32 +281,7 @@ func (v *KeyResponse) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) er
 		writes[1] = write1
 	}
 
-	if len(writes) > 0 {
-		return func(w wrpc.IndexWriter) error {
-			var wg sync.WaitGroup
-			var wgErr atomic.Pointer[error]
-			for index, write := range writes {
-				wg.Add(1)
-				w, err := w.Index(index)
-				if err != nil {
-					return fmt.Errorf("failed to index nested record writer: %w", err)
-				}
-				write := write
-				go func() {
-					defer wg.Done()
-					if err := write(w); err != nil {
-						wgErr.Store(&err)
-					}
-				}()
-			}
-			wg.Wait()
-			if err := wgErr.Load(); err != nil {
-				return *err
-			}
-			return nil
-		}, nil
-	}
-	return nil, nil
+	return wrpc.JoinWrites(writes), nil
 }
 
 // A bucket is a collection of key-value pairs. Each key-value pair is stored as a entry in the
@@ -881,32 +829,7 @@ func Bucket_Set(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borrow[Buc
 				writes[uint32(i)] = write
 			}
 		}
-		if len(writes) > 0 {
-			return func(w wrpc.IndexWriter) error {
-				var wg sync.WaitGroup
-				var wgErr atomic.Pointer[error]
-				for index, write := range writes {
-					wg.Add(1)
-					w, err := w.Index(index)
-					if err != nil {
-						return fmt.Errorf("failed to index nested list writer: %w", err)
-					}
-					write := write
-					go func() {
-						defer wg.Done()
-						if err := write(w); err != nil {
-							wgErr.Store(&err)
-						}
-					}()
-				}
-				wg.Wait()
-				if err := wgErr.Load(); err != nil {
-					return *err
-				}
-				return nil
-			}, nil
-		}
-		return nil, nil
+		return wrpc.JoinWrites(writes), nil
 	}(value, &buf__)
 	if err__ != nil {
 		err__ = fmt.Errorf("failed to write `value` parameter: %w", err__)

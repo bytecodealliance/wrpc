@@ -10,8 +10,6 @@ import (
 	io "io"
 	slog "log/slog"
 	math "math"
-	sync "sync"
-	atomic "sync/atomic"
 	utf8 "unicode/utf8"
 	wrpc "wrpc.io/go"
 )
@@ -225,32 +223,7 @@ func (v *KeyResponse) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) er
 				writes[uint32(i)] = write
 			}
 		}
-		if len(writes) > 0 {
-			return func(w wrpc.IndexWriter) error {
-				var wg sync.WaitGroup
-				var wgErr atomic.Pointer[error]
-				for index, write := range writes {
-					wg.Add(1)
-					w, err := w.Index(index)
-					if err != nil {
-						return fmt.Errorf("failed to index nested list writer: %w", err)
-					}
-					write := write
-					go func() {
-						defer wg.Done()
-						if err := write(w); err != nil {
-							wgErr.Store(&err)
-						}
-					}()
-				}
-				wg.Wait()
-				if err := wgErr.Load(); err != nil {
-					return *err
-				}
-				return nil
-			}, nil
-		}
-		return nil, nil
+		return wrpc.JoinWrites(writes), nil
 	}(v.Keys, w)
 	if err != nil {
 		return nil, fmt.Errorf("failed to write `keys` field: %w", err)
@@ -308,32 +281,7 @@ func (v *KeyResponse) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) er
 		writes[1] = write1
 	}
 
-	if len(writes) > 0 {
-		return func(w wrpc.IndexWriter) error {
-			var wg sync.WaitGroup
-			var wgErr atomic.Pointer[error]
-			for index, write := range writes {
-				wg.Add(1)
-				w, err := w.Index(index)
-				if err != nil {
-					return fmt.Errorf("failed to index nested record writer: %w", err)
-				}
-				write := write
-				go func() {
-					defer wg.Done()
-					if err := write(w); err != nil {
-						wgErr.Store(&err)
-					}
-				}()
-			}
-			wg.Wait()
-			if err := wgErr.Load(); err != nil {
-				return *err
-			}
-			return nil
-		}, nil
-	}
-	return nil, nil
+	return wrpc.JoinWrites(writes), nil
 }
 
 // A bucket is a collection of key-value pairs. Each key-value pair is stored as a entry in the
@@ -571,6 +519,9 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 						if err := write(w); err != nil {
 							slog.WarnContext(ctx, "failed to write nested result value", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "open", "err", err)
 						}
+						if err := w.Close(); err != nil {
+							slog.DebugContext(ctx, "failed to close nested result writer", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "open", "err", err)
+						}
 					}()
 				}
 			}
@@ -751,32 +702,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 								writes[uint32(i)] = write
 							}
 						}
-						if len(writes) > 0 {
-							return func(w wrpc.IndexWriter) error {
-								var wg sync.WaitGroup
-								var wgErr atomic.Pointer[error]
-								for index, write := range writes {
-									wg.Add(1)
-									w, err := w.Index(index)
-									if err != nil {
-										return fmt.Errorf("failed to index nested list writer: %w", err)
-									}
-									write := write
-									go func() {
-										defer wg.Done()
-										if err := write(w); err != nil {
-											wgErr.Store(&err)
-										}
-									}()
-								}
-								wg.Wait()
-								if err := wgErr.Load(); err != nil {
-									return *err
-								}
-								return nil
-							}, nil
-						}
-						return nil, nil
+						return wrpc.JoinWrites(writes), nil
 					}(v, w)
 					if err != nil {
 						return nil, fmt.Errorf("failed to write `option::some` payload: %w", err)
@@ -833,6 +759,9 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 					go func() {
 						if err := write(w); err != nil {
 							slog.WarnContext(ctx, "failed to write nested result value", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.get", "err", err)
+						}
+						if err := w.Close(); err != nil {
+							slog.DebugContext(ctx, "failed to close nested result writer", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.get", "err", err)
 						}
 					}()
 				}
@@ -1055,6 +984,9 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 						if err := write(w); err != nil {
 							slog.WarnContext(ctx, "failed to write nested result value", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.set", "err", err)
 						}
+						if err := w.Close(); err != nil {
+							slog.DebugContext(ctx, "failed to close nested result writer", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.set", "err", err)
+						}
 					}()
 				}
 			}
@@ -1231,6 +1163,9 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 					go func() {
 						if err := write(w); err != nil {
 							slog.WarnContext(ctx, "failed to write nested result value", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.delete", "err", err)
+						}
+						if err := w.Close(); err != nil {
+							slog.DebugContext(ctx, "failed to close nested result writer", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.delete", "err", err)
 						}
 					}()
 				}
@@ -1423,6 +1358,9 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 					go func() {
 						if err := write(w); err != nil {
 							slog.WarnContext(ctx, "failed to write nested result value", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.exists", "err", err)
+						}
+						if err := w.Close(); err != nil {
+							slog.DebugContext(ctx, "failed to close nested result writer", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.exists", "err", err)
 						}
 					}()
 				}
@@ -1627,6 +1565,9 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 					go func() {
 						if err := write(w); err != nil {
 							slog.WarnContext(ctx, "failed to write nested result value", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.list-keys", "err", err)
+						}
+						if err := w.Close(); err != nil {
+							slog.DebugContext(ctx, "failed to close nested result writer", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.list-keys", "err", err)
 						}
 					}()
 				}

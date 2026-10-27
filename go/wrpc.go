@@ -3,6 +3,7 @@ package wrpc
 import (
 	"bufio"
 	"context"
+	"fmt"
 	"io"
 	"slices"
 )
@@ -131,6 +132,41 @@ func JoinDeferred(fs ...func(context.Context) error) func(context.Context) error
 		var g errGroup
 		for _, f := range fs {
 			g.Go(func() error { return f(ctx) })
+		}
+		return g.Wait(nil)
+	}
+}
+
+// IndexWrite returns a function, which calls `write` with the writer indexed by `path` and closes the indexed writer afterwards.
+// It returns `nil` if `write` is `nil`.
+func IndexWrite(write func(IndexWriter) error, path ...uint32) func(IndexWriter) error {
+	if write == nil {
+		return nil
+	}
+	return func(w IndexWriter) error {
+		wi, err := w.Index(path...)
+		if err != nil {
+			return fmt.Errorf("failed to index nested writer: %w", err)
+		}
+		return writeNested(wi, write)
+	}
+}
+
+// JoinWrites returns a function, which calls all `writes` concurrently with the writer indexed by their key,
+// closes the indexed writers afterwards and returns the joined errors.
+// It returns `nil` if `writes` is empty.
+func JoinWrites(writes map[uint32]func(IndexWriter) error) func(IndexWriter) error {
+	if len(writes) == 0 {
+		return nil
+	}
+	return func(w IndexWriter) error {
+		var g errGroup
+		for index, write := range writes {
+			wi, err := w.Index(index)
+			if err != nil {
+				return g.Wait(fmt.Errorf("failed to index nested writer at index `%d`: %w", index, err))
+			}
+			g.Go(func() error { return writeNested(wi, write) })
 		}
 		return g.Wait(nil)
 	}

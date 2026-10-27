@@ -1547,13 +1547,11 @@ impl InterfaceGenerator<'_> {
     }
 
     fn print_write_list(&mut self, ty: &Type, name: &str, writer: &str) {
-        let atomic = self.deps.atomic();
         let binary = self.deps.binary();
         let fmt = self.deps.fmt();
         let io = self.deps.io();
         let math = self.deps.math();
         let slog = self.deps.slog();
-        let sync = self.deps.sync();
         let wrpc = self.deps.wrpc();
 
         self.push_str("func(v ");
@@ -1590,32 +1588,7 @@ impl InterfaceGenerator<'_> {
                 writes[uint32(i)] = write
             }}
         }}
-        if len(writes) > 0 {{
-            return func(w {wrpc}.IndexWriter) error {{
-                var wg {sync}.WaitGroup
-                var wgErr {atomic}.Pointer[error]
-                for index, write := range writes {{
-                    wg.Add(1)
-                    w, err := w.Index(index)
-                    if err != nil {{
-                        return {fmt}.Errorf("failed to index nested list writer: %w", err)
-                    }}
-                    write := write
-                    go func() {{
-                        defer wg.Done()
-                        if err := write(w); err != nil {{
-                            wgErr.Store(&err)
-                        }}
-                    }}()
-                }}
-                wg.Wait()
-                if err := wgErr.Load(); err != nil {{
-                    return *err
-                }}
-                return nil
-            }}, nil
-        }}
-        return nil, nil
+        return {wrpc}.JoinWrites(writes), nil
     }}({name}, {writer})"#
         );
     }
@@ -1745,7 +1718,13 @@ impl InterfaceGenerator<'_> {
 
     fn print_write_tuple(&mut self, ty: &Tuple, name: &str, writer: &str) {
         match ty.types.as_slice() {
-            [] => self.push_str("(func({wrpc}.IndexWriter) error)(nil), error(nil)"),
+            [] => {
+                let wrpc = self.deps.wrpc();
+                uwrite!(
+                    self.src,
+                    "(func({wrpc}.IndexWriter) error)(nil), error(nil)"
+                );
+            }
             [ty] => {
                 let fmt = self.deps.fmt();
                 let io = self.deps.io();
@@ -1767,24 +1746,13 @@ impl InterfaceGenerator<'_> {
         if err != nil {{
             return nil, {fmt}.Errorf("failed to write tuple element 0: %w", err)
         }}
-        if write != nil {{
-            return func(w {wrpc}.IndexWriter) error {{
-                    w, err := w.Index(0)
-                    if err != nil {{
-                        return {fmt}.Errorf("failed to index nested tuple writer: %w", err)
-                    }}
-                    return write(w)
-            }}, nil
-        }}
-        return write, nil
+        return {wrpc}.IndexWrite(write, 0), nil
     }}({name}, {writer})"#
                 );
             }
             _ => {
-                let atomic = self.deps.atomic();
                 let fmt = self.deps.fmt();
                 let io = self.deps.io();
-                let sync = self.deps.sync();
                 let wrpc = self.deps.wrpc();
 
                 self.push_str("func(v *");
@@ -1816,32 +1784,7 @@ impl InterfaceGenerator<'_> {
                 }
                 uwrite!(
                     self.src,
-                    r#"if len(writes) > 0 {{
-            return func(w {wrpc}.IndexWriter) error {{
-                var wg {sync}.WaitGroup
-                var wgErr {atomic}.Pointer[error]
-                for index, write := range writes {{
-                    wg.Add(1)
-                    w, err := w.Index(index)
-                    if err != nil {{
-                        return {fmt}.Errorf("failed to index nested tuple writer: %w", err)
-                    }}
-                    write := write
-                    go func() {{
-                        defer wg.Done()
-                        if err := write(w); err != nil {{
-                            wgErr.Store(&err)
-                        }}
-                    }}()
-                }}
-                wg.Wait()
-                if err := wgErr.Load(); err != nil {{
-                    return *err
-                }}
-                return nil
-            }}, nil
-        }}
-        return nil, nil
+                    r#"return {wrpc}.JoinWrites(writes), nil
     }}({name}, {writer})"#
                 );
             }
@@ -2377,6 +2320,9 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
                             if err := write(w); err != nil {{
                                 {slog}.WarnContext(ctx, "failed to write nested result value", "instance", "{instance}", "name", "{name}", "err", err){abort32}
                             }}
+                            if err := w.Close(); err != nil {{
+                                {slog}.DebugContext(ctx, "failed to close nested result writer", "instance", "{instance}", "name", "{name}", "err", err)
+                            }}
                         }}()"#,
                     );
                     idx = idx.saturating_add(1);
@@ -2610,7 +2556,7 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
             w, err := w__.Index(index)
             if err != nil {{
                 if cErr := w__.Close(); cErr != nil {{
-                    {slog}.DebugContext(ctx__, "failed to close outgoing stream", "instance", "{instance}", "name", "{}", "err", cErr)
+                    {slog}.DebugContext(ctx__, "failed to close outgoing stream", "instance", "{instance}", "name", "{0}", "err", cErr)
                 }}
                 err__ = {fmt}.Errorf("failed to index param writer at index `%v`: %w", index, err)
                 return
@@ -2621,6 +2567,9 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
                 defer wg__.Done()
                 if err := write(w); err != nil {{
                     errCh__ <- err
+                }}
+                if err := w.Close(); err != nil {{
+                    {slog}.DebugContext(ctx__, "failed to close nested param writer", "instance", "{instance}", "name", "{0}", "err", err)
                 }}
             }}()
         }}
@@ -3199,38 +3148,10 @@ func (v *{name}) WriteToIndex(w {wrpc}.ByteWriter) (func({wrpc}.IndexWriter) err
     }}"#
                 );
             }
-            let atomic = self.deps.atomic();
-            let fmt = self.deps.fmt();
-            let sync = self.deps.sync();
             uwriteln!(
                 self.src,
                 r#"
-    if len(writes) > 0 {{
-        return func(w {wrpc}.IndexWriter) error {{
-            var wg {sync}.WaitGroup
-            var wgErr {atomic}.Pointer[error]
-            for index, write := range writes {{
-                wg.Add(1)
-                w, err := w.Index(index)
-                if err != nil {{
-                    return {fmt}.Errorf("failed to index nested record writer: %w", err)
-                }}
-                write := write
-                go func() {{
-                    defer wg.Done()
-                    if err := write(w); err != nil {{
-                        wgErr.Store(&err)
-                    }}
-                }}()
-            }}
-            wg.Wait()
-            if err := wgErr.Load(); err != nil {{
-                return *err
-            }}
-            return nil
-        }}, nil
-    }}
-    return nil, nil
+    return {wrpc}.JoinWrites(writes), nil
 }}"#
             );
             if info.error {

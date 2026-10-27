@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"math"
 	"sync"
@@ -229,7 +230,7 @@ func WriteStream[T any](v <-chan []T, w ByteWriter, f func(T, ByteWriter) (func(
 					if err != nil {
 						return fmt.Errorf("failed to index nested stream writer: %w", err)
 					}
-					g.Go(func() error { return write(w) })
+					g.Go(func() error { return writeNested(w, write) })
 				}
 				total++
 			}
@@ -295,10 +296,15 @@ func writeStreamChunks[T any](v <-chan []T, w IndexWriter, f func([]T, *bytes.Bu
 	return <-writeErr
 }
 
-func closeNested(r IndexReadCloser) {
-	if err := r.Close(); err != nil {
-		slog.Debug("failed to close nested reader", "err", err)
+func closeNested(c io.Closer) {
+	if err := c.Close(); err != nil {
+		slog.Debug("failed to close nested stream", "err", err)
 	}
+}
+
+func writeNested(w IndexWriteCloser, write func(IndexWriter) error) error {
+	defer closeNested(w)
+	return write(w)
 }
 
 func drain[T any](v <-chan T) {
