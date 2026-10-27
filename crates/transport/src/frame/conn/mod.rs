@@ -175,8 +175,7 @@ enum Route<'a> {
 }
 
 impl Subscriptions {
-    /// Declares `paths`, with the data of the root sent to `tx`, ignoring the paths, which
-    /// declare both a wildcard and an index at the same position as a preceding one
+    /// Declares `paths`, with the data of the root sent to `tx`
     fn new<P: AsRef<[Option<usize>]>>(
         paths: impl IntoIterator<Item = P>,
         tx: mpsc::Sender<std::io::Result<Bytes>>,
@@ -201,16 +200,16 @@ impl Subscriptions {
             indexed: Arc::default(),
             closed: false,
         };
-        'paths: for path in paths {
+        for path in paths {
             let path = path.as_ref();
             if path.is_empty() {
                 continue;
             }
             for (k, i) in path.iter().enumerate() {
-                let parent = subs.patterns.entry(Box::from(&path[..k])).or_default();
-                if *parent.wildcard.get_or_insert(i.is_none()) != i.is_none() {
-                    continue 'paths;
-                }
+                subs.patterns
+                    .entry(Box::from(&path[..k]))
+                    .or_default()
+                    .wildcard = Some(i.is_none());
             }
             subs.patterns.entry(Box::from(path)).or_default().declared = true;
             if let Some(path) = path.iter().copied().collect() {
@@ -448,6 +447,10 @@ impl Incoming {
     /// If `drain` is `true`, data ingress continues after all handles are dropped until the peer
     /// closes the stream, failing on any data received or not processed, otherwise data ingress
     /// is aborted, see [`ConnHandler::DRAIN`].
+    ///
+    /// `paths` must not contain both a wildcard and an index at the same position, so paths of
+    /// different variant cases, which are not indexed, must be merged by replacing such indices
+    /// by wildcards.
     pub fn new<T, P, Fut>(
         mut rx: T,
         paths: impl IntoIterator<Item = P>,
@@ -1109,8 +1112,8 @@ mod tests {
                 &[Some(0)][..],
                 &[Some(0)],
                 &[Some(0xffff_ffff)],
+                &[Some(1), None, Some(0)],
                 &[Some(1), None],
-                &[Some(1), Some(0)],
             ],
         );
         tx.write_all(&FRAME).await.unwrap();
@@ -1118,8 +1121,16 @@ mod tests {
             .await
             .unwrap();
         tx.write_all(&[0x02, 0x01, 0x05, 0x01, 0x2c]).await.unwrap();
+        tx.write_all(&[0x03, 0x01, 0x07, 0x00, 0x01, 0x2d])
+            .await
+            .unwrap();
         drop(tx);
-        for (path, data) in [(&[0][..], 0x2a), (&[0xffff_ffff], 0x2b), (&[1, 5], 0x2c)] {
+        for (path, data) in [
+            (&[0][..], 0x2a),
+            (&[0xffff_ffff], 0x2b),
+            (&[1, 5], 0x2c),
+            (&[1, 7, 0], 0x2d),
+        ] {
             let mut buf = Vec::default();
             rx.index(path).unwrap().read_to_end(&mut buf).await.unwrap();
             assert_eq!(buf, [data]);
