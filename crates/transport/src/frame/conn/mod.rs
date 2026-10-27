@@ -331,6 +331,19 @@ impl Subscriptions {
         pending
     }
 
+    /// Accounts for a new handle of `path`, which is already indexed
+    #[instrument(level = "trace", skip(self))]
+    fn retain(&mut self, path: &[usize]) {
+        let Some((.., pattern)) = self.resolve(path) else {
+            return;
+        };
+        for (k, ..) in pattern.iter().enumerate().filter(|(.., p)| p.is_none()) {
+            if let Some(element) = self.subs.get_mut(&path[..=k]) {
+                element.handles += 1;
+            }
+        }
+    }
+
     /// Accounts for a dropped handle of `path`, removing the elements without handles,
     /// returning `true` if any of them held data, which was not processed
     #[instrument(level = "trace", skip(self), ret(level = "trace"))]
@@ -566,6 +579,26 @@ impl Incoming {
             subscribed: rx.is_some(),
             rx: rx.map(|rx| StreamReader::new(ReceiverStream::new(rx))),
             path,
+            io: Arc::clone(&self.io),
+            state: Arc::clone(&self.state),
+        })
+    }
+
+    /// Takes the data of this handle, returning a handle reading it, if this handle reads any.
+    /// This handle keeps addressing the same position for [`Self::index`], but reads no data.
+    pub fn take_reader(&mut self) -> Option<Self> {
+        let rx = self.rx.take()?;
+        if !self.path.is_empty() {
+            self.state
+                .index
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .retain(&self.path);
+        }
+        Some(Self {
+            rx: Some(rx),
+            subscribed: true,
+            path: Arc::clone(&self.path),
             io: Arc::clone(&self.io),
             state: Arc::clone(&self.state),
         })
@@ -1138,6 +1171,42 @@ mod tests {
             rx.index(path).unwrap().read_to_end(&mut buf).await.unwrap();
             assert_eq!(buf, [data]);
         }
+        drop(rx);
+        done(done_rx).await.unwrap();
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn incoming_take_reader() {
+        let (mut tx, mut rx, done_rx) = incoming_paths(true, [[Some(0)]]);
+        tx.write_all(&[0x00, 0x01, 0x2b]).await.unwrap();
+        tx.write_all(&FRAME).await.unwrap();
+        drop(tx);
+        let mut reader = rx.take_reader().unwrap();
+        assert!(rx.take_reader().is_none());
+        let mut buf = Vec::default();
+        let mut sub = rx.index(&[0]).unwrap();
+        sub.read_to_end(&mut buf).await.unwrap();
+        assert_eq!(buf, [0x2a]);
+        buf.clear();
+        reader.read_to_end(&mut buf).await.unwrap();
+        assert_eq!(buf, [0x2b]);
+        drop(sub);
+        drop(rx);
+        drop(reader);
+        done(done_rx).await.unwrap();
+
+        let (mut tx, rx, done_rx) = incoming_paths(true, [[None]]);
+        let mut element = rx.index(&[0]).unwrap();
+        let mut reader = element.take_reader().unwrap();
+        drop(element);
+        tx.write_all(&FRAME).await.unwrap();
+        drop(tx);
+        let mut buf = Vec::default();
+        reader.read_to_end(&mut buf).await.unwrap();
+        assert_eq!(buf, [0x2a]);
+        assert_eq!(rx.state.index.lock().unwrap().subs.len(), 2);
+        drop(reader);
+        assert_eq!(rx.state.index.lock().unwrap().subs.len(), 1);
         drop(rx);
         done(done_rx).await.unwrap();
     }
