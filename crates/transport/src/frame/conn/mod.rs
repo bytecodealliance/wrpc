@@ -969,13 +969,8 @@ mod tests {
 
     #[test_log::test(tokio::test)]
     async fn incoming_rejects_unsubscribed_paths() {
-        let (_tx, rx) = tokio::io::duplex(16);
-        let rx = Incoming::new(
-            BufReader::new(rx),
-            [&[Some(0)][..], &[Some(1)], &[Some(1), Some(0)]],
-            false,
-            |_, _| async {},
-        );
+        let (_tx, rx, ..) =
+            incoming_paths(false, [&[Some(0)][..], &[Some(1)], &[Some(1), Some(0)]]);
         rx.index(&[0]).unwrap();
         for path in [&[0][..], &[2], &[1, 1]] {
             let Err(err) = rx.index(path) else {
@@ -983,13 +978,7 @@ mod tests {
             };
             assert_eq!(err.kind(), ErrorKind::NotFound);
         }
-        let (_tx, rx) = tokio::io::duplex(16);
-        let rx = Incoming::new(
-            BufReader::new(rx),
-            [[Some(0), Some(0)]],
-            false,
-            |_, _| async {},
-        );
+        let (_tx, rx, ..) = incoming_paths(false, [[Some(0), Some(0)]]);
         let mut sub = rx.index(&[0]).unwrap();
         sub.index(&[0]).unwrap();
         let err = sub.read_to_end(&mut Vec::default()).await.unwrap_err();
@@ -1008,8 +997,11 @@ mod tests {
 
     #[test_log::test(tokio::test)]
     async fn incoming_drop_waits_for_eof() {
-        let (tx, rx, mut done_rx) = incoming(true);
+        let (mut tx, rx, mut done_rx) = incoming(true);
         drop(rx);
+        tokio::task::yield_now().await;
+        assert!(done_rx.try_recv().is_err());
+        tx.write_all(&[0x00, 0x00]).await.unwrap();
         tokio::task::yield_now().await;
         assert!(done_rx.try_recv().is_err());
         drop(tx);
@@ -1017,11 +1009,12 @@ mod tests {
     }
 
     #[test_log::test(tokio::test)]
-    async fn incoming_drop_accepts_empty_frame() {
-        let (mut tx, rx, done_rx) = incoming(true);
-        drop(rx);
-        tx.write_all(&[0x00, 0x00]).await.unwrap();
+    async fn incoming_eof_waits_for_drop() {
+        let (tx, mut rx, mut done_rx) = incoming(true);
         drop(tx);
+        rx.read_to_end(&mut Vec::default()).await.unwrap();
+        assert!(done_rx.try_recv().is_err());
+        drop(rx);
         done(done_rx).await.unwrap();
     }
 
@@ -1041,33 +1034,18 @@ mod tests {
     }
 
     #[test_log::test(tokio::test)]
-    async fn incoming_drop_rejects_data() {
+    async fn incoming_rejects_unprocessed_data() {
         let (mut tx, rx, done_rx) = incoming(true);
         drop(rx);
         tx.write_all(&FRAME).await.unwrap();
         assert_eq!(failed(done_rx).await, ErrorKind::BrokenPipe);
-    }
 
-    #[test_log::test(tokio::test)]
-    async fn incoming_drop_reports_ingress_error() {
-        let (mut tx, rx, done_rx) = incoming(true);
-        tx.write_all(&FRAME).await.unwrap();
-        tx.write_all(&[0x01, 0x01, 0x01, 0x2a]).await.unwrap();
-        drop(rx);
-        assert_eq!(failed(done_rx).await, ErrorKind::NotFound);
-    }
-
-    #[test_log::test(tokio::test)]
-    async fn incoming_drop_rejects_pending() {
         let (mut tx, rx, done_rx) = incoming(true);
         tx.write_all(&FRAME).await.unwrap();
         tokio::task::yield_now().await;
         drop(rx);
         assert_eq!(failed(done_rx).await, ErrorKind::BrokenPipe);
-    }
 
-    #[test_log::test(tokio::test)]
-    async fn incoming_drop_rejects_unread() {
         let (mut tx, rx, done_rx) = incoming(true);
         let sub = rx.index(&[0]).unwrap();
         tx.write_all(&FRAME).await.unwrap();
@@ -1075,10 +1053,7 @@ mod tests {
         drop(sub);
         drop(rx);
         assert_eq!(failed(done_rx).await, ErrorKind::BrokenPipe);
-    }
 
-    #[test_log::test(tokio::test)]
-    async fn buffered_drop_rejects_unread() {
         let (tx, rx, done_rx) = incoming(true);
         drop(crate::BufferedIncoming {
             buffer: BytesMut::from(&FRAME[..]),
@@ -1086,26 +1061,19 @@ mod tests {
         });
         drop(tx);
         assert_eq!(failed(done_rx).await, ErrorKind::BrokenPipe);
-    }
 
-    #[test_log::test(tokio::test)]
-    async fn incoming_eof_waits_for_drop() {
-        let (tx, mut rx, mut done_rx) = incoming(true);
-        drop(tx);
-        rx.read_to_end(&mut Vec::default()).await.unwrap();
-        assert!(done_rx.try_recv().is_err());
-        drop(rx);
-        done(done_rx).await.unwrap();
-    }
-
-    #[test_log::test(tokio::test)]
-    async fn incoming_eof_rejects_pending() {
         let (mut tx, rx, done_rx) = incoming(true);
         tx.write_all(&FRAME).await.unwrap();
         drop(tx);
         tokio::task::yield_now().await;
         drop(rx);
         assert_eq!(failed(done_rx).await, ErrorKind::BrokenPipe);
+
+        let (mut tx, rx, done_rx) = incoming(true);
+        tx.write_all(&FRAME).await.unwrap();
+        tx.write_all(&[0x01, 0x01, 0x01, 0x2a]).await.unwrap();
+        drop(rx);
+        assert_eq!(failed(done_rx).await, ErrorKind::NotFound);
     }
 
     #[test_log::test(tokio::test)]
@@ -1136,7 +1104,7 @@ mod tests {
     }
 
     #[test_log::test(tokio::test)]
-    async fn ingress_rejects_invalid_frames() {
+    async fn incoming_rejects_invalid_frames() {
         for (frames, kind) in [
             ([0x02, 0x00].as_slice(), ErrorKind::UnexpectedEof),
             (
@@ -1157,13 +1125,13 @@ mod tests {
             (&[0x01, 0x01, 0x01, 0x2a], ErrorKind::NotFound),
             (&[0x03, 0x02, 0x03, 0x00, 0x01, 0x2a], ErrorKind::NotFound),
         ] {
-            let (tx, _rx) = mpsc::channel(1);
-            let index = std::sync::Mutex::new(Subscriptions::new(
+            let (mut tx, _rx, done_rx) = incoming_paths(
+                true,
                 [[Some(0)].as_slice(), &[Some(1), Some(0)], &[Some(2), None]],
-                tx,
-            ));
-            let err = ingress(frames, &index).await.unwrap_err();
-            assert_eq!(err.kind(), kind, "{frames:02x?}");
+            );
+            tx.write_all(frames).await.unwrap();
+            drop(tx);
+            assert_eq!(failed(done_rx).await, kind, "{frames:02x?}");
         }
     }
 
