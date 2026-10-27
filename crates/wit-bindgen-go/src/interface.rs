@@ -2445,7 +2445,7 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
     ) {
         for func in funcs {
             if self.r#gen.skip.contains(&func.name) {
-                return;
+                continue;
             }
 
             let context = self.deps.context();
