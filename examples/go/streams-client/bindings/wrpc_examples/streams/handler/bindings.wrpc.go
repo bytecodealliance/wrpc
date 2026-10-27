@@ -10,7 +10,6 @@ import (
 	io "io"
 	slog "log/slog"
 	sync "sync"
-	atomic "sync/atomic"
 	wrpc "wrpc.io/go"
 )
 
@@ -48,32 +47,7 @@ func (v *Req) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, err
 		writes[1] = write1
 	}
 
-	if len(writes) > 0 {
-		return func(w wrpc.IndexWriter) error {
-			var wg sync.WaitGroup
-			var wgErr atomic.Pointer[error]
-			for index, write := range writes {
-				wg.Add(1)
-				w, err := w.Index(index)
-				if err != nil {
-					return fmt.Errorf("failed to index nested record writer: %w", err)
-				}
-				write := write
-				go func() {
-					defer wg.Done()
-					if err := write(w); err != nil {
-						wgErr.Store(&err)
-					}
-				}()
-			}
-			wg.Wait()
-			if err := wgErr.Load(); err != nil {
-				return *err
-			}
-			return nil
-		}, nil
-	}
-	return nil, nil
+	return wrpc.JoinWrites(writes), nil
 }
 func Echo(ctx__ context.Context, wrpc__ wrpc.Invoker, r *Req) (r0__ <-chan []uint64, r1__ <-chan []uint8, errs__ <-chan error, err__ error) {
 	var buf__ bytes.Buffer
@@ -129,6 +103,9 @@ func Echo(ctx__ context.Context, wrpc__ wrpc.Invoker, r *Req) (r0__ <-chan []uin
 				defer wg__.Done()
 				if err := write(w); err != nil {
 					errCh__ <- err
+				}
+				if err := w.Close(); err != nil {
+					slog.DebugContext(ctx__, "failed to close nested param writer", "instance", "wrpc-examples:streams/handler", "name", "echo", "err", err)
 				}
 			}()
 		}

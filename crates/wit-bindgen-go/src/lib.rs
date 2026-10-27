@@ -81,12 +81,6 @@ struct Deps {
 }
 
 impl Deps {
-    fn atomic(&mut self) -> &'static str {
-        self.map
-            .insert("atomic".to_string(), "sync/atomic".to_string());
-        "atomic"
-    }
-
     fn binary(&mut self) -> &'static str {
         self.map
             .insert("binary".to_string(), "encoding/binary".to_string());

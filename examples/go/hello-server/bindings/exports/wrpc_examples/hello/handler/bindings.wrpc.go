@@ -95,6 +95,9 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 						if err := write(w); err != nil {
 							slog.WarnContext(ctx, "failed to write nested result value", "instance", "wrpc-examples:hello/handler", "name", "hello", "err", err)
 						}
+						if err := w.Close(); err != nil {
+							slog.DebugContext(ctx, "failed to close nested result writer", "instance", "wrpc-examples:hello/handler", "name", "hello", "err", err)
+						}
 					}()
 				}
 			}

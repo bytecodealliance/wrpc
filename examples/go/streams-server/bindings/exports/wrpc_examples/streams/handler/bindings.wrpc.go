@@ -10,7 +10,6 @@ import (
 	io "io"
 	slog "log/slog"
 	sync "sync"
-	atomic "sync/atomic"
 	wrpc "wrpc.io/go"
 )
 
@@ -48,32 +47,7 @@ func (v *Req) WriteToIndex(w wrpc.ByteWriter) (func(wrpc.IndexWriter) error, err
 		writes[1] = write1
 	}
 
-	if len(writes) > 0 {
-		return func(w wrpc.IndexWriter) error {
-			var wg sync.WaitGroup
-			var wgErr atomic.Pointer[error]
-			for index, write := range writes {
-				wg.Add(1)
-				w, err := w.Index(index)
-				if err != nil {
-					return fmt.Errorf("failed to index nested record writer: %w", err)
-				}
-				write := write
-				go func() {
-					defer wg.Done()
-					if err := write(w); err != nil {
-						wgErr.Store(&err)
-					}
-				}()
-			}
-			wg.Wait()
-			if err := wgErr.Load(); err != nil {
-				return *err
-			}
-			return nil
-		}, nil
-	}
-	return nil, nil
+	return wrpc.JoinWrites(writes), nil
 }
 
 type Handler interface {
@@ -233,6 +207,9 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 							slog.WarnContext(ctx, "failed to write nested result value", "instance", "wrpc-examples:streams/handler", "name", "echo", "err", err)
 							cancel()
 						}
+						if err := w.Close(); err != nil {
+							slog.DebugContext(ctx, "failed to close nested result writer", "instance", "wrpc-examples:streams/handler", "name", "echo", "err", err)
+						}
 					}()
 				case 1:
 					w, err := w.Index(0, 1)
@@ -248,6 +225,9 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 						if err := write(w); err != nil {
 							slog.WarnContext(ctx, "failed to write nested result value", "instance", "wrpc-examples:streams/handler", "name", "echo", "err", err)
 							cancel()
+						}
+						if err := w.Close(); err != nil {
+							slog.DebugContext(ctx, "failed to close nested result writer", "instance", "wrpc-examples:streams/handler", "name", "echo", "err", err)
 						}
 					}()
 				}
