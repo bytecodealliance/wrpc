@@ -2290,15 +2290,15 @@ where
                     )
                 })?;
                 trace!(i, end, "received stream chunk");
-                if tx.send(chunk).await.is_err() {
-                    return Err(error_receiver_closed());
-                }
                 for (i, deferred) in zip(i.., mem::take(&mut framed.decoder_mut().deferred)) {
                     if let Some(deferred) = deferred {
                         let r = framed.get_ref().index(&[i]).map_err(std::io::Error::other)?;
                         trace!("spawning receive task");
                         tasks.spawn(deferred(r, Vec::default()));
                     }
+                }
+                if tx.send(chunk).await.is_err() {
+                    return Err(error_receiver_closed());
                 }
                 i = end;
             },
