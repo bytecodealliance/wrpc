@@ -385,6 +385,34 @@ test(
   },
 );
 
+test(
+  "data for a sub-stream declared while ingress waits for room is routed",
+  { timeout: 1000 },
+  async () => {
+    const frames = [];
+    const peer = new Mux({ read: async () => null, write: (bytes) => void frames.push(bytes) });
+    for (let k = 0; k < 64; k++) await peer.outgoing([1, k]).write(Uint8Array.of(7));
+    await peer.outgoing([0, 0]).write(Uint8Array.of(42));
+    const mux = new Mux({
+      read: async () => frames.shift() ?? new Promise(() => {}),
+      write: () => {},
+    });
+    mux.seal(
+      [],
+      [
+        { path: [0], nested: true },
+        { path: [1], nested: true },
+      ],
+    );
+    mux.start();
+    while (!mux.pendingWaiters.length) await tick();
+    mux.seal([0, 0], [{ path: [], nested: false }]);
+    const ar = mux.incoming([0, 0]);
+    assert.ok(await ar.fill(1));
+    assert.deepEqual(ar.remaining(), Uint8Array.of(42));
+  },
+);
+
 test("an invocation sends no frames for empty data", async () => {
   for (const [types, args, expected] of [
     [[], [], "\x00\x03foo\x03bar"],
