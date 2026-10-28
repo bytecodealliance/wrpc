@@ -120,7 +120,7 @@ struct Pattern {
 ///
 /// Elements, i.e. positions matched by a wildcard, are subscribed to once indexed or once data
 /// is received for them, and removed once all handles within them are dropped. Indexing an
-/// element releases the preceding ones, which were not subscribed to. At most
+/// element releases the preceding ones, which were not indexed yet. At most
 /// [`MAX_UNCLAIMED_ELEMENTS`] elements are subscribed to before being indexed, after which
 /// ingress waits for them to be indexed.
 #[derive(Debug)]
