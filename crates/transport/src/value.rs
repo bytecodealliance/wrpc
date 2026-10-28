@@ -1041,10 +1041,6 @@ where
             self.ret = Vec::with_capacity(
                 len.min(DEFAULT_MAX_INITIAL_CAPACITY / mem::size_of::<T::Item>().max(1)),
             );
-            self.deferred = Vec::with_capacity(len.min(
-                DEFAULT_MAX_INITIAL_CAPACITY
-                    / mem::size_of::<Option<DeferredFn<BufferedIncoming>>>(),
-            ));
             self.cap = len;
         }
         while self.cap > 0 {
@@ -1058,8 +1054,11 @@ where
                     return Err(err);
                 }
             };
+            if let Some(deferred) = self.dec.take_deferred() {
+                self.deferred.resize_with(self.ret.len(), || None);
+                self.deferred.push(Some(deferred));
+            }
             self.ret.push(v);
-            self.deferred.push(self.dec.take_deferred());
             self.cap -= 1;
         }
         Ok(Some(mem::take(&mut self.ret)))
@@ -2500,6 +2499,25 @@ mod tests {
         if let Some(_f) = Deferred::<BufferedIncoming>::take_deferred(&mut dec) {
             bail!("no deferred read should have been returned");
         }
+        Ok(())
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn list_decoder_stores_only_deferred_elements() -> anyhow::Result<()> {
+        let mut dec = ListDecoder::new(UnitCodec);
+        let mut buf = BytesMut::from(&[0x80, 0x80, 0x04][..]);
+        let units = tokio_util::codec::Decoder::decode(&mut dec, &mut buf)?;
+        assert_eq!(units.map(|units| units.len()), Some(0x10000));
+        assert_eq!(dec.deferred.capacity(), 0);
+
+        let mut dec =
+            <Vec<Pin<Box<dyn Stream<Item = Bytes> + Send>>> as Decode>::Decoder::default();
+        let mut buf = BytesMut::from(&[0x03, 0x01, 0x00, 0x00, 0x01, 0x00][..]);
+        let vs = tokio_util::codec::Decoder::decode(&mut dec, &mut buf)?;
+        assert_eq!(vs.map(|vs| vs.len()), Some(3));
+        assert_eq!(dec.deferred.len(), 2);
+        assert!(dec.deferred[0].is_none());
+        assert!(dec.deferred[1].is_some());
         Ok(())
     }
 
