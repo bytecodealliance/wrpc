@@ -51,18 +51,18 @@ export const DISCARDED = new Error("sub-stream discarded");
 
 /**
  * A node of the trie of expected inbound sub-streams, addressed by path.
+ * Once it and the nodes nested in it are finished, it is forgotten: a path
+ * missing from a node whose children are all known is no longer expected,
+ * like a closed one.
  * @typedef {object} Node
  * @property {Map<number, Node>} children
  * @property {Chan<Uint8Array> | undefined} chan the data of the sub-stream at
  *   this path, if one is expected here
  * @property {boolean} sealed whether every sub-stream nested in it is known
  * @property {number} decided the number of stream elements known, whose
- *   children are all in the trie
+ *   children are all in the trie until forgotten
  * @property {boolean} done whether all its own data has been read
  * @property {boolean} closed whether an empty frame closed it
- * @property {Map<number, boolean> | undefined} pruned whether an empty frame
- *   closed each child forgotten once finished, by index, beyond the `decided`
- *   stream elements
  * @property {Map<number, Map<string, Pending>> | undefined} pending the data
  *   buffered for the paths through each missing child, by path key
  */
@@ -75,15 +75,25 @@ const node = (sealed) => ({
   decided: 0,
   done: false,
   closed: false,
-  pruned: undefined,
   pending: undefined,
 });
 
-/** @param {Node} n @param {(chan: Chan<Uint8Array>) => void} f */
-function eachChan(n, f) {
-  if (n.chan) f(n.chan);
-  for (const group of n.pending?.values() ?? []) for (const { chan } of group.values()) f(chan);
-  for (const child of n.children.values()) eachChan(child, f);
+/** The child `i` of `n`, created if missing. @param {Node} n @param {number} i */
+function child(n, i) {
+  let c = n.children.get(i);
+  if (!c) n.children.set(i, (c = node(true)));
+  return c;
+}
+
+/**
+ * The channels of `n` and of the nodes nested in it, including those of the
+ * data buffered for their missing children.
+ * @param {Node} n @returns {Generator<Chan<Uint8Array>>}
+ */
+function* chans(n) {
+  if (n.chan) yield n.chan;
+  for (const group of n.pending?.values() ?? []) for (const { chan } of group.values()) yield chan;
+  for (const c of n.children.values()) yield* chans(c);
 }
 
 /** @param {Undecided} at @param {Pending} pending */
@@ -106,6 +116,16 @@ function* readFrameHeader(r) {
   return [path, yield* atomic(r, readVarU32)];
 }
 
+/**
+ * Abort `transport`, if it can be, ignoring any failure to.
+ * @param {Transport} transport @param {unknown} err
+ */
+function abortTransport(transport, err) {
+  Promise.resolve()
+    .then(() => transport.abort?.(err))
+    .catch(() => {});
+}
+
 /** @param {number[]} path */
 export const unexpectedError = (path) => new Error(`unexpected data for sub-stream [${path}]`);
 
@@ -119,14 +139,17 @@ function unexpected(path) {
  * @typedef {object} Transport
  * @property {() => Promise<Uint8Array | null | undefined>} read next inbound chunk, `null` at EOF
  * @property {(bytes: Uint8Array) => Promise<void> | void} write send an outbound chunk
- * @property {() => Promise<void> | void} [closeWrite] half-close the write side
+ * @property {() => Promise<void> | void} closeWrite half-close the write side,
+ *   communicating the end of transmit to the peer
  * @property {(reason: unknown) => Promise<void> | void} [abort] tear down both
  *   directions after a failure
  */
 
 /**
- * Adapt a WHATWG stream duplex (as provided by a WebTransport bidirectional
- * stream, or built over a WebSocket / `MessagePort`) to a {@link Transport}.
+ * Adapt a WHATWG stream duplex with a half-close, such as a WebTransport
+ * bidirectional stream, to a {@link Transport}, ending transmit by closing
+ * the writable side. A WebSocket has no half-close, so a transport over one
+ * must communicate the end of transmit in-band instead.
  * @param {{ readable: ReadableStream<Uint8Array>, writable: WritableStream<Uint8Array> }} duplex
  * @returns {Transport}
  */
@@ -192,11 +215,23 @@ export class Outgoing {
  * the root sub-stream `[]`, and those declared with {@link Mux.seal} as each
  * value carrying pending `stream`/`future` values is decoded, until they are
  * {@link Mux.finish finished}. Data for a path that may still be declared is
- * buffered until it is; data for any other path fails the invocation.
+ * buffered until it is; data for any other path, or for a closed one, fails
+ * the invocation, while an empty frame for it is discarded.
  */
 export class Mux {
-  /** @param {Transport} transport */
+  /**
+   * Aborts `transport` and throws a `TypeError` if it does not implement
+   * `closeWrite`.
+   * @param {Transport} transport
+   */
   constructor(transport) {
+    if (typeof transport.closeWrite !== "function") {
+      const err = new TypeError(
+        "a transport must implement `closeWrite` to communicate end of transmit",
+      );
+      abortTransport(transport, err);
+      throw err;
+    }
     this.transport = transport;
     /** Reader over the raw inbound byte stream (header, then frames). */
     this.master = new AsyncReader(() => transport.read());
@@ -217,7 +252,34 @@ export class Mux {
     this.aborted = false;
     /** @type {Promise<void> | undefined} */
     this.ingress = undefined;
+    /** @type {Promise<void>} */
+    const inbound = new Promise((resolve) => (this.#endInbound = resolve));
+    /** @type {Promise<void>} */
+    const outbound = new Promise((resolve) => (this.#endOutbound = resolve));
+    /** @type {Promise<never>} */
+    const failed = new Promise((_, reject) => (this.#fail = reject));
+    /**
+     * Resolves once the peer ended transmit and every frame it sent was
+     * routed, and the write side was half-closed, unless the multiplexer is
+     * aborted first: then it rejects with the error it was aborted with. The
+     * data routed may still be being decoded.
+     * @type {Promise<void>}
+     */
+    this.ended = Promise.race([Promise.all([inbound, outbound]).then(() => {}), failed]);
+    this.ended.catch(() => {});
+    /**
+     * Rejects with the error the multiplexer is aborted with, once it is.
+     * @type {Promise<never>}
+     */
+    this.failed = failed;
   }
+
+  /** @type {() => void} */
+  #endInbound = () => {};
+  /** @type {() => void} */
+  #endOutbound = () => {};
+  /** @type {(err: unknown) => void} */
+  #fail = () => {};
 
   /** Write the invocation header: the protocol byte and instance/function names.
    * @param {string} instance @param {string} func @returns {Promise<void>} */
@@ -232,7 +294,10 @@ export class Mux {
   /** Begin reading and routing inbound frames off `master`. */
   start() {
     if (this.ingress) return;
-    this.ingress = this._ingress().catch((err) => this.abort(err));
+    this.ingress = this._ingress().then(
+      () => this.#endInbound(),
+      (err) => this.abort(err),
+    );
   }
 
   async _ingress() {
@@ -243,10 +308,7 @@ export class Mux {
       const [path, n] = await m.decode(readFrameHeader);
       await this._room(path, n === 0);
       if (n === 0) {
-        // An empty frame closes its sub-stream, which may already be finished.
         this._route(path, true)?.close();
-        const closed = this._get(path);
-        if (closed) closed.closed = true;
         continue;
       }
       const chan = this._route(path);
@@ -270,8 +332,8 @@ export class Mux {
    */
   async _room(path, empty) {
     while (this.pendingCount >= MAX_PENDING && !this.aborted) {
-      const found = this._find(path, empty, false);
-      if (found === null || found instanceof Chan) return;
+      const found = this._find(path, empty);
+      if (found === null || !("at" in found)) return;
       if (found.at.pending?.get(found.i)?.has(key(path))) return;
       await new Promise((resolve) => this.pendingWaiters.push(() => resolve(undefined)));
     }
@@ -291,48 +353,43 @@ export class Mux {
   }
 
   /**
-   * The channel of the sub-stream at `path`, or where the lookup stopped if it
-   * is not yet known whether it is expected. With `empty`, for an empty frame,
-   * a finished sub-stream gives `null`, and with `close`, a forgotten one is
-   * recorded as closed by it.
+   * The node of the sub-stream at `path`, or where the lookup stopped if it
+   * is not yet known whether it is expected. A path no sub-stream is or may
+   * still be expected at, or a closed or finished one, fails the invocation,
+   * unless `empty`, for an empty frame, which is to be discarded: then it
+   * gives `null`.
    * @param {number[]} path
    * @param {boolean} [empty]
-   * @param {boolean} [close]
-   * @returns {Chan<Uint8Array> | null | Undecided}
+   * @returns {Node | null | Undecided}
    */
-  _find(path, empty = false, close = empty) {
+  _find(path, empty = false) {
+    const fail = () => (empty ? null : unexpected(path));
     let n = this.root;
-    for (const [d, i] of path.entries()) {
-      const child = n.children.get(i);
-      if (!child) {
-        const closed = n.pruned?.get(i);
-        const finished = i < n.decided || closed !== undefined;
-        if (empty && finished && !closed) {
-          if (close && closed === false && d === path.length - 1) n.pruned?.set(i, true);
-          return null;
-        }
-        return n.sealed || finished ? unexpected(path) : { at: n, i };
-      }
-      n = child;
+    for (const i of path) {
+      const c = n.children.get(i);
+      if (!c) return n.sealed || i < n.decided ? fail() : { at: n, i };
+      n = c;
     }
-    if (n.closed) unexpected(path);
-    if (n.done) return empty ? null : unexpected(path);
-    return n.chan ?? unexpected(path);
+    return n.closed || n.done || !n.chan ? fail() : n;
   }
 
   /**
    * The channel to route the data of the sub-stream at `path` to, or
-   * `undefined` to drop it. With `empty`, for an empty frame, the data of a
-   * path that may still be expected is buffered as if it were finished.
+   * `undefined` to drop it. With `empty`, for an empty frame, the sub-stream
+   * is marked closed, and the data of a path that may still be expected is
+   * buffered as if it were finished.
    * @param {number[]} path
    * @param {boolean} [empty]
    */
   _route(path, empty = false) {
     const found = this._find(path, empty);
     if (found === null) return undefined;
-    if (found instanceof Chan) return found;
+    if (!("at" in found)) {
+      found.closed ||= empty;
+      return found.chan;
+    }
     let pending = found.at.pending?.get(found.i)?.get(key(path));
-    if (pending?.closed) unexpected(path);
+    if (pending?.closed) return empty ? undefined : unexpected(path);
     if (!pending) {
       const p = (pending = { path, chan: new Chan(CAPACITY), empty, closed: false, counted: true });
       this.pendingCount++;
@@ -353,8 +410,8 @@ export class Mux {
   _takePending(path) {
     let n = this.root;
     for (const i of path) {
-      const child = n.children.get(i);
-      if (!child) {
+      const c = n.children.get(i);
+      if (!c) {
         const group = n.pending?.get(i);
         const k = key(path);
         const pending = group?.get(k);
@@ -362,27 +419,21 @@ export class Mux {
         if (pending) this._uncount(pending);
         return { at: n, i, pending };
       }
-      n = child;
+      n = c;
     }
     return undefined;
   }
 
   /**
-   * The node at `path`, `undefined` if there is none. With `create`, missing
-   * nodes are created.
+   * The node at `path`, `undefined` if there is none.
    * @param {number[]} path
-   * @param {boolean} [create]
    */
-  _get(path, create = false) {
+  _get(path) {
     let n = this.root;
     for (const i of path) {
-      let child = n.children.get(i);
-      if (!child) {
-        if (!create) return undefined;
-        child = node(true);
-        n.children.set(i, child);
-      }
-      n = child;
+      const c = n.children.get(i);
+      if (!c) return undefined;
+      n = c;
     }
     return n;
   }
@@ -393,44 +444,66 @@ export class Mux {
    * of a stream at `[...stream, k]`, decoded in order. `expected` lists the
    * paths, relative to `path`, of the value's pending `stream`/`future`
    * values, and whether each may nest sub-streams of its own. Data for any
-   * other path nested in the value fails the invocation.
+   * other path nested in the value fails the invocation. If the value was
+   * forgotten, as discarded ones are, nothing is declared: the data buffered
+   * for the sub-streams is discarded, and any of it fails the invocation.
    * @param {number[]} path
    * @param {{ path: number[], nested: boolean }[]} expected
+   * @returns {boolean} whether the sub-streams are declared
    */
   seal(path, expected) {
     /** @type {Undecided[]} */
     const settle = [];
-    if (path.length) {
-      const parent = this._get(path.slice(0, -1));
-      if (parent && !parent.sealed) {
-        const from = parent.decided;
-        parent.decided = Math.max(from, path[path.length - 1] + 1);
-        for (let i = from; i < parent.decided; i++) settle.push({ at: parent, i });
+    const taken = expected.map((e) => this._takePending([...path, ...e.path]));
+    for (const t of taken) if (t) settle.push(t);
+    let scope = this._get(path);
+    const parent = path.length ? this._get(path.slice(0, -1)) : undefined;
+    if (parent && !parent.sealed) {
+      const k = path[path.length - 1];
+      const from = parent.decided;
+      parent.decided = Math.max(from, k + 1);
+      for (let i = from; i < parent.decided; i++) settle.push({ at: parent, i });
+      if (!scope && expected.length && k >= from) {
+        scope = child(parent, k);
       }
     }
-    const taken = expected.map((e) => this._takePending([...path, ...e.path]));
-    const scope = this._get(path, expected.length > 0);
-    if (scope) scope.sealed = true;
-    expected.forEach((e, j) => {
-      const t = taken[j];
-      if (t) settle.push(t);
-      const n = /** @type {Node} */ (this._get([...path, ...e.path], true));
-      n.sealed = !e.nested;
-      if (n.chan) return;
-      n.chan = t?.pending?.chan ?? new Chan(CAPACITY);
-      n.closed = t?.pending?.closed ?? false;
-      if (this.inboundClosed) n.chan.close(this.inboundError);
-    });
-    if (scope) for (const i of scope.pending?.keys() ?? []) settle.push({ at: scope, i });
+    if (scope) {
+      scope.sealed = true;
+      for (const [j, e] of expected.entries()) this._declare(scope, e, taken[j]?.pending);
+      for (const i of scope.pending?.keys() ?? []) settle.push({ at: scope, i });
+    } else {
+      this._drop(
+        path,
+        taken.flatMap((t) => (t?.pending ? [t.pending.chan] : [])),
+      );
+    }
     for (const at of settle) this._settle(at);
     this._wake();
+    return !!scope || !expected.length;
+  }
+
+  /**
+   * Declare the sub-stream of a pending value at `e.path` relative to `scope`,
+   * taking over the data buffered for it.
+   * @param {Node} scope
+   * @param {{ path: number[], nested: boolean }} e
+   * @param {Pending | undefined} pending
+   */
+  _declare(scope, e, pending) {
+    let n = scope;
+    for (const i of e.path) n = child(n, i);
+    n.sealed = !e.nested;
+    if (n.chan) return;
+    n.chan = pending?.chan ?? new Chan(CAPACITY);
+    n.closed = pending?.closed ?? false;
+    if (this.inboundClosed) n.chan.close(this.inboundError);
   }
 
   /**
    * Declare that the sub-stream at `path` has no more data: its stream ended,
-   * or its future's value was decoded. Once the sub-streams nested in it
-   * finish too, it is forgotten, and any further data for it fails the
-   * invocation, as does any data of it left unread in `reader`.
+   * or its future's value was decoded. Any further data for it fails the
+   * invocation, as does any data of it left unread in `reader`. Once the
+   * sub-streams nested in it finish too, it is forgotten.
    * @param {number[]} path
    * @param {AsyncReader} [reader] the reader it was read over
    */
@@ -456,17 +529,14 @@ export class Mux {
   _prune(path) {
     const nodes = [this.root];
     for (const i of path) {
-      const child = nodes[nodes.length - 1].children.get(i);
-      if (!child) return;
-      nodes.push(child);
+      const c = nodes[nodes.length - 1].children.get(i);
+      if (!c) return;
+      nodes.push(c);
     }
     for (let d = path.length; d > 0; d--) {
       const n = nodes[d];
       if (n.children.size || (n.chan && !n.done)) return;
-      const parent = nodes[d - 1];
-      const i = path[d - 1];
-      parent.children.delete(i);
-      if (i >= parent.decided) (parent.pruned ??= new Map()).set(i, n.closed);
+      nodes[d - 1].children.delete(path[d - 1]);
     }
   }
 
@@ -480,17 +550,12 @@ export class Mux {
   discard(path, from, to) {
     const n = this._get(path);
     if (!n) return;
-    let unread = false;
     for (const [k, c] of n.children) {
       if (k < from || k >= to) continue;
       n.children.delete(k);
-      eachChan(c, (chan) => {
-        unread ||= chan.queue.length > 0;
-        chan.cancel(DISCARDED);
-      });
+      this._drop([...path, k], chans(c));
     }
     this._prune(path);
-    if (unread) this.abort(unexpectedError(path));
     this._wake();
   }
 
@@ -504,8 +569,24 @@ export class Mux {
   }
 
   /**
-   * Look up the paths buffered in the group at `at` again: drop or reject
-   * those decided since, and keep the rest where their lookup stops now.
+   * Fail the readers of `dropped` with {@link DISCARDED}, aborting the
+   * invocation if any of them holds data, as data for the sub-streams nested
+   * in the value at `path`.
+   * @param {number[]} path @param {Iterable<Chan<Uint8Array>>} dropped
+   */
+  _drop(path, dropped) {
+    let unread = false;
+    for (const chan of dropped) {
+      unread ||= chan.queue.length > 0;
+      chan.cancel(DISCARDED);
+    }
+    if (unread) this.abort(unexpectedError(path));
+  }
+
+  /**
+   * Look up the paths buffered in the group at `at` again: drop those decided
+   * since, failing the invocation on any data of theirs, and keep the rest
+   * where their lookup stops now.
    * @param {Undecided} at
    */
   _settle(at) {
@@ -520,7 +601,7 @@ export class Mux {
         this.abort(err);
         return;
       }
-      if (found === null || found instanceof Chan) pending.chan.cancel(DISCARDED);
+      if (found === null || !("at" in found)) this._drop(pending.path, [pending.chan]);
       else attach(found, pending);
     }
   }
@@ -530,7 +611,7 @@ export class Mux {
     if (this.inboundClosed) return;
     this.inboundClosed = true;
     this.inboundError = err;
-    eachChan(this.root, (chan) => chan.close(err));
+    for (const chan of chans(this.root)) chan.close(err);
   }
 
   /**
@@ -582,15 +663,18 @@ export class Mux {
     this._closeInbound(err);
     this._wake();
     this.inboundError ??= err;
-    Promise.resolve()
-      .then(() => this.transport.abort?.(err))
-      .catch(() => {});
+    this.#fail(err);
+    abortTransport(this.transport, err);
   }
 
-  /** Flush pending writes and half-close the write side. @returns {Promise<void>} */
+  /**
+   * Flush pending writes and half-close the write side, communicating the end
+   * of transmit to the peer. @returns {Promise<void>}
+   */
   async closeWrite() {
     await this.writeChain;
     if (this.writeError !== undefined) throw this.writeError;
-    if (this.transport.closeWrite) await this.transport.closeWrite();
+    await this.transport.closeWrite();
+    this.#endOutbound();
   }
 }

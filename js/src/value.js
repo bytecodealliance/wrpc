@@ -2,8 +2,8 @@
 // or decoded against a `Type` from `types.js`. This mirrors the canonical Rust
 // codec in `wrpc-transport`'s `value.rs`.
 //
-// JavaScript representation of values (aligned with the component-model JS
-// conventions used by `jco`):
+// JavaScript representation of values (largely following the conventions of
+// `jco`, see `README.md` for where it deviates):
 //
 //   bool                -> boolean
 //   s8/u8/.../s32/u32   -> number

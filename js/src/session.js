@@ -209,18 +209,29 @@ async function receiveTuple(mux, root, types) {
   }
   expect(mux, [], sink);
   mux.finish([], root);
-  const done = readNested(mux, [], sink).then(() => undefined);
+  const done = unlessAborted(mux, readNested(mux, [], sink));
   done.catch((err) => mux.abort(err));
   return { values, done };
 }
 
 /**
+ * Resolves once `p` resolves, unless `mux` was aborted by then: then it
+ * rejects with the error it was aborted with.
+ * @param {Mux} mux @param {Promise<unknown>} p @returns {Promise<void>}
+ */
+async function unlessAborted(mux, p) {
+  await Promise.race([p, mux.failed]);
+  if (mux.aborted) throw mux.writeError;
+}
+
+/**
  * Declare to `mux` the sub-streams of the pending values in `sink`, decoded
- * at `path`.
+ * at `path`, unless the value was discarded.
  * @param {Mux} mux @param {number[]} path @param {DecodeDeferred[]} sink
+ * @returns {boolean} whether they are declared
  */
 function expect(mux, path, sink) {
-  mux.seal(
+  return mux.seal(
     path,
     sink.flatMap((e) =>
       e.kind === "inline" ? [] : [{ path: e.path, nested: !!e.ty && hasAsync(e.ty) }],
@@ -273,11 +284,12 @@ async function readFuture(mux, path, entry, ar) {
     else decoded = { value: undefined, sink: [] };
   } catch (err) {
     if (err !== DISCARDED) throw err;
+  }
+  if (!decoded || !expect(mux, path, decoded.sink)) {
     if (ar.remaining().length) throw unexpectedError(path);
     return;
   }
   const { value, sink } = decoded;
-  expect(mux, path, sink);
   // A value nested at the future's own path continues reading it.
   if (!sink.some((e) => e.kind !== "inline" && e.path.length === 0)) mux.finish(path, ar);
   const nested = readNested(mux, path, sink, ar);
@@ -327,8 +339,7 @@ async function readStream(mux, path, elem, queue, ar) {
           const { value, sink } = await tasks.race(decodeOne(ar, elem));
           chunk.push(value);
           const at = [...path, base + k];
-          expect(mux, at, sink);
-          if (!sink.length) continue;
+          if (!expect(mux, at, sink) || !sink.length) continue;
           tasks.add(readNested(mux, at, sink));
         }
         starts.set(chunk, base);
@@ -351,6 +362,18 @@ async function readStream(mux, path, elem, queue, ar) {
 // ----- public API -----------------------------------------------------------
 
 /**
+ * Resolves once `mux` ended transmit both ways and `decoded`, the decoding of
+ * all the data received, resolved; rejects with any failure of the invocation.
+ * @param {Mux} mux @param {Promise<unknown>} decoded
+ * @returns {Promise<void>}
+ */
+function finished(mux, decoded) {
+  const p = unlessAborted(mux, Promise.all([mux.ended, decoded]));
+  p.catch(() => {});
+  return p;
+}
+
+/**
  * Invoke `func` on `instance` over `transport`, sending `args` (encoded against
  * `paramTypes`) and decoding the reply against `resultTypes`.
  *
@@ -358,8 +381,10 @@ async function readStream(mux, path, elem, queue, ar) {
  * arrives — `stream` results are async iterables of chunks and `future`
  * results are promises, both fed as their data arrives — together with a
  * `done` promise that resolves once all asynchronous I/O (parameters and
- * results) has completed. If the arguments do not match `paramTypes`, or any
- * of it fails, the transport is aborted.
+ * results) has completed, and a `finished` promise that resolves once the
+ * peer has also ended transmit and all the data it sent has been decoded,
+ * reporting any failure after `done` too. If the arguments do not match
+ * `paramTypes`, or any of it fails, the transport is aborted.
  *
  * @param {Transport} transport
  * @param {string} instance
@@ -367,7 +392,7 @@ async function readStream(mux, path, elem, queue, ar) {
  * @param {Type[]} paramTypes
  * @param {any[]} args
  * @param {Type[]} [resultTypes]
- * @returns {Promise<{ results: any[], done: Promise<void> }>}
+ * @returns {Promise<{ results: any[], done: Promise<void>, finished: Promise<void> }>}
  */
 export async function invoke(transport, instance, func, paramTypes, args, resultTypes = []) {
   const mux = new Mux(transport);
@@ -404,17 +429,20 @@ export async function invoke(transport, instance, func, paramTypes, args, result
   }
   const { values, done: rx } = received;
 
-  const done = Promise.all([tx, rx]).then(() => undefined);
+  const done = unlessAborted(mux, Promise.all([tx, rx]));
   // Avoid an unhandled rejection if the caller uses `results` without `done`.
   done.catch(() => {});
-  return { results: values, done };
+  return { results: values, done, finished: finished(mux, done) };
 }
 
 /**
  * Accept a single invocation on `transport`: read its header and return a
  * handle exposing the invoked `instance`/`func`, methods to receive the
- * parameters and send the results, and the underlying multiplexer. If any
- * I/O fails, the transport is aborted.
+ * parameters and send the results, the underlying multiplexer, and a
+ * `finished` promise that resolves once the parameters have been received,
+ * the peer has ended transmit, the results have been sent and all the data the
+ * peer sent has been decoded, reporting any failure after the parameters'
+ * `done` too. If any I/O fails, the transport is aborted.
  *
  * @param {Transport} transport
  */
@@ -435,11 +463,19 @@ export async function accept(transport) {
   }
   mux.start();
   const root = mux.incoming([]);
+  /** @type {(received: ReturnType<typeof receiveTuple>) => void} */
+  let receive = () => {};
+  /** @type {ReturnType<typeof receiveTuple>} */
+  const received = new Promise((resolve) => (receive = resolve));
 
   return {
     instance,
     func,
     mux,
+    finished: finished(
+      mux,
+      received.then(({ done }) => done),
+    ),
 
     /**
      * Decode the invocation parameters against `paramTypes`. Returns the
@@ -447,7 +483,9 @@ export async function accept(transport) {
      * @param {Type[]} paramTypes
      */
     async receiveParams(paramTypes) {
-      const { values, done } = await receiveTuple(mux, root, paramTypes);
+      const receiving = receiveTuple(mux, root, paramTypes);
+      receive(receiving);
+      const { values, done } = await receiving;
       return { params: values, done };
     },
 
