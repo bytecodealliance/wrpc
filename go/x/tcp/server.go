@@ -33,7 +33,8 @@ func (s *Server) Accept() error {
 	if err != nil {
 		return fmt.Errorf("failed to accept TCP connection: %w", err)
 	}
-	if err := s.srv.Accept(writeConn{conn}, readConn{conn}); err != nil {
+	w, r := newConn(conn)
+	if err := s.srv.Accept(w, r); err != nil {
 		return fmt.Errorf("failed to accept invocation: %w", err)
 	}
 	return nil

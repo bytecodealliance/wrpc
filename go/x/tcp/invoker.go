@@ -3,6 +3,7 @@ package wrpctcp
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net"
 
 	wrpc "wrpc.io/go"
@@ -26,5 +27,13 @@ func (c *Invoker) Invoke(ctx context.Context, instance string, name string, buf 
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to establish TCP connection: %w", err)
 	}
-	return wrpc.InvokeFramed(ctx, writeConn{conn}, readConn{conn}, instance, name, buf, paths...)
+	w, r := newConn(conn)
+	wc, rc, err := wrpc.InvokeFramed(ctx, w, r, instance, name, buf, paths...)
+	if err != nil {
+		if cErr := conn.Close(); cErr != nil {
+			slog.DebugContext(ctx, "failed to close TCP connection", "err", cErr)
+		}
+		return nil, nil, err
+	}
+	return wc, rc, nil
 }
