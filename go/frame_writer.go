@@ -166,9 +166,9 @@ func (w *FrameStreamWriter) Index(path ...uint32) (IndexWriteCloser, error) {
 	}), nil
 }
 
-func (w *FrameStreamWriter) drop() {
+func (w *FrameStreamWriter) drop() bool {
 	if w.gone.Swap(true) {
-		return
+		return false
 	}
 	writers := w.writers.Add(-1)
 	slog.DebugContext(w.ctx, "dropped frame stream writer",
@@ -178,13 +178,16 @@ func (w *FrameStreamWriter) drop() {
 	if writers == 0 {
 		// SAFETY: This is the last ref
 		close(w.ch)
-		<-w.ctx.Done()
+		return true
 	}
+	return false
 }
 
 func (w *FrameStreamWriter) Close() error {
 	defer runtime.SetFinalizer(w, nil)
-	w.drop()
+	if w.drop() {
+		<-w.ctx.Done()
+	}
 	switch err := w.ctx.Err(); err {
 	case nil:
 		return nil

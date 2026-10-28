@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"runtime"
 	"slices"
+	"sync"
 	"testing"
+	"time"
 
 	wrpc "wrpc.io/go"
 )
@@ -145,4 +148,52 @@ func TestFrameStreamWriter(t *testing.T) {
 			t.Fatalf("%v trailing bytes left in buffer: %s", n, r.String())
 		}
 	})
+}
+
+type blockingWriter struct {
+	once    sync.Once
+	started chan struct{}
+	release chan struct{}
+}
+
+func (w *blockingWriter) Write(p []byte) (int, error) {
+	w.once.Do(func() { close(w.started) })
+	<-w.release
+	return len(p), nil
+}
+
+func (*blockingWriter) Close() error { return nil }
+
+func TestFrameStreamWriterFinalizer(t *testing.T) {
+	dst := &blockingWriter{
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	defer close(dst.release)
+	func() {
+		w := wrpc.NewFrameStreamWriter(context.Background(), dst)
+		assertWriteByte(t, w, 42)
+	}()
+	select {
+	case <-dst.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("frame was not written")
+	}
+	runtime.GC()
+	time.Sleep(100 * time.Millisecond)
+
+	finalized := make(chan struct{})
+	func() {
+		v := &struct{ p *int }{}
+		runtime.SetFinalizer(v, func(*struct{ p *int }) { close(finalized) })
+	}()
+	for range 50 {
+		runtime.GC()
+		select {
+		case <-finalized:
+			return
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+	t.Fatal("finalizers are blocked")
 }
