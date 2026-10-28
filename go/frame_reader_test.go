@@ -55,6 +55,98 @@ func TestFrameStreamReader(t *testing.T) {
 		assertClose(t, r)
 	})
 
+	for _, data := range []bool{false, true} {
+		t.Run(fmt.Sprintf("repeated empty frame data=%v", data), func(t *testing.T) {
+			t.Parallel()
+			ctx, ingress := withIngress()
+			frames := []wrpc.Frame{
+				{Path: []uint32{0}, Data: []byte("world")},
+				{Path: []uint32{0}},
+				{Path: []uint32{0}},
+				{Data: []byte("hello")},
+			}
+			if data {
+				frames = append(frames, wrpc.Frame{Path: []uint32{0}, Data: []byte("!")})
+			}
+			r := wrpc.NewFrameStreamReader(ctx, encodeFrames(t, frames...), wrpc.NewSubscribePath().Index(0))
+			sub, err := r.Index(0)
+			if err != nil {
+				t.Fatalf("failed to index reader: %s", err)
+			}
+			buf, err := io.ReadAll(sub)
+			if err != nil {
+				t.Fatalf("expected empty frame to close the path, got `%v`", err)
+			}
+			if string(buf) != "world" {
+				t.Fatalf("expected `world`, got `%s`", buf)
+			}
+			buf, err = io.ReadAll(r)
+			if data {
+				if err == nil || !strings.Contains(err.Error(), "closed path") {
+					t.Fatalf("expected the stream to fail, got `%v`", err)
+				}
+			} else if err != nil {
+				t.Fatalf("failed to read: %s", err)
+			}
+			if string(buf) != "hello" {
+				t.Fatalf("expected `hello`, got `%s`", buf)
+			}
+			assertClose(t, sub)
+			assertClose(t, r)
+			if data {
+				assertIngressFails(t, ingress, "closed path")
+			} else {
+				assertIngressSucceeds(t, ingress)
+			}
+		})
+	}
+
+	for _, data := range []bool{false, true} {
+		t.Run(fmt.Sprintf("undeclared path data=%v", data), func(t *testing.T) {
+			t.Parallel()
+			ctx, ingress := withIngress()
+			frames := []wrpc.Frame{
+				{Path: []uint32{1}},
+				{Path: []uint32{0, 1}},
+				{Path: []uint32{0}, Data: []byte("world")},
+				{Data: []byte("hello")},
+			}
+			if data {
+				frames = append(frames, wrpc.Frame{Path: []uint32{1}, Data: []byte("!")})
+			}
+			r := wrpc.NewFrameStreamReader(ctx, encodeFrames(t, frames...), wrpc.NewSubscribePath().Index(0))
+			sub, err := r.Index(0)
+			if err != nil {
+				t.Fatalf("failed to index reader: %s", err)
+			}
+			buf, err := io.ReadAll(r)
+			if data {
+				if err == nil || !strings.Contains(err.Error(), "unknown path") {
+					t.Fatalf("expected the stream to fail, got `%v`", err)
+				}
+			} else if err != nil {
+				t.Fatalf("failed to read: %s", err)
+			}
+			if string(buf) != "hello" {
+				t.Fatalf("expected `hello`, got `%s`", buf)
+			}
+			buf = make([]byte, 5)
+			if _, err := io.ReadFull(sub, buf); err != nil {
+				t.Fatalf("failed to read: %s", err)
+			}
+			if string(buf) != "world" {
+				t.Fatalf("expected `world`, got `%s`", buf)
+			}
+			assertClose(t, sub)
+			assertClose(t, r)
+			if data {
+				assertIngressFails(t, ingress, "unknown path")
+			} else {
+				assertIngressSucceeds(t, ingress)
+			}
+		})
+	}
+
 	t.Run("closed reader", func(t *testing.T) {
 		t.Parallel()
 		ctx := context.Background()
