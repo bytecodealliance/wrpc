@@ -86,6 +86,7 @@ listen(process.argv[2], async (transport) => {
     const [paramTypes, resultTypes, f] = handler;
     const { params, done } = await inv.receiveParams(paramTypes);
     await Promise.all([done, (async () => inv.sendResults(resultTypes, f(params)))()]);
+    await inv.finished;
   } catch (err) {
     inv?.mux.abort(err);
     console.error(`failed to serve \`${inv?.instance}.${inv?.func}\`:`, err);

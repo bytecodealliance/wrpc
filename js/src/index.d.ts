@@ -236,7 +236,8 @@ export const DISCARDED: Error;
 export interface Transport {
   read(): Promise<Uint8Array | null | undefined>;
   write(bytes: Uint8Array): Promise<void> | void;
-  closeWrite?(): Promise<void> | void;
+  /** Half-close the write side, communicating the end of transmit to the peer. */
+  closeWrite(): Promise<void> | void;
   /** Tear down both directions after a failure. */
   abort?(reason: unknown): Promise<void> | void;
 }
@@ -257,11 +258,24 @@ export class Outgoing {
 
 /**
  * The framing multiplexer over a {@link Transport}. Inbound data is accepted
- * only for the root sub-stream `[]` and the sub-streams declared with `seal`.
+ * only for the root sub-stream `[]` and the sub-streams declared with `seal`;
+ * an empty frame for any other path, or for a closed one, is discarded.
  */
 export class Mux {
+  /**
+   * Aborts `transport` and throws a `TypeError` if it does not implement
+   * `closeWrite`.
+   */
   constructor(transport: Transport);
   master: AsyncReader;
+  /**
+   * Resolves once the peer ended transmit and every frame it sent was routed,
+   * and the write side was half-closed, unless the multiplexer is aborted
+   * first: then it rejects with the error it was aborted with.
+   */
+  readonly ended: Promise<void>;
+  /** Rejects with the error the multiplexer is aborted with, once it is. */
+  readonly failed: Promise<never>;
   writeHeader(instance: string, func: string): Promise<void>;
   start(): void;
   /** The reader for the expected sub-stream at `path`. */
@@ -269,9 +283,10 @@ export class Mux {
   /**
    * Declare the sub-streams of the pending values in the value decoded at
    * `path` (the root tuple, a future's value, or a stream's element, in
-   * order), with paths relative to it.
+   * order), with paths relative to it. Returns whether they are declared:
+   * nothing is if the value was forgotten, as discarded ones are.
    */
-  seal(path: number[], expected: { path: number[]; nested: boolean }[]): void;
+  seal(path: number[], expected: { path: number[]; nested: boolean }[]): boolean;
   /**
    * Declare that the sub-stream at `path` has no more data: its stream ended,
    * or its future's value was decoded. Data of it left unread in `reader`
@@ -287,11 +302,18 @@ export class Mux {
   onDiscard(path: number[], f: () => void): void;
   outgoing(path: number[]): Outgoing;
   abort(err?: unknown): void;
+  /** Flush pending writes and half-close the write side. */
   closeWrite(): Promise<void>;
 }
 
 // ----- session.js -----------------------------------------------------------
 
+/**
+ * `done` resolves once all asynchronous parameters and results have been
+ * transmitted; `finished` once the peer has also ended transmit and all the
+ * data it sent has been decoded, rejecting with any failure of the
+ * invocation, including those after `done`.
+ */
 export function invoke(
   transport: Transport,
   instance: string,
@@ -299,12 +321,19 @@ export function invoke(
   paramTypes: Type[],
   args: InputValue[],
   resultTypes?: Type[],
-): Promise<{ results: Value[]; done: Promise<void> }>;
+): Promise<{ results: Value[]; done: Promise<void>; finished: Promise<void> }>;
 
 export interface Invocation {
   instance: string;
   func: string;
   mux: Mux;
+  /**
+   * Resolves once the parameters have been received, the peer has ended
+   * transmit, the results have been sent and all the data the peer sent has
+   * been decoded, rejecting with any failure of the invocation, including
+   * those after the parameters' `done`.
+   */
+  finished: Promise<void>;
   receiveParams(paramTypes: Type[]): Promise<{ params: Value[]; done: Promise<void> }>;
   sendResults(resultTypes: Type[], values: InputValue[]): Promise<void>;
 }

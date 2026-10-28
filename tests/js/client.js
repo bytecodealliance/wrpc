@@ -11,8 +11,8 @@ const addr = process.argv[2];
 
 /** Send `v` of type `ty` to `func` and return what it echoes. */
 async function echo(func, ty, v) {
-  const { results, done } = await invoke(await connect(addr), "wrpc-test:js/echo", func, [ty], [v], [ty]);
-  return { out: results[0], done };
+  const { results, done, finished } = await invoke(await connect(addr), "wrpc-test:js/echo", func, [ty], [v], [ty]);
+  return { out: results[0], done, finished };
 }
 
 /** Drain an async iterable of chunks into an array of chunks. */
@@ -114,9 +114,9 @@ test("values", { timeout: 5000 }, async () => {
       lists: [],
     },
   ]) {
-    const { out, done } = await echo("echo", ty, val);
+    const { out, done, finished } = await echo("echo", ty, val);
     assert.deepEqual(out, val);
-    await done;
+    await Promise.all([done, finished]);
   }
 });
 
@@ -131,7 +131,7 @@ test("async", { timeout: 5000 }, async () => {
     yield [["a"], []];
     yield delay([["b", "c"]]);
   }
-  const { out, done } = await echo("echo-async", ty, {
+  const { out, done, finished } = await echo("echo-async", ty, {
     bytes: [new Uint8Array([1]), new Uint8Array([2, 3])],
     lists: lists(),
     str: delay("later"),
@@ -142,5 +142,5 @@ test("async", { timeout: 5000 }, async () => {
   assert.deepEqual(ls.flat(), [["a"], [], ["b", "c"]]);
   assert.equal(str, "later");
   assert.equal(nested, 42);
-  await done;
+  await Promise.all([done, finished]);
 });
