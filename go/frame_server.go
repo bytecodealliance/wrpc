@@ -66,6 +66,19 @@ func (s *FramedServer) Serve(instance string, name string, f HandleFunc, paths .
 }
 
 func (s *FramedServer) Accept(w io.WriteCloser, r io.ReadCloser) error {
+	if err := s.accept(w, r); err != nil {
+		if cErr := w.Close(); cErr != nil {
+			slog.DebugContext(s.ctx, "failed to close writer", "err", cErr)
+		}
+		if cErr := r.Close(); cErr != nil {
+			slog.DebugContext(s.ctx, "failed to close reader", "err", cErr)
+		}
+		return err
+	}
+	return nil
+}
+
+func (s *FramedServer) accept(w io.WriteCloser, r io.ReadCloser) error {
 	br := bufio.NewReader(r)
 	b, err := br.ReadByte()
 	if err != nil {
