@@ -248,14 +248,10 @@ function readNested(mux, path, sink, ar) {
  */
 async function readDeferred(mux, path, entry, ar) {
   switch (entry.kind) {
-    case "inline": {
-      // Discard the sub-streams nested in the chunk unless the consumer received it.
-      const queue = entry.queue;
-      queue.onCancel(() => {
-        if (queue.taken === 0) mux.discard(path);
-      });
+    case "inline":
+      // Discard the sub-streams nested in the chunk unless the stream is read to completion.
+      entry.queue.onCancel(() => mux.discard(path));
       return;
-    }
     case "future":
       return readFuture(mux, path, entry, ar ?? mux.incoming(path));
     case "stream":
@@ -289,17 +285,14 @@ async function readFuture(mux, path, entry, ar) {
 /**
  * Receive a stream's chunks over `ar` into `queue`, waiting while it is full.
  * If the consumer cancels the queue, the rest of the stream is discarded,
- * along with the sub-streams nested in the elements it did not receive.
+ * along with the sub-streams nested in all of its elements.
  * @param {Mux} mux @param {number[]} path @param {Type} elem
  * @param {import("./index.d.ts").Chan<any>} queue @param {AsyncReader} ar
  */
 async function readStream(mux, path, elem, queue, ar) {
   const nested = hasAsync(elem);
-  /** @type {number[]} the index of the first element of each chunk not yet taken */
-  const starts = [];
-  let taken = 0;
   let base = 0;
-  queue.onCancel(() => mux.discard(path, starts[queue.taken - taken] ?? base));
+  queue.onCancel(() => mux.discard(path));
   // Nobody receives the rest of a discarded stream.
   mux.ondiscard(path, () => queue.cancel());
   const tasks = new Tasks();
@@ -309,11 +302,6 @@ async function readStream(mux, path, elem, queue, ar) {
       if (len === 0) {
         mux.finish(path, ar);
         break;
-      }
-      if (nested) {
-        starts.splice(0, queue.taken - taken);
-        taken = queue.taken;
-        starts.push(base);
       }
       let chunk;
       if (elem.kind === "u8") {
