@@ -249,9 +249,13 @@ impl<C: Send + Sync> store::Handler<C> for Handler {
                 };
                 let mut conf = client_tls_config();
                 conf.alpn_protocols = vec![web_transport_quinn::ALPN.as_bytes().to_vec()];
-                let conf: QuicClientConfig = conf
+                let conf: QuicClientConfig = match conf
                     .try_into()
-                    .context("failed to convert rustls client config to QUIC client config")?;
+                    .context("failed to convert rustls client config to QUIC client config")
+                {
+                    Ok(conf) => conf,
+                    Err(err) => return Ok(Err(store::Error::Other(format!("{err:#}")))),
+                };
                 let ep =
                     web_transport_quinn::Client::new(ep, quinn::ClientConfig::new(Arc::new(conf)));
                 let conn = match ep
