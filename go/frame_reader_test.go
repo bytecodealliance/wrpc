@@ -184,6 +184,31 @@ func TestFrameStreamReader(t *testing.T) {
 		assertClose(t, r)
 	})
 
+	t.Run("full buffer", func(t *testing.T) {
+		t.Parallel()
+		ctx := context.Background()
+		var src sink
+		for range 100 {
+			if _, err := wrpc.WriteFrame(wrpc.Frame{Path: []uint32{0}, Data: []byte("x")}, &src); err != nil {
+				t.Fatalf("failed to write frame: %s", err)
+			}
+		}
+		r := wrpc.NewFrameStreamReader(ctx, &src, wrpc.NewSubscribePath().Index(0))
+		sub, err := r.Index(0)
+		if err != nil {
+			t.Fatalf("failed to index reader: %s", err)
+		}
+		buf, err := io.ReadAll(sub)
+		if err != nil {
+			t.Fatalf("failed to read: %s", err)
+		}
+		if string(buf) != strings.Repeat("x", 100) {
+			t.Fatalf("expected 100 bytes, got `%s`", buf)
+		}
+		assertClose(t, sub)
+		assertClose(t, r)
+	})
+
 	t.Run("unclaimed elements", func(t *testing.T) {
 		t.Parallel()
 		ctx := context.Background()
