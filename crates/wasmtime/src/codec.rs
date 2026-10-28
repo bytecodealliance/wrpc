@@ -37,8 +37,8 @@ pub struct ValEncoder<'a, T: 'static> {
     pub store: StoreContextMut<'a, T>,
     pub ty: &'a Type,
     pub resources: &'a [ResourceType],
-    /// Resource types bridged to wRPC `stream<u8>` (`wasi:io` `input-stream`/
-    /// `output-stream`), identified by their possibly-uninstantiated type.
+    /// Resource types bridged to wRPC `stream<u8>` (`wasi:io` `input-stream`), identified by
+    /// their possibly-uninstantiated type.
     pub io_streams: &'a [ResourceType],
     pub deferred: Option<
         Box<

@@ -3,13 +3,12 @@
 //! When serving a component function over wRPC, the transport must be told which
 //! nested positions of the parameters carry asynchronous values (streams and
 //! futures) so it can subscribe to their data channels. `wasi:io`
-//! `input-stream`/`output-stream` resources are bridged to wRPC `stream<u8>` by
-//! this runtime, so they are treated as asynchronous here as well.
+//! `input-stream` resources are bridged to wRPC `stream<u8>` by this runtime,
+//! so they are treated as asynchronous here as well.
 //!
 //! Note that at serve time the component has not been instantiated, so a
 //! `wasi:io` stream parameter appears as the component's own *uninstantiated*
-//! resource type rather than the host [`DynInputStream`](wasmtime_wasi::p2::DynInputStream)/
-//! [`DynOutputStream`](wasmtime_wasi::p2::DynOutputStream)
+//! resource type rather than the host [`DynInputStream`](wasmtime_wasi::p2::DynInputStream)
 //! type. We therefore identify those resources by collecting the component's
 //! `wasi:io/streams` imports up front and comparing against them.
 
@@ -22,11 +21,11 @@ use wasmtime::component::types::{self, Type};
 use wrpc_introspect::merge_wildcards;
 
 /// Collect the (uninstantiated) resource types of the component's imported
-/// `wasi:io/streams` `input-stream` and `output-stream`, against which
-/// parameter resource types can be compared at serve time.
+/// `wasi:io/streams` `input-stream`, against which parameter resource types can
+/// be compared at serve time.
 ///
 /// A `Vec` is used rather than a set because [`ResourceType`] is neither `Ord`
-/// nor `Hash`; the collection holds at most two entries.
+/// nor `Hash`; the collection holds one entry per imported `wasi:io/streams` version.
 #[must_use]
 pub fn wasi_io_stream_resources(
     engine: &Engine,
@@ -42,7 +41,7 @@ pub fn wasi_io_stream_resources(
             continue;
         }
         for (name, ty) in resources {
-            if (&*name == "input-stream" || &*name == "output-stream") && !out.contains(&ty) {
+            if &*name == "input-stream" && !out.contains(&ty) {
                 out.push(ty);
             }
         }
