@@ -226,12 +226,15 @@ func WriteStream[T any](v <-chan []T, w ByteWriter, f func(T, ByteWriter) (func(
 					return fmt.Errorf("failed to encode pending stream element %d: %w", total, err)
 				}
 				if write != nil {
-					w, err := w.Index(total)
-					if err != nil {
-						return fmt.Errorf("failed to index nested stream writer: %w", err)
-					}
+					i := total
 					*nested = append(*nested, func() {
-						g.Go(func() error { return writeNested(ctx, w, write) })
+						g.Go(func() error {
+							w, err := w.Index(i)
+							if err != nil {
+								return fmt.Errorf("failed to index nested stream writer: %w", err)
+							}
+							return writeNested(ctx, w, write)
+						})
 					})
 				}
 				total++
@@ -242,8 +245,6 @@ func WriteStream[T any](v <-chan []T, w ByteWriter, f func(T, ByteWriter) (func(
 	}, nil
 }
 
-// streamBatch is a batch of encoded stream chunks and the functions starting
-// the writes of the values nested in their elements, called once it is written
 type streamBatch struct {
 	buf    []byte
 	nested []func()
