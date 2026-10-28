@@ -13,8 +13,6 @@ import (
 	"sync/atomic"
 )
 
-// maxUnclaimedElements is the maximum number of elements, i.e. positions matched by a wildcard,
-// which data is received for before they are indexed
 const maxUnclaimedElements = 64
 
 func indexPath(path ...uint32) string {
@@ -47,10 +45,8 @@ func decodePath(p string) []uint32 {
 	return path
 }
 
-// subscribePattern is a declared path or a prefix of one
 type subscribePattern struct {
 	declared bool
-	// wildcard is the pattern of the positions nested in the path, if they are matched by a wildcard
 	wildcard *subscribePattern
 	nested   map[uint32]*subscribePattern
 }
@@ -77,7 +73,6 @@ func (p *subscribePattern) insert(path SubscribePath) {
 	p.declared = true
 }
 
-// resolve returns the pattern matching `path` and the positions of the elements in it
 func (p *subscribePattern) resolve(path []uint32) (*subscribePattern, []int) {
 	var elements []int
 	for k, i := range path {
@@ -92,40 +87,28 @@ func (p *subscribePattern) resolve(path []uint32) (*subscribePattern, []int) {
 }
 
 type frameElement struct {
-	readers int
-	parent  *frameElement
-	// paths are the subscriptions, which this is the innermost element containing
-	paths []string
-	// containers are the paths containing elements, which this is the innermost element containing
+	readers    int
+	parent     *frameElement
+	paths      []string
 	containers []string
-	// elements are the elements, which this is the innermost element containing
-	elements map[string]struct{}
+	elements   map[string]struct{}
 }
 
-// frameSubscriptions are the subscriptions of the declared paths and the root.
-//
-// Elements, i.e. positions matched by a wildcard, are subscribed to once indexed or once data
-// is received for them, and removed once all readers within them are dropped. Indexing an
-// element releases the preceding ones, which were not indexed. At most [maxUnclaimedElements]
-// elements are subscribed to before being indexed, after which ingress waits for them to be indexed.
 type frameSubscriptions struct {
-	ctx      context.Context
-	readers  *atomic.Int64
-	mu       sync.Mutex
-	cond     *sync.Cond
-	patterns subscribePattern
-	nest     map[string]chan []byte
-	closed   map[string]struct{}
-	dropped  map[string]struct{}
-	elements map[string]*frameElement
-	// unclaimed are the elements subscribed to before being indexed
+	ctx       context.Context
+	readers   *atomic.Int64
+	mu        sync.Mutex
+	cond      *sync.Cond
+	patterns  subscribePattern
+	nest      map[string]chan []byte
+	closed    map[string]struct{}
+	dropped   map[string]struct{}
+	elements  map[string]*frameElement
 	unclaimed map[string]struct{}
-	// next is the lowest index of an element, which is not released, by the path containing it
-	next map[string]uint64
-	done bool
+	next      map[string]uint64
+	done      bool
 }
 
-// owner returns the innermost element containing position `k` of `path`, if any
 func (s *frameSubscriptions) owner(path []uint32, positions []int, k int) *frameElement {
 	var el *frameElement
 	for _, j := range positions {
@@ -137,7 +120,6 @@ func (s *frameSubscriptions) owner(path []uint32, positions []int, k int) *frame
 	return el
 }
 
-// element returns the element at position `k` of `path`, subscribing to it if it is not yet
 func (s *frameSubscriptions) element(path []uint32, positions []int, k int) (string, *frameElement) {
 	e := indexPath(path[:k+1]...)
 	el, ok := s.elements[e]
@@ -154,7 +136,6 @@ func (s *frameSubscriptions) element(path []uint32, positions []int, k int) (str
 	return e, el
 }
 
-// subscribe returns the channel of `path`, subscribing to it if it is not yet
 func (s *frameSubscriptions) subscribe(path []uint32, positions []int) chan []byte {
 	p := indexPath(path...)
 	ch, ok := s.nest[p]
@@ -171,10 +152,8 @@ func (s *frameSubscriptions) subscribe(path []uint32, positions []int) chan []by
 	return ch
 }
 
-// route returns the channel of `path` and whether it is within a released element, waiting
-// while [maxUnclaimedElements] elements are subscribed to before being indexed
-func (s *frameSubscriptions) route(path []uint32) (chan []byte, bool, error) {
-	if ch, ok := s.nest[indexPath(path...)]; ok {
+func (s *frameSubscriptions) route(path []uint32, p string) (chan []byte, bool, error) {
+	if ch, ok := s.nest[p]; ok {
 		return ch, false, nil
 	}
 	for {
@@ -211,8 +190,6 @@ func (s *frameSubscriptions) route(path []uint32) (chan []byte, bool, error) {
 	}
 }
 
-// claim subscribes to the elements in `path`, releasing the preceding ones, which were not indexed,
-// and returns the channel of `path` and the elements in it
 func (s *frameSubscriptions) claim(path []uint32) (chan []byte, []string, error) {
 	pattern, positions := s.patterns.resolve(path)
 	if pattern == nil || !pattern.declared {
@@ -237,10 +214,7 @@ func (s *frameSubscriptions) claim(path []uint32) (chan []byte, []string, error)
 		}
 		e, el := s.element(path, positions, k)
 		el.readers++
-		if _, ok := s.unclaimed[e]; ok {
-			delete(s.unclaimed, e)
-			s.cond.Broadcast()
-		}
+		delete(s.unclaimed, e)
 		if !ok {
 			if owner := s.owner(path, positions, k); owner != nil {
 				owner.containers = append(owner.containers, c)
@@ -249,10 +223,10 @@ func (s *frameSubscriptions) claim(path []uint32) (chan []byte, []string, error)
 		s.next[c] = max(next, uint64(path[k])+1)
 		elements[j] = e
 	}
+	s.cond.Broadcast()
 	return s.subscribe(path, positions), elements, nil
 }
 
-// remove removes the element at `e` and everything nested in it
 func (s *frameSubscriptions) remove(e string) {
 	el, ok := s.elements[e]
 	if !ok {
@@ -349,7 +323,7 @@ func NewFrameStreamReader(ctx context.Context, r ByteReadCloser, paths ...Subscr
 			p := indexPath(frame.Path...)
 			subs.mu.Lock()
 			defer subs.mu.Unlock()
-			ch, released, err := subs.route(frame.Path)
+			ch, released, err := subs.route(frame.Path, p)
 			if err != nil {
 				return err
 			}
