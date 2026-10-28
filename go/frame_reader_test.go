@@ -6,7 +6,9 @@ import (
 	"context"
 	"io"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	wrpc "wrpc.io/go"
 )
@@ -259,4 +261,63 @@ func TestFrameStreamReader(t *testing.T) {
 		}
 		assertClose(t, r)
 	})
+}
+
+type countingReader struct {
+	*bytes.Reader
+	n atomic.Int64
+}
+
+func (r *countingReader) Read(p []byte) (int, error) {
+	n, err := r.Reader.Read(p)
+	r.n.Add(int64(n))
+	return n, err
+}
+
+func (r *countingReader) ReadByte() (byte, error) {
+	b, err := r.Reader.ReadByte()
+	if err == nil {
+		r.n.Add(1)
+	}
+	return b, err
+}
+
+func (*countingReader) Close() error { return nil }
+
+func TestFrameStreamReaderBoundsBuffering(t *testing.T) {
+	ctx := context.Background()
+	data := bytes.Repeat([]byte{0x2a}, 20<<20)
+	var src sink
+	for _, frame := range []wrpc.Frame{
+		{Path: []uint32{0}, Data: data},
+		{Data: []byte("hello")},
+	} {
+		if _, err := wrpc.WriteFrame(frame, &src); err != nil {
+			t.Fatalf("failed to write frame: %s", err)
+		}
+	}
+	rd := &countingReader{Reader: bytes.NewReader(src.Bytes())}
+	r := wrpc.NewFrameStreamReader(ctx, rd, wrpc.NewSubscribePath().Index(0))
+	sub, err := r.Index(0)
+	if err != nil {
+		t.Fatalf("failed to index reader: %s", err)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if n := rd.n.Load(); n > 18<<20 {
+		t.Fatalf("expected at most 18MiB to be read before the path is consumed, read %d bytes", n)
+	}
+	buf, err := io.ReadAll(sub)
+	if err != nil {
+		t.Fatalf("failed to read path: %s", err)
+	}
+	if !bytes.Equal(buf, data) {
+		t.Fatalf("expected %d bytes of data, got %d", len(data), len(buf))
+	}
+	buf, err = io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("failed to read root: %s", err)
+	}
+	if string(buf) != "hello" {
+		t.Fatalf("expected `hello`, got `%s`", buf)
+	}
 }
