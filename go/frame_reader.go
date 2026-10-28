@@ -198,7 +198,7 @@ func (s *frameSubscriptions) route(path []uint32, p string) (*frameSub, bool, er
 	for {
 		pattern, positions := s.patterns.resolve(path)
 		if pattern == nil || !pattern.declared {
-			return nil, false, fmt.Errorf("received a frame for unknown path `%v`", path)
+			return nil, false, nil
 		}
 		missing := 0
 		for _, k := range positions {
@@ -365,20 +365,24 @@ func NewFrameStreamReader(ctx context.Context, r ByteReadCloser, paths ...Subscr
 			if err != nil {
 				return nil, err
 			}
-			if released {
-				if n > 0 {
-					return nil, fmt.Errorf("received data for a released element on path `%v`", path)
-				}
-				return nil, nil
-			}
-			if _, ok := subs.closed[p]; ok {
-				return nil, fmt.Errorf("received a frame for closed path `%v`", path)
-			}
+			_, closed := subs.closed[p]
 			if n == 0 {
+				if sub == nil || closed {
+					return nil, nil
+				}
 				slog.DebugContext(ctx, "received empty frame, closing path", "path", path)
 				subs.closed[p] = struct{}{}
 				close(sub.ch)
 				return nil, nil
+			}
+			if released {
+				return nil, fmt.Errorf("received data for a released element on path `%v`", path)
+			}
+			if sub == nil {
+				return nil, fmt.Errorf("received a frame for unknown path `%v`", path)
+			}
+			if closed {
+				return nil, fmt.Errorf("received a frame for closed path `%v`", path)
 			}
 			if sub.isDropped() {
 				return nil, fmt.Errorf("received data for a closed reader on path `%v`", path)
