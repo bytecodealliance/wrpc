@@ -280,12 +280,17 @@ export class Mux {
     }
   }
 
+  /** Wake the frame waiting in {@link Mux._room}, to look its path up again. */
+  _wake() {
+    for (const f of this.pendingWaiters.splice(0)) f();
+  }
+
   /** Stop counting `pending` towards {@link MAX_PENDING}. @param {Pending} pending */
   _uncount(pending) {
     if (!pending.counted) return;
     pending.counted = false;
     this.pendingCount--;
-    for (const f of this.pendingWaiters.splice(0)) f();
+    this._wake();
   }
 
   /**
@@ -429,6 +434,7 @@ export class Mux {
     });
     if (scope) for (const i of scope.pending?.keys() ?? []) settle.push({ at: scope, i });
     for (const at of settle) this._settle(at);
+    this._wake();
   }
 
   /**
@@ -450,6 +456,7 @@ export class Mux {
     n.chan?.close();
     for (const i of [...(n.pending?.keys() ?? [])]) this._settle({ at: n, i });
     this._prune(path);
+    this._wake();
   }
 
   /**
@@ -496,6 +503,7 @@ export class Mux {
       eachChan(child, (chan) => chan.cancel(DISCARDED));
       n.children.delete(i);
     }
+    this._wake();
   }
 
   /**
@@ -588,7 +596,7 @@ export class Mux {
     this.aborted = true;
     this.writeError = err;
     this._closeInbound(err);
-    for (const f of this.pendingWaiters.splice(0)) f();
+    this._wake();
     this.inboundError ??= err;
     Promise.resolve()
       .then(() => this.transport.abort?.(err))
