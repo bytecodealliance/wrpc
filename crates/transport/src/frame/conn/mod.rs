@@ -1,6 +1,5 @@
 use core::fmt::{Debug, Display};
 use core::future::poll_fn;
-use core::mem;
 use core::ops::Bound;
 use core::pin::{Pin, pin};
 use core::sync::atomic::{AtomicBool, Ordering};
@@ -168,6 +167,8 @@ impl Subscription {
 enum Route<'a> {
     /// Sender slot of the subscription
     Tx(&'a mut TxSlot),
+    /// The frame is for a path, which carries no pending value
+    NotFound,
     /// The frame is for an element, which was released
     Released,
     /// The frame is for an element, which can only be subscribed to using a permit
@@ -373,34 +374,29 @@ impl Subscriptions {
             .any(|sub| sub.rx.is_some_and(|rx| !rx.is_empty()))
     }
 
-    /// Routes a frame received on `path`, subscribing to the elements in it using `permit`
-    fn route(
-        &mut self,
-        path: &[usize],
-        permit: &mut Option<OwnedSemaphorePermit>,
-    ) -> std::io::Result<Route<'_>> {
+    /// Routes a frame received on `path`, subscribing to the elements in it using `permit`.
+    /// Nothing is subscribed to for a `path`, which is not declared.
+    fn route(&mut self, path: &[usize], permit: &mut Option<OwnedSemaphorePermit>) -> Route<'_> {
         if self.subs.get(path).is_none_or(|sub| sub.tx.is_none()) {
             let Some((Pattern { declared: true, .. }, pattern)) = self.resolve(path) else {
-                return Err(error_not_found(path));
+                return Route::NotFound;
             };
             for (k, ..) in pattern.iter().enumerate().filter(|(.., p)| p.is_none()) {
                 if self.subs.contains_key(&path[..=k]) {
                     continue;
                 }
                 if path[k] < self.next(&path[..k]) {
-                    return Ok(Route::Released);
+                    return Route::Released;
                 }
                 let Some(permit) = permit.take() else {
-                    return Ok(Route::Unclaimed);
+                    return Route::Unclaimed;
                 };
                 trace!(path = ?&path[..=k], "subscribing to unclaimed element");
                 self.subscribe(&path[..=k], &pattern[..=k]).permit = Some(permit);
             }
             self.subscribe(path, &pattern);
         }
-        self.get_tx_mut(path)
-            .map(Route::Tx)
-            .ok_or_else(|| error_not_found(path))
+        self.get_tx_mut(path).map_or(Route::NotFound, Route::Tx)
     }
 
     /// Gets the sender slot of a subscription
@@ -852,13 +848,11 @@ async fn ingress(
                 let mut subs = index
                     .lock()
                     .map_err(|err| std::io::Error::other(err.to_string()))?;
-                match subs.route(&path, &mut permit)? {
+                match subs.route(&path, &mut permit) {
                     Route::Tx(tx) => {
                         if n == 0 {
                             trace!(?path, "closing path");
-                            if let TxSlot::Closed = mem::replace(tx, TxSlot::Closed) {
-                                return Err(error_closed(&path));
-                            }
+                            *tx = TxSlot::Closed;
                             continue 'frames;
                         }
                         let TxSlot::Open(tx) = tx else {
@@ -866,7 +860,11 @@ async fn ingress(
                         };
                         break tx.clone();
                     }
-                    Route::Released if n == 0 => continue 'frames,
+                    Route::NotFound | Route::Released if n == 0 => {
+                        trace!(?path, "discarding empty frame");
+                        continue 'frames;
+                    }
+                    Route::NotFound => return Err(error_not_found(&path)),
                     Route::Released => return Err(error_receiver_closed()),
                     Route::Unclaimed => (Arc::clone(&subs.unclaimed), Arc::clone(&subs.indexed)),
                 }
@@ -913,11 +911,11 @@ fn close_rx(state: &IngressState) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Returns the error for a frame received on a closed `path`
+/// Returns the error for data received on a closed `path`
 fn error_closed(path: &[usize]) -> std::io::Error {
     std::io::Error::new(
         std::io::ErrorKind::InvalidData,
-        format!("received a frame on closed path `{path:?}`"),
+        format!("received data on closed path `{path:?}`"),
     )
 }
 
@@ -1269,16 +1267,10 @@ mod tests {
                 ErrorKind::UnexpectedEof,
             ),
             (&[0x00, 0x00, 0x00, 0x01, 0x2a], ErrorKind::InvalidData),
-            (&[0x00, 0x00, 0x00, 0x00], ErrorKind::InvalidData),
             (
                 &[0x01, 0x00, 0x00, 0x01, 0x00, 0x01, 0x2a],
                 ErrorKind::InvalidData,
             ),
-            (
-                &[0x01, 0x00, 0x00, 0x01, 0x00, 0x00],
-                ErrorKind::InvalidData,
-            ),
-            (&[0x01, 0x01, 0x00], ErrorKind::NotFound),
             (&[0x01, 0x01, 0x01, 0x2a], ErrorKind::NotFound),
             (&[0x03, 0x02, 0x03, 0x00, 0x01, 0x2a], ErrorKind::NotFound),
         ] {
@@ -1290,6 +1282,76 @@ mod tests {
             drop(tx);
             assert_eq!(failed(done_rx).await, kind, "{frames:02x?}");
         }
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn incoming_discards_empty_frames_on_closed_paths() {
+        let (mut tx, mut rx, done_rx) = incoming_paths(true, [[Some(0)], [Some(1)]]);
+        let mut sub = rx.index(&[0]).unwrap();
+        let mut other = rx.index(&[1]).unwrap();
+        tx.write_all(&[0x00, 0x00, 0x00, 0x00]).await.unwrap();
+        tx.write_all(&[0x01, 0x00, 0x00, 0x01, 0x00, 0x00])
+            .await
+            .unwrap();
+        tx.write_all(&[0x01, 0x01, 0x01, 0x2a]).await.unwrap();
+        let mut buf = [0; 1];
+        other.read_exact(&mut buf).await.unwrap();
+        assert_eq!(buf, [0x2a]);
+        assert_eq!(rx.read_to_end(&mut Vec::default()).await.unwrap(), 0);
+        assert_eq!(sub.read_to_end(&mut Vec::default()).await.unwrap(), 0);
+        tx.write_all(&FRAME).await.unwrap();
+        assert_eq!(failed(done_rx).await, ErrorKind::InvalidData);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn incoming_discards_empty_frames_on_undeclared_paths() {
+        let (mut tx, rx, done_rx) = incoming_paths(
+            true,
+            [[Some(0)].as_slice(), &[Some(1), Some(0)], &[Some(2), None]],
+        );
+        let mut sub = rx.index(&[0]).unwrap();
+        tx.write_all(&[0x01, 0x01, 0x00]).await.unwrap();
+        tx.write_all(&[0x01, 0x03, 0x00]).await.unwrap();
+        tx.write_all(&[0x03, 0x02, 0x03, 0x00, 0x00]).await.unwrap();
+        tx.write_all(&FRAME).await.unwrap();
+        let mut buf = [0; 1];
+        sub.read_exact(&mut buf).await.unwrap();
+        assert_eq!(buf, [0x2a]);
+        {
+            let index = rx.state.index.lock().unwrap();
+            assert_eq!(index.subs.len(), 3, "{index:?}");
+            assert!(index.next.is_empty(), "{index:?}");
+            assert_eq!(
+                index.unclaimed.available_permits(),
+                MAX_UNCLAIMED_ELEMENTS,
+                "{index:?}"
+            );
+        }
+        tx.write_all(&[0x01, 0x01, 0x01, 0x2a]).await.unwrap();
+        assert_eq!(failed(done_rx).await, ErrorKind::NotFound);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn incoming_discards_empty_frames_on_released_elements() {
+        let (mut tx, rx, done_rx) = incoming_paths(true, [[None]]);
+        drop(rx.index(&[0]).unwrap());
+        let mut sub = rx.index(&[1]).unwrap();
+        tx.write_all(&[0x01, 0x00, 0x00]).await.unwrap();
+        tx.write_all(&[0x01, 0x00, 0x00]).await.unwrap();
+        tx.write_all(&[0x01, 0x01, 0x01, 0x2a]).await.unwrap();
+        let mut buf = [0; 1];
+        sub.read_exact(&mut buf).await.unwrap();
+        assert_eq!(buf, [0x2a]);
+        assert!(
+            !rx.state
+                .index
+                .lock()
+                .unwrap()
+                .subs
+                .contains_key([0].as_slice())
+        );
+        tx.write_all(&FRAME).await.unwrap();
+        assert_eq!(failed(done_rx).await, ErrorKind::BrokenPipe);
     }
 
     #[test_log::test(tokio::test)]
