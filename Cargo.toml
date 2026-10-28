@@ -122,7 +122,7 @@ tempfile = { workspace = true }
 test-log = { workspace = true, features = ["color", "log", "trace"] }
 tokio = { workspace = true, features = ["net", "process", "rt-multi-thread"] }
 tokio-util = { workspace = true }
-wasmtime = { workspace = true }
+wasmtime = { workspace = true, features = ["component-model-async", "cranelift", "wat"] }
 wasmtime-wasi = { workspace = true }
 wasmtime-cli-flags = { workspace = true, features = [
     "async",

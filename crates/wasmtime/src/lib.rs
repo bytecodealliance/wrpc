@@ -18,7 +18,7 @@ use tokio_util::codec::Encoder;
 use tracing::{debug, instrument, trace, warn};
 use uuid::Uuid;
 use wasmtime::component::{
-    Func, Resource, ResourceAny, ResourceTable, ResourceType, Type, Val, types,
+    Accessor, Func, Resource, ResourceAny, ResourceTable, ResourceType, Type, Val, types,
 };
 use wasmtime::error::Context as _;
 use wasmtime::{AsContextMut, Engine, bail};
@@ -355,9 +355,13 @@ impl fmt::Display for CallError {
     }
 }
 
+/// Calls the exported `func` with parameters decoded from `rx` and transmits the results on `tx`.
+///
+/// The `store` [`Accessor`] is used to call `func` concurrently, it can be acquired, for example,
+/// using [`wasmtime::Store::run_concurrent`].
 #[allow(clippy::too_many_arguments)]
-pub async fn call<C>(
-    mut store: C,
+pub async fn call<T>(
+    mut store: &Accessor<T>,
     rx: Incoming,
     mut tx: Outgoing,
     guest_resources: &[ResourceType],
@@ -368,8 +372,7 @@ pub async fn call<C>(
     func: Func,
 ) -> Result<(), CallError>
 where
-    C: AsContextMut,
-    C::Data: WrpcView,
+    T: WrpcView + 'static,
 {
     let mut params = vec![Val::Bool(false); params_ty.len()];
     let mut rx = pin!(rx);
@@ -388,60 +391,63 @@ where
         .map_err(CallError::Decode)?;
     }
     let mut results = vec![Val::Bool(false); results_ty.len()];
-    func.call_async(&mut store, &params, &mut results)
+    func.call_concurrent(store, &params, &mut results)
         .await
         .context("failed to call function")
         .map_err(CallError::Call)?;
 
-    let mut buf = BytesMut::default();
-    let mut deferred = vec![];
-    match (
-        &rpc_result_type(host_resources, results_ty),
-        results.as_slice(),
-    ) {
-        (None, results) => {
-            for (i, (v, ty)) in zip(results, results_ty).enumerate() {
+    let (buf, deferred) = store.with(|mut store| {
+        let mut buf = BytesMut::default();
+        let mut deferred = vec![];
+        match (
+            &rpc_result_type(host_resources, results_ty),
+            results.as_slice(),
+        ) {
+            (None, results) => {
+                for (i, (v, ty)) in zip(results, results_ty).enumerate() {
+                    let mut enc =
+                        ValEncoder::new(store.as_context_mut(), ty, guest_resources, io_streams);
+                    enc.encode(v, &mut buf)
+                        .with_context(|| format!("failed to encode result value {i}"))
+                        .map_err(CallError::Encode)?;
+                    deferred.push(enc.deferred);
+                }
+            }
+            // `result<_, rpc-eror>`
+            (Some(None), [Val::Result(Ok(None))]) => {}
+            // `result<T, rpc-eror>`
+            (Some(Some(ty)), [Val::Result(Ok(Some(v)))]) => {
                 let mut enc =
                     ValEncoder::new(store.as_context_mut(), ty, guest_resources, io_streams);
                 enc.encode(v, &mut buf)
-                    .with_context(|| format!("failed to encode result value {i}"))
+                    .context("failed to encode result value 0")
                     .map_err(CallError::Encode)?;
                 deferred.push(enc.deferred);
             }
-        }
-        // `result<_, rpc-eror>`
-        (Some(None), [Val::Result(Ok(None))]) => {}
-        // `result<T, rpc-eror>`
-        (Some(Some(ty)), [Val::Result(Ok(Some(v)))]) => {
-            let mut enc = ValEncoder::new(store.as_context_mut(), ty, guest_resources, io_streams);
-            enc.encode(v, &mut buf)
-                .context("failed to encode result value 0")
-                .map_err(CallError::Encode)?;
-            deferred.push(enc.deferred);
-        }
-        (Some(..), [Val::Result(Err(Some(err)))]) => {
-            let Val::Resource(err) = &**err else {
+            (Some(..), [Val::Result(Err(Some(err)))]) => {
+                let Val::Resource(err) = &**err else {
+                    return Err(CallError::TypeMismatch(wasmtime::Error::msg(
+                        "RPC result error value is not a resource",
+                    )));
+                };
+                let err = err
+                    .try_into_resource(&mut store)
+                    .context("RPC result error resource type mismatch")
+                    .map_err(CallError::TypeMismatch)?;
+                let err = store
+                    .data_mut()
+                    .delete_error(err)
+                    .map_err(CallError::Table)?;
+                return Err(CallError::Guest(err));
+            }
+            _ => {
                 return Err(CallError::TypeMismatch(wasmtime::Error::msg(
-                    "RPC result error value is not a resource",
+                    "RPC result type mismatch",
                 )));
-            };
-            let mut store = store.as_context_mut();
-            let err = err
-                .try_into_resource(&mut store)
-                .context("RPC result error resource type mismatch")
-                .map_err(CallError::TypeMismatch)?;
-            let err = store
-                .data_mut()
-                .delete_error(err)
-                .map_err(CallError::Table)?;
-            return Err(CallError::Guest(err));
+            }
         }
-        _ => {
-            return Err(CallError::TypeMismatch(wasmtime::Error::msg(
-                "RPC result type mismatch",
-            )));
-        }
-    }
+        Ok((buf, deferred))
+    })?;
 
     debug!("transmitting results");
     tx.write_bytes(buf.freeze())

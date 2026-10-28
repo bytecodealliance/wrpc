@@ -13,13 +13,15 @@ use tokio_util::codec::Encoder;
 use tracing::{Instrument as _, Span, debug, instrument, trace, warn};
 use wasmtime::component::{LinkerInstance, ResourceType, Type, Val, types};
 use wasmtime::error::Context as _;
-use wasmtime::{AsContextMut, Engine, StoreContextMut, bail, ensure};
+use wasmtime::{AsContextMut, Engine, bail, ensure};
 use wasmtime_wasi::p2::DynInputStream;
 use wrpc_transport::{Invoke, InvokeExt as _};
 
 use crate::paths::params_async_paths;
 use crate::rpc::Error;
-use crate::{ValEncoder, WrpcView, WrpcViewExt as _, read_value, rpc_func_name, rpc_result_type};
+use crate::{
+    ValEncoder, WithStore, WrpcView, WrpcViewExt as _, read_value, rpc_func_name, rpc_result_type,
+};
 
 /// Polyfill [`types::ComponentItem`] in a [`LinkerInstance`] using [`wrpc_transport::Invoke`]
 #[instrument(level = "trace", skip_all)]
@@ -33,7 +35,7 @@ pub fn link_item<V>(
     name: impl Into<Arc<str>>,
 ) -> wasmtime::Result<()>
 where
-    V: WrpcView,
+    V: WrpcView<Invoke: Clone> + 'static,
 {
     let instance = instance.into();
     let guest_resources = guest_resources.into();
@@ -113,7 +115,7 @@ pub fn link_instance<V>(
     name: impl Into<Arc<str>>,
 ) -> wasmtime::Result<()>
 where
-    V: WrpcView,
+    V: WrpcView<Invoke: Clone> + 'static,
 {
     let instance = name.into();
     let guest_resources = guest_resources.into();
@@ -134,8 +136,8 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn invoke<T: WrpcView>(
-    mut store: &mut StoreContextMut<'_, T>,
+async fn invoke(
+    store: &mut impl WithStore<Data: WrpcView<Invoke: Clone>>,
     params: &[Val],
     results: &mut [Val],
     guest_resources: Arc<[ResourceType]>,
@@ -144,19 +146,24 @@ async fn invoke<T: WrpcView>(
     instance: Arc<str>,
     name: Arc<str>,
 ) -> wasmtime::Result<anyhow::Result<()>> {
-    let mut buf = BytesMut::default();
-    let mut deferred = vec![];
-    for (v, (name, ref ty)) in zip(params, params_ty) {
-        let mut enc = ValEncoder::new(store.as_context_mut(), ty, &guest_resources, &[]);
-        enc.encode(v, &mut buf)
-            .with_context(|| format!("failed to encode parameter `{name}`"))?;
-        deferred.push(enc.deferred);
-    }
-    let view = store.data_mut().wrpc();
-    let clt = view.ctx.client();
-    let cx = view.ctx.context();
-    let timeout = view.ctx.timeout();
-    let buf = buf.freeze();
+    let (buf, deferred, clt, cx, timeout) = store.with_store(|mut store| {
+        let mut buf = BytesMut::default();
+        let mut deferred = vec![];
+        for (v, (name, ref ty)) in zip(params, params_ty) {
+            let mut enc = ValEncoder::new(store.as_context_mut(), ty, &guest_resources, &[]);
+            enc.encode(v, &mut buf)
+                .with_context(|| format!("failed to encode parameter `{name}`"))?;
+            deferred.push(enc.deferred);
+        }
+        let view = store.data_mut().wrpc();
+        wasmtime::error::Ok((
+            buf.freeze(),
+            deferred,
+            view.ctx.client().clone(),
+            view.ctx.context(),
+            view.ctx.timeout(),
+        ))
+    })?;
     let results_ty: Vec<_> = results_ty.into_iter().collect();
     let paths = params_async_paths(&results_ty, &[ResourceType::host::<DynInputStream>()]);
     let rpc_name = rpc_func_name(&name);
@@ -201,7 +208,7 @@ async fn invoke<T: WrpcView>(
         let mut incoming = pin!(incoming);
         for (i, (v, ref ty)) in zip(results, results_ty).enumerate() {
             read_value(
-                &mut store,
+                &mut *store,
                 &mut incoming,
                 &guest_resources,
                 &[],
@@ -238,6 +245,12 @@ async fn invoke<T: WrpcView>(
 }
 
 /// Polyfill [`types::ComponentFunc`] in a [`LinkerInstance`] using [`wrpc_transport::Invoke`]
+///
+/// Imports declared as `async func` are linked using [`LinkerInstance::func_new_concurrent`], all
+/// other imports using [`LinkerInstance::func_new_async`].
+/// The former only access the store through an [`Accessor`](wasmtime::component::Accessor), which
+/// cannot be held across `await` points, therefore [`WrpcView::Invoke`] is cloned for each
+/// invocation and the view must be `'static`.
 #[instrument(level = "trace", skip_all)]
 pub fn link_function<V>(
     linker: &mut LinkerInstance<V>,
@@ -248,122 +261,98 @@ pub fn link_function<V>(
     name: impl Into<Arc<str>>,
 ) -> wasmtime::Result<()>
 where
-    V: WrpcView,
+    V: WrpcView<Invoke: Clone> + 'static,
 {
     let span = Span::current();
     let instance = instance.into();
     let name = name.into();
     let guest_resources = guest_resources.into();
     let host_resources = host_resources.into();
-    match rpc_result_type(&host_resources, ty.results()) {
-        None => linker.func_new_async(&Arc::clone(&name), move |mut store, ty, params, results| {
-            let instance = Arc::clone(&instance);
-            let name = Arc::clone(&name);
-            let resources = Arc::clone(&guest_resources);
-            Box::new(
-                async move {
-                    match invoke(
-                        &mut store,
-                        params,
-                        results,
-                        resources,
-                        ty.params(),
-                        ty.results(),
-                        instance,
-                        name,
-                    )
-                    .await
-                    {
-                        Ok(Ok(())) => Ok(()),
-                        Ok(Err(err)) => Err(wasmtime::Error::from_anyhow(err)),
-                        Err(err) => Err(err),
-                    }
-                }
+    let result_ty = rpc_result_type(&host_resources, ty.results());
+    if ty.async_() {
+        linker.func_new_concurrent(&Arc::clone(&name), move |store, ty, params, results| {
+            Box::pin(
+                call(
+                    store,
+                    ty,
+                    params,
+                    results,
+                    result_ty.clone(),
+                    Arc::clone(&guest_resources),
+                    Arc::clone(&instance),
+                    Arc::clone(&name),
+                )
                 .instrument(span.clone()),
             )
-        }),
-        // `result<_, rpc-eror>`
-        Some(None) => {
-            linker.func_new_async(&Arc::clone(&name), move |mut store, ty, params, results| {
-                let instance = Arc::clone(&instance);
-                let name = Arc::clone(&name);
-                let resources = Arc::clone(&guest_resources);
-                Box::new(
-                    async move {
-                        let [result] = results else {
-                            bail!("result type mismatch");
-                        };
-                        match invoke(
-                            &mut store,
-                            params,
-                            &mut [],
-                            resources,
-                            ty.params(),
-                            None,
-                            instance,
-                            name,
-                        )
-                        .await?
-                        {
-                            Ok(()) => {
-                                *result = Val::Result(Ok(None));
-                            }
-                            Err(err) => {
-                                let err = store.data_mut().push_error(Error::Invoke(err))?;
-                                let err = err
-                                    .try_into_resource_any(&mut store)
-                                    .context("failed to lower error resource")?;
-                                *result = Val::Result(Err(Some(Box::new(Val::Resource(err)))));
-                            }
-                        }
-                        Ok(())
-                    }
-                    .instrument(span.clone()),
+        })
+    } else {
+        linker.func_new_async(&Arc::clone(&name), move |store, ty, params, results| {
+            Box::new(
+                call(
+                    store,
+                    ty,
+                    params,
+                    results,
+                    result_ty.clone(),
+                    Arc::clone(&guest_resources),
+                    Arc::clone(&instance),
+                    Arc::clone(&name),
                 )
-            })
-        }
-        // `result<T, rpc-eror>`
-        Some(Some(result_ty)) => {
-            linker.func_new_async(&Arc::clone(&name), move |mut store, ty, params, results| {
-                let instance = Arc::clone(&instance);
-                let name = Arc::clone(&name);
-                let resources = Arc::clone(&guest_resources);
-                let result_ty = result_ty.clone();
-                Box::new(
-                    async move {
-                        let [result] = results else {
-                            bail!("result type mismatch");
-                        };
-                        let mut ok = [Val::Bool(false); 1];
-                        match invoke(
-                            &mut store,
-                            params,
-                            ok.as_mut_slice(),
-                            resources,
-                            ty.params(),
-                            [result_ty],
-                            instance,
-                            name,
-                        )
-                        .await?
-                        {
-                            Ok(()) => {
-                                let [ok] = ok;
-                                *result = Val::Result(Ok(Some(Box::new(ok))));
-                            }
-                            Err(err) => {
-                                let err = store.data_mut().push_error(Error::Invoke(err))?;
-                                let err = err
-                                    .try_into_resource_any(&mut store)
-                                    .context("failed to lower error resource")?;
-                                *result = Val::Result(Err(Some(Box::new(Val::Resource(err)))));
-                            }
-                        }
-                        Ok(())
-                    }
-                    .instrument(span.clone()),
-                )
-            })
-        }
+                .instrument(span.clone()),
+            )
+        })
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn call(
+    mut store: impl WithStore<Data: WrpcView<Invoke: Clone>>,
+    ty: types::ComponentFunc,
+    params: &[Val],
+    results: &mut [Val],
+    result_ty: Option<Option<Type>>,
+    guest_resources: Arc<[ResourceType]>,
+    instance: Arc<str>,
+    name: Arc<str>,
+) -> wasmtime::Result<()> {
+    let Some(result_ty) = result_ty else {
+        let res = invoke(
+            &mut store,
+            params,
+            results,
+            guest_resources,
+            ty.params(),
+            ty.results(),
+            instance,
+            name,
+        )
+        .await?;
+        return res.map_err(wasmtime::Error::from_anyhow);
+    };
+    let [result] = results else {
+        bail!("result type mismatch");
+    };
+    let mut ok = result_ty.as_ref().map(|_| Val::Bool(false));
+    let res = invoke(
+        &mut store,
+        params,
+        ok.as_mut_slice(),
+        guest_resources,
+        ty.params(),
+        result_ty,
+        instance,
+        name,
+    )
+    .await?;
+    *result = match res {
+        Ok(()) => Val::Result(Ok(ok.map(Box::new))),
+        Err(err) => store.with_store(|mut store| {
+            let err = store.data_mut().push_error(Error::Invoke(err))?;
+            let err = err
+                .try_into_resource_any(&mut store)
+                .context("failed to lower error resource")?;
+            wasmtime::error::Ok(Val::Result(Err(Some(Box::new(Val::Resource(err))))))
+        })?,
+    };
+    Ok(())
 }

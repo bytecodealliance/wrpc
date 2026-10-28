@@ -143,13 +143,15 @@ pub async fn handle_serve(
             }
         }
     });
-    while let Some(res) = handlers.join_next().await {
-        if let Err(err) = res {
-            error!(?err, "handler failed");
+    let res = async {
+        while let Some(res) = handlers.join_next().await {
+            res.context("failed to join handler")??;
         }
+        anyhow::Ok(())
     }
+    .await;
     accept.abort();
-    Ok(())
+    res
 }
 
 #[instrument(level = "trace", ret(level = "trace"))]
