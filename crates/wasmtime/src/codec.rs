@@ -13,7 +13,7 @@ use tokio_util::codec::{Encoder, FramedRead};
 use tokio_util::io::StreamReader;
 use tracing::{error, instrument, trace, warn};
 use uuid::Uuid;
-use wasm_tokio::cm::AsyncReadValue as _;
+use wasm_tokio::cm::{AsyncReadValue as _, F32Codec, F64Codec};
 use wasm_tokio::{
     AsyncReadCore as _, AsyncReadLeb128 as _, AsyncReadUtf8 as _, CoreNameEncoder,
     CoreVecDecoderBytes, CoreVecEncoderBytes, DEFAULT_MAX_INITIAL_CAPACITY, Leb128Encoder,
@@ -27,9 +27,7 @@ use wasmtime::{AsContextMut, StoreContextMut};
 use wasmtime_wasi::p2::pipe::{AsyncReadStream, MemoryInputPipe};
 use wasmtime_wasi::p2::{DynInputStream, StreamError};
 use wrpc_transport::frame::{Incoming, Outgoing};
-use wrpc_transport::{
-    CanonicalNanF32Codec, CanonicalNanF64Codec, Deferred as _, READ_CHUNK_SIZE, StreamEncoderRead,
-};
+use wrpc_transport::{Deferred as _, READ_CHUNK_SIZE, StreamEncoderRead};
 
 use crate::{RemoteResource, WrpcView};
 
@@ -177,12 +175,12 @@ where
             (Val::U64(v), Type::U64) => Leb128Encoder
                 .encode(*v, dst)
                 .context("failed to encode u64"),
-            (Val::Float32(v), Type::Float32) => CanonicalNanF32Codec::default()
-                .encode(*v, dst)
-                .context("failed to encode f32"),
-            (Val::Float64(v), Type::Float64) => CanonicalNanF64Codec::default()
-                .encode(*v, dst)
-                .context("failed to encode f64"),
+            (Val::Float32(v), Type::Float32) => {
+                F32Codec.encode(*v, dst).context("failed to encode f32")
+            }
+            (Val::Float64(v), Type::Float64) => {
+                F64Codec.encode(*v, dst).context("failed to encode f64")
+            }
             (Val::Char(v), Type::Char) => {
                 Utf8Codec.encode(*v, dst).context("failed to encode char")
             }
