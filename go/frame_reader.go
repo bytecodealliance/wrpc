@@ -97,6 +97,7 @@ type frameElement struct {
 type frameSub struct {
 	ch      chan []byte
 	dropped chan struct{}
+	taken   bool
 }
 
 func newFrameSub() *frameSub {
@@ -124,18 +125,25 @@ func (s *frameSub) isDropped() bool {
 }
 
 type frameSubscriptions struct {
-	ctx       context.Context
-	readers   *atomic.Int64
-	mu        sync.Mutex
-	cond      *sync.Cond
-	patterns  subscribePattern
-	nest      map[string]*frameSub
-	closed    map[string]struct{}
-	elements  map[string]*frameElement
-	unclaimed map[string]struct{}
-	next      map[string]uint64
-	done      bool
+	ctx         context.Context
+	mu          sync.Mutex
+	cond        *sync.Cond
+	patterns    subscribePattern
+	nest        map[string]*frameSub
+	closed      map[string]struct{}
+	elements    map[string]*frameElement
+	unclaimed   map[string]struct{}
+	next        map[string]uint64
+	done        bool
+	drained     bool
+	unprocessed bool
 }
+
+func errNotFound(path []uint32) error {
+	return fmt.Errorf("`%v` subscription not found", path)
+}
+
+var errUnprocessed = errors.New("received data was not processed")
 
 func (s *frameSubscriptions) owner(path []uint32, positions []int, k int) *frameElement {
 	var el *frameElement
@@ -172,6 +180,9 @@ func (s *frameSubscriptions) subscribe(path []uint32, positions []int) *frameSub
 		if s.done {
 			close(sub.ch)
 		}
+		if s.drained {
+			sub.drop()
+		}
 		s.nest[p] = sub
 		if el := s.owner(path, positions, len(path)); el != nil {
 			el.paths = append(el.paths, p)
@@ -199,7 +210,7 @@ func (s *frameSubscriptions) route(path []uint32, p string) (*frameSub, bool, er
 			}
 			missing++
 		}
-		if missing == 0 || len(s.unclaimed)+missing <= maxUnclaimedElements {
+		if missing == 0 || !s.drained && len(s.unclaimed)+missing <= maxUnclaimedElements {
 			for _, k := range positions {
 				if _, ok := s.elements[indexPath(path[:k+1]...)]; !ok {
 					e, _ := s.element(path, positions, k)
@@ -208,11 +219,11 @@ func (s *frameSubscriptions) route(path []uint32, p string) (*frameSub, bool, er
 			}
 			return s.subscribe(path, positions), false, nil
 		}
+		if s.drained {
+			return nil, true, nil
+		}
 		if err := s.ctx.Err(); err != nil {
 			return nil, false, err
-		}
-		if s.readers.Load() == 0 {
-			return nil, false, fmt.Errorf("received data for a closed reader on path `%v`", path)
 		}
 		s.cond.Wait()
 	}
@@ -220,12 +231,17 @@ func (s *frameSubscriptions) route(path []uint32, p string) (*frameSub, bool, er
 
 func (s *frameSubscriptions) claim(path []uint32) (*frameSub, []string, error) {
 	pattern, positions := s.patterns.resolve(path)
-	if pattern == nil || !pattern.declared {
-		return nil, nil, errors.New("unknown subscription")
+	if pattern == nil {
+		return nil, nil, errNotFound(path)
 	}
 	for _, k := range positions {
 		if _, ok := s.elements[indexPath(path[:k+1]...)]; !ok && uint64(path[k]) < s.next[indexPath(path[:k]...)] {
 			return nil, nil, errors.New("released subscription")
+		}
+	}
+	if pattern.declared && pattern.wildcard == nil && len(pattern.nested) == 0 {
+		if sub, ok := s.nest[indexPath(path...)]; ok && sub.taken {
+			return nil, nil, errNotFound(path)
 		}
 	}
 	elements := make([]string, len(positions))
@@ -252,7 +268,15 @@ func (s *frameSubscriptions) claim(path []uint32) (*frameSub, []string, error) {
 		elements[j] = e
 	}
 	s.cond.Broadcast()
-	return s.subscribe(path, positions), elements, nil
+	if !pattern.declared {
+		return nil, elements, nil
+	}
+	sub := s.subscribe(path, positions)
+	if sub.taken {
+		return nil, elements, nil
+	}
+	sub.taken = true
+	return sub, elements, nil
 }
 
 func (s *frameSubscriptions) remove(e string) {
@@ -267,6 +291,9 @@ func (s *frameSubscriptions) remove(e string) {
 	}
 	for _, p := range el.paths {
 		if sub, ok := s.nest[p]; ok {
+			if len(sub.ch) > 0 {
+				s.unprocessed = true
+			}
 			sub.drop()
 		}
 		delete(s.nest, p)
@@ -283,7 +310,7 @@ func (s *frameSubscriptions) remove(e string) {
 
 type FrameStreamReader struct {
 	ctx      context.Context
-	ch       <-chan []byte
+	sub      *frameSub
 	readers  *atomic.Int64
 	subs     *frameSubscriptions
 	elements []string
@@ -307,7 +334,6 @@ func NewFrameStreamReader(ctx context.Context, r ByteReadCloser, paths ...Subscr
 
 	subs := &frameSubscriptions{
 		ctx:       ctx,
-		readers:   &readers,
 		nest:      make(map[string]*frameSub, len(paths)+1),
 		closed:    make(map[string]struct{}),
 		elements:  make(map[string]*frameElement),
@@ -316,6 +342,7 @@ func NewFrameStreamReader(ctx context.Context, r ByteReadCloser, paths ...Subscr
 	}
 	subs.cond = sync.NewCond(&subs.mu)
 	root := newFrameSub()
+	root.taken = true
 	subs.nest[""] = root
 	for _, path := range paths {
 		subs.patterns.insert(path)
@@ -331,22 +358,6 @@ func NewFrameStreamReader(ctx context.Context, r ByteReadCloser, paths ...Subscr
 
 	var ingressErr atomic.Pointer[error]
 	go func() {
-		defer func() {
-			stop()
-			subs.mu.Lock()
-			subs.done = true
-			for p, sub := range subs.nest {
-				if _, ok := subs.closed[p]; !ok {
-					close(sub.ch)
-				}
-			}
-			subs.mu.Unlock()
-
-			if err := r.Close(); err != nil {
-				slog.DebugContext(ctx, "failed to close frame stream reader", "err", err)
-			}
-		}()
-
 		accept := func(path []uint32, p string, n uint32) (*frameSub, error) {
 			subs.mu.Lock()
 			defer subs.mu.Unlock()
@@ -400,32 +411,75 @@ func NewFrameStreamReader(ctx context.Context, r ByteReadCloser, paths ...Subscr
 					return fmt.Errorf("received data for a closed reader on path `%v`", path)
 				case sub.ch <- data:
 				}
+				subs.mu.Lock()
+				dropped := sub.isDropped() && len(sub.ch) > 0
+				subs.mu.Unlock()
+				if dropped {
+					return fmt.Errorf("received data for a closed reader on path `%v`", path)
+				}
 			}
 			return nil
 		}
-		for readers.Load() > 0 {
-			slog.DebugContext(ctx, "reading frame")
-			path, n, err := readFrameHeader(r)
-			if err == io.EOF {
-				break
-			}
-			if err == nil {
+		err := func() error {
+			for {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+				subs.mu.Lock()
+				unprocessed := subs.drained && subs.unprocessed
+				subs.mu.Unlock()
+				if unprocessed {
+					return errUnprocessed
+				}
+				slog.DebugContext(ctx, "reading frame")
+				path, n, err := readFrameHeader(r)
+				if err == io.EOF {
+					return nil
+				}
+				if err != nil {
+					return err
+				}
 				slog.DebugContext(ctx, "read frame header",
 					"path", path,
 					"len", n,
 				)
-				err = handle(path, n)
+				if err := handle(path, n); err != nil {
+					return err
+				}
 			}
-			if err != nil {
-				slog.ErrorContext(ctx, "failed to process frame", "err", err)
-				ingressErr.Store(&err)
-				break
+		}()
+		if err != nil {
+			ingressErr.Store(&err)
+		}
+		subs.mu.Lock()
+		subs.done = true
+		for p, sub := range subs.nest {
+			if _, ok := subs.closed[p]; !ok {
+				close(sub.ch)
 			}
+		}
+		if err == nil {
+			for !subs.drained && ctx.Err() == nil {
+				subs.cond.Wait()
+			}
+			if subs.drained && subs.unprocessed {
+				err = errUnprocessed
+			}
+		}
+		subs.mu.Unlock()
+		stop()
+		if err != nil {
+			slog.ErrorContext(ctx, "ingress failed", "err", err)
+		} else {
+			slog.DebugContext(ctx, "ingress successfully complete")
+		}
+		if err := r.Close(); err != nil {
+			slog.DebugContext(ctx, "failed to close frame stream reader", "err", err)
 		}
 	}()
 	return newFrameStreamReader(&FrameStreamReader{
 		ctx:     ctx,
-		ch:      root.ch,
+		sub:     root,
 		readers: &readers,
 		subs:    subs,
 		err:     &ingressErr,
@@ -448,13 +502,16 @@ func (r *FrameStreamReader) Read(p []byte) (int, error) {
 		r.buf = r.buf[n:]
 		return n, nil
 	}
+	if r.sub == nil {
+		return 0, errNotFound(decodePath(r.path))
+	}
 	slog.DebugContext(r.ctx, "waiting for next frame",
 		"path", r.path,
 	)
 	select {
 	case <-r.ctx.Done():
 		return 0, r.ctx.Err()
-	case buf, ok := <-r.ch:
+	case buf, ok := <-r.sub.ch:
 		if !ok {
 			return 0, r.closedErr()
 		}
@@ -481,11 +538,14 @@ func (r *FrameStreamReader) ReadByte() (byte, error) {
 		)
 		return b, nil
 	}
+	if r.sub == nil {
+		return 0, errNotFound(decodePath(r.path))
+	}
 	slog.DebugContext(r.ctx, "waiting for next frame", "path", r.path)
 	select {
 	case <-r.ctx.Done():
 		return 0, r.ctx.Err()
-	case buf, ok := <-r.ch:
+	case buf, ok := <-r.sub.ch:
 		if !ok {
 			return 0, r.closedErr()
 		}
@@ -512,6 +572,9 @@ func (r *FrameStreamReader) closedErr() error {
 }
 
 func (r *FrameStreamReader) Index(path ...uint32) (IndexReadCloser, error) {
+	if len(path) == 0 {
+		return nil, errors.New("path cannot be empty")
+	}
 	full := append(decodePath(r.path), path...)
 	r.subs.mu.Lock()
 	defer r.subs.mu.Unlock()
@@ -526,7 +589,7 @@ func (r *FrameStreamReader) Index(path ...uint32) (IndexReadCloser, error) {
 	)
 	return newFrameStreamReader(&FrameStreamReader{
 		ctx:      r.ctx,
-		ch:       sub.ch,
+		sub:      sub,
 		readers:  r.readers,
 		subs:     r.subs,
 		elements: elements,
@@ -545,29 +608,37 @@ func (r *FrameStreamReader) drop() {
 		"path", r.path,
 	)
 
-	r.subs.mu.Lock()
-	defer r.subs.mu.Unlock()
+	s := r.subs
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
-	if sub, ok := r.subs.nest[r.path]; ok {
-		sub.drop()
-	}
-	if readers == 0 {
-		for _, sub := range r.subs.nest {
-			sub.drop()
+	if r.sub != nil {
+		if len(r.buf) > 0 || len(r.sub.ch) > 0 {
+			s.unprocessed = true
 		}
+		r.sub.drop()
 	}
-	r.subs.cond.Broadcast()
 	for _, e := range r.elements {
-		el, ok := r.subs.elements[e]
+		el, ok := s.elements[e]
 		if !ok {
-			return
+			break
 		}
 		el.readers--
 		if el.readers == 0 {
-			r.subs.remove(e)
-			return
+			s.remove(e)
+			break
 		}
 	}
+	if readers == 0 {
+		s.drained = true
+		for _, sub := range s.nest {
+			if len(sub.ch) > 0 {
+				s.unprocessed = true
+			}
+			sub.drop()
+		}
+	}
+	s.cond.Broadcast()
 }
 
 func (r *FrameStreamReader) Close() error {
