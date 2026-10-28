@@ -40,6 +40,8 @@ impl DerefMut for Client {
 /// Graceful stream shutdown handler
 pub struct ConnHandler;
 
+const DONE: u32 = 1;
+
 impl wrpc_transport::frame::ConnHandler<BufReader<RecvStream>, SendStream> for ConnHandler {
     const DRAIN: bool = false;
 
@@ -49,7 +51,7 @@ impl wrpc_transport::frame::ConnHandler<BufReader<RecvStream>, SendStream> for C
         } else {
             debug!("ingress successfully complete");
         }
-        if let Err(err) = rx.get_mut().stop(0) {
+        if let Err(err) = rx.get_mut().stop(DONE) {
             debug!(?err, "failed to close incoming stream");
         }
     }
@@ -61,7 +63,7 @@ impl wrpc_transport::frame::ConnHandler<BufReader<RecvStream>, SendStream> for C
             debug!("egress successfully complete");
         }
         match tx.stopped().await {
-            Ok(None | Some(0)) => {
+            Ok(None | Some(DONE)) => {
                 trace!("stream successfully closed");
             }
             Ok(Some(code)) => {
