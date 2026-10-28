@@ -249,12 +249,14 @@ function readNested(mux, path, sink, ar) {
 async function readDeferred(mux, path, entry, ar) {
   switch (entry.kind) {
     case "inline":
-      // Discard the sub-streams nested in the chunk unless the stream is read to completion.
-      entry.queue.onCancel(() => mux.discard(path));
+      entry.queue.onCancel(([chunk]) => {
+        if (chunk) mux.discard(path, 0, chunk.length);
+      });
       return;
     case "future":
       return readFuture(mux, path, entry, ar ?? mux.incoming(path));
     case "stream":
+      mux.onDiscard(path, () => entry.queue.cancel(DISCARDED));
       return readStream(mux, path, entry.ty, entry.queue, ar ?? mux.incoming(path));
   }
 }
@@ -270,8 +272,9 @@ async function readFuture(mux, path, entry, ar) {
     else if (await ar.fill(1)) throw unexpectedError(path);
     else decoded = { value: undefined, sink: [] };
   } catch (err) {
-    if (err === DISCARDED) return;
-    throw err;
+    if (err !== DISCARDED) throw err;
+    if (ar.remaining().length) throw unexpectedError(path);
+    return;
   }
   const { value, sink } = decoded;
   expect(mux, path, sink);
@@ -284,17 +287,26 @@ async function readFuture(mux, path, entry, ar) {
 
 /**
  * Receive a stream's chunks over `ar` into `queue`, waiting while it is full.
- * If the consumer cancels the queue, the rest of the stream is discarded,
- * along with the sub-streams nested in all of its elements.
+ * If the consumer cancels the queue, the sub-streams nested in the elements
+ * of the chunks it dropped are discarded, while those of the chunks it
+ * received keep receiving, and any further chunk fails the invocation. The
+ * queue of a stream discarded along with its parent is cancelled with
+ * {@link DISCARDED}, dropping the chunks nobody can receive.
  * @param {Mux} mux @param {number[]} path @param {Type} elem
  * @param {import("./index.d.ts").Chan<any>} queue @param {AsyncReader} ar
  */
 async function readStream(mux, path, elem, queue, ar) {
   const nested = hasAsync(elem);
+  /** The index of the first element of each chunk sent. @type {WeakMap<any[], number>} */
+  const starts = new WeakMap();
+  if (nested) {
+    queue.onCancel((dropped) => {
+      if (!dropped.length) return;
+      const from = /** @type {number} */ (starts.get(dropped[0]));
+      mux.discard(path, from, from + dropped.reduce((n, chunk) => n + chunk.length, 0));
+    });
+  }
   let base = 0;
-  queue.onCancel(() => mux.discard(path));
-  // Nobody receives the rest of a discarded stream.
-  mux.ondiscard(path, () => queue.cancel());
   const tasks = new Tasks();
   try {
     for (;;) {
@@ -303,6 +315,7 @@ async function readStream(mux, path, elem, queue, ar) {
         mux.finish(path, ar);
         break;
       }
+      if (queue.cancelled) throw unexpectedError(path);
       let chunk;
       if (elem.kind === "u8") {
         chunk = await tasks.race(ar.take(len));
@@ -318,12 +331,18 @@ async function readStream(mux, path, elem, queue, ar) {
           if (!sink.length) continue;
           tasks.add(readNested(mux, at, sink));
         }
+        starts.set(chunk, base);
       }
       base += len;
-      if (!(await tasks.race(queue.send(chunk)))) break;
+      if (!(await tasks.race(queue.send(chunk)))) {
+        throw queue.error === DISCARDED ? DISCARDED : unexpectedError(path);
+      }
     }
   } catch (err) {
-    if (!queue.cancelled && err !== DISCARDED) throw err;
+    if (err !== DISCARDED) throw err;
+    if (ar.remaining().length) throw unexpectedError(path);
+    await tasks.wait();
+    return;
   }
   queue.close();
   await tasks.wait();

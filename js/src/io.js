@@ -273,17 +273,18 @@ export class Chan {
     this.error = undefined;
   }
 
-  /** @type {(() => void)[]} */
+  /** @type {((dropped: T[]) => void)[]} */
   #cancelHooks = [];
 
   /**
-   * Call `f` once the consumer cancels the channel, or now if it already has.
-   * Hooks are dropped once the consumer has received the end of the channel:
-   * cancelling then drops nothing.
-   * @param {() => void} f
+   * Call `f` with the buffered values dropped once the consumer cancels the
+   * channel, or now, with none, if it already has. Hooks are dropped once the
+   * consumer has received the end of the channel: cancelling then drops
+   * nothing.
+   * @param {(dropped: T[]) => void} f
    */
   onCancel(f) {
-    if (this.cancelled) f();
+    if (this.cancelled) f([]);
     else this.#cancelHooks.push(f);
   }
 
@@ -314,16 +315,17 @@ export class Chan {
 
   /**
    * Stop consuming: drop the buffered values, close (failed with `err`, if
-   * given and it has not already failed), and call the `onCancel` hooks.
+   * given and it has not already failed), and call the `onCancel` hooks with
+   * the values dropped.
    * @param {unknown} [err]
    */
   cancel(err) {
     if (this.cancelled) return;
     this.cancelled = true;
-    this.queue.length = 0;
+    const dropped = this.queue.splice(0);
     this.close(err);
     this.error ??= err;
-    for (const f of this.#cancelHooks.splice(0)) f();
+    for (const f of this.#cancelHooks.splice(0)) f(dropped);
   }
 
   /**
@@ -401,7 +403,7 @@ export class AsyncReader {
 
   /**
    * Pull chunks until at least `n` unconsumed bytes are buffered, joining them
-   * with a single copy.
+   * with a single copy. If pulling fails, the chunks pulled stay buffered.
    * @param {number} n
    * @returns {Promise<boolean>} `false` if the input ended first
    */
@@ -409,26 +411,29 @@ export class AsyncReader {
     let have = this.buf.length - this.pos;
     if (have >= n) return true;
     const chunks = have > 0 ? [this.remaining()] : [];
-    while (have < n && !this.eof) {
-      const chunk = await this.pull();
-      if (chunk === null || chunk === undefined) {
-        this.eof = true;
-      } else if (chunk.length > 0) {
-        chunks.push(chunk);
-        have += chunk.length;
+    try {
+      while (have < n && !this.eof) {
+        const chunk = await this.pull();
+        if (chunk === null || chunk === undefined) {
+          this.eof = true;
+        } else if (chunk.length > 0) {
+          chunks.push(chunk);
+          have += chunk.length;
+        }
       }
-    }
-    if (chunks.length === 1) {
-      this.buf = chunks[0];
-    } else {
-      this.buf = new Uint8Array(have);
-      let off = 0;
-      for (const chunk of chunks) {
-        this.buf.set(chunk, off);
-        off += chunk.length;
+    } finally {
+      if (chunks.length === 1) {
+        this.buf = chunks[0];
+      } else {
+        this.buf = new Uint8Array(have);
+        let off = 0;
+        for (const chunk of chunks) {
+          this.buf.set(chunk, off);
+          off += chunk.length;
+        }
       }
+      this.pos = 0;
     }
-    this.pos = 0;
     return have >= n;
   }
 
