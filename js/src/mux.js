@@ -63,8 +63,8 @@ export const DISCARDED = new Error("sub-stream discarded");
  * @property {Map<number, boolean> | undefined} pruned whether an empty frame
  *   closed each child forgotten once finished, by index, beyond the `decided`
  *   stream elements
- * @property {number} discardFrom `Infinity`, unless the node is discarded: then
- *   its own data and that of its children from this index on is dropped
+ * @property {boolean} discarded whether its data and that of its children is
+ *   dropped
  * @property {Map<number, Map<string, Pending>> | undefined} pending the data
  *   buffered for the paths through each missing child, by path key
  */
@@ -78,7 +78,7 @@ const node = (sealed) => ({
   done: false,
   closed: false,
   pruned: undefined,
-  discardFrom: Infinity,
+  discarded: false,
   pending: undefined,
 });
 
@@ -306,7 +306,7 @@ export class Mux {
   _find(path, empty = false, close = empty) {
     let n = this.root;
     for (const [d, i] of path.entries()) {
-      if (i >= n.discardFrom) return null;
+      if (n.discarded) return null;
       const child = n.children.get(i);
       if (!child) {
         const closed = n.pruned?.get(i);
@@ -321,7 +321,7 @@ export class Mux {
     }
     if (n.closed) unexpected(path);
     if (n.done) return empty ? null : unexpected(path);
-    if (n.discardFrom !== Infinity) return null;
+    if (n.discarded) return null;
     return n.chan ?? unexpected(path);
   }
 
@@ -358,7 +358,7 @@ export class Mux {
   _takePending(path) {
     let n = this.root;
     for (const i of path) {
-      if (i >= n.discardFrom) return undefined;
+      if (n.discarded) return undefined;
       const child = n.children.get(i);
       if (!child) {
         const group = n.pending?.get(i);
@@ -382,7 +382,7 @@ export class Mux {
   _get(path, create = false) {
     let n = this.root;
     for (const i of path) {
-      if (i >= n.discardFrom) return null;
+      if (n.discarded) return null;
       let child = n.children.get(i);
       if (!child) {
         if (!create) return undefined;
@@ -473,7 +473,7 @@ export class Mux {
     }
     for (let d = path.length; d > 0; d--) {
       const n = nodes[d];
-      if (n.children.size || n.discardFrom !== Infinity || (n.chan && !n.done)) return;
+      if (n.children.size || n.discarded || (n.chan && !n.done)) return;
       const parent = nodes[d - 1];
       const i = path[d - 1];
       parent.children.delete(i);
@@ -482,27 +482,17 @@ export class Mux {
   }
 
   /**
-   * Discard the sub-stream at `path` and those nested in its children from
-   * index `from` on: drop their buffered and future data, and fail their
-   * readers with {@link DISCARDED}.
+   * Discard the sub-stream at `path` and those nested in it: drop their
+   * buffered and future data, and fail their readers with {@link DISCARDED}.
    * @param {number[]} path
-   * @param {number} [from]
    */
-  discard(path, from = 0) {
+  discard(path) {
     const n = this._get(path);
-    if (!n || (n.done && ![...n.children.keys()].some((i) => i >= from))) return;
-    n.discardFrom = Math.min(n.discardFrom, from);
-    n.chan?.cancel(DISCARDED);
-    for (const [i, group] of n.pending ?? []) {
-      if (i < from) continue;
-      for (const { chan } of group.values()) chan.cancel(DISCARDED);
-      n.pending?.delete(i);
-    }
-    for (const [i, child] of n.children) {
-      if (i < from) continue;
-      eachChan(child, (chan) => chan.cancel(DISCARDED));
-      n.children.delete(i);
-    }
+    if (!n || (n.done && !n.children.size)) return;
+    n.discarded = true;
+    eachChan(n, (chan) => chan.cancel(DISCARDED));
+    n.pending = undefined;
+    n.children.clear();
     this._wake();
   }
 

@@ -137,8 +137,6 @@ export class Chan<T> implements AsyncIterable<T> {
   readonly capacity: number;
   readonly closed: boolean;
   readonly cancelled: boolean;
-  /** The number of values handed to the consumer. */
-  readonly taken: number;
   /**
    * Call `f` once the consumer cancels the channel, or now if it already has.
    * Hooks are dropped once the consumer has received the end of the channel.
@@ -249,8 +247,8 @@ export class Mux {
    * fails the invocation.
    */
   finish(path: number[], reader?: AsyncReader): void;
-  /** Discard the sub-stream at `path` and those nested in its children from index `from` (default 0) on. */
-  discard(path: number[], from?: number): void;
+  /** Discard the sub-stream at `path` and those nested in it. */
+  discard(path: number[]): void;
   /** Call `f` once the sub-stream at `path` is discarded. */
   ondiscard(path: number[], f: () => void): void;
   outgoing(path: number[]): Outgoing;
