@@ -94,15 +94,43 @@ type frameElement struct {
 	elements   map[string]struct{}
 }
 
+type frameSub struct {
+	ch      chan []byte
+	dropped chan struct{}
+}
+
+func newFrameSub() *frameSub {
+	return &frameSub{
+		ch:      make(chan []byte, 64),
+		dropped: make(chan struct{}),
+	}
+}
+
+func (s *frameSub) drop() {
+	select {
+	case <-s.dropped:
+	default:
+		close(s.dropped)
+	}
+}
+
+func (s *frameSub) isDropped() bool {
+	select {
+	case <-s.dropped:
+		return true
+	default:
+		return false
+	}
+}
+
 type frameSubscriptions struct {
 	ctx       context.Context
 	readers   *atomic.Int64
 	mu        sync.Mutex
 	cond      *sync.Cond
 	patterns  subscribePattern
-	nest      map[string]chan []byte
+	nest      map[string]*frameSub
 	closed    map[string]struct{}
-	dropped   map[string]struct{}
 	elements  map[string]*frameElement
 	unclaimed map[string]struct{}
 	next      map[string]uint64
@@ -136,25 +164,25 @@ func (s *frameSubscriptions) element(path []uint32, positions []int, k int) (str
 	return e, el
 }
 
-func (s *frameSubscriptions) subscribe(path []uint32, positions []int) chan []byte {
+func (s *frameSubscriptions) subscribe(path []uint32, positions []int) *frameSub {
 	p := indexPath(path...)
-	ch, ok := s.nest[p]
+	sub, ok := s.nest[p]
 	if !ok {
-		ch = make(chan []byte, 64)
+		sub = newFrameSub()
 		if s.done {
-			close(ch)
+			close(sub.ch)
 		}
-		s.nest[p] = ch
+		s.nest[p] = sub
 		if el := s.owner(path, positions, len(path)); el != nil {
 			el.paths = append(el.paths, p)
 		}
 	}
-	return ch
+	return sub
 }
 
-func (s *frameSubscriptions) route(path []uint32, p string) (chan []byte, bool, error) {
-	if ch, ok := s.nest[p]; ok {
-		return ch, false, nil
+func (s *frameSubscriptions) route(path []uint32, p string) (*frameSub, bool, error) {
+	if sub, ok := s.nest[p]; ok {
+		return sub, false, nil
 	}
 	for {
 		pattern, positions := s.patterns.resolve(path)
@@ -190,7 +218,7 @@ func (s *frameSubscriptions) route(path []uint32, p string) (chan []byte, bool, 
 	}
 }
 
-func (s *frameSubscriptions) claim(path []uint32) (chan []byte, []string, error) {
+func (s *frameSubscriptions) claim(path []uint32) (*frameSub, []string, error) {
 	pattern, positions := s.patterns.resolve(path)
 	if pattern == nil || !pattern.declared {
 		return nil, nil, errors.New("unknown subscription")
@@ -238,9 +266,11 @@ func (s *frameSubscriptions) remove(e string) {
 		delete(el.parent.elements, e)
 	}
 	for _, p := range el.paths {
+		if sub, ok := s.nest[p]; ok {
+			sub.drop()
+		}
 		delete(s.nest, p)
 		delete(s.closed, p)
-		delete(s.dropped, p)
 	}
 	for _, c := range el.containers {
 		delete(s.next, c)
@@ -272,27 +302,25 @@ func newFrameStreamReader(r *FrameStreamReader) *FrameStreamReader {
 }
 
 func NewFrameStreamReader(ctx context.Context, r ByteReadCloser, paths ...SubscribePath) *FrameStreamReader {
-	ch := make(chan []byte, 64)
-
 	var readers atomic.Int64
 	readers.Add(1)
 
 	subs := &frameSubscriptions{
 		ctx:       ctx,
 		readers:   &readers,
-		nest:      make(map[string]chan []byte, len(paths)+1),
+		nest:      make(map[string]*frameSub, len(paths)+1),
 		closed:    make(map[string]struct{}),
-		dropped:   make(map[string]struct{}),
 		elements:  make(map[string]*frameElement),
 		unclaimed: make(map[string]struct{}),
 		next:      make(map[string]uint64),
 	}
 	subs.cond = sync.NewCond(&subs.mu)
-	subs.nest[""] = ch
+	root := newFrameSub()
+	subs.nest[""] = root
 	for _, path := range paths {
 		subs.patterns.insert(path)
 		if p, ok := concretePath(path); ok {
-			subs.nest[p] = make(chan []byte, 64)
+			subs.nest[p] = newFrameSub()
 		}
 	}
 	stop := context.AfterFunc(ctx, func() {
@@ -307,9 +335,9 @@ func NewFrameStreamReader(ctx context.Context, r ByteReadCloser, paths ...Subscr
 			stop()
 			subs.mu.Lock()
 			subs.done = true
-			for p, ch := range subs.nest {
+			for p, sub := range subs.nest {
 				if _, ok := subs.closed[p]; !ok {
-					close(ch)
+					close(sub.ch)
 				}
 			}
 			subs.mu.Unlock()
@@ -319,31 +347,37 @@ func NewFrameStreamReader(ctx context.Context, r ByteReadCloser, paths ...Subscr
 			}
 		}()
 
-		handle := func(frame Frame) error {
-			p := indexPath(frame.Path...)
+		accept := func(frame Frame, p string) (*frameSub, error) {
 			subs.mu.Lock()
 			defer subs.mu.Unlock()
-			ch, released, err := subs.route(frame.Path, p)
+			sub, released, err := subs.route(frame.Path, p)
 			if err != nil {
-				return err
+				return nil, err
 			}
 			if released {
 				if len(frame.Data) > 0 {
-					return fmt.Errorf("received data for a released element on path `%v`", frame.Path)
+					return nil, fmt.Errorf("received data for a released element on path `%v`", frame.Path)
 				}
-				return nil
+				return nil, nil
 			}
 			if _, ok := subs.closed[p]; ok {
-				return fmt.Errorf("received a frame for closed path `%v`", frame.Path)
-			}
-			if _, ok := subs.dropped[p]; ok && len(frame.Data) > 0 {
-				return fmt.Errorf("received data for a closed reader on path `%v`", frame.Path)
+				return nil, fmt.Errorf("received a frame for closed path `%v`", frame.Path)
 			}
 			if len(frame.Data) == 0 {
 				slog.DebugContext(ctx, "received empty frame, closing path", "path", frame.Path)
 				subs.closed[p] = struct{}{}
-				close(ch)
-				return nil
+				close(sub.ch)
+				return nil, nil
+			}
+			if sub.isDropped() {
+				return nil, fmt.Errorf("received data for a closed reader on path `%v`", frame.Path)
+			}
+			return sub, nil
+		}
+		handle := func(frame Frame) error {
+			sub, err := accept(frame, indexPath(frame.Path...))
+			if err != nil || sub == nil {
+				return err
 			}
 			slog.DebugContext(ctx, "received data frame, sending frame data",
 				"frame", frame,
@@ -351,13 +385,13 @@ func NewFrameStreamReader(ctx context.Context, r ByteReadCloser, paths ...Subscr
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
-			case ch <- frame.Data:
+			case <-sub.dropped:
+				return fmt.Errorf("received data for a closed reader on path `%v`", frame.Path)
+			case sub.ch <- frame.Data:
 				slog.DebugContext(ctx, "sent received frame data",
 					"frame", frame,
 				)
 				return nil
-			default:
-				return fmt.Errorf("reader too slow, dropped a frame for path `%v`", frame.Path)
 			}
 		}
 		for readers.Load() > 0 {
@@ -381,7 +415,7 @@ func NewFrameStreamReader(ctx context.Context, r ByteReadCloser, paths ...Subscr
 	}()
 	return newFrameStreamReader(&FrameStreamReader{
 		ctx:     ctx,
-		ch:      ch,
+		ch:      root.ch,
 		readers: &readers,
 		subs:    subs,
 		err:     &ingressErr,
@@ -471,7 +505,7 @@ func (r *FrameStreamReader) Index(path ...uint32) (IndexReadCloser, error) {
 	full := append(decodePath(r.path), path...)
 	r.subs.mu.Lock()
 	defer r.subs.mu.Unlock()
-	ch, elements, err := r.subs.claim(full)
+	sub, elements, err := r.subs.claim(full)
 	if err != nil {
 		return nil, err
 	}
@@ -482,7 +516,7 @@ func (r *FrameStreamReader) Index(path ...uint32) (IndexReadCloser, error) {
 	)
 	return newFrameStreamReader(&FrameStreamReader{
 		ctx:      r.ctx,
-		ch:       ch,
+		ch:       sub.ch,
 		readers:  r.readers,
 		subs:     r.subs,
 		elements: elements,
@@ -504,7 +538,14 @@ func (r *FrameStreamReader) drop() {
 	r.subs.mu.Lock()
 	defer r.subs.mu.Unlock()
 
-	r.subs.dropped[r.path] = struct{}{}
+	if sub, ok := r.subs.nest[r.path]; ok {
+		sub.drop()
+	}
+	if readers == 0 {
+		for _, sub := range r.subs.nest {
+			sub.drop()
+		}
+	}
 	r.subs.cond.Broadcast()
 	for _, e := range r.elements {
 		el, ok := r.subs.elements[e]
