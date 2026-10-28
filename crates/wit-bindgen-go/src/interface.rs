@@ -2185,9 +2185,7 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
                         self.src,
                         r#"
         if d{i} != nil {{
-            wg.Add(1)
             go func() {{
-                defer wg.Done()
                 if err := d{i}(deferredCtx); err != nil {{
                     {slog}.WarnContext(ctx, "failed to read deferred parameter", "i", {i}, "instance", "{instance}", "name", "{name}", "err", err)
                 }}

@@ -133,9 +133,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 			return
 		}
 		if d0 != nil {
-			wg.Add(1)
 			go func() {
-				defer wg.Done()
 				if err := d0(deferredCtx); err != nil {
 					slog.WarnContext(ctx, "failed to read deferred parameter", "i", 0, "instance", "wrpc-examples:streams/handler", "name", "echo", "err", err)
 				}
