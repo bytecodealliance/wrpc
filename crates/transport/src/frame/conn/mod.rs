@@ -614,8 +614,11 @@ struct IngressState {
 impl IngressState {
     /// Returns whether an empty frame closed the `path`
     fn is_closed(&self, path: &[usize]) -> bool {
-        let mut index = self.index.lock().unwrap_or_else(PoisonError::into_inner);
-        matches!(index.get_tx_mut(path), Some(TxSlot::Closed))
+        let index = self.index.lock().unwrap_or_else(PoisonError::into_inner);
+        matches!(
+            index.subs.get(path).and_then(|sub| sub.tx.as_ref()),
+            Some(TxSlot::Closed)
+        )
     }
 }
 
