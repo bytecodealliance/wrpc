@@ -21,7 +21,7 @@ use wasm_tokio::{
 };
 use wasmtime::bail;
 use wasmtime::component::types::{Case, Field};
-use wasmtime::component::{ResourceType, Type, Val};
+use wasmtime::component::{Accessor, ResourceType, Type, Val};
 use wasmtime::error::Context as _;
 use wasmtime::{AsContextMut, StoreContextMut};
 use wasmtime_wasi::p2::pipe::{AsyncReadStream, MemoryInputPipe};
@@ -30,6 +30,33 @@ use wrpc_transport::frame::{Incoming, Outgoing};
 use wrpc_transport::{Deferred as _, READ_CHUNK_SIZE, StreamEncoderRead};
 
 use crate::{RemoteResource, WrpcView};
+
+/// Synchronous access to a store, which is either borrowed exclusively or reachable through an
+/// [`Accessor`].
+///
+/// Wasmtime only provides an [`Accessor`] to host functions implementing `async func` imports,
+/// host functions implementing other imports hold a [`StoreContextMut`] across `await` points.
+pub trait WithStore {
+    type Data: 'static;
+
+    fn with_store<R>(&mut self, f: impl FnOnce(StoreContextMut<'_, Self::Data>) -> R) -> R;
+}
+
+impl<T: 'static> WithStore for StoreContextMut<'_, T> {
+    type Data = T;
+
+    fn with_store<R>(&mut self, f: impl FnOnce(StoreContextMut<'_, T>) -> R) -> R {
+        f(self.as_context_mut())
+    }
+}
+
+impl<T: 'static> WithStore for &Accessor<T> {
+    type Data = T;
+
+    fn with_store<R>(&mut self, f: impl FnOnce(StoreContextMut<'_, T>) -> R) -> R {
+        self.with(|mut store| f(store.as_context_mut()))
+    }
+}
 
 pub struct ValEncoder<'a, T: 'static> {
     pub store: StoreContextMut<'a, T>,
@@ -591,7 +618,7 @@ async fn read_bytes(r: &mut (impl AsyncRead + Unpin)) -> std::io::Result<Bytes> 
 #[instrument(level = "trace", skip_all, fields(ty, path))]
 #[allow(clippy::too_many_arguments)]
 pub async fn read_value<T>(
-    store: &mut impl AsContextMut<Data = T>,
+    store: &mut impl WithStore<Data = T>,
     r: &mut Pin<&mut Incoming>,
     resources: &[ResourceType],
     io_streams: &[ResourceType],
@@ -862,7 +889,6 @@ where
         }
         Type::Own(ty) | Type::Borrow(ty) => {
             if *ty == ResourceType::host::<DynInputStream>() || io_streams.contains(ty) {
-                let mut store = store.as_context_mut();
                 // The stream must be typed as `DynInputStream` (the host resource type),
                 // otherwise the resulting resource handle carries the concrete reader type
                 // and fails the guest's `own<input-stream>` type check.
@@ -904,19 +930,17 @@ where
                         ));
                     }
                 };
-                let res = store
-                    .data_mut()
-                    .wrpc()
-                    .table
-                    .push(stream)
-                    .map_err(|err| std::io::Error::new(std::io::ErrorKind::OutOfMemory, err))?;
-                let v = res
-                    .try_into_resource_any(store)
-                    .map_err(std::io::Error::other)?;
+                let v = store.with_store(|mut store| {
+                    let res =
+                        store.data_mut().wrpc().table.push(stream).map_err(|err| {
+                            std::io::Error::new(std::io::ErrorKind::OutOfMemory, err)
+                        })?;
+                    res.try_into_resource_any(store)
+                        .map_err(std::io::Error::other)
+                })?;
                 *val = Val::Resource(v);
                 Ok(())
             } else if resources.contains(ty) {
-                let mut store = store.as_context_mut();
                 let mut id = uuid::Bytes::default();
                 debug_assert_eq!(id.len(), 16);
                 let n = r.read_u8_leb128().await?;
@@ -942,26 +966,32 @@ where
 
                 let id = Uuid::from_bytes_le(id);
                 trace!(?id, "lookup shared resource");
-                let resource = store
-                    .data_mut()
-                    .wrpc()
-                    .ctx
-                    .shared_resources()
-                    .0
-                    .get(&id)
-                    .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::NotFound))?;
-                *val = Val::Resource(*resource);
+                let resource = store.with_store(|mut store| {
+                    store
+                        .data_mut()
+                        .wrpc()
+                        .ctx
+                        .shared_resources()
+                        .0
+                        .get(&id)
+                        .copied()
+                        .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::NotFound))
+                })?;
+                *val = Val::Resource(resource);
                 Ok(())
             } else {
-                let mut store = store.as_context_mut();
                 let buf = read_bytes(r).await?;
-                let table = store.data_mut().wrpc().table;
-                let resource = table
-                    .push(RemoteResource(buf))
-                    .map_err(|err| std::io::Error::new(std::io::ErrorKind::OutOfMemory, err))?;
-                let resource = resource
-                    .try_into_resource_any(store)
-                    .map_err(std::io::Error::other)?;
+                let resource = store.with_store(|mut store| {
+                    let resource = store
+                        .data_mut()
+                        .wrpc()
+                        .table
+                        .push(RemoteResource(buf))
+                        .map_err(|err| std::io::Error::new(std::io::ErrorKind::OutOfMemory, err))?;
+                    resource
+                        .try_into_resource_any(store)
+                        .map_err(std::io::Error::other)
+                })?;
                 *val = Val::Resource(resource);
                 Ok(())
             }

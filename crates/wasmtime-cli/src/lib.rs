@@ -2,7 +2,6 @@
 
 use core::future::poll_fn;
 use core::ops::Bound;
-use core::pin::pin;
 use core::time::Duration;
 
 use std::collections::{BTreeMap, HashMap};
@@ -10,9 +9,8 @@ use std::sync::Arc;
 
 use anyhow::{Context as _, anyhow, bail};
 use clap::Parser;
-use futures::StreamExt as _;
+use futures::{Stream, StreamExt as _};
 use tokio::fs;
-use tokio::sync::Mutex;
 use tokio::task::JoinSet;
 use tracing::{Instrument as _, Span, error, info, instrument, warn};
 use url::Url;
@@ -21,12 +19,12 @@ use wasi_preview1_component_adapter_provider::{
     WASI_SNAPSHOT_PREVIEW1_REACTOR_ADAPTER,
 };
 use wasmtime::component::{Component, InstancePre, Linker, ResourceTable, ResourceType, types};
-use wasmtime::{Engine, Store};
+use wasmtime::{Config, Engine, Memory, MemoryType, Store};
 use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpCtxView, WasiHttpView};
 use wrpc_transport::{Invoke, Serve};
 use wrpc_wasmtime::{
-    RemoteResource, ServeExt as _, SharedResourceTable, WrpcCtxView, WrpcView,
+    RemoteResource, ServeExt as _, SharedResourceTable, SharedStore, WrpcCtxView, WrpcView,
     collect_component_resource_exports, collect_component_resource_imports, link_item,
 };
 
@@ -358,15 +356,15 @@ impl<C: Invoke> WasiHttpView for Ctx<C> {
 // https://github.com/bytecodealliance/wasmtime/blob/b943666650696f1eb7ff8b217762b58d5ef5779d/src/commands/serve.rs#L641-L656
 fn use_pooling_allocator_by_default() -> anyhow::Result<Option<bool>> {
     const BITS_TO_TEST: u32 = 42;
-    let mut config = wasmtime::Config::new();
+    let mut config = Config::default();
     config.wasm_memory64(true);
     config.memory_reservation(1 << BITS_TO_TEST);
-    let engine = wasmtime::Engine::new(&config)?;
-    let mut store = wasmtime::Store::new(&engine, ());
+    let engine = Engine::new(&config)?;
+    let mut store = Store::new(&engine, ());
     // NB: the maximum size is in wasm pages to take out the 16-bits of wasm
     // page size here from the maximum size.
-    let ty = wasmtime::MemoryType::new64(0, Some(1 << (BITS_TO_TEST - 16)));
-    if wasmtime::Memory::new(&mut store, ty).is_ok() {
+    let ty = MemoryType::new64(0, Some(1 << (BITS_TO_TEST - 16)));
+    if Memory::new(&mut store, ty).is_ok() {
         Ok(Some(true))
     } else {
         Ok(None)
@@ -461,7 +459,7 @@ where
         .map_err(anyhow::Error::from)
         .context("failed to construct Wasmtime config")?;
     config.wasm_component_model(true);
-    let engine = wasmtime::Engine::new(&config)
+    let engine = Engine::new(&config)
         .map_err(anyhow::Error::from)
         .context("failed to initialize Wasmtime engine")?;
 
@@ -592,7 +590,7 @@ fn new_store<C: Invoke>(
     envs: impl IntoIterator<Item = (impl AsRef<str>, impl AsRef<str>)>,
     arg0: &str,
     timeout: Duration,
-) -> wasmtime::Store<Ctx<C>> {
+) -> Store<Ctx<C>> {
     let mut wasi = WasiCtxBuilder::new();
     wasi.inherit_env()
         .inherit_stdio()
@@ -679,11 +677,34 @@ where
     res.map_err(|()| anyhow!("component failed"))
 }
 
+async fn handle_invocations<T>(
+    invocations: impl Stream<Item = anyhow::Result<(T, impl Future<Output = anyhow::Result<()>>)>>,
+    kind: &'static str,
+) {
+    invocations
+        .for_each_concurrent(None, |invocation| async move {
+            match invocation {
+                Ok((_, fut)) => {
+                    info!(kind, "serving function invocation");
+                    if let Err(err) = fut.await {
+                        warn!(?err, kind, "failed to serve function invocation");
+                    } else {
+                        info!(kind, "successfully served function invocation");
+                    }
+                }
+                Err(err) => {
+                    error!(?err, kind, "failed to accept function invocation");
+                }
+            }
+        })
+        .await;
+}
+
 #[instrument(level = "trace", skip_all, ret(level = "trace"))]
 pub async fn serve_shared<C, S>(
-    handlers: &mut JoinSet<()>,
+    handlers: &mut JoinSet<anyhow::Result<()>>,
     srv: S,
-    mut store: wasmtime::Store<Ctx<C>>,
+    mut store: Store<Ctx<C>>,
     pre: InstancePre<Ctx<C>>,
     guest_resources: Arc<[ResourceType]>,
     host_resources: Arc<HashMap<Box<str>, HashMap<Box<str>, (ResourceType, ResourceType)>>>,
@@ -703,17 +724,23 @@ where
     let io_stream_resources: Arc<[ResourceType]> =
         wrpc_wasmtime::paths::wasi_io_stream_resources(&engine, &pre.component().component_type())
             .into();
-    let store = Arc::new(Mutex::new(store));
+    let (store, event_loop) = SharedStore::new(store);
+    handlers.spawn(event_loop.instrument(span.clone()));
     for (name, types::ComponentExtern { ty, .. }) in
         pre.component().component_type().exports(&engine)
     {
         match (name, ty) {
             (name, types::ComponentItem::ComponentFunc(ty)) => {
                 info!(?name, "serving root function");
+                let idx = pre
+                    .component()
+                    .get_export_index(None, name)
+                    .with_context(|| format!("export `{name}` not found"))?;
                 let invocations = srv
                     .serve_function_shared(
-                        Arc::clone(&store),
+                        store.clone(),
                         instance,
+                        idx,
                         Arc::clone(&guest_resources),
                         Arc::clone(&host_resources),
                         Arc::clone(&io_stream_resources),
@@ -724,25 +751,8 @@ where
                     .await?;
                 handlers.spawn(
                     async move {
-                        let mut invocations = pin!(invocations);
-                        while let Some(invocation) = invocations.next().await {
-                            match invocation {
-                                Ok((_, fut)) => {
-                                    info!("serving root function invocation");
-                                    match fut.await {
-                                        Err(err) => {
-                                            warn!(?err, "failed to serve root function invocation");
-                                        }
-                                        _ => {
-                                            info!("successfully served root function invocation");
-                                        }
-                                    }
-                                }
-                                Err(err) => {
-                                    error!(?err, "failed to accept root function invocation");
-                                }
-                            }
-                        }
+                        handle_invocations(invocations, "root").await;
+                        Ok(())
                     }
                     .instrument(span.clone()),
                 );
@@ -757,14 +767,23 @@ where
                 warn!(name, "serving root component exports not supported yet");
             }
             (instance_name, types::ComponentItem::ComponentInstance(ty)) => {
+                let instance_idx = pre
+                    .component()
+                    .get_export_index(None, instance_name)
+                    .with_context(|| format!("export `{instance_name}` not found"))?;
                 for (name, types::ComponentExtern { ty, .. }) in ty.exports(&engine) {
                     match ty {
                         types::ComponentItem::ComponentFunc(ty) => {
                             info!(?name, "serving instance function");
+                            let idx = pre
+                                .component()
+                                .get_export_index(Some(&instance_idx), name)
+                                .with_context(|| format!("export `{name}` not found"))?;
                             let invocations = srv
                                 .serve_function_shared(
-                                    Arc::clone(&store),
+                                    store.clone(),
                                     instance,
+                                    idx,
                                     Arc::clone(&guest_resources),
                                     Arc::clone(&host_resources),
                                     Arc::clone(&io_stream_resources),
@@ -773,33 +792,13 @@ where
                                     name,
                                 )
                                 .await?;
-                            handlers.spawn(async move {
-                                let mut invocations = pin!(invocations);
-                                while let Some(invocation) = invocations.next().await {
-                                    match invocation {
-                                        Ok((_, fut)) => {
-                                            info!("serving instance function invocation");
-                                            match fut.await { Err(err) => {
-                                                warn!(
-                                                    ?err,
-                                                    "failed to serve instance function invocation"
-                                                );
-                                            } _ => {
-                                                info!(
-                                                    "successfully served instance function invocation"
-                                                );
-                                            }}
-                                        }
-                                        Err(err) => {
-                                            error!(
-                                                ?err,
-                                                "failed to accept instance function invocation"
-                                            );
-                                        }
-                                    }
+                            handlers.spawn(
+                                async move {
+                                    handle_invocations(invocations, "instance").await;
+                                    Ok(())
                                 }
-                            }
-                            .instrument(span.clone()));
+                                .instrument(span.clone()),
+                            );
                         }
                         types::ComponentItem::CoreFunc(_) => {
                             warn!(
@@ -838,7 +837,7 @@ where
 #[instrument(level = "trace", skip_all, ret(level = "trace"))]
 #[allow(clippy::too_many_arguments)]
 pub async fn serve_stateless<C, S>(
-    handlers: &mut JoinSet<()>,
+    handlers: &mut JoinSet<anyhow::Result<()>>,
     srv: S,
     clt: C,
     cx: C::Context,
@@ -885,25 +884,8 @@ where
                     .await?;
                 handlers.spawn(
                     async move {
-                        let mut invocations = pin!(invocations);
-                        while let Some(invocation) = invocations.next().await {
-                            match invocation {
-                                Ok((_, fut)) => {
-                                    info!("serving root function invocation");
-                                    match fut.await {
-                                        Err(err) => {
-                                            warn!(?err, "failed to serve root function invocation");
-                                        }
-                                        _ => {
-                                            info!("successfully served root function invocation");
-                                        }
-                                    }
-                                }
-                                Err(err) => {
-                                    error!(?err, "failed to accept root function invocation");
-                                }
-                            }
-                        }
+                        handle_invocations(invocations, "root").await;
+                        Ok(())
                     }
                     .instrument(span.clone()),
                 );
@@ -945,32 +927,13 @@ where
                                     name,
                                 )
                                 .await?;
-                            handlers.spawn(async move {
-                                let mut invocations = pin!(invocations);
-                                while let Some(invocation) = invocations.next().await {
-                                    match invocation {
-                                        Ok((_, fut)) => {
-                                            info!("serving instance function invocation");
-                                            match fut.await { Err(err) => {
-                                                warn!(
-                                                    ?err,
-                                                    "failed to serve instance function invocation"
-                                                );
-                                            } _ => {
-                                                info!(
-                                                    "successfully served instance function invocation"
-                                                );
-                                            }}
-                                        }
-                                        Err(err) => {
-                                            error!(
-                                                ?err,
-                                                "failed to accept instance function invocation"
-                                            );
-                                        }
-                                    }
+                            handlers.spawn(
+                                async move {
+                                    handle_invocations(invocations, "instance").await;
+                                    Ok(())
                                 }
-                            }.instrument(span.clone()));
+                                .instrument(span.clone()),
+                            );
                         }
                         types::ComponentItem::CoreFunc(_) => {
                             warn!(
@@ -1014,7 +977,7 @@ pub async fn serve<C, S>(
     timeout: Duration,
     envs: Vec<(Box<str>, Box<str>)>,
     workload: &str,
-) -> anyhow::Result<JoinSet<()>>
+) -> anyhow::Result<JoinSet<anyhow::Result<()>>>
 where
     C: Invoke + Clone + 'static,
     C::Context: Clone + 'static,
