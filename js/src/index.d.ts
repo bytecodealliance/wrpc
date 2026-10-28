@@ -30,7 +30,10 @@ export type Type =
   | { kind: "stream"; elem: Type }
   | { kind: "own" | "borrow"; name: string };
 
-/** The JavaScript representation of a decoded component-model value. */
+/**
+ * The JavaScript representation of a decoded component-model value. Decoded
+ * `stream` values are {@link Chan}s of chunks, which can be cancelled.
+ */
 export type Value =
   | boolean
   | number
@@ -41,7 +44,32 @@ export type Value =
   | { [field: string]: Value }
   | { tag: string; val?: Value }
   | Promise<Value>
-  | AsyncIterable<Value[] | Uint8Array>
+  | Chan<Value[] | Uint8Array>
+  | undefined;
+
+/**
+ * A component-model value to send: a decoded {@link Value}, or any other
+ * representation the codec accepts, such as an `ArrayBuffer` or view for a
+ * byte list or handle, a `Set` or array of names for `flags`, a thunk for a
+ * `future`, an iterable or async iterable of chunks for a `stream`, and `null`
+ * for an `option`'s `none`.
+ */
+export type InputValue =
+  | boolean
+  | number
+  | bigint
+  | string
+  | ArrayBuffer
+  | ArrayBufferView
+  | Set<string>
+  | InputValue[]
+  | { [field: string]: InputValue }
+  | { tag: string; val?: InputValue }
+  | Promise<InputValue>
+  | (() => InputValue)
+  | Iterable<InputValue[] | ArrayBuffer | ArrayBufferView>
+  | AsyncIterable<InputValue[] | ArrayBuffer | ArrayBufferView>
+  | null
   | undefined;
 
 /**
@@ -86,7 +114,7 @@ export namespace types {
   export function variant(
     cases: Record<string, Type | null> | { name: string; ty: Type | null }[],
   ): Type;
-  function enumType(names: string[]): Type;
+  export function enumType(names: string[]): Type;
   export { enumType as enum };
   export function flags(names: string[]): Type;
   export function own(name: string): Type;
@@ -180,8 +208,8 @@ export class AsyncReader {
 export function encodeValue(
   w: Writer,
   ty: Type,
-  v: Value,
-  sink?: { path: number[]; kind: "stream" | "future"; ty: Type | null; value: Value }[],
+  v: InputValue,
+  sink?: { path: number[]; kind: "stream" | "future"; ty: Type | null; value: InputValue }[],
   path?: number[],
 ): void;
 export function decodeValue(r: Reader, ty: Type, sink?: DecodeDeferred[], path?: number[]): Value;
@@ -269,7 +297,7 @@ export function invoke(
   instance: string,
   func: string,
   paramTypes: Type[],
-  args: Value[],
+  args: InputValue[],
   resultTypes?: Type[],
 ): Promise<{ results: Value[]; done: Promise<void> }>;
 
@@ -278,7 +306,7 @@ export interface Invocation {
   func: string;
   mux: Mux;
   receiveParams(paramTypes: Type[]): Promise<{ params: Value[]; done: Promise<void> }>;
-  sendResults(resultTypes: Type[], values: Value[]): Promise<void>;
+  sendResults(resultTypes: Type[], values: InputValue[]): Promise<void>;
 }
 
 export function accept(transport: Transport): Promise<Invocation>;
