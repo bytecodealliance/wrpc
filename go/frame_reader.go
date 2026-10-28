@@ -101,7 +101,7 @@ type frameSub struct {
 
 func newFrameSub() *frameSub {
 	return &frameSub{
-		ch:      make(chan []byte, 64),
+		ch:      make(chan []byte, 16),
 		dropped: make(chan struct{}),
 	}
 }
@@ -347,64 +347,74 @@ func NewFrameStreamReader(ctx context.Context, r ByteReadCloser, paths ...Subscr
 			}
 		}()
 
-		accept := func(frame Frame, p string) (*frameSub, error) {
+		accept := func(path []uint32, p string, n uint32) (*frameSub, error) {
 			subs.mu.Lock()
 			defer subs.mu.Unlock()
-			sub, released, err := subs.route(frame.Path, p)
+			sub, released, err := subs.route(path, p)
 			if err != nil {
 				return nil, err
 			}
 			if released {
-				if len(frame.Data) > 0 {
-					return nil, fmt.Errorf("received data for a released element on path `%v`", frame.Path)
+				if n > 0 {
+					return nil, fmt.Errorf("received data for a released element on path `%v`", path)
 				}
 				return nil, nil
 			}
 			if _, ok := subs.closed[p]; ok {
-				return nil, fmt.Errorf("received a frame for closed path `%v`", frame.Path)
+				return nil, fmt.Errorf("received a frame for closed path `%v`", path)
 			}
-			if len(frame.Data) == 0 {
-				slog.DebugContext(ctx, "received empty frame, closing path", "path", frame.Path)
+			if n == 0 {
+				slog.DebugContext(ctx, "received empty frame, closing path", "path", path)
 				subs.closed[p] = struct{}{}
 				close(sub.ch)
 				return nil, nil
 			}
 			if sub.isDropped() {
-				return nil, fmt.Errorf("received data for a closed reader on path `%v`", frame.Path)
+				return nil, fmt.Errorf("received data for a closed reader on path `%v`", path)
 			}
 			return sub, nil
 		}
-		handle := func(frame Frame) error {
-			sub, err := accept(frame, indexPath(frame.Path...))
+		handle := func(path []uint32, n uint32) error {
+			sub, err := accept(path, indexPath(path...), n)
 			if err != nil || sub == nil {
 				return err
 			}
-			slog.DebugContext(ctx, "received data frame, sending frame data",
-				"frame", frame,
-			)
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-sub.dropped:
-				return fmt.Errorf("received data for a closed reader on path `%v`", frame.Path)
-			case sub.ch <- frame.Data:
-				slog.DebugContext(ctx, "sent received frame data",
-					"frame", frame,
+			for n > 0 {
+				k := min(n, maxInitialCapacity)
+				data := make([]byte, k)
+				if _, err := io.ReadFull(r, data); err != nil {
+					if err == io.EOF {
+						err = io.ErrUnexpectedEOF
+					}
+					return fmt.Errorf("failed to read data: %w", err)
+				}
+				n -= k
+				slog.DebugContext(ctx, "sending received frame data",
+					"path", path,
+					"len", k,
 				)
-				return nil
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-sub.dropped:
+					return fmt.Errorf("received data for a closed reader on path `%v`", path)
+				case sub.ch <- data:
+				}
 			}
+			return nil
 		}
 		for readers.Load() > 0 {
 			slog.DebugContext(ctx, "reading frame")
-			frame, err := ReadFrame(r)
+			path, n, err := readFrameHeader(r)
 			if err == io.EOF {
 				break
 			}
 			if err == nil {
-				slog.DebugContext(ctx, "read frame",
-					"frame", frame,
+				slog.DebugContext(ctx, "read frame header",
+					"path", path,
+					"len", n,
 				)
-				err = handle(frame)
+				err = handle(path, n)
 			}
 			if err != nil {
 				slog.ErrorContext(ctx, "failed to process frame", "err", err)
