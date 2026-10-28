@@ -137,16 +137,19 @@ export class Chan<T> implements AsyncIterable<T> {
   readonly capacity: number;
   readonly closed: boolean;
   readonly cancelled: boolean;
+  /** The error the channel was failed with, if any. */
+  readonly error: unknown;
   /**
-   * Call `f` once the consumer cancels the channel, or now if it already has.
-   * Hooks are dropped once the consumer has received the end of the channel.
+   * Call `f` with the buffered values dropped once the consumer cancels the
+   * channel, or now, with none, if it already has. Hooks are dropped once the
+   * consumer has received the end of the channel.
    */
-  onCancel(f: () => void): void;
+  onCancel(f: (dropped: T[]) => void): void;
   push(value: T): void;
   /** Push `value` once fewer than `capacity` values are buffered; `false` if closed instead. */
   send(value: T): Promise<boolean>;
   close(err?: unknown): void;
-  /** Stop consuming: drop the buffered values, close (failed with `err`, if given and not already failed), and call the `onCancel` hooks. */
+  /** Stop consuming: drop the buffered values, close (failed with `err`, if given and not already failed), and call the `onCancel` hooks with the values dropped. */
   cancel(err?: unknown): void;
   next(): Promise<{ value: T | undefined; done: boolean }>;
   [Symbol.asyncIterator](): AsyncIterator<T>;
@@ -247,10 +250,13 @@ export class Mux {
    * fails the invocation.
    */
   finish(path: number[], reader?: AsyncReader): void;
-  /** Discard the sub-stream at `path` and those nested in it. */
-  discard(path: number[]): void;
-  /** Call `f` once the sub-stream at `path` is discarded. */
-  ondiscard(path: number[], f: () => void): void;
+  /**
+   * Discard the sub-streams nested in elements `from` up to `to` of the
+   * stream at `path`.
+   */
+  discard(path: number[], from: number, to: number): void;
+  /** Call `f` once the sub-stream expected at `path` is discarded, or now if it already is. */
+  onDiscard(path: number[], f: () => void): void;
   outgoing(path: number[]): Outgoing;
   abort(err?: unknown): void;
   closeWrite(): Promise<void>;
