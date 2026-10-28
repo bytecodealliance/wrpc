@@ -79,7 +79,9 @@ record frame {
 }
 ```
 
-An empty frame, i.e. a frame with empty `data`, closes its `path`: the sender MUST NOT send any more frames on that `path`, including another empty frame, and a receiver MUST treat a frame received on a closed `path` as an error. Closing a `path` does not close the paths nested in it. A sender MAY leave a `path` open, unless stated otherwise (see [Futures](#futures)).
+An empty frame, i.e. a frame with empty `data`, closes its `path`: the sender MUST NOT send any more non-empty frames on that `path`. If a non-empty frame is received on a closed `path`, the receiver MUST treat it as an error. A receiver MUST discard empty frames received on a `path` that is closed. Closing a `path` does not close the paths nested in it. A sender MAY leave a `path` open, unless stated otherwise (see [Futures](#futures)).
+
+Likewise, if a non-empty frame is received on a `path` that carries no pending value the receiver has received or may still receive, the receiver MUST treat it as an error, and it MUST discard empty frames received on such a `path`.
 
 A sender MUST send the data of a pending value only after the data carrying it, for example, the data of a pending value in a stream element after the stream chunk containing that element, since a receiver MAY bound the data it buffers for a `path`, which no value it decoded carries yet.
 
