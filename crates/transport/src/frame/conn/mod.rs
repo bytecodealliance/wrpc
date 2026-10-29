@@ -429,7 +429,8 @@ pin_project! {
         rx: Option<StreamReader<ReceiverStream<std::io::Result<Bytes>>, Bytes>>,
         subscribed: bool,
         path: Arc<[usize]>,
-        io: Arc<IngressGuard>,
+        dropped: Arc<oneshot::Sender<()>>,
+        task: Arc<AbortOnDropHandle<()>>,
         state: Arc<IngressState>,
     }
 
@@ -456,15 +457,19 @@ pin_project! {
 impl Incoming {
     /// Creates a new [Incoming] given an [`AsyncBufRead`] and a set of async paths.
     ///
+    /// Data ingress is aborted and the reader is dropped once all handles and all futures
+    /// returned by [`Self::finished`] are dropped.
     /// If `drain` is `true`, data ingress continues after all handles are dropped until the peer
-    /// closes the stream, otherwise data ingress is aborted and the reader is dropped.
-    /// Any data received after all handles are dropped, or received for a registered path, which
-    /// was never indexed, fails draining ingress with [`std::io::ErrorKind::BrokenPipe`].
-    /// Draining reports such data, which would otherwise go unnoticed, discards empty frames the
+    /// closes the stream, as long as a future returned by [`Self::finished`] is held, otherwise
+    /// data ingress stops once all handles are dropped.
+    /// Any data received for a registered path, which was not processed, fails ingress with
+    /// [`std::io::ErrorKind::BrokenPipe`] once all handles are dropped, as does any data
+    /// received after that by draining ingress.
+    /// Draining reports the latter, which would otherwise go unnoticed, discards empty frames the
     /// peer may still send to close paths, and reads the stream to its end, which transports
     /// reusing the connection, like HTTP/1, require.
     /// Transports, which signal the peer to stop sending once the reader is dropped, like QUIC,
-    /// may abort ingress instead.
+    /// may stop ingress instead.
     ///
     /// `paths` must not contain both a wildcard and an index at the same position, so paths of
     /// different variant cases, which are not indexed, must be merged by replacing such indices
@@ -482,7 +487,7 @@ impl Incoming {
             unprocessed: AtomicBool::default(),
             done: watch::Sender::new(None),
         });
-        let (dropped_tx, dropped_rx) = drain.then(oneshot::channel).unzip();
+        let (dropped_tx, mut dropped_rx) = oneshot::channel();
         let span = Span::current();
         let task = tokio::spawn({
             let state = Arc::clone(&state);
@@ -501,20 +506,21 @@ impl Incoming {
                             .close_tx();
                         res
                     });
-                    let Some(mut dropped) = dropped_rx else {
-                        return io.await;
-                    };
                     select! {
                         biased;
 
                         res = &mut io => {
                             res?;
-                            _ = dropped.await;
+                            _ = dropped_rx.await;
                             close_rx(&state)
                         }
-                        _ = &mut dropped => {
+                        _ = &mut dropped_rx => {
                             close_rx(&state)?;
-                            io.await
+                            if drain {
+                                io.await
+                            } else {
+                                Ok(())
+                            }
                         }
                     }
                 }
@@ -532,13 +538,8 @@ impl Incoming {
             rx: Some(StreamReader::new(ReceiverStream::new(rx_rx))),
             subscribed: true,
             path: Arc::from([]),
-            io: Arc::new(match dropped_tx {
-                // TODO: Bound draining by a deadline or a byte limit
-                Some(dropped) => IngressGuard::Drain { _dropped: dropped },
-                None => IngressGuard::Abort {
-                    _task: AbortOnDropHandle::new(task),
-                },
-            }),
+            dropped: Arc::new(dropped_tx),
+            task: Arc::new(AbortOnDropHandle::new(task)),
             state,
         }
     }
@@ -584,15 +585,21 @@ impl Incoming {
             subscribed: rx.is_some(),
             rx: rx.map(|rx| StreamReader::new(ReceiverStream::new(rx))),
             path,
-            io: Arc::clone(&self.io),
+            dropped: Arc::clone(&self.dropped),
+            task: Arc::clone(&self.task),
             state: Arc::clone(&self.state),
         })
     }
 
-    /// Returns a future, which resolves to the result of ingress once it is complete.
-    /// Ingress aborted once all handles are dropped, see [`Self::new`], resolves to success.
+    /// Returns a future, which resolves to the result of ingress once it is complete and all
+    /// handles are dropped. Ingress is not aborted while the future is held, see [`Self::new`].
     pub fn finished(&self) -> impl Future<Output = std::io::Result<()>> + Send + 'static {
-        finished(self.state.done.subscribe())
+        let task = Arc::clone(&self.task);
+        let done = finished(self.state.done.subscribe());
+        async move {
+            let _task = task;
+            done.await
+        }
     }
 
     /// Takes the data of this handle, returning a handle reading it, if this handle reads any.
@@ -610,7 +617,8 @@ impl Incoming {
             rx: Some(rx),
             subscribed: true,
             path: Arc::clone(&self.path),
-            io: Arc::clone(&self.io),
+            dropped: Arc::clone(&self.dropped),
+            task: Arc::clone(&self.task),
             state: Arc::clone(&self.state),
         })
     }
@@ -666,11 +674,6 @@ impl IngressState {
             Some(TxSlot::Closed)
         )
     }
-}
-
-enum IngressGuard {
-    Abort { _task: AbortOnDropHandle<()> },
-    Drain { _dropped: oneshot::Sender<()> },
 }
 
 /// Outgoing framed stream
@@ -969,10 +972,10 @@ async fn egress(
     tx.shutdown().await
 }
 
-/// Waits for the result of ingress or egress, which is success if it was aborted
+/// Waits for the result of ingress or egress
 async fn finished(mut done: watch::Receiver<Option<std::io::Result<()>>>) -> std::io::Result<()> {
     let Ok(res) = done.wait_for(Option::is_some).await else {
-        return Ok(());
+        return Err(std::io::Error::other("I/O task stopped without a result"));
     };
     match &*res {
         Some(Err(err)) => Err(copy_io_error(err)),
@@ -1054,6 +1057,17 @@ mod tests {
     }
 
     #[test_log::test(tokio::test)]
+    async fn incoming_abort_rejects_unprocessed_data() {
+        let (mut tx, rx, mut done_rx) = incoming(false);
+        tx.write_all(&FRAME).await.unwrap();
+        drop(tx);
+        tokio::task::yield_now().await;
+        assert!((&mut done_rx).now_or_never().is_none());
+        drop(rx);
+        assert_eq!(failed(done_rx).await, ErrorKind::BrokenPipe);
+    }
+
+    #[test_log::test(tokio::test)]
     async fn incoming_read_to_end_fails_on_ingress_failure() {
         let (mut tx, mut rx, ..) = incoming(true);
         tx.write_all(&[0x00, 0x01, 0x2a, 0x01]).await.unwrap();
@@ -1062,6 +1076,16 @@ mod tests {
         let err = rx.read_to_end(&mut buf).await.unwrap_err();
         assert_eq!(err.kind(), ErrorKind::UnexpectedEof);
         assert_eq!(buf, [0x2a]);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn incoming_drop_aborts_without_finished() {
+        let (mut tx, rx, done_rx) = incoming(true);
+        drop(done_rx);
+        drop(rx);
+        tokio::task::yield_now().await;
+        let err = tx.write_all(&FRAME).await.unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::BrokenPipe);
     }
 
     #[test_log::test(tokio::test)]
