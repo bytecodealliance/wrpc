@@ -103,8 +103,9 @@ pub trait WrpcCtx<T: Invoke>: Send {
     /// Returns a table of shared exported resources
     fn shared_resources(&mut self) -> &mut SharedResourceTable;
 
-    /// Optional invocation timeout, component will trap if invocation is not finished within the
-    /// returned [Duration]. If this method returns [None], then no timeout will be used.
+    /// Optional invocation timeout. Polyfilled imports fail if the invocation is not finished
+    /// within the returned [Duration], while `wrpc:rpc` invocations fail if they are not
+    /// established within it. If this method returns [None], then no timeout will be used.
     fn timeout(&self) -> Option<Duration> {
         None
     }

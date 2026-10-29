@@ -48,11 +48,9 @@ where
 pub enum Error {
     /// Failure of an invocation, including its transmission
     Invoke(anyhow::Error),
-    /// Error originating from an [`index`](wrpc_transport::frame::Incoming::index) call on the
-    /// incoming framed stream.
+    /// Error originating from an `index` call on an incoming channel
     IncomingIndex(std::io::Error),
-    /// Error originating from an [`index`](wrpc_transport::frame::Outgoing::index) call on the
-    /// outgoing framed stream.
+    /// Error originating from an `index` call on an outgoing channel
     OutgoingIndex(std::io::Error),
     /// Error originating from reading the data of an incoming channel
     Read(std::io::Error),
