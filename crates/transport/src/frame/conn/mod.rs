@@ -23,7 +23,7 @@ use wasm_tokio::{
     AsyncReadCore as _, AsyncReadLeb128 as _, DEFAULT_MAX_INITIAL_CAPACITY, Leb128Encoder,
 };
 
-use crate::frame::{MAX_INITIAL_PATH_CAPACITY, PROTOCOL};
+use crate::frame::PROTOCOL;
 use crate::{copy_io_error, error_receiver_closed};
 
 mod client;
@@ -139,6 +139,8 @@ struct Subscriptions {
     indexed: Arc<Notify>,
     /// Whether all senders are closed
     closed: bool,
+    /// Maximum length of the declared paths
+    depth: usize,
 }
 
 #[derive(Debug, Default)]
@@ -203,12 +205,14 @@ impl Subscriptions {
             unclaimed: Arc::new(Semaphore::new(MAX_UNCLAIMED_ELEMENTS)),
             indexed: Arc::default(),
             closed: false,
+            depth: 0,
         };
         for path in paths {
             let path = path.as_ref();
             if path.is_empty() {
                 continue;
             }
+            subs.depth = subs.depth.max(path.len());
             for (k, i) in path.iter().enumerate() {
                 subs.patterns
                     .entry(Box::from(&path[..k]))
@@ -478,6 +482,7 @@ impl Incoming {
     {
         let (rx_tx, rx_rx) = mpsc::channel(MAX_BUFFERED_CHUNKS);
         let index = Subscriptions::new(paths, rx_tx);
+        let depth = index.depth;
         let state = Arc::new(IngressState {
             index: std::sync::Mutex::new(index),
             err: std::sync::OnceLock::default(),
@@ -491,7 +496,7 @@ impl Incoming {
             async move {
                 let res = async {
                     let mut io = pin!(async {
-                        let res = ingress(&mut rx, &state.index).await;
+                        let res = ingress(&mut rx, &state.index, depth).await;
                         if let Err(err) = &res {
                             _ = state.err.set(copy_io_error(err));
                         }
@@ -812,6 +817,7 @@ impl AsyncWrite for Outgoing {
 async fn ingress(
     mut rx: impl AsyncRead + Unpin,
     index: &std::sync::Mutex<Subscriptions>,
+    depth: usize,
 ) -> std::io::Result<()> {
     'frames: loop {
         trace!("reading path length");
@@ -823,26 +829,33 @@ async fn ingress(
         let n = AsyncReadExt::chain([b].as_slice(), &mut rx)
             .read_u32_leb128()
             .await?;
-        let n = usize::try_from(n)
+        let path_len = usize::try_from(n)
             .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
-        trace!(n, "read path length");
-        let path = if n == 0 {
-            Vec::default()
-        } else {
-            let mut path = Vec::with_capacity(n.min(MAX_INITIAL_PATH_CAPACITY));
-            for i in 0..n {
-                trace!(i, "reading path element");
-                let p = rx.read_u32_leb128().await?;
+        trace!(path_len, "read path length");
+        let mut path = Vec::with_capacity(path_len.min(depth));
+        for i in 0..path_len {
+            trace!(i, "reading path element");
+            let p = rx.read_u32_leb128().await?;
+            if i < depth {
                 let p = usize::try_from(p)
                     .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
                 path.push(p);
             }
-            trace!(?path, "read path");
-            path
-        };
+        }
+        trace!(?path, "read path");
         trace!("reading data length");
         let n = rx.read_u32_leb128().await?;
         trace!(n, "read data length");
+        if path_len > depth {
+            if n == 0 {
+                trace!(path_len, "discarding empty frame");
+                continue 'frames;
+            }
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("path length of `{path_len}` exceeds maximum of `{depth}`"),
+            ));
+        }
         let mut permit = None;
         let tx = loop {
             let (unclaimed, indexed) = {
@@ -1403,7 +1416,8 @@ mod tests {
             .collect();
         let mut ingress = pin!(tokio::task::unconstrained(ingress(
             frames.as_slice(),
-            &index
+            &index,
+            1
         )));
         assert!(ingress.as_mut().now_or_never().is_none());
         let mut rx = index.lock().unwrap().take_rx(&[0]).unwrap().unwrap();
@@ -1424,7 +1438,7 @@ mod tests {
         let n = DEFAULT_MAX_INITIAL_CAPACITY + 1;
         let mut frame = vec![0x00, 0x81, 0x80, 0x40];
         frame.resize(frame.len() + n, 0x42);
-        ingress(frame.as_slice(), &index).await.unwrap();
+        ingress(frame.as_slice(), &index, 0).await.unwrap();
         drop(index);
         let mut chunks = vec![];
         while let Some(chunk) = rx.recv().await {
