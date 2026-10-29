@@ -321,7 +321,7 @@ export function encodeValue(w, ty, v, sink, path) {
     }
     case "flags": {
       if (!isObject(v)) throw new TypeError("expected an object for `flags`");
-      const bytes = new Uint8Array(Math.ceil(Math.max(ty.flags.length, 1) / 8));
+      const bytes = new Uint8Array(Math.ceil(ty.flags.length / 8));
       ty.flags.forEach(({ key }, i) => {
         if (v[key]) bytes[i >> 3] |= 1 << (i & 7);
       });
@@ -487,7 +487,7 @@ function decodeScalar(r, ty) {
     }
     case "flags": {
       const n = ty.flags.length;
-      const bytes = r.take(Math.ceil(Math.max(n, 1) / 8));
+      const bytes = r.take(Math.ceil(n / 8));
       if (bytes[bytes.length - 1] >> (((n - 1) % 8) + 1))
         throw new RangeError("invalid flags bits");
       /** @type {Record<string, boolean>} */
