@@ -305,10 +305,7 @@ impl IncomingChannel {
             .ok_or_else(|| error_undeclared(&path))?;
         let concrete = pattern.iter().all(Option::is_some);
         if node.declared && concrete && node.returned {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::AlreadyExists,
-                format!("`{path:?}` channel already returned"),
-            ));
+            return Err(error_returned(&path));
         }
         let incoming = Arc::<Slot>::default();
         {
@@ -323,6 +320,9 @@ impl IncomingChannel {
                     .lock()
                     .unwrap_or_else(PoisonError::into_inner)
                     .index(&path)?;
+                if node.declared && !handle.is_subscribed() {
+                    return Err(error_returned(&path));
+                }
                 *incoming.lock().unwrap_or_else(PoisonError::into_inner) = Some(Ok(handle));
             } else {
                 IncomingRoot::push(
@@ -385,6 +385,14 @@ impl IncomingChannel {
             take_reader(&incoming).unwrap_or_else(|| Err(error_ended()))
         }))
     }
+}
+
+/// Returns the error for a declared `path`, whose channel was already returned
+fn error_returned(path: &[usize]) -> std::io::Error {
+    std::io::Error::new(
+        std::io::ErrorKind::AlreadyExists,
+        format!("`{path:?}` channel already returned"),
+    )
 }
 
 /// Returns the error for a `path`, which is neither declared nor a prefix of a declared one
@@ -502,6 +510,18 @@ mod tests {
         for path in [&[2][..], &[0, 0], &[1, 5, 1]] {
             assert_eq!(index_err(&rx, path), ErrorKind::NotFound);
         }
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn incoming_channel_index_returned_element() {
+        let paths = [&[Some(0), None][..], &[Some(0), None, None]];
+        let (_tx, incoming) = tokio::io::duplex(64);
+        let root = Arc::<IncomingRoot>::default();
+        root.set(Incoming::new(BufReader::new(incoming), paths));
+        let rx = IncomingChannel::new(future::ready(Ok(())).boxed().shared(), root, paths);
+        let element = rx.index(&[0, 3]).unwrap();
+        assert_eq!(index_err(&rx, &[0, 3]), ErrorKind::AlreadyExists);
+        assert!(element.index(&[0]).unwrap().declared);
     }
 
     #[test_log::test(tokio::test)]

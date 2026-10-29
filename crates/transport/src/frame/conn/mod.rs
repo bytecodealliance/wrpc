@@ -601,6 +601,13 @@ impl Incoming {
         }
     }
 
+    /// Returns whether this handle was returned with the data of its position, i.e. whether the
+    /// position is declared and its data was not taken by another handle yet.
+    #[must_use]
+    pub fn is_subscribed(&self) -> bool {
+        self.subscribed
+    }
+
     /// Takes the data of this handle, returning a handle reading it, if this handle reads any.
     /// This handle keeps addressing the same position for [`Self::index`], but reads no data.
     pub fn take_reader(&mut self) -> Option<Self> {
