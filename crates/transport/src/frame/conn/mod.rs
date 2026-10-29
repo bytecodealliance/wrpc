@@ -23,7 +23,7 @@ use wasm_tokio::{
     AsyncReadCore as _, AsyncReadLeb128 as _, DEFAULT_MAX_INITIAL_CAPACITY, Leb128Encoder,
 };
 
-use crate::frame::{MAX_INITIAL_PATH_CAPACITY, PROTOCOL};
+use crate::frame::PROTOCOL;
 use crate::{copy_io_error, error_receiver_closed};
 
 mod client;
@@ -139,6 +139,8 @@ struct Subscriptions {
     indexed: Arc<Notify>,
     /// Whether all senders are closed
     closed: bool,
+    /// Maximum length of the declared paths
+    depth: usize,
 }
 
 #[derive(Debug, Default)]
@@ -203,12 +205,14 @@ impl Subscriptions {
             unclaimed: Arc::new(Semaphore::new(MAX_UNCLAIMED_ELEMENTS)),
             indexed: Arc::default(),
             closed: false,
+            depth: 0,
         };
         for path in paths {
             let path = path.as_ref();
             if path.is_empty() {
                 continue;
             }
+            subs.depth = subs.depth.max(path.len());
             for (k, i) in path.iter().enumerate() {
                 subs.patterns
                     .entry(Box::from(&path[..k]))
@@ -813,6 +817,10 @@ async fn ingress(
     mut rx: impl AsyncRead + Unpin,
     index: &std::sync::Mutex<Subscriptions>,
 ) -> std::io::Result<()> {
+    let depth = index
+        .lock()
+        .map_err(|err| std::io::Error::other(err.to_string()))?
+        .depth;
     'frames: loop {
         trace!("reading path length");
         let b = match rx.read_u8().await {
@@ -826,23 +834,31 @@ async fn ingress(
         let n = usize::try_from(n)
             .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
         trace!(n, "read path length");
-        let path = if n == 0 {
-            Vec::default()
-        } else {
-            let mut path = Vec::with_capacity(n.min(MAX_INITIAL_PATH_CAPACITY));
-            for i in 0..n {
-                trace!(i, "reading path element");
-                let p = rx.read_u32_leb128().await?;
+        let path_len = n;
+        let mut path = Vec::with_capacity(n.min(depth));
+        for i in 0..n {
+            trace!(i, "reading path element");
+            let p = rx.read_u32_leb128().await?;
+            if i < depth {
                 let p = usize::try_from(p)
                     .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
                 path.push(p);
             }
-            trace!(?path, "read path");
-            path
-        };
+        }
+        trace!(?path, "read path");
         trace!("reading data length");
         let n = rx.read_u32_leb128().await?;
         trace!(n, "read data length");
+        if path_len > depth {
+            if n == 0 {
+                trace!(path_len, "discarding empty frame");
+                continue 'frames;
+            }
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("path length of `{path_len}` exceeds maximum of `{depth}`"),
+            ));
+        }
         let mut permit = None;
         let tx = loop {
             let (unclaimed, indexed) = {
