@@ -26,3 +26,12 @@ func TestUntrustedLength(t *testing.T) {
 		t.Fatalf("unexpected slice length %d and capacity %d", len(v), cap(v))
 	}
 }
+
+func TestInvalidUTF8String(t *testing.T) {
+	if _, err := wrpc.WriteString("\xff", &bytes.Buffer{}); err == nil {
+		t.Fatal("writing invalid UTF-8 should fail")
+	}
+	if _, err := wrpc.ReadString(bytes.NewReader([]byte{1, 0xff})); err == nil {
+		t.Fatal("reading invalid UTF-8 should fail")
+	}
+}
