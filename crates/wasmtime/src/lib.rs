@@ -7,6 +7,7 @@ use core::pin::pin;
 use core::time::Duration;
 
 use std::collections::{BTreeMap, HashMap};
+use std::sync::Arc;
 
 use bytes::{Bytes, BytesMut};
 use futures::future::try_join_all;
@@ -75,6 +76,18 @@ fn rpc_result_type<T: Borrow<Type>>(
 }
 
 pub struct RemoteResource(pub Bytes);
+
+/// Resource types, values of which are given special treatment by the wRPC value codec
+#[derive(Clone, Debug, Default)]
+pub struct ResourceTypes {
+    /// Guest-exported resource types, handles of which are transmitted as references to
+    /// [`SharedResourceTable`] entries
+    pub guest: Arc<[ResourceType]>,
+    /// Resource types bridged to wRPC `stream<u8>` (`wasi:io` `input-stream`), identified by
+    /// their possibly-uninstantiated type
+    #[cfg(feature = "wasmtime-wasi")]
+    pub io_streams: Arc<[ResourceType]>,
+}
 
 /// A table of shared resources exported by the component
 #[derive(Debug, Default)]
@@ -253,9 +266,8 @@ pub async fn call<T>(
     mut store: &Accessor<T>,
     rx: Incoming,
     mut tx: Outgoing,
-    guest_resources: &[ResourceType],
+    resources: &ResourceTypes,
     host_resources: &HashMap<Box<str>, HashMap<Box<str>, (ResourceType, ResourceType)>>,
-    io_streams: &[ResourceType],
     params_ty: impl ExactSizeIterator<Item = &Type>,
     results_ty: &[Type],
     func: Func,
@@ -266,18 +278,10 @@ where
     let mut params = vec![Val::Bool(false); params_ty.len()];
     let mut rx = pin!(rx);
     for (i, (v, ty)) in zip(&mut params, params_ty).enumerate() {
-        read_value(
-            &mut store,
-            &mut rx,
-            guest_resources,
-            io_streams,
-            v,
-            ty,
-            &[i],
-        )
-        .await
-        .with_context(|| format!("failed to decode parameter value {i}"))
-        .map_err(CallError::Decode)?;
+        read_value(&mut store, &mut rx, resources, v, ty, &[i])
+            .await
+            .with_context(|| format!("failed to decode parameter value {i}"))
+            .map_err(CallError::Decode)?;
     }
     let mut results = vec![Val::Bool(false); results_ty.len()];
     func.call_concurrent(store, &params, &mut results)
@@ -294,8 +298,7 @@ where
         ) {
             (None, results) => {
                 for (i, (v, ty)) in zip(results, results_ty).enumerate() {
-                    let mut enc =
-                        ValEncoder::new(store.as_context_mut(), ty, guest_resources, io_streams);
+                    let mut enc = ValEncoder::new(store.as_context_mut(), ty, resources);
                     enc.encode(v, &mut buf)
                         .with_context(|| format!("failed to encode result value {i}"))
                         .map_err(CallError::Encode)?;
@@ -306,8 +309,7 @@ where
             (Some(None), [Val::Result(Ok(None))]) => {}
             // `result<T, rpc-eror>`
             (Some(Some(ty)), [Val::Result(Ok(Some(v)))]) => {
-                let mut enc =
-                    ValEncoder::new(store.as_context_mut(), ty, guest_resources, io_streams);
+                let mut enc = ValEncoder::new(store.as_context_mut(), ty, resources);
                 enc.encode(v, &mut buf)
                     .context("failed to encode result value 0")
                     .map_err(CallError::Encode)?;

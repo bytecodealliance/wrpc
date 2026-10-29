@@ -20,6 +20,8 @@ use wasmtime::component::ResourceType;
 use wasmtime::component::types::{self, Type};
 use wrpc_introspect::merge_wildcards;
 
+use crate::ResourceTypes;
+
 /// Collect the (uninstantiated) resource types of the component's imported
 /// `wasi:io/streams` `input-stream`, against which parameter resource types can
 /// be compared at serve time.
@@ -53,13 +55,13 @@ pub fn wasi_io_stream_resources(
 /// whether the type *itself* is asynchronous (a stream or future).
 ///
 /// Mirrors `wrpc_introspect::async_paths_ty`, but operates over Wasmtime's
-/// component [`Type`] rather than WIT types. `streams` is the set of resource
-/// types that are bridged to wRPC `stream<u8>` (see [`wasi_io_stream_resources`]).
-fn async_paths(ty: &Type, streams: &[ResourceType]) -> (BTreeSet<VecDeque<Option<usize>>>, bool) {
+/// component [`Type`] rather than WIT types.
+#[cfg_attr(not(feature = "wasmtime-wasi"), expect(clippy::only_used_in_recursion))]
+fn async_paths(ty: &Type, resources: &ResourceTypes) -> (BTreeSet<VecDeque<Option<usize>>>, bool) {
     let mut paths = BTreeSet::new();
     match ty {
         Type::List(ty) => {
-            let (nested, fut) = async_paths(&ty.ty(), streams);
+            let (nested, fut) = async_paths(&ty.ty(), resources);
             for mut path in nested {
                 path.push_front(None);
                 paths.insert(path);
@@ -69,16 +71,16 @@ fn async_paths(ty: &Type, streams: &[ResourceType]) -> (BTreeSet<VecDeque<Option
             }
             (paths, false)
         }
-        Type::Option(ty) => async_paths(&ty.ty(), streams),
+        Type::Option(ty) => async_paths(&ty.ty(), resources),
         Type::Result(ty) => {
             let mut is_fut = false;
             if let Some(ty) = ty.ok() {
-                let (nested, fut) = async_paths(&ty, streams);
+                let (nested, fut) = async_paths(&ty, resources);
                 paths.extend(nested);
                 is_fut |= fut;
             }
             if let Some(ty) = ty.err() {
-                let (nested, fut) = async_paths(&ty, streams);
+                let (nested, fut) = async_paths(&ty, resources);
                 paths.extend(nested);
                 is_fut |= fut;
             }
@@ -88,7 +90,7 @@ fn async_paths(ty: &Type, streams: &[ResourceType]) -> (BTreeSet<VecDeque<Option
             let mut is_fut = false;
             for case in ty.cases() {
                 if let Some(ty) = case.ty {
-                    let (nested, fut) = async_paths(&ty, streams);
+                    let (nested, fut) = async_paths(&ty, resources);
                     paths.extend(nested);
                     is_fut |= fut;
                 }
@@ -97,7 +99,7 @@ fn async_paths(ty: &Type, streams: &[ResourceType]) -> (BTreeSet<VecDeque<Option
         }
         Type::Tuple(ty) => {
             for (i, ty) in ty.types().enumerate() {
-                let (nested, fut) = async_paths(&ty, streams);
+                let (nested, fut) = async_paths(&ty, resources);
                 for mut path in nested {
                     path.push_front(Some(i));
                     paths.insert(path);
@@ -110,7 +112,7 @@ fn async_paths(ty: &Type, streams: &[ResourceType]) -> (BTreeSet<VecDeque<Option
         }
         Type::Record(ty) => {
             for (i, field) in ty.fields().enumerate() {
-                let (nested, fut) = async_paths(&field.ty, streams);
+                let (nested, fut) = async_paths(&field.ty, resources);
                 for mut path in nested {
                     path.push_front(Some(i));
                     paths.insert(path);
@@ -123,13 +125,13 @@ fn async_paths(ty: &Type, streams: &[ResourceType]) -> (BTreeSet<VecDeque<Option
         }
         Type::Future(ty) => {
             if let Some(ty) = ty.ty() {
-                (paths, _) = async_paths(&ty, streams);
+                (paths, _) = async_paths(&ty, resources);
             }
             (paths, true)
         }
         Type::Stream(ty) => {
             if let Some(ty) = ty.ty() {
-                let (nested, fut) = async_paths(&ty, streams);
+                let (nested, fut) = async_paths(&ty, resources);
                 for mut path in nested {
                     path.push_front(None);
                     paths.insert(path);
@@ -140,7 +142,8 @@ fn async_paths(ty: &Type, streams: &[ResourceType]) -> (BTreeSet<VecDeque<Option
             }
             (paths, true)
         }
-        Type::Own(ty) | Type::Borrow(ty) if streams.contains(ty) => {
+        #[cfg(feature = "wasmtime-wasi")]
+        Type::Own(ty) | Type::Borrow(ty) if resources.io_streams.contains(ty) => {
             // `wasi:io` streams are sent/received as wRPC `stream<u8>`.
             (paths, true)
         }
@@ -155,11 +158,11 @@ fn async_paths(ty: &Type, streams: &[ResourceType]) -> (BTreeSet<VecDeque<Option
 /// with `Some(i)`.
 pub(crate) fn params_async_paths<'a>(
     params: impl IntoIterator<Item = &'a Type>,
-    streams: &[ResourceType],
+    resources: &ResourceTypes,
 ) -> Arc<[Box<[Option<usize>]>]> {
     let mut out = BTreeSet::new();
     for (i, ty) in params.into_iter().enumerate() {
-        let (nested, fut) = async_paths(ty, streams);
+        let (nested, fut) = async_paths(ty, resources);
         for mut path in nested {
             path.push_front(Some(i));
             out.insert(path);

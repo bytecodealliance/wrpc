@@ -24,8 +24,8 @@ use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpCtxView, WasiHttpView};
 use wrpc_transport::{Invoke, Serve};
 use wrpc_wasmtime::{
-    RemoteResource, ServeExt as _, SharedResourceTable, SharedStore, WrpcCtxView, WrpcView,
-    collect_component_resource_exports, collect_component_resource_imports, link_item,
+    RemoteResource, ResourceTypes, ServeExt as _, SharedResourceTable, SharedStore, WrpcCtxView,
+    WrpcView, collect_component_resource_exports, collect_component_resource_imports, link_item,
 };
 
 mod tcp;
@@ -715,9 +715,14 @@ where
         .map_err(anyhow::Error::from)
         .context("failed to instantiate component")?;
     let engine = store.engine().clone();
-    let io_stream_resources: Arc<[ResourceType]> =
-        wrpc_wasmtime::paths::wasi_io_stream_resources(&engine, &pre.component().component_type())
-            .into();
+    let resources = ResourceTypes {
+        guest: guest_resources,
+        io_streams: wrpc_wasmtime::paths::wasi_io_stream_resources(
+            &engine,
+            &pre.component().component_type(),
+        )
+        .into(),
+    };
     let (store, event_loop) = SharedStore::new(store);
     handlers.spawn(event_loop.instrument(span.clone()));
     for (name, types::ComponentExtern { ty, .. }) in
@@ -735,9 +740,8 @@ where
                         store.clone(),
                         instance,
                         idx,
-                        Arc::clone(&guest_resources),
+                        resources.clone(),
                         Arc::clone(&host_resources),
-                        Arc::clone(&io_stream_resources),
                         ty,
                         "",
                         name,
@@ -778,9 +782,8 @@ where
                                     store.clone(),
                                     instance,
                                     idx,
-                                    Arc::clone(&guest_resources),
+                                    resources.clone(),
                                     Arc::clone(&host_resources),
-                                    Arc::clone(&io_stream_resources),
                                     ty,
                                     instance_name,
                                     name,

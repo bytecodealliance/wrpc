@@ -24,7 +24,7 @@ use wasmtime::error::Context as _;
 use wasmtime::{AsContextMut, StoreContextMut};
 use wrpc_transport::frame::{Incoming, Outgoing};
 
-use crate::{RemoteResource, WrpcView};
+use crate::{RemoteResource, ResourceTypes, WrpcView};
 
 /// Synchronous access to a store, which is either borrowed exclusively or reachable through an
 /// [`Accessor`].
@@ -56,10 +56,7 @@ impl<T: 'static> WithStore for &Accessor<T> {
 pub struct ValEncoder<'a, T: 'static> {
     pub store: StoreContextMut<'a, T>,
     pub ty: &'a Type,
-    pub resources: &'a [ResourceType],
-    /// Resource types bridged to wRPC `stream<u8>` (`wasi:io` `input-stream`), identified by
-    /// their possibly-uninstantiated type.
-    pub io_streams: &'a [ResourceType],
+    pub resources: &'a ResourceTypes,
     pub deferred: Option<
         Box<
             dyn FnOnce(Outgoing) -> Pin<Box<dyn Future<Output = wasmtime::Result<()>> + Send>>
@@ -73,14 +70,12 @@ impl<T> ValEncoder<'_, T> {
     pub fn new<'a>(
         store: StoreContextMut<'a, T>,
         ty: &'a Type,
-        resources: &'a [ResourceType],
-        io_streams: &'a [ResourceType],
+        resources: &'a ResourceTypes,
     ) -> ValEncoder<'a, T> {
         ValEncoder {
             store,
             ty,
             resources,
-            io_streams,
             deferred: None,
         }
     }
@@ -90,7 +85,6 @@ impl<T> ValEncoder<'_, T> {
             store: self.store.as_context_mut(),
             ty,
             resources: self.resources,
-            io_streams: self.io_streams,
             deferred: None,
         }
     }
@@ -488,13 +482,9 @@ where
                 Ok(())
             }
             (Val::Resource(resource), Type::Own(ty) | Type::Borrow(ty)) => {
-                #[cfg(not(feature = "wasmtime-wasi"))]
-                if self.io_streams.contains(ty) {
-                    bail!("encoding `wasi:io/input-stream` requires `wasmtime-wasi` feature");
-                }
                 #[cfg(feature = "wasmtime-wasi")]
                 if *ty == ResourceType::host::<wasmtime_wasi::p2::DynInputStream>()
-                    || self.io_streams.contains(ty)
+                    || self.resources.io_streams.contains(ty)
                 {
                     let stream = resource
                         .try_into_resource::<wasmtime_wasi::p2::DynInputStream>(&mut self.store)
@@ -568,7 +558,7 @@ where
                             .encode(buf, dst)
                             .context("failed to encode resource handle")
                     }
-                } else if self.resources.contains(ty) {
+                } else if self.resources.guest.contains(ty) {
                     let id = Uuid::now_v7();
                     CoreVecEncoderBytes
                         .encode(id.to_bytes_le().as_slice(), dst)
@@ -625,12 +615,10 @@ async fn read_bytes(r: &mut (impl AsyncRead + Unpin)) -> std::io::Result<Bytes> 
 
 /// Read encoded value of type [`Type`] from an [`AsyncRead`] into a [`Val`]
 #[instrument(level = "trace", skip_all, fields(ty, path))]
-#[allow(clippy::too_many_arguments)]
 pub async fn read_value<T>(
     store: &mut impl WithStore<Data = T>,
     r: &mut Pin<&mut Incoming>,
-    resources: &[ResourceType],
-    io_streams: &[ResourceType],
+    resources: &ResourceTypes,
     val: &mut Val,
     ty: &Type,
     path: &[usize],
@@ -716,10 +704,7 @@ where
                 let mut v = Val::Bool(false);
                 path.push(i);
                 trace!(i, "reading list element value");
-                Box::pin(read_value(
-                    store, r, resources, io_streams, &mut v, &ty, &path,
-                ))
-                .await?;
+                Box::pin(read_value(store, r, resources, &mut v, &ty, &path)).await?;
                 path.pop();
                 vs.push(v);
             }
@@ -734,10 +719,7 @@ where
                 let mut v = Val::Bool(false);
                 path.push(i);
                 trace!(i, "reading struct field value");
-                Box::pin(read_value(
-                    store, r, resources, io_streams, &mut v, &ty, &path,
-                ))
-                .await?;
+                Box::pin(read_value(store, r, resources, &mut v, &ty, &path)).await?;
                 path.pop();
                 vs.push((name.to_string(), v));
             }
@@ -752,10 +734,7 @@ where
                 let mut v = Val::Bool(false);
                 path.push(i);
                 trace!(i, "reading tuple element value");
-                Box::pin(read_value(
-                    store, r, resources, io_streams, &mut v, &ty, &path,
-                ))
-                .await?;
+                Box::pin(read_value(store, r, resources, &mut v, &ty, &path)).await?;
                 path.pop();
                 vs.push(v);
             }
@@ -776,10 +755,7 @@ where
             if let Some(ty) = ty {
                 let mut v = Val::Bool(false);
                 trace!(variant = name, "reading nested variant value");
-                Box::pin(read_value(
-                    store, r, resources, io_streams, &mut v, &ty, path,
-                ))
-                .await?;
+                Box::pin(read_value(store, r, resources, &mut v, &ty, path)).await?;
                 *val = Val::Variant(name, Some(Box::new(v)));
             } else {
                 *val = Val::Variant(name, None);
@@ -804,16 +780,7 @@ where
             if ok {
                 let mut v = Val::Bool(false);
                 trace!("reading nested `option::some` value");
-                Box::pin(read_value(
-                    store,
-                    r,
-                    resources,
-                    io_streams,
-                    &mut v,
-                    &ty.ty(),
-                    path,
-                ))
-                .await?;
+                Box::pin(read_value(store, r, resources, &mut v, &ty.ty(), path)).await?;
                 *val = Val::Option(Some(Box::new(v)));
             } else {
                 *val = Val::Option(None);
@@ -826,10 +793,7 @@ where
                 if let Some(ty) = ty.ok() {
                     let mut v = Val::Bool(false);
                     trace!("reading nested `result::ok` value");
-                    Box::pin(read_value(
-                        store, r, resources, io_streams, &mut v, &ty, path,
-                    ))
-                    .await?;
+                    Box::pin(read_value(store, r, resources, &mut v, &ty, path)).await?;
                     *val = Val::Result(Ok(Some(Box::new(v))));
                 } else {
                     *val = Val::Result(Ok(None));
@@ -837,10 +801,7 @@ where
             } else if let Some(ty) = ty.err() {
                 let mut v = Val::Bool(false);
                 trace!("reading nested `result::err` value");
-                Box::pin(read_value(
-                    store, r, resources, io_streams, &mut v, &ty, path,
-                ))
-                .await?;
+                Box::pin(read_value(store, r, resources, &mut v, &ty, path)).await?;
                 *val = Val::Result(Err(Some(Box::new(v))));
             } else {
                 *val = Val::Result(Err(None));
@@ -897,16 +858,9 @@ where
             Ok(())
         }
         Type::Own(ty) | Type::Borrow(ty) => {
-            #[cfg(not(feature = "wasmtime-wasi"))]
-            if io_streams.contains(ty) {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::Unsupported,
-                    "decoding `wasi:io/input-stream` requires `wasmtime-wasi` feature",
-                ));
-            }
             #[cfg(feature = "wasmtime-wasi")]
             if *ty == ResourceType::host::<wasmtime_wasi::p2::DynInputStream>()
-                || io_streams.contains(ty)
+                || resources.io_streams.contains(ty)
             {
                 // The stream must be typed as `DynInputStream` (the host resource type),
                 // otherwise the resulting resource handle carries the concrete reader type
@@ -965,7 +919,7 @@ where
                 *val = Val::Resource(v);
                 return Ok(());
             }
-            if resources.contains(ty) {
+            if resources.guest.contains(ty) {
                 let mut id = uuid::Bytes::default();
                 debug_assert_eq!(id.len(), 16);
                 let n = r.read_u8_leb128().await?;
