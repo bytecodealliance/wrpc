@@ -64,17 +64,23 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Sink<&[u8]> for Outgoing<T> {
 }
 
 /// Incoming half of a split [`WebSocketStream`].
-#[repr(transparent)]
-pub struct Incoming<T>(SplitStream<WebSocketStream<T>>);
+pub struct Incoming<T> {
+    stream: SplitStream<WebSocketStream<T>>,
+    eof_received: bool,
+}
 
 impl<T: AsyncRead + AsyncWrite + Unpin> Stream for Incoming<T> {
     type Item = Result<Bytes, std::io::Error>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        if self.eof_received {
+            return Poll::Ready(None);
+        }
         loop {
-            match ready!(Pin::new(&mut self.0).poll_next(cx)) {
+            match ready!(Pin::new(&mut self.stream).poll_next(cx)) {
                 Some(Ok(msg)) if msg.is_text() => {
                     if msg.as_payload().is_empty() {
+                        self.eof_received = true;
                         return Poll::Ready(None);
                     }
                     return Poll::Ready(Some(Err(std::io::Error::new(
@@ -84,14 +90,19 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Stream for Incoming<T> {
                 }
                 Some(Ok(msg)) if msg.is_close() => {
                     return Poll::Ready(Some(Err(std::io::Error::new(
-                        std::io::ErrorKind::UnexpectedEof,
+                        std::io::ErrorKind::ConnectionAborted,
                         "WebSocket connection closed before EOF sentinel",
                     ))));
                 }
                 Some(Ok(msg)) if msg.is_ping() || msg.is_pong() => continue,
                 Some(Ok(msg)) => return Poll::Ready(Some(Ok(Bytes::from(msg.into_payload())))),
                 Some(Err(err)) => return Poll::Ready(Some(Err(std::io::Error::other(err)))),
-                None => return Poll::Ready(None),
+                None => {
+                    return Poll::Ready(Some(Err(std::io::Error::new(
+                        std::io::ErrorKind::ConnectionAborted,
+                        "WebSocket connection closed before EOF sentinel",
+                    ))));
+                }
             }
         }
     }
@@ -112,7 +123,10 @@ where
             sink: tx,
             eof_sent: false,
         }),
-        StreamReader::new(Incoming(rx)),
+        StreamReader::new(Incoming {
+            stream: rx,
+            eof_received: false,
+        }),
     )
 }
 
