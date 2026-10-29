@@ -97,7 +97,7 @@ where
         let stream = self.try_take_inner();
         async move {
             let (rx, tx) = stream?;
-            invoke(tx, BufReader::new(rx), instance, func, params, paths).await
+            invoke(tx, BufReader::new(rx), instance, func, params, paths, true).await
         }
     }
 }

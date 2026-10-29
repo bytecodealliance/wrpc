@@ -14,7 +14,6 @@ anyhow = { workspace = true, features = ["std"] }
 bytes = { workspace = true }
 quinn = { workspace = true, features = ["runtime-tokio"] }
 tokio = { workspace = true, features = ["io-util"] }
-tracing = { workspace = true }
 wrpc-transport = { workspace = true }
 
 [dev-dependencies]

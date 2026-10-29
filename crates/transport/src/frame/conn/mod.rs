@@ -451,25 +451,25 @@ pin_project! {
 }
 
 impl Incoming {
-    /// Creates a new [Incoming] given an [`AsyncBufRead`], [`ConnHandler`] and a set of async paths.
-    /// `on_ingress` will be called once data ingress is complete.
+    /// Creates a new [Incoming] given an [`AsyncBufRead`] and a set of async paths.
+    ///
     /// If `drain` is `true`, data ingress continues after all handles are dropped until the peer
-    /// closes the stream, failing on any data received or not processed, otherwise data ingress
-    /// is aborted, see [`ConnHandler::DRAIN`].
+    /// closes the stream, otherwise data ingress is aborted and the reader is dropped.
+    /// Any data received after all handles are dropped, or received for a registered path, which
+    /// was never indexed, fails draining ingress with [`std::io::ErrorKind::BrokenPipe`].
+    /// Draining reports such data, which would otherwise go unnoticed, discards empty frames the
+    /// peer may still send to close paths, and reads the stream to its end, which transports
+    /// reusing the connection, like HTTP/1, require.
+    /// Transports, which signal the peer to stop sending once the reader is dropped, like QUIC,
+    /// may abort ingress instead.
     ///
     /// `paths` must not contain both a wildcard and an index at the same position, so paths of
     /// different variant cases, which are not indexed, must be merged by replacing such indices
     /// by wildcards.
-    pub fn new<T, P, Fut>(
-        mut rx: T,
-        paths: impl IntoIterator<Item = P>,
-        drain: bool,
-        on_ingress: impl FnOnce(T, std::io::Result<()>) -> Fut + Send + 'static,
-    ) -> Self
+    pub fn new<T, P>(mut rx: T, paths: impl IntoIterator<Item = P>, drain: bool) -> Self
     where
         T: AsyncBufRead + Unpin + Send + 'static,
         P: AsRef<[Option<usize>]>,
-        Fut: Future<Output = ()> + Send,
     {
         let (rx_tx, rx_rx) = mpsc::channel(128);
         let index = Subscriptions::new(paths, rx_tx);
@@ -516,10 +516,12 @@ impl Incoming {
                     }
                 }
                 .await;
-                state
-                    .done
-                    .send_replace(Some(res.as_ref().copied().map_err(copy_io_error)));
-                on_ingress(rx, res).await;
+                if let Err(err) = &res {
+                    error!(?err, "ingress failed");
+                } else {
+                    debug!("ingress successfully complete");
+                }
+                state.done.send_replace(Some(res));
             }
             .instrument(span.clone())
         });
@@ -585,8 +587,7 @@ impl Incoming {
     }
 
     /// Returns a future, which resolves to the result of ingress once it is complete.
-    /// Ingress aborted once all handles are dropped, see [`ConnHandler::DRAIN`], resolves to
-    /// success.
+    /// Ingress aborted once all handles are dropped, see [`Self::new`], resolves to success.
     pub fn finished(&self) -> impl Future<Output = std::io::Result<()>> + Send + 'static {
         finished(self.state.done.subscribe())
     }
@@ -679,13 +680,9 @@ pub struct Outgoing {
 
 impl Outgoing {
     /// Creates a new [Outgoing] given an [`AsyncWrite`].
-    pub fn new<T, Fut>(
-        mut tx: T,
-        on_egress: impl FnOnce(T, std::io::Result<()>) -> Fut + Send + 'static,
-    ) -> Self
+    pub fn new<T>(mut tx: T) -> Self
     where
         T: AsyncWrite + Unpin + Send + 'static,
-        Fut: Future<Output = ()> + Send,
     {
         let span = Span::current();
         let (tx_tx, tx_rx) = mpsc::channel(128);
@@ -693,8 +690,12 @@ impl Outgoing {
         tokio::spawn(
             async move {
                 let res = egress(&mut tx, tx_rx).await;
-                done_tx.send_replace(Some(res.as_ref().copied().map_err(copy_io_error)));
-                on_egress(tx, res).await;
+                if let Err(err) = &res {
+                    error!(?err, "egress failed");
+                } else {
+                    debug!("egress successfully complete");
+                }
+                done_tx.send_replace(Some(res));
             }
             .instrument(span.clone()),
         );
@@ -975,47 +976,6 @@ async fn finished(mut done: watch::Receiver<Option<std::io::Result<()>>>) -> std
     }
 }
 
-/// Connection handler defines the connection I/O behavior.
-/// It is mostly useful for transports that may require additional clean up not already covered
-/// by [`AsyncWriteExt::shutdown`](tokio::io::AsyncWriteExt::shutdown), for example.
-/// This API is experimental and may change in backwards-incompatible ways in the future.
-pub trait ConnHandler<Rx, Tx> {
-    /// Whether to keep reading once all [Incoming] handles are dropped until the peer closes
-    /// the stream, rather than aborting ingress and dropping the reader.
-    /// Any data received after all handles are dropped, or received for a registered path, which
-    /// was never indexed, fails ingress with [`std::io::ErrorKind::BrokenPipe`].
-    /// Draining reports such data, which would otherwise go unnoticed, discards empty frames the
-    /// peer may still send to close paths, and reads the stream to its end, which transports
-    /// reusing the connection, like HTTP/1, require.
-    /// Transports, which signal the peer to stop sending once the reader is dropped, like QUIC,
-    /// may abort ingress instead.
-    const DRAIN: bool = true;
-
-    /// Handle ingress completion
-    fn on_ingress(rx: Rx, res: std::io::Result<()>) -> impl Future<Output = ()> + Send {
-        _ = rx;
-        if let Err(err) = res {
-            error!(?err, "ingress failed");
-        } else {
-            debug!("ingress successfully complete");
-        }
-        async {}
-    }
-
-    /// Handle egress completion
-    fn on_egress(tx: Tx, res: std::io::Result<()>) -> impl Future<Output = ()> + Send {
-        _ = tx;
-        if let Err(err) = res {
-            error!(?err, "egress failed");
-        } else {
-            debug!("egress successfully complete");
-        }
-        async {}
-    }
-}
-
-impl<Rx, Tx> ConnHandler<Rx, Tx> for () {}
-
 #[cfg(test)]
 mod tests {
     use core::time::Duration;
@@ -1023,6 +983,7 @@ mod tests {
     use std::io::ErrorKind;
 
     use futures::FutureExt as _;
+    use futures::future::BoxFuture;
     use tokio::io::{BufReader, DuplexStream};
 
     use super::*;
@@ -1034,7 +995,7 @@ mod tests {
     ) -> (
         DuplexStream,
         Incoming,
-        oneshot::Receiver<std::io::Result<()>>,
+        BoxFuture<'static, std::io::Result<()>>,
     ) {
         incoming_paths(drain, [[Some(0)]])
     }
@@ -1045,24 +1006,21 @@ mod tests {
     ) -> (
         DuplexStream,
         Incoming,
-        oneshot::Receiver<std::io::Result<()>>,
+        BoxFuture<'static, std::io::Result<()>>,
     ) {
         let (tx, rx) = tokio::io::duplex(16);
-        let (done_tx, done_rx) = oneshot::channel();
-        let rx = Incoming::new(BufReader::new(rx), paths, drain, |_, res| async {
-            _ = done_tx.send(res);
-        });
-        (tx, rx, done_rx)
+        let rx = Incoming::new(BufReader::new(rx), paths, drain);
+        let done = rx.finished().boxed();
+        (tx, rx, done)
     }
 
-    async fn done(rx: oneshot::Receiver<std::io::Result<()>>) -> std::io::Result<()> {
+    async fn done(rx: BoxFuture<'static, std::io::Result<()>>) -> std::io::Result<()> {
         tokio::time::timeout(Duration::from_secs(5), rx)
             .await
             .expect("ingress timed out")
-            .expect("ingress aborted")
     }
 
-    async fn failed(rx: oneshot::Receiver<std::io::Result<()>>) -> ErrorKind {
+    async fn failed(rx: BoxFuture<'static, std::io::Result<()>>) -> ErrorKind {
         done(rx).await.unwrap_err().kind()
     }
 
@@ -1087,13 +1045,8 @@ mod tests {
     #[test_log::test(tokio::test)]
     async fn incoming_drop_aborts() {
         let (_tx, rx, done_rx) = incoming(false);
-        let finished = rx.finished();
         drop(rx);
-        tokio::time::timeout(Duration::from_secs(5), done_rx)
-            .await
-            .unwrap()
-            .unwrap_err();
-        finished.await.unwrap();
+        done(done_rx).await.unwrap();
     }
 
     #[test_log::test(tokio::test)]
@@ -1101,10 +1054,10 @@ mod tests {
         let (mut tx, rx, mut done_rx) = incoming(true);
         drop(rx);
         tokio::task::yield_now().await;
-        assert!(done_rx.try_recv().is_err());
+        assert!((&mut done_rx).now_or_never().is_none());
         tx.write_all(&[0x00, 0x00]).await.unwrap();
         tokio::task::yield_now().await;
-        assert!(done_rx.try_recv().is_err());
+        assert!((&mut done_rx).now_or_never().is_none());
         drop(tx);
         done(done_rx).await.unwrap();
     }
@@ -1114,7 +1067,7 @@ mod tests {
         let (tx, mut rx, mut done_rx) = incoming(true);
         drop(tx);
         rx.read_to_end(&mut Vec::default()).await.unwrap();
-        assert!(done_rx.try_recv().is_err());
+        assert!((&mut done_rx).now_or_never().is_none());
         drop(rx);
         done(done_rx).await.unwrap();
     }
@@ -1183,7 +1136,7 @@ mod tests {
     async fn outgoing_finished() {
         let (tx, rx) = tokio::io::duplex(16);
         drop(rx);
-        let mut tx = Outgoing::new(tx, |_, _| async {});
+        let mut tx = Outgoing::new(tx);
         let finished = tx.finished();
         tx.write_all(&[0x2a]).await.unwrap();
         drop(tx);

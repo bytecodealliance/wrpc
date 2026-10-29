@@ -158,6 +158,6 @@ impl<R: Resolver + Send + Sync> Invoke for Client<'_, R> {
             .await
             .context("failed to establish WebSocket connection")?;
         let (tx, rx) = split(ws);
-        invoke(tx, rx, instance, func, params, paths).await
+        invoke(tx, rx, instance, func, params, paths, true).await
     }
 }
