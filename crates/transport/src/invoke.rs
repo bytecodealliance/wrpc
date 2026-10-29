@@ -7,7 +7,6 @@ use core::time::Duration;
 use anyhow::Context as _;
 use bytes::{Bytes, BytesMut};
 use futures::TryStreamExt as _;
-use tokio::io::AsyncWriteExt as _;
 use tokio::{select, try_join};
 use tokio_util::codec::{Encoder as _, FramedRead};
 use tracing::{Instrument as _, debug, instrument, trace};
@@ -140,15 +139,10 @@ pub trait InvokeExt: Invoke {
             enc.encode(params, &mut buf)
                 .context("failed to encode parameters")?;
             debug!("invoking function");
-            let (mut outgoing, incoming) = self
+            let (outgoing, incoming) = self
                 .invoke(cx, instance, func, buf.freeze(), paths)
                 .await
                 .context("failed to invoke function")?;
-            trace!("shutdown synchronous parameter channel");
-            outgoing
-                .shutdown()
-                .await
-                .context("failed to shutdown synchronous parameter channel")?;
             let mut tx = enc.take_deferred().map(|tx| {
                 tokio::spawn(
                     async {

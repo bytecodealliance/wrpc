@@ -349,9 +349,6 @@ where
         .await
         .context("failed to flush outgoing stream")
         .map_err(CallError::Flush)?;
-    if let Err(err) = tx.shutdown().await {
-        trace!(?err, "failed to shutdown outgoing stream");
-    }
     try_join_all(
         zip(0.., deferred)
             .filter_map(|(i, f)| f.map(|f| (tx.index(&[i]), f)))

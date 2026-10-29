@@ -90,10 +90,6 @@ where
                         .write_all(b"bar")
                         .await
                         .context("failed to write `bar`")?;
-                    outgoing
-                        .shutdown()
-                        .await
-                        .context("failed to shutdown stream")?;
                     drop(outgoing);
                     info!("wrote `bar`");
                     anyhow::Ok(())
@@ -104,10 +100,6 @@ where
                         .write_all(b"client->server")
                         .await
                         .context("failed to write `client->server`")?;
-                    nested_tx
-                        .shutdown()
-                        .await
-                        .context("failed to shutdown stream")?;
                     drop(nested_tx);
                     info!("wrote `client->server`");
                     anyhow::Ok(())
@@ -164,10 +156,6 @@ where
                         .write_all(b"foo")
                         .await
                         .context("failed to write `foo`")?;
-                    outgoing
-                        .shutdown()
-                        .await
-                        .context("failed to shutdown stream")?;
                     drop(outgoing);
                     info!("wrote `foo`");
                     anyhow::Ok(())
@@ -178,10 +166,6 @@ where
                         .write_all(b"server->client")
                         .await
                         .context("failed to write `server->client`")?;
-                    nested_tx
-                        .shutdown()
-                        .await
-                        .context("failed to shutdown stream")?;
                     drop(nested_tx);
                     info!("wrote `server->client`");
                     anyhow::Ok(())
