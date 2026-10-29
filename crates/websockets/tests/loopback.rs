@@ -52,7 +52,7 @@ async fn close_before_eof() -> anyhow::Result<()> {
             .context("failed to send message")?;
         drop(clt);
         let (_tx, rx) = split(ws);
-        let mut rx = Incoming::new(rx, [[Some(0)]], true);
+        let mut rx = Incoming::new(rx, [[Some(0)]]);
         let finished = rx.finished();
         let mut buf = Vec::default();
         let err = rx

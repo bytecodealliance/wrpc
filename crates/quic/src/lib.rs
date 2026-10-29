@@ -10,8 +10,8 @@ use tokio::io::{AsyncBufRead, AsyncRead, BufReader, ReadBuf};
 use wrpc_transport::Invoke;
 use wrpc_transport::frame::{Incoming, Outgoing, invoke};
 
-/// QUIC server, which aborts ingress once all handles are dropped
-pub type Server = wrpc_transport::Server<(), RecvStream, SendStream, false>;
+/// QUIC server
+pub type Server = wrpc_transport::Server<(), RecvStream, SendStream>;
 
 /// Buffered receive side of a QUIC stream, which stops the stream with application error code
 /// `1` once dropped, signaling the peer that it is done receiving data
@@ -80,16 +80,7 @@ impl Invoke for &Client {
             .open_bi()
             .await
             .context("failed to open parameter stream")?;
-        invoke(
-            tx,
-            RecvStream::from(rx),
-            instance,
-            func,
-            params,
-            paths,
-            false,
-        )
-        .await
+        invoke(tx, RecvStream::from(rx), instance, func, params, paths).await
     }
 }
 
