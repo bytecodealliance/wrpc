@@ -101,7 +101,7 @@
             if (!conn) throw 'WebTransport not connected';
 
             const obj = getFormValues('#settings');
-            let identifier = '';
+            let identifier;
             let proto = obj.proto;
             if (proto === 'mem') {
                 identifier = '';
