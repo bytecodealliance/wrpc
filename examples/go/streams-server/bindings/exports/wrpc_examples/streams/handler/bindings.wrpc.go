@@ -50,6 +50,13 @@ func (v *Req) WriteToIndex(w wrpc.ByteWriter) (func(context.Context, wrpc.IndexW
 	return wrpc.JoinWrites(writes), nil
 }
 
+// Handler handles invocations of the exported functions.
+//
+// The context passed to a method is cancelled once the invocation completes.
+// `context.Cause` then returns `context.Canceled` if the invocation succeeded,
+// or the error that failed it, such as a pending parameter that could not be
+// received. The channel of such a parameter is never closed, so a method
+// waiting on it must also wait on the context's `Done` channel.
 type Handler interface {
 	Echo(ctx__ context.Context, r *Req) (<-chan []uint64, <-chan []uint8, error)
 }
@@ -71,12 +78,12 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 				slog.DebugContext(ctx, "failed to close writer", "instance", "wrpc-examples:streams/handler", "name", "echo", "err", err)
 			}
 		}()
-		deferredCtx, cancel := context.WithCancel(ctx)
+		ctx, cancel := context.WithCancelCause(ctx)
 		var wg sync.WaitGroup
 		defer func() {
 			go func() {
 				wg.Wait()
-				cancel()
+				cancel(nil)
 			}()
 		}()
 		slog.DebugContext(ctx, "reading parameter", "i", 0)
@@ -127,6 +134,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 
 		if err != nil {
 			slog.WarnContext(ctx, "failed to read parameter", "i", 0, "instance", "wrpc-examples:streams/handler", "name", "echo", "err", err)
+			cancel(err)
 			if err := r.Close(); err != nil {
 				slog.ErrorContext(ctx, "failed to close reader", "instance", "wrpc-examples:streams/handler", "name", "echo", "err", err)
 			}
@@ -136,8 +144,9 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				if err := d0(deferredCtx); err != nil {
+				if err := d0(ctx); err != nil {
 					slog.WarnContext(ctx, "failed to read deferred parameter", "i", 0, "instance", "wrpc-examples:streams/handler", "name", "echo", "err", err)
+					cancel(err)
 				}
 			}()
 		}
@@ -148,7 +157,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 		}
 		if err != nil {
 			slog.WarnContext(ctx, "failed to handle invocation", "instance", "wrpc-examples:streams/handler", "name", "echo", "err", err)
-			cancel()
+			cancel(err)
 			return
 		}
 
@@ -166,7 +175,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 		})
 		if err != nil {
 			slog.WarnContext(ctx, "failed to write result value", "i", 0, "instance", "wrpc-examples:streams/handler", "name", "echo", "err", err)
-			cancel()
+			cancel(err)
 			return
 		}
 		if write0 != nil {
@@ -175,7 +184,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 		write1, err := wrpc.WriteByteStream(r1, &buf)
 		if err != nil {
 			slog.WarnContext(ctx, "failed to write result value", "i", 1, "instance", "wrpc-examples:streams/handler", "name", "echo", "err", err)
-			cancel()
+			cancel(err)
 			return
 		}
 		if write1 != nil {
@@ -185,7 +194,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 		_, err = w.Write(buf.Bytes())
 		if err != nil {
 			slog.WarnContext(ctx, "failed to write result", "instance", "wrpc-examples:streams/handler", "name", "echo", "err", err)
-			cancel()
+			cancel(err)
 			return
 		}
 		if len(writes) > 0 {
@@ -196,7 +205,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 					w, err := w.Index(0, 0)
 					if err != nil {
 						slog.ErrorContext(ctx, "failed to index result writer", "instance", "wrpc-examples:streams/handler", "name", "echo", "err", err)
-						cancel()
+						cancel(err)
 						return
 					}
 					write := write
@@ -205,7 +214,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 						defer wg.Done()
 						if err := write(ctx, w); err != nil {
 							slog.WarnContext(ctx, "failed to write nested result value", "instance", "wrpc-examples:streams/handler", "name", "echo", "err", err)
-							cancel()
+							cancel(err)
 						}
 						if err := w.Close(); err != nil {
 							slog.DebugContext(ctx, "failed to close nested result writer", "instance", "wrpc-examples:streams/handler", "name", "echo", "err", err)
@@ -215,7 +224,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 					w, err := w.Index(0, 1)
 					if err != nil {
 						slog.ErrorContext(ctx, "failed to index result writer", "instance", "wrpc-examples:streams/handler", "name", "echo", "err", err)
-						cancel()
+						cancel(err)
 						return
 					}
 					write := write
@@ -224,7 +233,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 						defer wg.Done()
 						if err := write(ctx, w); err != nil {
 							slog.WarnContext(ctx, "failed to write nested result value", "instance", "wrpc-examples:streams/handler", "name", "echo", "err", err)
-							cancel()
+							cancel(err)
 						}
 						if err := w.Close(); err != nil {
 							slog.DebugContext(ctx, "failed to close nested result writer", "instance", "wrpc-examples:streams/handler", "name", "echo", "err", err)

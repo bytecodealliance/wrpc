@@ -10,6 +10,7 @@ import (
 	io "io"
 	slog "log/slog"
 	math "math"
+	sync "sync"
 	utf8 "unicode/utf8"
 	wrpc "wrpc.io/go"
 )
@@ -300,6 +301,14 @@ func (v *KeyResponse) WriteToIndex(w wrpc.ByteWriter) (func(context.Context, wrp
 //
 // In this interface, we use the term `bucket` to refer to a collection of key-value pairs
 type Bucket interface{}
+
+// Handler handles invocations of the exported functions.
+//
+// The context passed to a method is cancelled once the invocation completes.
+// `context.Cause` then returns `context.Canceled` if the invocation succeeded,
+// or the error that failed it, such as a pending parameter that could not be
+// received. The channel of such a parameter is never closed, so a method
+// waiting on it must also wait on the context's `Done` channel.
 type Handler interface {
 	// Get the bucket with the specified identifier.
 	//
@@ -371,6 +380,14 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 				slog.DebugContext(ctx, "failed to close writer", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "open", "err", err)
 			}
 		}()
+		ctx, cancel := context.WithCancelCause(ctx)
+		var wg sync.WaitGroup
+		defer func() {
+			go func() {
+				wg.Wait()
+				cancel(nil)
+			}()
+		}()
 		slog.DebugContext(ctx, "reading parameter", "i", 0)
 		p0, err := func(r interface {
 			io.ByteReader
@@ -413,6 +430,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 
 		if err != nil {
 			slog.WarnContext(ctx, "failed to read parameter", "i", 0, "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "open", "err", err)
+			cancel(err)
 			if err := r.Close(); err != nil {
 				slog.ErrorContext(ctx, "failed to close reader", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "open", "err", err)
 			}
@@ -425,6 +443,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 		}
 		if err != nil {
 			slog.WarnContext(ctx, "failed to handle invocation", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "open", "err", err)
+			cancel(err)
 			return
 		}
 
@@ -493,6 +512,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 		}(r0, &buf)
 		if err != nil {
 			slog.WarnContext(ctx, "failed to write result value", "i", 0, "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "open", "err", err)
+			cancel(err)
 			return
 		}
 		if write0 != nil {
@@ -502,6 +522,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 		_, err = w.Write(buf.Bytes())
 		if err != nil {
 			slog.WarnContext(ctx, "failed to write result", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "open", "err", err)
+			cancel(err)
 			return
 		}
 		if len(writes) > 0 {
@@ -512,12 +533,16 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 					w, err := w.Index(0)
 					if err != nil {
 						slog.ErrorContext(ctx, "failed to index result writer", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "open", "err", err)
+						cancel(err)
 						return
 					}
 					write := write
+					wg.Add(1)
 					go func() {
+						defer wg.Done()
 						if err := write(ctx, w); err != nil {
 							slog.WarnContext(ctx, "failed to write nested result value", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "open", "err", err)
+							cancel(err)
 						}
 						if err := w.Close(); err != nil {
 							slog.DebugContext(ctx, "failed to close nested result writer", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "open", "err", err)
@@ -537,6 +562,14 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 			if err := w.Close(); err != nil {
 				slog.DebugContext(ctx, "failed to close writer", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.get", "err", err)
 			}
+		}()
+		ctx, cancel := context.WithCancelCause(ctx)
+		var wg sync.WaitGroup
+		defer func() {
+			go func() {
+				wg.Wait()
+				cancel(nil)
+			}()
 		}()
 		slog.DebugContext(ctx, "reading parameter", "i", 0)
 		p0, err := func(r interface {
@@ -574,6 +607,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 
 		if err != nil {
 			slog.WarnContext(ctx, "failed to read parameter", "i", 0, "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.get", "err", err)
+			cancel(err)
 			if err := r.Close(); err != nil {
 				slog.ErrorContext(ctx, "failed to close reader", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.get", "err", err)
 			}
@@ -621,6 +655,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 
 		if err != nil {
 			slog.WarnContext(ctx, "failed to read parameter", "i", 1, "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.get", "err", err)
+			cancel(err)
 			if err := r.Close(); err != nil {
 				slog.ErrorContext(ctx, "failed to close reader", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.get", "err", err)
 			}
@@ -633,6 +668,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 		}
 		if err != nil {
 			slog.WarnContext(ctx, "failed to handle invocation", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.get", "err", err)
+			cancel(err)
 			return
 		}
 
@@ -734,6 +770,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 		}(r0, &buf)
 		if err != nil {
 			slog.WarnContext(ctx, "failed to write result value", "i", 0, "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.get", "err", err)
+			cancel(err)
 			return
 		}
 		if write0 != nil {
@@ -743,6 +780,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 		_, err = w.Write(buf.Bytes())
 		if err != nil {
 			slog.WarnContext(ctx, "failed to write result", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.get", "err", err)
+			cancel(err)
 			return
 		}
 		if len(writes) > 0 {
@@ -753,12 +791,16 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 					w, err := w.Index(0)
 					if err != nil {
 						slog.ErrorContext(ctx, "failed to index result writer", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.get", "err", err)
+						cancel(err)
 						return
 					}
 					write := write
+					wg.Add(1)
 					go func() {
+						defer wg.Done()
 						if err := write(ctx, w); err != nil {
 							slog.WarnContext(ctx, "failed to write nested result value", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.get", "err", err)
+							cancel(err)
 						}
 						if err := w.Close(); err != nil {
 							slog.DebugContext(ctx, "failed to close nested result writer", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.get", "err", err)
@@ -778,6 +820,14 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 			if err := w.Close(); err != nil {
 				slog.DebugContext(ctx, "failed to close writer", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.set", "err", err)
 			}
+		}()
+		ctx, cancel := context.WithCancelCause(ctx)
+		var wg sync.WaitGroup
+		defer func() {
+			go func() {
+				wg.Wait()
+				cancel(nil)
+			}()
 		}()
 		slog.DebugContext(ctx, "reading parameter", "i", 0)
 		p0, err := func(r interface {
@@ -815,6 +865,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 
 		if err != nil {
 			slog.WarnContext(ctx, "failed to read parameter", "i", 0, "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.set", "err", err)
+			cancel(err)
 			if err := r.Close(); err != nil {
 				slog.ErrorContext(ctx, "failed to close reader", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.set", "err", err)
 			}
@@ -862,6 +913,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 
 		if err != nil {
 			slog.WarnContext(ctx, "failed to read parameter", "i", 1, "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.set", "err", err)
+			cancel(err)
 			if err := r.Close(); err != nil {
 				slog.ErrorContext(ctx, "failed to close reader", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.set", "err", err)
 			}
@@ -906,6 +958,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 
 		if err != nil {
 			slog.WarnContext(ctx, "failed to read parameter", "i", 2, "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.set", "err", err)
+			cancel(err)
 			if err := r.Close(); err != nil {
 				slog.ErrorContext(ctx, "failed to close reader", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.set", "err", err)
 			}
@@ -918,6 +971,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 		}
 		if err != nil {
 			slog.WarnContext(ctx, "failed to handle invocation", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.set", "err", err)
+			cancel(err)
 			return
 		}
 
@@ -958,6 +1012,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 		}(r0, &buf)
 		if err != nil {
 			slog.WarnContext(ctx, "failed to write result value", "i", 0, "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.set", "err", err)
+			cancel(err)
 			return
 		}
 		if write0 != nil {
@@ -967,6 +1022,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 		_, err = w.Write(buf.Bytes())
 		if err != nil {
 			slog.WarnContext(ctx, "failed to write result", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.set", "err", err)
+			cancel(err)
 			return
 		}
 		if len(writes) > 0 {
@@ -977,12 +1033,16 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 					w, err := w.Index(0)
 					if err != nil {
 						slog.ErrorContext(ctx, "failed to index result writer", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.set", "err", err)
+						cancel(err)
 						return
 					}
 					write := write
+					wg.Add(1)
 					go func() {
+						defer wg.Done()
 						if err := write(ctx, w); err != nil {
 							slog.WarnContext(ctx, "failed to write nested result value", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.set", "err", err)
+							cancel(err)
 						}
 						if err := w.Close(); err != nil {
 							slog.DebugContext(ctx, "failed to close nested result writer", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.set", "err", err)
@@ -1002,6 +1062,14 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 			if err := w.Close(); err != nil {
 				slog.DebugContext(ctx, "failed to close writer", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.delete", "err", err)
 			}
+		}()
+		ctx, cancel := context.WithCancelCause(ctx)
+		var wg sync.WaitGroup
+		defer func() {
+			go func() {
+				wg.Wait()
+				cancel(nil)
+			}()
 		}()
 		slog.DebugContext(ctx, "reading parameter", "i", 0)
 		p0, err := func(r interface {
@@ -1039,6 +1107,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 
 		if err != nil {
 			slog.WarnContext(ctx, "failed to read parameter", "i", 0, "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.delete", "err", err)
+			cancel(err)
 			if err := r.Close(); err != nil {
 				slog.ErrorContext(ctx, "failed to close reader", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.delete", "err", err)
 			}
@@ -1086,6 +1155,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 
 		if err != nil {
 			slog.WarnContext(ctx, "failed to read parameter", "i", 1, "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.delete", "err", err)
+			cancel(err)
 			if err := r.Close(); err != nil {
 				slog.ErrorContext(ctx, "failed to close reader", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.delete", "err", err)
 			}
@@ -1098,6 +1168,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 		}
 		if err != nil {
 			slog.WarnContext(ctx, "failed to handle invocation", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.delete", "err", err)
+			cancel(err)
 			return
 		}
 
@@ -1138,6 +1209,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 		}(r0, &buf)
 		if err != nil {
 			slog.WarnContext(ctx, "failed to write result value", "i", 0, "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.delete", "err", err)
+			cancel(err)
 			return
 		}
 		if write0 != nil {
@@ -1147,6 +1219,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 		_, err = w.Write(buf.Bytes())
 		if err != nil {
 			slog.WarnContext(ctx, "failed to write result", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.delete", "err", err)
+			cancel(err)
 			return
 		}
 		if len(writes) > 0 {
@@ -1157,12 +1230,16 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 					w, err := w.Index(0)
 					if err != nil {
 						slog.ErrorContext(ctx, "failed to index result writer", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.delete", "err", err)
+						cancel(err)
 						return
 					}
 					write := write
+					wg.Add(1)
 					go func() {
+						defer wg.Done()
 						if err := write(ctx, w); err != nil {
 							slog.WarnContext(ctx, "failed to write nested result value", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.delete", "err", err)
+							cancel(err)
 						}
 						if err := w.Close(); err != nil {
 							slog.DebugContext(ctx, "failed to close nested result writer", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.delete", "err", err)
@@ -1182,6 +1259,14 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 			if err := w.Close(); err != nil {
 				slog.DebugContext(ctx, "failed to close writer", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.exists", "err", err)
 			}
+		}()
+		ctx, cancel := context.WithCancelCause(ctx)
+		var wg sync.WaitGroup
+		defer func() {
+			go func() {
+				wg.Wait()
+				cancel(nil)
+			}()
 		}()
 		slog.DebugContext(ctx, "reading parameter", "i", 0)
 		p0, err := func(r interface {
@@ -1219,6 +1304,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 
 		if err != nil {
 			slog.WarnContext(ctx, "failed to read parameter", "i", 0, "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.exists", "err", err)
+			cancel(err)
 			if err := r.Close(); err != nil {
 				slog.ErrorContext(ctx, "failed to close reader", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.exists", "err", err)
 			}
@@ -1266,6 +1352,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 
 		if err != nil {
 			slog.WarnContext(ctx, "failed to read parameter", "i", 1, "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.exists", "err", err)
+			cancel(err)
 			if err := r.Close(); err != nil {
 				slog.ErrorContext(ctx, "failed to close reader", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.exists", "err", err)
 			}
@@ -1278,6 +1365,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 		}
 		if err != nil {
 			slog.WarnContext(ctx, "failed to handle invocation", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.exists", "err", err)
+			cancel(err)
 			return
 		}
 
@@ -1333,6 +1421,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 		}(r0, &buf)
 		if err != nil {
 			slog.WarnContext(ctx, "failed to write result value", "i", 0, "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.exists", "err", err)
+			cancel(err)
 			return
 		}
 		if write0 != nil {
@@ -1342,6 +1431,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 		_, err = w.Write(buf.Bytes())
 		if err != nil {
 			slog.WarnContext(ctx, "failed to write result", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.exists", "err", err)
+			cancel(err)
 			return
 		}
 		if len(writes) > 0 {
@@ -1352,12 +1442,16 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 					w, err := w.Index(0)
 					if err != nil {
 						slog.ErrorContext(ctx, "failed to index result writer", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.exists", "err", err)
+						cancel(err)
 						return
 					}
 					write := write
+					wg.Add(1)
 					go func() {
+						defer wg.Done()
 						if err := write(ctx, w); err != nil {
 							slog.WarnContext(ctx, "failed to write nested result value", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.exists", "err", err)
+							cancel(err)
 						}
 						if err := w.Close(); err != nil {
 							slog.DebugContext(ctx, "failed to close nested result writer", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.exists", "err", err)
@@ -1377,6 +1471,14 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 			if err := w.Close(); err != nil {
 				slog.DebugContext(ctx, "failed to close writer", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.list-keys", "err", err)
 			}
+		}()
+		ctx, cancel := context.WithCancelCause(ctx)
+		var wg sync.WaitGroup
+		defer func() {
+			go func() {
+				wg.Wait()
+				cancel(nil)
+			}()
 		}()
 		slog.DebugContext(ctx, "reading parameter", "i", 0)
 		p0, err := func(r interface {
@@ -1414,6 +1516,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 
 		if err != nil {
 			slog.WarnContext(ctx, "failed to read parameter", "i", 0, "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.list-keys", "err", err)
+			cancel(err)
 			if err := r.Close(); err != nil {
 				slog.ErrorContext(ctx, "failed to close reader", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.list-keys", "err", err)
 			}
@@ -1480,6 +1583,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 
 		if err != nil {
 			slog.WarnContext(ctx, "failed to read parameter", "i", 1, "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.list-keys", "err", err)
+			cancel(err)
 			if err := r.Close(); err != nil {
 				slog.ErrorContext(ctx, "failed to close reader", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.list-keys", "err", err)
 			}
@@ -1492,6 +1596,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 		}
 		if err != nil {
 			slog.WarnContext(ctx, "failed to handle invocation", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.list-keys", "err", err)
+			cancel(err)
 			return
 		}
 
@@ -1540,6 +1645,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 		}(r0, &buf)
 		if err != nil {
 			slog.WarnContext(ctx, "failed to write result value", "i", 0, "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.list-keys", "err", err)
+			cancel(err)
 			return
 		}
 		if write0 != nil {
@@ -1549,6 +1655,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 		_, err = w.Write(buf.Bytes())
 		if err != nil {
 			slog.WarnContext(ctx, "failed to write result", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.list-keys", "err", err)
+			cancel(err)
 			return
 		}
 		if len(writes) > 0 {
@@ -1559,12 +1666,16 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 					w, err := w.Index(0)
 					if err != nil {
 						slog.ErrorContext(ctx, "failed to index result writer", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.list-keys", "err", err)
+						cancel(err)
 						return
 					}
 					write := write
+					wg.Add(1)
 					go func() {
+						defer wg.Done()
 						if err := write(ctx, w); err != nil {
 							slog.WarnContext(ctx, "failed to write nested result value", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.list-keys", "err", err)
+							cancel(err)
 						}
 						if err := w.Close(); err != nil {
 							slog.DebugContext(ctx, "failed to close nested result writer", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "bucket.list-keys", "err", err)

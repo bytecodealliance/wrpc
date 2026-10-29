@@ -2066,7 +2066,17 @@ impl InterfaceGenerator<'_> {
             return false;
         }
 
-        uwriteln!(self.src, "type Handler interface {{");
+        uwriteln!(
+            self.src,
+            "// Handler handles invocations of the exported functions.
+//
+// The context passed to a method is cancelled once the invocation completes.
+// `context.Cause` then returns `context.Canceled` if the invocation succeeded,
+// or the error that failed it, such as a pending parameter that could not be
+// received. The channel of such a parameter is never closed, so a method
+// waiting on it must also wait on the context's `Done` channel.
+type Handler interface {{"
+        );
         for method in &methods {
             self.src.push_str(method);
         }
@@ -2130,29 +2140,19 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
             }}
         }}()"#,
             );
-            let async_params = func.params.iter().any(|Param { ty, .. }| self.is_async(ty));
-            let abort = |indent: usize| {
-                if async_params {
-                    format!("\n{:indent$}cancel()", "")
-                } else {
-                    String::new()
-                }
-            };
-            if async_params {
-                let sync = self.deps.sync();
-                uwrite!(
-                    self.src,
-                    r#"
-        deferredCtx, cancel := {context}.WithCancel(ctx)
+            let sync = self.deps.sync();
+            uwrite!(
+                self.src,
+                r#"
+        ctx, cancel := {context}.WithCancelCause(ctx)
         var wg {sync}.WaitGroup
         defer func() {{
             go func() {{
                 wg.Wait()
-                cancel()
+                cancel(nil)
             }}()
         }}()"#,
-                );
-            }
+            );
             for (i, Param { ty, .. }) in func.params.iter().enumerate() {
                 let d = if self.is_async(ty) {
                     format!("d{i}, ")
@@ -2172,6 +2172,7 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
                     r#"
         if err != nil {{
             {slog}.WarnContext(ctx, "failed to read parameter", "i", {i}, "instance", "{instance}", "name", "{name}", "err", err)
+            cancel(err)
             if err := r.Close(); err != nil {{
                 {slog}.ErrorContext(ctx, "failed to close reader", "instance", "{instance}", "name", "{name}", "err", err)
             }}
@@ -2188,8 +2189,9 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
             wg.Add(1)
             go func() {{
                 defer wg.Done()
-                if err := d{i}(deferredCtx); err != nil {{
+                if err := d{i}(ctx); err != nil {{
                     {slog}.WarnContext(ctx, "failed to read deferred parameter", "i", {i}, "instance", "{instance}", "name", "{name}", "err", err)
+                    cancel(err)
                 }}
             }}()
         }}"#,
@@ -2219,7 +2221,6 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
             for (i, _) in func.params.iter().enumerate() {
                 uwrite!(self.src, ", p{i}");
             }
-            let abort12 = abort(12);
             uwriteln!(
                 self.src,
                 r#")
@@ -2227,7 +2228,8 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
             {slog}.ErrorContext(ctx, "failed to close reader", "instance", "{instance}", "name", "{name}", "err", cErr)
         }}
         if err != nil {{
-            {slog}.WarnContext(ctx, "failed to handle invocation", "instance", "{instance}", "name", "{name}", "err", err){abort12}
+            {slog}.WarnContext(ctx, "failed to handle invocation", "instance", "{instance}", "name", "{name}", "err", err)
+            cancel(err)
             return
         }}
 
@@ -2246,7 +2248,8 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
                     self.src,
                     r#"
         if err != nil {{
-            {slog}.WarnContext(ctx, "failed to write result value", "i", {i}, "instance", "{instance}", "name", "{name}", "err", err){abort12}
+            {slog}.WarnContext(ctx, "failed to write result value", "i", {i}, "instance", "{instance}", "name", "{name}", "err", err)
+            cancel(err)
             return
         }}
         if write{i} != nil {{
@@ -2260,7 +2263,8 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
         {slog}.DebugContext(ctx, "transmitting `{fqn}` result")
         _, err = w.Write(buf.Bytes())
         if err != nil {{
-            {slog}.WarnContext(ctx, "failed to write result", "instance", "{instance}", "name", "{name}", "err", err){abort12}
+            {slog}.WarnContext(ctx, "failed to write result", "instance", "{instance}", "name", "{name}", "err", err)
+            cancel(err)
             return
         }}
         if len(writes) > 0 {{
@@ -2281,38 +2285,28 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
                     if is_tuple(self.resolve, ty) {
                         uwrite!(self.src, ", {j}");
                     }
-                    let abort28 = abort(28);
                     uwrite!(
                         self.src,
                         r#")
                         if err != nil {{
-                            {slog}.ErrorContext(ctx, "failed to index result writer", "instance", "{instance}", "name", "{name}", "err", err){abort28}
+                            {slog}.ErrorContext(ctx, "failed to index result writer", "instance", "{instance}", "name", "{name}", "err", err)
+                            cancel(err)
                             return
                         }}
                         write := write"#,
                     );
-                    if async_params {
-                        self.push_str(
-                            r#"
-                        wg.Add(1)"#,
-                        );
-                    }
                     self.push_str(
                         r#"
-                        go func() {"#,
-                    );
-                    if async_params {
-                        self.push_str(
-                            r#"
+                        wg.Add(1)
+                        go func() {
                             defer wg.Done()"#,
-                        );
-                    }
-                    let abort32 = abort(32);
+                    );
                     uwrite!(
                         self.src,
                         r#"
                             if err := write(ctx, w); err != nil {{
-                                {slog}.WarnContext(ctx, "failed to write nested result value", "instance", "{instance}", "name", "{name}", "err", err){abort32}
+                                {slog}.WarnContext(ctx, "failed to write nested result value", "instance", "{instance}", "name", "{name}", "err", err)
+                                cancel(err)
                             }}
                             if err := w.Close(); err != nil {{
                                 {slog}.DebugContext(ctx, "failed to close nested result writer", "instance", "{instance}", "name", "{name}", "err", err)
