@@ -33,6 +33,7 @@ default = [
     "net",
     "quic",
     "wasmtime",
+    "wasmtime-wasi",
     "webtransport",
     "websockets",
 ]
@@ -52,6 +53,7 @@ net = ["wrpc-transport/net"]
 quic = ["dep:wrpc-quic"]
 wasi = ["wrpc-transport/wasi"]
 wasmtime = ["dep:wrpc-wasmtime"]
+wasmtime-wasi = ["wrpc-wasmtime?/wasmtime-wasi"]
 webtransport = ["dep:wrpc-webtransport"]
 websockets = [
     "dep:wrpc-websockets",

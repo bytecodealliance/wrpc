@@ -12,7 +12,6 @@ use tokio::sync::{mpsc, oneshot};
 use tracing::{Instrument as _, Span, debug, instrument};
 use wasmtime::component::types;
 use wasmtime::component::{Accessor, ComponentExportIndex, Instance, InstancePre, ResourceType};
-use wasmtime_wasi::WasiView;
 
 use crate::{WrpcView, call, rpc_func_name};
 
@@ -130,7 +129,7 @@ pub trait ServeExt: wrpc_transport::Serve {
         >,
     > + Send
     where
-        T: WasiView + WrpcView + 'static,
+        T: WrpcView + 'static,
     {
         let span = Span::current();
         let host_resources = host_resources.into();
@@ -150,11 +149,14 @@ pub trait ServeExt: wrpc_transport::Serve {
                 .with_context(|| format!("export `{name}` not found"))?;
 
             let params_ty: Arc<[_]> = ty.params().map(|(_, ty)| ty).collect();
+            #[cfg(feature = "wasmtime-wasi")]
             let io_streams: Arc<[ResourceType]> = crate::paths::wasi_io_stream_resources(
                 component_ty.engine(),
                 &component_ty.component_type(),
             )
             .into();
+            #[cfg(not(feature = "wasmtime-wasi"))]
+            let io_streams: Arc<[ResourceType]> = Arc::default();
             let paths = crate::paths::params_async_paths(params_ty.iter(), &io_streams);
             let invocations = self
                 .serve(instance_name, rpc_func_name(name), paths)
@@ -247,7 +249,7 @@ pub trait ServeExt: wrpc_transport::Serve {
         >,
     > + Send
     where
-        T: WasiView + WrpcView + 'static,
+        T: WrpcView + 'static,
     {
         let span = Span::current();
         let guest_resources = guest_resources.into();
