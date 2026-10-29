@@ -34,7 +34,7 @@ const handlers = {
     fallible: [
       [t.bool],
       [t.result(t.bool, t.string)],
-      ([ok]) => [ok ? { tag: "ok", val: true } : { tag: "err", val: "test" }],
+      ([ok]) => [ok ? { kind: "ok", value: true } : { kind: "error", value: "test" }],
     ],
     numbers: [
       [],
@@ -45,12 +45,21 @@ const handlers = {
     "with-variant-option": [
       [t.bool],
       [t.option(v)],
-      ([ok]) => [ok ? { tag: "var", val: r("bar") } : undefined],
+      ([ok]) => [ok ? { kind: "var", value: r("bar") } : undefined],
     ],
     "with-variant-list": [
       [],
       [t.list(v)],
-      () => [["empty", { tag: "var", val: r("foo") }, "empty", "empty", "empty", { tag: "var", val: r("bar") }]],
+      () => [
+        [
+          { kind: "empty" },
+          { kind: "var", value: r("foo") },
+          { kind: "empty" },
+          { kind: "empty" },
+          { kind: "empty" },
+          { kind: "var", value: r("bar") },
+        ],
+      ],
     ],
     "with-record": [[], [rec], () => [r("foo")]],
     "with-record-list": [[t.u8], [t.list(rec)], ([n]) => [Array.from({ length: n }, (_, i) => r(`${i}`))]],

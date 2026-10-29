@@ -72,13 +72,13 @@
             return results;
         }
 
-        // Render a decoded `error` variant value (`{ tag, val? }`) as a string.
+        // Render a decoded `error` variant value (`{ kind, value? }`) as a string.
         function formatError(err) {
-            switch (err.tag) {
+            switch (err.kind) {
                 case 'no-such-store': return 'no such store';
                 case 'access-denied': return 'access denied';
-                case 'other': return err.val;
-                default: return `unknown error \`${err.tag}\``;
+                case 'other': return err.value;
+                default: return `unknown error \`${err.kind}\``;
             }
         }
 
@@ -146,8 +146,8 @@
 
             dbg.debug(`opening bucket for \`${identifier}\`...`);
             const [res] = await invoke(STORE, 'open', OPEN.params, OPEN.results, [identifier]);
-            if (res.tag === 'err') throw 'failed to open bucket: ' + formatError(res.val);
-            const bucket = res.val;
+            if (res.kind === 'error') throw 'failed to open bucket: ' + formatError(res.value);
+            const bucket = res.value;
             buckets.set(identifier, bucket);
             dbg.log(`opened bucket ${uuidString(bucket)}`);
             return bucket;
@@ -166,12 +166,12 @@
 
             dbg.debug(`getting \`${key}\`...`);
             const [res] = await invoke(STORE, 'bucket.get', GET.params, GET.results, [bucket, key]);
-            if (res.tag === 'err') throw 'failed to get value: ' + formatError(res.val);
-            if (res.val === undefined) {
+            if (res.kind === 'error') throw 'failed to get value: ' + formatError(res.value);
+            if (res.value === undefined) {
                 dbg.info('key missing');
                 return;
             }
-            const s = new TextDecoder().decode(res.val);
+            const s = new TextDecoder().decode(res.value);
             dbg.info(`got value from bucket ${uuidString(bucket)}:`, JSON.stringify(s, null, 2));
             if (getValue) getValue.value = s;
         }
@@ -188,7 +188,7 @@
 
             dbg.debug(`setting \`${key}\`...`);
             const [res] = await invoke(STORE, 'bucket.set', SET.params, SET.results, [bucket, key, valueBuf]);
-            if (res.tag === 'err') throw 'failed to set value: ' + formatError(res.val);
+            if (res.kind === 'error') throw 'failed to set value: ' + formatError(res.value);
             dbg.info(`set value in bucket ${uuidString(bucket)}`);
         }
 

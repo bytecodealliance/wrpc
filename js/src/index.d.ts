@@ -22,13 +22,29 @@ export type Type =
   | { kind: "option"; some: Type }
   | { kind: "result"; ok: Type | null; err: Type | null }
   | { kind: "tuple"; elems: Type[] }
-  | { kind: "record"; fields: { name: string; ty: Type }[] }
+  | { kind: "record"; fields: { name: string; key: string; ty: Type }[] }
   | { kind: "variant"; cases: { name: string; ty: Type | null }[] }
   | { kind: "enum"; names: string[] }
-  | { kind: "flags"; names: string[] }
+  | { kind: "flags"; flags: { name: string; key: string }[] }
   | { kind: "future"; some: Type | null }
   | { kind: "stream"; elem: Type }
   | { kind: "own" | "borrow"; name: string };
+
+/** The typed arrays that lists of the numeric types map to. */
+export type TypedArray =
+  | Int8Array
+  | Uint8Array
+  | Int16Array
+  | Uint16Array
+  | Int32Array
+  | Uint32Array
+  | BigInt64Array
+  | BigUint64Array
+  | Float32Array
+  | Float64Array;
+
+/** A `list` value or `stream` chunk: a typed array for the numeric types. */
+export type Chunk = Value[] | TypedArray;
 
 /**
  * The JavaScript representation of a decoded component-model value. Decoded
@@ -39,36 +55,33 @@ export type Value =
   | number
   | bigint
   | string
-  | Uint8Array
+  | TypedArray
   | Value[]
   | { [field: string]: Value }
-  | { tag: string; val?: Value }
+  | { kind: string; value?: Value }
   | Promise<Value>
-  | Chan<Value[] | Uint8Array>
+  | Chan<Chunk>
   | undefined;
 
 /**
  * A component-model value to send: a decoded {@link Value}, or any other
- * representation the codec accepts, such as an `ArrayBuffer` or view for a
- * byte list or handle, a `Set` or array of names for `flags`, a thunk for a
- * `future`, an iterable or async iterable of chunks for a `stream`, and `null`
- * for an `option`'s `none`.
+ * representation the codec accepts, such as any iterable for a `list` or
+ * `tuple`, a thunk for a `future`, an iterable or async iterable of chunks for
+ * a `stream`, and `null` for an `option`'s `none`. Scalars are converted like
+ * the component model's JS-API draft does, e.g. integers wrap.
  */
 export type InputValue =
   | boolean
   | number
   | bigint
   | string
-  | ArrayBuffer
-  | ArrayBufferView
-  | Set<string>
-  | InputValue[]
+  | TypedArray
+  | Iterable<InputValue>
   | { [field: string]: InputValue }
-  | { tag: string; val?: InputValue }
+  | { kind: string; value?: InputValue }
   | Promise<InputValue>
   | (() => InputValue)
-  | Iterable<InputValue[] | ArrayBuffer | ArrayBufferView>
-  | AsyncIterable<InputValue[] | ArrayBuffer | ArrayBufferView>
+  | AsyncIterable<Iterable<InputValue>>
   | null
   | undefined;
 
@@ -85,8 +98,8 @@ export type DecodeDeferred =
       ty: Type | null;
       resolve: (value: Value) => void;
     }
-  | { path: number[]; kind: "stream"; ty: Type; queue: Chan<Value[] | Uint8Array> }
-  | { path: number[]; kind: "inline"; queue: Chan<Value[] | Uint8Array> };
+  | { path: number[]; kind: "stream"; ty: Type; queue: Chan<Chunk> }
+  | { path: number[]; kind: "inline"; queue: Chan<Chunk> };
 
 // ----- types.js -------------------------------------------------------------
 

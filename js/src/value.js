@@ -2,8 +2,9 @@
 // or decoded against a `Type` from `types.js`. This mirrors the canonical Rust
 // codec in `wrpc-transport`'s `value.rs`.
 //
-// JavaScript representation of values (largely following the conventions of
-// `jco`, see `README.md` for where it deviates):
+// JavaScript representation of values (following the ToJSValue and
+// ToComponentValue conversions of the component model's JS-API draft, see
+// `README.md` for where it deviates):
 //
 //   bool                -> boolean
 //   s8/u8/.../s32/u32   -> number
@@ -11,16 +12,20 @@
 //   f32/f64             -> number
 //   char                -> string (a single Unicode scalar)
 //   string              -> string
-//   list<u8>            -> Uint8Array
+//   list<s8>/list<u8>   -> Int8Array/Uint8Array
+//   list<s16>/list<u16> -> Int16Array/Uint16Array
+//   list<s32>/list<u32> -> Int32Array/Uint32Array
+//   list<s64>/list<u64> -> BigInt64Array/BigUint64Array
+//   list<f32>/list<f64> -> Float32Array/Float64Array
 //   list<T>             -> Array
 //   tuple               -> Array
-//   record              -> object keyed by field name
+//   record              -> null-prototype object keyed by camel case field name
 //   option<T>           -> T | undefined (none is `undefined`/`null`), or
-//                          { tag: "some", val } | { tag: "none" } if T is an option
-//   result<O, E>        -> { tag: "ok", val } | { tag: "err", val }
-//   variant             -> { tag: caseName, val? }
+//                          { kind: "some", value } | { kind: "none" } if T is an option
+//   result<O, E>        -> { kind: "ok", value? } | { kind: "error", value? }
+//   variant             -> { kind: caseName, value? }
 //   enum                -> string (the case name)
-//   flags               -> { [name]: boolean }
+//   flags               -> null-prototype object of booleans keyed by camel case name
 //   own<R> / borrow<R>  -> Uint8Array (the opaque handle bytes)
 
 import {
@@ -42,8 +47,48 @@ import {
 /** The number of received chunks a pending `stream` buffers. */
 const STREAM_CAPACITY = 128;
 
-/** @param {Type} ty */
-const isBytes = (ty) => ty.kind === "list" && ty.elem.kind === "u8";
+/** @typedef {import("./index.d.ts").TypedArray} TypedArray */
+/**
+ * @typedef {{ name: string, new (length: number): TypedArray, from(elems: ArrayLike<any>): TypedArray }}
+ *   TypedArrayConstructor
+ */
+
+/**
+ * The typed arrays that lists of each numeric type map to.
+ * @type {Record<string, TypedArrayConstructor>}
+ */
+const TYPED_ARRAYS = {
+  s8: Int8Array,
+  u8: Uint8Array,
+  s16: Int16Array,
+  u16: Uint16Array,
+  s32: Int32Array,
+  u32: Uint32Array,
+  s64: BigInt64Array,
+  u64: BigUint64Array,
+  f32: Float32Array,
+  f64: Float64Array,
+};
+
+/**
+ * The typed array that a list of `elem` maps to, if `elem` is numeric.
+ * @param {Type} elem @returns {TypedArrayConstructor | undefined}
+ */
+export const typedArray = (elem) =>
+  Object.hasOwn(TYPED_ARRAYS, elem.kind) ? TYPED_ARRAYS[elem.kind] : undefined;
+
+/** The name of the typed array `this` is, from any realm, or `undefined`. */
+const typedArrayName = /** @type {(this: unknown) => string | undefined} */ (
+  Object.getOwnPropertyDescriptor(Object.getPrototypeOf(Int8Array.prototype), Symbol.toStringTag)
+    ?.get
+);
+
+/**
+ * Whether `v` is a `Typed` typed array, from any realm.
+ * @template {TypedArrayConstructor} T
+ * @param {unknown} v @param {T} Typed @returns {v is InstanceType<T>}
+ */
+export const isTypedArray = (v, Typed) => typedArrayName.call(v) === Typed.name;
 
 /**
  * Extend a relative index `path` by structural index `i`, but only while a
@@ -75,50 +120,10 @@ const asyncRequired = (kind, op = "decode") =>
   `\`${kind}\` values require the async session API (\`invoke\`/\`accept\`), ` +
   `not the synchronous \`${op}\``;
 
-/**
- * Convert the integer `number` or `bigint` `v` to a `bigint` and assert it is
- * within `[min, max]`, rejecting fractional, non-numeric, or out-of-range
- * inputs instead of silently coercing or wrapping them on the wire.
- * @param {any} v @param {string} kind @param {bigint} min @param {bigint} max
- * @returns {bigint}
- */
-function checkInt(v, kind, min, max) {
-  let b;
-  if (typeof v === "bigint") {
-    b = v;
-  } else {
-    if (!Number.isInteger(v)) throw new TypeError(`expected an integer for \`${kind}\`, got ${v}`);
-    b = BigInt(v);
-  }
-  if (b < min || b > max) {
-    throw new RangeError(`\`${kind}\` value ${b} out of range [${min}, ${max}]`);
-  }
-  return b;
-}
-
-/**
- * {@link checkInt} for the integer kinds of at most 32 bits, as a `number`.
- * @param {any} v @param {string} kind @param {number} min @param {number} max
- * @returns {number}
- */
-function checkSmallInt(v, kind, min, max) {
-  const n = typeof v === "bigint" ? Number(v) : v;
-  if (!Number.isInteger(n)) throw new TypeError(`expected an integer for \`${kind}\`, got ${v}`);
-  if (n < min || n > max)
-    throw new RangeError(`\`${kind}\` value ${v} out of range [${min}, ${max}]`);
-  return n;
-}
-
 /** Scratch space to convert floats to and from their little-endian bytes. */
 const floatView = new DataView(new ArrayBuffer(8));
 const floatBytes = new Uint8Array(floatView.buffer);
 const f32Bytes = floatBytes.subarray(0, 4);
-
-/** @param {any} v @param {string} kind @returns {number} */
-function checkFloat(v, kind) {
-  if (typeof v !== "number") throw new TypeError(`expected a number for \`${kind}\`, got ${v}`);
-  return v;
-}
 
 /** The kinds of the types whose values contain other values. */
 const COMPOSITE = new Set([
@@ -134,7 +139,8 @@ const COMPOSITE = new Set([
 
 /**
  * Decode a single stream/list chunk of `n` elements of type `elem` from `r`.
- * `stream<u8>` chunks are returned as a `Uint8Array`; all others as an array.
+ * Chunks of numeric types are returned as the matching typed array, all
+ * others as an array.
  * @param {Reader} r
  * @param {Type} elem
  * @param {number} n
@@ -152,11 +158,12 @@ export function* readChunk(r, elem, n, sink, path) {
     return out;
   }
   // Resume from the last whole element rather than one generator step per element.
+  const typed = typedArray(elem);
   for (;;) {
     let pos = r.pos;
     try {
       for (; out.length < n; pos = r.pos) out.push(decodeScalar(r, elem));
-      return out;
+      return typed ? typed.from(out) : out;
     } catch (err) {
       if (!isUnexpectedEof(err)) throw err;
       r.pos = pos;
@@ -184,129 +191,123 @@ export function* readChunk(r, elem, n, sink, path) {
 export function encodeValue(w, ty, v, sink, path) {
   switch (ty.kind) {
     case "bool":
-      if (typeof v !== "boolean")
-        throw new TypeError(`expected a boolean for a \`bool\`, got ${v}`);
       w.u8(v ? 1 : 0);
       return;
     case "u8":
-      w.u8(checkSmallInt(v, "u8", 0, 0xff));
-      return;
     case "s8":
-      w.u8(checkSmallInt(v, "s8", -0x80, 0x7f) & 0xff);
+      w.u8(+v & 0xff);
       return;
     case "u16":
-      w.varU(checkSmallInt(v, "u16", 0, 0xffff));
+      w.varU(+v & 0xffff);
       return;
     case "u32":
-      w.varU(checkSmallInt(v, "u32", 0, 0xffffffff));
+      w.varU(+v >>> 0);
       return;
     case "u64":
-      w.varU(checkInt(v, "u64", 0n, (1n << 64n) - 1n));
+      w.varU(BigInt.asUintN(64, v));
       return;
     case "s16":
-      w.varS(checkSmallInt(v, "s16", -0x8000, 0x7fff));
+      w.varS((+v << 16) >> 16);
       return;
     case "s32":
-      w.varS(checkSmallInt(v, "s32", -0x80000000, 0x7fffffff));
+      w.varS(+v | 0);
       return;
     case "s64":
-      w.varS(checkInt(v, "s64", -(1n << 63n), (1n << 63n) - 1n));
+      w.varS(BigInt.asIntN(64, v));
       return;
     case "f32": {
-      const n = checkFloat(v, "f32");
+      const n = +v;
       if (Number.isNaN(n)) floatView.setUint32(0, 0x7fc00000, true);
       else floatView.setFloat32(0, n, true);
       w.bytes(f32Bytes);
       return;
     }
     case "f64": {
-      const n = checkFloat(v, "f64");
+      const n = +v;
       if (Number.isNaN(n)) floatView.setBigUint64(0, 0x7ff8000000000000n, true);
       else floatView.setFloat64(0, n, true);
       w.bytes(floatBytes);
       return;
     }
     case "char": {
-      const cp = typeof v === "string" ? v.codePointAt(0) : undefined;
+      const s = `${v}`;
+      const cp = s.codePointAt(0);
       if (
         cp === undefined ||
-        v.length !== (cp > 0xffff ? 2 : 1) ||
+        s.length !== (cp > 0xffff ? 2 : 1) ||
         (cp >= 0xd800 && cp <= 0xdfff)
       ) {
-        throw new TypeError(`expected a single Unicode scalar value for a \`char\`, got ${v}`);
+        throw new TypeError(`expected a single Unicode scalar value for a \`char\`, got ${s}`);
       }
-      w.bytes(textEncoder.encode(v));
+      w.bytes(textEncoder.encode(s));
       return;
     }
     case "string":
-      if (typeof v !== "string")
-        throw new TypeError(`expected a string for a \`string\`, got ${v}`);
-      if (/\p{Surrogate}/u.test(v))
-        throw new TypeError("a `string` cannot contain lone surrogates");
-      w.name(v);
+      w.name(`${v}`);
       return;
-    case "list": {
-      if (isBytes(ty)) {
-        const bytes = toBytes(v);
-        w.varU(bytes.length);
-        w.bytes(bytes);
+    case "list":
+    case "own":
+    case "borrow": {
+      const elem = ty.kind === "list" ? ty.elem : u8;
+      const elems = toList(v, elem);
+      w.varU(elems.length);
+      if (elem.kind === "u8") {
+        w.bytes(/** @type {Uint8Array} */ (elems));
         return;
       }
-      if (!Array.isArray(v)) throw new TypeError("expected an array for a `list`");
-      w.varU(v.length);
-      for (let i = 0; i < v.length; i++)
-        encodeValue(w, ty.elem, v[i], sink, childPath(sink, path, i));
+      for (let i = 0; i < elems.length; i++)
+        encodeValue(w, elem, elems[i], sink, childPath(sink, path, i));
       return;
     }
     case "tuple": {
-      if (!Array.isArray(v) || v.length !== ty.elems.length) {
-        throw new TypeError(`expected a ${ty.elems.length}-element tuple`);
-      }
-      ty.elems.forEach((et, i) => encodeValue(w, et, v[i], sink, childPath(sink, path, i)));
+      const elems = iterableToValues(v);
+      if (!elems) throw new TypeError(`expected an iterable for a \`tuple\``);
+      ty.elems.forEach((et, i) => encodeValue(w, et, elems[i], sink, childPath(sink, path, i)));
       return;
     }
     case "record": {
-      if (typeof v !== "object" || v === null)
-        throw new TypeError("expected an object for a `record`");
-      ty.fields.forEach(({ name, ty: fty }, i) => {
-        if (!(name in v)) throw new TypeError(`missing record field \`${name}\``);
-        encodeValue(w, fty, v[name], sink, childPath(sink, path, i));
-      });
+      if (!isObject(v)) throw new TypeError("expected an object for a `record`");
+      ty.fields.forEach(({ key, ty: fty }, i) =>
+        encodeValue(w, fty, v[key], sink, childPath(sink, path, i)),
+      );
       return;
     }
     case "option": {
-      const { tag, val } = asOption(ty, v);
-      if (tag === "none") {
+      if (ty.some.kind === "option") {
+        const i = caseIndex(v, OPTION_CASES, "a nested `option`");
+        w.u8(i);
+        if (i) encodeValue(w, ty.some, v.value, sink, path);
+      } else if (v === null || v === undefined) {
         w.u8(0);
       } else {
         w.u8(1);
-        encodeValue(w, ty.some, val, sink, path);
+        encodeValue(w, ty.some, v, sink, path);
       }
       return;
     }
     case "result": {
-      const { tag, val } = asResult(v);
-      if (tag === "ok") {
-        w.u8(0);
-        if (ty.ok) encodeValue(w, ty.ok, val, sink, path);
-      } else {
-        w.u8(1);
-        if (ty.err) encodeValue(w, ty.err, val, sink, path);
-      }
+      const i = caseIndex(v, RESULT_CASES, "a `result`");
+      w.u8(i);
+      const pty = i ? ty.err : ty.ok;
+      if (pty) encodeValue(w, pty, v.value, sink, path);
       return;
     }
     case "enum": {
-      const i = ty.names.indexOf(v);
-      if (i < 0) throw new RangeError(`unknown enum case \`${v}\``);
+      const s = `${v}`;
+      const i = ty.names.indexOf(s);
+      if (i < 0) throw new TypeError(`unknown enum case \`${s}\``);
       w.varU(i);
       return;
     }
     case "variant": {
-      const { tag, val } = asVariant(v);
-      const i = ty.cases.findIndex((c) => c.name === tag);
-      if (i < 0) throw new RangeError(`unknown variant case \`${tag}\``);
+      const i = caseIndex(
+        v,
+        ty.cases.map((c) => c.name),
+        "a `variant`",
+      );
       w.varU(i);
-      if (ty.cases[i].ty) encodeValue(w, ty.cases[i].ty, val, sink, path);
+      const pty = ty.cases[i].ty;
+      if (pty) encodeValue(w, pty, v.value, sink, path);
       return;
     }
     case "future":
@@ -319,21 +320,11 @@ export function encodeValue(w, ty, v, sink, path) {
       return;
     }
     case "flags": {
-      const set = toFlagSet(v);
-      for (const name of set) {
-        if (!ty.names.includes(name)) throw new RangeError(`unknown flag \`${name}\``);
-      }
-      const bytes = new Uint8Array(Math.ceil(Math.max(ty.names.length, 1) / 8));
-      ty.names.forEach((name, i) => {
-        if (set.has(name)) bytes[i >> 3] |= 1 << (i & 7);
+      if (!isObject(v)) throw new TypeError("expected an object for `flags`");
+      const bytes = new Uint8Array(Math.ceil(Math.max(ty.flags.length, 1) / 8));
+      ty.flags.forEach(({ key }, i) => {
+        if (v[key]) bytes[i >> 3] |= 1 << (i & 7);
       });
-      w.bytes(bytes);
-      return;
-    }
-    case "own":
-    case "borrow": {
-      const bytes = toBytes(v);
-      w.varU(bytes.length);
       w.bytes(bytes);
       return;
     }
@@ -388,32 +379,30 @@ export function* decodeSteps(r, ty, sink, path) {
     }
     case "record": {
       /** @type {Record<string, any>} */
-      const out = {};
+      const out = Object.create(null);
       for (let i = 0; i < ty.fields.length; i++) {
-        const { name, ty: fty } = ty.fields[i];
-        out[name] = yield* decodeSteps(r, fty, sink, childPath(sink, path, i));
+        const { key, ty: fty } = ty.fields[i];
+        out[key] = yield* decodeSteps(r, fty, sink, childPath(sink, path, i));
       }
       return out;
     }
     case "option": {
       const nested = ty.some.kind === "option";
-      if (!(yield* atomic(r, optionStatus))) return nested ? { tag: "none" } : undefined;
-      const val = yield* decodeSteps(r, ty.some, sink, path);
-      return nested ? { tag: "some", val } : val;
+      if (!(yield* atomic(r, optionStatus))) return nested ? tagged("none") : undefined;
+      const value = yield* decodeSteps(r, ty.some, sink, path);
+      return nested ? tagged("some", value) : value;
     }
     case "result": {
       const err = yield* atomic(r, resultStatus);
+      const kind = RESULT_CASES[err ? 1 : 0];
       const vty = err ? ty.err : ty.ok;
-      return {
-        tag: err ? "err" : "ok",
-        val: vty ? yield* decodeSteps(r, vty, sink, path) : undefined,
-      };
+      return vty ? tagged(kind, yield* decodeSteps(r, vty, sink, path)) : tagged(kind);
     }
     case "variant": {
       const i = yield* atomic(r, readVarU32);
       const c = ty.cases[i];
       if (!c) throw new RangeError(`unknown variant discriminant ${i}`);
-      return c.ty ? { tag: c.name, val: yield* decodeSteps(r, c.ty, sink, path) } : { tag: c.name };
+      return c.ty ? tagged(c.name, yield* decodeSteps(r, c.ty, sink, path)) : tagged(c.name);
     }
     case "future": {
       if (yield* atomic(r, optionStatus)) {
@@ -497,14 +486,14 @@ function decodeScalar(r, ty) {
       return name;
     }
     case "flags": {
-      const n = ty.names.length;
+      const n = ty.flags.length;
       const bytes = r.take(Math.ceil(Math.max(n, 1) / 8));
       if (bytes[bytes.length - 1] >> (((n - 1) % 8) + 1))
         throw new RangeError("invalid flags bits");
       /** @type {Record<string, boolean>} */
-      const out = {};
-      ty.names.forEach((name, i) => {
-        out[name] = (bytes[i >> 3] & (1 << (i & 7))) !== 0;
+      const out = Object.create(null);
+      ty.flags.forEach(({ key }, i) => {
+        out[key] = (bytes[i >> 3] & (1 << (i & 7))) !== 0;
       });
       return out;
     }
@@ -542,51 +531,61 @@ export function hasAsync(ty) {
   }
 }
 
-/** @param {any} v @returns {Uint8Array} */
-export function toBytes(v) {
-  if (v instanceof Uint8Array) return v;
-  if (v instanceof ArrayBuffer) return new Uint8Array(v);
-  if (ArrayBuffer.isView(v)) return new Uint8Array(v.buffer, v.byteOffset, v.byteLength);
-  if (Array.isArray(v)) return Uint8Array.from(v, (b) => checkSmallInt(b, "u8", 0, 0xff));
-  throw new TypeError("expected `Uint8Array`, `ArrayBuffer`, or `number[]` for a byte list");
+/** @param {unknown} v @returns {v is Record<string, any>} */
+const isObject = (v) => (typeof v === "object" && v !== null) || typeof v === "function";
+
+/**
+ * The values `v` iterates, or `undefined` if `v` is not an iterable object.
+ * @param {unknown} v @returns {unknown[] | undefined}
+ */
+function iterableToValues(v) {
+  if (!isObject(v)) return undefined;
+  const iter = /** @type {any} */ (v)[Symbol.iterator];
+  if (iter === undefined || iter === null) return undefined;
+  return [...{ [Symbol.iterator]: () => iter.call(v) }];
 }
 
 /**
- * An `option` is `T | undefined`, unless `T` is itself an `option`: then the
- * outer one is tagged, so that `some(none)` is distinct from `none`.
- * @param {{ some: Type }} ty @param {any} v
+ * The elements of the `list<elem>` value or `stream<elem>` chunk `v`: the
+ * typed array of a numeric `elem`, copying any other iterable into one, or the
+ * values `v` iterates.
+ * @param {unknown} v @param {Type} elem @returns {ArrayLike<any>}
  */
-function asOption(ty, v) {
-  if (ty.some.kind !== "option") {
-    return v === null || v === undefined ? { tag: "none" } : { tag: "some", val: v };
+export function toList(v, elem) {
+  const typed = typedArray(elem);
+  if (typed && isTypedArray(v, typed)) {
+    if (/** @type {any} */ (v.buffer).detached)
+      throw new TypeError("expected a typed array with an attached buffer");
+    return v;
   }
-  if (v && typeof v === "object" && (v.tag === "some" || v.tag === "none")) {
-    return { tag: v.tag, val: v.val };
-  }
-  throw new TypeError('expected `{ tag: "some", val } | { tag: "none" }` for a nested `option`');
+  const elems = iterableToValues(v);
+  if (!elems) throw new TypeError(`expected an iterable for a \`list<${elem.kind}>\``);
+  return typed ? typed.from(elems) : elems;
 }
 
-/** @param {any} v */
-function asResult(v) {
-  if (v && typeof v === "object" && (v.tag === "ok" || v.tag === "err")) {
-    return { tag: v.tag, val: v.val };
-  }
-  throw new TypeError('expected `{ tag: "ok" | "err", val }` for a `result`');
+const u8 = /** @type {Type} */ ({ kind: "u8" });
+const OPTION_CASES = ["none", "some"];
+const RESULT_CASES = ["ok", "error"];
+
+/**
+ * A null-prototype `{ kind, value? }` object, with `value` only if given.
+ * @param {string} kind @param {...any} value
+ */
+function tagged(kind, ...value) {
+  const out = Object.create(null);
+  out.kind = kind;
+  if (value.length) out.value = value[0];
+  return out;
 }
 
-/** @param {any} v */
-function asVariant(v) {
-  if (typeof v === "string") return { tag: v, val: undefined };
-  if (v && typeof v === "object" && typeof v.tag === "string") return { tag: v.tag, val: v.val };
-  throw new TypeError("expected a string or `{ tag, val }` for a `variant`");
-}
-
-/** @param {any} v */
-function toFlagSet(v) {
-  if (v instanceof Set) return v;
-  if (Array.isArray(v)) return new Set(v);
-  if (v && typeof v === "object") {
-    return new Set(Object.keys(v).filter((k) => v[k]));
-  }
-  throw new TypeError("expected an object, array, or `Set` for `flags`");
+/**
+ * The index of the case of `cases` that the `{ kind, value? }` object `v` is.
+ * @param {any} v @param {string[]} cases @param {string} what @returns {number}
+ */
+function caseIndex(v, cases, what) {
+  if (!isObject(v)) throw new TypeError(`expected \`{ kind, value? }\` for ${what}`);
+  const kind = `${v.kind}`;
+  const i = cases.indexOf(kind);
+  if (i < 0) throw new TypeError(`unknown case \`${kind}\` of ${what}`);
+  return i;
 }

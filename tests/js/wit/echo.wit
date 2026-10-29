@@ -3,7 +3,7 @@ package wrpc-test:js;
 interface echo {
     enum color { red, green, blue }
 
-    flags small { a, b, c }
+    flags small { a, b, c, HTTP-only }
 
     flags wide {
         f0, f1, f2, f3, f4, f5, f6, f7,
@@ -43,6 +43,7 @@ interface echo {
         small: small,
         tup: tuple<u8, string>,
         lists: list<list<u16>>,
+        favorite-numbers: list<s64>,
     }
 
     record asyncs {

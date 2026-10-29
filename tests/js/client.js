@@ -22,6 +22,9 @@ async function collect(stream) {
   return out;
 }
 
+/** A null-prototype object of `props`, as records, flags and variants decode to. */
+const obj = (props) => Object.assign(Object.create(null), props);
+
 const delay = (v) => new Promise((resolve) => setTimeout(() => resolve(v), 10));
 
 test("values", { timeout: 5000 }, async () => {
@@ -49,9 +52,10 @@ test("values", { timeout: 5000 }, async () => {
     unit: t.result(),
     vs: t.list(v),
     color: t.enum(["red", "green", "blue"]),
-    small: t.flags(["a", "b", "c"]),
+    small: t.flags(["a", "b", "c", "HTTP-only"]),
     tup: t.tuple(t.u8, t.string),
     lists: t.list(t.list(t.u16)),
+    "favorite-numbers": t.list(t.s64),
   });
   for (const val of [
     {
@@ -68,24 +72,25 @@ test("values", { timeout: 5000 }, async () => {
       x64: NaN,
       c: "😀",
       s: "héllo 👋",
-      wide: Object.fromEntries(wide.map((name, i) => [name, i % 8 === 0])),
+      wide: obj(Object.fromEntries(wide.map((name, i) => [name, i % 8 === 0]))),
       bytes: new Uint8Array([1, 2, 3]),
       strs: ["a", "", "c"],
-      opt: { tag: "some", val: undefined },
-      res: { tag: "ok", val: 7 },
-      unit: { tag: "err", val: undefined },
+      opt: obj({ kind: "some", value: undefined }),
+      res: obj({ kind: "ok", value: 7 }),
+      unit: obj({ kind: "error" }),
       vs: [
-        { tag: "empty" },
-        { tag: "num", val: 3 },
-        { tag: "str", val: "x" },
-        { tag: "nested", val: { tag: "some", val: undefined } },
-        { tag: "nested", val: { tag: "none" } },
-        { tag: "nested", val: { tag: "some", val: 9 } },
+        obj({ kind: "empty" }),
+        obj({ kind: "num", value: 3 }),
+        obj({ kind: "str", value: "x" }),
+        obj({ kind: "nested", value: obj({ kind: "some", value: undefined }) }),
+        obj({ kind: "nested", value: obj({ kind: "none" }) }),
+        obj({ kind: "nested", value: obj({ kind: "some", value: 9 }) }),
       ],
       color: "blue",
-      small: { a: true, b: false, c: true },
+      small: obj({ a: true, b: false, c: true, httpOnly: true }),
       tup: [1, "one"],
-      lists: [[], [1, 65535]],
+      lists: [new Uint16Array(), Uint16Array.of(1, 65535)],
+      favoriteNumbers: BigInt64Array.of(-(1n << 63n), 0n, 42n),
     },
     {
       b: false,
@@ -101,21 +106,22 @@ test("values", { timeout: 5000 }, async () => {
       x64: 5e-324,
       c: "\0",
       s: "",
-      wide: Object.fromEntries(wide.map((name) => [name, false])),
+      wide: obj(Object.fromEntries(wide.map((name) => [name, false]))),
       bytes: new Uint8Array(),
       strs: [],
-      opt: { tag: "none" },
-      res: { tag: "err", val: "bad" },
-      unit: { tag: "ok", val: undefined },
+      opt: obj({ kind: "none" }),
+      res: obj({ kind: "error", value: "bad" }),
+      unit: obj({ kind: "ok" }),
       vs: [],
       color: "red",
-      small: { a: false, b: false, c: false },
+      small: obj({ a: false, b: false, c: false, httpOnly: false }),
       tup: [0, ""],
       lists: [],
+      favoriteNumbers: new BigInt64Array(),
     },
   ]) {
-    const { out, done, finished } = await echo("echo", ty, val);
-    assert.deepEqual(out, val);
+    const { out, done, finished } = await echo("echo", ty, obj(val));
+    assert.deepEqual(out, obj(val));
     await Promise.all([done, finished]);
   }
 });
