@@ -12,7 +12,7 @@ wRPC relies on [component model value definition encoding] for data encoding on 
 
 wRPC makes use of *transports*, which are responsible for establishing a connection between two parties and transferring the wRPC wire protocol data between them.
 
-Examples of supported wRPC transports are: TCP, Unix Domain Sockets, QUIC, WebTransport and WebSockets.
+Examples of supported wRPC transports are: TCP, Unix Domain Sockets, QUIC, WebTransport, WebSockets and HTTP (see [Transport specifications](#transport-specifications)).
 
 ### Indexing
 
@@ -96,6 +96,52 @@ TCP relies on [Framed stream specification](#framed-stream-specification) to map
 The server MUST listen on a TCP socket and client MUST establish a new connection to that socket per each invocation.
 
 The write side of the stream MUST be shutdown as soon as data transfer is done, for example, once the client is done sending encoded parameter buffer and all asynchronous parameters, it MUST shutdown the write side of the stream to signal EOF to the server.
+
+### Unix domain sockets
+
+Unix domain sockets follow the [TCP](#tcp) transport specification, using a stream-oriented (`SOCK_STREAM`) socket in place of a TCP socket.
+
+### QUIC
+
+QUIC relies on [Framed stream specification](#framed-stream-specification) to map a single bidirectional QUIC stream to a single wRPC invocation.
+
+The client MUST open a new client-initiated bidirectional stream per each invocation. A single QUIC connection MAY carry multiple concurrent invocations.
+
+A peer MUST communicate the end of transmit by finishing the send side of the stream.
+
+Once a peer is done receiving data, it SHOULD stop the receive side of the stream with application error code `1`. A peer MUST treat its send side being stopped with application error code `1` after it finished the stream as successful completion.
+
+TLS configuration, including the ALPN protocol, is application-defined.
+
+### WebTransport
+
+WebTransport follows the [QUIC](#quic) transport specification, using bidirectional streams opened by the client within a WebTransport session in place of QUIC streams and WebTransport application error codes in place of QUIC application error codes.
+
+A single WebTransport session MAY carry multiple concurrent invocations.
+
+### WebSockets
+
+WebSockets rely on [Framed stream specification](#framed-stream-specification) to map a single WebSocket connection to a single wRPC invocation.
+
+The client MUST establish a new WebSocket connection per each invocation.
+
+The byte stream is transmitted as the concatenation of payloads of binary messages, message boundaries carry no meaning.
+
+WebSocket closes both directions of a connection at once, so a peer MUST communicate the end of transmit by sending an empty text message and keeping the connection open. A peer MUST NOT send non-empty text messages, and the receiver MUST treat these as an error. If the connection is closed before an empty text message is received, the receiver MUST treat it as an error.
+
+A peer MAY close the connection once it has both sent and received the end of transmit.
+
+### HTTP
+
+HTTP relies on [Framed stream specification](#framed-stream-specification) to map a single HTTP request-response exchange to a single wRPC invocation.
+
+The client MUST send a `POST` request per each invocation, with the request body carrying the data sent by the client and the response body carrying the data sent by the server. The end of the request or response body communicates the end of transmit.
+
+The request target and header fields are application-defined and not interpreted by wRPC.
+
+A server accepting the invocation MUST respond with a `2xx` status code without waiting for the request body to complete, and the client MUST NOT wait for the response before sending the request body. A client MUST treat a response with a status code other than `2xx` as a failed invocation.
+
+Since data is transferred concurrently in both directions, the HTTP version used SHOULD support full-duplex exchange, for example, HTTP/2.
 
 ## Component model value definition encoding extensions
 
