@@ -278,7 +278,7 @@ async fn main() -> anyhow::Result<()> {
         tokio::spawn(async move {
             loop {
                 let (stream, _) = lis.accept().await.expect("failed to accept connection");
-                let (rx, tx) = stream.into_split();
+                let (rx, tx) = tcp::split(stream);
                 let srv = Arc::clone(&srv);
                 tokio::spawn(async move {
                     srv.accept((), tx, BufReader::new(rx))
