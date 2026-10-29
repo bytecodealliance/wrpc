@@ -11,7 +11,14 @@ const addr = process.argv[2];
 
 /** Send `v` of type `ty` to `func` and return what it echoes. */
 async function echo(func, ty, v) {
-  const { results, done, finished } = await invoke(await connect(addr), "wrpc-test:js/echo", func, [ty], [v], [ty]);
+  const { results, done, finished } = await invoke(
+    await connect(addr),
+    "wrpc-test:js/echo",
+    func,
+    [ty],
+    [v],
+    [ty],
+  );
   return { out: results[0], done, finished };
 }
 
@@ -143,8 +150,16 @@ test("async", { timeout: 5000 }, async () => {
     str: delay("later"),
     nested: () => delay(() => delay(42)),
   });
-  const [bytes, ls, str, nested] = await Promise.all([collect(out.bytes), collect(out.lists), out.str, out.nested]);
-  assert.deepEqual(bytes.flatMap((chunk) => [...chunk]), [1, 2, 3]);
+  const [bytes, ls, str, nested] = await Promise.all([
+    collect(out.bytes),
+    collect(out.lists),
+    out.str,
+    out.nested,
+  ]);
+  assert.deepEqual(
+    bytes.flatMap((chunk) => [...chunk]),
+    [1, 2, 3],
+  );
   assert.deepEqual(ls.flat(), [["a"], [], ["b", "c"]]);
   assert.equal(str, "later");
   assert.equal(nested, 42);

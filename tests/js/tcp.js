@@ -28,7 +28,9 @@ export const transport = (sock) => fromWebStreams(Duplex.toWeb(sock));
  */
 export function connect(addr) {
   return new Promise((resolve, reject) => {
-    const sock = net.connect({ ...parse(addr), allowHalfOpen: true }, () => resolve(transport(sock)));
+    const sock = net.connect({ ...parse(addr), allowHalfOpen: true }, () =>
+      resolve(transport(sock)),
+    );
     sock.once("error", reject);
   });
 }
