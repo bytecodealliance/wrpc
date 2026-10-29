@@ -20,7 +20,6 @@ use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, Server
 use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer, ServerName, UnixTime};
 use rustls::version::TLS13;
 use rustls::{DigitallySignedStruct, SignatureScheme};
-use tokio::io::BufReader;
 use tokio::sync::{Notify, RwLock};
 use tokio::task::JoinSet;
 use tokio::{select, signal};
@@ -747,7 +746,7 @@ export const PORT = "{port}"
                             .accept_bi()
                             .await
                             .context("failed to accept wRPC connection")?;
-                        srv.accept((), tx, BufReader::new(rx))
+                        srv.accept((), tx, rx.into())
                             .await
                             .context("failed to serve wRPC connection")?;
                     }

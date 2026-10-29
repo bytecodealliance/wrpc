@@ -13,7 +13,6 @@ use quinn::{Endpoint, ServerConfig};
 use rcgen::{CertifiedKey, generate_simple_self_signed};
 use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
 use rustls::version::TLS13;
-use tokio::io::BufReader;
 use tokio::task::JoinSet;
 use tokio::{select, signal};
 use tracing::{debug, error, info, warn};
@@ -100,7 +99,7 @@ async fn main() -> anyhow::Result<()> {
                                     .accept_bi()
                                     .await
                                     .context("failed to accept wRPC connection")?;
-                                srv.accept((), tx, BufReader::new(rx))
+                                srv.accept((), tx, rx.into())
                                     .await
                                     .context("failed to serve wRPC connection")?;
                             }

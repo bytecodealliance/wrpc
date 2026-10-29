@@ -1,15 +1,54 @@
 //! wRPC QUIC transport
 
+use core::pin::Pin;
+use core::task::{Context, Poll};
+
 use anyhow::Context as _;
 use bytes::Bytes;
-use quinn::{Connection, RecvStream, SendStream, VarInt};
-use tokio::io::BufReader;
+use quinn::{Connection, SendStream, VarInt};
+use tokio::io::{AsyncBufRead, AsyncRead, BufReader, ReadBuf};
 use tracing::{debug, error, trace, warn};
 use wrpc_transport::Invoke;
 use wrpc_transport::frame::{Incoming, InvokeBuilder, Outgoing};
 
 /// QUIC server with graceful stream shutdown handling
-pub type Server = wrpc_transport::Server<(), BufReader<RecvStream>, SendStream, ConnHandler>;
+pub type Server = wrpc_transport::Server<(), RecvStream, SendStream, ConnHandler>;
+
+/// Buffered receive side of a QUIC stream, which stops the stream with application error code
+/// `1` once dropped, signaling the peer that it is done receiving data
+pub struct RecvStream(BufReader<quinn::RecvStream>);
+
+impl From<quinn::RecvStream> for RecvStream {
+    fn from(rx: quinn::RecvStream) -> Self {
+        Self(BufReader::new(rx))
+    }
+}
+
+impl Drop for RecvStream {
+    fn drop(&mut self) {
+        _ = self.0.get_mut().stop(DONE);
+    }
+}
+
+impl AsyncRead for RecvStream {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.get_mut().0).poll_read(cx, buf)
+    }
+}
+
+impl AsyncBufRead for RecvStream {
+    fn poll_fill_buf(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<&[u8]>> {
+        Pin::new(&mut self.get_mut().0).poll_fill_buf(cx)
+    }
+
+    fn consume(self: Pin<&mut Self>, amt: usize) {
+        Pin::new(&mut self.get_mut().0).consume(amt);
+    }
+}
 
 /// QUIC wRPC client
 #[derive(Clone, Debug)]
@@ -20,19 +59,8 @@ pub struct ConnHandler;
 
 const DONE: VarInt = VarInt::from_u32(1);
 
-impl wrpc_transport::frame::ConnHandler<BufReader<RecvStream>, SendStream> for ConnHandler {
+impl wrpc_transport::frame::ConnHandler<RecvStream, SendStream> for ConnHandler {
     const DRAIN: bool = false;
-
-    async fn on_ingress(mut rx: BufReader<RecvStream>, res: std::io::Result<()>) {
-        if let Err(err) = res {
-            error!(?err, "ingress failed");
-        } else {
-            debug!("ingress successfully complete");
-        }
-        if let Err(err) = rx.get_mut().stop(DONE) {
-            debug!(?err, "failed to close incoming stream");
-        }
-    }
 
     async fn on_egress(tx: SendStream, res: std::io::Result<()>) {
         if let Err(err) = res {
@@ -84,7 +112,7 @@ impl Invoke for &Client {
             .await
             .context("failed to open parameter stream")?;
         InvokeBuilder::<ConnHandler>::default()
-            .invoke(tx, BufReader::new(rx), instance, func, params, paths)
+            .invoke(tx, RecvStream::from(rx), instance, func, params, paths)
             .await
     }
 }
