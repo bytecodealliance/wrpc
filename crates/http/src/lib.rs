@@ -285,8 +285,8 @@ impl wrpc_transport::Invoke for Client<hyper::client::conn::http2::SendRequest<O
         let rx = data_reader_from_response(sender.send_request(req));
 
         Ok((
-            wrpc_transport::frame::Outgoing::new(tx, |_, _| async {}),
-            wrpc_transport::frame::Incoming::new(rx, paths.as_ref(), false, |_, _| async {}),
+            wrpc_transport::frame::Outgoing::new(tx),
+            wrpc_transport::frame::Incoming::new(rx, paths.as_ref(), false),
         ))
     }
 }
@@ -323,8 +323,8 @@ where
         let rx = data_reader_from_response(self.0.request(req));
 
         Ok((
-            wrpc_transport::frame::Outgoing::new(tx, |_, _| async {}),
-            wrpc_transport::frame::Incoming::new(rx, paths.as_ref(), true, |_, _| async {}),
+            wrpc_transport::frame::Outgoing::new(tx),
+            wrpc_transport::frame::Incoming::new(rx, paths.as_ref(), true),
         ))
     }
 }

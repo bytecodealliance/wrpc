@@ -4890,7 +4890,6 @@ dependencies = [
  "quinn",
  "test-log",
  "tokio",
- "tracing",
  "wrpc-test",
  "wrpc-transport",
 ]
@@ -5053,7 +5052,6 @@ dependencies = [
  "futures",
  "test-log",
  "tokio",
- "tracing",
  "web-transport-quinn",
  "wrpc-test",
  "wrpc-transport",

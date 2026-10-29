@@ -13,7 +13,6 @@ repository.workspace = true
 anyhow = { workspace = true, features = ["std"] }
 bytes = { workspace = true }
 tokio = { workspace = true, features = ["io-util"] }
-tracing = { workspace = true }
 web-transport-quinn = { workspace = true }
 wrpc-transport = { workspace = true }
 

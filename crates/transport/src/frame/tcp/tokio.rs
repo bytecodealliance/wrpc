@@ -79,6 +79,6 @@ where
             stream.set_zero_linger()?;
         }
         let (rx, tx) = stream.into_split();
-        invoke(tx, BufReader::new(rx), instance, func, params, paths).await
+        invoke(tx, BufReader::new(rx), instance, func, params, paths, true).await
     }
 }

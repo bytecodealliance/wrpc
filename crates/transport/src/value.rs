@@ -2551,13 +2551,13 @@ mod tests {
     async fn outgoing_stream_ready() -> anyhow::Result<()> {
         for (ready, expected) in [("foo", &b"\x03foo\x03bar\x00"[..]), ("", b"\x03bar\x00")] {
             let (tx, rx) = tokio::io::duplex(1024);
-            let w = Outgoing::new(tx, |_, _| async {}).index(&[0])?;
+            let w = Outgoing::new(tx).index(&[0])?;
             w.write_stream_bytes(0, stream::iter([ready, "bar"].map(Bytes::from)))
                 .await?;
             assert_eq!(read_frames(rx).await?, expected);
 
             let (tx, rx) = tokio::io::duplex(1024);
-            let w = Outgoing::new(tx, |_, _| async {}).index(&[0])?;
+            let w = Outgoing::new(tx).index(&[0])?;
             w.write_stream_read(0, ready.into(), b"bar".as_slice())
                 .await?;
             assert_eq!(read_frames(rx).await?, expected);
@@ -2572,7 +2572,6 @@ mod tests {
                 tokio::io::empty(),
                 Vec::<Vec<Option<usize>>>::default(),
                 true,
-                |_, _| async {},
             ),
         }
     }
@@ -2674,7 +2673,6 @@ mod tests {
                 tokio::io::empty(),
                 Vec::<Vec<Option<usize>>>::default(),
                 true,
-                |_, _| async {},
             ),
         };
         f(r, Vec::default()).await?;

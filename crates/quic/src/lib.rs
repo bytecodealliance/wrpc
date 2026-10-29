@@ -7,12 +7,11 @@ use anyhow::Context as _;
 use bytes::Bytes;
 use quinn::{Connection, SendStream, VarInt};
 use tokio::io::{AsyncBufRead, AsyncRead, BufReader, ReadBuf};
-use tracing::{debug, error, trace, warn};
 use wrpc_transport::Invoke;
-use wrpc_transport::frame::{Incoming, InvokeBuilder, Outgoing};
+use wrpc_transport::frame::{Incoming, Outgoing, invoke};
 
-/// QUIC server with graceful stream shutdown handling
-pub type Server = wrpc_transport::Server<(), RecvStream, SendStream, ConnHandler>;
+/// QUIC server, which aborts ingress once all handles are dropped
+pub type Server = wrpc_transport::Server<(), RecvStream, SendStream, false>;
 
 /// Buffered receive side of a QUIC stream, which stops the stream with application error code
 /// `1` once dropped, signaling the peer that it is done receiving data
@@ -54,37 +53,7 @@ impl AsyncBufRead for RecvStream {
 #[derive(Clone, Debug)]
 pub struct Client(Connection);
 
-/// Graceful stream shutdown handler
-pub struct ConnHandler;
-
 const DONE: VarInt = VarInt::from_u32(1);
-
-impl wrpc_transport::frame::ConnHandler<RecvStream, SendStream> for ConnHandler {
-    const DRAIN: bool = false;
-
-    async fn on_egress(tx: SendStream, res: std::io::Result<()>) {
-        if let Err(err) = res {
-            error!(?err, "egress failed");
-        } else {
-            debug!("egress successfully complete");
-        }
-        match tx.stopped().await {
-            Ok(None) => {
-                trace!("stream successfully closed");
-            }
-            Ok(Some(code)) => {
-                if code == DONE {
-                    trace!("stream successfully closed");
-                } else {
-                    warn!(?code, "stream closed with code");
-                }
-            }
-            Err(err) => {
-                error!(?err, "failed to await stream close");
-            }
-        }
-    }
-}
 
 impl From<Connection> for Client {
     fn from(conn: Connection) -> Self {
@@ -111,9 +80,16 @@ impl Invoke for &Client {
             .open_bi()
             .await
             .context("failed to open parameter stream")?;
-        InvokeBuilder::<ConnHandler>::default()
-            .invoke(tx, RecvStream::from(rx), instance, func, params, paths)
-            .await
+        invoke(
+            tx,
+            RecvStream::from(rx),
+            instance,
+            func,
+            params,
+            paths,
+            false,
+        )
+        .await
     }
 }
 
