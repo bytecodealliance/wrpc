@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"io"
-	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -21,30 +20,18 @@ import (
 	"wrpc.io/tests/go/internal"
 )
 
+func serveAsync(t *testing.T, h server.Handler) (context.Context, wrpc.Invoker) {
+	return serve(t, func(s wrpc.Server) (func() error, error) {
+		return async_server.Serve(s, h)
+	})
+}
+
 func TestAsync(t *testing.T) {
-	var cancel func()
-	ctx := context.Background()
-	dl, ok := t.Deadline()
-	if ok {
-		ctx, cancel = context.WithDeadline(ctx, dl)
-	} else {
-		ctx, cancel = context.WithTimeout(ctx, time.Minute)
-	}
-	defer cancel()
-
-	srv, client := internal.RunTCP(t, ctx)
-
-	stop, err := async_server.Serve(srv, integration.AsyncHandler{})
-	if err != nil {
-		t.Errorf("failed to serve `async-server` world: %s", err)
-		return
-	}
-	internal.Accept(ctx, srv)
+	ctx, client := serveAsync(t, integration.AsyncHandler{})
 
 	t.Run("with-streams", func(t *testing.T) {
-		slog.DebugContext(ctx, "calling `wrpc-test:integration/async.with-streams`")
 		byteRx, stringListRx, errCh, err := async.WithStreams(ctx, client)
-		require.NoError(t, err, "failed to call `wrpc-test:integration/async.with-streams`")
+		require.NoError(t, err)
 		var b []byte
 		for chunk := range byteRx {
 			b = append(b, chunk...)
@@ -56,14 +43,14 @@ func TestAsync(t *testing.T) {
 		}
 		assert.Equal(t, [][]string{{"foo"}, {"bar", "baz"}}, ss)
 		for err := range errCh {
-			require.NoError(t, err, "failed to receive async value from peer")
+			require.NoError(t, err)
 		}
 	})
 
 	t.Run("with-streams-cancel", func(t *testing.T) {
 		callCtx, callCancel := context.WithCancel(ctx)
 		_, stringListRx, errCh, err := async.WithStreams(callCtx, client)
-		require.NoError(t, err, "failed to call `wrpc-test:integration/async.with-streams`")
+		require.NoError(t, err)
 		for range stringListRx {
 		}
 		callCancel()
@@ -81,7 +68,6 @@ func TestAsync(t *testing.T) {
 	})
 
 	t.Run("identity-nested-async", func(t *testing.T) {
-		slog.DebugContext(ctx, "calling `wrpc-test:integration/async.identity-nested-async`")
 		stream := make(chan []string, 3)
 		stream <- []string{"foo"}
 		stream <- []string{}
@@ -90,46 +76,38 @@ func TestAsync(t *testing.T) {
 		fut0, errCh, err := async.IdentityNestedAsync(ctx, client,
 			internal.Ready(internal.Ready(internal.Ready((<-chan []string)(stream)))),
 		)
-		require.NoError(t, err, "failed to call `wrpc-test:integration/async.identity-nested-async`")
-		fut1, ok := <-fut0
-		require.True(t, ok, "failed to receive future 0")
-		fut2, ok := <-fut1
-		require.True(t, ok, "failed to receive future 1")
-		rx, ok := <-fut2
-		require.True(t, ok, "failed to receive future 2")
+		require.NoError(t, err)
+		rx := <-<-<-fut0
+		require.NotNil(t, rx)
 		var ss []string
 		for chunk := range rx {
 			ss = append(ss, chunk...)
 		}
 		assert.Equal(t, []string{"foo", "bar", "baz"}, ss)
 		for err := range errCh {
-			require.NoError(t, err, "failed to exchange async values with peer")
+			require.NoError(t, err)
 		}
 	})
 
 	t.Run("identity-future", func(t *testing.T) {
-		slog.DebugContext(ctx, "calling `wrpc-test:integration/async.identity-future`")
 		ch := make(chan struct{}, 1)
 		fut, errCh, err := async.IdentityFuture(ctx, client, ch)
-		require.NoError(t, err, "failed to call `wrpc-test:integration/async.identity-future`")
+		require.NoError(t, err)
 		select {
 		case <-fut:
 			t.Fatal("future resolved before its parameter")
 		case <-time.After(100 * time.Millisecond):
 		}
 		ch <- struct{}{}
-		select {
-		case _, ok := <-fut:
-			require.True(t, ok, "future closed without resolving")
-		case <-ctx.Done():
-			t.Fatal("future did not resolve")
-		}
+		close(ch)
+		_, ok := <-fut
+		require.True(t, ok, "future closed without resolving")
 		for err := range errCh {
-			require.NoError(t, err, "failed to exchange async values with peer")
+			require.NoError(t, err)
 		}
 
 		fut, errCh, err = async.IdentityFuture(ctx, client, internal.Ready(struct{}{}))
-		require.NoError(t, err, "failed to call `wrpc-test:integration/async.identity-future`")
+		require.NoError(t, err)
 		select {
 		case _, ok := <-fut:
 			require.True(t, ok, "future closed without resolving")
@@ -137,14 +115,9 @@ func TestAsync(t *testing.T) {
 			t.Fatal("expected a ready future")
 		}
 		for err := range errCh {
-			require.NoError(t, err, "failed to exchange async values with peer")
+			require.NoError(t, err)
 		}
 	})
-
-	if err = stop(); err != nil {
-		t.Errorf("failed to stop serving `async-server` world: %s", err)
-		return
-	}
 }
 
 type truncatedStreamHandler struct {
@@ -172,94 +145,55 @@ func (h truncatedStreamHandler) WithFuture(ctx context.Context, x *server.Someth
 	}
 }
 
-func TestAsyncTruncatedStream(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-	defer cancel()
+func invokeTruncatedStream(t *testing.T, ctx context.Context, client wrpc.Invoker, paths ...wrpc.SubscribePath) wrpc.IndexReadCloser {
+	t.Helper()
+	w, r, err := client.Invoke(ctx, "wrpc-test:integration/async", "with-future", []byte{0x03, 'b', 'a', 'r', 0x00}, paths...)
+	require.NoError(t, err)
+	t.Cleanup(func() { r.Close() })
+	sw, err := w.Index(1)
+	require.NoError(t, err)
+	_, err = sw.Write([]byte{0x02, 'a', 'b', 0x04, 'c'})
+	require.NoError(t, err)
+	require.NoError(t, sw.Close())
+	require.NoError(t, w.Close())
+	return r
+}
 
-	srv, client := internal.RunTCP(t, ctx)
+func TestAsyncTruncatedStream(t *testing.T) {
 	received := make(chan []byte, 1)
 	cause := make(chan error, 1)
-	stop, err := async_server.Serve(srv, truncatedStreamHandler{
-		received: received,
-		cause:    cause,
-	})
-	require.NoError(t, err, "failed to serve `async-server` world")
-	defer stop()
-	internal.Accept(ctx, srv)
-
-	w, r, err := client.Invoke(ctx, "wrpc-test:integration/async", "with-future", []byte{0x03, 'b', 'a', 'r', 0x00})
-	require.NoError(t, err, "failed to invoke `wrpc-test:integration/async.with-future`")
-	defer r.Close()
-	sw, err := w.Index(1)
-	require.NoError(t, err, "failed to index stream writer")
-	_, err = sw.Write([]byte{0x02, 'a', 'b', 0x04, 'c'})
-	require.NoError(t, err, "failed to write truncated stream")
-	require.NoError(t, sw.Close(), "failed to close stream writer")
-	require.NoError(t, w.Close(), "failed to close writer")
-
+	ctx, client := serveAsync(t, truncatedStreamHandler{received: received, cause: cause})
+	invokeTruncatedStream(t, ctx, client)
 	select {
 	case b := <-received:
 		assert.Equal(t, "ab", string(b))
 	case <-ctx.Done():
 		t.Fatal("handler did not observe the truncated stream")
 	}
-	err = <-cause
-	assert.ErrorIs(t, err, io.ErrUnexpectedEOF)
+	assert.ErrorIs(t, <-cause, io.ErrUnexpectedEOF)
 }
 
 func TestAsyncEchoTruncatedStream(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-	defer cancel()
-
-	srv, client := internal.RunTCP(t, ctx)
-	stop, err := async_server.Serve(srv, integration.AsyncHandler{})
-	require.NoError(t, err, "failed to serve `async-server` world")
-	defer stop()
-	internal.Accept(ctx, srv)
-
-	w, r, err := client.Invoke(ctx, "wrpc-test:integration/async", "with-future", []byte{0x03, 'b', 'a', 'r', 0x00}, wrpc.NewSubscribePath().Index(0))
-	require.NoError(t, err, "failed to invoke `wrpc-test:integration/async.with-future`")
-	defer r.Close()
-	sw, err := w.Index(1)
-	require.NoError(t, err, "failed to index stream writer")
-	_, err = sw.Write([]byte{0x02, 'a', 'b', 0x04, 'c'})
-	require.NoError(t, err, "failed to write truncated stream")
-	require.NoError(t, sw.Close(), "failed to close stream writer")
-	require.NoError(t, w.Close(), "failed to close writer")
-
-	fut, deferred, err := wrpc.ReadFuture(r, func(r wrpc.IndexReadCloser, path ...uint32) (<-chan []byte, func(context.Context) error, error) {
-		return wrpc.ReadByteStream(r, path...)
-	}, 0)
-	require.NoError(t, err, "failed to read result")
+	ctx, client := serveAsync(t, integration.AsyncHandler{})
+	r := invokeTruncatedStream(t, ctx, client, wrpc.NewSubscribePath().Index(0))
+	fut, deferred, err := wrpc.ReadFuture(r, wrpc.ReadByteStream, 0)
+	require.NoError(t, err)
 	require.NotNil(t, deferred, "expected a pending result")
 	done := make(chan error, 1)
-	go func() {
-		done <- deferred(ctx)
-	}()
+	go func() { done <- deferred(ctx) }()
 	var s <-chan []byte
-	select {
-	case s = <-fut:
-	case err := <-done:
-		require.Error(t, err, "result future resolved without a value")
-		return
-	case <-ctx.Done():
-		t.Fatal("result future did not resolve")
-	}
 	var b []byte
 	for {
 		select {
-		case chunk, ok := <-s:
-			if !ok {
-				s = nil
-			}
+		case s = <-fut:
+			fut = nil
+		case chunk := <-s:
 			b = append(b, chunk...)
-			continue
 		case err := <-done:
 			require.Error(t, err, "expected the echoed stream to fail")
-		case <-ctx.Done():
-			t.Fatal("echoed stream did not terminate")
+			require.NoError(t, ctx.Err(), "echoed stream did not terminate")
+			assert.True(t, strings.HasPrefix("ab", string(b)), "unexpected echoed data %q", b)
+			return
 		}
-		break
 	}
-	assert.True(t, strings.HasPrefix("ab", string(b)), "unexpected echoed data %q", b)
 }

@@ -3,125 +3,40 @@
 package integration_test
 
 import (
-	"context"
-	"log/slog"
 	"testing"
-	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	wrpc "wrpc.io/go"
 	integration "wrpc.io/tests/go"
 	"wrpc.io/tests/go/bindings/resources_client/strange"
 	"wrpc.io/tests/go/bindings/resources_client/wrpc_test/integration/resources"
 	"wrpc.io/tests/go/bindings/resources_server"
-	"wrpc.io/tests/go/internal"
 )
 
 func TestResources(t *testing.T) {
-	var cancel func()
-	ctx := context.Background()
-	dl, ok := t.Deadline()
-	if ok {
-		ctx, cancel = context.WithDeadline(ctx, dl)
-	} else {
-		ctx, cancel = context.WithTimeout(ctx, time.Minute)
-	}
-	defer cancel()
+	ctx, client := serve(t, func(s wrpc.Server) (func() error, error) {
+		return resources_server.Serve(s, &integration.ResourcesHandler{}, integration.ResourcesStrangeHandler{})
+	})
 
-	srv, client := internal.RunTCP(t, ctx)
+	foo, err := resources.NewFoo(ctx, client)
+	require.NoError(t, err)
 
-	stop, err := resources_server.Serve(srv, &integration.ResourcesHandler{}, integration.ResourcesStrangeHandler{})
-	if err != nil {
-		t.Errorf("failed to serve `resources-server` world: %s", err)
-		return
-	}
-	internal.Accept(ctx, srv)
+	v, err := resources.Foo_Bar(ctx, client, foo.Borrow())
+	require.NoError(t, err)
+	assert.Equal(t, "bar", v)
 
-	var foo wrpc.Own[resources.Foo]
-	{
-		slog.DebugContext(ctx, "calling `wrpc-test:integration/resources.[constructor]foo`")
-		v, err := resources.NewFoo(ctx, client)
-		if err != nil {
-			t.Errorf("failed to call `wrpc-test:integration/resources.[constructor]foo`: %s", err)
-			return
-		}
-		foo = v
-	}
-	// TODO: Reenable once resource dropping is supported
-	//if err := foo.Drop(ctx, client); err != nil {
-	//	t.Errorf("failed to drop `foo` resource: %s", err)
-	//	return
-	//}
+	v, err = resources.Bar(ctx, client, foo.Borrow())
+	require.NoError(t, err)
+	assert.Equal(t, "bar", v)
 
-	{
-		slog.DebugContext(ctx, "calling `wrpc-test:integration/resources.[constructor]foo`")
-		v, err := resources.NewFoo(ctx, client)
-		if err != nil {
-			t.Errorf("failed to call `wrpc-test:integration/resources.[constructor]foo`: %s", err)
-			return
-		}
-		foo = v
-	}
+	n, err := strange.Bar(ctx, client, foo.Borrow())
+	require.NoError(t, err)
+	assert.Equal(t, uint64(42), n)
 
-	{
-		slog.DebugContext(ctx, "calling `wrpc-test:integration/resources.[method]foo.bar`")
-		v, err := resources.Foo_Bar(ctx, client, foo.Borrow())
-		if err != nil {
-			t.Errorf("failed to call `wrpc-test:integration/resources.[method]foo.bar`: %s", err)
-			return
-		}
-		if v != "bar" {
-			t.Errorf("expected: `bar`, got: %s", v)
-			return
-		}
-	}
+	v, err = resources.Foo_Foo(ctx, client, foo)
+	require.NoError(t, err)
+	assert.Equal(t, "foo", v)
 
-	{
-		slog.DebugContext(ctx, "calling `wrpc-test:integration/resources.bar`")
-		v, err := resources.Bar(ctx, client, foo.Borrow())
-		if err != nil {
-			t.Errorf("failed to call `wrpc-test:integration/resources.bar`: %s", err)
-			return
-		}
-		if v != "bar" {
-			t.Errorf("expected: `bar`, got: %s", v)
-			return
-		}
-	}
-
-	{
-		slog.DebugContext(ctx, "calling `wrpc-test:integration/strange.bar`")
-		v, err := strange.Bar(ctx, client, foo.Borrow())
-		if err != nil {
-			t.Errorf("failed to call `wrpc-test:integration/strange.bar`: %s", err)
-			return
-		}
-		if v != 42 {
-			t.Errorf("expected: `bar`, got: %v", v)
-			return
-		}
-	}
-
-	{
-		slog.DebugContext(ctx, "calling `wrpc-test:integration/resources.[static]foo.foo`")
-		v, err := resources.Foo_Foo(ctx, client, foo)
-		if err != nil {
-			t.Errorf("failed to call `wrpc-test:integration/resources.bar`: %s", err)
-			return
-		}
-		if v != "foo" {
-			t.Errorf("expected: `foo`, got: %s", v)
-			return
-		}
-	}
-
-	// TODO: Reenable once resource dropping is supported
-	//if err := foo.Drop(ctx, client); err == nil {
-	//	t.Errorf("`foo` resource did not get dropped by moving")
-	//	return
-	//}
-
-	if err = stop(); err != nil {
-		t.Errorf("failed to stop serving `resources-server` world: %s", err)
-		return
-	}
+	// TODO: Test dropping `foo`, also after moving it, once resource dropping is supported
 }

@@ -68,73 +68,17 @@ func assertIndex(t *testing.T, w wrpc.IndexWriter, path ...uint32) wrpc.IndexWri
 }
 
 func TestFrameStreamWriter(t *testing.T) {
-	t.Run("hello", func(t *testing.T) {
+	t.Run("nested", func(t *testing.T) {
 		t.Parallel()
-		ctx := context.Background()
 		var dst sink
-		w := wrpc.NewFrameStreamWriter(ctx, &dst)
-
+		w := wrpc.NewFrameStreamWriter(context.Background(), &dst)
+		if _, err := w.Index(); err == nil {
+			t.Fatal("indexing an empty path should fail")
+		}
 		assertWriteString(t, w, "")
 		if err := w.WriteBytes(nil); err != nil {
 			t.Fatalf("failed to write empty bytes: %s", err)
 		}
-		assertWriteString(t, w, "hello")
-		assertClose(t, w)
-
-		r := bytes.NewBuffer(dst.Bytes())
-		assertReadFrame(t, r, []byte("hello"))
-
-		if n := r.Len(); n > 0 {
-			t.Fatalf("%v trailing bytes left in buffer: %s", n, r.String())
-		}
-	})
-
-	t.Run("empty index path", func(t *testing.T) {
-		t.Parallel()
-		ctx := context.Background()
-		var dst sink
-		w := wrpc.NewFrameStreamWriter(ctx, &dst)
-		if _, err := w.Index(); err == nil {
-			t.Fatal("indexing an empty path should fail")
-		}
-		assertClose(t, w)
-	})
-
-	t.Run("close path", func(t *testing.T) {
-		t.Parallel()
-		ctx := context.Background()
-		var dst sink
-		w := wrpc.NewFrameStreamWriter(ctx, &dst)
-
-		w0 := assertIndex(t, w, 0)
-		assertWriteString(t, w0, "hello")
-		assertWriteString(t, w0, "")
-		if err := w0.ClosePath(); err != nil {
-			t.Fatalf("failed to close path: %s", err)
-		}
-		assertClose(t, w0)
-		assertClose(t, w0)
-		if err := w.ClosePath(); err != nil {
-			t.Fatalf("failed to close path: %s", err)
-		}
-		assertClose(t, w)
-
-		r := bytes.NewBuffer(dst.Bytes())
-		assertReadFrame(t, r, []byte("hello"), 0)
-		assertReadFrame(t, r, nil, 0)
-		assertReadFrame(t, r, nil)
-		if n := r.Len(); n > 0 {
-			t.Fatalf("%v trailing bytes left in buffer: %s", n, r.String())
-		}
-	})
-
-	t.Run("nested", func(t *testing.T) {
-		t.Parallel()
-		ctx := context.Background()
-		var dst sink
-
-		w := wrpc.NewFrameStreamWriter(ctx, &dst)
-
 		assertWriteByte(t, w, 42)
 		w0 := assertIndex(t, w, 0)
 		w42_41 := assertIndex(t, w, 42, 41)
@@ -155,6 +99,32 @@ func TestFrameStreamWriter(t *testing.T) {
 		assertReadFrame(t, r, []byte("hello"), 0)
 		assertReadFrame(t, r, []byte("test"), 0, 1)
 		assertReadFrame(t, r, []byte{0xfe}, 42, 41)
+		if n := r.Len(); n > 0 {
+			t.Fatalf("%v trailing bytes left in buffer: %s", n, r.String())
+		}
+	})
+
+	t.Run("close path", func(t *testing.T) {
+		t.Parallel()
+		var dst sink
+		w := wrpc.NewFrameStreamWriter(context.Background(), &dst)
+		w0 := assertIndex(t, w, 0)
+		assertWriteString(t, w0, "hello")
+		assertWriteString(t, w0, "")
+		if err := w0.ClosePath(); err != nil {
+			t.Fatalf("failed to close path: %s", err)
+		}
+		assertClose(t, w0)
+		assertClose(t, w0)
+		if err := w.ClosePath(); err != nil {
+			t.Fatalf("failed to close path: %s", err)
+		}
+		assertClose(t, w)
+
+		r := bytes.NewBuffer(dst.Bytes())
+		assertReadFrame(t, r, []byte("hello"), 0)
+		assertReadFrame(t, r, nil, 0)
+		assertReadFrame(t, r, nil)
 		if n := r.Len(); n > 0 {
 			t.Fatalf("%v trailing bytes left in buffer: %s", n, r.String())
 		}
