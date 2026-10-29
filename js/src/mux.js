@@ -62,6 +62,8 @@ export const DISCARDED = new Error("sub-stream discarded");
  * @property {Chan<Uint8Array> | undefined} chan the data of the sub-stream at
  *   this path, if one is expected here
  * @property {boolean} sealed whether every sub-stream nested in it is known
+ * @property {Set<number> | undefined} possible the children, which may be
+ *   expected, if only some may
  * @property {number} decided the number of stream elements known, whose
  *   children are all in the trie until forgotten
  * @property {boolean} done whether all its own data has been read
@@ -75,6 +77,7 @@ const node = (sealed) => ({
   children: new Map(),
   chan: undefined,
   sealed,
+  possible: undefined,
   decided: 0,
   done: false,
   closed: false,
@@ -391,7 +394,11 @@ export class Mux {
     let n = this.root;
     for (const i of path) {
       const c = n.children.get(i);
-      if (!c) return n.sealed || i < n.decided ? fail() : { at: n, i };
+      if (!c) {
+        return n.sealed || i < n.decided || (n.possible && !n.possible.has(i))
+          ? fail()
+          : { at: n, i };
+      }
       n = c;
     }
     return n.closed || n.done || !n.chan ? fail() : n;
@@ -460,6 +467,16 @@ export class Mux {
       n = c;
     }
     return n;
+  }
+
+  /**
+   * Declare that sub-streams nested in the root may only be expected at the
+   * root `indices`, so that data for any other path fails the invocation as
+   * soon as it arrives, while an empty frame for it is discarded.
+   * @param {Iterable<number>} indices
+   */
+  restrict(indices) {
+    this.root.possible = new Set(indices);
   }
 
   /**

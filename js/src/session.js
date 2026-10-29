@@ -412,6 +412,7 @@ export async function invoke(transport, instance, func, paramTypes, args, result
     }
     paramTypes.forEach((ty, i) => encodeValue(w, ty, args[i], psink, [i]));
     await mux.writeHeader(instance, func);
+    mux.restrict(resultTypes.flatMap((ty, i) => (hasAsync(ty) ? [i] : [])));
     mux.start();
     await mux.outgoing([]).write(w.finish());
   } catch (err) {
