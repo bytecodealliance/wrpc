@@ -8,7 +8,6 @@ use std::sync::Arc;
 use anyhow::Context as _;
 use bytes::BytesMut;
 use futures::{Stream, TryStreamExt as _};
-use tokio::io::AsyncWriteExt as _;
 use tokio_util::codec::{Decoder as _, Encoder as _, FramedRead};
 use tracing::{Instrument as _, Span, debug, instrument, trace};
 
@@ -129,10 +128,6 @@ pub trait ServeExt: Serve {
                                         .await
                                         .context("failed to transmit synchronous results")?;
                                     let tx = enc.take_deferred();
-                                    outgoing
-                                        .shutdown()
-                                        .await
-                                        .context("failed to shutdown synchronous return channel")?;
                                     if let Some(tx) = tx {
                                         debug!("transmitting async results");
                                         tx(outgoing, Vec::default())

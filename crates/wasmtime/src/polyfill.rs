@@ -10,7 +10,7 @@ use tokio::io::AsyncWriteExt as _;
 use tokio::time::Instant;
 use tokio::try_join;
 use tokio_util::codec::Encoder;
-use tracing::{Instrument as _, Span, debug, instrument, trace, warn};
+use tracing::{Instrument as _, Span, debug, instrument, warn};
 use wasmtime::component::{LinkerInstance, ResourceType, Type, Val, types};
 use wasmtime::error::Context as _;
 use wasmtime::{AsContextMut, Engine, bail, ensure};
@@ -199,9 +199,6 @@ async fn invoke(
             .flush()
             .await
             .context("failed to flush outgoing stream")?;
-        if let Err(err) = outgoing.shutdown().await {
-            trace!(?err, "failed to shutdown outgoing stream");
-        }
         wasmtime::error::Ok(())
     };
     let rx = async {
