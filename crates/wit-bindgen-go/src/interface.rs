@@ -448,32 +448,41 @@ impl InterfaceGenerator<'_> {
         uwrite!(
             self.src,
             r#"func(r {io}.ByteReader) (rune, error) {{
-    var x uint32
-    var s uint8
-    for i := 0; i < 5; i++ {{
+    {slog}.Debug("reading char byte", "i", 0)
+    b, err := r.ReadByte()
+    if err != nil {{
+        return {utf8}.RuneError, {fmt}.Errorf("failed to read char byte: %w", err)
+    }}
+    var n int
+    switch {{
+    case b < 0x80:
+        return rune(b), nil
+    case b&0xe0 == 0xc0:
+        n = 2
+    case b&0xf0 == 0xe0:
+        n = 3
+    case b&0xf8 == 0xf0:
+        n = 4
+    default:
+        return {utf8}.RuneError, {errors}.New("char is not valid UTF-8")
+    }}
+    var buf [{utf8}.UTFMax]byte
+    buf[0] = b
+    for i := 1; i < n; i++ {{
         {slog}.Debug("reading char byte", "i", i)
-        b, err := r.ReadByte()
+        buf[i], err = r.ReadByte()
         if err != nil {{
-            if i > 0 && err == {io}.EOF {{
+            if err == {io}.EOF {{
                 err = {io}.ErrUnexpectedEOF
             }}
             return {utf8}.RuneError, {fmt}.Errorf("failed to read char byte: %w", err)
         }}
-        if s == 28 && b > 0x0f {{
-            return {utf8}.RuneError, {errors}.New("char overflows a 32-bit integer")
-        }}
-        if b < 0x80 {{
-            x = x | uint32(b)<<s
-            v := rune(x)
-            if !{utf8}.ValidRune(v) {{
-                return v, {errors}.New("char is not valid UTF-8")
-            }}
-            return v, nil
-        }}
-        x |= uint32(b&0x7f) << s
-        s += 7
     }}
-    return {utf8}.RuneError, {errors}.New("char overflows a 32-bit integer")
+    v, size := {utf8}.DecodeRune(buf[:n])
+    if size != n {{
+        return {utf8}.RuneError, {errors}.New("char is not valid UTF-8")
+    }}
+    return v, nil
 }}({reader})"#,
         );
     }
@@ -1500,16 +1509,18 @@ impl InterfaceGenerator<'_> {
     }
 
     fn print_write_char(&mut self, name: &str, writer: &str) {
-        let binary = self.deps.binary();
+        let errors = self.deps.errors();
         let io = self.deps.io();
         let slog = self.deps.slog();
+        let utf8 = self.deps.utf8();
         uwrite!(
             self.src,
             r#"func(v rune, w {io}.Writer) (err error) {{
-                b := make([]byte, {binary}.MaxVarintLen32)
-                i := {binary}.PutUvarint(b, uint64(v))
+                if !{utf8}.ValidRune(v) {{
+                    return {errors}.New("char is not a valid Unicode scalar value")
+                }}
                 {slog}.Debug("writing char")
-                _, err = w.Write(b[:i])
+                _, err = w.Write({utf8}.AppendRune(make([]byte, 0, {utf8}.UTFMax), v))
                 return err
             }}({name}, {writer})"#,
         );

@@ -383,5 +383,13 @@ pub async fn assert_sync<C: Clone>(
         .await
         .context("failed to call `wrpc-test:integration/sync.with-enum`")?;
     ensure!(v == Foobar::Bar, "{v:?}");
+
+    for c in ['a', 'é', '🚩'] {
+        info!("calling `wrpc-test:integration/sync.identity-char`");
+        let v = sync::identity_char(client, cx.clone(), c)
+            .await
+            .context("failed to call `wrpc-test:integration/sync.identity-char`")?;
+        ensure!(v == c, "{v:?}");
+    }
     Ok(())
 }
