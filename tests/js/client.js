@@ -7,9 +7,18 @@ import { test } from "node:test";
 import { invoke, t } from "../../js/src/index.js";
 import { connect } from "./tcp.js";
 
+/**
+ * @typedef {import("../../js/src/index.js").Chan<import("../../js/src/index.js").Chunk>} Chan
+ * @typedef {import("../../js/src/index.js").InputValue} InputValue
+ * @typedef {import("../../js/src/index.js").Type} Type
+ */
+
 const addr = process.argv[2];
 
-/** Send `v` of type `ty` to `func` and return what it echoes. */
+/**
+ * Send `v` of type `ty` to `func` and return what it echoes.
+ * @param {string} func @param {Type} ty @param {InputValue} v
+ */
 async function echo(func, ty, v) {
   const { results, done, finished } = await invoke(
     await connect(addr),
@@ -22,16 +31,23 @@ async function echo(func, ty, v) {
   return { out: results[0], done, finished };
 }
 
-/** Drain an async iterable of chunks into an array of chunks. */
+/**
+ * Drain an async iterable of chunks into an array of chunks.
+ * @template T @param {AsyncIterable<T>} stream @returns {Promise<T[]>}
+ */
 async function collect(stream) {
   const out = [];
   for await (const chunk of stream) out.push(chunk);
   return out;
 }
 
-/** A null-prototype object of `props`, as records, flags and variants decode to. */
+/**
+ * A null-prototype object of `props`, as records, flags and variants decode to.
+ * @template {object} T @param {T} props @returns {T}
+ */
 const obj = (props) => Object.assign(Object.create(null), props);
 
+/** @template T @param {T} v @returns {Promise<T>} */
 const delay = (v) => new Promise((resolve) => setTimeout(() => resolve(v), 10));
 
 test("values", { timeout: 5000 }, async () => {
@@ -144,12 +160,17 @@ test("async", { timeout: 5000 }, async () => {
     yield [["a"], []];
     yield delay([["b", "c"]]);
   }
-  const { out, done, finished } = await echo("echo-async", ty, {
+  const echoed = await echo("echo-async", ty, {
     bytes: [new Uint8Array([1]), new Uint8Array([2, 3])],
     lists: lists(),
     str: delay("later"),
     nested: () => delay(() => delay(42)),
   });
+  const { done, finished } = echoed;
+  const out =
+    /** @type {{ bytes: Chan, lists: Chan, str: Promise<string>, nested: Promise<number> }} */ (
+      echoed.out
+    );
   const [bytes, ls, str, nested] = await Promise.all([
     collect(out.bytes),
     collect(out.lists),
