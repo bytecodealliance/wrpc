@@ -23,7 +23,8 @@ use tracing::{Instrument, Span, info, info_span, instrument};
 use wasmtime::component::{Component, Linker, ResourceTable, ResourceType, types};
 use wasmtime_wasi::{WasiCtx, WasiCtxView, WasiView};
 use wrpc::runtime::wasmtime::{
-    ServeExt as _, SharedResourceTable, SharedStore, WrpcCtx, WrpcCtxView, WrpcView, link_item,
+    ResourceTypes, ServeExt as _, SharedResourceTable, SharedStore, WrpcCtx, WrpcCtxView, WrpcView,
+    link_item,
 };
 use wrpc_transport::frame::Oneshot;
 use wrpc_transport::{InvokeExt as _, ResourceBorrow, ResourceOwn, ServeExt as _};
@@ -2107,9 +2108,11 @@ async fn rust_wasmtime_polyfill_async() -> anyhow::Result<()> {
             store,
             instance,
             idx,
-            guest_resources,
+            ResourceTypes {
+                guest: guest_resources,
+                ..ResourceTypes::default()
+            },
             host_resources,
-            Arc::<[ResourceType]>::default(),
             ty,
             "",
             "run",
@@ -2221,9 +2224,8 @@ async fn rust_wasmtime_shared_store_trap() -> anyhow::Result<()> {
             store,
             instance,
             idx,
-            Arc::<[ResourceType]>::default(),
+            ResourceTypes::default(),
             Arc::default(),
-            Arc::<[ResourceType]>::default(),
             ty,
             "",
             "run",

@@ -19,7 +19,8 @@ use wrpc_transport::{Invoke, InvokeExt as _};
 use crate::paths::params_async_paths;
 use crate::rpc::Error;
 use crate::{
-    ValEncoder, WithStore, WrpcView, WrpcViewExt as _, read_value, rpc_func_name, rpc_result_type,
+    ResourceTypes, ValEncoder, WithStore, WrpcView, WrpcViewExt as _, read_value, rpc_func_name,
+    rpc_result_type,
 };
 
 /// Polyfill [`types::ComponentItem`] in a [`LinkerInstance`] using [`wrpc_transport::Invoke`]
@@ -139,7 +140,7 @@ async fn invoke(
     store: &mut impl WithStore<Data: WrpcView<Invoke: Clone>>,
     params: &[Val],
     results: &mut [Val],
-    guest_resources: Arc<[ResourceType]>,
+    resources: &ResourceTypes,
     params_ty: impl IntoIterator<Item = (&str, Type)>,
     results_ty: impl IntoIterator<Item = Type>,
     instance: Arc<str>,
@@ -149,7 +150,7 @@ async fn invoke(
         let mut buf = BytesMut::default();
         let mut deferred = vec![];
         for (v, (name, ref ty)) in zip(params, params_ty) {
-            let mut enc = ValEncoder::new(store.as_context_mut(), ty, &guest_resources, &[]);
+            let mut enc = ValEncoder::new(store.as_context_mut(), ty, resources);
             enc.encode(v, &mut buf)
                 .with_context(|| format!("failed to encode parameter `{name}`"))?;
             deferred.push(enc.deferred);
@@ -164,11 +165,7 @@ async fn invoke(
         ))
     })?;
     let results_ty: Vec<_> = results_ty.into_iter().collect();
-    #[cfg(feature = "wasmtime-wasi")]
-    let io_streams = [ResourceType::host::<wasmtime_wasi::p2::DynInputStream>()];
-    #[cfg(not(feature = "wasmtime-wasi"))]
-    let io_streams: [ResourceType; 0] = [];
-    let paths = params_async_paths(&results_ty, &io_streams);
+    let paths = params_async_paths(&results_ty, resources);
     let rpc_name = rpc_func_name(&name);
     let start = Instant::now();
     let invocation = if let Some(timeout) = timeout {
@@ -210,17 +207,9 @@ async fn invoke(
     let rx = async {
         let mut incoming = pin!(incoming);
         for (i, (v, ref ty)) in zip(results, results_ty).enumerate() {
-            read_value(
-                &mut *store,
-                &mut incoming,
-                &guest_resources,
-                &[],
-                v,
-                ty,
-                &[i],
-            )
-            .await
-            .with_context(|| format!("failed to decode return value {i}"))?;
+            read_value(&mut *store, &mut incoming, resources, v, ty, &[i])
+                .await
+                .with_context(|| format!("failed to decode return value {i}"))?;
         }
         wasmtime::error::Ok(())
     };
@@ -269,8 +258,12 @@ where
     let span = Span::current();
     let instance = instance.into();
     let name = name.into();
-    let guest_resources = guest_resources.into();
     let host_resources = host_resources.into();
+    let resources = ResourceTypes {
+        guest: guest_resources.into(),
+        #[cfg(feature = "wasmtime-wasi")]
+        io_streams: Arc::from([ResourceType::host::<wasmtime_wasi::p2::DynInputStream>()]),
+    };
     let result_ty = rpc_result_type(&host_resources, ty.results());
     if ty.async_() {
         linker.func_new_concurrent(&Arc::clone(&name), move |store, ty, params, results| {
@@ -281,7 +274,7 @@ where
                     params,
                     results,
                     result_ty.clone(),
-                    Arc::clone(&guest_resources),
+                    resources.clone(),
                     Arc::clone(&instance),
                     Arc::clone(&name),
                 )
@@ -297,7 +290,7 @@ where
                     params,
                     results,
                     result_ty.clone(),
-                    Arc::clone(&guest_resources),
+                    resources.clone(),
                     Arc::clone(&instance),
                     Arc::clone(&name),
                 )
@@ -314,7 +307,7 @@ async fn call(
     params: &[Val],
     results: &mut [Val],
     result_ty: Option<Option<Type>>,
-    guest_resources: Arc<[ResourceType]>,
+    resources: ResourceTypes,
     instance: Arc<str>,
     name: Arc<str>,
 ) -> wasmtime::Result<()> {
@@ -323,7 +316,7 @@ async fn call(
             &mut store,
             params,
             results,
-            guest_resources,
+            &resources,
             ty.params(),
             ty.results(),
             instance,
@@ -340,7 +333,7 @@ async fn call(
         &mut store,
         params,
         ok.as_mut_slice(),
-        guest_resources,
+        &resources,
         ty.params(),
         result_ty,
         instance,
