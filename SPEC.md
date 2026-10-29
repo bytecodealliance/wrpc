@@ -85,7 +85,7 @@ Likewise, if a non-empty frame is received on a `path` that carries no pending v
 
 A sender MUST send the data of a pending value only after the data carrying it, for example, the data of a pending value in a stream element after the stream chunk containing that element, since a receiver MAY bound the data it buffers for a `path`, which no value it decoded carries yet.
 
-Frames do not communicate the end of transmit, i.e. that no more frames follow. Each transport MUST communicate it using its own mechanism, for example, TCP shutdown or finishing a QUIC stream. The end of transmit closes every `path`.
+Frames do not communicate the end of transmit, i.e. that no more frames follow. Each transport MUST communicate it using its own mechanism, for example, TCP shutdown or finishing a QUIC stream. The end of transmit closes every `path`. A sender, which fails before sending all of its data, SHOULD signal the failure using the transport's own mechanism instead of communicating the end of transmit, if the transport has one, for example, by resetting the QUIC stream or the TCP connection.
 
 ## Transport specifications
 
