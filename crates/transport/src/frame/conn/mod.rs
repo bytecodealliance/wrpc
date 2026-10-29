@@ -458,23 +458,20 @@ impl Incoming {
     /// Creates a new [Incoming] given an [`AsyncBufRead`] and a set of async paths.
     ///
     /// Data ingress is aborted and the reader is dropped once all handles and all futures
-    /// returned by [`Self::finished`] are dropped.
-    /// If `drain` is `true`, data ingress continues after all handles are dropped until the peer
-    /// closes the stream, as long as a future returned by [`Self::finished`] is held, otherwise
-    /// data ingress stops once all handles are dropped.
+    /// returned by [`Self::finished`] are dropped. Data ingress continues after all handles are
+    /// dropped until the peer closes the stream, i.e. it is drained, as long as a future returned
+    /// by [`Self::finished`] is held.
     /// Any data received for a registered path, which was not processed, fails ingress with
     /// [`std::io::ErrorKind::BrokenPipe`] once all handles are dropped, as does any data
-    /// received after that by draining ingress.
+    /// received after that while draining.
     /// Draining reports the latter, which would otherwise go unnoticed, discards empty frames the
     /// peer may still send to close paths, and reads the stream to its end, which transports
     /// reusing the connection, like HTTP/1, require.
-    /// Transports, which signal the peer to stop sending once the reader is dropped, like QUIC,
-    /// may stop ingress instead.
     ///
     /// `paths` must not contain both a wildcard and an index at the same position, so paths of
     /// different variant cases, which are not indexed, must be merged by replacing such indices
     /// by wildcards.
-    pub fn new<T, P>(mut rx: T, paths: impl IntoIterator<Item = P>, drain: bool) -> Self
+    pub fn new<T, P>(mut rx: T, paths: impl IntoIterator<Item = P>) -> Self
     where
         T: AsyncBufRead + Unpin + Send + 'static,
         P: AsRef<[Option<usize>]>,
@@ -516,11 +513,7 @@ impl Incoming {
                         }
                         _ = &mut dropped_rx => {
                             close_rx(&state)?;
-                            if drain {
-                                io.await
-                            } else {
-                                Ok(())
-                            }
+                            io.await
                         }
                     }
                 }
@@ -591,8 +584,9 @@ impl Incoming {
         })
     }
 
-    /// Returns a future, which resolves to the result of ingress once it is complete and all
-    /// handles are dropped. Ingress is not aborted while the future is held, see [`Self::new`].
+    /// Returns a future, which resolves to the result of ingress once it fails, or once it is
+    /// complete and all handles are dropped. Ingress is drained while the future is held, see
+    /// [`Self::new`].
     pub fn finished(&self) -> impl Future<Output = std::io::Result<()>> + Send + 'static {
         let task = Arc::clone(&self.task);
         let done = finished(self.state.done.subscribe());
@@ -997,18 +991,15 @@ mod tests {
 
     const FRAME: [u8; 4] = [0x01, 0x00, 0x01, 0x2a];
 
-    fn incoming(
-        drain: bool,
-    ) -> (
+    fn incoming() -> (
         DuplexStream,
         Incoming,
         BoxFuture<'static, std::io::Result<()>>,
     ) {
-        incoming_paths(drain, [[Some(0)]])
+        incoming_paths([[Some(0)]])
     }
 
     fn incoming_paths<P: AsRef<[Option<usize>]>>(
-        drain: bool,
         paths: impl IntoIterator<Item = P>,
     ) -> (
         DuplexStream,
@@ -1016,7 +1007,7 @@ mod tests {
         BoxFuture<'static, std::io::Result<()>>,
     ) {
         let (tx, rx) = tokio::io::duplex(16);
-        let rx = Incoming::new(BufReader::new(rx), paths, drain);
+        let rx = Incoming::new(BufReader::new(rx), paths);
         let done = rx.finished().boxed();
         (tx, rx, done)
     }
@@ -1033,8 +1024,7 @@ mod tests {
 
     #[test_log::test(tokio::test)]
     async fn incoming_rejects_unsubscribed_paths() {
-        let (_tx, rx, ..) =
-            incoming_paths(false, [&[Some(0)][..], &[Some(1)], &[Some(1), Some(0)]]);
+        let (_tx, rx, ..) = incoming_paths([&[Some(0)][..], &[Some(1)], &[Some(1), Some(0)]]);
         rx.index(&[0]).unwrap();
         for path in [&[0][..], &[2], &[1, 1]] {
             let Err(err) = rx.index(path) else {
@@ -1042,7 +1032,7 @@ mod tests {
             };
             assert_eq!(err.kind(), ErrorKind::NotFound);
         }
-        let (_tx, rx, ..) = incoming_paths(false, [[Some(0), Some(0)]]);
+        let (_tx, rx, ..) = incoming_paths([[Some(0), Some(0)]]);
         let mut sub = rx.index(&[0]).unwrap();
         sub.index(&[0]).unwrap();
         let err = sub.read_to_end(&mut Vec::default()).await.unwrap_err();
@@ -1050,26 +1040,8 @@ mod tests {
     }
 
     #[test_log::test(tokio::test)]
-    async fn incoming_drop_aborts() {
-        let (_tx, rx, done_rx) = incoming(false);
-        drop(rx);
-        done(done_rx).await.unwrap();
-    }
-
-    #[test_log::test(tokio::test)]
-    async fn incoming_abort_rejects_unprocessed_data() {
-        let (mut tx, rx, mut done_rx) = incoming(false);
-        tx.write_all(&FRAME).await.unwrap();
-        drop(tx);
-        tokio::task::yield_now().await;
-        assert!((&mut done_rx).now_or_never().is_none());
-        drop(rx);
-        assert_eq!(failed(done_rx).await, ErrorKind::BrokenPipe);
-    }
-
-    #[test_log::test(tokio::test)]
     async fn incoming_read_to_end_fails_on_ingress_failure() {
-        let (mut tx, mut rx, ..) = incoming(true);
+        let (mut tx, mut rx, ..) = incoming();
         tx.write_all(&[0x00, 0x01, 0x2a, 0x01]).await.unwrap();
         drop(tx);
         let mut buf = Vec::default();
@@ -1080,17 +1052,25 @@ mod tests {
 
     #[test_log::test(tokio::test)]
     async fn incoming_drop_aborts_without_finished() {
-        let (mut tx, rx, done_rx) = incoming(true);
-        drop(done_rx);
-        drop(rx);
-        tokio::task::yield_now().await;
-        let err = tx.write_all(&FRAME).await.unwrap_err();
-        assert_eq!(err.kind(), ErrorKind::BrokenPipe);
+        for finished_first in [true, false] {
+            let (mut tx, rx, done_rx) = incoming();
+            if finished_first {
+                drop(done_rx);
+                drop(rx);
+            } else {
+                drop(rx);
+                tokio::task::yield_now().await;
+                drop(done_rx);
+            }
+            tokio::task::yield_now().await;
+            let err = tx.write_all(&FRAME).await.unwrap_err();
+            assert_eq!(err.kind(), ErrorKind::BrokenPipe);
+        }
     }
 
     #[test_log::test(tokio::test)]
     async fn incoming_drop_waits_for_eof() {
-        let (mut tx, rx, mut done_rx) = incoming(true);
+        let (mut tx, rx, mut done_rx) = incoming();
         drop(rx);
         tokio::task::yield_now().await;
         assert!((&mut done_rx).now_or_never().is_none());
@@ -1103,7 +1083,7 @@ mod tests {
 
     #[test_log::test(tokio::test)]
     async fn incoming_eof_waits_for_drop() {
-        let (tx, mut rx, mut done_rx) = incoming(true);
+        let (tx, mut rx, mut done_rx) = incoming();
         drop(tx);
         rx.read_to_end(&mut Vec::default()).await.unwrap();
         assert!((&mut done_rx).now_or_never().is_none());
@@ -1113,7 +1093,7 @@ mod tests {
 
     #[test_log::test(tokio::test)]
     async fn incoming_empty_frame_closes_path() {
-        let (mut tx, mut rx, done_rx) = incoming(true);
+        let (mut tx, mut rx, done_rx) = incoming();
         let mut sub = rx.index(&[0]).unwrap();
         tx.write_all(&[0x00, 0x00]).await.unwrap();
         tx.write_all(&FRAME).await.unwrap();
@@ -1128,20 +1108,20 @@ mod tests {
 
     #[test_log::test(tokio::test)]
     async fn incoming_rejects_unprocessed_data() {
-        let (mut tx, rx, done_rx) = incoming(true);
+        let (mut tx, rx, done_rx) = incoming();
         let finished = rx.finished();
         drop(rx);
         tx.write_all(&FRAME).await.unwrap();
         assert_eq!(failed(done_rx).await, ErrorKind::BrokenPipe);
         assert_eq!(finished.await.unwrap_err().kind(), ErrorKind::BrokenPipe);
 
-        let (mut tx, rx, done_rx) = incoming(true);
+        let (mut tx, rx, done_rx) = incoming();
         tx.write_all(&FRAME).await.unwrap();
         tokio::task::yield_now().await;
         drop(rx);
         assert_eq!(failed(done_rx).await, ErrorKind::BrokenPipe);
 
-        let (mut tx, rx, done_rx) = incoming(true);
+        let (mut tx, rx, done_rx) = incoming();
         let sub = rx.index(&[0]).unwrap();
         tx.write_all(&FRAME).await.unwrap();
         tokio::task::yield_now().await;
@@ -1149,7 +1129,7 @@ mod tests {
         drop(rx);
         assert_eq!(failed(done_rx).await, ErrorKind::BrokenPipe);
 
-        let (tx, rx, done_rx) = incoming(true);
+        let (tx, rx, done_rx) = incoming();
         drop(crate::BufferedIncoming {
             buffer: BytesMut::from(&FRAME[..]),
             inner: rx,
@@ -1157,14 +1137,14 @@ mod tests {
         drop(tx);
         assert_eq!(failed(done_rx).await, ErrorKind::BrokenPipe);
 
-        let (mut tx, rx, done_rx) = incoming(true);
+        let (mut tx, rx, done_rx) = incoming();
         tx.write_all(&FRAME).await.unwrap();
         drop(tx);
         tokio::task::yield_now().await;
         drop(rx);
         assert_eq!(failed(done_rx).await, ErrorKind::BrokenPipe);
 
-        let (mut tx, rx, done_rx) = incoming(true);
+        let (mut tx, rx, done_rx) = incoming();
         tx.write_all(&FRAME).await.unwrap();
         tx.write_all(&[0x01, 0x01, 0x01, 0x2a]).await.unwrap();
         drop(rx);
@@ -1184,16 +1164,13 @@ mod tests {
 
     #[test_log::test(tokio::test)]
     async fn incoming_declared_paths() {
-        let (mut tx, rx, done_rx) = incoming_paths(
-            true,
-            [
-                &[Some(0)][..],
-                &[Some(0)],
-                &[Some(0xffff_ffff)],
-                &[Some(1), None, Some(0)],
-                &[Some(1), None],
-            ],
-        );
+        let (mut tx, rx, done_rx) = incoming_paths([
+            &[Some(0)][..],
+            &[Some(0)],
+            &[Some(0xffff_ffff)],
+            &[Some(1), None, Some(0)],
+            &[Some(1), None],
+        ]);
         tx.write_all(&FRAME).await.unwrap();
         tx.write_all(&[0x01, 0xff, 0xff, 0xff, 0xff, 0x0f, 0x01, 0x2b])
             .await
@@ -1219,7 +1196,7 @@ mod tests {
 
     #[test_log::test(tokio::test)]
     async fn incoming_take_reader() {
-        let (mut tx, mut rx, done_rx) = incoming_paths(true, [[Some(0)]]);
+        let (mut tx, mut rx, done_rx) = incoming_paths([[Some(0)]]);
         tx.write_all(&[0x00, 0x01, 0x2b]).await.unwrap();
         tx.write_all(&FRAME).await.unwrap();
         drop(tx);
@@ -1237,7 +1214,7 @@ mod tests {
         drop(reader);
         done(done_rx).await.unwrap();
 
-        let (mut tx, rx, done_rx) = incoming_paths(true, [[None]]);
+        let (mut tx, rx, done_rx) = incoming_paths([[None]]);
         let mut element = rx.index(&[0]).unwrap();
         let mut reader = element.take_reader().unwrap();
         drop(element);
@@ -1269,10 +1246,8 @@ mod tests {
             (&[0x01, 0x01, 0x01, 0x2a], ErrorKind::NotFound),
             (&[0x03, 0x02, 0x03, 0x00, 0x01, 0x2a], ErrorKind::NotFound),
         ] {
-            let (mut tx, _rx, done_rx) = incoming_paths(
-                true,
-                [[Some(0)].as_slice(), &[Some(1), Some(0)], &[Some(2), None]],
-            );
+            let (mut tx, _rx, done_rx) =
+                incoming_paths([[Some(0)].as_slice(), &[Some(1), Some(0)], &[Some(2), None]]);
             tx.write_all(frames).await.unwrap();
             drop(tx);
             assert_eq!(failed(done_rx).await, kind, "{frames:02x?}");
@@ -1281,7 +1256,7 @@ mod tests {
 
     #[test_log::test(tokio::test)]
     async fn incoming_discards_empty_frames_on_closed_paths() {
-        let (mut tx, mut rx, done_rx) = incoming_paths(true, [[Some(0)], [Some(1)]]);
+        let (mut tx, mut rx, done_rx) = incoming_paths([[Some(0)], [Some(1)]]);
         let mut sub = rx.index(&[0]).unwrap();
         let mut other = rx.index(&[1]).unwrap();
         tx.write_all(&[0x00, 0x00, 0x00, 0x00]).await.unwrap();
@@ -1300,10 +1275,8 @@ mod tests {
 
     #[test_log::test(tokio::test)]
     async fn incoming_discards_empty_frames_on_undeclared_paths() {
-        let (mut tx, rx, done_rx) = incoming_paths(
-            true,
-            [[Some(0)].as_slice(), &[Some(1), Some(0)], &[Some(2), None]],
-        );
+        let (mut tx, rx, done_rx) =
+            incoming_paths([[Some(0)].as_slice(), &[Some(1), Some(0)], &[Some(2), None]]);
         let mut sub = rx.index(&[0]).unwrap();
         tx.write_all(&[0x01, 0x01, 0x00]).await.unwrap();
         tx.write_all(&[0x01, 0x03, 0x00]).await.unwrap();
@@ -1328,7 +1301,7 @@ mod tests {
 
     #[test_log::test(tokio::test)]
     async fn incoming_discards_empty_frames_on_released_elements() {
-        let (mut tx, rx, done_rx) = incoming_paths(true, [[None]]);
+        let (mut tx, rx, done_rx) = incoming_paths([[None]]);
         drop(rx.index(&[0]).unwrap());
         let mut sub = rx.index(&[1]).unwrap();
         tx.write_all(&[0x01, 0x00, 0x00]).await.unwrap();
@@ -1351,7 +1324,7 @@ mod tests {
 
     #[test_log::test(tokio::test)]
     async fn incoming_wildcard_elements() {
-        let (mut tx, rx, done_rx) = incoming_paths(true, [[None]]);
+        let (mut tx, rx, done_rx) = incoming_paths([[None]]);
         tx.write_all(&FRAME).await.unwrap();
         tx.write_all(&[0x01, 0x03, 0x01, 0x2b]).await.unwrap();
         tx.write_all(&[0x01, 0x01, 0x01, 0x2a]).await.unwrap();
@@ -1383,7 +1356,7 @@ mod tests {
 
     #[test_log::test(tokio::test)]
     async fn incoming_nested_wildcard_elements() {
-        let (mut tx, rx, done_rx) = incoming_paths(true, [[None, Some(0), None]]);
+        let (mut tx, rx, done_rx) = incoming_paths([[None, Some(0), None]]);
         let element = rx.index(&[1]).unwrap();
         let mut buf = [0; 1];
         for i in 0..100 {
@@ -1409,7 +1382,7 @@ mod tests {
 
     #[test_log::test(tokio::test)]
     async fn incoming_released_element_fails_unclaimed_frame() {
-        let (mut tx, rx, done_rx) = incoming_paths(true, [[None, None]]);
+        let (mut tx, rx, done_rx) = incoming_paths([[None, None]]);
         let element = rx.index(&[0]).unwrap();
         for i in 1..=32 {
             tx.write_all(&[0x02, i, 0x00, 0x01, 0x2a]).await.unwrap();

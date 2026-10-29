@@ -311,7 +311,7 @@ impl Invoke for WebSocketsClient {
             .await
             .context("failed to establish WebSocket connection")?;
         let (tx, rx) = wrpc_websockets::split(ws);
-        wrpc_transport::frame::invoke(tx, rx, instance, func, params, paths, true).await
+        wrpc_transport::frame::invoke(tx, rx, instance, func, params, paths).await
     }
 }
 

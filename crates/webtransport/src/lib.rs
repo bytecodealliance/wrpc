@@ -11,8 +11,8 @@ use web_transport_quinn::{SendStream, Session};
 use wrpc_transport::Invoke;
 use wrpc_transport::frame::{Incoming, Outgoing, invoke};
 
-/// WebTransport server, which aborts ingress once all handles are dropped
-pub type Server = wrpc_transport::Server<(), RecvStream, SendStream, false>;
+/// WebTransport server
+pub type Server = wrpc_transport::Server<(), RecvStream, SendStream>;
 
 /// Buffered receive side of a WebTransport stream, which stops the stream with WebTransport
 /// application error code `1` once dropped, signaling the peer that it is done receiving data
@@ -95,16 +95,7 @@ impl Invoke for &Client {
             .open_bi()
             .await
             .context("failed to open parameter stream")?;
-        invoke(
-            tx,
-            RecvStream::from(rx),
-            instance,
-            func,
-            params,
-            paths,
-            false,
-        )
-        .await
+        invoke(tx, RecvStream::from(rx), instance, func, params, paths).await
     }
 }
 

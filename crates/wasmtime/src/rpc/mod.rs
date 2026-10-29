@@ -509,7 +509,7 @@ mod tests {
         for transmitted in [true, false] {
             let paths = [[None, Some(0)], [None, Some(1)]];
             let (mut tx, incoming) = tokio::io::duplex(64);
-            let incoming = Incoming::new(BufReader::new(incoming), paths, true);
+            let incoming = Incoming::new(BufReader::new(incoming), paths);
             let root = Arc::<IncomingRoot>::default();
             let (transmit_tx, transmit_rx) = oneshot::channel::<()>();
             let transmission = async move {
@@ -552,7 +552,7 @@ mod tests {
     async fn incoming_channel_data_outlives_channels() {
         let paths = [[Some(0)]];
         let (mut tx, incoming) = tokio::io::duplex(64);
-        let incoming = Incoming::new(BufReader::new(incoming), paths, true);
+        let incoming = Incoming::new(BufReader::new(incoming), paths);
         let root = Arc::<IncomingRoot>::default();
         let weak = Arc::downgrade(&root);
         let rx = IncomingChannel::new(future::ready(Ok(())).boxed().shared(), root, paths);
@@ -578,7 +578,7 @@ mod tests {
         for transmitted in [true, false] {
             let paths: [[Option<usize>; 0]; 0] = [];
             let (mut tx, incoming) = tokio::io::duplex(64);
-            let incoming = Incoming::new(BufReader::new(incoming), paths, true);
+            let incoming = Incoming::new(BufReader::new(incoming), paths);
             let root = Arc::<IncomingRoot>::default();
             let (transmit_tx, transmit_rx) = oneshot::channel::<()>();
             let transmission = async move {

@@ -286,7 +286,7 @@ impl wrpc_transport::Invoke for Client<hyper::client::conn::http2::SendRequest<O
 
         Ok((
             wrpc_transport::frame::Outgoing::new(tx),
-            wrpc_transport::frame::Incoming::new(rx, paths.as_ref(), false),
+            wrpc_transport::frame::Incoming::new(rx, paths.as_ref()),
         ))
     }
 }
@@ -324,7 +324,7 @@ where
 
         Ok((
             wrpc_transport::frame::Outgoing::new(tx),
-            wrpc_transport::frame::Incoming::new(rx, paths.as_ref(), true),
+            wrpc_transport::frame::Incoming::new(rx, paths.as_ref()),
         ))
     }
 }

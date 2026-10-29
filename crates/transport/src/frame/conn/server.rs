@@ -13,13 +13,13 @@ use tracing::{instrument, trace};
 use crate::Serve;
 use crate::frame::{Header, HeaderReadError, Incoming, Outgoing};
 
-/// wRPC server for framed transports, `DRAIN` is passed to [`Incoming::new`]
+/// wRPC server for framed transports
 #[derive(Debug)]
-pub struct Server<C, I, O, const DRAIN: bool = true> {
+pub struct Server<C, I, O> {
     handlers: Mutex<HashMap<String, HashMap<String, mpsc::Sender<(C, I, O)>>>>,
 }
 
-impl<C, I, O, const DRAIN: bool> Server<C, I, O, DRAIN> {
+impl<C, I, O> Server<C, I, O> {
     /// Constructs a new [Server]
     #[must_use]
     pub fn new() -> Self {
@@ -88,7 +88,7 @@ impl<C, I, O> Display for AcceptError<C, I, O> {
 
 impl<C, I, O> core::error::Error for AcceptError<C, I, O> {}
 
-impl<C, I, O, const DRAIN: bool> Server<C, I, O, DRAIN>
+impl<C, I, O> Server<C, I, O>
 where
     I: AsyncBufRead + Unpin,
 {
@@ -114,13 +114,13 @@ where
 }
 
 #[instrument(level = "trace", skip(srv, paths))]
-async fn serve<C, I, O, const DRAIN: bool>(
-    srv: &Server<C, I, O, DRAIN>,
+async fn serve<C, I, O>(
+    srv: &Server<C, I, O>,
     instance: &str,
     func: &str,
     paths: Arc<[Box<[Option<usize>]>]>,
 ) -> anyhow::Result<
-    impl Stream<Item = anyhow::Result<(C, Outgoing, Incoming)>> + 'static + use<C, I, O, DRAIN>,
+    impl Stream<Item = anyhow::Result<(C, Outgoing, Incoming)>> + 'static + use<C, I, O>,
 >
 where
     C: Send + Sync + 'static,
@@ -143,13 +143,13 @@ where
     }
     Ok(ReceiverStream::new(rx).map(move |(cx, rx, tx)| {
         trace!("received invocation");
-        let rx = Incoming::new(rx, paths.as_ref(), DRAIN);
+        let rx = Incoming::new(rx, paths.as_ref());
         let tx = Outgoing::new(tx);
         Ok((cx, tx, rx))
     }))
 }
 
-impl<C, I, O, const DRAIN: bool> Serve for Server<C, I, O, DRAIN>
+impl<C, I, O> Serve for Server<C, I, O>
 where
     C: Send + Sync + 'static,
     I: AsyncBufRead + Send + Sync + Unpin + 'static,
@@ -163,15 +163,13 @@ where
         func: &str,
         paths: Arc<[Box<[Option<usize>]>]>,
     ) -> anyhow::Result<
-        impl Stream<Item = anyhow::Result<(Self::Context, Outgoing, Incoming)>>
-        + 'static
-        + use<C, I, O, DRAIN>,
+        impl Stream<Item = anyhow::Result<(Self::Context, Outgoing, Incoming)>> + 'static + use<C, I, O>,
     > {
         serve(self, instance, func, paths).await
     }
 }
 
-impl<'a, C, I, O, const DRAIN: bool> Serve for &'a Server<C, I, O, DRAIN>
+impl<'a, C, I, O> Serve for &'a Server<C, I, O>
 where
     C: Send + Sync + 'static,
     I: AsyncBufRead + Send + Sync + Unpin + 'static,
@@ -187,7 +185,7 @@ where
     ) -> anyhow::Result<
         impl Stream<Item = anyhow::Result<(Self::Context, Outgoing, Incoming)>>
         + 'static
-        + use<'a, C, I, O, DRAIN>,
+        + use<'a, C, I, O>,
     > {
         serve(self, instance, func, paths).await
     }

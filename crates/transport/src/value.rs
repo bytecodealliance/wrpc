@@ -2571,7 +2571,6 @@ mod tests {
             inner: crate::frame::Incoming::new(
                 tokio::io::empty(),
                 Vec::<Vec<Option<usize>>>::default(),
-                true,
             ),
         }
     }
@@ -2672,7 +2671,6 @@ mod tests {
             inner: crate::frame::Incoming::new(
                 tokio::io::empty(),
                 Vec::<Vec<Option<usize>>>::default(),
-                true,
             ),
         };
         f(r, Vec::default()).await?;
