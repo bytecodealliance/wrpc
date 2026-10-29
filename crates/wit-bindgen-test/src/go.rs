@@ -119,12 +119,18 @@ func main() {
 				return
 			default:
 			}
-			if err := srv.Accept(); err != nil {
-				if errors.Is(err, net.ErrClosed) {
-					return
+			accept, err := srv.Accept()
+			if err != nil {
+				if !errors.Is(err, net.ErrClosed) {
+					os.Stderr.WriteString(err.Error() + "\n")
 				}
 				return
 			}
+			go func() {
+				if err := accept(ctx); err != nil {
+					os.Stderr.WriteString(err.Error() + "\n")
+				}
+			}()
 		}
 	}()
 

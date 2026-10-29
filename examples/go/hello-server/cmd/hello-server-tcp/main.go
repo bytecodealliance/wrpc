@@ -42,11 +42,18 @@ func run() (err error) {
 				return
 			default:
 				slog.Debug("accepting invocation")
-				if err := srv.Accept(); err != nil {
+				accept, err := srv.Accept()
+				if err != nil {
 					if !errors.Is(err, net.ErrClosed) {
+						slog.Error("failed to accept connection", "err", err)
+					}
+					continue
+				}
+				go func() {
+					if err := accept(ctx); err != nil {
 						slog.Error("failed to accept invocation", "err", err)
 					}
-				}
+				}()
 			}
 		}
 	}()

@@ -54,12 +54,18 @@ func Accept(ctx context.Context, srv *wrpctcp.Server) {
 			case <-ctx.Done():
 				return
 			default:
-				if err := srv.Accept(); err != nil {
+				accept, err := srv.Accept()
+				if err != nil {
 					if !errors.Is(err, net.ErrClosed) {
-						slog.Error("failed to accept invocation", "err", err)
+						slog.Error("failed to accept connection", "err", err)
 					}
 					return
 				}
+				go func() {
+					if err := accept(ctx); err != nil {
+						slog.Error("failed to accept invocation", "err", err)
+					}
+				}()
 			}
 		}
 	}()

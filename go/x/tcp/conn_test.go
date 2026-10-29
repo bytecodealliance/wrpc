@@ -51,6 +51,7 @@ func TestConnClose(t *testing.T) {
 
 func TestServerAcceptError(t *testing.T) {
 	for name, payload := range map[string][]byte{
+		"stalled":  nil,
 		"version":  {0xff},
 		"instance": {0x00, 1, 'a', 1, 'b'},
 	} {
@@ -58,7 +59,16 @@ func TestServerAcceptError(t *testing.T) {
 			l := listen(t)
 			srv := NewServerWithContext(context.Background(), l)
 			accepted := make(chan error, 1)
-			go func() { accepted <- srv.Accept() }()
+			go func() {
+				accept, err := srv.Accept()
+				if err != nil {
+					accepted <- err
+					return
+				}
+				ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+				defer cancel()
+				accepted <- accept(ctx)
+			}()
 			c := dial(t, l)
 			if _, err := c.Write(payload); err != nil {
 				t.Fatalf("failed to write: %s", err)
