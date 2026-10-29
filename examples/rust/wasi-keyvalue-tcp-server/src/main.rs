@@ -45,6 +45,7 @@ async fn main() -> anyhow::Result<()> {
                                 warn!(?err, "failed to set TCP_NODELAY");
                             }
                             let (rx, tx) = stream.into_split();
+                            let tx = wrpc_transport::tcp::WriteHalf::from(tx);
                             let srv = Arc::clone(&srv);
                             conns.spawn(async move {
                                 if let Err(err) = srv.accept(addr, tx, BufReader::new(rx)).await {
