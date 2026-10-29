@@ -391,5 +391,20 @@ pub async fn assert_sync<C: Clone>(
             .context("failed to call `wrpc-test:integration/sync.identity-char`")?;
         ensure!(v == c, "{v:?}");
     }
+
+    for (a, b) in [
+        (None, None),
+        (Some(Bytes::default()), Some(Vec::default())),
+        (Some(Bytes::from("foo")), Some(vec!["foo".to_string()])),
+    ] {
+        let b_ref = b
+            .as_ref()
+            .map(|b| b.iter().map(String::as_str).collect::<Vec<_>>());
+        info!("calling `wrpc-test:integration/sync.identity-option-lists`");
+        let v = sync::identity_option_lists(client, cx.clone(), a.as_ref(), b_ref.as_deref())
+            .await
+            .context("failed to call `wrpc-test:integration/sync.identity-option-lists`")?;
+        ensure!(v == (a, b), "{v:?}");
+    }
     Ok(())
 }

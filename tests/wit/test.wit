@@ -35,6 +35,7 @@ interface sync {
     with-record-tuple: func() -> tuple<rec, rec>;
     with-enum: func() -> foobar;
     identity-char: func(c: char) -> char;
+    identity-option-lists: func(a: option<list<u8>>, b: option<list<string>>) -> tuple<option<list<u8>>, option<list<string>>>;
 }
 
 interface %async {
