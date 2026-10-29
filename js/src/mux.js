@@ -146,10 +146,24 @@ function unexpected(path) {
  */
 
 /**
+ * The application error code a peer stops its receive side with once it is
+ * done receiving.
+ */
+const DONE = 1;
+
+/**
+ * Whether `err` reports the send side being stopped with {@link DONE}.
+ * @param {any} err
+ */
+const stoppedDone = (err) => err?.source === "stream" && err?.streamErrorCode === DONE;
+
+/**
  * Adapt a WHATWG stream duplex with a half-close, such as a WebTransport
  * bidirectional stream, to a {@link Transport}, ending transmit by closing
- * the writable side. A WebSocket has no half-close, so a transport over one
- * must communicate the end of transmit in-band instead.
+ * the writable side. The peer stopping the writable side with application
+ * error code `1` while it is being closed completes the close. A WebSocket
+ * has no half-close, so a transport over one must communicate the end of
+ * transmit in-band instead.
  * @param {{ readable: ReadableStream<Uint8Array>, writable: WritableStream<Uint8Array> }} duplex
  * @returns {Transport}
  */
@@ -162,7 +176,13 @@ export function fromWebStreams({ readable, writable }) {
       return done ? null : value;
     },
     write: (bytes) => writer.write(bytes),
-    closeWrite: () => writer.close(),
+    closeWrite: async () => {
+      try {
+        await writer.close();
+      } catch (err) {
+        if (!stoppedDone(err)) throw err;
+      }
+    },
     abort: async (reason) => {
       await Promise.allSettled([reader.cancel(reason), writer.abort(reason)]);
     },
