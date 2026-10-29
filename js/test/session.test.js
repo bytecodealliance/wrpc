@@ -1098,7 +1098,12 @@ for (const [
       inbound.close();
       const { finished } = await invoke(transport, STREAMS, "get", [], [], [ty]);
       if (data) {
-        await assert.rejects(finished, new RegExp(`unexpected data for sub-stream \\[${path}\\]`));
+        await assert.rejects(
+          finished,
+          new RegExp(
+            `unexpected data for (sub-stream \\[${path}\\]|a sub-stream path of length ${path.length})`,
+          ),
+        );
       } else {
         await finished;
         assert.equal(await outcome(aborted), "ok");
@@ -1567,7 +1572,6 @@ test("an accepted invocation is finished once its parameters are decoded", async
     const inv = await accept(transport);
     if (truncated) {
       await inv.sendResults([], []);
-      await inv.mux.ended;
       const { done } = await inv.receiveParams([t.stream(t.u8)]);
       await assert.rejects(done, /unexpected end of input/);
       await assert.rejects(inv.finished, /unexpected end of input/);
@@ -1598,7 +1602,6 @@ test("an accepted invocation is not finished until its parameters are received",
   inbound.close();
   const inv = await accept(transport);
   await inv.sendResults([], []);
-  await inv.mux.ended;
   const pending = Symbol("pending");
   assert.equal(await Promise.race([inv.finished, tick().then(() => pending)]), pending);
   const { params } = await inv.receiveParams([t.u8]);

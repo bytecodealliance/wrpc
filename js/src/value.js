@@ -506,29 +506,43 @@ function decodeScalar(r, ty) {
 }
 
 /**
+ * The length of the longest path, relative to a value of `ty`, of a pending
+ * `stream`/`future` value it can carry, or `-1` if it can carry none.
+ * @param {Type} ty @returns {number}
+ */
+export function asyncDepth(ty) {
+  /** @param {Type | null | undefined} t */
+  const nested = (t) => (t ? asyncDepth(t) : -1);
+  /** @param {(Type | null | undefined)[]} ts */
+  const indexed = (ts) => Math.max(-1, ...ts.map((t) => (nested(t) < 0 ? -1 : nested(t) + 1)));
+  switch (ty.kind) {
+    case "future":
+      return Math.max(0, nested(ty.some));
+    case "stream":
+      return Math.max(0, indexed([ty.elem]));
+    case "list":
+      return indexed([ty.elem]);
+    case "option":
+      return nested(ty.some);
+    case "result":
+      return Math.max(nested(ty.ok), nested(ty.err));
+    case "tuple":
+      return indexed(ty.elems);
+    case "record":
+      return indexed(ty.fields.map((f) => f.ty));
+    case "variant":
+      return Math.max(-1, ...ty.cases.map((c) => nested(c.ty)));
+    default:
+      return -1;
+  }
+}
+
+/**
  * Whether values of `ty` can carry pending `stream`/`future` values.
  * @param {Type} ty @returns {boolean}
  */
 export function hasAsync(ty) {
-  switch (ty.kind) {
-    case "future":
-    case "stream":
-      return true;
-    case "list":
-      return hasAsync(ty.elem);
-    case "option":
-      return hasAsync(ty.some);
-    case "result":
-      return (!!ty.ok && hasAsync(ty.ok)) || (!!ty.err && hasAsync(ty.err));
-    case "tuple":
-      return ty.elems.some(hasAsync);
-    case "record":
-      return ty.fields.some((f) => hasAsync(f.ty));
-    case "variant":
-      return ty.cases.some((c) => !!c.ty && hasAsync(c.ty));
-    default:
-      return false;
-  }
+  return asyncDepth(ty) >= 0;
 }
 
 /** @param {unknown} v @returns {v is Record<string, any>} */
