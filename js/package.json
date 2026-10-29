@@ -37,13 +37,14 @@
   },
   "scripts": {
     "test": "node --test",
-    "check": "tsc",
+    "check": "tsc && tsc -p tsconfig.node.json && tsc -p tsconfig.web.json",
     "lint": "cd .. && eslint -c js/eslint.config.js js tests/js examples/web/ui",
     "fmt": "cd .. && prettier --write js tests/js examples/web/ui",
     "fmt:check": "cd .. && prettier --check js tests/js examples/web/ui"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@types/node": "^24.19.2",
     "eslint": "^10.13.0",
     "globals": "^17.13.0",
     "prettier": "^3.9.10",

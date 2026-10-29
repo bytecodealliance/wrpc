@@ -245,7 +245,7 @@ It deviates from the draft in that:
 
 ```sh
 npm test       # codec / framing / session tests (node --test)
-npm run check  # type-check the sources and declarations (tsc)
+npm run check  # type-check all JavaScript in the repository (tsc)
 npm run lint   # lint all JavaScript in the repository (eslint)
 npm run fmt    # format all JavaScript in the repository (prettier); `fmt:check` verifies
 ```
