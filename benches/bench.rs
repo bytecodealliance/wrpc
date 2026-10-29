@@ -430,7 +430,7 @@ fn bench_tcp(
                     .context("failed to set TCP_NODELAY")?;
                 let srv = Arc::clone(&srv);
                 tasks.spawn(async move {
-                    let (rx, tx) = stream.into_split();
+                    let (rx, tx) = wrpc_transport::tcp::split(stream);
                     srv.accept((), tx, BufReader::new(rx))
                         .await
                         .context("failed to accept invocation")

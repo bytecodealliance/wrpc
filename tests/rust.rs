@@ -1582,7 +1582,7 @@ async fn rust_bindgen_tcp_sync() -> anyhow::Result<()> {
         let accept = async {
             let (stream, addr) = lis.accept().await.expect("failed to accept connection");
             assert!(addr.ip().is_loopback());
-            let (rx, tx) = stream.into_split();
+            let (rx, tx) = wrpc_transport::tcp::split(stream);
             srv.accept((), tx, BufReader::new(rx))
                 .await
                 .expect("failed to accept connection");
@@ -1620,7 +1620,7 @@ async fn rust_bindgen_tcp_root() -> anyhow::Result<()> {
         let accept = async {
             let (stream, addr) = lis.accept().await.expect("failed to accept connection");
             assert!(addr.ip().is_loopback());
-            let (rx, tx) = stream.into_split();
+            let (rx, tx) = wrpc_transport::tcp::split(stream);
             srv.accept((), tx, BufReader::new(rx))
                 .await
                 .expect("failed to accept connection");
@@ -1739,7 +1739,7 @@ async fn rust_tcp_unprocessed_stream() -> anyhow::Result<()> {
             },
             async {
                 let (stream, _) = lis.accept().await.expect("failed to accept connection");
-                let (rx, tx) = stream.into_split();
+                let (rx, tx) = wrpc_transport::tcp::split(stream);
                 srv.accept((), tx, BufReader::new(rx))
                     .await
                     .expect("failed to accept connection");
@@ -1840,7 +1840,7 @@ async fn rust_bindgen_tcp_async() -> anyhow::Result<()> {
         let accept = async {
             let (stream, addr) = lis.accept().await.expect("failed to accept connection");
             assert!(addr.ip().is_loopback());
-            let (rx, tx) = stream.into_split();
+            let (rx, tx) = wrpc_transport::tcp::split(stream);
             srv.accept((), tx, BufReader::new(rx))
                 .await
                 .expect("failed to accept connection");
@@ -2166,7 +2166,7 @@ async fn rust_wasmtime_polyfill_async() -> anyhow::Result<()> {
         let accept = async {
             let (stream, addr) = lis.accept().await.expect("failed to accept connection");
             assert!(addr.ip().is_loopback());
-            let (rx, tx) = stream.into_split();
+            let (rx, tx) = wrpc_transport::tcp::split(stream);
             srv.accept((), tx, BufReader::new(rx))
                 .await
                 .expect("failed to accept connection");
@@ -2257,7 +2257,7 @@ async fn rust_wasmtime_shared_store_trap() -> anyhow::Result<()> {
         let accept = async {
             let (stream, addr) = lis.accept().await.expect("failed to accept connection");
             assert!(addr.ip().is_loopback());
-            let (rx, tx) = stream.into_split();
+            let (rx, tx) = wrpc_transport::tcp::split(stream);
             srv.accept((), tx, BufReader::new(rx))
                 .await
                 .expect("failed to accept connection");
