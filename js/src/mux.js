@@ -639,6 +639,7 @@ export class Mux {
       try {
         found = this._find(pending.path, pending.empty);
       } catch (err) {
+        for (const { chan } of group.values()) chan.close(err);
         this.abort(err);
         return;
       }
