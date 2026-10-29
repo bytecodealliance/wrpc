@@ -1221,7 +1221,7 @@ async fn rust_bindgen_quic_sync() -> anyhow::Result<()> {
             loop {
                 let accept = async {
                     let (tx, rx) = sc.accept_bi().await.expect("failed to accept connection");
-                    srv.accept((), tx, rx.into())
+                    srv.accept((), tx.into(), rx.into())
                         .await
                         .expect("failed to accept connection");
                 };
@@ -1252,7 +1252,7 @@ async fn rust_bindgen_quic_async() -> anyhow::Result<()> {
         loop {
             let accept = async {
                 let (tx, rx) = sc.accept_bi().await.expect("failed to accept connection");
-                srv.accept((), tx, rx.into())
+                srv.accept((), tx.into(), rx.into())
                     .await
                     .expect("failed to accept connection");
             };
@@ -1281,7 +1281,7 @@ async fn rust_dynamic_quic() -> anyhow::Result<()> {
             loop {
                 let accept = async {
                     let (tx, rx) = sc.accept_bi().await.expect("failed to accept connection");
-                    srv.accept((), tx, rx.into())
+                    srv.accept((), tx.into(), rx.into())
                         .await
                         .expect("failed to accept connection");
                 };
@@ -1314,7 +1314,7 @@ async fn rust_bindgen_webtransport_sync() -> anyhow::Result<()> {
             loop {
                 let accept = async {
                     let (tx, rx) = sc.accept_bi().await.expect("failed to accept connection");
-                    srv.accept((), tx, rx.into())
+                    srv.accept((), tx.into(), rx.into())
                         .await
                         .expect("failed to accept connection");
                 };
@@ -1349,7 +1349,7 @@ async fn rust_bindgen_webtransport_async() -> anyhow::Result<()> {
         loop {
             let accept = async {
                 let (tx, rx) = sc.accept_bi().await.expect("failed to accept connection");
-                srv.accept((), tx, rx.into())
+                srv.accept((), tx.into(), rx.into())
                     .await
                     .expect("failed to accept connection");
             };
@@ -1378,7 +1378,7 @@ async fn rust_dynamic_webtransport() -> anyhow::Result<()> {
             loop {
                 let accept = async {
                     let (tx, rx) = sc.accept_bi().await.expect("failed to accept connection");
-                    srv.accept((), tx, rx.into())
+                    srv.accept((), tx.into(), rx.into())
                         .await
                         .expect("failed to accept connection");
                 };
