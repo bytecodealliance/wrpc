@@ -122,3 +122,7 @@ func (SyncHandler) WithRecordTuple(ctx context.Context) (*sync.Rec, *sync.Rec, e
 func (SyncHandler) WithEnum(ctx context.Context) (sync.Foobar, error) {
 	return sync.Foobar_Bar, nil
 }
+
+func (SyncHandler) IdentityChar(ctx context.Context, c rune) (rune, error) {
+	return c, nil
+}
