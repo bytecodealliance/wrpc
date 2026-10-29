@@ -638,6 +638,13 @@ async fn main() -> anyhow::Result<()> {
         Router::new()
             .route("/", index.clone())
             .route(
+                "/main.js",
+                get((
+                    [(CONTENT_TYPE, "application/javascript")],
+                    include_str!("../../ui/main.js"),
+                )),
+            )
+            .route(
                 "/consts.js",
                 get((
                     [(CONTENT_TYPE, "application/javascript")],
