@@ -17,6 +17,27 @@ import (
 )
 
 func TestFrameStreamReader(t *testing.T) {
+	t.Run("empty subscription path", func(t *testing.T) {
+		t.Parallel()
+		ctx := context.Background()
+		var src sink
+		if _, err := wrpc.WriteFrame(wrpc.Frame{Data: []byte("hello")}, &src); err != nil {
+			t.Fatalf("failed to write frame: %s", err)
+		}
+		r := wrpc.NewFrameStreamReader(ctx, &src, wrpc.NewSubscribePath())
+		buf, err := io.ReadAll(r)
+		if err != nil {
+			t.Fatalf("failed to read root: %s", err)
+		}
+		if string(buf) != "hello" {
+			t.Fatalf("expected `hello`, got `%s`", buf)
+		}
+		if _, err := r.Index(); err == nil {
+			t.Fatal("indexing an empty path should fail")
+		}
+		assertClose(t, r)
+	})
+
 	t.Run("empty frame", func(t *testing.T) {
 		t.Parallel()
 		ctx := context.Background()

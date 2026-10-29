@@ -345,6 +345,9 @@ func NewFrameStreamReader(ctx context.Context, r ByteReadCloser, paths ...Subscr
 	root.taken = true
 	subs.nest[""] = root
 	for _, path := range paths {
+		if len(path) == 0 {
+			continue
+		}
 		subs.patterns.insert(path)
 		if p, ok := concretePath(path); ok {
 			subs.nest[p] = newFrameSub()
