@@ -4,6 +4,12 @@
 import { accept, t } from "../../js/src/index.js";
 import { listen } from "./tcp.js";
 
+/**
+ * @typedef {import("../../js/src/index.js").InputValue} InputValue
+ * @typedef {import("../../js/src/index.js").Type} Type
+ * @typedef {import("../../js/src/index.js").Value} Value
+ */
+
 const rec = t.record({ nested: t.record({ foo: t.string }) });
 const v = t.variant({ var: rec, empty: null });
 const cases = [
@@ -23,7 +29,7 @@ const r = (foo) => ({ nested: { foo } });
 /**
  * The parameter and result types and the implementation of each function, by
  * instance and name.
- * @type {Record<string, Record<string, [any[], any[], (params: any[]) => any[]]>>}
+ * @type {Record<string, Record<string, [Type[], Type[], (params: Value[]) => InputValue[]]>>}
  */
 const handlers = {
   "wrpc-test:integration/foo": {
@@ -69,7 +75,7 @@ const handlers = {
     "with-record-list": [
       [t.u8],
       [t.list(rec)],
-      ([n]) => [Array.from({ length: n }, (_, i) => r(`${i}`))],
+      ([n]) => [Array.from({ length: /** @type {number} */ (n) }, (_, i) => r(`${i}`))],
     ],
     "with-record-tuple": [[], [t.tuple(rec, rec)], () => [[r("0"), r("1")]]],
     "with-enum": [[], [t.enum(["foo", "bar"])], () => ["bar"]],
@@ -83,7 +89,10 @@ const handlers = {
     "with-future": [
       [t.record({ foo: t.string }), t.stream(t.u8)],
       [t.future(t.stream(t.u8))],
-      ([x, s]) => (x.foo === "bar" ? [s] : fail(`expected \`bar\`, got \`${x.foo}\``)),
+      ([x, s]) => {
+        const { foo } = /** @type {{ foo: string }} */ (x);
+        return foo === "bar" ? [s] : fail(`expected \`bar\`, got \`${foo}\``);
+      },
     ],
     "identity-future": [[t.future()], [t.future()], ([v]) => [v]],
     "identity-cases": [cases, [t.tuple(...cases)], (params) => [params]],

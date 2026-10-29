@@ -6,22 +6,43 @@ import * as t from "../src/types.js";
 import { AsyncReader, Chan, Reader, Writer } from "../src/io.js";
 import { encodeValue, decodeSteps, decodeValue } from "../src/value.js";
 
-/** Encode a single value against `ty` to bytes. */
+/**
+ * @typedef {import("../src/index.js").Chunk} Chunk
+ * @typedef {import("../src/index.js").InputValue} InputValue
+ * @typedef {import("../src/index.js").Type} Type
+ * @typedef {import("../src/index.js").TypedArray} TypedArray
+ * @typedef {{ new (length: number): TypedArray, from(vals: Iterable<number | bigint>): TypedArray, readonly name: string }} TypedArrayConstructor
+ * @typedef {import("../src/index.js").Value} Value
+ */
+
+/**
+ * Encode a single value against `ty` to bytes.
+ * @param {Type} ty @param {InputValue} v
+ */
 function encode(ty, v) {
   const w = new Writer();
   encodeValue(w, ty, v);
   return w.finish();
 }
 
-/** Decode a single value of type `ty` from `bytes`. */
+/**
+ * Decode a single value of type `ty` from `bytes`.
+ * @param {Type} ty @param {Uint8Array} bytes
+ */
 function decode(ty, bytes) {
   return decodeValue(new Reader(bytes), ty);
 }
 
-/** A null-prototype object of `props`, as records, flags and variants decode to. */
+/**
+ * A null-prototype object of `props`, as records, flags and variants decode to.
+ * @template {object} T @param {T} props @returns {T}
+ */
 const obj = (props) => Object.assign(Object.create(null), props);
 
-/** Assert that `v` survives an encode/decode round-trip against `ty`. */
+/**
+ * Assert that `v` survives an encode/decode round-trip against `ty`.
+ * @param {Type} ty @param {InputValue} v
+ */
 function roundtrip(ty, v) {
   const out = decode(ty, encode(ty, v));
   assert.deepEqual(out, v);
@@ -43,7 +64,7 @@ test("small integers", () => {
 });
 
 test("integers wrap like the JS-API draft converts them", () => {
-  for (const [ty, v, wrapped] of [
+  for (const [ty, v, wrapped] of /** @type {[Type, InputValue, Value][]} */ ([
     [t.u8, 256, 0],
     [t.u8, -1, 255],
     [t.s8, 128, -128],
@@ -65,11 +86,12 @@ test("integers wrap like the JS-API draft converts them", () => {
     [t.u32, undefined, 0],
     [t.u64, "7", 7n],
     [t.s64, true, 1n],
-  ]) {
+  ])) {
     assert.equal(decode(ty, encode(ty, v)), wrapped, `${ty.kind} ${v}`);
   }
   for (const ty of [t.u8, t.s32, t.f64]) {
     assert.throws(() => encode(ty, 1n), TypeError);
+    // @ts-expect-error
     assert.throws(() => encode(ty, Symbol()), TypeError);
   }
   for (const ty of [t.u64, t.s64]) {
@@ -78,7 +100,7 @@ test("integers wrap like the JS-API draft converts them", () => {
 });
 
 test("other scalars are converted like the JS-API draft converts them", () => {
-  for (const [ty, v, converted] of [
+  for (const [ty, v, converted] of /** @type {[Type, InputValue, Value][]} */ ([
     [t.bool, "false", true],
     [t.bool, 0, false],
     [t.bool, undefined, false],
@@ -91,9 +113,10 @@ test("other scalars are converted like the JS-API draft converts them", () => {
     [t.string, "\uDE00\uD83D", "\uFFFD\uFFFD"],
     [t.char, 1, "1"],
     [t.enum(["red"]), ["red"], "red"],
-  ]) {
+  ])) {
     assert.equal(decode(ty, encode(ty, v)), converted, `${ty.kind} ${String(v)}`);
   }
+  // @ts-expect-error
   assert.throws(() => encode(t.string, Symbol()), TypeError);
   assert.throws(() => encode(t.enum(["red"]), "blue"), {
     name: "TypeError",
@@ -134,6 +157,7 @@ test("decoding rejects status bytes other than 0 and 1", () => {
 });
 
 test("integers encode the same as a number and as a bigint", () => {
+  /** @param {(w: Writer) => void} f */
   const bytes = (f) => {
     const w = new Writer();
     f(w);
@@ -215,6 +239,7 @@ test("byte lists round-trip as Uint8Array", () => {
     assert.deepEqual(encode(ty, Uint16Array.of(0x1ff)), encode(ty, Uint8Array.of(0xff)));
     // but not an `ArrayBuffer` or a `DataView`, which are not iterable
     for (const v of [Uint8Array.of(1).buffer, new DataView(new ArrayBuffer(1)), "1"]) {
+      // @ts-expect-error
       assert.throws(() => encode(ty, v), { name: "TypeError", message: /expected an iterable/ });
     }
   }
@@ -223,7 +248,10 @@ test("byte lists round-trip as Uint8Array", () => {
   assert.throws(() => encode(t.list(t.u8), detached), /attached buffer/);
 });
 
-/** Sample values of each numeric type, and the typed array lists of it map to. */
+/**
+ * Sample values of each numeric type, and the typed array lists of it map to.
+ * @type {[Type, TypedArrayConstructor, number[] | bigint[]][]}
+ */
 const NUMERIC = [
   [t.s8, Int8Array, [-128, -1, 0, 127]],
   [t.u8, Uint8Array, [0, 1, 255]],
@@ -363,6 +391,7 @@ test("record fields are read like properties", () => {
   const ty = t.record({ a: t.u8, b: t.option(t.u8) });
   const bytes = encode(ty, { a: 1, b: 2 });
   assert.deepEqual(encode(ty, Object.create({ a: 1, b: 2 })), bytes);
+  /** @type {{ a: number, b: number }} */
   const getters = new (class {
     get a() {
       return 1;
@@ -464,6 +493,7 @@ test("flags", () => {
     encode(ty, { read: 1, write: "", exec: "yes", wirte: true }),
     Uint8Array.of(0b101),
   );
+  /** @type {{ write: boolean }} */
   const getter = new (class {
     get write() {
       return true;
@@ -510,9 +540,10 @@ test("stream and future cannot be encoded or decoded synchronously", () => {
 });
 
 test("ready streams and futures are decoded synchronously", async () => {
+  /** @param {Value} chunks */
   const collect = async (chunks) => {
     const out = [];
-    for await (const chunk of chunks) out.push(chunk);
+    for await (const chunk of /** @type {AsyncIterable<Chunk>} */ (chunks)) out.push(chunk);
     return out;
   };
   assert.deepEqual(await collect(decode(t.stream(t.u8), Uint8Array.of(1, 2, 7, 8))), [
@@ -586,13 +617,13 @@ test("cancelling a failed channel keeps its error", async () => {
 
 test("values decode resumably across chunk boundaries", async () => {
   const strings = Array.from({ length: 100 }, (_, i) => `s${i}`.repeat(i % 5));
-  for (const [ty, v] of [
+  for (const [ty, v] of /** @type {[Type, InputValue][]} */ ([
     [t.list(t.string), strings],
     [
       t.list(t.tuple(t.string, t.u64, t.f64, t.char)),
       strings.map((s, i) => [s, BigInt(i) << 40n, i / 3, "é"]),
     ],
-  ]) {
+  ])) {
     const chunks = Array.from(encode(ty, v), (b) => Uint8Array.of(b));
     const ar = new AsyncReader(async () => chunks.shift() ?? null);
     assert.deepEqual(await ar.decode((r) => decodeSteps(r, ty)), v);
@@ -601,11 +632,13 @@ test("values decode resumably across chunk boundaries", async () => {
 
 test("a channel drops its cancel hooks once its end is received", async () => {
   for (const consume of [
+    /** @param {Chan<number>} chan */
     async (chan) => {
       chan.push(1);
       chan.close();
       for await (const v of chan) assert.equal(v, 1);
     },
+    /** @param {Chan<number>} chan */
     async (chan) => {
       const end = chan.next();
       chan.close();
