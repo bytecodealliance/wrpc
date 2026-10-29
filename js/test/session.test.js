@@ -302,6 +302,46 @@ test("aborting a web stream transport cancels and aborts both sides", async () =
   ]);
 });
 
+/**
+ * Invoke a function returning a `u8` over a web stream transport whose
+ * writable side the peer stops with `code` while it is being closed.
+ *
+ * @param {number} code
+ */
+function invokeStopped(code) {
+  const transport = fromWebStreams({
+    readable: new ReadableStream({
+      start: (controller) => {
+        controller.enqueue(Uint8Array.of(0x00, 0x01, 0x2a));
+        controller.close();
+      },
+    }),
+    writable: new WritableStream({
+      close: () =>
+        Promise.reject(
+          Object.assign(new Error("Received STOP_SENDING."), {
+            name: "WebTransportError",
+            source: "stream",
+            streamErrorCode: code,
+          }),
+        ),
+    }),
+  });
+  return invoke(transport, STREAMS, "get", [], [], [t.u8]);
+}
+
+test("the peer stopping the closing web stream with code 1 completes it", async () => {
+  const { results, done } = await invokeStopped(1);
+  assert.deepEqual(results, [42]);
+  await done;
+});
+
+test("the peer stopping the closing web stream with another code fails it", async () => {
+  const { results, done } = await invokeStopped(0);
+  assert.deepEqual(results, [42]);
+  await assert.rejects(done, { name: "WebTransportError", streamErrorCode: 0 });
+});
+
 test("frame data is routed as it arrives", async () => {
   const bytes = [0x01, 0x00, 0x03, 0x0a, 0x14, 0x1e, 0x01, 0x00, 0x02, 0x28];
   const transport = {
