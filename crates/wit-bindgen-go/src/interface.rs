@@ -1134,7 +1134,7 @@ impl InterfaceGenerator<'_> {
             return nil, {fmt}.Errorf("failed to read owned resource handle length byte: %w", err)
         }}
         if b < 0x80 {{
-            if i == 4 && b > 1 {{
+            if i == 4 && b > 0x0f {{
                 return nil, {errors}.New("owned resource handle length overflows a 32-bit integer")
             }}
             x = x | uint32(b)<<s
@@ -1184,7 +1184,7 @@ impl InterfaceGenerator<'_> {
             return nil, {fmt}.Errorf("failed to read borrowed resource handle length byte: %w", err)
         }}
         if b < 0x80 {{
-            if i == 4 && b > 1 {{
+            if i == 4 && b > 0x0f {{
                 return nil, {errors}.New("borrowed resource handle length overflows a 32-bit integer")
             }}
             x = x | uint32(b)<<s
