@@ -359,6 +359,10 @@ export interface Invocation {
    * those after the parameters' `done`.
    */
   finished: Promise<void>;
+  /**
+   * Decode the parameters against `paramTypes`. It must be called, with `[]`
+   * for a function without parameters, for `finished` to resolve.
+   */
   receiveParams(paramTypes: Type[]): Promise<{ params: Value[]; done: Promise<void> }>;
   sendResults(resultTypes: Type[], values: InputValue[]): Promise<void>;
 }

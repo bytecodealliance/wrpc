@@ -158,9 +158,10 @@ signal end of transmit within the connection. To interoperate with the Rust
 `wrpc-websockets` transport, send data as binary messages and end transmit by
 sending an empty text message (`ws.send("")`), keeping the connection open;
 when reading, treat an empty text message received from the peer as the end
-of transmit. The Rust transport fails an invocation whose connection closes
-before that empty text message as an unexpected end of input, and rejects
-non-empty text messages.
+of transmit. As the specification requires, `read()` must reject, rather than
+resolve to `null`, if the connection closes before that empty text message is
+received, or if a non-empty text message is received, and the connection may
+only be closed once end of transmit was both sent and received.
 
 ## Value mapping
 
