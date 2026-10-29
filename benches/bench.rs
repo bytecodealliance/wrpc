@@ -502,7 +502,7 @@ fn bench_quic(
                 let (tx, rx) = conn.accept_bi().await.context("failed to accept stream")?;
                 let srv = Arc::clone(&srv);
                 tasks.spawn(async move {
-                    srv.accept((), tx, BufReader::new(rx))
+                    srv.accept((), tx, rx.into())
                         .await
                         .context("failed to accept invocation")
                 });
@@ -537,7 +537,7 @@ fn bench_webtransport(
                 let (tx, rx) = conn.accept_bi().await.context("failed to accept stream")?;
                 let srv = Arc::clone(&srv);
                 tasks.spawn(async move {
-                    srv.accept((), tx, BufReader::new(rx))
+                    srv.accept((), tx, rx.into())
                         .await
                         .context("failed to accept invocation")
                 });
