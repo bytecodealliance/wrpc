@@ -187,7 +187,8 @@ export function fromWebStreams({ readable, writable }) {
       }
     },
     abort: async (reason) => {
-      await Promise.allSettled([reader.cancel(reason), writer.abort(reason)]);
+      const r = stoppedDone(reason) ? undefined : reason;
+      await Promise.allSettled([reader.cancel(r), writer.abort(r)]);
     },
   };
 }
