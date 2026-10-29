@@ -746,7 +746,7 @@ export const PORT = "{port}"
                             .accept_bi()
                             .await
                             .context("failed to accept wRPC connection")?;
-                        srv.accept((), tx, rx.into())
+                        srv.accept((), tx.into(), rx.into())
                             .await
                             .context("failed to serve wRPC connection")?;
                     }
