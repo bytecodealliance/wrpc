@@ -4,11 +4,11 @@ package integration_test
 
 import (
 	"context"
-	"log/slog"
-	"reflect"
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	wrpc "wrpc.io/go"
 	integration "wrpc.io/tests/go"
 	"wrpc.io/tests/go/bindings/sync_client/foo"
@@ -17,236 +17,72 @@ import (
 	"wrpc.io/tests/go/internal"
 )
 
-func TestSync(t *testing.T) {
-	var cancel func()
-	ctx := context.Background()
-	dl, ok := t.Deadline()
-	if ok {
-		ctx, cancel = context.WithDeadline(ctx, dl)
-	} else {
-		ctx, cancel = context.WithTimeout(ctx, time.Minute)
-	}
-	defer cancel()
-
+func serve(t *testing.T, f func(wrpc.Server) (func() error, error)) (context.Context, wrpc.Invoker) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	t.Cleanup(cancel)
 	srv, client := internal.RunTCP(t, ctx)
-
-	var h integration.SyncHandler
-	stop, err := sync_server.Serve(srv, h, h)
-	if err != nil {
-		t.Errorf("failed to serve `sync-server` world: %s", err)
-		return
-	}
+	stop, err := f(srv)
+	require.NoError(t, err, "failed to serve world")
+	t.Cleanup(func() { assert.NoError(t, stop(), "failed to stop serving world") })
 	internal.Accept(ctx, srv)
+	return ctx, client
+}
 
-	{
-		slog.DebugContext(ctx, "calling `wrpc-test:integration/sync-client.foo.f`")
-		v, err := foo.F(ctx, client, "f")
-		if err != nil {
-			t.Errorf("failed to call `wrpc-test:integration/sync-client.foo.f`: %s", err)
-			return
-		}
-		if v != 42 {
-			t.Errorf("expected: 42, got: %d", v)
-			return
-		}
-	}
-	{
-		slog.DebugContext(ctx, "calling `wrpc-test:integration/sync-client.foo.foo`")
-		err := foo.Foo(ctx, client, "foo")
-		if err != nil {
-			t.Errorf("failed to call `wrpc-test:integration/sync-client.foo.foo`: %s", err)
-			return
-		}
-	}
-	{
-		slog.DebugContext(ctx, "calling `wrpc-test:integration/sync.fallible`")
-		v, err := sync.Fallible(ctx, client, true)
-		if err != nil {
-			t.Errorf("failed to call `wrpc-test:integration/sync.fallible`: %s", err)
-			return
-		}
-		expected := wrpc.Ok[string](true)
-		if !reflect.DeepEqual(v, expected) {
-			t.Errorf("expected: %#v, got: %#v", expected, v)
-			return
-		}
-	}
-	{
-		slog.DebugContext(ctx, "calling `wrpc-test:integration/sync.fallible`")
-		v, err := sync.Fallible(ctx, client, false)
-		if err != nil {
-			t.Errorf("failed to call `wrpc-test:integration/sync.fallible`: %s", err)
-			return
-		}
-		expected := wrpc.Err[bool]("test")
-		if !reflect.DeepEqual(v, expected) {
-			t.Errorf("expected: %#v, got: %#v", expected, v)
-			return
-		}
-	}
-	{
-		slog.DebugContext(ctx, "calling `wrpc-test:integration/sync.numbers`")
-		v0, v1, v2, v3, v4, v5, v6, v7, v8, v9, err := sync.Numbers(ctx, client)
-		if err != nil {
-			t.Errorf("failed to call `wrpc-test:integration/sync.numbers`: %s", err)
-			return
-		}
-		if v0 != 1 {
-			t.Errorf("expected: 1, got: %#v", v0)
-			return
-		}
-		if v1 != 2 {
-			t.Errorf("expected: 2, got: %#v", v1)
-			return
-		}
-		if v2 != 3 {
-			t.Errorf("expected: 3, got: %#v", v2)
-			return
-		}
-		if v3 != 4 {
-			t.Errorf("expected: 4, got: %#v", v3)
-			return
-		}
-		if v4 != 5 {
-			t.Errorf("expected: 5, got: %#v", v4)
-			return
-		}
-		if v5 != 6 {
-			t.Errorf("expected: 6, got: %#v", v5)
-			return
-		}
-		if v6 != 7 {
-			t.Errorf("expected: 7, got: %#v", v6)
-			return
-		}
-		if v7 != 8 {
-			t.Errorf("expected: 8, got: %#v", v7)
-			return
-		}
-		if v8 != 9 {
-			t.Errorf("expected: 9, got: %#v", v8)
-			return
-		}
-		if v9 != 10 {
-			t.Errorf("expected: 10, got: %#v", v9)
-			return
-		}
-	}
-	{
-		slog.DebugContext(ctx, "calling `wrpc-test:integration/sync.with-flags`")
-		v, err := sync.WithFlags(ctx, client, true, false, true)
-		if err != nil {
-			t.Errorf("failed to call `wrpc-test:integration/sync.with-flags`: %s", err)
-			return
-		}
-		expected := &sync.Abc{A: true, B: false, C: true}
-		if !reflect.DeepEqual(v, expected) {
-			t.Errorf("expected: %v, got: %#v", expected, v)
-			return
-		}
-	}
-	{
-		v, err := sync.WithVariantOption(ctx, client, true)
-		if err != nil {
-			t.Errorf("failed to call `wrpc-test:integration/sync.with-variant-option`: %s", err)
-			return
-		}
-		expected := sync.NewVarVar(&sync.Rec{
-			Nested: &sync.RecNested{
-				Foo: "bar",
-			},
-		})
-		if !reflect.DeepEqual(v, expected) {
-			t.Errorf("expected: %v, got: %#v", expected, v)
-			return
-		}
-	}
-	{
-		v, err := sync.WithVariantOption(ctx, client, false)
-		if err != nil {
-			t.Errorf("failed to call `wrpc-test:integration/sync.with-variant-option`: %s", err)
-			return
-		}
-		var expected *sync.Var
-		if !reflect.DeepEqual(v, expected) {
-			t.Errorf("expected: %v, got: %#v", expected, v)
-			return
-		}
-	}
-	{
-		v, err := sync.WithVariantList(ctx, client)
-		if err != nil {
-			t.Errorf("failed to call `wrpc-test:integration/sync.with-variant-list`: %s", err)
-			return
-		}
-		expected := []*sync.Var{
-			sync.NewVarEmpty(),
-			sync.NewVarVar(&sync.Rec{
-				Nested: &sync.RecNested{
-					Foo: "foo",
-				},
-			}),
-			sync.NewVarEmpty(),
-			sync.NewVarEmpty(),
-			sync.NewVarEmpty(),
-			sync.NewVarVar(&sync.Rec{
-				Nested: &sync.RecNested{
-					Foo: "bar",
-				},
-			}),
-		}
-		if !reflect.DeepEqual(v, expected) {
-			t.Errorf("expected: %v, got: %#v", expected, v)
-			return
-		}
-	}
-	{
-		v, err := sync.WithRecord(ctx, client)
-		if err != nil {
-			t.Errorf("failed to call `wrpc-test:integration/sync.with-record`: %s", err)
-			return
-		}
-		expected := &sync.Rec{
-			Nested: &sync.RecNested{
-				Foo: "foo",
-			},
-		}
-		if !reflect.DeepEqual(v, expected) {
-			t.Errorf("expected: %v, got: %#v", expected, v)
-			return
-		}
-	}
-	{
-		v, err := sync.WithRecordList(ctx, client, 3)
-		if err != nil {
-			t.Errorf("failed to call `wrpc-test:integration/sync.with-record-list`: %s", err)
-			return
-		}
-		expected := []*sync.Rec{
-			{
-				Nested: &sync.RecNested{
-					Foo: "0",
-				},
-			},
-			{
-				Nested: &sync.RecNested{
-					Foo: "1",
-				},
-			},
-			{
-				Nested: &sync.RecNested{
-					Foo: "2",
-				},
-			},
-		}
-		if !reflect.DeepEqual(v, expected) {
-			t.Errorf("expected: %v, got: %#v", expected, v)
-			return
-		}
+func TestSync(t *testing.T) {
+	var h integration.SyncHandler
+	ctx, client := serve(t, func(s wrpc.Server) (func() error, error) {
+		return sync_server.Serve(s, h, h)
+	})
+
+	n, err := foo.F(ctx, client, "f")
+	require.NoError(t, err)
+	assert.Equal(t, uint32(42), n)
+
+	require.NoError(t, foo.Foo(ctx, client, "foo"))
+
+	for ok, want := range map[bool]*wrpc.Result[bool, string]{
+		true:  wrpc.Ok[string](true),
+		false: wrpc.Err[bool]("test"),
+	} {
+		v, err := sync.Fallible(ctx, client, ok)
+		require.NoError(t, err)
+		assert.Equal(t, want, v)
 	}
 
-	if err = stop(); err != nil {
-		t.Errorf("failed to stop serving `sync-server` world: %s", err)
-		return
+	v0, v1, v2, v3, v4, v5, v6, v7, v8, v9, err := sync.Numbers(ctx, client)
+	require.NoError(t, err)
+	assert.Equal(t,
+		[]any{uint8(1), uint16(2), uint32(3), uint64(4), int8(5), int16(6), int32(7), int64(8), float32(9), float64(10)},
+		[]any{v0, v1, v2, v3, v4, v5, v6, v7, v8, v9},
+	)
+
+	flags, err := sync.WithFlags(ctx, client, true, false, true)
+	require.NoError(t, err)
+	assert.Equal(t, &sync.Abc{A: true, C: true}, flags)
+
+	rec := func(foo string) *sync.Rec {
+		return &sync.Rec{Nested: &sync.RecNested{Foo: foo}}
 	}
+
+	opt, err := sync.WithVariantOption(ctx, client, true)
+	require.NoError(t, err)
+	assert.Equal(t, sync.NewVarVar(rec("bar")), opt)
+
+	opt, err = sync.WithVariantOption(ctx, client, false)
+	require.NoError(t, err)
+	assert.Nil(t, opt)
+
+	vars, err := sync.WithVariantList(ctx, client)
+	require.NoError(t, err)
+	empty := sync.NewVarEmpty()
+	assert.Equal(t, []*sync.Var{empty, sync.NewVarVar(rec("foo")), empty, empty, empty, sync.NewVarVar(rec("bar"))}, vars)
+
+	r, err := sync.WithRecord(ctx, client)
+	require.NoError(t, err)
+	assert.Equal(t, rec("foo"), r)
+
+	rs, err := sync.WithRecordList(ctx, client, 3)
+	require.NoError(t, err)
+	assert.Equal(t, []*sync.Rec{rec("0"), rec("1"), rec("2")}, rs)
 }
