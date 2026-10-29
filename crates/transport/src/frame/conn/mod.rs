@@ -23,7 +23,7 @@ use wasm_tokio::{
     AsyncReadCore as _, AsyncReadLeb128 as _, DEFAULT_MAX_INITIAL_CAPACITY, Leb128Encoder,
 };
 
-use crate::frame::MAX_INITIAL_PATH_CAPACITY;
+use crate::frame::{MAX_INITIAL_PATH_CAPACITY, PROTOCOL};
 use crate::{copy_io_error, error_receiver_closed};
 
 mod client;
@@ -81,7 +81,7 @@ impl Header {
         let mut instance = String::default();
         let mut name = String::default();
         match rx.read_u8().await.map_err(HeaderReadError::IO)? {
-            0x00 => {
+            PROTOCOL => {
                 rx.read_core_name(&mut instance)
                     .await
                     .map_err(HeaderReadError::IO)?;
@@ -105,6 +105,9 @@ enum TxSlot {
 /// Maximum number of elements, i.e. positions matched by a wildcard, which data is received for
 /// before they are indexed
 const MAX_UNCLAIMED_ELEMENTS: usize = 64;
+
+/// Maximum number of data chunks buffered per sub-stream
+const MAX_BUFFERED_CHUNKS: usize = 16;
 
 /// Declared path or a prefix of one
 #[derive(Clone, Copy, Debug, Default)]
@@ -154,7 +157,7 @@ impl Subscription {
         if !declared {
             return Self::default();
         }
-        let (tx, rx) = mpsc::channel(16);
+        let (tx, rx) = mpsc::channel(MAX_BUFFERED_CHUNKS);
         Self {
             tx: Some(TxSlot::Open(tx)),
             rx: Some(rx),
@@ -471,7 +474,7 @@ impl Incoming {
         T: AsyncBufRead + Unpin + Send + 'static,
         P: AsRef<[Option<usize>]>,
     {
-        let (rx_tx, rx_rx) = mpsc::channel(128);
+        let (rx_tx, rx_rx) = mpsc::channel(MAX_BUFFERED_CHUNKS);
         let index = Subscriptions::new(paths, rx_tx);
         let state = Arc::new(IngressState {
             index: std::sync::Mutex::new(index),
