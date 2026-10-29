@@ -61,7 +61,7 @@ All wRPC transports use this framing. A transport implementation only needs to p
 
 ## Framed stream specification
 
-wRPC framed stream begins with a version byte `0x00` and is followed by a header encoded using [component model value definition encoding]:
+The framed stream sent by the client begins with a version byte `0x00` and is followed by a header encoded using [component model value definition encoding]:
 
 ```wit
 record header {
@@ -70,7 +70,7 @@ record header {
 }
 ```
 
-The header MAY be followed by one or more frames encoded using [component model value definition encoding]:
+The header MAY be followed by one or more frames encoded using [component model value definition encoding]. The framed stream sent by the server consists of frames only:
 
 ```wit
 record frame {
