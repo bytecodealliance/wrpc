@@ -2,8 +2,9 @@ use core::fmt::{Debug, Display};
 use core::future::poll_fn;
 use core::ops::Bound;
 use core::pin::{Pin, pin};
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use core::task::{Context, Poll, ready};
+use core::time::Duration;
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, PoisonError};
@@ -13,6 +14,7 @@ use pin_project_lite::pin_project;
 use tokio::io::{AsyncBufRead, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt as _};
 use tokio::select;
 use tokio::sync::{Notify, OwnedSemaphorePermit, Semaphore, mpsc, oneshot, watch};
+use tokio::time::{Instant, Sleep};
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::codec::Encoder;
 use tokio_util::io::StreamReader;
@@ -428,6 +430,8 @@ pin_project! {
         path: Arc<[usize]>,
         io: Arc<IngressGuard>,
         state: Arc<IngressState>,
+        deadline: Option<Pin<Box<Sleep>>>,
+        armed: bool,
     }
 
     impl PinnedDrop for Incoming {
@@ -478,6 +482,7 @@ impl Incoming {
             err: std::sync::OnceLock::default(),
             unprocessed: AtomicBool::default(),
             done: watch::Sender::new(None),
+            timeout: Timeout::default(),
         });
         let (dropped_tx, dropped_rx) = drain.then(oneshot::channel).unzip();
         let span = Span::current();
@@ -511,7 +516,13 @@ impl Incoming {
                         }
                         _ = &mut dropped => {
                             close_rx(&state)?;
-                            io.await
+                            let Some(timeout) = state.timeout.get() else {
+                                return io.await;
+                            };
+                            tokio::time::timeout(timeout, io).await.unwrap_or_else(|_| {
+                                debug!("drain timed out");
+                                Ok(())
+                            })
                         }
                     }
                 }
@@ -528,14 +539,34 @@ impl Incoming {
             subscribed: true,
             path: Arc::from([]),
             io: Arc::new(match dropped_tx {
-                // TODO: Bound draining by a deadline or a byte limit
                 Some(dropped) => IngressGuard::Drain { _dropped: dropped },
                 None => IngressGuard::Abort {
                     _task: AbortOnDropHandle::new(task),
                 },
             }),
             state,
+            deadline: None,
+            armed: false,
         }
+    }
+
+    /// Sets the read timeout.
+    ///
+    /// Once set, a read that stays pending for longer than `timeout` fails with
+    /// [`std::io::ErrorKind::TimedOut`]. The deadline is armed when a read first returns
+    /// [`Poll::Pending`] and cleared once a read completes or times out. Dropping a pending
+    /// read does not clear it, so the next read fails as soon as the deadline elapses unless
+    /// data arrives first. Setting the timeout does not affect an already armed deadline. The
+    /// timeout is shared by all sub-streams of this connection, including those returned by
+    /// [`Self::index`] and backing async `stream` and `future` values, which must therefore
+    /// not idle for longer than `timeout`.
+    ///
+    /// If ingress is drained, see [`ConnHandler::DRAIN`], draining stops once all handles are
+    /// dropped and the peer does not close the stream within `timeout`.
+    #[must_use]
+    pub fn with_timeout(self, timeout: Duration) -> Self {
+        self.state.timeout.set(timeout);
+        self
     }
 
     /// Marks data received by this handle as not processed, which fails ingress once all
@@ -581,6 +612,8 @@ impl Incoming {
             path,
             io: Arc::clone(&self.io),
             state: Arc::clone(&self.state),
+            deadline: None,
+            armed: false,
         })
     }
 
@@ -608,6 +641,8 @@ impl Incoming {
             path: Arc::clone(&self.path),
             io: Arc::clone(&self.io),
             state: Arc::clone(&self.state),
+            deadline: None,
+            armed: false,
         })
     }
 }
@@ -631,7 +666,28 @@ impl AsyncRead for Incoming {
             trace!("reader is closed");
             return Poll::Ready(Ok(()));
         };
-        ready!(rx.poll_read(cx, buf))?;
+        if let Poll::Ready(res) = rx.poll_read(cx, buf) {
+            *this.armed = false;
+            res?;
+        } else {
+            let Some(timeout) = this.state.timeout.get() else {
+                return Poll::Pending;
+            };
+            let sleep = this
+                .deadline
+                .get_or_insert_with(|| Box::pin(tokio::time::sleep(timeout)));
+            if !*this.armed {
+                sleep.as_mut().reset(Instant::now() + timeout);
+                *this.armed = true;
+            }
+            ready!(sleep.as_mut().poll(cx));
+            *this.armed = false;
+            trace!("read timed out");
+            return Poll::Ready(Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "read timed out",
+            )));
+        }
         trace!(buf = ?buf.filled(), "read buffer");
         if buf.filled().is_empty() {
             self.rx.take();
@@ -650,6 +706,25 @@ struct IngressState {
     err: std::sync::OnceLock<std::io::Error>,
     unprocessed: AtomicBool,
     done: watch::Sender<Option<std::io::Result<()>>>,
+    timeout: Timeout,
+}
+
+/// Timeout in nanoseconds, `0` if not set
+#[derive(Default)]
+struct Timeout(AtomicU64);
+
+impl Timeout {
+    fn get(&self) -> Option<Duration> {
+        match self.0.load(Ordering::Relaxed) {
+            0 => None,
+            n => Some(Duration::from_nanos(n)),
+        }
+    }
+
+    fn set(&self, timeout: Duration) {
+        let n = u64::try_from(timeout.as_nanos()).unwrap_or(u64::MAX);
+        self.0.store(n.max(1), Ordering::Relaxed);
+    }
 }
 
 impl IngressState {
@@ -675,6 +750,7 @@ pub struct Outgoing {
     path: Arc<[usize]>,
     path_buf: Bytes,
     done: watch::Receiver<Option<std::io::Result<()>>>,
+    timeout: Arc<Timeout>,
 }
 
 impl Outgoing {
@@ -688,22 +764,51 @@ impl Outgoing {
         Fut: Future<Output = ()> + Send,
     {
         let span = Span::current();
-        let (tx_tx, tx_rx) = mpsc::channel(128);
+        let (tx_tx, mut tx_rx) = mpsc::channel(128);
         let (done_tx, done_rx) = watch::channel(None);
-        tokio::spawn(
+        let timeout = Arc::<Timeout>::default();
+        tokio::spawn({
+            let timeout = Arc::clone(&timeout);
             async move {
-                let res = egress(&mut tx, tx_rx).await;
+                let res = egress(
+                    TimeoutWriter {
+                        inner: &mut tx,
+                        timeout,
+                        deadline: None,
+                        armed: false,
+                    },
+                    &mut tx_rx,
+                )
+                .await;
                 done_tx.send_replace(Some(res.as_ref().copied().map_err(copy_io_error)));
+                drop(tx_rx);
                 on_egress(tx, res).await;
             }
-            .instrument(span.clone()),
-        );
+            .instrument(span.clone())
+        });
         Self {
             tx: PollSender::new(tx_tx),
             path: Arc::from([]),
             path_buf: Bytes::from_static(&[0]),
             done: done_rx,
+            timeout,
         }
+    }
+
+    /// Sets the write timeout.
+    ///
+    /// Writes are buffered and written to the underlying connection by a background task.
+    /// Once set, that task fails with [`std::io::ErrorKind::TimedOut`] if the connection does
+    /// not accept any buffered data within `timeout`, after which the result is passed to
+    /// `on_egress` and all subsequent writes, flushes and shutdowns on this stream fail with
+    /// the same error. Flushes and shutdowns do not wait for the background task, so they only
+    /// report an error that has already occurred and data buffered before it is lost. Setting
+    /// the timeout does not affect a write already in progress. The timeout is shared by all
+    /// sub-streams of this connection, including those returned by [`Self::index`].
+    #[must_use]
+    pub fn with_timeout(self, timeout: Duration) -> Self {
+        self.timeout.set(timeout);
+        self
     }
 
     /// Index the outgoing stream using a structural `path`, returning a handle that writes
@@ -737,6 +842,7 @@ impl Outgoing {
             path,
             path_buf: buf.freeze(),
             done: self.done.clone(),
+            timeout: Arc::clone(&self.timeout),
         })
     }
 
@@ -748,7 +854,7 @@ impl Outgoing {
     pub(crate) fn poll_reserve(&mut self, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
         self.tx
             .poll_reserve(cx)
-            .map_err(|err| std::io::Error::new(std::io::ErrorKind::BrokenPipe, err))
+            .map_err(|e| error_egress(&self.done, e))
     }
 
     pub(crate) async fn reserve(&mut self) -> std::io::Result<()> {
@@ -759,7 +865,7 @@ impl Outgoing {
         trace!(path = ?self.path, ?buf, "sending outgoing frame");
         self.tx
             .send_item((self.path_buf.clone(), buf))
-            .map_err(|err| std::io::Error::new(std::io::ErrorKind::BrokenPipe, err))
+            .map_err(|e| error_egress(&self.done, e))
     }
 
     /// Writes `buf` to the stream as a single frame, without copying it.
@@ -797,12 +903,101 @@ impl AsyncWrite for Outgoing {
 
     #[instrument(level = "trace", skip_all, fields(path = ?self.path), ret(level = "trace"))]
     fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        Poll::Ready(Ok(()))
+        Poll::Ready(match &*self.done.borrow() {
+            Some(Err(err)) => Err(copy_io_error(err)),
+            _ => Ok(()),
+        })
     }
 
     #[instrument(level = "trace", skip_all, fields(path = ?self.path), ret(level = "trace"))]
     fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        Poll::Ready(Ok(()))
+        Poll::Ready(match &*self.done.borrow() {
+            Some(Err(err)) => Err(copy_io_error(err)),
+            _ => Ok(()),
+        })
+    }
+}
+
+/// Returns a copy of the egress error, if egress failed, and [`std::io::ErrorKind::BrokenPipe`]
+/// wrapping `e` otherwise
+fn error_egress(
+    done: &watch::Receiver<Option<std::io::Result<()>>>,
+    e: impl Into<Box<dyn core::error::Error + Send + Sync>>,
+) -> std::io::Error {
+    match &*done.borrow() {
+        Some(Err(err)) => copy_io_error(err),
+        _ => std::io::Error::new(std::io::ErrorKind::BrokenPipe, e),
+    }
+}
+
+pin_project! {
+    struct TimeoutWriter<T> {
+        #[pin]
+        inner: T,
+        timeout: Arc<Timeout>,
+        deadline: Option<Pin<Box<Sleep>>>,
+        armed: bool,
+    }
+}
+
+impl<T: AsyncWrite> TimeoutWriter<T> {
+    fn poll_timeout<R>(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        poll: impl FnOnce(Pin<&mut T>, &mut Context<'_>) -> Poll<std::io::Result<R>>,
+    ) -> Poll<std::io::Result<R>> {
+        let this = self.project();
+        if let Poll::Ready(res) = poll(this.inner, cx) {
+            *this.armed = false;
+            return Poll::Ready(res);
+        }
+        let Some(timeout) = this.timeout.get() else {
+            return Poll::Pending;
+        };
+        let sleep = this
+            .deadline
+            .get_or_insert_with(|| Box::pin(tokio::time::sleep(timeout)));
+        if !*this.armed {
+            sleep.as_mut().reset(Instant::now() + timeout);
+            *this.armed = true;
+        }
+        ready!(sleep.as_mut().poll(cx));
+        *this.armed = false;
+        trace!("connection write timed out");
+        Poll::Ready(Err(std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            "connection write timed out",
+        )))
+    }
+}
+
+impl<T: AsyncWrite> AsyncWrite for TimeoutWriter<T> {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        self.poll_timeout(cx, |inner, cx| inner.poll_write(cx, buf))
+    }
+
+    fn poll_write_vectored(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bufs: &[std::io::IoSlice<'_>],
+    ) -> Poll<std::io::Result<usize>> {
+        self.poll_timeout(cx, |inner, cx| inner.poll_write_vectored(cx, bufs))
+    }
+
+    fn is_write_vectored(&self) -> bool {
+        self.inner.is_write_vectored()
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        self.poll_timeout(cx, AsyncWrite::poll_flush)
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        self.poll_timeout(cx, AsyncWrite::poll_shutdown)
     }
 }
 
@@ -938,7 +1133,7 @@ fn error_unprocessed() -> std::io::Error {
 #[instrument(level = "trace", skip_all)]
 async fn egress(
     mut tx: impl AsyncWrite + Unpin,
-    mut rx: mpsc::Receiver<(Bytes, Bytes)>,
+    rx: &mut mpsc::Receiver<(Bytes, Bytes)>,
 ) -> std::io::Result<()> {
     let mut buf = BytesMut::with_capacity(5);
     trace!("waiting for next frame");
@@ -989,6 +1184,7 @@ pub trait ConnHandler<Rx, Tx> {
     /// reusing the connection, like HTTP/1, require.
     /// Transports, which signal the peer to stop sending once the reader is dropped, like QUIC,
     /// may abort ingress instead.
+    /// Draining is bounded by the read timeout, if one is set, see [`Incoming::with_timeout`].
     const DRAIN: bool = true;
 
     /// Handle ingress completion
@@ -1177,6 +1373,41 @@ mod tests {
         tx.write_all(&[0x01, 0x01, 0x01, 0x2a]).await.unwrap();
         drop(rx);
         assert_eq!(failed(done_rx).await, ErrorKind::NotFound);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn incoming_drop_drain_times_out() {
+        let (_tx, rx, done_rx) = incoming(true);
+        drop(rx.with_timeout(Duration::from_millis(10)));
+        done(done_rx).await.unwrap();
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn incoming_read_after_timeout() {
+        let (mut tx, rx, _done_rx) = incoming(false);
+        let mut rx = rx.with_timeout(Duration::from_millis(10));
+        let mut buf = [0; 1];
+        let err = rx.read_exact(&mut buf).await.unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::TimedOut);
+        tx.write_all(&[0x00, 0x01, 0x2a]).await.unwrap();
+        rx.read_exact(&mut buf).await.unwrap();
+        assert_eq!(buf, [0x2a]);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn outgoing_timeout_after_stall() {
+        let (tx, _rx) = tokio::io::duplex(1);
+        let (done_tx, done_rx) = oneshot::channel();
+        let mut tx = Outgoing::new(tx, |_, res| async {
+            _ = done_tx.send(res);
+        })
+        .with_timeout(Duration::from_millis(10));
+        tx.write_all(&[0; 16]).await.unwrap();
+        assert_eq!(failed(done_rx).await, ErrorKind::TimedOut);
+        let err = tx.write_all(&[0]).await.unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::TimedOut);
+        let err = tx.flush().await.unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::TimedOut);
     }
 
     #[test_log::test(tokio::test)]
