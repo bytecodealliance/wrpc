@@ -103,9 +103,10 @@ interface transport {
         /// an error if receiving fails, and to success otherwise. If the
         /// stream's readable end is dropped before the position is closed, the
         /// future instead resolves once the incoming direction of the invocation
-        /// ends, to an error if it fails, including because unread data has
-        /// been discarded. Dropping the returned future does not cancel the
-        /// read.
+        /// has ended and all of its channels and the streams taken from them
+        /// have been dropped, to an error if it fails, including because unread
+        /// data has been discarded. Dropping the returned future does not cancel
+        /// the read.
         ///
         /// Returns an error if the data of this channel has already been taken,
         /// or if this channel is neither the root channel nor at the position
@@ -158,7 +159,8 @@ interface transport {
         /// No more data may be written to the position afterwards by any
         /// channel, so all writes of data to it must have completed before.
         /// Since the closed positions are not tracked, writing data to a closed
-        /// position or closing it again fails the invocation on the peer.
+        /// position fails the invocation on the peer, while closing it again
+        /// has no effect.
         ///
         /// Returns an error if writing fails.
         close: async func() -> result<_, error>;
@@ -173,7 +175,8 @@ interface invoker {
     /// Invoke a function.
     ///
     /// The invocation is transmitted asynchronously, once any stream taken from
-    /// the returned channels, any `close` call or the returned future is first
+    /// the returned channels, any `close` call, the returned future or a future
+    /// returned by `read-via-stream`, whose stream has been dropped, is first
     /// polled. Dropping all of them, and the returned channels, before that
     /// cancels the invocation. Until the underlying transport is ready, the
     /// streams written to the returned outgoing channels are not read from.
