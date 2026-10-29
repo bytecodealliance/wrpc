@@ -272,9 +272,13 @@ export class Outgoing {
 }
 
 /**
- * The framing multiplexer over a {@link Transport}. Inbound data is accepted
- * only for the root sub-stream `[]` and the sub-streams declared with `seal`;
- * an empty frame for any other path, or for a closed one, is discarded.
+ * The framing multiplexer over a {@link Transport}. Inbound data is only
+ * accepted for the sub-streams the decoded values expect: the root sub-stream
+ * `[]`, and those declared with `seal` as each value carrying pending
+ * `stream`/`future` values is decoded, until they are finished. Data for a
+ * path that may still be declared is buffered until it is; data for any other
+ * path, or for a closed one, fails the invocation, while an empty frame for it
+ * is discarded.
  */
 export class Mux {
   /**
@@ -295,6 +299,12 @@ export class Mux {
   start(): void;
   /** The reader for the expected sub-stream at `path`. */
   incoming(path: number[]): AsyncReader;
+  /**
+   * Declare that sub-streams nested in the root may only be expected at the
+   * root `indices`, so that data for any other path fails the invocation as
+   * soon as it arrives, while an empty frame for it is discarded.
+   */
+  restrict(indices: Iterable<number>): void;
   /**
    * Declare the sub-streams of the pending values in the value decoded at
    * `path` (the root tuple, a future's value, or a stream's element, in

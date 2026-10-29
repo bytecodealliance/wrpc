@@ -529,6 +529,27 @@ test("data arriving before its sub-stream is decoded is kept", { timeout: 1000 }
   await done;
 });
 
+test("data for results which cannot be pending fails at once", { timeout: 1000 }, async () => {
+  /** @type {Uint8Array[]} */
+  const frames = [];
+  const peer = new Mux({
+    read: async () => null,
+    write: (bytes) => void frames.push(bytes),
+    closeWrite: () => {},
+  });
+  await peer.outgoing([2]).close();
+  await peer.outgoing([0]).write(Uint8Array.of(0));
+  const transport = {
+    read: async () => frames.shift() ?? null,
+    write: () => {},
+    closeWrite: () => {},
+  };
+  await assert.rejects(
+    invoke(transport, STREAMS, "get", [], [], [t.u32, t.stream(t.u8)]),
+    /unexpected data for sub-stream \[0\]/,
+  );
+});
+
 test(
   "data arriving before sibling sub-streams are decoded is kept",
   { timeout: 1000 },
