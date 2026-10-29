@@ -1,6 +1,16 @@
 // The wRPC wire encoding, framing and invocation are provided by the
 // `@bytecodealliance/wrpc` client, served by the backend under `/wrpc`.
-import { t, invoke as wrpcInvoke, fromWebStreams } from "/wrpc/index.js";
+import { t, invoke as wrpcInvoke, fromWebStreams } from "@bytecodealliance/wrpc";
+
+/**
+ * @typedef {import("@bytecodealliance/wrpc").InputValue} InputValue
+ * @typedef {import("@bytecodealliance/wrpc").Type} Type
+ * @typedef {{ kind: string, value?: string }} StoreError
+ */
+/**
+ * @template T
+ * @typedef {{ kind: "ok", value: T } | { kind: "error", value: StoreError }} Result
+ */
 
 // `wasi:keyvalue/store`, as served by the backend. The types mirror the
 // WIT in `crates/wasi-keyvalue/wit/deps/keyvalue/store.wit`; the codec
@@ -21,13 +31,19 @@ const SET = {
   results: [t.result(null, error)],
 };
 
-let conn;
+/** @type {WebTransport | null} */
+let conn = null;
+/** @type {Map<string, Uint8Array>} */
 let buckets = new Map();
 
 // Invoke `func` on `instance` over a fresh WebTransport bidirectional
 // stream. The framed transport maps one stream to one invocation; the
 // client writes the request, streams any async parameters, and decodes
 // the reply (and any async results) until all I/O is done.
+/**
+ * @param {string} instance @param {string} func
+ * @param {Type[]} paramTypes @param {Type[]} resultTypes @param {InputValue[]} args
+ */
 async function invoke(instance, func, paramTypes, resultTypes, args) {
   if (!conn) throw "WebTransport not connected";
   const stream = await conn.createBidirectionalStream();
@@ -44,6 +60,7 @@ async function invoke(instance, func, paramTypes, resultTypes, args) {
 }
 
 // Render a decoded `error` variant value (`{ kind, value? }`) as a string.
+/** @param {StoreError} err */
 function formatError(err) {
   switch (err.kind) {
     case "no-such-store":
@@ -57,6 +74,7 @@ function formatError(err) {
   }
 }
 
+/** @param {Uint8Array} v */
 function uuidString(v) {
   return v.reduce((s, x) => {
     const hex = x.toString(16).padStart(2, "0");
@@ -120,7 +138,9 @@ async function getBucket() {
   if (existing) return existing;
 
   dbg.debug(`opening bucket for \`${identifier}\`...`);
-  const [res] = await invoke(STORE, "open", OPEN.params, OPEN.results, [identifier]);
+  const [res] = /** @type {[Result<Uint8Array>]} */ (
+    await invoke(STORE, "open", OPEN.params, OPEN.results, [identifier])
+  );
   if (res.kind === "error") throw "failed to open bucket: " + formatError(res.value);
   const bucket = res.value;
   buckets.set(identifier, bucket);
@@ -131,7 +151,7 @@ async function getBucket() {
 async function handleGet() {
   /** @type {HTMLInputElement | null} */
   const getValue = document.querySelector('#get input[name="get-value"]');
-  if (getValue) getValue.value = null;
+  if (getValue) getValue.value = "";
 
   const bucket = await getBucket();
 
@@ -140,7 +160,9 @@ async function handleGet() {
   if (!key) throw "key must be set";
 
   dbg.debug(`getting \`${key}\`...`);
-  const [res] = await invoke(STORE, "bucket.get", GET.params, GET.results, [bucket, key]);
+  const [res] = /** @type {[Result<Uint8Array | undefined>]} */ (
+    await invoke(STORE, "bucket.get", GET.params, GET.results, [bucket, key])
+  );
   if (res.kind === "error") throw "failed to get value: " + formatError(res.value);
   if (res.value === undefined) {
     dbg.info("key missing");
@@ -162,13 +184,17 @@ async function handleSet() {
   const valueBuf = value ? new TextEncoder().encode(value) : new Uint8Array();
 
   dbg.debug(`setting \`${key}\`...`);
-  const [res] = await invoke(STORE, "bucket.set", SET.params, SET.results, [bucket, key, valueBuf]);
+  const [res] = /** @type {[Result<undefined>]} */ (
+    await invoke(STORE, "bucket.set", SET.params, SET.results, [bucket, key, valueBuf])
+  );
   if (res.kind === "error") throw "failed to set value: " + formatError(res.value);
   dbg.info(`set value in bucket ${uuidString(bucket)}`);
 }
 
+/** @type {Record<"debug" | "log" | "info" | "warn" | "error", (...value: unknown[]) => void>} */
 const dbg = (() => {
   const output = document.querySelector("#message-output");
+  /** @type {Record<string, string>} */
   const className = {
     debug: "has-text-grey",
     log: "has-text-normal",
@@ -176,6 +202,7 @@ const dbg = (() => {
     warn: "has-text-warning",
     error: "has-text-danger",
   };
+  /** @param {unknown[]} value @param {string} [level] */
   const handleLog = (value, level = "log") => {
     level = ["debug", "log", "info", "warn", "error"].includes(level) ? level : "info";
     const prefix = new Date().toISOString();
@@ -199,7 +226,6 @@ const dbg = (() => {
   };
 })();
 
-// @ts-check
 function initUI() {
   function updateTemplate() {
     const option = protoDropdown?.value ?? "mem";
@@ -234,6 +260,7 @@ function initUI() {
   });
 }
 
+/** @param {string} selector */
 function getFormValues(selector) {
   /** @type {HTMLFormElement | null} */
   const form = document.querySelector(selector);
