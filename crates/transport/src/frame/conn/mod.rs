@@ -109,6 +109,9 @@ const MAX_UNCLAIMED_ELEMENTS: usize = 64;
 /// Maximum number of data chunks buffered per sub-stream
 const MAX_BUFFERED_CHUNKS: usize = 16;
 
+/// Maximum length of the data of a frame
+const MAX_FRAME_DATA: usize = u32::MAX as usize;
+
 /// Declared path or a prefix of one
 #[derive(Clone, Copy, Debug, Default)]
 struct Pattern {
@@ -691,11 +694,11 @@ impl Outgoing {
         T: AsyncWrite + Unpin + Send + 'static,
     {
         let span = Span::current();
-        let (tx_tx, tx_rx) = mpsc::channel(128);
+        let (tx_tx, mut tx_rx) = mpsc::channel(128);
         let (done_tx, done_rx) = watch::channel(None);
         tokio::spawn(
             async move {
-                let res = egress(&mut tx, tx_rx).await;
+                let res = egress(&mut tx, &mut tx_rx).await;
                 if let Err(err) = &res {
                     error!(?err, "egress failed");
                 } else {
@@ -752,10 +755,16 @@ impl Outgoing {
         finished(self.done.clone())
     }
 
+    /// Returns the error of egress, if it failed
+    fn error_egress(&self) -> std::io::Error {
+        match &*self.done.borrow() {
+            Some(Err(err)) => copy_io_error(err),
+            _ => std::io::ErrorKind::BrokenPipe.into(),
+        }
+    }
+
     pub(crate) fn poll_reserve(&mut self, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        self.tx
-            .poll_reserve(cx)
-            .map_err(|err| std::io::Error::new(std::io::ErrorKind::BrokenPipe, err))
+        self.tx.poll_reserve(cx).map_err(|_| self.error_egress())
     }
 
     pub(crate) async fn reserve(&mut self) -> std::io::Result<()> {
@@ -766,17 +775,19 @@ impl Outgoing {
         trace!(path = ?self.path, ?buf, "sending outgoing frame");
         self.tx
             .send_item((self.path_buf.clone(), buf))
-            .map_err(|err| std::io::Error::new(std::io::ErrorKind::BrokenPipe, err))
+            .map_err(|_| self.error_egress())
     }
 
-    /// Writes `buf` to the stream as a single frame, without copying it.
+    /// Writes `buf` to the stream as a single frame, or as several if it is longer than the maximum
+    /// frame length, without copying it.
     /// Empty `buf` is not written, since an empty frame closes the stream, see [`Self::close`].
-    pub async fn write_bytes(&mut self, buf: Bytes) -> std::io::Result<()> {
-        if buf.is_empty() {
-            return Ok(());
+    pub async fn write_bytes(&mut self, mut buf: Bytes) -> std::io::Result<()> {
+        while !buf.is_empty() {
+            let data = buf.split_to(buf.len().min(MAX_FRAME_DATA));
+            self.reserve().await?;
+            self.send_reserved(data)?;
         }
-        self.reserve().await?;
-        self.send_reserved(buf)
+        Ok(())
     }
 
     /// Closes the stream by writing an empty frame. No more data may be written to it afterwards.
@@ -798,6 +809,7 @@ impl AsyncWrite for Outgoing {
         }
         trace!("writing outgoing chunk");
         ready!(self.poll_reserve(cx))?;
+        let buf = &buf[..buf.len().min(MAX_FRAME_DATA)];
         self.send_reserved(Bytes::copy_from_slice(buf))?;
         Poll::Ready(Ok(buf.len()))
     }
@@ -953,7 +965,7 @@ fn error_unprocessed() -> std::io::Error {
 #[instrument(level = "trace", skip_all)]
 async fn egress(
     mut tx: impl AsyncWrite + Unpin,
-    mut rx: mpsc::Receiver<(Bytes, Bytes)>,
+    rx: &mut mpsc::Receiver<(Bytes, Bytes)>,
 ) -> std::io::Result<()> {
     let mut buf = BytesMut::with_capacity(5);
     trace!("waiting for next frame");
@@ -1079,6 +1091,38 @@ mod tests {
             let err = tx.write_all(&FRAME).await.unwrap_err();
             assert_eq!(err.kind(), ErrorKind::BrokenPipe);
         }
+    }
+
+    struct FailingWriter;
+
+    impl AsyncWrite for FailingWriter {
+        fn poll_write(
+            self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+            _buf: &[u8],
+        ) -> Poll<std::io::Result<usize>> {
+            Poll::Ready(Err(std::io::Error::other("test")))
+        }
+
+        fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+            Poll::Ready(Ok(()))
+        }
+
+        fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+            Poll::Ready(Ok(()))
+        }
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn outgoing_reports_egress_failure() {
+        let mut tx = Outgoing::new(FailingWriter);
+        let finished = tx.finished();
+        tx.write_all(b"foo").await.unwrap();
+        let err = finished.await.unwrap_err();
+        assert_eq!(err.to_string(), "test");
+        let err = tx.write_all(b"bar").await.unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::Other);
+        assert_eq!(err.to_string(), "test");
     }
 
     #[test_log::test(tokio::test)]
