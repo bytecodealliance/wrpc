@@ -110,16 +110,19 @@ function attach({ at, i }, pending) {
 }
 
 /**
- * Read a frame header: the sub-stream path and the data length.
- * @param {import("./io.js").Reader} r
- * @returns {Generator<number, [number[], number], void>}
+ * Read a frame header: the sub-stream path, keeping at most `depth` of its
+ * elements, the data length and the path length.
+ * @param {import("./io.js").Reader} r @param {number} depth
+ * @returns {Generator<number, [number[], number, number], void>}
  */
-function* readFrameHeader(r) {
+function* readFrameHeader(r, depth) {
   const path = [];
-  for (let depth = yield* atomic(r, readVarU32); depth > 0; depth--) {
-    path.push(yield* atomic(r, readVarU32));
+  const len = yield* atomic(r, readVarU32);
+  for (let i = 0; i < len; i++) {
+    const p = yield* atomic(r, readVarU32);
+    if (i < depth) path.push(p);
   }
-  return [path, yield* atomic(r, readVarU32)];
+  return [path, yield* atomic(r, readVarU32), len];
 }
 
 /**
@@ -265,6 +268,8 @@ export class Mux {
     /** The expected sub-streams, rooted at the one carrying the synchronous values. */
     this.root = node(false);
     this.root.chan = new Chan(CAPACITY);
+    /** The maximum length of the path of an expected sub-stream. */
+    this.maxDepth = Infinity;
     /** The number of buffered sub-streams not yet declared. */
     this.pendingCount = 0;
     /** @type {(() => void)[]} */
@@ -332,7 +337,11 @@ export class Mux {
     while (!this.aborted) {
       // Stop cleanly at a frame boundary once the peer closes the stream.
       if (!(await m.fill(1))) break;
-      const [path, n] = await m.decode(readFrameHeader);
+      const [path, n, len] = await m.decode((r) => readFrameHeader(r, this.maxDepth));
+      if (len > this.maxDepth) {
+        if (n === 0) continue;
+        throw new Error(`unexpected data for a sub-stream path of length ${len}`);
+      }
       await this._room(path, n === 0);
       if (n === 0) {
         this._route(path, true)?.close();
@@ -471,12 +480,14 @@ export class Mux {
 
   /**
    * Declare that sub-streams nested in the root may only be expected at the
-   * root `indices`, so that data for any other path fails the invocation as
-   * soon as it arrives, while an empty frame for it is discarded.
-   * @param {Iterable<number>} indices
+   * root `indices`, at paths at most `depth` long, so that data for any other
+   * path fails the invocation as soon as it arrives, while an empty frame for
+   * it is discarded.
+   * @param {Iterable<number>} indices @param {number} depth
    */
-  restrict(indices) {
+  restrict(indices, depth) {
     this.root.possible = new Set(indices);
+    this.maxDepth = depth;
   }
 
   /**

@@ -301,10 +301,11 @@ export class Mux {
   incoming(path: number[]): AsyncReader;
   /**
    * Declare that sub-streams nested in the root may only be expected at the
-   * root `indices`, so that data for any other path fails the invocation as
-   * soon as it arrives, while an empty frame for it is discarded.
+   * root `indices`, at paths at most `depth` long, so that data for any other
+   * path fails the invocation as soon as it arrives, while an empty frame for
+   * it is discarded.
    */
-  restrict(indices: Iterable<number>): void;
+  restrict(indices: Iterable<number>, depth: number): void;
   /**
    * Declare the sub-streams of the pending values in the value decoded at
    * `path` (the root tuple, a future's value, or a stream's element, in
@@ -360,8 +361,9 @@ export interface Invocation {
    */
   finished: Promise<void>;
   /**
-   * Decode the parameters against `paramTypes`. It must be called, with `[]`
-   * for a function without parameters, for `finished` to resolve.
+   * Start reading the frames of the invocation and decode the parameters
+   * against `paramTypes`. It must be called, with `[]` for a function without
+   * parameters, for `finished` to resolve.
    */
   receiveParams(paramTypes: Type[]): Promise<{ params: Value[]; done: Promise<void> }>;
   sendResults(resultTypes: Type[], values: InputValue[]): Promise<void>;

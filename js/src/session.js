@@ -12,6 +12,7 @@
 import { Writer, atomic, readVarU32 } from "./io.js";
 import { DISCARDED, Mux, PROTOCOL, unexpectedError } from "./mux.js";
 import {
+  asyncDepth,
   decodeSteps,
   encodeValue,
   hasAsync,
@@ -232,6 +233,17 @@ async function unlessAborted(mux, p) {
 }
 
 /**
+ * Declare to `mux` the sub-streams the root values of `types` can carry.
+ * @param {Mux} mux @param {Type[]} types
+ */
+function restrict(mux, types) {
+  mux.restrict(
+    types.flatMap((ty, i) => (hasAsync(ty) ? [i] : [])),
+    Math.max(0, ...types.map((ty) => asyncDepth(ty) + 1)),
+  );
+}
+
+/**
  * Declare to `mux` the sub-streams of the pending values in `sink`, decoded
  * at `path`, unless the value was discarded.
  * @param {Mux} mux @param {number[]} path @param {DecodeDeferred[]} sink
@@ -412,7 +424,7 @@ export async function invoke(transport, instance, func, paramTypes, args, result
     }
     paramTypes.forEach((ty, i) => encodeValue(w, ty, args[i], psink, [i]));
     await mux.writeHeader(instance, func);
-    mux.restrict(resultTypes.flatMap((ty, i) => (hasAsync(ty) ? [i] : [])));
+    restrict(mux, resultTypes);
     mux.start();
     await mux.outgoing([]).write(w.finish());
   } catch (err) {
@@ -469,7 +481,6 @@ export async function accept(transport) {
     mux.abort(err);
     throw err;
   }
-  mux.start();
   const root = mux.incoming([]);
   /** @type {(received: ReturnType<typeof receiveTuple>) => void} */
   let receive = () => {};
@@ -491,6 +502,8 @@ export async function accept(transport) {
      * @param {Type[]} paramTypes
      */
     async receiveParams(paramTypes) {
+      restrict(mux, paramTypes);
+      mux.start();
       const receiving = receiveTuple(mux, root, paramTypes);
       receive(receiving);
       const { values, done } = await receiving;
