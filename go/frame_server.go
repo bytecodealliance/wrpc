@@ -41,6 +41,10 @@ func (s *FramedServer) Serve(instance string, name string, f HandleFunc, paths .
 		hs = make(map[string]handler)
 		s.handlers[instance] = hs
 	}
+	if _, ok := hs[name]; ok {
+		cancel()
+		return nil, fmt.Errorf("handler for `%s#%s` already exists", instance, name)
+	}
 	hs[name] = handler{
 		Context:    ctx,
 		WaitGroup:  &wg,
@@ -52,12 +56,10 @@ func (s *FramedServer) Serve(instance string, name string, f HandleFunc, paths .
 		cancel()
 
 		s.handlersMu.Lock()
-		defer s.handlersMu.Unlock()
-
-		hs, ok := s.handlers[instance]
-		if ok {
+		if hs, ok := s.handlers[instance]; ok && hs[name].WaitGroup == &wg {
 			delete(hs, name)
 		}
+		s.handlersMu.Unlock()
 
 		wg.Wait()
 
@@ -65,8 +67,21 @@ func (s *FramedServer) Serve(instance string, name string, f HandleFunc, paths .
 	}, nil
 }
 
-func (s *FramedServer) Accept(w io.WriteCloser, r io.ReadCloser) error {
-	if err := s.accept(w, r); err != nil {
+// Accept reads the invocation header from `r` and calls the handler of the invoked function
+// in a new goroutine. Reading the header is aborted, closing `w` and `r`, once `ctx` is done.
+func (s *FramedServer) Accept(ctx context.Context, w io.WriteCloser, r io.ReadCloser) error {
+	stop := context.AfterFunc(ctx, func() {
+		if err := r.Close(); err != nil {
+			slog.DebugContext(s.ctx, "failed to close reader", "err", err)
+		}
+	})
+	if err := s.accept(w, r, func() error {
+		if !stop() {
+			return context.Cause(ctx)
+		}
+		return nil
+	}); err != nil {
+		stop()
 		if cErr := w.Close(); cErr != nil {
 			slog.DebugContext(s.ctx, "failed to close writer", "err", cErr)
 		}
@@ -78,7 +93,7 @@ func (s *FramedServer) Accept(w io.WriteCloser, r io.ReadCloser) error {
 	return nil
 }
 
-func (s *FramedServer) accept(w io.WriteCloser, r io.ReadCloser) error {
+func (s *FramedServer) accept(w io.WriteCloser, r io.ReadCloser, headerRead func() error) error {
 	br := bufio.NewReader(r)
 	b, err := br.ReadByte()
 	if err != nil {
@@ -96,6 +111,9 @@ func (s *FramedServer) accept(w io.WriteCloser, r io.ReadCloser) error {
 		name, err := ReadString(br)
 		if err != nil {
 			return fmt.Errorf("failed to read function name string: %w", err)
+		}
+		if err := headerRead(); err != nil {
+			return fmt.Errorf("failed to read invocation header: %w", err)
 		}
 
 		s.handlersMu.RLock()
