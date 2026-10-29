@@ -157,6 +157,9 @@ func ReadFutureUnit(r IndexReadCloser, path ...uint32) (<-chan struct{}, func(co
 
 // WriteFutureUnit writes a `future` without a payload received from `v` to `w`
 func WriteFutureUnit(v <-chan struct{}, w ByteWriter) (func(context.Context, IndexWriter) error, error) {
+	if v == nil {
+		return nil, errors.New("outgoing future channel is nil")
+	}
 	select {
 	case _, ok := <-v:
 		if !ok {
