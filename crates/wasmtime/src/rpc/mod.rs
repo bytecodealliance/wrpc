@@ -46,8 +46,10 @@ where
 
 /// RPC error
 pub enum Error {
-    /// Failure of an invocation, including its transmission
+    /// Failure of an invocation
     Invoke(anyhow::Error),
+    /// Failure to transmit an invocation
+    Transmission(Arc<anyhow::Error>),
     /// Error originating from an `index` call on an incoming channel
     IncomingIndex(std::io::Error),
     /// Error originating from an `index` call on an outgoing channel
@@ -72,6 +74,10 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Error::Invoke(error) => error.fmt(f),
+            Error::Transmission(error) => {
+                "invocation was not transmitted: ".fmt(f)?;
+                error.fmt(f)
+            }
             Error::IncomingIndex(error)
             | Error::OutgoingIndex(error)
             | Error::Read(error)
@@ -143,11 +149,24 @@ fn error_data_taken() -> std::io::Error {
     std::io::Error::new(std::io::ErrorKind::AlreadyExists, "data already taken")
 }
 
+/// Failure to transmit an invocation, shared by all of its channels and its result
+#[derive(Debug)]
+struct NotTransmitted(Arc<anyhow::Error>);
+
+impl fmt::Display for NotTransmitted {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        "invocation was not transmitted: ".fmt(f)?;
+        self.0.fmt(f)
+    }
+}
+
+impl std::error::Error for NotTransmitted {}
+
 /// Error returned for the channels of an invocation, which failed to be transmitted
-fn error_not_transmitted(err: &anyhow::Error) -> std::io::Error {
+fn error_not_transmitted(err: &Arc<anyhow::Error>) -> std::io::Error {
     std::io::Error::new(
         std::io::ErrorKind::NotConnected,
-        format!("invocation was not transmitted: {err:#}"),
+        NotTransmitted(Arc::clone(err)),
     )
 }
 
