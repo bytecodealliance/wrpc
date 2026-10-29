@@ -2,10 +2,11 @@
 
 use core::fmt;
 use core::future;
+use core::mem;
 use core::pin::Pin;
 use core::task::{Context, Poll, ready};
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError, Weak};
 
 use futures::FutureExt as _;
@@ -100,37 +101,154 @@ type Slot = Mutex<Option<std::io::Result<Incoming>>>;
 struct IncomingRoot {
     /// Root handle, set once the invocation is transmitted
     root: OnceLock<Mutex<Incoming>>,
-    /// Positions of the channels returned before the invocation was transmitted, in order
-    pending: Mutex<Vec<Pending>>,
+    /// Channels returned before the invocation was transmitted
+    pending: Mutex<PendingChannels>,
 }
 
 /// Position of a channel returned before the invocation was transmitted
 struct Pending {
     path: Box<[usize]>,
+    /// Pattern matching `path`, with `None` at the positions matched by a wildcard
+    pattern: Box<[Option<usize>]>,
     slot: Weak<Slot>,
-    /// Whether the position is that of a declared async value without wildcards, which has to
-    /// be indexed even if the channel was dropped, so that its data is discarded
-    concrete: bool,
+    /// Whether the position is that of a declared async value, whose data has to be taken even
+    /// if the channel was dropped, so that it is discarded
+    declared: bool,
+}
+
+impl Pending {
+    /// Returns the paths of the list and stream elements containing the position, outermost first
+    fn elements(&self) -> impl Iterator<Item = &[usize]> {
+        self.pattern
+            .iter()
+            .enumerate()
+            .filter(|(.., p)| p.is_none())
+            .map(|(k, ..)| &self.path[..=k])
+    }
+}
+
+/// Channels returned before the invocation was transmitted, which mirror the elements the
+/// transport releases, so that indexing behaves the same before and after transmission
+#[derive(Default)]
+struct PendingChannels {
+    /// Positions of the channels, which are alive or declared, in the order they were returned
+    channels: Vec<Pending>,
+    /// Index following the last element a channel was returned within, keyed by the path of
+    /// the list or stream containing it
+    next: BTreeMap<Box<[usize]>, usize>,
+    /// Channels returned within an element, which may still be alive, keyed by its path
+    elements: BTreeMap<Box<[usize]>, Vec<Weak<Slot>>>,
+    /// Declared positions in `channels`
+    declared: BTreeSet<Box<[usize]>>,
+    /// Number of `channels`, at which the dropped ones are pruned next
+    prune_at: usize,
+}
+
+impl PendingChannels {
+    /// Returns whether the element at `path` is released, see [`is_released`]
+    fn is_released(&self, path: &[usize]) -> bool {
+        is_released(&self.next, &self.elements, path)
+    }
+
+    /// Records the position of a channel, failing if it is within a released element or a
+    /// declared position, whose channel was already returned
+    fn push(&mut self, entry: Pending) -> std::io::Result<()> {
+        if entry.elements().any(|element| self.is_released(element)) {
+            return Err(error_discarded(&entry.path));
+        }
+        if entry.declared && !self.declared.insert(entry.path.clone()) {
+            return Err(error_returned(&entry.path));
+        }
+        for element in entry.elements() {
+            let (i, parent) = element.split_last().expect("element path is not empty");
+            let next = self.next.entry(Box::from(parent)).or_default();
+            *next = (*next).max(i.saturating_add(1));
+            self.elements
+                .entry(Box::from(element))
+                .or_default()
+                .push(Weak::clone(&entry.slot));
+        }
+        self.channels.push(entry);
+        if self.channels.len() >= self.prune_at {
+            self.prune();
+            self.prune_at = self.channels.len().saturating_mul(2).max(64);
+        }
+        Ok(())
+    }
+
+    /// Forgets the dropped channels, which need not be indexed, and the elements released
+    fn prune(&mut self) {
+        self.elements.retain(|_, slots| {
+            slots.retain(|slot| slot.strong_count() > 0);
+            !slots.is_empty()
+        });
+        let released: Vec<_> = self
+            .next
+            .keys()
+            .filter(|parent| (1..=parent.len()).any(|k| self.is_released(&parent[..k])))
+            .cloned()
+            .collect();
+        for parent in released {
+            self.next.remove(&parent);
+        }
+        let (next, elements) = (&self.next, &self.elements);
+        self.channels.retain(|entry| {
+            entry.slot.strong_count() > 0
+                || entry.declared
+                    && !entry
+                        .elements()
+                        .any(|element| is_released(next, elements, element))
+        });
+        self.declared = self
+            .channels
+            .iter()
+            .filter(|Pending { declared, .. }| *declared)
+            .map(|Pending { path, .. }| path.clone())
+            .collect();
+    }
+}
+
+/// Returns whether the element at `path` is released, i.e. a channel was returned within it or
+/// a following element and no channel returned within it is alive
+fn is_released(
+    next: &BTreeMap<Box<[usize]>, usize>,
+    elements: &BTreeMap<Box<[usize]>, Vec<Weak<Slot>>>,
+    path: &[usize],
+) -> bool {
+    let Some((i, parent)) = path.split_last() else {
+        return false;
+    };
+    next.get(parent).is_some_and(|next| i < next)
+        && !elements
+            .get(path)
+            .is_some_and(|slots| slots.iter().any(|slot| slot.strong_count() > 0))
 }
 
 impl IncomingRoot {
-    /// Records the position of a channel returned before the invocation was transmitted,
-    /// forgetting the dropped channels, whose positions need not be indexed
-    fn push(pending: &mut Vec<Pending>, entry: Pending) {
-        pending.retain(|Pending { slot, concrete, .. }| *concrete || slot.strong_count() > 0);
-        pending.push(entry);
-    }
-
     /// Sets the root handle, indexing the positions of the channels returned before in the
-    /// order they were returned
+    /// order they were returned and releasing the elements released before
     fn set(&self, incoming: Incoming) {
         let mut pending = self.pending.lock().unwrap_or_else(PoisonError::into_inner);
-        for Pending { path, slot, .. } in pending.drain(..) {
+        let released: Vec<_> = pending
+            .next
+            .iter()
+            .map(|(parent, next)| [parent, &[next - 1][..]].concat())
+            .filter(|element| pending.is_released(element))
+            .collect();
+        let mut dropped = Vec::default();
+        for Pending { path, slot, .. } in mem::take(&mut pending.channels) {
             let handle = incoming.index(&path);
             if let Some(slot) = slot.upgrade() {
                 *slot.lock().unwrap_or_else(PoisonError::into_inner) = Some(handle);
+            } else {
+                dropped.push(handle);
             }
         }
+        for element in released {
+            _ = incoming.index(&element);
+        }
+        drop(dropped);
+        *pending = PendingChannels::default();
         _ = self.root.set(Mutex::new(incoming));
     }
 }
@@ -343,15 +461,13 @@ impl IncomingChannel {
                     return Err(error_returned(&path));
                 }
                 *incoming.lock().unwrap_or_else(PoisonError::into_inner) = Some(Ok(handle));
-            } else {
-                IncomingRoot::push(
-                    &mut pending,
-                    Pending {
-                        path: path.clone(),
-                        slot: Arc::downgrade(&incoming),
-                        concrete: node.declared && concrete,
-                    },
-                );
+            } else if let Err(err) = pending.push(Pending {
+                path: path.clone(),
+                pattern: pattern.into(),
+                slot: Arc::downgrade(&incoming),
+                declared: node.declared,
+            }) {
+                *incoming.lock().unwrap_or_else(PoisonError::into_inner) = Some(Err(err));
             }
         }
         if node.declared && concrete {
@@ -404,6 +520,14 @@ impl IncomingChannel {
             take_reader(&incoming).unwrap_or_else(|| Err(error_ended()))
         }))
     }
+}
+
+/// Returns the error for a `path` within a released list or stream element
+fn error_discarded(path: &[usize]) -> std::io::Error {
+    std::io::Error::new(
+        std::io::ErrorKind::NotFound,
+        format!("`{path:?}` is within a discarded element"),
+    )
 }
 
 /// Returns the error for a declared `path`, whose channel was already returned
@@ -654,15 +778,87 @@ mod tests {
         let rx = IncomingChannel::new(
             future::pending().boxed().shared(),
             Arc::clone(&root),
-            [&[Some(0)][..], &[Some(1), None]],
+            [&[Some(0)][..], &[Some(1), None, None]],
         );
         drop(rx.index(&[0]).unwrap());
-        for i in 0..100 {
-            drop(rx.index(&[1, i]).unwrap());
+        for i in 0..1000 {
+            drop(rx.index(&[1, i, 0]).unwrap());
         }
         let pending = root.pending.lock().unwrap();
-        assert_eq!(pending.len(), 2);
-        assert_eq!(*pending[0].path, [0]);
-        assert!(pending[0].concrete);
+        assert!(pending.channels.len() < 64);
+        assert!(pending.elements.len() < 64);
+        assert!(pending.next.len() < 64);
+        assert_eq!(*pending.channels[0].path, [0]);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn incoming_channel_elements_match_transmitted() {
+        let paths = [
+            &[Some(0), None][..],
+            &[Some(0), None, None],
+            &[Some(1), None],
+            &[Some(1), None, None],
+        ];
+        for transmitted in [true, false] {
+            let (_tx, incoming) = tokio::io::duplex(64);
+            let mut incoming = Some(Incoming::new(BufReader::new(incoming), paths));
+            let root = Arc::<IncomingRoot>::default();
+            if transmitted {
+                root.set(incoming.take().unwrap());
+            }
+            let rx = IncomingChannel::new(
+                future::ready(Ok(())).boxed().shared(),
+                Arc::clone(&root),
+                paths,
+            );
+            let _nested = rx.index(&[0, 1, 0]).unwrap();
+            let returned = rx.index(&[1, 1]).unwrap();
+            let _nested_returned = rx.index(&[1, 1, 0]).unwrap();
+            drop(returned);
+            let again = rx.index(&[1, 1]);
+            if let Some(incoming) = incoming {
+                root.set(incoming);
+            }
+            let mut element = rx.index(&[0, 1]).unwrap();
+            assert!(ready(element.take_data().unwrap()).await.is_ok());
+            let err = match again {
+                Ok(mut ch) => ready(ch.take_data().unwrap()).await.err().unwrap(),
+                Err(err) => err,
+            };
+            assert_eq!(
+                err.kind(),
+                ErrorKind::AlreadyExists,
+                "transmitted: {transmitted}"
+            );
+        }
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn incoming_channel_discards_released_elements() {
+        for transmitted in [true, false] {
+            let (_tx, incoming) = tokio::io::duplex(64);
+            let mut incoming = Some(Incoming::new(BufReader::new(incoming), [[None]]));
+            let root = Arc::<IncomingRoot>::default();
+            if transmitted {
+                root.set(incoming.take().unwrap());
+            }
+            let rx = IncomingChannel::new(
+                future::ready(Ok(())).boxed().shared(),
+                Arc::clone(&root),
+                [[None]],
+            );
+            let mut alive = rx.index(&[2]).unwrap();
+            drop(rx.index(&[5]).unwrap());
+            let released = rx.index(&[3]);
+            if let Some(incoming) = incoming {
+                root.set(incoming);
+            }
+            let err = match released {
+                Ok(mut ch) => ready(ch.take_data().unwrap()).await.err().unwrap(),
+                Err(err) => err,
+            };
+            assert_eq!(err.kind(), ErrorKind::NotFound);
+            assert!(ready(alive.take_data().unwrap()).await.is_ok());
+        }
     }
 }
