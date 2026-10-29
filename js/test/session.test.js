@@ -288,18 +288,23 @@ test("an invalid invocation header aborts the transport", async () => {
 });
 
 test("aborting a web stream transport cancels and aborts both sides", async () => {
-  /** @type {[string, unknown][]} */
-  const reasons = [];
-  const transport = fromWebStreams({
-    readable: new ReadableStream({ cancel: (reason) => void reasons.push(["cancel", reason]) }),
-    writable: new WritableStream({ abort: (reason) => void reasons.push(["abort", reason]) }),
-  });
-  assert.ok(transport.abort);
-  await transport.abort("boom");
-  assert.deepEqual(reasons.sort(), [
-    ["abort", "boom"],
-    ["cancel", "boom"],
-  ]);
+  for (const [reason, expected] of [
+    ["boom", "boom"],
+    [Object.assign(new Error("stopped"), { source: "stream", streamErrorCode: 1 }), undefined],
+  ]) {
+    /** @type {[string, unknown][]} */
+    const reasons = [];
+    const transport = fromWebStreams({
+      readable: new ReadableStream({ cancel: (reason) => void reasons.push(["cancel", reason]) }),
+      writable: new WritableStream({ abort: (reason) => void reasons.push(["abort", reason]) }),
+    });
+    assert.ok(transport.abort);
+    await transport.abort(reason);
+    assert.deepEqual(reasons.sort(), [
+      ["abort", expected],
+      ["cancel", expected],
+    ]);
+  }
 });
 
 /**
