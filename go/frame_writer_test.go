@@ -89,6 +89,17 @@ func TestFrameStreamWriter(t *testing.T) {
 		}
 	})
 
+	t.Run("empty index path", func(t *testing.T) {
+		t.Parallel()
+		ctx := context.Background()
+		var dst sink
+		w := wrpc.NewFrameStreamWriter(ctx, &dst)
+		if _, err := w.Index(); err == nil {
+			t.Fatal("indexing an empty path should fail")
+		}
+		assertClose(t, w)
+	})
+
 	t.Run("close path", func(t *testing.T) {
 		t.Parallel()
 		ctx := context.Background()

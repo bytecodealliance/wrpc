@@ -3,6 +3,7 @@ package wrpc
 import (
 	"bufio"
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"runtime"
@@ -148,6 +149,9 @@ func (w *FrameStreamWriter) ClosePath() error {
 }
 
 func (w *FrameStreamWriter) Index(path ...uint32) (IndexWriteCloser, error) {
+	if len(path) == 0 {
+		return nil, errors.New("path cannot be empty")
+	}
 	p := make([]uint32, 0, len(w.path)+len(path))
 	p = append(p, w.path...)
 	p = append(p, path...)
