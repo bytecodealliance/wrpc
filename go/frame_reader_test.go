@@ -17,6 +17,26 @@ import (
 )
 
 func TestFrameStreamReader(t *testing.T) {
+	t.Run("path deeper than declared", func(t *testing.T) {
+		t.Parallel()
+		ctx := context.Background()
+		var src sink
+		for _, frame := range []wrpc.Frame{
+			{Path: []uint32{0, 0, 0}},
+			{Path: []uint32{0, 0, 0}, Data: []byte("!")},
+		} {
+			if _, err := wrpc.WriteFrame(frame, &src); err != nil {
+				t.Fatalf("failed to write frame: %s", err)
+			}
+		}
+		r := wrpc.NewFrameStreamReader(ctx, &src, wrpc.NewSubscribePath().Index(0).Wildcard())
+		_, err := io.ReadAll(r)
+		if err == nil || !strings.Contains(err.Error(), "exceeds maximum") {
+			t.Fatalf("expected the stream to fail, got `%v`", err)
+		}
+		assertClose(t, r)
+	})
+
 	t.Run("empty subscription path", func(t *testing.T) {
 		t.Parallel()
 		ctx := context.Background()

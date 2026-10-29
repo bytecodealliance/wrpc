@@ -8,6 +8,8 @@ import (
 	"math"
 )
 
+const maxInitialPathCapacity = 32
+
 type Frame struct {
 	Path []uint32
 	Data []byte
@@ -15,7 +17,7 @@ type Frame struct {
 
 // ReadFrame reads a single frame from `r` and returns it:
 func ReadFrame(r ByteReader) (Frame, error) {
-	path, n, err := readFrameHeader(r)
+	path, _, n, err := readFrameHeader(r, math.MaxUint32)
 	if err != nil {
 		return Frame{}, err
 	}
@@ -29,32 +31,35 @@ func ReadFrame(r ByteReader) (Frame, error) {
 	}, nil
 }
 
-// readFrameHeader reads the path of a frame and the length of its data from `r`
-func readFrameHeader(r ByteReader) ([]uint32, uint32, error) {
+// readFrameHeader reads the path of a frame, keeping at most `depth` of its elements, the
+// length of the path and the length of its data from `r`
+func readFrameHeader(r ByteReader, depth uint32) ([]uint32, uint32, uint32, error) {
 	slog.Debug("reading path length")
 	n, err := ReadUint32(r)
 	if err != nil {
 		if err == io.EOF {
-			return nil, 0, io.EOF
+			return nil, 0, 0, io.EOF
 		}
-		return nil, 0, fmt.Errorf("failed to read path length: %w", err)
+		return nil, 0, 0, fmt.Errorf("failed to read path length: %w", err)
 	}
-	path := NewSlice[[]uint32](n)
+	path := make([]uint32, 0, min(n, depth, maxInitialPathCapacity))
 	slog.Debug("reading path elements", "len", n)
 	for i := range n {
 		slog.Debug("reading path element", "index", i)
 		v, err := ReadUint32(r)
 		if err != nil {
-			return nil, 0, fmt.Errorf("failed to read path element %d: %w", i, err)
+			return nil, 0, 0, fmt.Errorf("failed to read path element %d: %w", i, err)
 		}
-		path = append(path, v)
+		if i < depth {
+			path = append(path, v)
+		}
 	}
 	slog.Debug("reading data length")
-	n, err = ReadUint32(r)
+	k, err := ReadUint32(r)
 	if err != nil {
-		return nil, 0, fmt.Errorf("failed to read data length: %w", err)
+		return nil, 0, 0, fmt.Errorf("failed to read data length: %w", err)
 	}
-	return path, n, nil
+	return path, n, k, nil
 }
 
 func WriteFrame(v Frame, w ByteWriter) (int, error) {

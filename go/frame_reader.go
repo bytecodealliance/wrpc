@@ -349,10 +349,12 @@ func NewFrameStreamReader(ctx context.Context, r ByteReadCloser, paths ...Subscr
 	root := newFrameSub()
 	root.taken = true
 	subs.nest[""] = root
+	var maxDepth uint32
 	for _, path := range paths {
 		if len(path) == 0 {
 			continue
 		}
+		maxDepth = max(maxDepth, uint32(len(path)))
 		subs.patterns.insert(path)
 		if p, ok := concretePath(path); ok {
 			subs.nest[p] = newFrameSub()
@@ -444,12 +446,18 @@ func NewFrameStreamReader(ctx context.Context, r ByteReadCloser, paths ...Subscr
 					return errUnprocessed
 				}
 				slog.DebugContext(ctx, "reading frame")
-				path, n, err := readFrameHeader(r)
+				path, depth, n, err := readFrameHeader(r, maxDepth)
 				if err == io.EOF {
 					return nil
 				}
 				if err != nil {
 					return err
+				}
+				if depth > maxDepth {
+					if n == 0 {
+						continue
+					}
+					return fmt.Errorf("path length of %d exceeds maximum of %d", depth, maxDepth)
 				}
 				slog.DebugContext(ctx, "read frame header",
 					"path", path,
