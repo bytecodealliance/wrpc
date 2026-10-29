@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { runInNewContext } from "node:vm";
 
 import * as t from "../src/types.js";
 import { Chan, Writer } from "../src/io.js";
@@ -108,6 +109,48 @@ test("empty interior stream chunks do not truncate the stream", async () => {
   );
   assert.deepEqual(await collect(results[0][0]), [1n, 2n, 3n, 4n]);
   await Promise.all([done, serving]);
+});
+
+test("numeric stream chunks are typed arrays", async () => {
+  for (const [elem, Typed, vals] of [
+    [t.s8, Int8Array, [-128, 0, 127]],
+    [t.u8, Uint8Array, [0, 1, 255]],
+    [t.s16, Int16Array, [-32768, 1, 32767]],
+    [t.u16, Uint16Array, [0, 1, 65535]],
+    [t.s32, Int32Array, [-2147483648, 1, 2147483647]],
+    [t.u32, Uint32Array, [0, 1, 4294967295]],
+    [t.s64, BigInt64Array, [-(1n << 63n), 1n, (1n << 63n) - 1n]],
+    [t.u64, BigUint64Array, [0n, 1n, (1n << 64n) - 1n]],
+    [t.f32, Float32Array, [1.5, -0.25, Infinity]],
+    [t.f64, Float64Array, [Math.PI, 5e-324, -Infinity]],
+  ]) {
+    const ty = t.stream(elem);
+    for (const [src, chunks] of [
+      [Typed.from(vals), [Typed.from(vals)]],
+      [
+        [vals.slice(0, 1), Typed.from(vals.slice(1)), []],
+        [Typed.from(vals.slice(0, 1)), Typed.from(vals.slice(1))],
+      ],
+      [runInNewContext(`${Typed.name}.from(vals)`, { vals }), [Typed.from(vals)]],
+      [[runInNewContext(`${Typed.name}.from(vals)`, { vals })], [Typed.from(vals)]],
+      [[new Set(vals)], [Typed.from(vals)]],
+    ]) {
+      const [client, server] = duplexPair();
+      const serving = (async () => {
+        const inv = await accept(server);
+        const { params, done: rx } = await inv.receiveParams([ty]);
+        await Promise.all([rx, inv.sendResults([ty], [params[0]])]);
+      })();
+      const { results, done } = await invoke(client, STREAMS, "echo", [ty], [src], [ty]);
+      const out = [];
+      for await (const chunk of results[0]) {
+        assert.ok(chunk instanceof Typed, `\`stream<${elem.kind}>\` chunks are \`${Typed.name}\``);
+        out.push(chunk);
+      }
+      assert.deepEqual(out, chunks);
+      await Promise.all([done, serving]);
+    }
+  }
 });
 
 test("an inbound transport failure surfaces to a sub-stream reader", async () => {
@@ -285,7 +328,7 @@ test("invalid arguments fail before anything is written and abort the transport"
     closeWrite: () => {},
     abort: (reason) => void aborted.push(reason),
   };
-  await assert.rejects(invoke(transport, STREAMS, "get", [t.u32], [-1], []), /out of range/);
+  await assert.rejects(invoke(transport, STREAMS, "get", [t.u32], [1n], []), TypeError);
   await assert.rejects(invoke(transport, STREAMS, "get", [t.u32], [], []), /expected 1 argument/);
   await new Promise(setImmediate);
   assert.deepEqual(writes, []);
@@ -293,7 +336,12 @@ test("invalid arguments fail before anything is written and abort the transport"
 });
 
 test("invalid stream chunks fail the invocation", async () => {
-  for (const [ty, chunks, error] of [[t.stream(t.u8), [1, 2, 3], /expected `Uint8Array`/]]) {
+  for (const [ty, chunks, error] of [
+    [t.stream(t.u8), [1, 2, 3], /expected an iterable/],
+    [t.stream(t.u8), [Uint8Array.of(1).buffer], /expected an iterable/],
+    [t.stream(t.u16), Int32Array.of(1), /expected an iterable/],
+    [t.stream(t.u16), [[1n]], TypeError],
+  ]) {
     const transport = {
       read: () => new Promise((resolve) => setTimeout(() => resolve(null), 10)),
       write: () => {},
@@ -305,7 +353,7 @@ test("invalid stream chunks fail the invocation", async () => {
 
 for (const [name, values, error] of [
   ["a mismatched number of", [], /expected 1 result/],
-  ["mistyped", [1], /expected a string/],
+  ["mistyped", [Symbol()], /Symbol/],
 ]) {
   test(`sending ${name} results fails the invocation`, { timeout: 1000 }, async () => {
     const [client, server] = duplexPair();

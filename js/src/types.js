@@ -7,13 +7,16 @@
 //   | { kind: "option", some: Type }
 //   | { kind: "result", ok: Type | null, err: Type | null }
 //   | { kind: "tuple", elems: Type[] }
-//   | { kind: "record", fields: { name: string, ty: Type }[] }
+//   | { kind: "record", fields: { name: string, key: string, ty: Type }[] }
 //   | { kind: "variant", cases: { name: string, ty: Type | null }[] }
 //   | { kind: "enum", names: string[] }
-//   | { kind: "flags", names: string[] }
+//   | { kind: "flags", flags: { name: string, key: string }[] }
 //   | { kind: "own" | "borrow", name: string }
 //
-// This is the structural type tree the value codec and session walk.
+// This is the structural type tree the value codec and session walk. Names are
+// the WIT names; the `key` of a record field or flag is the camel case
+// property name its value has in JavaScript, as in the component model's
+// JS-API draft.
 
 export const bool = { kind: "bool" };
 export const s8 = { kind: "s8" };
@@ -67,10 +70,14 @@ export const tuple = (...elems) => ({ kind: "tuple", elems });
 
 /**
  * A record. Accepts an ordered field map `{ name: Type }` or an array of
- * `{ name, ty }`. Field order is the wire order and must match the WIT.
+ * `{ name, ty }`, keyed by the WIT field names. Field order is the wire order
+ * and must match the WIT.
  * @param {Record<string, Type> | { name: string, ty: Type }[]} fields
  */
-export const record = (fields) => ({ kind: "record", fields: normalizeFields(fields) });
+export const record = (fields) => ({
+  kind: "record",
+  fields: uniqueKeys(normalizeFields(fields), "record field"),
+});
 
 /**
  * A variant. Accepts a case map `{ name: Type | null }` (use `null` for a
@@ -85,8 +92,14 @@ export const variant = (cases) => ({
 /** An enum. @param {string[]} names */
 export const enumType = (names) => ({ kind: "enum", names: [...names] });
 
-/** Flags. @param {string[]} names */
-export const flags = (names) => ({ kind: "flags", names: [...names] });
+/** Flags, by their WIT names. @param {string[]} names */
+export const flags = (names) => ({
+  kind: "flags",
+  flags: uniqueKeys(
+    names.map((name) => ({ name, key: camelCase(name) })),
+    "flag",
+  ),
+});
 
 /** An owned resource handle `own<name>`. @param {string} name */
 export const own = (name) => ({ kind: "own", name });
@@ -94,10 +107,45 @@ export const own = (name) => ({ kind: "own", name });
 /** A borrowed resource handle `borrow<name>`. @param {string} name */
 export const borrow = (name) => ({ kind: "borrow", name });
 
+/**
+ * `items`, unless two of them have the same key: then it throws.
+ * @template {{ name: string, key: string }} T
+ * @param {T[]} items @param {string} what @returns {T[]}
+ */
+function uniqueKeys(items, what) {
+  /** @type {Map<string, string>} */
+  const names = new Map();
+  for (const { name, key } of items) {
+    const other = names.get(key);
+    if (other !== undefined) {
+      throw new TypeError(`${what}s \`${other}\` and \`${name}\` both have the key \`${key}\``);
+    }
+    names.set(key, name);
+  }
+  return items;
+}
+
 /** @param {Record<string, Type> | { name: string, ty: Type }[]} fields */
 function normalizeFields(fields) {
-  if (Array.isArray(fields)) return fields.map(({ name, ty }) => ({ name, ty }));
-  return Object.entries(fields).map(([name, ty]) => ({ name, ty }));
+  const entries = Array.isArray(fields)
+    ? fields.map(({ name, ty }) => /** @type {const} */ ([name, ty]))
+    : Object.entries(fields);
+  return entries.map(([name, ty]) => ({ name, key: camelCase(name), ty }));
+}
+
+/**
+ * The camel case form of the WIT label `name`, as the component model's
+ * JS-API draft names record fields and flags: its first fragment lowercased,
+ * followed by the others capitalized, unless they are acronyms, e.g.
+ * `favorite-color` is `favoriteColor` and `inner-HTML` is `innerHTML`.
+ * @param {string} name
+ */
+function camelCase(name) {
+  const [first, ...rest] = name.split("-");
+  return (
+    first.toLowerCase() +
+    rest.map((f) => (/^[0-9A-Z]+$/.test(f) ? f : f.charAt(0).toUpperCase() + f.slice(1))).join("")
+  );
 }
 
 /** @param {Record<string, Type | null> | { name: string, ty: Type | null }[]} cases */

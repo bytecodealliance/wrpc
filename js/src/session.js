@@ -11,7 +11,15 @@
 
 import { Writer, atomic, readVarU32 } from "./io.js";
 import { DISCARDED, Mux, PROTOCOL, unexpectedError } from "./mux.js";
-import { decodeSteps, encodeValue, hasAsync, readChunk, toBytes } from "./value.js";
+import {
+  decodeSteps,
+  encodeValue,
+  hasAsync,
+  isTypedArray,
+  readChunk,
+  toList,
+  typedArray,
+} from "./value.js";
 
 /** @typedef {import("./index.d.ts").Type} Type */
 /** @typedef {import("./index.d.ts").DecodeDeferred} DecodeDeferred */
@@ -29,15 +37,17 @@ async function resolveFuture(v) {
 }
 
 /**
- * Yield the chunks of a `stream` source. A `stream<u8>` may be given as a
- * single `Uint8Array`; otherwise the source is any (async-)iterable of chunks
- * (arrays of elements, or `Uint8Array`s for `stream<u8>`).
+ * Yield the chunks of a `stream` source. A stream of a numeric type may be
+ * given as a single typed array of it; otherwise the source is any
+ * (async-)iterable of chunks (arrays of elements, or typed arrays for numeric
+ * types).
  * @param {any} src
  * @param {Type} elem
  */
 async function* streamChunks(src, elem) {
   if (src === null || src === undefined) return;
-  if (elem.kind === "u8" && src instanceof Uint8Array) {
+  const typed = typedArray(elem);
+  if (typed && isTypedArray(src, typed)) {
     if (src.length) yield src;
     return;
   }
@@ -142,29 +152,26 @@ async function writeStream(out, elem, src) {
  */
 async function writeChunk(out, elem, chunk, base, tasks) {
   const w = new Writer();
+  const elems = toList(chunk, elem);
+  // An empty chunk is indistinguishable from the stream terminator.
+  if (elems.length === 0) return 0;
+  w.varU(elems.length);
   if (elem.kind === "u8") {
-    const bytes = toBytes(chunk);
-    // An empty chunk is indistinguishable from the stream terminator.
-    if (bytes.length === 0) return 0;
-    w.varU(bytes.length);
-    w.bytes(bytes);
+    w.bytes(/** @type {Uint8Array} */ (elems));
     await tasks.race(out.write(w.finish()));
-    return bytes.length;
+    return elems.length;
   }
-  if (!Array.isArray(chunk)) throw new TypeError("expected an array for a `stream` chunk");
-  if (chunk.length === 0) return 0;
-  w.varU(chunk.length);
   /** @type {[number[], any][]} */
   const deferred = [];
-  for (let k = 0; k < chunk.length; k++) {
+  for (let k = 0; k < elems.length; k++) {
     /** @type {any[]} */
     const sink = [];
-    encodeValue(w, elem, chunk[k], sink, []);
+    encodeValue(w, elem, elems[k], sink, []);
     for (const e of sink) deferred.push([[base + k, ...e.path], e]);
   }
   await tasks.race(out.write(w.finish()));
   for (const [path, e] of deferred) tasks.add(writeDeferred(out.index(path), e));
-  return chunk.length;
+  return elems.length;
 }
 
 // ----- decoding side --------------------------------------------------------

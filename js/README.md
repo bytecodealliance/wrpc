@@ -45,8 +45,8 @@ const { results, done, finished } = await invoke(
 );
 
 const [opened] = results;
-if (opened.tag === "err") throw opened.val;
-const bucket = opened.val; // a Uint8Array handle
+if (opened.kind === "error") throw opened.value;
+const bucket = opened.value; // a Uint8Array handle
 await done; // all asynchronous I/O has completed
 await finished; // the server ended transmit too
 ```
@@ -69,8 +69,9 @@ data for a sub-stream that has already ended.
 
 `t.stream(elem)` and `t.future(some)` describe asynchronous values, and
 `t.future()` a bare `future` without a payload. A `stream` parameter is given as
-an (async-)iterable of chunks (a `Uint8Array` for `stream<u8>`, an array of
-elements otherwise); a `future` as a value, a promise, or a thunk. Decoded
+an (async-)iterable of chunks, each a `list<elem>` value (see
+[Value mapping](#value-mapping)), or, for a stream of a numeric type, as a
+single typed array of it; a `future` as a value, a promise, or a thunk. Decoded
 `stream` results are async iterables of chunks and `future` results are
 promises, resolving to `undefined` for a bare `future`:
 
@@ -91,7 +92,7 @@ const { results, done } = await invoke(
 const [numbers, bytes] = results[0];
 await Promise.all([
   (async () => {
-    for await (const chunk of numbers) console.log(chunk); // [1n, 2n, 3n]
+    for await (const chunk of numbers) console.log(chunk); // BigUint64Array([1n, 2n, 3n])
   })(),
   (async () => {
     for await (const chunk of bytes) console.log(chunk); // Uint8Array([1, 2, 3])
@@ -133,7 +134,7 @@ const inv = await accept(transport); // { instance, func, ... }
 const { params, done: rx } = await inv.receiveParams([t.string]);
 await Promise.all([
   rx,
-  inv.sendResults([t.result(t.own("bucket"), error)], [{ tag: "ok", val: handle }]),
+  inv.sendResults([t.result(t.own("bucket"), error)], [{ kind: "ok", value: handle }]),
 ]);
 await inv.finished; // the client ended transmit, its data was decoded and the results were sent
 ```
@@ -163,49 +164,70 @@ non-empty text messages.
 
 ## Value mapping
 
-Component-model values map to JavaScript largely following the conventions of
-[`jco`](https://github.com/bytecodealliance/jco):
+Component-model values map to JavaScript following the `ToJSValue` and
+`ToComponentValue` conversions of the component model's [JS-API draft], which
+native WebAssembly component support in browsers implements:
 
-| WIT                    | JavaScript                                               |
-| ---------------------- | -------------------------------------------------------- |
-| `bool`                 | `boolean`                                                |
-| `s8`–`s32`, `u8`–`u32` | `number`                                                 |
-| `s64`, `u64`           | `bigint`                                                 |
-| `f32`, `f64`           | `number`                                                 |
-| `char`, `string`       | `string`                                                 |
-| `list<u8>`             | `Uint8Array`                                             |
-| `list<T>`              | `Array`                                                  |
-| `tuple<...>`           | `Array`                                                  |
-| `record`               | object keyed by the field names given to `t.record`      |
-| `option<T>`            | `T \| undefined`                                         |
-| `option<option<T>>`    | `{ tag: "some", val } \| { tag: "none" }`                |
-| `result<O, E>`         | `{ tag: "ok", val } \| { tag: "err", val }`              |
-| `variant`              | `{ tag: caseName, val? }`                                |
-| `enum`                 | `string` (the case name)                                 |
-| `flags`                | `{ [name]: boolean }`                                    |
-| `future<T>`            | `Promise<T>` (or, when sending, a thunk)                 |
-| `stream<T>`            | async iterable of chunks (`Uint8Array` for `stream<u8>`) |
-| `own<R>` / `borrow<R>` | `Uint8Array` (the opaque handle bytes)                   |
+| WIT                      | JavaScript                                                    |
+| ------------------------ | ------------------------------------------------------------- |
+| `bool`                   | `boolean`                                                     |
+| `s8`–`s32`, `u8`–`u32`   | `number`                                                      |
+| `s64`, `u64`             | `bigint`                                                      |
+| `f32`, `f64`             | `number`                                                      |
+| `char`, `string`         | `string`                                                      |
+| `list<s8>`, `list<u8>`   | `Int8Array`, `Uint8Array`                                     |
+| `list<s16>`, `list<u16>` | `Int16Array`, `Uint16Array`                                   |
+| `list<s32>`, `list<u32>` | `Int32Array`, `Uint32Array`                                   |
+| `list<s64>`, `list<u64>` | `BigInt64Array`, `BigUint64Array`                             |
+| `list<f32>`, `list<f64>` | `Float32Array`, `Float64Array`                                |
+| `list<T>`                | `Array`                                                       |
+| `tuple<...>`             | `Array`                                                       |
+| `record`                 | null-prototype object keyed by the camel case field names     |
+| `option<T>`              | `T \| undefined`                                              |
+| `option<option<T>>`      | `{ kind: "some", value } \| { kind: "none" }`                 |
+| `result<O, E>`           | `{ kind: "ok", value? } \| { kind: "error", value? }`         |
+| `variant`                | `{ kind: caseName, value? }`                                  |
+| `enum`                   | `string` (the case name)                                      |
+| `flags`                  | null-prototype object of `boolean`s keyed by camel case names |
+| `future<T>`              | `Promise<T>` (or, when sending, a thunk)                      |
+| `stream<T>`              | async iterable of chunks, each mapped like a `list<T>`        |
+| `own<R>` / `borrow<R>`   | `Uint8Array` (the opaque handle bytes)                        |
 
-It deviates from `jco` in that:
+`option`, `result` and `variant` objects have a null prototype too, and carry
+a `value` only if their case has a payload. `t.record` and `t.flags` take the
+WIT names of the fields and flags, which are converted to camel case like the
+draft does: the first word is lowercased, and the other words are capitalized,
+except acronyms, which are kept as they are (`favorite-color` →
+`favoriteColor`, `HTTP-error` → `httpError`, `inner-HTML` → `innerHTML`).
+Variant case and enum names are kept as they are in WIT.
 
-- Only `list<u8>` maps to a typed array; lists of other numeric types are
-  `Array`s, where `jco` uses `Int8Array`, `Uint16Array`, …, `BigInt64Array`,
-  `Float64Array`.
-- Record fields and flags are keyed by the names given to `t.record` and
-  `t.flags`, while `jco` converts the WIT names to lower camel case
-  (`favorite-color` → `favoriteColor`). Only their positions are transmitted,
-  so name them in camel case to match `jco`. Variant case and enum names are
-  kept as given, as in `jco`.
-- A `result` is always a tagged object, while `jco` returns the `ok` value of
-  a function's `result` and throws its `err` value.
-- Resources are their opaque handle bytes, while `jco` represents them as
-  class instances.
-- `future` and `stream` values follow the wRPC session API described above.
+When sending, values are converted like the draft does, too:
 
-When sending, `flags` are also accepted as a `Set` or an array of the names
-that are set, and byte lists and resource handles as any `ArrayBuffer`,
-`ArrayBufferView` or array of bytes.
+- Integers are converted to numbers and wrap, with `NaN` and infinities
+  becoming `0`, while `s64` and `u64` require a `bigint` (or a `boolean` or a
+  `string`), which wraps too. Floats are converted to numbers, `bool`s are
+  truthiness, and `char`s, `string`s and enums are converted to strings, with
+  lone surrogates in `string`s replaced by U+FFFD.
+- A `list` or `tuple` is any iterable, whose elements are converted like the
+  typed array constructors convert them for lists of numeric types; a
+  `tuple`'s missing elements are `undefined`. An `ArrayBuffer` is not
+  iterable, so it is not a byte list.
+- Record fields and flags are read as properties, also from the prototype, so
+  a missing field is `undefined`, and flags are their truthiness.
+- `null` is also `none`, but only for an `option` not nested in another one.
+
+It deviates from the draft in that:
+
+- A `result` is always a tagged object, while the draft returns the `ok` value
+  of a function's `result` and throws a `WebAssembly.ComponentError` for its
+  `error` value.
+- Resources are their opaque handle bytes, which are sent like a `list<u8>`,
+  while the draft represents them as class instances.
+- `future` and `stream` values, which the draft does not specify yet, follow
+  the wRPC session API described above, so that a `stream` is received in
+  chunks, as sent.
+
+[JS-API draft]: https://github.com/WebAssembly/component-model/blob/main/design/mvp/JS-Explainer.md
 
 ## API
 
