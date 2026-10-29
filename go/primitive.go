@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"math"
+	"unicode/utf8"
 )
 
 func PutUint16(buf []byte, x uint16) int {
@@ -72,6 +73,9 @@ func WriteUint64(v uint64, w ByteWriter) (int, error) {
 }
 
 func WriteString(v string, w ByteWriter) (int, error) {
+	if !utf8.ValidString(v) {
+		return 0, errors.New("string is not valid UTF-8")
+	}
 	n := len(v)
 	if n > math.MaxUint32 {
 		return 0, fmt.Errorf("string byte length of %d overflows a 32-bit integer", n)
@@ -109,6 +113,9 @@ func ReadString(r ByteReader) (string, error) {
 		return "", fmt.Errorf("failed to read string: %w", err)
 	}
 	slog.Debug("read string bytes", "buf", b)
+	if !utf8.Valid(b) {
+		return "", errors.New("string is not valid UTF-8")
+	}
 	return string(b), nil
 }
 

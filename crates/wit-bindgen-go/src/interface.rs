@@ -1525,13 +1525,18 @@ impl InterfaceGenerator<'_> {
 
     fn print_write_string(&mut self, name: &str, writer: &str) {
         let binary = self.deps.binary();
+        let errors = self.deps.errors();
         let io = self.deps.io();
         let fmt = self.deps.fmt();
         let math = self.deps.math();
         let slog = self.deps.slog();
+        let utf8 = self.deps.utf8();
         uwrite!(
             self.src,
             r#"func(v string, w {io}.Writer) (err error) {{
+                if !{utf8}.ValidString(v) {{
+                    return {errors}.New("string is not valid UTF-8")
+                }}
                 n := len(v)
                 if n > {math}.MaxUint32 {{
                     return {fmt}.Errorf("string byte length of %d overflows a 32-bit integer", n)
