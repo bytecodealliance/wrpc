@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use bytes::{Bytes, BytesMut};
 use tracing::{instrument, trace};
-use wasm_tokio::{DEFAULT_MAX_INITIAL_CAPACITY, Leb128DecoderU32, Leb128DecoderU64, Leb128Encoder};
+use wasm_tokio::{DEFAULT_MAX_INITIAL_CAPACITY, Leb128DecoderU32, Leb128Encoder};
 
 use crate::frame::{Frame, FrameRef, MAX_INITIAL_PATH_CAPACITY};
 
@@ -12,13 +12,13 @@ pub struct Decoder {
     path_cap: usize,
     data_len: usize,
     max_depth: u32,
-    max_size: u64,
+    max_size: u32,
 }
 
 impl Decoder {
     /// Construct a new [Frame] decoder
     #[must_use]
-    pub fn new(max_depth: u32, max_size: u64) -> Self {
+    pub fn new(max_depth: u32, max_size: u32) -> Self {
         Self {
             path: Option::default(),
             path_cap: 0,
@@ -31,7 +31,7 @@ impl Decoder {
 
 impl Default for Decoder {
     fn default() -> Self {
-        Self::new(u32::MAX, u32::MAX.into())
+        Self::new(u32::MAX, u32::MAX)
     }
 }
 
@@ -78,7 +78,7 @@ impl tokio_util::codec::Decoder for Decoder {
         }
         if self.data_len == 0 {
             trace!("decoding data length");
-            let Some(n) = Leb128DecoderU64.decode(src)? else {
+            let Some(n) = Leb128DecoderU32.decode(src)? else {
                 self.path = Some(path);
                 return Ok(None);
             };
@@ -132,7 +132,7 @@ impl tokio_util::codec::Encoder<FrameRef<'_>> for Encoder {
     ) -> Result<(), Self::Error> {
         let size = data.len();
         let depth = path.len();
-        dst.reserve(size.saturating_add(depth).saturating_add(5 + 10));
+        dst.reserve(size.saturating_add(depth).saturating_add(5 + 5));
         let n = u32::try_from(depth)
             .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
         trace!(n, "encoding path length");
@@ -143,7 +143,7 @@ impl tokio_util::codec::Encoder<FrameRef<'_>> for Encoder {
             trace!(p, "encoding path element");
             Leb128Encoder.encode(p, dst)?;
         }
-        let n = u64::try_from(size)
+        let n = u32::try_from(size)
             .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
         trace!(n, "encoding data length");
         Leb128Encoder.encode(n, dst)?;
