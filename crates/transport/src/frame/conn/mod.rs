@@ -632,9 +632,10 @@ impl AsyncRead for Incoming {
             trace!("reader is closed");
             return Poll::Ready(Ok(()));
         };
+        let n = buf.filled().len();
         ready!(rx.poll_read(cx, buf))?;
         trace!(buf = ?buf.filled(), "read buffer");
-        if buf.filled().is_empty() {
+        if buf.filled().len() == n {
             self.rx.take();
             if let Some(err) = self.state.err.get()
                 && !self.state.is_closed(&self.path)
@@ -1047,6 +1048,17 @@ mod tests {
         let (_tx, rx, done_rx) = incoming(false);
         drop(rx);
         done(done_rx).await.unwrap();
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn incoming_read_to_end_fails_on_ingress_failure() {
+        let (mut tx, mut rx, ..) = incoming(true);
+        tx.write_all(&[0x00, 0x01, 0x2a, 0x01]).await.unwrap();
+        drop(tx);
+        let mut buf = Vec::default();
+        let err = rx.read_to_end(&mut buf).await.unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::UnexpectedEof);
+        assert_eq!(buf, [0x2a]);
     }
 
     #[test_log::test(tokio::test)]
