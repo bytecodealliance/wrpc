@@ -27,6 +27,9 @@ const CAPACITY = 16;
  */
 const MAX_PENDING = 64;
 
+/** The maximum size of a buffered inbound data chunk. */
+const MAX_CHUNK = 1 << 20;
+
 /** @param {number[]} path */
 const key = (path) => path.join(",");
 
@@ -334,7 +337,7 @@ export class Mux {
       const chan = this._route(path);
       for (let len = n; len > 0;) {
         if (!(await m.fill(1))) throw new RangeError(UNEXPECTED_EOF);
-        const data = m.remaining().slice(0, len);
+        const data = m.remaining().slice(0, Math.min(len, MAX_CHUNK));
         m.consume(data.length);
         len -= data.length;
         // A finished or discarded sub-stream's reader is gone: the rest of the frame overruns it.

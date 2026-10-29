@@ -607,6 +607,30 @@ test("an invocation sends no frames for empty data", async () => {
   }
 });
 
+test("inbound frame data is buffered in chunks of at most 1 MiB", async () => {
+  const w = new Writer();
+  w.varU(0);
+  w.varU(3 << 20);
+  w.bytes(new Uint8Array(3 << 20));
+  /** @type {Uint8Array[]} */
+  const bytes = [w.finish()];
+  const mux = new Mux({
+    read: async () => bytes.pop() ?? null,
+    write: () => {},
+    closeWrite: () => {},
+  });
+  mux.start();
+  const chan = mux.root.chan;
+  assert.ok(chan);
+  const sizes = [];
+  for (let n = 0; n < 3 << 20; n += sizes[sizes.length - 1]) {
+    const { value } = await chan.next();
+    assert.ok(value);
+    sizes.push(value.length);
+  }
+  assert.deepEqual(sizes, [1 << 20, 1 << 20, 1 << 20]);
+});
+
 test("writing empty data fails once aborted", async () => {
   const mux = new Mux({ read: async () => null, write: () => {}, closeWrite: () => {} });
   mux.abort(new Error("boom"));
