@@ -37,7 +37,7 @@ func ReadResultStatus(r ByteReader) (bool, error) {
 	}
 }
 
-// ReadResult reads a single byte from `r`
+// ReadResult reads a `result` from `r` using `fOk` and `fErr` to read its payload
 func ReadResult[T, U any](r ByteReader, fOk func(ByteReader) (T, error), fErr func(ByteReader) (U, error)) (*Result[T, U], error) {
 	ok, err := ReadResultStatus(r)
 	if err != nil {

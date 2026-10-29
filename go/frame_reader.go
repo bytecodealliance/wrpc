@@ -328,6 +328,11 @@ func newFrameStreamReader(r *FrameStreamReader) *FrameStreamReader {
 	return r
 }
 
+// NewFrameStreamReader returns a reader of the framed stream `r`, which receives data
+// of the root path and the async `paths`.
+// `paths` must not contain both a wildcard and an index at the same position, so paths of
+// different variant cases, which are not indexed, must be merged by replacing such indices
+// by wildcards.
 func NewFrameStreamReader(ctx context.Context, r ByteReadCloser, paths ...SubscribePath) *FrameStreamReader {
 	var readers atomic.Int64
 	readers.Add(1)
@@ -578,6 +583,9 @@ func (r *FrameStreamReader) closedErr() error {
 	return io.EOF
 }
 
+// Index returns a reader of the sub-stream addressed by the structural `path`.
+// Elements, i.e. positions matched by a wildcard in the async paths, must be indexed in
+// order, since indexing an element releases the preceding ones, which were not indexed yet.
 func (r *FrameStreamReader) Index(path ...uint32) (IndexReadCloser, error) {
 	if len(path) == 0 {
 		return nil, errors.New("path cannot be empty")

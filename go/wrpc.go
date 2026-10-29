@@ -8,7 +8,7 @@ import (
 	"slices"
 )
 
-// Invoke is the client-side transport handle
+// Invoker is the client-side transport handle
 type Invoker interface {
 	// Invoke invokes a function `name` within an instance `instance`.
 	// Initial, encoded payload must be specified in `b`.
