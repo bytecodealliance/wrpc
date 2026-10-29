@@ -636,6 +636,11 @@ test("inbound frame data is buffered in chunks of at most 1 MiB", async () => {
   assert.deepEqual(sizes, [1 << 20, 1 << 20, 1 << 20]);
 });
 
+test("writing a frame overflowing a u32 fails", async () => {
+  const mux = new Mux({ read: async () => null, write: () => {}, closeWrite: () => {} });
+  await assert.rejects(mux.outgoing([2 ** 32]).write(Uint8Array.of(1)), RangeError);
+});
+
 test("writing empty data fails once aborted", async () => {
   const mux = new Mux({ read: async () => null, write: () => {}, closeWrite: () => {} });
   mux.abort(new Error("boom"));

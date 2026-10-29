@@ -660,6 +660,9 @@ export class Mux {
 
   /** @param {number[]} path @param {Uint8Array} data */
   _writeFrame(path, data) {
+    if (data.length > 0xffffffff || path.some((p) => p > 0xffffffff)) {
+      return Promise.reject(new RangeError(`frame for sub-stream [${path}] overflows a u32`));
+    }
     const w = new Writer();
     w.varU(path.length);
     for (const p of path) w.varU(p);
