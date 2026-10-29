@@ -246,6 +246,8 @@ It deviates from the draft in that:
 ```sh
 npm test       # codec / framing / session tests (node --test)
 npm run check  # type-check the sources and declarations (tsc)
+npm run lint   # lint all JavaScript in the repository (eslint)
+npm run fmt    # format all JavaScript in the repository (prettier); `fmt:check` verifies
 ```
 
 Interoperability with the Rust implementation is tested from the repository
