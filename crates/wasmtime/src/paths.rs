@@ -8,9 +8,9 @@
 //!
 //! Note that at serve time the component has not been instantiated, so a
 //! `wasi:io` stream parameter appears as the component's own *uninstantiated*
-//! resource type rather than the host [`DynInputStream`](wasmtime_wasi::p2::DynInputStream)
-//! type. We therefore identify those resources by collecting the component's
-//! `wasi:io/streams` imports up front and comparing against them.
+//! resource type rather than the host `DynInputStream` type. We therefore
+//! identify those resources by collecting the component's `wasi:io/streams`
+//! imports up front and comparing against them.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::Arc;
