@@ -80,6 +80,11 @@ const handlers = {
     "with-record-tuple": [[], [t.tuple(rec, rec)], () => [[r("0"), r("1")]]],
     "with-enum": [[], [t.enum(["foo", "bar"])], () => ["bar"]],
     "identity-char": [[t.char], [t.char], ([c]) => [c]],
+    "identity-option-lists": [
+      [t.option(t.list(t.u8)), t.option(t.list(t.string))],
+      [t.tuple(t.option(t.list(t.u8)), t.option(t.list(t.string)))],
+      (v) => [v],
+    ],
   },
   "wrpc-test:integration/async": {
     "with-streams": [

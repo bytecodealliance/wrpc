@@ -126,3 +126,7 @@ func (SyncHandler) WithEnum(ctx context.Context) (sync.Foobar, error) {
 func (SyncHandler) IdentityChar(ctx context.Context, c rune) (rune, error) {
 	return c, nil
 }
+
+func (SyncHandler) IdentityOptionLists(ctx context.Context, a []uint8, b []string) ([]uint8, []string, error) {
+	return a, b, nil
+}

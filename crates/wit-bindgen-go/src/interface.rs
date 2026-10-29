@@ -560,7 +560,7 @@ impl InterfaceGenerator<'_> {
         if b < 0x80 {{
             x = x | uint32(b)<<s
             if x == 0 {{
-                return nil, nil
+                return []byte{{}}, nil
             }}
             {slog}.Debug("reading byte list contents", "len", x)
             buf, err := {wrpc}.ReadBytes(r, x)
@@ -611,9 +611,6 @@ impl InterfaceGenerator<'_> {
         }}
         if b < 0x80 {{
             x = x | uint32(b)<<s
-            if x == 0 {{
-                return nil, {d}nil
-            }}
             vs := {wrpc}.NewSlice["#,
         );
         self.print_list(ty);
