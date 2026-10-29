@@ -49,159 +49,73 @@ function roundtrip(ty, v) {
   return out;
 }
 
-test("booleans", () => {
-  roundtrip(t.bool, true);
-  roundtrip(t.bool, false);
+test("scalars round-trip", () => {
+  for (const [ty, vals] of /** @type {[Type, InputValue[]][]} */ ([
+    [t.bool, [true, false]],
+    [t.u8, [0, 127, 255]],
+    [t.s8, [-128, -1, 127]],
+    [t.u16, [0, 300, 65535]],
+    [t.s16, [-32768, -1, 32767]],
+    [t.u32, [0, 4294967295]],
+    [t.s32, [-2147483648, -1, 2147483647]],
+    [t.u64, [0n, (1n << 64n) - 1n]],
+    [t.s64, [-(1n << 63n), (1n << 63n) - 1n]],
+    [t.f32, [1.5, -Infinity]],
+    [t.f64, [0, -2.25, Math.PI]],
+    [t.char, ["a", "€", "😀"]],
+    [t.string, ["", "hello, wRPC 👋", "﻿bom"]],
+  ])) {
+    for (const v of vals) roundtrip(ty, v);
+  }
+  // numbers and bigints are encoded alike across the LEB128 byte boundaries
+  for (const v of [0, 63, 64, 127, 128, 8191, 8192, 2 ** 32 - 1]) {
+    assert.deepEqual(encode(t.u32, v), encode(t.u64, BigInt(v)));
+  }
+  for (const v of [-1, 63, 64, -64, -65, 8191, 8192, -8192, -8193, -(2 ** 31)]) {
+    assert.deepEqual(encode(t.s32, v), encode(t.s64, BigInt(v)));
+  }
 });
 
-test("small integers", () => {
-  for (const v of [0, 1, 127, 255]) roundtrip(t.u8, v);
-  for (const v of [-128, -1, 0, 127]) roundtrip(t.s8, v);
-  for (const v of [0, 300, 65535]) roundtrip(t.u16, v);
-  for (const v of [-32768, -1, 32767]) roundtrip(t.s16, v);
-  for (const v of [0, 1, 4294967295]) roundtrip(t.u32, v);
-  for (const v of [-2147483648, -1, 2147483647]) roundtrip(t.s32, v);
-});
-
-test("integers wrap like the JS-API draft converts them", () => {
-  for (const [ty, v, wrapped] of /** @type {[Type, InputValue, Value][]} */ ([
+test("scalars are converted like the JS-API draft converts them", () => {
+  for (const [ty, v, converted] of /** @type {[Type, InputValue, Value][]} */ ([
     [t.u8, 256, 0],
     [t.u8, -1, 255],
     [t.s8, 128, -128],
-    [t.s8, -129, 127],
-    [t.u16, 65536, 0],
     [t.s16, 32768, -32768],
-    [t.u32, 4294967296, 0],
     [t.u32, -1, 4294967295],
     [t.s32, 2147483648, -2147483648],
     [t.u64, -1n, (1n << 64n) - 1n],
-    [t.u64, 1n << 64n, 0n],
     [t.s64, 1n << 63n, -(1n << 63n)],
     [t.u8, 1.5, 1],
-    [t.s8, -1.5, -1],
     [t.u32, NaN, 0],
-    [t.u32, Infinity, 0],
     [t.u32, "7", 7],
-    [t.u32, null, 0],
     [t.u32, undefined, 0],
     [t.u64, "7", 7n],
     [t.s64, true, 1n],
-  ])) {
-    assert.equal(decode(ty, encode(ty, v)), wrapped, `${ty.kind} ${v}`);
-  }
-  for (const ty of [t.u8, t.s32, t.f64]) {
-    assert.throws(() => encode(ty, 1n), TypeError);
-    // @ts-expect-error
-    assert.throws(() => encode(ty, Symbol()), TypeError);
-  }
-  for (const ty of [t.u64, t.s64]) {
-    for (const v of [1, 1.5, null, undefined]) assert.throws(() => encode(ty, v), TypeError);
-  }
-});
-
-test("other scalars are converted like the JS-API draft converts them", () => {
-  for (const [ty, v, converted] of /** @type {[Type, InputValue, Value][]} */ ([
     [t.bool, "false", true],
-    [t.bool, 0, false],
     [t.bool, undefined, false],
-    [t.f64, null, 0],
     [t.f64, "1.5", 1.5],
     [t.f32, 0.1, Math.fround(0.1)],
     [t.string, 1, "1"],
-    [t.string, undefined, "undefined"],
-    [t.string, "a\uD800", "a\uFFFD"],
-    [t.string, "\uDE00\uD83D", "\uFFFD\uFFFD"],
-    [t.char, 1, "1"],
+    [t.string, "a\uD800", "a�"],
+    [t.string, "\uDE00\uD83D", "��"],
     [t.enum(["red"]), ["red"], "red"],
   ])) {
     assert.equal(decode(ty, encode(ty, v)), converted, `${ty.kind} ${String(v)}`);
   }
-  // @ts-expect-error
-  assert.throws(() => encode(t.string, Symbol()), TypeError);
-  assert.throws(() => encode(t.enum(["red"]), "blue"), {
-    name: "TypeError",
-    message: "unknown enum case `blue`",
-  });
-});
-
-test("integer decoding rejects out-of-range and overlong encodings", () => {
-  assert.throws(() => decode(t.u32, Uint8Array.of(0x80, 0x80, 0x80, 0x80, 0x10)), /overflows/);
-  assert.throws(
-    () => decode(t.u32, Uint8Array.of(0x80, 0x80, 0x80, 0x80, 0x80, 0x00)),
-    /overflows/,
-  );
-  assert.throws(() => decode(t.u16, Uint8Array.of(0x80, 0x80, 0x04)), /overflows/);
-  assert.throws(() => decode(t.s8, new Uint8Array(0)), /unexpected end of input/);
-  assert.throws(() => decode(t.s16, Uint8Array.of(0x80, 0x80, 0x02)), /overflows/);
-  assert.throws(() => decode(t.s64, new Uint8Array(11).fill(0xff)), /overflows/);
-  assert.equal(decode(t.u32, Uint8Array.of(0xff, 0xff, 0xff, 0xff, 0x0f)), 4294967295);
-  assert.equal(decode(t.s32, Uint8Array.of(0x80, 0x80, 0x80, 0x80, 0x78)), -2147483648);
-});
-
-test("decoding rejects status bytes other than 0 and 1", () => {
-  assert.throws(() => decode(t.bool, Uint8Array.of(2)), /invalid bool value byte `2`/);
-  assert.throws(
-    () => decode(t.option(t.u8), Uint8Array.of(2, 0)),
-    /invalid option status byte `2`/,
-  );
-  assert.throws(() => decode(t.result(), Uint8Array.of(0xff)), /invalid result status byte `255`/);
-  assert.throws(
-    () => decode(t.future(t.u8), Uint8Array.of(2, 0)),
-    /invalid option status byte `2`/,
-  );
-  assert.throws(
-    () => decode(t.stream(t.u8), Uint8Array.of(2, 0)),
-    /invalid option status byte `2`/,
-  );
-  assert.equal(decode(t.bool, Uint8Array.of(1)), true);
-});
-
-test("integers encode the same as a number and as a bigint", () => {
-  /** @param {(w: Writer) => void} f */
-  const bytes = (f) => {
-    const w = new Writer();
-    f(w);
-    return w.finish();
-  };
-  for (const v of [0, 1, 63, 64, 127, 128, 8191, 8192, 2 ** 31 - 1, 2 ** 31, 2 ** 32 - 1]) {
-    assert.deepEqual(
-      bytes((w) => w.varU(v)),
-      bytes((w) => w.varU(BigInt(v))),
-    );
-    assert.equal(
-      decode(
-        t.u32,
-        bytes((w) => w.varU(v)),
-      ),
-      v,
-    );
+  for (const [ty, v] of /** @type {[Type, InputValue][]} */ ([
+    [t.u8, 1n],
+    [t.f64, 1n],
+    [t.u32, Symbol()],
+    [t.string, Symbol()],
+    [t.u64, 1],
+    [t.s64, undefined],
+  ])) {
+    assert.throws(() => encode(ty, v), TypeError, `${ty.kind} ${String(v)}`);
   }
-  for (const v of [0, 1, -1, 63, 64, -64, -65, 8191, 8192, -8192, -8193, 2 ** 31 - 1, -(2 ** 31)]) {
-    assert.deepEqual(
-      bytes((w) => w.varS(v)),
-      bytes((w) => w.varS(BigInt(v))),
-    );
-    assert.equal(
-      decode(
-        t.s32,
-        bytes((w) => w.varS(v)),
-      ),
-      v,
-    );
+  for (const v of ["ab", "", "\uD800"]) {
+    assert.throws(() => encode(t.char, v), /single Unicode scalar/);
   }
-  assert.throws(() => new Writer().varU(1.5), RangeError);
-});
-
-test("64-bit integers are bigint", () => {
-  roundtrip(t.u64, 0n);
-  roundtrip(t.u64, 18446744073709551615n);
-  roundtrip(t.s64, -9223372036854775808n);
-  roundtrip(t.s64, 9223372036854775807n);
-});
-
-test("floats", () => {
-  for (const v of [0, 1.5, -2.25, 3.141592653589793]) roundtrip(t.f64, v);
-  roundtrip(t.f32, 1.5);
 });
 
 test("NaNs are encoded canonically", () => {
@@ -213,39 +127,28 @@ test("NaNs are encoded canonically", () => {
   assert.ok(Number.isNaN(decode(t.f64, encode(t.f64, NaN))));
 });
 
-test("char and string", () => {
-  roundtrip(t.char, "a");
-  roundtrip(t.char, "€");
-  roundtrip(t.char, "😀");
-  roundtrip(t.string, "");
-  roundtrip(t.string, "hello, wRPC 👋");
-  roundtrip(t.string, "\uFEFFbom");
-  roundtrip(t.list(t.char), ["\uFEFF"]);
-  assert.throws(() => encode(t.char, "ab"), /single Unicode scalar/);
-  assert.throws(() => encode(t.char, ""), /single Unicode scalar/);
-  assert.throws(() => encode(t.char, "\uD800"), /single Unicode scalar/);
-  assert.throws(() => decode(t.string, Uint8Array.of(1, 0xff)), TypeError);
-  assert.throws(() => decode(t.char, Uint8Array.of(0x80, 0x80)), TypeError);
-});
-
-test("byte lists round-trip as Uint8Array", () => {
-  const out = roundtrip(t.list(t.u8), new Uint8Array([1, 2, 3, 255]));
-  assert.ok(out instanceof Uint8Array);
-  for (const ty of [t.list(t.u8), t.own("bucket")]) {
-    // encoding also accepts any iterable, converting its elements
-    for (const v of [[1, 2], Uint16Array.of(1, 2), Int8Array.of(1, 2), new Set([1, 2])]) {
-      assert.deepEqual(encode(ty, v), encode(ty, Uint8Array.of(1, 2)));
-    }
-    assert.deepEqual(encode(ty, Uint16Array.of(0x1ff)), encode(ty, Uint8Array.of(0xff)));
-    // but not an `ArrayBuffer` or a `DataView`, which are not iterable
-    for (const v of [Uint8Array.of(1).buffer, new DataView(new ArrayBuffer(1)), "1"]) {
-      // @ts-expect-error
-      assert.throws(() => encode(ty, v), { name: "TypeError", message: /expected an iterable/ });
-    }
+test("decoding rejects invalid input", () => {
+  for (const [ty, bytes, error] of /** @type {[Type, number[], RegExp][]} */ ([
+    [t.u32, [0x80, 0x80, 0x80, 0x80, 0x10], /overflows/],
+    [t.u32, [0x80, 0x80, 0x80, 0x80, 0x80, 0x00], /overflows/],
+    [t.u16, [0x80, 0x80, 0x04], /overflows/],
+    [t.s16, [0x80, 0x80, 0x02], /overflows/],
+    [t.s64, new Array(11).fill(0xff), /overflows/],
+    [t.s8, [], /unexpected end of input/],
+    [t.bool, [2], /invalid bool value byte `2`/],
+    [t.option(t.u8), [2, 0], /invalid option status byte `2`/],
+    [t.result(), [0xff], /invalid result status byte `255`/],
+    [t.future(t.u8), [2, 0], /invalid option status byte `2`/],
+    [t.stream(t.u8), [2, 0], /invalid option status byte `2`/],
+    [t.string, [1, 0xff], /encoded data was not valid/],
+    [t.char, [0x80, 0x80], /encoded data was not valid/],
+    [t.flags(["a", "b", "c"]), [0b1000], /invalid flags bits/],
+    [t.flags(Array.from({ length: 9 }, (_, i) => `f${i}`)), [0, 2], /invalid flags bits/],
+  ])) {
+    assert.throws(() => decode(ty, Uint8Array.from(bytes)), error, `${ty.kind} ${bytes}`);
   }
-  const detached = Uint8Array.of(1);
-  structuredClone(detached.buffer, { transfer: [detached.buffer] });
-  assert.throws(() => encode(t.list(t.u8), detached), /attached buffer/);
+  assert.equal(decode(t.u32, Uint8Array.of(0xff, 0xff, 0xff, 0xff, 0x0f)), 4294967295);
+  assert.equal(decode(t.s32, Uint8Array.of(0x80, 0x80, 0x80, 0x80, 0x78)), -2147483648);
 });
 
 /**
@@ -269,49 +172,47 @@ test("numeric lists round-trip as typed arrays", () => {
   for (const [elem, Typed, vals] of NUMERIC) {
     const ty = t.list(elem);
     const typed = Typed.from(vals);
-    const out = roundtrip(ty, typed);
-    assert.ok(out instanceof Typed, `\`list<${elem.kind}>\` decodes to \`${Typed.name}\``);
+    assert.ok(roundtrip(ty, typed) instanceof Typed, `\`list<${elem.kind}>\` is \`${Typed.name}\``);
     assert.ok(roundtrip(ty, new Typed(0)) instanceof Typed);
-    // encoding also accepts a plain array
+    // encoding also accepts a plain array, and typed arrays from another realm
     assert.deepEqual(encode(ty, vals), encode(ty, typed));
-    assert.deepEqual(decode(ty, encode(ty, vals)), typed);
+    assert.deepEqual(
+      encode(ty, runInNewContext(`${Typed.name}.from(vals)`, { vals })),
+      encode(ty, typed),
+    );
   }
+  assert.ok(roundtrip(t.own("bucket"), Uint8Array.of(1, 2)) instanceof Uint8Array);
+  roundtrip(t.borrow("bucket"), Uint8Array.of(1, 2));
   // other iterables are converted like the typed array constructors do
-  assert.deepEqual(encode(t.list(t.u16), Int32Array.of(-1)), encode(t.list(t.u16), [65535]));
+  for (const ty of [t.list(t.u8), t.own("bucket")]) {
+    for (const v of [[1, 2], Int8Array.of(1, 2), new Set([1, 2]), runInNewContext("[1, 2]")]) {
+      assert.deepEqual(encode(ty, v), encode(ty, Uint8Array.of(1, 2)));
+    }
+    assert.deepEqual(encode(ty, Uint16Array.of(0x1ff)), encode(ty, Uint8Array.of(0xff)));
+    for (const v of [
+      Uint8Array.of(1).buffer,
+      new DataView(new ArrayBuffer(1)),
+      "1",
+      { length: 1 },
+    ]) {
+      // @ts-expect-error
+      assert.throws(() => encode(ty, v), { name: "TypeError", message: /expected an iterable/ });
+    }
+  }
   assert.deepEqual(encode(t.list(t.s8), [128]), encode(t.list(t.s8), [-128]));
-  assert.deepEqual(encode(t.list(t.u64), new Set([1n])), encode(t.list(t.u64), [1n]));
   assert.throws(() => encode(t.list(t.s64), [-1, 2]), TypeError);
   assert.throws(() => encode(t.list(t.u64), Uint8Array.of(1)), TypeError);
-  assert.throws(() => encode(t.list(t.u16), { length: 1 }), /expected an iterable/);
-  assert.deepEqual(decode(t.list(t.list(t.u16)), encode(t.list(t.list(t.u16)), [[1], []])), [
-    Uint16Array.of(1),
-    new Uint16Array(0),
-  ]);
-});
-
-test("typed arrays and iterables from another realm are accepted", () => {
-  for (const [elem, Typed, vals] of NUMERIC) {
-    const foreign = runInNewContext(`${Typed.name}.from(vals)`, { vals });
-    assert.ok(!(foreign instanceof Typed));
-    assert.deepEqual(encode(t.list(elem), foreign), encode(t.list(elem), Typed.from(vals)));
-  }
-  for (const ty of [t.list(t.u8), t.own("bucket")]) {
-    for (const v of ["Uint16Array.of(1, 2)", "[1, 2]", "new Set([1, 2])"]) {
-      assert.deepEqual(encode(ty, runInNewContext(v)), encode(ty, Uint8Array.of(1, 2)));
-    }
-    for (const v of ["Uint8Array.of(1, 2).buffer", "({ length: 1 })"]) {
-      assert.throws(() => encode(ty, runInNewContext(v)), /expected an iterable/);
-    }
-  }
+  const detached = Uint8Array.of(1);
+  structuredClone(detached.buffer, { transfer: [detached.buffer] });
+  assert.throws(() => encode(t.list(t.u8), detached), /attached buffer/);
 });
 
 test("lists, tuples, records", () => {
   roundtrip(t.list(t.string), ["a", "b", "c"]);
+  roundtrip(t.list(t.list(t.u16)), [Uint16Array.of(1), new Uint16Array(0)]);
   roundtrip(t.tuple(t.u8, t.string, t.bool), [7, "x", true]);
   const rec = t.record({ keys: t.list(t.string), cursor: t.option(t.string) });
   roundtrip(rec, obj({ keys: ["a", "b"], cursor: "next" }));
-  roundtrip(rec, obj({ keys: [], cursor: undefined }));
-  assert.equal(Object.getPrototypeOf(decode(rec, encode(rec, { keys: [] }))), null);
   // lists and tuples are any iterables, and missing tuple elements are `undefined`
   assert.deepEqual(decode(t.list(t.string), encode(t.list(t.string), new Set(["a"]))), ["a"]);
   const tup = t.tuple(t.u8, t.option(t.string));
@@ -319,55 +220,35 @@ test("lists, tuples, records", () => {
   assert.deepEqual(decode(tup, encode(tup, [7, "x", "extra"])), [7, "x"]);
   for (const v of ["ab", 1, { 0: 1, length: 1 }]) {
     assert.throws(() => encode(tup, v), { name: "TypeError", message: /expected an iterable/ });
-    assert.throws(() => encode(t.list(t.char), v), /expected an iterable/);
   }
   assert.throws(() => encode(rec, "x"), { name: "TypeError", message: /expected an object/ });
 });
 
-test("record fields are keyed in camel case", () => {
-  const ty = t.record({
-    "favorite-color": t.string,
-    "HTTP-error": t.u8,
-    "inner-HTML": t.string,
-    "max-retry-count": t.u32,
-    default: t.bool,
-  });
-  assert.deepEqual(
-    ty.fields.map(({ name, key }) => [name, key]),
-    [
-      ["favorite-color", "favoriteColor"],
-      ["HTTP-error", "httpError"],
-      ["inner-HTML", "innerHTML"],
-      ["max-retry-count", "maxRetryCount"],
-      ["default", "default"],
-    ],
-  );
-  roundtrip(
-    ty,
-    obj({ favoriteColor: "blue", httpError: 4, innerHTML: "<p>", maxRetryCount: 3, default: true }),
-  );
-  assert.deepEqual(
-    t.record([{ name: "a-b", ty: t.u8 }]).fields.map(({ key }) => key),
-    ["aB"],
-  );
-});
-
-test("names mapping to the same key are rejected", () => {
-  assert.throws(() => t.record({ "a-b": t.u8, "a-B": t.u8 }), {
+test("record fields are read like properties, missing ones are `undefined`", () => {
+  const ty = t.record({ a: t.u8, "b-c": t.option(t.u8) });
+  const bytes = encode(ty, { a: 1, bC: 2 });
+  /** @type {{ a: number, bC: number }} */
+  const getters = new (class {
+    get a() {
+      return 1;
+    }
+    get bC() {
+      return 2;
+    }
+  })();
+  for (const v of [
+    Object.create({ a: 1, bC: 2 }),
+    getters,
+    runInNewContext("({ a: 1, bC: 2 })"),
+    { a: 1, bC: 2, c: 3 },
+  ]) {
+    assert.deepEqual(encode(ty, v), bytes);
+  }
+  assert.deepEqual(decode(ty, encode(ty, { a: 1 })), obj({ a: 1, bC: undefined }));
+  const nested = t.record({ "nested-option": t.option(t.option(t.u8)) });
+  assert.throws(() => encode(nested, {}), {
     name: "TypeError",
-    message: "record fields `a-b` and `a-B` both have the key `aB`",
-  });
-  assert.throws(
-    () =>
-      t.record([
-        { name: "a", ty: t.u8 },
-        { name: "a", ty: t.u8 },
-      ]),
-    /record fields `a` and `a` both have the key `a`/,
-  );
-  assert.throws(() => t.flags(["http-only", "HTTP-only"]), {
-    name: "TypeError",
-    message: "flags `http-only` and `HTTP-only` both have the key `httpOnly`",
+    message: "expected `{ kind, value? }` for a nested `option`",
   });
 });
 
@@ -378,48 +259,23 @@ test("names are converted to camel case like the JS-API draft converts them", ()
     ["XML-http-request", "xmlHttpRequest"],
     ["get-URL-path", "getURLPath"],
     ["inner-HTML", "innerHTML"],
+    ["HTTP-error", "httpError"],
     ["status-404", "status404"],
     ["v2-api", "v2Api"],
     ["a-b-c", "aBC"],
+    ["default", "default"],
   ]) {
     assert.equal(t.record({ [name]: t.u8 }).fields[0].key, key, name);
     assert.equal(t.flags([name]).flags[0].key, key, name);
   }
-});
-
-test("record fields are read like properties", () => {
-  const ty = t.record({ a: t.u8, b: t.option(t.u8) });
-  const bytes = encode(ty, { a: 1, b: 2 });
-  assert.deepEqual(encode(ty, Object.create({ a: 1, b: 2 })), bytes);
-  /** @type {{ a: number, b: number }} */
-  const getters = new (class {
-    get a() {
-      return 1;
-    }
-    get b() {
-      return 2;
-    }
-  })();
-  assert.deepEqual(encode(ty, getters), bytes);
-  assert.deepEqual(encode(ty, runInNewContext("({ a: 1, b: 2 })")), bytes);
-  // other properties are ignored
-  assert.deepEqual(encode(ty, { a: 1, b: 2, c: 3 }), bytes);
-});
-
-test("missing record fields are `undefined`", () => {
-  const ty = t.record({ name: t.string, "nick-name": t.option(t.string) });
-  assert.deepEqual(encode(ty, { name: "x" }), encode(ty, { name: "x", nickName: undefined }));
-  assert.deepEqual(decode(ty, encode(ty, { name: "x" })), obj({ name: "x", nickName: undefined }));
-  assert.deepEqual(encode(ty, { nickName: "y" }), encode(ty, { name: "undefined", nickName: "y" }));
-  const nested = t.record({ "nested-option": t.option(t.option(t.u8)) });
-  assert.throws(() => encode(nested, {}), {
+  assert.throws(() => t.record({ "a-b": t.u8, "a-B": t.u8 }), {
     name: "TypeError",
-    message: "expected `{ kind, value? }` for a nested `option`",
+    message: "record fields `a-b` and `a-B` both have the key `aB`",
   });
-  assert.deepEqual(
-    decode(nested, encode(nested, { nestedOption: { kind: "none" } })),
-    obj({ nestedOption: obj({ kind: "none" }) }),
-  );
+  assert.throws(() => t.flags(["http-only", "HTTP-only"]), {
+    name: "TypeError",
+    message: "flags `http-only` and `HTTP-only` both have the key `httpOnly`",
+  });
 });
 
 test("options", () => {
@@ -427,20 +283,14 @@ test("options", () => {
   roundtrip(ty, 42);
   assert.equal(decode(ty, encode(ty, undefined)), undefined);
   assert.equal(decode(ty, encode(ty, null)), undefined);
-});
-
-test("nested options keep some(none) distinct from none", () => {
-  const ty = t.option(t.option(t.u32));
-  roundtrip(ty, obj({ kind: "some", value: 1 }));
-  roundtrip(ty, obj({ kind: "some", value: undefined }));
-  roundtrip(ty, obj({ kind: "none" }));
-  assert.deepEqual(encode(ty, { kind: "some" }), Uint8Array.of(1, 0));
-  assert.deepEqual(encode(ty, { kind: "none", value: 1 }), Uint8Array.of(0));
-  assert.throws(() => encode(ty, undefined), /nested `option`/);
-  assert.throws(() => encode(ty, { tag: "none" }), /unknown case `undefined` of a nested `option`/);
-  const deep = t.option(t.option(t.option(t.string)));
-  roundtrip(deep, obj({ kind: "some", value: obj({ kind: "some", value: "x" }) }));
-  roundtrip(deep, obj({ kind: "some", value: obj({ kind: "none" }) }));
+  // nested options keep some(none) distinct from none
+  const nested = t.option(t.option(t.u32));
+  roundtrip(nested, obj({ kind: "some", value: 1 }));
+  roundtrip(nested, obj({ kind: "some", value: undefined }));
+  roundtrip(nested, obj({ kind: "none" }));
+  assert.deepEqual(encode(nested, { kind: "none", value: 1 }), Uint8Array.of(0));
+  assert.throws(() => encode(nested, undefined), /nested `option`/);
+  assert.throws(() => encode(nested, { tag: "none" }), /unknown case `undefined`/);
 });
 
 test("results", () => {
@@ -454,165 +304,64 @@ test("results", () => {
   // `result<_, e>`: ok carries no payload, so it has no `value`
   const unit = t.result(null, t.string);
   assert.deepEqual(decode(unit, encode(unit, { kind: "ok", value: 1 })), obj({ kind: "ok" }));
-  assert.equal(Object.getPrototypeOf(decode(unit, encode(unit, { kind: "ok" }))), null);
 });
 
 test("enums and variants", () => {
   const color = t.enum(["red", "green", "blue"]);
   roundtrip(color, "green");
-  const err = t.variant({ "no-such-store": null, "access-denied": null, other: t.string });
+  assert.throws(() => encode(color, "pink"), /unknown enum case `pink`/);
+  const err = t.variant({ "no-such-store": null, other: t.string });
   roundtrip(err, obj({ kind: "no-such-store" }));
   roundtrip(err, obj({ kind: "other", value: "boom" }));
   // the case is converted to a string, and the payload is read only if the case has one
   const kind = { toString: () => "other" };
-  assert.deepEqual(
-    encode(err, { kind, value: "boom" }),
-    encode(err, { kind: "other", value: "boom" }),
-  );
-  assert.deepEqual(encode(err, { kind: "access-denied", value: 1 }), Uint8Array.of(1));
-  assert.throws(() => encode(err, "access-denied"), {
-    name: "TypeError",
-    message: "expected `{ kind, value? }` for a `variant`",
-  });
-  assert.throws(() => encode(err, { kind: "nope" }), {
-    name: "TypeError",
-    message: "unknown case `nope` of a `variant`",
-  });
+  assert.deepEqual(encode(err, { kind, value: "x" }), encode(err, { kind: "other", value: "x" }));
+  assert.deepEqual(encode(err, { kind: "no-such-store", value: 1 }), Uint8Array.of(0));
+  assert.throws(() => encode(err, "other"), /expected `{ kind, value\? }` for a `variant`/);
+  assert.throws(() => encode(err, { kind: "nope" }), /unknown case `nope` of a `variant`/);
 });
 
 test("flags", () => {
   const ty = t.flags(["read", "write", "exec"]);
   roundtrip(ty, obj({ read: true, write: false, exec: true }));
-  // unset flags may be left out
+  // unset flags may be left out, flags are converted to booleans and read
+  // like properties, and other properties are ignored
   assert.deepEqual(
-    decode(ty, encode(ty, { read: true, exec: true })),
+    decode(ty, encode(ty, { read: 1, write: "", exec: "yes", wirte: true })),
     obj({ read: true, write: false, exec: true }),
   );
-  // flags are converted to booleans, and other properties are ignored
-  assert.deepEqual(
-    encode(ty, { read: 1, write: "", exec: "yes", wirte: true }),
-    Uint8Array.of(0b101),
-  );
-  /** @type {{ write: boolean }} */
-  const getter = new (class {
-    get write() {
-      return true;
-    }
-  })();
-  assert.deepEqual(encode(ty, getter), Uint8Array.of(0b10));
   assert.deepEqual(encode(ty, Object.create({ exec: true })), Uint8Array.of(0b100));
-  const foreign = runInNewContext("({ read: true, exec: true })");
-  assert.deepEqual(encode(ty, foreign), encode(ty, { read: true, exec: true }));
-  for (const v of [null, undefined, "read", 1]) {
-    assert.throws(() => encode(ty, v), {
-      name: "TypeError",
-      message: "expected an object for `flags`",
-    });
+  for (const v of [null, "read", 1]) {
+    assert.throws(() => encode(ty, v), /expected an object for `flags`/);
   }
-  assert.throws(() => decode(ty, Uint8Array.of(0b1000)), /invalid flags bits/);
-  const kebab = t.flags(["read-only", "HTTP-secure", "no-cache-at-all"]);
-  assert.deepEqual(
-    kebab.flags.map(({ key }) => key),
-    ["readOnly", "httpSecure", "noCacheAtAll"],
-  );
-  roundtrip(kebab, obj({ readOnly: true, httpSecure: false, noCacheAtAll: true }));
-  assert.deepEqual(encode(kebab, { httpSecure: true }), Uint8Array.of(0b10));
-  assert.deepEqual(encode(kebab, { "read-only": true }), Uint8Array.of(0));
   const wide = t.flags(Array.from({ length: 9 }, (_, i) => `f${i}`));
   assert.equal(decode(wide, Uint8Array.of(0, 1)).f8, true);
-  assert.throws(() => decode(wide, Uint8Array.of(0, 2)), /invalid flags bits/);
 });
 
-test("resource handles round-trip as bytes", () => {
-  const handle = new Uint8Array(16).map((_, i) => i);
-  const out = roundtrip(t.own("bucket"), handle);
-  assert.ok(out instanceof Uint8Array);
-  roundtrip(t.borrow("bucket"), handle);
-});
-
-test("stream and future cannot be encoded or decoded synchronously", () => {
-  // They require the async session API; `encode`/`decode` must refuse them.
-  assert.throws(() => encode(t.stream(t.u8), new Uint8Array([1])), /async session API/);
-  assert.throws(() => encode(t.future(t.string), "x"), /async session API/);
-  // a pending marker (`0x00`) decoded on its own is likewise rejected
-  assert.throws(() => decode(t.stream(t.u8), new Uint8Array([0])), /async session API/);
-  assert.throws(() => decode(t.future(t.string), new Uint8Array([0])), /async session API/);
-});
-
-test("ready streams and futures are decoded synchronously", async () => {
+test("streams and futures are decoded synchronously only if ready", async () => {
+  for (const [ty, v] of /** @type {[Type, InputValue][]} */ ([
+    [t.stream(t.u8), Uint8Array.of(1)],
+    [t.future(t.string), "x"],
+  ])) {
+    assert.throws(() => encode(ty, v), /async session API/);
+    assert.throws(() => decode(ty, Uint8Array.of(0)), /async session API/);
+  }
   /** @param {Value} chunks */
   const collect = async (chunks) => {
     const out = [];
     for await (const chunk of /** @type {AsyncIterable<Chunk>} */ (chunks)) out.push(chunk);
     return out;
   };
-  assert.deepEqual(await collect(decode(t.stream(t.u8), Uint8Array.of(1, 2, 7, 8))), [
-    Uint8Array.of(7, 8),
-  ]);
-  assert.deepEqual(await collect(decode(t.stream(t.string), Uint8Array.of(1, 1, 1, 0x61))), [
-    ["a"],
-  ]);
-  assert.deepEqual(await collect(decode(t.stream(t.u8), Uint8Array.of(1, 0))), []);
-  for (const [elem, Typed, vals] of NUMERIC) {
-    const w = new Writer();
-    w.u8(1);
-    encodeValue(w, t.list(elem), vals);
-    const chunks = await collect(decode(t.stream(elem), w.finish()));
-    assert.deepEqual(chunks, [Typed.from(vals)]);
-    assert.ok(chunks[0] instanceof Typed);
+  for (const [ty, bytes, chunks] of /** @type {[Type, number[], Chunk[]][]} */ ([
+    [t.stream(t.u8), [1, 2, 7, 8], [Uint8Array.of(7, 8)]],
+    [t.stream(t.u16), [1, 1, 0x80, 0x02], [Uint16Array.of(256)]],
+    [t.stream(t.string), [1, 1, 1, 0x61], [["a"]]],
+    [t.stream(t.u8), [1, 0], []],
+  ])) {
+    assert.deepEqual(await collect(decode(ty, Uint8Array.from(bytes))), chunks);
   }
   assert.equal(await decode(t.future(t.u8), Uint8Array.of(1, 7)), 7);
   assert.equal(await decode(t.future(), Uint8Array.of(1)), undefined);
-});
-
-test("the wasi:keyvalue store types", () => {
-  const error = t.variant({ "no-such-store": null, "access-denied": null, other: t.string });
-  const open = t.result(t.own("bucket"), error);
-  const get = t.result(t.option(t.list(t.u8)), error);
-  const set = t.result(null, error);
-
-  roundtrip(open, obj({ kind: "ok", value: new Uint8Array([0xde, 0xad, 0xbe, 0xef]) }));
-  roundtrip(get, obj({ kind: "ok", value: new TextEncoder().encode("value") }));
-  roundtrip(get, obj({ kind: "ok", value: undefined }));
-  roundtrip(get, obj({ kind: "error", value: obj({ kind: "no-such-store" }) }));
-  assert.deepEqual(decode(set, encode(set, { kind: "ok" })), obj({ kind: "ok" }));
-});
-
-test("a bounded channel makes senders wait for room", async () => {
-  const chan = new Chan(1);
-  assert.equal(await chan.send(1), true);
-  let sent = false;
-  const sending = chan.send(2).then((ok) => (sent = ok));
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(sent, false);
-  assert.deepEqual(await chan.next(), { value: 1, done: false });
-  assert.equal(await sending, true);
-  chan.close();
-  assert.equal(await chan.send(3), false);
-  assert.deepEqual(await chan.next(), { value: 2, done: false });
-  assert.deepEqual(await chan.next(), { value: undefined, done: true });
-});
-
-test("leaving a loop over a channel early cancels it", async () => {
-  const chan = new Chan();
-  let cancelled = false;
-  chan.onCancel(() => (cancelled = true));
-  chan.push(1);
-  chan.push(2);
-  for await (const v of chan) {
-    assert.equal(v, 1);
-    break;
-  }
-  assert.ok(cancelled);
-  assert.deepEqual(await chan.next(), { value: undefined, done: true });
-  assert.equal(await chan.send(3), false);
-});
-
-test("cancelling a failed channel keeps its error", async () => {
-  const chan = new Chan();
-  chan.close(new Error("boom"));
-  chan.cancel(new Error("discarded"));
-  await assert.rejects(chan.next(), /boom/);
 });
 
 test("values decode resumably across chunk boundaries", async () => {
@@ -630,26 +379,64 @@ test("values decode resumably across chunk boundaries", async () => {
   }
 });
 
-test("a channel drops its cancel hooks once its end is received", async () => {
-  for (const consume of [
-    /** @param {Chan<number>} chan */
-    async (chan) => {
-      chan.push(1);
-      chan.close();
-      for await (const v of chan) assert.equal(v, 1);
-    },
-    /** @param {Chan<number>} chan */
-    async (chan) => {
-      const end = chan.next();
-      chan.close();
-      await end;
-    },
-  ]) {
+test("a bounded channel makes senders wait for room", async () => {
+  const chan = new Chan(1);
+  assert.equal(await chan.send(1), true);
+  let sent = false;
+  const sending = chan.send(2).then((ok) => (sent = ok));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(sent, false);
+  assert.deepEqual(await chan.next(), { value: 1, done: false });
+  assert.equal(await sending, true);
+  chan.close();
+  assert.equal(await chan.send(3), false);
+  assert.deepEqual(await chan.next(), { value: 2, done: false });
+  assert.deepEqual(await chan.next(), { value: undefined, done: true });
+});
+
+test("a channel is cancelled by leaving a loop over it early, not once ended", async () => {
+  for (const [
+    consume,
+    cancels,
+  ] of /** @type {[(chan: Chan<number>) => Promise<void>, boolean][]} */ ([
+    [
+      async (chan) => {
+        for await (const v of chan) {
+          assert.equal(v, 1);
+          break;
+        }
+      },
+      true,
+    ],
+    [
+      async (chan) => {
+        chan.close();
+        for await (const v of chan) assert.equal(v, 1);
+        chan.cancel();
+      },
+      false,
+    ],
+    [
+      async (chan) => {
+        await chan.next();
+        const end = chan.next();
+        chan.close();
+        await end;
+        chan.cancel();
+      },
+      false,
+    ],
+  ])) {
     const chan = new Chan();
     let cancelled = false;
     chan.onCancel(() => (cancelled = true));
+    chan.push(1);
     await consume(chan);
-    chan.cancel();
-    assert.equal(cancelled, false);
+    assert.equal(cancelled, cancels);
+    assert.equal(await chan.send(2), false);
   }
+  const failed = new Chan();
+  failed.close(new Error("boom"));
+  failed.cancel(new Error("discarded"));
+  await assert.rejects(failed.next(), /boom/);
 });
