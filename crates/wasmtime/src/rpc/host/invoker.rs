@@ -104,7 +104,7 @@ where
         let rx = IncomingChannel::new(transmission.clone(), incoming_root, &paths);
         let res = async move {
             if let Err(err) = transmission.await {
-                return Err(Error::Invoke(anyhow!("{err:#}")));
+                return Err(Error::Transmission(err));
             }
             let Some((egress, ingress)) = finished
                 .lock()
