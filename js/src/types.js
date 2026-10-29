@@ -114,13 +114,16 @@ export const enumType = (names) => ({ kind: "enum", names: [...names] });
  * Flags, by their WIT names.
  * @param {string[]} names @returns {Extract<Type, { kind: "flags" }>}
  */
-export const flags = (names) => ({
-  kind: "flags",
-  flags: uniqueKeys(
-    names.map((name) => ({ name, key: camelCase(name) })),
-    "flag",
-  ),
-});
+export const flags = (names) => {
+  if (names.length === 0) throw new RangeError("flags must have at least one flag");
+  return {
+    kind: "flags",
+    flags: uniqueKeys(
+      names.map((name) => ({ name, key: camelCase(name) })),
+      "flag",
+    ),
+  };
+};
 
 /** An owned resource handle `own<name>`. @param {string} name @returns {Type} */
 export const own = (name) => ({ kind: "own", name });
