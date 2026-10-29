@@ -123,13 +123,15 @@ export namespace types {
   export function stream(elem: Type): Type;
   export function result(ok?: Type | null, err?: Type | null): Type;
   export function tuple(...elems: Type[]): Type;
-  export function record(fields: Record<string, Type> | { name: string; ty: Type }[]): Type;
+  export function record(
+    fields: Record<string, Type> | { name: string; ty: Type }[],
+  ): Extract<Type, { kind: "record" }>;
   export function variant(
     cases: Record<string, Type | null> | { name: string; ty: Type | null }[],
   ): Type;
   export function enumType(names: string[]): Type;
   export { enumType as enum };
-  export function flags(names: string[]): Type;
+  export function flags(names: string[]): Extract<Type, { kind: "flags" }>;
   export function own(name: string): Type;
   export function borrow(name: string): Type;
 }

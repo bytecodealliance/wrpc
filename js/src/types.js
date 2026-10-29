@@ -18,26 +18,39 @@
 // property name its value has in JavaScript, as in the component model's
 // JS-API draft.
 
-export const bool = { kind: "bool" };
-export const s8 = { kind: "s8" };
-export const u8 = { kind: "u8" };
-export const s16 = { kind: "s16" };
-export const u16 = { kind: "u16" };
-export const s32 = { kind: "s32" };
-export const u32 = { kind: "u32" };
-export const s64 = { kind: "s64" };
-export const u64 = { kind: "u64" };
-export const f32 = { kind: "f32" };
-export const f64 = { kind: "f64" };
-export const char = { kind: "char" };
-export const string = { kind: "string" };
-
 /** @typedef {import("./index.d.ts").Type} Type */
 
-/** `list<elem>` @param {Type} elem */
+/** @type {Type} */
+export const bool = { kind: "bool" };
+/** @type {Type} */
+export const s8 = { kind: "s8" };
+/** @type {Type} */
+export const u8 = { kind: "u8" };
+/** @type {Type} */
+export const s16 = { kind: "s16" };
+/** @type {Type} */
+export const u16 = { kind: "u16" };
+/** @type {Type} */
+export const s32 = { kind: "s32" };
+/** @type {Type} */
+export const u32 = { kind: "u32" };
+/** @type {Type} */
+export const s64 = { kind: "s64" };
+/** @type {Type} */
+export const u64 = { kind: "u64" };
+/** @type {Type} */
+export const f32 = { kind: "f32" };
+/** @type {Type} */
+export const f64 = { kind: "f64" };
+/** @type {Type} */
+export const char = { kind: "char" };
+/** @type {Type} */
+export const string = { kind: "string" };
+
+/** `list<elem>` @param {Type} elem @returns {Type} */
 export const list = (elem) => ({ kind: "list", elem });
 
-/** `option<some>` @param {Type} some */
+/** `option<some>` @param {Type} some @returns {Type} */
 export const option = (some) => ({ kind: "option", some });
 
 /**
@@ -46,6 +59,7 @@ export const option = (some) => ({ kind: "option", some });
  * `accept`); the synchronous `encode`/`decode` cannot transmit it. Pass no
  * type for a bare `future` without a payload.
  * @param {Type | null} [some]
+ * @returns {Type}
  */
 export const future = (some = null) => ({ kind: "future", some });
 
@@ -54,6 +68,7 @@ export const future = (some = null) => ({ kind: "future", some });
  * multiplexed over the invocation's framed stream. Requires the async session
  * API (`invoke` / `accept`).
  * @param {Type} elem
+ * @returns {Type}
  */
 export const stream = (elem) => ({ kind: "stream", elem });
 
@@ -62,10 +77,11 @@ export const stream = (elem) => ({ kind: "stream", elem });
  * is `result<_, e>` and `result()` is bare `result`.
  * @param {Type | null} [ok]
  * @param {Type | null} [err]
+ * @returns {Type}
  */
 export const result = (ok = null, err = null) => ({ kind: "result", ok, err });
 
-/** `tuple<...elems>` @param {...Type} elems */
+/** `tuple<...elems>` @param {...Type} elems @returns {Type} */
 export const tuple = (...elems) => ({ kind: "tuple", elems });
 
 /**
@@ -73,6 +89,7 @@ export const tuple = (...elems) => ({ kind: "tuple", elems });
  * `{ name, ty }`, keyed by the WIT field names. Field order is the wire order
  * and must match the WIT.
  * @param {Record<string, Type> | { name: string, ty: Type }[]} fields
+ * @returns {Extract<Type, { kind: "record" }>}
  */
 export const record = (fields) => ({
   kind: "record",
@@ -83,16 +100,20 @@ export const record = (fields) => ({
  * A variant. Accepts a case map `{ name: Type | null }` (use `null` for a
  * payload-less case) or an array of `{ name, ty }`.
  * @param {Record<string, Type | null> | { name: string, ty: Type | null }[]} cases
+ * @returns {Type}
  */
 export const variant = (cases) => ({
   kind: "variant",
   cases: normalizeCases(cases),
 });
 
-/** An enum. @param {string[]} names */
+/** An enum. @param {string[]} names @returns {Type} */
 export const enumType = (names) => ({ kind: "enum", names: [...names] });
 
-/** Flags, by their WIT names. @param {string[]} names */
+/**
+ * Flags, by their WIT names.
+ * @param {string[]} names @returns {Extract<Type, { kind: "flags" }>}
+ */
 export const flags = (names) => ({
   kind: "flags",
   flags: uniqueKeys(
@@ -101,10 +122,10 @@ export const flags = (names) => ({
   ),
 });
 
-/** An owned resource handle `own<name>`. @param {string} name */
+/** An owned resource handle `own<name>`. @param {string} name @returns {Type} */
 export const own = (name) => ({ kind: "own", name });
 
-/** A borrowed resource handle `borrow<name>`. @param {string} name */
+/** A borrowed resource handle `borrow<name>`. @param {string} name @returns {Type} */
 export const borrow = (name) => ({ kind: "borrow", name });
 
 /**
