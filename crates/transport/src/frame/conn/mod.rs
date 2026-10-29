@@ -984,8 +984,11 @@ pub trait ConnHandler<Rx, Tx> {
     /// the stream, rather than aborting ingress and dropping the reader.
     /// Any data received after all handles are dropped, or received for a registered path, which
     /// was never indexed, fails ingress with [`std::io::ErrorKind::BrokenPipe`].
-    /// Draining is required for transports that reset the connection when closed with
-    /// unread data, like TCP, discarding data not yet received by the peer.
+    /// Draining reports such data, which would otherwise go unnoticed, discards empty frames the
+    /// peer may still send to close paths, and reads the stream to its end, which transports
+    /// reusing the connection, like HTTP/1, require.
+    /// Transports, which signal the peer to stop sending once the reader is dropped, like QUIC,
+    /// may abort ingress instead.
     const DRAIN: bool = true;
 
     /// Handle ingress completion
