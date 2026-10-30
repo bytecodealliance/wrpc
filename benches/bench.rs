@@ -17,6 +17,7 @@ use tokio::io::BufReader;
 use tokio::net::UnixListener;
 use tokio::runtime::{Handle, Runtime};
 use tokio::task::JoinHandle;
+use tokio::try_join;
 use wasmtime::component::{Component, Linker, ResourceTable};
 use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 use wrpc_transport::frame::{Incoming, Outgoing};
@@ -640,7 +641,7 @@ fn bench_http2(
         .context("failed to query listener address")?;
     let ((sender, conn), (stream, _)) = rt
         .block_on(async {
-            tokio::try_join!(
+            try_join!(
                 async {
                     let stream = wrpc_test::tcp_connect(addr).await?;
                     hyper::client::conn::http2::handshake(
