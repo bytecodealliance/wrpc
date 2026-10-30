@@ -5,17 +5,34 @@ use std::path::{Path, PathBuf};
 use bytes::Bytes;
 use tokio::io::BufReader;
 use tokio::net::UnixStream;
-use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
 use tracing::instrument;
 
 use crate::Invoke;
 use crate::frame::{Incoming, Outgoing, invoke};
 
+/// Read half of a Unix domain socket stream returned by [split]
+pub type ReadHalf = crate::frame::ReadHalf<UnixStream>;
+
+/// Write half of a Unix domain socket stream returned by [split], which, if dropped before being
+/// shut down, closes the socket
+pub type WriteHalf = crate::frame::WriteHalf<UnixStream>;
+
+/// Splits a Unix domain socket stream into a [ReadHalf] and a [WriteHalf].
+///
+/// If the [WriteHalf] is dropped before being shut down, the socket is closed, so that sending
+/// data fails for the peer, and reading from the [ReadHalf] fails, unless it already reached the
+/// end of the stream.
+/// Unix domain sockets cannot be reset, so the peer receives the end of the stream.
+#[must_use]
+pub fn split(stream: UnixStream) -> (ReadHalf, WriteHalf) {
+    crate::frame::split::split(stream, |_| {})
+}
+
 /// [Invoke] implementation in terms of a single [`UnixStream`].
 ///
 /// [`Invoke::invoke`] can only be called at most once on [Oneshot],
 /// repeated calls will return an error.
-pub type Oneshot = super::Oneshot<OwnedReadHalf, OwnedWriteHalf>;
+pub type Oneshot = super::Oneshot<ReadHalf, WriteHalf>;
 
 impl Oneshot {
     /// Creates a pair of connected [Oneshot] using [`UnixStream::pair`].
@@ -27,7 +44,7 @@ impl Oneshot {
 
 impl From<UnixStream> for Oneshot {
     fn from(stream: UnixStream) -> Self {
-        stream.into_split().into()
+        split(stream).into()
     }
 }
 
@@ -75,7 +92,7 @@ impl Invoke for Client<PathBuf> {
         P: AsRef<[Option<usize>]> + Send + Sync,
     {
         let stream = UnixStream::connect(&self.0).await?;
-        let (rx, tx) = stream.into_split();
+        let (rx, tx) = split(stream);
         invoke(tx, BufReader::new(rx), instance, func, params, paths).await
     }
 }
@@ -96,7 +113,7 @@ impl Invoke for Client<&Path> {
         P: AsRef<[Option<usize>]> + Send + Sync,
     {
         let stream = UnixStream::connect(self.0).await?;
-        let (rx, tx) = stream.into_split();
+        let (rx, tx) = split(stream);
         invoke(tx, BufReader::new(rx), instance, func, params, paths).await
     }
 }
@@ -118,7 +135,7 @@ impl Invoke for Client<&std::os::unix::net::SocketAddr> {
     {
         let stream = std::os::unix::net::UnixStream::connect_addr(self.0)?;
         let stream = UnixStream::from_std(stream)?;
-        let (rx, tx) = stream.into_split();
+        let (rx, tx) = split(stream);
         invoke(tx, BufReader::new(rx), instance, func, params, paths).await
     }
 }
@@ -140,7 +157,38 @@ impl Invoke for Client<std::os::unix::net::SocketAddr> {
     {
         let stream = std::os::unix::net::UnixStream::connect_addr(&self.0)?;
         let stream = UnixStream::from_std(stream)?;
-        let (rx, tx) = stream.into_split();
+        let (rx, tx) = split(stream);
         invoke(tx, BufReader::new(rx), instance, func, params, paths).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+    use super::*;
+
+    #[test_log::test(tokio::test)]
+    async fn write_half_dropped() {
+        for shutdown in [true, false] {
+            let (clt, mut srv) = UnixStream::pair().unwrap();
+            let (mut rx, mut tx) = split(clt);
+            tx.write_all(b"foo").await.unwrap();
+            if shutdown {
+                tx.shutdown().await.unwrap();
+            }
+            drop(tx);
+            let mut buf = Vec::default();
+            srv.read_to_end(&mut buf).await.unwrap();
+            assert_eq!(buf, b"foo");
+            let res = srv.write_all(b"bar").await;
+            if shutdown {
+                res.unwrap();
+            } else {
+                assert_eq!(res.unwrap_err().kind(), std::io::ErrorKind::BrokenPipe);
+                let err = rx.read_to_end(&mut Vec::default()).await.unwrap_err();
+                assert_eq!(err.kind(), std::io::ErrorKind::ConnectionAborted);
+            }
+        }
     }
 }

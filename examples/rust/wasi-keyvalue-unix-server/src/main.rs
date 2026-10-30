@@ -48,7 +48,7 @@ async fn main() -> anyhow::Result<()> {
                 select! {
                     res = lis.accept() => match res {
                         Ok((stream, addr)) => {
-                            let (rx, tx) = stream.into_split();
+                            let (rx, tx) = wrpc_transport::unix::split(stream);
                             let srv = Arc::clone(&srv);
                             conns.spawn(async move {
                                 if let Err(err) = srv.accept(addr, tx, BufReader::new(rx)).await {

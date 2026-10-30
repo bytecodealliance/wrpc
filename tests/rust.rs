@@ -1817,7 +1817,7 @@ async fn rust_oneshot_duplex() -> anyhow::Result<()> {
 #[instrument(ret)]
 async fn rust_oneshot_uds() -> anyhow::Result<()> {
     let (clt, srv) = Oneshot::unix_pair()?;
-    let (rx, tx) = srv.into_split();
+    let (rx, tx) = wrpc_transport::unix::split(srv);
     assert_oneshot(clt, rx, tx).await
 }
 
@@ -1876,7 +1876,7 @@ async fn rust_bindgen_uds_sync() -> anyhow::Result<()> {
         let accept = async {
             let (stream, addr) = lis.accept().await.expect("failed to accept connection");
             assert!(addr.is_unnamed());
-            let (rx, tx) = stream.into_split();
+            let (rx, tx) = wrpc_transport::unix::split(stream);
             srv.accept((), tx, BufReader::new(rx))
                 .await
                 .expect("failed to accept connection");
@@ -1912,7 +1912,7 @@ async fn rust_bindgen_uds_async() -> anyhow::Result<()> {
         let accept = async {
             let (stream, addr) = lis.accept().await.expect("failed to accept connection");
             assert!(addr.is_unnamed());
-            let (rx, tx) = stream.into_split();
+            let (rx, tx) = wrpc_transport::unix::split(stream);
             srv.accept((), tx, BufReader::new(rx))
                 .await
                 .expect("failed to accept connection");

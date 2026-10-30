@@ -471,7 +471,7 @@ fn bench_unix(
                 let (stream, _) = lis.accept().await.context("failed to accept connection")?;
                 let srv = Arc::clone(&srv);
                 tasks.spawn(async move {
-                    let (rx, tx) = stream.into_split();
+                    let (rx, tx) = wrpc_transport::unix::split(stream);
                     srv.accept((), tx, BufReader::new(rx))
                         .await
                         .context("failed to accept invocation")
