@@ -1,19 +1,19 @@
 //! wRPC TCP transport using [tokio]
 
-use core::pin::Pin;
-use core::task::{Context, Poll, ready};
-
-use std::io::IoSlice;
-use std::sync::{Arc, Mutex, PoisonError};
-
 use bytes::Bytes;
-use futures::task::AtomicWaker;
-use tokio::io::{AsyncRead, AsyncWrite, BufReader, ReadBuf};
+use tokio::io::BufReader;
 use tokio::net::{TcpStream, ToSocketAddrs};
 use tracing::instrument;
 
 use crate::Invoke;
 use crate::frame::{Incoming, Outgoing, invoke};
+
+/// Read half of a TCP stream returned by [split]
+pub type ReadHalf = crate::frame::ReadHalf<TcpStream>;
+
+/// Write half of a TCP stream returned by [split], which, if dropped before being shut down,
+/// aborts the connection, signaling the peer that sending data failed
+pub type WriteHalf = crate::frame::WriteHalf<TcpStream>;
 
 /// Splits a TCP stream into a [ReadHalf] and a [WriteHalf].
 ///
@@ -22,127 +22,7 @@ use crate::frame::{Incoming, Outgoing, invoke};
 /// reached the end of the stream.
 #[must_use]
 pub fn split(stream: TcpStream) -> (ReadHalf, WriteHalf) {
-    let shared = Arc::new(Shared {
-        stream: Mutex::new(Some(stream)),
-        waker: AtomicWaker::default(),
-    });
-    (
-        ReadHalf {
-            shared: Arc::clone(&shared),
-            eof: false,
-        },
-        WriteHalf {
-            shared,
-            shutdown: false,
-        },
-    )
-}
-
-#[derive(Debug)]
-struct Shared {
-    stream: Mutex<Option<TcpStream>>,
-    waker: AtomicWaker,
-}
-
-impl Shared {
-    fn poll<T>(
-        &self,
-        f: impl FnOnce(Pin<&mut TcpStream>) -> Poll<std::io::Result<T>>,
-    ) -> Poll<std::io::Result<T>> {
-        let mut stream = self.stream.lock().unwrap_or_else(PoisonError::into_inner);
-        let Some(stream) = stream.as_mut() else {
-            return Poll::Ready(Err(std::io::Error::new(
-                std::io::ErrorKind::ConnectionAborted,
-                "TCP write half dropped before being shut down",
-            )));
-        };
-        f(Pin::new(stream))
-    }
-}
-
-/// Read half of a TCP stream returned by [split]
-#[derive(Debug)]
-pub struct ReadHalf {
-    shared: Arc<Shared>,
-    eof: bool,
-}
-
-impl AsyncRead for ReadHalf {
-    fn poll_read(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &mut ReadBuf<'_>,
-    ) -> Poll<std::io::Result<()>> {
-        let this = self.get_mut();
-        if this.eof {
-            return Poll::Ready(Ok(()));
-        }
-        this.shared.waker.register(cx.waker());
-        let n = buf.filled().len();
-        ready!(this.shared.poll(|stream| stream.poll_read(cx, buf)))?;
-        this.eof = buf.filled().len() == n && buf.remaining() > 0;
-        Poll::Ready(Ok(()))
-    }
-}
-
-/// Write half of a TCP stream returned by [split], which, if dropped before being shut down,
-/// aborts the connection, signaling the peer that sending data failed
-#[derive(Debug)]
-pub struct WriteHalf {
-    shared: Arc<Shared>,
-    shutdown: bool,
-}
-
-impl Drop for WriteHalf {
-    fn drop(&mut self) {
-        if self.shutdown {
-            return;
-        }
-        let stream = self
-            .shared
-            .stream
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .take();
-        if let Some(stream) = stream {
-            _ = stream.set_zero_linger();
-        }
-        self.shared.waker.wake();
-    }
-}
-
-impl AsyncWrite for WriteHalf {
-    fn poll_write(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &[u8],
-    ) -> Poll<std::io::Result<usize>> {
-        self.shared.poll(|stream| stream.poll_write(cx, buf))
-    }
-
-    fn poll_write_vectored(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        bufs: &[IoSlice<'_>],
-    ) -> Poll<std::io::Result<usize>> {
-        self.shared
-            .poll(|stream| stream.poll_write_vectored(cx, bufs))
-    }
-
-    fn is_write_vectored(&self) -> bool {
-        true
-    }
-
-    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        self.shared.poll(|stream| stream.poll_flush(cx))
-    }
-
-    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        let this = self.get_mut();
-        ready!(this.shared.poll(|stream| stream.poll_shutdown(cx)))?;
-        this.shutdown = true;
-        Poll::Ready(Ok(()))
-    }
+    crate::frame::split::split(stream, |stream| _ = stream.set_zero_linger())
 }
 
 /// [Invoke] implementation of a TCP transport using [tokio]
