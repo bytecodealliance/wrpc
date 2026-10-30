@@ -1,10 +1,88 @@
 use std::sync::Arc;
 
 use bytes::{Bytes, BytesMut};
+use tokio::io::{AsyncRead, AsyncReadExt as _};
 use tracing::{instrument, trace};
-use wasm_tokio::{DEFAULT_MAX_INITIAL_CAPACITY, Leb128DecoderU32, Leb128Encoder};
+use wasm_tokio::{
+    AsyncReadLeb128 as _, DEFAULT_MAX_INITIAL_CAPACITY, Leb128DecoderU32, Leb128Encoder,
+};
 
-use crate::frame::{Frame, FrameRef, MAX_INITIAL_PATH_CAPACITY};
+use crate::frame::{Frame, FrameRef, Header, HeaderReadError, MAX_INITIAL_PATH_CAPACITY, PROTOCOL};
+
+/// Default maximum length of a [Frame] path
+const DEFAULT_MAX_DEPTH: u32 = 64;
+
+/// Default maximum length of the data of a [Frame]
+const DEFAULT_MAX_SIZE: u32 = 16 << 20;
+
+/// Default maximum length of the instance and function names in a [Header]
+const DEFAULT_MAX_NAME_LEN: u32 = 1 << 10;
+
+/// [Header] decoder
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct HeaderDecoder {
+    max_instance_len: u32,
+    max_name_len: u32,
+}
+
+impl HeaderDecoder {
+    /// Construct a new [Header] decoder, which rejects instance and function names longer than
+    /// `max_instance_len` and `max_name_len` bytes respectively
+    #[must_use]
+    pub fn new(max_instance_len: u32, max_name_len: u32) -> Self {
+        Self {
+            max_instance_len,
+            max_name_len,
+        }
+    }
+
+    /// Reads the wRPC header from a byte stream
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if reading the header fails
+    #[instrument(level = "trace", skip_all, ret(level = "trace"))]
+    pub async fn read(&self, mut rx: impl AsyncRead + Unpin) -> Result<Header, HeaderReadError> {
+        match rx.read_u8().await.map_err(HeaderReadError::IO)? {
+            PROTOCOL => {
+                let instance = read_name(&mut rx, self.max_instance_len, "instance")
+                    .await
+                    .map_err(HeaderReadError::IO)?;
+                let name = read_name(&mut rx, self.max_name_len, "function")
+                    .await
+                    .map_err(HeaderReadError::IO)?;
+                Ok(Header { instance, name })
+            }
+            v => Err(HeaderReadError::UnsupportedVersion(v)),
+        }
+    }
+}
+
+impl Default for HeaderDecoder {
+    fn default() -> Self {
+        Self::new(DEFAULT_MAX_NAME_LEN, DEFAULT_MAX_NAME_LEN)
+    }
+}
+
+/// Reads a name of at most `max_len` bytes from `rx`
+async fn read_name(
+    mut rx: impl AsyncRead + Unpin,
+    max_len: u32,
+    kind: &str,
+) -> std::io::Result<String> {
+    let n = rx.read_u32_leb128().await?;
+    if n > max_len {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("{kind} name length of `{n}` exceeds maximum of `{max_len}`"),
+        ));
+    }
+    let n = usize::try_from(n)
+        .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
+    let mut buf = vec![0; n];
+    rx.read_exact(&mut buf).await?;
+    String::from_utf8(buf).map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))
+}
 
 /// [Frame] decoder
 pub struct Decoder {
@@ -31,7 +109,7 @@ impl Decoder {
 
 impl Default for Decoder {
     fn default() -> Self {
-        Self::new(u32::MAX, u32::MAX)
+        Self::new(DEFAULT_MAX_DEPTH, DEFAULT_MAX_SIZE)
     }
 }
 
@@ -234,5 +312,31 @@ mod tests {
         assert_eq!(s, None);
 
         Ok(())
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn decoder_limits() {
+        let mut buf = BytesMut::default();
+        crate::frame::encode_invocation(&mut buf, "foo", "bar", 0).unwrap();
+        let header = HeaderDecoder::default().read(buf.as_ref()).await.unwrap();
+        assert_eq!(header.instance, "foo");
+        assert_eq!(header.name, "bar");
+        let Err(HeaderReadError::IO(err)) = HeaderDecoder::new(2, 3).read(buf.as_ref()).await
+        else {
+            panic!("reading a header with a too long instance name should fail");
+        };
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+
+        let mut tx = FramedWrite::new(vec![], Encoder);
+        tx.send(FrameRef {
+            path: &[0; DEFAULT_MAX_DEPTH as usize + 1],
+            data: b"",
+        })
+        .await
+        .unwrap();
+        let tx = tx.into_inner();
+        let mut rx = FramedRead::new(tx.as_slice(), Decoder::default());
+        let err = rx.try_next().await.unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
     }
 }

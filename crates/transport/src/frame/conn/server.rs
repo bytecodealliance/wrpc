@@ -11,20 +11,28 @@ use tokio_stream::wrappers::ReceiverStream;
 use tracing::{instrument, trace};
 
 use crate::Serve;
-use crate::frame::{Header, HeaderReadError, Incoming, Outgoing};
+use crate::frame::{Header, HeaderDecoder, HeaderReadError, Incoming, Outgoing};
 
 /// wRPC server for framed transports
 #[derive(Debug)]
 pub struct Server<C, I, O> {
     handlers: Mutex<HashMap<String, HashMap<String, mpsc::Sender<(C, I, O)>>>>,
+    header: HeaderDecoder,
 }
 
 impl<C, I, O> Server<C, I, O> {
     /// Constructs a new [Server]
     #[must_use]
     pub fn new() -> Self {
+        Self::with_header_decoder(HeaderDecoder::default())
+    }
+
+    /// Constructs a new [Server], which reads invocation headers using `header`
+    #[must_use]
+    pub fn with_header_decoder(header: HeaderDecoder) -> Self {
         Self {
             handlers: Mutex::default(),
+            header,
         }
     }
 }
@@ -99,7 +107,7 @@ where
     /// Returns an error if handling the invocation fails
     #[instrument(level = "trace", skip_all, ret(level = "trace"))]
     pub async fn accept(&self, cx: C, tx: O, mut rx: I) -> Result<(), AcceptError<C, I, O>> {
-        let Header { instance, name } = Header::read(&mut rx).await?;
+        let Header { instance, name } = self.header.read(&mut rx).await?;
         let h = self
             .handlers
             .lock()

@@ -19,11 +19,8 @@ use tokio_util::io::StreamReader;
 use tokio_util::sync::PollSender;
 use tokio_util::task::AbortOnDropHandle;
 use tracing::{Instrument as _, Span, debug, error, instrument, trace};
-use wasm_tokio::{
-    AsyncReadCore as _, AsyncReadLeb128 as _, DEFAULT_MAX_INITIAL_CAPACITY, Leb128Encoder,
-};
+use wasm_tokio::{AsyncReadLeb128 as _, DEFAULT_MAX_INITIAL_CAPACITY, Leb128Encoder};
 
-use crate::frame::PROTOCOL;
 use crate::{copy_io_error, error_receiver_closed};
 
 mod client;
@@ -32,7 +29,7 @@ mod server;
 pub use client::*;
 pub use server::*;
 
-/// Error returned by [`Header::read`]
+/// Error returned by [`HeaderDecoder::read`](crate::frame::HeaderDecoder::read)
 pub enum HeaderReadError {
     /// I/O error
     IO(std::io::Error),
@@ -68,31 +65,6 @@ pub struct Header {
 
     /// Name of the function being called
     pub name: String,
-}
-
-impl Header {
-    /// Reads the wRPC header from a byte stream
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if reading the header fails
-    #[instrument(level = "trace", skip_all, ret(level = "trace"))]
-    pub async fn read(mut rx: impl AsyncRead + Unpin) -> Result<Self, HeaderReadError> {
-        let mut instance = String::default();
-        let mut name = String::default();
-        match rx.read_u8().await.map_err(HeaderReadError::IO)? {
-            PROTOCOL => {
-                rx.read_core_name(&mut instance)
-                    .await
-                    .map_err(HeaderReadError::IO)?;
-                rx.read_core_name(&mut name)
-                    .await
-                    .map_err(HeaderReadError::IO)?;
-            }
-            v => return Err(HeaderReadError::UnsupportedVersion(v)),
-        }
-        Ok(Self { instance, name })
-    }
 }
 
 /// Sender of a subscribed path
