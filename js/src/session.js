@@ -462,11 +462,14 @@ export async function invoke(transport, instance, func, paramTypes, args, result
  * `finished` promise that resolves once the parameters have been received,
  * the peer has ended transmit, the results have been sent and all the data the
  * peer sent has been decoded, reporting any failure after the parameters'
- * `done` too. If any I/O fails, the transport is aborted.
+ * `done` too. If any I/O fails, the transport is aborted. Instance and function
+ * names longer than `maxInstanceLength` and `maxNameLength` bytes, 1 KiB by
+ * default, are rejected.
  *
  * @param {Transport} transport
+ * @param {{ maxInstanceLength?: number, maxNameLength?: number }} [options]
  */
-export async function accept(transport) {
+export async function accept(transport, { maxInstanceLength = 1024, maxNameLength = 1024 } = {}) {
   const mux = new Mux(transport);
   let instance;
   let func;
@@ -475,8 +478,8 @@ export async function accept(transport) {
     if (version !== PROTOCOL) {
       throw new Error(`unsupported wRPC framing version byte 0x${version.toString(16)}`);
     }
-    instance = await mux.master.name();
-    func = await mux.master.name();
+    instance = await mux.master.name(maxInstanceLength);
+    func = await mux.master.name(maxNameLength);
   } catch (err) {
     mux.abort(err);
     throw err;

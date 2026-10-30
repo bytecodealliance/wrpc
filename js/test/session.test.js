@@ -272,6 +272,28 @@ test("a failed parameter stream aborts the transport", { timeout: 1000 }, async 
   assert.match(String(aborted), /source failed/);
 });
 
+test("invocation header names are bounded", async () => {
+  const w = new Writer();
+  w.u8(0);
+  w.name("a".repeat(2000));
+  w.name("f");
+  for (const [options, ok] of /** @type {[object | undefined, boolean][]} */ ([
+    [undefined, false],
+    [{ maxInstanceLength: 2000 }, true],
+  ])) {
+    /** @type {Uint8Array[]} */
+    const bytes = [w.finish()];
+    const transport = {
+      read: async () => bytes.pop() ?? null,
+      write: () => {},
+      closeWrite: () => {},
+    };
+    const accepted = accept(transport, options);
+    if (ok) assert.equal((await accepted).instance, "a".repeat(2000));
+    else await assert.rejects(accepted, /name length of 2000 exceeds maximum of 1024/);
+  }
+});
+
 test("an invalid invocation header aborts the transport", async () => {
   /** @type {unknown} */
   let aborted;
