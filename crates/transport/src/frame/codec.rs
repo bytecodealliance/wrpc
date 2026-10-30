@@ -338,5 +338,9 @@ mod tests {
         let mut rx = FramedRead::new(tx.as_slice(), Decoder::default());
         let err = rx.try_next().await.unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+
+        let mut rx = FramedRead::new(b"\0\xff\xff\xff\xff\x0f".as_slice(), Decoder::default());
+        let err = rx.try_next().await.unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
     }
 }

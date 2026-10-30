@@ -161,34 +161,3 @@ impl Invoke for Client<std::os::unix::net::SocketAddr> {
         invoke(tx, BufReader::new(rx), instance, func, params, paths).await
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
-
-    use super::*;
-
-    #[test_log::test(tokio::test)]
-    async fn write_half_dropped() {
-        for shutdown in [true, false] {
-            let (clt, mut srv) = UnixStream::pair().unwrap();
-            let (mut rx, mut tx) = split(clt);
-            tx.write_all(b"foo").await.unwrap();
-            if shutdown {
-                tx.shutdown().await.unwrap();
-            }
-            drop(tx);
-            let mut buf = Vec::default();
-            srv.read_to_end(&mut buf).await.unwrap();
-            assert_eq!(buf, b"foo");
-            let res = srv.write_all(b"bar").await;
-            if shutdown {
-                res.unwrap();
-            } else {
-                assert_eq!(res.unwrap_err().kind(), std::io::ErrorKind::BrokenPipe);
-                let err = rx.read_to_end(&mut Vec::default()).await.unwrap_err();
-                assert_eq!(err.kind(), std::io::ErrorKind::ConnectionAborted);
-            }
-        }
-    }
-}

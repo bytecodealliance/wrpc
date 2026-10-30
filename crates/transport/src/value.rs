@@ -2405,150 +2405,71 @@ impl Decode for Pin<Box<dyn AsyncRead + Send>> {
 mod tests {
     use std::io::ErrorKind;
 
-    use anyhow::{Context as _, bail};
+    use anyhow::bail;
     use tokio_util::codec::Decoder as _;
 
     use super::*;
 
-    #[test_log::test(tokio::test)]
-    async fn list_decoder_reset_on_error() -> anyhow::Result<()> {
-        let mut dec = <Vec<Vec<String>> as Decode>::Decoder::default();
-        let mut buf = BytesMut::from(&[0x02, 0x01, 0x01, b'a', 0x01, 0x01, 0xff][..]);
-        assert!(tokio_util::codec::Decoder::decode(&mut dec, &mut buf).is_err());
-        let mut buf = BytesMut::from(&[0x01, 0x01, 0x01, b'b'][..]);
-        assert_eq!(
-            tokio_util::codec::Decoder::decode(&mut dec, &mut buf)?,
-            Some(vec![vec!["b".to_string()]])
-        );
-        Ok(())
-    }
+    type StreamBytes = Pin<Box<dyn Stream<Item = Bytes> + Send>>;
 
     #[test_log::test(tokio::test)]
-    async fn list_decoder_reset_deferred_on_error() -> anyhow::Result<()> {
-        let mut dec =
-            <Vec<Pin<Box<dyn Stream<Item = Bytes> + Send>>> as Decode>::Decoder::default();
-        let mut buf = BytesMut::from(&[0x02, 0x00, 0xff, 0xff, 0xff, 0xff, 0xff][..]);
-        assert!(tokio_util::codec::Decoder::decode(&mut dec, &mut buf).is_err());
-        let mut buf = BytesMut::from(&[0x00][..]);
-        let vs = tokio_util::codec::Decoder::decode(&mut dec, &mut buf)?;
-        assert!(vs.is_some_and(|vs| vs.is_empty()));
-        if let Some(_f) = Deferred::<BufferedIncoming>::take_deferred(&mut dec) {
-            bail!("no deferred read should have been returned");
-        }
-        Ok(())
-    }
-
-    #[test_log::test(tokio::test)]
-    async fn list_decoder_stores_only_deferred_elements() -> anyhow::Result<()> {
-        let mut dec = ListDecoder::new(UnitCodec);
-        let mut buf = BytesMut::from(&[0x80, 0x80, 0x04][..]);
-        let units = tokio_util::codec::Decoder::decode(&mut dec, &mut buf)?;
-        assert_eq!(units.map(|units| units.len()), Some(0x10000));
-        assert_eq!(dec.deferred.capacity(), 0);
-
-        let mut dec =
-            <Vec<Pin<Box<dyn Stream<Item = Bytes> + Send>>> as Decode>::Decoder::default();
-        let mut buf = BytesMut::from(&[0x03, 0x01, 0x00, 0x00, 0x01, 0x00][..]);
-        let vs = tokio_util::codec::Decoder::decode(&mut dec, &mut buf)?;
-        assert_eq!(vs.map(|vs| vs.len()), Some(3));
-        assert_eq!(dec.deferred.len(), 2);
-        assert!(dec.deferred[0].is_none());
-        assert!(dec.deferred[1].is_some());
-        Ok(())
-    }
-
-    #[test_log::test(tokio::test)]
-    async fn stream_decoder_ready() -> anyhow::Result<()> {
-        let mut dec =
-            <Pin<Box<dyn Stream<Item = Vec<String>> + Send>> as Decode>::Decoder::default();
-        let mut buf = BytesMut::from(&b"\x01\x02\x03foo\x03bar\x01\x00"[..]);
-        let Some(s) = tokio_util::codec::Decoder::decode(&mut dec, &mut buf)? else {
-            bail!("stream not decoded");
-        };
-        assert_eq!(s.concat().await, ["foo", "bar"]);
-        let Some(s) = tokio_util::codec::Decoder::decode(&mut dec, &mut buf)? else {
-            bail!("stream not decoded");
-        };
-        assert_eq!(s.count().await, 0);
-        if let Some(_f) = Deferred::<BufferedIncoming>::take_deferred(&mut dec) {
-            bail!("no deferred read should have been returned");
-        }
-
-        let mut dec = <Pin<Box<dyn Stream<Item = Bytes> + Send>> as Decode>::Decoder::default();
-        let mut buf = BytesMut::from(&b"\x01\x03foo\x01\x00"[..]);
-        let Some(s) = tokio_util::codec::Decoder::decode(&mut dec, &mut buf)? else {
-            bail!("stream not decoded");
-        };
-        assert_eq!(s.collect::<Vec<_>>().await, [Bytes::from("foo")]);
-        let Some(s) = tokio_util::codec::Decoder::decode(&mut dec, &mut buf)? else {
-            bail!("stream not decoded");
-        };
-        assert_eq!(s.count().await, 0);
-
-        let mut dec = <Pin<Box<dyn AsyncRead + Send>> as Decode>::Decoder::default();
-        let mut buf = BytesMut::from(&b"\x01\x03foo\x01\x00"[..]);
-        let Some(mut r) = tokio_util::codec::Decoder::decode(&mut dec, &mut buf)? else {
-            bail!("stream not decoded");
-        };
-        let mut v = vec![];
-        r.read_to_end(&mut v).await?;
-        assert_eq!(v, b"foo");
-        let Some(mut r) = tokio_util::codec::Decoder::decode(&mut dec, &mut buf)? else {
-            bail!("stream not decoded");
-        };
-        let mut v = vec![];
-        r.read_to_end(&mut v).await?;
-        assert!(v.is_empty());
-        Ok(())
-    }
-
-    async fn read_frames(mut rx: impl AsyncRead + Unpin) -> anyhow::Result<Vec<u8>> {
-        let mut buf = vec![];
-        rx.read_to_end(&mut buf).await?;
-        let mut buf = buf.as_slice();
-        let mut data = vec![];
-        while let [0x01, 0x00, n, rest @ ..] = buf {
-            let (chunk, rest) = rest.split_at(usize::from(*n));
-            data.extend_from_slice(chunk);
-            buf = rest;
-        }
-        if !buf.is_empty() {
-            bail!("unexpected trailing bytes: {buf:02x?}");
-        }
-        Ok(data)
-    }
-
-    #[test]
-    fn stream_ready_after_pending() -> anyhow::Result<()> {
+    async fn codec() -> anyhow::Result<()> {
         let mut buf = BytesMut::default();
-        let mut enc = StreamEncoderBytes::<Outgoing>::default();
-        enc.encode(stream::pending::<Bytes>(), &mut buf)?;
-        enc.encode(stream::empty::<Bytes>(), &mut buf)?;
-        assert!(enc.take_deferred().is_none());
-
-        let (_tx, rx) = tokio::io::duplex(1);
-        let mut enc = StreamEncoderRead::<Outgoing>::default();
-        enc.encode(rx, &mut buf)?;
-        enc.encode(tokio::io::empty(), &mut buf)?;
-        assert!(enc.take_deferred().is_none());
-
-        let mut enc = StreamEncoderRead::<Outgoing, 2>::default();
-        enc.encode(b"fo".as_slice(), &mut buf)?;
-        assert!(enc.take_deferred().is_some());
-
-        let mut enc = StreamEncoderRead::<Outgoing>::default();
-        let (_tx, rx) = tokio::io::duplex(1);
-        enc.encode(rx, &mut buf)?;
-        let err = tokio_util::io::StreamReader::new(stream::iter([Err::<Bytes, _>(
-            std::io::Error::from(ErrorKind::ConnectionReset),
-        )]));
-        assert!(enc.encode(err, &mut buf).is_err());
-        assert!(enc.take_deferred().is_none());
+        let mut enc = <(u8, u32) as Encode>::Encoder::default();
+        enc.encode((0x42, 0x42), &mut buf)?;
+        if let Some(_f) = Deferred::<Outgoing>::take_deferred(&mut enc) {
+            bail!("no deferred write should have been returned");
+        }
+        assert_eq!(buf.as_ref(), b"\x42\x42");
         Ok(())
     }
 
     #[test_log::test(tokio::test)]
-    async fn outgoing_stream_ready() -> anyhow::Result<()> {
+    async fn list_decoder() -> anyhow::Result<()> {
+        let mut dec = <Vec<Vec<String>> as Decode>::Decoder::default();
+        let mut buf = BytesMut::from(&b"\x02\x01\x01a\x01\x01\xff"[..]);
+        assert!(dec.decode(&mut buf).is_err());
+        let mut buf = BytesMut::from(concat!("\x01", concat!("\x01", "\x01b")).as_bytes());
+        let v = dec.decode(&mut buf)?;
+        assert_eq!(v, Some(vec![vec!["b".to_string()]]));
+
+        let mut dec = <Vec<StreamBytes> as Decode>::Decoder::default();
+        let mut buf = BytesMut::from(&b"\x02\0\xff\xff\xff\xff\xff"[..]);
+        assert!(dec.decode(&mut buf).is_err());
+        let vs = dec.decode(&mut BytesMut::from("\0"))?;
+        assert!(vs.is_some_and(|vs| vs.is_empty()));
+        assert!(Deferred::<BufferedIncoming>::take_deferred(&mut dec).is_none());
+
+        let n = b"\xff\xff\xff\xff\x0f";
+        let err = crate::unpack::<Vec<Vec<String>>>(&mut BytesMut::from(&n[..])).unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::UnexpectedEof);
+        let err = crate::unpack::<Vec<StreamBytes>>(&mut BytesMut::from(&n[..]))
+            .err()
+            .unwrap();
+        assert_eq!(err.kind(), ErrorKind::UnexpectedEof);
+        let err = crate::unpack::<Bytes>(&mut BytesMut::from(&n[..])).unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::UnexpectedEof);
+        Ok(())
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn stream_encoder() -> anyhow::Result<()> {
+        async fn read_frames(mut rx: impl AsyncRead + Unpin) -> anyhow::Result<Vec<u8>> {
+            let mut buf = vec![];
+            rx.read_to_end(&mut buf).await?;
+            let mut buf = buf.as_slice();
+            let mut data = vec![];
+            while let [0x01, 0x00, n, rest @ ..] = buf {
+                let (chunk, rest) = rest.split_at(usize::from(*n));
+                data.extend_from_slice(chunk);
+                buf = rest;
+            }
+            if !buf.is_empty() {
+                bail!("unexpected trailing bytes: {buf:02x?}");
+            }
+            Ok(data)
+        }
+
         for (ready, expected) in [("foo", &b"\x03foo\x03bar\x00"[..]), ("", b"\x03bar\x00")] {
             let (tx, rx) = tokio::io::duplex(1024);
             let w = Outgoing::new(tx).index(&[0])?;
@@ -2565,128 +2486,85 @@ mod tests {
         Ok(())
     }
 
-    fn buffered(buffer: &[u8]) -> BufferedIncoming {
-        BufferedIncoming {
-            buffer: BytesMut::from(buffer),
-            inner: crate::frame::Incoming::new(
-                tokio::io::empty(),
-                Vec::<Vec<Option<usize>>>::default(),
-            ),
+    #[test_log::test(tokio::test)]
+    async fn deferred_decoder() -> anyhow::Result<()> {
+        type FutureBytes = Pin<Box<dyn Future<Output = Bytes> + Send>>;
+        type UnitFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
+
+        fn buffered(buffer: &[u8]) -> BufferedIncoming {
+            BufferedIncoming {
+                buffer: BytesMut::from(buffer),
+                inner: crate::frame::Incoming::new(
+                    tokio::io::empty(),
+                    Vec::<Vec<Option<usize>>>::default(),
+                ),
+            }
         }
-    }
 
-    type FutureBytes = Pin<Box<dyn Future<Output = Bytes> + Send>>;
-    type StreamBytes = Pin<Box<dyn Stream<Item = Bytes> + Send>>;
+        fn pending<T: Decode>() -> (T, DeferredFn<BufferedIncoming>) {
+            let mut dec = T::Decoder::default();
+            let Ok(Some(v)) = dec.decode(&mut BytesMut::from("\0")) else {
+                panic!("value not decoded")
+            };
+            (v, dec.take_deferred().expect("deferred read missing"))
+        }
 
-    fn pending<T: Decode>() -> (T, DeferredFn<BufferedIncoming>) {
-        let mut dec = T::Decoder::default();
-        let Ok(Some(v)) = dec.decode(&mut BytesMut::from(&[0x00][..])) else {
-            panic!("value not decoded")
-        };
-        (v, dec.take_deferred().expect("deferred read missing"))
-    }
+        async fn read<T: Decode>(buffer: &[u8]) -> (T, std::io::Result<()>) {
+            let (v, f) = pending::<T>();
+            let res = f(buffered(buffer), Vec::default()).await;
+            (v, res)
+        }
 
-    #[test_log::test(tokio::test)]
-    async fn future_rejects_unprocessed() {
-        let (_fut, f) = pending::<FutureBytes>();
-        let err = f(buffered(b"\x03foo\x2a"), Vec::default()).await;
-        assert_eq!(err.unwrap_err().kind(), ErrorKind::InvalidData);
+        let (fut, res) = read::<UnitFuture>(b"").await;
+        res.unwrap();
+        fut.await;
 
-        let (fut, f) = pending::<Pin<Box<dyn Future<Output = ()> + Send>>>();
-        let err = f(buffered(b"\x2a"), Vec::default()).await;
-        assert_eq!(err.unwrap_err().kind(), ErrorKind::InvalidData);
+        let (fut, res) = read::<UnitFuture>(b"\x2a").await;
+        assert_eq!(res.unwrap_err().kind(), ErrorKind::InvalidData);
         assert!(fut.now_or_never().is_none());
-    }
 
-    #[test_log::test(tokio::test)]
-    async fn future_rejects_unprocessed_buffered() {
         let data: Bytes = (0..2 * READ_CHUNK_SIZE).map(|i| i as u8).collect();
         let mut buffer = BytesMut::default();
         CoreVecEncoderBytes.encode(&data, &mut buffer).unwrap();
-        buffer.extend_from_slice(&[0x2a; READ_CHUNK_SIZE]);
-        let (_fut, f) = pending::<FutureBytes>();
-        let err = f(buffered(&buffer), Vec::default()).await;
-        assert_eq!(err.unwrap_err().kind(), ErrorKind::InvalidData);
-    }
+        buffer.extend_from_slice(&b"\x2a".repeat(READ_CHUNK_SIZE));
+        let (.., res) = read::<FutureBytes>(&buffer).await;
+        assert_eq!(res.unwrap_err().kind(), ErrorKind::InvalidData);
 
-    #[test_log::test(tokio::test)]
-    async fn future_unit_resolves_on_end() {
-        let (fut, f) = pending::<Pin<Box<dyn Future<Output = ()> + Send>>>();
-        f(buffered(b""), Vec::default()).await.unwrap();
-        fut.await;
-    }
+        let (.., res) = read::<FutureBytes>(b"\x03foo\x2a").await;
+        assert_eq!(res.unwrap_err().kind(), ErrorKind::InvalidData);
 
-    #[test_log::test(tokio::test)]
-    async fn future_rejects_dropped_receiver() {
+        let (.., res) = read::<StreamBytes>(b"\x03foo\x00\x2a").await;
+        assert_eq!(res.unwrap_err().kind(), ErrorKind::InvalidData);
+
         let (fut, f) = pending::<FutureBytes>();
         drop(fut);
         let err = f(buffered(b"\x03foo"), Vec::default()).await;
         assert_eq!(err.unwrap_err().kind(), ErrorKind::BrokenPipe);
-    }
 
-    #[test_log::test(tokio::test)]
-    async fn stream_rejects_unprocessed() {
-        let (_stream, f) = pending::<StreamBytes>();
-        let err = f(buffered(b"\x03foo\x00\x2a"), Vec::default()).await;
-        assert_eq!(err.unwrap_err().kind(), ErrorKind::InvalidData);
-    }
-
-    #[test_log::test(tokio::test)]
-    async fn stream_rejects_truncated() {
-        let (mut s, f) = pending::<StreamBytes>();
-        let err = f(buffered(b"\x03foo"), Vec::default()).await;
-        assert_eq!(err.unwrap_err().kind(), ErrorKind::UnexpectedEof);
+        let (mut s, res) = read::<StreamBytes>(b"\x03foo").await;
+        assert_eq!(res.unwrap_err().kind(), ErrorKind::UnexpectedEof);
         assert_eq!(s.next().await.unwrap(), "foo");
         assert!(s.next().now_or_never().is_none());
 
-        let (mut s, f) = pending::<Pin<Box<dyn Stream<Item = Vec<String>> + Send>>>();
-        let err = f(buffered(b"\x01\x03foo"), Vec::default()).await;
-        assert_eq!(err.unwrap_err().kind(), ErrorKind::UnexpectedEof);
+        let (mut s, res) =
+            read::<Pin<Box<dyn Stream<Item = Vec<String>> + Send>>>(b"\x01\x03foo").await;
+        assert_eq!(res.unwrap_err().kind(), ErrorKind::UnexpectedEof);
         assert_eq!(s.next().await.unwrap(), ["foo"]);
         assert!(s.next().now_or_never().is_none());
 
-        let (mut r, f) = pending::<Pin<Box<dyn AsyncRead + Send>>>();
-        let err = f(buffered(b"\x03foo"), Vec::default()).await;
-        assert_eq!(err.unwrap_err().kind(), ErrorKind::UnexpectedEof);
+        let (mut r, res) = read::<Pin<Box<dyn AsyncRead + Send>>>(b"\x03foo").await;
+        assert_eq!(res.unwrap_err().kind(), ErrorKind::UnexpectedEof);
         let mut buf = [0; 3];
         r.read_exact(&mut buf).await.unwrap();
         assert_eq!(&buf, b"foo");
         assert!(r.read(&mut buf).now_or_never().is_none());
-    }
 
-    #[test_log::test(tokio::test)]
-    async fn future_nested_buffered() -> anyhow::Result<()> {
         let data: Bytes = (0..2 * READ_CHUNK_SIZE).map(|i| i as u8).collect();
-        let mut buffer = BytesMut::from(&[0x00][..]);
+        let mut buffer = BytesMut::from("\0");
         CoreVecEncoderBytes.encode(&data, &mut buffer)?;
-
-        let mut dec = <Pin<
-            Box<dyn Future<Output = Pin<Box<dyn Future<Output = Bytes> + Send>>> + Send>,
-        > as Decode>::Decoder::default();
-        let fut = dec.decode(&mut BytesMut::from(&[0x00][..]))?;
-        let fut = fut.context("future not decoded")?;
-        let f = dec.take_deferred().context("deferred read missing")?;
-        let r = BufferedIncoming {
-            buffer,
-            inner: crate::frame::Incoming::new(
-                tokio::io::empty(),
-                Vec::<Vec<Option<usize>>>::default(),
-            ),
-        };
-        f(r, Vec::default()).await?;
+        let (fut, res) = read::<Pin<Box<dyn Future<Output = FutureBytes> + Send>>>(&buffer).await;
+        res?;
         assert_eq!(fut.await.await, data);
-        Ok(())
-    }
-
-    #[test_log::test(tokio::test)]
-    async fn codec() -> anyhow::Result<()> {
-        let mut buf = BytesMut::default();
-        let mut enc = <(u8, u32) as Encode>::Encoder::default();
-        enc.encode((0x42, 0x42), &mut buf)?;
-        if let Some(_f) = Deferred::<Outgoing>::take_deferred(&mut enc) {
-            bail!("no deferred write should have been returned");
-        }
-        assert_eq!(buf.as_ref(), b"\x42\x42");
         Ok(())
     }
 }

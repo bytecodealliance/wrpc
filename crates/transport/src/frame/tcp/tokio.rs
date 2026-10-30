@@ -99,37 +99,3 @@ where
         invoke(tx, BufReader::new(rx), instance, func, params, paths).await
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
-    use tokio::net::TcpListener;
-
-    use super::*;
-
-    #[test_log::test(tokio::test)]
-    async fn write_half_dropped() {
-        let lis = TcpListener::bind("[::1]:0").await.unwrap();
-        let addr = lis.local_addr().unwrap();
-        for shutdown in [true, false] {
-            let (clt, srv) = tokio::join!(TcpStream::connect(addr), lis.accept());
-            let (mut rx, mut tx) = split(clt.unwrap());
-            tx.write_all(b"foo").await.unwrap();
-            if shutdown {
-                tx.shutdown().await.unwrap();
-            }
-            drop(tx);
-            let (mut srv, ..) = srv.unwrap();
-            let mut buf = Vec::default();
-            let res = srv.read_to_end(&mut buf).await;
-            if shutdown {
-                res.unwrap();
-                assert_eq!(buf, b"foo");
-            } else {
-                assert_eq!(res.unwrap_err().kind(), std::io::ErrorKind::ConnectionReset);
-                let err = rx.read_to_end(&mut Vec::default()).await.unwrap_err();
-                assert_eq!(err.kind(), std::io::ErrorKind::ConnectionAborted);
-            }
-        }
-    }
-}

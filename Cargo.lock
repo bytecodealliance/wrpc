@@ -4922,6 +4922,7 @@ dependencies = [
  "bytes",
  "futures",
  "pin-project-lite",
+ "tempfile",
  "test-log",
  "tokio",
  "tokio-stream",
@@ -4929,6 +4930,7 @@ dependencies = [
  "tracing",
  "wasi 0.14.7+wasi-0.2.4",
  "wasm-tokio",
+ "wrpc-test",
 ]
 
 [[package]]
@@ -4983,6 +4985,7 @@ dependencies = [
  "wasmtime-wasi",
  "wit-parser 0.253.0",
  "wrpc-introspect",
+ "wrpc-test",
  "wrpc-transport",
 ]
 

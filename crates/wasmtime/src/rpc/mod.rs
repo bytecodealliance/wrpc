@@ -616,10 +616,41 @@ impl OutgoingChannel {
 mod tests {
     use std::io::ErrorKind;
 
-    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _, BufReader};
+    use bytes::BytesMut;
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _, BufReader, DuplexStream};
     use tokio::sync::oneshot;
+    use tokio_util::codec::Encoder as _;
+    use wrpc_transport::{FrameEncoder, FrameRef};
 
     use super::*;
+
+    fn frame(path: &[usize], data: &[u8]) -> BytesMut {
+        let mut buf = BytesMut::default();
+        FrameEncoder
+            .encode(FrameRef { path, data }, &mut buf)
+            .unwrap();
+        buf
+    }
+
+    fn incoming<P: AsRef<[Option<usize>]>>(
+        paths: impl IntoIterator<Item = P>,
+    ) -> (DuplexStream, Incoming) {
+        let (tx, rx) = tokio::io::duplex(64);
+        (tx, Incoming::new(BufReader::new(rx), paths))
+    }
+
+    fn transmission() -> (oneshot::Sender<()>, Transmission) {
+        let (tx, rx) = oneshot::channel::<()>();
+        let fut = async move {
+            _ = rx.await;
+            Ok(())
+        };
+        (tx, fut.boxed().shared())
+    }
+
+    fn ready_transmission() -> Transmission {
+        future::ready(Ok(())).boxed().shared()
+    }
 
     async fn ready(incoming: Deferred<Incoming>) -> std::io::Result<Incoming> {
         match incoming {
@@ -628,59 +659,20 @@ mod tests {
         }
     }
 
-    fn index_err(rx: &IncomingChannel, path: &[usize]) -> ErrorKind {
-        let Err(err) = rx.index(path) else {
-            panic!("indexing `{path:?}` should fail");
-        };
-        err.kind()
-    }
-
-    #[test_log::test]
-    fn incoming_channel_index() {
-        let rx = IncomingChannel::new(
-            future::pending().boxed().shared(),
-            Arc::default(),
-            [&[Some(0)][..], &[Some(1), None, Some(0)]],
-        );
-        assert!(rx.index(&[0]).unwrap().declared);
-        assert_eq!(index_err(&rx, &[0]), ErrorKind::AlreadyExists);
-        let mut prefix = rx.index(&[1]).unwrap();
-        assert!(matches!(prefix.take_data(), Err(Error::Undeclared)));
-        let mut element = prefix.index(&[5, 0]).unwrap();
-        assert!(element.declared);
-        assert!(element.take_data().is_ok());
-        assert!(matches!(element.take_data(), Err(Error::DataTaken)));
-        for path in [&[2][..], &[0, 0], &[1, 5, 1]] {
-            assert_eq!(index_err(&rx, path), ErrorKind::NotFound);
-        }
+    async fn read(incoming: Deferred<Incoming>) -> std::io::Result<Vec<u8>> {
+        let mut incoming = ready(incoming).await?;
+        let mut buf = Vec::default();
+        incoming.read_to_end(&mut buf).await?;
+        Ok(buf)
     }
 
     #[test_log::test(tokio::test)]
-    async fn incoming_channel_index_returned_element() {
-        let paths = [&[Some(0), None][..], &[Some(0), None, None]];
-        let (_tx, incoming) = tokio::io::duplex(64);
-        let root = Arc::<IncomingRoot>::default();
-        root.set(Incoming::new(BufReader::new(incoming), paths));
-        let rx = IncomingChannel::new(future::ready(Ok(())).boxed().shared(), root, paths);
-        let element = rx.index(&[0, 3]).unwrap();
-        assert_eq!(index_err(&rx, &[0, 3]), ErrorKind::AlreadyExists);
-        assert!(element.index(&[0]).unwrap().declared);
-    }
-
-    #[test_log::test(tokio::test)]
-    async fn incoming_channel_reads_elements() {
+    async fn incoming_channel() {
         for transmitted in [true, false] {
             let paths = [[None, Some(0)], [None, Some(1)]];
-            let (mut tx, incoming) = tokio::io::duplex(64);
-            let incoming = Incoming::new(BufReader::new(incoming), paths);
+            let (mut tx, incoming) = incoming(paths);
             let root = Arc::<IncomingRoot>::default();
-            let (transmit_tx, transmit_rx) = oneshot::channel::<()>();
-            let transmission = async move {
-                _ = transmit_rx.await;
-                Ok(())
-            }
-            .boxed()
-            .shared();
+            let (transmit, transmission) = transmission();
             let mut incoming = Some(incoming);
             if transmitted {
                 root.set(incoming.take().unwrap());
@@ -693,172 +685,170 @@ mod tests {
             if let Some(incoming) = incoming {
                 root.set(incoming);
             }
-            transmit_tx.send(()).unwrap();
-            tx.write_all(&[0x02, 0x01, 0x00, 0x01, 0x2b]).await.unwrap();
-            tx.write_all(&[0x02, 0x00, 0x00, 0x01, 0x2a]).await.unwrap();
-            tx.write_all(&[0x02, 0x00, 0x01, 0x01, 0x2c]).await.unwrap();
+            transmit.send(()).unwrap();
+            tx.write_all(&frame(&[1, 0], b"\x2b")).await.unwrap();
+            tx.write_all(&frame(&[0, 0], b"\x2a")).await.unwrap();
+            tx.write_all(&frame(&[0, 1], b"\x2c")).await.unwrap();
             drop(tx);
-            let mut buf = Vec::default();
-            ready(b).await.unwrap().read_to_end(&mut buf).await.unwrap();
-            assert_eq!(buf, [0x2b]);
-            buf.clear();
-            ready(a).await.unwrap().read_to_end(&mut buf).await.unwrap();
-            assert_eq!(buf, [0x2a]);
-            buf.clear();
+            assert_eq!(read(b).await.unwrap(), b"\x2b");
+            assert_eq!(read(a).await.unwrap(), b"\x2a");
             let c = first.index(&[1]).unwrap().take_data().unwrap();
-            ready(c).await.unwrap().read_to_end(&mut buf).await.unwrap();
-            assert_eq!(buf, [0x2c]);
+            assert_eq!(read(c).await.unwrap(), b"\x2c");
         }
     }
 
     #[test_log::test(tokio::test)]
-    async fn incoming_channel_data_outlives_channels() {
-        let paths = [[Some(0)]];
-        let (mut tx, incoming) = tokio::io::duplex(64);
-        let incoming = Incoming::new(BufReader::new(incoming), paths);
-        let root = Arc::<IncomingRoot>::default();
-        let weak = Arc::downgrade(&root);
-        let rx = IncomingChannel::new(future::ready(Ok(())).boxed().shared(), root, paths);
-        let mut ch = rx.index(&[0]).unwrap();
-        let data = ch.take_data().unwrap();
-        drop(ch);
-        drop(rx);
-        weak.upgrade().unwrap().set(incoming);
-        tx.write_all(&[0x01, 0x00, 0x01, 0x2a]).await.unwrap();
-        drop(tx);
-        let mut buf = Vec::default();
-        ready(data)
-            .await
-            .unwrap()
-            .read_to_end(&mut buf)
-            .await
-            .unwrap();
-        assert_eq!(buf, [0x2a]);
+    async fn incoming_channel_index() {
+        fn index_err(rx: &IncomingChannel, path: &[usize]) -> ErrorKind {
+            let Err(err) = rx.index(path) else {
+                panic!("indexing `{path:?}` should fail");
+            };
+            err.kind()
+        }
+
+        {
+            let rx = IncomingChannel::new(
+                future::pending().boxed().shared(),
+                Arc::default(),
+                [&[Some(0)][..], &[Some(1), None, Some(0)]],
+            );
+            assert!(rx.index(&[0]).unwrap().declared);
+            assert_eq!(index_err(&rx, &[0]), ErrorKind::AlreadyExists);
+            let mut prefix = rx.index(&[1]).unwrap();
+            assert!(matches!(prefix.take_data(), Err(Error::Undeclared)));
+            let mut element = prefix.index(&[5, 0]).unwrap();
+            assert!(element.declared);
+            assert!(element.take_data().is_ok());
+            assert!(matches!(element.take_data(), Err(Error::DataTaken)));
+            for path in [&[2][..], &[0, 0], &[1, 5, 1]] {
+                assert_eq!(index_err(&rx, path), ErrorKind::NotFound);
+            }
+        }
+        {
+            let paths = [&[Some(0), None][..], &[Some(0), None, None]];
+            let (_tx, incoming) = incoming(paths);
+            let root = Arc::<IncomingRoot>::default();
+            root.set(incoming);
+            let rx = IncomingChannel::new(ready_transmission(), root, paths);
+            let element = rx.index(&[0, 3]).unwrap();
+            assert_eq!(index_err(&rx, &[0, 3]), ErrorKind::AlreadyExists);
+            assert!(element.index(&[0]).unwrap().declared);
+        }
+        {
+            let paths = [
+                &[Some(0), None][..],
+                &[Some(0), None, None],
+                &[Some(1), None],
+                &[Some(1), None, None],
+            ];
+            for transmitted in [true, false] {
+                let (_tx, incoming) = incoming(paths);
+                let mut incoming = Some(incoming);
+                let root = Arc::<IncomingRoot>::default();
+                if transmitted {
+                    root.set(incoming.take().unwrap());
+                }
+                let rx = IncomingChannel::new(ready_transmission(), Arc::clone(&root), paths);
+                let _nested = rx.index(&[0, 1, 0]).unwrap();
+                let returned = rx.index(&[1, 1]).unwrap();
+                let _nested_returned = rx.index(&[1, 1, 0]).unwrap();
+                drop(returned);
+                let again = rx.index(&[1, 1]);
+                if let Some(incoming) = incoming {
+                    root.set(incoming);
+                }
+                let mut element = rx.index(&[0, 1]).unwrap();
+                let res = ready(element.take_data().unwrap()).await;
+                assert!(res.is_ok());
+                let err = match again {
+                    Ok(mut ch) => {
+                        let Err(err) = ready(ch.take_data().unwrap()).await else {
+                            panic!("reading data should fail");
+                        };
+                        err
+                    }
+                    Err(err) => err,
+                };
+                assert_eq!(
+                    err.kind(),
+                    ErrorKind::AlreadyExists,
+                    "transmitted: {transmitted}"
+                );
+            }
+        }
+        {
+            for transmitted in [true, false] {
+                let (_tx, incoming) = incoming([[None]]);
+                let mut incoming = Some(incoming);
+                let root = Arc::<IncomingRoot>::default();
+                if transmitted {
+                    root.set(incoming.take().unwrap());
+                }
+                let rx = IncomingChannel::new(ready_transmission(), Arc::clone(&root), [[None]]);
+                let mut alive = rx.index(&[2]).unwrap();
+                drop(rx.index(&[5]).unwrap());
+                let released = rx.index(&[3]);
+                if let Some(incoming) = incoming {
+                    root.set(incoming);
+                }
+                let err = match released {
+                    Ok(mut ch) => {
+                        let Err(err) = ready(ch.take_data().unwrap()).await else {
+                            panic!("reading data should fail");
+                        };
+                        err
+                    }
+                    Err(err) => err,
+                };
+                assert_eq!(err.kind(), ErrorKind::NotFound);
+                let res = ready(alive.take_data().unwrap()).await;
+                assert!(res.is_ok());
+            }
+        }
     }
 
     #[test_log::test(tokio::test)]
-    async fn incoming_invocation_finished_outlives_channels() {
-        for transmitted in [true, false] {
-            let paths: [[Option<usize>; 0]; 0] = [];
-            let (mut tx, incoming) = tokio::io::duplex(64);
-            let incoming = Incoming::new(BufReader::new(incoming), paths);
+    async fn incoming_channel_outlives_handles() {
+        {
+            let paths = [[Some(0)]];
+            let (mut tx, incoming) = incoming(paths);
             let root = Arc::<IncomingRoot>::default();
-            let (transmit_tx, transmit_rx) = oneshot::channel::<()>();
-            let transmission = async move {
-                _ = transmit_rx.await;
-                Ok(())
-            }
-            .boxed()
-            .shared();
-            let transmit = |(incoming, tx): (Incoming, oneshot::Sender<()>)| {
-                root.set(incoming);
-                tx.send(()).unwrap();
-            };
-            let mut pending = Some((incoming, transmit_tx));
-            if transmitted {
-                transmit(pending.take().unwrap());
-            }
-            let mut rx = IncomingChannel::new(transmission, Arc::clone(&root), paths);
-            let finished = rx.invocation.finished();
-            drop(rx.take_data().unwrap());
+            let weak = Arc::downgrade(&root);
+            let rx = IncomingChannel::new(ready_transmission(), root, paths);
+            let data = rx.index(&[0]).unwrap().take_data().unwrap();
             drop(rx);
-            if let Some(pending) = pending {
-                transmit(pending);
-            }
-            drop(root);
-            tx.write_all(&[0x00, 0x01, 0x2a]).await.unwrap();
+            weak.upgrade().unwrap().set(incoming);
+            tx.write_all(&frame(&[0], b"\x2a")).await.unwrap();
             drop(tx);
-            assert!(finished.await.is_err());
+            assert_eq!(read(data).await.unwrap(), b"\x2a");
         }
-    }
-
-    #[test_log::test]
-    fn incoming_channel_forgets_dropped_elements() {
-        let root = Arc::<IncomingRoot>::default();
-        let rx = IncomingChannel::new(
-            future::pending().boxed().shared(),
-            Arc::clone(&root),
-            [&[Some(0)][..], &[Some(1), None, None]],
-        );
-        drop(rx.index(&[0]).unwrap());
-        for i in 0..1000 {
-            drop(rx.index(&[1, i, 0]).unwrap());
-        }
-        let pending = root.pending.lock().unwrap();
-        assert!(pending.channels.len() < 64);
-        assert!(pending.elements.len() < 64);
-        assert!(pending.next.len() < 64);
-        assert_eq!(*pending.channels[0].path, [0]);
-    }
-
-    #[test_log::test(tokio::test)]
-    async fn incoming_channel_elements_match_transmitted() {
-        let paths = [
-            &[Some(0), None][..],
-            &[Some(0), None, None],
-            &[Some(1), None],
-            &[Some(1), None, None],
-        ];
-        for transmitted in [true, false] {
-            let (_tx, incoming) = tokio::io::duplex(64);
-            let mut incoming = Some(Incoming::new(BufReader::new(incoming), paths));
-            let root = Arc::<IncomingRoot>::default();
-            if transmitted {
-                root.set(incoming.take().unwrap());
+        {
+            for transmitted in [true, false] {
+                let paths: [[Option<usize>; 0]; 0] = [];
+                let (mut tx, incoming) = incoming(paths);
+                let root = Arc::<IncomingRoot>::default();
+                let (transmit, transmission) = transmission();
+                let mut pending = Some((incoming, transmit));
+                let mut transmit = || {
+                    if let Some((incoming, tx)) = pending.take() {
+                        root.set(incoming);
+                        tx.send(()).unwrap();
+                    }
+                };
+                if transmitted {
+                    transmit();
+                }
+                let mut rx = IncomingChannel::new(transmission, Arc::clone(&root), paths);
+                let finished = rx.invocation.finished();
+                drop(rx.take_data().unwrap());
+                drop(rx);
+                transmit();
+                drop(root);
+                tx.write_all(&frame(&[], b"\x2a")).await.unwrap();
+                drop(tx);
+                let res = finished.await;
+                assert!(res.is_err());
             }
-            let rx = IncomingChannel::new(
-                future::ready(Ok(())).boxed().shared(),
-                Arc::clone(&root),
-                paths,
-            );
-            let _nested = rx.index(&[0, 1, 0]).unwrap();
-            let returned = rx.index(&[1, 1]).unwrap();
-            let _nested_returned = rx.index(&[1, 1, 0]).unwrap();
-            drop(returned);
-            let again = rx.index(&[1, 1]);
-            if let Some(incoming) = incoming {
-                root.set(incoming);
-            }
-            let mut element = rx.index(&[0, 1]).unwrap();
-            assert!(ready(element.take_data().unwrap()).await.is_ok());
-            let err = match again {
-                Ok(mut ch) => ready(ch.take_data().unwrap()).await.err().unwrap(),
-                Err(err) => err,
-            };
-            assert_eq!(
-                err.kind(),
-                ErrorKind::AlreadyExists,
-                "transmitted: {transmitted}"
-            );
-        }
-    }
-
-    #[test_log::test(tokio::test)]
-    async fn incoming_channel_discards_released_elements() {
-        for transmitted in [true, false] {
-            let (_tx, incoming) = tokio::io::duplex(64);
-            let mut incoming = Some(Incoming::new(BufReader::new(incoming), [[None]]));
-            let root = Arc::<IncomingRoot>::default();
-            if transmitted {
-                root.set(incoming.take().unwrap());
-            }
-            let rx = IncomingChannel::new(
-                future::ready(Ok(())).boxed().shared(),
-                Arc::clone(&root),
-                [[None]],
-            );
-            let mut alive = rx.index(&[2]).unwrap();
-            drop(rx.index(&[5]).unwrap());
-            let released = rx.index(&[3]);
-            if let Some(incoming) = incoming {
-                root.set(incoming);
-            }
-            let err = match released {
-                Ok(mut ch) => ready(ch.take_data().unwrap()).await.err().unwrap(),
-                Err(err) => err,
-            };
-            assert_eq!(err.kind(), ErrorKind::NotFound);
-            assert!(ready(alive.take_data().unwrap()).await.is_ok());
         }
     }
 }

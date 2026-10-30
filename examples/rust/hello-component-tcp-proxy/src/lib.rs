@@ -69,11 +69,12 @@ fn wake_ready(
 
 #[cfg(target_family = "wasm")]
 async fn invoke(addr: &str) -> String {
+    use tokio::join;
     use tokio::sync::mpsc::error::TryRecvError;
 
     let wrpc = wrpc_transport::tcp::Client::from(addr);
     let (pollables_tx, mut pollables_rx) = tokio::sync::mpsc::unbounded_channel();
-    let (s, _) = tokio::join!(
+    let (s, _) = join!(
         async {
             wrpc_bindings::wrpc_examples::hello::handler::hello(&wrpc, pollables_tx)
                 .await
