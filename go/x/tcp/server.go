@@ -13,15 +13,15 @@ type Server struct {
 	srv *wrpc.FramedServer
 }
 
-func NewServerWithContext(ctx context.Context, l *net.TCPListener) *Server {
+func NewServerWithContext(ctx context.Context, l *net.TCPListener, opts ...wrpc.FramedServerOption) *Server {
 	return &Server{
 		l:   l,
-		srv: wrpc.NewFramedServer(ctx),
+		srv: wrpc.NewFramedServer(ctx, opts...),
 	}
 }
 
-func NewServer(l *net.TCPListener) *Server {
-	return NewServerWithContext(context.Background(), l)
+func NewServer(l *net.TCPListener, opts ...wrpc.FramedServerOption) *Server {
+	return NewServerWithContext(context.Background(), l, opts...)
 }
 
 func (s *Server) Serve(instance string, name string, f wrpc.HandleFunc, paths ...wrpc.SubscribePath) (func() error, error) {
