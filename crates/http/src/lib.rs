@@ -2,10 +2,12 @@
 
 use core::ops::{Deref, DerefMut};
 use core::pin::Pin;
-use core::task::{Context, Poll, ready};
+use core::task::{Context, Poll, Waker, ready};
 
 use std::collections::VecDeque;
+use std::io::IoSlice;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use bytes::{Bytes, BytesMut};
 use futures::{Stream, TryStreamExt as _, stream};
@@ -13,7 +15,7 @@ use http_body::Frame;
 use http_body_util::BodyExt as _;
 use http_body_util::combinators::MapErr;
 use pin_project_lite::pin_project;
-use tokio::io::{ReadHalf, SimplexStream, WriteHalf, simplex};
+use tokio::io::{AsyncWrite, ReadHalf, SimplexStream, WriteHalf, simplex};
 use tokio_util::io::{StreamReader, poll_read_buf};
 
 /// Body buffer size
@@ -27,7 +29,56 @@ pub type IncomingBodyDataReader<T> = StreamReader<IncomingBodyDataStream<T>, Byt
 pub type DynIncomingBodyDataReader =
     IncomingBodyDataReader<Box<dyn FnMut(hyper::Error) -> std::io::Error + Send + Sync + 'static>>;
 
-pub type OutgoingBodyDataWriter = WriteHalf<SimplexStream>;
+/// Writer of the data of an [`OutgoingBody`], which fails the body once dropped before being
+/// shut down
+#[derive(Debug)]
+pub struct OutgoingBodyDataWriter {
+    stream: WriteHalf<SimplexStream>,
+    aborted: Arc<AtomicBool>,
+    shutdown: bool,
+}
+
+impl Drop for OutgoingBodyDataWriter {
+    fn drop(&mut self) {
+        if !self.shutdown {
+            self.aborted.store(true, Ordering::Relaxed);
+            _ = Pin::new(&mut self.stream).poll_shutdown(&mut Context::from_waker(Waker::noop()));
+        }
+    }
+}
+
+impl AsyncWrite for OutgoingBodyDataWriter {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        Pin::new(&mut self.get_mut().stream).poll_write(cx, buf)
+    }
+
+    fn poll_write_vectored(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bufs: &[IoSlice<'_>],
+    ) -> Poll<std::io::Result<usize>> {
+        Pin::new(&mut self.get_mut().stream).poll_write_vectored(cx, bufs)
+    }
+
+    fn is_write_vectored(&self) -> bool {
+        self.stream.is_write_vectored()
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.get_mut().stream).poll_flush(cx)
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        let this = self.get_mut();
+        ready!(Pin::new(&mut this.stream).poll_shutdown(cx))?;
+        this.shutdown = true;
+        Poll::Ready(Ok(()))
+    }
+}
 
 pin_project! {
     #[project = OutgoingBodyProj]
@@ -37,6 +88,7 @@ pin_project! {
         buffer: BytesMut,
         #[pin]
         stream: ReadHalf<SimplexStream>,
+        aborted: Arc<AtomicBool>,
     }
 }
 
@@ -44,13 +96,19 @@ impl OutgoingBody {
     #[must_use]
     pub fn new(chunks: impl IntoIterator<Item = Bytes>) -> (Self, OutgoingBodyDataWriter) {
         let (rx, tx) = simplex(DEFAULT_BODY_BUFFER_SIZE);
+        let aborted = Arc::<AtomicBool>::default();
         (
             Self {
                 chunks: chunks.into_iter().filter(|buf| !buf.is_empty()).collect(),
                 buffer: BytesMut::default(),
                 stream: rx,
+                aborted: Arc::clone(&aborted),
             },
-            tx,
+            OutgoingBodyDataWriter {
+                stream: tx,
+                aborted,
+                shutdown: false,
+            },
         )
     }
 }
@@ -71,7 +129,12 @@ impl http_body::Body for OutgoingBody {
         this.buffer.reserve(DEFAULT_BODY_BUFFER_SIZE);
         ready!(poll_read_buf(this.stream, cx, this.buffer))?;
         let buf = self.buffer.split().freeze();
-        if buf.is_empty() {
+        if buf.is_empty() && self.aborted.load(Ordering::Relaxed) {
+            Poll::Ready(Some(Err(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "body writer dropped before being shut down",
+            ))))
+        } else if buf.is_empty() {
             Poll::Ready(None)
         } else {
             Poll::Ready(Some(Ok(Frame::data(buf))))
@@ -286,7 +349,7 @@ impl wrpc_transport::Invoke for Client<hyper::client::conn::http2::SendRequest<O
 
         Ok((
             wrpc_transport::frame::Outgoing::new(tx),
-            wrpc_transport::frame::Incoming::new(rx, paths.as_ref(), false),
+            wrpc_transport::frame::Incoming::new(rx, paths.as_ref()),
         ))
     }
 }
@@ -324,7 +387,7 @@ where
 
         Ok((
             wrpc_transport::frame::Outgoing::new(tx),
-            wrpc_transport::frame::Incoming::new(rx, paths.as_ref(), true),
+            wrpc_transport::frame::Incoming::new(rx, paths.as_ref()),
         ))
     }
 }

@@ -205,7 +205,6 @@ where
         func,
         params,
         paths,
-        true,
     )
     .await
 }

@@ -1,10 +1,12 @@
 use std::sync::Arc;
 
 use anyhow::{Context as _, anyhow};
+use http_body_util::BodyExt as _;
 use hyper_util::rt::TokioExecutor;
 use hyper_util::rt::tokio::WithHyperIo;
+use tokio::io::AsyncWriteExt as _;
 use tokio::sync::oneshot;
-use wrpc_http::{Client, Server};
+use wrpc_http::{Client, OutgoingBody, Server};
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn http2() -> anyhow::Result<()> {
@@ -48,4 +50,23 @@ async fn pooling() -> anyhow::Result<()> {
         Ok(())
     })
     .await
+}
+
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+async fn body_writer_dropped() -> anyhow::Result<()> {
+    for shutdown in [true, false] {
+        let (body, mut tx) = OutgoingBody::new([]);
+        tx.write_all(b"foo").await.context("failed to write body")?;
+        if shutdown {
+            tx.shutdown().await.context("failed to shut down body")?;
+        }
+        drop(tx);
+        let res = body.collect().await;
+        if shutdown {
+            assert_eq!(res.context("failed to read body")?.to_bytes(), "foo");
+        } else {
+            assert_eq!(res.unwrap_err().kind(), std::io::ErrorKind::BrokenPipe);
+        }
+    }
+    Ok(())
 }

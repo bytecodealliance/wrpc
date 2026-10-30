@@ -122,6 +122,7 @@ pub async fn handle_serve(
                                 warn!(?err, "failed to set TCP_NODELAY");
                             }
                             let (rx, tx) = stream.into_split();
+                            let tx = wrpc_transport::tcp::WriteHalf::from(tx);
                             let rx = BufReader::new(rx);
                             let srv = Arc::clone(&srv);
                             conns.spawn(async move {

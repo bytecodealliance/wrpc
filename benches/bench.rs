@@ -311,7 +311,7 @@ impl Invoke for WebSocketsClient {
             .await
             .context("failed to establish WebSocket connection")?;
         let (tx, rx) = wrpc_websockets::split(ws);
-        wrpc_transport::frame::invoke(tx, rx, instance, func, params, paths, true).await
+        wrpc_transport::frame::invoke(tx, rx, instance, func, params, paths).await
     }
 }
 
@@ -502,7 +502,7 @@ fn bench_quic(
                 let (tx, rx) = conn.accept_bi().await.context("failed to accept stream")?;
                 let srv = Arc::clone(&srv);
                 tasks.spawn(async move {
-                    srv.accept((), tx, rx.into())
+                    srv.accept((), tx.into(), rx.into())
                         .await
                         .context("failed to accept invocation")
                 });
@@ -537,7 +537,7 @@ fn bench_webtransport(
                 let (tx, rx) = conn.accept_bi().await.context("failed to accept stream")?;
                 let srv = Arc::clone(&srv);
                 tasks.spawn(async move {
-                    srv.accept((), tx, rx.into())
+                    srv.accept((), tx.into(), rx.into())
                         .await
                         .context("failed to accept invocation")
                 });

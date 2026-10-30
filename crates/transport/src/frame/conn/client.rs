@@ -36,7 +36,7 @@ pub fn encode_invocation(
     Ok(())
 }
 
-/// Invoke function `func` on instance `instance`, `drain` is passed to [`Incoming::new`]
+/// Invoke function `func` on instance `instance`
 #[instrument(level = "trace", skip_all)]
 pub async fn invoke<P, I, O>(
     mut tx: O,
@@ -45,7 +45,6 @@ pub async fn invoke<P, I, O>(
     func: &str,
     params: impl AsRef<[u8]>,
     paths: impl AsRef<[P]> + Send,
-    drain: bool,
 ) -> anyhow::Result<(Outgoing, Incoming)>
 where
     P: AsRef<[Option<usize>]> + Send + Sync,
@@ -63,6 +62,6 @@ where
     tx.flush().await.context("failed to flush invocation")?;
 
     let tx = Outgoing::new(tx);
-    let rx = Incoming::new(rx, paths.as_ref(), drain);
+    let rx = Incoming::new(rx, paths.as_ref());
     Ok((tx, rx))
 }
