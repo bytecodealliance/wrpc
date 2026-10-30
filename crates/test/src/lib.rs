@@ -1,5 +1,7 @@
+use core::future::poll_fn;
 use core::net::Ipv6Addr;
 use core::pin::pin;
+use core::task::Poll;
 
 use std::process::ExitStatus;
 use std::sync::Arc;
@@ -10,7 +12,7 @@ use rcgen::{CertifiedKey, generate_simple_self_signed};
 use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
 use rustls::version::TLS13;
 use rustls::{ClientConfig, RootCertStore, ServerConfig};
-use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _, BufReader};
 use tokio::net::{TcpListener, TcpStream, ToSocketAddrs};
 use tokio::process::Command;
 use tokio::sync::oneshot;
@@ -18,6 +20,55 @@ use tokio::task::JoinHandle;
 use tokio::{select, spawn, try_join};
 use tracing::info;
 use wrpc_transport::{Invoke, Serve};
+
+/// Polls `fut` to completion while repeatedly running `accept` to feed established connections
+/// into a server, returning the first error of either.
+pub async fn accept_until<T>(
+    fut: impl Future<Output = anyhow::Result<T>>,
+    accept: impl AsyncFn() -> anyhow::Result<()>,
+) -> anyhow::Result<T> {
+    let mut fut = pin!(fut);
+    let mut accepting = pin!(accept());
+    poll_fn(|cx| {
+        while let Poll::Ready(res) = accepting.as_mut().poll(cx) {
+            res?;
+            accepting.set(accept());
+        }
+        fut.as_mut().poll(cx)
+    })
+    .await
+}
+
+pub async fn accept_tcp(
+    srv: &wrpc_transport::Server<
+        (),
+        BufReader<wrpc_transport::tcp::ReadHalf>,
+        wrpc_transport::tcp::WriteHalf,
+    >,
+    lis: &TcpListener,
+) -> anyhow::Result<()> {
+    let (stream, ..) = lis.accept().await.context("failed to accept connection")?;
+    let (rx, tx) = wrpc_transport::tcp::split(stream);
+    srv.accept((), tx, BufReader::new(rx))
+        .await
+        .context("failed to accept invocation")
+}
+
+#[cfg(unix)]
+pub async fn accept_unix(
+    srv: &wrpc_transport::Server<
+        (),
+        BufReader<wrpc_transport::unix::ReadHalf>,
+        wrpc_transport::unix::WriteHalf,
+    >,
+    lis: &tokio::net::UnixListener,
+) -> anyhow::Result<()> {
+    let (stream, ..) = lis.accept().await.context("failed to accept connection")?;
+    let (rx, tx) = wrpc_transport::unix::split(stream);
+    srv.accept((), tx, BufReader::new(rx))
+        .await
+        .context("failed to accept invocation")
+}
 
 pub async fn tcp_bind() -> anyhow::Result<TcpListener> {
     TcpListener::bind((Ipv6Addr::LOCALHOST, 0))
@@ -301,7 +352,7 @@ where
     Fut: Future<Output = anyhow::Result<T>>,
 {
     with_quic_endpoints(|addr, clt, srv| async move {
-        let (clt, srv) = tokio::try_join!(
+        let (clt, srv) = try_join!(
             async move {
                 let conn = clt
                     .connect(addr, "::1")
@@ -316,6 +367,44 @@ where
         f(clt, srv).await.context("closure failed")
     })
     .await
+}
+
+#[cfg(feature = "quic")]
+pub async fn accept_quic<I, O>(
+    srv: &wrpc_transport::Server<(), I, O>,
+    conn: &quinn::Connection,
+) -> anyhow::Result<()>
+where
+    I: From<quinn::RecvStream> + tokio::io::AsyncBufRead + Unpin + Send + Sync + 'static,
+    O: From<quinn::SendStream> + Send + Sync + 'static,
+{
+    let (tx, rx) = conn.accept_bi().await.context("failed to accept stream")?;
+    srv.accept((), tx.into(), rx.into())
+        .await
+        .context("failed to accept invocation")
+}
+
+#[cfg(feature = "webtransport")]
+pub async fn accept_webtransport<I, O>(
+    srv: &wrpc_transport::Server<(), I, O>,
+    session: &web_transport_quinn::Session,
+) -> anyhow::Result<()>
+where
+    I: From<web_transport_quinn::RecvStream>
+        + tokio::io::AsyncBufRead
+        + Unpin
+        + Send
+        + Sync
+        + 'static,
+    O: From<web_transport_quinn::SendStream> + Send + Sync + 'static,
+{
+    let (tx, rx) = session
+        .accept_bi()
+        .await
+        .context("failed to accept stream")?;
+    srv.accept((), tx.into(), rx.into())
+        .await
+        .context("failed to accept invocation")
 }
 
 #[cfg(feature = "webtransport")]
@@ -453,9 +542,44 @@ where
         .local_addr()
         .context("failed to query listener local address")?;
     let clt = ClientBuilder::new()
-        .uri(&format!("ws://[::1]:{}", addr.port()))
+        .uri(&format!("ws://{addr}"))
         .context("failed to set WebSocket URI")?;
     f(clt, ServerBuilder::new(), lis)
         .await
         .context("closure failed")
+}
+
+#[cfg(feature = "websockets")]
+pub async fn accept_websocket_stream(
+    lis: &TcpListener,
+    srv: &tokio_websockets::ServerBuilder,
+) -> anyhow::Result<tokio_websockets::WebSocketStream<TcpStream>> {
+    let (stream, addr) = lis
+        .accept()
+        .await
+        .context("failed to accept TCP connection")?;
+    anyhow::ensure!(addr.ip().is_loopback(), "unexpected peer address `{addr}`");
+    let (_req, ws) = srv
+        .accept(stream)
+        .await
+        .context("failed to perform WebSocket handshake")?;
+    Ok(ws)
+}
+
+#[cfg(feature = "websockets")]
+pub async fn accept_websocket<I, O>(
+    srv: &wrpc_transport::Server<(), I, O>,
+    lis: &TcpListener,
+    sb: &tokio_websockets::ServerBuilder,
+    split: impl FnOnce(tokio_websockets::WebSocketStream<TcpStream>) -> (O, I),
+) -> anyhow::Result<()>
+where
+    I: tokio::io::AsyncBufRead + Unpin + Send + Sync + 'static,
+    O: Send + Sync + 'static,
+{
+    let ws = accept_websocket_stream(lis, sb).await?;
+    let (tx, rx) = split(ws);
+    srv.accept((), tx, rx)
+        .await
+        .context("failed to accept invocation")
 }

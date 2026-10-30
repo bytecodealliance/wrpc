@@ -1,6 +1,7 @@
 use anyhow::Context as _;
 use futures::SinkExt as _;
 use tokio::io::AsyncReadExt as _;
+use tokio::join;
 use wrpc_transport::frame::{Incoming, Server};
 use wrpc_websockets::tokio_websockets::Message;
 use wrpc_websockets::{Client, split};
@@ -9,21 +10,12 @@ use wrpc_websockets::{Client, split};
 async fn loopback() -> anyhow::Result<()> {
     let srv = Server::default();
     wrpc_test::with_websockets(|clt, server, lis| async move {
-        wrpc_test::assert_single_invocation((), &Client::from(clt), &srv, async {
-            let (stream, addr) = lis
-                .accept()
-                .await
-                .context("failed to accept TCP connection")?;
-            assert!(addr.ip().is_loopback());
-            let (_req, ws) = server
-                .accept(stream)
-                .await
-                .context("failed to perform WebSocket handshake")?;
-            let (tx, rx) = split(ws);
-            srv.accept((), tx, rx)
-                .await
-                .context("failed to accept invocation")
-        })
+        wrpc_test::assert_single_invocation(
+            (),
+            &Client::from(clt),
+            &srv,
+            wrpc_test::accept_websocket(&srv, &lis, &server, split),
+        )
         .await
     })
     .await
@@ -32,20 +24,11 @@ async fn loopback() -> anyhow::Result<()> {
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn close_before_eof() -> anyhow::Result<()> {
     wrpc_test::with_websockets(|clt, server, lis| async move {
-        let (accepted, connected) = tokio::join!(
-            async {
-                let (stream, ..) = lis
-                    .accept()
-                    .await
-                    .context("failed to accept TCP connection")?;
-                server
-                    .accept(stream)
-                    .await
-                    .context("failed to perform WebSocket handshake")
-            },
+        let (ws, connected) = join!(
+            wrpc_test::accept_websocket_stream(&lis, &server),
             clt.connect(),
         );
-        let (_req, ws) = accepted?;
+        let ws = ws?;
         let (mut clt, _res) = connected.context("failed to connect")?;
         clt.send(Message::binary(&[0x00, 0x01, 0x2a][..]))
             .await
