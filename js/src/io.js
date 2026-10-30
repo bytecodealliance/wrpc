@@ -191,9 +191,14 @@ export class Reader {
     return result;
   }
 
-  /** Read a `core:name`. @returns {string} */
-  name() {
-    return textDecoder.decode(this.take(readVarU32(this)));
+  /**
+   * Read a `core:name` of at most `max` bytes.
+   * @param {number} [max] @returns {string}
+   */
+  name(max = Infinity) {
+    const n = readVarU32(this);
+    if (n > max) throw new RangeError(`name length of ${n} exceeds maximum of ${max}`);
+    return textDecoder.decode(this.take(n));
   }
 }
 
@@ -479,9 +484,12 @@ export class AsyncReader {
     return this.decode((r) => atomic(r, (r) => r.varU(bits)));
   }
 
-  /** Read a `core:name`. @returns {Promise<string>} */
-  name() {
-    return this.decode((r) => atomic(r, (r) => r.name()));
+  /**
+   * Read a `core:name` of at most `max` bytes.
+   * @param {number} [max] @returns {Promise<string>}
+   */
+  name(max) {
+    return this.decode((r) => atomic(r, (r) => r.name(max)));
   }
 }
 

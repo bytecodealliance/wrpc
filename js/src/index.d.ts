@@ -162,7 +162,7 @@ export class Reader {
   take(n: number): Uint8Array;
   varU(bits?: number): bigint;
   varS(bits?: number): bigint;
-  name(): string;
+  name(max?: number): string;
 }
 
 /**
@@ -212,7 +212,7 @@ export class AsyncReader {
   u8(): Promise<number>;
   take(n: number): Promise<Uint8Array>;
   varU(bits?: number): Promise<bigint>;
-  name(): Promise<string>;
+  name(max?: number): Promise<string>;
 }
 
 // ----- value.js -------------------------------------------------------------
@@ -369,4 +369,12 @@ export interface Invocation {
   sendResults(resultTypes: Type[], values: InputValue[]): Promise<void>;
 }
 
-export function accept(transport: Transport): Promise<Invocation>;
+/**
+ * Accept an invocation. Instance and function names longer than
+ * `maxInstanceLength` and `maxNameLength` bytes, 1 KiB by default, are
+ * rejected.
+ */
+export function accept(
+  transport: Transport,
+  options?: { maxInstanceLength?: number; maxNameLength?: number },
+): Promise<Invocation>;
