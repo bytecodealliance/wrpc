@@ -30,4 +30,7 @@ wrpc-transport = { workspace = true }
 
 [dev-dependencies]
 test-log = { workspace = true, features = ["trace"] }
-tokio = { workspace = true, features = ["io-util", "rt"] }
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "rt-multi-thread"] }
+wasmtime = { workspace = true, features = ["cranelift", "wat"] }
+wrpc-test = { workspace = true }
+wrpc-transport = { workspace = true, features = ["net"] }

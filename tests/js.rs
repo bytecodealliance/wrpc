@@ -1,4 +1,4 @@
-use core::net::Ipv6Addr;
+use core::net::{Ipv6Addr, SocketAddr};
 use core::pin::pin;
 
 use std::process::Stdio;
@@ -19,11 +19,12 @@ async fn js_server() -> anyhow::Result<()> {
     let port = wrpc_test::free_port()
         .await
         .context("failed to find free port")?;
-    let addr = format!("[::1]:{port}");
+    let addr = SocketAddr::from((Ipv6Addr::LOCALHOST, port));
 
     info!("starting `tests/js/server.js`");
     let mut server = Command::new("node")
-        .args(["tests/js/server.js", &addr])
+        .arg("tests/js/server.js")
+        .arg(addr.to_string())
         .stdout(Stdio::piped())
         .kill_on_drop(true)
         .spawn()
