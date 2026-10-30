@@ -8,9 +8,10 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"unicode/utf8"
 )
 
-// InvokeFramed invokes a function `name` within an instance `instance`.
+// InvokeFramed invokes a function `name` within an instance `instance`, both of which must be valid UTF-8.
 // Initial, encoded payload must be specified in `buf`.
 // `paths` define the async result paths to subscribe on.
 // On success, `InvokeFramed` returns two handles used for writing and reading encoded parameters and results respectively.
@@ -24,6 +25,12 @@ func InvokeFramed(ctx context.Context, w io.WriteCloser, r io.ReadCloser, instan
 	}
 	if len(buf) > math.MaxUint32 {
 		return nil, nil, errors.New("buffer length overflows uint32")
+	}
+	if !utf8.ValidString(instance) {
+		return nil, nil, errors.New("instance is not valid UTF-8")
+	}
+	if !utf8.ValidString(name) {
+		return nil, nil, errors.New("name is not valid UTF-8")
 	}
 	// TODO: Count the exact amount of bytes required
 	payload := make(
