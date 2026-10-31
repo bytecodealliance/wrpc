@@ -308,21 +308,29 @@ func TestFrameStreamReaderBoundsBuffering(t *testing.T) {
 		wrpc.Frame{Path: []uint32{0}, Data: data},
 		wrpc.Frame{Data: []byte("hello")},
 	)
-	rd := &countingReader{Reader: bytes.NewReader(src.Bytes())}
-	r := wrpc.NewFrameStreamReader(context.Background(), rd, wrpc.NewSubscribePath().Index(0))
-	sub := assertIndexReader(t, r, 0)
-	time.Sleep(100 * time.Millisecond)
-	if n := rd.n.Load(); n > 18<<20 {
-		t.Fatalf("expected at most 18MiB to be read before the path is consumed, read %d bytes", n)
+	for _, tc := range []struct {
+		limits wrpc.IncomingLimits
+		max    int64
+	}{
+		{wrpc.IncomingLimits{}, 18 << 20},
+		{wrpc.IncomingLimits{MaxBufferedChunks: 1, MaxChunkLen: 1 << 10}, 4 << 10},
+	} {
+		rd := &countingReader{Reader: bytes.NewReader(src.Bytes())}
+		r := wrpc.NewFrameStreamReaderWithLimits(context.Background(), rd, tc.limits, wrpc.NewSubscribePath().Index(0))
+		sub := assertIndexReader(t, r, 0)
+		time.Sleep(100 * time.Millisecond)
+		if n := rd.n.Load(); n > tc.max {
+			t.Fatalf("expected at most %d bytes to be read before the path is consumed, read %d bytes", tc.max, n)
+		}
+		buf, err := io.ReadAll(sub)
+		if err != nil {
+			t.Fatalf("failed to read path: %s", err)
+		}
+		if !bytes.Equal(buf, data) {
+			t.Fatalf("expected %d bytes of data, got %d", len(data), len(buf))
+		}
+		assertReadAll(t, r, "hello", "")
 	}
-	buf, err := io.ReadAll(sub)
-	if err != nil {
-		t.Fatalf("failed to read path: %s", err)
-	}
-	if !bytes.Equal(buf, data) {
-		t.Fatalf("expected %d bytes of data, got %d", len(data), len(buf))
-	}
-	assertReadAll(t, r, "hello", "")
 }
 
 func TestFrameStreamReaderDrain(t *testing.T) {
