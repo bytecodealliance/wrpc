@@ -283,36 +283,53 @@ impl hyper::service::Service<http::Request<hyper::body::Incoming>> for Server {
 /// Client wrapper
 #[cfg(feature = "client")]
 #[derive(Clone, Debug, Default)]
-#[repr(transparent)]
-pub struct Client<T>(pub T);
+pub struct Client<T> {
+    inner: T,
+    limits: wrpc_transport::frame::IncomingLimits,
+}
 
 #[cfg(feature = "client")]
 impl<T> Deref for Client<T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
-        &self.0
+        &self.inner
     }
 }
 
 #[cfg(feature = "client")]
 impl<T> DerefMut for Client<T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
+        &mut self.inner
     }
 }
 
 #[cfg(feature = "client")]
 impl<T> From<T> for Client<T> {
     fn from(c: T) -> Self {
-        Self(c)
+        Self::new(c)
     }
 }
 
 #[cfg(feature = "client")]
 impl<T> Client<T> {
     pub fn new(c: T) -> Self {
-        Self(c)
+        Self {
+            inner: c,
+            limits: wrpc_transport::frame::IncomingLimits::default(),
+        }
+    }
+
+    /// Returns the wrapped client
+    pub fn into_inner(self) -> T {
+        self.inner
+    }
+
+    /// Bounds the data buffered for the results of invocations by `limits`, which are the
+    /// default [`IncomingLimits`](wrpc_transport::frame::IncomingLimits) unless set.
+    #[must_use]
+    pub fn incoming_limits(self, limits: wrpc_transport::frame::IncomingLimits) -> Self {
+        Self { limits, ..self }
     }
 }
 
@@ -337,7 +354,7 @@ impl wrpc_transport::Invoke for Client<hyper::client::conn::http2::SendRequest<O
     {
         use anyhow::Context as _;
 
-        let mut sender = self.0.clone();
+        let mut sender = self.inner.clone();
         sender.ready().await.context("HTTP connection closed")?;
 
         let mut buf = BytesMut::default();
@@ -349,7 +366,7 @@ impl wrpc_transport::Invoke for Client<hyper::client::conn::http2::SendRequest<O
 
         Ok((
             wrpc_transport::frame::Outgoing::new(tx),
-            wrpc_transport::frame::Incoming::new(rx, paths.as_ref()),
+            wrpc_transport::frame::Incoming::with_limits(rx, paths.as_ref(), self.limits),
         ))
     }
 }
@@ -383,11 +400,11 @@ where
             .context("failed to encode invocation")?;
         let (req, tx) = new_request(cx, [buf.freeze(), params]);
 
-        let rx = data_reader_from_response(self.0.request(req));
+        let rx = data_reader_from_response(self.inner.request(req));
 
         Ok((
             wrpc_transport::frame::Outgoing::new(tx),
-            wrpc_transport::frame::Incoming::new(rx, paths.as_ref()),
+            wrpc_transport::frame::Incoming::with_limits(rx, paths.as_ref(), self.limits),
         ))
     }
 }

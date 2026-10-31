@@ -8,7 +8,7 @@ use bytes::Bytes;
 use quinn::{Connection, VarInt};
 use tokio::io::{AsyncBufRead, AsyncRead, AsyncWrite, BufReader, ReadBuf};
 use wrpc_transport::Invoke;
-use wrpc_transport::frame::{Incoming, Outgoing, invoke};
+use wrpc_transport::frame::{Incoming, IncomingLimits, Outgoing, invoke};
 
 const DONE: VarInt = VarInt::from_u32(1);
 
@@ -101,11 +101,26 @@ impl AsyncWrite for SendStream {
 
 /// QUIC wRPC client
 #[derive(Clone, Debug)]
-pub struct Client(Connection);
+pub struct Client {
+    conn: Connection,
+    limits: IncomingLimits,
+}
+
+impl Client {
+    /// Bounds the data buffered for the results of invocations by `limits`, which are the
+    /// default [`IncomingLimits`] unless set.
+    #[must_use]
+    pub fn incoming_limits(self, limits: IncomingLimits) -> Self {
+        Self { limits, ..self }
+    }
+}
 
 impl From<Connection> for Client {
     fn from(conn: Connection) -> Self {
-        Self(conn)
+        Self {
+            conn,
+            limits: IncomingLimits::default(),
+        }
     }
 }
 
@@ -124,7 +139,7 @@ impl Invoke for &Client {
         P: AsRef<[Option<usize>]> + Send + Sync,
     {
         let (tx, rx) = self
-            .0
+            .conn
             .open_bi()
             .await
             .context("failed to open parameter stream")?;
@@ -135,6 +150,7 @@ impl Invoke for &Client {
             func,
             params,
             paths,
+            self.limits,
         )
         .await
     }

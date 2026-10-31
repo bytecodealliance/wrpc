@@ -23,7 +23,9 @@ pub mod serve;
 mod pack;
 mod value;
 
-pub use frame::{Decoder as FrameDecoder, Encoder as FrameEncoder, Frame, FrameRef, Server};
+pub use frame::{
+    Decoder as FrameDecoder, Encoder as FrameEncoder, Frame, FrameRef, IncomingLimits, Server,
+};
 pub use invoke::{Invoke, InvokeExt};
 pub use pack::{Packer, pack, pack_ready, unpack};
 pub use serve::{Serve, ServeExt};

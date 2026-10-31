@@ -74,15 +74,40 @@ enum TxSlot {
     Closed,
 }
 
-/// Maximum number of elements, i.e. positions matched by a wildcard, which data is received for
-/// before they are indexed
-const MAX_UNCLAIMED_ELEMENTS: usize = 64;
+/// Default of [`IncomingLimits::max_unclaimed_elements`]
+const DEFAULT_MAX_UNCLAIMED_ELEMENTS: usize = 64;
 
-/// Maximum number of data chunks buffered per sub-stream
-const MAX_BUFFERED_CHUNKS: usize = 16;
+/// Default of [`IncomingLimits::max_buffered_chunks`]
+const DEFAULT_MAX_BUFFERED_CHUNKS: usize = 16;
+
+/// Default of [`IncomingLimits::max_chunk_len`]
+const DEFAULT_MAX_CHUNK_LEN: usize = 1 << 20;
 
 /// Maximum length of the data of a frame
 const MAX_FRAME_DATA: usize = u32::MAX as usize;
+
+/// Bounds of the data buffered by [Incoming]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct IncomingLimits {
+    /// Maximum number of data chunks buffered per sub-stream, at least 1 and at most
+    /// [`Semaphore::MAX_PERMITS`]
+    pub max_buffered_chunks: usize,
+    /// Maximum length of a buffered data chunk, at least 1
+    pub max_chunk_len: usize,
+    /// Maximum number of elements, i.e. positions matched by a wildcard, which data is received
+    /// for before they are indexed, at least 1 and at most [`Semaphore::MAX_PERMITS`]
+    pub max_unclaimed_elements: usize,
+}
+
+impl Default for IncomingLimits {
+    fn default() -> Self {
+        Self {
+            max_buffered_chunks: DEFAULT_MAX_BUFFERED_CHUNKS,
+            max_chunk_len: DEFAULT_MAX_CHUNK_LEN,
+            max_unclaimed_elements: DEFAULT_MAX_UNCLAIMED_ELEMENTS,
+        }
+    }
+}
 
 /// Declared path or a prefix of one
 #[derive(Clone, Copy, Debug, Default)]
@@ -98,8 +123,8 @@ struct Pattern {
 /// Elements, i.e. positions matched by a wildcard, are subscribed to once indexed or once data
 /// is received for them, and removed once all handles within them are dropped. Indexing an
 /// element releases the preceding ones, which were not indexed yet. At most
-/// [`MAX_UNCLAIMED_ELEMENTS`] elements are subscribed to before being indexed, after which
-/// ingress waits for them to be indexed.
+/// [`IncomingLimits::max_unclaimed_elements`] elements are subscribed to before being indexed,
+/// after which ingress waits for them to be indexed.
 #[derive(Debug)]
 struct Subscriptions {
     /// Declared paths and their prefixes
@@ -116,6 +141,8 @@ struct Subscriptions {
     closed: bool,
     /// Maximum length of the declared paths
     depth: usize,
+    /// Maximum number of data chunks buffered per subscription
+    chunks: usize,
 }
 
 #[derive(Debug, Default)]
@@ -129,12 +156,13 @@ struct Subscription {
 }
 
 impl Subscription {
-    /// Creates a subscription, which receives data if the path is `declared`
-    fn new(declared: bool) -> Self {
+    /// Creates a subscription, which receives data if the path is `declared`, buffering at most
+    /// `chunks` data chunks
+    fn new(declared: bool, chunks: usize) -> Self {
         if !declared {
             return Self::default();
         }
-        let (tx, rx) = mpsc::channel(MAX_BUFFERED_CHUNKS);
+        let (tx, rx) = mpsc::channel(chunks);
         Self {
             tx: Some(TxSlot::Open(tx)),
             rx: Some(rx),
@@ -160,6 +188,7 @@ impl Subscriptions {
     fn new<P: AsRef<[Option<usize>]>>(
         paths: impl IntoIterator<Item = P>,
         tx: mpsc::Sender<std::io::Result<Bytes>>,
+        limits: IncomingLimits,
     ) -> Self {
         let mut subs = Self {
             patterns: BTreeMap::from([(
@@ -177,10 +206,11 @@ impl Subscriptions {
                 },
             )]),
             next: BTreeMap::default(),
-            unclaimed: Arc::new(Semaphore::new(MAX_UNCLAIMED_ELEMENTS)),
+            unclaimed: Arc::new(Semaphore::new(limits.max_unclaimed_elements)),
             indexed: Arc::default(),
             closed: false,
             depth: 0,
+            chunks: limits.max_buffered_chunks,
         };
         for path in paths {
             let path = path.as_ref();
@@ -196,7 +226,7 @@ impl Subscriptions {
             }
             subs.patterns.entry(Box::from(path)).or_default().declared = true;
             if let Some(path) = path.iter().copied().collect() {
-                subs.subs.insert(path, Subscription::new(true));
+                subs.subs.insert(path, Subscription::new(true, subs.chunks));
             }
         }
         subs
@@ -222,8 +252,9 @@ impl Subscriptions {
     fn subscribe(&mut self, path: &[usize], pattern: &[Option<usize>]) -> &mut Subscription {
         let declared = self.patterns.get(pattern).is_some_and(|p| p.declared);
         let closed = self.closed;
+        let chunks = self.chunks;
         self.subs.entry(Box::from(path)).or_insert_with(|| {
-            let mut sub = Subscription::new(declared);
+            let mut sub = Subscription::new(declared, chunks);
             if closed {
                 sub.tx = None;
             }
@@ -450,14 +481,37 @@ impl Incoming {
     /// `paths` must not contain both a wildcard and an index at the same position, so paths of
     /// different variant cases, which are not indexed, must be merged by replacing such indices
     /// by wildcards.
-    pub fn new<T, P>(mut rx: T, paths: impl IntoIterator<Item = P>) -> Self
+    ///
+    /// The data buffered is bounded by the default [`IncomingLimits`], see [`Self::with_limits`].
+    pub fn new<T, P>(rx: T, paths: impl IntoIterator<Item = P>) -> Self
     where
         T: AsyncBufRead + Unpin + Send + 'static,
         P: AsRef<[Option<usize>]>,
     {
-        let (rx_tx, rx_rx) = mpsc::channel(MAX_BUFFERED_CHUNKS);
-        let index = Subscriptions::new(paths, rx_tx);
+        Self::with_limits(rx, paths, IncomingLimits::default())
+    }
+
+    /// Creates a new [Incoming] like [`Self::new`], bounding the data buffered by `limits`.
+    pub fn with_limits<T, P>(
+        mut rx: T,
+        paths: impl IntoIterator<Item = P>,
+        limits: IncomingLimits,
+    ) -> Self
+    where
+        T: AsyncBufRead + Unpin + Send + 'static,
+        P: AsRef<[Option<usize>]>,
+    {
+        let limits = IncomingLimits {
+            max_buffered_chunks: limits.max_buffered_chunks.clamp(1, Semaphore::MAX_PERMITS),
+            max_chunk_len: limits.max_chunk_len.max(1),
+            max_unclaimed_elements: limits
+                .max_unclaimed_elements
+                .clamp(1, Semaphore::MAX_PERMITS),
+        };
+        let (rx_tx, rx_rx) = mpsc::channel(limits.max_buffered_chunks);
+        let index = Subscriptions::new(paths, rx_tx, limits);
         let depth = index.depth;
+        let chunk_len = limits.max_chunk_len;
         let state = Arc::new(IngressState {
             index: std::sync::Mutex::new(index),
             err: std::sync::OnceLock::default(),
@@ -471,7 +525,7 @@ impl Incoming {
             async move {
                 let res = async {
                     let mut io = pin!(async {
-                        let res = ingress(&mut rx, &state.index, depth).await;
+                        let res = ingress(&mut rx, &state.index, depth, chunk_len).await;
                         if let Err(err) = &res {
                             _ = state.err.set(copy_io_error(err));
                         }
@@ -809,7 +863,9 @@ async fn ingress(
     mut rx: impl AsyncRead + Unpin,
     index: &std::sync::Mutex<Subscriptions>,
     depth: usize,
+    chunk_len: usize,
 ) -> std::io::Result<()> {
+    let chunk_len = u64::try_from(chunk_len).unwrap_or(u64::MAX);
     'frames: loop {
         trace!("reading path length");
         let b = match rx.read_u8().await {
@@ -888,13 +944,16 @@ async fn ingress(
         drop(permit);
         let mut data = (&mut rx).take(n.into());
         while data.limit() > 0 {
-            let k = usize::try_from(data.limit())
-                .unwrap_or(usize::MAX)
-                .min(DEFAULT_MAX_INITIAL_CAPACITY);
-            let mut buf = BytesMut::with_capacity(k);
+            let k = data.limit().min(chunk_len);
+            let mut chunk = (&mut data).take(k);
+            let mut buf = BytesMut::with_capacity(
+                usize::try_from(k)
+                    .unwrap_or(usize::MAX)
+                    .min(DEFAULT_MAX_INITIAL_CAPACITY),
+            );
             trace!(len = k, "reading data chunk");
-            while buf.len() < k {
-                if data.read_buf(&mut buf).await? == 0 {
+            while chunk.limit() > 0 {
+                if chunk.read_buf(&mut buf).await? == 0 {
                     return Err(std::io::ErrorKind::UnexpectedEof.into());
                 }
             }
@@ -995,7 +1054,8 @@ mod tests {
     use tokio_util::codec::Encoder as _;
 
     use super::*;
-    use crate::frame::{Encoder, FrameRef};
+    use crate::Invoke as _;
+    use crate::frame::{Encoder, FrameRef, Oneshot};
 
     fn frame(path: &[usize], data: &[u8]) -> Vec<u8> {
         let mut buf = BytesMut::default();
@@ -1283,12 +1343,18 @@ mod tests {
     #[test_log::test(tokio::test)]
     async fn incoming_bounds_unread_data() {
         async fn assert_backpressure(
+            limits: IncomingLimits,
             paths: [Option<usize>; 1],
             frames: &[u8],
             read: impl AsyncFnOnce(&Incoming),
         ) {
-            let (mut tx, rx, done_rx) = incoming_paths([paths]);
-            let ingress = spawn(done_rx);
+            let (clt, mut tx) = Oneshot::duplex(16);
+            let (_, rx) = clt
+                .incoming_limits(limits)
+                .invoke((), "", "", Bytes::default(), [paths])
+                .await
+                .unwrap();
+            let ingress = spawn(rx.finished());
             let mut write = pin!(tx.write_all(frames));
             for _ in 0..frames.len() {
                 assert!(write.as_mut().now_or_never().is_none());
@@ -1300,23 +1366,49 @@ mod tests {
             ingress.await.unwrap().unwrap();
         }
 
-        let frames = frame(&[0], b"\x2a").repeat(2 * MAX_BUFFERED_CHUNKS);
-        assert_backpressure([Some(0)], &frames, async |rx| {
-            let mut buf = vec![0; 2 * MAX_BUFFERED_CHUNKS];
-            rx.index(&[0]).unwrap().read_exact(&mut buf).await.unwrap();
-        })
-        .await;
+        let n = 2 * DEFAULT_MAX_BUFFERED_CHUNKS;
+        let chunks = IncomingLimits {
+            max_buffered_chunks: 1,
+            ..IncomingLimits::default()
+        };
+        let chunk_len = IncomingLimits {
+            max_chunk_len: 1,
+            ..IncomingLimits::default()
+        };
+        for (limits, n, frames) in [
+            (IncomingLimits::default(), n, frame(&[0], b"\x2a").repeat(n)),
+            (chunks, 16, frame(&[0], b"\x2a").repeat(16)),
+            (chunk_len, 128, frame(&[0], &[0x2a; 128])),
+        ] {
+            assert_backpressure(limits, [Some(0)], &frames, async |rx| {
+                let mut buf = vec![0; n];
+                rx.index(&[0]).unwrap().read_exact(&mut buf).await.unwrap();
+            })
+            .await;
+        }
 
-        let frames: Vec<u8> = (0..2 * MAX_UNCLAIMED_ELEMENTS)
-            .flat_map(|i| frame(&[i], b"\x2a"))
-            .collect();
-        assert_backpressure([None], &frames, async |rx| {
-            for i in 0..2 * MAX_UNCLAIMED_ELEMENTS {
-                let mut buf = [0; 1];
-                rx.index(&[i]).unwrap().read_exact(&mut buf).await.unwrap();
-                assert_eq!(&buf, b"\x2a");
-            }
-        })
-        .await;
+        for (limits, n) in [
+            (
+                IncomingLimits::default(),
+                2 * DEFAULT_MAX_UNCLAIMED_ELEMENTS,
+            ),
+            (
+                IncomingLimits {
+                    max_unclaimed_elements: 1,
+                    ..IncomingLimits::default()
+                },
+                16,
+            ),
+        ] {
+            let frames: Vec<u8> = (0..n).flat_map(|i| frame(&[i], b"\x2a")).collect();
+            assert_backpressure(limits, [None], &frames, async |rx| {
+                for i in 0..n {
+                    let mut buf = [0; 1];
+                    rx.index(&[i]).unwrap().read_exact(&mut buf).await.unwrap();
+                    assert_eq!(&buf, b"\x2a");
+                }
+            })
+            .await;
+        }
     }
 }

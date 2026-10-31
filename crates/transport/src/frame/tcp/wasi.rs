@@ -21,55 +21,55 @@ use wasi::sockets::tcp::ShutdownType;
 use wasi::sockets::tcp_create_socket::{TcpSocket, create_tcp_socket};
 
 use crate::Invoke;
-use crate::frame::{Incoming, Outgoing};
+use crate::frame::{Incoming, IncomingLimits, Outgoing};
 
 /// [Invoke] implementation of a TCP transport using `wasi:sockets`
 #[derive(Clone, Copy, Debug)]
 pub struct Client<T, N = Network> {
     addr: T,
     network: N,
+    limits: IncomingLimits,
 }
 
 impl<T, N> Client<T, N> {
     /// Constructs a new [Client]
     pub fn new(network: N, addr: T) -> Self {
-        Self { addr, network }
+        Self {
+            addr,
+            network,
+            limits: IncomingLimits::default(),
+        }
+    }
+
+    /// Bounds the data buffered for the results of invocations by `limits`, which are the
+    /// default [`IncomingLimits`] unless set.
+    #[must_use]
+    pub fn incoming_limits(self, limits: IncomingLimits) -> Self {
+        Self { limits, ..self }
     }
 }
 
 impl From<String> for Client<Box<str>, Network> {
     fn from(addr: String) -> Self {
-        Self {
-            addr: addr.into_boxed_str(),
-            network: instance_network(),
-        }
+        Self::new(instance_network(), addr.into_boxed_str())
     }
 }
 
 impl From<Box<str>> for Client<Box<str>, Network> {
     fn from(addr: Box<str>) -> Self {
-        Self {
-            addr,
-            network: instance_network(),
-        }
+        Self::new(instance_network(), addr)
     }
 }
 
 impl<'a> From<&'a str> for Client<&'a str, Network> {
     fn from(addr: &'a str) -> Self {
-        Self {
-            addr,
-            network: instance_network(),
-        }
+        Self::new(instance_network(), addr)
     }
 }
 
 impl From<IpSocketAddress> for Client<IpSocketAddress, Network> {
     fn from(addr: IpSocketAddress) -> Self {
-        Self {
-            addr,
-            network: instance_network(),
-        }
+        Self::new(instance_network(), addr)
     }
 }
 
@@ -180,6 +180,7 @@ async fn finish_invoke<P>(
     func: &str,
     params: Bytes,
     paths: impl AsRef<[P]> + Send,
+    limits: IncomingLimits,
     pollables: mpsc::UnboundedSender<(Pollable, Waker)>,
 ) -> anyhow::Result<(Outgoing, Incoming)>
 where
@@ -205,6 +206,7 @@ where
         func,
         params,
         paths,
+        limits,
     )
     .await
 }
@@ -217,6 +219,7 @@ async fn invoke_ip<P>(
     func: &str,
     params: Bytes,
     paths: impl AsRef<[P]> + Send,
+    limits: IncomingLimits,
     pollables: mpsc::UnboundedSender<(Pollable, Waker)>,
 ) -> anyhow::Result<(Outgoing, Incoming)>
 where
@@ -230,7 +233,7 @@ where
     socket
         .start_connect(network, addr)
         .context("failed to start connection")?;
-    finish_invoke(socket, instance, func, params, paths, pollables).await
+    finish_invoke(socket, instance, func, params, paths, limits, pollables).await
 }
 
 #[instrument(level = "trace", skip_all, fields(params = format!("{params:02x?}")))]
@@ -241,6 +244,7 @@ async fn invoke_unresolved<P>(
     func: &str,
     params: Bytes,
     paths: impl AsRef<[P]> + Send,
+    limits: IncomingLimits,
     pollables: mpsc::UnboundedSender<(Pollable, Waker)>,
 ) -> anyhow::Result<(Outgoing, Incoming)>
 where
@@ -283,7 +287,7 @@ where
     socket
         .start_connect(network, addr)
         .context("failed to start connection")?;
-    finish_invoke(socket, instance, func, params, paths, pollables).await
+    finish_invoke(socket, instance, func, params, paths, limits, pollables).await
 }
 
 impl Invoke for Client<&str, &Network> {
@@ -307,6 +311,7 @@ impl Invoke for Client<&str, &Network> {
             func,
             params,
             paths,
+            self.limits,
             pollables,
         )
         .await
@@ -334,6 +339,7 @@ impl Invoke for Client<&str, Network> {
             func,
             params,
             paths,
+            self.limits,
             pollables,
         )
         .await
@@ -361,6 +367,7 @@ impl Invoke for Client<Box<str>, Network> {
             func,
             params,
             paths,
+            self.limits,
             pollables,
         )
         .await
@@ -388,6 +395,7 @@ impl Invoke for Client<IpSocketAddress, &Network> {
             func,
             params,
             paths,
+            self.limits,
             pollables,
         )
         .await
@@ -415,6 +423,7 @@ impl Invoke for Client<IpSocketAddress, Network> {
             func,
             params,
             paths,
+            self.limits,
             pollables,
         )
         .await

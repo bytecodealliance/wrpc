@@ -11,13 +11,14 @@ use tokio_stream::wrappers::ReceiverStream;
 use tracing::{instrument, trace};
 
 use crate::Serve;
-use crate::frame::{Header, HeaderDecoder, HeaderReadError, Incoming, Outgoing};
+use crate::frame::{Header, HeaderDecoder, HeaderReadError, Incoming, IncomingLimits, Outgoing};
 
 /// wRPC server for framed transports
 #[derive(Debug)]
 pub struct Server<C, I, O> {
     handlers: Mutex<HashMap<String, HashMap<String, mpsc::Sender<(C, I, O)>>>>,
     header: HeaderDecoder,
+    limits: IncomingLimits,
 }
 
 impl<C, I, O> Server<C, I, O> {
@@ -33,7 +34,14 @@ impl<C, I, O> Server<C, I, O> {
         Self {
             handlers: Mutex::default(),
             header,
+            limits: IncomingLimits::default(),
         }
+    }
+
+    /// Bounds the data buffered by the [Incoming] of each invocation by `limits`
+    #[must_use]
+    pub fn with_incoming_limits(self, limits: IncomingLimits) -> Self {
+        Self { limits, ..self }
     }
 }
 
@@ -149,9 +157,10 @@ where
             entry.insert(tx);
         }
     }
+    let limits = srv.limits;
     Ok(ReceiverStream::new(rx).map(move |(cx, rx, tx)| {
         trace!("received invocation");
-        let rx = Incoming::new(rx, paths.as_ref());
+        let rx = Incoming::with_limits(rx, paths.as_ref(), limits);
         let tx = Outgoing::new(tx);
         Ok((cx, tx, rx))
     }))

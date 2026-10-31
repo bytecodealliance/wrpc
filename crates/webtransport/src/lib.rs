@@ -9,7 +9,7 @@ use bytes::Bytes;
 use tokio::io::{AsyncBufRead, AsyncRead, AsyncWrite, BufReader, ReadBuf};
 use web_transport_quinn::Session;
 use wrpc_transport::Invoke;
-use wrpc_transport::frame::{Incoming, Outgoing, invoke};
+use wrpc_transport::frame::{Incoming, IncomingLimits, Outgoing, invoke};
 
 const DONE: u32 = 1;
 
@@ -102,11 +102,26 @@ impl AsyncWrite for SendStream {
 
 /// WebTransport wRPC client
 #[derive(Clone, Debug)]
-pub struct Client(Session);
+pub struct Client {
+    session: Session,
+    limits: IncomingLimits,
+}
+
+impl Client {
+    /// Bounds the data buffered for the results of invocations by `limits`, which are the
+    /// default [`IncomingLimits`] unless set.
+    #[must_use]
+    pub fn incoming_limits(self, limits: IncomingLimits) -> Self {
+        Self { limits, ..self }
+    }
+}
 
 impl From<Session> for Client {
     fn from(session: Session) -> Self {
-        Self(session)
+        Self {
+            session,
+            limits: IncomingLimits::default(),
+        }
     }
 }
 
@@ -114,13 +129,13 @@ impl Deref for Client {
     type Target = Session;
 
     fn deref(&self) -> &Self::Target {
-        &self.0
+        &self.session
     }
 }
 
 impl DerefMut for Client {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
+        &mut self.session
     }
 }
 
@@ -139,7 +154,7 @@ impl Invoke for &Client {
         P: AsRef<[Option<usize>]> + Send + Sync,
     {
         let (tx, rx) = self
-            .0
+            .session
             .open_bi()
             .await
             .context("failed to open parameter stream")?;
@@ -150,6 +165,7 @@ impl Invoke for &Client {
             func,
             params,
             paths,
+            self.limits,
         )
         .await
     }

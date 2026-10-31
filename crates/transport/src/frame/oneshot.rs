@@ -7,18 +7,24 @@ use tokio::io::{
 use tracing::instrument;
 
 use crate::Invoke;
-use crate::frame::{Incoming, Outgoing, invoke};
+use crate::frame::{Incoming, IncomingLimits, Outgoing, invoke};
 
 /// [Invoke] implementation in terms of a single stream pair.
 ///
 /// [`Invoke::invoke`] can only be called at most once on [Oneshot],
 /// repeated calls will return an error.
 #[derive(Debug)]
-pub struct Oneshot<I, O>(std::sync::Mutex<Option<(I, O)>>);
+pub struct Oneshot<I, O> {
+    stream: std::sync::Mutex<Option<(I, O)>>,
+    limits: IncomingLimits,
+}
 
 impl<I, O> From<(I, O)> for Oneshot<I, O> {
     fn from((rx, tx): (I, O)) -> Self {
-        Self(std::sync::Mutex::new(Some((rx, tx))))
+        Self {
+            stream: std::sync::Mutex::new(Some((rx, tx))),
+            limits: IncomingLimits::default(),
+        }
     }
 }
 
@@ -38,9 +44,16 @@ impl Oneshot<ReadHalf<DuplexStream>, WriteHalf<DuplexStream>> {
 }
 
 impl<I, O> Oneshot<I, O> {
+    /// Bounds the data buffered for the results of the invocation by `limits`, which are the
+    /// default [`IncomingLimits`] unless set.
+    #[must_use]
+    pub fn incoming_limits(self, limits: IncomingLimits) -> Self {
+        Self { limits, ..self }
+    }
+
     /// Returns the inner stream pair if [Oneshot] has not been used yet or an error.
     pub fn try_take_inner(&self) -> std::io::Result<(I, O)> {
-        match self.0.try_lock().map(|mut stream| stream.take()) {
+        match self.stream.try_lock().map(|mut stream| stream.take()) {
             Ok(Some((rx, tx))) => Ok((rx, tx)),
             Ok(None) | Err(std::sync::TryLockError::WouldBlock) => Err(std::io::Error::new(
                 std::io::ErrorKind::UnexpectedEof,
@@ -95,9 +108,19 @@ where
         P: AsRef<[Option<usize>]> + Send + Sync,
     {
         let stream = self.try_take_inner();
+        let limits = self.limits;
         async move {
             let (rx, tx) = stream?;
-            invoke(tx, BufReader::new(rx), instance, func, params, paths).await
+            invoke(
+                tx,
+                BufReader::new(rx),
+                instance,
+                func,
+                params,
+                paths,
+                limits,
+            )
+            .await
         }
     }
 }
