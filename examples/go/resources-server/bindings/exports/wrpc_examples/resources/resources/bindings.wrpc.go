@@ -11,6 +11,7 @@ import (
 	slog "log/slog"
 	math "math"
 	sync "sync"
+	utf8 "unicode/utf8"
 	wrpc "wrpc.io/go"
 )
 
@@ -69,27 +70,10 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 		var buf bytes.Buffer
 		writes := make(map[uint32]func(context.Context, wrpc.IndexWriter) error, 1)
 
-		write0, err := (func(context.Context, wrpc.IndexWriter) error)(nil), func(v string, w io.Writer) (err error) {
-			n := len(v)
-			if n > math.MaxUint32 {
-				return fmt.Errorf("string byte length of %d overflows a 32-bit integer", n)
-			}
-			if err = func(v int, w io.Writer) error {
-				b := make([]byte, binary.MaxVarintLen32)
-				i := binary.PutUvarint(b, uint64(v))
-				slog.Debug("writing string byte length", "len", n)
-				_, err = w.Write(b[:i])
-				return err
-			}(n, w); err != nil {
-				return fmt.Errorf("failed to write string byte length of %d: %w", n, err)
-			}
-			slog.Debug("writing string bytes")
-			_, err = w.Write([]byte(v))
-			if err != nil {
-				return fmt.Errorf("failed to write string bytes: %w", err)
-			}
-			return nil
-		}(string(r0), &buf)
+		write0, err := (func(context.Context, wrpc.IndexWriter) error)(nil), func(v []byte, w wrpc.ByteWriter) error {
+			_, err := wrpc.WriteByteList(v, w)
+			return err
+		}(r0, &buf)
 		if err != nil {
 			slog.WarnContext(ctx, "failed to write result value", "i", 0, "instance", "wrpc-examples:resources/resources", "name", "foo", "err", err)
 			cancel(err)
@@ -168,7 +152,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 					return nil, fmt.Errorf("failed to read owned resource handle length byte: %w", err)
 				}
 				if b < 0x80 {
-					if i == 4 && b > 1 {
+					if i == 4 && b > 0x0f {
 						return nil, errors.New("owned resource handle length overflows a 32-bit integer")
 					}
 					x = x | uint32(b)<<s
@@ -208,6 +192,9 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 		writes := make(map[uint32]func(context.Context, wrpc.IndexWriter) error, 1)
 
 		write0, err := (func(context.Context, wrpc.IndexWriter) error)(nil), func(v string, w io.Writer) (err error) {
+			if !utf8.ValidString(v) {
+				return errors.New("string is not valid UTF-8")
+			}
 			n := len(v)
 			if n > math.MaxUint32 {
 				return fmt.Errorf("string byte length of %d overflows a 32-bit integer", n)
@@ -306,7 +293,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 					return nil, fmt.Errorf("failed to read borrowed resource handle length byte: %w", err)
 				}
 				if b < 0x80 {
-					if i == 4 && b > 1 {
+					if i == 4 && b > 0x0f {
 						return nil, errors.New("borrowed resource handle length overflows a 32-bit integer")
 					}
 					x = x | uint32(b)<<s
@@ -346,6 +333,9 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 		writes := make(map[uint32]func(context.Context, wrpc.IndexWriter) error, 1)
 
 		write0, err := (func(context.Context, wrpc.IndexWriter) error)(nil), func(v string, w io.Writer) (err error) {
+			if !utf8.ValidString(v) {
+				return errors.New("string is not valid UTF-8")
+			}
 			n := len(v)
 			if n > math.MaxUint32 {
 				return fmt.Errorf("string byte length of %d overflows a 32-bit integer", n)
@@ -444,7 +434,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 					return nil, fmt.Errorf("failed to read borrowed resource handle length byte: %w", err)
 				}
 				if b < 0x80 {
-					if i == 4 && b > 1 {
+					if i == 4 && b > 0x0f {
 						return nil, errors.New("borrowed resource handle length overflows a 32-bit integer")
 					}
 					x = x | uint32(b)<<s
@@ -484,6 +474,9 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 		writes := make(map[uint32]func(context.Context, wrpc.IndexWriter) error, 1)
 
 		write0, err := (func(context.Context, wrpc.IndexWriter) error)(nil), func(v string, w io.Writer) (err error) {
+			if !utf8.ValidString(v) {
+				return errors.New("string is not valid UTF-8")
+			}
 			n := len(v)
 			if n > math.MaxUint32 {
 				return fmt.Errorf("string byte length of %d overflows a 32-bit integer", n)

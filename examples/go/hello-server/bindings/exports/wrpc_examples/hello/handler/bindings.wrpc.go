@@ -5,11 +5,13 @@ import (
 	bytes "bytes"
 	context "context"
 	binary "encoding/binary"
+	errors "errors"
 	fmt "fmt"
 	io "io"
 	slog "log/slog"
 	math "math"
 	sync "sync"
+	utf8 "unicode/utf8"
 	wrpc "wrpc.io/go"
 )
 
@@ -64,6 +66,9 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 		writes := make(map[uint32]func(context.Context, wrpc.IndexWriter) error, 1)
 
 		write0, err := (func(context.Context, wrpc.IndexWriter) error)(nil), func(v string, w io.Writer) (err error) {
+			if !utf8.ValidString(v) {
+				return errors.New("string is not valid UTF-8")
+			}
 			n := len(v)
 			if n > math.MaxUint32 {
 				return fmt.Errorf("string byte length of %d overflows a 32-bit integer", n)
