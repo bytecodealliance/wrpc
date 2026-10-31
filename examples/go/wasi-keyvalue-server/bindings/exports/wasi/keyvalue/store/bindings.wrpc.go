@@ -132,6 +132,9 @@ func (v *Error) WriteToIndex(w wrpc.ByteWriter) (func(context.Context, wrpc.Inde
 			return nil, errors.New("invalid payload")
 		}
 		write, err := (func(context.Context, wrpc.IndexWriter) error)(nil), func(v string, w io.Writer) (err error) {
+			if !utf8.ValidString(v) {
+				return errors.New("string is not valid UTF-8")
+			}
 			n := len(v)
 			if n > math.MaxUint32 {
 				return fmt.Errorf("string byte length of %d overflows a 32-bit integer", n)
@@ -197,6 +200,9 @@ func (v *KeyResponse) WriteToIndex(w wrpc.ByteWriter) (func(context.Context, wrp
 		writes := make(map[uint32]func(context.Context, wrpc.IndexWriter) error, n)
 		for i, e := range v {
 			write, err := (func(context.Context, wrpc.IndexWriter) error)(nil), func(v string, w io.Writer) (err error) {
+				if !utf8.ValidString(v) {
+					return errors.New("string is not valid UTF-8")
+				}
 				n := len(v)
 				if n > math.MaxUint32 {
 					return fmt.Errorf("string byte length of %d overflows a 32-bit integer", n)
@@ -250,6 +256,9 @@ func (v *KeyResponse) WriteToIndex(w wrpc.ByteWriter) (func(context.Context, wrp
 		}
 		slog.Debug("writing `option::some` payload")
 		write, err := (func(context.Context, wrpc.IndexWriter) error)(nil), func(v string, w io.Writer) (err error) {
+			if !utf8.ValidString(v) {
+				return errors.New("string is not valid UTF-8")
+			}
 			n := len(v)
 			if n > math.MaxUint32 {
 				return fmt.Errorf("string byte length of %d overflows a 32-bit integer", n)
@@ -466,27 +475,10 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 					return nil, fmt.Errorf("failed to write `result::ok` status byte: %w", err)
 				}
 				slog.Debug("writing `result::ok` payload")
-				write, err := (func(context.Context, wrpc.IndexWriter) error)(nil), func(v string, w io.Writer) (err error) {
-					n := len(v)
-					if n > math.MaxUint32 {
-						return fmt.Errorf("string byte length of %d overflows a 32-bit integer", n)
-					}
-					if err = func(v int, w io.Writer) error {
-						b := make([]byte, binary.MaxVarintLen32)
-						i := binary.PutUvarint(b, uint64(v))
-						slog.Debug("writing string byte length", "len", n)
-						_, err = w.Write(b[:i])
-						return err
-					}(n, w); err != nil {
-						return fmt.Errorf("failed to write string byte length of %d: %w", n, err)
-					}
-					slog.Debug("writing string bytes")
-					_, err = w.Write([]byte(v))
-					if err != nil {
-						return fmt.Errorf("failed to write string bytes: %w", err)
-					}
-					return nil
-				}(string(*v.Ok), w)
+				write, err := (func(context.Context, wrpc.IndexWriter) error)(nil), func(v []byte, w wrpc.ByteWriter) error {
+					_, err := wrpc.WriteByteList(v, w)
+					return err
+				}(*v.Ok, w)
 				if err != nil {
 					return nil, fmt.Errorf("failed to write `result::ok` payload: %w", err)
 				}
@@ -588,7 +580,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 					return nil, fmt.Errorf("failed to read borrowed resource handle length byte: %w", err)
 				}
 				if b < 0x80 {
-					if i == 4 && b > 1 {
+					if i == 4 && b > 0x0f {
 						return nil, errors.New("borrowed resource handle length overflows a 32-bit integer")
 					}
 					x = x | uint32(b)<<s
@@ -846,7 +838,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 					return nil, fmt.Errorf("failed to read borrowed resource handle length byte: %w", err)
 				}
 				if b < 0x80 {
-					if i == 4 && b > 1 {
+					if i == 4 && b > 0x0f {
 						return nil, errors.New("borrowed resource handle length overflows a 32-bit integer")
 					}
 					x = x | uint32(b)<<s
@@ -941,7 +933,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 				if b < 0x80 {
 					x = x | uint32(b)<<s
 					if x == 0 {
-						return nil, nil
+						return []byte{}, nil
 					}
 					slog.Debug("reading byte list contents", "len", x)
 					buf, err := wrpc.ReadBytes(r, x)
@@ -1088,7 +1080,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 					return nil, fmt.Errorf("failed to read borrowed resource handle length byte: %w", err)
 				}
 				if b < 0x80 {
-					if i == 4 && b > 1 {
+					if i == 4 && b > 0x0f {
 						return nil, errors.New("borrowed resource handle length overflows a 32-bit integer")
 					}
 					x = x | uint32(b)<<s
@@ -1285,7 +1277,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 					return nil, fmt.Errorf("failed to read borrowed resource handle length byte: %w", err)
 				}
 				if b < 0x80 {
-					if i == 4 && b > 1 {
+					if i == 4 && b > 0x0f {
 						return nil, errors.New("borrowed resource handle length overflows a 32-bit integer")
 					}
 					x = x | uint32(b)<<s
@@ -1497,7 +1489,7 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 					return nil, fmt.Errorf("failed to read borrowed resource handle length byte: %w", err)
 				}
 				if b < 0x80 {
-					if i == 4 && b > 1 {
+					if i == 4 && b > 0x0f {
 						return nil, errors.New("borrowed resource handle length overflows a 32-bit integer")
 					}
 					x = x | uint32(b)<<s
