@@ -10,8 +10,8 @@ import (
 )
 
 func Run(ctx context.Context, c wrpc.Invoker) error {
-	thing := must(to_test.NewThing(ctx, c, 42))
-	assertEqual(must(to_test.Foo(ctx, c, thing.Borrow())), 42+1+2)
+	thing := must(to_test.NewThing(ctx, c, 254))
+	assertEqual(must(to_test.Foo(ctx, c, thing.Borrow())), 254+1+2)
 	return nil
 }
 

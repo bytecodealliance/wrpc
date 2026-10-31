@@ -1238,7 +1238,7 @@ impl InterfaceGenerator<'_> {
             TypeDefKind::Record(ty) => {
                 self.print_read_record(ty, reader, path, &name.expect("record missing a name"));
             }
-            TypeDefKind::Resource => self.print_read_string(reader),
+            TypeDefKind::Resource => unreachable!(),
             TypeDefKind::Handle(Handle::Own(id)) => self.print_read_own(reader, *id),
             TypeDefKind::Handle(Handle::Borrow(id)) => self.print_read_borrow(reader, *id),
             TypeDefKind::Flags(_ty) => {
@@ -1912,13 +1912,16 @@ impl InterfaceGenerator<'_> {
     fn print_write_tyid(&mut self, id: TypeId, name: &str, writer: &str) {
         let ty = &self.resolve.types[id];
         match &ty.kind {
-            TypeDefKind::Handle(Handle::Own(_id)) => {
+            TypeDefKind::Handle(..) => {
+                let wrpc = self.deps.wrpc();
                 self.print_nil_write();
-                self.print_write_string(&format!("string({name})"), writer);
-            }
-            TypeDefKind::Handle(Handle::Borrow(_id)) => {
-                self.print_nil_write();
-                self.print_write_string(&format!("string({name})"), writer);
+                uwrite!(
+                    self.src,
+                    r#"func(v []byte, w {wrpc}.ByteWriter) error {{
+                _, err := {wrpc}.WriteByteList(v, w)
+                return err
+            }}({name}, {writer})"#,
+                );
             }
             TypeDefKind::Tuple(ty) => self.print_write_tuple(ty, name, writer),
             TypeDefKind::Option(ty) => self.print_write_option(ty, name, writer),
@@ -1927,6 +1930,7 @@ impl InterfaceGenerator<'_> {
             TypeDefKind::Future(ty) => self.print_write_future(ty, name, writer),
             TypeDefKind::Stream(ty) => self.print_write_stream(ty, name, writer),
             TypeDefKind::Type(ty) => self.print_write_ty(ty, name, writer),
+            TypeDefKind::Resource => unreachable!(),
             _ => {
                 if ty.name.is_some() {
                     uwrite!(self.src, "({name}).WriteToIndex({writer})");
@@ -1935,9 +1939,6 @@ impl InterfaceGenerator<'_> {
                 match &ty.kind {
                     TypeDefKind::Record(_) => {
                         panic!("unsupported anonymous type reference: record")
-                    }
-                    TypeDefKind::Resource => {
-                        panic!("unsupported anonymous type reference: resource")
                     }
                     TypeDefKind::Flags(_) => panic!("unsupported anonymous type reference: flags"),
                     TypeDefKind::Variant(_) => panic!("unsupported anonymous variant"),
