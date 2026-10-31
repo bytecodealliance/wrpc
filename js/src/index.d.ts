@@ -272,6 +272,26 @@ export class Outgoing {
 }
 
 /**
+ * The bounds of the inbound data a {@link Mux} buffers, each at least 1.
+ */
+export interface IncomingLimits {
+  /**
+   * The number of inbound data chunks buffered per sub-stream, 16 by default.
+   * Once a sub-stream's buffer is full, reading from the transport waits for it
+   * to be consumed, or for a sub-stream not yet declared, to be declared.
+   */
+  maxBufferedChunks?: number;
+  /** The maximum size of a buffered inbound data chunk, 1 MiB by default. */
+  maxChunkLength?: number;
+  /**
+   * The maximum number of sub-streams not yet declared, which data is buffered
+   * for, 64 by default. Once reached, reading from the transport waits for them
+   * to be declared, so a sub-stream must be declared by data sent before its own.
+   */
+  maxPendingSubStreams?: number;
+}
+
+/**
  * The framing multiplexer over a {@link Transport}. Inbound data is only
  * accepted for the sub-streams the decoded values expect: the root sub-stream
  * `[]`, and those declared with `seal` as each value carrying pending
@@ -285,7 +305,7 @@ export class Mux {
    * Aborts `transport` and throws a `TypeError` if it does not implement
    * `closeWrite`.
    */
-  constructor(transport: Transport);
+  constructor(transport: Transport, limits?: IncomingLimits);
   master: AsyncReader;
   /**
    * Resolves once the peer ended transmit and every frame it sent was routed,
@@ -347,6 +367,7 @@ export function invoke(
   paramTypes: Type[],
   args: InputValue[],
   resultTypes?: Type[],
+  limits?: IncomingLimits,
 ): Promise<{ results: Value[]; done: Promise<void>; finished: Promise<void> }>;
 
 export interface Invocation {
@@ -372,9 +393,10 @@ export interface Invocation {
 /**
  * Accept an invocation. Instance and function names longer than
  * `maxInstanceLength` and `maxNameLength` bytes, 1 KiB by default, are
- * rejected.
+ * rejected. The inbound data buffered is bounded by the {@link IncomingLimits}
+ * in `options`.
  */
 export function accept(
   transport: Transport,
-  options?: { maxInstanceLength?: number; maxNameLength?: number },
+  options?: { maxInstanceLength?: number; maxNameLength?: number } & IncomingLimits,
 ): Promise<Invocation>;

@@ -27,6 +27,7 @@ import {
 /** @typedef {import("./io.js").AsyncReader} AsyncReader */
 /** @typedef {import("./mux.js").Transport} Transport */
 /** @typedef {import("./mux.js").Outgoing} Outgoing */
+/** @typedef {import("./mux.js").IncomingLimits} IncomingLimits */
 
 // ----- encoding side --------------------------------------------------------
 
@@ -411,10 +412,19 @@ function finished(mux, decoded) {
  * @param {Type[]} paramTypes
  * @param {any[]} args
  * @param {Type[]} [resultTypes]
+ * @param {IncomingLimits} [limits] the bounds of the inbound data buffered
  * @returns {Promise<{ results: any[], done: Promise<void>, finished: Promise<void> }>}
  */
-export async function invoke(transport, instance, func, paramTypes, args, resultTypes = []) {
-  const mux = new Mux(transport);
+export async function invoke(
+  transport,
+  instance,
+  func,
+  paramTypes,
+  args,
+  resultTypes = [],
+  limits,
+) {
+  const mux = new Mux(transport, limits);
   const w = new Writer();
   /** @type {any[]} */
   const psink = [];
@@ -464,13 +474,17 @@ export async function invoke(transport, instance, func, paramTypes, args, result
  * peer sent has been decoded, reporting any failure after the parameters'
  * `done` too. If any I/O fails, the transport is aborted. Instance and function
  * names longer than `maxInstanceLength` and `maxNameLength` bytes, 1 KiB by
- * default, are rejected.
+ * default, are rejected. The inbound data buffered is bounded by the
+ * {@link IncomingLimits} in `options`.
  *
  * @param {Transport} transport
- * @param {{ maxInstanceLength?: number, maxNameLength?: number }} [options]
+ * @param {{ maxInstanceLength?: number, maxNameLength?: number } & IncomingLimits} [options]
  */
-export async function accept(transport, { maxInstanceLength = 1024, maxNameLength = 1024 } = {}) {
-  const mux = new Mux(transport);
+export async function accept(
+  transport,
+  { maxInstanceLength = 1024, maxNameLength = 1024, ...limits } = {},
+) {
+  const mux = new Mux(transport, limits);
   let instance;
   let func;
   try {
