@@ -446,10 +446,14 @@ func NewFrameStreamReader(ctx context.Context, r ByteReadCloser, paths ...Subscr
 					return errUnprocessed
 				}
 				slog.DebugContext(ctx, "reading frame")
-				path, depth, n, err := readFrameHeader(r, maxDepth)
+				depth, err := readFramePathLen(r)
 				if err == io.EOF {
 					return nil
 				}
+				if err != nil {
+					return err
+				}
+				path, n, err := readFramePath(r, depth, maxDepth)
 				if err != nil {
 					return err
 				}
