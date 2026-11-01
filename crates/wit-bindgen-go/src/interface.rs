@@ -295,6 +295,11 @@ impl InterfaceGenerator<'_> {
         if err != nil {{
             return 0, {fmt}.Errorf("failed to read s16 byte: %w", err)
         }}
+        if i == lenCeiling-1 {{
+            if rest := (b & 0x7f) >> 1; rest != 0 && rest != 0x7f>>1 {{
+                return 0, {errors}.New("s16 overflows a 16-bit integer")
+            }}
+        }}
         length++
 
         result |= (int16(b) & 0x7f) << shift
@@ -338,6 +343,11 @@ impl InterfaceGenerator<'_> {
         if err != nil {{
             return 0, {fmt}.Errorf("failed to read s32 byte: %w", err)
         }}
+        if i == lenCeiling-1 {{
+            if rest := (b & 0x7f) >> 3; rest != 0 && rest != 0x7f>>3 {{
+                return 0, {errors}.New("s32 overflows a 32-bit integer")
+            }}
+        }}
         length++
 
         result |= (int32(b) & 0x7f) << shift
@@ -380,6 +390,11 @@ impl InterfaceGenerator<'_> {
         b, err = r.ReadByte()
         if err != nil {{
             return 0, {fmt}.Errorf("failed to read s64 byte: %w", err)
+        }}
+        if i == lenCeiling-1 {{
+            if rest := b & 0x7f; rest != 0 && rest != 0x7f {{
+                return 0, {errors}.New("s64 overflows a 64-bit integer")
+            }}
         }}
         length++
 

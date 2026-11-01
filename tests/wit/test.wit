@@ -147,6 +147,7 @@ interface get-types {
 
     get-features: func() -> feature-flags;
     get-floats: func() -> floats;
+    get-signed: func() -> tuple<s16, s32, s64>;
 }
 
 world types {
