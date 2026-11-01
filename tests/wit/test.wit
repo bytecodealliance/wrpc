@@ -140,7 +140,13 @@ interface get-types {
         show-f,
     }
 
+    record floats {
+        a: f32,
+        b: f64,
+    }
+
     get-features: func() -> feature-flags;
+    get-floats: func() -> floats;
 }
 
 world types {

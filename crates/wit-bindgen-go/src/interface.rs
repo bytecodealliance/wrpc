@@ -1472,15 +1472,14 @@ impl InterfaceGenerator<'_> {
     }
 
     fn print_write_f32(&mut self, name: &str, writer: &str) {
-        let binary = self.deps.binary();
         let io = self.deps.io();
-        let math = self.deps.math();
         let slog = self.deps.slog();
+        let wrpc = self.deps.wrpc();
         uwrite!(
             self.src,
             r#"func(v float32, w {io}.Writer) (err error) {{
                 b := make([]byte, 4)
-                {binary}.LittleEndian.PutUint32(b, {math}.Float32bits(v))
+                {wrpc}.PutFloat32(b, v)
                 {slog}.Debug("writing f32")
                 _, err = w.Write(b)
                 return err
@@ -1489,15 +1488,14 @@ impl InterfaceGenerator<'_> {
     }
 
     fn print_write_f64(&mut self, name: &str, writer: &str) {
-        let binary = self.deps.binary();
         let io = self.deps.io();
-        let math = self.deps.math();
         let slog = self.deps.slog();
+        let wrpc = self.deps.wrpc();
         uwrite!(
             self.src,
             r#"func(v float64, w {io}.Writer) (err error) {{
                 b := make([]byte, 8)
-                {binary}.LittleEndian.PutUint64(b, {math}.Float64bits(v))
+                {wrpc}.PutFloat64(b, v)
                 {slog}.Debug("writing f64")
                 _, err = w.Write(b)
                 return err

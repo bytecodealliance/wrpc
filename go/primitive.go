@@ -34,20 +34,34 @@ func AppendUint64(buf []byte, x uint64) []byte {
 	return binary.AppendUvarint(buf, x)
 }
 
+func float32Bits(x float32) uint32 {
+	if math.IsNaN(float64(x)) {
+		return 0x7fc0_0000
+	}
+	return math.Float32bits(x)
+}
+
+func float64Bits(x float64) uint64 {
+	if math.IsNaN(x) {
+		return 0x7ff8_0000_0000_0000
+	}
+	return math.Float64bits(x)
+}
+
 func AppendFloat32(buf []byte, x float32) []byte {
-	return binary.LittleEndian.AppendUint32(buf, math.Float32bits(x))
+	return binary.LittleEndian.AppendUint32(buf, float32Bits(x))
 }
 
 func PutFloat32(buf []byte, x float32) {
-	binary.LittleEndian.PutUint32(buf, math.Float32bits(x))
+	binary.LittleEndian.PutUint32(buf, float32Bits(x))
 }
 
 func AppendFloat64(buf []byte, x float64) []byte {
-	return binary.LittleEndian.AppendUint64(buf, math.Float64bits(x))
+	return binary.LittleEndian.AppendUint64(buf, float64Bits(x))
 }
 
 func PutFloat64(buf []byte, x float64) {
-	binary.LittleEndian.PutUint64(buf, math.Float64bits(x))
+	binary.LittleEndian.PutUint64(buf, float64Bits(x))
 }
 
 func WriteUint8(v uint8, w ByteWriter) error {
