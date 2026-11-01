@@ -1,15 +1,17 @@
+use core::future::{pending, ready};
 use core::iter::zip;
 use core::mem;
 use core::ops::{BitOrAssign, Shl};
 use core::pin::Pin;
+use core::task::{Context, Poll};
 
 use std::collections::HashSet;
 
 use bytes::{BufMut as _, Bytes, BytesMut};
-use futures::TryStreamExt as _;
 use futures::stream::FuturesUnordered;
+use futures::{StreamExt as _, TryStreamExt as _};
 use tokio::io::{AsyncRead, AsyncReadExt as _};
-use tokio_util::codec::Encoder;
+use tokio_util::codec::{Decoder, Encoder, FramedRead};
 use tracing::{error, instrument, trace, warn};
 use uuid::Uuid;
 use wasm_tokio::cm::{AsyncReadValue as _, F32Codec, F64Codec};
@@ -19,9 +21,13 @@ use wasm_tokio::{
 };
 use wasmtime::bail;
 use wasmtime::component::types::{Case, Field};
-use wasmtime::component::{Accessor, ResourceType, Type, Val};
+use wasmtime::component::{
+    Accessor, ComponentType, Destination, FutureAny, FutureReader, Lift, Lower, ResourceType,
+    StreamAny, StreamProducer, StreamReader, StreamResult, Type, Val, VecBuffer,
+};
 use wasmtime::error::Context as _;
 use wasmtime::{AsContextMut, StoreContextMut};
+use wrpc_transport::Decode;
 use wrpc_transport::frame::{Incoming, Outgoing};
 
 use crate::{RemoteResource, ResourceTypes, WrpcView};
@@ -146,6 +152,277 @@ where
         .collect();
     while let Some(()) = futs.try_next().await? {}
     Ok(())
+}
+
+trait Payload: ComponentType + Lift + Lower + Send + Sync + Unpin + 'static {
+    fn from_val(v: Option<Val>) -> Option<Self>;
+}
+
+impl Payload for () {
+    fn from_val(v: Option<Val>) -> Option<Self> {
+        v.is_none().then_some(())
+    }
+}
+
+macro_rules! impl_payload {
+    ($($t:ty => $case:ident),+ $(,)?) => {
+        $(
+            impl Payload for $t {
+                fn from_val(v: Option<Val>) -> Option<Self> {
+                    if let Some(Val::$case(v)) = v {
+                        Some(v)
+                    } else {
+                        None
+                    }
+                }
+            }
+        )+
+    };
+}
+
+impl_payload!(
+    bool => Bool,
+    i8 => S8,
+    u8 => U8,
+    i16 => S16,
+    u16 => U16,
+    i32 => S32,
+    u32 => U32,
+    i64 => S64,
+    u64 => U64,
+    f32 => Float32,
+    f64 => Float64,
+    char => Char,
+    String => String,
+);
+
+macro_rules! with_payload {
+    ($ty:expr, $p:ident => $body:expr, $unsupported:expr) => {
+        match $ty {
+            None => {
+                type $p = ();
+                $body
+            }
+            Some(ref ty) => with_payload!(@some ty, $p => $body, $unsupported),
+        }
+    };
+    (@some $ty:expr, $p:ident => $body:expr, $unsupported:expr) => {
+        match $ty {
+            Type::Bool => {
+                type $p = bool;
+                $body
+            }
+            Type::S8 => {
+                type $p = i8;
+                $body
+            }
+            Type::U8 => {
+                type $p = u8;
+                $body
+            }
+            Type::S16 => {
+                type $p = i16;
+                $body
+            }
+            Type::U16 => {
+                type $p = u16;
+                $body
+            }
+            Type::S32 => {
+                type $p = i32;
+                $body
+            }
+            Type::U32 => {
+                type $p = u32;
+                $body
+            }
+            Type::S64 => {
+                type $p = i64;
+                $body
+            }
+            Type::U64 => {
+                type $p = u64;
+                $body
+            }
+            Type::Float32 => {
+                type $p = f32;
+                $body
+            }
+            Type::Float64 => {
+                type $p = f64;
+                $body
+            }
+            Type::Char => {
+                type $p = char;
+                $body
+            }
+            Type::String => {
+                type $p = String;
+                $body
+            }
+            _ => $unsupported,
+        }
+    };
+}
+
+async fn read_payload<P, T>(
+    store: &mut impl WithStore<Data = T>,
+    r: &mut Pin<&mut Incoming>,
+    resources: &ResourceTypes,
+    ty: Option<&Type>,
+    path: &[usize],
+) -> std::io::Result<P>
+where
+    P: Payload,
+    T: WrpcView + 'static,
+{
+    let v = if let Some(ty) = ty {
+        let mut v = Val::Bool(false);
+        Box::pin(read_value(store, r, resources, &mut v, ty, path)).await?;
+        Some(v)
+    } else {
+        None
+    };
+    P::from_val(v).ok_or_else(|| std::io::Error::other("payload value type mismatch"))
+}
+
+async fn read_future<P, T>(
+    store: &mut impl WithStore<Data = T>,
+    r: &mut Pin<&mut Incoming>,
+    resources: &ResourceTypes,
+    ty: Option<&Type>,
+    path: &[usize],
+) -> std::io::Result<FutureAny>
+where
+    P: Payload + Decode,
+    T: WrpcView + 'static,
+    std::io::Error: From<<P::Decoder as Decoder>::Error>,
+{
+    let fut = if r.read_option_status().await? {
+        let v = read_payload::<P, T>(store, r, resources, ty, path).await?;
+        store.with_store(|mut store| {
+            FutureReader::new(&mut store, ready(wasmtime::error::Ok(v)))
+                .and_then(|fut| fut.try_into_future_any(store))
+        })
+    } else {
+        let r = r.index(path).map_err(std::io::Error::other)?;
+        store.with_store(|mut store| {
+            FutureReader::new(&mut store, async move {
+                let mut rx = FramedRead::new(r, P::Decoder::default());
+                let v = rx.next().await.map(|v| v.map_err(std::io::Error::from));
+                let processed = rx.read_buffer().is_empty();
+                drop(rx);
+                match v {
+                    Some(Ok(v)) if processed => wasmtime::error::Ok(v),
+                    Some(Ok(..)) => {
+                        error!("received data after future value");
+                        pending().await
+                    }
+                    Some(Err(err)) => {
+                        error!(%err, "failed to receive future value");
+                        pending().await
+                    }
+                    None => {
+                        error!("future value missing");
+                        pending().await
+                    }
+                }
+            })
+            .and_then(|fut| fut.try_into_future_any(store))
+        })
+    };
+    fut.map_err(std::io::Error::other)
+}
+
+async fn read_stream<P, T>(
+    store: &mut impl WithStore<Data = T>,
+    r: &mut Pin<&mut Incoming>,
+    resources: &ResourceTypes,
+    ty: &Type,
+    path: &[usize],
+) -> std::io::Result<StreamAny>
+where
+    P: Payload + Decode<ListDecoder: Send>,
+    T: WrpcView + 'static,
+    std::io::Error: From<<P::ListDecoder as Decoder>::Error>,
+{
+    struct Producer<P: Decode>(Option<FramedRead<Incoming, P::ListDecoder>>);
+
+    impl<P, D> StreamProducer<D> for Producer<P>
+    where
+        P: Payload + Decode<ListDecoder: Send>,
+        std::io::Error: From<<P::ListDecoder as Decoder>::Error>,
+    {
+        type Item = P;
+        type Buffer = VecBuffer<P>;
+
+        fn poll_produce<'a>(
+            mut self: Pin<&mut Self>,
+            cx: &mut Context<'_>,
+            store: StoreContextMut<'a, D>,
+            mut dst: Destination<'a, P, VecBuffer<P>>,
+            finish: bool,
+        ) -> Poll<wasmtime::Result<StreamResult>> {
+            if dst.remaining(store) == Some(0) {
+                return Poll::Ready(Ok(StreamResult::Completed));
+            }
+            if let Some(rx) = &mut self.0 {
+                match rx.poll_next_unpin(cx) {
+                    Poll::Ready(Some(Ok(chunk)))
+                        if chunk.is_empty() && rx.read_buffer().is_empty() =>
+                    {
+                        self.0 = None;
+                        return Poll::Ready(Ok(StreamResult::Dropped));
+                    }
+                    Poll::Ready(Some(Ok(chunk))) if chunk.is_empty() => {
+                        error!("received data after stream end");
+                        self.0 = None;
+                    }
+                    Poll::Ready(Some(Ok(chunk))) => {
+                        dst.set_buffer(chunk.into());
+                        return Poll::Ready(Ok(StreamResult::Completed));
+                    }
+                    Poll::Ready(Some(Err(err))) => {
+                        error!(err = %std::io::Error::from(err), "failed to receive stream chunk");
+                        self.0 = None;
+                    }
+                    Poll::Ready(None) => {
+                        error!("stream end missing");
+                        self.0 = None;
+                    }
+                    Poll::Pending => {}
+                }
+            }
+            if finish {
+                Poll::Ready(Ok(StreamResult::Cancelled))
+            } else {
+                Poll::Pending
+            }
+        }
+    }
+
+    let stream = if r.read_option_status().await? {
+        let n = r.read_u32_leb128().await?;
+        let n = usize::try_from(n).unwrap_or(usize::MAX);
+        let mut vs = Vec::with_capacity(n.min(DEFAULT_MAX_INITIAL_CAPACITY / mem::size_of::<P>()));
+        for _ in 0..n {
+            let v = read_payload::<P, T>(store, r, resources, Some(ty), path).await?;
+            vs.push(v);
+        }
+        store.with_store(|mut store| {
+            StreamReader::new(&mut store, vs).and_then(|stream| stream.try_into_stream_any(store))
+        })
+    } else {
+        let rx = r.index(path).map_err(std::io::Error::other)?;
+        store.with_store(|mut store| {
+            StreamReader::new(
+                &mut store,
+                Producer::<P>(Some(FramedRead::new(rx, P::ListDecoder::default()))),
+            )
+            .and_then(|stream| stream.try_into_stream_any(store))
+        })
+    };
+    stream.map_err(std::io::Error::other)
 }
 
 impl<T> Encoder<&Val> for ValEncoder<'_, T>
@@ -975,9 +1252,40 @@ where
                 Ok(())
             }
         }
-        Type::Future(..) | Type::Stream(..) | Type::ErrorContext => Err(std::io::Error::new(
+        Type::Future(ty) => {
+            let payload = ty.ty();
+            let future = with_payload!(
+                payload,
+                P => read_future::<P, T>(store, r, resources, payload.as_ref(), path).await,
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::Unsupported,
+                    "`future` payload type not supported, only primitive types and `string` are",
+                ))
+            )?;
+            *val = Val::Future(future);
+            Ok(())
+        }
+        Type::Stream(ty) => {
+            let Some(payload) = ty.ty() else {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::Unsupported,
+                    "`stream` without a payload type not supported",
+                ));
+            };
+            let stream = with_payload!(
+                @some payload,
+                P => read_stream::<P, T>(store, r, resources, &payload, path).await,
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::Unsupported,
+                    "`stream` payload type not supported, only primitive types and `string` are",
+                ))
+            )?;
+            *val = Val::Stream(stream);
+            Ok(())
+        }
+        Type::ErrorContext => Err(std::io::Error::new(
             std::io::ErrorKind::Unsupported,
-            "async not supported",
+            "`error-context` not supported",
         )),
         Type::Map(..) => Err(std::io::Error::new(
             std::io::ErrorKind::Unsupported,
