@@ -8,10 +8,12 @@ use core::task::{Context, Poll};
 use std::collections::HashSet;
 
 use bytes::{BufMut as _, Bytes, BytesMut};
-use futures::stream::FuturesUnordered;
+use futures::stream::{self, FuturesUnordered};
 use futures::{StreamExt as _, TryStreamExt as _};
 use tokio::io::{AsyncRead, AsyncReadExt as _};
+use tokio::sync::{mpsc, oneshot};
 use tokio_util::codec::{Decoder, Encoder, FramedRead};
+use tokio_util::sync::PollSender;
 use tracing::{error, instrument, trace, warn};
 use uuid::Uuid;
 use wasm_tokio::cm::{AsyncReadValue as _, F32Codec, F64Codec};
@@ -22,15 +24,19 @@ use wasm_tokio::{
 use wasmtime::bail;
 use wasmtime::component::types::{Case, Field};
 use wasmtime::component::{
-    Accessor, ComponentType, Destination, FutureAny, FutureReader, Lift, Lower, ResourceType,
-    StreamAny, StreamProducer, StreamReader, StreamResult, Type, Val, VecBuffer,
+    Accessor, ComponentType, Destination, FutureAny, FutureConsumer, FutureReader, Lift, Lower,
+    ResourceType, Source, StreamAny, StreamConsumer, StreamProducer, StreamReader, StreamResult,
+    Type, Val, VecBuffer,
 };
 use wasmtime::error::Context as _;
 use wasmtime::{AsContextMut, StoreContextMut};
-use wrpc_transport::Decode;
 use wrpc_transport::frame::{Incoming, Outgoing};
+use wrpc_transport::{Decode, Encode, READ_CHUNK_SIZE, Sink as _};
 
 use crate::{RemoteResource, ResourceTypes, WrpcView};
+
+type DeferredFn =
+    Box<dyn FnOnce(Outgoing) -> Pin<Box<dyn Future<Output = wasmtime::Result<()>> + Send>> + Send>;
 
 /// Synchronous access to a store, which is either borrowed exclusively or reachable through an
 /// [`Accessor`].
@@ -63,12 +69,7 @@ pub struct ValEncoder<'a, T: 'static> {
     pub store: StoreContextMut<'a, T>,
     pub ty: &'a Type,
     pub resources: &'a ResourceTypes,
-    pub deferred: Option<
-        Box<
-            dyn FnOnce(Outgoing) -> Pin<Box<dyn Future<Output = wasmtime::Result<()>> + Send>>
-                + Send,
-        >,
-    >,
+    pub deferred: Option<DeferredFn>,
 }
 
 impl<T> ValEncoder<'_, T> {
@@ -134,14 +135,7 @@ fn flag_bits<'a, T: BitOrAssign + Shl<u8, Output = T> + From<u8>>(
 async fn write_deferred<I>(w: Outgoing, deferred: I) -> wasmtime::Result<()>
 where
     I: IntoIterator,
-    I::IntoIter: ExactSizeIterator<
-        Item = Option<
-            Box<
-                dyn FnOnce(Outgoing) -> Pin<Box<dyn Future<Output = wasmtime::Result<()>> + Send>>
-                    + Send,
-            >,
-        >,
-    >,
+    I::IntoIter: ExactSizeIterator<Item = Option<DeferredFn>>,
 {
     let mut futs: FuturesUnordered<_> = zip(0.., deferred)
         .filter_map(|(i, f)| f.map(|f| (w.index(&[i]), f)))
@@ -263,6 +257,99 @@ macro_rules! with_payload {
             _ => $unsupported,
         }
     };
+}
+
+fn encode_future<P, T>(
+    store: StoreContextMut<'_, T>,
+    future: FutureAny,
+    offset: usize,
+) -> wasmtime::Result<DeferredFn>
+where
+    P: Payload + Encode,
+    std::io::Error: From<<P::Encoder as Encoder<P>>::Error>,
+{
+    struct Consumer<P>(Option<oneshot::Sender<P>>);
+
+    impl<P: Payload, D> FutureConsumer<D> for Consumer<P> {
+        type Item = P;
+
+        fn poll_consume(
+            mut self: Pin<&mut Self>,
+            _: &mut Context<'_>,
+            store: StoreContextMut<'_, D>,
+            mut source: Source<'_, P>,
+            _: bool,
+        ) -> Poll<wasmtime::Result<()>> {
+            let mut v = None;
+            source.read(store, &mut v)?;
+            if let (Some(v), Some(tx)) = (v, self.0.take()) {
+                _ = tx.send(v);
+            }
+            Poll::Ready(Ok(()))
+        }
+    }
+
+    let (tx, rx) = oneshot::channel();
+    let future = future.try_into_future_reader::<P>()?;
+    future.pipe(store, Consumer(Some(tx)))?;
+    Ok(Box::new(move |w| {
+        Box::pin(async move {
+            let v = rx.await.context("future dropped without a value")?;
+            w.write_future(offset, ready(v)).await?;
+            Ok(())
+        })
+    }))
+}
+
+fn encode_stream<P, T>(
+    store: StoreContextMut<'_, T>,
+    stream: StreamAny,
+    offset: usize,
+) -> wasmtime::Result<DeferredFn>
+where
+    P: Payload + Encode,
+    std::io::Error: From<<P::Encoder as Encoder<P>>::Error>,
+{
+    struct Consumer<P: Send + 'static>(PollSender<Vec<P>>);
+
+    impl<P: Payload, D> StreamConsumer<D> for Consumer<P> {
+        type Item = P;
+
+        fn poll_consume(
+            mut self: Pin<&mut Self>,
+            cx: &mut Context<'_>,
+            mut store: StoreContextMut<'_, D>,
+            mut source: Source<'_, P>,
+            finish: bool,
+        ) -> Poll<wasmtime::Result<StreamResult>> {
+            match self.0.poll_reserve(cx) {
+                Poll::Ready(Ok(())) => {}
+                Poll::Ready(Err(..)) => return Poll::Ready(Ok(StreamResult::Dropped)),
+                Poll::Pending if finish => return Poll::Ready(Ok(StreamResult::Cancelled)),
+                Poll::Pending => return Poll::Pending,
+            }
+            let n = source.remaining(&mut store);
+            if n > 0 {
+                let mut buf = Vec::with_capacity(n.min(READ_CHUNK_SIZE));
+                source.read(&mut store, &mut buf)?;
+                if self.0.send_item(buf).is_err() {
+                    return Poll::Ready(Ok(StreamResult::Dropped));
+                }
+            }
+            Poll::Ready(Ok(StreamResult::Completed))
+        }
+    }
+
+    let (tx, mut rx) = mpsc::channel(1);
+    let stream = stream.try_into_stream_reader::<P>()?;
+    stream.pipe(store, Consumer(PollSender::new(tx)))?;
+    Ok(Box::new(move |w| {
+        Box::pin(async move {
+            w.write_stream(offset, stream::poll_fn(move |cx| rx.poll_recv(cx)))
+                .await?;
+            Ok(())
+        })
+    }))
 }
 
 async fn read_payload<P, T>(
@@ -859,8 +946,46 @@ where
                 }
             }
 
-            (_, Type::Future(..) | Type::Stream(..) | Type::ErrorContext) => {
-                bail!("async not supported")
+            (Val::Future(future), Type::Future(ty)) => {
+                let offset = dst.len();
+                let store = self.store.as_context_mut();
+                let deferred = with_payload!(
+                    ty.ty(),
+                    P => encode_future::<P, T>(store, future.clone(), offset),
+                    {
+                        future.clone().close(store)?;
+                        bail!("`future` payload type not supported, only primitive types and `string` are")
+                    }
+                )?;
+                dst.reserve(1);
+                dst.put_u8(0);
+                self.deferred = Some(deferred);
+                Ok(())
+            }
+            (Val::Stream(stream), Type::Stream(ty)) => {
+                let offset = dst.len();
+                let store = self.store.as_context_mut();
+                let deferred = match ty.ty() {
+                    Some(payload) => with_payload!(
+                        @some payload,
+                        P => encode_stream::<P, T>(store, stream.clone(), offset),
+                        {
+                            stream.clone().close(store)?;
+                            bail!("`stream` payload type not supported, only primitive types and `string` are")
+                        }
+                    ),
+                    None => {
+                        stream.clone().close(store)?;
+                        bail!("`stream` without a payload type not supported")
+                    }
+                }?;
+                dst.reserve(1);
+                dst.put_u8(0);
+                self.deferred = Some(deferred);
+                Ok(())
+            }
+            (_, Type::ErrorContext) => {
+                bail!("`error-context` not supported")
             }
             (_, Type::Map(..)) => {
                 bail!("maps not supported")
