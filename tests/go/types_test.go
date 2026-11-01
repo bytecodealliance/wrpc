@@ -4,6 +4,7 @@ package integration_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"math"
 	"testing"
@@ -73,5 +74,33 @@ func TestCanonicalNaN(t *testing.T) {
 		_, err := v.WriteToIndex(&b)
 		require.NoError(t, err)
 		assert.Equal(t, binary.LittleEndian.AppendUint64(binary.LittleEndian.AppendUint32(nil, math.Float32bits(v.A)), math.Float64bits(v.B)), b.Bytes(), "%v", v)
+	}
+}
+
+func TestSignedLEB128(t *testing.T) {
+	for _, tc := range []struct {
+		data string
+		want [3]int64
+		err  string
+	}{
+		{data: "\x80\x80\x7e" + "\x80\x80\x80\x80\x78" + "\x80\x80\x80\x80\x80\x80\x80\x80\x80\x7f", want: [3]int64{math.MinInt16, math.MinInt32, math.MinInt64}},
+		{data: "\xff\xff\x01" + "\xff\xff\xff\xff\x07" + "\xff\xff\xff\xff\xff\xff\xff\xff\xff\x00", want: [3]int64{math.MaxInt16, math.MaxInt32, math.MaxInt64}},
+		{data: "\x80\x80\x7a" + "\x00" + "\x00", err: "s16 overflows"},
+		{data: "\x00" + "\x80\x80\x80\x80\x08" + "\x00", err: "s32 overflows"},
+		{data: "\x00" + "\x00" + "\x80\x80\x80\x80\x80\x80\x80\x80\x80\x01", err: "s64 overflows"},
+	} {
+		ctx, client := serve(t, func(s wrpc.Server) (func() error, error) {
+			return s.Serve("wrpc-test:integration/get-types", "get-signed", func(ctx context.Context, w wrpc.IndexWriteCloser, r wrpc.IndexReadCloser) {
+				_, _ = w.Write([]byte(tc.data))
+				_ = w.Close()
+			})
+		})
+		a, b, c, err := get_types.GetSigned(ctx, client)
+		if tc.err != "" {
+			assert.ErrorContains(t, err, tc.err, "%q", tc.data)
+			continue
+		}
+		require.NoError(t, err)
+		assert.Equal(t, tc.want, [3]int64{int64(a), int64(b), c})
 	}
 }
