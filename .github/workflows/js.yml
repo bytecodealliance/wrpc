@@ -23,6 +23,26 @@ defaults:
     working-directory: ./js
 
 jobs:
+  build:
+    runs-on: ubuntu-24.04
+    env:
+      RUSTUP_TOOLCHAIN: stable
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - run: rustup toolchain install stable --profile minimal --target wasm32-wasip1
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - run: npm run build
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: wit-bindgen-wrpc-wasm
+          path: js/bin/wit-bindgen-wrpc.wasm
+          if-no-files-found: error
+
   test:
     runs-on: ubuntu-24.04
     steps:
@@ -40,9 +60,35 @@ jobs:
       - run: npm run check
       - run: npm test
 
+  bindgen:
+    needs: build
+    strategy:
+      matrix:
+        os:
+          - ubuntu-24.04
+          - windows-2025
+    runs-on: ${{ matrix.os }}
+    steps:
+      - run: git config --global core.autocrlf false
+        working-directory: .
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: wit-bindgen-wrpc-wasm
+          path: js/bin
+      - run: node bin/wit-bindgen-wrpc.js js --generate-all --check --out-dir ../examples/web/ui/bindings ../examples/web/wit
+      - run: node bin/wit-bindgen-wrpc.js js --generate-all --check --out-dir ${{ github.workspace }}/examples/web/ui/bindings ${{ github.workspace }}/examples/web/wit
+
   publish:
     name: publish to npm
-    needs: test
+    needs:
+      - test
+      - bindgen
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -54,12 +100,16 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: wit-bindgen-wrpc-wasm
+          path: js/bin
       - name: publish to npm
         env:
           IS_TAG: ${{ startsWith(github.ref, 'refs/tags/js/v') }}
         run: |
           pkgver=$(node -p 'require("./package.json").version')
-          args=(--provenance)
+          args=(--provenance --ignore-scripts)
           if [[ $pkgver == *"-"* ]]; then
             echo "version ${pkgver} is a pre-release"
             args+=(--tag next)

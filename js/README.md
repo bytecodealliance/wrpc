@@ -191,12 +191,14 @@ Deno.serve((request) => {
 ## Generating bindings
 
 `wit-bindgen-wrpc js` generates bindings for a WIT world: an ES module and its
-TypeScript declarations per interface, importing only this package. For
-example, for the `client` and `server` worlds of `examples/wit/hello`:
+TypeScript declarations per interface, importing only this package. This
+package ships `wit-bindgen-wrpc` compiled to WebAssembly, so `npx` runs it
+without any other installation. For example, for the `client` and `server`
+worlds of `examples/wit/hello`:
 
 ```sh
-wit-bindgen-wrpc js --world client --out-dir client examples/wit/hello
-wit-bindgen-wrpc js --world server --out-dir server examples/wit/hello
+npx -p @bytecodealliance/wrpc wit-bindgen-wrpc js --world client --out-dir client examples/wit/hello
+npx -p @bytecodealliance/wrpc wit-bindgen-wrpc js --world server --out-dir server examples/wit/hello
 ```
 
 The module of an imported interface, at `<namespace>/<package>/<interface>.js`,

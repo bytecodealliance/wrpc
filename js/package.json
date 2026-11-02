@@ -28,7 +28,11 @@
     },
     "./package.json": "./package.json"
   },
+  "bin": {
+    "wit-bindgen-wrpc": "./bin/wit-bindgen-wrpc.js"
+  },
   "files": [
+    "bin",
     "src"
   ],
   "sideEffects": false,
@@ -36,6 +40,8 @@
     "access": "public"
   },
   "scripts": {
+    "build": "node scripts/build.js",
+    "prepack": "npm run build",
     "test": "node --test",
     "check": "tsc && tsc -p tsconfig.node.json && tsc -p tsconfig.web.json",
     "lint": "cd .. && eslint -c js/eslint.config.js js tests/js tests/runtime examples/web/ui",
@@ -51,6 +57,6 @@
     "typescript": "^5.6.0"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=24"
   }
 }
