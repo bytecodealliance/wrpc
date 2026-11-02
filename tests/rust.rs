@@ -761,7 +761,6 @@ where
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 #[instrument(ret)]
 async fn rust_oneshot_no_params_open_outgoing() -> anyhow::Result<()> {
-    use tokio::io::AsyncReadExt as _;
     use wrpc::Invoke as _;
 
     let (clt, srv) = Oneshot::duplex(1024);
@@ -817,7 +816,7 @@ async fn rust_oneshot_raw() -> anyhow::Result<()> {
             assert_eq!(a, "test");
         },
         async {
-            use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+            use tokio::io::AsyncWriteExt as _;
             use tokio_util::codec::Encoder as _;
             use wrpc_transport::Encode as _;
 

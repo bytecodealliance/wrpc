@@ -2429,7 +2429,7 @@ mod tests {
         let mut dec = <Vec<Vec<String>> as Decode>::Decoder::default();
         let mut buf = BytesMut::from(&b"\x02\x01\x01a\x01\x01\xff"[..]);
         assert!(dec.decode(&mut buf).is_err());
-        let mut buf = BytesMut::from(concat!("\x01", concat!("\x01", "\x01b")).as_bytes());
+        let mut buf = BytesMut::from("\x01\x01\x01b");
         let v = dec.decode(&mut buf)?;
         assert_eq!(v, Some(vec![vec!["b".to_string()]]));
 
