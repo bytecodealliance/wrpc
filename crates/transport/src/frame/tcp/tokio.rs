@@ -10,9 +10,8 @@ use crate::frame::{Incoming, Outgoing, ReadHalf, WriteHalf, invoke};
 
 /// Splits a TCP stream into a [`ReadHalf`] and a [`WriteHalf`].
 ///
-/// If the [`WriteHalf`] is dropped before being shut down, the connection is aborted, signaling
-/// the peer that sending data failed, and reading from the [`ReadHalf`] fails, unless it already
-/// reached the end of the stream.
+/// If the [`WriteHalf`] is dropped before being shut down, the connection is aborted and reading
+/// from the [`ReadHalf`] fails, unless it already reached the end of the stream.
 #[must_use]
 pub fn split(stream: TcpStream) -> (ReadHalf<TcpStream>, WriteHalf<TcpStream>) {
     crate::frame::split::split(stream, |stream| _ = stream.set_zero_linger())

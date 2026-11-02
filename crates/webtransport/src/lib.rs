@@ -55,7 +55,7 @@ impl AsyncBufRead for RecvStream {
 }
 
 /// Send side of a WebTransport stream, which is reset with WebTransport application error code `0` once
-/// dropped before being shut down, signaling the peer that sending data failed
+/// dropped before being shut down
 #[derive(Debug)]
 pub struct SendStream {
     inner: web_transport_quinn::SendStream,
