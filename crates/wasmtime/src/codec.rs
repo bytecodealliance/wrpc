@@ -398,6 +398,9 @@ where
                 let mut rx = FramedRead::new(r, P::Decoder::default());
                 let v = rx.next().await.map(|v| v.map_err(std::io::Error::from));
                 let processed = rx.read_buffer().is_empty();
+                if !processed || !matches!(v, Some(Ok(..))) {
+                    rx.get_ref().reject();
+                }
                 drop(rx);
                 match v {
                     Some(Ok(v)) if processed => wasmtime::error::Ok(v),
@@ -463,6 +466,7 @@ where
                     }
                     Poll::Ready(Some(Ok(chunk))) if chunk.is_empty() => {
                         error!("received data after stream end");
+                        rx.get_ref().reject();
                         self.0 = None;
                     }
                     Poll::Ready(Some(Ok(chunk))) => {
@@ -471,10 +475,12 @@ where
                     }
                     Poll::Ready(Some(Err(err))) => {
                         error!(err = %std::io::Error::from(err), "failed to receive stream chunk");
+                        rx.get_ref().reject();
                         self.0 = None;
                     }
                     Poll::Ready(None) => {
                         error!("stream end missing");
+                        rx.get_ref().reject();
                         self.0 = None;
                     }
                     Poll::Pending => {}
@@ -1280,21 +1286,23 @@ where
                                         >::default(),
                                     ),
                                     |mut framed| async move {
-                                        match futures::StreamExt::next(&mut framed).await {
+                                        let res = match futures::StreamExt::next(&mut framed).await
+                                        {
                                             Some(Ok(chunk)) if chunk.is_empty() => {
                                                 if framed.read_buffer().is_empty() {
-                                                    Ok(None)
-                                                } else {
-                                                    Err(std::io::Error::new(
-                                                        std::io::ErrorKind::InvalidData,
-                                                        "received data after stream end",
-                                                    ))
+                                                    return Ok(None);
                                                 }
+                                                Err(std::io::Error::new(
+                                                    std::io::ErrorKind::InvalidData,
+                                                    "received data after stream end",
+                                                ))
                                             }
-                                            Some(Ok(chunk)) => Ok(Some((chunk, framed))),
+                                            Some(Ok(chunk)) => return Ok(Some((chunk, framed))),
                                             Some(Err(err)) => Err(err),
                                             None => Err(std::io::ErrorKind::UnexpectedEof.into()),
-                                        }
+                                        };
+                                        framed.get_ref().reject();
+                                        res
                                     },
                                 )),
                             ))

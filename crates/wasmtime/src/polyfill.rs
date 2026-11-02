@@ -206,6 +206,7 @@ async fn invoke(
         for (i, (v, ref ty)) in zip(results, results_ty).enumerate() {
             read_value(&mut *store, &mut incoming, resources, v, ty, &[i])
                 .await
+                .inspect_err(|_| incoming.reject())
                 .with_context(|| format!("failed to decode return value {i}"))?;
         }
         wasmtime::error::Ok(())

@@ -281,6 +281,7 @@ where
     for (i, (v, ty)) in zip(&mut params, params_ty).enumerate() {
         read_value(&mut store, &mut rx, resources, v, ty, &[i])
             .await
+            .inspect_err(|_| rx.reject())
             .with_context(|| format!("failed to decode parameter value {i}"))
             .map_err(CallError::Decode)?;
     }
