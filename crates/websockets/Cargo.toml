@@ -40,5 +40,6 @@ wrpc-transport = { workspace = true }
 anyhow = { workspace = true, features = ["std"] }
 test-log = { workspace = true, features = ["color", "log", "trace"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tokio-util = { workspace = true, features = ["codec"] }
 tracing = { workspace = true }
 wrpc-test = { workspace = true, features = ["websockets"] }
