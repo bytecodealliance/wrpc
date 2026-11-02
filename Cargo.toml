@@ -111,7 +111,7 @@ criterion = { workspace = true, features = [
     "plotters",
     "rayon",
 ] }
-futures = { workspace = true, features = ["async-await", "executor"] }
+futures = { workspace = true, features = ["async-await"] }
 http = { workspace = true }
 http-body-util = { workspace = true }
 hyper = { workspace = true, features = ["client", "http1", "http2", "server"] }

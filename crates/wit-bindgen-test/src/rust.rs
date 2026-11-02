@@ -141,7 +141,7 @@ path = "lib.rs"
 wit-bindgen-wrpc = {{ {wit_bindgen_dep} }}
 wrpc-transport = {{ {transport_dep}, features = ["net"] }}
 tokio = {{ version = "1", features = ["macros", "rt-multi-thread", "net", "sync", "io-util", "time"] }}
-futures = "0.3"
+futures = {{ version = "0.3", default-features = false, features = ["std", "async-await"] }}
 anyhow = "1"
 serde = {{ version = "1", features = ["derive"] }}
 serde_json = "1"
