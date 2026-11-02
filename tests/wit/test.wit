@@ -83,6 +83,16 @@ world sync-server {
         f: func(x: string) -> u32;
         foo: func(x: string);
     }
+
+    export resources;
+
+    export strange: interface {
+        use resources.{foo};
+
+        bar: func(v: borrow<foo>) -> u64;
+    }
+
+    export ping: func() -> string;
 }
 
 world sync-client {
@@ -92,6 +102,16 @@ world sync-client {
         f: func(x: string) -> u32;
         foo: func(x: string);
     }
+
+    import resources;
+
+    import strange: interface {
+        use resources.{foo};
+
+        bar: func(v: borrow<foo>) -> u64;
+    }
+
+    import ping: func() -> string;
 }
 
 world async-server {
@@ -100,32 +120,4 @@ world async-server {
 
 world async-client {
     import %async;
-}
-
-world resources-server {
-    export resources;
-
-    export strange: interface {
-        use resources.{foo};
-
-        bar: func(v: borrow<foo>) -> u64;
-    }
-}
-
-world resources-client {
-    import resources;
-
-    import strange: interface {
-        use resources.{foo};
-
-        bar: func(v: borrow<foo>) -> u64;
-    }
-}
-
-world root-server {
-    export ping: func() -> string;
-}
-
-world root-client {
-    import ping: func() -> string;
 }
