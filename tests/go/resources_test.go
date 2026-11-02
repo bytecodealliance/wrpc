@@ -16,7 +16,8 @@ import (
 
 func TestResources(t *testing.T) {
 	ctx, client := serve(t, func(s wrpc.Server) (func() error, error) {
-		return resources_server.Serve(s, &integration.ResourcesHandler{}, integration.ResourcesStrangeHandler{})
+		h := &integration.ResourcesHandler{}
+		return resources_server.Serve(s, h, integration.ResourcesStrangeHandler{Resources: h})
 	})
 
 	foo, err := resources.NewFoo(ctx, client)
@@ -37,6 +38,9 @@ func TestResources(t *testing.T) {
 	v, err = resources.Foo_Foo(ctx, client, foo)
 	require.NoError(t, err)
 	assert.Equal(t, "foo", v)
+
+	_, err = resources.Foo_Bar(ctx, client, foo.Borrow())
+	assert.Error(t, err)
 
 	a, err := resources.NewCounter(ctx, client, 1)
 	require.NoError(t, err)
