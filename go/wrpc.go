@@ -1,3 +1,6 @@
+// Package wrpc implements wRPC for Go.
+//
+// This package is not ready for production use.
 package wrpc
 
 import (

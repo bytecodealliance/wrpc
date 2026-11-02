@@ -1,3 +1,6 @@
+// Package wrpctcp implements the wRPC TCP transport for Go.
+//
+// This package is not ready for production use.
 package wrpctcp
 
 import (

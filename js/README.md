@@ -1,5 +1,7 @@
 # `@bytecodealliance/wrpc`
 
+> **Warning:** this package is not ready for production use.
+
 A [wRPC](https://github.com/bytecodealliance/wrpc) client and server for JavaScript: a
 transport-agnostic, component-native implementation of the wRPC wire format and
 its mandatory framing. It encodes and decodes [component model] values against a
