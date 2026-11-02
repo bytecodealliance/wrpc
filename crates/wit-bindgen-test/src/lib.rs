@@ -37,7 +37,11 @@ mod rust;
 ///   recursively to find `test.wit` files.
 ///
 /// * The `test.wit` file must have a `runner` world and a `test` world. The
-///   "runner" should import interfaces that are exported by "test".
+///   "runner" should import interfaces that are exported by "test". A
+///   `//@ dependencies = ['a', 'b']` comment replaces the `test` world with
+///   the listed worlds, whose source files are named after them (`a*.*`,
+///   `b*.*`). The runner's and each dependency's imports are routed to the
+///   nearest following dependency exporting them.
 ///
 /// * Adjacent to `test.wit` should be a number of `runner*.*` files. There is
 ///   one runner per source language, for example `runner.rs` and `runner.c`.
@@ -162,7 +166,7 @@ struct Bindgen {
     wit_config: config::WitConfig,
 }
 
-#[derive(PartialEq)]
+#[derive(Clone, Copy, PartialEq)]
 enum Kind {
     Runner,
     Test,
@@ -293,31 +297,17 @@ impl Runner<'_> {
         let wit_config: config::WitConfig = config::parse_test_config(&wit_contents, "//@")
             .context("failed to parse WIT test config")?;
 
-        let runner_world = wit_config.runner_world().to_string();
-        // Upstream composes a runner against many dependency worlds; wRPC links
-        // exactly one `runner` against one `test` world over the transport, so
-        // only a single dependency world is supported here.
-        let test_world = match wit_config.dependency_worlds().as_slice() {
-            [world] => world.clone(),
-            worlds => bail!(
-                "wRPC runtime tests support exactly one `test` world, found {}: {worlds:?}",
-                worlds.len()
-            ),
-        };
-        resolve
-            .select_world(&[pkg], Some(runner_world.as_str()))
-            .with_context(|| {
-                format!("failed to find expected `{runner_world}` world to generate bindings")
+        let mut worlds = vec![(wit_config.runner_world().to_string(), Kind::Runner)];
+        for world in wit_config.dependency_worlds() {
+            worlds.push((world, Kind::Test));
+        }
+        for (world, ..) in &worlds {
+            resolve.select_world(&[pkg], Some(world)).with_context(|| {
+                format!("failed to find expected `{world}` world to generate bindings")
             })?;
-        resolve
-            .select_world(&[pkg], Some(test_world.as_str()))
-            .with_context(|| {
-                format!("failed to find expected `{test_world}` world to generate bindings")
-            })?;
+        }
 
         let mut components = Vec::new();
-        let mut any_runner = false;
-        let mut any_test = false;
 
         for entry in dir.read_dir().context("failed to read test directory")? {
             let entry = entry.context("failed to read test directory entry")?;
@@ -326,39 +316,36 @@ impl Runner<'_> {
             let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
                 continue;
             };
-            let kind = if name.starts_with("runner") {
-                any_runner = true;
-                Kind::Runner
-            } else if name != "test.wit" && name.starts_with("test") {
-                any_test = true;
-                Kind::Test
-            } else {
+            if name == "test.wit" {
+                continue;
+            }
+            let Some((world, kind)) = worlds
+                .iter()
+                .filter(|(world, ..)| name.starts_with(world))
+                .max_by_key(|(world, ..)| world.len())
+            else {
                 continue;
             };
 
             let bindgen = Bindgen {
                 args: Vec::new(),
                 wit_config: wit_config.clone(),
-                world: match kind {
-                    Kind::Runner => runner_world.clone(),
-                    Kind::Test => test_world.clone(),
-                },
+                world: world.clone(),
                 // Point at the test directory rather than `test.wit` so the
                 // bindings generator resolves a sibling `deps/` directory.
                 wit_path: dir.to_path_buf(),
             };
 
             let component = self
-                .parse_component(&path, kind, bindgen)
+                .parse_component(&path, *kind, bindgen)
                 .with_context(|| format!("failed to parse component source file {path:?}"))?;
             components.push(component);
         }
 
-        if !any_runner {
-            bail!("no `runner*` test files found in test directory");
-        }
-        if !any_test {
-            bail!("no `test*` test files found in test directory");
+        for (world, ..) in &worlds {
+            if !components.iter().any(|c| c.bindgen.world == *world) {
+                bail!("no `{world}*` test files found in test directory");
+            }
         }
 
         Ok(components)
@@ -630,19 +617,45 @@ impl Runner<'_> {
         let mut compiled_components = HashMap::new();
         for (test, component, path) in compilations {
             let list = compiled_components.entry(&test.name).or_insert(Vec::new());
-            list.push((component, path));
+            list.push((*component, path));
         }
 
         let mut to_run = Vec::new();
         for (test, components) in compiled_components.iter() {
+            let TestKind::Runtime(all) = &tests[test.as_str()].kind else {
+                unreachable!()
+            };
+            let worlds = all
+                .iter()
+                .find(|c| c.kind == Kind::Runner)
+                .map(|c| c.bindgen.wit_config.dependency_worlds())
+                .unwrap_or_default();
             for a in components.iter().filter(|(c, _)| c.kind == Kind::Runner) {
                 // Unlike upstream's component composition, wRPC links the runner
-                // and test into one host binary, so they must share a language.
-                for b in components
-                    .iter()
-                    .filter(|(c, _)| c.kind == Kind::Test && c.language == a.0.language)
-                {
-                    to_run.push((test, a, b));
+                // and its dependencies into one host binary, so they must share
+                // a language.
+                let mut deps = vec![Vec::default()];
+                for world in &worlds {
+                    deps = deps
+                        .into_iter()
+                        .flat_map(|deps| {
+                            components
+                                .iter()
+                                .filter(|(c, ..)| {
+                                    c.kind == Kind::Test
+                                        && c.bindgen.world == *world
+                                        && c.language == a.0.language
+                                })
+                                .map(move |b| {
+                                    let mut deps = deps.clone();
+                                    deps.push(b);
+                                    deps
+                                })
+                        })
+                        .collect();
+                }
+                for deps in deps {
+                    to_run.push((test, a, deps));
                 }
             }
         }
@@ -651,30 +664,35 @@ impl Runner<'_> {
 
         let results = to_run
             .par_iter()
-            .map(|(case_name, (runner, runner_path), (test, test_path))| {
+            .map(|(case_name, (runner, runner_path), deps)| {
                 let case = &tests[case_name.as_str()];
                 let result = self
-                    .runtime_test(case, runner, runner_path, test, test_path)
+                    .runtime_test(case, runner, runner_path, deps)
                     .with_context(|| {
                         format!(
-                            "failed to run `{}` with runner `{}` and test `{}`",
-                            case.name, runner.language, test.language,
+                            "failed to run `{}` with runner `{}`",
+                            case.name,
+                            runner.path.display(),
                         )
                     });
                 self.update_status(&result, false);
-                (result, case_name, runner, runner_path, test, test_path)
+                (result, case_name, runner, runner_path, deps)
             })
             .collect::<Vec<_>>();
 
         println!("");
 
         self.render_errors(results.into_iter().map(
-            |(result, case_name, runner, runner_path, test, test_path)| {
-                StepResult::new(case_name, result)
+            |(result, case_name, runner, runner_path, deps)| {
+                let mut step = StepResult::new(case_name, result)
                     .metadata("runner", runner.path.display())
-                    .metadata("test", test.path.display())
-                    .metadata("compiled runner", runner_path.display())
-                    .metadata("compiled test", test_path.display())
+                    .metadata("compiled runner", runner_path.display());
+                for (test, test_path) in deps {
+                    step = step
+                        .metadata("test", test.path.display())
+                        .metadata("compiled test", test_path.display());
+                }
+                step
             },
         ));
 
@@ -702,23 +720,26 @@ impl Runner<'_> {
 
     /// Executes a single test case.
     ///
-    /// Unlike upstream — which composes a `runner` and `test` guest component
-    /// and runs them in a component runtime — wRPC links the `runner` (a wRPC
-    /// client) and `test` (a wRPC server) into a single host binary connected
-    /// over an in-process TCP transport, and runs it to completion.
+    /// Unlike upstream — which composes a `runner` and `test` guest components
+    /// with WAC and runs them in a component runtime — wRPC links the `runner`
+    /// (a wRPC client) and the dependency worlds (wRPC servers) into a single
+    /// host binary connected over in-process TCP transports, and runs it to
+    /// completion. Dependencies are chained in the order listed: each
+    /// component's imports are routed to the nearest following dependency
+    /// exporting them.
     fn runtime_test(
         &self,
         case: &Test,
         runner: &Component,
         runner_bindings: &Path,
-        test: &Component,
-        test_bindings: &Path,
+        deps: &[&(&Component, PathBuf)],
     ) -> Result<()> {
         match runner.language {
-            Language::Rust => {
-                self.rust_runtime_test(case, runner, runner_bindings, test, test_bindings)
-            }
-            Language::Go => self.go_runtime_test(case, runner, test),
+            Language::Rust => self.rust_runtime_test(case, runner, runner_bindings, deps),
+            Language::Go => match deps {
+                [(test, ..)] => self.go_runtime_test(case, runner, test),
+                _ => bail!("Go runtime tests support exactly one `test` world"),
+            },
         }
     }
 

@@ -222,74 +222,161 @@ enum Edition {
     E2024,
 }
 
-/// The fixed driver linking a `client` (the `runner` world) and a `server` (the
-/// `test` world) into one binary, connected over an in-process TCP transport.
+/// The driver linking a `client` (the `runner` world) and its dependencies
+/// (`server` for the first, then each named after its world) into one binary.
+/// Each dependency is served over its own in-process TCP transport and receives
+/// a client routing its imports to the following dependencies as its context.
 const DRIVER: &str = r##"#![allow(warnings)]
 
-pub mod server {
-    include!(env!("WRPC_SERVER_BINDINGS"));
-    include!(env!("WRPC_SERVER_SRC"));
-}
+use core::future::Future;
+use core::net::{Ipv6Addr, SocketAddr};
+use core::time::Duration;
 
-pub mod client {
-    include!(env!("WRPC_CLIENT_BINDINGS"));
-    include!(env!("WRPC_CLIENT_SRC"));
-}
+use std::sync::{Arc, Mutex};
 
-#[tokio::main(flavor = "multi_thread")]
-async fn main() -> anyhow::Result<()> {
-    use core::net::Ipv6Addr;
-    use core::time::Duration;
-    use std::sync::Arc;
+use anyhow::bail;
+use futures::{Stream, StreamExt as _, stream};
+use tokio::io::BufReader;
+use tokio::net::TcpListener;
+use wit_bindgen_wrpc::bytes::Bytes;
+use wrpc_transport::frame::{Incoming, Outgoing, Server, tcp};
+use wrpc_transport::{Invoke, Serve};
 
-    use futures::{stream, StreamExt as _};
-    use tokio::io::BufReader;
-    use wrpc_transport::frame::{tcp, Server};
+{modules}
 
-    let lis = tokio::net::TcpListener::bind((Ipv6Addr::LOCALHOST, 0))
-        .await
-        .expect("failed to start TCP listener");
-    let addr = lis.local_addr().expect("failed to get server address");
+struct Router(
+    Vec<(
+        Vec<(String, String)>,
+        tcp::Client<SocketAddr>,
+    )>,
+);
 
-    let srv = Arc::new(Server::default());
+impl Invoke for Router {
+    type Context = ();
 
-    // Register the `server`'s exported handlers, then serve them forever in
-    // the background.
-    let invocations = server::serve(srv.as_ref(), server::Component)
-        .await
-        .expect("failed to serve `test` world exports");
-    tokio::spawn(async move {
-        let mut invocations = stream::select_all(invocations.into_iter().map(
-            |(instance, name, invocations)| invocations.map(move |res| (instance, name, res)),
-        ));
-        while let Some((instance, name, invocation)) = invocations.next().await {
-            invocation
-                .unwrap_or_else(|err| panic!("failed to accept `{instance}#{name}` invocation: {err:?}"))
-                .await
-                .expect("failed to serve invocation");
-        }
-    });
-
-    // Accept connections forever in the background. Each client invocation opens
-    // a new connection.
+    async fn invoke<P>(
+        &self,
+        cx: (),
+        instance: &str,
+        func: &str,
+        params: Bytes,
+        paths: impl AsRef<[P]> + Send,
+    ) -> anyhow::Result<(Outgoing, Incoming)>
+    where
+        P: AsRef<[Option<usize>]> + Send + Sync,
     {
-        let srv = Arc::clone(&srv);
+        let Some((.., clt)) = self
+            .0
+            .iter()
+            .find(|(names, ..)| names.iter().any(|(i, f)| *i == instance && *f == func))
+        else {
+            bail!("no component exports `{instance}#{func}`")
+        };
+        clt.invoke(cx, instance, func, params, paths).await
+    }
+}
+
+struct Recorder<'a, T>(&'a T, Mutex<Vec<(String, String)>>);
+
+impl<'a, T: Serve> Serve for Recorder<'a, T> {
+    type Context = T::Context;
+
+    fn serve(
+        &self,
+        instance: &str,
+        func: &str,
+        paths: Arc<[Box<[Option<usize>]>]>,
+    ) -> impl Future<
+        Output = anyhow::Result<
+            impl Stream<
+                Item = anyhow::Result<(
+                    Self::Context,
+                    Outgoing,
+                    Incoming,
+                )>,
+            > + Send
+            + 'static
+            + use<'a, T>,
+        >,
+    > + Send {
+        self.1
+            .lock()
+            .unwrap()
+            .push((instance.to_string(), func.to_string()));
+        self.0.serve(instance, func, paths)
+    }
+}
+
+macro_rules! serve {
+    ($routes:ident, $component:ident) => {{
+        let lis = TcpListener::bind((Ipv6Addr::LOCALHOST, 0))
+            .await
+            .expect("failed to start TCP listener");
+        let addr = lis.local_addr().expect("failed to get server address");
+
+        let srv = Arc::new(Server::default());
+
+        // Register the exported handlers, then serve each invocation
+        // concurrently in the background.
+        let recorder = Recorder(srv.as_ref(), Default::default());
+        let invocations = $component::serve(&recorder, $component::Component)
+            .await
+            .expect(concat!("failed to serve `", stringify!($component), "` exports"));
+        let names = recorder.1.into_inner().unwrap();
+        tokio::spawn(async move {
+            let mut invocations = stream::select_all(invocations.into_iter().map(
+                |(instance, name, invocations)| {
+                    invocations.map(move |res| (instance, name, res))
+                },
+            ));
+            while let Some((instance, name, invocation)) =
+                invocations.next().await
+            {
+                let invocation = invocation.unwrap_or_else(|err| {
+                    panic!("failed to accept `{instance}#{name}` invocation: {err:?}")
+                });
+                tokio::spawn(async move {
+                    if let Err(err) = invocation.await {
+                        eprintln!("failed to serve `{instance}#{name}` invocation: {err:?}");
+                    }
+                });
+            }
+        });
+
+        // Accept connections forever in the background. Each client invocation
+        // opens a new connection.
+        let router = Arc::new(Router($routes.clone()));
         tokio::spawn(async move {
             loop {
                 let (stream, _) = lis.accept().await.expect("failed to accept connection");
                 let (rx, tx) = tcp::split(stream);
                 let srv = Arc::clone(&srv);
+                let router = Arc::clone(&router);
                 tokio::spawn(async move {
-                    srv.accept((), tx, BufReader::new(rx))
-                        .await
-                        .expect("failed to accept connection");
+                    if let Err(err) = srv.accept(router, tx, BufReader::new(rx)).await {
+                        eprintln!("failed to accept connection: {err}");
+                    }
                 });
             }
         });
-    }
+        $routes.insert(0, (names, tcp::Client::from(addr)));
+    }};
+}
+
+#[tokio::main(flavor = "multi_thread")]
+async fn main() -> anyhow::Result<()> {
+    // Fail the test on any panic, including in handlers running in spawned tasks.
+    let hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        hook(info);
+        std::process::abort();
+    }));
+
+    let mut routes = Vec::default();
+    {serve}
 
     // Run the `client` to completion.
-    let clt = tcp::Client::from(addr);
+    let clt = Router(routes);
     tokio::time::timeout(Duration::from_secs(60), client::run(&clt))
         .await
         .expect("runtime test timed out")?;
@@ -326,26 +413,54 @@ impl Runner<'_> {
     }
 
     /// Builds and runs a single Rust runtime test by linking the `runner` and
-    /// `test` into one binary connected over an in-process TCP transport.
+    /// its dependencies into one binary connected over in-process TCP
+    /// transports.
     pub(crate) fn rust_runtime_test(
         &self,
         case: &Test,
         runner: &Component,
         runner_bindings: &std::path::Path,
-        tst: &Component,
-        test_bindings: &std::path::Path,
+        deps: &[&(&Component, PathBuf)],
     ) -> Result<()> {
+        let mut name = runner.name.clone();
+        let mut components = vec![("client".to_string(), runner, runner_bindings)];
+        for (i, (dep, bindings)) in deps.iter().enumerate() {
+            name.push('-');
+            name.push_str(&dep.name);
+            let module = if i == 0 {
+                "server".to_string()
+            } else {
+                dep.bindgen.world.to_snake_case()
+            };
+            components.push((module, *dep, bindings.as_path()));
+        }
         let artifacts_dir = env::current_dir()?
             .join(&self.opts.artifacts)
             .join(&case.name)
-            .join(format!("{}-{}", runner.name, tst.name));
+            .join(name);
 
-        let runner_rs =
-            runner_bindings.join(format!("{}.rs", runner.bindgen.world.to_snake_case()));
-        let test_rs = test_bindings.join(format!("{}.rs", tst.bindgen.world.to_snake_case()));
+        let mut modules = String::default();
+        for (module, component, bindings) in &components {
+            let bindings = bindings.join(format!("{}.rs", component.bindgen.world.to_snake_case()));
+            let src = component.path.canonicalize()?;
+            modules.push_str(&format!(
+                "pub mod {module} {{\n    include!({bindings:?});\n    include!({src:?});\n}}\n\n",
+            ));
+        }
+        let serve = components[1..]
+            .iter()
+            .rev()
+            .map(|(module, ..)| format!("serve!(routes, {module});"))
+            .collect::<Vec<_>>()
+            .join("\n    ");
 
         let driver = artifacts_dir.join("driver.rs");
-        super::write_if_different(&driver, DRIVER)?;
+        super::write_if_different(
+            &driver,
+            DRIVER
+                .replace("{modules}", modules.trim_end())
+                .replace("{serve}", &serve),
+        )?;
 
         let bin = artifacts_dir.join("driver");
         let mut cmd = self.rustc(Edition::E2021);
@@ -353,10 +468,6 @@ impl Runner<'_> {
             .arg("--crate-type=bin")
             .arg("-o")
             .arg(&bin)
-            .env("WRPC_SERVER_BINDINGS", &test_rs)
-            .env("WRPC_CLIENT_BINDINGS", &runner_rs)
-            .env("WRPC_SERVER_SRC", tst.path.canonicalize()?)
-            .env("WRPC_CLIENT_SRC", runner.path.canonicalize()?)
             // Set so a `wit_bindgen_wrpc::generate!` embedded in a runner/test
             // source (e.g. the `with` tests' `mod other`) doesn't panic looking
             // for the manifest dir.
