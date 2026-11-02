@@ -10,10 +10,11 @@ import { fromWebStreams } from "./mux.js";
 
 /**
  * A client {@link Transport} sending a `POST` request to `input` with `fetch`,
- * whose response must have a `2xx` status. The other `options` are passed to
- * `fetch`. The request body is streamed, unless `buffer` is set: then it is
- * sent once the client has ended transmit, for runtimes which cannot stream
- * request bodies.
+ * whose response must have a `2xx` status, or the invocation fails with an
+ * error carrying the status and the first 4 KiB of the response body. The
+ * other `options` are passed to `fetch`. The request body is streamed, unless
+ * `buffer` is set: then it is sent once the client has ended transmit, for
+ * runtimes which cannot stream request bodies.
  * @param {Parameters<typeof fetch>[0]} input
  * @param {FetchOptions} [options]
  * @returns {Transport}
@@ -38,8 +39,8 @@ export function fromFetch(input, { fetch = globalThis.fetch, buffer = false, ...
     })
     .then(async (res) => {
       if (!res.ok) {
-        await res.body?.cancel().catch(() => {});
-        throw new Error(`HTTP request failed with status ${res.status}`);
+        const text = res.body ? await readPrefix(res.body, 4096) : "";
+        throw new Error(`HTTP request failed with status ${res.status}${text ? `: ${text}` : ""}`);
       }
       return (res.body ?? new Blob([]).stream()).getReader();
     });
@@ -73,6 +74,27 @@ export function fromFetch(input, { fetch = globalThis.fetch, buffer = false, ...
     },
     abort,
   };
+}
+
+/**
+ * Reads at most `limit` bytes of `body` as UTF-8 text and cancels it.
+ * @param {ReadableStream<Uint8Array>} body
+ * @param {number} limit
+ * @returns {Promise<string>}
+ */
+async function readPrefix(body, limit) {
+  const reader = body.getReader();
+  const buf = new Uint8Array(limit);
+  let n = 0;
+  while (n < limit) {
+    const r = await reader.read().catch(() => null);
+    if (!r || r.done) break;
+    const k = Math.min(r.value.length, limit - n);
+    buf.set(r.value.subarray(0, k), n);
+    n += k;
+  }
+  reader.cancel().catch(() => {});
+  return new TextDecoder().decode(buf.subarray(0, n));
 }
 
 /**

@@ -41,9 +41,15 @@ test("values echo over HTTP", async () => {
 });
 
 test("a response status other than 2xx fails the invocation", async () => {
-  /** @type {typeof globalThis.fetch} */
-  const fetch = async () => new Response("nope", { status: 404 });
-  await assert.rejects(invoke(fromFetch(ADDR, { fetch }), "i", "f", [], [], [t.u8]), {
-    message: "HTTP request failed with status 404",
-  });
+  for (const [body, message] of [
+    ["nope", "HTTP request failed with status 404: nope"],
+    ["", "HTTP request failed with status 404"],
+    ["x".repeat(5000), `HTTP request failed with status 404: ${"x".repeat(4096)}`],
+  ]) {
+    /** @type {typeof globalThis.fetch} */
+    const fetch = async () => new Response(body, { status: 404 });
+    await assert.rejects(invoke(fromFetch(ADDR, { fetch }), "i", "f", [], [], [t.u8]), {
+      message,
+    });
+  }
 });
