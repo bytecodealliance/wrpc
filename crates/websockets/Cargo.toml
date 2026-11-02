@@ -10,8 +10,9 @@ license.workspace = true
 repository.workspace = true
 
 [features]
-default = ["rand", "ring"]
+default = ["client", "rand", "ring", "server"]
 aws_lc_rs = ["tokio-websockets/aws_lc_rs"]
+client = ["dep:anyhow", "dep:tracing", "tokio-websockets/client"]
 fastrand = ["tokio-websockets/fastrand"]
 getrandom = ["tokio-websockets/getrandom"]
 native-tls = ["tokio-websockets/native-tls"]
@@ -25,16 +26,21 @@ rustls-native-roots = ["tokio-websockets/rustls-native-roots"]
 rustls-platform-verifier = ["tokio-websockets/rustls-platform-verifier"]
 rustls-tls12 = ["tokio-websockets/rustls-tls12"]
 rustls-webpki-roots = ["tokio-websockets/rustls-webpki-roots"]
+server = ["tokio-websockets/server"]
 sha1_smol = ["tokio-websockets/sha1_smol"]
 
 [dependencies]
-anyhow = { workspace = true, features = ["std"] }
+anyhow = { workspace = true, features = ["std"], optional = true }
 bytes = { workspace = true }
 futures = { workspace = true }
 tokio = { workspace = true }
-tokio-websockets = { workspace = true, features = ["client", "server"] }
-tracing = { workspace = true }
+tokio-websockets = { workspace = true }
+tracing = { workspace = true, optional = true }
 wrpc-transport = { workspace = true }
+
+[[test]]
+name = "loopback"
+required-features = ["client", "server"]
 
 [dev-dependencies]
 anyhow = { workspace = true, features = ["std"] }

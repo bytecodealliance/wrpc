@@ -57,8 +57,10 @@ wasmtime-wasi = ["wrpc-wasmtime?/wasmtime-wasi"]
 webtransport = ["dep:wrpc-webtransport"]
 websockets = [
     "dep:wrpc-websockets",
+    "wrpc-websockets/client",
     "wrpc-websockets/rand",
     "wrpc-websockets/ring",
+    "wrpc-websockets/server",
 ]
 
 [[bin]]
