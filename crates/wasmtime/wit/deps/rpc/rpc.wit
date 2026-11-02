@@ -44,7 +44,10 @@ interface context {
 /// The elements of a list or stream must be indexed in order: returning the
 /// channel for a position within an element discards the preceding elements,
 /// for which no channel has been returned, along with any data received for
-/// them.
+/// them. An element may also be discarded once incoming channels have been
+/// returned within it and all of them have been dropped, so a channel within an
+/// element, such as that of the element itself, must be kept while the
+/// positions nested in the element are still to be indexed.
 ///
 /// `index` returns the channel for the position at `path`, relative to the
 /// position of the channel it is called on. The returned channel is independent
@@ -122,7 +125,11 @@ interface transport {
         /// the invocation, or within a discarded element. If the invocation
         /// has not been transmitted yet, the latter two errors for the
         /// positions within list or stream elements instead fail reading the
-        /// data of the returned channel.
+        /// data of the returned channel. Whether or not the invocation has been
+        /// transmitted, an element is discarded by returning the channel for a
+        /// position within a following element, unless a channel has been
+        /// returned within it, and may be discarded once channels have been
+        /// returned within it and all of them have been dropped.
         index: func(path: list<u32>) -> result<incoming-channel, error>;
     }
 
