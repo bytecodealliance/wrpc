@@ -4530,6 +4530,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "wit-bindgen-wrpc-js"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "wit-bindgen-core",
+ "wrpc-introspect",
+]
+
+[[package]]
 name = "wit-bindgen-wrpc-rust"
 version = "0.12.0"
 dependencies = [
@@ -4721,6 +4731,7 @@ dependencies = [
  "wit-bindgen-core",
  "wit-bindgen-wrpc",
  "wit-bindgen-wrpc-go",
+ "wit-bindgen-wrpc-js",
  "wit-bindgen-wrpc-rust",
  "wit-bindgen-wrpc-test",
  "wrpc-cli",

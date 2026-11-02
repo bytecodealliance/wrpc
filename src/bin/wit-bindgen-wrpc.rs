@@ -29,6 +29,13 @@ enum Opt {
         #[clap(flatten)]
         args: Common,
     },
+    /// Generates bindings for JavaScript wRPC applications
+    Js {
+        #[clap(flatten)]
+        opts: wit_bindgen_wrpc_js::Opts,
+        #[clap(flatten)]
+        args: Common,
+    },
 
     // doc-comments are present on `wit_bindgen_wrpc_test::Opts` for clap to use.
     Test {
@@ -88,6 +95,7 @@ fn main() -> Result<()> {
     let (generator, opt) = match Opt::parse() {
         Opt::Rust { opts, args } => (opts.build(), args),
         Opt::Go { opts, args } => (opts.build(), args),
+        Opt::Js { opts, args } => (opts.build(), args),
         Opt::Test { opts } => {
             let exe = std::env::args_os().next().unwrap();
             return opts.run(std::path::Path::new(&exe));

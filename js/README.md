@@ -188,6 +188,53 @@ Deno.serve((request) => {
 });
 ```
 
+## Generating bindings
+
+`wit-bindgen-wrpc js` generates bindings for a WIT world: an ES module and its
+TypeScript declarations per interface, importing only this package. For
+example, for the `client` and `server` worlds of `examples/wit/hello`:
+
+```sh
+wit-bindgen-wrpc js --world client --out-dir client examples/wit/hello
+wit-bindgen-wrpc js --world server --out-dir server examples/wit/hello
+```
+
+The module of an imported interface, at `<namespace>/<package>/<interface>.js`,
+exports a function per function of it, which takes the transport to invoke it
+over and resolves to its result, and the type tree of each of its types. The
+functions of a resource are grouped in an object named after it, with `new` for
+its constructor. A function with `stream` or `future` parameters or results
+resolves to `{ result, finished }` instead, where `finished` is that of
+`invoke`:
+
+```js
+import * as handler from "./client/wrpc-examples/hello/handler.js";
+
+console.log(await handler.hello(transport));
+```
+
+The world module's `serve` accepts an invocation of the world's exports from a
+transport and calls the corresponding method of their handlers, with the
+parameters, and sends what it returns. It takes a handler for the functions the
+world exports itself, if any, followed by one per exported interface with
+functions, in the order of the world (`exports/<namespace>/<package>/<interface>.js` declares
+its `Handler`):
+
+```js
+import { serve } from "./server/server.js";
+
+await serve(transport, { hello: () => "hello from JavaScript" });
+```
+
+To route invocations yourself, for example to serve several worlds on one
+listener, pass each invocation `accept` returns to the `serveInterface(inv,
+handler)` of the module of its instance, or of the world module for the
+world's own functions. Like `serve` does, abort the invocation's `mux` if that
+fails and then await its `finished`.
+
+Names follow the [JS-API draft], so functions are camel case and types are
+Pascal case. `map` types and fixed-length lists are not supported yet.
+
 ## Value mapping
 
 Component-model values map to JavaScript following the `ToJSValue` and

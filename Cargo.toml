@@ -42,8 +42,10 @@ bin-bindgen = [
     "dep:clap",
     "dep:wit-bindgen-core",
     "dep:wit-bindgen-wrpc-go",
+    "dep:wit-bindgen-wrpc-js",
     "dep:wit-bindgen-wrpc-test",
     "wit-bindgen-wrpc-go/clap",
+    "wit-bindgen-wrpc-js/clap",
     "wit-bindgen-wrpc-rust/clap",
 ]
 bin-wasmtime = ["dep:tokio", "dep:wrpc-wasmtime-cli", "tokio/rt-multi-thread"]
@@ -88,6 +90,7 @@ tracing = { workspace = true, features = ["attributes"] }
 wit-bindgen-core = { workspace = true, optional = true }
 wit-bindgen-wrpc = { workspace = true }
 wit-bindgen-wrpc-go = { workspace = true, optional = true }
+wit-bindgen-wrpc-js = { workspace = true, optional = true }
 wit-bindgen-wrpc-rust = { workspace = true, optional = true }
 wit-bindgen-wrpc-test = { workspace = true, optional = true }
 wrpc-cli = { workspace = true, optional = true }
@@ -204,6 +207,7 @@ wit-bindgen = { version = "0.59", default-features = false }
 wit-bindgen-core = { version = "0.59", default-features = false }
 wit-bindgen-wrpc = { version = "0.13", default-features = false, path = "./crates/wit-bindgen" }
 wit-bindgen-wrpc-go = { version = "0.14", default-features = false, path = "./crates/wit-bindgen-go" }
+wit-bindgen-wrpc-js = { version = "0.1", default-features = false, path = "./crates/wit-bindgen-js" }
 wit-bindgen-wrpc-rust = { version = "0.12", default-features = false, path = "./crates/wit-bindgen-rust" }
 wit-bindgen-wrpc-rust-macro = { version = "0.12", default-features = false, path = "./crates/wit-bindgen-rust-macro" }
 wit-bindgen-wrpc-test = { version = "0.1", default-features = false, path = "./crates/wit-bindgen-test" }

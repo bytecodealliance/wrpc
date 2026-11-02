@@ -35,6 +35,8 @@ on:
       - 'crates/webtransport/v[0-9].[0-9]+.[0-9]+-*'
       - 'crates/wit-bindgen-go/v[0-9].[0-9]+.[0-9]+'
       - 'crates/wit-bindgen-go/v[0-9].[0-9]+.[0-9]+-*'
+      - 'crates/wit-bindgen-js/v[0-9].[0-9]+.[0-9]+'
+      - 'crates/wit-bindgen-js/v[0-9].[0-9]+.[0-9]+-*'
       - 'crates/wit-bindgen-test/v[0-9].[0-9]+.[0-9]+'
       - 'crates/wit-bindgen-test/v[0-9].[0-9]+.[0-9]+-*'
       - 'crates/wit-bindgen-rust-macro/v[0-9].[0-9]+.[0-9]+'
@@ -247,6 +249,9 @@ jobs:
             workspace-dependencies: true
 
           - crate: wit-bindgen-go
+            workspace-dependencies: true
+
+          - crate: wit-bindgen-js
             workspace-dependencies: true
 
           - crate: wit-bindgen-rust
