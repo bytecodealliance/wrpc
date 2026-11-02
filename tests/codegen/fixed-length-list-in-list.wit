@@ -1,0 +1,10 @@
+package test:fixed-length-list-in-list;
+
+interface i {
+  f: func(a: list<list<u32, 2>>, b: list<tuple<list<u8, 2>, string>>) -> list<list<u32, 2>>;
+}
+
+world test {
+  import i;
+  export i;
+}

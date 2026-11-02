@@ -68,9 +68,8 @@ impl LanguageMethods for Rust {
         if !args.is_empty() {
             return true;
         }
-        // The wRPC Rust generator does not yet support named fixed-length
-        // lists or `map`.
-        matches!(name, "named-fixed-length-list.wit" | "map.wit")
+        // The wRPC Rust generator does not yet support `map`.
+        name == "map.wit"
     }
 
     fn codegen_test_variants(&self) -> &[(&str, &[&str])] {

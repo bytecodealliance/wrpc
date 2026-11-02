@@ -1074,6 +1074,166 @@ where
     type ListDecoder = ListDecoder<Self::Decoder>;
 }
 
+/// Encoder for `list<T, N>`
+pub struct ArrayEncoder<W = Outgoing> {
+    deferred: Option<DeferredFn<W>>,
+}
+
+impl<W> Default for ArrayEncoder<W> {
+    fn default() -> Self {
+        Self { deferred: None }
+    }
+}
+
+impl<W> Deferred<W> for ArrayEncoder<W> {
+    fn take_deferred(&mut self) -> Option<DeferredFn<W>> {
+        self.deferred.take()
+    }
+}
+
+impl<T, W: Sink, const N: usize> tokio_util::codec::Encoder<[T; N]> for ArrayEncoder<W>
+where
+    T: Encode<W>,
+{
+    type Error = <T::Encoder as tokio_util::codec::Encoder<T>>::Error;
+
+    #[instrument(level = "trace", skip(self, items), fields(ty = "array"))]
+    fn encode(&mut self, items: [T; N], dst: &mut BytesMut) -> Result<(), Self::Error> {
+        let mut enc = T::Encoder::default();
+        self.deferred = T::encode_iter_own(items, &mut enc, dst)?;
+        Ok(())
+    }
+}
+
+impl<'a, T, W: Sink, const N: usize> tokio_util::codec::Encoder<&'a [T; N]> for ArrayEncoder<W>
+where
+    T: Encode<W>,
+    T::Encoder: tokio_util::codec::Encoder<&'a T>,
+{
+    type Error = <T::Encoder as tokio_util::codec::Encoder<&'a T>>::Error;
+
+    #[instrument(level = "trace", skip(self, items), fields(ty = "array"))]
+    fn encode(&mut self, items: &'a [T; N], dst: &mut BytesMut) -> Result<(), Self::Error> {
+        let mut enc = T::Encoder::default();
+        self.deferred = T::encode_iter_ref(items, &mut enc, dst)?;
+        Ok(())
+    }
+}
+
+impl<'a, 'b, T, W: Sink, const N: usize> tokio_util::codec::Encoder<&'a &'b [T; N]>
+    for ArrayEncoder<W>
+where
+    T: Encode<W>,
+    T::Encoder: tokio_util::codec::Encoder<&'b T>,
+{
+    type Error = <T::Encoder as tokio_util::codec::Encoder<&'b T>>::Error;
+
+    #[instrument(level = "trace", skip(self, items), fields(ty = "array"))]
+    fn encode(&mut self, items: &'a &'b [T; N], dst: &mut BytesMut) -> Result<(), Self::Error> {
+        let mut enc = T::Encoder::default();
+        self.deferred = T::encode_iter_ref(*items, &mut enc, dst)?;
+        Ok(())
+    }
+}
+
+impl<T, W: Sink, const N: usize> Encode<W> for [T; N]
+where
+    T: Encode<W>,
+{
+    type Encoder = ArrayEncoder<W>;
+}
+
+impl<'a, T, W: Sink, const N: usize> Encode<W> for &'a [T; N]
+where
+    T: Encode<W>,
+    T::Encoder: tokio_util::codec::Encoder<&'a T>,
+{
+    type Encoder = ArrayEncoder<W>;
+}
+
+/// Decoder for `list<T, N>`
+pub struct ArrayDecoder<T, const N: usize>
+where
+    T: tokio_util::codec::Decoder,
+{
+    dec: T,
+    ret: Vec<T::Item>,
+    deferred: Vec<Option<DeferredFn<BufferedIncoming>>>,
+}
+
+impl<T, const N: usize> Default for ArrayDecoder<T, N>
+where
+    T: tokio_util::codec::Decoder + Default,
+{
+    fn default() -> Self {
+        Self {
+            dec: T::default(),
+            ret: Vec::default(),
+            deferred: Vec::default(),
+        }
+    }
+}
+
+impl<T, const N: usize> Deferred<BufferedIncoming> for ArrayDecoder<T, N>
+where
+    T: tokio_util::codec::Decoder,
+{
+    fn take_deferred(&mut self) -> Option<DeferredFn<BufferedIncoming>> {
+        let deferred = mem::take(&mut self.deferred);
+        if deferred.iter().any(Option::is_some) {
+            Some(Box::new(|r, path| {
+                Box::pin(handle_deferred(r, deferred, path))
+            }))
+        } else {
+            None
+        }
+    }
+}
+
+impl<T, const N: usize> tokio_util::codec::Decoder for ArrayDecoder<T, N>
+where
+    T: tokio_util::codec::Decoder + Deferred<BufferedIncoming>,
+{
+    type Item = [T::Item; N];
+    type Error = T::Error;
+
+    #[instrument(level = "trace", skip(self), fields(ty = "array"))]
+    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+        if self.ret.is_empty() {
+            self.ret
+                .reserve(N.min(DEFAULT_MAX_INITIAL_CAPACITY / mem::size_of::<T::Item>().max(1)));
+        }
+        while self.ret.len() < N {
+            let v = match self.dec.decode(src) {
+                Ok(Some(v)) => v,
+                Ok(None) => return Ok(None),
+                Err(err) => {
+                    self.ret = Vec::default();
+                    self.deferred.clear();
+                    return Err(err);
+                }
+            };
+            if let Some(deferred) = self.dec.take_deferred() {
+                self.deferred.resize_with(self.ret.len(), || None);
+                self.deferred.push(Some(deferred));
+            }
+            self.ret.push(v);
+        }
+        let Ok(ret) = mem::take(&mut self.ret).try_into() else {
+            unreachable!("array decoder decoded exactly `N` elements")
+        };
+        Ok(Some(ret))
+    }
+}
+
+impl<T, const N: usize> Decode for [T; N]
+where
+    T: Decode + Send,
+{
+    type Decoder = ArrayDecoder<T::Decoder, N>;
+    type ListDecoder = ListDecoder<Self::Decoder>;
+}
+
 macro_rules! impl_copy_codec {
     ($t:ty, $c:tt) => {
         impl<W: Sink> Encode<W> for $t {
@@ -2421,6 +2581,21 @@ mod tests {
             bail!("no deferred write should have been returned");
         }
         assert_eq!(buf.as_ref(), b"\x42\x42");
+        Ok(())
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn array_codec() -> anyhow::Result<()> {
+        let mut buf = BytesMut::default();
+        let mut enc = <[[u32; 2]; 2] as Encode>::Encoder::default();
+        enc.encode([[1, 300], [2, 3]], &mut buf)?;
+        assert_eq!(buf.as_ref(), b"\x01\xac\x02\x02\x03");
+
+        let mut dec = <[[u32; 2]; 2] as Decode>::Decoder::default();
+        let v = dec.decode(&mut buf.split_to(3))?;
+        assert_eq!(v, None);
+        let v = dec.decode(&mut buf)?;
+        assert_eq!(v, Some([[1, 300], [2, 3]]));
         Ok(())
     }
 
