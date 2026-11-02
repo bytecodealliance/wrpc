@@ -74,6 +74,11 @@ func Echo(ctx__ context.Context, wrpc__ wrpc.Invoker, r *Req) (r0__ <-chan []uin
 		return
 	}
 	defer func() {
+		if err__ != nil && ctx__.Err() == nil {
+			if err := wrpc.CloseWithError(w__, err__); err != nil {
+				slog.DebugContext(ctx__, "failed to close outgoing stream", "instance", "wrpc-examples:streams/handler", "name", "echo", "err", err)
+			}
+		}
 		if err := r__.Close(); err != nil {
 			slog.ErrorContext(ctx__, "failed to close reader", "instance", "wrpc-examples:streams/handler", "name", "echo", "err", err)
 		}
@@ -91,9 +96,6 @@ func Echo(ctx__ context.Context, wrpc__ wrpc.Invoker, r *Req) (r0__ <-chan []uin
 		for index, write := range writes__ {
 			w, err := w__.Index(index)
 			if err != nil {
-				if cErr := w__.Close(); cErr != nil {
-					slog.DebugContext(ctx__, "failed to close outgoing stream", "instance", "wrpc-examples:streams/handler", "name", "echo", "err", cErr)
-				}
 				err__ = fmt.Errorf("failed to index param writer at index `%v`: %w", index, err)
 				return
 			}
@@ -101,10 +103,11 @@ func Echo(ctx__ context.Context, wrpc__ wrpc.Invoker, r *Req) (r0__ <-chan []uin
 			write := write
 			go func() {
 				defer wg__.Done()
-				if err := write(ctx__, w); err != nil {
+				err := write(ctx__, w)
+				if err != nil {
 					errCh__ <- err
 				}
-				if err := w.Close(); err != nil {
+				if err := wrpc.CloseWithError(w, err); err != nil {
 					slog.DebugContext(ctx__, "failed to close nested param writer", "instance", "wrpc-examples:streams/handler", "name", "echo", "err", err)
 				}
 			}()
@@ -156,6 +159,11 @@ func Echo(ctx__ context.Context, wrpc__ wrpc.Invoker, r *Req) (r0__ <-chan []uin
 			defer wg__.Done()
 			if err := d0__(ctx__); err != nil {
 				errCh__ <- err
+				if ctx__.Err() == nil {
+					if err := wrpc.CloseWithError(w__, err); err != nil {
+						slog.DebugContext(ctx__, "failed to close outgoing stream", "instance", "wrpc-examples:streams/handler", "name", "echo", "err", err)
+					}
+				}
 			}
 		}()
 	}
@@ -165,6 +173,11 @@ func Echo(ctx__ context.Context, wrpc__ wrpc.Invoker, r *Req) (r0__ <-chan []uin
 			defer wg__.Done()
 			if err := d1__(ctx__); err != nil {
 				errCh__ <- err
+				if ctx__.Err() == nil {
+					if err := wrpc.CloseWithError(w__, err); err != nil {
+						slog.DebugContext(ctx__, "failed to close outgoing stream", "instance", "wrpc-examples:streams/handler", "name", "echo", "err", err)
+					}
+				}
 			}
 		}()
 	}

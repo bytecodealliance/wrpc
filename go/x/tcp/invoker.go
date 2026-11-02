@@ -30,7 +30,7 @@ func (c *Invoker) Invoke(ctx context.Context, instance string, name string, buf 
 	w, r := newConn(conn)
 	wc, rc, err := wrpc.InvokeFramed(ctx, w, r, instance, name, buf, paths...)
 	if err != nil {
-		if cErr := conn.Close(); cErr != nil {
+		if cErr := w.CloseWithError(err); cErr != nil {
 			slog.DebugContext(ctx, "failed to close TCP connection", "err", cErr)
 		}
 		return nil, nil, err

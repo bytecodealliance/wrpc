@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"math"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -47,6 +48,7 @@ func TestSync(t *testing.T) {
 	assert.Equal(t, uint32(42), n)
 
 	require.NoError(t, foo.Foo(ctx, client, "foo"))
+	require.ErrorIs(t, foo.Foo(ctx, client, "bar"), syscall.ECONNRESET)
 
 	for ok, want := range map[bool]*wrpc.Result[bool, string]{
 		true:  wrpc.Ok[string](true),

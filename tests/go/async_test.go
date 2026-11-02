@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -177,7 +178,10 @@ func TestAsyncEchoTruncatedStream(t *testing.T) {
 	ctx, client := serveAsync(t, integration.AsyncHandler{})
 	r := invokeTruncatedStream(t, ctx, client, wrpc.NewSubscribePath().Index(0))
 	fut, deferred, err := wrpc.ReadFuture(r, wrpc.ReadByteStream, 0)
-	require.NoError(t, err)
+	if err != nil {
+		require.ErrorIs(t, err, syscall.ECONNRESET)
+		return
+	}
 	require.NotNil(t, deferred, "expected a pending result")
 	done := make(chan error, 1)
 	go func() { done <- deferred(ctx) }()

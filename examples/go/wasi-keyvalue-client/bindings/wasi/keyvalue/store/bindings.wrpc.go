@@ -357,6 +357,11 @@ func Open(ctx__ context.Context, wrpc__ wrpc.Invoker, identifier string) (r0__ *
 		return
 	}
 	defer func() {
+		if err__ != nil && ctx__.Err() == nil {
+			if err := wrpc.CloseWithError(w__, err__); err != nil {
+				slog.DebugContext(ctx__, "failed to close outgoing stream", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "open", "err", err)
+			}
+		}
 		if err := r__.Close(); err != nil {
 			slog.ErrorContext(ctx__, "failed to close reader", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "open", "err", err)
 		}
@@ -567,6 +572,11 @@ func Bucket_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borrow[Buc
 		return
 	}
 	defer func() {
+		if err__ != nil && ctx__.Err() == nil {
+			if err := wrpc.CloseWithError(w__, err__); err != nil {
+				slog.DebugContext(ctx__, "failed to close outgoing stream", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "[method]bucket.get", "err", err)
+			}
+		}
 		if err := r__.Close(); err != nil {
 			slog.ErrorContext(ctx__, "failed to close reader", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "[method]bucket.get", "err", err)
 		}
@@ -839,6 +849,11 @@ func Bucket_Set(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borrow[Buc
 		return
 	}
 	defer func() {
+		if err__ != nil && ctx__.Err() == nil {
+			if err := wrpc.CloseWithError(w__, err__); err != nil {
+				slog.DebugContext(ctx__, "failed to close outgoing stream", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "[method]bucket.set", "err", err)
+			}
+		}
 		if err := r__.Close(); err != nil {
 			slog.ErrorContext(ctx__, "failed to close reader", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "[method]bucket.set", "err", err)
 		}
@@ -1012,6 +1027,11 @@ func Bucket_Delete(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borrow[
 		return
 	}
 	defer func() {
+		if err__ != nil && ctx__.Err() == nil {
+			if err := wrpc.CloseWithError(w__, err__); err != nil {
+				slog.DebugContext(ctx__, "failed to close outgoing stream", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "[method]bucket.delete", "err", err)
+			}
+		}
 		if err := r__.Close(); err != nil {
 			slog.ErrorContext(ctx__, "failed to close reader", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "[method]bucket.delete", "err", err)
 		}
@@ -1186,6 +1206,11 @@ func Bucket_Exists(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borrow[
 		return
 	}
 	defer func() {
+		if err__ != nil && ctx__.Err() == nil {
+			if err := wrpc.CloseWithError(w__, err__); err != nil {
+				slog.DebugContext(ctx__, "failed to close outgoing stream", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "[method]bucket.exists", "err", err)
+			}
+		}
 		if err := r__.Close(); err != nil {
 			slog.ErrorContext(ctx__, "failed to close reader", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "[method]bucket.exists", "err", err)
 		}
@@ -1410,6 +1435,11 @@ func Bucket_ListKeys(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borro
 		return
 	}
 	defer func() {
+		if err__ != nil && ctx__.Err() == nil {
+			if err := wrpc.CloseWithError(w__, err__); err != nil {
+				slog.DebugContext(ctx__, "failed to close outgoing stream", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "[method]bucket.list-keys", "err", err)
+			}
+		}
 		if err := r__.Close(); err != nil {
 			slog.ErrorContext(ctx__, "failed to close reader", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "[method]bucket.list-keys", "err", err)
 		}

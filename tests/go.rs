@@ -10,16 +10,18 @@ async fn go_bindgen() -> anyhow::Result<()> {
     use core::time::Duration;
 
     use std::env::consts::EXE_SUFFIX;
+    use std::io::{Error, ErrorKind};
 
     use anyhow::{anyhow, bail};
     use tempfile::tempdir;
     use tokio::fs;
-    use tokio::time::sleep;
+    use tokio::time::{sleep, timeout};
     use tracing::info;
+    use wrpc_transport::InvokeExt as _;
 
     if let Err(err) = fs::remove_dir_all("tests/go/bindings").await {
         match err.kind() {
-            std::io::ErrorKind::NotFound => {}
+            ErrorKind::NotFound => {}
             _ => bail!(anyhow!(err).context("failed to remove `test/go/bindings`")),
         }
     }
@@ -75,13 +77,29 @@ async fn go_bindgen() -> anyhow::Result<()> {
 
         common::assert_sync((), &client).await?;
 
-        server
-            .start_kill()
-            .context("failed to kill `sync-server-tcp`")?;
-        server
-            .wait_with_output()
+        let res = client
+            .invoke_values_blocking::<_, _, (u32,)>(
+                (),
+                "wrpc-test:integration/foo",
+                "f",
+                ("panic",),
+                &[[]; 0],
+            )
+            .await;
+        let Err(err) = res else {
+            bail!("a panicking handler must fail the invocation");
+        };
+        ensure!(
+            err.chain().any(|err| err
+                .downcast_ref::<Error>()
+                .is_some_and(|err| err.kind() == ErrorKind::ConnectionReset)),
+            "expected the connection to be reset, got {err:?}"
+        );
+        let res = timeout(Duration::from_secs(5), server.wait())
             .await
-            .context("failed to wait for `sync-server-tcp` to exit")?;
+            .context("`sync-server-tcp` did not exit on panic")?;
+        let status = res.context("failed to wait for `sync-server-tcp` to exit")?;
+        ensure!(!status.success(), "`sync-server-tcp` must exit on panic");
     }
 
     {

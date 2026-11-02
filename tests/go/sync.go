@@ -31,7 +31,7 @@ func (SyncHandler) F(ctx context.Context, x string) (uint32, error) {
 func (SyncHandler) Foo(ctx context.Context, x string) error {
 	slog.DebugContext(ctx, "handling `foo`", "x", x)
 	if x != "foo" {
-		panic(fmt.Errorf("expected: `foo`\ngot:`%s`", x))
+		return fmt.Errorf("expected: `foo`\ngot:`%s`", x)
 	}
 	return nil
 }
