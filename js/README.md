@@ -279,14 +279,12 @@ Variant case and enum names are kept as they are in WIT.
 
 When sending, values are converted like the draft does, too:
 
-- Integers are converted to numbers and wrap, with `NaN` and infinities
-  becoming `0`, while `s64` and `u64` require a `bigint` (or a `boolean` or a
-  `string`), which wraps too. Floats are converted to numbers, `bool`s are
-  truthiness, and `char`s, `string`s and enums are converted to strings, with
-  lone surrogates in `string`s replaced by U+FFFD.
+- Floats are converted to numbers, `bool`s are truthiness, and `char`s,
+  `string`s and enums are converted to strings, with lone surrogates in
+  `string`s replaced by U+FFFD.
 - A `list` or `tuple` is any iterable, whose elements are converted like the
-  typed array constructors convert them for lists of numeric types; a
-  `tuple`'s missing elements are `undefined`. An `ArrayBuffer` is not
+  typed array constructors convert them for lists of floats; a `tuple`'s
+  missing elements are `undefined`. An `ArrayBuffer` is not
   iterable, so it is not a byte list.
 - Record fields and flags are read as properties, also from the prototype, so
   a missing field is `undefined`, and flags are their truthiness.
@@ -294,6 +292,9 @@ When sending, values are converted like the draft does, too:
 
 It deviates from the draft in that:
 
+- Integers, also in `list`s, are not converted and do not wrap: sending one
+  throws a `TypeError` unless it is a `number`, or a `bigint` for `s64` and
+  `u64`, and a `RangeError` unless it is an integer in the type's range.
 - A `result` is always a tagged object, while the draft returns the `ok` value
   of a function's `result` and throws a `WebAssembly.ComponentError` for its
   `error` value.

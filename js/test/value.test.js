@@ -78,20 +78,6 @@ test("scalars round-trip", () => {
 
 test("scalars are converted like the JS-API draft converts them", () => {
   for (const [ty, v, converted] of /** @type {[Type, InputValue, Value][]} */ ([
-    [t.u8, 256, 0],
-    [t.u8, -1, 255],
-    [t.s8, 128, -128],
-    [t.s16, 32768, -32768],
-    [t.u32, -1, 4294967295],
-    [t.s32, 2147483648, -2147483648],
-    [t.u64, -1n, (1n << 64n) - 1n],
-    [t.s64, 1n << 63n, -(1n << 63n)],
-    [t.u8, 1.5, 1],
-    [t.u32, NaN, 0],
-    [t.u32, "7", 7],
-    [t.u32, undefined, 0],
-    [t.u64, "7", 7n],
-    [t.s64, true, 1n],
     [t.bool, "false", true],
     [t.bool, undefined, false],
     [t.f64, "1.5", 1.5],
@@ -115,6 +101,34 @@ test("scalars are converted like the JS-API draft converts them", () => {
   }
   for (const v of ["ab", "", "\uD800"]) {
     assert.throws(() => encode(t.char, v), /single Unicode scalar/);
+  }
+});
+
+test("integers must be in range", () => {
+  for (const [ty, min, max] of /** @type {[Type, any, any][]} */ ([
+    [t.u8, 0, 0xff],
+    [t.s8, -0x80, 0x7f],
+    [t.u16, 0, 0xffff],
+    [t.s16, -0x8000, 0x7fff],
+    [t.u32, 0, 0xffffffff],
+    [t.s32, -0x80000000, 0x7fffffff],
+    [t.u64, 0n, (1n << 64n) - 1n],
+    [t.s64, -(1n << 63n), (1n << 63n) - 1n],
+  ])) {
+    roundtrip(ty, min);
+    roundtrip(ty, max);
+    const one = /** @type {any} */ (typeof max === "bigint" ? 1n : 1);
+    const other = typeof max === "bigint" ? 1 : 1n;
+    for (const [v, error] of /** @type {[InputValue, typeof Error][]} */ ([
+      [min - one, RangeError],
+      [max + one, RangeError],
+      [1.5, one === 1 ? RangeError : TypeError],
+      [NaN, one === 1 ? RangeError : TypeError],
+      [other, TypeError],
+      ["1", TypeError],
+    ])) {
+      assert.throws(() => encode(ty, v), error, `${ty.kind} ${String(v)}`);
+    }
   }
 });
 
@@ -183,12 +197,12 @@ test("numeric lists round-trip as typed arrays", () => {
   }
   assert.ok(roundtrip(t.own("bucket"), Uint8Array.of(1, 2)) instanceof Uint8Array);
   roundtrip(t.borrow("bucket"), Uint8Array.of(1, 2));
-  // other iterables are converted like the typed array constructors do
+  // other iterables are copied into a typed array
   for (const ty of [t.list(t.u8), t.own("bucket")]) {
     for (const v of [[1, 2], Int8Array.of(1, 2), new Set([1, 2]), runInNewContext("[1, 2]")]) {
       assert.deepEqual(encode(ty, v), encode(ty, Uint8Array.of(1, 2)));
     }
-    assert.deepEqual(encode(ty, Uint16Array.of(0x1ff)), encode(ty, Uint8Array.of(0xff)));
+    assert.throws(() => encode(ty, Uint16Array.of(0x100)), RangeError);
     for (const v of [
       Uint8Array.of(1).buffer,
       new DataView(new ArrayBuffer(1)),
@@ -199,8 +213,9 @@ test("numeric lists round-trip as typed arrays", () => {
       assert.throws(() => encode(ty, v), { name: "TypeError", message: /expected an iterable/ });
     }
   }
-  assert.deepEqual(encode(t.list(t.s8), [128]), encode(t.list(t.s8), [-128]));
+  assert.throws(() => encode(t.list(t.s8), [128]), RangeError);
   assert.throws(() => encode(t.list(t.s64), [-1, 2]), TypeError);
+  assert.throws(() => encode(t.list(t.u64), [-1n]), RangeError);
   assert.throws(() => encode(t.list(t.u64), Uint8Array.of(1)), TypeError);
   const detached = Uint8Array.of(1);
   structuredClone(detached.buffer, { transfer: [detached.buffer] });

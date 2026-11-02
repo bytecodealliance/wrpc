@@ -68,7 +68,8 @@ export type Value =
  * representation the codec accepts, such as any iterable for a `list` or
  * `tuple`, a thunk for a `future`, an iterable or async iterable of chunks for
  * a `stream`, and `null` for an `option`'s `none`. Scalars are converted like
- * the component model's JS-API draft does, e.g. integers wrap.
+ * the component model's JS-API draft does, except that integers must be
+ * `number`s (`bigint`s for `s64` and `u64`) in range.
  */
 export type InputValue =
   | boolean
