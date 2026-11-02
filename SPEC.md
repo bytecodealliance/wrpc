@@ -20,11 +20,11 @@ Examples of supported wRPC transports are: TCP, Unix Domain Sockets, QUIC, WebTr
 
 As WIT interfaces and associated values are asynchronous in nature, callers and callees require ability to asynchronously, bidirectionally transfer (portions of) function parameter and result value data.
 
-For example, caller of `wasi:http/outgoing-handler.handle` function MUST be able to simultaneously send data over the passed `output-stream` and well as receive data from the returned `input-stream`. For this purpose wRPC *multiplexes* these data streams over a single bidirectional byte stream provided by the transport, allowing for bidirectional concurrent transfer of multiple data streams (see [Framing](#framing)).
+For example, caller of `wasi:http/outgoing-handler.handle` function MUST be able to simultaneously send data over the passed `output-stream` as well as receive data from the returned `input-stream`. For this purpose wRPC *multiplexes* these data streams over a single bidirectional byte stream provided by the transport, allowing for bidirectional concurrent transfer of multiple data streams (see [Framing](#framing)).
 
 wRPC uses a concept of "indexing" for differentiating and identifying the data streams used as part of processing of a single WIT function invocation.
 
-An "index" is a sequence of unsigned 32-bit integers and represents a reflective structural path to the value, e.g. a record field or a list element.
+An "index" is a sequence of unsigned 32-bit integers and represents a reflective structural path to the value, e.g. a record field or a list element. The "root" (synchronous) data channel is identified by the empty index `[]`.
 
 Consider the following WIT:
 
@@ -43,15 +43,15 @@ interface example {
 
 A path to field `a` in `foo` parameter `v` is defined as a sequence: `[0, 0]`.
 
-The invoker of `foo` MAY choose to send the whole contents of parameter `v`, i.e. `rec` encoded using [component model value definition encoding] on the "root" (synchronous) parameter data channel, in which case `stream<u8>` is sent as `ready` `list<u8>` (see [Streams](#streams)), otherwise, the invoker MAY mark `rec.a` as pending in the encoding of `v` and instead, send it asynchnously over data channel identified by `[0, 0]` (first field in the first parameter).
+The invoker of `foo` MAY choose to send the whole contents of parameter `v`, i.e. `rec` encoded using [component model value definition encoding] on the "root" (synchronous) parameter data channel, in which case `stream<u8>` is sent as `ready` `list<u8>` (see [Streams](#streams)), otherwise, the invoker MAY mark `rec.a` as pending in the encoding of `v` and instead, send it asynchronously over the data channel identified by `[0, 0]` (first field in the first parameter).
 
-Similarly, the handler of `foo` MAY either send the complete resulting `stream<u8>` contents as encoded `ready` `list<u8>` over the "root" (synchronous) result data channel or asynchronously over data channel identified by `0` (first return value).
+Similarly, the handler of `foo` MAY either send the complete resulting `stream<u8>` contents as encoded `ready` `list<u8>` over the "root" (synchronous) result data channel or asynchronously over the data channel identified by `[0]` (first return value).
 
 The indexing rules are as follows:
 
 - Record fields are indexed in order of their WIT declaration
 - Tuple members are indexed in order of their WIT declaration
-- Variant, option and result payloads are not indexed
+- Variant, option, result and future payloads are not indexed
 - List elements are indexed in the order they appear in the list
 - Stream elements are indexed in the order they appear in the stream
 
@@ -143,14 +143,14 @@ Since data is transferred concurrently in both directions, the HTTP version used
 
 `future<T>` values are encoded as `variant future<T> { pending, ready(T) }`.
 
-In case a future is pending, it's value is transmitted using the parent's index.
+In case a future is pending, its value is transmitted using the future's index.
 
 For example:
 ```wit
     foo: func(v: future<bool>);
 ```
 
-If `v` is pending, encoded `bool` value is sent on index `0` (corresponding to first parameter)
+If `v` is pending, encoded `bool` value is sent on index `[0]` (corresponding to first parameter)
 
 A `future` without a payload type has an empty value encoding, so once such a pending future resolves, the sender MUST close its index, either with an empty frame or by ending transmit (see [Framed stream specification](#framed-stream-specification)), and the receiver MUST consider it resolved once the index is closed.
 
