@@ -31,8 +31,6 @@ on:
       - 'crates/wasmtime/v[0-9].[0-9]+.[0-9]+-*'
       - 'crates/wave/v[0-9].[0-9]+.[0-9]+'
       - 'crates/wave/v[0-9].[0-9]+.[0-9]+-*'
-      - 'crates/websockets/v[0-9].[0-9]+.[0-9]+'
-      - 'crates/websockets/v[0-9].[0-9]+.[0-9]+-*'
       - 'crates/webtransport/v[0-9].[0-9]+.[0-9]+'
       - 'crates/webtransport/v[0-9].[0-9]+.[0-9]+-*'
       - 'crates/wit-bindgen-go/v[0-9].[0-9]+.[0-9]+'
@@ -240,9 +238,6 @@ jobs:
             workspace-dependencies: true
 
           - crate: wave
-            workspace-dependencies: true
-
-          - crate: websockets
             workspace-dependencies: true
 
           - crate: webtransport

@@ -12,7 +12,9 @@ wRPC relies on [component model value definition encoding] for data encoding on 
 
 wRPC makes use of *transports*, which are responsible for establishing a connection between two parties and transferring the wRPC wire protocol data between them.
 
-Examples of supported wRPC transports are: TCP, Unix Domain Sockets, QUIC, WebTransport, WebSockets and HTTP (see [Transport specifications](#transport-specifications)).
+A transport MUST support a native half-close: a peer MUST be able to communicate the end of transmit using the transport's own mechanism, while it keeps receiving the data sent by the other peer. Transports, which can only close both directions at once, do not qualify.
+
+Examples of supported wRPC transports are: TCP, Unix Domain Sockets, QUIC, WebTransport and HTTP (see [Transport specifications](#transport-specifications)).
 
 ### Indexing
 
@@ -85,7 +87,7 @@ Likewise, if a non-empty frame is received on a `path` that carries no pending v
 
 A sender MUST send the data of a pending value only after the data carrying it, for example, the data of a pending value in a stream element after the stream chunk containing that element, since a receiver MAY bound the data it buffers for a `path`, which no value it decoded carries yet.
 
-Frames do not communicate the end of transmit, i.e. that no more frames follow. Each transport MUST communicate it using its own mechanism, for example, TCP shutdown or finishing a QUIC stream. The end of transmit closes every `path`. A sender, which fails before sending all of its data, SHOULD signal the failure using the transport's own mechanism instead of communicating the end of transmit, if the transport has one, for example, by resetting the QUIC stream or the TCP connection.
+Frames do not communicate the end of transmit, i.e. that no more frames follow. Each transport MUST communicate it using its native half-close (see [Transport](#transport)), for example, TCP shutdown or finishing a QUIC stream. The end of transmit closes every `path`. A sender, which fails before sending all of its data, SHOULD signal the failure using the transport's own mechanism instead of communicating the end of transmit, if the transport has one, for example, by resetting the QUIC stream or the TCP connection.
 
 ## Transport specifications
 
@@ -122,18 +124,6 @@ TLS configuration, including the ALPN protocol, is application-defined.
 WebTransport follows the [QUIC](#quic) transport specification, using bidirectional streams opened by the client within a WebTransport session in place of QUIC streams and WebTransport application error codes in place of QUIC application error codes.
 
 A single WebTransport session MAY carry multiple concurrent invocations.
-
-### WebSockets
-
-WebSockets rely on [Framed stream specification](#framed-stream-specification) to map a single WebSocket connection to a single wRPC invocation.
-
-The client MUST establish a new WebSocket connection per each invocation.
-
-The byte stream is transmitted as the concatenation of payloads of binary messages, message boundaries carry no meaning.
-
-WebSocket closes both directions of a connection at once, so a peer MUST communicate the end of transmit by sending an empty text message and keeping the connection open. A peer MUST NOT send non-empty text messages, and the receiver MUST treat these as an error. If the connection is closed before an empty text message is received, the receiver MUST treat it as an error.
-
-A peer MAY close the connection once it has both sent and received the end of transmit.
 
 ### HTTP
 
