@@ -22,6 +22,7 @@ use std::sync::Arc;
 
 mod config;
 mod go;
+mod js;
 mod rust;
 
 /// Tool to run tests that exercise the `wit-bindgen` bindings generator.
@@ -89,6 +90,9 @@ pub struct Opts {
 
     #[clap(flatten)]
     go: go::GoOpts,
+
+    #[clap(flatten)]
+    js: js::JsOpts,
 
     /// Whether or not the calling process's stderr is inherited into child
     /// processes.
@@ -176,6 +180,7 @@ enum Kind {
 enum Language {
     Rust,
     Go,
+    Js,
 }
 
 /// Helper structure to package up arguments when sent to language-specific
@@ -360,6 +365,7 @@ impl Runner<'_> {
         let language = match extension {
             "rs" => Language::Rust,
             "go" => Language::Go,
+            "js" => Language::Js,
             other => bail!("unsupported test source file extension `{other}`"),
         };
 
@@ -738,6 +744,12 @@ impl Runner<'_> {
                 [(test, ..)] => self.go_runtime_test(case, runner, test),
                 _ => bail!("Go runtime tests support exactly one `test` world"),
             },
+            Language::Js => match deps {
+                [(test, test_bindings)] => {
+                    self.js_runtime_test(case, runner, runner_bindings, test, test_bindings)
+                }
+                _ => bail!("JavaScript runtime tests support exactly one `test` world"),
+            },
         }
     }
 
@@ -950,12 +962,13 @@ trait LanguageMethods {
 }
 
 impl Language {
-    const ALL: &[Language] = &[Language::Rust, Language::Go];
+    const ALL: &[Language] = &[Language::Rust, Language::Go, Language::Js];
 
     fn obj(&self) -> &dyn LanguageMethods {
         match self {
             Language::Rust => &rust::Rust,
             Language::Go => &go::Go,
+            Language::Js => &js::Js,
         }
     }
 }
