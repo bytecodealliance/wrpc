@@ -25,6 +25,7 @@ type FramedServer struct {
 	handlers       map[string]map[string]handler
 	maxInstanceLen uint32
 	maxNameLen     uint32
+	limits         IncomingLimits
 }
 
 // FramedServerOption configures a FramedServer
@@ -36,6 +37,13 @@ func WithMaxHeaderNameLen(instance, name uint32) FramedServerOption {
 	return func(s *FramedServer) {
 		s.maxInstanceLen = instance
 		s.maxNameLen = name
+	}
+}
+
+// WithIncomingLimits sets the bounds of the data buffered for each invocation
+func WithIncomingLimits(limits IncomingLimits) FramedServerOption {
+	return func(s *FramedServer) {
+		s.limits = limits
 	}
 }
 
@@ -158,10 +166,10 @@ func (s *FramedServer) accept(w io.WriteCloser, r io.ReadCloser, headerRead func
 			h.HandleFunc(
 				h.Context,
 				NewFrameStreamWriter(h.Context, w),
-				NewFrameStreamReader(h.Context, BufReadCloser{
+				NewFrameStreamReaderWithLimits(h.Context, BufReadCloser{
 					Reader: br,
 					Closer: r,
-				}, h.paths...))
+				}, s.limits, h.paths...))
 		}()
 		return nil
 

@@ -11,11 +11,18 @@ import (
 
 // Invoker is a thin wrapper around *net.TCPAddr, which is able to invoke wRPC functions
 type Invoker struct {
-	addr string
+	addr   string
+	limits wrpc.IncomingLimits
 }
 
 func NewInvoker(addr string) *Invoker {
-	return &Invoker{addr: addr}
+	return NewInvokerWithLimits(addr, wrpc.IncomingLimits{})
+}
+
+// NewInvokerWithLimits returns an Invoker, which bounds the data buffered for each invocation
+// by `limits`
+func NewInvokerWithLimits(addr string, limits wrpc.IncomingLimits) *Invoker {
+	return &Invoker{addr: addr, limits: limits}
 }
 
 func (c *Invoker) Invoke(ctx context.Context, instance string, name string, buf []byte, paths ...wrpc.SubscribePath) (wrpc.IndexWriteCloser, wrpc.IndexReadCloser, error) {
@@ -28,7 +35,7 @@ func (c *Invoker) Invoke(ctx context.Context, instance string, name string, buf 
 		return nil, nil, fmt.Errorf("failed to establish TCP connection: %w", err)
 	}
 	w, r := newConn(conn)
-	wc, rc, err := wrpc.InvokeFramed(ctx, w, r, instance, name, buf, paths...)
+	wc, rc, err := wrpc.InvokeFramedWithLimits(ctx, w, r, c.limits, instance, name, buf, paths...)
 	if err != nil {
 		if cErr := conn.Close(); cErr != nil {
 			slog.DebugContext(ctx, "failed to close TCP connection", "err", cErr)

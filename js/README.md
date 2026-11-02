@@ -111,7 +111,9 @@ queued behind the stream's on the transport. Leave a `for await` loop early (or 
 implementation, any further chunk of it then fails the invocation, while its
 end does not. The streams and futures nested in the chunks you received keep
 receiving, while those nested in the chunks it buffered, which are dropped, are
-discarded: any data for them fails the invocation.
+discarded: any data for them fails the invocation. The bounds are configurable
+with the `IncomingLimits` passed as the last argument of `invoke` or in the
+options of `accept`.
 
 Data the peer sends for a sub-stream that the decoded values do not carry —
 for a `stream` in an `option` that is `none`, say — or for one it already

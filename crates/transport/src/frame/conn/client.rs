@@ -6,7 +6,7 @@ use tracing::{instrument, trace};
 use wasm_tokio::{CoreNameEncoder, Leb128Encoder};
 
 use crate::frame::PROTOCOL;
-use crate::frame::conn::{Incoming, Outgoing};
+use crate::frame::conn::{Incoming, IncomingLimits, Outgoing};
 
 /// Encodes the header of an invocation, which is followed by `params_len` bytes of
 /// parameters, to a `BytesMut`. If `params_len` is 0, only the header is encoded.
@@ -36,7 +36,8 @@ pub fn encode_invocation(
     Ok(())
 }
 
-/// Invoke function `func` on instance `instance`
+/// Invoke function `func` on instance `instance`, bounding the data buffered by the returned
+/// [`Incoming`] by `limits`
 #[instrument(level = "trace", skip_all)]
 pub async fn invoke<P, I, O>(
     mut tx: O,
@@ -45,6 +46,7 @@ pub async fn invoke<P, I, O>(
     func: &str,
     params: impl AsRef<[u8]>,
     paths: impl AsRef<[P]> + Send,
+    limits: IncomingLimits,
 ) -> anyhow::Result<(Outgoing, Incoming)>
 where
     P: AsRef<[Option<usize>]> + Send + Sync,
@@ -62,6 +64,6 @@ where
     tx.flush().await.context("failed to flush invocation")?;
 
     let tx = Outgoing::new(tx);
-    let rx = Incoming::new(rx, paths.as_ref());
+    let rx = Incoming::with_limits(rx, paths.as_ref(), limits);
     Ok((tx, rx))
 }

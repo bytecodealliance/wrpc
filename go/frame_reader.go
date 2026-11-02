@@ -13,7 +13,23 @@ import (
 	"sync/atomic"
 )
 
-const maxUnclaimedElements = 64
+const (
+	defaultMaxBufferedChunks    = 16
+	defaultMaxChunkLen          = 1 << 20
+	defaultMaxUnclaimedElements = 64
+)
+
+// IncomingLimits bounds the data buffered by a FrameStreamReader.
+// Fields, which are not positive, use their defaults.
+type IncomingLimits struct {
+	// MaxBufferedChunks is the number of data chunks buffered per path, 16 by default
+	MaxBufferedChunks int
+	// MaxChunkLen is the maximum length of a buffered data chunk, 1 MiB by default
+	MaxChunkLen uint32
+	// MaxUnclaimedElements is the maximum number of elements, i.e. positions matched by a
+	// wildcard, which data is received for before they are indexed, 64 by default
+	MaxUnclaimedElements int
+}
 
 func indexPath(path ...uint32) string {
 	p := make([]byte, len(path)*4)
@@ -100,9 +116,9 @@ type frameSub struct {
 	taken   bool
 }
 
-func newFrameSub() *frameSub {
+func newFrameSub(chunks int) *frameSub {
 	return &frameSub{
-		ch:      make(chan []byte, 16),
+		ch:      make(chan []byte, chunks),
 		dropped: make(chan struct{}),
 	}
 }
@@ -137,6 +153,7 @@ type frameSubscriptions struct {
 	done        bool
 	drained     bool
 	unprocessed bool
+	limits      IncomingLimits
 }
 
 func errNotFound(path []uint32) error {
@@ -176,7 +193,7 @@ func (s *frameSubscriptions) subscribe(path []uint32, positions []int) *frameSub
 	p := indexPath(path...)
 	sub, ok := s.nest[p]
 	if !ok {
-		sub = newFrameSub()
+		sub = newFrameSub(s.limits.MaxBufferedChunks)
 		if s.done {
 			close(sub.ch)
 		}
@@ -210,7 +227,7 @@ func (s *frameSubscriptions) route(path []uint32, p string) (*frameSub, bool, er
 			}
 			missing++
 		}
-		if missing == 0 || !s.drained && len(s.unclaimed)+missing <= maxUnclaimedElements {
+		if missing == 0 || !s.drained && len(s.unclaimed)+missing <= s.limits.MaxUnclaimedElements {
 			for _, k := range positions {
 				if _, ok := s.elements[indexPath(path[:k+1]...)]; !ok {
 					e, _ := s.element(path, positions, k)
@@ -333,7 +350,23 @@ func newFrameStreamReader(r *FrameStreamReader) *FrameStreamReader {
 // `paths` must not contain both a wildcard and an index at the same position, so paths of
 // different variant cases, which are not indexed, must be merged by replacing such indices
 // by wildcards.
+// The data buffered is bounded by the default IncomingLimits, see NewFrameStreamReaderWithLimits.
 func NewFrameStreamReader(ctx context.Context, r ByteReadCloser, paths ...SubscribePath) *FrameStreamReader {
+	return NewFrameStreamReaderWithLimits(ctx, r, IncomingLimits{}, paths...)
+}
+
+// NewFrameStreamReaderWithLimits returns a reader like NewFrameStreamReader, which bounds the
+// data buffered by `limits`.
+func NewFrameStreamReaderWithLimits(ctx context.Context, r ByteReadCloser, limits IncomingLimits, paths ...SubscribePath) *FrameStreamReader {
+	if limits.MaxBufferedChunks <= 0 {
+		limits.MaxBufferedChunks = defaultMaxBufferedChunks
+	}
+	if limits.MaxChunkLen == 0 {
+		limits.MaxChunkLen = defaultMaxChunkLen
+	}
+	if limits.MaxUnclaimedElements <= 0 {
+		limits.MaxUnclaimedElements = defaultMaxUnclaimedElements
+	}
 	var readers atomic.Int64
 	readers.Add(1)
 
@@ -344,9 +377,10 @@ func NewFrameStreamReader(ctx context.Context, r ByteReadCloser, paths ...Subscr
 		elements:  make(map[string]*frameElement),
 		unclaimed: make(map[string]struct{}),
 		next:      make(map[string]uint64),
+		limits:    limits,
 	}
 	subs.cond = sync.NewCond(&subs.mu)
-	root := newFrameSub()
+	root := newFrameSub(limits.MaxBufferedChunks)
 	root.taken = true
 	subs.nest[""] = root
 	var maxDepth uint32
@@ -357,7 +391,7 @@ func NewFrameStreamReader(ctx context.Context, r ByteReadCloser, paths ...Subscr
 		maxDepth = max(maxDepth, uint32(len(path)))
 		subs.patterns.insert(path)
 		if p, ok := concretePath(path); ok {
-			subs.nest[p] = newFrameSub()
+			subs.nest[p] = newFrameSub(limits.MaxBufferedChunks)
 		}
 	}
 	stop := context.AfterFunc(ctx, func() {
@@ -405,12 +439,9 @@ func NewFrameStreamReader(ctx context.Context, r ByteReadCloser, paths ...Subscr
 				return err
 			}
 			for n > 0 {
-				k := min(n, maxInitialCapacity)
-				data := make([]byte, k)
-				if _, err := io.ReadFull(r, data); err != nil {
-					if err == io.EOF {
-						err = io.ErrUnexpectedEOF
-					}
+				k := min(n, limits.MaxChunkLen)
+				data, err := ReadBytes(r, k)
+				if err != nil {
 					return fmt.Errorf("failed to read data: %w", err)
 				}
 				n -= k

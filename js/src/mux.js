@@ -13,22 +13,24 @@ import { AsyncReader, Chan, UNEXPECTED_EOF, Writer, atomic, readVarU32 } from ".
 /** The wRPC framing protocol version byte. */
 export const PROTOCOL = 0x00;
 
-/**
- * The number of inbound data chunks buffered per sub-stream. Once a
- * sub-stream's buffer is full, reading from the transport waits for it to be
- * consumed, or for a sub-stream not yet declared, to be declared.
- */
-const CAPACITY = 16;
+const DEFAULT_MAX_BUFFERED_CHUNKS = 16;
+const DEFAULT_MAX_CHUNK_LENGTH = 1 << 20;
+const DEFAULT_MAX_PENDING_SUB_STREAMS = 64;
 
 /**
- * The maximum number of sub-streams not yet declared, which data is buffered
- * for. Once reached, reading from the transport waits for them to be declared,
- * so a sub-stream must be declared by data sent before its own.
+ * The bounds of the inbound data a {@link Mux} buffers, each at least 1.
+ * @typedef {object} IncomingLimits
+ * @property {number} [maxBufferedChunks] the number of inbound data chunks
+ *   buffered per sub-stream, 16 by default. Once a sub-stream's buffer is full,
+ *   reading from the transport waits for it to be consumed, or for a
+ *   sub-stream not yet declared, to be declared.
+ * @property {number} [maxChunkLength] the maximum size of a buffered inbound
+ *   data chunk, 1 MiB by default.
+ * @property {number} [maxPendingSubStreams] the maximum number of sub-streams
+ *   not yet declared, which data is buffered for, 64 by default. Once reached,
+ *   reading from the transport waits for them to be declared, so a sub-stream
+ *   must be declared by data sent before its own.
  */
-const MAX_PENDING = 64;
-
-/** The maximum size of a buffered inbound data chunk. */
-const MAX_CHUNK = 1 << 20;
 
 /** @param {number[]} path */
 const key = (path) => path.join(",");
@@ -43,7 +45,7 @@ export const DISCARDED = new Error("sub-stream discarded");
  * @property {Chan<Uint8Array>} chan
  * @property {boolean} empty whether only empty frames arrived for it
  * @property {boolean} closed whether an empty frame closed it
- * @property {boolean} counted whether it counts towards {@link MAX_PENDING}
+ * @property {boolean} counted whether it counts towards `maxPendingSubStreams`
  */
 
 /**
@@ -251,8 +253,9 @@ export class Mux {
    * Aborts `transport` and throws a `TypeError` if it does not implement
    * `closeWrite`.
    * @param {Transport} transport
+   * @param {IncomingLimits} [limits]
    */
-  constructor(transport) {
+  constructor(transport, limits) {
     if (typeof transport.closeWrite !== "function") {
       const err = new TypeError(
         "a transport must implement `closeWrite` to communicate end of transmit",
@@ -260,12 +263,20 @@ export class Mux {
       abortTransport(transport, err);
       throw err;
     }
+    const {
+      maxBufferedChunks = DEFAULT_MAX_BUFFERED_CHUNKS,
+      maxChunkLength = DEFAULT_MAX_CHUNK_LENGTH,
+      maxPendingSubStreams = DEFAULT_MAX_PENDING_SUB_STREAMS,
+    } = limits ?? {};
     this.transport = transport;
+    this.maxBufferedChunks = Math.max(1, maxBufferedChunks);
+    this.maxChunkLength = Math.max(1, maxChunkLength);
+    this.maxPendingSubStreams = Math.max(1, maxPendingSubStreams);
     /** Reader over the raw inbound byte stream (header, then frames). */
     this.master = new AsyncReader(() => transport.read());
     /** The expected sub-streams, rooted at the one carrying the synchronous values. */
     this.root = node(false);
-    this.root.chan = new Chan(CAPACITY);
+    this.root.chan = new Chan(this.maxBufferedChunks);
     /** The maximum length of the path of an expected sub-stream. */
     this.maxDepth = Infinity;
     /** The number of buffered sub-streams not yet declared. */
@@ -348,7 +359,7 @@ export class Mux {
       const chan = this._route(path);
       for (let len = n; len > 0;) {
         if (!(await m.fill(1))) throw new RangeError(UNEXPECTED_EOF);
-        const data = m.remaining().slice(0, Math.min(len, MAX_CHUNK));
+        const data = m.remaining().slice(0, Math.min(len, this.maxChunkLength));
         m.consume(data.length);
         len -= data.length;
         // A finished or discarded sub-stream's reader is gone: the rest of the frame overruns it.
@@ -359,13 +370,13 @@ export class Mux {
   }
 
   /**
-   * Wait while {@link MAX_PENDING} sub-streams not yet declared are buffered,
+   * Wait while `maxPendingSubStreams` sub-streams not yet declared are buffered,
    * if the frame at `path` would buffer another one.
    * @param {number[]} path
    * @param {boolean} empty
    */
   async _room(path, empty) {
-    while (this.pendingCount >= MAX_PENDING && !this.aborted) {
+    while (this.pendingCount >= this.maxPendingSubStreams && !this.aborted) {
       const found = this._find(path, empty);
       if (found === null || !("at" in found)) return;
       if (found.at.pending?.get(found.i)?.has(key(path))) return;
@@ -378,7 +389,7 @@ export class Mux {
     for (const f of this.pendingWaiters.splice(0)) f();
   }
 
-  /** Stop counting `pending` towards {@link MAX_PENDING}. @param {Pending} pending */
+  /** Stop counting `pending` towards `maxPendingSubStreams`. @param {Pending} pending */
   _uncount(pending) {
     if (!pending.counted) return;
     pending.counted = false;
@@ -429,7 +440,13 @@ export class Mux {
     let pending = found.at.pending?.get(found.i)?.get(key(path));
     if (pending?.closed) return empty ? undefined : unexpected(path);
     if (!pending) {
-      const p = (pending = { path, chan: new Chan(CAPACITY), empty, closed: false, counted: true });
+      const p = (pending = {
+        path,
+        chan: new Chan(this.maxBufferedChunks),
+        empty,
+        closed: false,
+        counted: true,
+      });
       this.pendingCount++;
       p.chan.onCancel(() => this._uncount(p));
       attach(found, p);
@@ -544,7 +561,7 @@ export class Mux {
     for (const i of e.path) n = child(n, i);
     n.sealed = !e.nested;
     if (n.chan) return;
-    n.chan = pending?.chan ?? new Chan(CAPACITY);
+    n.chan = pending?.chan ?? new Chan(this.maxBufferedChunks);
     n.closed = pending?.closed ?? false;
     if (this.inboundClosed) n.chan.close(this.inboundError);
   }

@@ -6,7 +6,7 @@ use tokio::net::{TcpStream, ToSocketAddrs};
 use tracing::instrument;
 
 use crate::Invoke;
-use crate::frame::{Incoming, Outgoing, ReadHalf, WriteHalf, invoke};
+use crate::frame::{Incoming, IncomingLimits, Outgoing, ReadHalf, WriteHalf, invoke};
 
 /// Splits a TCP stream into a [`ReadHalf`] and a [`WriteHalf`].
 ///
@@ -23,6 +23,7 @@ pub struct Client<T> {
     addr: T,
     nodelay: Option<bool>,
     zero_linger: bool,
+    limits: IncomingLimits,
 }
 
 impl<T> Client<T> {
@@ -47,6 +48,13 @@ impl<T> Client<T> {
             ..self
         }
     }
+
+    /// Bounds the data buffered for the results of invocations by `limits`, which are the
+    /// default [`IncomingLimits`] unless set.
+    #[must_use]
+    pub fn incoming_limits(self, limits: IncomingLimits) -> Self {
+        Self { limits, ..self }
+    }
 }
 
 impl<T> From<T> for Client<T>
@@ -58,6 +66,7 @@ where
             addr,
             nodelay: Some(true),
             zero_linger: false,
+            limits: IncomingLimits::default(),
         }
     }
 }
@@ -88,6 +97,15 @@ where
             stream.set_zero_linger()?;
         }
         let (rx, tx) = split(stream);
-        invoke(tx, BufReader::new(rx), instance, func, params, paths).await
+        invoke(
+            tx,
+            BufReader::new(rx),
+            instance,
+            func,
+            params,
+            paths,
+            self.limits,
+        )
+        .await
     }
 }

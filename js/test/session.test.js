@@ -11,6 +11,7 @@ import { encodeValue } from "../src/value.js";
 /**
  * @typedef {import("../src/index.js").Chunk} Chunk
  * @typedef {import("../src/index.js").InputValue} InputValue
+ * @typedef {import("../src/index.js").IncomingLimits} IncomingLimits
  * @typedef {import("../src/index.js").Transport} Transport
  * @typedef {import("../src/index.js").Type} Type
  * @typedef {import("../src/index.js").TypedArray} TypedArray
@@ -504,28 +505,32 @@ test("writing a frame fails once aborted or overflowing a u32", async () => {
   await assert.rejects(mux.outgoing([]).write(new Uint8Array(0)), /boom/);
 });
 
-test("inbound frame data is buffered in chunks of at most 1 MiB", async () => {
-  const w = new Writer();
-  w.varU(0);
-  w.varU(3 << 20);
-  w.bytes(new Uint8Array(3 << 20));
-  /** @type {Uint8Array[]} */
-  const bytes = [w.finish()];
-  const mux = new Mux({
-    read: async () => bytes.pop() ?? null,
-    write: () => {},
-    closeWrite: () => {},
-  });
-  mux.start();
-  const chan = mux.root.chan;
-  assert.ok(chan);
-  const sizes = [];
-  for (let n = 0; n < 3 << 20; n += sizes[sizes.length - 1]) {
-    const { value } = await chan.next();
-    assert.ok(value);
-    sizes.push(value.length);
+test("inbound frame data is buffered in chunks of at most `maxChunkLength`", async () => {
+  for (const [limits, size] of /** @type {[IncomingLimits | undefined, number][]} */ ([
+    [undefined, 1 << 20],
+    [{ maxChunkLength: 1 << 10 }, 1 << 10],
+  ])) {
+    const w = new Writer();
+    w.varU(0);
+    w.varU(3 * size);
+    w.bytes(new Uint8Array(3 * size));
+    /** @type {Uint8Array[]} */
+    const bytes = [w.finish()];
+    const mux = new Mux(
+      { read: async () => bytes.pop() ?? null, write: () => {}, closeWrite: () => {} },
+      limits,
+    );
+    mux.start();
+    const chan = mux.root.chan;
+    assert.ok(chan);
+    const sizes = [];
+    for (let n = 0; n < 3 * size; n += sizes[sizes.length - 1]) {
+      const { value } = await chan.next();
+      assert.ok(value);
+      sizes.push(value.length);
+    }
+    assert.deepEqual(sizes, [size, size, size]);
   }
-  assert.deepEqual(sizes, [1 << 20, 1 << 20, 1 << 20]);
 });
 
 /**
@@ -586,24 +591,29 @@ test(
   "data for a sub-stream declared while ingress waits for room is routed",
   { timeout: 1000 },
   async () => {
-    const { transport } = await feed([
-      ...Array.from({ length: 64 }, (_, k) => /** @type {Frame} */ ([[1, k], [7]])),
-      [[0, 0], [42]],
-    ]);
-    const mux = new Mux(transport);
-    mux.seal(
-      [],
-      [
-        { path: [0], nested: true },
-        { path: [1], nested: true },
-      ],
-    );
-    mux.start();
-    while (!mux.pendingWaiters.length) await tick();
-    mux.seal([0, 0], [{ path: [], nested: false }]);
-    const ar = mux.incoming([0, 0]);
-    assert.ok(await ar.fill(1));
-    assert.deepEqual(ar.remaining(), Uint8Array.of(42));
+    for (const [limits, n] of /** @type {[IncomingLimits | undefined, number][]} */ ([
+      [undefined, 64],
+      [{ maxPendingSubStreams: 1 }, 1],
+    ])) {
+      const { transport } = await feed([
+        ...Array.from({ length: n }, (_, k) => /** @type {Frame} */ ([[1, k], [7]])),
+        [[0, 0], [42]],
+      ]);
+      const mux = new Mux(transport, limits);
+      mux.seal(
+        [],
+        [
+          { path: [0], nested: true },
+          { path: [1], nested: true },
+        ],
+      );
+      mux.start();
+      while (!mux.pendingWaiters.length) await tick();
+      mux.seal([0, 0], [{ path: [], nested: false }]);
+      const ar = mux.incoming([0, 0]);
+      assert.ok(await ar.fill(1));
+      assert.deepEqual(ar.remaining(), Uint8Array.of(42));
+    }
   },
 );
 

@@ -8,7 +8,7 @@ use tokio::net::UnixStream;
 use tracing::instrument;
 
 use crate::Invoke;
-use crate::frame::{Incoming, Outgoing, ReadHalf, WriteHalf, invoke};
+use crate::frame::{Incoming, IncomingLimits, Outgoing, ReadHalf, WriteHalf, invoke};
 
 /// Splits a Unix domain socket stream into a [`ReadHalf`] and a [`WriteHalf`].
 ///
@@ -41,29 +41,48 @@ impl From<UnixStream> for Oneshot {
 
 /// [Invoke] implementation of a Unix domain socket transport
 #[derive(Clone, Debug)]
-pub struct Client<T>(T);
+pub struct Client<T> {
+    addr: T,
+    limits: IncomingLimits,
+}
+
+impl<T> Client<T> {
+    fn new(addr: T) -> Self {
+        Self {
+            addr,
+            limits: IncomingLimits::default(),
+        }
+    }
+
+    /// Bounds the data buffered for the results of invocations by `limits`, which are the
+    /// default [`IncomingLimits`] unless set.
+    #[must_use]
+    pub fn incoming_limits(self, limits: IncomingLimits) -> Self {
+        Self { limits, ..self }
+    }
+}
 
 impl From<PathBuf> for Client<PathBuf> {
     fn from(path: PathBuf) -> Self {
-        Self(path)
+        Self::new(path)
     }
 }
 
 impl<'a> From<&'a Path> for Client<&'a Path> {
     fn from(path: &'a Path) -> Self {
-        Self(path)
+        Self::new(path)
     }
 }
 
 impl<'a> From<&'a std::os::unix::net::SocketAddr> for Client<&'a std::os::unix::net::SocketAddr> {
     fn from(addr: &'a std::os::unix::net::SocketAddr) -> Self {
-        Self(addr)
+        Self::new(addr)
     }
 }
 
 impl From<std::os::unix::net::SocketAddr> for Client<std::os::unix::net::SocketAddr> {
     fn from(addr: std::os::unix::net::SocketAddr) -> Self {
-        Self(addr)
+        Self::new(addr)
     }
 }
 
@@ -82,9 +101,18 @@ impl Invoke for Client<PathBuf> {
     where
         P: AsRef<[Option<usize>]> + Send + Sync,
     {
-        let stream = UnixStream::connect(&self.0).await?;
+        let stream = UnixStream::connect(&self.addr).await?;
         let (rx, tx) = split(stream);
-        invoke(tx, BufReader::new(rx), instance, func, params, paths).await
+        invoke(
+            tx,
+            BufReader::new(rx),
+            instance,
+            func,
+            params,
+            paths,
+            self.limits,
+        )
+        .await
     }
 }
 
@@ -103,9 +131,18 @@ impl Invoke for Client<&Path> {
     where
         P: AsRef<[Option<usize>]> + Send + Sync,
     {
-        let stream = UnixStream::connect(self.0).await?;
+        let stream = UnixStream::connect(self.addr).await?;
         let (rx, tx) = split(stream);
-        invoke(tx, BufReader::new(rx), instance, func, params, paths).await
+        invoke(
+            tx,
+            BufReader::new(rx),
+            instance,
+            func,
+            params,
+            paths,
+            self.limits,
+        )
+        .await
     }
 }
 
@@ -124,10 +161,19 @@ impl Invoke for Client<&std::os::unix::net::SocketAddr> {
     where
         P: AsRef<[Option<usize>]> + Send + Sync,
     {
-        let stream = std::os::unix::net::UnixStream::connect_addr(self.0)?;
+        let stream = std::os::unix::net::UnixStream::connect_addr(self.addr)?;
         let stream = UnixStream::from_std(stream)?;
         let (rx, tx) = split(stream);
-        invoke(tx, BufReader::new(rx), instance, func, params, paths).await
+        invoke(
+            tx,
+            BufReader::new(rx),
+            instance,
+            func,
+            params,
+            paths,
+            self.limits,
+        )
+        .await
     }
 }
 
@@ -146,9 +192,18 @@ impl Invoke for Client<std::os::unix::net::SocketAddr> {
     where
         P: AsRef<[Option<usize>]> + Send + Sync,
     {
-        let stream = std::os::unix::net::UnixStream::connect_addr(&self.0)?;
+        let stream = std::os::unix::net::UnixStream::connect_addr(&self.addr)?;
         let stream = UnixStream::from_std(stream)?;
         let (rx, tx) = split(stream);
-        invoke(tx, BufReader::new(rx), instance, func, params, paths).await
+        invoke(
+            tx,
+            BufReader::new(rx),
+            instance,
+            func,
+            params,
+            paths,
+            self.limits,
+        )
+        .await
     }
 }
