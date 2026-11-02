@@ -4,6 +4,8 @@ use core::mem;
 use core::pin::pin;
 use core::time::Duration;
 
+use std::sync::Arc;
+
 use anyhow::Context as _;
 use bytes::{Bytes, BytesMut};
 use futures::TryStreamExt as _;
@@ -34,6 +36,24 @@ pub trait Invoke: Send + Sync {
     ) -> impl Future<Output = anyhow::Result<(Outgoing, Incoming)>> + Send
     where
         P: AsRef<[Option<usize>]> + Send + Sync;
+}
+
+impl<T: Invoke> Invoke for Arc<T> {
+    type Context = T::Context;
+
+    fn invoke<P>(
+        &self,
+        cx: Self::Context,
+        instance: &str,
+        func: &str,
+        params: Bytes,
+        paths: impl AsRef<[P]> + Send,
+    ) -> impl Future<Output = anyhow::Result<(Outgoing, Incoming)>> + Send
+    where
+        P: AsRef<[Option<usize>]> + Send + Sync,
+    {
+        T::invoke(self, cx, instance, func, params, paths)
+    }
 }
 
 /// Wrapper struct returned by [`InvokeExt::timeout`]
