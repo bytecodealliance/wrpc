@@ -12,9 +12,10 @@ use crate::frame::{Incoming, Outgoing, ReadHalf, WriteHalf, invoke};
 ///
 /// If the [`WriteHalf`] is dropped before being shut down, the connection is aborted and reading
 /// from the [`ReadHalf`] fails, unless it already reached the end of the stream.
+/// Rejecting the [`ReadHalf`] aborts the connection and fails the [`WriteHalf`].
 #[must_use]
 pub fn split(stream: TcpStream) -> (ReadHalf<TcpStream>, WriteHalf<TcpStream>) {
-    crate::frame::split::split(stream, |stream| _ = stream.set_zero_linger())
+    crate::frame::split::split_with(stream, |stream| _ = stream.set_zero_linger())
 }
 
 /// [Invoke] implementation of a TCP transport using [tokio]

@@ -14,9 +14,10 @@ use crate::frame::{Incoming, Outgoing, ReadHalf, WriteHalf, invoke};
 ///
 /// If the [`WriteHalf`] is dropped before being shut down, the socket is closed and reading from
 /// the [`ReadHalf`] fails, unless it already reached the end of the stream.
+/// Rejecting the [`ReadHalf`] closes the socket and fails the [`WriteHalf`].
 #[must_use]
 pub fn split(stream: UnixStream) -> (ReadHalf<UnixStream>, WriteHalf<UnixStream>) {
-    crate::frame::split::split(stream, |_| {})
+    crate::frame::split(stream)
 }
 
 /// [Invoke] implementation in terms of a single [`UnixStream`].

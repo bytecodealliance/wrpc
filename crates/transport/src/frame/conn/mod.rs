@@ -10,7 +10,9 @@ use std::sync::{Arc, PoisonError};
 
 use bytes::{Buf as _, Bytes, BytesMut};
 use pin_project_lite::pin_project;
-use tokio::io::{AsyncBufRead, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt as _};
+use tokio::io::{
+    AsyncBufRead, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt as _, BufReader, DuplexStream,
+};
 use tokio::select;
 use tokio::sync::{Notify, OwnedSemaphorePermit, Semaphore, mpsc, oneshot, watch};
 use tokio_stream::wrappers::ReceiverStream;
@@ -65,6 +67,24 @@ pub struct Header {
 
     /// Name of the function being called
     pub name: String,
+}
+
+/// Incoming byte stream of an invocation, which can be rejected once the data received is invalid
+pub trait Reject {
+    /// Rejects the data received, closing the invocation's byte stream in both directions
+    fn reject(self);
+}
+
+impl<T: AsyncRead + Reject> Reject for BufReader<T> {
+    fn reject(self) {
+        self.into_inner().reject();
+    }
+}
+
+impl Reject for DuplexStream {
+    fn reject(self) {
+        drop(self);
+    }
 }
 
 /// Sender of a subscribed path
@@ -989,7 +1009,6 @@ mod tests {
 
     use futures::FutureExt as _;
     use futures::future::BoxFuture;
-    use tokio::io::{BufReader, DuplexStream};
     use tokio::task::yield_now;
     use tokio::{join, spawn};
     use tokio_util::codec::Encoder as _;

@@ -21,7 +21,7 @@ use wasi::sockets::tcp::ShutdownType;
 use wasi::sockets::tcp_create_socket::{TcpSocket, create_tcp_socket};
 
 use crate::Invoke;
-use crate::frame::{Incoming, Outgoing};
+use crate::frame::{Incoming, Outgoing, Reject};
 
 /// [Invoke] implementation of a TCP transport using `wasi:sockets`
 #[derive(Clone, Copy, Debug)]
@@ -115,6 +115,16 @@ impl Drop for IncomingStream {
         trace!("shutting down receive end of the stream");
         if let Err(err) = self.socket.shutdown(ShutdownType::Receive) {
             debug!(?err, "failed to shut down receive end of the stream")
+        }
+    }
+}
+
+impl Reject for IncomingStream {
+    #[instrument(level = "trace", skip_all, ret(level = "trace"))]
+    fn reject(self) {
+        trace!("shutting down both ends of the stream");
+        if let Err(err) = self.socket.shutdown(ShutdownType::Both) {
+            debug!(?err, "failed to shut down both ends of the stream")
         }
     }
 }
