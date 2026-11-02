@@ -11,11 +11,10 @@ license.workspace = true
 repository.workspace = true
 
 [features]
-default = ["http", "quic", "webtransport", "websockets"]
+default = ["http", "quic", "webtransport"]
 http = ["dep:http", "dep:hyper", "dep:hyper-util"]
 quic = ["dep:quinn"]
 webtransport = ["dep:quinn", "dep:url", "dep:web-transport-quinn"]
-websockets = ["dep:tokio-websockets"]
 
 [dependencies]
 anyhow = { workspace = true }
@@ -37,12 +36,6 @@ quinn = { workspace = true, features = [
 rcgen = { workspace = true, features = ["crypto", "ring", "zeroize"] }
 rustls = { workspace = true, features = ["logging", "ring", "std"] }
 tokio = { workspace = true, features = ["net", "process", "rt-multi-thread"] }
-tokio-websockets = { workspace = true, features = [
-    "client",
-    "rand",
-    "ring",
-    "server",
-], optional = true }
 tracing = { workspace = true }
 url = { workspace = true, optional = true }
 web-transport-quinn = { workspace = true, optional = true }

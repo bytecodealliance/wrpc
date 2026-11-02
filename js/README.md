@@ -6,7 +6,7 @@ its mandatory framing. It encodes and decodes [component model] values against a
 WIT type tree and invokes (or serves) functions over a single bidirectional
 byte stream, multiplexing each invocation's synchronous and **asynchronous**
 (`stream` / `future`) parameters and results — leaving the byte transport
-(WebTransport, WebSocket, a `MessagePort`, …) up to you.
+(WebTransport, a `MessagePort`, …) up to you.
 
 It is dependency-free and ships as standard ES modules, so it runs directly in
 the browser (`<script type="module">`) as well as through a bundler or Node.
@@ -152,16 +152,7 @@ such as the Rust implementation, otherwise waits forever.
 
 `fromWebStreams` maps `closeWrite` to closing the writable side, which suits
 byte streams with a half-close, such as WebTransport bidirectional streams or
-TCP sockets (with half-open connections allowed). A WebSocket has no
-half-close, and closing it ends both directions, so a WebSocket transport must
-signal end of transmit within the connection. To interoperate with the Rust
-`wrpc-websockets` transport, send data as binary messages and end transmit by
-sending an empty text message (`ws.send("")`), keeping the connection open;
-when reading, treat an empty text message received from the peer as the end
-of transmit. As the specification requires, `read()` must reject, rather than
-resolve to `null`, if the connection closes before that empty text message is
-received, or if a non-empty text message is received, and the connection may
-only be closed once end of transmit was both sent and received.
+TCP sockets (with half-open connections allowed).
 
 ## Value mapping
 

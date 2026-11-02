@@ -1,4 +1,3 @@
-use core::net::SocketAddr;
 use core::pin::Pin;
 
 use std::fs;
@@ -7,7 +6,6 @@ use std::process::Command;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use anyhow::{Context as _, bail, ensure};
-use bytes::Bytes;
 use criterion::measurement::Measurement;
 use criterion::{BenchmarkGroup, Criterion};
 use futures::{Stream, StreamExt as _};
@@ -19,7 +17,6 @@ use tokio::runtime::{Handle, Runtime};
 use tokio::task::JoinHandle;
 use wasmtime::component::{Component, Linker, ResourceTable};
 use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
-use wrpc_transport::frame::{Incoming, Outgoing};
 use wrpc_transport::{Invoke, Serve};
 
 mod ping_bindings_wrpc {
@@ -282,39 +279,6 @@ impl<T: Send> greet_bindings_wrpc::exports::wrpc_bench::bench::greet::Handler<T>
     }
 }
 
-struct WebSocketsClient {
-    addr: SocketAddr,
-    builder: wrpc_websockets::ClientBuilder<'static>,
-}
-
-impl Invoke for WebSocketsClient {
-    type Context = ();
-
-    async fn invoke<P>(
-        &self,
-        (): Self::Context,
-        instance: &str,
-        func: &str,
-        params: Bytes,
-        paths: impl AsRef<[P]> + Send,
-    ) -> anyhow::Result<(Outgoing, Incoming)>
-    where
-        P: AsRef<[Option<usize>]> + Send + Sync,
-    {
-        let stream = wrpc_test::tcp_connect(self.addr).await?;
-        stream
-            .set_zero_linger()
-            .context("failed to set zero linger")?;
-        let (ws, _) = self
-            .builder
-            .connect_on(stream)
-            .await
-            .context("failed to establish WebSocket connection")?;
-        let (tx, rx) = wrpc_websockets::split(ws);
-        wrpc_transport::frame::invoke(tx, rx, instance, func, params, paths).await
-    }
-}
-
 #[derive(Clone)]
 struct Tasks {
     handle: Handle,
@@ -551,50 +515,6 @@ fn bench_webtransport(
     res
 }
 
-fn bench_websockets(
-    g: &mut BenchmarkGroup<impl Measurement>,
-    func: Func,
-    handler: impl Handler<()>,
-) -> anyhow::Result<()> {
-    let rt = Runtime::new().context("failed to build Tokio runtime")?;
-    let (clt, ws, lis) = rt
-        .block_on(wrpc_test::with_websockets(async |clt, srv, lis| {
-            Ok((clt, Arc::new(srv), lis))
-        }))
-        .context("failed to set up WebSockets")?;
-    let addr = lis
-        .local_addr()
-        .context("failed to query listener address")?;
-    let srv = Arc::new(wrpc_transport::frame::Server::default());
-    let tasks = Tasks::new(&rt);
-    spawn_invocations(&rt, &tasks, srv.as_ref(), func, handler)?;
-    tasks.spawn({
-        let tasks = tasks.clone();
-        async move {
-            loop {
-                let (stream, _) = lis.accept().await.context("failed to accept connection")?;
-                stream
-                    .set_nodelay(true)
-                    .context("failed to set TCP_NODELAY")?;
-                let srv = Arc::clone(&srv);
-                let ws = Arc::clone(&ws);
-                tasks.spawn(async move {
-                    let (_, ws) = ws
-                        .accept(stream)
-                        .await
-                        .context("failed to perform WebSocket handshake")?;
-                    let (tx, rx) = wrpc_websockets::split(ws);
-                    srv.accept((), tx, rx)
-                        .await
-                        .context("failed to accept invocation")
-                });
-            }
-        }
-    });
-    let clt = WebSocketsClient { addr, builder: clt };
-    bench_invoke(g, &rt, &tasks, "websockets", func, &clt, || ())
-}
-
 fn bench_http1(
     g: &mut BenchmarkGroup<impl Measurement>,
     func: Func,
@@ -682,7 +602,6 @@ where
     bench_unix(g, func, handler.clone())?;
     bench_quic(g, func, handler.clone())?;
     bench_webtransport(g, func, handler.clone())?;
-    bench_websockets(g, func, handler.clone())?;
     bench_http1(g, func, handler.clone())?;
     bench_http2(g, func, handler.clone())?;
     Ok(())

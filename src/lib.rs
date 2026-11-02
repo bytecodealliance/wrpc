@@ -14,9 +14,6 @@ pub mod transport {
 
     #[cfg(feature = "webtransport")]
     pub use wrpc_webtransport as web;
-
-    #[cfg(feature = "websockets")]
-    pub use wrpc_websockets as websockets;
 }
 
 /// wRPC runtime

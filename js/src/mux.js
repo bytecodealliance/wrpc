@@ -1,7 +1,7 @@
 // The framing multiplexer: the layer that turns a transport's single
 // bidirectional byte stream into the indexed sub-streams an invocation needs.
 //
-// Every wRPC transport (TCP, Unix, QUIC, WebTransport, WebSocket, …) provides
+// Every wRPC transport (TCP, Unix, QUIC, WebTransport, …) provides
 // one bidirectional byte stream per invocation; this module implements the
 // mandatory wRPC framing on top of it (see `SPEC.md`, "Framed stream
 // specification"). Outgoing data is written as frames `[path][data]`, where
@@ -170,9 +170,7 @@ const stoppedDone = (err) => err?.source === "stream" && err?.streamErrorCode ==
  * Adapt a WHATWG stream duplex with a half-close, such as a WebTransport
  * bidirectional stream, to a {@link Transport}, ending transmit by closing
  * the writable side. The peer stopping the writable side with application
- * error code `1` while it is being closed completes the close. A WebSocket
- * has no half-close, so a transport over one must communicate the end of
- * transmit in-band instead.
+ * error code `1` while it is being closed completes the close.
  * @param {{ readable: ReadableStream<Uint8Array>, writable: WritableStream<Uint8Array> }} duplex
  * @returns {Transport}
  */
