@@ -65,6 +65,14 @@ interface resources {
         bar: func() -> string;
     }
 
+    resource counter {
+        constructor(initial: u32);
+        clone-counter: func() -> counter;
+        get-count: func() -> u32;
+        increment-by: func(num: u32);
+        sum: static func(a: borrow<counter>, b: borrow<counter>) -> u32;
+    }
+
     bar: func(v: borrow<foo>) -> string;
 }
 

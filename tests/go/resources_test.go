@@ -38,5 +38,23 @@ func TestResources(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "foo", v)
 
+	a, err := resources.NewCounter(ctx, client, 1)
+	require.NoError(t, err)
+
+	require.NoError(t, resources.Counter_IncrementBy(ctx, client, a.Borrow(), 2))
+
+	n32, err := resources.Counter_GetCount(ctx, client, a.Borrow())
+	require.NoError(t, err)
+	assert.Equal(t, uint32(3), n32)
+
+	b, err := resources.Counter_CloneCounter(ctx, client, a.Borrow())
+	require.NoError(t, err)
+
+	require.NoError(t, resources.Counter_IncrementBy(ctx, client, b.Borrow(), 1))
+
+	n32, err = resources.Counter_Sum(ctx, client, a.Borrow(), b.Borrow())
+	require.NoError(t, err)
+	assert.Equal(t, uint32(7), n32)
+
 	// TODO: Test dropping `foo`, also after moving it, once resource dropping is supported
 }
