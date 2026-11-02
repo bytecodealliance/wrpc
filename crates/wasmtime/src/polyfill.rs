@@ -19,7 +19,7 @@ use wrpc_transport::{Invoke, InvokeExt as _};
 use crate::paths::params_async_paths;
 use crate::rpc::Error;
 use crate::{
-    ResourceTypes, ValEncoder, WithStore, WrpcView, WrpcViewExt as _, read_value, rpc_func_name,
+    ResourceTypes, ValEncoder, WithStore, WrpcView, WrpcViewExt as _, decode_value, rpc_func_name,
     rpc_result_type,
 };
 
@@ -203,11 +203,13 @@ async fn invoke(
     };
     let rx = async {
         let mut incoming = pin!(incoming);
+        let mut buf = BytesMut::default();
         for (i, (v, ref ty)) in zip(results, results_ty).enumerate() {
-            read_value(&mut *store, &mut incoming, resources, v, ty, &[i])
+            *v = decode_value(&mut *store, &mut incoming, &mut buf, resources, ty, &[i])
                 .await
                 .with_context(|| format!("failed to decode return value {i}"))?;
         }
+        ensure!(buf.is_empty(), "received data after return values end");
         wasmtime::error::Ok(())
     };
     let res = if let Some(timeout) = timeout {
