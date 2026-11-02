@@ -115,6 +115,7 @@
                 ++ [
                   pkgs.nodejs
                   pkgs.pkgsUnstable.go
+                  pkgs.typescript
                 ];
             };
 
@@ -203,6 +204,7 @@
               pkgs.cargo-audit
               pkgs.cargo-nextest
               pkgs.nodejs
+              pkgs.typescript
               pkgs.wit-deps
 
               pkgs.pkgsUnstable.go
