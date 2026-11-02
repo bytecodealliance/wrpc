@@ -2,29 +2,27 @@ use core::net::{Ipv6Addr, SocketAddr};
 use core::pin::pin;
 
 use std::process::Stdio;
+use std::sync::Arc;
 
 use anyhow::{Context as _, bail, ensure};
 use futures::{StreamExt as _, stream};
+use hyper::client::conn::http2;
+use hyper::server::conn::http1;
+use hyper_util::rt::{TokioExecutor, TokioIo};
 use tokio::io::{AsyncBufReadExt as _, BufReader};
-use tokio::net::TcpListener;
-use tokio::process::Command;
+use tokio::net::{TcpListener, TcpStream};
+use tokio::process::{Child, Command};
 use tokio::{select, spawn};
 use tracing::{info, instrument};
 
 pub mod common;
 
-#[instrument(ret)]
-#[test_log::test(tokio::test(flavor = "multi_thread"))]
-async fn js_server() -> anyhow::Result<()> {
-    let port = wrpc_test::free_port()
-        .await
-        .context("failed to find free port")?;
-    let addr = SocketAddr::from((Ipv6Addr::LOCALHOST, port));
-
+/// Start `tests/js/server.js` listening on `addr` and wait until it is ready.
+async fn start_server(addr: &str) -> anyhow::Result<Child> {
     info!("starting `tests/js/server.js`");
     let mut server = Command::new("node")
         .arg("tests/js/server.js")
-        .arg(addr.to_string())
+        .arg(addr)
         .stdout(Stdio::piped())
         .kill_on_drop(true)
         .spawn()
@@ -37,19 +35,22 @@ async fn js_server() -> anyhow::Result<()> {
         line == "listening",
         "unexpected `tests/js/server.js` output: {line}"
     );
-
-    let client = wrpc_transport::frame::tcp::Client::from(addr);
-    common::assert_sync((), &client).await?;
-    common::assert_async((), &client).await?;
-
-    server.start_kill().context("failed to kill `node`")?;
-    server.wait().await.context("failed to wait for `node`")?;
-    Ok(())
+    Ok(server)
 }
 
-#[instrument(ret)]
-#[test_log::test(tokio::test(flavor = "multi_thread"))]
-async fn js_client() -> anyhow::Result<()> {
+/// Serve the `echo-server` world of `tests/js/wit` on `srv`, passing each
+/// connection accepted on `lis` to `accept`, until `tests/js/client.js`, run
+/// against `addr`, exits.
+async fn serve_echo<S>(
+    srv: &S,
+    lis: TcpListener,
+    addr: &str,
+    mut accept: impl AsyncFnMut(TcpStream, SocketAddr),
+) -> anyhow::Result<()>
+where
+    S: wrpc_transport::Serve,
+    S::Context: 'static,
+{
     mod bindings {
         wit_bindgen_wrpc::generate!({
             world: "echo-server",
@@ -72,12 +73,7 @@ async fn js_client() -> anyhow::Result<()> {
         }
     }
 
-    let lis = TcpListener::bind((Ipv6Addr::LOCALHOST, 0))
-        .await
-        .context("failed to start TCP listener")?;
-    let addr = lis.local_addr().context("failed to get server address")?;
-    let srv = wrpc_transport::frame::Server::default();
-    let invocations = bindings::serve(&srv, Echo)
+    let invocations = bindings::serve(srv, Echo)
         .await
         .context("failed to serve `wrpc-test:js/echo`")?;
     let mut invocations = stream::select_all(
@@ -89,7 +85,7 @@ async fn js_client() -> anyhow::Result<()> {
     info!("running `tests/js/client.js`");
     let mut client = pin!(
         Command::new("node")
-            .args(["--test-force-exit", "tests/js/client.js", &addr.to_string()])
+            .args(["--test-force-exit", "tests/js/client.js", addr])
             .kill_on_drop(true)
             .status()
     );
@@ -102,8 +98,7 @@ async fn js_client() -> anyhow::Result<()> {
             }
             res = lis.accept() => {
                 let (stream, addr) = res.expect("failed to accept connection");
-                let (rx, tx) = wrpc_transport::tcp::split(stream);
-                srv.accept(addr, tx, BufReader::new(rx)).await.expect("failed to accept invocation");
+                accept(stream, addr).await;
             }
             Some((instance, name, invocation)) = invocations.next() => {
                 let invocation = invocation
@@ -116,4 +111,91 @@ async fn js_client() -> anyhow::Result<()> {
             }
         }
     }
+}
+
+#[instrument(ret)]
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+async fn js_server() -> anyhow::Result<()> {
+    let port = wrpc_test::free_port()
+        .await
+        .context("failed to find free port")?;
+    let addr = SocketAddr::from((Ipv6Addr::LOCALHOST, port));
+    let mut server = start_server(&addr.to_string()).await?;
+
+    let client = wrpc_transport::frame::tcp::Client::from(addr);
+    common::assert_sync((), &client).await?;
+    common::assert_async((), &client).await?;
+
+    server.start_kill().context("failed to kill `node`")?;
+    server.wait().await.context("failed to wait for `node`")?;
+    Ok(())
+}
+
+#[instrument(ret)]
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+async fn js_http_server() -> anyhow::Result<()> {
+    let port = wrpc_test::free_port()
+        .await
+        .context("failed to find free port")?;
+    let addr = SocketAddr::from((Ipv6Addr::LOCALHOST, port));
+    let mut server = start_server(&format!("http://{addr}")).await?;
+
+    let conn = wrpc_test::tcp_connect(addr).await?;
+    let (sender, conn) = http2::handshake(TokioExecutor::new(), TokioIo::new(conn))
+        .await
+        .context("failed to establish HTTP/2 connection")?;
+    spawn(conn);
+    let client = wrpc_http::Client::from(sender);
+    let (mut cx, ()) = http::Request::new(()).into_parts();
+    cx.uri = format!("http://{addr}/")
+        .parse()
+        .context("failed to parse request URI")?;
+    common::assert_sync(cx.clone(), &client).await?;
+    common::assert_async(cx, &client).await?;
+
+    server.start_kill().context("failed to kill `node`")?;
+    server.wait().await.context("failed to wait for `node`")?;
+    Ok(())
+}
+
+#[instrument(ret)]
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+async fn js_client() -> anyhow::Result<()> {
+    let lis = TcpListener::bind((Ipv6Addr::LOCALHOST, 0))
+        .await
+        .context("failed to start TCP listener")?;
+    let addr = lis.local_addr().context("failed to get server address")?;
+    let srv = wrpc_transport::frame::Server::default();
+    serve_echo(&srv, lis, &addr.to_string(), async |stream, addr| {
+        let (rx, tx) = wrpc_transport::tcp::split(stream);
+        srv.accept(addr, tx, BufReader::new(rx))
+            .await
+            .expect("failed to accept invocation");
+    })
+    .await
+}
+
+#[instrument(ret)]
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+async fn js_http_client() -> anyhow::Result<()> {
+    let lis = TcpListener::bind((Ipv6Addr::LOCALHOST, 0))
+        .await
+        .context("failed to start TCP listener")?;
+    let addr = lis.local_addr().context("failed to get server address")?;
+    let srv = wrpc_http::Server::default();
+    serve_echo(
+        srv.0.as_ref(),
+        lis,
+        &format!("http://{addr}"),
+        async |stream, _| {
+            let svc = wrpc_http::Server::from(Arc::clone(&srv.0));
+            spawn(async move {
+                http1::Builder::new()
+                    .serve_connection(TokioIo::new(stream), svc)
+                    .await
+                    .expect("failed to serve HTTP connection");
+            });
+        },
+    )
+    .await
 }
