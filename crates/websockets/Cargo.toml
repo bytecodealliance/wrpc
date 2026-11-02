@@ -30,9 +30,8 @@ sha1_smol = ["tokio-websockets/sha1_smol"]
 [dependencies]
 anyhow = { workspace = true, features = ["std"] }
 bytes = { workspace = true }
-futures = { workspace = true, features = ["alloc"] }
+futures = { workspace = true }
 tokio = { workspace = true }
-tokio-util = { workspace = true, features = ["io"] }
 tokio-websockets = { workspace = true, features = ["client", "server"] }
 tracing = { workspace = true }
 wrpc-transport = { workspace = true }

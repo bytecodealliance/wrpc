@@ -1399,8 +1399,8 @@ async fn accept_websockets(
     sb: &wrpc_websockets::ServerBuilder,
     srv: &wrpc_transport::frame::Server<
         (),
-        tokio_util::io::StreamReader<wrpc_websockets::Incoming<tokio::net::TcpStream>, Bytes>,
-        tokio_util::io::SinkWriter<wrpc_websockets::Outgoing<tokio::net::TcpStream>>,
+        wrpc_websockets::Incoming<tokio::net::TcpStream>,
+        wrpc_websockets::Outgoing<tokio::net::TcpStream>,
     >,
 ) {
     let (stream, addr) = lis.accept().await.expect("failed to accept connection");

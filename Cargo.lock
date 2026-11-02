@@ -5036,7 +5036,6 @@ dependencies = [
  "futures",
  "test-log",
  "tokio",
- "tokio-util",
  "tokio-websockets",
  "tracing",
  "wrpc-test",
