@@ -282,7 +282,7 @@ impl hyper::service::Service<http::Request<hyper::body::Incoming>> for Server {
 
 /// Client wrapper
 #[cfg(feature = "client")]
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 #[repr(transparent)]
 pub struct Client<T>(pub T);
 
