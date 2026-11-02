@@ -49,7 +49,7 @@ const STREAM_CAPACITY = 128;
 
 /** @typedef {import("./index.d.ts").TypedArray} TypedArray */
 /**
- * @typedef {{ name: string, new (length: number): TypedArray, from(elems: ArrayLike<any>): TypedArray }}
+ * @typedef {{ name: string, new (length: number): TypedArray, from(elems: ArrayLike<any>, map?: (e: any) => any): TypedArray }}
  *   TypedArrayConstructor
  */
 
@@ -69,6 +69,38 @@ const TYPED_ARRAYS = {
   f32: Float32Array,
   f64: Float64Array,
 };
+
+/**
+ * The inclusive bounds of each integer type.
+ * @type {Record<string, [number, number] | [bigint, bigint]>}
+ */
+const INT_BOUNDS = {
+  s8: [-0x80, 0x7f],
+  u8: [0, 0xff],
+  s16: [-0x8000, 0x7fff],
+  u16: [0, 0xffff],
+  s32: [-0x80000000, 0x7fffffff],
+  u32: [0, 0xffffffff],
+  s64: [-(1n << 63n), (1n << 63n) - 1n],
+  u64: [0n, (1n << 64n) - 1n],
+};
+
+/**
+ * `v` if it is an integer of the integer type `kind`, which is a `number`, or
+ * a `bigint` for `s64` and `u64`.
+ * @param {string} kind @param {unknown} v @returns {number | bigint}
+ */
+function checkInt(kind, v) {
+  const [min, max] = INT_BOUNDS[kind];
+  if (typeof v !== typeof min) {
+    throw new TypeError(`expected a ${typeof min} for a \`${kind}\`, got ${typeof v}`);
+  }
+  const n = /** @type {number | bigint} */ (v);
+  if ((typeof n === "number" && !Number.isInteger(n)) || n < min || n > max) {
+    throw new RangeError(`expected an integer in [${min}, ${max}] for a \`${kind}\`, got ${n}`);
+  }
+  return n;
+}
 
 /**
  * The typed array that a list of `elem` maps to, if `elem` is numeric.
@@ -195,25 +227,17 @@ export function encodeValue(w, ty, v, sink, path) {
       return;
     case "u8":
     case "s8":
-      w.u8(+v & 0xff);
+      w.u8(/** @type {number} */ (checkInt(ty.kind, v)) & 0xff);
       return;
     case "u16":
-      w.varU(+v & 0xffff);
-      return;
     case "u32":
-      w.varU(+v >>> 0);
-      return;
     case "u64":
-      w.varU(BigInt.asUintN(64, v));
+      w.varU(checkInt(ty.kind, v));
       return;
     case "s16":
-      w.varS((+v << 16) >> 16);
-      return;
     case "s32":
-      w.varS(+v | 0);
-      return;
     case "s64":
-      w.varS(BigInt.asIntN(64, v));
+      w.varS(checkInt(ty.kind, v));
       return;
     case "f32": {
       const n = +v;
@@ -574,7 +598,9 @@ export function toList(v, elem) {
   }
   const elems = iterableToValues(v);
   if (!elems) throw new TypeError(`expected an iterable for a \`list<${elem.kind}>\``);
-  return typed ? typed.from(elems) : elems;
+  if (!typed) return elems;
+  if (!Object.hasOwn(INT_BOUNDS, elem.kind)) return typed.from(elems);
+  return typed.from(elems, (e) => checkInt(elem.kind, e));
 }
 
 const u8 = /** @type {Type} */ ({ kind: "u8" });
