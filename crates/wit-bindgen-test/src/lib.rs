@@ -761,12 +761,11 @@ status: {}",
 
     /// Returns whether the named runtime test is expected to fail.
     ///
-    /// The wRPC generators do not yet implement the `map` or fixed-length
-    /// `list<T, N>` WIT types, so bindings generation for those tests panics.
-    /// Their failure is expected; if a test here starts succeeding, the harness
-    /// flags it so this entry can be removed.
+    /// The wRPC generators do not yet implement the `map` WIT type, so bindings
+    /// generation for that test panics. Its failure is expected; if a test here
+    /// starts succeeding, the harness flags it so this entry can be removed.
     fn runtime_test_should_fail(name: &str) -> bool {
-        matches!(name, "map" | "fixed-length-lists")
+        name == "map"
     }
 
     /// "poor man's test output progress"

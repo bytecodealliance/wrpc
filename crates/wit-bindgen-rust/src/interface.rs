@@ -1009,6 +1009,15 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve, H: Handler<T::Context> + 
         }
     }
 
+    fn print_fixed_length_list(&mut self, ty: &Type, size: u32, owned: bool, submodule: bool) {
+        if !owned {
+            self.push_str("&'a ");
+        }
+        self.push_str("[");
+        self.print_ty(ty, true, submodule);
+        uwrite!(self.src, "; {size}]");
+    }
+
     fn print_future(&mut self, ty: &Option<Type>, submodule: bool) {
         self.push_str("::core::pin::Pin<::std::boxed::Box<dyn ::core::future::Future<Output = ");
         if let Some(ty) = ty {
@@ -1064,8 +1073,8 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve, H: Handler<T::Context> + 
         }
         match &ty.kind {
             TypeDefKind::List(ty) => self.print_list(ty, owned, submodule),
-            TypeDefKind::FixedLengthList(..) => {
-                panic!("unsupported anonymous type reference: fixed size list")
+            TypeDefKind::FixedLengthList(ty, size) => {
+                self.print_fixed_length_list(ty, *size, owned, submodule)
             }
             TypeDefKind::Map(..) => panic!("unsupported anonymous type reference: map"),
             TypeDefKind::Option(ty) => self.print_option(ty, owned, submodule),
@@ -2479,13 +2488,18 @@ mod {mod_name} {{
 
     fn type_fixed_length_list(
         &mut self,
-        _id: TypeId,
+        id: TypeId,
         _name: &str,
-        _ty: &Type,
-        _size: u32,
-        _docs: &Docs,
+        ty: &Type,
+        size: u32,
+        docs: &Docs,
     ) {
-        panic!("unsupported type: fixed length list")
+        if let Some(name) = self.name_of(id) {
+            self.rustdoc(docs);
+            uwrite!(self.src, "pub type {name} = ");
+            self.print_fixed_length_list(ty, size, true, false);
+            self.push_str(";\n");
+        }
     }
 
     fn type_map(&mut self, _id: TypeId, _name: &str, _key: &Type, _value: &Type, _docs: &Docs) {
