@@ -91,6 +91,11 @@ struct Common {
 }
 
 fn main() -> Result<()> {
+    #[cfg(target_os = "wasi")]
+    if let Some(pwd) = std::env::var_os("PWD") {
+        std::env::set_current_dir(pwd).context("failed to change directory to `PWD`")?;
+    }
+
     let mut files = Files::default();
     let (generator, opt) = match Opt::parse() {
         Opt::Rust { opts, args } => (opts.build(), args),
