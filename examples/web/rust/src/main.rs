@@ -655,10 +655,14 @@ export const PORT = "{port}"
                     ),
                 )),
             )
-            // Serve the `@bytecodealliance/wrpc` client the UI imports.
+            // Serve the `@bytecodealliance/wrpc` client and the bindings the UI imports.
             .nest_service(
                 "/wrpc",
                 ServeDir::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../../js/src")),
+            )
+            .nest_service(
+                "/bindings",
+                ServeDir::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../ui/bindings")),
             )
             .fallback(index)
             .layer(TraceLayer::new_for_http()),
