@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { invoke, t } from "../../js/src/index.js";
-import { connect } from "./tcp.js";
+import { connect } from "./transport.js";
 
 /**
  * @typedef {import("../../js/src/index.js").Chan<import("../../js/src/index.js").Chunk>} Chan

@@ -2,7 +2,7 @@
 // address given as the first argument, for the Rust clients in `tests/js.rs`.
 
 import { accept, t } from "../../js/src/index.js";
-import { listen } from "./tcp.js";
+import { listen } from "./transport.js";
 
 /**
  * @typedef {import("../../js/src/index.js").InputValue} InputValue
