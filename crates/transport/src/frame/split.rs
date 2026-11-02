@@ -76,8 +76,7 @@ impl<T: AsyncRead + Unpin> AsyncRead for ReadHalf<T> {
     }
 }
 
-/// Write half of a stream, which, if dropped before being shut down, closes the stream, signaling
-/// the peer that sending data failed
+/// Write half of a stream, which, if dropped before being shut down, closes the stream
 #[derive(Debug)]
 pub struct WriteHalf<T> {
     shared: Arc<Shared<T>>,

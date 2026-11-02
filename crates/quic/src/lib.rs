@@ -54,7 +54,7 @@ impl AsyncBufRead for RecvStream {
 }
 
 /// Send side of a QUIC stream, which is reset with application error code `0` once
-/// dropped before being shut down, signaling the peer that sending data failed
+/// dropped before being shut down
 #[derive(Debug)]
 pub struct SendStream {
     inner: quinn::SendStream,
