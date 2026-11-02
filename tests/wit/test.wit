@@ -129,27 +129,3 @@ world root-server {
 world root-client {
     import ping: func() -> string;
 }
-
-interface get-types {
-    flags feature-flags {
-        show-a,
-        show-b,
-        show-c,
-        show-d,
-        show-e,
-        show-f,
-    }
-
-    record floats {
-        a: f32,
-        b: f64,
-    }
-
-    get-features: func() -> feature-flags;
-    get-floats: func() -> floats;
-    get-signed: func() -> tuple<s16, s32, s64>;
-}
-
-world types {
-    import get-types;
-}

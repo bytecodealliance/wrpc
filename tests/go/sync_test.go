@@ -4,6 +4,9 @@ package integration_test
 
 import (
 	"context"
+	"encoding/binary"
+	"math"
+	"strings"
 	"testing"
 	"time"
 
@@ -85,4 +88,112 @@ func TestSync(t *testing.T) {
 	rs, err := sync.WithRecordList(ctx, client, 3)
 	require.NoError(t, err)
 	assert.Equal(t, []*sync.Rec{rec("0"), rec("1"), rec("2")}, rs)
+}
+
+func TestFlags(t *testing.T) {
+	for _, tc := range []struct {
+		data string
+		want *sync.Abc
+	}{
+		{data: "\x05", want: &sync.Abc{A: true, C: true}},
+		{data: "\x08"},
+		{data: "\x80"},
+	} {
+		ctx, client := serve(t, func(s wrpc.Server) (func() error, error) {
+			return s.Serve("wrpc-test:integration/sync", "with-flags", func(ctx context.Context, w wrpc.IndexWriteCloser, r wrpc.IndexReadCloser) {
+				_, _ = w.Write([]byte(tc.data))
+				_ = w.Close()
+			})
+		})
+		flags, err := sync.WithFlags(ctx, client, true, false, true)
+		if tc.want == nil {
+			assert.ErrorContains(t, err, "bit not associated with any flag is set", "%q", tc.data)
+			assert.Nil(t, flags, "%q", tc.data)
+			continue
+		}
+		require.NoError(t, err)
+		assert.Equal(t, tc.want, flags)
+	}
+}
+
+type floatsHandler struct {
+	integration.SyncHandler
+	floats chan [2]uint64
+}
+
+func (h floatsHandler) Numbers(ctx context.Context) (uint8, uint16, uint32, uint64, int8, int16, int32, int64, float32, float64, error) {
+	select {
+	case bits := <-h.floats:
+		return 0, 0, 0, 0, 0, 0, 0, 0, math.Float32frombits(uint32(bits[0])), math.Float64frombits(bits[1]), nil
+	case <-ctx.Done():
+		return 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, ctx.Err()
+	}
+}
+
+func TestCanonicalNaN(t *testing.T) {
+	h := floatsHandler{floats: make(chan [2]uint64, 1)}
+	ctx, client := serve(t, func(s wrpc.Server) (func() error, error) {
+		return sync_server.Serve(s, h, h)
+	})
+	const nan32, nan64 = 0x7fc0_0000, 0x7ff8_0000_0000_0000
+	for _, tc := range []struct {
+		bits [2]uint64
+		nan  bool
+	}{
+		{bits: [2]uint64{0x7f80_0001, 0x7ff0_0000_0000_0001}, nan: true},
+		{bits: [2]uint64{0x7fa0_0000, 0x7ff4_0000_0000_0000}, nan: true},
+		{bits: [2]uint64{0x7fc0_0001, 0x7ff8_0000_0000_0001}, nan: true},
+		{bits: [2]uint64{0x7fff_ffff, 0x7fff_ffff_ffff_ffff}, nan: true},
+		{bits: [2]uint64{0xff80_0001, 0xfff0_0000_0000_0001}, nan: true},
+		{bits: [2]uint64{0xffc0_0000, 0xfff8_0000_0000_0000}, nan: true},
+		{bits: [2]uint64{0xffff_ffff, 0xffff_ffff_ffff_ffff}, nan: true},
+		{bits: [2]uint64{0x0000_0000, 0x0000_0000_0000_0000}},
+		{bits: [2]uint64{0x8000_0000, 0x8000_0000_0000_0000}},
+		{bits: [2]uint64{0x3fc0_0000, 0xbff8_0000_0000_0000}},
+		{bits: [2]uint64{0x0000_0001, 0x0000_0000_0000_0001}},
+		{bits: [2]uint64{0x7f7f_ffff, 0x7fef_ffff_ffff_ffff}},
+		{bits: [2]uint64{0x7f80_0000, 0xfff0_0000_0000_0000}},
+	} {
+		bits, want := tc.bits, tc.bits
+		if tc.nan {
+			want = [2]uint64{nan32, nan64}
+		}
+		h.floats <- bits
+		_, _, _, _, _, _, _, _, a, b, err := sync.Numbers(ctx, client)
+		require.NoError(t, err)
+		assert.Equal(t, want, [2]uint64{uint64(math.Float32bits(a)), math.Float64bits(b)}, "%#x", bits)
+		assert.Equal(t,
+			binary.LittleEndian.AppendUint64(binary.LittleEndian.AppendUint32(nil, uint32(want[0])), want[1]),
+			wrpc.AppendFloat64(wrpc.AppendFloat32(nil, math.Float32frombits(uint32(bits[0]))), math.Float64frombits(bits[1])),
+			"%#x", bits,
+		)
+	}
+}
+
+func TestSignedLEB128(t *testing.T) {
+	for _, tc := range []struct {
+		data string
+		want [3]int64
+		err  string
+	}{
+		{data: "\x80\x80\x7e" + "\x80\x80\x80\x80\x78" + "\x80\x80\x80\x80\x80\x80\x80\x80\x80\x7f", want: [3]int64{math.MinInt16, math.MinInt32, math.MinInt64}},
+		{data: "\xff\xff\x01" + "\xff\xff\xff\xff\x07" + "\xff\xff\xff\xff\xff\xff\xff\xff\xff\x00", want: [3]int64{math.MaxInt16, math.MaxInt32, math.MaxInt64}},
+		{data: "\x80\x80\x7a" + "\x00" + "\x00", err: "s16 overflows"},
+		{data: "\x00" + "\x80\x80\x80\x80\x08" + "\x00", err: "s32 overflows"},
+		{data: "\x00" + "\x00" + "\x80\x80\x80\x80\x80\x80\x80\x80\x80\x01", err: "s64 overflows"},
+	} {
+		ctx, client := serve(t, func(s wrpc.Server) (func() error, error) {
+			return s.Serve("wrpc-test:integration/sync", "numbers", func(ctx context.Context, w wrpc.IndexWriteCloser, r wrpc.IndexReadCloser) {
+				_, _ = w.Write([]byte("\x00\x00\x00\x00\x00" + tc.data + strings.Repeat("\x00", 12)))
+				_ = w.Close()
+			})
+		})
+		_, _, _, _, _, a, b, c, _, _, err := sync.Numbers(ctx, client)
+		if tc.err != "" {
+			assert.ErrorContains(t, err, tc.err, "%q", tc.data)
+			continue
+		}
+		require.NoError(t, err)
+		assert.Equal(t, tc.want, [3]int64{int64(a), int64(b), c})
+	}
 }
