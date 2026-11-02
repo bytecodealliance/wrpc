@@ -4739,11 +4739,15 @@ dependencies = [
  "quinn",
  "rcgen",
  "rustls",
+ "tempfile",
  "tokio",
  "tracing",
  "url",
  "web-transport-quinn",
+ "wrpc-http",
+ "wrpc-quic",
  "wrpc-transport",
+ "wrpc-webtransport",
 ]
 
 [[package]]
