@@ -89,6 +89,8 @@ A sender MUST send the data of a pending value only after the data carrying it, 
 
 Frames do not communicate the end of transmit, i.e. that no more frames follow. Each transport MUST communicate it using its native half-close (see [Transport](#transport)), for example, TCP shutdown or finishing a QUIC stream. The end of transmit closes every `path`.
 
+A receiver, which treats received data as an error, MUST fail the invocation. A peer, which fails an invocation, MUST close the invocation's byte stream in both directions using the transport's mechanism (see [Transport specifications](#transport-specifications)), and MUST NOT close a connection or session carrying other invocations.
+
 ## Transport specifications
 
 ### TCP
@@ -99,13 +101,15 @@ The server MUST listen on a TCP socket and client MUST establish a new connectio
 
 The write side of the stream MUST be shutdown as soon as data transfer is done, for example, once the client is done sending encoded parameter buffer and all asynchronous parameters, it MUST shutdown the write side of the stream to signal EOF to the server.
 
+To close the stream in both directions (see [Framed stream specification](#framed-stream-specification)), a peer MUST reset the connection (`RST`).
+
 This mapping is deliberate: a TCP connection provides exactly one byte stream and no stream-level multiplexing, so the TCP transport does not multiplex invocations over a connection itself. Since the client shuts down its write side first, the client performs the active close and holds a `TIME_WAIT` socket per invocation, which bounds the sustained invocation rate from a single client to a single server address by the size of the client's ephemeral port range.
 
 Peers that need many concurrent invocations over a single long-lived connection, or per-invocation metadata, SHOULD use a transport that natively multiplexes streams, such as [QUIC](#quic), [WebTransport](#webtransport) or [HTTP](#http) over HTTP/2.
 
 ### Unix domain sockets
 
-Unix domain sockets follow the [TCP](#tcp) transport specification, using a stream-oriented (`SOCK_STREAM`) socket in place of a TCP socket.
+Unix domain sockets follow the [TCP](#tcp) transport specification, using a stream-oriented (`SOCK_STREAM`) socket in place of a TCP socket and closing the socket in place of resetting the connection.
 
 ### QUIC
 
@@ -116,6 +120,8 @@ The client MUST open a new client-initiated bidirectional stream per each invoca
 A peer MUST communicate the end of transmit by finishing the send side of the stream.
 
 Once a peer is done receiving data, it SHOULD stop the receive side of the stream with application error code `1`. A peer MUST treat its send side being stopped with application error code `1` after it finished the stream as successful completion.
+
+To close the stream in both directions (see [Framed stream specification](#framed-stream-specification)), a peer MUST stop the receive side and reset the send side of the stream, both with application error code `0`, which indicates a failed invocation.
 
 TLS configuration, including the ALPN protocol, is application-defined.
 
@@ -130,6 +136,8 @@ A single WebTransport session MAY carry multiple concurrent invocations.
 HTTP relies on [Framed stream specification](#framed-stream-specification) to map a single HTTP request-response exchange to a single wRPC invocation.
 
 The client MUST send a `POST` request per each invocation, with the request body carrying the data sent by the client and the response body carrying the data sent by the server. The end of the request or response body communicates the end of transmit.
+
+To close the exchange in both directions (see [Framed stream specification](#framed-stream-specification)), a peer MUST reset its stream with an error code other than `NO_ERROR`, for example, `RST_STREAM` with `INTERNAL_ERROR` in HTTP/2. Where the exchange has no stream of its own, as in HTTP/1.1, a peer MUST close the connection instead.
 
 The request target and header fields are application-defined and not interpreted by wRPC.
 
