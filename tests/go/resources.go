@@ -12,10 +12,7 @@ import (
 	"wrpc.io/tests/go/bindings/resources_server/exports/wrpc_test/integration/resources"
 )
 
-type Foo struct {
-	cancel context.CancelFunc
-	id     uuid.UUID
-}
+type Foo struct{}
 
 func (Foo) Bar(ctx context.Context) (string, error) {
 	return "bar", nil
@@ -31,23 +28,14 @@ func (h *ResourcesHandler) Foo(ctx context.Context) (wrpc.Own[resources.Foo], er
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate UUIDv7: %w", err)
 	}
-	ctx, cancel := context.WithCancel(ctx)
-	v := Foo{id: id, cancel: cancel}
-	h.Store(id.String(), v)
-	go func() {
-		<-ctx.Done()
-		h.Delete(id)
-	}()
+	h.Store(id.String(), Foo{})
 	return wrpc.Own[resources.Foo](id.String()), nil
 }
 
 func (h *ResourcesHandler) Foo_Foo(ctx context.Context, v wrpc.Own[resources.Foo]) (string, error) {
-	stored, ok := h.Load(string(v))
-	if !ok {
+	if _, ok := h.LoadAndDelete(string(v)); !ok {
 		return "", fmt.Errorf("unknown resource ID `%s`", string(v))
 	}
-	foo := stored.(Foo)
-	foo.cancel()
 	return "foo", nil
 }
 
@@ -130,8 +118,13 @@ func (h *ResourcesHandler) Counter_Sum(ctx context.Context, a wrpc.Borrow[resour
 	return x + y, nil
 }
 
-type ResourcesStrangeHandler struct{}
+type ResourcesStrangeHandler struct {
+	Resources *ResourcesHandler
+}
 
 func (h ResourcesStrangeHandler) Bar(ctx context.Context, v wrpc.Borrow[resources.Foo]) (uint64, error) {
+	if _, ok := h.Resources.Load(string(v)); !ok {
+		return 0, fmt.Errorf("unknown resource ID `%s`", string(v))
+	}
 	return 42, nil
 }
