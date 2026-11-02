@@ -152,9 +152,18 @@ every transport must: `closeWrite` is required, and an invocation fails if
 the transport does not implement it. A peer that reads until end of transmit,
 such as the Rust implementation, otherwise waits forever.
 
-`fromWebStreams` maps `closeWrite` to closing the writable side, which suits
-byte streams with a half-close, such as WebTransport bidirectional streams or
-TCP sockets (with half-open connections allowed).
+`fromWebStreams` maps `closeWrite` to closing the writable side and `abort` to
+cancelling the readable and aborting the writable side, which suits byte
+streams with a half-close, such as WebTransport bidirectional streams. A
+Node.js TCP socket (with half-open connections allowed) adapted with
+`Duplex.toWeb` may be closed cleanly by that `abort`, so reset it instead:
+
+```js
+const transport = {
+  ...fromWebStreams(Duplex.toWeb(socket)),
+  abort: () => void socket.resetAndDestroy(),
+};
+```
 
 `fromFetch(input, options?)` returns an HTTP client transport for one
 invocation, sending a `POST` request to `input` with `options.fetch`

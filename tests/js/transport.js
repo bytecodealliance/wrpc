@@ -22,10 +22,15 @@ function parse(addr) {
 
 /**
  * A transport over a socket. wRPC signals the end of each direction by
- * shutting down its write side, so sockets must allow half-open connections.
+ * shutting down its write side, so sockets must allow half-open connections,
+ * and a failed invocation resets the connection.
  * @param {net.Socket} sock
+ * @returns {Transport}
  */
-export const transport = (sock) => fromWebStreams(Duplex.toWeb(sock));
+export const transport = (sock) => ({
+  ...fromWebStreams(Duplex.toWeb(sock)),
+  abort: () => void sock.resetAndDestroy(),
+});
 
 /**
  * Connect to `addr`.

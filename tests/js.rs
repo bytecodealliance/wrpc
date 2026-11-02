@@ -1,19 +1,24 @@
 use core::net::{Ipv6Addr, SocketAddr};
 use core::pin::pin;
+use core::time::Duration;
 
+use std::io::ErrorKind;
 use std::process::Stdio;
 use std::sync::Arc;
 
 use anyhow::{Context as _, bail, ensure};
+use bytes::Bytes;
 use futures::{StreamExt as _, stream};
 use hyper::client::conn::http2;
 use hyper::server::conn::http1;
 use hyper_util::rt::{TokioExecutor, TokioIo};
-use tokio::io::{AsyncBufReadExt as _, BufReader};
+use tokio::io::{AsyncBufReadExt as _, AsyncReadExt as _, AsyncWriteExt as _, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::process::{Child, Command};
+use tokio::time::timeout;
 use tokio::{select, spawn};
 use tracing::{info, instrument};
+use wrpc_transport::Invoke as _;
 
 pub mod common;
 
@@ -123,6 +128,25 @@ async fn js_server() -> anyhow::Result<()> {
     let mut server = start_server(&addr.to_string()).await?;
 
     let client = wrpc_transport::frame::tcp::Client::from(addr);
+    {
+        let (tx, mut rx) = client
+            .invoke(
+                (),
+                "wrpc-test:integration/foo",
+                "foo",
+                Bytes::default(),
+                &[[]; 0],
+            )
+            .await?;
+        let mut invalid = tx.index(&[1])?;
+        invalid.write_all(b"x").await?;
+        let res = timeout(Duration::from_secs(5), rx.read_to_end(&mut Vec::default()))
+            .await
+            .context("invalid data did not reset the invocation")?;
+        let err = res.expect_err("invalid data must reset the invocation");
+        assert_eq!(err.kind(), ErrorKind::ConnectionReset);
+    }
+
     common::assert_sync((), &client).await?;
     common::assert_async((), &client).await?;
 
