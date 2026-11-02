@@ -15,6 +15,7 @@ runs:
     with:
       extra-conf: |
         accept-flake-config = true
+        fallback = true
 
   - uses: cachix/cachix-action@v17
     continue-on-error: true
