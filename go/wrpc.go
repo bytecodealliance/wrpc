@@ -186,3 +186,18 @@ type BufReadCloser struct {
 	*bufio.Reader
 	io.Closer
 }
+
+func (r BufReadCloser) CloseWithError(err error) error {
+	return CloseWithError(r.Closer, err)
+}
+
+// CloseWithError closes `c`. If `err` is not nil and `c` has a `CloseWithError` method,
+// that method is called instead, which must tear down the whole exchange `c` belongs to,
+// e.g. reset a TCP connection, so that the peer does not mistake a failed invocation
+// for one which ended cleanly.
+func CloseWithError(c io.Closer, err error) error {
+	if c, ok := c.(interface{ CloseWithError(error) error }); ok {
+		return c.CloseWithError(err)
+	}
+	return c.Close()
+}

@@ -333,6 +333,8 @@ func newFrameStreamReader(r *FrameStreamReader) *FrameStreamReader {
 // `paths` must not contain both a wildcard and an index at the same position, so paths of
 // different variant cases, which are not indexed, must be merged by replacing such indices
 // by wildcards.
+// Once the data received is processed or `ctx` is done, `r` is closed. If receiving fails
+// otherwise, e.g. on invalid data, `r` is closed with the error instead (see `CloseWithError`).
 func NewFrameStreamReader(ctx context.Context, r ByteReadCloser, paths ...SubscribePath) *FrameStreamReader {
 	var readers atomic.Int64
 	readers.Add(1)
@@ -472,8 +474,18 @@ func NewFrameStreamReader(ctx context.Context, r ByteReadCloser, paths ...Subscr
 				}
 			}
 		}()
-		if err != nil {
+		closeReader := func(err error) {
+			if errors.Is(err, ctx.Err()) {
+				err = nil
+			}
+			if err := CloseWithError(r, err); err != nil {
+				slog.DebugContext(ctx, "failed to close frame stream reader", "err", err)
+			}
+		}
+		failed := err != nil
+		if failed {
 			ingressErr.Store(&err)
+			closeReader(err)
 		}
 		subs.mu.Lock()
 		subs.done = true
@@ -497,8 +509,8 @@ func NewFrameStreamReader(ctx context.Context, r ByteReadCloser, paths ...Subscr
 		} else {
 			slog.DebugContext(ctx, "ingress successfully complete")
 		}
-		if err := r.Close(); err != nil {
-			slog.DebugContext(ctx, "failed to close frame stream reader", "err", err)
+		if !failed {
+			closeReader(err)
 		}
 	}()
 	return newFrameStreamReader(&FrameStreamReader{

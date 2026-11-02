@@ -91,10 +91,11 @@ func (s *FramedServer) Serve(instance string, name string, f HandleFunc, paths .
 }
 
 // Accept reads the invocation header from `r` and calls the handler of the invoked function
-// in a new goroutine. Reading the header is aborted, closing `w` and `r`, once `ctx` is done.
+// in a new goroutine. Reading the header is aborted once `ctx` is done.
+// If accepting fails, `w` and `r` are closed with the error (see `CloseWithError`).
 func (s *FramedServer) Accept(ctx context.Context, w io.WriteCloser, r io.ReadCloser) error {
 	stop := context.AfterFunc(ctx, func() {
-		if err := r.Close(); err != nil {
+		if err := CloseWithError(r, context.Cause(ctx)); err != nil {
 			slog.DebugContext(s.ctx, "failed to close reader", "err", err)
 		}
 	})
@@ -105,11 +106,11 @@ func (s *FramedServer) Accept(ctx context.Context, w io.WriteCloser, r io.ReadCl
 		return nil
 	}); err != nil {
 		stop()
-		if cErr := w.Close(); cErr != nil {
-			slog.DebugContext(s.ctx, "failed to close writer", "err", cErr)
-		}
-		if cErr := r.Close(); cErr != nil {
+		if cErr := CloseWithError(r, err); cErr != nil {
 			slog.DebugContext(s.ctx, "failed to close reader", "err", cErr)
+		}
+		if cErr := CloseWithError(w, err); cErr != nil {
+			slog.DebugContext(s.ctx, "failed to close writer", "err", cErr)
 		}
 		return err
 	}

@@ -43,12 +43,20 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 	}
 
 	stop0, err := s.Serve("wrpc-examples:resources/resources", "foo", func(ctx context.Context, w wrpc.IndexWriteCloser, r wrpc.IndexReadCloser) {
+		ctx, cancel := context.WithCancelCause(ctx)
+		var ok bool
 		defer func() {
-			if err := w.Close(); err != nil {
+			var err error
+			if !ok {
+				err = context.Cause(ctx)
+				if err == nil {
+					err = errors.New("invocation failed")
+				}
+			}
+			if err := wrpc.CloseWithError(w, err); err != nil {
 				slog.DebugContext(ctx, "failed to close writer", "instance", "wrpc-examples:resources/resources", "name", "foo", "err", err)
 			}
 		}()
-		ctx, cancel := context.WithCancelCause(ctx)
 		var wg sync.WaitGroup
 		defer func() {
 			go func() {
@@ -104,17 +112,19 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 					wg.Add(1)
 					go func() {
 						defer wg.Done()
-						if err := write(ctx, w); err != nil {
+						err := write(ctx, w)
+						if err != nil {
 							slog.WarnContext(ctx, "failed to write nested result value", "instance", "wrpc-examples:resources/resources", "name", "foo", "err", err)
 							cancel(err)
 						}
-						if err := w.Close(); err != nil {
+						if err := wrpc.CloseWithError(w, err); err != nil {
 							slog.DebugContext(ctx, "failed to close nested result writer", "instance", "wrpc-examples:resources/resources", "name", "foo", "err", err)
 						}
 					}()
 				}
 			}
 		}
+		ok = true
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to serve `wrpc-examples:resources/resources.foo`: %w", err)
@@ -122,12 +132,20 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 	stops = append(stops, stop0)
 
 	stop1, err := s.Serve("wrpc-examples:resources/resources", "foo.baz", func(ctx context.Context, w wrpc.IndexWriteCloser, r wrpc.IndexReadCloser) {
+		ctx, cancel := context.WithCancelCause(ctx)
+		var ok bool
 		defer func() {
-			if err := w.Close(); err != nil {
+			var err error
+			if !ok {
+				err = context.Cause(ctx)
+				if err == nil {
+					err = errors.New("invocation failed")
+				}
+			}
+			if err := wrpc.CloseWithError(w, err); err != nil {
 				slog.DebugContext(ctx, "failed to close writer", "instance", "wrpc-examples:resources/resources", "name", "foo.baz", "err", err)
 			}
 		}()
-		ctx, cancel := context.WithCancelCause(ctx)
 		var wg sync.WaitGroup
 		defer func() {
 			go func() {
@@ -245,17 +263,19 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 					wg.Add(1)
 					go func() {
 						defer wg.Done()
-						if err := write(ctx, w); err != nil {
+						err := write(ctx, w)
+						if err != nil {
 							slog.WarnContext(ctx, "failed to write nested result value", "instance", "wrpc-examples:resources/resources", "name", "foo.baz", "err", err)
 							cancel(err)
 						}
-						if err := w.Close(); err != nil {
+						if err := wrpc.CloseWithError(w, err); err != nil {
 							slog.DebugContext(ctx, "failed to close nested result writer", "instance", "wrpc-examples:resources/resources", "name", "foo.baz", "err", err)
 						}
 					}()
 				}
 			}
 		}
+		ok = true
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to serve `wrpc-examples:resources/resources.foo.baz`: %w", err)
@@ -263,12 +283,20 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 	stops = append(stops, stop1)
 
 	stop2, err := s.Serve("wrpc-examples:resources/resources", "foo.bar", func(ctx context.Context, w wrpc.IndexWriteCloser, r wrpc.IndexReadCloser) {
+		ctx, cancel := context.WithCancelCause(ctx)
+		var ok bool
 		defer func() {
-			if err := w.Close(); err != nil {
+			var err error
+			if !ok {
+				err = context.Cause(ctx)
+				if err == nil {
+					err = errors.New("invocation failed")
+				}
+			}
+			if err := wrpc.CloseWithError(w, err); err != nil {
 				slog.DebugContext(ctx, "failed to close writer", "instance", "wrpc-examples:resources/resources", "name", "foo.bar", "err", err)
 			}
 		}()
-		ctx, cancel := context.WithCancelCause(ctx)
 		var wg sync.WaitGroup
 		defer func() {
 			go func() {
@@ -386,17 +414,19 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 					wg.Add(1)
 					go func() {
 						defer wg.Done()
-						if err := write(ctx, w); err != nil {
+						err := write(ctx, w)
+						if err != nil {
 							slog.WarnContext(ctx, "failed to write nested result value", "instance", "wrpc-examples:resources/resources", "name", "foo.bar", "err", err)
 							cancel(err)
 						}
-						if err := w.Close(); err != nil {
+						if err := wrpc.CloseWithError(w, err); err != nil {
 							slog.DebugContext(ctx, "failed to close nested result writer", "instance", "wrpc-examples:resources/resources", "name", "foo.bar", "err", err)
 						}
 					}()
 				}
 			}
 		}
+		ok = true
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to serve `wrpc-examples:resources/resources.foo.bar`: %w", err)
@@ -404,12 +434,20 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 	stops = append(stops, stop2)
 
 	stop3, err := s.Serve("wrpc-examples:resources/resources", "bar", func(ctx context.Context, w wrpc.IndexWriteCloser, r wrpc.IndexReadCloser) {
+		ctx, cancel := context.WithCancelCause(ctx)
+		var ok bool
 		defer func() {
-			if err := w.Close(); err != nil {
+			var err error
+			if !ok {
+				err = context.Cause(ctx)
+				if err == nil {
+					err = errors.New("invocation failed")
+				}
+			}
+			if err := wrpc.CloseWithError(w, err); err != nil {
 				slog.DebugContext(ctx, "failed to close writer", "instance", "wrpc-examples:resources/resources", "name", "bar", "err", err)
 			}
 		}()
-		ctx, cancel := context.WithCancelCause(ctx)
 		var wg sync.WaitGroup
 		defer func() {
 			go func() {
@@ -527,17 +565,19 @@ func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
 					wg.Add(1)
 					go func() {
 						defer wg.Done()
-						if err := write(ctx, w); err != nil {
+						err := write(ctx, w)
+						if err != nil {
 							slog.WarnContext(ctx, "failed to write nested result value", "instance", "wrpc-examples:resources/resources", "name", "bar", "err", err)
 							cancel(err)
 						}
-						if err := w.Close(); err != nil {
+						if err := wrpc.CloseWithError(w, err); err != nil {
 							slog.DebugContext(ctx, "failed to close nested result writer", "instance", "wrpc-examples:resources/resources", "name", "bar", "err", err)
 						}
 					}()
 				}
 			}
 		}
+		ok = true
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to serve `wrpc-examples:resources/resources.bar`: %w", err)

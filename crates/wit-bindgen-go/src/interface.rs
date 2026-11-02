@@ -2160,18 +2160,27 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
             uwrite!(
                 self.src,
                 r#"
-    stop{i}, err := s.Serve("{instance}", "{name}", func(ctx {context}.Context, w {wrpc}.IndexWriteCloser, r {wrpc}.IndexReadCloser) {{
-        defer func() {{
-            if err := w.Close(); err != nil {{
-                {slog}.DebugContext(ctx, "failed to close writer", "instance", "{instance}", "name", "{name}", "err", err)
-            }}
-        }}()"#,
+    stop{i}, err := s.Serve("{instance}", "{name}", func(ctx {context}.Context, w {wrpc}.IndexWriteCloser, r {wrpc}.IndexReadCloser) {{"#,
             );
+            let errors = self.deps.errors();
             let sync = self.deps.sync();
             uwrite!(
                 self.src,
                 r#"
         ctx, cancel := {context}.WithCancelCause(ctx)
+        var ok bool
+        defer func() {{
+            var err error
+            if !ok {{
+                err = {context}.Cause(ctx)
+                if err == nil {{
+                    err = {errors}.New("invocation failed")
+                }}
+            }}
+            if err := {wrpc}.CloseWithError(w, err); err != nil {{
+                {slog}.DebugContext(ctx, "failed to close writer", "instance", "{instance}", "name", "{name}", "err", err)
+            }}
+        }}()
         var wg {sync}.WaitGroup
         defer func() {{
             go func() {{
@@ -2219,6 +2228,9 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
                 if err := d{i}(ctx); err != nil {{
                     {slog}.WarnContext(ctx, "failed to read deferred parameter", "i", {i}, "instance", "{instance}", "name", "{name}", "err", err)
                     cancel(err)
+                    if err := {wrpc}.CloseWithError(w, err); err != nil {{
+                        {slog}.DebugContext(ctx, "failed to close writer", "instance", "{instance}", "name", "{name}", "err", err)
+                    }}
                 }}
             }}()
         }}"#,
@@ -2331,11 +2343,12 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
                     uwrite!(
                         self.src,
                         r#"
-                            if err := write(ctx, w); err != nil {{
+                            err := write(ctx, w)
+                            if err != nil {{
                                 {slog}.WarnContext(ctx, "failed to write nested result value", "instance", "{instance}", "name", "{name}", "err", err)
                                 cancel(err)
                             }}
-                            if err := w.Close(); err != nil {{
+                            if err := {wrpc}.CloseWithError(w, err); err != nil {{
                                 {slog}.DebugContext(ctx, "failed to close nested result writer", "instance", "{instance}", "name", "{name}", "err", err)
                             }}
                         }}()"#,
@@ -2350,6 +2363,7 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
                 }}
             }}
         }}
+        ok = true
     }}, "#,
             );
             for (i, Param { ty, .. }) in func.params.iter().enumerate() {
@@ -2536,6 +2550,11 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
         return
     }}
     defer func() {{
+        if err__ != nil && ctx__.Err() == nil {{
+            if err := {wrpc}.CloseWithError(w__, err__); err != nil {{
+                {slog}.DebugContext(ctx__, "failed to close outgoing stream", "instance", "{instance}", "name", "{name}", "err", err)
+            }}
+        }}
         if err := r__.Close(); err != nil {{
             {slog}.ErrorContext(ctx__, "failed to close reader", "instance", "{instance}", "name", "{name}", "err", err)
         }}
@@ -2571,9 +2590,6 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
         for index, write := range writes__ {{
             w, err := w__.Index(index)
             if err != nil {{
-                if cErr := w__.Close(); cErr != nil {{
-                    {slog}.DebugContext(ctx__, "failed to close outgoing stream", "instance", "{instance}", "name", "{0}", "err", cErr)
-                }}
                 err__ = {fmt}.Errorf("failed to index param writer at index `%v`: %w", index, err)
                 return
             }}
@@ -2581,10 +2597,11 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
             write := write
             go func() {{
                 defer wg__.Done()
-                if err := write(ctx__, w); err != nil {{
+                err := write(ctx__, w)
+                if err != nil {{
                     errCh__ <- err
                 }}
-                if err := w.Close(); err != nil {{
+                if err := {wrpc}.CloseWithError(w, err); err != nil {{
                     {slog}.DebugContext(ctx__, "failed to close nested param writer", "instance", "{instance}", "name", "{0}", "err", err)
                 }}
             }}()
@@ -2652,9 +2669,15 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
             defer wg__.Done()
             if err := d{idx}__(ctx__); err != nil {{
                 errCh__ <- err
+                if ctx__.Err() == nil {{
+                    if err := {wrpc}.CloseWithError(w__, err); err != nil {{
+                        {slog}.DebugContext(ctx__, "failed to close outgoing stream", "instance", "{instance}", "name", "{name}", "err", err)
+                    }}
+                }}
             }}
         }}()
     }}"#,
+                    name = func.name,
                 );
             }
             if func.result.is_none() {

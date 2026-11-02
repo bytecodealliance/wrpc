@@ -31,6 +31,15 @@ func (c *conn) closeHalf(err error) error {
 	return err
 }
 
+func (c *conn) reset() error {
+	err := c.SetLinger(0)
+	cErr := c.TCPConn.Close()
+	if errors.Is(cErr, net.ErrClosed) {
+		return nil
+	}
+	return errors.Join(err, cErr)
+}
+
 type writeConn struct {
 	*conn
 	once sync.Once
@@ -43,6 +52,13 @@ func (c *writeConn) Close() (err error) {
 	return err
 }
 
+func (c *writeConn) CloseWithError(err error) error {
+	if err == nil {
+		return c.Close()
+	}
+	return c.reset()
+}
+
 type readConn struct {
 	*conn
 	once sync.Once
@@ -53,4 +69,11 @@ func (c *readConn) Close() (err error) {
 		err = c.closeHalf(c.CloseRead())
 	})
 	return err
+}
+
+func (c *readConn) CloseWithError(err error) error {
+	if err == nil {
+		return c.Close()
+	}
+	return c.reset()
 }
