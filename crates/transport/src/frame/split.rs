@@ -1,5 +1,5 @@
 use core::pin::Pin;
-use core::task::{Context, Poll, ready};
+use core::task::{Context, Poll, Waker, ready};
 
 use std::io::IoSlice;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -11,25 +11,30 @@ use crate::frame::Reject;
 
 /// Splits a stream into a [ReadHalf] and a [WriteHalf].
 ///
-/// If the [WriteHalf] is dropped before being shut down or the [ReadHalf] is rejected, the stream
-/// is closed. Transports, which can reset the stream, provide their own `split`, e.g. `tcp::split`.
-pub fn split<T>(stream: T) -> (ReadHalf<T>, WriteHalf<T>) {
+/// Dropping the [WriteHalf] shuts down the write side of the stream. Rejecting the [ReadHalf]
+/// closes the stream. Transports, which can reset the stream, provide their own `split`, e.g.
+/// `tcp::split`.
+pub fn split<T: AsyncWrite + Unpin>(stream: T) -> (ReadHalf<T>, WriteHalf<T>) {
     split_with(stream, |_| {})
 }
 
 /// Splits a stream into a [ReadHalf] and a [WriteHalf], calling `abort` on the stream before
-/// closing it if the [WriteHalf] is dropped before being shut down or the [ReadHalf] is rejected.
-pub(crate) fn split_with<T>(stream: T, abort: fn(&T)) -> (ReadHalf<T>, WriteHalf<T>) {
+/// closing it if the [ReadHalf] is rejected.
+pub(crate) fn split_with<T: AsyncWrite + Unpin>(
+    stream: T,
+    abort: fn(&T),
+) -> (ReadHalf<T>, WriteHalf<T>) {
     let shared = Arc::new(Shared {
         stream: Mutex::new(Some(stream)),
-        reader: AtomicWaker::default(),
         writer: AtomicWaker::default(),
         abort,
+        shutdown: |stream| {
+            _ = Pin::new(stream).poll_shutdown(&mut Context::from_waker(Waker::noop()));
+        },
     });
     (
         ReadHalf {
             shared: Arc::clone(&shared),
-            eof: false,
         },
         WriteHalf {
             shared,
@@ -41,24 +46,9 @@ pub(crate) fn split_with<T>(stream: T, abort: fn(&T)) -> (ReadHalf<T>, WriteHalf
 #[derive(Debug)]
 struct Shared<T> {
     stream: Mutex<Option<T>>,
-    reader: AtomicWaker,
     writer: AtomicWaker,
     abort: fn(&T),
-}
-
-impl<T> Shared<T> {
-    fn abort(&self) {
-        let stream = self
-            .stream
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .take();
-        if let Some(stream) = stream {
-            (self.abort)(&stream);
-        }
-        self.reader.wake();
-        self.writer.wake();
-    }
+    shutdown: fn(&mut T),
 }
 
 impl<T: Unpin> Shared<T> {
@@ -77,17 +67,24 @@ impl<T: Unpin> Shared<T> {
     }
 }
 
-/// Read half of a stream, which fails once the [WriteHalf] is dropped before being shut down,
-/// unless it already reached the end of the stream. Rejecting it closes the stream.
+/// Read half of a stream. Rejecting it closes the stream.
 #[derive(Debug)]
 pub struct ReadHalf<T> {
     shared: Arc<Shared<T>>,
-    eof: bool,
 }
 
 impl<T> Reject for ReadHalf<T> {
     fn reject(self) {
-        self.shared.abort();
+        let stream = self
+            .shared
+            .stream
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+        if let Some(stream) = stream {
+            (self.shared.abort)(&stream);
+        }
+        self.shared.writer.wake();
     }
 }
 
@@ -97,19 +94,11 @@ impl<T: AsyncRead + Unpin> AsyncRead for ReadHalf<T> {
         cx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<std::io::Result<()>> {
-        let this = self.get_mut();
-        if this.eof {
-            return Poll::Ready(Ok(()));
-        }
-        this.shared.reader.register(cx.waker());
-        let n = buf.filled().len();
-        ready!(this.shared.poll(|stream| stream.poll_read(cx, buf)))?;
-        this.eof = buf.filled().len() == n && buf.remaining() > 0;
-        Poll::Ready(Ok(()))
+        self.shared.poll(|stream| stream.poll_read(cx, buf))
     }
 }
 
-/// Write half of a stream, which, if dropped before being shut down, closes the stream.
+/// Write half of a stream, which shuts down the write side of the stream once dropped.
 /// It fails once the [ReadHalf] is rejected.
 #[derive(Debug)]
 pub struct WriteHalf<T> {
@@ -119,8 +108,16 @@ pub struct WriteHalf<T> {
 
 impl<T> Drop for WriteHalf<T> {
     fn drop(&mut self) {
-        if !self.shutdown {
-            self.shared.abort();
+        if self.shutdown {
+            return;
+        }
+        let mut stream = self
+            .shared
+            .stream
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if let Some(stream) = stream.as_mut() {
+            (self.shared.shutdown)(stream);
         }
     }
 }

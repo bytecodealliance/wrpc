@@ -3,7 +3,7 @@
 use core::ops::{Deref, DerefMut};
 use core::pin::Pin;
 use core::sync::atomic::{AtomicBool, Ordering};
-use core::task::{Context, Poll, ready};
+use core::task::{Context, Poll, Waker, ready};
 
 use std::collections::VecDeque;
 use std::io::IoSlice;
@@ -61,21 +61,17 @@ impl Abort {
     }
 }
 
-/// Writer of the data of an [`OutgoingBody`], which fails the body once dropped before being
-/// shut down. It fails once the body is dropped or an [`ExchangeReader`] created with it is
-/// rejected.
+/// Writer of the data of an [`OutgoingBody`], which ends the body once dropped.
+/// It fails once the body is dropped or an [`ExchangeReader`] created with it is rejected.
 #[derive(Debug)]
 pub struct OutgoingBodyDataWriter {
     stream: WriteHalf<SimplexStream>,
     abort: Arc<Abort>,
-    shutdown: bool,
 }
 
 impl Drop for OutgoingBodyDataWriter {
     fn drop(&mut self) {
-        if !self.shutdown {
-            self.abort.abort();
-        }
+        _ = Pin::new(&mut self.stream).poll_shutdown(&mut Context::from_waker(Waker::noop()));
     }
 }
 
@@ -113,9 +109,7 @@ impl AsyncWrite for OutgoingBodyDataWriter {
     fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
         let this = self.get_mut();
         this.abort.check(&this.abort.writer, cx)?;
-        ready!(Pin::new(&mut this.stream).poll_shutdown(cx))?;
-        this.shutdown = true;
-        Poll::Ready(Ok(()))
+        Pin::new(&mut this.stream).poll_shutdown(cx)
     }
 }
 
@@ -149,11 +143,7 @@ impl OutgoingBody {
                 stream: rx,
                 abort: Arc::clone(&abort),
             },
-            OutgoingBodyDataWriter {
-                stream: tx,
-                abort,
-                shutdown: false,
-            },
+            OutgoingBodyDataWriter { stream: tx, abort },
         )
     }
 }

@@ -73,19 +73,10 @@ async fn error_response() -> anyhow::Result<()> {
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn body_writer_dropped() -> anyhow::Result<()> {
-    for shutdown in [true, false] {
-        let (body, mut tx) = OutgoingBody::new([]);
-        tx.write_all(b"foo").await.context("failed to write body")?;
-        if shutdown {
-            tx.shutdown().await.context("failed to shut down body")?;
-        }
-        drop(tx);
-        let res = body.collect().await;
-        if shutdown {
-            assert_eq!(res.context("failed to read body")?.to_bytes(), "foo");
-        } else {
-            assert_eq!(res.unwrap_err().kind(), std::io::ErrorKind::BrokenPipe);
-        }
-    }
+    let (body, mut tx) = OutgoingBody::new([]);
+    tx.write_all(b"foo").await.context("failed to write body")?;
+    drop(tx);
+    let body = body.collect().await.context("failed to read body")?;
+    assert_eq!(body.to_bytes(), "foo");
     Ok(())
 }

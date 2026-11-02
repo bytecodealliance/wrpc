@@ -1,7 +1,7 @@
 //! wRPC QUIC transport
 
 use core::pin::Pin;
-use core::task::{Context, Poll, ready};
+use core::task::{Context, Poll};
 
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -32,10 +32,7 @@ pub fn split((tx, rx): (quinn::SendStream, quinn::RecvStream)) -> (RecvStream, S
             rx: BufReader::new(rx),
             shared: Arc::clone(&shared),
         },
-        SendStream {
-            shared,
-            shutdown: false,
-        },
+        SendStream { shared },
     )
 }
 
@@ -114,18 +111,22 @@ impl AsyncBufRead for RecvStream {
     }
 }
 
-/// Send side of a QUIC stream, which is reset with application error code `0` once
-/// dropped before being shut down or once the [`RecvStream`] is rejected
+/// Send side of a QUIC stream, which is finished once dropped and reset with application error
+/// code `0` once the [`RecvStream`] is rejected
 #[derive(Debug)]
 pub struct SendStream {
     shared: Arc<Shared>,
-    shutdown: bool,
 }
 
 impl Drop for SendStream {
     fn drop(&mut self) {
-        if !self.shutdown {
-            self.shared.reset();
+        let mut tx = self
+            .shared
+            .tx
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if let Some(tx) = tx.as_mut() {
+            _ = tx.finish();
         }
     }
 }
@@ -146,11 +147,8 @@ impl AsyncWrite for SendStream {
     }
 
     fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        let this = self.get_mut();
-        this.shared.waker.register(cx.waker());
-        ready!(this.shared.poll(|tx| AsyncWrite::poll_shutdown(tx, cx)))?;
-        this.shutdown = true;
-        Poll::Ready(Ok(()))
+        self.shared.waker.register(cx.waker());
+        self.shared.poll(|tx| AsyncWrite::poll_shutdown(tx, cx))
     }
 }
 

@@ -52,31 +52,18 @@ async fn params_dropped() -> anyhow::Result<()> {
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn send_stream_dropped() -> anyhow::Result<()> {
     wrpc_test::with_quic(|cc, sc| async move {
-        for shutdown in [true, false] {
-            let stream = cc.open_bi().await.context("failed to open stream")?;
-            let (_rx, mut tx) = wrpc_quic::split(stream);
-            tx.write_all(b"foo")
-                .await
-                .context("failed to write to stream")?;
-            if shutdown {
-                tx.shutdown().await.context("failed to shut down stream")?;
-            }
-            drop(tx);
-            let (_stx, mut srx) = sc.accept_bi().await.context("failed to accept stream")?;
-            let res = srx.read_to_end(usize::MAX).await;
-            if shutdown {
-                assert_eq!(res.context("failed to read stream")?, b"foo");
-            } else {
-                assert!(
-                    matches!(
-                        res,
-                        Err(quinn::ReadToEndError::Read(quinn::ReadError::Reset(code)))
-                            if code == VarInt::from_u32(0)
-                    ),
-                    "{res:?}"
-                );
-            }
-        }
+        let stream = cc.open_bi().await.context("failed to open stream")?;
+        let (_rx, mut tx) = wrpc_quic::split(stream);
+        tx.write_all(b"foo")
+            .await
+            .context("failed to write to stream")?;
+        drop(tx);
+        let (_stx, mut srx) = sc.accept_bi().await.context("failed to accept stream")?;
+        let buf = srx
+            .read_to_end(usize::MAX)
+            .await
+            .context("failed to read stream")?;
+        assert_eq!(buf, b"foo");
         Ok(())
     })
     .await

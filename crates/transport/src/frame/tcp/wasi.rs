@@ -135,6 +135,16 @@ struct OutgoingStream {
     pollables: mpsc::UnboundedSender<(Pollable, Waker)>,
 }
 
+impl Drop for OutgoingStream {
+    #[instrument(level = "trace", skip_all, ret(level = "trace"))]
+    fn drop(&mut self) {
+        trace!("shutting down send end of the stream");
+        if let Err(err) = self.socket.shutdown(ShutdownType::Send) {
+            debug!(?err, "failed to shut down send end of the stream")
+        }
+    }
+}
+
 impl AsyncWrite for OutgoingStream {
     #[instrument(level = "trace", skip_all, ret(level = "trace"))]
     fn poll_write(
