@@ -19,7 +19,7 @@ use tokio::sync::{Notify, OwnedSemaphorePermit, Semaphore, mpsc, oneshot, watch}
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::codec::Encoder;
 use tokio_util::io::StreamReader;
-use tokio_util::sync::PollSender;
+use tokio_util::sync::{CancellationToken, PollSender};
 use tokio_util::task::AbortOnDropHandle;
 use tracing::{Instrument as _, Span, debug, error, instrument, trace};
 use wasm_tokio::{AsyncReadLeb128 as _, DEFAULT_MAX_INITIAL_CAPACITY, Leb128Encoder};
@@ -486,38 +486,43 @@ impl Incoming {
             index: std::sync::Mutex::new(index),
             err: std::sync::OnceLock::default(),
             unprocessed: AtomicBool::default(),
+            rejected: CancellationToken::default(),
             done: watch::Sender::new(None),
         });
         let (dropped_tx, mut dropped_rx) = oneshot::channel();
         let span = Span::current();
+        let mut reader = Reader {
+            rx: Some(rx),
+            state: Arc::clone(&state),
+        };
         let task = tokio::spawn({
             let state = Arc::clone(&state);
             async move {
-                let mut reader = Reader {
-                    rx: Some(rx),
-                    state: Arc::clone(&state),
-                };
-                let res = async {
-                    let mut io = pin!(async {
-                        ingress(&mut reader, &state.index, depth).await?;
-                        close_tx(&state);
-                        Ok(())
-                    });
-                    select! {
-                        biased;
+                let res = select! {
+                    biased;
 
-                        res = &mut io => {
-                            res?;
-                            _ = dropped_rx.await;
-                            close_rx(&state)
+                    () = state.rejected.cancelled() => Err(error_rejected()),
+                    res = async {
+                        let mut io = pin!(async {
+                            ingress(&mut reader, &state.index, depth).await?;
+                            close_tx(&state);
+                            Ok(())
+                        });
+                        select! {
+                            biased;
+
+                            res = &mut io => {
+                                res?;
+                                _ = dropped_rx.await;
+                                close_rx(&state)
+                            }
+                            _ = &mut dropped_rx => {
+                                close_rx(&state)?;
+                                io.await
+                            }
                         }
-                        _ = &mut dropped_rx => {
-                            close_rx(&state)?;
-                            io.await
-                        }
-                    }
-                }
-                .await;
+                    } => res,
+                };
                 let rx = reader.rx.take();
                 if let Err(err) = &res {
                     error!(?err, "ingress failed");
@@ -609,10 +614,15 @@ impl Incoming {
         self.subscribed
     }
 
-    /// Takes the data of this handle, returning a handle reading it, if this handle reads any.
-    /// This handle keeps addressing the same position for [`Self::index`], but reads no data.
-    pub fn take_reader(&mut self) -> Option<Self> {
-        let rx = self.rx.take()?;
+    /// Rejects the data received, for example, because it cannot be decoded, which fails ingress
+    /// and rejects the reader, closing the invocation's byte stream in both directions, see
+    /// [`Reject`].
+    pub fn reject(&self) {
+        self.state.rejected.cancel();
+    }
+
+    /// Returns a handle, which reads no data, but keeps ingress running like any other handle
+    pub(crate) fn handle(&self) -> Self {
         if !self.path.is_empty() {
             self.state
                 .index
@@ -620,14 +630,24 @@ impl Incoming {
                 .unwrap_or_else(PoisonError::into_inner)
                 .retain(&self.path);
         }
-        Some(Self {
-            rx: Some(rx),
-            subscribed: true,
+        Self {
+            rx: None,
+            subscribed: false,
             path: Arc::clone(&self.path),
             dropped: Arc::clone(&self.dropped),
             task: Arc::clone(&self.task),
             state: Arc::clone(&self.state),
-        })
+        }
+    }
+
+    /// Takes the data of this handle, returning a handle reading it, if this handle reads any.
+    /// This handle keeps addressing the same position for [`Self::index`], but reads no data.
+    pub fn take_reader(&mut self) -> Option<Self> {
+        let rx = self.rx.take()?;
+        let mut reader = self.handle();
+        reader.rx = Some(rx);
+        reader.subscribed = true;
+        Some(reader)
     }
 }
 
@@ -669,6 +689,7 @@ struct IngressState {
     index: std::sync::Mutex<Subscriptions>,
     err: std::sync::OnceLock<std::io::Error>,
     unprocessed: AtomicBool,
+    rejected: CancellationToken,
     done: watch::Sender<Option<std::io::Result<()>>>,
 }
 
@@ -683,8 +704,8 @@ impl IngressState {
     }
 }
 
-/// Reader of [Incoming], which is rejected once dropped while ingress is aborted, if the dropped
-/// handles held data, which was not processed
+/// Reader of [Incoming], which is rejected once dropped while ingress is aborted, if the data
+/// received was rejected or the dropped handles held data, which was not processed
 struct Reader<T: Reject> {
     rx: Option<T>,
     state: Arc<IngressState>,
@@ -693,7 +714,7 @@ struct Reader<T: Reject> {
 impl<T: Reject> Drop for Reader<T> {
     fn drop(&mut self) {
         if let Some(rx) = self.rx.take()
-            && close_rx(&self.state).is_err()
+            && (self.state.rejected.is_cancelled() || close_rx(&self.state).is_err())
         {
             rx.reject();
         }
@@ -996,6 +1017,14 @@ fn error_not_found(path: &[usize]) -> std::io::Error {
     std::io::Error::new(
         std::io::ErrorKind::NotFound,
         format!("`{path:?}` subscription not found"),
+    )
+}
+
+/// Returns the error for received data, which was rejected
+fn error_rejected() -> std::io::Error {
+    std::io::Error::new(
+        std::io::ErrorKind::InvalidData,
+        "received data was rejected",
     )
 }
 

@@ -1,5 +1,6 @@
 #![cfg(feature = "net")]
 
+use core::future::pending;
 use core::pin::pin;
 use core::time::Duration;
 
@@ -8,11 +9,13 @@ use std::sync::Arc;
 use anyhow::Context as _;
 use bytes::Bytes;
 use futures::TryStreamExt as _;
+use futures::future::BoxFuture;
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
-use tokio::join;
 use tokio::net::TcpStream;
+use tokio::time::timeout;
+use tokio::{join, try_join};
 use wrpc_transport::tcp;
-use wrpc_transport::{Invoke as _, Serve as _};
+use wrpc_transport::{Invoke as _, InvokeExt as _, Serve as _, ServeExt as _};
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn loopback() -> anyhow::Result<()> {
@@ -72,4 +75,50 @@ async fn write_half_dropped() -> anyhow::Result<()> {
     rx.read_to_end(&mut buf).await?;
     assert_eq!(buf, b"bar");
     Ok(())
+}
+
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+async fn undecodable_values() -> anyhow::Result<()> {
+    wrpc_test::serve_tcp(async |clt, srv| {
+        let params = srv
+            .serve_values::<(String,), ()>("foo", "params", Arc::default())
+            .await?;
+        let results = srv
+            .serve("foo", "results", Arc::from([Box::from([Some(0)])]))
+            .await?;
+        let (mut params, mut results) = (pin!(params), pin!(results));
+        try_join!(
+            async {
+                let res = params.try_next().await;
+                assert!(res.is_err(), "decoding invalid parameters should fail");
+                let invocation = results.try_next().await?;
+                let ((), mut tx, rx) = invocation.context("invocation missing")?;
+                tx.write_all(b"\x01\xff").await?;
+                let res = timeout(Duration::from_secs(5), rx.finished()).await?;
+                res.expect_err("invalid results should have been rejected");
+                anyhow::Ok(())
+            },
+            async {
+                let (_tx, mut rx) = clt
+                    .invoke(
+                        (),
+                        "foo",
+                        "params",
+                        Bytes::from_static(b"\x01\xff"),
+                        [[]; 0],
+                    )
+                    .await?;
+                let res = rx.read_to_end(&mut Vec::default()).await;
+                res.expect_err("invalid parameters should have been rejected");
+                let params: (BoxFuture<'static, String>,) = (Box::pin(pending()),);
+                let res = clt
+                    .invoke_values::<_, _, (String,), _>((), "foo", "results", params, [[Some(0)]])
+                    .await;
+                assert!(res.is_err(), "decoding invalid results should fail");
+                anyhow::Ok(())
+            },
+        )?;
+        Ok(())
+    })
+    .await
 }

@@ -175,13 +175,17 @@ pub trait InvokeExt: Invoke {
                 )
             });
 
+            let handle = incoming.handle();
             let mut dec = FramedRead::new(incoming, Results::Decoder::default());
             let results = async {
                 debug!("receiving sync results");
-                dec.try_next()
+                let results = dec
+                    .try_next()
                     .await
-                    .context("failed to receive sync results")?
-                    .context("incomplete results")
+                    .context("failed to receive sync results");
+                results
+                    .and_then(|results| results.context("incomplete results"))
+                    .inspect_err(|_| handle.reject())
             };
             let results = match tx.take() {
                 Some(mut fut) => {
@@ -209,7 +213,7 @@ pub trait InvokeExt: Invoke {
             Ok((
                 results,
                 (tx.is_some() || rx.is_some()).then_some(
-                    async {
+                    async move {
                         match (tx, rx) {
                             (Some(tx), Some(rx)) => {
                                 try_join!(
@@ -217,6 +221,7 @@ pub trait InvokeExt: Invoke {
                                         debug!("receiving async results");
                                         rx(incoming, Vec::default())
                                             .await
+                                            .inspect_err(|_| handle.reject())
                                             .context("receiving async results failed")
                                     },
                                     async {
@@ -231,6 +236,7 @@ pub trait InvokeExt: Invoke {
                                 debug!("receiving async results");
                                 rx(incoming, Vec::default())
                                     .await
+                                    .inspect_err(|_| handle.reject())
                                     .context("receiving async results failed")?;
                             }
                             _ => {}

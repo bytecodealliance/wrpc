@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use anyhow::Context as _;
 use bytes::BytesMut;
-use futures::{Stream, TryStreamExt as _};
+use futures::{Stream, TryFutureExt as _, TryStreamExt as _};
 use tokio_util::codec::{Decoder as _, Encoder as _, FramedRead};
 use tracing::{Instrument as _, Span, debug, instrument, trace};
 
@@ -88,22 +88,27 @@ pub trait ServeExt: Serve {
             let invocations = self.serve(instance, func, paths).await?;
             Ok(invocations.and_then(move |(cx, mut outgoing, incoming)| {
                 async {
+                    let handle = incoming.handle();
                     let mut dec = FramedRead::new(incoming, Params::Decoder::default());
                     debug!("receiving sync parameters");
-                    let params = match dec
-                        .decoder_mut()
-                        .decode(&mut BytesMut::default())
-                        .context("failed to decode sync parameters")?
-                    {
-                        Some(params) => params,
-                        None => {
-                            let params = dec
-                                .try_next()
-                                .await
-                                .context("failed to receive sync parameters")?;
-                            params.context("incomplete sync parameters")?
+                    let params = async {
+                        match dec
+                            .decoder_mut()
+                            .decode(&mut BytesMut::default())
+                            .context("failed to decode sync parameters")?
+                        {
+                            Some(params) => Ok(params),
+                            None => {
+                                let params = dec
+                                    .try_next()
+                                    .await
+                                    .context("failed to receive sync parameters")?;
+                                params.context("incomplete sync parameters")
+                            }
                         }
-                    };
+                    }
+                    .await
+                    .inspect_err(|_| handle.reject())?;
                     trace!("received sync parameters");
                     let rx = dec.decoder_mut().take_deferred();
                     let incoming = BufferedIncoming {
@@ -114,7 +119,9 @@ pub trait ServeExt: Serve {
                     Ok((
                         cx,
                         params,
-                        rx.map(|f| f(incoming, Vec::default())),
+                        rx.map(|f| {
+                            f(incoming, Vec::default()).inspect_err(move |_| handle.reject())
+                        }),
                         move |results| {
                             Box::pin(
                                 async move {
