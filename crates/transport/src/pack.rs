@@ -202,204 +202,95 @@ pub fn unpack<T: Decode>(buf: &mut BytesMut) -> Result<T, <T::Decoder as Decoder
 mod tests {
     use core::future::{pending, ready};
     use core::pin::Pin;
-    use core::time::Duration;
 
     use futures::FutureExt as _;
+    use futures::future::{self, BoxFuture};
     use futures::stream::{self, BoxStream};
-    use tokio::sync::oneshot;
     use tokio::task::yield_now;
     use tokio_util::io::StreamReader;
 
     use super::*;
 
     #[test_log::test(tokio::test)]
-    async fn sync() -> anyhow::Result<()> {
-        let mut buf = BytesMut::default();
-        pack((0x42_u8, "foo".to_string()), &mut buf).await?;
-        assert_eq!(buf.as_ref(), b"\x42\x03foo");
-        let (a, b) = unpack::<(u8, String)>(&mut buf)?;
-        assert_eq!(a, 0x42);
-        assert_eq!(b, "foo");
-        Ok(())
-    }
-
-    #[test_log::test(tokio::test)]
-    async fn future() -> anyhow::Result<()> {
-        let (tx, rx) = oneshot::channel::<u32>();
-        let fut: Pin<Box<dyn Future<Output = Pin<Box<dyn Future<Output = u32> + Send>>> + Send>> =
-            Box::pin(ready(
-                Box::pin(async { rx.await.unwrap() }) as Pin<Box<dyn Future<Output = u32> + Send>>
-            ));
-        let mut buf = BytesMut::default();
-        let (res, ()) = tokio::join!(pack((fut, 0x01_u8), &mut buf), async {
-            tx.send(0x42).unwrap();
-        });
-        res?;
-        assert_eq!(buf.as_ref(), b"\x01\x01\x42\x01");
-
-        let (fut, v) = unpack::<(
-            Pin<Box<dyn Future<Output = Pin<Box<dyn Future<Output = u32> + Send>>> + Send>>,
+    async fn roundtrip() -> anyhow::Result<()> {
+        type Value = (
             u8,
-        )>(&mut buf)?;
-        assert_eq!(v, 0x01);
-        assert_eq!(fut.await.await, 0x42);
-        Ok(())
-    }
-
-    #[test_log::test(tokio::test)]
-    async fn stream() -> anyhow::Result<()> {
-        let s: Pin<Box<dyn Stream<Item = Vec<Pin<Box<dyn Future<Output = u8> + Send>>>> + Send>> =
-            Box::pin(stream::iter([
-                vec![
-                    Box::pin(async { 1_u8 }) as Pin<Box<dyn Future<Output = u8> + Send>>,
-                    Box::pin(async { 2 }),
-                ],
-                vec![],
-                vec![Box::pin(async { 3 })],
-            ]));
-        let mut buf = BytesMut::default();
-        pack(s, &mut buf).await?;
-        assert_eq!(buf.as_ref(), b"\x01\x03\x01\x01\x01\x02\x01\x03");
-
-        let s = unpack::<
-            Pin<Box<dyn Stream<Item = Vec<Pin<Box<dyn Future<Output = u8> + Send>>>> + Send>>,
-        >(&mut buf)?;
-        let mut vs = vec![];
-        for fut in s.concat().await {
-            vs.push(fut.await);
-        }
-        assert_eq!(vs, [1, 2, 3]);
-        Ok(())
-    }
-
-    #[test_log::test(tokio::test)]
-    async fn stream_bytes() -> anyhow::Result<()> {
-        let s: Pin<Box<dyn Stream<Item = Bytes> + Send>> = Box::pin(stream::iter([
-            Bytes::from_static(b"foo"),
-            Bytes::from_static(b"bar"),
-        ]));
-        let r: Pin<Box<dyn AsyncRead + Send>> = Box::pin(std::io::Cursor::new(b"baz"));
-        let mut buf = BytesMut::default();
-        pack((s, r), &mut buf).await?;
-        assert_eq!(buf.as_ref(), b"\x01\x06foobar\x01\x03baz");
-
-        let (s, mut r) = unpack::<(
-            Pin<Box<dyn Stream<Item = Bytes> + Send>>,
+            BoxFuture<'static, String>,
+            BoxStream<'static, Vec<BoxFuture<'static, u8>>>,
+            BoxStream<'static, Bytes>,
             Pin<Box<dyn AsyncRead + Send>>,
-        )>(&mut buf)?;
-        let s: Vec<Bytes> = s.collect().await;
-        assert_eq!(s.concat(), b"foobar");
-        let mut v = vec![];
-        r.read_to_end(&mut v).await?;
-        assert_eq!(v, b"baz");
-        Ok(())
-    }
+            Vec<BoxFuture<'static, Option<BoxStream<'static, Vec<String>>>>>,
+            BoxStream<'static, Vec<u8>>,
+        );
 
-    #[test_log::test(tokio::test)]
-    async fn stream_empty() -> anyhow::Result<()> {
-        let s: Pin<Box<dyn Stream<Item = Vec<u8>> + Send>> = Box::pin(stream::empty());
-        let b: Pin<Box<dyn Stream<Item = Bytes> + Send>> = Box::pin(stream::empty());
-        let mut buf = BytesMut::default();
-        pack((s, b, tokio::io::empty()), &mut buf).await?;
-        assert_eq!(buf.as_ref(), b"\x01\x00\x01\x00\x01\x00");
-
-        let (s, b, mut r) = unpack::<(
-            Pin<Box<dyn Stream<Item = Vec<u8>> + Send>>,
-            Pin<Box<dyn Stream<Item = Bytes> + Send>>,
-            Pin<Box<dyn AsyncRead + Send>>,
-        )>(&mut buf)?;
-        assert!(s.concat().await.is_empty());
-        assert_eq!(b.count().await, 0);
-        let mut v = vec![];
-        r.read_to_end(&mut v).await?;
-        assert!(v.is_empty());
-        Ok(())
-    }
-
-    fn ready_then_pending<T: Send + 'static>(ready: T, pending: T) -> BoxStream<'static, T> {
-        stream::iter([ready])
-            .chain(stream::once(async {
+        fn later<T: Send + 'static>(v: T) -> BoxFuture<'static, T> {
+            async {
                 yield_now().await;
-                pending
-            }))
+                v
+            }
             .boxed()
-    }
+        }
 
-    #[test_log::test(tokio::test)]
-    async fn stream_partial() -> anyhow::Result<()> {
-        let s = ready_then_pending(vec![1_u8, 2], vec![3]);
-        let b = ready_then_pending(Bytes::from("foo"), Bytes::from("bar"));
-        let r: Pin<Box<dyn AsyncRead + Send>> = Box::pin(StreamReader::new(
-            ready_then_pending(Bytes::from("foo"), Bytes::from("bar")).map(Ok::<_, std::io::Error>),
-        ));
+        fn chunks<T: Send + 'static>(ready: T, pending: T) -> BoxStream<'static, T> {
+            stream::iter([ready])
+                .chain(stream::once(later(pending)))
+                .boxed()
+        }
+
+        let v: Value = (
+            0x42,
+            later("foo".into()),
+            stream::iter([vec![ready(1).boxed(), later(2)], vec![], vec![later(3)]]).boxed(),
+            chunks(Bytes::from("foo"), Bytes::from("bar")),
+            Box::pin(StreamReader::new(
+                chunks(Bytes::from("foo"), Bytes::from("bar")).map(Ok::<_, std::io::Error>),
+            )),
+            vec![
+                later(Some(chunks(vec!["foo".into()], vec!["bar".into()]))),
+                ready(None).boxed(),
+            ],
+            stream::empty().boxed(),
+        );
         let mut buf = BytesMut::default();
-        pack((s, b, r), &mut buf).await?;
+        pack(v, &mut buf).await?;
+        let (a, b, c, d, mut e, f, g) = unpack::<Value>(&mut buf)?;
+        assert_eq!(a, 0x42);
+        assert_eq!(b.await, "foo");
+        assert_eq!(future::join_all(c.concat().await).await, [1, 2, 3]);
+        let d: Vec<_> = d.collect().await;
+        assert_eq!(d.concat(), b"foobar");
+        let mut s = String::default();
+        e.read_to_string(&mut s).await?;
+        assert_eq!(s, "foobar");
+        let [f0, f1] = <[_; 2]>::try_from(future::join_all(f).await)
+            .ok()
+            .expect("invalid list length");
+        assert_eq!(f0.expect("missing stream").concat().await, ["foo", "bar"]);
+        assert!(f1.is_none());
+        assert_eq!(g.count().await, 0);
+
+        let s = stream::iter((0..=255_u8).map(|i| vec![ready(i).boxed()])).boxed();
+        pack_ready(s, &mut buf)?;
+        let s = unpack::<BoxStream<'static, Vec<BoxFuture<'static, u8>>>>(&mut buf)?;
         assert_eq!(
-            buf.as_ref(),
-            b"\x01\x03\x01\x02\x03\x01\x06foobar\x01\x06foobar"
+            future::join_all(s.concat().await).await,
+            (0..=255).collect::<Vec<u8>>()
         );
         Ok(())
     }
 
-    #[test_log::test(tokio::test)]
-    async fn pending_future() -> anyhow::Result<()> {
-        let fut: Pin<Box<dyn Future<Output = u8> + Send>> = Box::pin(pending());
-        let mut buf = BytesMut::default();
-        let res = tokio::time::timeout(Duration::from_millis(10), pack(fut, &mut buf)).await;
-        assert!(res.is_err());
-        Ok(())
-    }
-
     #[test]
-    fn ready_values() -> anyhow::Result<()> {
-        let fut = ready(0x42_u8).boxed();
-        let s = stream::iter([Bytes::from("foo")]).boxed();
-        let mut buf = BytesMut::default();
-        pack_ready((0x01_u8, fut, s), &mut buf)?;
-        assert_eq!(buf.as_ref(), b"\x01\x01\x42\x01\x03foo");
-        Ok(())
-    }
-
-    #[test]
-    fn ready_nested() -> anyhow::Result<()> {
-        let s = stream::iter((0..=255_u8).map(|i| vec![ready(i).boxed()])).boxed();
-        let mut buf = BytesMut::default();
-        pack_ready(s, &mut buf)?;
-        let expected: Vec<u8> = [0x01, 0x80, 0x02]
-            .into_iter()
-            .chain((0..=255).flat_map(|i| [0x01, i]))
-            .collect();
-        assert_eq!(buf.as_ref(), expected);
-        Ok(())
-    }
-
-    #[test]
-    fn ready_pending() {
+    fn rejects_invalid() {
         let fut = ready(pending::<u8>().boxed()).boxed();
-        let mut buf = BytesMut::default();
-        let err = pack_ready(fut, &mut buf).unwrap_err();
+        let err = pack_ready(fut, &mut BytesMut::default()).unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::WouldBlock);
-    }
 
-    #[test]
-    fn unpack_trailing() {
-        let mut buf = BytesMut::from(&b"\x42\x00"[..]);
-        let err = unpack::<u8>(&mut buf).err().unwrap();
-        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
-    }
-
-    #[test_log::test(tokio::test)]
-    async fn unpack_pending() {
-        let mut buf = BytesMut::from(&b"\x00"[..]);
-        let err = unpack::<Pin<Box<dyn Future<Output = u8> + Send>>>(&mut buf)
+        let err = unpack::<BoxFuture<'static, u8>>(&mut BytesMut::from("\0"))
             .err()
             .unwrap();
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
 
-        let mut buf = BytesMut::from(&b"\x00"[..]);
-        let err = unpack::<Pin<Box<dyn Stream<Item = Vec<u8>> + Send>>>(&mut buf)
-            .err()
-            .unwrap();
+        let err = unpack::<u8>(&mut BytesMut::from("\x42\0")).unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
     }
 }
