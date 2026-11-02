@@ -26,12 +26,32 @@ const cases = [
 /** @param {string} foo */
 const r = (foo) => ({ nested: { foo } });
 
+/** @param {Value} v */
+const handle = (v) => new TextDecoder().decode(/** @type {Uint8Array} */ (v));
+const fooHandle = new TextEncoder().encode("foo");
+/** @template T @param {Value} v @param {T} ret @returns {T} */
+const withFoo = (v, ret) => (handle(v) === "foo" ? ret : fail("unknown `foo`"));
+
+/** @type {number[]} */
+const counters = [];
+/** @param {number} n */
+const newCounter = (n) => new TextEncoder().encode(`${counters.push(n) - 1}`);
+/** @param {Value} v */
+const counter = (v) => {
+  const id = handle(v);
+  const i = Number(id);
+  return `${i}` === id && i in counters ? i : fail("unknown `counter`");
+};
+
 /**
  * The parameter and result types and the implementation of each function, by
  * instance and name.
  * @type {Record<string, Record<string, [Type[], Type[], (params: Value[]) => InputValue[]]>>}
  */
 const handlers = {
+  "": {
+    ping: [[], [t.string], () => ["pong"]],
+  },
   "wrpc-test:integration/foo": {
     f: [[t.string], [t.u32], ([x]) => (x === "f" ? [42] : fail(`expected \`f\`, got \`${x}\``))],
     foo: [[t.string], [], ([x]) => (x === "foo" ? [] : fail(`expected \`foo\`, got \`${x}\``))],
@@ -85,6 +105,36 @@ const handlers = {
       [t.tuple(t.option(t.list(t.u8)), t.option(t.list(t.string)))],
       (v) => [v],
     ],
+  },
+  "wrpc-test:integration/resources": {
+    foo: [[], [t.own("foo")], () => [fooHandle]],
+    "foo.foo": [[t.own("foo")], [t.string], ([v]) => withFoo(v, ["foo"])],
+    "foo.bar": [[t.borrow("foo")], [t.string], ([v]) => withFoo(v, ["bar"])],
+    bar: [[t.borrow("foo")], [t.string], ([v]) => withFoo(v, ["bar"])],
+    counter: [[t.u32], [t.own("counter")], ([n]) => [newCounter(/** @type {number} */ (n))]],
+    "counter.clone-counter": [
+      [t.borrow("counter")],
+      [t.own("counter")],
+      ([v]) => [newCounter(counters[counter(v)])],
+    ],
+    "counter.get-count": [[t.borrow("counter")], [t.u32], ([v]) => [counters[counter(v)]]],
+    "counter.increment-by": [
+      [t.borrow("counter"), t.u32],
+      [],
+      ([v, n]) => {
+        const i = counter(v);
+        counters[i] = (counters[i] + /** @type {number} */ (n)) >>> 0;
+        return [];
+      },
+    ],
+    "counter.sum": [
+      [t.borrow("counter"), t.borrow("counter")],
+      [t.u32],
+      ([a, b]) => [(counters[counter(a)] + counters[counter(b)]) >>> 0],
+    ],
+  },
+  "wrpc-test:integration/strange": {
+    bar: [[t.borrow("foo")], [t.u64], ([v]) => withFoo(v, [42n])],
   },
   "wrpc-test:integration/async": {
     "with-streams": [

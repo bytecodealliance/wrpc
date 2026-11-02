@@ -55,30 +55,9 @@ where
     C: Clone + Send + Sync + 'static,
     I: wrpc::Invoke<Context = C> + Clone + 'static,
 {
-    mod resources_client {
+    mod sync_client {
         wit_bindgen_wrpc::generate!({
-            world: "resources-client",
-            path: "tests/wit",
-        });
-    }
-
-    mod resources_server {
-        wit_bindgen_wrpc::generate!({
-            world: "resources-server",
-            path: "tests/wit",
-        });
-    }
-
-    mod root_client {
-        wit_bindgen_wrpc::generate!({
-            world: "root-client",
-            path: "tests/wit",
-        });
-    }
-
-    mod root_server {
-        wit_bindgen_wrpc::generate!({
-            world: "root-server",
+            world: "sync-client",
             path: "tests/wit",
         });
     }
@@ -90,7 +69,7 @@ where
         });
     }
 
-    use resources_server::exports::wrpc_test::integration::resources::{self, Counter, Foo};
+    use sync_server::exports::wrpc_test::integration::resources::{self, Counter, Foo};
     use sync_server::exports::wrpc_test::integration::sync::{
         self, Abc, Foobar, Rec, RecNested, Var,
     };
@@ -106,14 +85,20 @@ where
         Ok(())
     }
 
-    #[derive(Clone, Default)]
-    struct Handler(Arc<Mutex<Vec<u32>>>);
+    #[derive(Clone)]
+    struct Handler<I: wrpc::Invoke> {
+        counts: Arc<Mutex<Vec<u32>>>,
+        clt: I,
+        cx: I::Context,
+    }
 
-    impl Handler {
+    impl<I: wrpc::Invoke> Handler<I> {
         fn push(&self, count: u32) -> ResourceOwn<Counter> {
-            let mut counts = self.0.lock().unwrap();
+            let mut counts = self.counts.lock().unwrap();
             counts.push(count);
-            ResourceOwn::from(Bytes::copy_from_slice(&(counts.len() - 1).to_ne_bytes()))
+            ResourceOwn::from(Bytes::copy_from_slice(
+                &counts.len().saturating_sub(1).to_ne_bytes(),
+            ))
         }
 
         fn with<T>(
@@ -124,13 +109,13 @@ where
             let handle = Bytes::from(handle);
             let i = handle.as_ref().try_into()?;
             let i = usize::from_ne_bytes(i);
-            let mut counts = self.0.lock().unwrap();
+            let mut counts = self.counts.lock().unwrap();
             let count = counts.get_mut(i).context("unknown counter")?;
             Ok(f(count))
         }
     }
 
-    impl<C: Send + Sync> resources::HandlerFoo<C> for Handler {
+    impl<C: Send + Sync, I: wrpc::Invoke + 'static> resources::HandlerFoo<C> for Handler<I> {
         async fn new(&self, _cx: C) -> anyhow::Result<ResourceOwn<Foo>> {
             Ok(ResourceOwn::from(Bytes::from_static(b"foo")))
         }
@@ -146,7 +131,7 @@ where
         }
     }
 
-    impl<C: Send + Sync> resources::HandlerCounter<C> for Handler {
+    impl<C: Send + Sync, I: wrpc::Invoke + 'static> resources::HandlerCounter<C> for Handler<I> {
         async fn new(&self, _cx: C, initial: u32) -> anyhow::Result<ResourceOwn<Counter>> {
             Ok(self.push(initial))
         }
@@ -185,34 +170,30 @@ where
         }
     }
 
-    impl<C: Send + Sync> resources::Handler<C> for Handler {
+    impl<C: Send + Sync, I: wrpc::Invoke + 'static> resources::Handler<C> for Handler<I> {
         async fn bar(&self, _cx: C, v: ResourceBorrow<Foo>) -> anyhow::Result<String> {
             ensure_foo(v)?;
             Ok("bar".into())
         }
     }
 
-    impl<C: Send + Sync> resources_server::exports::strange::Handler<C> for Handler {
+    impl<C: Send + Sync, I: wrpc::Invoke + 'static> sync_server::exports::strange::Handler<C>
+        for Handler<I>
+    {
         async fn bar(&self, _cx: C, v: ResourceBorrow<Foo>) -> anyhow::Result<u64> {
             ensure_foo(v)?;
             Ok(42)
         }
     }
 
-    #[derive(Clone)]
-    struct Root<I, C> {
-        clt: I,
-        cx: C,
-    }
-
-    impl<SC, I, C> root_server::Handler<SC> for Root<I, C>
+    impl<C, I> sync_server::Handler<C> for Handler<I>
     where
-        SC: Send + Sync,
-        I: wrpc::Invoke<Context = C>,
-        C: Clone + Send + Sync,
+        C: Send + Sync,
+        I: wrpc::Invoke + 'static,
+        I::Context: Clone,
     {
-        async fn ping(&self, _cx: SC) -> anyhow::Result<String> {
-            use resources_client::wrpc_test::integration::resources::Counter;
+        async fn ping(&self, _cx: C) -> anyhow::Result<String> {
+            use sync_client::wrpc_test::integration::resources::Counter;
 
             let counter = Counter::new(&self.clt, self.cx.clone(), 42).await?;
             let n = Counter::get_count(&self.clt, self.cx.clone(), &counter.as_borrow()).await?;
@@ -221,7 +202,7 @@ where
         }
     }
 
-    impl<C: Send + Sync> sync::Handler<C> for Handler {
+    impl<C: Send + Sync, I: wrpc::Invoke + 'static> sync::Handler<C> for Handler<I> {
         async fn fallible(&self, _cx: C, ok: bool) -> anyhow::Result<Result<bool, String>> {
             Ok(if ok { Ok(true) } else { Err("test".into()) })
         }
@@ -286,7 +267,9 @@ where
         }
     }
 
-    impl<C: Send + Sync> sync_server::exports::foo::Handler<C> for Handler {
+    impl<C: Send + Sync, I: wrpc::Invoke + 'static> sync_server::exports::foo::Handler<C>
+        for Handler<I>
+    {
         async fn f(&self, _cx: C, x: String) -> anyhow::Result<u32> {
             assert_eq!(x, "f");
             Ok(42)
@@ -298,49 +281,18 @@ where
         }
     }
 
-    let root = Root {
+    let handler = Handler {
+        counts: Arc::default(),
         clt: clt.clone(),
         cx: cx.clone(),
     };
-    let mut invocations = root_server::serve(srv, root).await?;
+    let invocations = sync_server::serve(srv, handler).await?;
     assert!(
         invocations
             .iter()
             .any(|(instance, name, ..)| instance.is_empty() && *name == "ping")
     );
-    let resources = resources_server::serve(srv, Handler::default()).await?;
-    invocations.extend(resources);
-    let sync = sync_server::serve(srv, Handler::default()).await?;
-    invocations.extend(sync);
-    serve_bindgen(invocations, async {
-        use resources_client::strange;
-        use resources_client::wrpc_test::integration::resources::{self, Counter, Foo};
-
-        assert_sync(cx.clone(), clt).await?;
-        let pong = root_client::ping(clt, cx.clone()).await?;
-        assert_eq!(pong, "pong");
-
-        let foo = Foo::new(clt, cx.clone()).await?;
-        let v = Foo::bar(clt, cx.clone(), &foo.as_borrow()).await?;
-        assert_eq!(v, "bar");
-        let v = resources::bar(clt, cx.clone(), &foo.as_borrow()).await?;
-        assert_eq!(v, "bar");
-        let v = strange::bar(clt, cx.clone(), &foo.as_borrow()).await?;
-        assert_eq!(v, 42);
-        let v = Foo::foo(clt, cx.clone(), &foo).await?;
-        assert_eq!(v, "foo");
-
-        let a = Counter::new(clt, cx.clone(), 1).await?;
-        Counter::increment_by(clt, cx.clone(), &a.as_borrow(), 2).await?;
-        let n = Counter::get_count(clt, cx.clone(), &a.as_borrow()).await?;
-        assert_eq!(n, 3);
-        let b = Counter::clone_counter(clt, cx.clone(), &a.as_borrow()).await?;
-        Counter::increment_by(clt, cx.clone(), &b.as_borrow(), 1).await?;
-        let n = Counter::sum(clt, cx, &a.as_borrow(), &b.as_borrow()).await?;
-        assert_eq!(n, 7);
-        Ok(())
-    })
-    .await
+    serve_bindgen(invocations, assert_sync(cx, clt)).await
 }
 
 #[instrument(skip_all, ret)]

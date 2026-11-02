@@ -209,7 +209,7 @@ pub async fn assert_async<C: Clone>(
     Ok(())
 }
 
-/// Call each function of the `sync-client` world in `tests/wit` and check the
+/// Call every function of the `sync-client` world in `tests/wit` and check the
 /// results the `sync-server` world is expected to return.
 pub async fn assert_sync<C: Clone>(
     cx: C,
@@ -223,9 +223,10 @@ pub async fn assert_sync<C: Clone>(
         });
     }
 
-    use bindings::foo;
+    use bindings::wrpc_test::integration::resources::{self, Counter, Foo};
     use bindings::wrpc_test::integration::sync;
     use bindings::wrpc_test::integration::sync::{Abc, Foobar, Rec, RecNested, Var};
+    use bindings::{foo, strange};
 
     info!("calling `wrpc-test:integration/sync-client.foo.f`");
     let v = foo::f(client, cx.clone(), "f")
@@ -406,5 +407,74 @@ pub async fn assert_sync<C: Clone>(
             .context("failed to call `wrpc-test:integration/sync.identity-option-lists`")?;
         ensure!(v == (a, b), "{v:?}");
     }
+
+    info!("calling `wrpc-test:integration/sync-client.ping`");
+    let v = bindings::ping(client, cx.clone())
+        .await
+        .context("failed to call `wrpc-test:integration/sync-client.ping`")?;
+    ensure!(v == "pong", "{v:?}");
+
+    info!("calling `wrpc-test:integration/resources.[constructor]foo`");
+    let res = Foo::new(client, cx.clone())
+        .await
+        .context("failed to call `wrpc-test:integration/resources.[constructor]foo`")?;
+
+    info!("calling `wrpc-test:integration/resources.[method]foo.bar`");
+    let v = Foo::bar(client, cx.clone(), &res.as_borrow())
+        .await
+        .context("failed to call `wrpc-test:integration/resources.[method]foo.bar`")?;
+    ensure!(v == "bar", "{v:?}");
+
+    info!("calling `wrpc-test:integration/resources.bar`");
+    let v = resources::bar(client, cx.clone(), &res.as_borrow())
+        .await
+        .context("failed to call `wrpc-test:integration/resources.bar`")?;
+    ensure!(v == "bar", "{v:?}");
+
+    info!("calling `wrpc-test:integration/sync-client.strange.bar`");
+    let v = strange::bar(client, cx.clone(), &res.as_borrow())
+        .await
+        .context("failed to call `wrpc-test:integration/sync-client.strange.bar`")?;
+    ensure!(v == 42, "{v:?}");
+
+    info!("calling `wrpc-test:integration/resources.[static]foo.foo`");
+    let v = Foo::foo(client, cx.clone(), &res)
+        .await
+        .context("failed to call `wrpc-test:integration/resources.[static]foo.foo`")?;
+    ensure!(v == "foo", "{v:?}");
+
+    info!("calling `wrpc-test:integration/resources.[constructor]counter`");
+    let a = Counter::new(client, cx.clone(), 1)
+        .await
+        .context("failed to call `wrpc-test:integration/resources.[constructor]counter`")?;
+
+    info!("calling `wrpc-test:integration/resources.[method]counter.increment-by`");
+    Counter::increment_by(client, cx.clone(), &a.as_borrow(), 2)
+        .await
+        .context("failed to call `wrpc-test:integration/resources.[method]counter.increment-by`")?;
+
+    info!("calling `wrpc-test:integration/resources.[method]counter.get-count`");
+    let v = Counter::get_count(client, cx.clone(), &a.as_borrow())
+        .await
+        .context("failed to call `wrpc-test:integration/resources.[method]counter.get-count`")?;
+    ensure!(v == 3, "{v:?}");
+
+    info!("calling `wrpc-test:integration/resources.[method]counter.clone-counter`");
+    let b = Counter::clone_counter(client, cx.clone(), &a.as_borrow())
+        .await
+        .context(
+            "failed to call `wrpc-test:integration/resources.[method]counter.clone-counter`",
+        )?;
+
+    info!("calling `wrpc-test:integration/resources.[method]counter.increment-by`");
+    Counter::increment_by(client, cx.clone(), &b.as_borrow(), 1)
+        .await
+        .context("failed to call `wrpc-test:integration/resources.[method]counter.increment-by`")?;
+
+    info!("calling `wrpc-test:integration/resources.[static]counter.sum`");
+    let v = Counter::sum(client, cx, &a.as_borrow(), &b.as_borrow())
+        .await
+        .context("failed to call `wrpc-test:integration/resources.[static]counter.sum`")?;
+    ensure!(v == 7, "{v:?}");
     Ok(())
 }
