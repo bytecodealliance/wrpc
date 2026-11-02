@@ -3,20 +3,24 @@
 use core::ops::{Deref, DerefMut};
 use core::pin::Pin;
 use core::sync::atomic::{AtomicBool, Ordering};
-use core::task::{Context, Poll, Waker, ready};
+use core::task::{Context, Poll, ready};
 
 use std::collections::VecDeque;
 use std::io::IoSlice;
 use std::sync::Arc;
 
 use bytes::{Bytes, BytesMut};
+use futures::task::AtomicWaker;
 use futures::{Stream, TryStreamExt as _, stream};
 use http_body::Frame;
 use http_body_util::BodyExt as _;
 use http_body_util::combinators::MapErr;
 use pin_project_lite::pin_project;
-use tokio::io::{AsyncWrite, ReadHalf, SimplexStream, WriteHalf, simplex};
+use tokio::io::{
+    AsyncBufRead, AsyncRead, AsyncWrite, ReadBuf, ReadHalf, SimplexStream, WriteHalf, simplex,
+};
 use tokio_util::io::{StreamReader, poll_read_buf};
+use wrpc_transport::frame::Reject;
 
 /// Body buffer size
 pub const DEFAULT_BODY_BUFFER_SIZE: usize = 8192;
@@ -26,23 +30,51 @@ pub type IncomingBodyDataStream<T> =
 
 pub type IncomingBodyDataReader<T> = StreamReader<IncomingBodyDataStream<T>, Bytes>;
 
-pub type DynIncomingBodyDataReader =
-    IncomingBodyDataReader<Box<dyn FnMut(hyper::Error) -> std::io::Error + Send + Sync + 'static>>;
+pub type DynIncomingBodyDataReader = ExchangeReader<
+    IncomingBodyDataReader<Box<dyn FnMut(hyper::Error) -> std::io::Error + Send + Sync + 'static>>,
+>;
+
+/// Failure of an [`OutgoingBody`]
+#[derive(Debug, Default)]
+struct Abort {
+    aborted: AtomicBool,
+    body: AtomicWaker,
+    writer: AtomicWaker,
+}
+
+impl Abort {
+    fn abort(&self) {
+        self.aborted.store(true, Ordering::Relaxed);
+        self.body.wake();
+        self.writer.wake();
+    }
+
+    fn check(&self, waker: &AtomicWaker, cx: &Context<'_>) -> std::io::Result<()> {
+        waker.register(cx.waker());
+        if self.aborted.load(Ordering::Relaxed) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "body aborted",
+            ));
+        }
+        Ok(())
+    }
+}
 
 /// Writer of the data of an [`OutgoingBody`], which fails the body once dropped before being
-/// shut down
+/// shut down. It fails once the body is dropped or an [`ExchangeReader`] created with it is
+/// rejected.
 #[derive(Debug)]
 pub struct OutgoingBodyDataWriter {
     stream: WriteHalf<SimplexStream>,
-    aborted: Arc<AtomicBool>,
+    abort: Arc<Abort>,
     shutdown: bool,
 }
 
 impl Drop for OutgoingBodyDataWriter {
     fn drop(&mut self) {
         if !self.shutdown {
-            self.aborted.store(true, Ordering::Relaxed);
-            _ = Pin::new(&mut self.stream).poll_shutdown(&mut Context::from_waker(Waker::noop()));
+            self.abort.abort();
         }
     }
 }
@@ -53,7 +85,9 @@ impl AsyncWrite for OutgoingBodyDataWriter {
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<std::io::Result<usize>> {
-        Pin::new(&mut self.get_mut().stream).poll_write(cx, buf)
+        let this = self.get_mut();
+        this.abort.check(&this.abort.writer, cx)?;
+        Pin::new(&mut this.stream).poll_write(cx, buf)
     }
 
     fn poll_write_vectored(
@@ -61,7 +95,9 @@ impl AsyncWrite for OutgoingBodyDataWriter {
         cx: &mut Context<'_>,
         bufs: &[IoSlice<'_>],
     ) -> Poll<std::io::Result<usize>> {
-        Pin::new(&mut self.get_mut().stream).poll_write_vectored(cx, bufs)
+        let this = self.get_mut();
+        this.abort.check(&this.abort.writer, cx)?;
+        Pin::new(&mut this.stream).poll_write_vectored(cx, bufs)
     }
 
     fn is_write_vectored(&self) -> bool {
@@ -69,11 +105,14 @@ impl AsyncWrite for OutgoingBodyDataWriter {
     }
 
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        Pin::new(&mut self.get_mut().stream).poll_flush(cx)
+        let this = self.get_mut();
+        this.abort.check(&this.abort.writer, cx)?;
+        Pin::new(&mut this.stream).poll_flush(cx)
     }
 
     fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
         let this = self.get_mut();
+        this.abort.check(&this.abort.writer, cx)?;
         ready!(Pin::new(&mut this.stream).poll_shutdown(cx))?;
         this.shutdown = true;
         Poll::Ready(Ok(()))
@@ -88,7 +127,13 @@ pin_project! {
         buffer: BytesMut,
         #[pin]
         stream: ReadHalf<SimplexStream>,
-        aborted: Arc<AtomicBool>,
+        abort: Arc<Abort>,
+    }
+
+    impl PinnedDrop for OutgoingBody {
+        fn drop(this: Pin<&mut Self>) {
+            this.abort.abort();
+        }
     }
 }
 
@@ -96,17 +141,17 @@ impl OutgoingBody {
     #[must_use]
     pub fn new(chunks: impl IntoIterator<Item = Bytes>) -> (Self, OutgoingBodyDataWriter) {
         let (rx, tx) = simplex(DEFAULT_BODY_BUFFER_SIZE);
-        let aborted = Arc::<AtomicBool>::default();
+        let abort = Arc::<Abort>::default();
         (
             Self {
                 chunks: chunks.into_iter().filter(|buf| !buf.is_empty()).collect(),
                 buffer: BytesMut::default(),
                 stream: rx,
-                aborted: Arc::clone(&aborted),
+                abort: Arc::clone(&abort),
             },
             OutgoingBodyDataWriter {
                 stream: tx,
-                aborted,
+                abort,
                 shutdown: false,
             },
         )
@@ -121,6 +166,7 @@ impl http_body::Body for OutgoingBody {
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
+        self.abort.check(&self.abort.body, cx)?;
         if let Some(buf) = self.chunks.pop_front() {
             return Poll::Ready(Some(Ok(Frame::data(buf))));
         }
@@ -129,16 +175,59 @@ impl http_body::Body for OutgoingBody {
         this.buffer.reserve(DEFAULT_BODY_BUFFER_SIZE);
         ready!(poll_read_buf(this.stream, cx, this.buffer))?;
         let buf = self.buffer.split().freeze();
-        if buf.is_empty() && self.aborted.load(Ordering::Relaxed) {
-            Poll::Ready(Some(Err(std::io::Error::new(
-                std::io::ErrorKind::BrokenPipe,
-                "body writer dropped before being shut down",
-            ))))
-        } else if buf.is_empty() {
+        if buf.is_empty() {
             Poll::Ready(None)
         } else {
             Poll::Ready(Some(Ok(Frame::data(buf))))
         }
+    }
+}
+
+pin_project! {
+    /// Reader of the incoming body of an exchange, which fails the [`OutgoingBody`] of the
+    /// exchange once rejected, resetting the exchange
+    #[derive(Debug)]
+    pub struct ExchangeReader<T> {
+        #[pin]
+        reader: T,
+        abort: Arc<Abort>,
+    }
+}
+
+impl<T> ExchangeReader<T> {
+    /// Creates a reader of the incoming body read by `reader`, which fails the [`OutgoingBody`]
+    /// written by `writer` once rejected
+    pub fn new(reader: T, writer: &OutgoingBodyDataWriter) -> Self {
+        Self {
+            reader,
+            abort: Arc::clone(&writer.abort),
+        }
+    }
+}
+
+impl<T> Reject for ExchangeReader<T> {
+    fn reject(self) {
+        self.abort.abort();
+    }
+}
+
+impl<T: AsyncRead> AsyncRead for ExchangeReader<T> {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        self.project().reader.poll_read(cx, buf)
+    }
+}
+
+impl<T: AsyncBufRead> AsyncBufRead for ExchangeReader<T> {
+    fn poll_fill_buf(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<&[u8]>> {
+        self.project().reader.poll_fill_buf(cx)
+    }
+
+    fn consume(self: Pin<&mut Self>, amt: usize) {
+        self.project().reader.consume(amt);
     }
 }
 
@@ -270,8 +359,8 @@ impl hyper::service::Service<http::Request<hyper::body::Incoming>> for Server {
         let map_err: Box<dyn FnMut(hyper::Error) -> std::io::Error + Send + Sync + 'static> =
             Box::new(io_error_from_hyper);
         let body = body.map_err(map_err).into_data_stream();
-        let body = StreamReader::new(body);
         let (rx, tx) = OutgoingBody::new([]);
+        let body = ExchangeReader::new(StreamReader::new(body), &tx);
         let srv = Arc::clone(&self.0);
         Box::pin(async move {
             srv.accept(parts, tx, body).await?;
@@ -345,7 +434,7 @@ impl wrpc_transport::Invoke for Client<hyper::client::conn::http2::SendRequest<O
             .context("failed to encode invocation")?;
         let (req, tx) = new_request(cx, [buf.freeze(), params]);
 
-        let rx = data_reader_from_response(sender.send_request(req));
+        let rx = ExchangeReader::new(data_reader_from_response(sender.send_request(req)), &tx);
 
         Ok((
             wrpc_transport::frame::Outgoing::new(tx),
@@ -383,7 +472,7 @@ where
             .context("failed to encode invocation")?;
         let (req, tx) = new_request(cx, [buf.freeze(), params]);
 
-        let rx = data_reader_from_response(self.0.request(req));
+        let rx = ExchangeReader::new(data_reader_from_response(self.0.request(req)), &tx);
 
         Ok((
             wrpc_transport::frame::Outgoing::new(tx),
