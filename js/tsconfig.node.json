@@ -4,5 +4,6 @@
     "lib": ["ES2022"],
     "types": ["node"]
   },
-  "include": ["test", "../tests/js"]
+  "include": ["test", "../tests/js"],
+  "exclude": ["../tests/js/server.js", "../tests/js/client.js"]
 }

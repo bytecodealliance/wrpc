@@ -3,6 +3,7 @@ use core::pin::pin;
 use core::time::Duration;
 
 use std::io::ErrorKind;
+use std::path::Path;
 use std::process::Stdio;
 use std::sync::Arc;
 
@@ -12,6 +13,7 @@ use futures::{StreamExt as _, stream};
 use hyper::client::conn::http2;
 use hyper::server::conn::http1;
 use hyper_util::rt::{TokioExecutor, TokioIo};
+use tempfile::{TempDir, tempdir};
 use tokio::io::{AsyncBufReadExt as _, AsyncReadExt as _, AsyncWriteExt as _, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::process::{Child, Command};
@@ -22,12 +24,34 @@ use wrpc_transport::Invoke as _;
 
 pub mod common;
 
-/// Start `tests/js/server.js` listening on `addr` and wait until it is ready.
-async fn start_server(addr: &str) -> anyhow::Result<Child> {
+/// Generate the bindings of each of `worlds` of the WIT at `wit` into a
+/// temporary directory, in a subdirectory named after the world.
+async fn bindgen(wit: &str, worlds: &[&str]) -> anyhow::Result<TempDir> {
+    let dir = tempdir().context("failed to create temporary directory")?;
+    for world in worlds {
+        let status = Command::new(env!("CARGO_BIN_EXE_wit-bindgen-wrpc"))
+            .args(["js", "--world", world, "--wrpc-path"])
+            .arg(concat!(env!("CARGO_MANIFEST_DIR"), "/js/src/index.js"))
+            .arg("--out-dir")
+            .arg(dir.path().join(world))
+            .arg(wit)
+            .kill_on_drop(true)
+            .status()
+            .await
+            .context("failed to run `wit-bindgen-wrpc`")?;
+        ensure!(status.success(), "`wit-bindgen-wrpc` failed for `{world}`");
+    }
+    Ok(dir)
+}
+
+/// Start `tests/js/server.js` listening on `addr` with the bindings in
+/// `bindings` and wait until it is ready.
+async fn start_server(addr: &str, bindings: &Path) -> anyhow::Result<Child> {
     info!("starting `tests/js/server.js`");
     let mut server = Command::new("node")
         .arg("tests/js/server.js")
         .arg(addr)
+        .arg(bindings)
         .stdout(Stdio::piped())
         .kill_on_drop(true)
         .spawn()
@@ -87,10 +111,12 @@ where
             .map(|(instance, name, invocations)| invocations.map(move |res| (instance, name, res))),
     );
 
+    let bindings = bindgen("tests/js/wit", &["echo-client"]).await?;
     info!("running `tests/js/client.js`");
     let mut client = pin!(
         Command::new("node")
             .args(["--test-force-exit", "tests/js/client.js", addr])
+            .arg(bindings.path())
             .kill_on_drop(true)
             .status()
     );
@@ -121,11 +147,12 @@ where
 #[instrument(ret)]
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn js_server() -> anyhow::Result<()> {
+    let bindings = bindgen("tests/wit", &["sync-server", "async-server"]).await?;
     let port = wrpc_test::free_port()
         .await
         .context("failed to find free port")?;
     let addr = SocketAddr::from((Ipv6Addr::LOCALHOST, port));
-    let mut server = start_server(&addr.to_string()).await?;
+    let mut server = start_server(&addr.to_string(), bindings.path()).await?;
 
     let client = wrpc_transport::frame::tcp::Client::from(addr);
     {
@@ -158,11 +185,12 @@ async fn js_server() -> anyhow::Result<()> {
 #[instrument(ret)]
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn js_http_server() -> anyhow::Result<()> {
+    let bindings = bindgen("tests/wit", &["sync-server", "async-server"]).await?;
     let port = wrpc_test::free_port()
         .await
         .context("failed to find free port")?;
     let addr = SocketAddr::from((Ipv6Addr::LOCALHOST, port));
-    let mut server = start_server(&format!("http://{addr}")).await?;
+    let mut server = start_server(&format!("http://{addr}"), bindings.path()).await?;
 
     let conn = wrpc_test::tcp_connect(addr).await?;
     let (sender, conn) = http2::handshake(TokioExecutor::new(), TokioIo::new(conn))
