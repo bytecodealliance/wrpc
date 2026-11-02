@@ -1,62 +1,22 @@
 // The wRPC wire encoding, framing and invocation are provided by the
-// `@bytecodealliance/wrpc` client, served by the backend under `/wrpc`.
-import { t, invoke as wrpcInvoke, fromWebStreams } from "@bytecodealliance/wrpc";
+// `@bytecodealliance/wrpc` client, served by the backend under `/wrpc`, and
+// the `wasi:keyvalue/store` client by the bindings in `bindings`.
+import { fromWebStreams } from "@bytecodealliance/wrpc";
 
-/**
- * @typedef {import("@bytecodealliance/wrpc").InputValue} InputValue
- * @typedef {import("@bytecodealliance/wrpc").Type} Type
- * @typedef {{ kind: string, value?: string }} StoreError
- */
-/**
- * @template T
- * @typedef {{ kind: "ok", value: T } | { kind: "error", value: StoreError }} Result
- */
+import * as store from "./bindings/wasi/keyvalue/store.js";
 
-// `wasi:keyvalue/store`, as served by the backend. The types mirror the
-// WIT in `crates/wasi-keyvalue/wit/deps/keyvalue/store.wit`; the codec
-// walks them to encode arguments and decode results.
-const STORE = "wasi:keyvalue/store@0.2.0-draft2";
-const error = t.variant({ "no-such-store": null, "access-denied": null, other: t.string });
-
-// open: func(identifier: string) -> result<bucket, error>
-const OPEN = { params: [t.string], results: [t.result(t.own("bucket"), error)] };
-// bucket.get: func(key: string) -> result<option<list<u8>>, error>
-const GET = {
-  params: [t.borrow("bucket"), t.string],
-  results: [t.result(t.option(t.list(t.u8)), error)],
-};
-// bucket.set: func(key: string, value: list<u8>) -> result<_, error>
-const SET = {
-  params: [t.borrow("bucket"), t.string, t.list(t.u8)],
-  results: [t.result(null, error)],
-};
+/** @typedef {import("./bindings/wasi/keyvalue/store.js").Error} StoreError */
 
 /** @type {WebTransport | null} */
 let conn = null;
 /** @type {Map<string, Uint8Array>} */
 let buckets = new Map();
 
-// Invoke `func` on `instance` over a fresh WebTransport bidirectional
-// stream. The framed transport maps one stream to one invocation; the
-// client writes the request, streams any async parameters, and decodes
-// the reply (and any async results) until all I/O is done.
-/**
- * @param {string} instance @param {string} func
- * @param {Type[]} paramTypes @param {Type[]} resultTypes @param {InputValue[]} args
- */
-async function invoke(instance, func, paramTypes, resultTypes, args) {
+// A transport over a fresh WebTransport bidirectional stream, which carries
+// one invocation.
+async function transport() {
   if (!conn) throw "WebTransport not connected";
-  const stream = await conn.createBidirectionalStream();
-  const { results, done } = await wrpcInvoke(
-    fromWebStreams(stream),
-    instance,
-    func,
-    paramTypes,
-    args,
-    resultTypes,
-  );
-  await done;
-  return results;
+  return fromWebStreams(await conn.createBidirectionalStream());
 }
 
 // Render a decoded `error` variant value (`{ kind, value? }`) as a string.
@@ -69,8 +29,6 @@ function formatError(err) {
       return "access denied";
     case "other":
       return err.value;
-    default:
-      return `unknown error \`${err.kind}\``;
   }
 }
 
@@ -138,9 +96,7 @@ async function getBucket() {
   if (existing) return existing;
 
   dbg.debug(`opening bucket for \`${identifier}\`...`);
-  const [res] = /** @type {[Result<Uint8Array>]} */ (
-    await invoke(STORE, "open", OPEN.params, OPEN.results, [identifier])
-  );
+  const res = await store.open(await transport(), identifier);
   if (res.kind === "error") throw "failed to open bucket: " + formatError(res.value);
   const bucket = res.value;
   buckets.set(identifier, bucket);
@@ -160,9 +116,7 @@ async function handleGet() {
   if (!key) throw "key must be set";
 
   dbg.debug(`getting \`${key}\`...`);
-  const [res] = /** @type {[Result<Uint8Array | undefined>]} */ (
-    await invoke(STORE, "bucket.get", GET.params, GET.results, [bucket, key])
-  );
+  const res = await store.Bucket.get(await transport(), bucket, key);
   if (res.kind === "error") throw "failed to get value: " + formatError(res.value);
   if (res.value === undefined) {
     dbg.info("key missing");
@@ -184,9 +138,7 @@ async function handleSet() {
   const valueBuf = value ? new TextEncoder().encode(value) : new Uint8Array();
 
   dbg.debug(`setting \`${key}\`...`);
-  const [res] = /** @type {[Result<undefined>]} */ (
-    await invoke(STORE, "bucket.set", SET.params, SET.results, [bucket, key, valueBuf])
-  );
+  const res = await store.Bucket.set(await transport(), bucket, key, valueBuf);
   if (res.kind === "error") throw "failed to set value: " + formatError(res.value);
   dbg.info(`set value in bucket ${uuidString(bucket)}`);
 }

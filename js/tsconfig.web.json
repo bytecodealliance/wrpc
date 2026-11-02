@@ -8,5 +8,6 @@
       "@bytecodealliance/wrpc": ["."]
     }
   },
-  "include": ["../examples/web/ui"]
+  "include": ["../examples/web/ui"],
+  "exclude": ["../examples/web/ui/bindings/**/*.js"]
 }

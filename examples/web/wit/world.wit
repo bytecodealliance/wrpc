@@ -1,0 +1,5 @@
+package wrpc-examples:web;
+
+world client {
+    import wasi:keyvalue/store@0.2.0-draft2;
+}
