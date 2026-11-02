@@ -16,12 +16,12 @@ use common::{assert_async, assert_sync};
 use futures::future::BoxFuture;
 use futures::stream::{BoxStream, FuturesUnordered};
 use futures::{Stream, StreamExt as _, TryStreamExt as _, future, stream};
-use tokio::io::{AsyncRead, AsyncReadExt as _, BufReader, split};
+use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWriteExt as _, BufReader};
 use tokio::task::yield_now;
 use tokio::{join, spawn, try_join};
 use tokio_util::io::StreamReader;
 use tracing::instrument;
-use wrpc_transport::frame::Oneshot;
+use wrpc_transport::frame::{Oneshot, Reject, split};
 use wrpc_transport::{InvokeExt as _, ResourceBorrow, ResourceOwn, ServeExt as _};
 
 async fn serve_bindgen<S, F>(
@@ -513,13 +513,15 @@ async fn assert_dynamic<C: Clone + Send + Sync + 'static>(
     let reset = srv
         .serve_values::<(String,), (String,)>("test", "reset", Arc::default())
         .await?;
+    let invalid = srv.serve("test", "invalid", Arc::default()).await?;
     let sync = srv
         .serve_values::<SyncValues, SyncValues>("test", "sync", Arc::default())
         .await?;
     let async_ = srv
         .serve_values::<AsyncValues, AsyncValues>("test", "async", Arc::clone(&paths))
         .await?;
-    let (mut reset, mut sync, mut async_) = (pin!(reset), pin!(sync), pin!(async_));
+    let (mut reset, mut invalid, mut sync, mut async_) =
+        (pin!(reset), pin!(invalid), pin!(sync), pin!(async_));
     try_join!(
         async {
             for spawned in [false, true] {
@@ -532,6 +534,18 @@ async fn assert_dynamic<C: Clone + Send + Sync + 'static>(
                     drop(inv);
                 }
             }
+            let Some((.., mut tx, rx)) = invalid.try_next().await? else {
+                bail!("`test.invalid` missing");
+            };
+            rx.finished()
+                .await
+                .expect_err("receiving invalid data should fail");
+            _ = tx.write_all(b"\x04test").await;
+            let finished = tx.finished();
+            drop(tx);
+            finished
+                .await
+                .expect_err("transmitting after receiving invalid data should fail");
             for _ in 0..2 {
                 let Some((.., params, io, tx)) = sync.try_next().await? else {
                     bail!("`test.sync` missing");
@@ -562,6 +576,18 @@ async fn assert_dynamic<C: Clone + Send + Sync + 'static>(
                     .await;
                 res.expect_err("`test.reset` should have failed");
             }
+
+            let (tx, mut rx) = clt
+                .invoke(cx.clone(), "test", "invalid", Bytes::default(), &[[]; 0])
+                .await?;
+            let mut tx = tx.index(&[0])?;
+            tx.write_all(b"invalid").await?;
+            let mut buf = Vec::default();
+            _ = rx.read_to_end(&mut buf).await;
+            assert!(
+                buf.is_empty(),
+                "received results after transmitting invalid data"
+            );
 
             let mut buf = BytesMut::default();
             wrpc_transport::pack(sync_values(), &mut buf).await?;
@@ -678,7 +704,7 @@ async fn rust_http_dynamic() -> anyhow::Result<()> {
 async fn assert_oneshot<T, R, W>(clt: T, rx: R, tx: W) -> anyhow::Result<()>
 where
     T: wrpc::Invoke<Context = ()> + 'static,
-    R: tokio::io::AsyncRead + Send + Sync + Unpin + 'static,
+    R: tokio::io::AsyncRead + Reject + Send + Sync + Unpin + 'static,
     W: tokio::io::AsyncWrite + Send + Sync + Unpin + 'static,
 {
     let srv = Arc::new(wrpc_transport::frame::Server::default());

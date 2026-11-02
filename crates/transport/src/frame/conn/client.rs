@@ -6,7 +6,7 @@ use tracing::{instrument, trace};
 use wasm_tokio::{CoreNameEncoder, Leb128Encoder};
 
 use crate::frame::PROTOCOL;
-use crate::frame::conn::{Incoming, Outgoing};
+use crate::frame::conn::{Incoming, Outgoing, Reject};
 
 /// Encodes the header of an invocation, which is followed by `params_len` bytes of
 /// parameters, to a `BytesMut`. If `params_len` is 0, only the header is encoded.
@@ -48,7 +48,7 @@ pub async fn invoke<P, I, O>(
 ) -> anyhow::Result<(Outgoing, Incoming)>
 where
     P: AsRef<[Option<usize>]> + Send + Sync,
-    I: AsyncBufRead + Unpin + Send + 'static,
+    I: AsyncBufRead + Reject + Unpin + Send + 'static,
     O: AsyncWrite + Unpin + Send + 'static,
 {
     let params = params.as_ref();

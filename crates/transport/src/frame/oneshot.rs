@@ -1,13 +1,11 @@
 //! wRPC transport stream framing
 
 use bytes::Bytes;
-use tokio::io::{
-    AsyncRead, AsyncWrite, BufReader, DuplexStream, ReadHalf, WriteHalf, duplex, split,
-};
+use tokio::io::{AsyncRead, AsyncWrite, BufReader, DuplexStream, duplex};
 use tracing::instrument;
 
 use crate::Invoke;
-use crate::frame::{Incoming, Outgoing, invoke};
+use crate::frame::{Incoming, Outgoing, ReadHalf, Reject, WriteHalf, invoke, split};
 
 /// [Invoke] implementation in terms of a single stream pair.
 ///
@@ -55,7 +53,7 @@ impl<I, O> Oneshot<I, O> {
 
 impl<I, O> Invoke for Oneshot<I, O>
 where
-    I: AsyncRead + Send + Unpin + 'static,
+    I: AsyncRead + Reject + Send + Unpin + 'static,
     O: AsyncWrite + Send + Unpin + 'static,
 {
     type Context = ();
@@ -77,7 +75,7 @@ where
 
 impl<I, O> Invoke for &Oneshot<I, O>
 where
-    I: AsyncRead + Send + Unpin + 'static,
+    I: AsyncRead + Reject + Send + Unpin + 'static,
     O: AsyncWrite + Send + Unpin + 'static,
 {
     type Context = ();

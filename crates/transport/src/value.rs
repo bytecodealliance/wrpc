@@ -2566,6 +2566,7 @@ mod tests {
     use std::io::ErrorKind;
 
     use anyhow::bail;
+    use tokio::io::{BufReader, duplex};
     use tokio_util::codec::Decoder as _;
 
     use super::*;
@@ -2646,13 +2647,13 @@ mod tests {
         }
 
         for (ready, expected) in [("foo", &b"\x03foo\x03bar\x00"[..]), ("", b"\x03bar\x00")] {
-            let (tx, rx) = tokio::io::duplex(1024);
+            let (tx, rx) = duplex(1024);
             let w = Outgoing::new(tx).index(&[0])?;
             w.write_stream_bytes(0, stream::iter([ready, "bar"].map(Bytes::from)))
                 .await?;
             assert_eq!(read_frames(rx).await?, expected);
 
-            let (tx, rx) = tokio::io::duplex(1024);
+            let (tx, rx) = duplex(1024);
             let w = Outgoing::new(tx).index(&[0])?;
             w.write_stream_read(0, ready.into(), b"bar".as_slice())
                 .await?;
@@ -2667,10 +2668,11 @@ mod tests {
         type UnitFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
 
         fn buffered(buffer: &[u8]) -> BufferedIncoming {
+            let (rx, ..) = duplex(1);
             BufferedIncoming {
                 buffer: BytesMut::from(buffer),
                 inner: crate::frame::Incoming::new(
-                    tokio::io::empty(),
+                    BufReader::new(rx),
                     Vec::<Vec<Option<usize>>>::default(),
                 ),
             }

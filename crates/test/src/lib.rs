@@ -46,7 +46,7 @@ async fn serve_listener<C, I, O, T>(
     f: impl AsyncFnOnce(C, &wrpc_transport::Server<(), I, O>) -> anyhow::Result<T>,
 ) -> anyhow::Result<T>
 where
-    I: tokio::io::AsyncBufRead + Unpin + Send + Sync + 'static,
+    I: tokio::io::AsyncBufRead + wrpc_transport::frame::Reject + Unpin + Send + Sync + 'static,
     O: Send + Sync + 'static,
 {
     let srv = wrpc_transport::Server::default();

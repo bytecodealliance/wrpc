@@ -12,6 +12,7 @@ use bytes::{Buf as _, Bytes, BytesMut};
 use pin_project_lite::pin_project;
 use tokio::io::{
     AsyncBufRead, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt as _, BufReader, DuplexStream,
+    ReadBuf,
 };
 use tokio::select;
 use tokio::sync::{Notify, OwnedSemaphorePermit, Semaphore, mpsc, oneshot, watch};
@@ -466,13 +467,16 @@ impl Incoming {
     /// Draining reports the latter, which would otherwise go unnoticed, discards empty frames the
     /// peer may still send to close paths, and reads the stream to its end, which transports
     /// reusing the connection, like HTTP/1, require.
+    /// The reader is rejected once ingress fails, including when all handles and all futures
+    /// returned by [`Self::finished`] are dropped while data, which was not processed, is held,
+    /// closing the invocation's byte stream in both directions, see [`Reject`].
     ///
     /// `paths` must not contain both a wildcard and an index at the same position, so paths of
     /// different variant cases, which are not indexed, must be merged by replacing such indices
     /// by wildcards.
-    pub fn new<T, P>(mut rx: T, paths: impl IntoIterator<Item = P>) -> Self
+    pub fn new<T, P>(rx: T, paths: impl IntoIterator<Item = P>) -> Self
     where
-        T: AsyncBufRead + Unpin + Send + 'static,
+        T: AsyncBufRead + Reject + Unpin + Send + 'static,
         P: AsRef<[Option<usize>]>,
     {
         let (rx_tx, rx_rx) = mpsc::channel(MAX_BUFFERED_CHUNKS);
@@ -489,19 +493,15 @@ impl Incoming {
         let task = tokio::spawn({
             let state = Arc::clone(&state);
             async move {
+                let mut reader = Reader {
+                    rx: Some(rx),
+                    state: Arc::clone(&state),
+                };
                 let res = async {
                     let mut io = pin!(async {
-                        let res = ingress(&mut rx, &state.index, depth).await;
-                        if let Err(err) = &res {
-                            _ = state.err.set(copy_io_error(err));
-                        }
-                        trace!("shutting down subscriptions");
-                        state
-                            .index
-                            .lock()
-                            .unwrap_or_else(PoisonError::into_inner)
-                            .close_tx();
-                        res
+                        ingress(&mut reader, &state.index, depth).await?;
+                        close_tx(&state);
+                        Ok(())
                     });
                     select! {
                         biased;
@@ -518,8 +518,14 @@ impl Incoming {
                     }
                 }
                 .await;
+                let rx = reader.rx.take();
                 if let Err(err) = &res {
                     error!(?err, "ingress failed");
+                    if let Some(rx) = rx {
+                        rx.reject();
+                    }
+                    _ = state.err.set(copy_io_error(err));
+                    close_tx(&state);
                 } else {
                     debug!("ingress successfully complete");
                 }
@@ -630,7 +636,7 @@ impl AsyncRead for Incoming {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-        buf: &mut tokio::io::ReadBuf<'_>,
+        buf: &mut ReadBuf<'_>,
     ) -> Poll<std::io::Result<()>> {
         if buf.remaining() == 0 {
             return Poll::Ready(Ok(()));
@@ -674,6 +680,36 @@ impl IngressState {
             index.subs.get(path).and_then(|sub| sub.tx.as_ref()),
             Some(TxSlot::Closed)
         )
+    }
+}
+
+/// Reader of [Incoming], which is rejected once dropped while ingress is aborted, if the dropped
+/// handles held data, which was not processed
+struct Reader<T: Reject> {
+    rx: Option<T>,
+    state: Arc<IngressState>,
+}
+
+impl<T: Reject> Drop for Reader<T> {
+    fn drop(&mut self) {
+        if let Some(rx) = self.rx.take()
+            && close_rx(&self.state).is_err()
+        {
+            rx.reject();
+        }
+    }
+}
+
+impl<T: AsyncRead + Reject + Unpin> AsyncRead for Reader<T> {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        let Some(rx) = self.get_mut().rx.as_mut() else {
+            return Poll::Ready(Ok(()));
+        };
+        Pin::new(rx).poll_read(cx, buf)
     }
 }
 
@@ -926,6 +962,16 @@ async fn ingress(
     }
 }
 
+/// Closes all senders of the subscriptions
+fn close_tx(state: &IngressState) {
+    trace!("shutting down subscriptions");
+    state
+        .index
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .close_tx();
+}
+
 /// Closes all receivers of the subscriptions once all [Incoming] handles were dropped,
 /// failing if any of them or any of the dropped handles held data, which was not processed
 fn close_rx(state: &IngressState) -> std::io::Result<()> {
@@ -1014,7 +1060,7 @@ mod tests {
     use tokio_util::codec::Encoder as _;
 
     use super::*;
-    use crate::frame::{Encoder, FrameRef};
+    use crate::frame::{Encoder, FrameRef, split};
 
     fn frame(path: &[usize], data: &[u8]) -> Vec<u8> {
         let mut buf = BytesMut::default();
@@ -1208,6 +1254,17 @@ mod tests {
             let err = tx.write_all(&frame(&[0], b"\x2a")).await.unwrap_err();
             assert_eq!(err.kind(), ErrorKind::BrokenPipe);
         }
+
+        let (mut tx, rx) = tokio::io::duplex(16);
+        let (rx, _rx_tx) = split(rx);
+        let mut rx = Incoming::new(BufReader::new(rx), [[Some(0)]]);
+        tx.write_all(&frame(&[], b"\x2a\x2b")).await.unwrap();
+        rx.read_exact(&mut [0; 1]).await.unwrap();
+        drop(rx);
+        tokio::time::timeout(Duration::from_secs(5), tx.read_to_end(&mut Vec::default()))
+            .await
+            .expect("exchange was not closed")
+            .unwrap();
     }
 
     #[test_log::test(tokio::test)]

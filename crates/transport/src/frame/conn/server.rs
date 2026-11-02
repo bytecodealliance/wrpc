@@ -11,7 +11,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use tracing::{instrument, trace};
 
 use crate::Serve;
-use crate::frame::{Header, HeaderDecoder, HeaderReadError, Incoming, Outgoing};
+use crate::frame::{Header, HeaderDecoder, HeaderReadError, Incoming, Outgoing, Reject};
 
 /// wRPC server for framed transports
 #[derive(Debug)]
@@ -98,24 +98,34 @@ impl<C, I, O> core::error::Error for AcceptError<C, I, O> {}
 
 impl<C, I, O> Server<C, I, O>
 where
-    I: AsyncBufRead + Unpin,
+    I: AsyncBufRead + Reject + Unpin,
 {
     /// Accept an already-established connection.
     ///
     /// # Errors
     ///
-    /// Returns an error if handling the invocation fails
+    /// Returns an error if handling the invocation fails. `rx` is rejected if reading the
+    /// invocation header fails or the function is not handled.
     #[instrument(level = "trace", skip_all, ret(level = "trace"))]
     pub async fn accept(&self, cx: C, tx: O, mut rx: I) -> Result<(), AcceptError<C, I, O>> {
-        let Header { instance, name } = self.header.read(&mut rx).await?;
+        let Header { instance, name } = match self.header.read(&mut rx).await {
+            Ok(header) => header,
+            Err(err) => {
+                rx.reject();
+                return Err(err.into());
+            }
+        };
         let h = self
             .handlers
             .lock()
             .await
             .get(&instance)
             .and_then(|h| h.get(&name))
-            .cloned()
-            .ok_or_else(|| AcceptError::UnhandledFunction { instance, name })?;
+            .cloned();
+        let Some(h) = h else {
+            rx.reject();
+            return Err(AcceptError::UnhandledFunction { instance, name });
+        };
         h.send((cx, rx, tx)).await?;
         Ok(())
     }
@@ -132,7 +142,7 @@ async fn serve<C, I, O>(
 >
 where
     C: Send + Sync + 'static,
-    I: AsyncBufRead + Send + Sync + Unpin + 'static,
+    I: AsyncBufRead + Reject + Send + Sync + Unpin + 'static,
     O: AsyncWrite + Send + Sync + Unpin + 'static,
 {
     let (tx, rx) = mpsc::channel(1024);
@@ -160,7 +170,7 @@ where
 impl<C, I, O> Serve for Server<C, I, O>
 where
     C: Send + Sync + 'static,
-    I: AsyncBufRead + Send + Sync + Unpin + 'static,
+    I: AsyncBufRead + Reject + Send + Sync + Unpin + 'static,
     O: AsyncWrite + Send + Sync + Unpin + 'static,
 {
     type Context = C;
@@ -180,7 +190,7 @@ where
 impl<'a, C, I, O> Serve for &'a Server<C, I, O>
 where
     C: Send + Sync + 'static,
-    I: AsyncBufRead + Send + Sync + Unpin + 'static,
+    I: AsyncBufRead + Reject + Send + Sync + Unpin + 'static,
     O: AsyncWrite + Send + Sync + Unpin + 'static,
 {
     type Context = C;
