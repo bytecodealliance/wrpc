@@ -522,8 +522,8 @@ pub async fn serve_quic<T>(
 ) -> anyhow::Result<T> {
     with_quic(|clt, conn| async move {
         let accept = async || {
-            let (tx, rx) = conn.accept_bi().await.context("failed to accept stream")?;
-            Ok((rx.into(), tx.into()))
+            let stream = conn.accept_bi().await.context("failed to accept stream")?;
+            Ok(wrpc_quic::split(stream))
         };
         serve_listener(wrpc_quic::Client::from(clt), accept, f).await
     })

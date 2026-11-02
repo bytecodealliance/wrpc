@@ -30,8 +30,9 @@ async fn params_dropped() -> anyhow::Result<()> {
             .await
             .context("failed to write invocation")?;
 
-        let (stx, srx) = sc.accept_bi().await.context("failed to accept stream")?;
-        srv.accept((), stx.into(), srx.into())
+        let stream = sc.accept_bi().await.context("failed to accept stream")?;
+        let (srx, stx) = wrpc_quic::split(stream);
+        srv.accept((), stx, srx)
             .await
             .context("failed to accept invocation")?;
         let ((), _outgoing, incoming) = invocations
@@ -52,8 +53,8 @@ async fn params_dropped() -> anyhow::Result<()> {
 async fn send_stream_dropped() -> anyhow::Result<()> {
     wrpc_test::with_quic(|cc, sc| async move {
         for shutdown in [true, false] {
-            let (tx, _rx) = cc.open_bi().await.context("failed to open stream")?;
-            let mut tx = wrpc_quic::SendStream::from(tx);
+            let stream = cc.open_bi().await.context("failed to open stream")?;
+            let (_rx, mut tx) = wrpc_quic::split(stream);
             tx.write_all(b"foo")
                 .await
                 .context("failed to write to stream")?;

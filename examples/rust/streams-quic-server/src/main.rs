@@ -95,11 +95,12 @@ async fn main() -> anyhow::Result<()> {
                                 .context("failed to accept QUIC connection")?;
                             let conn = conn.await.context("failed to establish QUIC connection")?;
                             loop {
-                                let (tx, rx) = conn
+                                let stream = conn
                                     .accept_bi()
                                     .await
                                     .context("failed to accept wRPC connection")?;
-                                srv.accept((), tx.into(), rx.into())
+                                let (rx, tx) = wrpc_quic::split(stream);
+                                srv.accept((), tx, rx)
                                     .await
                                     .context("failed to serve wRPC connection")?;
                             }
