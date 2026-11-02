@@ -74,11 +74,12 @@ async fn main() -> anyhow::Result<()> {
                                 .await
                                 .context("failed to establish WebTransport connection")?;
                             loop {
-                                let (tx, rx) = conn
+                                let stream = conn
                                     .accept_bi()
                                     .await
                                     .context("failed to accept wRPC connection")?;
-                                srv.accept((), tx.into(), rx.into())
+                                let (rx, tx) = wrpc_webtransport::split(stream);
+                                srv.accept((), tx, rx)
                                     .await
                                     .context("failed to serve wRPC connection")?;
                             }

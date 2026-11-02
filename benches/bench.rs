@@ -500,10 +500,11 @@ fn bench_webtransport(
         let tasks = tasks.clone();
         async move {
             loop {
-                let (tx, rx) = conn.accept_bi().await.context("failed to accept stream")?;
+                let stream = conn.accept_bi().await.context("failed to accept stream")?;
+                let (rx, tx) = wrpc_webtransport::split(stream);
                 let srv = Arc::clone(&srv);
                 tasks.spawn(async move {
-                    srv.accept((), tx.into(), rx.into())
+                    srv.accept((), tx, rx)
                         .await
                         .context("failed to accept invocation")
                 });

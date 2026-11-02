@@ -4,12 +4,15 @@ use core::ops::{Deref, DerefMut};
 use core::pin::Pin;
 use core::task::{Context, Poll, ready};
 
+use std::sync::{Arc, Mutex, PoisonError};
+
 use anyhow::Context as _;
 use bytes::Bytes;
+use futures::task::AtomicWaker;
 use tokio::io::{AsyncBufRead, AsyncRead, AsyncWrite, BufReader, ReadBuf};
 use web_transport_quinn::Session;
 use wrpc_transport::Invoke;
-use wrpc_transport::frame::{Incoming, Outgoing, invoke};
+use wrpc_transport::frame::{Incoming, Outgoing, Reject, invoke};
 
 const DONE: u32 = 1;
 
@@ -18,19 +21,83 @@ const ABORTED: u32 = 0;
 /// WebTransport server
 pub type Server = wrpc_transport::Server<(), RecvStream, SendStream>;
 
-/// Buffered receive side of a WebTransport stream, which stops the stream with WebTransport
-/// application error code `1` once dropped, signaling the peer that it is done receiving data
-pub struct RecvStream(BufReader<web_transport_quinn::RecvStream>);
+/// Splits a bidirectional WebTransport stream into a [`RecvStream`] and a [`SendStream`].
+#[must_use]
+pub fn split(
+    (tx, rx): (
+        web_transport_quinn::SendStream,
+        web_transport_quinn::RecvStream,
+    ),
+) -> (RecvStream, SendStream) {
+    let shared = Arc::new(Shared {
+        tx: Mutex::new(Some(tx)),
+        waker: AtomicWaker::default(),
+    });
+    (
+        RecvStream {
+            rx: BufReader::new(rx),
+            shared: Arc::clone(&shared),
+        },
+        SendStream {
+            shared,
+            shutdown: false,
+        },
+    )
+}
 
-impl From<web_transport_quinn::RecvStream> for RecvStream {
-    fn from(rx: web_transport_quinn::RecvStream) -> Self {
-        Self(BufReader::new(rx))
+#[derive(Debug)]
+struct Shared {
+    tx: Mutex<Option<web_transport_quinn::SendStream>>,
+    waker: AtomicWaker,
+}
+
+impl Shared {
+    fn reset(&self) {
+        let tx = self
+            .tx
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+        if let Some(mut tx) = tx {
+            _ = tx.reset(ABORTED);
+        }
+        self.waker.wake();
     }
+
+    fn poll<T>(
+        &self,
+        f: impl FnOnce(Pin<&mut web_transport_quinn::SendStream>) -> Poll<std::io::Result<T>>,
+    ) -> Poll<std::io::Result<T>> {
+        let mut tx = self.tx.lock().unwrap_or_else(PoisonError::into_inner);
+        let Some(tx) = tx.as_mut() else {
+            return Poll::Ready(Err(std::io::Error::new(
+                std::io::ErrorKind::ConnectionAborted,
+                "stream reset",
+            )));
+        };
+        f(Pin::new(tx))
+    }
+}
+
+/// Buffered receive side of a WebTransport stream, which stops the stream with WebTransport
+/// application error code `1` once dropped, signaling the peer that it is done receiving data.
+/// Rejecting it stops the stream and resets the [`SendStream`] with WebTransport application
+/// error code `0`.
+pub struct RecvStream {
+    rx: BufReader<web_transport_quinn::RecvStream>,
+    shared: Arc<Shared>,
 }
 
 impl Drop for RecvStream {
     fn drop(&mut self) {
-        _ = self.0.get_mut().stop(DONE);
+        _ = self.rx.get_mut().stop(DONE);
+    }
+}
+
+impl Reject for RecvStream {
+    fn reject(mut self) {
+        _ = self.rx.get_mut().stop(ABORTED);
+        self.shared.reset();
     }
 }
 
@@ -40,41 +107,32 @@ impl AsyncRead for RecvStream {
         cx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<std::io::Result<()>> {
-        Pin::new(&mut self.get_mut().0).poll_read(cx, buf)
+        Pin::new(&mut self.get_mut().rx).poll_read(cx, buf)
     }
 }
 
 impl AsyncBufRead for RecvStream {
     fn poll_fill_buf(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<&[u8]>> {
-        Pin::new(&mut self.get_mut().0).poll_fill_buf(cx)
+        Pin::new(&mut self.get_mut().rx).poll_fill_buf(cx)
     }
 
     fn consume(self: Pin<&mut Self>, amt: usize) {
-        Pin::new(&mut self.get_mut().0).consume(amt);
+        Pin::new(&mut self.get_mut().rx).consume(amt);
     }
 }
 
 /// Send side of a WebTransport stream, which is reset with WebTransport application error code `0` once
-/// dropped before being shut down
+/// dropped before being shut down or once the [`RecvStream`] is rejected
 #[derive(Debug)]
 pub struct SendStream {
-    inner: web_transport_quinn::SendStream,
+    shared: Arc<Shared>,
     shutdown: bool,
-}
-
-impl From<web_transport_quinn::SendStream> for SendStream {
-    fn from(inner: web_transport_quinn::SendStream) -> Self {
-        Self {
-            inner,
-            shutdown: false,
-        }
-    }
 }
 
 impl Drop for SendStream {
     fn drop(&mut self) {
         if !self.shutdown {
-            _ = self.inner.reset(ABORTED);
+            self.shared.reset();
         }
     }
 }
@@ -85,16 +143,19 @@ impl AsyncWrite for SendStream {
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<std::io::Result<usize>> {
-        AsyncWrite::poll_write(Pin::new(&mut self.get_mut().inner), cx, buf)
+        self.shared.waker.register(cx.waker());
+        self.shared.poll(|tx| AsyncWrite::poll_write(tx, cx, buf))
     }
 
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        AsyncWrite::poll_flush(Pin::new(&mut self.get_mut().inner), cx)
+        self.shared.waker.register(cx.waker());
+        self.shared.poll(|tx| AsyncWrite::poll_flush(tx, cx))
     }
 
     fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
         let this = self.get_mut();
-        ready!(AsyncWrite::poll_shutdown(Pin::new(&mut this.inner), cx))?;
+        this.shared.waker.register(cx.waker());
+        ready!(this.shared.poll(|tx| AsyncWrite::poll_shutdown(tx, cx)))?;
         this.shutdown = true;
         Poll::Ready(Ok(()))
     }
@@ -138,20 +199,13 @@ impl Invoke for &Client {
     where
         P: AsRef<[Option<usize>]> + Send + Sync,
     {
-        let (tx, rx) = self
+        let stream = self
             .0
             .open_bi()
             .await
             .context("failed to open parameter stream")?;
-        invoke(
-            SendStream::from(tx),
-            RecvStream::from(rx),
-            instance,
-            func,
-            params,
-            paths,
-        )
-        .await
+        let (rx, tx) = split(stream);
+        invoke(tx, rx, instance, func, params, paths).await
     }
 }
 

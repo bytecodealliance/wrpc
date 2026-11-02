@@ -536,11 +536,11 @@ pub async fn serve_webtransport<T>(
 ) -> anyhow::Result<T> {
     with_webtransport(|clt, session| async move {
         let accept = async || {
-            let (tx, rx) = session
+            let stream = session
                 .accept_bi()
                 .await
                 .context("failed to accept stream")?;
-            Ok((rx.into(), tx.into()))
+            Ok(wrpc_webtransport::split(stream))
         };
         serve_listener(wrpc_webtransport::Client::from(clt), accept, f).await
     })
