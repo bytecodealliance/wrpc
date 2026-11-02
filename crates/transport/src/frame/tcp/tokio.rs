@@ -6,22 +6,15 @@ use tokio::net::{TcpStream, ToSocketAddrs};
 use tracing::instrument;
 
 use crate::Invoke;
-use crate::frame::{Incoming, Outgoing, invoke};
+use crate::frame::{Incoming, Outgoing, ReadHalf, WriteHalf, invoke};
 
-/// Read half of a TCP stream returned by [split]
-pub type ReadHalf = crate::frame::ReadHalf<TcpStream>;
-
-/// Write half of a TCP stream returned by [split], which, if dropped before being shut down,
-/// aborts the connection, signaling the peer that sending data failed
-pub type WriteHalf = crate::frame::WriteHalf<TcpStream>;
-
-/// Splits a TCP stream into a [ReadHalf] and a [WriteHalf].
+/// Splits a TCP stream into a [`ReadHalf`] and a [`WriteHalf`].
 ///
-/// If the [WriteHalf] is dropped before being shut down, the connection is aborted, signaling the
-/// peer that sending data failed, and reading from the [ReadHalf] fails, unless it already
+/// If the [`WriteHalf`] is dropped before being shut down, the connection is aborted, signaling
+/// the peer that sending data failed, and reading from the [`ReadHalf`] fails, unless it already
 /// reached the end of the stream.
 #[must_use]
-pub fn split(stream: TcpStream) -> (ReadHalf, WriteHalf) {
+pub fn split(stream: TcpStream) -> (ReadHalf<TcpStream>, WriteHalf<TcpStream>) {
     crate::frame::split::split(stream, |stream| _ = stream.set_zero_linger())
 }
 

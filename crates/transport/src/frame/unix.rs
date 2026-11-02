@@ -8,23 +8,16 @@ use tokio::net::UnixStream;
 use tracing::instrument;
 
 use crate::Invoke;
-use crate::frame::{Incoming, Outgoing, invoke};
+use crate::frame::{Incoming, Outgoing, ReadHalf, WriteHalf, invoke};
 
-/// Read half of a Unix domain socket stream returned by [split]
-pub type ReadHalf = crate::frame::ReadHalf<UnixStream>;
-
-/// Write half of a Unix domain socket stream returned by [split], which, if dropped before being
-/// shut down, closes the socket
-pub type WriteHalf = crate::frame::WriteHalf<UnixStream>;
-
-/// Splits a Unix domain socket stream into a [ReadHalf] and a [WriteHalf].
+/// Splits a Unix domain socket stream into a [`ReadHalf`] and a [`WriteHalf`].
 ///
-/// If the [WriteHalf] is dropped before being shut down, the socket is closed, so that sending
-/// data fails for the peer, and reading from the [ReadHalf] fails, unless it already reached the
-/// end of the stream.
+/// If the [`WriteHalf`] is dropped before being shut down, the socket is closed, so that sending
+/// data fails for the peer, and reading from the [`ReadHalf`] fails, unless it already reached
+/// the end of the stream.
 /// Unix domain sockets cannot be reset, so the peer receives the end of the stream.
 #[must_use]
-pub fn split(stream: UnixStream) -> (ReadHalf, WriteHalf) {
+pub fn split(stream: UnixStream) -> (ReadHalf<UnixStream>, WriteHalf<UnixStream>) {
     crate::frame::split::split(stream, |_| {})
 }
 
@@ -32,7 +25,7 @@ pub fn split(stream: UnixStream) -> (ReadHalf, WriteHalf) {
 ///
 /// [`Invoke::invoke`] can only be called at most once on [Oneshot],
 /// repeated calls will return an error.
-pub type Oneshot = super::Oneshot<ReadHalf, WriteHalf>;
+pub type Oneshot = super::Oneshot<ReadHalf<UnixStream>, WriteHalf<UnixStream>>;
 
 impl Oneshot {
     /// Creates a pair of connected [Oneshot] using [`UnixStream::pair`].
