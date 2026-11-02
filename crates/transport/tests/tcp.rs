@@ -10,12 +10,12 @@ use anyhow::Context as _;
 use bytes::Bytes;
 use futures::TryStreamExt as _;
 use futures::future::BoxFuture;
-use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _, BufReader};
 use tokio::net::TcpStream;
 use tokio::time::timeout;
 use tokio::{join, try_join};
 use wrpc_transport::tcp;
-use wrpc_transport::{Invoke as _, InvokeExt as _, Serve as _, ServeExt as _};
+use wrpc_transport::{Invoke as _, InvokeExt as _, Serve as _, ServeExt as _, Server};
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn loopback() -> anyhow::Result<()> {
@@ -121,4 +121,30 @@ async fn undecodable_values() -> anyhow::Result<()> {
         Ok(())
     })
     .await
+}
+
+#[test_log::test(tokio::test)]
+async fn unhandled_invocation() -> anyhow::Result<()> {
+    let lis = wrpc_test::tcp_bind().await?;
+    let clt = tcp::Client::from(lis.local_addr()?);
+    for queued in [false, true] {
+        let srv = Server::default();
+        let mut invocations = Some(srv.serve("foo", "bar", Arc::default()).await?);
+        if !queued {
+            invocations.take();
+        }
+        let (res, conn) = join!(
+            clt.invoke((), "foo", "bar", Bytes::default(), [[]; 0]),
+            lis.accept()
+        );
+        let (_tx, mut rx) = res?;
+        let (stream, ..) = conn?;
+        let (srx, stx) = tcp::split(stream);
+        let res = srv.accept((), stx, BufReader::new(srx)).await;
+        assert_eq!(res.is_ok(), queued);
+        drop(invocations);
+        let res = rx.read_to_end(&mut Vec::default()).await;
+        res.expect_err("unhandled invocation should have been rejected");
+    }
+    Ok(())
 }

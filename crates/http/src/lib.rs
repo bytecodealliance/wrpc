@@ -337,11 +337,7 @@ impl Server {
 
 impl hyper::service::Service<http::Request<hyper::body::Incoming>> for Server {
     type Response = http::Response<OutgoingBody>;
-    type Error = wrpc_transport::frame::AcceptError<
-        http::request::Parts,
-        DynIncomingBodyDataReader,
-        OutgoingBodyDataWriter,
-    >;
+    type Error = wrpc_transport::frame::AcceptError;
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
 
     fn call(&self, req: http::Request<hyper::body::Incoming>) -> Self::Future {

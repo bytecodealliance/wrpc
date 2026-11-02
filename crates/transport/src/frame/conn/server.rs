@@ -16,8 +16,33 @@ use crate::frame::{Header, HeaderDecoder, HeaderReadError, Incoming, Outgoing, R
 /// wRPC server for framed transports
 #[derive(Debug)]
 pub struct Server<C, I, O> {
-    handlers: Mutex<HashMap<String, HashMap<String, mpsc::Sender<(C, I, O)>>>>,
+    handlers: Mutex<HashMap<String, HashMap<String, mpsc::Sender<(C, Unhandled<I>, O)>>>>,
     header: HeaderDecoder,
+}
+
+/// Reader of an invocation, which is rejected once dropped before being handed to a handler
+#[derive(Debug)]
+struct Unhandled<I> {
+    rx: Option<I>,
+    reject: fn(I),
+}
+
+impl<I> Unhandled<I> {
+    fn get_mut(&mut self) -> &mut I {
+        self.rx.as_mut().expect("reader is only taken by handlers")
+    }
+
+    fn handle(mut self) -> I {
+        self.rx.take().expect("reader is only taken by handlers")
+    }
+}
+
+impl<I> Drop for Unhandled<I> {
+    fn drop(&mut self) {
+        if let Some(rx) = self.rx.take() {
+            (self.reject)(rx);
+        }
+    }
 }
 
 impl<C, I, O> Server<C, I, O> {
@@ -44,7 +69,7 @@ impl<C, I, O> Default for Server<C, I, O> {
 }
 
 /// Error returned by [`Server::accept`]
-pub enum AcceptError<C, I, O> {
+pub enum AcceptError {
     /// Header read error
     HeaderRead(HeaderReadError),
     /// Function was not handled
@@ -54,47 +79,37 @@ pub enum AcceptError<C, I, O> {
         /// Function name
         name: String,
     },
-    /// Message sending failed
-    Send(mpsc::error::SendError<(C, I, O)>),
 }
 
-impl<C, I, O> From<HeaderReadError> for AcceptError<C, I, O> {
+impl From<HeaderReadError> for AcceptError {
     fn from(err: HeaderReadError) -> Self {
         Self::HeaderRead(err)
     }
 }
 
-impl<C, I, O> From<mpsc::error::SendError<(C, I, O)>> for AcceptError<C, I, O> {
-    fn from(err: mpsc::error::SendError<(C, I, O)>) -> Self {
-        Self::Send(err)
-    }
-}
-
-impl<C, I, O> Debug for AcceptError<C, I, O> {
+impl Debug for AcceptError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::HeaderRead(err) => Debug::fmt(err, f),
             Self::UnhandledFunction { instance, name } => {
                 write!(f, "`{instance}#{name}` does not have a handler registered")
             }
-            Self::Send(err) => Debug::fmt(err, f),
         }
     }
 }
 
-impl<C, I, O> Display for AcceptError<C, I, O> {
+impl Display for AcceptError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::HeaderRead(err) => Display::fmt(err, f),
             Self::UnhandledFunction { instance, name } => {
                 write!(f, "`{instance}#{name}` does not have a handler registered")
             }
-            Self::Send(err) => Display::fmt(err, f),
         }
     }
 }
 
-impl<C, I, O> core::error::Error for AcceptError<C, I, O> {}
+impl core::error::Error for AcceptError {}
 
 impl<C, I, O> Server<C, I, O>
 where
@@ -104,17 +119,16 @@ where
     ///
     /// # Errors
     ///
-    /// Returns an error if handling the invocation fails. `rx` is rejected if reading the
-    /// invocation header fails or the function is not handled.
+    /// Returns an error if handling the invocation fails. `rx` is rejected if the invocation is
+    /// not handed to a handler, i.e. if reading the invocation header fails, the function is not
+    /// handled, its handler stops receiving invocations or the returned future is dropped.
     #[instrument(level = "trace", skip_all, ret(level = "trace"))]
-    pub async fn accept(&self, cx: C, tx: O, mut rx: I) -> Result<(), AcceptError<C, I, O>> {
-        let Header { instance, name } = match self.header.read(&mut rx).await {
-            Ok(header) => header,
-            Err(err) => {
-                rx.reject();
-                return Err(err.into());
-            }
+    pub async fn accept(&self, cx: C, tx: O, rx: I) -> Result<(), AcceptError> {
+        let mut rx = Unhandled {
+            rx: Some(rx),
+            reject: I::reject,
         };
+        let Header { instance, name } = self.header.read(rx.get_mut()).await?;
         let h = self
             .handlers
             .lock()
@@ -122,12 +136,11 @@ where
             .get(&instance)
             .and_then(|h| h.get(&name))
             .cloned();
+        let unhandled = || AcceptError::UnhandledFunction { instance, name };
         let Some(h) = h else {
-            rx.reject();
-            return Err(AcceptError::UnhandledFunction { instance, name });
+            return Err(unhandled());
         };
-        h.send((cx, rx, tx)).await?;
-        Ok(())
+        h.send((cx, rx, tx)).await.map_err(|_| unhandled())
     }
 }
 
@@ -161,7 +174,7 @@ where
     }
     Ok(ReceiverStream::new(rx).map(move |(cx, rx, tx)| {
         trace!("received invocation");
-        let rx = Incoming::new(rx, paths.as_ref());
+        let rx = Incoming::new(rx.handle(), paths.as_ref());
         let tx = Outgoing::new(tx);
         Ok((cx, tx, rx))
     }))
