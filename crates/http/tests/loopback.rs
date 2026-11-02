@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use anyhow::{Context as _, anyhow};
 use bytes::Bytes;
-use http_body_util::{BodyExt as _, Empty};
+use http_body_util::{BodyExt as _, Full};
 use hyper::service::service_fn;
 use hyper_util::rt::TokioExecutor;
 use hyper_util::rt::tokio::WithHyperIo;
@@ -52,7 +52,7 @@ async fn pooling() -> anyhow::Result<()> {
 async fn error_response() -> anyhow::Result<()> {
     let svc = service_fn(|req: hyper::Request<hyper::body::Incoming>| async {
         req.into_body().collect().await?;
-        let mut res = hyper::Response::new(Empty::<Bytes>::default());
+        let mut res = hyper::Response::new(Full::new(Bytes::from("nope")));
         *res.status_mut() = hyper::StatusCode::INTERNAL_SERVER_ERROR;
         anyhow::Ok(res)
     });
@@ -65,7 +65,10 @@ async fn error_response() -> anyhow::Result<()> {
             .read_to_end(&mut vec![])
             .await
             .expect_err("reading results should fail");
-        assert!(err.to_string().contains("500"), "unexpected error: {err}");
+        assert_eq!(
+            err.to_string(),
+            "HTTP request failed with status `500 Internal Server Error`: nope"
+        );
         Ok(())
     });
     tokio::time::timeout(Duration::from_secs(10), fut).await?

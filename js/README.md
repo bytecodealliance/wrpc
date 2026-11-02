@@ -168,7 +168,8 @@ const transport = {
 `fromFetch(input, options?)` returns an HTTP client transport for one
 invocation, sending a `POST` request to `input` with `options.fetch`
 (`globalThis.fetch` by default) and failing the invocation unless the response
-status is `2xx`. The other `options`, such as `headers`, are passed to `fetch`.
+status is `2xx`, with an error carrying the status and the first 4 KiB of the
+response body. The other `options`, such as `headers`, are passed to `fetch`.
 The request body is streamed, which needs a runtime that supports streaming
 request bodies: Firefox and Safari do not, and Chromium only does over HTTP/2
 and only exposes the response once the request body is complete. With

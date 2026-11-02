@@ -15,7 +15,7 @@ use http_body::Frame;
 use http_body_util::BodyExt as _;
 use http_body_util::combinators::MapErr;
 use pin_project_lite::pin_project;
-use tokio::io::{AsyncWrite, ReadHalf, SimplexStream, WriteHalf, simplex};
+use tokio::io::{AsyncReadExt as _, AsyncWrite, ReadHalf, SimplexStream, WriteHalf, simplex};
 use tokio_util::io::{StreamReader, poll_read_buf};
 
 /// Body buffer size
@@ -177,7 +177,8 @@ pub fn data_reader_from_incoming(
 ///
 /// The response is awaited lazily, on first read, so that the request body
 /// can be completed independently of the response.
-/// Response status codes other than 2xx surface as an [`std::io::Error`] on read.
+/// Response status codes other than 2xx surface as an [`std::io::Error`] on read, carrying the
+/// status and the first 4 KiB of the response body.
 pub fn data_reader_from_response<E>(
     res: impl Future<Output = Result<http::Response<hyper::body::Incoming>, E>> + Send + 'static,
 ) -> StreamReader<impl Stream<Item = std::io::Result<Bytes>> + Send + Unpin, Bytes>
@@ -188,9 +189,19 @@ where
         let res = res.await.map_err(std::io::Error::other)?;
         let (http::response::Parts { status, .. }, body) = res.into_parts();
         if !status.is_success() {
-            return Err(std::io::Error::other(format!(
-                "HTTP request failed with status `{status}`"
-            )));
+            let mut buf = Vec::default();
+            let _ = data_reader_from_incoming(body)
+                .take(4096)
+                .read_to_end(&mut buf)
+                .await;
+            return Err(std::io::Error::other(if buf.is_empty() {
+                format!("HTTP request failed with status `{status}`")
+            } else {
+                format!(
+                    "HTTP request failed with status `{status}`: {}",
+                    String::from_utf8_lossy(&buf)
+                )
+            }));
         }
         Ok(data_stream_from_incoming(body))
     }))
