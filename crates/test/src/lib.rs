@@ -1,5 +1,7 @@
+use core::future::poll_fn;
 use core::net::Ipv6Addr;
 use core::pin::pin;
+use core::task::Poll;
 
 use std::process::ExitStatus;
 use std::sync::Arc;
@@ -18,6 +20,90 @@ use tokio::task::JoinHandle;
 use tokio::{select, spawn, try_join};
 use tracing::info;
 use wrpc_transport::{Invoke, Serve};
+
+/// Polls `fut` to completion while repeatedly running `accept` to feed established connections
+/// into a server, returning the first error of either.
+pub async fn accept_until<T>(
+    fut: impl Future<Output = anyhow::Result<T>>,
+    accept: impl AsyncFn() -> anyhow::Result<()>,
+) -> anyhow::Result<T> {
+    let mut fut = pin!(fut);
+    let mut accepting = pin!(accept());
+    poll_fn(|cx| {
+        while let Poll::Ready(res) = accepting.as_mut().poll(cx) {
+            res?;
+            accepting.set(accept());
+        }
+        fut.as_mut().poll(cx)
+    })
+    .await
+}
+
+#[cfg(any(feature = "net", feature = "quic", feature = "webtransport"))]
+async fn serve_listener<C, I, O, T>(
+    clt: C,
+    accept: impl AsyncFn() -> anyhow::Result<(I, O)>,
+    f: impl AsyncFnOnce(C, &wrpc_transport::Server<(), I, O>) -> anyhow::Result<T>,
+) -> anyhow::Result<T>
+where
+    I: tokio::io::AsyncBufRead + Unpin + Send + Sync + 'static,
+    O: Send + Sync + 'static,
+{
+    let srv = wrpc_transport::Server::default();
+    accept_until(f(clt, &srv), async || {
+        let (rx, tx) = accept().await?;
+        srv.accept((), tx, rx)
+            .await
+            .context("failed to accept invocation")
+    })
+    .await
+}
+
+#[cfg(feature = "net")]
+pub async fn serve_tcp<T>(
+    f: impl AsyncFnOnce(
+        wrpc_transport::tcp::Client<core::net::SocketAddr>,
+        &wrpc_transport::Server<
+            (),
+            tokio::io::BufReader<wrpc_transport::frame::ReadHalf<TcpStream>>,
+            wrpc_transport::frame::WriteHalf<TcpStream>,
+        >,
+    ) -> anyhow::Result<T>,
+) -> anyhow::Result<T> {
+    let lis = tcp_bind().await?;
+    let addr = lis
+        .local_addr()
+        .context("failed to query listener local address")?;
+    let accept = async || {
+        let (stream, addr) = lis.accept().await.context("failed to accept connection")?;
+        anyhow::ensure!(addr.ip().is_loopback(), "unexpected peer address `{addr}`");
+        let (rx, tx) = wrpc_transport::tcp::split(stream);
+        Ok((tokio::io::BufReader::new(rx), tx))
+    };
+    serve_listener(wrpc_transport::tcp::Client::from(addr), accept, f).await
+}
+
+#[cfg(all(unix, feature = "net"))]
+pub async fn serve_unix<T>(
+    f: impl AsyncFnOnce(
+        wrpc_transport::unix::Client<std::path::PathBuf>,
+        &wrpc_transport::Server<
+            (),
+            tokio::io::BufReader<wrpc_transport::frame::ReadHalf<tokio::net::UnixStream>>,
+            wrpc_transport::frame::WriteHalf<tokio::net::UnixStream>,
+        >,
+    ) -> anyhow::Result<T>,
+) -> anyhow::Result<T> {
+    let dir = tempfile::tempdir().context("failed to create temporary directory")?;
+    let path = dir.path().join("sock");
+    let lis = tokio::net::UnixListener::bind(&path).context("failed to bind Unix socket")?;
+    let accept = async || {
+        let (stream, ..) = lis.accept().await.context("failed to accept connection")?;
+        let (rx, tx) = wrpc_transport::unix::split(stream);
+        Ok((tokio::io::BufReader::new(rx), tx))
+    };
+    serve_listener(wrpc_transport::unix::Client::from(path), accept, f).await
+}
 
 pub async fn tcp_bind() -> anyhow::Result<TcpListener> {
     TcpListener::bind((Ipv6Addr::LOCALHOST, 0))
@@ -44,15 +130,11 @@ pub async fn free_port() -> anyhow::Result<u16> {
 
 /// A common single-invocation test used by different transport implementations.
 ///
-/// The server is set up via the [`Serve`] implementation `srv`. The `accept`
-/// future is run concurrently and is responsible for feeding established
-/// connections into `srv` (e.g. accepting a bidirectional stream); transports
-/// that subscribe internally can pass a future that resolves immediately.
+/// The server is set up via the [`Serve`] implementation `srv`.
 pub async fn assert_single_invocation<C, S>(
     cx: C::Context,
     clt: &C,
     srv: &S,
-    accept: impl Future<Output = anyhow::Result<()>>,
 ) -> anyhow::Result<S::Context>
 where
     C: Invoke,
@@ -119,13 +201,12 @@ where
             anyhow::Ok(())
         },
         async {
-            let ((), (cx, mut outgoing, mut incoming)) = try_join!(accept, async {
-                invocations
-                    .try_next()
-                    .await
-                    .context("failed to accept invocation")?
-                    .context("invocation stream unexpectedly finished")
-            })?;
+            let invocation = invocations
+                .try_next()
+                .await
+                .context("failed to accept invocation")?;
+            let (cx, mut outgoing, mut incoming) =
+                invocation.context("invocation stream unexpectedly finished")?;
             let mut nested_tx = outgoing.index(&[0, 42]).context("failed to index `0.42`")?;
             let mut nested_rx = incoming.index(&[42, 0]).context("failed to index `42.0`")?;
             try_join!(
@@ -301,7 +382,7 @@ where
     Fut: Future<Output = anyhow::Result<T>>,
 {
     with_quic_endpoints(|addr, clt, srv| async move {
-        let (clt, srv) = tokio::try_join!(
+        let (clt, srv) = try_join!(
             async move {
                 let conn = clt
                     .connect(addr, "::1")
@@ -433,4 +514,55 @@ where
     let (mut parts, ()) = http::Request::new(()).into_parts();
     parts.uri = format!("http://{addr}").parse().unwrap();
     f(parts, clt, lis).await.context("closure failed")
+}
+
+#[cfg(feature = "quic")]
+pub async fn serve_quic<T>(
+    f: impl AsyncFnOnce(wrpc_quic::Client, &wrpc_quic::Server) -> anyhow::Result<T>,
+) -> anyhow::Result<T> {
+    with_quic(|clt, conn| async move {
+        let accept = async || {
+            let (tx, rx) = conn.accept_bi().await.context("failed to accept stream")?;
+            Ok((rx.into(), tx.into()))
+        };
+        serve_listener(wrpc_quic::Client::from(clt), accept, f).await
+    })
+    .await
+}
+
+#[cfg(feature = "webtransport")]
+pub async fn serve_webtransport<T>(
+    f: impl AsyncFnOnce(wrpc_webtransport::Client, &wrpc_webtransport::Server) -> anyhow::Result<T>,
+) -> anyhow::Result<T> {
+    with_webtransport(|clt, session| async move {
+        let accept = async || {
+            let (tx, rx) = session
+                .accept_bi()
+                .await
+                .context("failed to accept stream")?;
+            Ok((rx.into(), tx.into()))
+        };
+        serve_listener(wrpc_webtransport::Client::from(clt), accept, f).await
+    })
+    .await
+}
+
+#[cfg(feature = "http")]
+pub async fn serve_http2<T>(
+    f: impl AsyncFnOnce(
+        http::request::Parts,
+        wrpc_http::Client<hyper::client::conn::http2::SendRequest<wrpc_http::OutgoingBody>>,
+        &wrpc_transport::Server<
+            http::request::Parts,
+            wrpc_http::DynIncomingBodyDataReader,
+            wrpc_http::OutgoingBodyDataWriter,
+        >,
+    ) -> anyhow::Result<T>,
+) -> anyhow::Result<T> {
+    let srv = Arc::new(wrpc_transport::Server::default());
+    with_http2(
+        wrpc_http::Server::from(Arc::clone(&srv)),
+        |parts, sender| async move { f(parts, wrpc_http::Client::from(sender), &srv).await },
+    )
+    .await
 }

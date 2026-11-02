@@ -133,6 +133,7 @@ wasmtime-cli-flags = { workspace = true, features = [
 ] }
 wrpc-test = { workspace = true, features = [
     "http",
+    "net",
     "quic",
     "webtransport",
 ] }
