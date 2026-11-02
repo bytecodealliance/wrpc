@@ -290,6 +290,11 @@ mod tests {
             .unwrap();
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
 
+        let err = unpack::<BoxStream<'static, Vec<u8>>>(&mut BytesMut::from("\0"))
+            .err()
+            .unwrap();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+
         let err = unpack::<u8>(&mut BytesMut::from("\x42\0")).unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
     }
