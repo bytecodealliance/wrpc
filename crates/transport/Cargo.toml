@@ -12,7 +12,7 @@ repository.workspace = true
 [features]
 default = ["fs", "net", "io-std"]
 fs = ["tokio/fs"]
-net = ["tokio/net"]
+net = ["tokio/net", "wrpc-test/net"]
 io-std = ["tokio/io-std"]
 
 [dependencies]
@@ -32,3 +32,4 @@ wasi = { workspace = true, features = ["std"], optional = true }
 [dev-dependencies]
 test-log = { workspace = true, features = ["color", "log", "trace"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+wrpc-test = { workspace = true }
