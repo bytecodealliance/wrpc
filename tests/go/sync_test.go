@@ -14,7 +14,10 @@ import (
 	"github.com/stretchr/testify/require"
 	wrpc "wrpc.io/go"
 	integration "wrpc.io/tests/go"
+	"wrpc.io/tests/go/bindings/sync_client"
 	"wrpc.io/tests/go/bindings/sync_client/foo"
+	"wrpc.io/tests/go/bindings/sync_client/strange"
+	"wrpc.io/tests/go/bindings/sync_client/wrpc_test/integration/resources"
 	"wrpc.io/tests/go/bindings/sync_client/wrpc_test/integration/sync"
 	"wrpc.io/tests/go/bindings/sync_server"
 	"wrpc.io/tests/go/internal"
@@ -34,8 +37,9 @@ func serve(t *testing.T, f func(wrpc.Server) (func() error, error)) (context.Con
 
 func TestSync(t *testing.T) {
 	var h integration.SyncHandler
+	rh := &integration.ResourcesHandler{}
 	ctx, client := serve(t, func(s wrpc.Server) (func() error, error) {
-		return sync_server.Serve(s, h, h)
+		return sync_server.Serve(s, h, h, h, rh, integration.StrangeHandler{Resources: rh})
 	})
 
 	n, err := foo.F(ctx, client, "f")
@@ -88,6 +92,52 @@ func TestSync(t *testing.T) {
 	rs, err := sync.WithRecordList(ctx, client, 3)
 	require.NoError(t, err)
 	assert.Equal(t, []*sync.Rec{rec("0"), rec("1"), rec("2")}, rs)
+
+	pong, err := sync_client.Ping(ctx, client)
+	require.NoError(t, err)
+	assert.Equal(t, "pong", pong)
+
+	res, err := resources.NewFoo(ctx, client)
+	require.NoError(t, err)
+
+	v, err := resources.Foo_Bar(ctx, client, res.Borrow())
+	require.NoError(t, err)
+	assert.Equal(t, "bar", v)
+
+	v, err = resources.Bar(ctx, client, res.Borrow())
+	require.NoError(t, err)
+	assert.Equal(t, "bar", v)
+
+	n64, err := strange.Bar(ctx, client, res.Borrow())
+	require.NoError(t, err)
+	assert.Equal(t, uint64(42), n64)
+
+	v, err = resources.Foo_Foo(ctx, client, res)
+	require.NoError(t, err)
+	assert.Equal(t, "foo", v)
+
+	_, err = resources.Foo_Bar(ctx, client, res.Borrow())
+	assert.Error(t, err)
+
+	a, err := resources.NewCounter(ctx, client, 1)
+	require.NoError(t, err)
+
+	require.NoError(t, resources.Counter_IncrementBy(ctx, client, a.Borrow(), 2))
+
+	n32, err := resources.Counter_GetCount(ctx, client, a.Borrow())
+	require.NoError(t, err)
+	assert.Equal(t, uint32(3), n32)
+
+	b, err := resources.Counter_CloneCounter(ctx, client, a.Borrow())
+	require.NoError(t, err)
+
+	require.NoError(t, resources.Counter_IncrementBy(ctx, client, b.Borrow(), 1))
+
+	n32, err = resources.Counter_Sum(ctx, client, a.Borrow(), b.Borrow())
+	require.NoError(t, err)
+	assert.Equal(t, uint32(7), n32)
+
+	// TODO: Test dropping `foo`, also after moving it, once resource dropping is supported
 }
 
 func TestFlags(t *testing.T) {
@@ -132,8 +182,9 @@ func (h floatsHandler) Numbers(ctx context.Context) (uint8, uint16, uint32, uint
 
 func TestCanonicalNaN(t *testing.T) {
 	h := floatsHandler{floats: make(chan [2]uint64, 1)}
+	rh := &integration.ResourcesHandler{}
 	ctx, client := serve(t, func(s wrpc.Server) (func() error, error) {
-		return sync_server.Serve(s, h, h)
+		return sync_server.Serve(s, h, h, h, rh, integration.StrangeHandler{Resources: rh})
 	})
 	const nan32, nan64 = 0x7fc0_0000, 0x7ff8_0000_0000_0000
 	for _, tc := range []struct {

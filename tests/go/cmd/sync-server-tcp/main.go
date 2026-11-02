@@ -32,7 +32,8 @@ func run(addr string) (err error) {
 
 	srv := wrpctcp.NewServerWithContext(ctx, l)
 	var h integration.SyncHandler
-	stop, err := sync_server.Serve(srv, h, h)
+	rh := &integration.ResourcesHandler{}
+	stop, err := sync_server.Serve(srv, h, h, h, rh, integration.StrangeHandler{Resources: rh})
 	if err != nil {
 		return fmt.Errorf("failed to serve world: %w", err)
 	}
