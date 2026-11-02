@@ -12,10 +12,8 @@ use crate::frame::{Incoming, Outgoing, ReadHalf, WriteHalf, invoke};
 
 /// Splits a Unix domain socket stream into a [`ReadHalf`] and a [`WriteHalf`].
 ///
-/// If the [`WriteHalf`] is dropped before being shut down, the socket is closed, so that sending
-/// data fails for the peer, and reading from the [`ReadHalf`] fails, unless it already reached
-/// the end of the stream.
-/// Unix domain sockets cannot be reset, so the peer receives the end of the stream.
+/// If the [`WriteHalf`] is dropped before being shut down, the socket is closed and reading from
+/// the [`ReadHalf`] fails, unless it already reached the end of the stream.
 #[must_use]
 pub fn split(stream: UnixStream) -> (ReadHalf<UnixStream>, WriteHalf<UnixStream>) {
     crate::frame::split::split(stream, |_| {})
