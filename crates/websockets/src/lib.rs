@@ -27,13 +27,14 @@ pub use tokio_websockets::ServerBuilder;
 fn error_closed_before_eof() -> std::io::Error {
     std::io::Error::new(
         std::io::ErrorKind::ConnectionAborted,
-        "WebSocket connection closed before EOF sentinel",
+        "WebSocket connection closed before end of transmit",
     )
 }
 
 struct Conn<T: AsyncRead + AsyncWrite + Unpin> {
     ws: WebSocketStream<T>,
     reader: Waker,
+    eof_sent: bool,
     eof_received: bool,
     aborted: bool,
     unprocessed: bool,
@@ -58,47 +59,58 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Conn<T> {
             .map_err(std::io::Error::other)
     }
 
-    fn try_close(&mut self, code: CloseCode, reason: &str) {
-        let mut cx = Context::from_waker(Waker::noop());
-        if let Poll::Ready(Ok(())) = self.poll_ready(&mut cx)
-            && self.start_send(Message::close(Some(code), reason)).is_ok()
-        {
-            _ = self.poll_flush(&mut cx);
-        }
+    fn poll_close(
+        &mut self,
+        cx: &mut Context<'_>,
+        code: CloseCode,
+        reason: &str,
+    ) -> Poll<std::io::Result<()>> {
+        ready!(self.poll_ready(cx))?;
+        _ = self.start_send(Message::close(Some(code), reason));
+        self.poll_flush(cx)
     }
 
     fn poll_next(&mut self, cx: &mut Context<'_>) -> Poll<std::io::Result<Option<Bytes>>> {
-        if self.eof_received {
-            return Poll::Ready(Ok(None));
-        }
-        if self.aborted {
-            return Poll::Ready(Err(std::io::Error::new(
-                std::io::ErrorKind::ConnectionAborted,
-                "write half dropped before being shut down",
-            )));
-        }
-        self.reader.clone_from(cx.waker());
-        loop {
-            match ready!(Pin::new(&mut self.ws).poll_next(cx)) {
-                Some(Ok(msg)) if msg.is_text() => {
-                    if msg.as_payload().is_empty() {
-                        self.eof_received = true;
-                        return Poll::Ready(Ok(None));
-                    }
-                    return Poll::Ready(Err(std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        "unexpected non-empty WebSocket text frame",
-                    )));
-                }
-                Some(Ok(msg)) if msg.is_close() => {
-                    return Poll::Ready(Err(error_closed_before_eof()));
-                }
-                Some(Ok(msg)) if msg.is_ping() || msg.is_pong() => {}
-                Some(Ok(msg)) => return Poll::Ready(Ok(Some(Bytes::from(msg.into_payload())))),
-                Some(Err(err)) => return Poll::Ready(Err(std::io::Error::other(err))),
-                None => return Poll::Ready(Err(error_closed_before_eof())),
+        if !self.eof_received {
+            if self.aborted {
+                return Poll::Ready(Err(std::io::Error::new(
+                    std::io::ErrorKind::ConnectionAborted,
+                    "write half dropped before being shut down",
+                )));
             }
+            self.reader.clone_from(cx.waker());
+            loop {
+                match ready!(Pin::new(&mut self.ws).poll_next(cx)) {
+                    Some(Ok(msg)) if msg.is_text() => {
+                        if !msg.as_payload().is_empty() {
+                            return Poll::Ready(Err(std::io::Error::new(
+                                std::io::ErrorKind::InvalidData,
+                                "unexpected non-empty WebSocket text frame",
+                            )));
+                        }
+                        break;
+                    }
+                    Some(Ok(msg)) if msg.is_close() => {
+                        if msg.as_close().map(|(code, ..)| code) == Some(CloseCode::NORMAL_CLOSURE)
+                        {
+                            break;
+                        }
+                        return Poll::Ready(Err(error_closed_before_eof()));
+                    }
+                    Some(Ok(msg)) if msg.is_ping() || msg.is_pong() => {}
+                    Some(Ok(msg)) => {
+                        return Poll::Ready(Ok(Some(Bytes::from(msg.into_payload()))));
+                    }
+                    Some(Err(err)) => return Poll::Ready(Err(std::io::Error::other(err))),
+                    None => return Poll::Ready(Err(error_closed_before_eof())),
+                }
+            }
+            self.eof_received = true;
         }
+        if self.eof_sent && !self.aborted {
+            _ = ready!(self.poll_close(cx, CloseCode::NORMAL_CLOSURE, ""));
+        }
+        Poll::Ready(Ok(None))
     }
 }
 
@@ -107,10 +119,10 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Drop for Conn<T> {
         if self.aborted {
             return;
         }
-        let mut cx = Context::from_waker(Waker::noop());
+        let cx = &mut Context::from_waker(Waker::noop());
         let processed = !self.unprocessed
             && loop {
-                match Pin::new(&mut self.ws).poll_next(&mut cx) {
+                match Pin::new(&mut self.ws).poll_next(cx) {
                     Poll::Ready(Some(Ok(msg)))
                         if msg.is_close() || msg.is_ping() || msg.is_pong() => {}
                     Poll::Ready(Some(Ok(msg)))
@@ -122,11 +134,11 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Drop for Conn<T> {
                     Poll::Ready(Some(Err(..)) | None) | Poll::Pending => break true,
                 }
             };
-        if processed {
-            self.try_close(CloseCode::NORMAL_CLOSURE, "");
+        _ = if processed {
+            self.poll_close(cx, CloseCode::NORMAL_CLOSURE, "")
         } else {
-            self.try_close(CloseCode::PROTOCOL_ERROR, "data was not processed");
-        }
+            self.poll_close(cx, CloseCode::PROTOCOL_ERROR, "data was not processed")
+        };
     }
 }
 
@@ -139,7 +151,6 @@ fn lock<T: AsyncRead + AsyncWrite + Unpin>(conn: &Shared<T>) -> MutexGuard<'_, C
 /// Outgoing half of a split [`WebSocketStream`].
 pub struct Outgoing<T: AsyncRead + AsyncWrite + Unpin> {
     conn: Shared<T>,
-    eof_sent: bool,
     shut_down: bool,
 }
 
@@ -151,7 +162,11 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Drop for Outgoing<T> {
         let mut conn = lock(&self.conn);
         conn.aborted = true;
         conn.reader.wake_by_ref();
-        conn.try_close(CloseCode::GOING_AWAY, "writer dropped before shutdown");
+        _ = conn.poll_close(
+            &mut Context::from_waker(Waker::noop()),
+            CloseCode::GOING_AWAY,
+            "writer dropped before shutdown",
+        );
     }
 }
 
@@ -177,12 +192,16 @@ impl<T: AsyncRead + AsyncWrite + Unpin> AsyncWrite for Outgoing<T> {
     fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
         let this = self.get_mut();
         let mut conn = lock(&this.conn);
-        if !this.eof_sent {
-            ready!(conn.poll_ready(cx))?;
-            conn.start_send(Message::text(Bytes::new()))?;
-            this.eof_sent = true;
+        if conn.eof_received {
+            ready!(conn.poll_close(cx, CloseCode::NORMAL_CLOSURE, ""))?;
+        } else {
+            if !conn.eof_sent {
+                ready!(conn.poll_ready(cx))?;
+                conn.start_send(Message::text(Bytes::new()))?;
+                conn.eof_sent = true;
+            }
+            ready!(conn.poll_flush(cx))?;
         }
-        ready!(conn.poll_flush(cx))?;
         this.shut_down = true;
         Poll::Ready(Ok(()))
     }
@@ -240,9 +259,15 @@ impl<T: AsyncRead + AsyncWrite + Unpin> AsyncRead for Incoming<T> {
 /// outgoing half and an [`AsyncBufRead`] incoming half, suitable for use with
 /// [`wrpc_transport::frame`].
 ///
+/// Shutting down the outgoing half closes the connection with status code 1000 (Normal Closure)
+/// if the incoming half already received the peer's end of transmit, and otherwise sends an EOF
+/// sentinel, an empty text message, and closes the connection the same way once the incoming half
+/// receives the peer's end of transmit, which is either an EOF sentinel or a close frame with
+/// status code 1000.
+///
 /// Once both halves are dropped after the outgoing half was shut down, the connection is closed
-/// normally, unless the incoming half left data unread or data, other than the peer's EOF
-/// sentinel, was already received, in which case it is closed with an error.
+/// normally, unless the incoming half left data unread or data, other than the peer's end of
+/// transmit, was already received, in which case it is closed with an error.
 /// If the outgoing half is dropped without being shut down, the incoming half fails and the
 /// connection is closed with an error.
 pub fn split<T>(ws: WebSocketStream<T>) -> (Outgoing<T>, Incoming<T>)
@@ -252,6 +277,7 @@ where
     let conn = Arc::new(Mutex::new(Conn {
         ws,
         reader: Waker::noop().clone(),
+        eof_sent: false,
         eof_received: false,
         aborted: false,
         unprocessed: false,
@@ -259,7 +285,6 @@ where
     (
         Outgoing {
             conn: Arc::clone(&conn),
-            eof_sent: false,
             shut_down: false,
         },
         Incoming {

@@ -131,9 +131,7 @@ The client MUST establish a new WebSocket connection per each invocation.
 
 The byte stream is transmitted as the concatenation of payloads of binary messages, message boundaries carry no meaning.
 
-WebSocket closes both directions of a connection at once, so a peer MUST communicate the end of transmit by sending an empty text message and keeping the connection open. A peer MUST NOT send non-empty text messages, and the receiver MUST treat these as an error. If the connection is closed before an empty text message is received, the receiver MUST treat it as an error.
-
-A peer MAY close the connection once it has both sent and received the end of transmit.
+WebSocket closes both directions of a connection at once. A peer that ends transmit after it has received the end of transmit MUST do so by closing the connection with status code 1000 (Normal Closure). A peer that ends transmit before it has received the end of transmit MUST do so by sending an empty text message, keeping the connection open, and MUST close the connection with status code 1000 once it receives the end of transmit. The receiver MUST treat both an empty text message and a close frame with status code 1000 as the end of transmit. A peer MUST NOT send non-empty text messages, and the receiver MUST treat these as an error. If the connection is closed in any other way before the end of transmit is received, the receiver MUST treat it as an error.
 
 ### HTTP
 

@@ -156,12 +156,15 @@ TCP sockets (with half-open connections allowed). A WebSocket has no
 half-close, and closing it ends both directions, so a WebSocket transport must
 signal end of transmit within the connection. To interoperate with the Rust
 `wrpc-websockets` transport, send data as binary messages and end transmit by
-sending an empty text message (`ws.send("")`), keeping the connection open;
-when reading, treat an empty text message received from the peer as the end
-of transmit. As the specification requires, `read()` must reject, rather than
-resolve to `null`, if the connection closes before that empty text message is
-received, or if a non-empty text message is received, and the connection may
-only be closed once end of transmit was both sent and received.
+closing the connection with status code 1000 (`ws.close(1000)`) if the peer's
+end of transmit was already received, or otherwise by sending an empty text
+message (`ws.send("")`), keeping the connection open, and closing it with
+status code 1000 once the peer's end of transmit is received. When reading,
+treat both an empty text message and a close with status code 1000 received
+from the peer as the end of transmit. As the specification requires, `read()`
+must reject, rather than resolve to `null`, if the connection closes in any
+other way before the end of transmit, or if a non-empty text message is
+received.
 
 ## Value mapping
 

@@ -187,3 +187,59 @@ async fn reader_dropped() -> anyhow::Result<()> {
     })
     .await
 }
+
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+async fn normal_close() -> anyhow::Result<()> {
+    async fn assert_next(
+        conn: &mut WebSocketStream<MaybeTlsStream<TcpStream>>,
+        f: impl FnOnce(&Message) -> bool,
+    ) -> anyhow::Result<()> {
+        let msg = tokio::time::timeout(Duration::from_secs(5), conn.next())
+            .await
+            .context("receive timed out")?;
+        let msg = msg.context("connection closed")?;
+        let msg = msg?;
+        assert!(f(&msg), "{msg:?}");
+        Ok(())
+    }
+
+    fn is_normal_close(msg: &Message) -> bool {
+        msg.as_close()
+            .is_some_and(|(code, ..)| code == CloseCode::NORMAL_CLOSURE)
+    }
+
+    wrpc_test::with_websockets(|clt, server, lis| async move {
+        let (ws, mut conn) = connect(&clt, &server, &lis).await?;
+        let (mut tx, mut rx) = split(ws);
+        conn.send(Message::binary(&b"foo"[..])).await?;
+        conn.send(Message::text(Bytes::new())).await?;
+        let mut buf = Vec::default();
+        rx.read_to_end(&mut buf).await.context("failed to read")?;
+        assert_eq!(buf, b"foo");
+        tx.write_all(b"bar").await.context("failed to write")?;
+        tx.shutdown().await.context("failed to shut down")?;
+        assert_next(&mut conn, |msg| msg.as_payload()[..] == b"bar"[..]).await?;
+        assert_next(&mut conn, is_normal_close).await?;
+
+        for eof in [
+            Message::text(Bytes::new()),
+            Message::close(Some(CloseCode::NORMAL_CLOSURE), ""),
+        ] {
+            let (ws, mut conn) = connect(&clt, &server, &lis).await?;
+            let (mut tx, mut rx) = split(ws);
+            tx.shutdown().await.context("failed to shut down")?;
+            assert_next(&mut conn, |msg| {
+                msg.is_text() && msg.as_payload().is_empty()
+            })
+            .await?;
+            conn.send(Message::binary(&b"foo"[..])).await?;
+            conn.send(eof).await?;
+            let mut buf = Vec::default();
+            rx.read_to_end(&mut buf).await.context("failed to read")?;
+            assert_eq!(buf, b"foo");
+            assert_next(&mut conn, is_normal_close).await?;
+        }
+        Ok(())
+    })
+    .await
+}
