@@ -156,6 +156,29 @@ such as the Rust implementation, otherwise waits forever.
 byte streams with a half-close, such as WebTransport bidirectional streams or
 TCP sockets (with half-open connections allowed).
 
+`fromFetch(input, options?)` returns an HTTP client transport for one
+invocation, sending a `POST` request to `input` with `options.fetch`
+(`globalThis.fetch` by default) and failing the invocation unless the response
+status is `2xx`. The other `options`, such as `headers`, are passed to `fetch`.
+The request body is streamed, which needs a runtime that supports streaming
+request bodies: Firefox and Safari do not, and Chromium only does over HTTP/2
+and only exposes the response once the request body is complete. With
+`buffer: true`, the whole request body is kept in memory and only sent once the
+client ends transmit, so the server receives nothing until every asynchronous
+parameter is complete.
+
+`fromRequest(request)` serves an invocation over a WHATWG `Request`, such as
+in Deno, Bun or a service worker, returning the `transport` to `accept` it on
+and the `response` to reply with without waiting for the request body:
+
+```js
+Deno.serve((request) => {
+  const { transport, response } = fromRequest(request);
+  serve(transport); // `accept(transport)`, then receive the parameters and send the results
+  return response;
+});
+```
+
 ## Value mapping
 
 Component-model values map to JavaScript following the `ToJSValue` and
@@ -229,6 +252,8 @@ It deviates from the draft in that:
 - `invoke(transport, instance, func, paramTypes, args, resultTypes?)` — invoke a function; resolves to `{ results, done, finished }`.
 - `accept(transport)` — accept an invocation; resolves to `{ instance, func, receiveParams, sendResults, finished, mux }`.
 - `fromWebStreams({ readable, writable })` — adapt a WHATWG stream duplex to a transport
+  (see [Transports](#transports)).
+- `fromFetch(input, options?)` / `fromRequest(request)` — the HTTP client and server transports
   (see [Transports](#transports)).
 - `encodeValue(writer, ty, value, sink?, path?)` / `decodeValue(reader, ty, sink?, path?)` — the low-level value codec.
 - `decodeSteps(reader, ty, sink?, path?)` / `atomic(reader, f)` — the resumable form of the decoder, driven by `AsyncReader.decode` across chunk boundaries.

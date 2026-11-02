@@ -332,6 +332,22 @@ export class Mux {
   closeWrite(): Promise<void>;
 }
 
+// ----- http.js --------------------------------------------------------------
+
+/** Options of {@link fromFetch}: the `fetch` request options, except for the method, body and signal. */
+export interface FetchOptions extends Omit<RequestInit, "method" | "body" | "signal"> {
+  /** The `fetch` implementation to use, `globalThis.fetch` by default. */
+  fetch?: typeof fetch;
+  /** Buffer the request body and send it once the client ends transmit. */
+  buffer?: boolean;
+}
+
+/** A client transport sending a `POST` request to `input` per invocation. */
+export function fromFetch(input: RequestInfo | URL, options?: FetchOptions): Transport;
+
+/** A server transport over `request`, with the response carrying the server's data. */
+export function fromRequest(request: Request): { transport: Transport; response: Response };
+
 // ----- session.js -----------------------------------------------------------
 
 /**
