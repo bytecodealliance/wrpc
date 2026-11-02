@@ -285,11 +285,11 @@ impl Runner<'_> {
     /// Returns a list of components that were found within this directory.
     fn load_test(&self, wit: &Path, dir: &Path) -> Result<Vec<Component>> {
         let mut resolve = wit_parser::Resolve::default();
-        // Use `push_path` on the test directory (not `push_file` on `test.wit`)
-        // so a sibling `deps/` directory of dependency packages is resolved,
-        // matching how codegen tests are loaded.
+        // Use the test directory when it has a `deps/` directory of dependency
+        // packages, like upstream, so those are resolved too.
+        let wit_path = if dir.join("deps").exists() { dir } else { wit };
         let (pkg, _) = resolve
-            .push_path(&dir)
+            .push_path(wit_path)
             .context("failed to load `test.wit` in test directory")?;
         let resolve = Arc::new(resolve);
 
@@ -331,9 +331,7 @@ impl Runner<'_> {
                 args: Vec::new(),
                 wit_config: wit_config.clone(),
                 world: world.clone(),
-                // Point at the test directory rather than `test.wit` so the
-                // bindings generator resolves a sibling `deps/` directory.
-                wit_path: dir.to_path_buf(),
+                wit_path: wit_path.to_path_buf(),
             };
 
             let component = self

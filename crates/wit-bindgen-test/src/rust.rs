@@ -462,6 +462,7 @@ impl Runner<'_> {
                 .replace("{serve}", &serve),
         )?;
 
+        let runner_path = runner.path.canonicalize()?;
         let bin = artifacts_dir.join("driver");
         let mut cmd = self.rustc(Edition::E2021);
         cmd.arg(&driver)
@@ -469,9 +470,9 @@ impl Runner<'_> {
             .arg("-o")
             .arg(&bin)
             // Set so a `wit_bindgen_wrpc::generate!` embedded in a runner/test
-            // source (e.g. the `with` tests' `mod other`) doesn't panic looking
-            // for the manifest dir.
-            .env("CARGO_MANIFEST_DIR", &artifacts_dir);
+            // source (e.g. the `with` tests' `mod other`) resolves its `path`
+            // relative to the test directory, like upstream.
+            .env("CARGO_MANIFEST_DIR", runner_path.parent().unwrap());
         for extern_ in [
             "wit_bindgen_wrpc",
             "wrpc_transport",
