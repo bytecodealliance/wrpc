@@ -3,16 +3,17 @@
 use core::borrow::Borrow;
 use core::fmt;
 use core::iter::zip;
-use core::pin::pin;
+use core::pin::{Pin, pin};
 use core::time::Duration;
 
 use std::collections::{BTreeMap, HashMap};
+use std::io;
 use std::sync::Arc;
 
 use bytes::{Bytes, BytesMut};
 use futures::future::try_join_all;
-use tokio::io::AsyncWriteExt as _;
-use tokio_util::codec::Encoder;
+use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+use tokio_util::codec::{Decoder as _, Encoder};
 use tracing::{debug, instrument, trace, warn};
 use uuid::Uuid;
 use wasmtime::component::{
@@ -20,8 +21,8 @@ use wasmtime::component::{
 };
 use wasmtime::error::Context as _;
 use wasmtime::{AsContextMut, Engine};
-use wrpc_transport::Invoke;
 use wrpc_transport::frame::{Incoming, Outgoing};
+use wrpc_transport::{Invoke, READ_CHUNK_SIZE};
 
 use crate::bindings::rpc::context::Context;
 use crate::bindings::rpc::error::Error;
@@ -258,6 +259,34 @@ impl fmt::Display for CallError {
     }
 }
 
+async fn decode_value<S>(
+    store: &mut S,
+    rx: &mut Pin<&mut Incoming>,
+    buf: &mut BytesMut,
+    resources: &ResourceTypes,
+    ty: &Type,
+    path: &[usize],
+) -> io::Result<Val>
+where
+    S: WithStore<Data: WrpcView>,
+{
+    let mut dec = ValDecoder::new(store, ty, resources, path);
+    loop {
+        let v = dec.decode(buf)?;
+        if let Some(f) = dec.take_deferred() {
+            f(rx)?;
+        }
+        if let Some(v) = v {
+            return Ok(v);
+        }
+        buf.reserve(READ_CHUNK_SIZE);
+        let n = rx.read_buf(buf).await?;
+        if n == 0 {
+            return Err(io::ErrorKind::UnexpectedEof.into());
+        }
+    }
+}
+
 /// Calls the exported `func` with parameters decoded from `rx` and transmits the results on `tx`.
 ///
 /// The `store` [`Accessor`] is used to call `func` concurrently, it can be acquired, for example,
@@ -278,11 +307,17 @@ where
 {
     let mut params = vec![Val::Bool(false); params_ty.len()];
     let mut rx = pin!(rx);
+    let mut buf = BytesMut::default();
     for (i, (v, ty)) in zip(&mut params, params_ty).enumerate() {
-        read_value(&mut store, &mut rx, resources, v, ty, &[i])
+        *v = decode_value(&mut store, &mut rx, &mut buf, resources, ty, &[i])
             .await
             .with_context(|| format!("failed to decode parameter value {i}"))
             .map_err(CallError::Decode)?;
+    }
+    if !buf.is_empty() {
+        return Err(CallError::Decode(wasmtime::Error::msg(
+            "received data after parameter values end",
+        )));
     }
     let mut results = vec![Val::Bool(false); results_ty.len()];
     func.call_concurrent(store, &params, &mut results)
