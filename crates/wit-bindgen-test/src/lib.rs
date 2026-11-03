@@ -9,6 +9,9 @@
     clippy::nonminimal_bool
 )]
 
+use core::iter;
+use core::ptr;
+
 use anyhow::{Context, Result, anyhow, bail};
 use clap::Parser;
 use rayon::prelude::*;
@@ -583,33 +586,34 @@ impl Runner<'_> {
         let compile_results = components
             .par_iter()
             .map(|(test, component)| {
-                let should_fail = Self::runtime_test_should_fail(&test.name);
+                let should_fail = component.language.obj().should_fail_runtime(&test.name);
                 let path = self
                     .compile_component(test, component)
                     .with_context(|| format!("failed to compile component {:?}", component.path));
-                self.update_status(&path, should_fail);
+                self.update_status(&path, should_fail && path.is_err());
                 (test, component, path, should_fail)
             })
             .collect::<Vec<_>>();
         println!("");
 
         let mut compilations = Vec::new();
+        let mut expected = Vec::default();
+        let mut failed = Vec::default();
         self.render_errors(compile_results.into_iter().map(
-            |(test, component, result, should_fail)| {
-                match result {
-                    // A test expected to fail that nonetheless compiled should be
-                    // flagged so its xfail entry can be removed.
-                    Ok(path) if !should_fail => {
-                        compilations.push((test, component, path));
-                        StepResult::new("", Ok(()))
+            |(test, component, result, should_fail)| match result {
+                Ok(path) => {
+                    if should_fail {
+                        expected.push((*test, *component));
                     }
-                    Ok(_) => StepResult::new(&test.name, Ok(()))
-                        .should_fail(true)
-                        .metadata("component", &component.name),
-                    Err(e) => StepResult::new(&test.name, Err(e))
+                    compilations.push((test, component, path));
+                    StepResult::new("", Ok(()))
+                }
+                Err(e) => {
+                    failed.push((test.name.as_str(), &component.language));
+                    StepResult::new(&test.name, Err(e))
                         .should_fail(should_fail)
                         .metadata("component", &component.name)
-                        .metadata("path", component.path.display()),
+                        .metadata("path", component.path.display())
                 }
             },
         ));
@@ -679,26 +683,67 @@ impl Runner<'_> {
                             runner.path.display(),
                         )
                     });
-                self.update_status(&result, false);
-                (result, case_name, runner, runner_path, deps)
+                let should_fail = runner.language.obj().should_fail_runtime(&case.name);
+                self.update_status(&result, should_fail);
+                (result, should_fail, case_name, runner, runner_path, deps)
             })
             .collect::<Vec<_>>();
 
         println!("");
 
-        self.render_errors(results.into_iter().map(
-            |(result, case_name, runner, runner_path, deps)| {
-                let mut step = StepResult::new(case_name, result)
-                    .metadata("runner", runner.path.display())
-                    .metadata("compiled runner", runner_path.display());
-                for (test, test_path) in deps {
-                    step = step
-                        .metadata("test", test.path.display())
-                        .metadata("compiled test", test_path.display());
-                }
-                step
-            },
-        ));
+        let ran: Vec<&Component> = to_run
+            .iter()
+            .flat_map(|(.., runner, deps)| {
+                iter::once(*runner)
+                    .chain(deps.iter().copied())
+                    .map(|(component, ..)| *component)
+            })
+            .collect();
+        let failed: Vec<(&str, &Language)> = results
+            .iter()
+            .filter(|(result, ..)| result.is_err())
+            .map(|(.., case_name, runner, _, _)| (case_name.as_str(), &runner.language))
+            .chain(failed)
+            .collect();
+        let stale = expected
+            .into_iter()
+            .filter(|(test, component)| {
+                !ran.iter().any(|ran| ptr::eq(*ran, *component))
+                    && !failed.iter().any(|(name, language)| {
+                        *name == test.name && **language == component.language
+                    })
+                    && components.iter().any(|(t, c)| {
+                        t.name == test.name
+                            && c.language == component.language
+                            && c.kind == Kind::Runner
+                    })
+            })
+            .map(|(test, component)| {
+                StepResult::new(&test.name, Ok(()))
+                    .should_fail(true)
+                    .metadata("component", &component.name)
+                    .metadata("path", component.path.display())
+            });
+
+        self.render_errors(
+            results
+                .into_iter()
+                .map(
+                    |(result, should_fail, case_name, runner, runner_path, deps)| {
+                        let mut step = StepResult::new(case_name, result)
+                            .should_fail(should_fail)
+                            .metadata("runner", runner.path.display())
+                            .metadata("compiled runner", runner_path.display());
+                        for (test, test_path) in deps {
+                            step = step
+                                .metadata("test", test.path.display())
+                                .metadata("compiled test", test_path.display());
+                        }
+                        step
+                    },
+                )
+                .chain(stale),
+        );
 
         Ok(())
     }
@@ -788,15 +833,6 @@ status: {}",
         }
 
         bail!("{error}")
-    }
-
-    /// Returns whether the named runtime test is expected to fail.
-    ///
-    /// The wRPC generators do not yet implement the `map` WIT type, so bindings
-    /// generation for that test panics. Its failure is expected; if a test here
-    /// starts succeeding, the harness flags it so this entry can be removed.
-    fn runtime_test_should_fail(name: &str) -> bool {
-        name == "map"
     }
 
     /// "poor man's test output progress"
@@ -955,6 +991,11 @@ trait LanguageMethods {
     /// Returns whether this language is supposed to fail this codegen tests
     /// given the `config` and `args` for the test.
     fn should_fail_verify(&self, name: &str, config: &config::WitConfig, args: &[String]) -> bool;
+
+    /// Returns whether this language is expected to fail the named runtime
+    /// test, either while generating bindings or while running it. A test
+    /// listed here that passes is reported as a failure.
+    fn should_fail_runtime(&self, name: &str) -> bool;
 
     /// Performs a "check" or a verify that the generated bindings described by
     /// `Verify` are indeed valid.

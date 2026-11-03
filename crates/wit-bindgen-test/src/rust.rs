@@ -72,6 +72,10 @@ impl LanguageMethods for Rust {
         name == "map.wit"
     }
 
+    fn should_fail_runtime(&self, name: &str) -> bool {
+        name == "map"
+    }
+
     fn codegen_test_variants(&self) -> &[(&str, &[&str])] {
         // Mirrors upstream wit-bindgen's codegen variant matrix. wRPC does not
         // implement any of these flags yet, so all variants are marked as

@@ -41,6 +41,10 @@ impl LanguageMethods for Js {
         )
     }
 
+    fn should_fail_runtime(&self, name: &str) -> bool {
+        name == "map"
+    }
+
     fn prepare(&self, _runner: &mut Runner<'_>) -> Result<()> {
         Ok(())
     }

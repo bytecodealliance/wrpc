@@ -46,6 +46,10 @@ impl LanguageMethods for Go {
         )
     }
 
+    fn should_fail_runtime(&self, name: &str) -> bool {
+        name == "map"
+    }
+
     fn prepare(&self, _runner: &mut Runner<'_>) -> Result<()> {
         // Go modules are resolved at build time; nothing to prepare.
         Ok(())
