@@ -3410,7 +3410,7 @@ func (v *{name}) WriteToIndex(w {wrpc}.ByteWriter) (func({context}.Context, {wrp
                 uwrite!(self.src, r#"func (v *{name}) Get{camel}() ("#);
                 if let Some(ty) = ty {
                     self.push_str("payload ");
-                    self.print_ty(ty, true);
+                    self.print_opt_ty(ty, true);
                     self.push_str(", ");
                 }
                 self.push_str("ok bool) {\n");
@@ -3420,7 +3420,7 @@ func (v *{name}) WriteToIndex(w {wrpc}.ByteWriter) (func({context}.Context, {wrp
                 );
                 if let Some(ty) = ty {
                     self.push_str("payload, ok = v.payload.(");
-                    self.print_ty(ty, true);
+                    self.print_opt_ty(ty, true);
                     self.push_str(")\n");
                 }
                 self.push_str("return\n}\n");
