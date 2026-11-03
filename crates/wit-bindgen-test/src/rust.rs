@@ -1,9 +1,12 @@
+use crate::config::{self, RuntimeTestConfig, StringList};
 use crate::{Component, LanguageMethods, Runner, Test, Verify};
 use anyhow::{Context, Result, bail};
 use clap::Parser;
 use heck::ToSnakeCase;
+use serde::Deserialize;
 use std::collections::HashMap;
 use std::env;
+use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -32,6 +35,15 @@ pub struct RustOpts {
         value_name = "X.Y.Z"
     )]
     rust_wrpc_transport_version: Option<String>,
+}
+
+/// Rust-specific configuration of component files
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RustConfig {
+    /// Space-separated list or array of compiler flags to pass.
+    #[serde(default)]
+    rustflags: StringList,
 }
 
 pub struct Rust;
@@ -467,7 +479,15 @@ impl Runner<'_> {
             .join(name);
 
         let mut modules = String::default();
+        let mut rustflags = Vec::default();
         for (module, component, bindings) in &components {
+            let contents = fs::read_to_string(&component.path)?;
+            let config =
+                config::parse_test_config::<RuntimeTestConfig<RustConfig>>(&contents, "//@")
+                    .with_context(|| format!("failed to parse {:?} config", component.path))?;
+            if let Some(config) = config.lang {
+                rustflags.extend(Vec::from(config.rustflags));
+            }
             let bindings = bindings.join(format!("{}.rs", component.bindgen.world.to_snake_case()));
             let src = component.path.canonicalize()?;
             modules.push_str(&format!(
@@ -496,6 +516,7 @@ impl Runner<'_> {
             .arg("--crate-type=bin")
             .arg("-o")
             .arg(&bin)
+            .args(&rustflags)
             // Set so a `wit_bindgen_wrpc::generate!` embedded in a runner/test
             // source (e.g. the `with` tests' `mod other`) resolves its `path`
             // relative to the test directory, like upstream.

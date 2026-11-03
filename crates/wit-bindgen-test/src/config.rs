@@ -81,10 +81,6 @@ pub struct RuntimeTestConfig<T = HashMap<String, toml::Value>> {
     // then the language uses its default configuration but if it is present
     // then the fields are re-parsed where `T` is specific-per-language. The
     // `Component::deserialize_lang_config` helper is intended for this.
-    #[expect(
-        dead_code,
-        reason = "no per-language config consumed by the wRPC runtime driver"
-    )]
     pub lang: Option<T>,
 }
 
