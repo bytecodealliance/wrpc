@@ -233,7 +233,8 @@ To route invocations yourself, for example to serve several worlds on one
 listener, pass each invocation `accept` returns to the `serveInterface(inv,
 handler)` of the module of its instance, or of the world module for the
 world's own functions. Like `serve` does, abort the invocation's `mux` if that
-fails and then await its `finished`.
+fails and then await its `finished`. The world module's `served` lists the
+`[instance, function]` pairs `serve` dispatches.
 
 Names follow the [JS-API draft], so functions are camel case and types are
 Pascal case. `map` types and fixed-length lists are not supported yet.

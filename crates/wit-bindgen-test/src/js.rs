@@ -49,6 +49,12 @@ impl LanguageMethods for Js {
         Ok(())
     }
 
+    fn prepare_component(&self, component: &Component, bindings_dir: &Path) -> Result<()> {
+        let src = fs::read(&component.path)?;
+        crate::write_if_different(&bindings_dir.join("impl.js"), src)?;
+        Ok(())
+    }
+
     fn generate_bindings(&self, runner: &Runner<'_>, bindgen: &Bindgen, dir: &Path) -> Result<()> {
         let js = runner.js_wrpc_path()?;
         let mut cmd = Command::new(runner.wit_bindgen);
@@ -154,45 +160,52 @@ impl Runner<'_> {
         })
     }
 
-    /// Runs a single JavaScript runtime test: serves the `test`'s handler
-    /// over TCP and runs the `runner` against it, in one Node.js process.
+    /// Runs a single JavaScript runtime test: serves each dependency's
+    /// handlers over TCP, routing its imports to the following dependencies,
+    /// and runs the `runner` against them, in one Node.js process.
     pub(crate) fn js_runtime_test(
         &self,
         case: &Test,
         runner: &Component,
         runner_bindings: &Path,
-        tst: &Component,
-        test_bindings: &Path,
+        deps: &[&(&Component, PathBuf)],
     ) -> Result<()> {
+        let mut name = runner.name.clone();
+        for (dep, ..) in deps {
+            name.push('-');
+            name.push_str(&dep.name);
+        }
         let cwd = env::current_dir()?;
         let driver = cwd
             .join(&self.opts.artifacts)
             .join(&case.name)
-            .join(format!("{}-{}-js", runner.name, tst.name));
-
-        // The sources import their bindings relative to the bindings directory.
-        let src = fs::read(&runner.path)?;
-        crate::write_if_different(&runner_bindings.join("impl.js"), src)?;
-        let src = fs::read(&tst.path)?;
-        crate::write_if_different(&test_bindings.join("impl.js"), src)?;
+            .join(format!("{name}-js"));
 
         let js = self.js_wrpc_path()?;
         let wrpc = file_url(&js.join("src/index.js"));
         let run = file_url(&runner_bindings.join("impl.js"));
-        let handler = file_url(&test_bindings.join("impl.js"));
-        let serve = file_url(&test_bindings.join(format!("{}.js", tst.bindgen.world)));
+        let mut imports = String::default();
+        let mut serve = String::default();
+        for (i, (dep, bindings)) in deps.iter().enumerate().rev() {
+            let handlers = file_url(&bindings.join("impl.js"));
+            let world = file_url(&bindings.join(format!("{}.js", dep.bindgen.world)));
+            imports.push_str(&format!(
+                "import {{ handlers as handlers{i} }} from {handlers:?};\nimport {{ serve as serve{i}, served as served{i} }} from {world:?};\n"
+            ));
+            serve.push_str(&format!(
+                "routes = [[served{i}, await listen(serve{i}, handlers{i}(router(routes)))], ...routes];\n"
+            ));
+        }
         crate::write_if_different(
             &driver.join("main.js"),
             format!(
                 r#"import net from "node:net";
 import {{ Duplex }} from "node:stream";
 
-import {{ fromWebStreams }} from {wrpc:?};
+import {{ Reader, fromWebStreams }} from {wrpc:?};
 
 import {{ run }} from {run:?};
-import {{ handler }} from {handler:?};
-import {{ serve }} from {serve:?};
-
+{imports}
 setTimeout(() => {{
   console.error("runtime test timed out");
   process.exit(1);
@@ -201,27 +214,92 @@ setTimeout(() => {{
 /** @param {{net.Socket}} sock */
 const transport = (sock) => fromWebStreams(Duplex.toWeb(sock));
 
-const server = net.createServer({{ allowHalfOpen: true }}, (sock) => {{
-  serve(transport(sock), handler).catch((err) => {{
-    console.error("failed to serve invocation:", err);
-    process.exit(1);
+/** @param {{number}} port */
+const dial = (port) =>
+  new Promise((resolve, reject) => {{
+    const sock = net.connect({{ host: "::1", port, allowHalfOpen: true }}, () =>
+      resolve(transport(sock)),
+    );
+    sock.once("error", reject);
   }});
-}});
-await new Promise((resolve) => server.listen(0, "::1", () => resolve(undefined)));
-const {{ port }} = /** @type {{net.AddressInfo}} */ (server.address());
 
-try {{
-  await run(
-    () =>
-      new Promise((resolve, reject) => {{
-        const sock = net.connect({{ host: "::1", port, allowHalfOpen: true }}, () =>
-          resolve(transport(sock)),
+/**
+ * Connects to the first of `routes` exporting the invoked function, once the
+ * invocation header is written.
+ * @param {{[[string, string][], number][]}} routes
+ */
+const router = (routes) => async () => {{
+  let header = new Uint8Array();
+  let connect;
+  let fail;
+  const conn = new Promise((resolve, reject) => {{
+    connect = resolve;
+    fail = reject;
+  }});
+  return {{
+    async write(bytes) {{
+      if (connect) {{
+        const buf = new Uint8Array(header.length + bytes.length);
+        buf.set(header);
+        buf.set(bytes, header.length);
+        header = buf;
+        const r = new Reader(header);
+        let instance, func;
+        try {{
+          r.u8();
+          instance = r.name();
+          func = r.name();
+        }} catch (err) {{
+          if (err instanceof RangeError) return;
+          throw err;
+        }}
+        const route = routes.find(([funcs]) =>
+          funcs.some(([i, f]) => i === instance && f === func),
         );
-        sock.once("error", reject);
-      }}),
-  );
+        if (!route) throw new Error(`no component exports \`${{instance}}#${{func}}\``);
+        connect(dial(route[1]));
+        connect = undefined;
+        bytes = header;
+      }}
+      const t = await conn;
+      return t.write(bytes);
+    }},
+    read: async () => (await conn).read(),
+    closeWrite: async () => {{
+      if (connect) fail(new Error("invocation closed before its header was written"));
+      return (await conn).closeWrite();
+    }},
+    abort: (reason) => {{
+      if (connect) fail(reason);
+      connect = undefined;
+      void conn.then((t) => t.abort?.(reason), () => {{}});
+    }},
+  }};
+}};
+
+/** @type {{net.Server[]}} */
+const servers = [];
+
+/** Serves `handlers` with `serve` on a new listener and returns its port. */
+async function listen(serve, handlers) {{
+  const server = net.createServer({{ allowHalfOpen: true }}, (sock) => {{
+    serve(transport(sock), ...handlers).catch((err) => {{
+      console.error("failed to serve invocation:", err);
+      process.exit(1);
+    }});
+  }});
+  servers.push(server);
+  await new Promise((resolve) => server.listen(0, "::1", () => resolve(undefined)));
+  return /** @type {{net.AddressInfo}} */ (server.address()).port;
+}}
+
+/** @type {{[[string, string][], number][]}} */
+let routes = [];
+{serve}
+try {{
+  await run(router(routes));
 }} finally {{
-  server.close();
+  for (const server of servers) server.close();
 }}
 "#
             ),

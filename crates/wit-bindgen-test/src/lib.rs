@@ -784,6 +784,10 @@ impl Runner<'_> {
             .language
             .obj()
             .generate_bindings(self, &component.bindgen, &bindings_dir)?;
+        component
+            .language
+            .obj()
+            .prepare_component(component, &bindings_dir)?;
         Ok(bindings_dir)
     }
 
@@ -806,12 +810,7 @@ impl Runner<'_> {
         match runner.language {
             Language::Rust => self.rust_runtime_test(case, runner, runner_bindings, deps),
             Language::Go => self.go_runtime_test(case, runner, deps),
-            Language::Js => match deps {
-                [(test, test_bindings)] => {
-                    self.js_runtime_test(case, runner, runner_bindings, test, test_bindings)
-                }
-                _ => bail!("JavaScript runtime tests support exactly one `test` world"),
-            },
+            Language::Js => self.js_runtime_test(case, runner, runner_bindings, deps),
         }
     }
 
@@ -1025,6 +1024,12 @@ trait LanguageMethods {
     fn should_fail_runtime_component(&self, name: &str, component: &str) -> bool {
         let _ = component;
         self.should_fail_runtime(name)
+    }
+
+    /// Prepares a runtime test component after its bindings were generated
+    /// into `bindings_dir`, before any runtime test using it runs.
+    fn prepare_component(&self, _component: &Component, _bindings_dir: &Path) -> Result<()> {
+        Ok(())
     }
 
     /// Performs a "check" or a verify that the generated bindings described by

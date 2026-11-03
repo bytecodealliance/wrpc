@@ -142,8 +142,8 @@ struct JsWrpc {
     modules: Vec<(String, Module)>,
     world_module: Module,
     /// The instances served by the world's `serve`, with the module serving
-    /// each, or `None` for the world's own functions.
-    exports: Vec<(String, Option<ModulePath>)>,
+    /// each, or `None` for the world's own functions, and the functions served.
+    exports: Vec<(String, Option<ModulePath>, Vec<String>)>,
 }
 
 impl JsWrpc {
@@ -221,6 +221,7 @@ fn name_package_module(resolve: &Resolve, id: PackageId) -> String {
     }
 }
 
+/// The wRPC instance name of the interface `id` imported or exported as `name`.
 fn interface_instance(resolve: &Resolve, name: &WorldKey, id: InterfaceId) -> String {
     let iface = &resolve.interfaces[id];
     let name = match name {
@@ -778,7 +779,9 @@ impl Gen<'_> {
         let (free, resources) = Self::group(funcs);
         for func in free {
             let name = match func_name(func).as_str() {
-                s @ ("serve" | "serveInterface") if self.path == self.world => format!("{s}_"),
+                s @ ("serve" | "serveInterface" | "served") if self.path == self.world => {
+                    format!("{s}_")
+                }
                 s => s.to_string(),
             };
             let (params, sig) = self.client_signature(resolve, func);
@@ -883,10 +886,10 @@ impl Gen<'_> {
     }
 
     /// Generate the `Handler` of `funcs` and `serveInterface`, serving their
-    /// invocations. Returns whether there are any.
-    fn serve_funcs(&mut self, resolve: &Resolve, funcs: &[&Function]) -> bool {
+    /// invocations. Returns the names of the functions served.
+    fn serve_funcs(&mut self, resolve: &Resolve, funcs: &[&Function]) -> Vec<String> {
         if funcs.is_empty() {
-            return false;
+            return Vec::default();
         }
         let (free, resources) = Self::group(funcs);
         let mut cases = String::default();
@@ -932,7 +935,10 @@ impl Gen<'_> {
 }
 ",
         );
-        true
+        funcs
+            .iter()
+            .map(|func| rpc_func_name(func).to_string())
+            .collect()
     }
 
     fn handler_signature(&mut self, resolve: &Resolve, func: &Function) -> String {
@@ -1066,11 +1072,12 @@ impl WorldGenerator for JsWrpc {
         let types: Vec<_> = iface.types.values().copied().collect();
         r#gen.define_types(resolve, &types);
         let funcs: Vec<_> = iface.functions.values().collect();
-        let exports = r#gen.serve_funcs(resolve, &funcs);
+        let served = r#gen.serve_funcs(resolve, &funcs);
         let m = r#gen.m;
         self.modules.push((path.clone(), m));
-        if exports {
-            self.exports.push((instance, Some(ModulePath::Local(path))));
+        if !served.is_empty() {
+            self.exports
+                .push((instance, Some(ModulePath::Local(path)), served));
         }
         Ok(())
     }
@@ -1085,10 +1092,10 @@ impl WorldGenerator for JsWrpc {
         let m = mem::take(&mut self.world_module);
         let mut r#gen = self.module(self.world.clone(), m);
         let funcs: Vec<_> = funcs.iter().map(|(.., f)| *f).collect();
-        let exports = r#gen.serve_funcs(resolve, &funcs);
+        let served = r#gen.serve_funcs(resolve, &funcs);
         self.world_module = r#gen.m;
-        if exports {
-            self.exports.push((String::default(), None));
+        if !served.is_empty() {
+            self.exports.push((String::default(), None, served));
         }
         Ok(())
     }
@@ -1113,7 +1120,7 @@ impl WorldGenerator for JsWrpc {
             r#gen.m.wrpc_types = true;
             let mut ts_params = vec!["transport: $wrpc.Transport".to_string()];
             let mut cases = String::default();
-            for (i, (instance, path)) in self.exports.iter().enumerate() {
+            for (i, (instance, path, ..)) in self.exports.iter().enumerate() {
                 params.push(format!("h{i}"));
                 let (handler, serve) = match path {
                     Some(path) => {
@@ -1151,6 +1158,20 @@ impl WorldGenerator for JsWrpc {
 ",
                 params.join(", ")
             );
+            let served: Vec<_> = self
+                .exports
+                .iter()
+                .flat_map(|(instance, .., funcs)| {
+                    funcs
+                        .iter()
+                        .map(move |func| format!("[{instance:?}, {func:?}]"))
+                })
+                .collect();
+            uwriteln!(
+                r#gen.m.dts,
+                "/** The `[instance, function]` pairs `serve` dispatches. */\nexport const served: readonly (readonly [string, string])[];"
+            );
+            uwriteln!(r#gen.m.js, "export const served = [{}];", served.join(", "));
         }
         let world = (r#gen.path, r#gen.m);
         let wrpc = self
