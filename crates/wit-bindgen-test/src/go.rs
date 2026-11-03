@@ -204,7 +204,7 @@ func main() {
 			os.Stderr.WriteString(err.Error() + "\n")
 			os.Exit(1)
 		}
-	case <-time.After(60 * time.Second):
+	case <-time.After(10 * time.Second):
 		panic("runtime test timed out")
 	}
 }

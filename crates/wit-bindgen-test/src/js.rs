@@ -211,7 +211,7 @@ import {{ run }} from {run:?};
 setTimeout(() => {{
   console.error("runtime test timed out");
   process.exit(1);
-}}, 60_000).unref();
+}}, 10_000).unref();
 
 /** @param {{net.Socket}} sock */
 const transport = (sock) => fromWebStreams(Duplex.toWeb(sock));

@@ -416,7 +416,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Run the `client` to completion.
     let clt = Router(routes);
-    tokio::time::timeout(Duration::from_secs(60), client::run(&clt))
+    tokio::time::timeout(Duration::from_secs(10), client::run(&clt))
         .await
         .expect("runtime test timed out")?;
     Ok(())
