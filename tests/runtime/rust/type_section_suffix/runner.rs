@@ -1,7 +1,28 @@
+mod a {
+    ::wit_bindgen_wrpc::generate!({
+        world: "available-imports",
+        path: "./test.wit",
+        generate_all,
+    });
+}
+
+mod c {
+    ::wit_bindgen_wrpc::generate!({
+        world: "test:a/imports",
+        path: "./test.wit",
+    });
+}
+mod d {
+    ::wit_bindgen_wrpc::generate!({
+        world: "test:b/imports",
+        path: "./test.wit",
+    });
+}
+
 pub async fn run(
     wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
-    crate::client::test::suffix::imports::foo(wrpc, ()).await?;
+    a::test::suffix::imports::foo(wrpc, ()).await?;
     crate::client::foo::f(wrpc, ()).await?;
     crate::client::bar::f(wrpc, ()).await?;
     Ok(())

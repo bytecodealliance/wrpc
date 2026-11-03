@@ -448,20 +448,29 @@ impl Runner<'_> {
                     continue;
                 }
 
+                let args: Vec<String> = language
+                    .obj()
+                    .default_bindgen_args_for_codegen()
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect();
+
                 codegen_tests.push((
                     language.clone(),
                     test,
                     name.to_string(),
-                    Vec::new(),
+                    args.clone(),
                     config.clone(),
                 ));
 
-                for (args_kind, args) in language.obj().codegen_test_variants() {
+                for (args_kind, new_args) in language.obj().codegen_test_variants() {
+                    let mut args = args.clone();
+                    args.extend(new_args.iter().map(ToString::to_string));
                     codegen_tests.push((
                         language.clone(),
                         test,
                         format!("{name}-{args_kind}"),
-                        args.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+                        args,
                         config.clone(),
                     ));
                 }
@@ -586,7 +595,10 @@ impl Runner<'_> {
         let compile_results = components
             .par_iter()
             .map(|(test, component)| {
-                let should_fail = component.language.obj().should_fail_runtime(&test.name);
+                let should_fail = component
+                    .language
+                    .obj()
+                    .should_fail_runtime_component(&test.name, &component.name);
                 let path = self
                     .compile_component(test, component)
                     .with_context(|| format!("failed to compile component {:?}", component.path));
@@ -683,7 +695,15 @@ impl Runner<'_> {
                             runner.path.display(),
                         )
                     });
-                let should_fail = runner.language.obj().should_fail_runtime(&case.name);
+                let should_fail = [runner]
+                    .into_iter()
+                    .chain(deps.iter().map(|(dep, ..)| dep))
+                    .any(|c| {
+                        runner
+                            .language
+                            .obj()
+                            .should_fail_runtime_component(&case.name, &c.name)
+                    });
                 self.update_status(&result, should_fail);
                 (result, should_fail, case_name, runner, runner_path, deps)
             })
@@ -978,6 +998,12 @@ trait LanguageMethods {
         &[]
     }
 
+    /// Same as `default_bindgen_args` but specifically applied during codegen
+    /// tests, such as generating stub impls by default.
+    fn default_bindgen_args_for_codegen(&self) -> &[&str] {
+        &[]
+    }
+
     /// Returns the name of this bindings generator when passed to
     /// `wit-bindgen`.
     ///
@@ -996,6 +1022,13 @@ trait LanguageMethods {
     /// test, either while generating bindings or while running it. A test
     /// listed here that passes is reported as a failure.
     fn should_fail_runtime(&self, name: &str) -> bool;
+
+    /// Same as `should_fail_runtime` but for the runtime test `name` built
+    /// with the component named `component` (a runner or a test variant).
+    fn should_fail_runtime_component(&self, name: &str, component: &str) -> bool {
+        let _ = component;
+        self.should_fail_runtime(name)
+    }
 
     /// Performs a "check" or a verify that the generated bindings described by
     /// `Verify` are indeed valid.

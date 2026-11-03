@@ -61,34 +61,47 @@ impl LanguageMethods for Rust {
         _config: &crate::config::WitConfig,
         args: &[String],
     ) -> bool {
-        // wRPC's Rust generator implements none of upstream's codegen variant
-        // flags (`--ownership`, `--async`, `--std-feature`,
-        // `--merge-structurally-equal-types`, `--map-type`), so every variant
-        // invocation (i.e. anything with extra `args`) is expected to fail.
-        if !args.is_empty() {
+        // wRPC's Rust generator does not implement upstream's `--ownership`
+        // and `--map-type` flags.
+        if args.iter().any(|arg| {
+            ["--ownership", "--map-type"]
+                .iter()
+                .any(|flag| arg.starts_with(flag))
+        }) {
             return true;
         }
         // The wRPC Rust generator does not yet support `map`.
-        name == "map.wit"
+        name == "map.wit" || name == "map.wit-merge-equal"
     }
 
     fn should_fail_runtime(&self, name: &str) -> bool {
         name == "map"
     }
 
+    fn should_fail_runtime_component(&self, name: &str, component: &str) -> bool {
+        match (name, component) {
+            // `--ownership` is not supported.
+            (
+                "ownership",
+                "runner-owning" | "runner-borrowing" | "runner-borrowing-duplicate-if-necessary",
+            ) => true,
+            // `--enable-method-chaining` is not supported.
+            ("method-chaining", "runner" | "test") => true,
+            _ => self.should_fail_runtime(name),
+        }
+    }
+
     fn codegen_test_variants(&self) -> &[(&str, &[&str])] {
-        // Mirrors upstream wit-bindgen's codegen variant matrix. wRPC does not
-        // implement any of these flags yet, so all variants are marked as
-        // expected failures in `should_fail_verify`; they are kept to track
-        // parity with upstream and to surface the day a flag becomes supported.
+        // Mirrors upstream wit-bindgen's codegen variant matrix. Variants for
+        // flags wRPC does not implement are marked as expected failures in
+        // `should_fail_verify`; they are kept to track parity with upstream and
+        // to surface the day a flag becomes supported.
         &[
             ("borrowed", &["--ownership=borrowing"]),
             (
                 "borrowed-duplicate",
                 &["--ownership=borrowing-duplicate-if-necessary"],
             ),
-            ("async", &["--async=all"]),
-            ("no-std", &["--std-feature"]),
             ("merge-equal", &["--merge-structurally-equal-types"]),
             ("hashmap", &["--map-type=std::collections::HashMap"]),
         ]
@@ -96,6 +109,10 @@ impl LanguageMethods for Rust {
 
     fn default_bindgen_args(&self) -> &[&str] {
         &["--generate-all"]
+    }
+
+    fn default_bindgen_args_for_codegen(&self) -> &[&str] {
+        &["--stubs"]
     }
 
     fn prepare(&self, runner: &mut Runner<'_>) -> Result<()> {
