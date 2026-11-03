@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"math"
 
-	wrpc "wrpc.io/go"
 	"driver/runner/test/numbers/numbers"
+	wrpc "wrpc.io/go"
 )
 
 func Run(ctx context.Context, c wrpc.Invoker) error {
