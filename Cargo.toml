@@ -197,7 +197,7 @@ wasi = { version = "0.14", default-features = false }
 wasi-preview1-component-adapter-provider = { version = "50", default-features = false }
 wasm-tokio = { version = "0.8.2", default-features = false }
 wasm-wave = { version = "0.261", default-features = false }
-wasmparser = { version = "0.262", default-features = false }
+wasmparser = { version = "0.263", default-features = false }
 wasmtime = { version = "50", default-features = false }
 wasmtime-cli-flags = { version = "50", default-features = false }
 wasmtime-wasi = { version = "50", default-features = false }
@@ -211,7 +211,7 @@ wit-bindgen-wrpc-js = { version = "0.1", default-features = false, path = "./cra
 wit-bindgen-wrpc-rust = { version = "0.12", default-features = false, path = "./crates/wit-bindgen-rust" }
 wit-bindgen-wrpc-rust-macro = { version = "0.12", default-features = false, path = "./crates/wit-bindgen-rust-macro" }
 wit-bindgen-wrpc-test = { version = "0.1", default-features = false, path = "./crates/wit-bindgen-test" }
-wit-component = { version = "0.262", default-features = false }
+wit-component = { version = "0.263", default-features = false }
 wit-parser = { version = "0.253", default-features = false }
 wrpc-cli = { version = "0.9", path = "./crates/cli", default-features = false }
 wrpc-http = { version = "0.2", path = "./crates/http", default-features = false }
