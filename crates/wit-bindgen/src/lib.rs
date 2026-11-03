@@ -785,10 +785,19 @@
 ///     // of the function.
 ///     skip: ["foo", "bar", "baz"],
 ///
+///     // Generates a `Stub` type implementing all exported `Handler` traits
+///     // with `unreachable!()` bodies.
+///     stubs,
+///
 ///     // Configure where the `bitflags` crate is located. By default this
 ///     // is `wit_bindgen_wrpc::bitflags` which already reexports `bitflags` for
 ///     // you.
 ///     bitflags_path: "path::to::bitflags",
+///
+///     // Indicates that instead of `&str` and `String` the `&[u8]` and
+///     // `Vec<u8>` types should be used. Strings are still required to be
+///     // valid UTF-8 and received strings are still validated.
+///     raw_strings,
 ///
 ///     // Configure where the runtime dependencies of the generated code are
 ///     // located. By default each of these points at the corresponding crate
@@ -824,6 +833,15 @@
 ///     // that it can be used on a more fine-grained basis (i.e. it only affects
 ///     // the specific `generate!` call where it is used.
 ///     debug: true,
+///
+///     // Find all structurally equal types and only generate one type
+///     // definition for each equivalence class.
+///     //
+///     // Other types in the same class will be type aliases to the generated
+///     // type. This avoids clone when converting between types that are
+///     // structurally equal, which is useful when import and export the same
+///     // interface.
+///     merge_structurally_equal_types: true,
 /// });
 /// ```
 ///
@@ -831,11 +849,12 @@
 pub use wit_bindgen_wrpc_rust_macro::generate;
 
 /// Compile-fail tests mirroring upstream `wit-bindgen`'s
-/// `crates/rust/tests/codegen.rs` modules for features the wRPC generator does
-/// **not** implement yet. They are kept as `compile_fail` doctests rather than
-/// regular codegen tests (which would break the build) to track parity with
-/// upstream and to surface the day a feature becomes supported — at which point
-/// the corresponding doctest will start failing because the code now compiles.
+/// `crates/rust/tests/codegen.rs` modules and `generate!` options for features
+/// the wRPC generator does **not** implement yet. They are kept as
+/// `compile_fail` doctests rather than regular codegen tests (which would break
+/// the build) to track parity with upstream and to surface the day a feature
+/// becomes supported — at which point the corresponding doctest will start
+/// failing because the code now compiles.
 ///
 /// The `map_type` option is not supported:
 ///
@@ -882,7 +901,9 @@ pub use wit_bindgen_wrpc_rust_macro::generate;
 /// });
 /// ```
 ///
-/// The `enable_method_chaining` option is not supported (upstream #1586):
+/// The `enable_method_chaining` option is not supported (upstream #1586; wRPC
+/// resource methods take the transport, context and handle explicitly and
+/// return futures, so there is no `self` to chain on):
 ///
 /// ```compile_fail
 /// wit_bindgen_wrpc::generate!({
@@ -902,71 +923,195 @@ pub use wit_bindgen_wrpc_rust_macro::generate;
 /// });
 /// ```
 ///
-/// The `merge_structurally_equal_types` option is not supported (upstream #1468,
-/// exposed in the macro by #1633):
+/// The `std_feature` option is not supported (wRPC bindings require `std`):
 ///
 /// ```compile_fail
 /// wit_bindgen_wrpc::generate!({
 ///     inline: r#"
-///     package test:merge-structurally-equal-types;
+///     package test:unsupported;
 ///
-///     interface blag {
-///         variant kind1 { a, b(u64), c }
-///         variant kind2 { a, b(u64), c }
-///         record kind3 { a: input-stream }
-///         record kind4 { a: input-stream }
-///         record tree { l: t1, r: t1  }
-///         record t1 { l: t2, r: t2 }
-///         record t2 { l: t3, r: t3 }
-///         record t3 { l: kind1, r: kind2 }
-///         record t-stream  { tree: tree, %stream: option<borrow<input-stream>> }
-///         resource input-stream {
-///             read: func(len: u64) -> list<u8>;
-///         }
-///         f: func(x: kind1) -> kind2;
-///         g: func(x: kind3) -> kind4;
-///         h: func(x: t-stream) -> tree;
-///     }
-///
-///     interface blah {
-///         use blag.{input-stream, kind4, t-stream};
-///         variant kind5 { a, b(u64), c }
-///         variant kind6 { a, c, b(u64) }
-///         record kind7 { a: borrow<input-stream> }
-///         record tt { l: t2, r: t2  }
-///         record t1 { l: t3, r: t3 }
-///         record t2 { l: t1, r: t1 }
-///         record t3 { l: kind5, r: kind5 }
-///         variant custom-result { ok(tt), err }
-///         f: func(x: kind6) -> kind5;
-///         g: func(x: kind7) -> kind4;
-///         h: func(x: t-stream) -> custom-result;
-///
-///         record r1 { a: u8 }
-///         type a1 = u8;
-///         record r2 { a: a1 }
-///         alias-type: func(x: r1) -> r2;
-///     }
-///
-///     interface resources {
-///         resource r1;
-///         type r2 = r1;
-///
-///         record t1 { a: r1 }
-///         record t2 { a: r2 }
-///         alias-own: func(x: t1) -> t2;
-///         alias-aggregate: func(x: option<t1>) -> option<t2>;
-///     }
-///
-///     world proxy {
-///         import blag;
-///         export blag;
-///         import blah;
-///         export blah;
+///     world test {
+///         import f: func(s: string);
+///         export g: func();
 ///     }
 ///     "#,
-///     generate_all,
-///     merge_structurally_equal_types: true
+///     std_feature,
+/// });
+/// ```
+///
+/// The `export_prefix` option is not supported (it prefixes canonical ABI export symbol names):
+///
+/// ```compile_fail
+/// wit_bindgen_wrpc::generate!({
+///     inline: r#"
+///     package test:unsupported;
+///
+///     world test {
+///         import f: func(s: string);
+///         export g: func();
+///     }
+///     "#,
+///     export_prefix: "prefix",
+/// });
+/// ```
+///
+/// The `ownership` option is not supported in `Owning` mode (wRPC passes nested import parameters borrowed):
+///
+/// ```compile_fail
+/// wit_bindgen_wrpc::generate!({
+///     inline: r#"
+///     package test:unsupported;
+///
+///     world test {
+///         import f: func(s: string);
+///         export g: func();
+///     }
+///     "#,
+///     ownership: Owning,
+/// });
+/// ```
+///
+/// The `ownership` option is not supported in `Borrowing` mode (wRPC does not generate borrowing type definitions):
+///
+/// ```compile_fail
+/// wit_bindgen_wrpc::generate!({
+///     inline: r#"
+///     package test:unsupported;
+///
+///     world test {
+///         import f: func(s: string);
+///         export g: func();
+///     }
+///     "#,
+///     ownership: Borrowing { duplicate_if_necessary: false },
+/// });
+/// ```
+///
+/// The `runtime_path` option is not supported (wRPC has no runtime module; use the `*_path` options):
+///
+/// ```compile_fail
+/// wit_bindgen_wrpc::generate!({
+///     inline: r#"
+///     package test:unsupported;
+///
+///     world test {
+///         import f: func(s: string);
+///         export g: func();
+///     }
+///     "#,
+///     runtime_path: "path::to::wit_bindgen_wrpc",
+/// });
+/// ```
+///
+/// The `type_section_suffix` option is not supported (wRPC emits no component type custom section):
+///
+/// ```compile_fail
+/// wit_bindgen_wrpc::generate!({
+///     inline: r#"
+///     package test:unsupported;
+///
+///     world test {
+///         import f: func(s: string);
+///         export g: func();
+///     }
+///     "#,
+///     type_section_suffix: "suffix",
+/// });
+/// ```
+///
+/// The `disable_run_ctors_once_workaround` option is not supported (it targets wasm libc constructors):
+///
+/// ```compile_fail
+/// wit_bindgen_wrpc::generate!({
+///     inline: r#"
+///     package test:unsupported;
+///
+///     world test {
+///         import f: func(s: string);
+///         export g: func();
+///     }
+///     "#,
+///     disable_run_ctors_once_workaround: true,
+/// });
+/// ```
+///
+/// The `default_bindings_module` option is not supported (wRPC generates a `serve` function, not an `export!` macro):
+///
+/// ```compile_fail
+/// wit_bindgen_wrpc::generate!({
+///     inline: r#"
+///     package test:unsupported;
+///
+///     world test {
+///         import f: func(s: string);
+///         export g: func();
+///     }
+///     "#,
+///     default_bindings_module: "bindings",
+/// });
+/// ```
+///
+/// The `export_macro_name` option is not supported (wRPC generates a `serve` function, not an `export!` macro):
+///
+/// ```compile_fail
+/// wit_bindgen_wrpc::generate!({
+///     inline: r#"
+///     package test:unsupported;
+///
+///     world test {
+///         import f: func(s: string);
+///         export g: func();
+///     }
+///     "#,
+///     export_macro_name: "export",
+/// });
+/// ```
+///
+/// The `pub_export_macro` option is not supported (wRPC generates a `serve` function, not an `export!` macro):
+///
+/// ```compile_fail
+/// wit_bindgen_wrpc::generate!({
+///     inline: r#"
+///     package test:unsupported;
+///
+///     world test {
+///         import f: func(s: string);
+///         export g: func();
+///     }
+///     "#,
+///     pub_export_macro: true,
+/// });
+/// ```
+///
+/// The `disable_custom_section_link_helpers` option is not supported (wRPC emits no custom sections):
+///
+/// ```compile_fail
+/// wit_bindgen_wrpc::generate!({
+///     inline: r#"
+///     package test:unsupported;
+///
+///     world test {
+///         import f: func(s: string);
+///         export g: func();
+///     }
+///     "#,
+///     disable_custom_section_link_helpers: true,
+/// });
+/// ```
+///
+/// The `async` option is not supported (it selects the component model async ABI, wRPC bindings are always async):
+///
+/// ```compile_fail
+/// wit_bindgen_wrpc::generate!({
+///     inline: r#"
+///     package test:unsupported;
+///
+///     world test {
+///         import f: func(s: string);
+///         export g: func();
+///     }
+///     "#,
+///     async: true,
 /// });
 /// ```
 #[cfg(doctest)]

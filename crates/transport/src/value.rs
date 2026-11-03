@@ -7,6 +7,7 @@ use core::marker::PhantomData;
 use core::mem;
 use core::ops::{Deref, DerefMut};
 use core::pin::Pin;
+use core::str;
 
 use bytes::{BufMut as _, Bytes, BytesMut};
 use futures::stream::{self, FuturesUnordered};
@@ -260,6 +261,7 @@ impl_deferred_sync!(CoreVecDecoderBytes);
 impl_deferred_sync!(CoreVecEncoderBytes);
 impl_deferred_sync!(Utf8Codec);
 impl_deferred_sync!(PrimValEncoder);
+impl_deferred_sync!(Utf8BytesEncoder);
 impl_deferred_sync!(Leb128Encoder);
 impl_deferred_sync!(Leb128DecoderI8);
 impl_deferred_sync!(Leb128DecoderU8);
@@ -1480,6 +1482,31 @@ impl<W: Sink> Encode<W> for &String {
 impl Decode for String {
     type Decoder = CoreNameDecoder;
     type ListDecoder = CoreVecDecoder<Self::Decoder>;
+}
+
+/// Bytes encoded as a `string`, validated to be UTF-8 when encoded
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[repr(transparent)]
+pub struct Utf8Bytes<T>(pub T);
+
+/// Encoder for [`Utf8Bytes`]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct Utf8BytesEncoder;
+
+impl<T: AsRef<[u8]>> tokio_util::codec::Encoder<Utf8Bytes<T>> for Utf8BytesEncoder {
+    type Error = std::io::Error;
+
+    #[instrument(level = "trace", skip_all, fields(ty = "string"))]
+    fn encode(&mut self, item: Utf8Bytes<T>, dst: &mut BytesMut) -> Result<(), Self::Error> {
+        let Utf8Bytes(item) = item;
+        let item = str::from_utf8(item.as_ref())
+            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))?;
+        CoreNameEncoder.encode(item, dst)
+    }
+}
+
+impl<T: AsRef<[u8]>, W: Sink> Encode<W> for Utf8Bytes<T> {
+    type Encoder = Utf8BytesEncoder;
 }
 
 impl<W: Sink> Encode<W> for Bytes {

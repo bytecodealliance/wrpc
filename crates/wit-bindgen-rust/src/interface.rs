@@ -19,6 +19,8 @@ pub struct InterfaceGenerator<'a> {
     pub in_import: bool,
     pub(super) r#gen: &'a mut RustWrpc,
     pub resolve: &'a Resolve,
+    pub(super) decoding: bool,
+    pub(super) encoding: bool,
 }
 
 impl InterfaceGenerator<'_> {
@@ -60,46 +62,7 @@ impl InterfaceGenerator<'_> {
             let (_, methods) = traits.get_mut(&resource).unwrap();
 
             let prev = mem::take(&mut self.src);
-            let mut sig = FnSig {
-                use_item_name: true,
-                private: true,
-                ..Default::default()
-            };
-            sig.self_arg = Some("&self".into());
-            sig.self_is_first_param = false;
-
-            self.print_docs_and_params(func, &sig);
-            match func.result.iter().len() {
-                0 => {
-                    uwrite!(
-                        self.src,
-                        " -> impl ::core::future::Future<Output = {}::Result<()>> + ::core::marker::Send",
-                        self.r#gen.anyhow_path()
-                    );
-                }
-                1 => {
-                    uwrite!(
-                        self.src,
-                        " -> impl ::core::future::Future<Output = {}::Result<",
-                        self.r#gen.anyhow_path()
-                    );
-                    let ty = func.result.iter().next().unwrap();
-                    self.print_ty(ty, true, false);
-                    self.push_str(">> + ::core::marker::Send");
-                }
-                _ => {
-                    uwrite!(
-                        self.src,
-                        " -> impl ::core::future::Future<Output = {}::Result<(",
-                        self.r#gen.anyhow_path()
-                    );
-                    for ty in func.result.iter() {
-                        self.print_ty(ty, true, false);
-                        self.push_str(", ");
-                    }
-                    self.push_str(")>> + ::core::marker::Send");
-                }
-            }
+            self.print_export_sig(func);
             self.src.push_str(";\n");
             let trait_method = mem::replace(&mut self.src, prev);
             methods.push(trait_method);
@@ -322,7 +285,17 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve, H: Handler<T::Context> + 
                 self.src,
                 r"
                         ), rx, tx)| {{
-                            let handler = handler.clone();
+                            let handler = handler.clone();"
+            );
+            for (i, param) in func.params.iter().enumerate() {
+                if self.has_raw_strings(&param.ty) {
+                    let ty = self.decoded_ty(&param.ty);
+                    uwrite!(self.src, "let p{i}: {ty} = p{i};");
+                }
+            }
+            uwrite!(
+                self.src,
+                r"
                             ::std::boxed::Box::pin(async move {{"
             );
             let (trait_name, name) = match func.kind {
@@ -355,8 +328,9 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve, H: Handler<T::Context> + 
                 tracing = self.r#gen.tracing_path(),
                 wit_name = func.name,
             );
-            for i in 0..func.params.len() {
-                uwrite!(self.src, ", p{i}");
+            for (i, param) in func.params.iter().enumerate() {
+                let p = self.decoded_value(&param.ty, &format!("p{i}"));
+                uwrite!(self.src, ", {p}");
             }
             uwrite!(
                 self.src,
@@ -365,9 +339,10 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve, H: Handler<T::Context> + 
                                     Ok(results) => {{
                                         match tx(",
             );
-            if func.result.iter().len() == 1 {
+            if let Some(ty) = &func.result {
                 // wrap single-element results into a tuple for correct indexing
-                self.push_str("(results,)");
+                let results = self.encoded_value(ty, "results", false);
+                uwrite!(self.src, "({results},)");
             } else {
                 self.push_str("results");
             }
@@ -449,6 +424,94 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve, H: Handler<T::Context> + 
         true
     }
 
+    fn print_export_sig(&mut self, func: &Function) {
+        let mut sig = FnSig {
+            use_item_name: true,
+            private: true,
+            ..Default::default()
+        };
+        sig.self_arg = Some("&self".into());
+        sig.self_is_first_param = false;
+
+        self.print_docs_and_params(func, &sig);
+        match func.result.iter().len() {
+            0 => {
+                uwrite!(
+                    self.src,
+                    " -> impl ::core::future::Future<Output = {}::Result<()>> + ::core::marker::Send",
+                    self.r#gen.anyhow_path()
+                );
+            }
+            1 => {
+                uwrite!(
+                    self.src,
+                    " -> impl ::core::future::Future<Output = {}::Result<",
+                    self.r#gen.anyhow_path()
+                );
+                let ty = func.result.iter().next().unwrap();
+                self.print_ty(ty, true, false);
+                self.push_str(">> + ::core::marker::Send");
+            }
+            _ => {
+                uwrite!(
+                    self.src,
+                    " -> impl ::core::future::Future<Output = {}::Result<(",
+                    self.r#gen.anyhow_path()
+                );
+                for ty in func.result.iter() {
+                    self.print_ty(ty, true, false);
+                    self.push_str(", ");
+                }
+                self.push_str(")>> + ::core::marker::Send");
+            }
+        }
+    }
+
+    pub(super) fn generate_stub<'a>(
+        &mut self,
+        interface: Option<InterfaceId>,
+        funcs: impl Iterator<Item = &'a Function>,
+    ) {
+        let path = match interface {
+            Some(id) => format!("{}::", self.path_to_interface(id).unwrap()),
+            None => String::default(),
+        };
+        let mut traits = BTreeMap::default();
+        traits.insert(None, (format!("{path}Handler"), String::default()));
+        if let Some(id) = interface {
+            for (name, id) in &self.resolve.interfaces[id].types {
+                if let TypeDefKind::Resource = self.resolve.types[*id].kind {
+                    let camel = name.to_upper_camel_case();
+                    traits.insert(
+                        Some(*id),
+                        (format!("{path}Handler{camel}"), String::default()),
+                    );
+                }
+            }
+        }
+
+        for func in funcs {
+            if self.r#gen.skip.contains(&func.name) {
+                continue;
+            }
+            let prev = mem::take(&mut self.src);
+            self.src.push_str("#[allow(unused_variables)]\n");
+            self.print_export_sig(func);
+            self.src.push_str(" { async { ::core::unreachable!() } }\n");
+            let method = mem::replace(&mut self.src, prev);
+            let (.., methods) = traits.get_mut(&func.kind.resource()).unwrap();
+            methods.push_str(&method);
+        }
+
+        let (name, methods) = traits.remove(&None).unwrap();
+        if !methods.is_empty() || !traits.is_empty() {
+            uwriteln!(self.src, "impl<Ctx> {name}<Ctx> for Stub {{\n{methods}}}");
+        }
+        for (name, methods) in traits.values() {
+            uwriteln!(self.src, "impl<Ctx> {name}<Ctx> for Stub {{\n{methods}}}");
+        }
+    }
+
     pub fn generate_imports<'a>(
         &mut self,
         instance: &str,
@@ -464,7 +527,7 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve, H: Handler<T::Context> + 
     }
 
     fn path_to_root(&self) -> String {
-        let mut path_to_root = String::new();
+        let mut path_to_root = String::default();
 
         if let Identifier::Interface(_, key) = self.identifier {
             // Escape the submodule for this interface
@@ -636,11 +699,21 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve, H: Handler<T::Context> + 
         async move {",
         );
 
+        let decoded = func
+            .result
+            .as_ref()
+            .filter(|ty| self.has_raw_strings(ty))
+            .map(|ty| self.decoded_ty(ty));
+        let result = func
+            .result
+            .as_ref()
+            .map(|ty| self.decoded_value(ty, "wrpc__"));
         if func.result.iter().len() == 0 || (!async_params && paths.is_empty()) {
+            let decoded = decoded.map_or_else(String::default, |ty| format!(": ({ty},)"));
             uwrite!(
                 self.src,
                 r#"
-                let wrpc__ = {anyhow}::Context::context(
+                let wrpc__{decoded} = {anyhow}::Context::context(
                     {wrpc_transport}::InvokeExt::invoke_values_blocking(wrpc__, cx__, "{instance}", "{}", ({params}), "#,
                 rpc_func_name(func),
                 wrpc_transport = self.r#gen.wrpc_transport_path(),
@@ -668,15 +741,18 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve, H: Handler<T::Context> + 
                 r#"
                     "failed to invoke `{fqn}`")?;"#,
             );
-            if func.result.iter().len() == 1 {
+            if let Some(result) = result {
                 self.push_str("let (wrpc__,) = wrpc__;\n");
+                uwriteln!(self.src, "Ok({result})");
+            } else {
+                self.push_str("Ok(wrpc__)\n");
             }
-            self.push_str("Ok(wrpc__)\n");
         } else {
+            let decoded = decoded.map_or_else(String::default, |ty| format!(": (({ty},), _)"));
             uwrite!(
                 self.src,
                 r#"
-                let (wrpc__, io__) = {anyhow}::Context::context(
+                let (wrpc__, io__){decoded} = {anyhow}::Context::context(
                     {wrpc_transport}::InvokeExt::invoke_values(wrpc__, cx__, "{instance}", "{}", ({params}), "#,
                 rpc_func_name(func),
                 wrpc_transport = self.r#gen.wrpc_transport_path(),
@@ -704,9 +780,9 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve, H: Handler<T::Context> + 
                 r#"
                     "failed to invoke `{fqn}`")?;"#,
             );
-            if func.result.iter().len() == 1 {
+            if let Some(result) = result {
                 self.push_str("let (wrpc__,) = wrpc__;\n");
-                self.push_str("Ok((wrpc__, io__))\n");
+                uwriteln!(self.src, "Ok(({result}, io__))");
             } else {
                 self.push_str("let (");
                 for i in 0..func.result.iter().len() {
@@ -859,7 +935,7 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve, H: Handler<T::Context> + 
             let id = dealias(self.resolve, *id);
             match &self.resolve.types[id].kind {
                 TypeDefKind::Type(Type::String) => {
-                    self.push_str("&'a str");
+                    self.print_borrowed_str();
                     return;
                 }
                 TypeDefKind::List(element) => {
@@ -886,10 +962,18 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve, H: Handler<T::Context> + 
             Type::F64 => self.push_str("f64"),
             Type::Char => self.push_str("char"),
             Type::String => {
-                if owned {
-                    self.push_str("String");
+                if !owned {
+                    self.print_borrowed_str();
+                } else if self.r#gen.opts.raw_strings && self.encoding {
+                    uwrite!(
+                        self.src,
+                        "{}::Utf8Bytes<Vec<u8>>",
+                        self.r#gen.wrpc_transport_path()
+                    );
+                } else if self.r#gen.opts.raw_strings && !self.decoding {
+                    self.push_str("Vec<u8>");
                 } else {
-                    self.push_str("&'a str");
+                    self.push_str("String");
                 }
             }
             Type::ErrorContext => self.push_str("()"),
@@ -959,8 +1043,156 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve, H: Handler<T::Context> + 
             Type::F32 => self.push_str("f32"),
             Type::F64 => self.push_str("f64"),
             Type::Char => self.push_str("char"),
-            Type::String => self.push_str("&'a str"),
+            Type::String => self.print_borrowed_str(),
             Type::ErrorContext => self.push_str("()"),
+        }
+    }
+
+    fn print_borrowed_str(&mut self) {
+        if self.r#gen.opts.raw_strings {
+            self.push_str("&'a [u8]");
+        } else {
+            self.push_str("&'a str");
+        }
+    }
+
+    fn has_raw_strings(&self, ty: &Type) -> bool {
+        if !self.r#gen.opts.raw_strings {
+            return false;
+        }
+        let Type::Id(id) = ty else {
+            return matches!(ty, Type::String);
+        };
+        let ty = &self.resolve.types[*id];
+        if ty.name.is_some() {
+            if let Some(TypeGeneration::Remap(..)) =
+                self.r#gen.with.get(&full_wit_type_name(self.resolve, *id))
+            {
+                return false;
+            }
+            if let TypeOwner::Interface(id) = ty.owner
+                && self.r#gen.interface_names[&id].remapped
+            {
+                return false;
+            }
+        }
+        match &ty.kind {
+            TypeDefKind::Type(ty)
+            | TypeDefKind::List(ty)
+            | TypeDefKind::FixedLengthList(ty, ..)
+            | TypeDefKind::Option(ty) => self.has_raw_strings(ty),
+            TypeDefKind::Result(Result_ { ok, err }) => {
+                ok.iter().chain(err).any(|ty| self.has_raw_strings(ty))
+            }
+            TypeDefKind::Tuple(Tuple { types }) => types.iter().any(|ty| self.has_raw_strings(ty)),
+            TypeDefKind::Future(ty) | TypeDefKind::Stream(ty) => {
+                ty.as_ref().is_some_and(|ty| self.has_raw_strings(ty))
+            }
+            _ => false,
+        }
+    }
+
+    fn print_decoded_ty(&mut self, ty: &Type, submodule: bool) {
+        let decoding = mem::replace(&mut self.decoding, true);
+        self.print_ty(ty, true, submodule);
+        self.decoding = decoding;
+    }
+
+    fn decoded_ty(&mut self, ty: &Type) -> String {
+        let prev = mem::take(&mut self.src);
+        self.print_decoded_ty(ty, false);
+        mem::replace(&mut self.src, prev).to_string()
+    }
+
+    fn print_encoded_ty(&mut self, ty: &Type, submodule: bool) {
+        let encoding = mem::replace(&mut self.encoding, true);
+        self.print_ty(ty, true, submodule);
+        self.encoding = encoding;
+    }
+
+    fn decoded_value(&self, ty: &Type, v: &str) -> String {
+        self.map_raw_strings(ty, v, false, &|v| format!("{v}.into_bytes()"))
+    }
+
+    fn encoded_value(&self, ty: &Type, v: &str, by_ref: bool) -> String {
+        let wrpc_transport = self.r#gen.wrpc_transport_path();
+        self.map_raw_strings(ty, v, by_ref, &|v| {
+            format!("{wrpc_transport}::Utf8Bytes({v})")
+        })
+    }
+
+    fn map_raw_strings(
+        &self,
+        ty: &Type,
+        v: &str,
+        by_ref: bool,
+        string: &dyn Fn(&str) -> String,
+    ) -> String {
+        if !self.has_raw_strings(ty) {
+            return v.to_string();
+        }
+        let Type::Id(id) = ty else {
+            return string(v);
+        };
+        let futures = self.r#gen.futures_path();
+        match &self.resolve.types[*id].kind {
+            TypeDefKind::Type(ty) => self.map_raw_strings(ty, v, by_ref, string),
+            TypeDefKind::List(ty) => format!(
+                "{v}.{}(|v| {}).collect::<Vec<_>>()",
+                if by_ref {
+                    "iter().map"
+                } else {
+                    "into_iter().map"
+                },
+                self.map_raw_strings(ty, "v", by_ref, string)
+            ),
+            TypeDefKind::FixedLengthList(ty, ..) => format!(
+                "{v}.{}(|v| {})",
+                if by_ref { "each_ref().map" } else { "map" },
+                self.map_raw_strings(ty, "v", by_ref, string)
+            ),
+            TypeDefKind::Option(ty) => format!(
+                "{v}.{}(|v| {})",
+                if by_ref { "as_ref().map" } else { "map" },
+                self.map_raw_strings(ty, "v", by_ref, string)
+            ),
+            TypeDefKind::Result(Result_ { ok, err }) => {
+                let ok = ok.as_ref().map_or("v".into(), |ty| {
+                    self.map_raw_strings(ty, "v", by_ref, string)
+                });
+                let err = err.as_ref().map_or("v".into(), |ty| {
+                    self.map_raw_strings(ty, "v", by_ref, string)
+                });
+                format!(
+                    "{v}.{}(|v| {ok}).map_err(|v| {err})",
+                    if by_ref { "as_ref().map" } else { "map" }
+                )
+            }
+            TypeDefKind::Tuple(Tuple { types }) => {
+                let (names, values): (Vec<_>, Vec<_>) = types
+                    .iter()
+                    .enumerate()
+                    .map(|(i, ty)| {
+                        let name = format!("v{i}");
+                        let value = self.map_raw_strings(ty, &name, by_ref, string);
+                        (name, value)
+                    })
+                    .unzip();
+                format!(
+                    "{{ let ({},) = {v}; ({},) }}",
+                    names.join(", "),
+                    values.join(", ")
+                )
+            }
+            TypeDefKind::Future(Some(ty)) => format!(
+                "::std::boxed::Box::pin({futures}::FutureExt::map({v}, |v| {})) as ::core::pin::Pin<::std::boxed::Box<dyn ::core::future::Future<Output = _> + ::core::marker::Send>>",
+                self.map_raw_strings(ty, "v", by_ref, string)
+            ),
+            TypeDefKind::Stream(Some(ty)) => format!(
+                "::std::boxed::Box::pin({futures}::StreamExt::map({v}, |v| v.into_iter().map(|v| {}).collect::<Vec<_>>())) as ::core::pin::Pin<::std::boxed::Box<dyn {futures}::Stream<Item = _> + ::core::marker::Send>>",
+                self.map_raw_strings(ty, "v", by_ref, string)
+            ),
+            _ => unreachable!(),
         }
     }
 
@@ -1058,7 +1290,9 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve, H: Handler<T::Context> + 
 
     fn print_tyid(&mut self, id: TypeId, owned: bool, submodule: bool) {
         let ty = &self.resolve.types[id];
-        if let Some(name) = &ty.name {
+        if let Some(name) = &ty.name
+            && !((self.decoding || self.encoding) && self.has_raw_strings(&Type::Id(id)))
+        {
             let full_wit_type_name = full_wit_type_name(self.resolve, id);
             if let Some(TypeGeneration::Remap(remapped_path)) =
                 self.r#gen.with.get(&full_wit_type_name)
@@ -1321,7 +1555,7 @@ mod {mod_name} {{
                 for Field { name, ty, .. } in fields {
                     let name = to_rust_ident(name);
                     uwrite!(self.src, "{name}: <");
-                    self.print_ty(ty, true, true);
+                    self.print_encoded_ty(ty, true);
                     uwriteln!(self.src, " as {wrpc_transport}::Encode<W>>::Encoder,");
                 }
             } else {
@@ -1424,10 +1658,10 @@ mod {mod_name} {{
                 for Field { name, ty, .. } in fields {
                     let name = to_rust_ident(name);
                     uwrite!(self.src, "c_{name}: <");
-                    self.print_ty(ty, true, true);
+                    self.print_decoded_ty(ty, true);
                     uwriteln!(self.src, " as {wrpc_transport}::Decode>::Decoder,");
                     uwrite!(self.src, "v_{name}: ::core::option::Option<");
-                    self.print_ty(ty, true, true);
+                    self.print_decoded_ty(ty, true);
                     uwriteln!(self.src, ">,");
                 }
             } else {
@@ -1545,9 +1779,10 @@ mod {mod_name} {{
                 );
             }
             self.push_str("Ok(Some(Self::Item{\n");
-            for Field { name, .. } in fields {
+            for Field { name, ty, .. } in fields {
                 let name = to_rust_ident(name);
-                uwriteln!(self.src, "{name}: self.v_{name}.take().unwrap(),");
+                let v = self.decoded_value(ty, &format!("self.v_{name}.take().unwrap()"));
+                uwriteln!(self.src, "{name}: {v},");
             }
             self.push_str("}))\n");
             self.push_str("}\n");
@@ -1558,6 +1793,7 @@ mod {mod_name} {{
                 names.push(format!("&super::{name}"));
             }
             for name in names {
+                let by_ref = name.starts_with('&');
                 uwriteln!(
                     self.src,
                     r#"
@@ -1579,9 +1815,10 @@ mod {mod_name} {{
                     }
                     self.push_str("} = item;\n");
 
-                    for Field { name, .. } in fields {
+                    for Field { name, ty, .. } in fields {
                         let name = to_rust_ident(name);
-                        uwriteln!(self.src, "self.{name}.encode(f_{name}, &mut dst)?;");
+                        let v = self.encoded_value(ty, &format!("f_{name}"), by_ref);
+                        uwriteln!(self.src, "self.{name}.encode({v}, &mut dst)?;");
                     }
                     uwriteln!(
                         self.src,
@@ -1632,6 +1869,16 @@ mod {mod_name} {{
                 self.push_str(&name);
                 self.push_str(" {}\n");
             }
+        }
+    }
+
+    fn define_type(&mut self, name: &str, id: TypeId) {
+        let equal = self.r#gen.types.get_representative_type(id);
+        if !self.r#gen.opts.merge_structurally_equal_types() || equal == id {
+            wit_bindgen_core::define_type(self, name, id);
+        } else {
+            let docs = &self.resolve.types[id].docs;
+            self.type_alias(id, name, &Type::Id(equal), docs);
         }
     }
 
@@ -2016,6 +2263,7 @@ mod {mod_name} {{
                     ]);
                 }
                 for ty in names {
+                    let by_ref = ty.starts_with('&');
                     uwrite!(
                         self.src,
                         r#"
@@ -2037,13 +2285,14 @@ mod {mod_name} {{
                     ) in cases.iter().enumerate()
                     {
                         let case = case_name.to_upper_camel_case();
-                        if ty.is_some() {
+                        if let Some(ty) = ty {
+                            let payload = self.encoded_value(ty, "payload", by_ref);
                             uwrite!(
                                 self.src,
                                 r"
                 super::{name}::{case}(payload) => {{
                     {wasm_tokio}::Leb128Encoder.encode({i}_u32, dst)?;
-                    self.0 = {wrpc_transport}::Encode::<W>::encode(payload, &mut ::core::default::Default::default(), dst)?;
+                    self.0 = {wrpc_transport}::Encode::<W>::encode({payload}, &mut ::core::default::Default::default(), dst)?;
                     Ok(())
                 }},"
                             );
@@ -2084,7 +2333,7 @@ mod {mod_name} {{
                             r"
                 {case}(<"
                         );
-                        self.print_ty(ty, true, true);
+                        self.print_decoded_ty(ty, true);
                         uwriteln!(self.src, " as {wrpc_transport}::Decode>::Decoder),");
                     }
                 }
@@ -2203,7 +2452,8 @@ mod {mod_name} {{
                 } in cases
                 {
                     let case = case_name.to_upper_camel_case();
-                    if ty.is_some() {
+                    if let Some(ty) = ty {
+                        let payload = self.decoded_value(ty, "payload");
                         uwriteln!(
                             self.src,
                             r"
@@ -2212,7 +2462,7 @@ mod {mod_name} {{
                                 return Ok(None)
                             }};
                             *self = Self::Deferred({wrpc_transport}::Deferred::<{wrpc_transport}::BufferedIncoming>::take_deferred(dec));
-                            Ok(Some(super::{name}::{case}(payload)))
+                            Ok(Some(super::{name}::{case}({payload})))
                         }},"
                         );
                     }

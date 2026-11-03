@@ -803,6 +803,145 @@ async fn rust_oneshot_raw() -> anyhow::Result<()> {
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 #[instrument(ret)]
+async fn rust_oneshot_raw_strings_invalid_utf8() -> anyhow::Result<()> {
+    mod bindings {
+        wit_bindgen_wrpc::generate!({
+            inline: "
+                package wrpc-test:raw-strings;
+
+                interface strings {
+                    bar: func() -> string;
+                }
+
+                world client {
+                    import strings;
+                }
+            ",
+            raw_strings,
+        });
+    }
+
+    let (clt, srv) = Oneshot::duplex(1024);
+    let (rx, tx) = split(srv);
+    let srv = Arc::new(wrpc_transport::frame::Server::default());
+    let invocations = srv
+        .serve_values::<(), (Bytes,)>("wrpc-test:raw-strings/strings", "bar", Arc::default())
+        .await?;
+    join!(
+        async {
+            bindings::wrpc_test::raw_strings::strings::bar(&clt, ())
+                .await
+                .expect_err("invalid UTF-8 must be rejected");
+        },
+        async {
+            srv.accept((), tx, BufReader::new(rx))
+                .await
+                .expect("failed to accept connection");
+            let (.., tx) = pin!(invocations)
+                .try_next()
+                .await
+                .expect("failed to accept invocation")
+                .expect("unexpected end of stream");
+            tx((Bytes::from_static(b"\xff"),))
+                .await
+                .expect("failed to transmit response");
+        }
+    );
+    Ok(())
+}
+
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+#[instrument(ret)]
+async fn rust_oneshot_raw_strings_invalid_utf8_result() -> anyhow::Result<()> {
+    mod bindings {
+        wit_bindgen_wrpc::generate!({
+            inline: "
+                package wrpc-test:raw-strings;
+
+                interface strings {
+                    record rec {
+                        s: string,
+                        l: list<string>,
+                        o: option<string>,
+                        t: tuple<string, u8>,
+                        r: result<string, string>,
+                    }
+                    variant var { s(string), l(list<string>) }
+                    bar: func() -> string;
+                    baz: func() -> rec;
+                    qux: func() -> var;
+                }
+
+                world server {
+                    export strings;
+                }
+            ",
+            raw_strings,
+        });
+    }
+    use bindings::exports::wrpc_test::raw_strings::strings::{Rec, Var};
+
+    #[derive(Clone, Copy)]
+    struct Handler;
+
+    impl<C: Send + Sync> bindings::exports::wrpc_test::raw_strings::strings::Handler<C> for Handler {
+        async fn bar(&self, _cx: C) -> anyhow::Result<Vec<u8>> {
+            Ok(b"\xff".to_vec())
+        }
+
+        async fn baz(&self, _cx: C) -> anyhow::Result<Rec> {
+            Ok(Rec {
+                s: b"\xff".to_vec(),
+                l: Vec::default(),
+                o: None,
+                t: (Vec::default(), 0),
+                r: Ok(Vec::default()),
+            })
+        }
+
+        async fn qux(&self, _cx: C) -> anyhow::Result<Var> {
+            Ok(Var::S(b"\xff".to_vec()))
+        }
+    }
+
+    let srv = Arc::new(wrpc_transport::frame::Server::default());
+    let invocations = bindings::serve(&*srv, Handler).await?;
+    let mut invocations = stream::select_all(invocations.into_iter().map(|(.., s)| s));
+    for func in ["bar", "baz", "qux"] {
+        let (clt, conn) = Oneshot::duplex(1024);
+        let (rx, tx) = split(conn);
+        join!(
+            async {
+                clt.invoke_values_blocking::<_, _, (String,)>(
+                    (),
+                    "wrpc-test:raw-strings/strings",
+                    func,
+                    (),
+                    &[[]; 0],
+                )
+                .await
+                .expect_err("invalid UTF-8 must not be transmitted");
+            },
+            async {
+                srv.accept((), tx, BufReader::new(rx))
+                    .await
+                    .expect("failed to accept connection");
+                let invocation = invocations
+                    .try_next()
+                    .await
+                    .expect("failed to accept invocation")
+                    .expect("unexpected end of stream");
+                invocation
+                    .await
+                    .expect_err("invalid UTF-8 must not be transmitted");
+            }
+        );
+    }
+    Ok(())
+}
+
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+#[instrument(ret)]
 async fn rust_oneshot_duplex() -> anyhow::Result<()> {
     let (clt, srv) = Oneshot::duplex(1024);
     let (rx, tx) = split(srv);

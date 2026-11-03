@@ -98,8 +98,12 @@ impl Parse for Config {
                             None => Source::Inline(s.value(), None),
                         });
                     }
+                    Opt::RawStrings => opts.raw_strings = true,
                     Opt::Skip(list) => opts.skip.extend(list.iter().map(syn::LitStr::value)),
                     Opt::BitflagsPath(path) => opts.bitflags_path = Some(path.value()),
+                    Opt::Stubs => {
+                        opts.stubs = true;
+                    }
                     Opt::AdditionalDerives(paths) => {
                         opts.additional_derive_attributes = paths
                             .into_iter()
@@ -122,6 +126,9 @@ impl Parse for Config {
                     }
                     Opt::Debug(enable) => {
                         debug = enable.value();
+                    }
+                    Opt::MergeStructurallyEqualTypes(enable) => {
+                        opts.merge_structurally_equal_types = Some(Some(enable.value()));
                     }
                     Opt::AnyhowPath(path) => {
                         opts.anyhow_path = Some(path.value());
@@ -295,12 +302,14 @@ impl Config {
 }
 
 mod kw {
+    syn::custom_keyword!(raw_strings);
     syn::custom_keyword!(skip);
     syn::custom_keyword!(world);
     syn::custom_keyword!(path);
     syn::custom_keyword!(inline);
     syn::custom_keyword!(bitflags_path);
     syn::custom_keyword!(exports);
+    syn::custom_keyword!(stubs);
     syn::custom_keyword!(additional_derives);
     syn::custom_keyword!(additional_derives_ignore);
     syn::custom_keyword!(with);
@@ -308,6 +317,7 @@ mod kw {
     syn::custom_keyword!(generate_unused_types);
     syn::custom_keyword!(features);
     syn::custom_keyword!(debug);
+    syn::custom_keyword!(merge_structurally_equal_types);
     syn::custom_keyword!(anyhow_path);
     syn::custom_keyword!(bytes_path);
     syn::custom_keyword!(futures_path);
@@ -322,8 +332,10 @@ enum Opt {
     World(syn::LitStr),
     Path(Span, Vec<syn::LitStr>),
     Inline(syn::LitStr),
+    RawStrings,
     Skip(Vec<syn::LitStr>),
     BitflagsPath(syn::LitStr),
+    Stubs,
     // Parse as paths so we can take the concrete types/macro names rather than raw strings
     AdditionalDerives(Vec<syn::Path>),
     AdditionalDerivesIgnore(Vec<syn::LitStr>),
@@ -332,6 +344,7 @@ enum Opt {
     GenerateUnusedTypes(syn::LitBool),
     Features(Vec<syn::LitStr>),
     Debug(syn::LitBool),
+    MergeStructurallyEqualTypes(syn::LitBool),
     AnyhowPath(syn::LitStr),
     BytesPath(syn::LitStr),
     FuturesPath(syn::LitStr),
@@ -368,6 +381,9 @@ impl Parse for Opt {
             input.parse::<kw::world>()?;
             input.parse::<Token![:]>()?;
             Ok(Opt::World(input.parse()?))
+        } else if l.peek(kw::raw_strings) {
+            input.parse::<kw::raw_strings>()?;
+            Ok(Opt::RawStrings)
         } else if l.peek(kw::skip) {
             input.parse::<kw::skip>()?;
             input.parse::<Token![:]>()?;
@@ -379,6 +395,9 @@ impl Parse for Opt {
             input.parse::<kw::bitflags_path>()?;
             input.parse::<Token![:]>()?;
             Ok(Opt::BitflagsPath(input.parse()?))
+        } else if l.peek(kw::stubs) {
+            input.parse::<kw::stubs>()?;
+            Ok(Opt::Stubs)
         } else if l.peek(kw::additional_derives) {
             input.parse::<kw::additional_derives>()?;
             input.parse::<Token![:]>()?;
@@ -419,6 +438,10 @@ impl Parse for Opt {
             input.parse::<kw::debug>()?;
             input.parse::<Token![:]>()?;
             Ok(Opt::Debug(input.parse()?))
+        } else if l.peek(kw::merge_structurally_equal_types) {
+            input.parse::<kw::merge_structurally_equal_types>()?;
+            input.parse::<Token![:]>()?;
+            Ok(Opt::MergeStructurallyEqualTypes(input.parse()?))
         } else if l.peek(kw::anyhow_path) {
             input.parse::<kw::anyhow_path>()?;
             input.parse::<Token![:]>()?;
