@@ -156,6 +156,13 @@ struct Component {
     /// The WIT world that's being used with this component, loaded from
     /// `test.wit`.
     bindgen: Bindgen,
+
+    /// The contents of the test file itself.
+    contents: String,
+
+    /// The raw language-specific `[lang]` table of the test configuration,
+    /// re-parsed by `deserialize_lang_config`.
+    lang_config: Option<HashMap<String, toml::Value>>,
 }
 
 #[derive(Clone)]
@@ -388,6 +395,8 @@ impl Runner<'_> {
             language,
             bindgen,
             kind,
+            contents,
+            lang_config: config.lang,
         })
     }
 
@@ -1080,4 +1089,35 @@ fn write_if_different(path: &Path, contents: impl AsRef<[u8]>) -> Result<bool> {
     }
     fs::write(path, contents).with_context(|| format!("failed to write {path:?}"))?;
     Ok(true)
+}
+
+impl Component {
+    /// Helper to convert `RuntimeTestConfig` to a `RuntimeTestConfig<T>` and
+    /// then extract the `T`.
+    ///
+    /// This is called from within each language's implementation with a
+    /// specific `T` necessary for that language.
+    fn deserialize_lang_config<T>(&self) -> Result<T>
+    where
+        T: Default + serde::de::DeserializeOwned,
+    {
+        // If this test has no language-specific configuration then return this
+        // language's default configuration.
+        if self.lang_config.is_none() {
+            return Ok(T::default());
+        }
+
+        // Otherwise re-parse the TOML at the top of the file but this time
+        // with the specific `T` that we're interested in. This is expected
+        // to then produce a value in the `lang` field since
+        // `self.lang_config.is_some()` is true.
+        let config = config::parse_test_config::<config::RuntimeTestConfig<T>>(
+            &self.contents,
+            self.language
+                .obj()
+                .comment_prefix_for_test_config()
+                .unwrap(),
+        )?;
+        Ok(config.lang.unwrap())
+    }
 }

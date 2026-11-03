@@ -1,4 +1,4 @@
-use crate::config::{self, RuntimeTestConfig, StringList};
+use crate::config::StringList;
 use crate::{Component, LanguageMethods, Runner, Test, Verify};
 use anyhow::{Context, Result, bail};
 use clap::Parser;
@@ -6,7 +6,6 @@ use heck::ToSnakeCase;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::env;
-use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -481,13 +480,8 @@ impl Runner<'_> {
         let mut modules = String::default();
         let mut rustflags = Vec::default();
         for (module, component, bindings) in &components {
-            let contents = fs::read_to_string(&component.path)?;
-            let config =
-                config::parse_test_config::<RuntimeTestConfig<RustConfig>>(&contents, "//@")
-                    .with_context(|| format!("failed to parse {:?} config", component.path))?;
-            if let Some(config) = config.lang {
-                rustflags.extend(Vec::from(config.rustflags));
-            }
+            let config = component.deserialize_lang_config::<RustConfig>()?;
+            rustflags.extend(Vec::from(config.rustflags));
             let bindings = bindings.join(format!("{}.rs", component.bindgen.world.to_snake_case()));
             let src = component.path.canonicalize()?;
             modules.push_str(&format!(
