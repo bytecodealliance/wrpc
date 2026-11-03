@@ -75,7 +75,13 @@ impl LanguageMethods for Rust {
     }
 
     fn should_fail_runtime(&self, name: &str) -> bool {
-        name == "map"
+        match name {
+            "map" => true,
+            // The harness does not support `externs`, i.e. linking bindings
+            // generated in another crate.
+            "xcrate" => true,
+            _ => false,
+        }
     }
 
     fn should_fail_runtime_component(&self, name: &str, component: &str) -> bool {
