@@ -42,7 +42,9 @@ impl LanguageMethods for Js {
     }
 
     fn should_fail_runtime(&self, name: &str) -> bool {
-        name == "map"
+        // The wRPC JavaScript generator does not yet support fixed-length
+        // lists or `map`.
+        matches!(name, "fixed-length-lists" | "map")
     }
 
     fn prepare(&self, _runner: &mut Runner<'_>) -> Result<()> {
