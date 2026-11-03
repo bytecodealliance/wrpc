@@ -48,7 +48,17 @@ impl LanguageMethods for Go {
     }
 
     fn should_fail_runtime(&self, name: &str) -> bool {
-        name == "map"
+        matches!(
+            name,
+            // The wRPC Go generator does not yet support fixed-length lists.
+            "fixed-length-lists"
+                // The wRPC Go generator does not yet support `map`.
+                | "map"
+                // The wRPC Go generator does not yet support bare `stream` types.
+                | "simple-stream"
+                // The wRPC Go generator has no `--generate-unused-types` option.
+                | "unused-types"
+        )
     }
 
     fn prepare(&self, _runner: &mut Runner<'_>) -> Result<()> {
