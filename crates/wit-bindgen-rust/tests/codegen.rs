@@ -436,3 +436,17 @@ mod raw_strings_with {
         }
     });
 }
+
+mod macro_string_path {
+    wit_bindgen_wrpc::generate!({
+        inline: r#"
+        package test:paths;
+
+        world test {
+            import paths:path1/test;
+        }
+        "#,
+        path: concat!(env!("CARGO_MANIFEST_DIR"), "/tests/wit/path1"),
+        generate_all,
+    });
+}

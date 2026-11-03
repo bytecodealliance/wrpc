@@ -26,3 +26,7 @@ tracing = { workspace = true }
 wasm-tokio = { workspace = true }
 wit-bindgen-wrpc-rust-macro = { workspace = true }
 wrpc-transport = { workspace = true }
+
+[features]
+default = ["macro-string"]
+macro-string = ["wit-bindgen-wrpc-rust-macro/macro-string"]

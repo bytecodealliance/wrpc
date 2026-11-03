@@ -22,9 +22,14 @@ test = false
 
 [dependencies]
 anyhow = { workspace = true }
+macro-string = { workspace = true, optional = true }
 prettyplease = { workspace = true }
 proc-macro2 = { workspace = true }
 quote = { workspace = true }
 syn = { workspace = true, features = ["clone-impls", "full", "parsing", "printing", "proc-macro"] }
 wit-bindgen-core = { workspace = true }
 wit-bindgen-wrpc-rust = { workspace = true }
+
+[features]
+default = ["macro-string"]
+macro-string = ["dep:macro-string"]
