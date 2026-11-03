@@ -14,7 +14,7 @@ pub async fn run(
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
     println!("test cancelling an import in progress");
     {
-        let (tx, rx) = oneshot::channel();
+        let (mut tx, rx) = oneshot::channel();
         let mut import = Box::pin(pending_import(
             wrpc,
             (),
@@ -27,25 +27,27 @@ pub async fn run(
                 .is_pending()
         );
         drop(import);
+        tx.closed().await;
         tx.send(()).unwrap_err();
     }
 
     println!("test cancelling an import before it starts");
     {
-        let (tx, rx) = oneshot::channel();
+        let (mut tx, rx) = oneshot::channel();
         let import = Box::pin(pending_import(
             wrpc,
             (),
             Box::pin(async move { rx.await.unwrap() }),
         ));
         drop(import);
+        tx.closed().await;
         tx.send(()).unwrap_err();
     }
 
     println!("test cancelling an import in the started state");
     {
-        let (tx1, rx1) = oneshot::channel();
-        let (tx2, rx2) = oneshot::channel();
+        let (mut tx1, rx1) = oneshot::channel();
+        let (mut tx2, rx2) = oneshot::channel();
 
         // create a task in the "started" state, but don't complete it yet
         let mut started_import = Box::pin(pending_import(
@@ -85,7 +87,9 @@ pub async fn run(
         backpressure_set(wrpc, (), false).await?;
 
         // both channels should be dropped
+        tx1.closed().await;
         tx1.send(()).unwrap_err();
+        tx2.closed().await;
         tx2.send(()).unwrap_err();
     }
 
@@ -141,7 +145,7 @@ pub async fn run(
         // force the next subtask to start out in the "starting" state, not the
         // "started" state.
         backpressure_set(wrpc, (), true).await?;
-        let (tx2, rx2) = oneshot::channel();
+        let (mut tx2, rx2) = oneshot::channel();
         let mut starting_import = Box::pin(pending_import(
             wrpc,
             (),
@@ -168,6 +172,7 @@ pub async fn run(
 
         // Our future to the import we cancelled shouldn't be able to complete
         // its write.
+        tx2.closed().await;
         tx2.send(()).unwrap_err();
 
         // Complete the other import normally just to assert that it's not

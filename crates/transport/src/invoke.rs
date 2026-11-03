@@ -11,6 +11,7 @@ use bytes::{Bytes, BytesMut};
 use futures::TryStreamExt as _;
 use tokio::{select, try_join};
 use tokio_util::codec::{Encoder as _, FramedRead};
+use tokio_util::task::AbortOnDropHandle;
 use tracing::{Instrument as _, debug, instrument, trace};
 
 use crate::frame::{Incoming, Outgoing};
@@ -123,6 +124,12 @@ impl<T: Invoke> Invoke for TimeoutOwned<T> {
 /// Extension trait for [Invoke]
 pub trait InvokeExt: Invoke {
     /// Invoke function `func` on instance `instance` using typed `Params` and `Results`
+    ///
+    /// Returns the synchronous results along with a future, which completes
+    /// once the asynchronous parameters are transmitted and the asynchronous
+    /// results are received, if there are any. The parameters are transmitted
+    /// by a task spawned on the runtime, the results are received while the
+    /// future is polled; dropping it aborts both.
     #[instrument(level = "trace", skip(self, cx, params, paths))]
     fn invoke_values<P, Params, Results, Paths>(
         &self,
@@ -164,7 +171,7 @@ pub trait InvokeExt: Invoke {
                 .await
                 .context("failed to invoke function")?;
             let mut tx = enc.take_deferred().map(|tx| {
-                tokio::spawn(
+                AbortOnDropHandle::new(tokio::spawn(
                     async {
                         debug!("transmitting async parameters");
                         tx(outgoing)
@@ -172,7 +179,7 @@ pub trait InvokeExt: Invoke {
                             .context("failed to write async parameters")
                     }
                     .in_current_span(),
-                )
+                ))
             });
 
             let mut dec = FramedRead::new(incoming, Results::Decoder::default());
