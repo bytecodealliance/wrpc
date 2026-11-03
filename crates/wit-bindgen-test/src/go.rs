@@ -1,8 +1,9 @@
 use crate::{Component, LanguageMethods, Runner, Test, Verify};
 use anyhow::{Context, Result};
 use clap::Parser;
+use heck::ToSnakeCase;
 use std::env;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 #[derive(Default, Debug, Clone, Parser)]
@@ -81,52 +82,84 @@ impl LanguageMethods for Go {
     }
 }
 
-/// The fixed driver linking a `runner` (client) and `test` (server) into one
-/// Go program, connected over an in-process TCP transport. Mirrors the Rust
-/// driver: it serves the `test` world's exports and runs the `runner` world's
-/// `Run` against a client connected to the in-process listener.
+/// The driver linking a `runner` (client) and its dependencies into one Go
+/// program. Mirrors the Rust driver: each dependency is served over its own
+/// in-process TCP transport and its handler receives an invoker routing its
+/// imports to the following dependencies (if its `NewHandler` takes one); the
+/// `runner` world's `Run` is then called with an invoker routing to all of them.
+/// `NewHandler` returns either one handler for all exported interfaces or one
+/// per interface, in the order of the world's `Serve` parameters.
 const DRIVER: &str = r#"package main
 
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"os"
+	"reflect"
 	"time"
 
+	wrpc "wrpc.io/go"
 	wrpctcp "wrpc.io/go/x/tcp"
 
 	"driver/runner"
-	"driver/test"
+{imports}
 )
 
-func main() {
-	a, err := net.ResolveTCPAddr("tcp", "[::1]:0")
+type route struct {
+	names  map[[2]string]struct{}
+	client wrpc.Invoker
+}
+
+type router []route
+
+func (r router) Invoke(ctx context.Context, instance string, name string, b []byte, paths ...wrpc.SubscribePath) (wrpc.IndexWriteCloser, wrpc.IndexReadCloser, error) {
+	for _, rt := range r {
+		if _, ok := rt.names[[2]string{instance, name}]; ok {
+			return rt.client.Invoke(ctx, instance, name, b, paths...)
+		}
+	}
+	return nil, nil, fmt.Errorf("no component exports `%s#%s`", instance, name)
+}
+
+type recorder struct {
+	wrpc.Server
+	names map[[2]string]struct{}
+}
+
+func (r recorder) Serve(instance string, name string, f wrpc.HandleFunc, paths ...wrpc.SubscribePath) (func() error, error) {
+	r.names[[2]string{instance, name}] = struct{}{}
+	return r.Server.Serve(instance, name, f, paths...)
+}
+
+func serve(ctx context.Context, routes router, serveFn any, newHandler any) router {
+	l, err := net.ListenTCP("tcp", &net.TCPAddr{IP: net.IPv6loopback})
 	if err != nil {
 		panic(err)
 	}
-	l, err := net.ListenTCP("tcp", a)
-	if err != nil {
-		panic(err)
-	}
-	addr := l.Addr().String()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
 	srv := wrpctcp.NewServerWithContext(ctx, l)
-	stop, err := test.Serve(srv, test.NewHandler())
-	if err != nil {
+	rec := recorder{srv, map[[2]string]struct{}{}}
+	h := reflect.ValueOf(newHandler)
+	var hArgs []reflect.Value
+	if h.Type().NumIn() == 1 {
+		hArgs = append(hArgs, reflect.ValueOf(routes))
+	}
+	handlers := h.Call(hArgs)
+	f := reflect.ValueOf(serveFn)
+	args := []reflect.Value{reflect.ValueOf(rec)}
+	n := f.Type().NumIn() - 1
+	if n > 0 && len(handlers) == 0 {
+		panic("NewHandler returned no handlers")
+	}
+	for i := range n {
+		args = append(args, handlers[min(i, len(handlers)-1)])
+	}
+	if err, _ := f.Call(args)[1].Interface().(error); err != nil {
 		panic(err)
 	}
-
 	go func() {
 		for {
-			select {
-			case <-ctx.Done():
-				return
-			default:
-			}
 			accept, err := srv.Accept()
 			if err != nil {
 				if !errors.Is(err, net.ErrClosed) {
@@ -141,17 +174,22 @@ func main() {
 			}()
 		}
 	}()
+	return append(router{{rec.names, wrpctcp.NewInvoker(l.Addr().String())}}, routes...)
+}
 
-	client := wrpctcp.NewInvoker(addr)
+func main() {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var routes router
+	{serve}
+
 	done := make(chan error, 1)
 	go func() {
-		done <- runner.Run(ctx, client)
+		done <- runner.Run(ctx, routes)
 	}()
 	select {
 	case err := <-done:
-		cancel()
-		_ = stop()
-		_ = l.Close()
 		if err != nil {
 			os.Stderr.WriteString(err.Error() + "\n")
 			os.Exit(1)
@@ -177,7 +215,8 @@ impl Runner<'_> {
             .arg("--generate-all")
             .arg("--package")
             .arg(pkg)
-            .arg("--gofmt=false");
+            .arg("--gofmt=false")
+            .args(&component.bindgen.args);
         self.run_command(&mut cmd)
             .context("failed to generate Go bindings")?;
 
@@ -189,12 +228,13 @@ impl Runner<'_> {
     }
 
     /// Builds and runs a single Go runtime test by linking the `runner` and
-    /// `test` into one Go program connected over an in-process TCP transport.
+    /// its dependencies into one Go program connected over in-process TCP
+    /// transports.
     pub(crate) fn go_runtime_test(
         &self,
         case: &Test,
         runner: &Component,
-        tst: &Component,
+        deps: &[&(&Component, PathBuf)],
     ) -> Result<()> {
         let cwd = env::current_dir()?;
         let go_module = match &self.opts.go.go_wrpc_path {
@@ -202,13 +242,27 @@ impl Runner<'_> {
             None => cwd.join("go"),
         };
 
+        let mut name = runner.name.clone();
+        for (dep, ..) in deps {
+            name.push('-');
+            name.push_str(&dep.name);
+        }
         let driver = cwd
             .join(&self.opts.artifacts)
             .join(&case.name)
-            .join(format!("{}-{}-go", runner.name, tst.name));
+            .join(format!("{name}-go"));
 
         self.generate_go_component(runner, &driver.join("runner"), "driver/runner")?;
-        self.generate_go_component(tst, &driver.join("test"), "driver/test")?;
+        let mut imports = String::default();
+        let mut serve = Vec::default();
+        for (dep, ..) in deps.iter().rev() {
+            let pkg = dep.bindgen.world.to_snake_case();
+            self.generate_go_component(dep, &driver.join(&pkg), &format!("driver/{pkg}"))?;
+            imports.push_str(&format!("\t\"driver/{pkg}\"\n"));
+            serve.push(format!(
+                "routes = serve(ctx, routes, {pkg}.Serve, {pkg}.NewHandler)"
+            ));
+        }
 
         super::write_if_different(
             &driver.join("go.mod"),
@@ -217,7 +271,12 @@ impl Runner<'_> {
                 go_module.display(),
             ),
         )?;
-        super::write_if_different(&driver.join("main.go"), DRIVER)?;
+        super::write_if_different(
+            &driver.join("main.go"),
+            DRIVER
+                .replace("{imports}", imports.trim_end())
+                .replace("{serve}", &serve.join("\n\t")),
+        )?;
 
         // The driver module lives under the build artifacts directory, which is
         // nested inside the repository's `go.work`. Disable workspace mode so

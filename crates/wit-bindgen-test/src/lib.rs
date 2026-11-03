@@ -805,10 +805,7 @@ impl Runner<'_> {
     ) -> Result<()> {
         match runner.language {
             Language::Rust => self.rust_runtime_test(case, runner, runner_bindings, deps),
-            Language::Go => match deps {
-                [(test, ..)] => self.go_runtime_test(case, runner, test),
-                _ => bail!("Go runtime tests support exactly one `test` world"),
-            },
+            Language::Go => self.go_runtime_test(case, runner, deps),
             Language::Js => match deps {
                 [(test, test_bindings)] => {
                     self.js_runtime_test(case, runner, runner_bindings, test, test_bindings)
