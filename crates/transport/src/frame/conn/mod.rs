@@ -2,7 +2,6 @@ use core::fmt::{Debug, Display};
 use core::future::poll_fn;
 use core::ops::Bound;
 use core::pin::{Pin, pin};
-use core::sync::atomic::{AtomicBool, Ordering};
 use core::task::{Context, Poll, ready};
 
 use std::collections::BTreeMap;
@@ -420,13 +419,13 @@ pin_project! {
                 let (mut rx, chunk) = rx.into_inner_with_chunk();
                 rx.close();
                 if chunk.is_some() || !rx.as_ref().is_empty() {
-                    this.mark_unprocessed();
+                    this.fail_unprocessed();
                 }
             }
             if !this.path.is_empty() {
                 let mut index = this.state.index.lock().unwrap_or_else(PoisonError::into_inner);
                 if index.release(&this.path) {
-                    this.mark_unprocessed();
+                    this.fail_unprocessed();
                 }
             }
         }
@@ -440,9 +439,9 @@ impl Incoming {
     /// returned by [`Self::finished`] are dropped. Data ingress continues after all handles are
     /// dropped until the peer closes the stream, i.e. it is drained, as long as a future returned
     /// by [`Self::finished`] is held.
-    /// Any data received for a registered path, which was not processed, fails ingress with
-    /// [`std::io::ErrorKind::BrokenPipe`] once all handles are dropped, as does any data
-    /// received after that while draining.
+    /// Dropping a handle, which received data it did not read, fails ingress with
+    /// [`std::io::ErrorKind::BrokenPipe`], as does data received for a declared path, which was
+    /// not read, once all handles are dropped, and any data received after that while draining.
     /// Draining reports the latter, which would otherwise go unnoticed, discards empty frames the
     /// peer may still send to close paths, and reads the stream to its end, which transports
     /// reusing the connection, like HTTP/1, require.
@@ -461,7 +460,7 @@ impl Incoming {
         let state = Arc::new(IngressState {
             index: std::sync::Mutex::new(index),
             err: std::sync::OnceLock::default(),
-            unprocessed: AtomicBool::default(),
+            failed: Notify::default(),
             done: watch::Sender::new(None),
         });
         let (dropped_tx, mut dropped_rx) = oneshot::channel();
@@ -471,7 +470,12 @@ impl Incoming {
             async move {
                 let res = async {
                     let mut io = pin!(async {
-                        let res = ingress(&mut rx, &state.index, depth).await;
+                        let res = select! {
+                            biased;
+
+                            () = state.failed.notified() => Err(error_unprocessed()),
+                            res = ingress(&mut rx, &state.index, depth) => res,
+                        };
                         if let Err(err) = &res {
                             _ = state.err.set(copy_io_error(err));
                         }
@@ -517,11 +521,11 @@ impl Incoming {
         }
     }
 
-    /// Marks data received by this handle as not processed, which fails ingress once all
-    /// handles are dropped
-    pub(crate) fn mark_unprocessed(&self) {
+    /// Fails ingress, since data received by this handle was not processed
+    pub(crate) fn fail_unprocessed(&self) {
         trace!(path = ?self.path, "dropping handle with unprocessed data");
-        self.state.unprocessed.store(true, Ordering::Relaxed);
+        _ = self.state.err.set(error_unprocessed());
+        self.state.failed.notify_one();
     }
 
     /// Index the incoming stream using a structural `path`, returning a handle to the
@@ -550,7 +554,7 @@ impl Incoming {
             .lock()
             .map_err(|err| std::io::Error::other(err.to_string()))?;
         if index.skip(&path) {
-            self.mark_unprocessed();
+            self.fail_unprocessed();
         }
         trace!(?path, "taking index subscription");
         let rx = index.take_rx(&path).ok_or_else(|| error_not_found(&path))?;
@@ -642,7 +646,8 @@ impl AsyncRead for Incoming {
 struct IngressState {
     index: std::sync::Mutex<Subscriptions>,
     err: std::sync::OnceLock<std::io::Error>,
-    unprocessed: AtomicBool,
+    /// Notified once a handle fails ingress
+    failed: Notify,
     done: watch::Sender<Option<std::io::Result<()>>>,
 }
 
@@ -907,14 +912,17 @@ async fn ingress(
 }
 
 /// Closes all receivers of the subscriptions once all [Incoming] handles were dropped,
-/// failing if any of them or any of the dropped handles held data, which was not processed
+/// failing if any of them held data, which was not processed, or if a handle failed ingress
 fn close_rx(state: &IngressState) -> std::io::Result<()> {
     trace!("all handles dropped, closing subscription receivers");
     let mut index = state.index.lock().unwrap_or_else(PoisonError::into_inner);
-    if index.close_rx() || state.unprocessed.load(Ordering::Relaxed) {
+    if index.close_rx() {
         return Err(error_unprocessed());
     }
-    Ok(())
+    match state.err.get() {
+        Some(err) => Err(copy_io_error(err)),
+        None => Ok(()),
+    }
 }
 
 /// Returns the error for data received on a closed `path`
@@ -1157,8 +1165,8 @@ mod tests {
         tx.write_all(&frame(&[0], b"\x2a")).await.unwrap();
         yield_now().await;
         drop(sub);
-        drop(rx);
         assert_eq!(failed(done_rx).await, ErrorKind::BrokenPipe);
+        drop(rx);
 
         let (mut tx, rx, done_rx) = incoming();
         tx.write_all(&frame(&[0], b"\x2a")).await.unwrap();
@@ -1213,7 +1221,6 @@ mod tests {
     #[test_log::test(tokio::test)]
     async fn incoming_wildcard_elements() {
         let (mut tx, rx, done_rx) = incoming_paths([[None]]);
-        tx.write_all(&frame(&[0], b"\x2a")).await.unwrap();
         tx.write_all(&frame(&[3], b"\x2b")).await.unwrap();
         tx.write_all(&frame(&[1], b"\x2a")).await.unwrap();
         yield_now().await;
@@ -1240,6 +1247,12 @@ mod tests {
         .expect("read timed out")
         .unwrap_err();
         assert_eq!(err.kind(), ErrorKind::BrokenPipe);
+
+        let (mut tx, rx, done_rx) = incoming_paths([[None]]);
+        tx.write_all(&frame(&[0], b"\x2a")).await.unwrap();
+        yield_now().await;
+        let _sub = rx.index(&[1]).unwrap();
+        assert_eq!(failed(done_rx).await, ErrorKind::BrokenPipe);
     }
 
     #[test_log::test(tokio::test)]
