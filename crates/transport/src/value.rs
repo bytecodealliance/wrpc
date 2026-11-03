@@ -224,9 +224,8 @@ impl<T: ?Sized> ResourceOwn<T> {
 }
 
 /// Deferred operation used for async value processing
-pub type DeferredFn<T> = Box<
-    dyn FnOnce(T, Vec<usize>) -> Pin<Box<dyn Future<Output = std::io::Result<()>> + Send>> + Send,
->;
+pub type DeferredFn<T> =
+    Box<dyn FnOnce(T) -> Pin<Box<dyn Future<Output = std::io::Result<()>> + Send>> + Send>;
 
 /// Handles async processing state for codecs
 pub trait Deferred<T> {
@@ -450,7 +449,7 @@ impl Sink for Outgoing {
             self.write_bytes(buf.freeze()).await?;
         }
         match enc.take_deferred() {
-            Some(f) => f(self, Vec::default()).await,
+            Some(f) => f(self).await,
             _ => Ok(()),
         }
     }
@@ -509,7 +508,7 @@ impl Sink for Outgoing {
                             let i = usize::try_from(i)
                                 .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
                             let w = self.index(&[i])?;
-                            deferred.push(f(w, Vec::default()));
+                            deferred.push(f(w));
                         }
                     }
                     i = end;
@@ -607,7 +606,7 @@ impl Sink for Outgoing {
 }
 
 #[instrument(level = "trace", skip(w, deferred))]
-async fn handle_deferred<T, I>(w: T, deferred: I, mut path: Vec<usize>) -> std::io::Result<()>
+async fn handle_deferred<T, I>(w: T, deferred: I) -> std::io::Result<()>
 where
     T: Index,
     I: IntoIterator<Item = Option<DeferredFn<T>>>,
@@ -616,10 +615,8 @@ where
     let mut futs = FuturesUnordered::default();
     for (i, f) in zip(0.., deferred) {
         if let Some(f) = f {
-            path.push(i);
-            let w = w.index(&path)?;
-            path.pop();
-            futs.push(f(w, Vec::default()));
+            let w = w.index(&[i])?;
+            futs.push(f(w));
         }
     }
     while let Some(()) = futs.try_next().await? {}
@@ -662,8 +659,8 @@ pub trait Encode<W: Sink = Outgoing>: Sized {
             deferred.push(enc.take_deferred());
         }
         if deferred.iter().any(Option::is_some) {
-            Ok(Some(Box::new(move |w, path| {
-                Box::pin(handle_deferred(w, deferred, path))
+            Ok(Some(Box::new(move |w| {
+                Box::pin(handle_deferred(w, deferred))
             })))
         } else {
             Ok(None)
@@ -690,8 +687,8 @@ pub trait Encode<W: Sink = Outgoing>: Sized {
             deferred.push(enc.take_deferred());
         }
         if deferred.iter().any(Option::is_some) {
-            Ok(Some(Box::new(move |w, path| {
-                Box::pin(handle_deferred(w, deferred, path))
+            Ok(Some(Box::new(move |w| {
+                Box::pin(handle_deferred(w, deferred))
             })))
         } else {
             Ok(None)
@@ -1011,9 +1008,7 @@ where
     fn take_deferred(&mut self) -> Option<DeferredFn<BufferedIncoming>> {
         let deferred = mem::take(&mut self.deferred);
         if deferred.iter().any(Option::is_some) {
-            Some(Box::new(|r, path| {
-                Box::pin(handle_deferred(r, deferred, path))
-            }))
+            Some(Box::new(|r| Box::pin(handle_deferred(r, deferred))))
         } else {
             None
         }
@@ -1181,9 +1176,7 @@ where
     fn take_deferred(&mut self) -> Option<DeferredFn<BufferedIncoming>> {
         let deferred = mem::take(&mut self.deferred);
         if deferred.iter().any(Option::is_some) {
-            Some(Box::new(|r, path| {
-                Box::pin(handle_deferred(r, deferred, path))
-            }))
+            Some(Box::new(|r| Box::pin(handle_deferred(r, deferred))))
         } else {
             None
         }
@@ -1711,7 +1704,7 @@ macro_rules! impl_tuple_codec {
                 let Self(($(mut $cn),+,)) = mem::take(self);
                 let deferred = [ $($cn.take_deferred()),+ ];
                 if deferred.iter().any(Option::is_some) {
-                    Some(Box::new(|r, path| Box::pin(handle_deferred(r, deferred, path))))
+                    Some(Box::new(|r| Box::pin(handle_deferred(r, deferred))))
                 } else {
                     None
                 }
@@ -1758,7 +1751,7 @@ macro_rules! impl_tuple_codec {
                 let ($(mut $cn),+,) = mem::take(self).into_inner();
                 let deferred = [ $($cn.take_deferred()),+ ];
                 if deferred.iter().any(Option::is_some) {
-                    Some(Box::new(|r, path| Box::pin(handle_deferred(r, deferred, path))))
+                    Some(Box::new(|r| Box::pin(handle_deferred(r, deferred))))
                 } else {
                     None
                 }
@@ -1940,16 +1933,8 @@ where
         dst.reserve(1);
         dst.put_u8(0x00);
         let span = Span::current();
-        self.deferred = Some(Box::new(move |mut w, path| {
-            Box::pin(
-                async move {
-                    if !path.is_empty() {
-                        w = w.index(&path)?;
-                    }
-                    w.write_future(offset, item).await
-                }
-                .instrument(span),
-            )
+        self.deferred = Some(Box::new(move |w| {
+            Box::pin(async move { w.write_future(offset, item).await }.instrument(span))
         }));
         Ok(())
     }
@@ -2017,14 +2002,11 @@ where
         let (tx, rx) = oneshot::channel();
         let dec = mem::take(&mut self.dec).into_inner();
         let span = Span::current();
-        self.deferred = Some(Box::new(|mut r, path| {
+        self.deferred = Some(Box::new(|r| {
             Box::pin(
                 async move {
-                    if !path.is_empty() {
-                        r = r.index(&path).map_err(std::io::Error::other)?;
-                    }
                     let mut dec = FramedRead::new(r, dec);
-                    trace!(?path, "receiving future element");
+                    trace!("receiving future element");
                     let Some(item) = dec.next().await else {
                         return Err(std::io::ErrorKind::UnexpectedEof.into());
                     };
@@ -2041,7 +2023,7 @@ where
                         let mut r = dec.into_inner();
                         buf.unsplit(mem::take(&mut r.buffer));
                         r.buffer = buf;
-                        rx(r, Vec::default()).await?;
+                        rx(r).await?;
                     }
                     Ok(())
                 }
@@ -2115,16 +2097,8 @@ where
         dst.reserve(1);
         dst.put_u8(0x00);
         let span = Span::current();
-        self.deferred = Some(Box::new(move |mut w, path| {
-            Box::pin(
-                async move {
-                    if !path.is_empty() {
-                        w = w.index(&path)?;
-                    }
-                    w.write_stream(offset, items).await
-                }
-                .instrument(span),
-            )
+        self.deferred = Some(Box::new(move |w| {
+            Box::pin(async move { w.write_stream(offset, items).await }.instrument(span))
         }));
         Ok(())
     }
@@ -2177,13 +2151,8 @@ where
         let offset = dst.len();
         dst.reserve(1);
         dst.put_u8(0x00);
-        self.deferred = Some(Box::new(move |mut w, path| {
-            Box::pin(async move {
-                if !path.is_empty() {
-                    w = w.index(&path)?;
-                }
-                w.write_stream_bytes(offset, items).await
-            })
+        self.deferred = Some(Box::new(move |w| {
+            Box::pin(async move { w.write_stream_bytes(offset, items).await })
         }));
         Ok(())
     }
@@ -2240,13 +2209,8 @@ where
         let offset = dst.len();
         dst.reserve(1);
         dst.put_u8(0x00);
-        self.deferred = Some(Box::new(move |mut w, path| {
-            Box::pin(async move {
-                if !path.is_empty() {
-                    w = w.index(&path)?;
-                }
-                w.write_stream_read(offset, ready, items).await
-            })
+        self.deferred = Some(Box::new(move |w| {
+            Box::pin(async move { w.write_stream_read(offset, ready, items).await })
         }));
         Ok(())
     }
@@ -2354,8 +2318,7 @@ fn receive_pending_stream<T: Send + 'static>(
 #[instrument(level = "trace", skip(dec, r, tx, end_tx), ret)]
 async fn handle_deferred_stream<C, T>(
     dec: C,
-    mut r: BufferedIncoming,
-    path: Vec<usize>,
+    r: BufferedIncoming,
     tx: mpsc::Sender<Vec<T>>,
     end_tx: oneshot::Sender<()>,
 ) -> std::io::Result<()>
@@ -2364,9 +2327,6 @@ where
     std::io::Error: From<C::Error>,
 {
     let dec = ListDecoder::new(dec);
-    if !path.is_empty() {
-        r = r.index(&path).map_err(std::io::Error::other)?;
-    }
     let mut framed = FramedRead::new(r, dec);
     let mut tasks = JoinSet::new();
     let mut i = 0_usize;
@@ -2396,7 +2356,7 @@ where
                     if let Some(deferred) = deferred {
                         let r = framed.get_ref().index(&[i]).map_err(std::io::Error::other)?;
                         trace!("spawning receive task");
-                        tasks.spawn(deferred(r, Vec::default()));
+                        tasks.spawn(deferred(r));
                     }
                 }
                 if tx.send(chunk).await.is_err() {
@@ -2441,10 +2401,10 @@ where
         // stream is pending
         let (tx, rx) = mpsc::channel(128);
         let (end_tx, end_rx) = oneshot::channel();
-        self.deferred = Some(Box::new(|r, path| {
-            Box::pin(async move {
-                handle_deferred_stream(T::Decoder::default(), r, path, tx, end_tx).await
-            })
+        self.deferred = Some(Box::new(|r| {
+            Box::pin(
+                async move { handle_deferred_stream(T::Decoder::default(), r, tx, end_tx).await },
+            )
         }));
         Ok(Some(Box::pin(receive_pending_stream(rx, end_rx))))
     }
@@ -2495,14 +2455,11 @@ impl tokio_util::codec::Decoder for StreamDecoderBytes {
         let (end_tx, end_rx) = oneshot::channel();
         let dec = mem::take(&mut self.dec).into_inner();
         let span = Span::current();
-        self.deferred = Some(Box::new(|mut r, path| {
+        self.deferred = Some(Box::new(|r| {
             Box::pin(
                 async move {
-                    if !path.is_empty() {
-                        r = r.index(&path).map_err(std::io::Error::other)?;
-                    }
                     let mut framed = FramedRead::new(r, dec);
-                    trace!(?path, "receiving pending byte stream chunk");
+                    trace!("receiving pending byte stream chunk");
                     while let Some(chunk) = framed.next().await {
                         let chunk = chunk?;
                         if chunk.is_empty() {
@@ -2686,7 +2643,7 @@ mod tests {
 
         async fn read<T: Decode>(buffer: &[u8]) -> (T, std::io::Result<()>) {
             let (v, f) = pending::<T>();
-            let res = f(buffered(buffer), Vec::default()).await;
+            let res = f(buffered(buffer)).await;
             (v, res)
         }
 
@@ -2713,7 +2670,7 @@ mod tests {
 
         let (fut, f) = pending::<FutureBytes>();
         drop(fut);
-        let err = f(buffered(b"\x03foo"), Vec::default()).await;
+        let err = f(buffered(b"\x03foo")).await;
         assert_eq!(err.unwrap_err().kind(), ErrorKind::BrokenPipe);
 
         let (mut s, res) = read::<StreamBytes>(b"\x03foo").await;

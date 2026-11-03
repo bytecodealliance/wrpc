@@ -88,7 +88,7 @@ async fn fill(deferred: Option<DeferredFn<Packer>>, dst: &mut BytesMut) -> std::
         return Ok(());
     };
     let (tx, mut rx) = mpsc::unbounded_channel();
-    f(Packer(tx), Vec::default()).await?;
+    f(Packer(tx)).await?;
     let mut holes = Vec::default();
     while let Some(hole) = rx.recv().await {
         holes.push(hole);
