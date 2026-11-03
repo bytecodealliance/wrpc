@@ -125,18 +125,21 @@ func (s *frameSub) isDropped() bool {
 }
 
 type frameSubscriptions struct {
-	ctx         context.Context
-	mu          sync.Mutex
-	cond        *sync.Cond
-	patterns    subscribePattern
-	nest        map[string]*frameSub
-	closed      map[string]struct{}
-	elements    map[string]*frameElement
-	unclaimed   map[string]struct{}
-	next        map[string]uint64
-	done        bool
-	drained     bool
-	unprocessed bool
+	ctx       context.Context
+	r         io.Closer
+	closeOnce sync.Once
+	err       atomic.Pointer[error]
+	mu        sync.Mutex
+	cond      *sync.Cond
+	patterns  subscribePattern
+	nest      map[string]*frameSub
+	closed    map[string]struct{}
+	elements  map[string]*frameElement
+	unclaimed map[string]struct{}
+	next      map[string]uint64
+	failed    chan struct{}
+	done      bool
+	drained   bool
 }
 
 func errNotFound(path []uint32) error {
@@ -144,6 +147,44 @@ func errNotFound(path []uint32) error {
 }
 
 var errUnprocessed = errors.New("received data was not processed")
+
+func (s *frameSubscriptions) closeReader(err error) {
+	s.closeOnce.Do(func() {
+		if errors.Is(err, s.ctx.Err()) {
+			err = nil
+		}
+		if err := CloseWithError(s.r, err); err != nil {
+			slog.DebugContext(s.ctx, "failed to close frame stream reader", "err", err)
+		}
+	})
+}
+
+func (s *frameSubscriptions) isFailed() bool {
+	select {
+	case <-s.failed:
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *frameSubscriptions) fail() {
+	if s.isFailed() {
+		return
+	}
+	slog.DebugContext(s.ctx, "dropping reader with unprocessed data")
+	s.err.CompareAndSwap(nil, &errUnprocessed)
+	close(s.failed)
+	s.cond.Broadcast()
+	go s.closeReader(errUnprocessed)
+}
+
+func (s *frameSubscriptions) errDropped(path []uint32) error {
+	if s.isFailed() {
+		return errUnprocessed
+	}
+	return fmt.Errorf("received data for a closed reader on path `%v`", path)
+}
 
 func (s *frameSubscriptions) owner(path []uint32, positions []int, k int) *frameElement {
 	var el *frameElement
@@ -222,6 +263,9 @@ func (s *frameSubscriptions) route(path []uint32, p string) (*frameSub, bool, er
 		if s.drained {
 			return nil, true, nil
 		}
+		if s.isFailed() {
+			return nil, false, errUnprocessed
+		}
 		if err := s.ctx.Err(); err != nil {
 			return nil, false, err
 		}
@@ -292,7 +336,7 @@ func (s *frameSubscriptions) remove(e string) {
 	for _, p := range el.paths {
 		if sub, ok := s.nest[p]; ok {
 			if len(sub.ch) > 0 {
-				s.unprocessed = true
+				s.fail()
 			}
 			sub.drop()
 		}
@@ -314,7 +358,6 @@ type FrameStreamReader struct {
 	readers  *atomic.Int64
 	subs     *frameSubscriptions
 	elements []string
-	err      *atomic.Pointer[error]
 	path     string
 	buf      []byte
 	gone     atomic.Bool
@@ -335,17 +378,21 @@ func newFrameStreamReader(r *FrameStreamReader) *FrameStreamReader {
 // by wildcards.
 // Once the data received is processed or `ctx` is done, `r` is closed. If receiving fails
 // otherwise, e.g. on invalid data, `r` is closed with the error instead (see `CloseWithError`).
+// Closing a reader, which received data it did not read, fails receiving immediately, closing
+// `r` with the error even while it is being read.
 func NewFrameStreamReader(ctx context.Context, r ByteReadCloser, paths ...SubscribePath) *FrameStreamReader {
 	var readers atomic.Int64
 	readers.Add(1)
 
 	subs := &frameSubscriptions{
 		ctx:       ctx,
+		r:         r,
 		nest:      make(map[string]*frameSub, len(paths)+1),
 		closed:    make(map[string]struct{}),
 		elements:  make(map[string]*frameElement),
 		unclaimed: make(map[string]struct{}),
 		next:      make(map[string]uint64),
+		failed:    make(chan struct{}),
 	}
 	subs.cond = sync.NewCond(&subs.mu)
 	root := newFrameSub()
@@ -368,7 +415,6 @@ func NewFrameStreamReader(ctx context.Context, r ByteReadCloser, paths ...Subscr
 		subs.mu.Unlock()
 	})
 
-	var ingressErr atomic.Pointer[error]
 	go func() {
 		accept := func(path []uint32, p string, n uint32) (*frameSub, error) {
 			subs.mu.Lock()
@@ -397,7 +443,7 @@ func NewFrameStreamReader(ctx context.Context, r ByteReadCloser, paths ...Subscr
 				return nil, fmt.Errorf("received a frame for closed path `%v`", path)
 			}
 			if sub.isDropped() {
-				return nil, fmt.Errorf("received data for a closed reader on path `%v`", path)
+				return nil, subs.errDropped(path)
 			}
 			return sub, nil
 		}
@@ -423,15 +469,17 @@ func NewFrameStreamReader(ctx context.Context, r ByteReadCloser, paths ...Subscr
 				select {
 				case <-ctx.Done():
 					return ctx.Err()
+				case <-subs.failed:
+					return errUnprocessed
 				case <-sub.dropped:
-					return fmt.Errorf("received data for a closed reader on path `%v`", path)
+					return subs.errDropped(path)
 				case sub.ch <- data:
 				}
 				subs.mu.Lock()
 				dropped := sub.isDropped() && len(sub.ch) > 0
 				subs.mu.Unlock()
 				if dropped {
-					return fmt.Errorf("received data for a closed reader on path `%v`", path)
+					return subs.errDropped(path)
 				}
 			}
 			return nil
@@ -441,10 +489,7 @@ func NewFrameStreamReader(ctx context.Context, r ByteReadCloser, paths ...Subscr
 				if err := ctx.Err(); err != nil {
 					return err
 				}
-				subs.mu.Lock()
-				unprocessed := subs.drained && subs.unprocessed
-				subs.mu.Unlock()
-				if unprocessed {
+				if subs.isFailed() {
 					return errUnprocessed
 				}
 				slog.DebugContext(ctx, "reading frame")
@@ -474,20 +519,15 @@ func NewFrameStreamReader(ctx context.Context, r ByteReadCloser, paths ...Subscr
 				}
 			}
 		}()
-		closeReader := func(err error) {
-			if errors.Is(err, ctx.Err()) {
-				err = nil
-			}
-			if err := CloseWithError(r, err); err != nil {
-				slog.DebugContext(ctx, "failed to close frame stream reader", "err", err)
-			}
-		}
-		failed := err != nil
-		if failed {
-			ingressErr.Store(&err)
-			closeReader(err)
+		if err != nil {
+			subs.err.CompareAndSwap(nil, &err)
+			err = *subs.err.Load()
+			subs.closeReader(err)
 		}
 		subs.mu.Lock()
+		if err == nil && subs.isFailed() {
+			err = errUnprocessed
+		}
 		subs.done = true
 		for p, sub := range subs.nest {
 			if _, ok := subs.closed[p]; !ok {
@@ -495,10 +535,10 @@ func NewFrameStreamReader(ctx context.Context, r ByteReadCloser, paths ...Subscr
 			}
 		}
 		if err == nil {
-			for !subs.drained && ctx.Err() == nil {
+			for !subs.drained && !subs.isFailed() && ctx.Err() == nil {
 				subs.cond.Wait()
 			}
-			if subs.drained && subs.unprocessed {
+			if subs.isFailed() {
 				err = errUnprocessed
 			}
 		}
@@ -509,16 +549,13 @@ func NewFrameStreamReader(ctx context.Context, r ByteReadCloser, paths ...Subscr
 		} else {
 			slog.DebugContext(ctx, "ingress successfully complete")
 		}
-		if !failed {
-			closeReader(err)
-		}
+		subs.closeReader(err)
 	}()
 	return newFrameStreamReader(&FrameStreamReader{
 		ctx:     ctx,
 		sub:     root,
 		readers: &readers,
 		subs:    subs,
-		err:     &ingressErr,
 	})
 }
 
@@ -601,7 +638,7 @@ func (r *FrameStreamReader) closedErr() error {
 	r.subs.mu.Lock()
 	_, closed := r.subs.closed[r.path]
 	r.subs.mu.Unlock()
-	if err := r.err.Load(); err != nil && !closed {
+	if err := r.subs.err.Load(); err != nil && !closed {
 		return *err
 	}
 	return io.EOF
@@ -632,7 +669,6 @@ func (r *FrameStreamReader) Index(path ...uint32) (IndexReadCloser, error) {
 		readers:  r.readers,
 		subs:     r.subs,
 		elements: elements,
-		err:      r.err,
 		path:     indexPath(full...),
 	}), nil
 }
@@ -653,7 +689,7 @@ func (r *FrameStreamReader) drop() {
 
 	if r.sub != nil {
 		if len(r.buf) > 0 || len(r.sub.ch) > 0 {
-			s.unprocessed = true
+			s.fail()
 		}
 		r.sub.drop()
 	}
@@ -672,7 +708,7 @@ func (r *FrameStreamReader) drop() {
 		s.drained = true
 		for _, sub := range s.nest {
 			if len(sub.ch) > 0 {
-				s.unprocessed = true
+				s.fail()
 			}
 			sub.drop()
 		}

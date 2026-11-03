@@ -132,6 +132,12 @@ func pipeReader(pr *io.PipeReader) wrpc.ByteReadCloser {
 	}{bufio.NewReader(pr), pr}
 }
 
+type closerFunc func() error
+
+func (f closerFunc) Close() error {
+	return f()
+}
+
 func writeFrames(t *testing.T, w io.Writer, frames ...wrpc.Frame) {
 	t.Helper()
 	done := make(chan error, 1)
@@ -239,7 +245,6 @@ func TestFrameStreamReader(t *testing.T) {
 		t.Parallel()
 		pr, pw := io.Pipe()
 		r := wrpc.NewFrameStreamReader(context.Background(), pipeReader(pr), wrpc.NewSubscribePath().Index(0).Wildcard())
-		writeFrames(t, pw, wrpc.Frame{Path: []uint32{0, 0}, Data: []byte("x")})
 		writeFrames(t, pw, wrpc.Frame{Path: []uint32{0, 2}, Data: []byte("b")})
 		sub := assertIndexReader(t, r, 0, 2)
 		assertRead(t, sub, "b")
@@ -260,7 +265,7 @@ func TestFrameStreamReader(t *testing.T) {
 		r := wrpc.NewFrameStreamReader(context.Background(), pipeReader(pr), wrpc.NewSubscribePath().Wildcard())
 		frames := make([]wrpc.Frame, 0, 66)
 		for i := range uint32(64) {
-			frames = append(frames, wrpc.Frame{Path: []uint32{i + 1}, Data: []byte("x")})
+			frames = append(frames, wrpc.Frame{Path: []uint32{i + 1}})
 		}
 		frames = append(frames,
 			wrpc.Frame{Path: []uint32{0}, Data: []byte("a")},
@@ -362,6 +367,45 @@ func TestFrameStreamReaderDrain(t *testing.T) {
 		assertIngress(t, ingress, "not processed")
 	})
 
+	t.Run("unread", func(t *testing.T) {
+		t.Parallel()
+		ctx, ingress := withIngress()
+		pr, pw := io.Pipe()
+		r := wrpc.NewFrameStreamReader(ctx, pipeReader(pr), wrpc.NewSubscribePath().Index(0))
+		sub := assertIndexReader(t, r, 0)
+		writeFrames(t, pw, wrpc.Frame{Path: []uint32{0}, Data: []byte("hello")})
+		assertRead(t, sub, "he")
+		assertClose(t, sub)
+		assertIngress(t, ingress, "not processed")
+		assertReadAll(t, r, "", "not processed")
+		assertClose(t, r)
+		pw.Close()
+	})
+
+	t.Run("first error wins", func(t *testing.T) {
+		t.Parallel()
+		ctx, ingress := withIngress()
+		pr, pw := io.Pipe()
+		closing := make(chan struct{})
+		closed := make(chan struct{})
+		r := wrpc.NewFrameStreamReader(ctx, struct {
+			*bufio.Reader
+			io.Closer
+		}{bufio.NewReader(pr), closerFunc(func() error {
+			close(closing)
+			<-closed
+			return pr.Close()
+		})}, wrpc.NewSubscribePath().Index(0))
+		sub := assertIndexReader(t, r, 0)
+		writeFrames(t, pw, wrpc.Frame{Path: []uint32{0}, Data: []byte("x")})
+		writeFrames(t, pw, wrpc.Frame{Path: []uint32{1}, Data: []byte("x")})
+		<-closing
+		assertClose(t, sub)
+		close(closed)
+		assertIngress(t, ingress, "unknown path")
+		assertClose(t, r)
+	})
+
 	t.Run("not indexed", func(t *testing.T) {
 		t.Parallel()
 		ctx, ingress := withIngress()
@@ -389,15 +433,16 @@ func TestFrameStreamReaderDrain(t *testing.T) {
 			}
 			for _, i := range indices {
 				sub := assertIndexReader(t, r, i)
-				if _, err := io.ReadAll(sub); err != nil {
+				if _, err := io.ReadAll(sub); err != nil && (!skip || !strings.Contains(err.Error(), "not processed")) {
 					t.Fatalf("failed to read: %s", err)
 				}
 				assertClose(t, sub)
 			}
-			assertClose(t, r)
 			if skip {
 				assertIngress(t, ingress, "not processed")
-			} else {
+			}
+			assertClose(t, r)
+			if !skip {
 				assertIngress(t, ingress, "")
 			}
 		})
