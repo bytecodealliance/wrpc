@@ -42,9 +42,16 @@ impl LanguageMethods for Js {
     }
 
     fn should_fail_runtime(&self, name: &str) -> bool {
-        // The wRPC JavaScript generator does not yet support fixed-length
-        // lists or `map`.
-        matches!(name, "fixed-length-lists" | "map")
+        matches!(
+            name,
+            // The wRPC JavaScript generator does not yet support fixed-length
+            // lists or `map`.
+            "fixed-length-lists"
+                | "map"
+                // Invocations cannot be cancelled: aborting the transport of
+                // one fails the remote invocation.
+                | "cancel-import"
+        )
     }
 
     fn prepare(&self, _runner: &mut Runner<'_>) -> Result<()> {
