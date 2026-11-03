@@ -4,8 +4,9 @@
 use ::wit_bindgen_wrpc::bytes::Bytes;
 use ::wit_bindgen_wrpc::wrpc_transport::{Invoke, ResourceBorrow, ResourceOwn};
 use rust_xcrate_test::a::test::xcrate::a_imports;
-use rust_xcrate_test::b::exports::test::xcrate::b_exports;
 use rust_xcrate_test::b::test::xcrate::b_imports;
+
+use crate::server::exports::test::xcrate::b_exports;
 
 #[derive(Clone)]
 pub struct Component;

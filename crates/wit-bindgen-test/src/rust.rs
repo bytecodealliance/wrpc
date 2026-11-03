@@ -6,6 +6,7 @@ use heck::ToSnakeCase;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::env;
+use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -43,6 +44,10 @@ struct RustConfig {
     /// Space-separated list or array of compiler flags to pass.
     #[serde(default)]
     rustflags: StringList,
+    /// List of path to rust files to build as external crates and link to the
+    /// main crate.
+    #[serde(default)]
+    externs: Vec<String>,
 }
 
 pub struct Rust;
@@ -86,13 +91,7 @@ impl LanguageMethods for Rust {
     }
 
     fn should_fail_runtime(&self, name: &str) -> bool {
-        match name {
-            "map" => true,
-            // The harness does not support `externs`, i.e. linking bindings
-            // generated in another crate.
-            "xcrate" => true,
-            _ => false,
-        }
+        name == "map"
     }
 
     fn should_fail_runtime_component(&self, name: &str, component: &str) -> bool {
@@ -422,6 +421,17 @@ async fn main() -> anyhow::Result<()> {
 }
 "##;
 
+/// Crates built during `prepare` that runtime-test crates are linked against.
+const DEPS: [&str; 7] = [
+    "wit_bindgen_wrpc",
+    "wrpc_transport",
+    "tokio",
+    "futures",
+    "anyhow",
+    "serde",
+    "serde_json",
+];
+
 impl Runner<'_> {
     fn rustc(&self, edition: Edition) -> Command {
         let state = self.rust_state.as_ref().unwrap();
@@ -476,14 +486,40 @@ impl Runner<'_> {
             .join(&self.opts.artifacts)
             .join(&case.name)
             .join(name);
+        fs::create_dir_all(&artifacts_dir)
+            .with_context(|| format!("failed to create directory {artifacts_dir:?}"))?;
 
         let mut modules = String::default();
         let mut rustflags = Vec::default();
+        let mut externs = Vec::default();
         for (module, component, bindings) in &components {
             let config = component.deserialize_lang_config::<RustConfig>()?;
-            rustflags.extend(Vec::from(config.rustflags));
-            let bindings = bindings.join(format!("{}.rs", component.bindgen.world.to_snake_case()));
+            let flags = Vec::from(config.rustflags);
             let src = component.path.canonicalize()?;
+            let manifest_dir = src.parent().unwrap();
+            for file in &config.externs {
+                let file = manifest_dir.join(file);
+                let stem = file.file_stem().unwrap().to_str().unwrap();
+                let name = stem.replace('-', "_");
+                let rlib = artifacts_dir.join(format!("lib{name}.rlib"));
+                let mut cmd = self.rustc(Edition::E2021);
+                cmd.arg(&file)
+                    .arg("--crate-type=rlib")
+                    .arg("--crate-name")
+                    .arg(&name)
+                    .arg("-o")
+                    .arg(&rlib)
+                    .args(&flags)
+                    .env("CARGO_MANIFEST_DIR", manifest_dir);
+                for krate in DEPS {
+                    self.extern_arg(&mut cmd, krate)?;
+                }
+                self.run_command(&mut cmd)
+                    .with_context(|| format!("failed to compile extern crate {file:?}"))?;
+                externs.push(format!("{name}={}", rlib.display()));
+            }
+            rustflags.extend(flags);
+            let bindings = bindings.join(format!("{}.rs", component.bindgen.world.to_snake_case()));
             modules.push_str(&format!(
                 "pub mod {module} {{\n    include!({bindings:?});\n    include!({src:?});\n}}\n\n",
             ));
@@ -515,16 +551,11 @@ impl Runner<'_> {
             // source (e.g. the `with` tests' `mod other`) resolves its `path`
             // relative to the test directory, like upstream.
             .env("CARGO_MANIFEST_DIR", runner_path.parent().unwrap());
-        for extern_ in [
-            "wit_bindgen_wrpc",
-            "wrpc_transport",
-            "tokio",
-            "futures",
-            "anyhow",
-            "serde",
-            "serde_json",
-        ] {
+        for extern_ in DEPS {
             self.extern_arg(&mut cmd, extern_)?;
+        }
+        for extern_ in &externs {
+            cmd.arg("--extern").arg(extern_);
         }
         self.run_command(&mut cmd)
             .context("failed to compile runtime test driver")?;
