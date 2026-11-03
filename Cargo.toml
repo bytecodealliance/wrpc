@@ -203,8 +203,8 @@ wasmtime-cli-flags = { version = "50", default-features = false }
 wasmtime-wasi = { version = "50", default-features = false }
 wasmtime-wasi-http = { version = "50", default-features = false }
 web-transport-quinn = { version = "0.13.5", default-features = false }
-wit-bindgen = { version = "0.59", default-features = false }
-wit-bindgen-core = { version = "0.59", default-features = false }
+wit-bindgen = { version = "0.60", default-features = false }
+wit-bindgen-core = { version = "0.60", default-features = false }
 wit-bindgen-wrpc = { version = "0.13", default-features = false, path = "./crates/wit-bindgen" }
 wit-bindgen-wrpc-go = { version = "0.14", default-features = false, path = "./crates/wit-bindgen-go" }
 wit-bindgen-wrpc-js = { version = "0.1", default-features = false, path = "./crates/wit-bindgen-js" }
@@ -212,7 +212,7 @@ wit-bindgen-wrpc-rust = { version = "0.12", default-features = false, path = "./
 wit-bindgen-wrpc-rust-macro = { version = "0.12", default-features = false, path = "./crates/wit-bindgen-rust-macro" }
 wit-bindgen-wrpc-test = { version = "0.1", default-features = false, path = "./crates/wit-bindgen-test" }
 wit-component = { version = "0.263", default-features = false }
-wit-parser = { version = "0.253", default-features = false }
+wit-parser = { version = "0.254", default-features = false }
 wrpc-cli = { version = "0.9", path = "./crates/cli", default-features = false }
 wrpc-http = { version = "0.2", path = "./crates/http", default-features = false }
 wrpc-introspect = { version = "0.8", default-features = false, path = "./crates/introspect" }
