@@ -1369,19 +1369,14 @@ mod {mod_name} {{
                     self.src,
                     r"
                 {{
-                    return Some(::std::boxed::Box::new(|w, mut path| {{",
+                    return Some(::std::boxed::Box::new(|w| {{",
                 );
                 for (i, Field { name, .. }) in fields.iter().enumerate() {
                     let name = to_rust_ident(name);
                     uwrite!(
                         self.src,
                         r"
-                        let f_{name} = f_{name}.map(|f| {{
-                            path.push({i});
-                            let w = w.index(&path);
-                            path.pop();
-                            (f, w)
-                        }});"
+                        let f_{name} = f_{name}.map(|f| (f, w.index(&[{i}])));"
                     );
                 }
                 uwrite!(
@@ -1397,7 +1392,7 @@ mod {mod_name} {{
                         r"
                                 async {{
                                     match f_{name} {{
-                                        Some((f, Ok(w))) => f(w, Vec::default()).await,
+                                        Some((f, Ok(w))) => f(w).await,
                                         Some((_, Err(err))) => Err(err),
                                         None => Ok(()),
                                     }}
@@ -1481,19 +1476,14 @@ mod {mod_name} {{
                     self.src,
                     r"
                 {{
-                    return Some(::std::boxed::Box::new(|r, mut path| {{",
+                    return Some(::std::boxed::Box::new(|r| {{",
                 );
                 for (i, Field { name, .. }) in fields.iter().enumerate() {
                     let name = to_rust_ident(name);
                     uwrite!(
                         self.src,
                         r"
-                        let f_{name} = f_{name}.map(|f| {{
-                            path.push({i});
-                            let r = r.index(&path);
-                            path.pop();
-                            (f, r)
-                        }});"
+                        let f_{name} = f_{name}.map(|f| (f, r.index(&[{i}])));"
                     );
                 }
                 uwrite!(
@@ -1509,7 +1499,7 @@ mod {mod_name} {{
                         r"
                                 async {{
                                     match f_{name} {{
-                                        Some((f, Ok(r))) => f(r, Vec::default()).await,
+                                        Some((f, Ok(r))) => f(r).await,
                                         Some((_, Err(err))) => Err(std::io::Error::other(err)),
                                         None => Ok(()),
                                     }}

@@ -111,35 +111,30 @@ pub trait ServeExt: Serve {
                         inner: dec.into_inner(),
                     };
                     let span = Span::current();
-                    Ok((
-                        cx,
-                        params,
-                        rx.map(|f| f(incoming, Vec::default())),
-                        move |results| {
-                            Box::pin(
-                                async move {
-                                    let mut enc = Results::Encoder::default();
-                                    let mut buf = BytesMut::default();
-                                    enc.encode(results, &mut buf)
-                                        .context("failed to encode synchronous results")?;
-                                    debug!("transmitting sync results");
-                                    outgoing
-                                        .write_bytes(buf.freeze())
+                    Ok((cx, params, rx.map(|f| f(incoming)), move |results| {
+                        Box::pin(
+                            async move {
+                                let mut enc = Results::Encoder::default();
+                                let mut buf = BytesMut::default();
+                                enc.encode(results, &mut buf)
+                                    .context("failed to encode synchronous results")?;
+                                debug!("transmitting sync results");
+                                outgoing
+                                    .write_bytes(buf.freeze())
+                                    .await
+                                    .context("failed to transmit synchronous results")?;
+                                let tx = enc.take_deferred();
+                                if let Some(tx) = tx {
+                                    debug!("transmitting async results");
+                                    tx(outgoing)
                                         .await
-                                        .context("failed to transmit synchronous results")?;
-                                    let tx = enc.take_deferred();
-                                    if let Some(tx) = tx {
-                                        debug!("transmitting async results");
-                                        tx(outgoing, Vec::default())
-                                            .await
-                                            .context("failed to write async results")?;
-                                    }
-                                    Ok(())
+                                        .context("failed to write async results")?;
                                 }
-                                .instrument(span),
-                            ) as Pin<_>
-                        },
-                    ))
+                                Ok(())
+                            }
+                            .instrument(span),
+                        ) as Pin<_>
+                    }))
                 }
                 .instrument(span.clone())
             }))

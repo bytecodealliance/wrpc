@@ -167,7 +167,7 @@ pub trait InvokeExt: Invoke {
                 tokio::spawn(
                     async {
                         debug!("transmitting async parameters");
-                        tx(outgoing, Vec::default())
+                        tx(outgoing)
                             .await
                             .context("failed to write async parameters")
                     }
@@ -215,9 +215,7 @@ pub trait InvokeExt: Invoke {
                                 try_join!(
                                     async {
                                         debug!("receiving async results");
-                                        rx(incoming, Vec::default())
-                                            .await
-                                            .context("receiving async results failed")
+                                        rx(incoming).await.context("receiving async results failed")
                                     },
                                     async {
                                         tx.await.context("transmitting async parameters failed")?
@@ -229,7 +227,7 @@ pub trait InvokeExt: Invoke {
                             }
                             (None, Some(rx)) => {
                                 debug!("receiving async results");
-                                rx(incoming, Vec::default())
+                                rx(incoming)
                                     .await
                                     .context("receiving async results failed")?;
                             }

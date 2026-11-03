@@ -884,9 +884,8 @@ where
                         enc.encode(items, dst)
                             .context("failed to encode input stream")?;
                         if let Some(f) = wrpc_transport::Deferred::take_deferred(&mut enc) {
-                            self.deferred = Some(Box::new(|w| {
-                                Box::pin(async move { Ok(f(w, Vec::default()).await?) })
-                            }));
+                            self.deferred =
+                                Some(Box::new(|w| Box::pin(async move { Ok(f(w).await?) })));
                         }
                     } else {
                         self.store
