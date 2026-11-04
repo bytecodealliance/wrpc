@@ -158,7 +158,13 @@ function unexpected(path) {
  * The application error code a peer stops its receive side with once it is
  * done receiving.
  */
-const DONE = 1;
+const DONE = 0;
+
+/**
+ * The application error code a peer closes both directions with once an
+ * invocation fails.
+ */
+const ABORTED = 1;
 
 /**
  * Whether `err` reports the send side being stopped with {@link DONE}.
@@ -167,10 +173,28 @@ const DONE = 1;
 const stoppedDone = (err) => err?.source === "stream" && err?.streamErrorCode === DONE;
 
 /**
+ * The reason to abort a WebTransport stream with after a failure. Any reason
+ * other than a `WebTransportError` is sent as code `0`, i.e. {@link DONE}.
+ * Browsers disagree on its constructor: the specification's form throws in
+ * Chromium, while Chromium's form silently loses the code elsewhere.
+ * @param {any} reason
+ */
+const abortReason = (reason) => {
+  const { WebTransportError } = /** @type {any} */ (globalThis);
+  if (!WebTransportError) return reason;
+  const message = String(reason?.message ?? reason);
+  try {
+    return new WebTransportError(message, { streamErrorCode: ABORTED });
+  } catch {
+    return new WebTransportError({ message, streamErrorCode: ABORTED });
+  }
+};
+
+/**
  * Adapt a WHATWG stream duplex with a half-close, such as a WebTransport
  * bidirectional stream, to a {@link Transport}, ending transmit by closing
  * the writable side. The peer stopping the writable side with application
- * error code `1` while it is being closed completes the close.
+ * error code `0` while it is being closed completes the close.
  * @param {{ readable: ReadableStream<Uint8Array>, writable: WritableStream<Uint8Array> }} duplex
  * @returns {Transport}
  */
@@ -191,7 +215,7 @@ export function fromWebStreams({ readable, writable }) {
       }
     },
     abort: async (reason) => {
-      const r = stoppedDone(reason) ? undefined : reason;
+      const r = stoppedDone(reason) ? undefined : abortReason(reason);
       await Promise.allSettled([reader.cancel(r), writer.abort(r)]);
     },
   };

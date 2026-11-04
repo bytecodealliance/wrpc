@@ -119,9 +119,9 @@ The client MUST open a new client-initiated bidirectional stream per each invoca
 
 A peer MUST communicate the end of transmit by finishing the send side of the stream.
 
-Once a peer is done receiving data, it SHOULD stop the receive side of the stream with application error code `1`. A peer MUST treat its send side being stopped with application error code `1` after it finished the stream as successful completion.
+Once a peer is done receiving data, it SHOULD stop the receive side of the stream with application error code `0`. A peer MUST treat its send side being stopped with application error code `0` after it finished the stream as successful completion.
 
-To close the stream in both directions (see [Framed stream specification](#framed-stream-specification)), a peer MUST stop the receive side and reset the send side of the stream, both with application error code `0`, which indicates a failed invocation.
+To close the stream in both directions (see [Framed stream specification](#framed-stream-specification)), a peer MUST stop the receive side and reset the send side of the stream, both with application error code `1`, which indicates a failed invocation.
 
 TLS configuration, including the ALPN protocol, is application-defined.
 

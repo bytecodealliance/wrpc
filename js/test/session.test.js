@@ -453,7 +453,7 @@ test("a failed reply stops sending stream parameters", { timeout: 1000 }, async 
 test("aborting a web stream transport cancels and aborts both sides", async () => {
   for (const [reason, expected] of [
     ["boom", "boom"],
-    [Object.assign(new Error("stopped"), { source: "stream", streamErrorCode: 1 }), undefined],
+    [Object.assign(new Error("stopped"), { source: "stream", streamErrorCode: 0 }), undefined],
   ]) {
     /** @type {[string, unknown][]} */
     const reasons = [];
@@ -470,8 +470,53 @@ test("aborting a web stream transport cancels and aborts both sides", async () =
   }
 });
 
-test("the peer stopping the closing web stream completes it only with code 1", async () => {
-  for (const code of [1, 0]) {
+test("aborting a web stream transport after a failure sends code 1", async () => {
+  const global = /** @type {any} */ (globalThis);
+  for (const WebTransportError of [
+    class extends Error {
+      /**
+       * @param {string} message
+       * @param {{ streamErrorCode: number }} options
+       */
+      constructor(message, options) {
+        super(message);
+        this.streamErrorCode = options.streamErrorCode;
+      }
+    },
+    class extends Error {
+      /** @param {{ message: string, streamErrorCode: number }} init */
+      constructor(init) {
+        if (typeof init !== "object") throw new TypeError("invalid init");
+        super(init.message);
+        this.streamErrorCode = init.streamErrorCode;
+      }
+    },
+  ]) {
+    global.WebTransportError = WebTransportError;
+    /** @type {any[]} */
+    const reasons = [];
+    const transport = fromWebStreams({
+      readable: new ReadableStream({ cancel: (reason) => void reasons.push(reason) }),
+      writable: new WritableStream({ abort: (reason) => void reasons.push(reason) }),
+    });
+    assert.ok(transport.abort);
+    try {
+      await transport.abort(new Error("boom"));
+    } finally {
+      delete global.WebTransportError;
+    }
+    assert.deepEqual(
+      reasons.map(({ message, streamErrorCode }) => [message, streamErrorCode]),
+      [
+        ["boom", 1],
+        ["boom", 1],
+      ],
+    );
+  }
+});
+
+test("the peer stopping the closing web stream completes it only with code 0", async () => {
+  for (const code of [0, 1]) {
     const transport = fromWebStreams({
       readable: new ReadableStream({
         start: (controller) => {
@@ -492,8 +537,8 @@ test("the peer stopping the closing web stream completes it only with code 1", a
     });
     const { results, done } = await get(transport, [t.u8]);
     assert.deepEqual(results, [42]);
-    if (code === 1) await done;
-    else await assert.rejects(done, { name: "WebTransportError", streamErrorCode: 0 });
+    if (code === 0) await done;
+    else await assert.rejects(done, { name: "WebTransportError", streamErrorCode: 1 });
   }
 });
 

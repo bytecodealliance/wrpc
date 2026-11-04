@@ -10,15 +10,15 @@ use tokio::io::{AsyncBufRead, AsyncRead, AsyncWrite, BufReader, ReadBuf};
 use wrpc_transport::Invoke;
 use wrpc_transport::frame::{Incoming, Outgoing, invoke};
 
-const DONE: VarInt = VarInt::from_u32(1);
+const DONE: VarInt = VarInt::from_u32(0);
 
-const ABORTED: VarInt = VarInt::from_u32(0);
+const ABORTED: VarInt = VarInt::from_u32(1);
 
 /// QUIC server
 pub type Server = wrpc_transport::Server<(), RecvStream, SendStream>;
 
 /// Buffered receive side of a QUIC stream, which stops the stream with application error code
-/// `1` once dropped, signaling the peer that it is done receiving data
+/// `0` once dropped, signaling the peer that it is done receiving data
 pub struct RecvStream(BufReader<quinn::RecvStream>);
 
 impl From<quinn::RecvStream> for RecvStream {
@@ -53,7 +53,7 @@ impl AsyncBufRead for RecvStream {
     }
 }
 
-/// Send side of a QUIC stream, which is reset with application error code `0` once
+/// Send side of a QUIC stream, which is reset with application error code `1` once
 /// dropped before being shut down
 #[derive(Debug)]
 pub struct SendStream {
