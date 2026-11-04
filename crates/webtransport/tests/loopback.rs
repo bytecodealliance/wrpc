@@ -43,7 +43,7 @@ async fn params_dropped() -> anyhow::Result<()> {
         drop(incoming);
 
         let code = tx.stopped().await.context("failed to await stream stop")?;
-        assert_eq!(code, Some(1));
+        assert_eq!(code, Some(0));
         Ok(())
     })
     .await
@@ -72,7 +72,7 @@ async fn send_stream_dropped() -> anyhow::Result<()> {
                     matches!(
                         res,
                         Err(web_transport_quinn::ReadToEndError::ReadError(
-                            web_transport_quinn::ReadError::Reset(0)
+                            web_transport_quinn::ReadError::Reset(1)
                         ))
                     ),
                     "{res:?}"

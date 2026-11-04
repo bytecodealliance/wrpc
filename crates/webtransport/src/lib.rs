@@ -11,15 +11,15 @@ use web_transport_quinn::Session;
 use wrpc_transport::Invoke;
 use wrpc_transport::frame::{Incoming, Outgoing, invoke};
 
-const DONE: u32 = 1;
+const DONE: u32 = 0;
 
-const ABORTED: u32 = 0;
+const ABORTED: u32 = 1;
 
 /// WebTransport server
 pub type Server = wrpc_transport::Server<(), RecvStream, SendStream>;
 
 /// Buffered receive side of a WebTransport stream, which stops the stream with WebTransport
-/// application error code `1` once dropped, signaling the peer that it is done receiving data
+/// application error code `0` once dropped, signaling the peer that it is done receiving data
 pub struct RecvStream(BufReader<web_transport_quinn::RecvStream>);
 
 impl From<web_transport_quinn::RecvStream> for RecvStream {
@@ -54,7 +54,7 @@ impl AsyncBufRead for RecvStream {
     }
 }
 
-/// Send side of a WebTransport stream, which is reset with WebTransport application error code `0` once
+/// Send side of a WebTransport stream, which is reset with WebTransport application error code `1` once
 /// dropped before being shut down
 #[derive(Debug)]
 pub struct SendStream {
