@@ -1,3 +1,5 @@
+#![allow(clippy::result_large_err)]
+
 //! wRPC WebTransport transport
 
 use core::ops::{Deref, DerefMut};
@@ -6,31 +8,34 @@ use core::task::{Context, Poll, ready};
 
 use anyhow::Context as _;
 use bytes::Bytes;
-use tokio::io::{AsyncBufRead, AsyncRead, AsyncWrite, BufReader, ReadBuf};
+use tokio::io::{AsyncRead, AsyncWrite, BufReader, ReadBuf};
 use web_transport_quinn::Session;
 use wrpc_transport::Invoke;
-use wrpc_transport::frame::{Incoming, Outgoing, invoke};
+use wrpc_transport::frame::{AcceptError, invoke};
 
-const DONE: u32 = 0;
+/// Error code of a stream, which was stopped or reset, because the invocation failed
+const FAILED: u32 = 1;
 
-const ABORTED: u32 = 1;
-
-/// WebTransport server
-pub type Server = wrpc_transport::Server<(), RecvStream, SendStream>;
-
-/// Buffered receive side of a WebTransport stream, which stops the stream with WebTransport
-/// application error code `0` once dropped, signaling the peer that it is done receiving data
-pub struct RecvStream(BufReader<web_transport_quinn::RecvStream>);
+/// [`web_transport_quinn::RecvStream`], which is stopped once dropped before reaching the end
+/// of the stream, since that fails the invocation
+#[derive(Debug)]
+pub struct RecvStream {
+    stream: web_transport_quinn::RecvStream,
+    /// Whether the end of the stream was reached
+    eof: bool,
+}
 
 impl From<web_transport_quinn::RecvStream> for RecvStream {
-    fn from(rx: web_transport_quinn::RecvStream) -> Self {
-        Self(BufReader::new(rx))
+    fn from(stream: web_transport_quinn::RecvStream) -> Self {
+        Self { stream, eof: false }
     }
 }
 
 impl Drop for RecvStream {
     fn drop(&mut self) {
-        _ = self.0.get_mut().stop(DONE);
+        if !self.eof {
+            _ = self.stream.stop(FAILED);
+        }
     }
 }
 
@@ -40,41 +45,41 @@ impl AsyncRead for RecvStream {
         cx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<std::io::Result<()>> {
-        Pin::new(&mut self.get_mut().0).poll_read(cx, buf)
+        if buf.remaining() == 0 {
+            return Poll::Ready(Ok(()));
+        }
+        let this = self.get_mut();
+        let n = buf.filled().len();
+        ready!(Pin::new(&mut this.stream).poll_read(cx, buf))?;
+        if buf.filled().len() == n {
+            this.eof = true;
+        }
+        Poll::Ready(Ok(()))
     }
 }
 
-impl AsyncBufRead for RecvStream {
-    fn poll_fill_buf(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<&[u8]>> {
-        Pin::new(&mut self.get_mut().0).poll_fill_buf(cx)
-    }
-
-    fn consume(self: Pin<&mut Self>, amt: usize) {
-        Pin::new(&mut self.get_mut().0).consume(amt);
-    }
-}
-
-/// Send side of a WebTransport stream, which is reset with WebTransport application error code `1` once
-/// dropped before being shut down
+/// [`web_transport_quinn::SendStream`], which is reset once dropped before being shut down,
+/// since that fails the invocation
 #[derive(Debug)]
 pub struct SendStream {
-    inner: web_transport_quinn::SendStream,
-    shutdown: bool,
+    stream: web_transport_quinn::SendStream,
+    /// Whether the stream was shut down
+    finished: bool,
 }
 
 impl From<web_transport_quinn::SendStream> for SendStream {
-    fn from(inner: web_transport_quinn::SendStream) -> Self {
+    fn from(stream: web_transport_quinn::SendStream) -> Self {
         Self {
-            inner,
-            shutdown: false,
+            stream,
+            finished: false,
         }
     }
 }
 
 impl Drop for SendStream {
     fn drop(&mut self) {
-        if !self.shutdown {
-            _ = self.inner.reset(ABORTED);
+        if !self.finished {
+            _ = self.stream.reset(FAILED);
         }
     }
 }
@@ -85,19 +90,35 @@ impl AsyncWrite for SendStream {
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<std::io::Result<usize>> {
-        AsyncWrite::poll_write(Pin::new(&mut self.get_mut().inner), cx, buf)
+        AsyncWrite::poll_write(Pin::new(&mut self.get_mut().stream), cx, buf)
     }
 
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        AsyncWrite::poll_flush(Pin::new(&mut self.get_mut().inner), cx)
+        Pin::new(&mut self.get_mut().stream).poll_flush(cx)
     }
 
     fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
         let this = self.get_mut();
-        ready!(AsyncWrite::poll_shutdown(Pin::new(&mut this.inner), cx))?;
-        this.shutdown = true;
+        ready!(Pin::new(&mut this.stream).poll_shutdown(cx))?;
+        this.finished = true;
         Poll::Ready(Ok(()))
     }
+}
+
+/// WebTransport server
+pub type Server = wrpc_transport::Server<(), BufReader<RecvStream>, SendStream>;
+
+/// Accepts an invocation on a bidirectional stream, see [`Server::accept`].
+///
+/// # Errors
+///
+/// Returns an error if accepting the invocation fails
+pub async fn accept(
+    srv: &Server,
+    tx: web_transport_quinn::SendStream,
+    rx: web_transport_quinn::RecvStream,
+) -> Result<(), AcceptError<(), BufReader<RecvStream>, SendStream>> {
+    srv.accept((), tx.into(), BufReader::new(rx.into())).await
 }
 
 /// WebTransport wRPC client
@@ -126,6 +147,8 @@ impl DerefMut for Client {
 
 impl Invoke for &Client {
     type Context = ();
+    type Outgoing = SendStream;
+    type Incoming = BufReader<RecvStream>;
 
     async fn invoke<P>(
         &self,
@@ -133,8 +156,8 @@ impl Invoke for &Client {
         instance: &str,
         func: &str,
         params: Bytes,
-        paths: impl AsRef<[P]> + Send,
-    ) -> anyhow::Result<(Outgoing, Incoming)>
+        _paths: impl AsRef<[P]> + Send,
+    ) -> anyhow::Result<(Self::Outgoing, Self::Incoming)>
     where
         P: AsRef<[Option<usize>]> + Send + Sync,
     {
@@ -143,20 +166,14 @@ impl Invoke for &Client {
             .open_bi()
             .await
             .context("failed to open parameter stream")?;
-        invoke(
-            SendStream::from(tx),
-            RecvStream::from(rx),
-            instance,
-            func,
-            params,
-            paths,
-        )
-        .await
+        invoke(tx.into(), BufReader::new(rx.into()), instance, func, params).await
     }
 }
 
 impl Invoke for Client {
     type Context = ();
+    type Outgoing = SendStream;
+    type Incoming = BufReader<RecvStream>;
 
     async fn invoke<P>(
         &self,
@@ -165,7 +182,7 @@ impl Invoke for Client {
         func: &str,
         params: Bytes,
         paths: impl AsRef<[P]> + Send,
-    ) -> anyhow::Result<(Outgoing, Incoming)>
+    ) -> anyhow::Result<(Self::Outgoing, Self::Incoming)>
     where
         P: AsRef<[Option<usize>]> + Send + Sync,
     {

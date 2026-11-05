@@ -31,7 +31,7 @@ http-body-util = { workspace = true }
 hyper = { workspace = true }
 hyper-util = { workspace = true, optional = true }
 pin-project-lite = { workspace = true }
-tokio = { workspace = true, features = ["rt", "sync"] }
+tokio = { workspace = true, features = ["macros", "rt", "sync"] }
 tokio-util = { workspace = true }
 tracing = { workspace = true }
 wrpc-transport = { workspace = true }

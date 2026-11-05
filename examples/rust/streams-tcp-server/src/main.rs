@@ -56,7 +56,7 @@ async fn main() -> anyhow::Result<()> {
     let lis = tokio::net::TcpListener::bind(&addr)
         .await
         .with_context(|| format!("failed to bind TCP listener on `{addr}`"))?;
-    let srv = Arc::new(wrpc_transport::Server::default());
+    let srv = Arc::new(wrpc_transport::tcp::Server::default());
     let invocations = bindings::serve(srv.as_ref(), Server)
         .await
         .context("failed to serve `wrpc-examples:streams/handler.echo`")?;
@@ -71,11 +71,11 @@ async fn main() -> anyhow::Result<()> {
                             if let Err(err) = stream.set_nodelay(true) {
                                 warn!(?err, "failed to set TCP_NODELAY");
                             }
-                            let (rx, tx) = wrpc_transport::tcp::split(stream);
                             let srv = Arc::clone(&srv);
                             conns.spawn(async move {
+                                let (rx, tx) = stream.into_split();
                                 if let Err(err) = srv.accept(addr, tx, BufReader::new(rx)).await {
-                                    error!(?err, "failed to serve TCP connection");
+                                    error!(?err, "failed to accept TCP connection");
                                 }
                             });
                         }

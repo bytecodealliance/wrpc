@@ -13,7 +13,7 @@ repository.workspace = true
 anyhow = { workspace = true, features = ["std"] }
 bytes = { workspace = true }
 quinn = { workspace = true, features = ["runtime-tokio"] }
-tokio = { workspace = true, features = ["io-util"] }
+tokio = { workspace = true, features = ["io-util", "macros", "rt"] }
 wrpc-transport = { workspace = true }
 
 [dev-dependencies]
