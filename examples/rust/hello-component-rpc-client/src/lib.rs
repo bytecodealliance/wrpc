@@ -19,28 +19,29 @@ impl bindings::exports::wasi::cli::run::Guest for Command {
 
 async fn explicit() {
     let cx = rpc::context::Context::default();
-    let (_, rx, invocation) =
-        rpc::invoker::invoke(cx, "wrpc-examples:hello/handler", "hello", &[], &[]);
-    let results = async move {
-        let (data, res) = rx.read_via_stream()?;
-        drop(rx);
-        let greeting = data.collect().await;
-        res.await?;
-        Ok::<_, rpc::error::Error>(greeting)
-    };
-    let (greeting, invocation) = futures::join!(results, invocation.into_future());
-    let greeting = match greeting {
-        Ok(greeting) => greeting,
+    let invocation = rpc::invoker::invoke(
+        cx,
+        "wrpc-examples:hello/handler".to_string(),
+        "hello".to_string(),
+        Vec::default(),
+        Vec::default(),
+    )
+    .await;
+    let (_, rx) = match invocation {
+        Ok(channels) => channels,
         Err(err) => {
-            eprintln!("failed to read `hello` results: {}", err.to_debug_string());
+            eprintln!(
+                "failed to invoke `hello` explicitly: {}",
+                err.to_debug_string()
+            );
             return;
         }
     };
-    if let Err(err) = invocation {
-        eprintln!(
-            "failed to invoke `hello` explicitly: {}",
-            err.to_debug_string()
-        );
+    let (data, res) = rx.read_via_stream();
+    drop(rx);
+    let greeting = data.collect().await;
+    if let Err(err) = res.await {
+        eprintln!("failed to read `hello` results: {}", err.to_debug_string());
         return;
     }
     let Some((n, greeting)) = greeting.split_first() else {

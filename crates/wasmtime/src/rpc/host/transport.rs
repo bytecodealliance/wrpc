@@ -1,4 +1,4 @@
-use core::future;
+use core::future::poll_fn;
 use core::pin::Pin;
 use core::task::{Context, Poll};
 
@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use futures::FutureExt as _;
 use futures::future::BoxFuture;
-use tokio::io::{AsyncRead as _, AsyncWrite as _, ReadBuf};
+use tokio::io::ReadBuf;
 use tokio::sync::oneshot;
 use wasmtime::component::{
     Access, Accessor, Destination, FutureReader, Resource, Source, StreamConsumer, StreamProducer,
@@ -15,14 +15,13 @@ use wasmtime::component::{
 use wasmtime::error::Context as _;
 use wasmtime::{AsContextMut as _, StoreContextMut};
 use wrpc_transport::READ_CHUNK_SIZE;
-use wrpc_transport::frame::{Incoming, Outgoing};
 
 use crate::bindings::rpc::transport::{
     Host, HostIncomingChannel, HostIncomingChannelWithStore, HostOutgoingChannel,
     HostOutgoingChannelWithStore, IncomingChannel, OutgoingChannel,
 };
 use crate::rpc::host::ResultProducer;
-use crate::rpc::{Deferred, Error, IncomingInvocation, WrpcRpcImpl};
+use crate::rpc::{DynIncoming, DynOutgoing, Error, WrpcRpcImpl};
 use crate::{WrpcView, WrpcViewExt as _};
 
 fn index_path(path: Vec<u32>) -> wasmtime::Result<Box<[usize]>> {
@@ -43,10 +42,8 @@ enum ReadOutcome {
 }
 
 struct IncomingProducer {
-    incoming: Option<Deferred<Incoming>>,
+    incoming: Arc<std::sync::Mutex<Box<dyn DynIncoming>>>,
     result: Option<oneshot::Sender<ReadOutcome>>,
-    /// Incoming direction of the invocation, until the handle reading the data is available
-    invocation: Option<Arc<IncomingInvocation>>,
 }
 
 impl IncomingProducer {
@@ -59,15 +56,13 @@ impl IncomingProducer {
 
 impl Drop for IncomingProducer {
     fn drop(&mut self) {
-        let (Some(incoming), Some(tx)) = (self.incoming.take(), self.result.take()) else {
-            return;
-        };
-        let finished = match (&incoming, &self.invocation) {
-            (Deferred::Ready(incoming), ..) => incoming.finished().boxed(),
-            (Deferred::Pending(..), Some(invocation)) => invocation.finished(),
-            (Deferred::Pending(..), None) => future::ready(Ok(())).boxed(),
-        };
-        _ = tx.send(ReadOutcome::Dropped(finished));
+        if let Some(tx) = self.result.take() {
+            let incoming = self
+                .incoming
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            _ = tx.send(ReadOutcome::Dropped(incoming.closed()));
+        }
     }
 }
 
@@ -86,26 +81,15 @@ impl<D> StreamProducer<D> for IncomingProducer {
         if n == Some(0) {
             return Poll::Ready(Ok(StreamResult::Completed));
         }
-        let this = &mut *self;
-        let Some(incoming) = &mut this.incoming else {
-            return Poll::Ready(Ok(StreamResult::Dropped));
-        };
-        let incoming = match incoming.poll_ready(cx) {
-            Poll::Ready(Ok(incoming)) => {
-                this.invocation = None;
-                incoming
-            }
-            Poll::Ready(Err(err)) => {
-                self.finish(Err(Error::Read(err)));
-                return Poll::Ready(Ok(StreamResult::Dropped));
-            }
-            Poll::Pending if finish => return Poll::Ready(Ok(StreamResult::Cancelled)),
-            Poll::Pending => return Poll::Pending,
-        };
         let mut dst = dst.as_direct(store, READ_CHUNK_SIZE);
         let buf = dst.remaining()?;
         let mut buf = ReadBuf::new(buf);
-        let res = Pin::new(incoming).poll_read(cx, &mut buf);
+        let mut incoming = self
+            .incoming
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let res = Pin::new(&mut **incoming).poll_read(cx, &mut buf);
+        drop(incoming);
         match res {
             Poll::Ready(Ok(())) if buf.filled().is_empty() => {
                 self.finish(Ok(()));
@@ -127,7 +111,7 @@ impl<D> StreamProducer<D> for IncomingProducer {
 }
 
 struct OutgoingConsumer {
-    outgoing: Deferred<Outgoing>,
+    outgoing: Arc<std::sync::Mutex<Box<dyn DynOutgoing>>>,
     result: Option<oneshot::Sender<Result<(), Error>>>,
 }
 
@@ -156,20 +140,16 @@ impl<D> StreamConsumer<D> for OutgoingConsumer {
         finish: bool,
     ) -> Poll<wasmtime::Result<StreamResult>> {
         let mut src = src.as_direct(store);
-        let outgoing = match self.outgoing.poll_ready(cx) {
-            Poll::Ready(Ok(outgoing)) => outgoing,
-            Poll::Ready(Err(err)) => {
-                self.finish(Err(Error::Write(err)));
-                return Poll::Ready(Ok(StreamResult::Dropped));
-            }
-            Poll::Pending if finish => return Poll::Ready(Ok(StreamResult::Cancelled)),
-            Poll::Pending => return Poll::Pending,
-        };
         let buf = src.remaining()?;
         if buf.is_empty() {
             return Poll::Ready(Ok(StreamResult::Completed));
         }
-        let res = Pin::new(outgoing).poll_write(cx, buf);
+        let mut outgoing = self
+            .outgoing
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let res = Pin::new(&mut **outgoing).poll_write(cx, buf);
+        drop(outgoing);
         match res {
             Poll::Ready(Ok(n)) => {
                 src.mark_read(n);
@@ -191,42 +171,32 @@ impl<T: WrpcView + 'static> HostIncomingChannelWithStore<T> for WrpcRpcImpl<T> {
     fn read_via_stream(
         mut store: Access<'_, T, Self>,
         incoming: Resource<IncomingChannel>,
-    ) -> wasmtime::Result<
-        Result<(StreamReader<u8>, FutureReader<Result<(), Resource<Error>>>), Resource<Error>>,
-    > {
+    ) -> wasmtime::Result<(StreamReader<u8>, FutureReader<Result<(), Resource<Error>>>)> {
         let WrpcRpcImpl(wrpc) = store.get();
         let incoming = wrpc
             .wrpc()
             .table
             .get_mut(&incoming)
             .context("failed to get incoming channel from table")?;
-        let invocation = Arc::clone(&incoming.invocation);
-        let incoming = match incoming.take_data() {
-            Ok(incoming) => incoming,
-            Err(err) => {
-                let err = wrpc.push_error(err)?;
-                return Ok(Err(err));
-            }
-        };
+        let incoming = incoming.take_data()?;
         let (tx, rx) = oneshot::channel();
         let data = StreamReader::new(
             &mut store,
             IncomingProducer {
-                incoming: Some(incoming),
+                incoming,
                 result: Some(tx),
-                invocation: Some(invocation),
             },
         )?;
         let res = async move {
             match rx.await {
                 Ok(ReadOutcome::Finished(res)) => res,
-                Ok(ReadOutcome::Dropped(finished)) => finished.await.map_err(Error::Read),
+                Ok(ReadOutcome::Dropped(closed)) => closed.await.map_err(Error::Read),
                 Err(..) => Err(Error::Read(std::io::ErrorKind::BrokenPipe.into())),
             }
         }
         .boxed();
         let res = FutureReader::new(&mut store, ResultProducer(res))?;
-        Ok(Ok((data, res)))
+        Ok((data, res))
     }
 }
 
@@ -235,23 +205,17 @@ impl<T: WrpcView> HostIncomingChannel for WrpcRpcImpl<T> {
         &mut self,
         incoming: Resource<IncomingChannel>,
         path: Vec<u32>,
-    ) -> wasmtime::Result<Result<Resource<IncomingChannel>, Resource<Error>>> {
+    ) -> wasmtime::Result<Resource<IncomingChannel>> {
         let table = self.0.wrpc().table;
         let incoming = table
             .get(&incoming)
             .context("failed to get incoming channel from table")?;
-        match incoming.index(&index_path(path)?) {
-            Ok(incoming) => {
-                let incoming = table
-                    .push(incoming)
-                    .context("failed to push incoming channel to table")?;
-                Ok(Ok(incoming))
-            }
-            Err(err) => {
-                let err = self.0.push_error(Error::IncomingIndex(err))?;
-                Ok(Err(err))
-            }
-        }
+        let incoming = incoming
+            .index(&index_path(path)?)
+            .context("failed to index incoming channel")?;
+        table
+            .push(incoming)
+            .context("failed to push incoming channel to table")
     }
 
     fn drop(&mut self, incoming: Resource<IncomingChannel>) -> wasmtime::Result<()> {
@@ -265,58 +229,40 @@ impl<T: WrpcView> HostIncomingChannel for WrpcRpcImpl<T> {
 }
 
 impl<T: WrpcView + 'static> HostOutgoingChannelWithStore<T> for WrpcRpcImpl<T> {
-    fn write_via_stream(
-        mut store: Access<'_, T, Self>,
-        outgoing: Resource<OutgoingChannel>,
-        mut data: StreamReader<u8>,
-    ) -> wasmtime::Result<Result<FutureReader<Result<(), Resource<Error>>>, Resource<Error>>> {
-        let WrpcRpcImpl(wrpc) = store.get();
-        let outgoing = wrpc
-            .wrpc()
-            .table
-            .get_mut(&outgoing)
-            .context("failed to get outgoing channel from table")?;
-        let outgoing = match outgoing.take_data() {
-            Ok(outgoing) => outgoing,
-            Err(err) => {
-                let err = wrpc.push_error(err)?;
-                data.close(&mut store)?;
-                return Ok(Err(err));
-            }
-        };
-        let (tx, rx) = oneshot::channel();
-        let res = async move {
-            rx.await
-                .unwrap_or_else(|_| Err(Error::Write(std::io::ErrorKind::BrokenPipe.into())))
-        }
-        .boxed();
-        data.pipe(
-            &mut store,
-            OutgoingConsumer {
-                outgoing: Deferred::new(outgoing),
-                result: Some(tx),
-            },
-        )?;
-        let res = FutureReader::new(&mut store, ResultProducer(res))?;
-        Ok(Ok(res))
-    }
-
-    async fn close(
+    async fn write_via_stream(
         store: &Accessor<T, Self>,
         outgoing: Resource<OutgoingChannel>,
+        data: StreamReader<u8>,
     ) -> wasmtime::Result<Result<(), Resource<Error>>> {
-        let outgoing = store.with(|mut store| {
+        let (outgoing, rx) = store.with(|mut store| {
             let WrpcRpcImpl(wrpc) = store.get();
             let outgoing = wrpc
                 .wrpc()
                 .table
-                .get(&outgoing)
+                .get_mut(&outgoing)
                 .context("failed to get outgoing channel from table")?;
-            Ok::<_, wasmtime::Error>(outgoing.outgoing())
+            let outgoing = outgoing.take_data()?;
+            let (tx, rx) = oneshot::channel();
+            data.pipe(
+                &mut store,
+                OutgoingConsumer {
+                    outgoing: Arc::clone(&outgoing),
+                    result: Some(tx),
+                },
+            )?;
+            wasmtime::error::Ok((outgoing, rx))
         })?;
         let res = async {
-            let mut outgoing = outgoing.await?;
-            outgoing.close().await
+            rx.await
+                .unwrap_or_else(|_| Err(Error::Write(std::io::ErrorKind::BrokenPipe.into())))?;
+            poll_fn(|cx| {
+                let mut outgoing = outgoing
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                Pin::new(&mut **outgoing).poll_shutdown(cx)
+            })
+            .await
+            .map_err(Error::Write)
         }
         .await;
         store.with(|mut store| {
@@ -324,7 +270,7 @@ impl<T: WrpcView + 'static> HostOutgoingChannelWithStore<T> for WrpcRpcImpl<T> {
             match res {
                 Ok(()) => Ok(Ok(())),
                 Err(err) => {
-                    let err = wrpc.push_error(Error::Write(err))?;
+                    let err = wrpc.push_error(err)?;
                     Ok(Err(err))
                 }
             }
@@ -337,23 +283,17 @@ impl<T: WrpcView> HostOutgoingChannel for WrpcRpcImpl<T> {
         &mut self,
         outgoing: Resource<OutgoingChannel>,
         path: Vec<u32>,
-    ) -> wasmtime::Result<Result<Resource<OutgoingChannel>, Resource<Error>>> {
+    ) -> wasmtime::Result<Resource<OutgoingChannel>> {
         let table = self.0.wrpc().table;
         let outgoing = table
             .get(&outgoing)
             .context("failed to get outgoing channel from table")?;
-        match outgoing.index(&index_path(path)?) {
-            Ok(outgoing) => {
-                let outgoing = table
-                    .push(outgoing)
-                    .context("failed to push outgoing channel to table")?;
-                Ok(Ok(outgoing))
-            }
-            Err(err) => {
-                let err = self.0.push_error(Error::OutgoingIndex(err))?;
-                Ok(Err(err))
-            }
-        }
+        let outgoing = outgoing
+            .index(&index_path(path)?)
+            .context("failed to index outgoing channel")?;
+        table
+            .push(outgoing)
+            .context("failed to push outgoing channel to table")
     }
 
     fn drop(&mut self, outgoing: Resource<OutgoingChannel>) -> wasmtime::Result<()> {

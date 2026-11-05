@@ -103,7 +103,7 @@ impl<T: Send + 'static> SharedStore<T> {
     }
 }
 
-pub trait ServeExt: wrpc_transport::Serve {
+pub trait ServeExt: wrpc_transport::ServeExt {
     /// Serve [`types::ComponentFunc`] from an [`InstancePre`] instantiating it on each call.
     /// This serving method does not support guest-exported resources.
     #[instrument(level = "trace", skip(self, store, instance_pre, host_resources))]
@@ -160,7 +160,7 @@ pub trait ServeExt: wrpc_transport::Serve {
             };
             let paths = crate::paths::params_async_paths(params_ty.iter(), &resources);
             let invocations = self
-                .serve(instance_name, rpc_func_name(name), paths)
+                .serve_framed(instance_name, rpc_func_name(name), paths)
                 .await?;
             let name = Arc::<str>::from(name);
             let results_ty: Arc<[_]> = ty.results().collect();
@@ -257,7 +257,7 @@ pub trait ServeExt: wrpc_transport::Serve {
             let params_ty: Arc<[_]> = ty.params().map(|(_, ty)| ty).collect();
             let paths = crate::paths::params_async_paths(params_ty.iter(), &resources);
             let invocations = self
-                .serve(instance_name, rpc_func_name(name), paths)
+                .serve_framed(instance_name, rpc_func_name(name), paths)
                 .await?;
             let name = Arc::<str>::from(name);
             let results_ty: Arc<[_]> = ty.results().collect();
@@ -306,4 +306,4 @@ pub trait ServeExt: wrpc_transport::Serve {
     }
 }
 
-impl<T: wrpc_transport::Serve> ServeExt for T {}
+impl<T: wrpc_transport::ServeExt> ServeExt for T {}

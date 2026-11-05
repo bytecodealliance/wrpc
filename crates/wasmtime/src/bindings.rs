@@ -9,8 +9,6 @@ mod generated {
         },
         imports: {
             "wrpc:rpc/transport.[method]incoming-channel.read-via-stream": store | trappable,
-            "wrpc:rpc/transport.[method]outgoing-channel.write-via-stream": store | trappable,
-            "wrpc:rpc/invoker.invoke": store | trappable,
             default: trappable,
         },
         require_store_data_send: true,

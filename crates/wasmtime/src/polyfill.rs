@@ -10,11 +10,11 @@ use tokio::io::AsyncWriteExt as _;
 use tokio::time::Instant;
 use tokio::try_join;
 use tokio_util::codec::Encoder;
-use tracing::{Instrument as _, Span, debug, instrument, warn};
+use tracing::{Instrument as _, Span, debug, instrument};
 use wasmtime::component::{LinkerInstance, ResourceType, Type, Val, types};
 use wasmtime::error::Context as _;
 use wasmtime::{AsContextMut, Engine, bail, ensure};
-use wrpc_transport::{Invoke, InvokeExt as _};
+use wrpc_transport::InvokeExt as _;
 
 use crate::paths::params_async_paths;
 use crate::rpc::Error;
@@ -170,12 +170,13 @@ async fn invoke(
     let start = Instant::now();
     let invocation = if let Some(timeout) = timeout {
         clt.timeout(timeout)
-            .invoke(cx, &instance, rpc_name, buf, &paths)
+            .invoke_framed(cx, &instance, rpc_name, buf, &paths)
             .await
     } else {
-        clt.invoke(cx, &instance, rpc_name, buf, &paths).await
+        clt.invoke_framed(cx, &instance, rpc_name, buf, &paths)
+            .await
     };
-    let (outgoing, incoming) = match invocation {
+    let (mut outgoing, incoming) = match invocation {
         Ok((outgoing, incoming)) => (outgoing, incoming),
         Err(err) => {
             return Ok(Err(err.context(format!(
@@ -183,7 +184,13 @@ async fn invoke(
             ))));
         }
     };
+    let closed = incoming.closed();
+    let closed = async { closed.await.context("invocation failed") };
     let tx = async {
+        outgoing
+            .shutdown()
+            .await
+            .context("failed to close parameters")?;
         try_join_all(
             zip(0.., deferred)
                 .filter_map(|(i, f)| f.map(|f| (outgoing.index(&[i]), f)))
@@ -194,11 +201,7 @@ async fn invoke(
         )
         .await
         .context("failed to write asynchronous parameters")?;
-        let mut outgoing = pin!(outgoing);
-        outgoing
-            .flush()
-            .await
-            .context("failed to flush outgoing stream")?;
+        drop(outgoing);
         wasmtime::error::Ok(())
     };
     let rx = async {
@@ -223,12 +226,17 @@ async fn invoke(
                     .await
                     .context("data receipt timed out")?
             },
+            async {
+                tokio::time::timeout(timeout, closed)
+                    .await
+                    .context("invocation timed out")?
+            },
         )
     } else {
-        try_join!(tx, rx)
+        try_join!(tx, rx, closed)
     };
     match res {
-        Ok(((), ())) => Ok(Ok(())),
+        Ok(((), (), ())) => Ok(Ok(())),
         Err(err) => Ok(Err(err.into())),
     }
 }
