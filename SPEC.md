@@ -160,7 +160,7 @@ For example:
 
 If `v` is pending, encoded `bool` value is sent on index `[0]` (corresponding to first parameter)
 
-A `future` without a payload type has an empty value encoding, so once such a pending future resolves, the sender MUST close its index with an empty frame (see [Framed stream specification](#framed-stream-specification)), and the receiver MUST consider it resolved once the index is closed.
+A `future` without a payload type has an empty value encoding, so a sender closes its index once it resolves, and closing the index is what resolves it for the receiver.
 
 ### Streams
 
