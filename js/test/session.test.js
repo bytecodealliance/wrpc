@@ -224,17 +224,18 @@ test("numeric stream chunks are typed arrays and empty ones are not sent", async
   }
 });
 
-test("an invocation sends no frames for empty data", async () => {
+test("an invocation sends only closing frames for empty data", async () => {
   for (const [types, args, expected] of /** @type {[Type[], InputValue[], string][]} */ ([
-    [[], [], "\x01\x03foo\x03bar"],
-    [[t.future()], [Promise.resolve()], "\x01\x03foo\x03bar\x00\x01\x00\x01\x00\x00"],
+    [[], [], "\x01\x03foo\x03bar\x00\x00"],
+    [[t.future()], [Promise.resolve()], "\x01\x03foo\x03bar\x00\x01\x00\x00\x00\x01\x00\x00"],
   ])) {
     /** @type {Uint8Array[]} */
     const frames = [];
     let closed = false;
+    const inbound = [Uint8Array.of(0x00, 0x00)];
     /** @type {Transport} */
     const transport = {
-      read: async () => null,
+      read: async () => inbound.pop() ?? null,
       write: (bytes) => void frames.push(bytes),
       closeWrite: () => void (closed = true),
     };
@@ -248,9 +249,10 @@ test("an invocation sends no frames for empty data", async () => {
 test("values nested in a future are indexed below it", { timeout: 1000 }, async () => {
   /** @type {Uint8Array[]} */
   const sent = [];
+  const inbound = [Uint8Array.of(0x00, 0x00)];
   /** @type {Transport} */
   const peer = {
-    read: async () => null,
+    read: async () => inbound.pop() ?? null,
     write: (bytes) => void sent.push(bytes),
     closeWrite: () => {},
   };
@@ -266,18 +268,26 @@ test("values nested in a future are indexed below it", { timeout: 1000 }, async 
   await done;
   assert.deepEqual(
     Buffer.concat(sent),
-    Buffer.from("\x01\x03foo\x03bar\x00\x01\x00\x01\x00\x01\x00\x02\x00\x00\x01\x07", "latin1"),
+    Buffer.from(
+      "\x01\x03foo\x03bar\x00\x01\x00\x00\x00\x01\x00\x01\x00\x02\x00\x00\x01\x07\x02\x00\x00\x00\x01\x00\x00",
+      "latin1",
+    ),
   );
 
   for (const frames of /** @type {Frame[][]} */ ([
     [
       [[], [0]],
+      [[], []],
       [[0], [0]],
       [[0, 0], [7]],
+      [[0], []],
+      [[0, 0], []],
     ],
     [
       [[], [1, 0]],
+      [[], []],
       [[0, 0], [7]],
+      [[0, 0], []],
     ],
   ])) {
     const { inbound, transport } = await feed(frames);
@@ -303,6 +313,7 @@ test("a value split across many frames and chunks decodes", async () => {
   const reply = w.finish();
   for (let i = 0; i < reply.length; i += 1000)
     await peer.outgoing([]).write(reply.subarray(i, i + 1000));
+  await peer.outgoing([]).close();
   const bytes = Buffer.concat(frames);
   const { inbound, transport } = await feed();
   for (let i = 0; i < bytes.length; i += 7) inbound.push(bytes.subarray(i, i + 7));
@@ -327,7 +338,12 @@ test("a failed transport fails the invocation", async () => {
 });
 
 test("aborting after the peer closed fails the sub-streams declared later", async () => {
-  const mux = new Mux({ read: async () => null, write: () => {}, closeWrite: () => {} });
+  const inbound = [Uint8Array.of(0x00, 0x00)];
+  const mux = new Mux({
+    read: async () => inbound.pop() ?? null,
+    write: () => {},
+    closeWrite: () => {},
+  });
   mux.start();
   await mux.ingress;
   mux.abort(new Error("boom"));
@@ -563,7 +579,7 @@ test("the peer stopping the closing web stream completes it only with code 0", a
     const transport = fromWebStreams({
       readable: new ReadableStream({
         start: (controller) => {
-          controller.enqueue(Uint8Array.of(0x00, 0x01, 0x2a));
+          controller.enqueue(Uint8Array.of(0x00, 0x01, 0x2a, 0x00, 0x00));
           controller.close();
         },
       }),
@@ -729,15 +745,32 @@ test("frames for results which cannot be pending fail at once", { timeout: 1000 
   }
 });
 
-test("a future without a payload resolves at the end of transmit", async () => {
+test("a future fails if transmit ends before it is closed", { timeout: 1000 }, async () => {
+  for (const close of [false, true]) {
+    const { inbound, transport } = await feed(
+      /** @type {Frame[]} */ ([[[], [0]], [[0], [7]], ...(close ? [[[0], []]] : []), [[], []]]),
+    );
+    inbound.close();
+    const { results, done } = await get(transport, [t.future(t.u8)]);
+    assert.equal(await results[0], 7);
+    if (close) await done;
+    else await assert.rejects(done, /unexpected end of input/);
+  }
+});
+
+test("a future without a payload fails if transmit ends before it is closed", async () => {
   for (const data of [false, true]) {
     const { inbound, transport } = await feed(
       data
         ? [
             [[], [0]],
+            [[], []],
             [[0], [0]],
           ]
-        : [[[], [0]]],
+        : [
+            [[], [0]],
+            [[], []],
+          ],
     );
     inbound.close();
     const { results, done } = await get(transport, [t.future()]);
@@ -746,8 +779,7 @@ test("a future without a payload resolves at the end of transmit", async () => {
       const pending = Symbol("pending");
       assert.equal(await Promise.race([results[0], pending]), pending);
     } else {
-      assert.equal(await results[0], undefined);
-      await done;
+      await assert.rejects(done, /unexpected end of input/);
     }
   }
 });
@@ -837,9 +869,15 @@ for (const [
   [
     "closed before it is declared",
     t.future(t.tuple(t.future())),
-    [[[], [0]]],
+    [
+      [[], [0]],
+      [[], []],
+    ],
     [0, 0, 0],
-    [[[0], [0]]],
+    [
+      [[0], [0]],
+      [[0], []],
+    ],
   ],
   [
     "not declared by its value",
@@ -887,8 +925,10 @@ for (const [
     t.stream(t.future(t.u8)),
     [
       [[], [0]],
+      [[], []],
       [[0], [1, 0]],
       [[0, 0], [5]],
+      [[0, 0], []],
     ],
     [0, 0],
     [[[0], [0]]],
@@ -898,8 +938,11 @@ for (const [
     t.future(t.tuple(t.future(t.u8))),
     [
       [[], [0]],
+      [[], []],
       [[0], [0]],
+      [[0], []],
       [[0, 0, 0], [5]],
+      [[0, 0, 0], []],
     ],
     [0, 0, 0],
     [],
@@ -955,6 +998,7 @@ test(
       for (const dropped of [false, true]) {
         const { inbound, send, transport } = await feed([
           [[], [0]],
+          [[], []],
           [[0], dropped ? [1, 0, 1, 0] : [1, 0]],
         ]);
         const { results, done } = await get(transport, [t.stream(elem)]);
@@ -998,6 +1042,7 @@ test(
     ])) {
       const { inbound, send, transport } = await feed([
         [[], [0]],
+        [[], []],
         [[0], [1, 0]],
         ...frames.map((frame) => /** @type {Frame} */ ([[0, 0], frame])),
       ]);
@@ -1076,7 +1121,14 @@ test("finished list elements are forgotten", { timeout: 1000 }, async () => {
   inbound.push(HEADER);
   await send([
     [[], [n, ...new Array(n).fill(0)]],
-    ...Array.from({ length: n }, (_, k) => /** @type {Frame} */ ([[0, k], [k]])),
+    ...Array.from(
+      { length: n },
+      (_, k) =>
+        /** @type {Frame[]} */ ([
+          [[0, k], [k]],
+          [[0, k], []],
+        ]),
+    ).flat(),
   ]);
   const inv = await accept(transport);
   const { params, done } = await inv.receiveParams([t.list(t.future(t.u8))]);
@@ -1118,7 +1170,9 @@ test(
 test("a failure after `done` rejects `finished`", { timeout: 1000 }, async () => {
   const { send, transport } = await feed([
     [[], [0]],
+    [[], []],
     [[0], [5]],
+    [[0], []],
   ]);
   const { results, done, finished } = await get(transport, [t.future(t.u8)]);
   assert.equal(await results[0], 5);

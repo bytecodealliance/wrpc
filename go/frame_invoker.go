@@ -14,7 +14,7 @@ import (
 // InvokeFramed invokes a function `name` within an instance `instance`, both of which must be valid UTF-8.
 // `paths` define the async result paths to subscribe on.
 // On success, `InvokeFramed` returns two handles used for writing and reading encoded parameters and results respectively.
-// The encoded parameters are written to the root of the returned writer.
+// The encoded parameters are written to the root of the returned writer, which must be closed.
 func InvokeFramed(ctx context.Context, w io.WriteCloser, r io.ReadCloser, instance string, name string, paths ...SubscribePath) (IndexWriteCloser, IndexReadCloser, error) {
 	if len(instance) > math.MaxUint32 {
 		return nil, nil, errors.New("instance length overflows uint32")
