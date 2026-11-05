@@ -29,6 +29,11 @@ func Hello(ctx__ context.Context, wrpc__ wrpc.Invoker) (r0__ string, err__ error
 			slog.ErrorContext(ctx__, "failed to close reader", "instance", "wrpc-examples:hello/handler", "name", "hello", "err", err)
 		}
 	}()
+	err__ = w__.ClosePath()
+	if err__ != nil {
+		err__ = fmt.Errorf("failed to close parameters: %w", err__)
+		return
+	}
 	if cErr__ := w__.Close(); cErr__ != nil {
 		slog.DebugContext(ctx__, "failed to close outgoing stream", "instance", "wrpc-examples:hello/handler", "name", "hello", "err", cErr__)
 	}

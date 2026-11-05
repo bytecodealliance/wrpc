@@ -88,6 +88,11 @@ func Echo(ctx__ context.Context, wrpc__ wrpc.Invoker, r *Req) (r0__ <-chan []uin
 		err__ = fmt.Errorf("failed to write parameters: %w", err__)
 		return
 	}
+	err__ = w__.ClosePath()
+	if err__ != nil {
+		err__ = fmt.Errorf("failed to close parameters: %w", err__)
+		return
+	}
 	errCh__ := make(chan error, uint(writeCount__)+2)
 	errs__ = errCh__
 	var wg__ sync.WaitGroup

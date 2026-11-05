@@ -371,6 +371,11 @@ func Open(ctx__ context.Context, wrpc__ wrpc.Invoker, identifier string) (r0__ *
 		err__ = fmt.Errorf("failed to write parameters: %w", err__)
 		return
 	}
+	err__ = w__.ClosePath()
+	if err__ != nil {
+		err__ = fmt.Errorf("failed to close parameters: %w", err__)
+		return
+	}
 	if cErr__ := w__.Close(); cErr__ != nil {
 		slog.DebugContext(ctx__, "failed to close outgoing stream", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "open", "err", cErr__)
 	}
@@ -589,6 +594,11 @@ func Bucket_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borrow[Buc
 	_, err__ = w__.Write(buf__.Bytes())
 	if err__ != nil {
 		err__ = fmt.Errorf("failed to write parameters: %w", err__)
+		return
+	}
+	err__ = w__.ClosePath()
+	if err__ != nil {
+		err__ = fmt.Errorf("failed to close parameters: %w", err__)
 		return
 	}
 	if cErr__ := w__.Close(); cErr__ != nil {
@@ -873,6 +883,11 @@ func Bucket_Set(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borrow[Buc
 		err__ = fmt.Errorf("failed to write parameters: %w", err__)
 		return
 	}
+	err__ = w__.ClosePath()
+	if err__ != nil {
+		err__ = fmt.Errorf("failed to close parameters: %w", err__)
+		return
+	}
 	if cErr__ := w__.Close(); cErr__ != nil {
 		slog.DebugContext(ctx__, "failed to close outgoing stream", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "[method]bucket.set", "err", cErr__)
 	}
@@ -1054,6 +1069,11 @@ func Bucket_Delete(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borrow[
 	_, err__ = w__.Write(buf__.Bytes())
 	if err__ != nil {
 		err__ = fmt.Errorf("failed to write parameters: %w", err__)
+		return
+	}
+	err__ = w__.ClosePath()
+	if err__ != nil {
+		err__ = fmt.Errorf("failed to close parameters: %w", err__)
 		return
 	}
 	if cErr__ := w__.Close(); cErr__ != nil {
@@ -1238,6 +1258,11 @@ func Bucket_Exists(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borrow[
 	_, err__ = w__.Write(buf__.Bytes())
 	if err__ != nil {
 		err__ = fmt.Errorf("failed to write parameters: %w", err__)
+		return
+	}
+	err__ = w__.ClosePath()
+	if err__ != nil {
+		err__ = fmt.Errorf("failed to close parameters: %w", err__)
 		return
 	}
 	if cErr__ := w__.Close(); cErr__ != nil {
@@ -1472,6 +1497,11 @@ func Bucket_ListKeys(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borro
 	_, err__ = w__.Write(buf__.Bytes())
 	if err__ != nil {
 		err__ = fmt.Errorf("failed to write parameters: %w", err__)
+		return
+	}
+	err__ = w__.ClosePath()
+	if err__ != nil {
+		err__ = fmt.Errorf("failed to close parameters: %w", err__)
 		return
 	}
 	if cErr__ := w__.Close(); cErr__ != nil {
