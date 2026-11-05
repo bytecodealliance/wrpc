@@ -1161,6 +1161,19 @@ where
         }
         Ok(Some(mem::take(&mut self.ret)))
     }
+
+    fn decode_eof(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+        match self.decode(src)? {
+            Some(v) => Ok(Some(v)),
+            None if self.cap == 0 && src.is_empty() => Ok(None),
+            None => {
+                self.cap = 0;
+                self.ret.clear();
+                self.deferred.clear();
+                Err(std::io::Error::from(std::io::ErrorKind::UnexpectedEof).into())
+            }
+        }
+    }
 }
 
 impl<T> Decode for Vec<T>
@@ -1557,6 +1570,13 @@ impl tokio_util::codec::Decoder for ListDecoderU8 {
     #[instrument(level = "trace", skip(self), fields(ty = "list<u8>"))]
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
         let Some(buf) = self.0.decode(src)? else {
+            return Ok(None);
+        };
+        Ok(Some(buf.into()))
+    }
+
+    fn decode_eof(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+        let Some(buf) = self.0.decode_eof(src)? else {
             return Ok(None);
         };
         Ok(Some(buf.into()))
@@ -2810,6 +2830,17 @@ mod tests {
             .unwrap();
         assert_eq!(err.kind(), ErrorKind::UnexpectedEof);
         let err = crate::unpack::<Bytes>(&mut BytesMut::from(&n[..])).unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::UnexpectedEof);
+
+        let mut dec = <Vec<Option<u8>> as Decode>::Decoder::default();
+        let err = dec
+            .decode_eof(&mut BytesMut::from(&b"\x02\x01\x07"[..]))
+            .unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::UnexpectedEof);
+        let mut dec = <Vec<u8> as Decode>::Decoder::default();
+        let err = dec
+            .decode_eof(&mut BytesMut::from(&b"\x02\x01"[..]))
+            .unwrap_err();
         assert_eq!(err.kind(), ErrorKind::UnexpectedEof);
         Ok(())
     }

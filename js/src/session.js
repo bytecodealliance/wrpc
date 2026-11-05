@@ -140,9 +140,6 @@ async function writeStream(out, elem, src) {
   } finally {
     chunks.return(undefined).catch(() => {});
   }
-  const end = new Writer();
-  end.varU(0); // a stream is terminated by an empty chunk
-  await tasks.race(out.write(end.finish()));
   await tasks.race(out.close());
   await tasks.wait();
 }
@@ -156,7 +153,6 @@ async function writeStream(out, elem, src) {
 async function writeChunk(out, elem, chunk, base, tasks) {
   const w = new Writer();
   const elems = toList(chunk, elem);
-  // An empty chunk is indistinguishable from the stream terminator.
   if (elems.length === 0) return 0;
   w.varU(elems.length);
   if (elem.kind === "u8") {
@@ -346,11 +342,11 @@ async function readStream(mux, path, elem, queue, ar) {
   const tasks = new Tasks();
   try {
     for (;;) {
-      const len = await tasks.race(ar.decode((r) => atomic(r, readVarU32)));
-      if (len === 0) {
+      if (!(await tasks.race(ar.fill(1)))) {
         mux.finish(path, ar);
         break;
       }
+      const len = await tasks.race(ar.decode((r) => atomic(r, readVarU32)));
       if (queue.cancelled) throw unexpectedError(path);
       let chunk;
       if (elem.kind === "u8") {
