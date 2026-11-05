@@ -57,7 +57,7 @@ func TestServerAcceptError(t *testing.T) {
 	for name, payload := range map[string][]byte{
 		"stalled":  nil,
 		"version":  {0xff},
-		"instance": {0x00, 1, 'a', 1, 'b'},
+		"instance": {0x01, 1, 'a', 1, 'b'},
 	} {
 		t.Run(name, func(t *testing.T) {
 			l := listen(t)
@@ -118,7 +118,7 @@ func TestServerInvalidFrame(t *testing.T) {
 		}
 		accepted <- accept(context.Background())
 	}()
-	buf := bytes.NewBuffer([]byte{0x00, 3, 'f', 'o', 'o', 3, 'b', 'a', 'r'})
+	buf := bytes.NewBuffer([]byte{0x01, 3, 'f', 'o', 'o', 3, 'b', 'a', 'r'})
 	if _, err := wrpc.WriteFrame(wrpc.Frame{Path: []uint32{1}, Data: []byte("x")}, buf); err != nil {
 		t.Fatalf("failed to encode frame: %s", err)
 	}

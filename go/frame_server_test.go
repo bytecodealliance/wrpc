@@ -27,7 +27,7 @@ func TestFramedServerHeaderNameLimit(t *testing.T) {
 			t.Fatal(err)
 		}
 		var hdr bytes.Buffer
-		hdr.WriteByte(0)
+		hdr.WriteByte(1)
 		if _, err := wrpc.WriteString(instance, &hdr); err != nil {
 			t.Fatal(err)
 		}
