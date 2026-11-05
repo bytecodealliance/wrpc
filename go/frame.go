@@ -8,6 +8,9 @@ import (
 	"math"
 )
 
+// frameVersion is the framing protocol version byte
+const frameVersion = 0x01
+
 const (
 	maxInitialPathCapacity = 32
 	defaultMaxFrameDepth   = 64

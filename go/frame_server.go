@@ -124,7 +124,7 @@ func (s *FramedServer) accept(w io.WriteCloser, r io.ReadCloser, headerRead func
 		return fmt.Errorf("failed to read version byte: %w", err)
 	}
 	switch b {
-	case 0x00:
+	case frameVersion:
 		slog.DebugContext(s.ctx, "reading instance name string")
 		instance, err := readHeaderName(br, s.maxInstanceLen)
 		if err != nil {

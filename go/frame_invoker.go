@@ -42,7 +42,8 @@ func InvokeFramed(ctx context.Context, w io.WriteCloser, r io.ReadCloser, instan
 			binary.MaxVarintLen32+len(buf),
 	)
 
-	i := 1 // version == 0
+	payload[0] = frameVersion
+	i := 1
 
 	i = i + PutUint32(payload[i:], uint32(len(instance)))
 	i = i + copy(payload[i:], instance)

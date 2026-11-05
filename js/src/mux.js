@@ -11,7 +11,7 @@
 import { AsyncReader, Chan, UNEXPECTED_EOF, Writer, atomic, readVarU32 } from "./io.js";
 
 /** The wRPC framing protocol version byte. */
-export const PROTOCOL = 0x00;
+export const PROTOCOL = 0x01;
 
 /**
  * The number of inbound data chunks buffered per sub-stream. Once a

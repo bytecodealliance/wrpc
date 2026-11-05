@@ -23,7 +23,7 @@ pub use oneshot::*;
 pub use split::{ReadHalf, WriteHalf};
 
 /// Framing protocol version
-pub const PROTOCOL: u8 = 0;
+pub const PROTOCOL: u8 = 1;
 
 const MAX_INITIAL_PATH_CAPACITY: usize = 32;
 

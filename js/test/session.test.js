@@ -22,7 +22,7 @@ import { encodeValue } from "../src/value.js";
 const STREAMS = "wrpc-examples:streams/handler";
 
 /** The header of an invocation of `f` on `i`. */
-const HEADER = Uint8Array.of(0, 1, 0x69, 1, 0x66);
+const HEADER = Uint8Array.of(1, 1, 0x69, 1, 0x66);
 
 /**
  * A pair of in-memory transports wired back to back, modelling a single
@@ -226,8 +226,8 @@ test("numeric stream chunks are typed arrays and empty ones are not sent", async
 
 test("an invocation sends no frames for empty data", async () => {
   for (const [types, args, expected] of /** @type {[Type[], InputValue[], string][]} */ ([
-    [[], [], "\x00\x03foo\x03bar"],
-    [[t.future()], [Promise.resolve()], "\x00\x03foo\x03bar\x00\x01\x00\x01\x00\x00"],
+    [[], [], "\x01\x03foo\x03bar"],
+    [[t.future()], [Promise.resolve()], "\x01\x03foo\x03bar\x00\x01\x00\x01\x00\x00"],
   ])) {
     /** @type {Uint8Array[]} */
     const frames = [];
@@ -311,7 +311,7 @@ test("a transport must communicate end of transmit", async () => {
 
 test("invocation header names are bounded", async () => {
   const w = new Writer();
-  w.u8(0);
+  w.u8(1);
   w.name("a".repeat(2000));
   w.name("f");
   for (const [options, ok] of /** @type {[object | undefined, boolean][]} */ ([
