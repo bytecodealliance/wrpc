@@ -7,7 +7,7 @@ use tokio::io::{
 use tracing::instrument;
 
 use crate::Invoke;
-use crate::frame::{Incoming, Outgoing, invoke};
+use crate::frame::invoke;
 
 /// [Invoke] implementation in terms of a single stream pair.
 ///
@@ -59,6 +59,8 @@ where
     O: AsyncWrite + Send + Unpin + 'static,
 {
     type Context = ();
+    type Outgoing = O;
+    type Incoming = BufReader<I>;
 
     async fn invoke<P>(
         &self,
@@ -66,12 +68,12 @@ where
         instance: &str,
         func: &str,
         params: Bytes,
-        paths: impl AsRef<[P]> + Send,
-    ) -> anyhow::Result<(Outgoing, Incoming)>
+        _paths: impl AsRef<[P]> + Send,
+    ) -> anyhow::Result<(Self::Outgoing, Self::Incoming)>
     where
         P: AsRef<[Option<usize>]> + Send + Sync,
     {
-        (&self).invoke(cx, instance, func, params, paths).await
+        (&self).invoke(cx, instance, func, params, _paths).await
     }
 }
 
@@ -81,23 +83,25 @@ where
     O: AsyncWrite + Send + Unpin + 'static,
 {
     type Context = ();
+    type Outgoing = O;
+    type Incoming = BufReader<I>;
 
-    #[instrument(level = "trace", skip(self, paths, params), fields(params = format!("{params:02x?}")))]
+    #[instrument(level = "trace", skip(self, _paths, params), fields(params = format!("{params:02x?}")))]
     fn invoke<P>(
         &self,
         (): Self::Context,
         instance: &str,
         func: &str,
         params: Bytes,
-        paths: impl AsRef<[P]> + Send,
-    ) -> impl Future<Output = anyhow::Result<(Outgoing, Incoming)>>
+        _paths: impl AsRef<[P]> + Send,
+    ) -> impl Future<Output = anyhow::Result<(Self::Outgoing, Self::Incoming)>>
     where
         P: AsRef<[Option<usize>]> + Send + Sync,
     {
         let stream = self.try_take_inner();
         async move {
             let (rx, tx) = stream?;
-            invoke(tx, BufReader::new(rx), instance, func, params, paths).await
+            invoke(tx, BufReader::new(rx), instance, func, params).await
         }
     }
 }

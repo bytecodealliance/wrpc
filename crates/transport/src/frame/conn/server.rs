@@ -1,22 +1,27 @@
 use core::fmt::{Debug, Display};
+use core::future::poll_fn;
 
 use std::collections::{HashMap, hash_map};
 use std::sync::Arc;
 
 use anyhow::bail;
+use bytes::BytesMut;
 use futures::{Stream, StreamExt as _};
 use tokio::io::{AsyncBufRead, AsyncWrite};
+use tokio::sync::mpsc::error::SendError;
 use tokio::sync::{Mutex, mpsc};
 use tokio_stream::wrappers::ReceiverStream;
 use tracing::{instrument, trace};
 
 use crate::Serve;
-use crate::frame::{Header, HeaderDecoder, HeaderReadError, Incoming, Outgoing};
+use crate::frame::conn::poll_decode;
+use crate::frame::{Header, HeaderDecoder, HeaderReadError};
 
-/// wRPC server for framed transports
+/// wRPC server for framed transports, which receives invocations over streams of type `I` and
+/// transmits over streams of type `O`
 #[derive(Debug)]
 pub struct Server<C, I, O> {
-    handlers: Mutex<HashMap<String, HashMap<String, mpsc::Sender<(C, I, O)>>>>,
+    handlers: Mutex<HashMap<String, HashMap<String, mpsc::Sender<(C, O, I)>>>>,
     header: HeaderDecoder,
 }
 
@@ -45,6 +50,8 @@ impl<C, I, O> Default for Server<C, I, O> {
 
 /// Error returned by [`Server::accept`]
 pub enum AcceptError<C, I, O> {
+    /// I/O error
+    IO(std::io::Error),
     /// Header read error
     HeaderRead(HeaderReadError),
     /// Function was not handled
@@ -54,8 +61,8 @@ pub enum AcceptError<C, I, O> {
         /// Function name
         name: String,
     },
-    /// Message sending failed
-    Send(mpsc::error::SendError<(C, I, O)>),
+    /// The handler of the function stopped receiving invocations
+    Send(SendError<(C, O, I)>),
 }
 
 impl<C, I, O> From<HeaderReadError> for AcceptError<C, I, O> {
@@ -64,19 +71,12 @@ impl<C, I, O> From<HeaderReadError> for AcceptError<C, I, O> {
     }
 }
 
-impl<C, I, O> From<mpsc::error::SendError<(C, I, O)>> for AcceptError<C, I, O> {
-    fn from(err: mpsc::error::SendError<(C, I, O)>) -> Self {
-        Self::Send(err)
-    }
-}
-
 impl<C, I, O> Debug for AcceptError<C, I, O> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
+            Self::IO(err) => Debug::fmt(err, f),
             Self::HeaderRead(err) => Debug::fmt(err, f),
-            Self::UnhandledFunction { instance, name } => {
-                write!(f, "`{instance}#{name}` does not have a handler registered")
-            }
+            Self::UnhandledFunction { .. } => Display::fmt(self, f),
             Self::Send(err) => Debug::fmt(err, f),
         }
     }
@@ -85,6 +85,7 @@ impl<C, I, O> Debug for AcceptError<C, I, O> {
 impl<C, I, O> Display for AcceptError<C, I, O> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
+            Self::IO(err) => Display::fmt(err, f),
             Self::HeaderRead(err) => Display::fmt(err, f),
             Self::UnhandledFunction { instance, name } => {
                 write!(f, "`{instance}#{name}` does not have a handler registered")
@@ -100,14 +101,19 @@ impl<C, I, O> Server<C, I, O>
 where
     I: AsyncBufRead + Unpin,
 {
-    /// Accept an already-established connection.
+    /// Accept an invocation on an already-established connection, passing its streams to the
+    /// handler of the function it invokes.
     ///
-    /// # Errors
-    ///
-    /// Returns an error if handling the invocation fails
-    #[instrument(level = "trace", skip_all, ret(level = "trace"))]
+    /// The streams are dropped if the invocation is not accepted.
+    #[instrument(level = "trace", skip_all)]
     pub async fn accept(&self, cx: C, tx: O, mut rx: I) -> Result<(), AcceptError<C, I, O>> {
-        let Header { instance, name } = self.header.read(&mut rx).await?;
+        let mut dec = self.header.clone();
+        let max = dec.max_len();
+        let mut buf = BytesMut::default();
+        let header = poll_fn(|cx| poll_decode(&mut rx, &mut dec, max, &mut buf, cx)).await?;
+        let Some(Header { instance, name }) = header else {
+            return Err(HeaderReadError::IO(std::io::ErrorKind::UnexpectedEof.into()).into());
+        };
         let h = self
             .handlers
             .lock()
@@ -115,25 +121,21 @@ where
             .get(&instance)
             .and_then(|h| h.get(&name))
             .cloned()
-            .ok_or_else(|| AcceptError::UnhandledFunction { instance, name })?;
-        h.send((cx, rx, tx)).await?;
-        Ok(())
+            .ok_or(AcceptError::UnhandledFunction { instance, name })?;
+        h.send((cx, tx, rx)).await.map_err(AcceptError::Send)
     }
 }
 
-#[instrument(level = "trace", skip(srv, paths))]
+#[instrument(level = "trace", skip(srv))]
 async fn serve<C, I, O>(
     srv: &Server<C, I, O>,
     instance: &str,
     func: &str,
-    paths: Arc<[Box<[Option<usize>]>]>,
-) -> anyhow::Result<
-    impl Stream<Item = anyhow::Result<(C, Outgoing, Incoming)>> + 'static + use<C, I, O>,
->
+) -> anyhow::Result<impl Stream<Item = anyhow::Result<(C, O, I)>> + 'static + use<C, I, O>>
 where
     C: Send + Sync + 'static,
-    I: AsyncBufRead + Send + Sync + Unpin + 'static,
-    O: AsyncWrite + Send + Sync + Unpin + 'static,
+    I: Send + 'static,
+    O: Send + 'static,
 {
     let (tx, rx) = mpsc::channel(1024);
     let mut handlers = srv.handlers.lock().await;
@@ -149,52 +151,56 @@ where
             entry.insert(tx);
         }
     }
-    Ok(ReceiverStream::new(rx).map(move |(cx, rx, tx)| {
+    Ok(ReceiverStream::new(rx).map(|invocation| {
         trace!("received invocation");
-        let rx = Incoming::new(rx, paths.as_ref());
-        let tx = Outgoing::new(tx);
-        Ok((cx, tx, rx))
+        Ok(invocation)
     }))
 }
 
 impl<C, I, O> Serve for Server<C, I, O>
 where
     C: Send + Sync + 'static,
-    I: AsyncBufRead + Send + Sync + Unpin + 'static,
-    O: AsyncWrite + Send + Sync + Unpin + 'static,
+    I: AsyncBufRead + Send + Unpin + 'static,
+    O: AsyncWrite + Send + Unpin + 'static,
 {
     type Context = C;
+    type Outgoing = O;
+    type Incoming = I;
 
     async fn serve(
         &self,
         instance: &str,
         func: &str,
-        paths: Arc<[Box<[Option<usize>]>]>,
+        _paths: Arc<[Box<[Option<usize>]>]>,
     ) -> anyhow::Result<
-        impl Stream<Item = anyhow::Result<(Self::Context, Outgoing, Incoming)>> + 'static + use<C, I, O>,
+        impl Stream<Item = anyhow::Result<(Self::Context, Self::Outgoing, Self::Incoming)>>
+        + 'static
+        + use<C, I, O>,
     > {
-        serve(self, instance, func, paths).await
+        serve(self, instance, func).await
     }
 }
 
 impl<'a, C, I, O> Serve for &'a Server<C, I, O>
 where
     C: Send + Sync + 'static,
-    I: AsyncBufRead + Send + Sync + Unpin + 'static,
-    O: AsyncWrite + Send + Sync + Unpin + 'static,
+    I: AsyncBufRead + Send + Unpin + 'static,
+    O: AsyncWrite + Send + Unpin + 'static,
 {
     type Context = C;
+    type Outgoing = O;
+    type Incoming = I;
 
     async fn serve(
         &self,
         instance: &str,
         func: &str,
-        paths: Arc<[Box<[Option<usize>]>]>,
+        _paths: Arc<[Box<[Option<usize>]>]>,
     ) -> anyhow::Result<
-        impl Stream<Item = anyhow::Result<(Self::Context, Outgoing, Incoming)>>
+        impl Stream<Item = anyhow::Result<(Self::Context, Self::Outgoing, Self::Incoming)>>
         + 'static
         + use<'a, C, I, O>,
     > {
-        serve(self, instance, func, paths).await
+        serve(self, instance, func).await
     }
 }

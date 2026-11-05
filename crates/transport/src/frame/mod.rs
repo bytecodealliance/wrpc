@@ -5,10 +5,8 @@ use std::sync::Arc;
 use bytes::Bytes;
 
 mod codec;
-mod conn;
+pub(crate) mod conn;
 mod oneshot;
-#[cfg(feature = "net")]
-mod split;
 
 #[cfg(any(all(target_family = "wasm", feature = "wasi"), feature = "net"))]
 pub mod tcp;
@@ -19,8 +17,6 @@ pub mod unix;
 pub use codec::*;
 pub use conn::*;
 pub use oneshot::*;
-#[cfg(feature = "net")]
-pub use split::{ReadHalf, WriteHalf};
 
 /// Framing protocol version
 pub const PROTOCOL: u8 = 1;

@@ -1,4 +1,4 @@
-#![allow(clippy::type_complexity)]
+#![allow(clippy::result_large_err, clippy::type_complexity)]
 #![deny(missing_docs)]
 
 //! wRPC transport abstractions, codec and framing
@@ -10,11 +10,11 @@
 //! - [Invoke] - the client-side handle to a wRPC transport, allowing clients to *invoke* WIT functions over wRPC transport
 //! - [Serve] - the server-side handle to a wRPC transport, allowing servers to *serve* WIT functions over wRPC transport
 //!
-//! [Invoke] and [Serve] establish a single bidirectional byte stream per invocation, over which
-//! wRPC layers its [framing](frame) protocol to multiplex the nested async parameter and result
-//! sub-streams. Both therefore yield the framed [`frame::Outgoing`] and [`frame::Incoming`]
-//! streams regardless of the underlying transport, which only needs to provide any
-//! [`AsyncWrite`](tokio::io::AsyncWrite)/[`AsyncBufRead`](tokio::io::AsyncBufRead) byte stream.
+//! [Invoke] and [Serve] establish a single bidirectional byte stream per invocation, which
+//! they yield as any [`AsyncWrite`](tokio::io::AsyncWrite)/[`AsyncBufRead`](tokio::io::AsyncBufRead)
+//! byte stream pair. [`InvokeExt`] and [`ServeExt`] layer the wRPC [framing](frame) protocol on
+//! top of it to multiplex the nested async parameter and result sub-streams as the framed
+//! [`frame::Outgoing`] and [`frame::Incoming`] streams.
 
 pub mod frame;
 pub mod invoke;
@@ -34,68 +34,14 @@ pub use frame::tcp;
 #[cfg(all(unix, feature = "net"))]
 pub use frame::unix;
 
-use core::mem;
-use core::pin::{Pin, pin};
-use core::task::{Context, Poll};
-
 use bytes::{BufMut as _, BytesMut};
-use tokio::io::{AsyncRead, ReadBuf};
 use tokio_util::codec::Encoder as _;
-use tracing::trace;
 use wasm_tokio::Leb128Encoder;
 
-/// Buffered incoming stream used for decoding values
-///
-/// This wraps the multiplexed framed [`frame::Incoming`] stream with a read buffer used to
-/// hold bytes that were read ahead while decoding synchronous values.
-pub struct BufferedIncoming {
-    buffer: BytesMut,
-    inner: frame::Incoming,
-}
-
-impl BufferedIncoming {
-    /// Index the incoming stream using a structural `path`, returning a handle to the
-    /// multiplexed sub-stream addressed by it.
-    pub fn index(&self, path: &[usize]) -> anyhow::Result<Self> {
-        let inner = self.inner.index(path)?;
-        Ok(Self {
-            buffer: BytesMut::default(),
-            inner,
-        })
-    }
-}
-
-impl Drop for BufferedIncoming {
-    fn drop(&mut self) {
-        if !self.buffer.is_empty() {
-            self.inner.fail_unprocessed();
-        }
-    }
-}
-
-impl AsyncRead for BufferedIncoming {
-    fn poll_read(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &mut ReadBuf<'_>,
-    ) -> Poll<std::io::Result<()>> {
-        let cap = buf.remaining();
-        if cap == 0 {
-            trace!("attempt to read empty buffer");
-            return Poll::Ready(Ok(()));
-        }
-        if !self.buffer.is_empty() {
-            if self.buffer.len() > cap {
-                trace!(cap, len = self.buffer.len(), "reading part of buffer");
-                buf.put_slice(&self.buffer.split_to(cap));
-            } else {
-                trace!(cap, len = self.buffer.len(), "reading full buffer");
-                buf.put_slice(&mem::take(&mut self.buffer));
-            }
-            return Poll::Ready(Ok(()));
-        }
-        pin!(&mut self.inner).poll_read(cx, buf)
-    }
+/// Multiplexes asynchronous value transmission using a structural `path`
+pub trait Index: Sized {
+    /// Index the entity using a structural `path`
+    fn index(&self, path: &[usize]) -> std::io::Result<Self>;
 }
 
 fn encode_ready_bytes_header(n: usize, dst: &mut BytesMut) -> std::io::Result<()> {
@@ -108,6 +54,22 @@ fn encode_ready_bytes_header(n: usize, dst: &mut BytesMut) -> std::io::Result<()
 
 fn copy_io_error(err: &std::io::Error) -> std::io::Error {
     std::io::Error::new(err.kind(), err.to_string())
+}
+
+/// Returns the error for data received after the end of a value
+fn error_trailing_data() -> std::io::Error {
+    std::io::Error::new(
+        std::io::ErrorKind::InvalidData,
+        "received data after value end",
+    )
+}
+
+/// Returns the error for received data, which was not processed
+fn error_unprocessed() -> std::io::Error {
+    std::io::Error::new(
+        std::io::ErrorKind::BrokenPipe,
+        "received data was not processed",
+    )
 }
 
 /// Returns the error for data received for a closed receiver
