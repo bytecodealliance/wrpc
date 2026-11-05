@@ -268,7 +268,10 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve, H: Handler<T::Context> + 
                     "{instance}",
                     "{wit_name}",
                     ::std::boxed::Box::pin(
-                        {futures}::TryStreamExt::map_ok({}_{name}, move |(cx, ("#,
+                        {futures}::TryStreamExt::map_ok({}_{name}, move |(cx, params, tx)| {{
+                            let handler = handler.clone();
+                            ::std::boxed::Box::pin(async move {{
+                                let (("#,
                 match func.kind {
                     FunctionKind::Freestanding | FunctionKind::AsyncFreestanding => "f",
                     FunctionKind::Method(_) | FunctionKind::AsyncMethod(_) => "m",
@@ -283,9 +286,11 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve, H: Handler<T::Context> + 
             }
             uwrite!(
                 self.src,
-                r"
-                        ), rx, tx)| {{
-                            let handler = handler.clone();"
+                r#"), rx) = {anyhow}::Context::context(
+                                    params.await,
+                                    "failed to receive `{fqn}` parameters",
+                                )?;"#,
+                anyhow = self.r#gen.anyhow_path(),
             );
             for (i, param) in func.params.iter().enumerate() {
                 if self.has_raw_strings(&param.ty) {
@@ -293,11 +298,6 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve, H: Handler<T::Context> + 
                     uwrite!(self.src, "let p{i}: {ty} = p{i};");
                 }
             }
-            uwrite!(
-                self.src,
-                r"
-                            ::std::boxed::Box::pin(async move {{"
-            );
             let (trait_name, name) = match func.kind {
                 FunctionKind::Freestanding | FunctionKind::AsyncFreestanding => {
                     ("Handler", to_rust_ident(func.item_name()).to_string())

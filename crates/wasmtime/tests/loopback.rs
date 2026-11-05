@@ -159,9 +159,10 @@ async fn polyfill_async() -> anyhow::Result<()> {
                     fut.await.context("failed to serve `run`")
                 },
                 async {
-                    let Some((.., (x,), rx, tx)) = pin!(foo).try_next().await? else {
+                    let Some((.., params, tx)) = pin!(foo).try_next().await? else {
                         bail!("`foo` invocation missing");
                     };
+                    let ((x,), rx) = params.await?;
                     assert!(rx.is_none());
                     assert_eq!(x, 42);
                     tx((x * 2,)).await
@@ -449,9 +450,10 @@ async fn async_values() -> anyhow::Result<()> {
                 async { handle(run).await.context("failed to serve `run`") },
                 async { handle(gen_).await.context("failed to serve `gen`") },
                 async {
-                    let Some((.., (s, f, u), rx, tx)) = pin!(foo).try_next().await? else {
+                    let Some((.., params, tx)) = pin!(foo).try_next().await? else {
                         bail!("`foo` invocation missing");
                     };
+                    let ((s, f, u), rx) = params.await?;
                     try_join!(
                         async {
                             if let Some(rx) = rx {

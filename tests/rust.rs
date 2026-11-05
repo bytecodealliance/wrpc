@@ -534,17 +534,19 @@ async fn assert_dynamic<C: Clone + Send + Sync + 'static>(
                 }
             }
             for _ in 0..2 {
-                let Some((.., params, io, tx)) = sync.try_next().await? else {
+                let Some((.., params, tx)) = sync.try_next().await? else {
                     bail!("`test.sync` missing");
                 };
+                let (params, io) = params.await?;
                 assert!(io.is_none());
                 assert_eq!(params, sync_values());
                 tx(sync_values()).await?;
             }
             for _ in 0..2 {
-                let Some((.., params, io, tx)) = async_.try_next().await? else {
+                let Some((.., params, tx)) = async_.try_next().await? else {
                     bail!("`test.async` missing");
                 };
+                let (params, io) = params.await?;
                 assert_async_values(params, io).await?;
                 tx(async_values()).await?;
             }
@@ -698,11 +700,12 @@ where
             srv.accept((), tx, BufReader::new(rx))
                 .await
                 .expect("failed to accept connection");
-            let ((), params, rx, tx) = pin!(invocations)
+            let ((), params, tx) = pin!(invocations)
                 .try_next()
                 .await
                 .expect("failed to accept invocation")
                 .expect("unexpected end of stream");
+            let (params, rx) = params.await.expect("failed to receive parameters");
             assert!(rx.is_none());
             assert_eq!(params, (42,));
             tx(("test",)).await.expect("failed to transmit response");
@@ -743,11 +746,12 @@ async fn rust_oneshot_no_params() -> anyhow::Result<()> {
                 srv.accept((), tx, BufReader::new(rx))
                     .await
                     .expect("failed to accept connection");
-                let ((), (), rx, tx) = pin!(invocations)
+                let ((), params, tx) = pin!(invocations)
                     .try_next()
                     .await
                     .expect("failed to accept invocation")
                     .expect("unexpected end of stream");
+                let ((), rx) = params.await.expect("failed to receive parameters");
                 assert!(rx.is_none());
                 tx(("test",)).await.expect("failed to transmit response");
             }

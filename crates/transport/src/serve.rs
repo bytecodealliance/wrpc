@@ -80,7 +80,8 @@ pub trait ServeExt: Serve {
 
     /// Serve function `func` from instance `instance` using typed `Params` and `Results`
     ///
-    /// Each invocation is yielded along with its synchronous parameters, a future receiving the
+    /// Each invocation is yielded as soon as it is accepted, along with a future receiving its
+    /// parameters, which resolves to the synchronous parameters and a future receiving the
     /// asynchronous ones, if there are any, and a function transmitting its results, which
     /// resolves once the invocation ends. Nothing is received unless it is polled.
     #[instrument(level = "trace", skip(self, paths))]
@@ -94,14 +95,21 @@ pub trait ServeExt: Serve {
             impl Stream<
                 Item = anyhow::Result<(
                     Self::Context,
-                    Params,
-                    Option<
-                        impl Future<Output = std::io::Result<()>>
-                        + Send
-                        + Unpin
-                        + 'static
-                        + use<Self, Params, Results>,
-                    >,
+                    impl Future<
+                        Output = anyhow::Result<(
+                            Params,
+                            Option<
+                                impl Future<Output = std::io::Result<()>>
+                                + Send
+                                + Unpin
+                                + 'static
+                                + use<Self, Params, Results>,
+                            >,
+                        )>,
+                    >
+                    + Send
+                    + 'static
+                    + use<Self, Params, Results>,
                     impl FnOnce(
                         Results,
                     )
@@ -127,9 +135,9 @@ pub trait ServeExt: Serve {
         let span = Span::current();
         async {
             let invocations = self.serve_framed(instance, func, paths).await?;
-            Ok(invocations.and_then(move |(cx, mut outgoing, incoming)| {
-                async {
-                    let closed = incoming.closed();
+            Ok(invocations.map_ok(move |(cx, mut outgoing, incoming)| {
+                let closed = incoming.closed();
+                let params = async move {
                     let mut dec = FramedRead::new(incoming, Params::Decoder::default());
                     debug!("receiving sync parameters");
                     let params = match dec
@@ -157,8 +165,12 @@ pub trait ServeExt: Serve {
                         return Err(error_trailing_data())
                             .context("failed to receive sync parameters");
                     }
-                    let span = Span::current();
-                    Ok((cx, params, rx.map(|f| f(incoming)), move |results| {
+                    Ok((params, rx.map(|f| f(incoming))))
+                }
+                .instrument(span.clone());
+                let results = {
+                    let span = span.clone();
+                    move |results| {
                         Box::pin(
                             async move {
                                 let mut enc = Results::Encoder::default();
@@ -188,9 +200,9 @@ pub trait ServeExt: Serve {
                             }
                             .instrument(span),
                         ) as Pin<_>
-                    }))
-                }
-                .instrument(span.clone())
+                    }
+                };
+                (cx, params, results)
             }))
         }
     }
@@ -271,7 +283,7 @@ mod tests {
         );
         async move {
             let st = fut.await.unwrap();
-            Ok(Box::pin(st.and_then(|(cx, _, _, tx)| async {
+            Ok(Box::pin(st.and_then(|(cx, _, tx)| async {
                 tx((Bytes::from("test"),)).await.unwrap();
                 Ok(cx)
             })) as Pin<Box<dyn Stream<Item = _>>>)

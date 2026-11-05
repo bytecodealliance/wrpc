@@ -85,7 +85,7 @@ An empty frame, i.e. a frame with empty `data`, closes its `path`: the sender MU
 
 Likewise, if a frame is received on a `path` that carries no pending value the receiver has received or may still receive, the receiver MUST treat it as an error.
 
-A sender MUST send the data of a pending value only after the data carrying it, for example, the data of a pending value in a stream element after the stream chunk containing that element, since a receiver MAY bound the data it buffers for a `path`, which no value it decoded carries yet.
+A sender MUST send the data carrying a pending value before any data of that value, for example, the stream chunk containing a pending element before the data of that element, and MUST NOT send data on a `path`, which no value it sent carries. A receiver MUST receive all pending values carried by the data it decoded concurrently, since a receiver MAY hold a received frame until the value at its `path` is read, which stalls the receipt of every other `path`.
 
 Frames do not communicate the end of transmit, i.e. that no more frames follow. A transport communicates it using its native half-close, if it has one, for example, TCP shutdown or finishing a QUIC stream, and otherwise by closing the byte stream (see [Transport](#transport)). If transmit ends while the root or the `path` of a pending value the receiver has decoded is still open, the receiver MUST treat it as a failed invocation.
 
