@@ -18,21 +18,14 @@ pub async fn run(
     let f2 = async { tx.send("hello".to_string()).unwrap() };
     let (res, ()) = join!(f1, f2);
     let (rx2, io) = res?;
-    let (m2, ()) = try_join!(async { Ok(rx2.await) }, async {
-        match io {
-            Some(io) => io.await,
-            None => Ok(()),
-        }
-    })?;
+    let (m2, ()) = try_join!(async { Ok(rx2.await) }, io)?;
     assert_eq!(m2, "helloworld");
 
     let (tx, rx) = oneshot::channel();
     let f1 = async {
         let (m3, io) = pong(wrpc, (), Box::pin(async move { rx.await.unwrap() })).await?;
         assert_eq!(m3, "helloworld");
-        if let Some(io) = io {
-            io.await?;
-        }
+        io.await?;
         ::wit_bindgen_wrpc::anyhow::Ok(())
     };
     let f2 = async { tx.send(m2).unwrap() };

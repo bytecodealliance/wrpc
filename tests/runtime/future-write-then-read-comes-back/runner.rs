@@ -12,12 +12,7 @@ pub async fn run(
     let a = async { tx.send(()).unwrap() };
     let b = async {
         let (rx, io) = f(wrpc, (), Box::pin(async move { rx.await.unwrap() })).await?;
-        try_join!(async { Ok(rx.await) }, async {
-            match io {
-                Some(io) => io.await,
-                None => Ok(()),
-            }
-        })?;
+        try_join!(async { Ok(rx.await) }, io)?;
         ::wit_bindgen_wrpc::anyhow::Ok(())
     };
     let ((), b_result) = join!(a, b);

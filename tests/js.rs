@@ -20,7 +20,7 @@ use tokio::process::{Child, Command};
 use tokio::time::timeout;
 use tokio::{select, spawn};
 use tracing::{info, instrument};
-use wrpc_transport::Invoke as _;
+use wrpc_transport::InvokeExt as _;
 
 pub mod common;
 
@@ -157,7 +157,7 @@ async fn js_server() -> anyhow::Result<()> {
     let client = wrpc_transport::frame::tcp::Client::from(addr);
     {
         let (tx, mut rx) = client
-            .invoke(
+            .invoke_framed(
                 (),
                 "wrpc-test:integration/foo",
                 "foo",
@@ -217,9 +217,9 @@ async fn js_client() -> anyhow::Result<()> {
         .await
         .context("failed to start TCP listener")?;
     let addr = lis.local_addr().context("failed to get server address")?;
-    let srv = wrpc_transport::frame::Server::default();
+    let srv = wrpc_transport::tcp::Server::default();
     serve_echo(&srv, lis, &addr.to_string(), async |stream, addr| {
-        let (rx, tx) = wrpc_transport::tcp::split(stream);
+        let (rx, tx) = stream.into_split();
         srv.accept(addr, tx, BufReader::new(rx))
             .await
             .expect("failed to accept invocation");

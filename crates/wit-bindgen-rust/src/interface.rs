@@ -321,10 +321,20 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve, H: Handler<T::Context> + 
             uwrite!(
                 self.src,
                 r#"
-                                let rx = rx.map({tracing}::Instrument::in_current_span).map({tokio}::spawn);
-                                {tracing}::trace!(instance = "{instance}", func = "{wit_name}", "calling handler");
-                                match {trait_name}::{name}(&handler, cx"#,
-                tokio = self.r#gen.tokio_path(),
+                                let rx = async {{
+                                    let Some(rx) = rx else {{
+                                        return {anyhow}::Ok(());
+                                    }};
+                                    {tracing}::trace!(instance = "{instance}", func = "{wit_name}", "receiving async invocation parameters");
+                                    {anyhow}::Context::context(
+                                        {tracing}::Instrument::in_current_span(rx).await,
+                                        "failed to receive `{fqn}` async parameters",
+                                    )
+                                }};
+                                let call = async {{
+                                    {tracing}::trace!(instance = "{instance}", func = "{wit_name}", "calling handler");
+                                    match {trait_name}::{name}(&handler, cx"#,
+                anyhow = self.r#gen.anyhow_path(),
                 tracing = self.r#gen.tracing_path(),
                 wit_name = func.name,
             );
@@ -335,9 +345,9 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve, H: Handler<T::Context> + 
             uwrite!(
                 self.src,
                 r"
-                                ).await {{
-                                    Ok(results) => {{
-                                        match tx(",
+                                    ).await {{
+                                        Ok(results) => {{
+                                            match tx(",
             );
             if let Some(ty) = &func.result {
                 // wrap single-element results into a tuple for correct indexing
@@ -349,37 +359,21 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve, H: Handler<T::Context> + 
             uwrite!(
                 self.src,
                 r#"
-                                        ).await {{
-                                            Ok(()) => {{
-                                                if let Some(rx) = rx {{
-                                                    {tracing}::trace!(instance = "{instance}", func = "{wit_name}", "receiving async invocation parameters");
-                                                    let rx = {anyhow}::Context::context(
-                                                        rx.await,
-                                                        "`{fqn}` async parameter receipt task failed",
-                                                    )?;
-                                                    {anyhow}::Context::context(
-                                                        rx,
-                                                        "failed to receive `{fqn}` async parameters",
-                                                    )
-                                                }} else {{
-                                                    {anyhow}::Ok(())
-                                                }}
-                                            }},
-                                            Err(err) => {{
-                                                if let Some(rx) = rx {{
-                                                    rx.abort();
-                                                }}
-                                                {anyhow}::bail!(err.context("failed to transmit `{fqn}` invocation results"))
-                                            }},
-                                        }}
-                                    }},
-                                    Err(err) => {{
-                                        if let Some(rx) = rx {{
-                                            rx.abort();
-                                        }}
-                                        {anyhow}::bail!(err.context("failed to serve `{fqn}` invocation"))
-                                    }},
-                                }}
+                                            ).await {{
+                                                Ok(()) => {anyhow}::Ok(()),
+                                                Err(err) => {{
+                                                    {anyhow}::bail!(err.context("failed to transmit `{fqn}` invocation results"))
+                                                }},
+                                            }}
+                                        }},
+                                        Err(err) => {{
+                                            {anyhow}::bail!(err.context("failed to serve `{fqn}` invocation"))
+                                        }},
+                                    }}
+                                }};
+                                let (call, rx) = {tokio}::join!(call, rx);
+                                call?;
+                                rx
                             }})
                             as ::core::pin::Pin<
                                     ::std::boxed::Box<
@@ -409,8 +403,7 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve, H: Handler<T::Context> + 
             }},"#,
                 anyhow = self.r#gen.anyhow_path(),
                 futures = self.r#gen.futures_path(),
-                tracing = self.r#gen.tracing_path(),
-                wit_name = func.name,
+                tokio = self.r#gen.tokio_path(),
             );
         }
 
@@ -670,7 +663,7 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve, H: Handler<T::Context> + 
                 if async_params || !paths.is_empty() {
                     uwrite!(
                         self.src,
-                        ", ::core::option::Option<impl ::core::future::Future<Output = {anyhow}::Result<()>> + ::core::marker::Send + 'static + use<'a, C__>>)",
+                        ", impl ::core::future::Future<Output = {anyhow}::Result<()>> + ::core::marker::Send + 'static + use<'a, C__>)",
                     );
                 }
                 uwrite!(self.src, ">> + Send + 'a");
@@ -687,7 +680,7 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve, H: Handler<T::Context> + 
                 if async_params || !paths.is_empty() {
                     uwrite!(
                         self.src,
-                        "::core::option::Option<impl ::core::future::Future<Output = {anyhow}::Result<()>> + ::core::marker::Send + 'static + use<'a, C__>>",
+                        "impl ::core::future::Future<Output = {anyhow}::Result<()>> + ::core::marker::Send + 'static + use<'a, C__>",
                     );
                 }
                 uwrite!(self.src, ")>> + Send + 'a");
@@ -1540,10 +1533,10 @@ impl<W: {wrpc_transport}::Sink> {wrpc_transport}::Encode<W> for self::{name}
     type Encoder = {mod_name}::Encoder<W>;
 }}
 
-impl {wrpc_transport}::Decode for self::{name}
+impl<R: {wrpc_transport}::Source> {wrpc_transport}::Decode<R> for self::{name}
 {{
-    type Decoder = {mod_name}::Decoder;
-    type ListDecoder = {wrpc_transport}::ListDecoder<Self::Decoder>;
+    type Decoder = {mod_name}::Decoder<R>;
+    type ListDecoder = {wrpc_transport}::ListDecoder<Self::Decoder, R>;
 }}
 
 mod {mod_name} {{
@@ -1650,7 +1643,7 @@ mod {mod_name} {{
         }}
     }}
 
-    pub struct Decoder
+    pub struct Decoder<R: {wrpc_transport}::Source>
     {{"
             );
 
@@ -1659,19 +1652,19 @@ mod {mod_name} {{
                     let name = to_rust_ident(name);
                     uwrite!(self.src, "c_{name}: <");
                     self.print_decoded_ty(ty, true);
-                    uwriteln!(self.src, " as {wrpc_transport}::Decode>::Decoder,");
+                    uwriteln!(self.src, " as {wrpc_transport}::Decode<R>>::Decoder,");
                     uwrite!(self.src, "v_{name}: ::core::option::Option<");
                     self.print_decoded_ty(ty, true);
                     uwriteln!(self.src, ">,");
                 }
             } else {
-                uwriteln!(self.src, "_ty: ::core::marker::PhantomData<()>,");
+                uwriteln!(self.src, "_ty: ::core::marker::PhantomData<R>,");
             }
             uwriteln!(
                 self.src,
                 r"}}
     #[automatically_derived]
-    impl ::core::default::Default for Decoder
+    impl<R: {wrpc_transport}::Source> ::core::default::Default for Decoder<R>
     {{
         fn default() -> Self {{
             Self{{"
@@ -1692,9 +1685,9 @@ mod {mod_name} {{
     }}
 
     #[automatically_derived]
-    impl {wrpc_transport}::Deferred<{wrpc_transport}::BufferedIncoming> for Decoder
+    impl<R: {wrpc_transport}::Source> {wrpc_transport}::Deferred<R> for Decoder<R>
     {{
-        fn take_deferred(&mut self) -> ::core::option::Option<{wrpc_transport}::DeferredFn<{wrpc_transport}::BufferedIncoming>> {{"
+        fn take_deferred(&mut self) -> ::core::option::Option<{wrpc_transport}::DeferredFn<R>> {{"
             );
             if !fields.is_empty() {
                 for Field { name, .. } in fields {
@@ -1758,7 +1751,7 @@ mod {mod_name} {{
     }}
 
     #[automatically_derived]
-    impl {tokio_util}::codec::Decoder for Decoder 
+    impl<R: {wrpc_transport}::Source> {tokio_util}::codec::Decoder for Decoder<R>
     {{
         type Item = super::{name};
         type Error = ::std::io::Error;
@@ -1953,7 +1946,7 @@ impl<W: {wrpc_transport}::Sink> {wrpc_transport}::Encode<W> for &&self::{name} {
     type Encoder = {mod_name}::Codec;
 }}
 
-impl {wrpc_transport}::Decode for self::{name} {{
+impl<R: {wrpc_transport}::Source> {wrpc_transport}::Decode<R> for self::{name} {{
     type Decoder = {mod_name}::Codec;
     type ListDecoder = {wrpc_transport}::SyncCodec<{wasm_tokio}::CoreVecDecoder<Self::Decoder>>;
 }}
@@ -2129,7 +2122,7 @@ impl<W: {wrpc_transport}::Sink> {wrpc_transport}::Encode<W> for &&self::{name} {
     type Encoder = {mod_name}::Codec;
 }}
 
-impl {wrpc_transport}::Decode for self::{name} {{
+impl<R: {wrpc_transport}::Source> {wrpc_transport}::Decode<R> for self::{name} {{
     type Decoder = {mod_name}::Codec;
     type ListDecoder = {wrpc_transport}::SyncCodec<{wasm_tokio}::CoreVecDecoder<Self::Decoder>>;
 }}
@@ -2231,10 +2224,10 @@ impl<W: {wrpc_transport}::Sink> {wrpc_transport}::Encode<W> for self::{name}
     type Encoder = {mod_name}::Encoder<W>;
 }}
 
-impl {wrpc_transport}::Decode for self::{name}
+impl<R: {wrpc_transport}::Source> {wrpc_transport}::Decode<R> for self::{name}
 {{
-    type Decoder = {mod_name}::Decoder;
-    type ListDecoder = {wrpc_transport}::ListDecoder<Self::Decoder>;
+    type Decoder = {mod_name}::Decoder<R>;
+    type ListDecoder = {wrpc_transport}::ListDecoder<Self::Decoder, R>;
 }}
 
 mod {mod_name} {{
@@ -2316,7 +2309,7 @@ mod {mod_name} {{
                 uwrite!(
                     self.src,
                     r"
-    pub enum PayloadDecoder
+    pub enum PayloadDecoder<R: {wrpc_transport}::Source>
     {{"
                 );
 
@@ -2334,7 +2327,7 @@ mod {mod_name} {{
                 {case}(<"
                         );
                         self.print_decoded_ty(ty, true);
-                        uwriteln!(self.src, " as {wrpc_transport}::Decode>::Decoder),");
+                        uwriteln!(self.src, " as {wrpc_transport}::Decode<R>>::Decoder),");
                     }
                 }
 
@@ -2343,14 +2336,14 @@ mod {mod_name} {{
                     r#"
     }}
 
-    pub enum Decoder
+    pub enum Decoder<R: {wrpc_transport}::Source>
     {{
-        Payload(::core::option::Option<PayloadDecoder>),
-        Deferred(::core::option::Option<{wrpc_transport}::DeferredFn<{wrpc_transport}::BufferedIncoming>>)
+        Payload(::core::option::Option<PayloadDecoder<R>>),
+        Deferred(::core::option::Option<{wrpc_transport}::DeferredFn<R>>)
     }}
 
     #[automatically_derived]
-    impl ::core::default::Default for Decoder
+    impl<R: {wrpc_transport}::Source> ::core::default::Default for Decoder<R>
     {{
         fn default() -> Self {{
             Self::Payload(None)
@@ -2358,9 +2351,9 @@ mod {mod_name} {{
     }}
 
     #[automatically_derived]
-    impl {wrpc_transport}::Deferred<{wrpc_transport}::BufferedIncoming> for Decoder
+    impl<R: {wrpc_transport}::Source> {wrpc_transport}::Deferred<R> for Decoder<R>
     {{
-        fn take_deferred(&mut self) -> ::core::option::Option<{wrpc_transport}::DeferredFn<{wrpc_transport}::BufferedIncoming>> {{
+        fn take_deferred(&mut self) -> ::core::option::Option<{wrpc_transport}::DeferredFn<R>> {{
             match self {{
                 Self::Payload(None) => None,"#
                 );
@@ -2392,7 +2385,7 @@ mod {mod_name} {{
     }}
 
     #[automatically_derived]
-    impl {tokio_util}::codec::Decoder for Decoder 
+    impl<R: {wrpc_transport}::Source> {tokio_util}::codec::Decoder for Decoder<R>
     {{
         type Item = super::{name};
         type Error = ::std::io::Error;
@@ -2461,7 +2454,7 @@ mod {mod_name} {{
                             let Some(payload) = dec.decode(src)? else {{
                                 return Ok(None)
                             }};
-                            *self = Self::Deferred({wrpc_transport}::Deferred::<{wrpc_transport}::BufferedIncoming>::take_deferred(dec));
+                            *self = Self::Deferred({wrpc_transport}::Deferred::<R>::take_deferred(dec));
                             Ok(Some(super::{name}::{case}({payload})))
                         }},"
                         );
@@ -2630,7 +2623,7 @@ impl<W: {wrpc_transport}::Sink> {wrpc_transport}::Encode<W> for &self::{name} {{
     type Encoder = {mod_name}::Codec;
 }}
 
-impl {wrpc_transport}::Decode for self::{name} {{
+impl<R: {wrpc_transport}::Source> {wrpc_transport}::Decode<R> for self::{name} {{
     type Decoder = {mod_name}::Codec;
     type ListDecoder = {wrpc_transport}::SyncCodec<{wasm_tokio}::CoreVecDecoder<Self::Decoder>>;
 }}
