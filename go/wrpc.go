@@ -16,7 +16,7 @@ type Invoker interface {
 	// Invoke invokes a function `name` within an instance `instance`.
 	// `paths` define the async result paths to subscribe on.
 	// On success, `Invoke` returns two handles used for writing and reading encoded parameters and results respectively.
-	// The encoded parameters are written to the root of the returned writer.
+	// The encoded parameters are written to the root of the returned writer, which must be closed.
 	Invoke(ctx context.Context, instance string, name string, paths ...SubscribePath) (IndexWriteCloser, IndexReadCloser, error)
 }
 
@@ -94,7 +94,7 @@ type IndexWriter interface {
 	io.Writer
 	io.ByteWriter
 
-	// ClosePath closes the path by sending an empty frame, after which nothing may be written to it.
+	// ClosePath closes the path by sending an empty frame, unless it is closed already, after which nothing may be written to it.
 	ClosePath() error
 
 	Index[IndexWriteCloser]

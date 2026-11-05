@@ -45,6 +45,9 @@ func TestWriteFutureNested(t *testing.T) {
 	r := bytes.NewBuffer(dst.Bytes())
 	assertReadFrame(t, r, []byte{0}, 0)
 	assertReadFrame(t, r, []byte{'x'}, 0, 0)
+	assertReadFrame(t, r, nil, 0, 0)
+	assertReadFrame(t, r, nil, 0)
+	assertReadFrame(t, r, nil)
 	if n := r.Len(); n > 0 {
 		t.Fatalf("%v trailing bytes left in buffer: %s", n, r.String())
 	}
