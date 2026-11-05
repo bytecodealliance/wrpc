@@ -335,7 +335,8 @@ export class Mux {
   #fail = () => {};
 
   /** Write the invocation header: the protocol byte and instance/function names.
-   * @param {string} instance @param {string} func @returns {Promise<void>} */
+   * @param {string} instance @param {string} func
+   * @returns {Promise<void>} */
   writeHeader(instance, func) {
     const w = new Writer();
     w.u8(PROTOCOL);
@@ -362,9 +363,10 @@ export class Mux {
       if (len > this.maxDepth) {
         throw new Error(`unexpected data for a sub-stream path of length ${len}`);
       }
-      await this._room(path);
+      await this._room(path, n === 0);
       if (n === 0) {
         this._route(path, true).close();
+        this._prune(path);
         continue;
       }
       const chan = this._route(path);
@@ -377,17 +379,19 @@ export class Mux {
         if (!(await chan.send(data)) && !this.aborted) unexpected(path);
       }
     }
-    this._closeInbound();
+    if (this.aborted) return;
+    if (!this.root.closed) throw new RangeError(UNEXPECTED_EOF);
+    this._closeInbound(new RangeError(UNEXPECTED_EOF));
   }
 
   /**
    * Wait while {@link MAX_PENDING} sub-streams not yet declared are buffered,
    * if the frame at `path` would buffer another one.
-   * @param {number[]} path
+   * @param {number[]} path @param {boolean} empty
    */
-  async _room(path) {
+  async _room(path, empty) {
     while (this.pendingCount >= MAX_PENDING && !this.aborted) {
-      const found = this._find(path);
+      const found = this._find(path, empty);
       if (!("at" in found)) return;
       if (found.at.pending?.get(found.i)?.has(key(path))) return;
       await new Promise((resolve) => this.pendingWaiters.push(() => resolve(undefined)));
@@ -410,11 +414,12 @@ export class Mux {
   /**
    * The node of the sub-stream at `path`, or where the lookup stopped if it
    * is not yet known whether it is expected. A path no sub-stream is or may
-   * still be expected at, or a closed or finished one, fails the invocation.
-   * @param {number[]} path
+   * still be expected at, or a closed one, fails the invocation, as does a
+   * finished one, unless `empty`, for the empty frame closing it.
+   * @param {number[]} path @param {boolean} [empty]
    * @returns {Node | Undecided}
    */
-  _find(path) {
+  _find(path, empty = false) {
     let n = this.root;
     for (const i of path) {
       const c = n.children.get(i);
@@ -425,7 +430,7 @@ export class Mux {
       }
       n = c;
     }
-    return n.closed || n.done || !n.chan ? unexpected(path) : n;
+    return n.closed || !n.chan || (n.done && !empty) ? unexpected(path) : n;
   }
 
   /**
@@ -437,7 +442,7 @@ export class Mux {
    * @param {boolean} [empty]
    */
   _route(path, empty = false) {
-    const found = this._find(path);
+    const found = this._find(path, empty);
     if (!("at" in found)) {
       found.closed ||= empty;
       return /** @type {Chan<Uint8Array>} */ (found.chan);
@@ -586,8 +591,8 @@ export class Mux {
   }
 
   /**
-   * Forget the node at `path` and its ancestors as long as they are finished
-   * and without children.
+   * Forget the node at `path` and its ancestors as long as they are finished,
+   * closed and without children.
    * @param {number[]} path
    */
   _prune(path) {
@@ -599,7 +604,7 @@ export class Mux {
     }
     for (let d = path.length; d > 0; d--) {
       const n = nodes[d];
-      if (n.children.size || (n.chan && !n.done)) return;
+      if (n.children.size || (n.chan && !(n.done && n.closed))) return;
       nodes[d - 1].children.delete(path[d - 1]);
     }
   }
@@ -730,7 +735,7 @@ export class Mux {
     this.writeError = err;
     this._closeInbound(err);
     this._wake();
-    this.inboundError ??= err;
+    this.inboundError = err;
     this.#fail(err);
     abortTransport(this.transport, err);
   }
