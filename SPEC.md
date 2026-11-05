@@ -12,7 +12,7 @@ wRPC relies on [component model value definition encoding] for data encoding on 
 
 wRPC makes use of *transports*, which are responsible for establishing a connection between two parties and transferring the wRPC wire protocol data between them.
 
-A transport MUST support a native half-close: a peer MUST be able to communicate the end of transmit using the transport's own mechanism, while it keeps receiving the data sent by the other peer. Transports, which can only close both directions at once, do not qualify.
+A transport MAY support a native half-close, which lets a peer communicate the end of transmit while it keeps receiving the data sent by the other peer. A peer using a transport, which can only close both directions at once, MUST keep the byte stream open until it is done sending and receiving.
 
 Examples of supported wRPC transports are: TCP, Unix Domain Sockets, QUIC, WebTransport and HTTP (see [Transport specifications](#transport-specifications)).
 
@@ -87,7 +87,7 @@ Likewise, if a non-empty frame is received on a `path` that carries no pending v
 
 A sender MUST send the data of a pending value only after the data carrying it, for example, the data of a pending value in a stream element after the stream chunk containing that element, since a receiver MAY bound the data it buffers for a `path`, which no value it decoded carries yet.
 
-Frames do not communicate the end of transmit, i.e. that no more frames follow. Each transport MUST communicate it using its native half-close (see [Transport](#transport)), for example, TCP shutdown or finishing a QUIC stream. The end of transmit closes every `path`.
+Frames do not communicate the end of transmit, i.e. that no more frames follow. A transport communicates it using its native half-close, if it has one, for example, TCP shutdown or finishing a QUIC stream, and otherwise by closing the byte stream (see [Transport](#transport)). The end of transmit closes every `path`.
 
 A receiver, which treats received data as an error, MUST fail the invocation. A peer, which fails an invocation, MUST close the invocation's byte stream in both directions using the transport's mechanism (see [Transport specifications](#transport-specifications)), and MUST NOT close a connection or session carrying other invocations.
 
