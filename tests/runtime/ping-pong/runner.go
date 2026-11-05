@@ -27,12 +27,12 @@ func Run(ctx context.Context, c wrpc.Invoker) error {
 	}
 	assertEqual(m2, "helloworld")
 
-	x = make(chan string)
+	y := make(chan string)
 	go func() {
-		x <- m2
-		close(x)
+		y <- m2
+		close(y)
 	}()
-	m3, errs, err := i.Pong(ctx, c, x)
+	m3, errs, err := i.Pong(ctx, c, y)
 	if err != nil {
 		return err
 	}

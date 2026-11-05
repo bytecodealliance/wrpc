@@ -24,11 +24,11 @@ func Run(ctx context.Context, c wrpc.Invoker) error {
 		return err
 	}
 
-	x = make(chan struct{})
+	y := make(chan struct{})
 	go func() {
-		x <- struct{}{}
-		close(x)
+		y <- struct{}{}
+		close(y)
 	}()
-	_, err = i.DropFuture(ctx, c, x)
+	_, err = i.DropFuture(ctx, c, y)
 	return err
 }

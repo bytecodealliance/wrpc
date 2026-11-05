@@ -20,12 +20,12 @@ func Run(ctx context.Context, c wrpc.Invoker) error {
 		return err
 	}
 
-	x = make(chan uint32)
+	y := make(chan uint32)
 	go func() {
-		x <- 0
-		close(x)
+		y <- 0
+		close(y)
 	}()
-	if _, err := i.CancelAfterRead(ctx, c, x); err != nil {
+	if _, err := i.CancelAfterRead(ctx, c, y); err != nil {
 		return err
 	}
 
