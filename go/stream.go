@@ -68,17 +68,18 @@ func ReadByteStream(r IndexReadCloser, path ...uint32) (<-chan []byte, func(cont
 		}
 		for {
 			slog.Debug("reading pending byte stream chunk")
-			buf, err := ReadByteList(r)
-			if err != nil {
-				return fmt.Errorf("failed to read pending byte stream chunk: %w", err)
-			}
-			if len(buf) == 0 {
+			n, err := ReadUint32(r)
+			if err == io.EOF {
 				slog.Debug("pending byte stream ended")
-				if r.Buffered() > 0 {
-					return errors.New("received data after pending byte stream end")
-				}
 				close(ch)
 				return nil
+			}
+			if err != nil {
+				return fmt.Errorf("failed to read pending byte stream chunk length: %w", err)
+			}
+			buf, err := ReadBytes(r, n)
+			if err != nil {
+				return fmt.Errorf("failed to read pending byte stream chunk: %w", err)
 			}
 			select {
 			case ch <- buf:
@@ -142,16 +143,13 @@ func ReadStream[T any](r IndexReadCloser, f func(IndexReadCloser, ...uint32) (T,
 			for {
 				slog.Debug("reading pending stream chunk length")
 				n, err := ReadUint32(r)
-				if err != nil {
-					return fmt.Errorf("failed to read pending stream chunk length: %w", err)
-				}
-				if n == 0 {
+				if err == io.EOF {
 					slog.Debug("pending stream ended")
-					if r.Buffered() > 0 {
-						return errors.New("received data after pending stream end")
-					}
 					close(ch)
 					return nil
+				}
+				if err != nil {
+					return fmt.Errorf("failed to read pending stream chunk length: %w", err)
 				}
 				if math.MaxUint32-n < total {
 					return errors.New("total pending stream element count would overflow a 32-bit unsigned integer")
@@ -281,7 +279,6 @@ func writeStreamChunks[T any](ctx context.Context, v <-chan []T, w IndexWriter, 
 			case chunk, ok := <-recv:
 				if !ok {
 					slog.Debug("writing pending stream end")
-					buf.WriteByte(0)
 					select {
 					case bufs <- streamBatch{buf.Bytes(), nested}:
 						return nil
