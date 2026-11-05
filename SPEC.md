@@ -1,4 +1,4 @@
-# wRPC v0.0.1-draft.1 specification
+# wRPC v0.0.1-draft.2 specification
 
 wRPC is a transport-agnostic protocol designed for asynchronous transmit of WIT function call invocations over network and other means of communication.
 
@@ -81,13 +81,13 @@ record frame {
 }
 ```
 
-An empty frame, i.e. a frame with empty `data`, closes its `path`: the sender MUST NOT send any more frames on that `path`. If a frame is received on a closed `path`, the receiver MUST treat it as an error. Closing a `path` does not close the paths nested in it. A sender MAY leave a `path` open, unless stated otherwise (see [Futures](#futures)).
+An empty frame, i.e. a frame with empty `data`, closes its `path`: the sender MUST NOT send any more frames on that `path`. If a frame is received on a closed `path`, the receiver MUST treat it as an error. Closing a `path` does not close the paths nested in it. A sender MUST close the root and the `path` of every pending value it sends, once it is done with them and before ending transmit.
 
 Likewise, if a frame is received on a `path` that carries no pending value the receiver has received or may still receive, the receiver MUST treat it as an error.
 
 A sender MUST send the data of a pending value only after the data carrying it, for example, the data of a pending value in a stream element after the stream chunk containing that element, since a receiver MAY bound the data it buffers for a `path`, which no value it decoded carries yet.
 
-Frames do not communicate the end of transmit, i.e. that no more frames follow. A transport communicates it using its native half-close, if it has one, for example, TCP shutdown or finishing a QUIC stream, and otherwise by closing the byte stream (see [Transport](#transport)). The end of transmit closes every `path`.
+Frames do not communicate the end of transmit, i.e. that no more frames follow. A transport communicates it using its native half-close, if it has one, for example, TCP shutdown or finishing a QUIC stream, and otherwise by closing the byte stream (see [Transport](#transport)). If transmit ends while the root or the `path` of a pending value the receiver has decoded is still open, the receiver MUST treat it as a failed invocation.
 
 A receiver, which treats received data as an error, MUST fail the invocation. A peer, which fails an invocation, MUST close the invocation's byte stream in both directions using the transport's mechanism (see [Transport specifications](#transport-specifications)), and MUST NOT close a connection or session carrying other invocations.
 
@@ -160,7 +160,7 @@ For example:
 
 If `v` is pending, encoded `bool` value is sent on index `[0]` (corresponding to first parameter)
 
-A `future` without a payload type has an empty value encoding, so once such a pending future resolves, the sender MUST close its index, either with an empty frame or by ending transmit (see [Framed stream specification](#framed-stream-specification)), and the receiver MUST consider it resolved once the index is closed.
+A `future` without a payload type has an empty value encoding, so once such a pending future resolves, the sender MUST close its index with an empty frame (see [Framed stream specification](#framed-stream-specification)), and the receiver MUST consider it resolved once the index is closed.
 
 ### Streams
 

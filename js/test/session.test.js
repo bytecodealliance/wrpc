@@ -224,17 +224,18 @@ test("numeric stream chunks are typed arrays and empty ones are not sent", async
   }
 });
 
-test("an invocation sends no frames for empty data", async () => {
+test("an invocation sends only closing frames for empty data", async () => {
   for (const [types, args, expected] of /** @type {[Type[], InputValue[], string][]} */ ([
-    [[], [], "\x01\x03foo\x03bar"],
-    [[t.future()], [Promise.resolve()], "\x01\x03foo\x03bar\x00\x01\x00\x01\x00\x00"],
+    [[], [], "\x01\x03foo\x03bar\x00\x00"],
+    [[t.future()], [Promise.resolve()], "\x01\x03foo\x03bar\x00\x01\x00\x00\x00\x01\x00\x00"],
   ])) {
     /** @type {Uint8Array[]} */
     const frames = [];
     let closed = false;
+    const inbound = [Uint8Array.of(0x00, 0x00)];
     /** @type {Transport} */
     const transport = {
-      read: async () => null,
+      read: async () => inbound.pop() ?? null,
       write: (bytes) => void frames.push(bytes),
       closeWrite: () => void (closed = true),
     };
@@ -284,7 +285,12 @@ test("a failed transport fails the invocation", async () => {
 });
 
 test("aborting after the peer closed fails the sub-streams declared later", async () => {
-  const mux = new Mux({ read: async () => null, write: () => {}, closeWrite: () => {} });
+  const inbound = [Uint8Array.of(0x00, 0x00)];
+  const mux = new Mux({
+    read: async () => inbound.pop() ?? null,
+    write: () => {},
+    closeWrite: () => {},
+  });
   mux.start();
   await mux.ingress;
   mux.abort(new Error("boom"));
@@ -686,7 +692,7 @@ test("frames for results which cannot be pending fail at once", { timeout: 1000 
   }
 });
 
-test("a future without a payload resolves at the end of transmit", async () => {
+test("a future without a payload fails if transmit ends before it is closed", async () => {
   for (const data of [false, true]) {
     const { inbound, transport } = await feed(
       data
@@ -694,7 +700,10 @@ test("a future without a payload resolves at the end of transmit", async () => {
             [[], [0]],
             [[0], [0]],
           ]
-        : [[[], [0]]],
+        : [
+            [[], [0]],
+            [[], []],
+          ],
     );
     inbound.close();
     const { results, done } = await get(transport, [t.future()]);
@@ -703,8 +712,7 @@ test("a future without a payload resolves at the end of transmit", async () => {
       const pending = Symbol("pending");
       assert.equal(await Promise.race([results[0], pending]), pending);
     } else {
-      assert.equal(await results[0], undefined);
-      await done;
+      await assert.rejects(done, /unexpected end of input/);
     }
   }
 });

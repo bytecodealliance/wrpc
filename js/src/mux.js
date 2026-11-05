@@ -334,13 +334,22 @@ export class Mux {
   /** @type {(err: unknown) => void} */
   #fail = () => {};
 
-  /** Write the invocation header: the protocol byte and instance/function names.
-   * @param {string} instance @param {string} func @returns {Promise<void>} */
-  writeHeader(instance, func) {
+  /** Write the invocation header: the protocol byte and instance/function names,
+   * followed by `params` on the root sub-stream, which is closed in the same write.
+   * @param {string} instance @param {string} func @param {Uint8Array} params
+   * @returns {Promise<void>} */
+  writeHeader(instance, func, params) {
     const w = new Writer();
     w.u8(PROTOCOL);
     w.name(instance);
     w.name(func);
+    if (params.length > 0) {
+      w.varU(0);
+      w.varU(params.length);
+      w.bytes(params);
+    }
+    w.varU(0);
+    w.varU(0);
     return this._write(w.finish());
   }
 
@@ -377,7 +386,9 @@ export class Mux {
         if (!(await chan.send(data)) && !this.aborted) unexpected(path);
       }
     }
-    this._closeInbound();
+    if (this.aborted) return;
+    if (!this.root.chan?.closed) throw new RangeError(UNEXPECTED_EOF);
+    this._closeInbound(new RangeError(UNEXPECTED_EOF));
   }
 
   /**
@@ -730,7 +741,7 @@ export class Mux {
     this.writeError = err;
     this._closeInbound(err);
     this._wake();
-    this.inboundError ??= err;
+    this.inboundError = err;
     this.#fail(err);
     abortTransport(this.transport, err);
   }

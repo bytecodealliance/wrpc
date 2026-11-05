@@ -491,6 +491,12 @@ func NewFrameStreamReader(ctx context.Context, r ByteReadCloser, paths ...Subscr
 				slog.DebugContext(ctx, "reading frame")
 				depth, err := readFramePathLen(r)
 				if err == io.EOF {
+					subs.mu.Lock()
+					_, closed := subs.closed[""]
+					subs.mu.Unlock()
+					if !closed {
+						return io.ErrUnexpectedEOF
+					}
 					return nil
 				}
 				if err != nil {
@@ -631,10 +637,13 @@ func (r *FrameStreamReader) closedErr() error {
 	r.subs.mu.Lock()
 	_, closed := r.subs.closed[r.path]
 	r.subs.mu.Unlock()
-	if err := r.subs.err.Load(); err != nil && !closed {
+	if closed {
+		return io.EOF
+	}
+	if err := r.subs.err.Load(); err != nil {
 		return *err
 	}
-	return io.EOF
+	return io.ErrUnexpectedEOF
 }
 
 // Index returns a reader of the sub-stream addressed by the structural `path`.

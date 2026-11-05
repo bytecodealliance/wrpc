@@ -39,6 +39,7 @@ type FrameStreamWriter struct {
 	ch      chan<- Frame
 	path    []uint32
 	gone    atomic.Bool
+	closed  bool
 }
 
 func newFrameStreamWriter(w *FrameStreamWriter) *FrameStreamWriter {
@@ -218,6 +219,11 @@ func (w *FrameStreamWriter) drop() bool {
 
 func (w *FrameStreamWriter) Close() error {
 	defer runtime.SetFinalizer(w, nil)
+	if !w.closed && !w.gone.Load() && !w.egress.failed.Load() {
+		if err := w.ClosePath(); err != nil {
+			slog.DebugContext(w.ctx, "failed to close path", "path", w.path, "err", err)
+		}
+	}
 	if w.drop() {
 		<-w.ctx.Done()
 	}

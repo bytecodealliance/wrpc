@@ -96,9 +96,13 @@ func TestFrameStreamWriter(t *testing.T) {
 
 		r := bytes.NewBuffer(dst.Bytes())
 		assertReadFrame(t, r, []byte{42})
+		assertReadFrame(t, r, nil)
 		assertReadFrame(t, r, []byte("hello"), 0)
+		assertReadFrame(t, r, nil, 0)
 		assertReadFrame(t, r, []byte("test"), 0, 1)
+		assertReadFrame(t, r, nil, 0, 1)
 		assertReadFrame(t, r, []byte{0xfe}, 42, 41)
+		assertReadFrame(t, r, nil, 42, 41)
 		if n := r.Len(); n > 0 {
 			t.Fatalf("%v trailing bytes left in buffer: %s", n, r.String())
 		}
@@ -124,6 +128,8 @@ func TestFrameStreamWriter(t *testing.T) {
 		r := bytes.NewBuffer(dst.Bytes())
 		assertReadFrame(t, r, []byte("hello"), 0)
 		assertReadFrame(t, r, nil, 0)
+		assertReadFrame(t, r, nil, 0)
+		assertReadFrame(t, r, nil)
 		assertReadFrame(t, r, nil)
 		if n := r.Len(); n > 0 {
 			t.Fatalf("%v trailing bytes left in buffer: %s", n, r.String())
