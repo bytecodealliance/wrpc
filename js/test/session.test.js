@@ -641,7 +641,8 @@ async function streamingReply(n) {
   const { inbound, transport } = await feed([
     [[], [0]],
     ...Array.from({ length: n }, (_, i) => /** @type {Frame} */ ([[0], [1, i & 0xff]])),
-    [[0], [0]],
+    [[0], []],
+    [[], []],
   ]);
   inbound.close();
   return transport;
@@ -654,7 +655,7 @@ test("an unconsumed stream result stops reading the transport", { timeout: 1000 
   assert.ok(transport.reads < 200, `read ${transport.reads} frames`);
   assert.equal((await collect(results[0])).length, 1000);
   await done;
-  assert.equal(transport.reads, 1003);
+  assert.equal(transport.reads, 1004);
 });
 
 test(
@@ -717,13 +718,14 @@ test("data arriving before its sub-streams are declared is kept", { timeout: 100
       [0, 1],
       [1, 8],
     ],
-    [[0, 1], [0]],
+    [[0, 1], []],
     [
       [0, 0],
       [1, 7],
     ],
-    [[0, 0], [0]],
+    [[0, 0], []],
     [[], [0, 0]],
+    [[], []],
   ]);
   inbound.close();
   const { results, done } = await get(transport, [t.tuple(t.stream(t.u8), t.stream(t.u8))]);
@@ -791,7 +793,7 @@ test("a truncated stream fails", { timeout: 1000 }, async () => {
     ({ send }) =>
       send([
         [[0], [1, 7]],
-        [[0], []],
+        [[], []],
       ]),
   ])) {
     const f = await feed([[[], [0]]]);
@@ -805,22 +807,37 @@ test("a truncated stream fails", { timeout: 1000 }, async () => {
 });
 
 test("frame data beyond the end of a sub-stream fails it", { timeout: 1000 }, async () => {
-  for (const [ty, value] of /** @type {[Type, number[]][]} */ ([
-    [t.future(t.u8), [5]],
-    [t.stream(t.u8), [1, 5, 0]],
+  for (const [ty, value] of /** @type {[Type, Frame[]][]} */ ([
+    [t.future(t.u8), [[[0], [5]]]],
+    [
+      t.stream(t.u8),
+      [
+        [[0], [1, 5]],
+        [[0], []],
+        [[0], []],
+      ],
+    ],
   ])) {
     for (const [extra, split] of /** @type {[number, boolean][]} */ ([
       [3, false],
       [3, true],
       [40, true],
     ])) {
-      const data = [...value, ...new Array(extra).fill(9)];
       const w = new Writer();
-      w.varU(1);
       w.varU(0);
-      w.varU(data.length);
-      w.bytes(data);
-      const bytes = [0, 1, 0, ...w.finish()];
+      w.varU(1);
+      w.bytes([0]);
+      w.varU(0);
+      w.varU(0);
+      const frames = structuredClone(value);
+      frames[frames.length - 1][1].push(...new Array(extra).fill(9));
+      for (const [path, data] of frames) {
+        w.varU(path.length);
+        for (const i of path) w.varU(i);
+        w.varU(data.length);
+        w.bytes(data);
+      }
+      const bytes = [...w.finish()];
       const { inbound, transport, aborted } = await feed();
       for (const chunk of split ? bytes.map((b) => [b]) : [bytes]) {
         inbound.push(Uint8Array.from(chunk));
@@ -861,7 +878,8 @@ for (const [
     t.stream(t.u8),
     [
       [[], [0]],
-      [[0], [1, 7, 0]],
+      [[0], [1, 7]],
+      [[0], []],
     ],
     [0],
     [],
@@ -931,7 +949,7 @@ for (const [
       [[0, 0], []],
     ],
     [0, 0],
-    [[[0], [0]]],
+    [[[0], []]],
   ],
   [
     "of a finished future in a finished future",
@@ -973,7 +991,8 @@ test("ready values in stream elements are received", { timeout: 1000 }, async ()
   const { inbound, transport } = await feed([
     [[], [0]],
     [[0], [2, 1, 5, 1, 6]],
-    [[0], [0]],
+    [[0], []],
+    [[], []],
   ]);
   inbound.close();
   const { results, done } = await get(transport, [t.stream(t.future(t.u8))]);
@@ -991,9 +1010,9 @@ test(
       data,
       read,
       expected,
-    ] of /** @type {[Type, number[], (v: any) => unknown, unknown][]} */ ([
-      [t.stream(t.u8), [1, 7, 0], collect, [7]],
-      [t.future(t.u8), [5], (v) => v, 5],
+    ] of /** @type {[Type, number[][], (v: any) => unknown, unknown][]} */ ([
+      [t.stream(t.u8), [[1, 7], []], collect, [7]],
+      [t.future(t.u8), [[5], []], (v) => v, 5],
     ])) {
       for (const dropped of [false, true]) {
         const { inbound, send, transport } = await feed([
@@ -1006,9 +1025,9 @@ test(
         const { value } = await chunks.next();
         await tick();
         await chunks.return();
-        await send([[[0, 0], data]]);
+        await send(data.map((d) => /** @type {Frame} */ ([[0, 0], d])));
         assert.deepEqual(await read(value[0]), expected);
-        await send([dropped ? [[0, 1], data] : [[0], [0]]]);
+        await send(dropped ? data.map((d) => /** @type {Frame} */ ([[0, 1], d])) : [[[0], []]]);
         inbound.close();
         if (dropped) await assert.rejects(done, /unexpected data for sub-stream \[0,1\]/);
         else await done;
@@ -1049,7 +1068,7 @@ test(
       const { results, done } = await get(transport, [t.stream(elem)]);
       await tick();
       results[0].cancel();
-      await send([[[0], [0]]]);
+      await send([[[0], []]]);
       inbound.close();
       await assert.rejects(done, /unexpected data for sub-stream \[0,0\]/);
     }
@@ -1075,7 +1094,10 @@ test(
     const { results, done } = await get(transport, [t.stream(t.stream(t.u8))]);
     for (let i = 0; i < 20; i++) await tick();
     results[0].cancel();
-    await send([[[0], [0]]]);
+    await send([
+      [[0], []],
+      [[], []],
+    ]);
     inbound.close();
     await done;
   },
@@ -1104,12 +1126,15 @@ test("cancelled stream elements are forgotten", { timeout: 1000 }, async () => {
   for (let i = 0; i < 100; i++) {
     await send([
       [[0], [1, 0]],
-      [[0, i], [0]],
+      [[0, i], []],
     ]);
     await tick();
     assert.ok((inv.mux.root.children.get(0)?.children.size ?? 0) <= 1);
   }
-  await send([[[0], [0]]]);
+  await send([
+    [[0], []],
+    [[], []],
+  ]);
   inbound.close();
   await Promise.all([consumed, done]);
   assert.equal(inv.mux.root.children.size, 0);
@@ -1190,7 +1215,8 @@ test("an accepted invocation is finished once its parameters are received and de
   await send([
     [[], [0]],
     ...Array.from({ length: n }, (_, k) => /** @type {Frame} */ ([[0], [1, k]])),
-    [[0], [0]],
+    [[0], []],
+    [[], []],
   ]);
   inbound.close();
   const inv = await accept(transport);
