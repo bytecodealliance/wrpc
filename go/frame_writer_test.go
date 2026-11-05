@@ -136,6 +136,31 @@ func TestFrameStreamWriter(t *testing.T) {
 	})
 }
 
+func TestWriteByteStreamEmpty(t *testing.T) {
+	ch := make(chan []byte)
+	close(ch)
+	var buf bytes.Buffer
+	write, err := wrpc.WriteByteStream(ch, &buf)
+	if err != nil {
+		t.Fatalf("failed to write stream: %s", err)
+	}
+	var dst sink
+	w := wrpc.NewFrameStreamWriter(context.Background(), &dst)
+	w0 := assertIndex(t, w, 0)
+	if err := write(context.Background(), w0); err != nil {
+		t.Fatalf("failed to write pending stream: %s", err)
+	}
+	assertClose(t, w0)
+	assertClose(t, w)
+
+	r := bytes.NewBuffer(dst.Bytes())
+	assertReadFrame(t, r, nil, 0)
+	assertReadFrame(t, r, nil)
+	if n := r.Len(); n > 0 {
+		t.Fatalf("%v trailing bytes left in buffer: %s", n, r.String())
+	}
+}
+
 type blockingWriter struct {
 	once    sync.Once
 	started chan struct{}
