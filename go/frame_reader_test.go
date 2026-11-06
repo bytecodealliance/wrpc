@@ -157,36 +157,33 @@ func writeFrames(t *testing.T, w io.Writer, frames ...wrpc.Frame) {
 
 func TestFrameStreamReader(t *testing.T) {
 	for name, tc := range map[string]struct {
-		empty wrpc.Frame
-		data  wrpc.Frame
-		err   string
+		path []uint32
+		err  string
 	}{
-		"closed path":  {wrpc.Frame{Path: []uint32{0}}, wrpc.Frame{Path: []uint32{0}, Data: []byte("!")}, "closed path"},
-		"unknown path": {wrpc.Frame{Path: []uint32{1}}, wrpc.Frame{Path: []uint32{1}, Data: []byte("!")}, "unknown path"},
-		"deep path":    {wrpc.Frame{Path: []uint32{0, 0, 0}}, wrpc.Frame{Path: []uint32{0, 0, 0}, Data: []byte("!")}, "exceeds maximum"},
+		"closed path":  {[]uint32{0}, "closed path"},
+		"unknown path": {[]uint32{1}, "unknown path"},
+		"deep path":    {[]uint32{0, 0, 0}, "exceeds maximum"},
 	} {
 		for _, data := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s data=%v", name, data), func(t *testing.T) {
 				t.Parallel()
 				ctx, ingress := withIngress()
-				frames := []wrpc.Frame{
-					{Path: []uint32{0}, Data: []byte("world")},
-					{Path: []uint32{0}},
-					tc.empty,
-					{Data: []byte("hello")},
-				}
-				msg := ""
+				frame := wrpc.Frame{Path: tc.path}
 				if data {
-					frames = append(frames, tc.data)
-					msg = tc.err
+					frame.Data = []byte("!")
 				}
-				r := wrpc.NewFrameStreamReader(ctx, encodeFrames(t, frames...), wrpc.NewSubscribePath().Index(0))
+				r := wrpc.NewFrameStreamReader(ctx, encodeFrames(t,
+					wrpc.Frame{Path: []uint32{0}, Data: []byte("world")},
+					wrpc.Frame{Path: []uint32{0}},
+					wrpc.Frame{Data: []byte("hello")},
+					frame,
+				), wrpc.NewSubscribePath().Index(0))
 				sub := assertIndexReader(t, r, 0)
 				assertReadAll(t, sub, "world", "")
-				assertReadAll(t, r, "hello", msg)
+				assertReadAll(t, r, "hello", tc.err)
 				assertClose(t, sub)
 				assertClose(t, r)
-				assertIngress(t, ingress, msg)
+				assertIngress(t, ingress, tc.err)
 			})
 		}
 	}
@@ -456,10 +453,8 @@ func TestFrameStreamReaderDrain(t *testing.T) {
 			for i := range uint32(65) {
 				frames = append(frames, wrpc.Frame{Path: []uint32{i + 1}})
 			}
-			msg := ""
 			if data {
 				frames[64].Data = []byte("x")
-				msg = "released element"
 			}
 			pr, pw := io.Pipe()
 			r := wrpc.NewFrameStreamReader(ctx, pipeReader(pr), wrpc.NewSubscribePath().Wildcard())
@@ -467,7 +462,7 @@ func TestFrameStreamReaderDrain(t *testing.T) {
 			time.Sleep(100 * time.Millisecond)
 			assertClose(t, r)
 			pw.Close()
-			assertIngress(t, ingress, msg)
+			assertIngress(t, ingress, "released element")
 		})
 	}
 
