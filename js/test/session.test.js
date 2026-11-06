@@ -672,16 +672,18 @@ test("data arriving before its sub-streams are declared is kept", { timeout: 100
   await done;
 });
 
-test("data for results which cannot be pending fails at once", { timeout: 1000 }, async () => {
-  const { inbound, transport } = await feed([
+test("frames for results which cannot be pending fail at once", { timeout: 1000 }, async () => {
+  for (const frame of /** @type {Frame[]} */ ([
     [[2], []],
     [[0], [0]],
-  ]);
-  inbound.close();
-  await assert.rejects(
-    get(transport, [t.u32, t.stream(t.u8)]),
-    /unexpected data for sub-stream \[0\]/,
-  );
+  ])) {
+    const { inbound, transport } = await feed([frame]);
+    inbound.close();
+    await assert.rejects(
+      get(transport, [t.u32, t.stream(t.u8)]),
+      new RegExp(`unexpected data for sub-stream \\[${frame[0]}\\]`),
+    );
+  }
 });
 
 test("a future without a payload resolves at the end of transmit", async () => {
@@ -860,29 +862,23 @@ for (const [
     [],
   ],
 ])) {
-  test(`a path ${name} discards empty frames and fails on data`, { timeout: 1000 }, async () => {
-    for (const data of [undefined, "before", "after"]) {
-      const { inbound, send, transport, aborted } = await feed(before);
-      /** @type {Frame[]} */
-      const frames = [
+  test(`a path ${name} fails on frames`, { timeout: 1000 }, async () => {
+    for (const frames of /** @type {Frame[][]} */ ([
+      [
         [path, []],
         [path, []],
-      ];
-      if (data) frames.splice(data === "before" ? 0 : 2, 0, [path, [7]]);
+      ],
+      [[path, [7]]],
+    ])) {
+      const { inbound, send, transport } = await feed(before);
       await send([...frames, ...after]);
       inbound.close();
-      const finished = get(transport, [ty]).then((r) => r.finished);
-      if (data) {
-        await assert.rejects(
-          finished,
-          new RegExp(
-            `unexpected data for (sub-stream \\[${path}\\]|a sub-stream path of length ${path.length})`,
-          ),
-        );
-      } else {
-        await finished;
-        assert.equal(await outcome(aborted), "ok");
-      }
+      await assert.rejects(
+        get(transport, [ty]).then((r) => r.finished),
+        new RegExp(
+          `unexpected data for (sub-stream \\[${path}\\]|a sub-stream path of length ${path.length})`,
+        ),
+      );
     }
   });
 }
@@ -1055,7 +1051,6 @@ test(
   async () => {
     for (const [nested, data] of /** @type {[number[], string | undefined][]} */ ([
       [[], undefined],
-      [[], "after"],
       [[0], "after"],
       [[0], "before"],
     ])) {
@@ -1070,10 +1065,9 @@ test(
       mux.discard([0], 0, 1);
       assert.equal(mux.seal([0, 0], [{ path: nested, nested: false }]), false);
       assert.equal(mux._get([0, 0]), undefined);
-      await send([[path, []]]);
-      if (data === "after") await send([[path, [1, 7]]]);
+      await send([[path, data === "after" ? [1, 7] : []]]);
       inbound.close();
-      assert.match(await outcome(aborted), data ? /unexpected data for sub-stream \[0,0/ : /^ok$/);
+      assert.match(await outcome(aborted), /unexpected data for sub-stream \[0,0/);
     }
   },
 );

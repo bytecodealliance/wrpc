@@ -41,7 +41,6 @@ export const DISCARDED = new Error("sub-stream discarded");
  * @typedef {object} Pending
  * @property {number[]} path
  * @property {Chan<Uint8Array>} chan
- * @property {boolean} empty whether only empty frames arrived for it
  * @property {boolean} closed whether an empty frame closed it
  * @property {boolean} counted whether it counts towards {@link MAX_PENDING}
  */
@@ -244,8 +243,8 @@ export class Outgoing {
   }
 
   /**
-   * Close the sub-stream by writing an empty frame. No more data may be
-   * written to it afterwards.
+   * Close the sub-stream by writing an empty frame. Nothing may be written
+   * to it afterwards.
    * @returns {Promise<void>}
    */
   close() {
@@ -267,8 +266,8 @@ export class Outgoing {
  * the root sub-stream `[]`, and those declared with {@link Mux.seal} as each
  * value carrying pending `stream`/`future` values is decoded, until they are
  * {@link Mux.finish finished}. Data for a path that may still be declared is
- * buffered until it is; data for any other path, or for a closed one, fails
- * the invocation, while an empty frame for it is discarded.
+ * buffered until it is; any frame for any other path, or for a closed one,
+ * fails the invocation.
  */
 export class Mux {
   /**
@@ -361,12 +360,11 @@ export class Mux {
       if (!(await m.fill(1))) break;
       const [path, n, len] = await m.decode((r) => readFrameHeader(r, this.maxDepth));
       if (len > this.maxDepth) {
-        if (n === 0) continue;
         throw new Error(`unexpected data for a sub-stream path of length ${len}`);
       }
-      await this._room(path, n === 0);
+      await this._room(path);
       if (n === 0) {
-        this._route(path, true)?.close();
+        this._route(path, true).close();
         continue;
       }
       const chan = this._route(path);
@@ -376,7 +374,7 @@ export class Mux {
         m.consume(data.length);
         len -= data.length;
         // A finished or discarded sub-stream's reader is gone: the rest of the frame overruns it.
-        if (chan && !(await chan.send(data)) && !this.aborted) unexpected(path);
+        if (!(await chan.send(data)) && !this.aborted) unexpected(path);
       }
     }
     this._closeInbound();
@@ -386,12 +384,11 @@ export class Mux {
    * Wait while {@link MAX_PENDING} sub-streams not yet declared are buffered,
    * if the frame at `path` would buffer another one.
    * @param {number[]} path
-   * @param {boolean} empty
    */
-  async _room(path, empty) {
+  async _room(path) {
     while (this.pendingCount >= MAX_PENDING && !this.aborted) {
-      const found = this._find(path, empty);
-      if (found === null || !("at" in found)) return;
+      const found = this._find(path);
+      if (!("at" in found)) return;
       if (found.at.pending?.get(found.i)?.has(key(path))) return;
       await new Promise((resolve) => this.pendingWaiters.push(() => resolve(undefined)));
     }
@@ -413,52 +410,46 @@ export class Mux {
   /**
    * The node of the sub-stream at `path`, or where the lookup stopped if it
    * is not yet known whether it is expected. A path no sub-stream is or may
-   * still be expected at, or a closed or finished one, fails the invocation,
-   * unless `empty`, for an empty frame, which is to be discarded: then it
-   * gives `null`.
+   * still be expected at, or a closed or finished one, fails the invocation.
    * @param {number[]} path
-   * @param {boolean} [empty]
-   * @returns {Node | null | Undecided}
+   * @returns {Node | Undecided}
    */
-  _find(path, empty = false) {
-    const fail = () => (empty ? null : unexpected(path));
+  _find(path) {
     let n = this.root;
     for (const i of path) {
       const c = n.children.get(i);
       if (!c) {
         return n.sealed || i < n.decided || (n.possible && !n.possible.has(i))
-          ? fail()
+          ? unexpected(path)
           : { at: n, i };
       }
       n = c;
     }
-    return n.closed || n.done || !n.chan ? fail() : n;
+    return n.closed || n.done || !n.chan ? unexpected(path) : n;
   }
 
   /**
-   * The channel to route the data of the sub-stream at `path` to, or
-   * `undefined` to drop it. With `empty`, for an empty frame, the sub-stream
-   * is marked closed, and the data of a path that may still be expected is
-   * buffered as if it were finished.
+   * The channel to route the data of the sub-stream at `path` to. With
+   * `empty`, for an empty frame, the sub-stream is marked closed, and the
+   * data of a path that may still be expected is buffered as if it were
+   * finished.
    * @param {number[]} path
    * @param {boolean} [empty]
    */
   _route(path, empty = false) {
-    const found = this._find(path, empty);
-    if (found === null) return undefined;
+    const found = this._find(path);
     if (!("at" in found)) {
       found.closed ||= empty;
-      return found.chan;
+      return /** @type {Chan<Uint8Array>} */ (found.chan);
     }
     let pending = found.at.pending?.get(found.i)?.get(key(path));
-    if (pending?.closed) return empty ? undefined : unexpected(path);
+    if (pending?.closed) return unexpected(path);
     if (!pending) {
-      const p = (pending = { path, chan: new Chan(CAPACITY), empty, closed: false, counted: true });
+      const p = (pending = { path, chan: new Chan(CAPACITY), closed: false, counted: true });
       this.pendingCount++;
       p.chan.onCancel(() => this._uncount(p));
       attach(found, p);
     }
-    pending.empty &&= empty;
     pending.closed ||= empty;
     return pending.chan;
   }
@@ -502,9 +493,8 @@ export class Mux {
 
   /**
    * Declare that sub-streams nested in the root may only be expected at the
-   * root `indices`, at paths at most `depth` long, so that data for any other
-   * path fails the invocation as soon as it arrives, while an empty frame for
-   * it is discarded.
+   * root `indices`, at paths at most `depth` long, so that any frame for any
+   * other path fails the invocation as soon as it arrives.
    * @param {Iterable<number>} indices @param {number} depth
    */
   restrict(indices, depth) {
@@ -670,13 +660,13 @@ export class Mux {
     for (const pending of group.values()) {
       let found;
       try {
-        found = this._find(pending.path, pending.empty);
+        found = this._find(pending.path);
       } catch (err) {
         for (const { chan } of group.values()) chan.close(err);
         this.abort(err);
         return;
       }
-      if (found === null || !("at" in found)) this._drop(pending.path, [pending.chan]);
+      if (!("at" in found)) this._drop(pending.path, [pending.chan]);
       else attach(found, pending);
     }
   }
