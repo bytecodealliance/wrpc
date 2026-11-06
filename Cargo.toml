@@ -163,7 +163,7 @@ http-body-util = { version = "0.1", default-features = false }
 humantime = { version = "2.1", default-features = false }
 hyper = { version = "1", default-features = false }
 hyper-util = { version = "0.1", default-features = false }
-macro-string = { version = "0.2", default-features = false }
+macro-string = { version = "0.3", default-features = false }
 nuid = { version = "0.6", default-features = false }
 pin-project-lite = { version = "0.2", default-features = false }
 prettyplease = { version = "0.2.37", default-features = false }
