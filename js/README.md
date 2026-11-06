@@ -115,10 +115,9 @@ end does not. The streams and futures nested in the chunks you received keep
 receiving, while those nested in the chunks it buffered, which are dropped, are
 discarded: any data for them fails the invocation.
 
-Data the peer sends for a sub-stream that the decoded values do not carry —
-for a `stream` in an `option` that is `none`, say — or for one it already
-closed with an empty frame fails the invocation, while such empty frames are
-discarded.
+Any frame the peer sends for a sub-stream that the decoded values do not carry
+— for a `stream` in an `option` that is `none`, say — or for one it already
+closed with an empty frame fails the invocation, empty or not.
 
 Received values never fail: if receiving a `future` or `stream` fails, it stays
 pending forever. The failure is reported by `done`, as in the Rust

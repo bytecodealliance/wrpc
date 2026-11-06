@@ -277,9 +277,8 @@ export class Outgoing {
  * accepted for the sub-streams the decoded values expect: the root sub-stream
  * `[]`, and those declared with `seal` as each value carrying pending
  * `stream`/`future` values is decoded, until they are finished. Data for a
- * path that may still be declared is buffered until it is; data for any other
- * path, or for a closed one, fails the invocation, while an empty frame for it
- * is discarded.
+ * path that may still be declared is buffered until it is; any frame for any
+ * other path, or for a closed one, fails the invocation.
  */
 export class Mux {
   /**
@@ -302,9 +301,8 @@ export class Mux {
   incoming(path: number[]): AsyncReader;
   /**
    * Declare that sub-streams nested in the root may only be expected at the
-   * root `indices`, at paths at most `depth` long, so that data for any other
-   * path fails the invocation as soon as it arrives, while an empty frame for
-   * it is discarded.
+   * root `indices`, at paths at most `depth` long, so that any frame for any
+   * other path fails the invocation as soon as it arrives.
    */
   restrict(indices: Iterable<number>, depth: number): void;
   /**
