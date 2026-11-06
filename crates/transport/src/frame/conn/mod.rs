@@ -441,10 +441,10 @@ impl Incoming {
     /// by [`Self::finished`] is held.
     /// Dropping a handle, which received data it did not read, fails ingress with
     /// [`std::io::ErrorKind::BrokenPipe`], as does data received for a declared path, which was
-    /// not read, once all handles are dropped, and any data received after that while draining.
-    /// Draining reports the latter, which would otherwise go unnoticed, discards empty frames the
-    /// peer may still send to close paths, and reads the stream to its end, which transports
-    /// reusing the connection, like HTTP/1, require.
+    /// not read, once all handles are dropped, and any data, or any frame for a new element,
+    /// received after that while draining. Draining reports the latter, which would otherwise go
+    /// unnoticed, and reads the stream to its end, which transports reusing the connection, like
+    /// HTTP/1, require.
     ///
     /// `paths` must not contain both a wildcard and an index at the same position, so paths of
     /// different variant cases, which are not indexed, must be merged by replacing such indices
@@ -774,7 +774,7 @@ impl Outgoing {
         Ok(())
     }
 
-    /// Closes the stream by writing an empty frame. No more data may be written to it afterwards.
+    /// Closes the stream by writing an empty frame. Nothing may be written to it afterwards.
     pub async fn close(&mut self) -> std::io::Result<()> {
         self.reserve().await?;
         self.send_reserved(Bytes::default())
@@ -843,10 +843,6 @@ async fn ingress(
         let n = rx.read_u32_leb128().await?;
         trace!(n, "read data length");
         if path_len > depth {
-            if n == 0 {
-                trace!(path_len, "discarding empty frame");
-                continue 'frames;
-            }
             return Err(std::io::Error::new(
                 std::io::ErrorKind::NotFound,
                 format!("path length of `{path_len}` exceeds maximum of `{depth}`"),
@@ -860,20 +856,16 @@ async fn ingress(
                     .lock()
                     .map_err(|err| std::io::Error::other(err.to_string()))?;
                 match subs.route(&path, &mut permit) {
-                    Route::Tx(tx) => {
-                        if n == 0 {
-                            trace!(?path, "closing path");
-                            *tx = TxSlot::Closed;
-                            continue 'frames;
-                        }
-                        let TxSlot::Open(tx) = tx else {
+                    Route::Tx(slot) => {
+                        let TxSlot::Open(tx) = slot else {
                             return Err(error_closed(&path));
                         };
+                        if n == 0 {
+                            trace!(?path, "closing path");
+                            *slot = TxSlot::Closed;
+                            continue 'frames;
+                        }
                         break tx.clone();
-                    }
-                    Route::NotFound | Route::Released if n == 0 => {
-                        trace!(?path, "discarding empty frame");
-                        continue 'frames;
                     }
                     Route::NotFound => return Err(error_not_found(&path)),
                     Route::Released => return Err(error_receiver_closed()),
@@ -884,7 +876,6 @@ async fn ingress(
             select! {
                 res = unclaimed.acquire_owned() => match res {
                     Ok(p) => permit = Some(p),
-                    Err(..) if n == 0 => continue 'frames,
                     Err(..) => return Err(error_receiver_closed()),
                 },
                 () = indexed.notified() => {}
@@ -925,11 +916,11 @@ fn close_rx(state: &IngressState) -> std::io::Result<()> {
     }
 }
 
-/// Returns the error for data received on a closed `path`
+/// Returns the error for a frame received on a closed `path`
 fn error_closed(path: &[usize]) -> std::io::Error {
     std::io::Error::new(
         std::io::ErrorKind::InvalidData,
-        format!("received data on closed path `{path:?}`"),
+        format!("received frame on closed path `{path:?}`"),
     )
 }
 
@@ -1097,7 +1088,7 @@ mod tests {
     #[test_log::test(tokio::test)]
     async fn incoming_closes_root() {
         let (mut tx, mut rx, done_rx) = incoming_paths([[Some(0)]]);
-        let frames = [frame(&[], b"\x2a"), frame(&[], b""), frame(&[], b"")].concat();
+        let frames = [frame(&[], b"\x2a"), frame(&[], b"")].concat();
         let mut buf = Vec::default();
         let (res, ()) = join!(rx.read_to_end(&mut buf), async {
             tx.write_all(&frames).await.unwrap();
@@ -1132,8 +1123,11 @@ mod tests {
                 [frame(&[0], b""), frame(&[0], b"\x2a")].concat(),
                 ErrorKind::InvalidData,
             ),
+            (frame(&[0], b"").repeat(2), ErrorKind::InvalidData),
             (frame(&[1], b"\x2a"), ErrorKind::NotFound),
+            (frame(&[1], b""), ErrorKind::NotFound),
             (frame(&[2, 3, 0], b"\x2a"), ErrorKind::NotFound),
+            (frame(&[2, 3, 0], b""), ErrorKind::NotFound),
         ] {
             let (mut tx, mut rx, done_rx) =
                 incoming_paths([[Some(0)].as_slice(), &[Some(1), Some(0)], &[Some(2), None]]);
@@ -1200,25 +1194,6 @@ mod tests {
     }
 
     #[test_log::test(tokio::test)]
-    async fn incoming_discards_empty_frames() {
-        let (mut tx, rx, done_rx) =
-            incoming_paths([[Some(0)].as_slice(), &[Some(1), Some(0)], &[Some(2), None]]);
-        drop(rx.index(&[2, 0]).unwrap());
-        let mut sub = rx.index(&[0]).unwrap();
-        tx.write_all(&frame(&[1], b"")).await.unwrap();
-        tx.write_all(&frame(&[3], b"")).await.unwrap();
-        tx.write_all(&frame(&[2, 3, 0], b"")).await.unwrap();
-        tx.write_all(&frame(&[2, 0], b"")).await.unwrap();
-        tx.write_all(&frame(&[0], b"\x2a")).await.unwrap();
-        let mut buf = [0; 1];
-        sub.read_exact(&mut buf).await.unwrap();
-        assert_eq!(&buf, b"\x2a");
-        tx.write_all(&frame(&[0], b"").repeat(2)).await.unwrap();
-        tx.write_all(&frame(&[2, 0], b"\x2a")).await.unwrap();
-        assert_eq!(failed(done_rx).await, ErrorKind::BrokenPipe);
-    }
-
-    #[test_log::test(tokio::test)]
     async fn incoming_wildcard_elements() {
         let (mut tx, rx, done_rx) = incoming_paths([[None]]);
         tx.write_all(&frame(&[3], b"\x2b")).await.unwrap();
@@ -1236,8 +1211,6 @@ mod tests {
         assert_eq!(err.kind(), ErrorKind::NotFound);
         drop(sub);
         tx.write_all(&frame(&[3], b"")).await.unwrap();
-        tx.write_all(&frame(&[0], b"")).await.unwrap();
-        tx.write_all(&frame(&[0], b"\x2a")).await.unwrap();
         assert_eq!(failed(done_rx).await, ErrorKind::BrokenPipe);
         let err = tokio::time::timeout(
             Duration::from_secs(5),
@@ -1252,6 +1225,12 @@ mod tests {
         tx.write_all(&frame(&[0], b"\x2a")).await.unwrap();
         yield_now().await;
         let _sub = rx.index(&[1]).unwrap();
+        assert_eq!(failed(done_rx).await, ErrorKind::BrokenPipe);
+
+        let (mut tx, rx, done_rx) = incoming_paths([[None]]);
+        drop(rx);
+        yield_now().await;
+        tx.write_all(&frame(&[0], b"")).await.unwrap();
         assert_eq!(failed(done_rx).await, ErrorKind::BrokenPipe);
     }
 
