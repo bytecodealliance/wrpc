@@ -328,7 +328,7 @@ where
                 Poll::Pending if finish => return Poll::Ready(Ok(StreamResult::Cancelled)),
                 Poll::Pending => return Poll::Pending,
             }
-            let n = source.remaining(&mut store);
+            let n = source.remaining(&mut store)?;
             if n > 0 {
                 let mut buf = Vec::with_capacity(n.min(READ_CHUNK_SIZE));
                 source.read(&mut store, &mut buf)?;
@@ -450,7 +450,8 @@ where
             mut dst: Destination<'a, P, VecBuffer<P>>,
             finish: bool,
         ) -> Poll<wasmtime::Result<StreamResult>> {
-            if dst.remaining(store) == Some(0) {
+            let n = dst.remaining(store)?;
+            if n == Some(0) {
                 return Poll::Ready(Ok(StreamResult::Completed));
             }
             if let Some(rx) = &mut self.0 {
