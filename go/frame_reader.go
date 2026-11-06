@@ -423,24 +423,20 @@ func NewFrameStreamReader(ctx context.Context, r ByteReadCloser, paths ...Subscr
 			if err != nil {
 				return nil, err
 			}
-			_, closed := subs.closed[p]
-			if n == 0 {
-				if sub == nil || closed {
-					return nil, nil
-				}
-				slog.DebugContext(ctx, "received empty frame, closing path", "path", path)
-				subs.closed[p] = struct{}{}
-				close(sub.ch)
-				return nil, nil
-			}
 			if released {
-				return nil, fmt.Errorf("received data for a released element on path `%v`", path)
+				return nil, fmt.Errorf("received a frame for a released element on path `%v`", path)
 			}
 			if sub == nil {
 				return nil, fmt.Errorf("received a frame for unknown path `%v`", path)
 			}
-			if closed {
+			if _, ok := subs.closed[p]; ok {
 				return nil, fmt.Errorf("received a frame for closed path `%v`", path)
+			}
+			if n == 0 {
+				slog.DebugContext(ctx, "received empty frame, closing path", "path", path)
+				subs.closed[p] = struct{}{}
+				close(sub.ch)
+				return nil, nil
 			}
 			if sub.isDropped() {
 				return nil, subs.errDropped(path)
@@ -505,9 +501,6 @@ func NewFrameStreamReader(ctx context.Context, r ByteReadCloser, paths ...Subscr
 					return err
 				}
 				if depth > maxDepth {
-					if n == 0 {
-						continue
-					}
 					return fmt.Errorf("path length of %d exceeds maximum of %d", depth, maxDepth)
 				}
 				slog.DebugContext(ctx, "read frame header",

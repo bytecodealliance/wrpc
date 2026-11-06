@@ -94,7 +94,7 @@ type IndexWriter interface {
 	io.Writer
 	io.ByteWriter
 
-	// ClosePath closes the path by sending an empty frame, after which no more data may be written to it.
+	// ClosePath closes the path by sending an empty frame, after which nothing may be written to it.
 	ClosePath() error
 
 	Index[IndexWriteCloser]
