@@ -1,32 +1,41 @@
 //! wRPC transport client handle
 
-use core::mem;
-use core::pin::pin;
+use core::future::poll_fn;
+use core::pin::Pin;
+use core::task::Poll;
 use core::time::Duration;
 
 use std::sync::Arc;
 
 use anyhow::Context as _;
 use bytes::{Bytes, BytesMut};
-use futures::TryStreamExt as _;
-use tokio::{select, try_join};
-use tokio_util::codec::{Encoder as _, FramedRead};
-use tokio_util::task::AbortOnDropHandle;
+use futures::StreamExt as _;
+use tokio::io::{AsyncBufRead, AsyncWrite, AsyncWriteExt as _};
+use tokio::try_join;
+use tokio_util::codec::{Encoder as _, FramedParts, FramedRead};
 use tracing::{Instrument as _, debug, instrument, trace};
 
+use crate::frame::conn::mux;
 use crate::frame::{Incoming, Outgoing};
-use crate::{BufferedIncoming, Deferred as _, TupleDecode, TupleEncode};
+use crate::{Deferred as _, TupleDecode, TupleEncode, error_trailing_data};
 
 /// Client-side handle to a wRPC transport
 ///
-/// Invocations are always multiplexed over the wRPC framing layer, so the outgoing and
-/// incoming byte streams are the framed [`Outgoing`] and [`Incoming`] streams regardless of
-/// the underlying transport.
+/// An invocation is a single bidirectional byte stream, which [`InvokeExt`] multiplexes using
+/// the wRPC [framing](crate::frame) protocol.
 pub trait Invoke: Send + Sync {
     /// Transport-specific invocation context
     type Context: Send + Sync;
 
-    /// Invoke function `func` on instance `instance`
+    /// Outgoing byte stream
+    type Outgoing: AsyncWrite + Send + Unpin + 'static;
+
+    /// Incoming byte stream
+    type Incoming: AsyncBufRead + Send + Unpin + 'static;
+
+    /// Invoke function `func` on instance `instance`, returning the streams of the invocation
+    /// with the invocation header and `params` written to the outgoing one as the first data
+    /// of the root path, which is left open.
     fn invoke<P>(
         &self,
         cx: Self::Context,
@@ -34,13 +43,15 @@ pub trait Invoke: Send + Sync {
         func: &str,
         params: Bytes,
         paths: impl AsRef<[P]> + Send,
-    ) -> impl Future<Output = anyhow::Result<(Outgoing, Incoming)>> + Send
+    ) -> impl Future<Output = anyhow::Result<(Self::Outgoing, Self::Incoming)>> + Send
     where
         P: AsRef<[Option<usize>]> + Send + Sync;
 }
 
 impl<T: Invoke> Invoke for Arc<T> {
     type Context = T::Context;
+    type Outgoing = T::Outgoing;
+    type Incoming = T::Incoming;
 
     fn invoke<P>(
         &self,
@@ -49,7 +60,7 @@ impl<T: Invoke> Invoke for Arc<T> {
         func: &str,
         params: Bytes,
         paths: impl AsRef<[P]> + Send,
-    ) -> impl Future<Output = anyhow::Result<(Outgoing, Incoming)>> + Send
+    ) -> impl Future<Output = anyhow::Result<(Self::Outgoing, Self::Incoming)>> + Send
     where
         P: AsRef<[Option<usize>]> + Send + Sync,
     {
@@ -68,6 +79,8 @@ pub struct Timeout<'a, T: ?Sized> {
 
 impl<T: Invoke> Invoke for Timeout<'_, T> {
     type Context = T::Context;
+    type Outgoing = T::Outgoing;
+    type Incoming = T::Incoming;
 
     #[instrument(level = "trace", skip(self, cx, params, paths))]
     async fn invoke<P>(
@@ -77,7 +90,7 @@ impl<T: Invoke> Invoke for Timeout<'_, T> {
         func: &str,
         params: Bytes,
         paths: impl AsRef<[P]> + Send,
-    ) -> anyhow::Result<(Outgoing, Incoming)>
+    ) -> anyhow::Result<(Self::Outgoing, Self::Incoming)>
     where
         P: AsRef<[Option<usize>]> + Send + Sync,
     {
@@ -101,6 +114,8 @@ pub struct TimeoutOwned<T> {
 
 impl<T: Invoke> Invoke for TimeoutOwned<T> {
     type Context = T::Context;
+    type Outgoing = T::Outgoing;
+    type Incoming = T::Incoming;
 
     #[instrument(level = "trace", skip(self, cx, params, paths))]
     async fn invoke<P>(
@@ -110,7 +125,7 @@ impl<T: Invoke> Invoke for TimeoutOwned<T> {
         func: &str,
         params: Bytes,
         paths: impl AsRef<[P]> + Send,
-    ) -> anyhow::Result<(Outgoing, Incoming)>
+    ) -> anyhow::Result<(Self::Outgoing, Self::Incoming)>
     where
         P: AsRef<[Option<usize>]> + Send + Sync,
     {
@@ -123,13 +138,33 @@ impl<T: Invoke> Invoke for TimeoutOwned<T> {
 
 /// Extension trait for [Invoke]
 pub trait InvokeExt: Invoke {
+    /// Invoke function `func` on instance `instance`, returning the framed streams of the
+    /// invocation, which multiplex the async `paths`
+    #[instrument(level = "trace", skip(self, cx, params, paths))]
+    fn invoke_framed<P>(
+        &self,
+        cx: Self::Context,
+        instance: &str,
+        func: &str,
+        params: Bytes,
+        paths: impl AsRef<[P]> + Send,
+    ) -> impl Future<Output = anyhow::Result<(Outgoing<Self::Outgoing>, Incoming<Self::Incoming>)>> + Send
+    where
+        P: AsRef<[Option<usize>]> + Send + Sync,
+    {
+        async {
+            let (tx, rx) = self
+                .invoke(cx, instance, func, params, paths.as_ref())
+                .await?;
+            Ok(mux(tx, rx, paths.as_ref()))
+        }
+    }
+
     /// Invoke function `func` on instance `instance` using typed `Params` and `Results`
     ///
-    /// Returns the synchronous results along with a future, which completes
-    /// once the asynchronous parameters are transmitted and the asynchronous
-    /// results are received, if there are any. The parameters are transmitted
-    /// by a task spawned on the runtime, the results are received while the
-    /// future is polled; dropping it aborts both.
+    /// Returns the synchronous results along with a future, which completes once the
+    /// asynchronous parameters are transmitted, the asynchronous results are received, if there
+    /// are any, and the invocation ends. Nothing is transmitted or received unless it is polled.
     #[instrument(level = "trace", skip(self, cx, params, paths))]
     fn invoke_values<P, Params, Results, Paths>(
         &self,
@@ -141,19 +176,17 @@ pub trait InvokeExt: Invoke {
     ) -> impl Future<
         Output = anyhow::Result<(
             Results,
-            Option<
-                impl Future<Output = anyhow::Result<()>>
-                + Send
-                + 'static
-                + use<Self, P, Params, Results, Paths>,
-            >,
+            impl Future<Output = anyhow::Result<()>>
+            + Send
+            + 'static
+            + use<Self, P, Params, Results, Paths>,
         )>,
     > + Send
     where
         Paths: AsRef<[P]> + Send,
         P: AsRef<[Option<usize>]> + Send + Sync,
-        Params: TupleEncode + Send,
-        Results: TupleDecode + Send,
+        Params: TupleEncode<Outgoing<Self::Outgoing>> + Send,
+        Results: TupleDecode<Incoming<Self::Incoming>> + Send,
         <Params::Encoder as tokio_util::codec::Encoder<Params>>::Error:
             core::error::Error + Send + Sync + 'static,
         <Results::Decoder as tokio_util::codec::Decoder>::Error:
@@ -166,84 +199,85 @@ pub trait InvokeExt: Invoke {
             enc.encode(params, &mut buf)
                 .context("failed to encode parameters")?;
             debug!("invoking function");
-            let (outgoing, incoming) = self
-                .invoke(cx, instance, func, buf.freeze(), paths)
+            let (mut outgoing, incoming) = self
+                .invoke_framed(cx, instance, func, buf.freeze(), paths)
                 .await
                 .context("failed to invoke function")?;
-            let mut tx = enc.take_deferred().map(|tx| {
-                AbortOnDropHandle::new(tokio::spawn(
-                    async {
+            let tx = enc.take_deferred();
+            let mut tx: Option<Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send>>> =
+                Some(Box::pin(
+                    async move {
+                        outgoing
+                            .shutdown()
+                            .await
+                            .context("failed to close parameters")?;
+                        let Some(tx) = tx else {
+                            drop(outgoing);
+                            return Ok(());
+                        };
                         debug!("transmitting async parameters");
                         tx(outgoing)
                             .await
                             .context("failed to write async parameters")
                     }
                     .in_current_span(),
-                ))
-            });
-
+                ));
+            let closed = incoming.closed();
             let mut dec = FramedRead::new(incoming, Results::Decoder::default());
-            let results = async {
-                debug!("receiving sync results");
-                dec.try_next()
-                    .await
-                    .context("failed to receive sync results")?
-                    .context("incomplete results")
-            };
-            let results = match tx.take() {
-                Some(mut fut) => {
-                    let mut results = pin!(results);
-                    select! {
-                        res = &mut results => {
-                            tx = Some(fut);
-                            res?
-                        }
-                        res = &mut fut => {
-                            res??;
-                            results.await?
-                        }
+            debug!("receiving sync results");
+            let results = poll_fn(|cx| {
+                match dec.poll_next_unpin(cx) {
+                    Poll::Ready(Some(Ok(results))) => return Poll::Ready(Ok(results)),
+                    Poll::Ready(Some(Err(err))) => {
+                        return Poll::Ready(Err(err).context("failed to receive sync results"));
                     }
+                    Poll::Ready(None) => {
+                        return Poll::Ready(Err(anyhow::anyhow!("incomplete results")));
+                    }
+                    Poll::Pending => {}
                 }
-                _ => results.await?,
-            };
+                if let Some(fut) = &mut tx
+                    && let Poll::Ready(res) = fut.as_mut().poll(cx)
+                {
+                    tx = None;
+                    res?;
+                }
+                Poll::Pending
+            })
+            .await?;
             trace!("received sync results");
-            let buffer = mem::take(dec.read_buffer_mut());
             let rx = dec.decoder_mut().take_deferred();
-            let incoming = BufferedIncoming {
-                buffer,
-                inner: dec.into_inner(),
-            };
+            let FramedParts {
+                io: incoming,
+                read_buf,
+                ..
+            } = dec.into_parts();
+            if !read_buf.is_empty() {
+                return Err(error_trailing_data()).context("failed to receive sync results");
+            }
             Ok((
                 results,
-                (tx.is_some() || rx.is_some()).then_some(
-                    async {
-                        match (tx, rx) {
-                            (Some(tx), Some(rx)) => {
-                                try_join!(
-                                    async {
-                                        debug!("receiving async results");
-                                        rx(incoming).await.context("receiving async results failed")
-                                    },
-                                    async {
-                                        tx.await.context("transmitting async parameters failed")?
-                                    }
-                                )?;
+                async move {
+                    try_join!(
+                        async {
+                            let Some(rx) = rx else {
+                                drop(incoming);
+                                return Ok(());
+                            };
+                            debug!("receiving async results");
+                            rx(incoming).await.context("receiving async results failed")
+                        },
+                        async {
+                            if let Some(tx) = tx {
+                                tx.await?;
                             }
-                            (Some(tx), None) => {
-                                tx.await.context("transmitting async parameters failed")??;
-                            }
-                            (None, Some(rx)) => {
-                                debug!("receiving async results");
-                                rx(incoming)
-                                    .await
-                                    .context("receiving async results failed")?;
-                            }
-                            _ => {}
-                        }
-                        Ok(())
-                    }
-                    .in_current_span(),
-                ),
+                            Ok(())
+                        },
+                    )?;
+                    closed.await.context("invocation failed")?;
+                    Ok(())
+                }
+                .in_current_span(),
             ))
         }
     }
@@ -261,8 +295,8 @@ pub trait InvokeExt: Invoke {
     ) -> impl Future<Output = anyhow::Result<Results>> + Send
     where
         P: AsRef<[Option<usize>]> + Send + Sync,
-        Params: TupleEncode + Send,
-        Results: TupleDecode + Send,
+        Params: TupleEncode<Outgoing<Self::Outgoing>> + Send,
+        Results: TupleDecode<Incoming<Self::Incoming>> + Send,
         <Params::Encoder as tokio_util::codec::Encoder<Params>>::Error:
             core::error::Error + Send + Sync + 'static,
         <Results::Decoder as tokio_util::codec::Decoder>::Error:
@@ -272,10 +306,8 @@ pub trait InvokeExt: Invoke {
             let (ret, io) = self
                 .invoke_values(cx, instance, func, params, paths)
                 .await?;
-            if let Some(io) = io {
-                trace!("awaiting I/O completion");
-                io.await?;
-            }
+            trace!("awaiting I/O completion");
+            io.await?;
             Ok(ret)
         }
     }
@@ -310,7 +342,7 @@ mod tests {
 
     use std::sync::Arc;
 
-    use futures::{Stream, StreamExt as _};
+    use futures::Stream;
 
     use super::*;
 
@@ -342,7 +374,7 @@ mod tests {
         i: &T,
         cx: T::Context,
         paths: Arc<[Arc<[Option<usize>]>]>,
-    ) -> anyhow::Result<(Outgoing, Incoming)> {
+    ) -> anyhow::Result<(T::Outgoing, T::Incoming)> {
         i.invoke(cx, "foo", "bar", Bytes::default(), &paths).await
     }
 

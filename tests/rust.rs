@@ -1,4 +1,5 @@
 #![allow(clippy::disallowed_names, clippy::type_complexity)]
+#![recursion_limit = "256"]
 
 pub mod common;
 
@@ -16,7 +17,7 @@ use common::{assert_async, assert_sync};
 use futures::future::BoxFuture;
 use futures::stream::{BoxStream, FuturesUnordered};
 use futures::{Stream, StreamExt as _, TryStreamExt as _, future, stream};
-use tokio::io::{AsyncRead, AsyncReadExt as _, BufReader, split};
+use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWriteExt as _, BufReader, split};
 use tokio::task::yield_now;
 use tokio::{join, spawn, try_join};
 use tokio_util::io::StreamReader;
@@ -533,17 +534,19 @@ async fn assert_dynamic<C: Clone + Send + Sync + 'static>(
                 }
             }
             for _ in 0..2 {
-                let Some((.., params, io, tx)) = sync.try_next().await? else {
+                let Some((.., params, tx)) = sync.try_next().await? else {
                     bail!("`test.sync` missing");
                 };
+                let (params, io) = params.await?;
                 assert!(io.is_none());
                 assert_eq!(params, sync_values());
                 tx(sync_values()).await?;
             }
             for _ in 0..2 {
-                let Some((.., params, io, tx)) = async_.try_next().await? else {
+                let Some((.., params, tx)) = async_.try_next().await? else {
                     bail!("`test.async` missing");
                 };
+                let (params, io) = params.await?;
                 assert_async_values(params, io).await?;
                 tx(async_values()).await?;
             }
@@ -579,7 +582,7 @@ async fn assert_dynamic<C: Clone + Send + Sync + 'static>(
                 let (res, io) = clt
                     .invoke_values(cx.clone(), "test", "async", params, &paths)
                     .await?;
-                assert_async_values(res, io).await?;
+                assert_async_values(res, Some(io)).await?;
             }
             anyhow::Ok(())
         },
@@ -697,11 +700,12 @@ where
             srv.accept((), tx, BufReader::new(rx))
                 .await
                 .expect("failed to accept connection");
-            let ((), params, rx, tx) = pin!(invocations)
+            let ((), params, tx) = pin!(invocations)
                 .try_next()
                 .await
                 .expect("failed to accept invocation")
                 .expect("unexpected end of stream");
+            let (params, rx) = params.await.expect("failed to receive parameters");
             assert!(rx.is_none());
             assert_eq!(params, (42,));
             tx(("test",)).await.expect("failed to transmit response");
@@ -712,7 +716,7 @@ where
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 #[instrument(ret)]
-async fn rust_oneshot_no_params_open_outgoing() -> anyhow::Result<()> {
+async fn rust_oneshot_no_params() -> anyhow::Result<()> {
     use wrpc::Invoke as _;
 
     let (clt, srv) = Oneshot::duplex(1024);
@@ -724,25 +728,30 @@ async fn rust_oneshot_no_params_open_outgoing() -> anyhow::Result<()> {
     let fut = async {
         join!(
             async {
-                let (_tx, mut rx) = clt
+                let (mut tx, mut rx) = clt
                     .invoke((), "foo", "bar", Bytes::default(), &[[]; 0])
                     .await
                     .expect("failed to invoke `foo.bar`");
+                tx.write_all(b"\0\0")
+                    .await
+                    .expect("failed to close `foo.bar` parameters");
                 let mut res = Vec::default();
                 rx.read_to_end(&mut res)
                     .await
                     .expect("failed to read results");
-                assert_eq!(res, b"\x04test");
+                assert_eq!(res, b"\0\x05\x04test\0\0");
+                drop(tx);
             },
             async {
                 srv.accept((), tx, BufReader::new(rx))
                     .await
                     .expect("failed to accept connection");
-                let ((), (), rx, tx) = pin!(invocations)
+                let ((), params, tx) = pin!(invocations)
                     .try_next()
                     .await
                     .expect("failed to accept invocation")
                     .expect("unexpected end of stream");
+                let ((), rx) = params.await.expect("failed to receive parameters");
                 assert!(rx.is_none());
                 tx(("test",)).await.expect("failed to transmit response");
             }
@@ -768,7 +777,6 @@ async fn rust_oneshot_raw() -> anyhow::Result<()> {
             assert_eq!(a, "test");
         },
         async {
-            use tokio::io::AsyncWriteExt as _;
             use tokio_util::codec::Encoder as _;
             use wrpc_transport::Encode as _;
 
@@ -777,10 +785,9 @@ async fn rust_oneshot_raw() -> anyhow::Result<()> {
             eprintln!("request: `{:?}`", Bytes::from(req));
 
             let mut data = bytes::BytesMut::default();
-            let deferred: Option<wrpc_transport::DeferredFn<wrpc_transport::frame::Outgoing>> =
-                ("test",)
-                    .encode(&mut Default::default(), &mut data)
-                    .expect("failed to encode");
+            let deferred: Option<wrpc_transport::DeferredFn<wrpc_transport::Packer>> = ("test",)
+                .encode(&mut Default::default(), &mut data)
+                .expect("failed to encode");
             assert!(deferred.is_none());
 
             let mut res = bytes::BytesMut::default();
@@ -796,6 +803,10 @@ async fn rust_oneshot_raw() -> anyhow::Result<()> {
             eprintln!("response: `{res:?}`");
 
             srv.write_all(&res).await.expect("failed to write response");
+            srv.write_all(b"\0\0")
+                .await
+                .expect("failed to close response root");
+            drop(srv);
         }
     );
     Ok(())
@@ -953,6 +964,6 @@ async fn rust_oneshot_duplex() -> anyhow::Result<()> {
 #[instrument(ret)]
 async fn rust_oneshot_uds() -> anyhow::Result<()> {
     let (clt, srv) = Oneshot::unix_pair()?;
-    let (rx, tx) = wrpc_transport::unix::split(srv);
+    let (rx, tx) = srv.into_split();
     assert_oneshot(clt, rx, tx).await
 }

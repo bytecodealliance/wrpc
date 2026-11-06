@@ -54,7 +54,7 @@ async fn main() -> anyhow::Result<()> {
     }
     let lis = tokio::net::UnixListener::bind(&path)
         .with_context(|| format!("failed to bind Unix listener on `{}`", path.display()))?;
-    let srv = Arc::new(wrpc_transport::Server::default());
+    let srv = Arc::new(wrpc_transport::unix::Server::default());
     let invocations = bindings::serve(srv.as_ref(), Server)
         .await
         .context("failed to serve `wrpc-examples.hello/handler.hello`")?;
@@ -66,11 +66,11 @@ async fn main() -> anyhow::Result<()> {
                 select! {
                     res = lis.accept() => match res {
                         Ok((stream, addr)) => {
-                            let (rx, tx) = wrpc_transport::unix::split(stream);
                             let srv = Arc::clone(&srv);
                             conns.spawn(async move {
+                                let (rx, tx) = stream.into_split();
                                 if let Err(err) = srv.accept(addr, tx, BufReader::new(rx)).await {
-                                    error!(?err, "failed to serve Unix connection");
+                                    error!(?err, "failed to accept Unix connection");
                                 }
                             });
                         }

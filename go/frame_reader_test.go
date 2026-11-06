@@ -138,6 +138,19 @@ func (f closerFunc) Close() error {
 	return f()
 }
 
+func closedFrames(t *testing.T, frames ...wrpc.Frame) wrpc.ByteReadCloser {
+	t.Helper()
+	return encodeFrames(t, append(frames, wrpc.Frame{})...)
+}
+
+func endTransmit(t *testing.T, w *io.PipeWriter) {
+	t.Helper()
+	go func() {
+		encodeFrames(t, wrpc.Frame{}).WriteTo(w)
+		w.Close()
+	}()
+}
+
 func writeFrames(t *testing.T, w io.Writer, frames ...wrpc.Frame) {
 	t.Helper()
 	done := make(chan error, 1)
@@ -172,7 +185,7 @@ func TestFrameStreamReader(t *testing.T) {
 				if data {
 					frame.Data = []byte("!")
 				}
-				r := wrpc.NewFrameStreamReader(ctx, encodeFrames(t,
+				r := wrpc.NewFrameStreamReader(ctx, closedFrames(t,
 					wrpc.Frame{Path: []uint32{0}, Data: []byte("world")},
 					wrpc.Frame{Path: []uint32{0}},
 					wrpc.Frame{Data: []byte("hello")},
@@ -195,7 +208,8 @@ func TestFrameStreamReader(t *testing.T) {
 		for range 100 {
 			frames = append(frames, wrpc.Frame{Path: []uint32{1}, Data: []byte("x")})
 		}
-		r := wrpc.NewFrameStreamReader(ctx, encodeFrames(t, frames...),
+		frames = append(frames, wrpc.Frame{Path: []uint32{0}}, wrpc.Frame{Path: []uint32{1}})
+		r := wrpc.NewFrameStreamReader(ctx, closedFrames(t, frames...),
 			wrpc.NewSubscribePath().Index(0),
 			wrpc.NewSubscribePath().Index(1),
 		)
@@ -232,8 +246,9 @@ func TestFrameStreamReader(t *testing.T) {
 			wrpc.Frame{Path: []uint32{0}},
 			wrpc.Frame{Path: []uint32{1}, Data: []byte("hello")},
 			wrpc.Frame{Path: []uint32{1}, Data: []byte("world")},
+			wrpc.Frame{Path: []uint32{1}},
 		)
-		pw.Close()
+		endTransmit(t, pw)
 		assertReadAll(t, sub1, "helloworld", "")
 		assertClose(t, sub1)
 	})
@@ -251,7 +266,7 @@ func TestFrameStreamReader(t *testing.T) {
 		}
 		assertClose(t, sub)
 		writeFrames(t, pw, wrpc.Frame{Path: []uint32{0, 0}, Data: []byte("y")})
-		pw.Close()
+		endTransmit(t, pw)
 		assertReadAll(t, r, "", "released element")
 		assertClose(t, r)
 	})
@@ -277,7 +292,7 @@ func TestFrameStreamReader(t *testing.T) {
 			assertRead(t, sub, el.data)
 			assertClose(t, sub)
 		}
-		pw.Close()
+		endTransmit(t, pw)
 		assertReadAll(t, r, "", "")
 		assertClose(t, r)
 	})
@@ -308,7 +323,9 @@ func TestFrameStreamReaderBoundsBuffering(t *testing.T) {
 	data := bytes.Repeat([]byte{0x2a}, 20<<20)
 	src := encodeFrames(t,
 		wrpc.Frame{Path: []uint32{0}, Data: data},
+		wrpc.Frame{Path: []uint32{0}},
 		wrpc.Frame{Data: []byte("hello")},
+		wrpc.Frame{},
 	)
 	rd := &countingReader{Reader: bytes.NewReader(src.Bytes())}
 	r := wrpc.NewFrameStreamReader(context.Background(), rd, wrpc.NewSubscribePath().Index(0))
@@ -340,7 +357,7 @@ func TestFrameStreamReaderDrain(t *testing.T) {
 		assertClose(t, r)
 		writeFrames(t, pw, wrpc.Frame{Path: []uint32{0}})
 		writeFrames(t, pw, wrpc.Frame{})
-		pw.Close()
+		endTransmit(t, pw)
 		assertIngress(t, ingress, "")
 	})
 
@@ -352,13 +369,13 @@ func TestFrameStreamReaderDrain(t *testing.T) {
 		assertClose(t, r)
 		writeFrames(t, pw, wrpc.Frame{Data: []byte("hello")})
 		assertIngress(t, ingress, "closed reader")
-		pw.Close()
+		endTransmit(t, pw)
 	})
 
 	t.Run("buffered", func(t *testing.T) {
 		t.Parallel()
 		ctx, ingress := withIngress()
-		r := wrpc.NewFrameStreamReader(ctx, encodeFrames(t, wrpc.Frame{Data: []byte("hello")}))
+		r := wrpc.NewFrameStreamReader(ctx, closedFrames(t, wrpc.Frame{Data: []byte("hello")}))
 		assertRead(t, r, "he")
 		assertClose(t, r)
 		assertIngress(t, ingress, "not processed")
@@ -376,7 +393,7 @@ func TestFrameStreamReaderDrain(t *testing.T) {
 		assertIngress(t, ingress, "not processed")
 		assertReadAll(t, r, "", "not processed")
 		assertClose(t, r)
-		pw.Close()
+		endTransmit(t, pw)
 	})
 
 	t.Run("first error wins", func(t *testing.T) {
@@ -406,7 +423,7 @@ func TestFrameStreamReaderDrain(t *testing.T) {
 	t.Run("not indexed", func(t *testing.T) {
 		t.Parallel()
 		ctx, ingress := withIngress()
-		r := wrpc.NewFrameStreamReader(ctx, encodeFrames(t,
+		r := wrpc.NewFrameStreamReader(ctx, closedFrames(t,
 			wrpc.Frame{Path: []uint32{0}, Data: []byte("hello")},
 		), wrpc.NewSubscribePath().Index(0))
 		assertReadAll(t, r, "", "")
@@ -418,10 +435,12 @@ func TestFrameStreamReaderDrain(t *testing.T) {
 		t.Run(fmt.Sprintf("skipped=%v", skip), func(t *testing.T) {
 			t.Parallel()
 			ctx, ingress := withIngress()
-			r := wrpc.NewFrameStreamReader(ctx, encodeFrames(t,
+			r := wrpc.NewFrameStreamReader(ctx, closedFrames(t,
 				wrpc.Frame{Path: []uint32{1}, Data: []byte("x")},
 				wrpc.Frame{Data: []byte("r")},
 				wrpc.Frame{Path: []uint32{2}, Data: []byte("y")},
+				wrpc.Frame{Path: []uint32{1}},
+				wrpc.Frame{Path: []uint32{2}},
 			), wrpc.NewSubscribePath().Wildcard())
 			assertRead(t, r, "r")
 			indices := []uint32{1, 2}
@@ -461,7 +480,7 @@ func TestFrameStreamReaderDrain(t *testing.T) {
 			writeFrames(t, pw, frames...)
 			time.Sleep(100 * time.Millisecond)
 			assertClose(t, r)
-			pw.Close()
+			endTransmit(t, pw)
 			assertIngress(t, ingress, "released element")
 		})
 	}
@@ -483,7 +502,7 @@ func TestFrameStreamReaderDrain(t *testing.T) {
 				t.Fatalf("failed to write frame data: %s", err)
 			}
 			assertClose(t, r)
-			pw.Close()
+			endTransmit(t, pw)
 			assertIngress(t, ingress, "closed reader")
 		}
 	})
@@ -492,7 +511,7 @@ func TestFrameStreamReaderDrain(t *testing.T) {
 func TestFrameStreamReaderIndex(t *testing.T) {
 	t.Run("empty path", func(t *testing.T) {
 		t.Parallel()
-		r := wrpc.NewFrameStreamReader(context.Background(), encodeFrames(t, wrpc.Frame{Data: []byte("hello")}),
+		r := wrpc.NewFrameStreamReader(context.Background(), closedFrames(t, wrpc.Frame{Data: []byte("hello")}),
 			wrpc.NewSubscribePath(),
 			wrpc.NewSubscribePath().Index(0),
 		)
@@ -509,8 +528,9 @@ func TestFrameStreamReaderIndex(t *testing.T) {
 
 	t.Run("not found", func(t *testing.T) {
 		t.Parallel()
-		r := wrpc.NewFrameStreamReader(context.Background(), encodeFrames(t,
+		r := wrpc.NewFrameStreamReader(context.Background(), closedFrames(t,
 			wrpc.Frame{Path: []uint32{0, 1}, Data: []byte("hello")},
+			wrpc.Frame{Path: []uint32{0, 1}},
 		), wrpc.NewSubscribePath().Index(0).Index(1))
 		prefix := assertIndexReader(t, r, 0)
 		_, err := prefix.ReadByte()

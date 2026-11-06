@@ -45,12 +45,8 @@ async fn main() -> anyhow::Result<()> {
 
     try_join!(
         async {
-            if let Some(io) = io {
-                debug!("performing async I/O");
-                io.await.context("failed to complete async I/O")
-            } else {
-                Ok(())
-            }
+            debug!("performing async I/O");
+            io.await.context("failed to complete async I/O")
         },
         async {
             eprintln!("sent {} bytes, server counted {total}", payload.len());

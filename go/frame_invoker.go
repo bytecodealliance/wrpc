@@ -15,7 +15,7 @@ import (
 // Initial, encoded payload must be specified in `buf`.
 // `paths` define the async result paths to subscribe on.
 // On success, `InvokeFramed` returns two handles used for writing and reading encoded parameters and results respectively.
-// If `buf` is empty, no initial frame is sent.
+// If `buf` is empty, no initial frame is sent. The root path is closed either way.
 func InvokeFramed(ctx context.Context, w io.WriteCloser, r io.ReadCloser, instance string, name string, buf []byte, paths ...SubscribePath) (IndexWriteCloser, IndexReadCloser, error) {
 	if len(instance) > math.MaxUint32 {
 		return nil, nil, errors.New("instance length overflows uint32")
@@ -39,7 +39,8 @@ func InvokeFramed(ctx context.Context, w io.WriteCloser, r io.ReadCloser, instan
 			binary.MaxVarintLen32+len(instance)+
 			binary.MaxVarintLen32+len(name)+
 			1+ // empty path length
-			binary.MaxVarintLen32+len(buf),
+			binary.MaxVarintLen32+len(buf)+
+			2, // root path close
 	)
 
 	payload[0] = frameVersion
@@ -58,11 +59,15 @@ func InvokeFramed(ctx context.Context, w io.WriteCloser, r io.ReadCloser, instan
 		i = i + copy(payload[i:], buf)
 	}
 
+	i = i + 2 // path == [], data == []
+
 	_, err := w.Write(payload[:i])
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to write initial frame: %w", err)
 	}
-	return NewFrameStreamWriter(ctx, w), NewFrameStreamReader(ctx, BufReadCloser{
+	fw := NewFrameStreamWriter(ctx, w)
+	fw.closed = true
+	return fw, NewFrameStreamReader(ctx, BufReadCloser{
 		Reader: bufio.NewReader(r),
 		Closer: r,
 	}, paths...), nil

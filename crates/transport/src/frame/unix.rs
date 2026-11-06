@@ -4,26 +4,36 @@ use std::path::{Path, PathBuf};
 
 use bytes::Bytes;
 use tokio::io::BufReader;
-use tokio::net::UnixStream;
+use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf, SocketAddr};
+use tokio::net::{UnixListener, UnixStream};
 use tracing::instrument;
 
 use crate::Invoke;
-use crate::frame::{Incoming, Outgoing, ReadHalf, WriteHalf, invoke};
+use crate::frame::{AcceptError, invoke};
 
-/// Splits a Unix domain socket stream into a [`ReadHalf`] and a [`WriteHalf`].
+/// Unix domain socket server
+pub type Server = crate::frame::Server<SocketAddr, BufReader<OwnedReadHalf>, OwnedWriteHalf>;
+
+/// Accepts a connection on `lis` and an invocation on it with the peer address as the context,
+/// see [`Server::accept`].
 ///
-/// If the [`WriteHalf`] is dropped before being shut down, the socket is closed and reading from
-/// the [`ReadHalf`] fails, unless it already reached the end of the stream.
-#[must_use]
-pub fn split(stream: UnixStream) -> (ReadHalf<UnixStream>, WriteHalf<UnixStream>) {
-    crate::frame::split::split(stream, |_| {})
+/// # Errors
+///
+/// Returns an error if accepting the connection or the invocation fails
+pub async fn accept(
+    srv: &Server,
+    lis: &UnixListener,
+) -> Result<(), AcceptError<SocketAddr, BufReader<OwnedReadHalf>, OwnedWriteHalf>> {
+    let (stream, addr) = lis.accept().await.map_err(AcceptError::IO)?;
+    let (rx, tx) = stream.into_split();
+    srv.accept(addr, tx, BufReader::new(rx)).await
 }
 
 /// [Invoke] implementation in terms of a single [`UnixStream`].
 ///
 /// [`Invoke::invoke`] can only be called at most once on [Oneshot],
 /// repeated calls will return an error.
-pub type Oneshot = super::Oneshot<ReadHalf<UnixStream>, WriteHalf<UnixStream>>;
+pub type Oneshot = super::Oneshot<OwnedReadHalf, OwnedWriteHalf>;
 
 impl Oneshot {
     /// Creates a pair of connected [Oneshot] using [`UnixStream::pair`].
@@ -35,7 +45,7 @@ impl Oneshot {
 
 impl From<UnixStream> for Oneshot {
     fn from(stream: UnixStream) -> Self {
-        split(stream).into()
+        stream.into_split().into()
     }
 }
 
@@ -69,86 +79,94 @@ impl From<std::os::unix::net::SocketAddr> for Client<std::os::unix::net::SocketA
 
 impl Invoke for Client<PathBuf> {
     type Context = ();
+    type Outgoing = OwnedWriteHalf;
+    type Incoming = BufReader<OwnedReadHalf>;
 
-    #[instrument(level = "trace", skip(self, paths, params), fields(params = format!("{params:02x?}")))]
+    #[instrument(level = "trace", skip(self, _paths, params), fields(params = format!("{params:02x?}")))]
     async fn invoke<P>(
         &self,
         (): Self::Context,
         instance: &str,
         func: &str,
         params: Bytes,
-        paths: impl AsRef<[P]> + Send,
-    ) -> anyhow::Result<(Outgoing, Incoming)>
+        _paths: impl AsRef<[P]> + Send,
+    ) -> anyhow::Result<(Self::Outgoing, Self::Incoming)>
     where
         P: AsRef<[Option<usize>]> + Send + Sync,
     {
         let stream = UnixStream::connect(&self.0).await?;
-        let (rx, tx) = split(stream);
-        invoke(tx, BufReader::new(rx), instance, func, params, paths).await
+        let (rx, tx) = stream.into_split();
+        invoke(tx, BufReader::new(rx), instance, func, params).await
     }
 }
 
 impl Invoke for Client<&Path> {
     type Context = ();
+    type Outgoing = OwnedWriteHalf;
+    type Incoming = BufReader<OwnedReadHalf>;
 
-    #[instrument(level = "trace", skip(self, paths, params), fields(params = format!("{params:02x?}")))]
+    #[instrument(level = "trace", skip(self, _paths, params), fields(params = format!("{params:02x?}")))]
     async fn invoke<P>(
         &self,
         (): Self::Context,
         instance: &str,
         func: &str,
         params: Bytes,
-        paths: impl AsRef<[P]> + Send,
-    ) -> anyhow::Result<(Outgoing, Incoming)>
+        _paths: impl AsRef<[P]> + Send,
+    ) -> anyhow::Result<(Self::Outgoing, Self::Incoming)>
     where
         P: AsRef<[Option<usize>]> + Send + Sync,
     {
         let stream = UnixStream::connect(self.0).await?;
-        let (rx, tx) = split(stream);
-        invoke(tx, BufReader::new(rx), instance, func, params, paths).await
+        let (rx, tx) = stream.into_split();
+        invoke(tx, BufReader::new(rx), instance, func, params).await
     }
 }
 
 impl Invoke for Client<&std::os::unix::net::SocketAddr> {
     type Context = ();
+    type Outgoing = OwnedWriteHalf;
+    type Incoming = BufReader<OwnedReadHalf>;
 
-    #[instrument(level = "trace", skip(self, paths, params), fields(params = format!("{params:02x?}")))]
+    #[instrument(level = "trace", skip(self, _paths, params), fields(params = format!("{params:02x?}")))]
     async fn invoke<P>(
         &self,
         (): Self::Context,
         instance: &str,
         func: &str,
         params: Bytes,
-        paths: impl AsRef<[P]> + Send,
-    ) -> anyhow::Result<(Outgoing, Incoming)>
+        _paths: impl AsRef<[P]> + Send,
+    ) -> anyhow::Result<(Self::Outgoing, Self::Incoming)>
     where
         P: AsRef<[Option<usize>]> + Send + Sync,
     {
         let stream = std::os::unix::net::UnixStream::connect_addr(self.0)?;
         let stream = UnixStream::from_std(stream)?;
-        let (rx, tx) = split(stream);
-        invoke(tx, BufReader::new(rx), instance, func, params, paths).await
+        let (rx, tx) = stream.into_split();
+        invoke(tx, BufReader::new(rx), instance, func, params).await
     }
 }
 
 impl Invoke for Client<std::os::unix::net::SocketAddr> {
     type Context = ();
+    type Outgoing = OwnedWriteHalf;
+    type Incoming = BufReader<OwnedReadHalf>;
 
-    #[instrument(level = "trace", skip(self, paths, params), fields(params = format!("{params:02x?}")))]
+    #[instrument(level = "trace", skip(self, _paths, params), fields(params = format!("{params:02x?}")))]
     async fn invoke<P>(
         &self,
         (): Self::Context,
         instance: &str,
         func: &str,
         params: Bytes,
-        paths: impl AsRef<[P]> + Send,
-    ) -> anyhow::Result<(Outgoing, Incoming)>
+        _paths: impl AsRef<[P]> + Send,
+    ) -> anyhow::Result<(Self::Outgoing, Self::Incoming)>
     where
         P: AsRef<[Option<usize>]> + Send + Sync,
     {
         let stream = std::os::unix::net::UnixStream::connect_addr(&self.0)?;
         let stream = UnixStream::from_std(stream)?;
-        let (rx, tx) = split(stream);
-        invoke(tx, BufReader::new(rx), instance, func, params, paths).await
+        let (rx, tx) = stream.into_split();
+        invoke(tx, BufReader::new(rx), instance, func, params).await
     }
 }

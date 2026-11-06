@@ -1,3 +1,4 @@
+use core::net::SocketAddr;
 use core::pin::Pin;
 
 use std::fs;
@@ -375,28 +376,28 @@ fn bench_direct(
 fn bench_tcp(
     g: &mut BenchmarkGroup<impl Measurement>,
     func: Func,
-    handler: impl Handler<()>,
+    handler: impl Handler<SocketAddr>,
 ) -> anyhow::Result<()> {
     let rt = Runtime::new().context("failed to build Tokio runtime")?;
     let lis = rt.block_on(wrpc_test::tcp_bind())?;
     let addr = lis
         .local_addr()
         .context("failed to query listener address")?;
-    let srv = Arc::new(wrpc_transport::frame::Server::default());
+    let srv = Arc::new(wrpc_transport::tcp::Server::default());
     let tasks = Tasks::new(&rt);
     spawn_invocations(&rt, &tasks, srv.as_ref(), func, handler)?;
     tasks.spawn({
         let tasks = tasks.clone();
         async move {
             loop {
-                let (stream, _) = lis.accept().await.context("failed to accept connection")?;
+                let (stream, addr) = lis.accept().await.context("failed to accept connection")?;
                 stream
                     .set_nodelay(true)
                     .context("failed to set TCP_NODELAY")?;
                 let srv = Arc::clone(&srv);
                 tasks.spawn(async move {
-                    let (rx, tx) = wrpc_transport::tcp::split(stream);
-                    srv.accept((), tx, BufReader::new(rx))
+                    let (rx, tx) = stream.into_split();
+                    srv.accept(addr, tx, BufReader::new(rx))
                         .await
                         .context("failed to accept invocation")
                 });
@@ -417,7 +418,7 @@ fn bench_tcp(
 fn bench_unix(
     g: &mut BenchmarkGroup<impl Measurement>,
     func: Func,
-    handler: impl Handler<()>,
+    handler: impl Handler<tokio::net::unix::SocketAddr>,
 ) -> anyhow::Result<()> {
     let rt = Runtime::new().context("failed to build Tokio runtime")?;
     let dir = tempfile::tempdir().context("failed to create temporary directory")?;
@@ -426,18 +427,18 @@ fn bench_unix(
         let _rt = rt.enter();
         UnixListener::bind(&path).context("failed to bind Unix listener")?
     };
-    let srv = Arc::new(wrpc_transport::frame::Server::default());
+    let srv = Arc::new(wrpc_transport::unix::Server::default());
     let tasks = Tasks::new(&rt);
     spawn_invocations(&rt, &tasks, srv.as_ref(), func, handler)?;
     tasks.spawn({
         let tasks = tasks.clone();
         async move {
             loop {
-                let (stream, _) = lis.accept().await.context("failed to accept connection")?;
+                let (stream, addr) = lis.accept().await.context("failed to accept connection")?;
                 let srv = Arc::clone(&srv);
                 tasks.spawn(async move {
-                    let (rx, tx) = wrpc_transport::unix::split(stream);
-                    srv.accept((), tx, BufReader::new(rx))
+                    let (rx, tx) = stream.into_split();
+                    srv.accept(addr, tx, BufReader::new(rx))
                         .await
                         .context("failed to accept invocation")
                 });
@@ -467,7 +468,7 @@ fn bench_quic(
                 let (tx, rx) = conn.accept_bi().await.context("failed to accept stream")?;
                 let srv = Arc::clone(&srv);
                 tasks.spawn(async move {
-                    srv.accept((), tx.into(), rx.into())
+                    wrpc_quic::accept(&srv, tx, rx)
                         .await
                         .context("failed to accept invocation")
                 });
@@ -502,7 +503,7 @@ fn bench_webtransport(
                 let (tx, rx) = conn.accept_bi().await.context("failed to accept stream")?;
                 let srv = Arc::clone(&srv);
                 tasks.spawn(async move {
-                    srv.accept((), tx.into(), rx.into())
+                    wrpc_webtransport::accept(&srv, tx, rx)
                         .await
                         .context("failed to accept invocation")
                 });
@@ -597,7 +598,10 @@ fn bench_transports<H>(
     handler: &H,
 ) -> anyhow::Result<()>
 where
-    H: Handler<()> + Handler<http::request::Parts>,
+    H: Handler<()>
+        + Handler<SocketAddr>
+        + Handler<tokio::net::unix::SocketAddr>
+        + Handler<http::request::Parts>,
 {
     bench_tcp(g, func, handler.clone())?;
     bench_unix(g, func, handler.clone())?;

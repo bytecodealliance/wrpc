@@ -21,7 +21,7 @@ use wasi::sockets::tcp::ShutdownType;
 use wasi::sockets::tcp_create_socket::{TcpSocket, create_tcp_socket};
 
 use crate::Invoke;
-use crate::frame::{Incoming, Outgoing};
+use crate::frame::invoke;
 
 /// [Invoke] implementation of a TCP transport using `wasi:sockets`
 #[derive(Clone, Copy, Debug)]
@@ -173,24 +173,20 @@ impl AsyncWrite for OutgoingStream {
     }
 }
 
-#[instrument(level = "trace", skip(socket, paths, params, pollables), fields(params = format!("{params:02x?}")))]
-async fn finish_invoke<P>(
+#[instrument(level = "trace", skip(socket, params, pollables), fields(params = format!("{params:02x?}")))]
+async fn finish_invoke(
     socket: TcpSocket,
     instance: &str,
     func: &str,
     params: Bytes,
-    paths: impl AsRef<[P]> + Send,
     pollables: mpsc::UnboundedSender<(Pollable, Waker)>,
-) -> anyhow::Result<(Outgoing, Incoming)>
-where
-    P: AsRef<[Option<usize>]> + Send + Sync,
-{
+) -> anyhow::Result<(OutgoingStream, BufReader<IncomingStream>)> {
     socket.subscribe().block();
     let (rx, tx) = socket
         .finish_connect()
         .context("failed to finish connection")?;
     let socket = Arc::new(socket);
-    crate::frame::invoke(
+    invoke(
         OutgoingStream {
             tx,
             socket: Arc::clone(&socket),
@@ -204,24 +200,19 @@ where
         instance,
         func,
         params,
-        paths,
     )
     .await
 }
 
 #[instrument(level = "trace", skip_all, fields(params = format!("{params:02x?}")))]
-async fn invoke_ip<P>(
+async fn invoke_ip(
     network: &Network,
     addr: IpSocketAddress,
     instance: &str,
     func: &str,
     params: Bytes,
-    paths: impl AsRef<[P]> + Send,
     pollables: mpsc::UnboundedSender<(Pollable, Waker)>,
-) -> anyhow::Result<(Outgoing, Incoming)>
-where
-    P: AsRef<[Option<usize>]> + Send + Sync,
-{
+) -> anyhow::Result<(OutgoingStream, BufReader<IncomingStream>)> {
     let socket = match addr {
         IpSocketAddress::Ipv4(..) => create_tcp_socket(IpAddressFamily::Ipv4),
         IpSocketAddress::Ipv6(..) => create_tcp_socket(IpAddressFamily::Ipv6),
@@ -230,22 +221,18 @@ where
     socket
         .start_connect(network, addr)
         .context("failed to start connection")?;
-    finish_invoke(socket, instance, func, params, paths, pollables).await
+    finish_invoke(socket, instance, func, params, pollables).await
 }
 
 #[instrument(level = "trace", skip_all, fields(params = format!("{params:02x?}")))]
-async fn invoke_unresolved<P>(
+async fn invoke_unresolved(
     network: &Network,
     addr: &str,
     instance: &str,
     func: &str,
     params: Bytes,
-    paths: impl AsRef<[P]> + Send,
     pollables: mpsc::UnboundedSender<(Pollable, Waker)>,
-) -> anyhow::Result<(Outgoing, Incoming)>
-where
-    P: AsRef<[Option<usize>]> + Send + Sync,
-{
+) -> anyhow::Result<(OutgoingStream, BufReader<IncomingStream>)> {
     let (addr, port) = addr.rsplit_once(":").context("address is not valid")?;
     let port = port.parse().context("port is not valid")?;
     let addrs =
@@ -283,11 +270,13 @@ where
     socket
         .start_connect(network, addr)
         .context("failed to start connection")?;
-    finish_invoke(socket, instance, func, params, paths, pollables).await
+    finish_invoke(socket, instance, func, params, pollables).await
 }
 
 impl Invoke for Client<&str, &Network> {
     type Context = mpsc::UnboundedSender<(Pollable, Waker)>;
+    type Outgoing = OutgoingStream;
+    type Incoming = BufReader<IncomingStream>;
 
     async fn invoke<P>(
         &self,
@@ -295,26 +284,19 @@ impl Invoke for Client<&str, &Network> {
         instance: &str,
         func: &str,
         params: Bytes,
-        paths: impl AsRef<[P]> + Send,
-    ) -> anyhow::Result<(Outgoing, Incoming)>
+        _paths: impl AsRef<[P]> + Send,
+    ) -> anyhow::Result<(Self::Outgoing, Self::Incoming)>
     where
         P: AsRef<[Option<usize>]> + Send + Sync,
     {
-        invoke_unresolved(
-            self.network,
-            self.addr,
-            instance,
-            func,
-            params,
-            paths,
-            pollables,
-        )
-        .await
+        invoke_unresolved(self.network, self.addr, instance, func, params, pollables).await
     }
 }
 
 impl Invoke for Client<&str, Network> {
     type Context = mpsc::UnboundedSender<(Pollable, Waker)>;
+    type Outgoing = OutgoingStream;
+    type Incoming = BufReader<IncomingStream>;
 
     async fn invoke<P>(
         &self,
@@ -322,26 +304,19 @@ impl Invoke for Client<&str, Network> {
         instance: &str,
         func: &str,
         params: Bytes,
-        paths: impl AsRef<[P]> + Send,
-    ) -> anyhow::Result<(Outgoing, Incoming)>
+        _paths: impl AsRef<[P]> + Send,
+    ) -> anyhow::Result<(Self::Outgoing, Self::Incoming)>
     where
         P: AsRef<[Option<usize>]> + Send + Sync,
     {
-        invoke_unresolved(
-            &self.network,
-            self.addr,
-            instance,
-            func,
-            params,
-            paths,
-            pollables,
-        )
-        .await
+        invoke_unresolved(&self.network, self.addr, instance, func, params, pollables).await
     }
 }
 
 impl Invoke for Client<Box<str>, Network> {
     type Context = mpsc::UnboundedSender<(Pollable, Waker)>;
+    type Outgoing = OutgoingStream;
+    type Incoming = BufReader<IncomingStream>;
 
     async fn invoke<P>(
         &self,
@@ -349,26 +324,19 @@ impl Invoke for Client<Box<str>, Network> {
         instance: &str,
         func: &str,
         params: Bytes,
-        paths: impl AsRef<[P]> + Send,
-    ) -> anyhow::Result<(Outgoing, Incoming)>
+        _paths: impl AsRef<[P]> + Send,
+    ) -> anyhow::Result<(Self::Outgoing, Self::Incoming)>
     where
         P: AsRef<[Option<usize>]> + Send + Sync,
     {
-        invoke_unresolved(
-            &self.network,
-            &self.addr,
-            instance,
-            func,
-            params,
-            paths,
-            pollables,
-        )
-        .await
+        invoke_unresolved(&self.network, &self.addr, instance, func, params, pollables).await
     }
 }
 
 impl Invoke for Client<IpSocketAddress, &Network> {
     type Context = mpsc::UnboundedSender<(Pollable, Waker)>;
+    type Outgoing = OutgoingStream;
+    type Incoming = BufReader<IncomingStream>;
 
     async fn invoke<P>(
         &self,
@@ -376,26 +344,19 @@ impl Invoke for Client<IpSocketAddress, &Network> {
         instance: &str,
         func: &str,
         params: Bytes,
-        paths: impl AsRef<[P]> + Send,
-    ) -> anyhow::Result<(Outgoing, Incoming)>
+        _paths: impl AsRef<[P]> + Send,
+    ) -> anyhow::Result<(Self::Outgoing, Self::Incoming)>
     where
         P: AsRef<[Option<usize>]> + Send + Sync,
     {
-        invoke_ip(
-            self.network,
-            self.addr,
-            instance,
-            func,
-            params,
-            paths,
-            pollables,
-        )
-        .await
+        invoke_ip(self.network, self.addr, instance, func, params, pollables).await
     }
 }
 
 impl Invoke for Client<IpSocketAddress, Network> {
     type Context = mpsc::UnboundedSender<(Pollable, Waker)>;
+    type Outgoing = OutgoingStream;
+    type Incoming = BufReader<IncomingStream>;
 
     async fn invoke<P>(
         &self,
@@ -403,21 +364,12 @@ impl Invoke for Client<IpSocketAddress, Network> {
         instance: &str,
         func: &str,
         params: Bytes,
-        paths: impl AsRef<[P]> + Send,
-    ) -> anyhow::Result<(Outgoing, Incoming)>
+        _paths: impl AsRef<[P]> + Send,
+    ) -> anyhow::Result<(Self::Outgoing, Self::Incoming)>
     where
         P: AsRef<[Option<usize>]> + Send + Sync,
     {
-        invoke_ip(
-            &self.network,
-            self.addr,
-            instance,
-            func,
-            params,
-            paths,
-            pollables,
-        )
-        .await
+        invoke_ip(&self.network, self.addr, instance, func, params, pollables).await
     }
 }
 

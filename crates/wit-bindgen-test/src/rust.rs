@@ -276,7 +276,7 @@ use futures::{Stream, StreamExt as _, stream};
 use tokio::io::BufReader;
 use tokio::net::TcpListener;
 use wit_bindgen_wrpc::bytes::Bytes;
-use wrpc_transport::frame::{Incoming, Outgoing, Server, tcp};
+use wrpc_transport::frame::tcp;
 use wrpc_transport::{Invoke, Serve};
 
 {modules}
@@ -290,6 +290,8 @@ struct Router(
 
 impl Invoke for Router {
     type Context = ();
+    type Outgoing = <tcp::Client<SocketAddr> as Invoke>::Outgoing;
+    type Incoming = <tcp::Client<SocketAddr> as Invoke>::Incoming;
 
     async fn invoke<P>(
         &self,
@@ -298,7 +300,7 @@ impl Invoke for Router {
         func: &str,
         params: Bytes,
         paths: impl AsRef<[P]> + Send,
-    ) -> anyhow::Result<(Outgoing, Incoming)>
+    ) -> anyhow::Result<(Self::Outgoing, Self::Incoming)>
     where
         P: AsRef<[Option<usize>]> + Send + Sync,
     {
@@ -317,6 +319,8 @@ struct Recorder<'a, T>(&'a T, Mutex<Vec<(String, String)>>);
 
 impl<'a, T: Serve> Serve for Recorder<'a, T> {
     type Context = T::Context;
+    type Outgoing = T::Outgoing;
+    type Incoming = T::Incoming;
 
     fn serve(
         &self,
@@ -328,8 +332,8 @@ impl<'a, T: Serve> Serve for Recorder<'a, T> {
             impl Stream<
                 Item = anyhow::Result<(
                     Self::Context,
-                    Outgoing,
-                    Incoming,
+                    Self::Outgoing,
+                    Self::Incoming,
                 )>,
             > + Send
             + 'static
@@ -351,7 +355,7 @@ macro_rules! serve {
             .expect("failed to start TCP listener");
         let addr = lis.local_addr().expect("failed to get server address");
 
-        let srv = Arc::new(Server::default());
+        let srv = Arc::new(wrpc_transport::frame::Server::default());
 
         // Register the exported handlers, then serve each invocation
         // concurrently in the background.
@@ -386,10 +390,10 @@ macro_rules! serve {
         tokio::spawn(async move {
             loop {
                 let (stream, _) = lis.accept().await.expect("failed to accept connection");
-                let (rx, tx) = tcp::split(stream);
                 let srv = Arc::clone(&srv);
                 let router = Arc::clone(&router);
                 tokio::spawn(async move {
+                    let (rx, tx) = stream.into_split();
                     if let Err(err) = srv.accept(router, tx, BufReader::new(rx)).await {
                         eprintln!("failed to accept connection: {err}");
                     }

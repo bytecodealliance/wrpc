@@ -295,7 +295,7 @@ export class Mux {
   readonly ended: Promise<void>;
   /** Rejects with the error the multiplexer is aborted with, once it is. */
   readonly failed: Promise<never>;
-  writeHeader(instance: string, func: string): Promise<void>;
+  writeHeader(instance: string, func: string, params: Uint8Array): Promise<void>;
   start(): void;
   /** The reader for the expected sub-stream at `path`. */
   incoming(path: number[]): AsyncReader;

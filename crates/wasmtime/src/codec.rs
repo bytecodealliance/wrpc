@@ -30,13 +30,12 @@ use wasmtime::component::{
 };
 use wasmtime::error::Context as _;
 use wasmtime::{AsContextMut, StoreContextMut};
-use wrpc_transport::frame::{Incoming, Outgoing};
-use wrpc_transport::{Decode, Encode, READ_CHUNK_SIZE, Sink as _};
+use wrpc_transport::{Decode, Encode, READ_CHUNK_SIZE, Sink};
 
 use crate::{RemoteResource, ResourceTypes, WrpcView};
 
-type DeferredFn =
-    Box<dyn FnOnce(Outgoing) -> Pin<Box<dyn Future<Output = wasmtime::Result<()>> + Send>> + Send>;
+type DeferredFn<W> =
+    Box<dyn FnOnce(W) -> Pin<Box<dyn Future<Output = wasmtime::Result<()>> + Send>> + Send>;
 
 /// Synchronous access to a store, which is either borrowed exclusively or reachable through an
 /// [`Accessor`].
@@ -65,20 +64,20 @@ impl<T: 'static> WithStore for &Accessor<T> {
     }
 }
 
-pub struct ValEncoder<'a, T: 'static> {
+pub struct ValEncoder<'a, T: 'static, W> {
     pub store: StoreContextMut<'a, T>,
     pub ty: &'a Type,
     pub resources: &'a ResourceTypes,
-    pub deferred: Option<DeferredFn>,
+    pub deferred: Option<DeferredFn<W>>,
 }
 
-impl<T> ValEncoder<'_, T> {
+impl<T, W> ValEncoder<'_, T, W> {
     #[must_use]
     pub fn new<'a>(
         store: StoreContextMut<'a, T>,
         ty: &'a Type,
         resources: &'a ResourceTypes,
-    ) -> ValEncoder<'a, T> {
+    ) -> ValEncoder<'a, T, W> {
         ValEncoder {
             store,
             ty,
@@ -87,7 +86,7 @@ impl<T> ValEncoder<'_, T> {
         }
     }
 
-    pub fn with_type<'a>(&'a mut self, ty: &'a Type) -> ValEncoder<'a, T> {
+    pub fn with_type<'a>(&'a mut self, ty: &'a Type) -> ValEncoder<'a, T, W> {
         ValEncoder {
             store: self.store.as_context_mut(),
             ty,
@@ -132,10 +131,11 @@ fn flag_bits<'a, T: BitOrAssign + Shl<u8, Output = T> + From<u8>>(
     v
 }
 
-async fn write_deferred<I>(w: Outgoing, deferred: I) -> wasmtime::Result<()>
+async fn write_deferred<W, I>(w: W, deferred: I) -> wasmtime::Result<()>
 where
+    W: Sink,
     I: IntoIterator,
-    I::IntoIter: ExactSizeIterator<Item = Option<DeferredFn>>,
+    I::IntoIter: ExactSizeIterator<Item = Option<DeferredFn<W>>>,
 {
     let mut futs: FuturesUnordered<_> = zip(0.., deferred)
         .filter_map(|(i, f)| f.map(|f| (w.index(&[i]), f)))
@@ -259,13 +259,14 @@ macro_rules! with_payload {
     };
 }
 
-fn encode_future<P, T>(
+fn encode_future<P, T, W>(
     store: StoreContextMut<'_, T>,
     future: FutureAny,
     offset: usize,
-) -> wasmtime::Result<DeferredFn>
+) -> wasmtime::Result<DeferredFn<W>>
 where
-    P: Payload + Encode,
+    P: Payload + Encode<W>,
+    W: Sink,
     std::io::Error: From<<P::Encoder as Encoder<P>>::Error>,
 {
     struct Consumer<P>(Option<oneshot::Sender<P>>);
@@ -301,13 +302,14 @@ where
     }))
 }
 
-fn encode_stream<P, T>(
+fn encode_stream<P, T, W>(
     store: StoreContextMut<'_, T>,
     stream: StreamAny,
     offset: usize,
-) -> wasmtime::Result<DeferredFn>
+) -> wasmtime::Result<DeferredFn<W>>
 where
-    P: Payload + Encode,
+    P: Payload + Encode<W>,
+    W: Sink,
     std::io::Error: From<<P::Encoder as Encoder<P>>::Error>,
 {
     struct Consumer<P: Send + 'static>(PollSender<Vec<P>>);
@@ -352,9 +354,9 @@ where
     }))
 }
 
-async fn read_payload<P, T>(
+async fn read_payload<P, T, R>(
     store: &mut impl WithStore<Data = T>,
-    r: &mut Pin<&mut Incoming>,
+    r: &mut Pin<&mut R>,
     resources: &ResourceTypes,
     ty: Option<&Type>,
     path: &[usize],
@@ -362,6 +364,7 @@ async fn read_payload<P, T>(
 where
     P: Payload,
     T: WrpcView + 'static,
+    R: wrpc_transport::Source,
 {
     let v = if let Some(ty) = ty {
         let mut v = Val::Bool(false);
@@ -373,26 +376,27 @@ where
     P::from_val(v).ok_or_else(|| std::io::Error::other("payload value type mismatch"))
 }
 
-async fn read_future<P, T>(
+async fn read_future<P, T, R>(
     store: &mut impl WithStore<Data = T>,
-    r: &mut Pin<&mut Incoming>,
+    r: &mut Pin<&mut R>,
     resources: &ResourceTypes,
     ty: Option<&Type>,
     path: &[usize],
 ) -> std::io::Result<FutureAny>
 where
-    P: Payload + Decode,
+    P: Payload + Decode<R>,
     T: WrpcView + 'static,
+    R: wrpc_transport::Source,
     std::io::Error: From<<P::Decoder as Decoder>::Error>,
 {
     let fut = if r.read_option_status().await? {
-        let v = read_payload::<P, T>(store, r, resources, ty, path).await?;
+        let v = read_payload::<P, T, R>(store, r, resources, ty, path).await?;
         store.with_store(|mut store| {
             FutureReader::new(&mut store, ready(wasmtime::error::Ok(v)))
                 .and_then(|fut| fut.try_into_future_any(store))
         })
     } else {
-        let r = r.index(path).map_err(std::io::Error::other)?;
+        let r = r.index(path)?;
         store.with_store(|mut store| {
             FutureReader::new(&mut store, async move {
                 let mut rx = FramedRead::new(r, P::Decoder::default());
@@ -421,23 +425,25 @@ where
     fut.map_err(std::io::Error::other)
 }
 
-async fn read_stream<P, T>(
+async fn read_stream<P, T, R>(
     store: &mut impl WithStore<Data = T>,
-    r: &mut Pin<&mut Incoming>,
+    r: &mut Pin<&mut R>,
     resources: &ResourceTypes,
     ty: &Type,
     path: &[usize],
 ) -> std::io::Result<StreamAny>
 where
-    P: Payload + Decode<ListDecoder: Send>,
+    P: Payload + Decode<R, ListDecoder: Send>,
     T: WrpcView + 'static,
+    R: wrpc_transport::Source,
     std::io::Error: From<<P::ListDecoder as Decoder>::Error>,
 {
-    struct Producer<P: Decode>(Option<FramedRead<Incoming, P::ListDecoder>>);
+    struct Producer<P: Decode<R>, R: wrpc_transport::Source>(Option<FramedRead<R, P::ListDecoder>>);
 
-    impl<P, D> StreamProducer<D> for Producer<P>
+    impl<P, D, R> StreamProducer<D> for Producer<P, R>
     where
-        P: Payload + Decode<ListDecoder: Send>,
+        P: Payload + Decode<R, ListDecoder: Send>,
+        R: wrpc_transport::Source,
         std::io::Error: From<<P::ListDecoder as Decoder>::Error>,
     {
         type Item = P;
@@ -456,15 +462,9 @@ where
             }
             if let Some(rx) = &mut self.0 {
                 match rx.poll_next_unpin(cx) {
-                    Poll::Ready(Some(Ok(chunk)))
-                        if chunk.is_empty() && rx.read_buffer().is_empty() =>
-                    {
-                        self.0 = None;
-                        return Poll::Ready(Ok(StreamResult::Dropped));
-                    }
                     Poll::Ready(Some(Ok(chunk))) if chunk.is_empty() => {
-                        error!("received data after stream end");
-                        self.0 = None;
+                        cx.waker().wake_by_ref();
+                        return Poll::Pending;
                     }
                     Poll::Ready(Some(Ok(chunk))) => {
                         dst.set_buffer(chunk.into());
@@ -475,8 +475,8 @@ where
                         self.0 = None;
                     }
                     Poll::Ready(None) => {
-                        error!("stream end missing");
                         self.0 = None;
+                        return Poll::Ready(Ok(StreamResult::Dropped));
                     }
                     Poll::Pending => {}
                 }
@@ -494,18 +494,18 @@ where
         let n = usize::try_from(n).unwrap_or(usize::MAX);
         let mut vs = Vec::with_capacity(n.min(DEFAULT_MAX_INITIAL_CAPACITY / mem::size_of::<P>()));
         for _ in 0..n {
-            let v = read_payload::<P, T>(store, r, resources, Some(ty), path).await?;
+            let v = read_payload::<P, T, R>(store, r, resources, Some(ty), path).await?;
             vs.push(v);
         }
         store.with_store(|mut store| {
             StreamReader::new(&mut store, vs).and_then(|stream| stream.try_into_stream_any(store))
         })
     } else {
-        let rx = r.index(path).map_err(std::io::Error::other)?;
+        let rx = r.index(path)?;
         store.with_store(|mut store| {
             StreamReader::new(
                 &mut store,
-                Producer::<P>(Some(FramedRead::new(rx, P::ListDecoder::default()))),
+                Producer::<P, R>(Some(FramedRead::new(rx, P::ListDecoder::default()))),
             )
             .and_then(|stream| stream.try_into_stream_any(store))
         })
@@ -513,7 +513,7 @@ where
     stream.map_err(std::io::Error::other)
 }
 
-impl<T> Encoder<&Val> for ValEncoder<'_, T>
+impl<T, W: Sink> Encoder<&Val> for ValEncoder<'_, T, W>
 where
     T: WrpcView,
 {
@@ -879,7 +879,7 @@ where
                                 }),
                             ));
                         let mut enc = wrpc_transport::StreamEncoderRead::<
-                            Outgoing,
+                            W,
                             { wrpc_transport::READ_CHUNK_SIZE },
                         >::default();
                         enc.encode(items, dst)
@@ -951,7 +951,7 @@ where
                 let store = self.store.as_context_mut();
                 let deferred = with_payload!(
                     ty.ty(),
-                    P => encode_future::<P, T>(store, future.clone(), offset),
+                    P => encode_future::<P, T, W>(store, future.clone(), offset),
                     {
                         future.clone().close(store)?;
                         bail!("`future` payload type not supported, only primitive types and `string` are")
@@ -968,7 +968,7 @@ where
                 let deferred = match ty.ty() {
                     Some(payload) => with_payload!(
                         @some payload,
-                        P => encode_stream::<P, T>(store, stream.clone(), offset),
+                        P => encode_stream::<P, T, W>(store, stream.clone(), offset),
                         {
                             stream.clone().close(store)?;
                             bail!("`stream` payload type not supported, only primitive types and `string` are")
@@ -1017,9 +1017,9 @@ async fn read_bytes(r: &mut (impl AsyncRead + Unpin)) -> std::io::Result<Bytes> 
 
 /// Read encoded value of type [`Type`] from an [`AsyncRead`] into a [`Val`]
 #[instrument(level = "trace", skip_all, fields(ty, path))]
-pub async fn read_value<T>(
+pub async fn read_value<T, R>(
     store: &mut impl WithStore<Data = T>,
-    r: &mut Pin<&mut Incoming>,
+    r: &mut Pin<&mut R>,
     resources: &ResourceTypes,
     val: &mut Val,
     ty: &Type,
@@ -1027,6 +1027,7 @@ pub async fn read_value<T>(
 ) -> std::io::Result<()>
 where
     T: WrpcView + 'static,
+    R: wrpc_transport::Source,
 {
     match ty {
         Type::Bool => {
@@ -1270,7 +1271,7 @@ where
                 let stream: wasmtime_wasi::p2::DynInputStream =
                     match r.read_u8().await? {
                         0 => {
-                            let r = r.index(path).map_err(std::io::Error::other)?;
+                            let r = r.index(path)?;
                             Box::new(wasmtime_wasi::p2::pipe::AsyncReadStream::new(
                                 tokio_util::io::StreamReader::new(futures::stream::try_unfold(
                                     tokio_util::codec::FramedRead::new(
@@ -1381,7 +1382,7 @@ where
             let payload = ty.ty();
             let future = with_payload!(
                 payload,
-                P => read_future::<P, T>(store, r, resources, payload.as_ref(), path).await,
+                P => read_future::<P, T, R>(store, r, resources, payload.as_ref(), path).await,
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::Unsupported,
                     "`future` payload type not supported, only primitive types and `string` are",
@@ -1399,7 +1400,7 @@ where
             };
             let stream = with_payload!(
                 @some payload,
-                P => read_stream::<P, T>(store, r, resources, &payload, path).await,
+                P => read_stream::<P, T, R>(store, r, resources, &payload, path).await,
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::Unsupported,
                     "`stream` payload type not supported, only primitive types and `string` are",

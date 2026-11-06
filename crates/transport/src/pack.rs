@@ -1,14 +1,20 @@
 //! Packing and unpacking of wRPC values to/from singular, flat byte buffers
 
+use core::future::ready;
+use core::pin::Pin;
+use core::task::{Context, Poll};
+
 use std::collections::VecDeque;
 
 use bytes::{BufMut as _, Bytes, BytesMut};
 use futures::{Stream, StreamExt as _};
-use tokio::io::{AsyncRead, AsyncReadExt as _};
+use tokio::io::{AsyncRead, AsyncReadExt as _, ReadBuf};
 use tokio::sync::mpsc;
 use tokio_util::codec::{Decoder, Encoder};
 
-use crate::{Decode, Deferred as _, DeferredFn, Encode, Index, Sink, encode_ready_bytes_header};
+use crate::{
+    Decode, Deferred as _, DeferredFn, Encode, Index, Sink, Source, encode_ready_bytes_header,
+};
 
 /// [Sink] used by [pack], which collects the packed asynchronous values
 #[derive(Clone)]
@@ -168,13 +174,43 @@ pub fn pack_ready<T: Encode<Packer>>(
     Ok(())
 }
 
+/// [Source] of [unpack], which receives nothing, since packed values contain no asynchronous
+/// values
+pub struct Unpacker;
+
+impl AsyncRead for Unpacker {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        _: &mut Context<'_>,
+        _: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        Poll::Ready(Ok(()))
+    }
+}
+
+impl Index for Unpacker {
+    fn index(&self, _: &[usize]) -> std::io::Result<Self> {
+        Ok(Self)
+    }
+}
+
+impl Source for Unpacker {
+    fn unread(&mut self, _: BytesMut) {}
+
+    fn closed(&self) -> impl Future<Output = std::io::Result<()>> + Send + 'static + use<> {
+        ready(Ok(()))
+    }
+}
+
 /// Unpack a [`Decode`] from a byte buffer `buf` produced by [`pack`] or [`pack_ready`].
 ///
 /// This function returns an error if `buf` contains pending asynchronous values or if `buf` is
 /// not fully consumed.
 ///
 /// If this function returns an error, contents of `buf` are undefined.
-pub fn unpack<T: Decode>(buf: &mut BytesMut) -> Result<T, <T::Decoder as Decoder>::Error> {
+pub fn unpack<T: Decode<Unpacker>>(
+    buf: &mut BytesMut,
+) -> Result<T, <T::Decoder as Decoder>::Error> {
     let mut dec = T::Decoder::default();
     let Some(v) = dec.decode(buf)? else {
         return Err(

@@ -19,10 +19,9 @@ io-std = ["tokio/io-std"]
 anyhow = { workspace = true, features = ["std"] }
 bytes = { workspace = true }
 futures = { workspace = true, features = ["std"] }
-pin-project-lite = { workspace = true }
-tokio = { workspace = true, features = ["macros", "rt", "time"] }
+tokio = { workspace = true, features = ["macros", "time"] }
 tokio-stream = { workspace = true }
-tokio-util = { workspace = true, features = ["codec", "io", "rt"] }
+tokio-util = { workspace = true, features = ["codec", "io"] }
 tracing = { workspace = true, features = ["attributes"] }
 wasm-tokio = { workspace = true, features = ["tracing"] }
 

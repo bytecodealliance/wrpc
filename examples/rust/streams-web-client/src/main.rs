@@ -66,12 +66,8 @@ async fn main() -> anyhow::Result<()> {
         .context("failed to invoke `wrpc-examples:streams/handler.echo`")?;
     try_join!(
         async {
-            if let Some(io) = io {
-                debug!("performing async I/O");
-                io.await.context("failed to complete async I/O")
-            } else {
-                Ok(())
-            }
+            debug!("performing async I/O");
+            io.await.context("failed to complete async I/O")
         },
         async {
             while let Some(item) = numbers.next().await {

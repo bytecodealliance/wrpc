@@ -99,7 +99,7 @@ pub async fn handle_serve(
     let lis = tokio::net::TcpListener::bind(&export)
         .await
         .with_context(|| format!("failed to bind TCP listener on `{export}`"))?;
-    let srv = Arc::new(wrpc_transport::Server::default());
+    let srv = Arc::new(wrpc_transport::tcp::Server::default());
     let timeout = *timeout;
     let mut handlers = crate::serve(
         srv.as_ref(),
@@ -121,13 +121,13 @@ pub async fn handle_serve(
                             if let Err(err) = stream.set_nodelay(true) {
                                 warn!(?err, "failed to set TCP_NODELAY");
                             }
-                            let (rx, tx) = wrpc_transport::tcp::split(stream);
-                            let rx = BufReader::new(rx);
                             let srv = Arc::clone(&srv);
                             conns.spawn(async move {
-                                match time::timeout(timeout, srv.accept(addr, tx, rx)).await {
+                                let (rx, tx) = stream.into_split();
+                                let accept = srv.accept(addr, tx, BufReader::new(rx));
+                                match time::timeout(timeout, accept).await {
                                     Ok(Ok(())) => {}
-                                    Ok(Err(err)) => error!(?err, "failed to serve TCP connection"),
+                                    Ok(Err(err)) => error!(?err, "failed to accept TCP invocation"),
                                     Err(..) => error!(?addr, "timed out accepting TCP connection"),
                                 }
                             });

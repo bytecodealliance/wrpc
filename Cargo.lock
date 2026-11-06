@@ -3206,7 +3206,6 @@ dependencies = [
  "bytes",
  "futures-core",
  "futures-sink",
- "futures-util",
  "libc",
  "pin-project-lite",
  "tokio",
@@ -4704,6 +4703,7 @@ name = "wrpc-test"
 version = "0.5.0"
 dependencies = [
  "anyhow",
+ "bytes",
  "futures",
  "http",
  "hyper",
@@ -4729,7 +4729,6 @@ dependencies = [
  "anyhow",
  "bytes",
  "futures",
- "pin-project-lite",
  "test-log",
  "tokio",
  "tokio-stream",

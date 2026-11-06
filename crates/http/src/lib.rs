@@ -10,13 +10,15 @@ use std::io::IoSlice;
 use std::sync::Arc;
 
 use bytes::{Bytes, BytesMut};
-use futures::{Stream, TryStreamExt as _, stream};
+use futures::stream::BoxStream;
+use futures::{StreamExt as _, TryStreamExt as _, stream};
 use http_body::Frame;
 use http_body_util::BodyExt as _;
 use http_body_util::combinators::MapErr;
 use pin_project_lite::pin_project;
 use tokio::io::{AsyncReadExt as _, AsyncWrite, ReadHalf, SimplexStream, WriteHalf, simplex};
 use tokio_util::io::{StreamReader, poll_read_buf};
+use wrpc_transport::frame::AcceptError;
 
 /// Body buffer size
 pub const DEFAULT_BODY_BUFFER_SIZE: usize = 8192;
@@ -28,6 +30,16 @@ pub type IncomingBodyDataReader<T> = StreamReader<IncomingBodyDataStream<T>, Byt
 
 pub type DynIncomingBodyDataReader =
     IncomingBodyDataReader<Box<dyn FnMut(hyper::Error) -> std::io::Error + Send + Sync + 'static>>;
+
+/// Reader of the data of a response body, see [`data_reader_from_response`]
+pub type ResponseBodyDataReader = StreamReader<BoxStream<'static, std::io::Result<Bytes>>, Bytes>;
+
+/// wRPC server for HTTP transports
+pub type FrameServer = wrpc_transport::frame::Server<
+    http::request::Parts,
+    DynIncomingBodyDataReader,
+    OutgoingBodyDataWriter,
+>;
 
 /// Writer of the data of an [`OutgoingBody`], which fails the body once dropped before being
 /// shut down
@@ -181,7 +193,7 @@ pub fn data_reader_from_incoming(
 /// status and the first 4 KiB of the response body.
 pub fn data_reader_from_response<E>(
     res: impl Future<Output = Result<http::Response<hyper::body::Incoming>, E>> + Send + 'static,
-) -> StreamReader<impl Stream<Item = std::io::Result<Bytes>> + Send + Unpin, Bytes>
+) -> ResponseBodyDataReader
 where
     E: std::error::Error + Send + Sync + 'static,
 {
@@ -206,30 +218,16 @@ where
         Ok(data_stream_from_incoming(body))
     }))
     .try_flatten();
-    StreamReader::new(body)
+    StreamReader::new(body.boxed())
 }
 
 /// wRPC Server
 #[derive(Debug, Default)]
 #[repr(transparent)]
-pub struct Server(
-    pub  Arc<
-        wrpc_transport::frame::Server<
-            http::request::Parts,
-            DynIncomingBodyDataReader,
-            OutgoingBodyDataWriter,
-        >,
-    >,
-);
+pub struct Server(pub Arc<FrameServer>);
 
 impl Deref for Server {
-    type Target = Arc<
-        wrpc_transport::frame::Server<
-            http::request::Parts,
-            DynIncomingBodyDataReader,
-            OutgoingBodyDataWriter,
-        >,
-    >;
+    type Target = Arc<FrameServer>;
 
     fn deref(&self) -> &Self::Target {
         &self.0
@@ -244,15 +242,7 @@ impl DerefMut for Server {
 
 impl<T> From<T> for Server
 where
-    T: Into<
-        Arc<
-            wrpc_transport::frame::Server<
-                http::request::Parts,
-                DynIncomingBodyDataReader,
-                OutgoingBodyDataWriter,
-            >,
-        >,
-    >,
+    T: Into<Arc<FrameServer>>,
 {
     fn from(s: T) -> Self {
         Self(s.into())
@@ -269,11 +259,8 @@ impl Server {
 
 impl hyper::service::Service<http::Request<hyper::body::Incoming>> for Server {
     type Response = http::Response<OutgoingBody>;
-    type Error = wrpc_transport::frame::AcceptError<
-        http::request::Parts,
-        DynIncomingBodyDataReader,
-        OutgoingBodyDataWriter,
-    >;
+    type Error =
+        AcceptError<http::request::Parts, DynIncomingBodyDataReader, OutgoingBodyDataWriter>;
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
 
     fn call(&self, req: http::Request<hyper::body::Incoming>) -> Self::Future {
@@ -330,19 +317,18 @@ impl<T> Client<T> {
 #[cfg(all(feature = "client", feature = "http2"))]
 impl wrpc_transport::Invoke for Client<hyper::client::conn::http2::SendRequest<OutgoingBody>> {
     type Context = http::request::Parts;
+    type Outgoing = OutgoingBodyDataWriter;
+    type Incoming = ResponseBodyDataReader;
 
-    #[tracing::instrument(level = "trace", skip(self, cx, paths, params), fields(params = format!("{params:02x?}")))]
+    #[tracing::instrument(level = "trace", skip(self, cx, _paths, params), fields(params = format!("{params:02x?}")))]
     async fn invoke<P>(
         &self,
         cx: Self::Context,
         instance: &str,
         func: &str,
         params: Bytes,
-        paths: impl AsRef<[P]> + Send,
-    ) -> anyhow::Result<(
-        wrpc_transport::frame::Outgoing,
-        wrpc_transport::frame::Incoming,
-    )>
+        _paths: impl AsRef<[P]> + Send,
+    ) -> anyhow::Result<(Self::Outgoing, Self::Incoming)>
     where
         P: AsRef<[Option<usize>]> + Send + Sync,
     {
@@ -358,10 +344,7 @@ impl wrpc_transport::Invoke for Client<hyper::client::conn::http2::SendRequest<O
 
         let rx = data_reader_from_response(sender.send_request(req));
 
-        Ok((
-            wrpc_transport::frame::Outgoing::new(tx),
-            wrpc_transport::frame::Incoming::new(rx, paths.as_ref()),
-        ))
+        Ok((tx, rx))
     }
 }
 
@@ -371,19 +354,18 @@ where
     C: hyper_util::client::legacy::connect::Connect + Clone + Send + Sync + 'static,
 {
     type Context = http::request::Parts;
+    type Outgoing = OutgoingBodyDataWriter;
+    type Incoming = ResponseBodyDataReader;
 
-    #[tracing::instrument(level = "trace", skip(self, cx, paths, params), fields(params = format!("{params:02x?}")))]
+    #[tracing::instrument(level = "trace", skip(self, cx, _paths, params), fields(params = format!("{params:02x?}")))]
     async fn invoke<P>(
         &self,
         cx: Self::Context,
         instance: &str,
         func: &str,
         params: Bytes,
-        paths: impl AsRef<[P]> + Send,
-    ) -> anyhow::Result<(
-        wrpc_transport::frame::Outgoing,
-        wrpc_transport::frame::Incoming,
-    )>
+        _paths: impl AsRef<[P]> + Send,
+    ) -> anyhow::Result<(Self::Outgoing, Self::Incoming)>
     where
         P: AsRef<[Option<usize>]> + Send + Sync,
     {
@@ -396,9 +378,6 @@ where
 
         let rx = data_reader_from_response(self.0.request(req));
 
-        Ok((
-            wrpc_transport::frame::Outgoing::new(tx),
-            wrpc_transport::frame::Incoming::new(rx, paths.as_ref()),
-        ))
+        Ok((tx, rx))
     }
 }

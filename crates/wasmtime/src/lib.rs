@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use bytes::{Bytes, BytesMut};
 use futures::future::try_join_all;
-use tokio::io::AsyncWriteExt as _;
+use tokio::io::{AsyncWrite, AsyncWriteExt as _};
 use tokio_util::codec::Encoder;
 use tracing::{debug, instrument, trace, warn};
 use uuid::Uuid;
@@ -20,8 +20,7 @@ use wasmtime::component::{
 };
 use wasmtime::error::Context as _;
 use wasmtime::{AsContextMut, Engine};
-use wrpc_transport::Invoke;
-use wrpc_transport::frame::{Incoming, Outgoing};
+use wrpc_transport::{Invoke, Sink, Source};
 
 use crate::bindings::rpc::context::Context;
 use crate::bindings::rpc::error::Error;
@@ -156,15 +155,6 @@ pub trait WrpcViewExt: WrpcView {
         Ok(error)
     }
 
-    fn get_error_mut(&mut self, error: &Resource<Error>) -> wasmtime::Result<&mut Error> {
-        let error = self
-            .wrpc()
-            .table
-            .get_mut(error)
-            .context("failed to get error from table")?;
-        Ok(error)
-    }
-
     fn delete_error(&mut self, error: Resource<Error>) -> wasmtime::Result<Error> {
         let error = self
             .wrpc()
@@ -219,6 +209,7 @@ pub enum CallError {
     Flush(wasmtime::Error),
     Deferred(wasmtime::Error),
     PostReturn(wasmtime::Error),
+    Closed(wasmtime::Error),
     Guest(Error),
 }
 
@@ -235,7 +226,8 @@ impl fmt::Debug for CallError {
             | CallError::Write(error)
             | CallError::Flush(error)
             | CallError::Deferred(error)
-            | CallError::PostReturn(error) => error.fmt(f),
+            | CallError::PostReturn(error)
+            | CallError::Closed(error) => error.fmt(f),
             CallError::Guest(error) => error.fmt(f),
         }
     }
@@ -252,7 +244,8 @@ impl fmt::Display for CallError {
             | CallError::Write(error)
             | CallError::Flush(error)
             | CallError::Deferred(error)
-            | CallError::PostReturn(error) => error.fmt(f),
+            | CallError::PostReturn(error)
+            | CallError::Closed(error) => error.fmt(f),
             CallError::Guest(error) => error.fmt(f),
         }
     }
@@ -263,10 +256,10 @@ impl fmt::Display for CallError {
 /// The `store` [`Accessor`] is used to call `func` concurrently, it can be acquired, for example,
 /// using [`wasmtime::Store::run_concurrent`].
 #[allow(clippy::too_many_arguments)]
-pub async fn call<T>(
+pub async fn call<T, R, W>(
     mut store: &Accessor<T>,
-    rx: Incoming,
-    mut tx: Outgoing,
+    rx: R,
+    mut tx: W,
     resources: &ResourceTypes,
     host_resources: &HashMap<Box<str>, HashMap<Box<str>, (ResourceType, ResourceType)>>,
     params_ty: impl ExactSizeIterator<Item = &Type>,
@@ -275,8 +268,11 @@ pub async fn call<T>(
 ) -> Result<(), CallError>
 where
     T: WrpcView + 'static,
+    R: Source,
+    W: Sink + AsyncWrite + Unpin,
 {
     let mut params = vec![Val::Bool(false); params_ty.len()];
+    let closed = rx.closed();
     let mut rx = pin!(rx);
     for (i, (v, ty)) in zip(&mut params, params_ty).enumerate() {
         read_value(&mut store, &mut rx, resources, v, ty, &[i])
@@ -342,13 +338,13 @@ where
     })?;
 
     debug!("transmitting results");
-    tx.write_bytes(buf.freeze())
+    tx.write_all(&buf)
         .await
         .context("failed to transmit results")
         .map_err(CallError::Write)?;
-    tx.flush()
+    tx.shutdown()
         .await
-        .context("failed to flush outgoing stream")
+        .context("failed to close results")
         .map_err(CallError::Flush)?;
     try_join_all(
         zip(0.., deferred)
@@ -360,6 +356,11 @@ where
     )
     .await
     .map_err(CallError::Deferred)?;
+    drop(tx);
+    closed
+        .await
+        .context("invocation failed")
+        .map_err(CallError::Closed)?;
     Ok(())
 }
 

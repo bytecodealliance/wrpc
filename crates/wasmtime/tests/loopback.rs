@@ -5,13 +5,11 @@ use std::sync::Arc;
 
 use anyhow::{Context as _, bail};
 use futures::{Stream, StreamExt as _, TryStreamExt as _, stream};
-use tokio::io::BufReader;
-use tokio::net::TcpStream;
 use tokio::task::yield_now;
 use tokio::{join, spawn, try_join};
 use tracing::Instrument as _;
 use wasmtime::component::{Component, Linker, ResourceTable, ResourceType, types};
-use wrpc_transport::frame::{ReadHalf, WriteHalf, tcp};
+use wrpc_transport::frame::tcp;
 use wrpc_transport::{InvokeExt as _, ServeExt as _};
 use wrpc_wasmtime::{
     ResourceTypes, ServeExt as _, SharedResourceTable, SharedStore, WrpcCtx, WrpcCtxView, WrpcView,
@@ -55,7 +53,7 @@ async fn with_store(
     wat: &str,
     f: impl AsyncFnOnce(
         &tcp::Client<SocketAddr>,
-        &wrpc_transport::Server<(), BufReader<ReadHalf<TcpStream>>, WriteHalf<TcpStream>>,
+        &tcp::Server,
         Component,
         wasmtime::Store<Ctx>,
     ) -> anyhow::Result<()>,
@@ -155,15 +153,16 @@ async fn polyfill_async() -> anyhow::Result<()> {
                     anyhow::Ok(())
                 },
                 async {
-                    let Some(((), fut)) = pin!(run).try_next().await? else {
+                    let Some((.., fut)) = pin!(run).try_next().await? else {
                         bail!("`run` invocation missing");
                     };
                     fut.await.context("failed to serve `run`")
                 },
                 async {
-                    let Some(((), (x,), rx, tx)) = pin!(foo).try_next().await? else {
+                    let Some((.., params, tx)) = pin!(foo).try_next().await? else {
                         bail!("`foo` invocation missing");
                     };
+                    let ((x,), rx) = params.await?;
                     assert!(rx.is_none());
                     assert_eq!(x, 42);
                     tx((x * 2,)).await
@@ -216,7 +215,7 @@ async fn shared_store_trap() -> anyhow::Result<()> {
             let (_, res) = join!(
                 clt.invoke_values_blocking::<_, (), ()>((), "", "run", (), &[[]; 0]),
                 async {
-                    let Some(((), fut)) = pin!(run).try_next().await? else {
+                    let Some((.., fut)) = pin!(run).try_next().await? else {
                         bail!("`run` invocation missing");
                     };
                     anyhow::Ok(fut.await)
@@ -241,28 +240,23 @@ async fn async_values() -> anyhow::Result<()> {
 
     async fn handle(
         invocations: impl Stream<
-            Item = anyhow::Result<((), Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send>>)>,
+            Item = anyhow::Result<(
+                SocketAddr,
+                Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send>>,
+            )>,
         >,
     ) -> anyhow::Result<()> {
-        let Some(((), fut)) = pin!(invocations).try_next().await? else {
+        let Some((.., fut)) = pin!(invocations).try_next().await? else {
             bail!("invocation missing");
         };
         fut.await
     }
 
     async fn receive<T>(
-        io: Option<impl Future<Output = anyhow::Result<()>>>,
+        io: impl Future<Output = anyhow::Result<()>>,
         values: impl Future<Output = T>,
     ) -> anyhow::Result<T> {
-        let ((), values) = try_join!(
-            async {
-                if let Some(io) = io {
-                    io.await?;
-                }
-                anyhow::Ok(())
-            },
-            async { anyhow::Ok(values.await) },
-        )?;
+        let ((), values) = try_join!(io, async { anyhow::Ok(values.await) })?;
         Ok(values)
     }
 
@@ -456,9 +450,10 @@ async fn async_values() -> anyhow::Result<()> {
                 async { handle(run).await.context("failed to serve `run`") },
                 async { handle(gen_).await.context("failed to serve `gen`") },
                 async {
-                    let Some(((), (s, f, u), rx, tx)) = pin!(foo).try_next().await? else {
+                    let Some((.., params, tx)) = pin!(foo).try_next().await? else {
                         bail!("`foo` invocation missing");
                     };
+                    let ((s, f, u), rx) = params.await?;
                     try_join!(
                         async {
                             if let Some(rx) = rx {

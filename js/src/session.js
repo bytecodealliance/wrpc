@@ -82,8 +82,9 @@ async function writeFuture(out, ty, value) {
   const sink = [];
   if (ty) encodeValue(w, ty, v, sink, []);
   const bytes = w.finish();
-  await (bytes.length > 0 ? out.write(bytes) : out.close());
+  await out.write(bytes);
   await Promise.all(sink.map((e) => writeDeferred(out.index(e.path), e)));
+  await out.close();
 }
 
 /**
@@ -139,9 +140,7 @@ async function writeStream(out, elem, src) {
   } finally {
     chunks.return(undefined).catch(() => {});
   }
-  const end = new Writer();
-  end.varU(0); // a stream is terminated by an empty chunk
-  await tasks.race(out.write(end.finish()));
+  await tasks.race(out.close());
   await tasks.wait();
 }
 
@@ -154,7 +153,6 @@ async function writeStream(out, elem, src) {
 async function writeChunk(out, elem, chunk, base, tasks) {
   const w = new Writer();
   const elems = toList(chunk, elem);
-  // An empty chunk is indistinguishable from the stream terminator.
   if (elems.length === 0) return 0;
   w.varU(elems.length);
   if (elem.kind === "u8") {
@@ -341,11 +339,11 @@ async function readStream(mux, path, elem, queue, ar) {
   const tasks = new Tasks();
   try {
     for (;;) {
-      const len = await tasks.race(ar.decode((r) => atomic(r, readVarU32)));
-      if (len === 0) {
+      if (!(await tasks.race(ar.fill(1)))) {
         mux.finish(path, ar);
         break;
       }
+      const len = await tasks.race(ar.decode((r) => atomic(r, readVarU32)));
       if (queue.cancelled) throw unexpectedError(path);
       let chunk;
       if (elem.kind === "u8") {
@@ -423,10 +421,9 @@ export async function invoke(transport, instance, func, paramTypes, args, result
       throw new RangeError(`expected ${paramTypes.length} argument(s), got ${args.length}`);
     }
     paramTypes.forEach((ty, i) => encodeValue(w, ty, args[i], psink, [i]));
-    await mux.writeHeader(instance, func);
     restrict(mux, resultTypes);
     mux.start();
-    await mux.outgoing([]).write(w.finish());
+    await mux.writeHeader(instance, func, w.finish());
   } catch (err) {
     mux.abort(err);
     throw err;
@@ -530,6 +527,7 @@ export async function accept(transport, { maxInstanceLength = 1024, maxNameLengt
         const sink = [];
         resultTypes.forEach((ty, i) => encodeValue(w, ty, values[i], sink, [i]));
         await mux.outgoing([]).write(w.finish());
+        await mux.outgoing([]).close();
         await Promise.all(sink.map((e) => writeDeferred(mux.outgoing(e.path), e)));
         await mux.closeWrite();
       } catch (err) {

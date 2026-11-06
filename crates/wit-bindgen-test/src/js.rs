@@ -46,11 +46,7 @@ impl LanguageMethods for Js {
             name,
             // The wRPC JavaScript generator does not yet support fixed-length
             // lists or `map`.
-            "fixed-length-lists"
-                | "map"
-                // Invocations cannot be cancelled: aborting the transport of
-                // one fails the remote invocation.
-                | "cancel-import"
+            "fixed-length-lists" | "map"
         )
     }
 

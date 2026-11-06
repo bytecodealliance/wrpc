@@ -1,12 +1,11 @@
 use anyhow::Context as _;
 use bytes::{Buf as _, BufMut as _, BytesMut};
-use tokio::io::{AsyncBufRead, AsyncWrite, AsyncWriteExt as _};
+use tokio::io::{AsyncWrite, AsyncWriteExt as _};
 use tokio_util::codec::Encoder;
 use tracing::{instrument, trace};
 use wasm_tokio::{CoreNameEncoder, Leb128Encoder};
 
 use crate::frame::PROTOCOL;
-use crate::frame::conn::{Incoming, Outgoing};
 
 /// Encodes the header of an invocation, which is followed by `params_len` bytes of
 /// parameters, to a `BytesMut`. If `params_len` is 0, only the header is encoded.
@@ -36,20 +35,19 @@ pub fn encode_invocation(
     Ok(())
 }
 
-/// Invoke function `func` on instance `instance`
+/// Invoke function `func` on instance `instance` over the streams of an established
+/// connection, writing `params` as the first data of the root path, which is left open, and
+/// returning the streams.
 #[instrument(level = "trace", skip_all)]
-pub async fn invoke<P, I, O>(
+pub async fn invoke<I, O>(
     mut tx: O,
     rx: I,
     instance: &str,
     func: &str,
     params: impl AsRef<[u8]>,
-    paths: impl AsRef<[P]> + Send,
-) -> anyhow::Result<(Outgoing, Incoming)>
+) -> anyhow::Result<(O, I)>
 where
-    P: AsRef<[Option<usize>]> + Send + Sync,
-    I: AsyncBufRead + Unpin + Send + 'static,
-    O: AsyncWrite + Unpin + Send + 'static,
+    O: AsyncWrite + Unpin,
 {
     let params = params.as_ref();
     let mut buf = BytesMut::default();
@@ -60,8 +58,5 @@ where
         .await
         .context("failed to initialize connection")?;
     tx.flush().await.context("failed to flush invocation")?;
-
-    let tx = Outgoing::new(tx);
-    let rx = Incoming::new(rx, paths.as_ref());
     Ok((tx, rx))
 }
