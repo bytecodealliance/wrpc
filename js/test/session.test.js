@@ -405,9 +405,14 @@ test("a failed parameter transmission fails the invocation and aborts the transp
     yield [1];
     throw new Error("source failed");
   }
-  for (const [arg, writes, error] of /** @type {[InputValue, number, RegExp][]} */ ([
-    [failing(), Infinity, /source failed/],
-    [Uint8Array.of(1), 2, /broken pipe/],
+  const stopped = Object.assign(new Error("Received STOP_SENDING."), {
+    source: "stream",
+    streamErrorCode: 0,
+  });
+  for (const [arg, writes, err, error] of /** @type {[InputValue, number, Error, RegExp][]} */ ([
+    [failing(), Infinity, new Error("unused"), /source failed/],
+    [Uint8Array.of(1), 2, new Error("broken pipe"), /broken pipe/],
+    [Uint8Array.of(1), 2, stopped, /STOP_SENDING/],
   ])) {
     let n = writes;
     /** @type {unknown} */
@@ -415,7 +420,7 @@ test("a failed parameter transmission fails the invocation and aborts the transp
     /** @type {Transport} */
     const transport = {
       read: () => new Promise((resolve) => setTimeout(() => resolve(null), 10)),
-      write: () => (n-- > 0 ? undefined : Promise.reject(new Error("broken pipe"))),
+      write: () => (n-- > 0 ? undefined : Promise.reject(err)),
       closeWrite: () => {},
       abort: (reason) => void (aborted = reason),
     };
@@ -451,23 +456,18 @@ test("a failed reply stops sending stream parameters", { timeout: 1000 }, async 
 });
 
 test("aborting a web stream transport cancels and aborts both sides", async () => {
-  for (const [reason, expected] of [
-    ["boom", "boom"],
-    [Object.assign(new Error("stopped"), { source: "stream", streamErrorCode: 0 }), undefined],
-  ]) {
-    /** @type {[string, unknown][]} */
-    const reasons = [];
-    const transport = fromWebStreams({
-      readable: new ReadableStream({ cancel: (reason) => void reasons.push(["cancel", reason]) }),
-      writable: new WritableStream({ abort: (reason) => void reasons.push(["abort", reason]) }),
-    });
-    assert.ok(transport.abort);
-    await transport.abort(reason);
-    assert.deepEqual(reasons.sort(), [
-      ["abort", expected],
-      ["cancel", expected],
-    ]);
-  }
+  /** @type {[string, unknown][]} */
+  const reasons = [];
+  const transport = fromWebStreams({
+    readable: new ReadableStream({ cancel: (reason) => void reasons.push(["cancel", reason]) }),
+    writable: new WritableStream({ abort: (reason) => void reasons.push(["abort", reason]) }),
+  });
+  assert.ok(transport.abort);
+  await transport.abort("boom");
+  assert.deepEqual(reasons.sort(), [
+    ["abort", "boom"],
+    ["cancel", "boom"],
+  ]);
 });
 
 test("aborting a web stream transport after a failure sends code 1", async () => {

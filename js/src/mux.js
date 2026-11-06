@@ -215,7 +215,7 @@ export function fromWebStreams({ readable, writable }) {
       }
     },
     abort: async (reason) => {
-      const r = stoppedDone(reason) ? undefined : abortReason(reason);
+      const r = abortReason(reason);
       await Promise.allSettled([reader.cancel(r), writer.abort(r)]);
     },
   };
