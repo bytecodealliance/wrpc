@@ -18,7 +18,7 @@ func NewInvoker(addr string) *Invoker {
 	return &Invoker{addr: addr}
 }
 
-func (c *Invoker) Invoke(ctx context.Context, instance string, name string, buf []byte, paths ...wrpc.SubscribePath) (wrpc.IndexWriteCloser, wrpc.IndexReadCloser, error) {
+func (c *Invoker) Invoke(ctx context.Context, instance string, name string, paths ...wrpc.SubscribePath) (wrpc.IndexWriteCloser, wrpc.IndexReadCloser, error) {
 	addr, err := net.ResolveTCPAddr("tcp", c.addr)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to resolve `%s` as TCP address: %w", c.addr, err)
@@ -28,7 +28,7 @@ func (c *Invoker) Invoke(ctx context.Context, instance string, name string, buf 
 		return nil, nil, fmt.Errorf("failed to establish TCP connection: %w", err)
 	}
 	w, r := newConn(conn)
-	wc, rc, err := wrpc.InvokeFramed(ctx, w, r, instance, name, buf, paths...)
+	wc, rc, err := wrpc.InvokeFramed(ctx, w, r, instance, name, paths...)
 	if err != nil {
 		if cErr := w.CloseWithError(err); cErr != nil {
 			slog.DebugContext(ctx, "failed to close TCP connection", "err", cErr)

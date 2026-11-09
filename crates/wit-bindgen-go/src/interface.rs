@@ -2516,13 +2516,7 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
     w__, r__, err__ = wrpc__.Invoke(ctx__, "{instance}", ""#
             );
             self.src.push_str(rpc_func_name(func));
-            self.src.push_str("\", ");
-            if !func.params.is_empty() {
-                self.src.push_str("buf__.Bytes()");
-            } else {
-                self.src.push_str("nil");
-            }
-            self.src.push_str(",\n");
+            self.src.push_str("\",\n");
             for (i, ty) in func.result.iter().enumerate() {
                 let (nested, fut) = async_paths_ty(self.resolve, ty);
                 for path in nested {
@@ -2561,6 +2555,17 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
     }}()"#,
                 name = func.name,
             );
+            if !func.params.is_empty() {
+                uwrite!(
+                    self.src,
+                    r#"
+    _, err__ = w__.Write(buf__.Bytes())
+    if err__ != nil {{
+        err__ = {fmt}.Errorf("failed to write parameters: %w", err__)
+        return
+    }}"#,
+                );
+            }
             if async_params || async_results > 0 {
                 let sync = self.deps.sync();
                 let count = if async_params {

@@ -148,9 +148,11 @@ func (h truncatedStreamHandler) WithFuture(ctx context.Context, x *server.Someth
 
 func invokeTruncatedStream(t *testing.T, ctx context.Context, client wrpc.Invoker, paths ...wrpc.SubscribePath) wrpc.IndexReadCloser {
 	t.Helper()
-	w, r, err := client.Invoke(ctx, "wrpc-test:integration/async", "with-future", []byte{0x03, 'b', 'a', 'r', 0x00}, paths...)
+	w, r, err := client.Invoke(ctx, "wrpc-test:integration/async", "with-future", paths...)
 	require.NoError(t, err)
 	t.Cleanup(func() { r.Close() })
+	_, err = w.Write([]byte{0x03, 'b', 'a', 'r', 0x00})
+	require.NoError(t, err)
 	sw, err := w.Index(1)
 	require.NoError(t, err)
 	_, err = sw.Write([]byte{0x02, 'a', 'b', 0x04, 'c'})

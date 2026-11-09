@@ -14,7 +14,7 @@ import (
 func Hello(ctx__ context.Context, wrpc__ wrpc.Invoker) (r0__ string, err__ error) {
 	var w__ wrpc.IndexWriteCloser
 	var r__ wrpc.IndexReadCloser
-	w__, r__, err__ = wrpc__.Invoke(ctx__, "wrpc-examples:hello/handler", "hello", nil)
+	w__, r__, err__ = wrpc__.Invoke(ctx__, "wrpc-examples:hello/handler", "hello")
 	if err__ != nil {
 		err__ = fmt.Errorf("failed to invoke `hello`: %w", err__)
 		return

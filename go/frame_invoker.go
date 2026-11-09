@@ -12,19 +12,15 @@ import (
 )
 
 // InvokeFramed invokes a function `name` within an instance `instance`, both of which must be valid UTF-8.
-// Initial, encoded payload must be specified in `buf`.
 // `paths` define the async result paths to subscribe on.
 // On success, `InvokeFramed` returns two handles used for writing and reading encoded parameters and results respectively.
-// If `buf` is empty, no initial frame is sent.
-func InvokeFramed(ctx context.Context, w io.WriteCloser, r io.ReadCloser, instance string, name string, buf []byte, paths ...SubscribePath) (IndexWriteCloser, IndexReadCloser, error) {
+// The encoded parameters are written to the root of the returned writer.
+func InvokeFramed(ctx context.Context, w io.WriteCloser, r io.ReadCloser, instance string, name string, paths ...SubscribePath) (IndexWriteCloser, IndexReadCloser, error) {
 	if len(instance) > math.MaxUint32 {
 		return nil, nil, errors.New("instance length overflows uint32")
 	}
 	if len(name) > math.MaxUint32 {
 		return nil, nil, errors.New("name length overflows uint32")
-	}
-	if len(buf) > math.MaxUint32 {
-		return nil, nil, errors.New("buffer length overflows uint32")
 	}
 	if !utf8.ValidString(instance) {
 		return nil, nil, errors.New("instance is not valid UTF-8")
@@ -32,14 +28,11 @@ func InvokeFramed(ctx context.Context, w io.WriteCloser, r io.ReadCloser, instan
 	if !utf8.ValidString(name) {
 		return nil, nil, errors.New("name is not valid UTF-8")
 	}
-	// TODO: Count the exact amount of bytes required
 	payload := make(
 		[]byte,
 		1+ // version
 			binary.MaxVarintLen32+len(instance)+
-			binary.MaxVarintLen32+len(name)+
-			1+ // empty path length
-			binary.MaxVarintLen32+len(buf),
+			binary.MaxVarintLen32+len(name),
 	)
 
 	payload[0] = frameVersion
@@ -51,16 +44,9 @@ func InvokeFramed(ctx context.Context, w io.WriteCloser, r io.ReadCloser, instan
 	i = i + PutUint32(payload[i:], uint32(len(name)))
 	i = i + copy(payload[i:], name)
 
-	if len(buf) > 0 {
-		i = i + 1 // path == []
-
-		i = i + binary.PutUvarint(payload[i:], uint64(len(buf)))
-		i = i + copy(payload[i:], buf)
-	}
-
 	_, err := w.Write(payload[:i])
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to write initial frame: %w", err)
+		return nil, nil, fmt.Errorf("failed to write invocation header: %w", err)
 	}
 	return NewFrameStreamWriter(ctx, w), NewFrameStreamReader(ctx, BufReadCloser{
 		Reader: bufio.NewReader(r),

@@ -66,7 +66,7 @@ func Echo(ctx__ context.Context, wrpc__ wrpc.Invoker, r *Req) (r0__ <-chan []uin
 	}
 	var w__ wrpc.IndexWriteCloser
 	var r__ wrpc.IndexReadCloser
-	w__, r__, err__ = wrpc__.Invoke(ctx__, "wrpc-examples:streams/handler", "echo", buf__.Bytes(),
+	w__, r__, err__ = wrpc__.Invoke(ctx__, "wrpc-examples:streams/handler", "echo",
 		wrpc.NewSubscribePath().Index(0).Index(0), wrpc.NewSubscribePath().Index(0).Index(1),
 	)
 	if err__ != nil {
@@ -83,6 +83,11 @@ func Echo(ctx__ context.Context, wrpc__ wrpc.Invoker, r *Req) (r0__ <-chan []uin
 			slog.ErrorContext(ctx__, "failed to close reader", "instance", "wrpc-examples:streams/handler", "name", "echo", "err", err)
 		}
 	}()
+	_, err__ = w__.Write(buf__.Bytes())
+	if err__ != nil {
+		err__ = fmt.Errorf("failed to write parameters: %w", err__)
+		return
+	}
 	errCh__ := make(chan error, uint(writeCount__)+2)
 	errs__ = errCh__
 	var wg__ sync.WaitGroup
