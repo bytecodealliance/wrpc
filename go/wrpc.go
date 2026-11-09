@@ -14,10 +14,10 @@ import (
 // Invoker is the client-side transport handle
 type Invoker interface {
 	// Invoke invokes a function `name` within an instance `instance`.
-	// Initial, encoded payload must be specified in `b`.
 	// `paths` define the async result paths to subscribe on.
 	// On success, `Invoke` returns two handles used for writing and reading encoded parameters and results respectively.
-	Invoke(ctx context.Context, instance string, name string, b []byte, paths ...SubscribePath) (IndexWriteCloser, IndexReadCloser, error)
+	// The encoded parameters are written to the root of the returned writer.
+	Invoke(ctx context.Context, instance string, name string, paths ...SubscribePath) (IndexWriteCloser, IndexReadCloser, error)
 }
 
 type HandleFunc func(context.Context, IndexWriteCloser, IndexReadCloser)

@@ -18,7 +18,7 @@ func TestInvokeFramedHeaderUTF8(t *testing.T) {
 		{"i", "\xff", false},
 	} {
 		var w bytes.Buffer
-		_, _, err := wrpc.InvokeFramed(t.Context(), nopWriteCloser{&w}, io.NopCloser(&bytes.Buffer{}), tc.instance, tc.name, nil)
+		_, _, err := wrpc.InvokeFramed(t.Context(), nopWriteCloser{&w}, io.NopCloser(&bytes.Buffer{}), tc.instance, tc.name)
 		if (err == nil) != tc.ok {
 			t.Fatalf("unexpected result invoking %q/%q: %v", tc.instance, tc.name, err)
 		}

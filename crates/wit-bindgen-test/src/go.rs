@@ -124,10 +124,10 @@ type route struct {
 
 type router []route
 
-func (r router) Invoke(ctx context.Context, instance string, name string, b []byte, paths ...wrpc.SubscribePath) (wrpc.IndexWriteCloser, wrpc.IndexReadCloser, error) {
+func (r router) Invoke(ctx context.Context, instance string, name string, paths ...wrpc.SubscribePath) (wrpc.IndexWriteCloser, wrpc.IndexReadCloser, error) {
 	for _, rt := range r {
 		if _, ok := rt.names[[2]string{instance, name}]; ok {
-			return rt.client.Invoke(ctx, instance, name, b, paths...)
+			return rt.client.Invoke(ctx, instance, name, paths...)
 		}
 	}
 	return nil, nil, fmt.Errorf("no component exports `%s#%s`", instance, name)

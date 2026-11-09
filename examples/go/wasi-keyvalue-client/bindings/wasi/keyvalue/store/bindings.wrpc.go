@@ -351,7 +351,7 @@ func Open(ctx__ context.Context, wrpc__ wrpc.Invoker, identifier string) (r0__ *
 	}
 	var w__ wrpc.IndexWriteCloser
 	var r__ wrpc.IndexReadCloser
-	w__, r__, err__ = wrpc__.Invoke(ctx__, "wasi:keyvalue/store@0.2.0-draft2", "open", buf__.Bytes())
+	w__, r__, err__ = wrpc__.Invoke(ctx__, "wasi:keyvalue/store@0.2.0-draft2", "open")
 	if err__ != nil {
 		err__ = fmt.Errorf("failed to invoke `open`: %w", err__)
 		return
@@ -366,6 +366,11 @@ func Open(ctx__ context.Context, wrpc__ wrpc.Invoker, identifier string) (r0__ *
 			slog.ErrorContext(ctx__, "failed to close reader", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "open", "err", err)
 		}
 	}()
+	_, err__ = w__.Write(buf__.Bytes())
+	if err__ != nil {
+		err__ = fmt.Errorf("failed to write parameters: %w", err__)
+		return
+	}
 	if cErr__ := w__.Close(); cErr__ != nil {
 		slog.DebugContext(ctx__, "failed to close outgoing stream", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "open", "err", cErr__)
 	}
@@ -566,7 +571,7 @@ func Bucket_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borrow[Buc
 	}
 	var w__ wrpc.IndexWriteCloser
 	var r__ wrpc.IndexReadCloser
-	w__, r__, err__ = wrpc__.Invoke(ctx__, "wasi:keyvalue/store@0.2.0-draft2", "bucket.get", buf__.Bytes())
+	w__, r__, err__ = wrpc__.Invoke(ctx__, "wasi:keyvalue/store@0.2.0-draft2", "bucket.get")
 	if err__ != nil {
 		err__ = fmt.Errorf("failed to invoke `[method]bucket.get`: %w", err__)
 		return
@@ -581,6 +586,11 @@ func Bucket_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borrow[Buc
 			slog.ErrorContext(ctx__, "failed to close reader", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "[method]bucket.get", "err", err)
 		}
 	}()
+	_, err__ = w__.Write(buf__.Bytes())
+	if err__ != nil {
+		err__ = fmt.Errorf("failed to write parameters: %w", err__)
+		return
+	}
 	if cErr__ := w__.Close(); cErr__ != nil {
 		slog.DebugContext(ctx__, "failed to close outgoing stream", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "[method]bucket.get", "err", cErr__)
 	}
@@ -843,7 +853,7 @@ func Bucket_Set(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borrow[Buc
 	}
 	var w__ wrpc.IndexWriteCloser
 	var r__ wrpc.IndexReadCloser
-	w__, r__, err__ = wrpc__.Invoke(ctx__, "wasi:keyvalue/store@0.2.0-draft2", "bucket.set", buf__.Bytes())
+	w__, r__, err__ = wrpc__.Invoke(ctx__, "wasi:keyvalue/store@0.2.0-draft2", "bucket.set")
 	if err__ != nil {
 		err__ = fmt.Errorf("failed to invoke `[method]bucket.set`: %w", err__)
 		return
@@ -858,6 +868,11 @@ func Bucket_Set(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borrow[Buc
 			slog.ErrorContext(ctx__, "failed to close reader", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "[method]bucket.set", "err", err)
 		}
 	}()
+	_, err__ = w__.Write(buf__.Bytes())
+	if err__ != nil {
+		err__ = fmt.Errorf("failed to write parameters: %w", err__)
+		return
+	}
 	if cErr__ := w__.Close(); cErr__ != nil {
 		slog.DebugContext(ctx__, "failed to close outgoing stream", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "[method]bucket.set", "err", cErr__)
 	}
@@ -1021,7 +1036,7 @@ func Bucket_Delete(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borrow[
 	}
 	var w__ wrpc.IndexWriteCloser
 	var r__ wrpc.IndexReadCloser
-	w__, r__, err__ = wrpc__.Invoke(ctx__, "wasi:keyvalue/store@0.2.0-draft2", "bucket.delete", buf__.Bytes())
+	w__, r__, err__ = wrpc__.Invoke(ctx__, "wasi:keyvalue/store@0.2.0-draft2", "bucket.delete")
 	if err__ != nil {
 		err__ = fmt.Errorf("failed to invoke `[method]bucket.delete`: %w", err__)
 		return
@@ -1036,6 +1051,11 @@ func Bucket_Delete(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borrow[
 			slog.ErrorContext(ctx__, "failed to close reader", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "[method]bucket.delete", "err", err)
 		}
 	}()
+	_, err__ = w__.Write(buf__.Bytes())
+	if err__ != nil {
+		err__ = fmt.Errorf("failed to write parameters: %w", err__)
+		return
+	}
 	if cErr__ := w__.Close(); cErr__ != nil {
 		slog.DebugContext(ctx__, "failed to close outgoing stream", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "[method]bucket.delete", "err", cErr__)
 	}
@@ -1200,7 +1220,7 @@ func Bucket_Exists(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borrow[
 	}
 	var w__ wrpc.IndexWriteCloser
 	var r__ wrpc.IndexReadCloser
-	w__, r__, err__ = wrpc__.Invoke(ctx__, "wasi:keyvalue/store@0.2.0-draft2", "bucket.exists", buf__.Bytes())
+	w__, r__, err__ = wrpc__.Invoke(ctx__, "wasi:keyvalue/store@0.2.0-draft2", "bucket.exists")
 	if err__ != nil {
 		err__ = fmt.Errorf("failed to invoke `[method]bucket.exists`: %w", err__)
 		return
@@ -1215,6 +1235,11 @@ func Bucket_Exists(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borrow[
 			slog.ErrorContext(ctx__, "failed to close reader", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "[method]bucket.exists", "err", err)
 		}
 	}()
+	_, err__ = w__.Write(buf__.Bytes())
+	if err__ != nil {
+		err__ = fmt.Errorf("failed to write parameters: %w", err__)
+		return
+	}
 	if cErr__ := w__.Close(); cErr__ != nil {
 		slog.DebugContext(ctx__, "failed to close outgoing stream", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "[method]bucket.exists", "err", cErr__)
 	}
@@ -1429,7 +1454,7 @@ func Bucket_ListKeys(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borro
 	}
 	var w__ wrpc.IndexWriteCloser
 	var r__ wrpc.IndexReadCloser
-	w__, r__, err__ = wrpc__.Invoke(ctx__, "wasi:keyvalue/store@0.2.0-draft2", "bucket.list-keys", buf__.Bytes())
+	w__, r__, err__ = wrpc__.Invoke(ctx__, "wasi:keyvalue/store@0.2.0-draft2", "bucket.list-keys")
 	if err__ != nil {
 		err__ = fmt.Errorf("failed to invoke `[method]bucket.list-keys`: %w", err__)
 		return
@@ -1444,6 +1469,11 @@ func Bucket_ListKeys(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borro
 			slog.ErrorContext(ctx__, "failed to close reader", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "[method]bucket.list-keys", "err", err)
 		}
 	}()
+	_, err__ = w__.Write(buf__.Bytes())
+	if err__ != nil {
+		err__ = fmt.Errorf("failed to write parameters: %w", err__)
+		return
+	}
 	if cErr__ := w__.Close(); cErr__ != nil {
 		slog.DebugContext(ctx__, "failed to close outgoing stream", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "[method]bucket.list-keys", "err", cErr__)
 	}
