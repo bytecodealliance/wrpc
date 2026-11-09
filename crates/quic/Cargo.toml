@@ -11,12 +11,12 @@ repository.workspace = true
 
 [dependencies]
 anyhow = { workspace = true, features = ["std"] }
-bytes = { workspace = true }
 quinn = { workspace = true, features = ["runtime-tokio"] }
 tokio = { workspace = true, features = ["io-util"] }
 wrpc-transport = { workspace = true }
 
 [dev-dependencies]
+bytes = { workspace = true }
 futures = { workspace = true }
 test-log = { workspace = true, features = ["color", "log", "trace"] }
 tokio = { workspace = true, features = ["rt-multi-thread"] }

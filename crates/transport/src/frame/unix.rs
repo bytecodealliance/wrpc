@@ -2,7 +2,6 @@
 
 use std::path::{Path, PathBuf};
 
-use bytes::Bytes;
 use tokio::io::BufReader;
 use tokio::net::UnixStream;
 use tracing::instrument;
@@ -70,13 +69,12 @@ impl From<std::os::unix::net::SocketAddr> for Client<std::os::unix::net::SocketA
 impl Invoke for Client<PathBuf> {
     type Context = ();
 
-    #[instrument(level = "trace", skip(self, paths, params), fields(params = format!("{params:02x?}")))]
+    #[instrument(level = "trace", skip(self, paths))]
     async fn invoke<P>(
         &self,
         (): Self::Context,
         instance: &str,
         func: &str,
-        params: Bytes,
         paths: impl AsRef<[P]> + Send,
     ) -> anyhow::Result<(Outgoing, Incoming)>
     where
@@ -84,20 +82,19 @@ impl Invoke for Client<PathBuf> {
     {
         let stream = UnixStream::connect(&self.0).await?;
         let (rx, tx) = split(stream);
-        invoke(tx, BufReader::new(rx), instance, func, params, paths).await
+        invoke(tx, BufReader::new(rx), instance, func, paths).await
     }
 }
 
 impl Invoke for Client<&Path> {
     type Context = ();
 
-    #[instrument(level = "trace", skip(self, paths, params), fields(params = format!("{params:02x?}")))]
+    #[instrument(level = "trace", skip(self, paths))]
     async fn invoke<P>(
         &self,
         (): Self::Context,
         instance: &str,
         func: &str,
-        params: Bytes,
         paths: impl AsRef<[P]> + Send,
     ) -> anyhow::Result<(Outgoing, Incoming)>
     where
@@ -105,20 +102,19 @@ impl Invoke for Client<&Path> {
     {
         let stream = UnixStream::connect(self.0).await?;
         let (rx, tx) = split(stream);
-        invoke(tx, BufReader::new(rx), instance, func, params, paths).await
+        invoke(tx, BufReader::new(rx), instance, func, paths).await
     }
 }
 
 impl Invoke for Client<&std::os::unix::net::SocketAddr> {
     type Context = ();
 
-    #[instrument(level = "trace", skip(self, paths, params), fields(params = format!("{params:02x?}")))]
+    #[instrument(level = "trace", skip(self, paths))]
     async fn invoke<P>(
         &self,
         (): Self::Context,
         instance: &str,
         func: &str,
-        params: Bytes,
         paths: impl AsRef<[P]> + Send,
     ) -> anyhow::Result<(Outgoing, Incoming)>
     where
@@ -127,20 +123,19 @@ impl Invoke for Client<&std::os::unix::net::SocketAddr> {
         let stream = std::os::unix::net::UnixStream::connect_addr(self.0)?;
         let stream = UnixStream::from_std(stream)?;
         let (rx, tx) = split(stream);
-        invoke(tx, BufReader::new(rx), instance, func, params, paths).await
+        invoke(tx, BufReader::new(rx), instance, func, paths).await
     }
 }
 
 impl Invoke for Client<std::os::unix::net::SocketAddr> {
     type Context = ();
 
-    #[instrument(level = "trace", skip(self, paths, params), fields(params = format!("{params:02x?}")))]
+    #[instrument(level = "trace", skip(self, paths))]
     async fn invoke<P>(
         &self,
         (): Self::Context,
         instance: &str,
         func: &str,
-        params: Bytes,
         paths: impl AsRef<[P]> + Send,
     ) -> anyhow::Result<(Outgoing, Incoming)>
     where
@@ -149,6 +144,6 @@ impl Invoke for Client<std::os::unix::net::SocketAddr> {
         let stream = std::os::unix::net::UnixStream::connect_addr(&self.0)?;
         let stream = UnixStream::from_std(stream)?;
         let (rx, tx) = split(stream);
-        invoke(tx, BufReader::new(rx), instance, func, params, paths).await
+        invoke(tx, BufReader::new(rx), instance, func, paths).await
     }
 }

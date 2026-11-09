@@ -8,7 +8,6 @@ use std::process::Stdio;
 use std::sync::Arc;
 
 use anyhow::{Context as _, bail, ensure};
-use bytes::Bytes;
 use futures::{StreamExt as _, stream};
 use hyper::client::conn::http2;
 use hyper::server::conn::http1;
@@ -157,13 +156,7 @@ async fn js_server() -> anyhow::Result<()> {
     let client = wrpc_transport::frame::tcp::Client::from(addr);
     {
         let (tx, mut rx) = client
-            .invoke(
-                (),
-                "wrpc-test:integration/foo",
-                "foo",
-                Bytes::default(),
-                &[[]; 0],
-            )
+            .invoke((), "wrpc-test:integration/foo", "foo", &[[]; 0])
             .await?;
         let mut invalid = tx.index(&[1])?;
         invalid.write_all(b"x").await?;

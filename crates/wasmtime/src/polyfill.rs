@@ -170,12 +170,12 @@ async fn invoke(
     let start = Instant::now();
     let invocation = if let Some(timeout) = timeout {
         clt.timeout(timeout)
-            .invoke(cx, &instance, rpc_name, buf, &paths)
+            .invoke(cx, &instance, rpc_name, &paths)
             .await
     } else {
-        clt.invoke(cx, &instance, rpc_name, buf, &paths).await
+        clt.invoke(cx, &instance, rpc_name, &paths).await
     };
-    let (outgoing, incoming) = match invocation {
+    let (mut outgoing, incoming) = match invocation {
         Ok((outgoing, incoming)) => (outgoing, incoming),
         Err(err) => {
             return Ok(Err(err.context(format!(
@@ -183,6 +183,11 @@ async fn invoke(
             ))));
         }
     };
+    if let Err(err) = outgoing.write_all(&buf).await {
+        return Ok(Err(anyhow::Error::from(err).context(format!(
+            "failed to write `{instance}.{name}` parameters"
+        ))));
+    }
     let tx = async {
         try_join_all(
             zip(0.., deferred)

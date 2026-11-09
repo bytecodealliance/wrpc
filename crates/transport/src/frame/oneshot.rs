@@ -1,6 +1,5 @@
 //! wRPC transport stream framing
 
-use bytes::Bytes;
 use tokio::io::{
     AsyncRead, AsyncWrite, BufReader, DuplexStream, ReadHalf, WriteHalf, duplex, split,
 };
@@ -65,13 +64,12 @@ where
         cx: Self::Context,
         instance: &str,
         func: &str,
-        params: Bytes,
         paths: impl AsRef<[P]> + Send,
     ) -> anyhow::Result<(Outgoing, Incoming)>
     where
         P: AsRef<[Option<usize>]> + Send + Sync,
     {
-        (&self).invoke(cx, instance, func, params, paths).await
+        (&self).invoke(cx, instance, func, paths).await
     }
 }
 
@@ -82,13 +80,12 @@ where
 {
     type Context = ();
 
-    #[instrument(level = "trace", skip(self, paths, params), fields(params = format!("{params:02x?}")))]
+    #[instrument(level = "trace", skip(self, paths))]
     fn invoke<P>(
         &self,
         (): Self::Context,
         instance: &str,
         func: &str,
-        params: Bytes,
         paths: impl AsRef<[P]> + Send,
     ) -> impl Future<Output = anyhow::Result<(Outgoing, Incoming)>>
     where
@@ -97,7 +94,7 @@ where
         let stream = self.try_take_inner();
         async move {
             let (rx, tx) = stream?;
-            invoke(tx, BufReader::new(rx), instance, func, params, paths).await
+            invoke(tx, BufReader::new(rx), instance, func, paths).await
         }
     }
 }

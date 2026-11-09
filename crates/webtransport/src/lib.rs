@@ -5,7 +5,6 @@ use core::pin::Pin;
 use core::task::{Context, Poll, ready};
 
 use anyhow::Context as _;
-use bytes::Bytes;
 use tokio::io::{AsyncBufRead, AsyncRead, AsyncWrite, BufReader, ReadBuf};
 use web_transport_quinn::Session;
 use wrpc_transport::Invoke;
@@ -132,7 +131,6 @@ impl Invoke for &Client {
         (): Self::Context,
         instance: &str,
         func: &str,
-        params: Bytes,
         paths: impl AsRef<[P]> + Send,
     ) -> anyhow::Result<(Outgoing, Incoming)>
     where
@@ -148,7 +146,6 @@ impl Invoke for &Client {
             RecvStream::from(rx),
             instance,
             func,
-            params,
             paths,
         )
         .await
@@ -163,12 +160,11 @@ impl Invoke for Client {
         (): Self::Context,
         instance: &str,
         func: &str,
-        params: Bytes,
         paths: impl AsRef<[P]> + Send,
     ) -> anyhow::Result<(Outgoing, Incoming)>
     where
         P: AsRef<[Option<usize>]> + Send + Sync,
     {
-        (&self).invoke((), instance, func, params, paths).await
+        (&self).invoke((), instance, func, paths).await
     }
 }

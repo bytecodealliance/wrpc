@@ -1,6 +1,5 @@
 //! wRPC TCP transport using [tokio]
 
-use bytes::Bytes;
 use tokio::io::BufReader;
 use tokio::net::{TcpStream, ToSocketAddrs};
 use tracing::instrument;
@@ -68,13 +67,12 @@ where
 {
     type Context = ();
 
-    #[instrument(level = "trace", skip(self, paths, params), fields(params = format!("{params:02x?}")))]
+    #[instrument(level = "trace", skip(self, paths))]
     async fn invoke<P>(
         &self,
         (): Self::Context,
         instance: &str,
         func: &str,
-        params: Bytes,
         paths: impl AsRef<[P]> + Send,
     ) -> anyhow::Result<(Outgoing, Incoming)>
     where
@@ -88,6 +86,6 @@ where
             stream.set_zero_linger()?;
         }
         let (rx, tx) = split(stream);
-        invoke(tx, BufReader::new(rx), instance, func, params, paths).await
+        invoke(tx, BufReader::new(rx), instance, func, paths).await
     }
 }

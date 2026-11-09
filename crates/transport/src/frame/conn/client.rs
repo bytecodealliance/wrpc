@@ -1,49 +1,37 @@
 use anyhow::Context as _;
-use bytes::{Buf as _, BufMut as _, BytesMut};
+use bytes::{BufMut as _, BytesMut};
 use tokio::io::{AsyncBufRead, AsyncWrite, AsyncWriteExt as _};
 use tokio_util::codec::Encoder;
 use tracing::{instrument, trace};
-use wasm_tokio::{CoreNameEncoder, Leb128Encoder};
+use wasm_tokio::CoreNameEncoder;
 
 use crate::frame::PROTOCOL;
 use crate::frame::conn::{Incoming, Outgoing};
 
-/// Encodes the header of an invocation, which is followed by `params_len` bytes of
-/// parameters, to a `BytesMut`. If `params_len` is 0, only the header is encoded.
+/// Encodes the header of an invocation to a `BytesMut`.
 ///
 /// This is low-level API, most users should use [`invoke`].
 #[instrument(level = "trace", skip_all)]
-pub fn encode_invocation(
-    buf: &mut BytesMut,
-    instance: &str,
-    func: &str,
-    params_len: usize,
-) -> std::io::Result<()> {
-    let params_len = u32::try_from(params_len)
-        .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
+pub fn encode_invocation(buf: &mut BytesMut, instance: &str, func: &str) -> std::io::Result<()> {
     buf.reserve(
-        17_usize // len(PROTOCOL) + len(instance) + len(func) + len([]) + len(params)
+        11_usize // len(PROTOCOL) + len(instance) + len(func)
             .saturating_add(instance.len())
             .saturating_add(func.len()),
     );
     buf.put_u8(PROTOCOL);
     CoreNameEncoder.encode(instance, buf)?;
     CoreNameEncoder.encode(func, buf)?;
-    if params_len > 0 {
-        buf.put_u8(0);
-        Leb128Encoder.encode(params_len, buf)?;
-    }
     Ok(())
 }
 
-/// Invoke function `func` on instance `instance`
+/// Invoke function `func` on instance `instance`, writing the invocation header without
+/// flushing it
 #[instrument(level = "trace", skip_all)]
 pub async fn invoke<P, I, O>(
     mut tx: O,
     rx: I,
     instance: &str,
     func: &str,
-    params: impl AsRef<[u8]>,
     paths: impl AsRef<[P]> + Send,
 ) -> anyhow::Result<(Outgoing, Incoming)>
 where
@@ -51,15 +39,12 @@ where
     I: AsyncBufRead + Unpin + Send + 'static,
     O: AsyncWrite + Unpin + Send + 'static,
 {
-    let params = params.as_ref();
     let mut buf = BytesMut::default();
-    encode_invocation(&mut buf, instance, func, params.len())
-        .context("failed to encode invocation")?;
+    encode_invocation(&mut buf, instance, func).context("failed to encode invocation")?;
     trace!(?buf, "writing invocation");
-    tx.write_all_buf(&mut buf.chain(params))
+    tx.write_all_buf(&mut buf)
         .await
         .context("failed to initialize connection")?;
-    tx.flush().await.context("failed to flush invocation")?;
 
     let tx = Outgoing::new(tx);
     let rx = Incoming::new(rx, paths.as_ref());

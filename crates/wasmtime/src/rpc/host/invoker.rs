@@ -3,6 +3,7 @@ use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use anyhow::anyhow;
 use futures::FutureExt as _;
+use tokio::io::AsyncWriteExt as _;
 use tokio::join;
 use wasmtime::component::{Access, FutureReader, Resource};
 use wasmtime::error::Context as _;
@@ -77,14 +78,15 @@ where
                 let invocation = if let Some(timeout) = timeout {
                     client
                         .timeout(timeout)
-                        .invoke(cx, &instance, &name, params.into(), paths)
+                        .invoke(cx, &instance, &name, paths)
                         .await
                 } else {
-                    client
-                        .invoke(cx, &instance, &name, params.into(), paths)
-                        .await
+                    client.invoke(cx, &instance, &name, paths).await
                 };
-                let (outgoing, incoming) = invocation.map_err(Arc::new)?;
+                let (mut outgoing, incoming) = invocation.map_err(Arc::new)?;
+                outgoing.write_all(&params).await.map_err(|err| {
+                    Arc::new(anyhow::Error::from(err).context("failed to write parameters"))
+                })?;
                 if let Some(finished) = finished.upgrade() {
                     *finished.lock().unwrap_or_else(PoisonError::into_inner) =
                         Some((outgoing.finished().boxed(), incoming.finished().boxed()));

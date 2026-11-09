@@ -725,7 +725,7 @@ async fn rust_oneshot_no_params_open_outgoing() -> anyhow::Result<()> {
         join!(
             async {
                 let (_tx, mut rx) = clt
-                    .invoke((), "foo", "bar", Bytes::default(), &[[]; 0])
+                    .invoke((), "foo", "bar", &[[]; 0])
                     .await
                     .expect("failed to invoke `foo.bar`");
                 let mut res = Vec::default();

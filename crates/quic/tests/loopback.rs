@@ -25,7 +25,7 @@ async fn params_dropped() -> anyhow::Result<()> {
     wrpc_test::with_quic(|cc, sc| async move {
         let (mut tx, _rx) = cc.open_bi().await.context("failed to open stream")?;
         let mut buf = BytesMut::default();
-        encode_invocation(&mut buf, "foo", "bar", 0).context("failed to encode invocation")?;
+        encode_invocation(&mut buf, "foo", "bar").context("failed to encode invocation")?;
         tx.write_all(&buf)
             .await
             .context("failed to write invocation")?;

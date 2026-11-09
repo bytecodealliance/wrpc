@@ -148,9 +148,13 @@ where
     let ((), cx) = try_join!(
         async {
             let (mut outgoing, mut incoming) = clt
-                .invoke(cx, "foo", "bar", "test".into(), &[&[Some(0), Some(42)]])
+                .invoke(cx, "foo", "bar", &[&[Some(0), Some(42)]])
                 .await
                 .context("failed to invoke `foo.bar`")?;
+            outgoing
+                .write_all(b"test")
+                .await
+                .context("failed to write `foo.bar` parameters")?;
             let mut nested_tx = outgoing.index(&[42, 0]).context("failed to index `42.0`")?;
             let mut nested_rx = incoming.index(&[0, 42]).context("failed to index `0.42`")?;
             try_join!(
