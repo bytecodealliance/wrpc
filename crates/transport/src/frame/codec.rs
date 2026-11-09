@@ -317,7 +317,7 @@ mod tests {
     #[test_log::test(tokio::test)]
     async fn decoder_limits() {
         let mut buf = BytesMut::default();
-        crate::frame::encode_invocation(&mut buf, "foo", "bar", 0).unwrap();
+        crate::frame::encode_invocation(&mut buf, "foo", "bar").unwrap();
         let header = HeaderDecoder::default().read(buf.as_ref()).await.unwrap();
         assert_eq!(header.instance, "foo");
         assert_eq!(header.name, "bar");

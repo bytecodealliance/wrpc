@@ -331,13 +331,12 @@ impl<T> Client<T> {
 impl wrpc_transport::Invoke for Client<hyper::client::conn::http2::SendRequest<OutgoingBody>> {
     type Context = http::request::Parts;
 
-    #[tracing::instrument(level = "trace", skip(self, cx, paths, params), fields(params = format!("{params:02x?}")))]
+    #[tracing::instrument(level = "trace", skip(self, cx, paths))]
     async fn invoke<P>(
         &self,
         cx: Self::Context,
         instance: &str,
         func: &str,
-        params: Bytes,
         paths: impl AsRef<[P]> + Send,
     ) -> anyhow::Result<(
         wrpc_transport::frame::Outgoing,
@@ -352,9 +351,9 @@ impl wrpc_transport::Invoke for Client<hyper::client::conn::http2::SendRequest<O
         sender.ready().await.context("HTTP connection closed")?;
 
         let mut buf = BytesMut::default();
-        wrpc_transport::frame::encode_invocation(&mut buf, instance, func, params.len())
+        wrpc_transport::frame::encode_invocation(&mut buf, instance, func)
             .context("failed to encode invocation")?;
-        let (req, tx) = new_request(cx, [buf.freeze(), params]);
+        let (req, tx) = new_request(cx, [buf.freeze()]);
 
         let rx = data_reader_from_response(sender.send_request(req));
 
@@ -372,13 +371,12 @@ where
 {
     type Context = http::request::Parts;
 
-    #[tracing::instrument(level = "trace", skip(self, cx, paths, params), fields(params = format!("{params:02x?}")))]
+    #[tracing::instrument(level = "trace", skip(self, cx, paths))]
     async fn invoke<P>(
         &self,
         cx: Self::Context,
         instance: &str,
         func: &str,
-        params: Bytes,
         paths: impl AsRef<[P]> + Send,
     ) -> anyhow::Result<(
         wrpc_transport::frame::Outgoing,
@@ -390,9 +388,9 @@ where
         use anyhow::Context as _;
 
         let mut buf = BytesMut::default();
-        wrpc_transport::frame::encode_invocation(&mut buf, instance, func, params.len())
+        wrpc_transport::frame::encode_invocation(&mut buf, instance, func)
             .context("failed to encode invocation")?;
-        let (req, tx) = new_request(cx, [buf.freeze(), params]);
+        let (req, tx) = new_request(cx, [buf.freeze()]);
 
         let rx = data_reader_from_response(self.0.request(req));
 

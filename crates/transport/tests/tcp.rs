@@ -6,7 +6,6 @@ use core::time::Duration;
 use std::sync::Arc;
 
 use anyhow::Context as _;
-use bytes::Bytes;
 use futures::TryStreamExt as _;
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::join;
@@ -30,7 +29,7 @@ async fn unprocessed_stream() -> anyhow::Result<()> {
             join!(
                 async {
                     let (tx, _rx) = clt
-                        .invoke((), "foo", "bar", Bytes::default(), [[Some(0)]])
+                        .invoke((), "foo", "bar", [[Some(0)]])
                         .await
                         .expect("failed to invoke `foo.bar`");
                     let mut tx = tx.index(&[0]).expect("failed to index stream");

@@ -58,7 +58,7 @@ async fn error_response() -> anyhow::Result<()> {
     });
     let fut = wrpc_test::with_http2(svc, |parts, sender| async move {
         let (tx, mut rx) = Client::from(sender)
-            .invoke(parts, "foo", "bar", "test".into(), [[None; 0]; 0])
+            .invoke(parts, "foo", "bar", [[None; 0]; 0])
             .await?;
         drop(tx);
         let err = rx

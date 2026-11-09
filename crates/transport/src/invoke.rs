@@ -7,8 +7,9 @@ use core::time::Duration;
 use std::sync::Arc;
 
 use anyhow::Context as _;
-use bytes::{Bytes, BytesMut};
+use bytes::BytesMut;
 use futures::TryStreamExt as _;
+use tokio::io::AsyncWriteExt as _;
 use tokio::{select, try_join};
 use tokio_util::codec::{Encoder as _, FramedRead};
 use tokio_util::task::AbortOnDropHandle;
@@ -26,13 +27,13 @@ pub trait Invoke: Send + Sync {
     /// Transport-specific invocation context
     type Context: Send + Sync;
 
-    /// Invoke function `func` on instance `instance`
+    /// Invoke function `func` on instance `instance`, whose parameters are written to the
+    /// returned [`Outgoing`]
     fn invoke<P>(
         &self,
         cx: Self::Context,
         instance: &str,
         func: &str,
-        params: Bytes,
         paths: impl AsRef<[P]> + Send,
     ) -> impl Future<Output = anyhow::Result<(Outgoing, Incoming)>> + Send
     where
@@ -47,13 +48,12 @@ impl<T: Invoke> Invoke for Arc<T> {
         cx: Self::Context,
         instance: &str,
         func: &str,
-        params: Bytes,
         paths: impl AsRef<[P]> + Send,
     ) -> impl Future<Output = anyhow::Result<(Outgoing, Incoming)>> + Send
     where
         P: AsRef<[Option<usize>]> + Send + Sync,
     {
-        T::invoke(self, cx, instance, func, params, paths)
+        T::invoke(self, cx, instance, func, paths)
     }
 }
 
@@ -69,24 +69,20 @@ pub struct Timeout<'a, T: ?Sized> {
 impl<T: Invoke> Invoke for Timeout<'_, T> {
     type Context = T::Context;
 
-    #[instrument(level = "trace", skip(self, cx, params, paths))]
+    #[instrument(level = "trace", skip(self, cx, paths))]
     async fn invoke<P>(
         &self,
         cx: Self::Context,
         instance: &str,
         func: &str,
-        params: Bytes,
         paths: impl AsRef<[P]> + Send,
     ) -> anyhow::Result<(Outgoing, Incoming)>
     where
         P: AsRef<[Option<usize>]> + Send + Sync,
     {
-        tokio::time::timeout(
-            self.timeout,
-            self.inner.invoke(cx, instance, func, params, paths),
-        )
-        .await
-        .context("invocation timed out")?
+        tokio::time::timeout(self.timeout, self.inner.invoke(cx, instance, func, paths))
+            .await
+            .context("invocation timed out")?
     }
 }
 
@@ -102,13 +98,12 @@ pub struct TimeoutOwned<T> {
 impl<T: Invoke> Invoke for TimeoutOwned<T> {
     type Context = T::Context;
 
-    #[instrument(level = "trace", skip(self, cx, params, paths))]
+    #[instrument(level = "trace", skip(self, cx, paths))]
     async fn invoke<P>(
         &self,
         cx: Self::Context,
         instance: &str,
         func: &str,
-        params: Bytes,
         paths: impl AsRef<[P]> + Send,
     ) -> anyhow::Result<(Outgoing, Incoming)>
     where
@@ -116,7 +111,7 @@ impl<T: Invoke> Invoke for TimeoutOwned<T> {
     {
         self.inner
             .timeout(self.timeout)
-            .invoke(cx, instance, func, params, paths)
+            .invoke(cx, instance, func, paths)
             .await
     }
 }
@@ -166,10 +161,14 @@ pub trait InvokeExt: Invoke {
             enc.encode(params, &mut buf)
                 .context("failed to encode parameters")?;
             debug!("invoking function");
-            let (outgoing, incoming) = self
-                .invoke(cx, instance, func, buf.freeze(), paths)
+            let (mut outgoing, incoming) = self
+                .invoke(cx, instance, func, paths)
                 .await
                 .context("failed to invoke function")?;
+            outgoing
+                .write_all(&buf)
+                .await
+                .context("failed to write parameters")?;
             let mut tx = enc.take_deferred().map(|tx| {
                 AbortOnDropHandle::new(tokio::spawn(
                     async {
@@ -310,6 +309,7 @@ mod tests {
 
     use std::sync::Arc;
 
+    use bytes::Bytes;
     use futures::{Stream, StreamExt as _};
 
     use super::*;
@@ -343,7 +343,7 @@ mod tests {
         cx: T::Context,
         paths: Arc<[Arc<[Option<usize>]>]>,
     ) -> anyhow::Result<(Outgoing, Incoming)> {
-        i.invoke(cx, "foo", "bar", Bytes::default(), &paths).await
+        i.invoke(cx, "foo", "bar", &paths).await
     }
 
     async fn call_invoke_async<T>() -> anyhow::Result<(Pin<Box<dyn Stream<Item = Bytes> + Send>>,)>

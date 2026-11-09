@@ -296,7 +296,6 @@ impl Invoke for Router {
         cx: (),
         instance: &str,
         func: &str,
-        params: Bytes,
         paths: impl AsRef<[P]> + Send,
     ) -> anyhow::Result<(Outgoing, Incoming)>
     where
@@ -309,7 +308,7 @@ impl Invoke for Router {
         else {
             bail!("no component exports `{instance}#{func}`")
         };
-        clt.invoke(cx, instance, func, params, paths).await
+        clt.invoke(cx, instance, func, paths).await
     }
 }
 
