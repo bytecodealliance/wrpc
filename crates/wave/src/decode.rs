@@ -41,7 +41,7 @@ where
         WasmTypeKind::Char => Ok(V::make_char(r.read_char_utf8().await?)),
         WasmTypeKind::String => {
             let mut s = String::default();
-            r.read_core_name(&mut s).await?;
+            r.read_core_name(&mut s, u32::MAX).await?;
             Ok(V::make_string(Cow::Owned(s)))
         }
         WasmTypeKind::List => {

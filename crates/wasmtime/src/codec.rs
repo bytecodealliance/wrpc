@@ -1091,7 +1091,7 @@ where
         }
         Type::String => {
             let mut s = String::default();
-            r.read_core_name(&mut s).await?;
+            r.read_core_name(&mut s, u32::MAX).await?;
             *val = Val::String(s);
             Ok(())
         }
