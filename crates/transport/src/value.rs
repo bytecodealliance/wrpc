@@ -1041,15 +1041,8 @@ where
             self.cap = len;
         }
         while self.cap > 0 {
-            let v = match self.dec.decode(src) {
-                Ok(Some(v)) => v,
-                Ok(None) => return Ok(None),
-                Err(err) => {
-                    self.cap = 0;
-                    self.ret.clear();
-                    self.deferred.clear();
-                    return Err(err);
-                }
+            let Some(v) = self.dec.decode(src)? else {
+                return Ok(None);
             };
             if let Some(deferred) = self.dec.take_deferred() {
                 self.deferred.resize_with(self.ret.len(), || None);
@@ -1199,14 +1192,8 @@ where
                 .reserve(N.min(DEFAULT_MAX_INITIAL_CAPACITY / mem::size_of::<T::Item>().max(1)));
         }
         while self.ret.len() < N {
-            let v = match self.dec.decode(src) {
-                Ok(Some(v)) => v,
-                Ok(None) => return Ok(None),
-                Err(err) => {
-                    self.ret = Vec::default();
-                    self.deferred.clear();
-                    return Err(err);
-                }
+            let Some(v) = self.dec.decode(src)? else {
+                return Ok(None);
             };
             if let Some(deferred) = self.dec.take_deferred() {
                 self.deferred.resize_with(self.ret.len(), || None);
@@ -2588,6 +2575,7 @@ mod tests {
         let mut dec = <Vec<Vec<String>> as Decode>::Decoder::default();
         let mut buf = BytesMut::from(&b"\x02\x01\x01a\x01\x01\xff"[..]);
         assert!(dec.decode(&mut buf).is_err());
+        let mut dec = <Vec<Vec<String>> as Decode>::Decoder::default();
         let mut buf = BytesMut::from("\x01\x01\x01b");
         let v = dec.decode(&mut buf)?;
         assert_eq!(v, Some(vec![vec!["b".to_string()]]));
@@ -2595,6 +2583,7 @@ mod tests {
         let mut dec = <Vec<StreamBytes> as Decode>::Decoder::default();
         let mut buf = BytesMut::from(&b"\x02\0\xff\xff\xff\xff\xff"[..]);
         assert!(dec.decode(&mut buf).is_err());
+        let mut dec = <Vec<StreamBytes> as Decode>::Decoder::default();
         let vs = dec.decode(&mut BytesMut::from("\0"))?;
         assert!(vs.is_some_and(|vs| vs.is_empty()));
         assert!(Deferred::<BufferedIncoming>::take_deferred(&mut dec).is_none());
