@@ -126,8 +126,8 @@ export const isTypedArray = (v, Typed) => typedArrayName.call(v) === Typed.name;
  * Extend a relative index `path` by structural index `i`, but only while a
  * `sink` is being collected (otherwise paths are irrelevant and left
  * `undefined`). `option`/`result`/`variant` keep the parent's path; `list`,
- * `tuple` and `record` push the element/field index, matching the wRPC
- * indexing rules.
+ * `tuple` and `record` push the element/field index and `future` pushes `0`,
+ * matching the wRPC indexing rules.
  * @param {unknown} sink
  * @param {number[] | undefined} path
  * @param {number} i
@@ -430,7 +430,9 @@ export function* decodeSteps(r, ty, sink, path) {
     }
     case "future": {
       if (yield* atomic(r, optionStatus)) {
-        return Promise.resolve(ty.some ? yield* decodeSteps(r, ty.some, sink, path) : undefined);
+        return Promise.resolve(
+          ty.some ? yield* decodeSteps(r, ty.some, sink, childPath(sink, path, 0)) : undefined,
+        );
       }
       if (!sink) throw new Error(asyncRequired(ty.kind));
       /** @type {(value: any) => void} */
@@ -541,7 +543,7 @@ export function asyncDepth(ty) {
   const indexed = (ts) => Math.max(-1, ...ts.map((t) => (nested(t) < 0 ? -1 : nested(t) + 1)));
   switch (ty.kind) {
     case "future":
-      return Math.max(0, nested(ty.some));
+      return Math.max(0, indexed([ty.some]));
     case "stream":
       return Math.max(0, indexed([ty.elem]));
     case "list":

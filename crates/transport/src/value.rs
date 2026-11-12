@@ -395,7 +395,7 @@ impl Index for BufferedIncoming {
 /// `offset` is the position of the byte written by the encoder of the asynchronous value
 /// in the buffer the value was encoded into.
 pub trait DeferredWrite: Index + Send + 'static {
-    /// Transmits the value of a `future<T>`
+    /// Transmits the value of a `future<T>`, and the values deferred by it at index `0`
     fn write_future<T>(
         self,
         offset: usize,
@@ -450,10 +450,7 @@ impl DeferredWrite for Outgoing {
         } else {
             self.write_bytes(buf.freeze()).await?;
         }
-        match enc.take_deferred() {
-            Some(f) => f(self).await,
-            _ => Ok(()),
-        }
+        handle_deferred(self, [enc.take_deferred()]).await
     }
 
     async fn write_stream<T>(
@@ -1941,7 +1938,10 @@ where
         if let Some(item) = (&mut item).now_or_never() {
             dst.reserve(1);
             dst.put_u8(0x01);
-            self.deferred = item.encode(&mut T::Encoder::default(), dst)?;
+            let f = item.encode(&mut T::Encoder::default(), dst)?;
+            self.deferred = f.map(|f| -> DeferredFn<W> {
+                Box::new(|w| Box::pin(handle_deferred(w, [Some(f)])))
+            });
             return Ok(());
         }
         let offset = dst.len();
@@ -2009,7 +2009,12 @@ where
             return Ok(None);
         };
         if let Some(item) = item {
-            self.deferred = self.dec.take_deferred();
+            self.deferred = self
+                .dec
+                .take_deferred()
+                .map(|f| -> DeferredFn<BufferedIncoming> {
+                    Box::new(|r| Box::pin(handle_deferred(r, [Some(f)])))
+                });
             return Ok(Some(Box::pin(async { item })));
         }
 
@@ -2026,18 +2031,14 @@ where
                         return Err(std::io::ErrorKind::UnexpectedEof.into());
                     };
                     let item = item?;
+                    ensure_processed(&dec)?;
                     let rx = dec.decoder_mut().take_deferred();
-                    if rx.is_none() {
-                        ensure_processed(&dec)?;
-                    }
                     if tx.send(item).is_err() {
                         return Err(error_receiver_closed());
                     }
                     if let Some(rx) = rx {
-                        let mut buf = mem::take(dec.read_buffer_mut());
-                        let mut r = dec.into_inner();
-                        buf.unsplit(mem::take(&mut r.buffer));
-                        r.buffer = buf;
+                        let r = dec.get_ref().index(&[0]).map_err(std::io::Error::other)?;
+                        drop(dec);
                         rx(r).await?;
                     }
                     Ok(())
@@ -2538,9 +2539,12 @@ mod tests {
     use std::io::ErrorKind;
 
     use anyhow::bail;
+    use tokio::io::duplex;
+    use tokio::task::yield_now;
     use tokio_util::codec::Decoder as _;
 
     use super::*;
+    use crate::frame::Incoming;
 
     type StreamBytes = Pin<Box<dyn Stream<Item = Bytes> + Send>>;
 
@@ -2707,13 +2711,40 @@ mod tests {
         r.read_exact(&mut buf).await.unwrap();
         assert_eq!(&buf, b"foo");
         assert!(r.read(&mut buf).now_or_never().is_none());
+        Ok(())
+    }
 
-        let data: Bytes = (0..2 * READ_CHUNK_SIZE).map(|i| i as u8).collect();
-        let mut buffer = BytesMut::from("\0");
-        CoreVecEncoderBytes.encode(&data, &mut buffer)?;
-        let (fut, res) = read::<Pin<Box<dyn Future<Output = FutureBytes> + Send>>>(&buffer).await;
-        res?;
-        assert_eq!(fut.await.await, data);
+    #[test_log::test(tokio::test)]
+    async fn nested_future() -> anyhow::Result<()> {
+        type FutureU8 = Pin<Box<dyn Future<Output = u8> + Send>>;
+        type FutureFutureU8 = Pin<Box<dyn Future<Output = FutureU8> + Send>>;
+
+        let (tx, mut rx) = duplex(1024);
+        let inner: FutureU8 = Box::pin(yield_now().map(|()| 0x2a));
+        let outer: FutureFutureU8 = Box::pin(yield_now().map(|()| inner));
+        let mut buf = BytesMut::default();
+        let f = outer.encode(&mut FutureEncoder::default(), &mut buf)?;
+        assert_eq!(buf.as_ref(), b"\0");
+        let w = Outgoing::new(tx).index(&[0])?;
+        f.expect("deferred write missing")(w).await?;
+        let mut frames = Vec::default();
+        rx.read_to_end(&mut frames).await?;
+        assert_eq!(frames, b"\x01\x00\x01\x00\x02\x00\x00\x01\x2a");
+
+        let r = BufferedIncoming {
+            buffer: BytesMut::default(),
+            inner: Incoming::new(
+                std::io::Cursor::new(frames),
+                [[Some(0)].as_slice(), &[Some(0), Some(0)]],
+            ),
+        };
+        let mut dec = <FutureFutureU8 as Decode>::Decoder::default();
+        let fut = dec.decode(&mut buf)?;
+        let fut = fut.expect("future not decoded");
+        let f = dec.take_deferred().expect("deferred read missing");
+        let r = r.index(&[0])?;
+        f(r).await?;
+        assert_eq!(fut.await.await, 0x2a);
         Ok(())
     }
 }

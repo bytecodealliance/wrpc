@@ -228,7 +228,14 @@ pub fn async_paths_tyid(resolve: &Resolve, id: TypeId) -> (BTreeSet<VecDeque<Opt
         TypeDefKind::Future(ty) => {
             let mut paths = BTreeSet::default();
             if let Some(ty) = ty {
-                (paths, _) = async_paths_ty(resolve, ty);
+                let (nested, fut) = async_paths_ty(resolve, ty);
+                for mut path in nested {
+                    path.push_front(Some(0));
+                    paths.insert(path);
+                }
+                if fut {
+                    paths.insert(vec![Some(0)].into());
+                }
             }
             (paths, true)
         }

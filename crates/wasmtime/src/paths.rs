@@ -125,7 +125,14 @@ fn async_paths(ty: &Type, resources: &ResourceTypes) -> (BTreeSet<VecDeque<Optio
         }
         Type::Future(ty) => {
             if let Some(ty) = ty.ty() {
-                (paths, _) = async_paths(&ty, resources);
+                let (nested, fut) = async_paths(&ty, resources);
+                for mut path in nested {
+                    path.push_front(Some(0));
+                    paths.insert(path);
+                }
+                if fut {
+                    paths.insert(VecDeque::from([Some(0)]));
+                }
             }
             (paths, true)
         }

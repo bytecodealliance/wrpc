@@ -51,7 +51,8 @@ The indexing rules are as follows:
 
 - Record fields are indexed in order of their WIT declaration
 - Tuple members are indexed in order of their WIT declaration
-- Variant, option, result and future payloads are not indexed
+- Variant, option and result payloads are not indexed
+- Future payloads are indexed as `0`
 - List elements are indexed in the order they appear in the list
 - Stream elements are indexed in the order they appear in the stream
 
@@ -159,6 +160,8 @@ For example:
 ```
 
 If `v` is pending, encoded `bool` value is sent on index `[0]` (corresponding to first parameter)
+
+Values nested in the payload of a future are indexed below the payload index `0`, whether the future is pending or `ready`. For example, a pending `v` of type `future<future<bool>>` resolving to a pending future is sent as `pending` on index `[0]`, and the nested `bool` is sent on index `[0, 0]`.
 
 A `future` without a payload type has an empty value encoding, so once such a pending future resolves, the sender MUST close its index, either with an empty frame or by ending transmit (see [Framed stream specification](#framed-stream-specification)), and the receiver MUST consider it resolved once the index is closed.
 
