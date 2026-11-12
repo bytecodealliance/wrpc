@@ -5,7 +5,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::{Context as _, anyhow};
-use bytes::BytesMut;
 use futures::StreamExt as _;
 use futures::stream::FuturesUnordered;
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -173,17 +172,16 @@ fn lookup<C, I, O>(
     func: &str,
     tx: O,
     rx: I,
-    buf: BytesMut,
-) -> Result<(Arc<Export>, Outgoing, Incoming), (C, O, I, BytesMut)>
+) -> Result<(Arc<Export>, Outgoing, Incoming), (C, O, I)>
 where
     I: AsyncRead + Send + Unpin + 'static,
     O: AsyncWrite + Send + Unpin + 'static,
 {
     let Some(export) = exports.get(instance).and_then(|funcs| funcs.get(func)) else {
-        return Err((cx, tx, rx, buf));
+        return Err((cx, tx, rx));
     };
     let export = Arc::clone(export);
-    let (tx, rx) = serve(tx, rx, buf, export.paths.iter());
+    let (tx, rx) = serve(tx, rx, export.paths.iter());
     Ok((export, tx, rx))
 }
 
@@ -229,8 +227,8 @@ where
 
     /// Returns a future serving the invocation of function `func` on instance `instance` over
     /// the byte streams `tx` and `rx`, whose header was read by
-    /// [`accept`](wrpc_transport::accept()) along with the bytes in `buf`, or the context `cx`,
-    /// the byte streams and `buf` back if it does not invoke an exported function
+    /// [`accept`](wrpc_transport::accept()), or the context `cx` and the byte streams back if it
+    /// does not invoke an exported function
     pub fn handle<C, I, O>(
         &self,
         cx: C,
@@ -238,16 +236,12 @@ where
         func: &str,
         tx: O,
         rx: I,
-        buf: BytesMut,
-    ) -> Result<
-        Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + 'static>>,
-        (C, O, I, BytesMut),
-    >
+    ) -> Result<Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + 'static>>, (C, O, I)>
     where
         I: AsyncRead + Send + Unpin + 'static,
         O: AsyncWrite + Send + Unpin + 'static,
     {
-        let (export, tx, rx) = lookup(&self.exports, cx, instance, func, tx, rx, buf)?;
+        let (export, tx, rx) = lookup(&self.exports, cx, instance, func, tx, rx)?;
         let mut store = (self.new_store)();
         let pre = self.pre.clone();
         let resources = self.resources.clone();
@@ -334,8 +328,8 @@ where
 
     /// Returns a future serving the invocation of function `func` on instance `instance` over
     /// the byte streams `tx` and `rx`, whose header was read by
-    /// [`accept`](wrpc_transport::accept()) along with the bytes in `buf`, or the context `cx`,
-    /// the byte streams and `buf` back if it does not invoke an exported function
+    /// [`accept`](wrpc_transport::accept()), or the context `cx` and the byte streams back if it
+    /// does not invoke an exported function
     pub fn handle<C, I, O>(
         &self,
         cx: C,
@@ -343,16 +337,12 @@ where
         func: &str,
         tx: O,
         rx: I,
-        buf: BytesMut,
-    ) -> Result<
-        Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + 'static>>,
-        (C, O, I, BytesMut),
-    >
+    ) -> Result<Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + 'static>>, (C, O, I)>
     where
         I: AsyncRead + Send + Unpin + 'static,
         O: AsyncWrite + Send + Unpin + 'static,
     {
-        let (export, tx, rx) = lookup(&self.exports, cx, instance, func, tx, rx, buf)?;
+        let (export, tx, rx) = lookup(&self.exports, cx, instance, func, tx, rx)?;
         let store = self.store.clone();
         let instance = self.instance;
         let resources = self.resources.clone();

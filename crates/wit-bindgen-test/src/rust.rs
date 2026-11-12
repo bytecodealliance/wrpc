@@ -278,7 +278,6 @@ use futures::StreamExt as _;
 use tokio::io::BufReader;
 use tokio::net::TcpListener;
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
-use wit_bindgen_wrpc::bytes::BytesMut;
 use wrpc_transport::tcp;
 use wrpc_transport::accept;
 
@@ -291,7 +290,6 @@ fn serve(
         &str,
         OwnedWriteHalf,
         BufReader<OwnedReadHalf>,
-        BytesMut,
     ) -> Result<Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send>>, String>
     + Send
     + Sync
@@ -304,12 +302,11 @@ fn serve(
             let (.., tx, mut rx) = res.expect("failed to accept connection");
             let handle = Arc::clone(&handle);
             tokio::spawn(async move {
-                let mut buf = BytesMut::default();
-                let header = match accept(&mut rx, &mut buf).await {
+                let header = match accept(&mut rx).await {
                     Ok(header) => header,
                     Err(err) => return eprintln!("failed to read invocation header: {err:?}"),
                 };
-                match handle(&header.instance, &header.name, tx, rx, buf) {
+                match handle(&header.instance, &header.name, tx, rx) {
                     Ok(fut) => {
                         if let Err(err) = fut.await {
                             eprintln!("failed to serve invocation: {err:?}");
@@ -463,8 +460,8 @@ impl Runner<'_> {
                     .map(|(j, (module, ..))| {
                         format!(
                             "
-                .or_else(|(.., tx, rx, buf)| {{
-                    {module}::handle(&{module}::Component, clt[{}].clone(), instance, func, tx, rx, buf)
+                .or_else(|(.., tx, rx)| {{
+                    {module}::handle(&{module}::Component, clt[{}].clone(), instance, func, tx, rx)
                 }})",
                             i + j
                         )
@@ -473,8 +470,8 @@ impl Runner<'_> {
                 format!(
                     "serve(lis.next().unwrap(), {{
         let clt = clt.clone();
-        move |instance, func, tx, rx, buf| {{
-            Err(((), tx, rx, buf)){handle}
+        move |instance, func, tx, rx| {{
+            Err(((), tx, rx)){handle}
                 .map_err(|_| format!(\"{{instance}}#{{func}}\"))
         }}
     }});"

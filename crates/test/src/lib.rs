@@ -7,7 +7,6 @@ use core::time::Duration;
 use std::process::ExitStatus;
 
 use anyhow::{Context, ensure};
-use bytes::BytesMut;
 use futures::stream::FuturesUnordered;
 use futures::{Stream, StreamExt as _, TryStreamExt as _};
 use rcgen::{CertifiedKey, generate_simple_self_signed};
@@ -29,13 +28,12 @@ use wrpc_transport::{Connect, Header, HeaderReadError, Index as _, accept, invok
 pub const MAX_INVOCATIONS: usize = 64;
 
 /// Polls `fut` to completion while accepting invocations from `incoming`, reading the header
-/// of each and polling the future `f` returns for it, which is passed the bytes read past the
-/// header, then completes the served invocations.
+/// of each and polling the future `f` returns for it, then completes the served invocations.
 /// At most [`MAX_INVOCATIONS`] are served concurrently. Returns the first error.
 pub async fn serve_until<C, I, O, E, T, Fut>(
     incoming: impl Stream<Item = Result<(C, O, I), E>>,
     fut: impl Future<Output = anyhow::Result<T>>,
-    mut f: impl FnMut(C, Header, O, I, BytesMut) -> Fut,
+    mut f: impl FnMut(C, Header, O, I) -> Fut,
 ) -> anyhow::Result<T>
 where
     I: AsyncRead + Unpin,
@@ -52,14 +50,13 @@ where
         {
             let (cx, tx, mut rx) = res.context("failed to accept invocation")?;
             reading.push(async move {
-                let mut buf = BytesMut::default();
-                let header = accept(&mut rx, &mut buf).await?;
-                Ok::<_, HeaderReadError>((cx, header, tx, rx, buf))
+                let header = accept(&mut rx).await?;
+                Ok::<_, HeaderReadError>((cx, header, tx, rx))
             });
         }
         while let Poll::Ready(Some(res)) = reading.poll_next_unpin(ctx) {
-            let (cx, header, tx, rx, buf) = res.context("failed to read invocation header")?;
-            served.push(f(cx, header, tx, rx, buf));
+            let (cx, header, tx, rx) = res.context("failed to read invocation header")?;
+            served.push(f(cx, header, tx, rx));
         }
         while let Poll::Ready(Some(res)) = served.poll_next_unpin(ctx) {
             res?;
@@ -88,8 +85,7 @@ where
 {
     let res = incoming.next().await.context("invocation stream ended")?;
     let (cx, tx, mut rx) = res.context("failed to accept invocation")?;
-    let mut buf = BytesMut::default();
-    let header = accept(&mut rx, &mut buf)
+    let header = accept(&mut rx)
         .await
         .context("failed to read invocation header")?;
     ensure!(
@@ -98,7 +94,7 @@ where
         header.instance,
         header.name,
     );
-    let (tx, rx) = serve(tx, rx, buf, paths);
+    let (tx, rx) = serve(tx, rx, paths);
     Ok((cx, tx, rx))
 }
 

@@ -2569,13 +2569,7 @@ mod tests {
     #[test_log::test(tokio::test)]
     async fn future_flushes_before_nested_value() -> anyhow::Result<()> {
         let (tx, mut rx) = duplex(2);
-        let (w, _rx) = mux(
-            tx,
-            CLOSED,
-            BytesMut::default(),
-            BytesMut::default(),
-            [[None; 0]; 0],
-        );
+        let (w, _rx) = mux(tx, CLOSED, BytesMut::default(), [[None; 0]; 0]);
         let w0 = w.index(&[0])?;
         let nested: Pin<Box<dyn Future<Output = u8> + Send>> = Box::pin(pending());
         let mut buf = [0; 4];
@@ -2599,13 +2593,7 @@ mod tests {
             std::io::Error: From<<T::Encoder as tokio_util::codec::Encoder<T>>::Error>,
         {
             let (tx, mut rx) = duplex(1024);
-            let (mut root, _rx) = mux(
-                tx,
-                CLOSED,
-                BytesMut::default(),
-                BytesMut::default(),
-                [[None; 0]; 0],
-            );
+            let (mut root, _rx) = mux(tx, CLOSED, BytesMut::default(), [[None; 0]; 0]);
             let mut buf = BytesMut::default();
             let f = v.encode(&mut T::Encoder::default(), &mut buf)?;
             root.write_all(&buf).await?;
@@ -2730,13 +2718,7 @@ mod tests {
 
         for (ready, expected) in [("foo", &b"\x03foo\x03bar"[..]), ("", b"\x03bar")] {
             let (tx, rx) = duplex(1024);
-            let (root, _rx) = mux(
-                tx,
-                CLOSED,
-                BytesMut::default(),
-                BytesMut::default(),
-                [[None; 0]; 0],
-            );
+            let (root, _rx) = mux(tx, CLOSED, BytesMut::default(), [[None; 0]; 0]);
             let w = root.index(&[0])?;
             w.write_stream_bytes(0, stream::iter([ready, "bar"].map(Bytes::from)))
                 .await?;
@@ -2745,13 +2727,7 @@ mod tests {
             assert_eq!(frames, expected);
 
             let (tx, rx) = duplex(1024);
-            let (root, _rx) = mux(
-                tx,
-                CLOSED,
-                BytesMut::default(),
-                BytesMut::default(),
-                [[None; 0]; 0],
-            );
+            let (root, _rx) = mux(tx, CLOSED, BytesMut::default(), [[None; 0]; 0]);
             let w = root.index(&[0])?;
             w.write_stream_read(0, ready.into(), b"bar".as_slice())
                 .await?;
@@ -2775,9 +2751,8 @@ mod tests {
             }
             let (mut tx, rx) = mux(
                 sink(),
-                b"".as_slice(),
+                std::io::Cursor::new(rx_buf),
                 BytesMut::default(),
-                rx_buf,
                 [&[Some(0)][..], &[Some(0), Some(0)]],
             );
             tx.shutdown().await.unwrap();

@@ -34,7 +34,7 @@ pub fn invoke(
         },
         &mut buf,
     )?;
-    Ok(mux(tx, rx, buf, BytesMut::default(), paths))
+    Ok(mux(tx, rx, buf, paths))
 }
 
 /// Invoke function `func` on instance `instance` over the byte streams `tx` and `rx` using typed

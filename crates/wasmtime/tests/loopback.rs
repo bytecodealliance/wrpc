@@ -69,8 +69,8 @@ async fn serve<T>(
     exports: &SharedExports<Ctx>,
     fut: impl Future<Output = anyhow::Result<T>>,
 ) -> anyhow::Result<T> {
-    serve_until(tcp::incoming(srv), fut, |cx, header, tx, rx, buf| {
-        let res = exports.handle(cx, &header.instance, &header.name, tx, rx, buf);
+    serve_until(tcp::incoming(srv), fut, |cx, header, tx, rx| {
+        let res = exports.handle(cx, &header.instance, &header.name, tx, rx);
         async move {
             let Ok(fut) = res else {
                 bail!("unexpected invocation");
@@ -102,8 +102,8 @@ async fn shared_store_trap() -> anyhow::Result<()> {
                     res.expect_err("`run` invocation succeeded");
                     Ok(())
                 },
-                |cx, header, tx, rx, buf| {
-                    let res = exports.handle(cx, &header.instance, &header.name, tx, rx, buf);
+                |cx, header, tx, rx| {
+                    let res = exports.handle(cx, &header.instance, &header.name, tx, rx);
                     async move {
                         let Ok(fut) = res else {
                             bail!("unexpected invocation");
@@ -442,8 +442,8 @@ async fn unread_param() -> anyhow::Result<()> {
                     _ = io.await;
                     Ok(())
                 },
-                |cx, header, tx, rx, buf| {
-                    let res = exports.handle(cx, &header.instance, &header.name, tx, rx, buf);
+                |cx, header, tx, rx| {
+                    let res = exports.handle(cx, &header.instance, &header.name, tx, rx);
                     async move {
                         let Ok(fut) = res else {
                             bail!("unexpected invocation");

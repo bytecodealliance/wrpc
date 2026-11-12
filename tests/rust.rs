@@ -517,27 +517,26 @@ where
     async fn accept<C, I, O, E>(
         srv: &mut (impl Stream<Item = Result<(C, O, I), E>> + Unpin),
         func: &str,
-    ) -> anyhow::Result<(O, I, BytesMut)>
+    ) -> anyhow::Result<(O, I)>
     where
         I: AsyncRead + Unpin,
         E: core::error::Error + Send + Sync + 'static,
     {
         let res = srv.next().await.context("invocation stream ended")?;
         let (.., tx, mut rx) = res.context("failed to accept invocation")?;
-        let mut buf = BytesMut::default();
-        let header = wrpc_transport::accept(&mut rx, &mut buf)
+        let header = wrpc_transport::accept(&mut rx)
             .await
             .context("failed to read invocation header")?;
         ensure!(header.instance == "test" && header.name == func);
-        Ok((tx, rx, buf))
+        Ok((tx, rx))
     }
 
     let mut srv = pin!(srv);
     try_join!(
         async {
             for spawned in [false, true] {
-                let (tx, rx, buf) = accept(&mut srv, "reset").await?;
-                let inv = serve_values::<(String,), (String,)>(tx, rx, buf);
+                let (tx, rx) = accept(&mut srv, "reset").await?;
+                let inv = serve_values::<(String,), (String,)>(tx, rx);
                 if spawned {
                     spawn(async move { drop(inv) }).await?;
                 } else {
@@ -545,16 +544,16 @@ where
                 }
             }
             for _ in 0..2 {
-                let (tx, rx, buf) = accept(&mut srv, "sync").await?;
-                let (params, tx) = serve_values::<SyncValues, SyncValues>(tx, rx, buf);
+                let (tx, rx) = accept(&mut srv, "sync").await?;
+                let (params, tx) = serve_values::<SyncValues, SyncValues>(tx, rx);
                 let (params, io) = params.await?;
                 assert_eq!(params, sync_values());
                 tx(sync_values()).await?;
                 io.await?;
             }
             for _ in 0..2 {
-                let (tx, rx, buf) = accept(&mut srv, "async").await?;
-                let (params, tx) = serve_values::<AsyncValues, AsyncValues>(tx, rx, buf);
+                let (tx, rx) = accept(&mut srv, "async").await?;
+                let (params, tx) = serve_values::<AsyncValues, AsyncValues>(tx, rx);
                 let (params, io) = params.await?;
                 try_join!(assert_async_values(params, io), tx(async_values()))?;
             }
@@ -714,13 +713,12 @@ where
             assert_eq!(a, "test");
         },
         async {
-            let mut buf = BytesMut::default();
-            let header = accept(&mut rx, &mut buf)
+            let header = accept(&mut rx)
                 .await
                 .expect("failed to read invocation header");
             assert_eq!(header.instance, "foo");
             assert_eq!(header.name, "bar");
-            let (params, tx) = serve_values::<(u32,), (&str,)>(tx, rx, buf);
+            let (params, tx) = serve_values::<(u32,), (&str,)>(tx, rx);
             let (params, io) = params.await.expect("failed to receive parameters");
             assert_eq!(params, (42,));
             tx(("test",)).await.expect("failed to transmit response");
@@ -761,13 +759,12 @@ async fn rust_oneshot_no_params() -> anyhow::Result<()> {
                 drop(tx);
             },
             async {
-                let mut buf = BytesMut::default();
-                let header = accept(&mut rx, &mut buf)
+                let header = accept(&mut rx)
                     .await
                     .expect("failed to read invocation header");
                 assert_eq!(header.instance, "foo");
                 assert_eq!(header.name, "bar");
-                let (params, tx) = serve_values::<(), (&str,)>(tx, rx, buf);
+                let (params, tx) = serve_values::<(), (&str,)>(tx, rx);
                 let ((), io) = params.await.expect("failed to receive parameters");
                 tx(("test",)).await.expect("failed to transmit response");
                 io.await.expect("invocation failed");
@@ -860,13 +857,12 @@ async fn rust_oneshot_raw_strings_invalid_utf8() -> anyhow::Result<()> {
                 .expect_err("invalid UTF-8 must be rejected");
         },
         async {
-            let mut buf = BytesMut::default();
-            let header = accept(&mut rx, &mut buf)
+            let header = accept(&mut rx)
                 .await
                 .expect("failed to read invocation header");
             assert_eq!(header.instance, "wrpc-test:raw-strings/strings");
             assert_eq!(header.name, "bar");
-            let (params, tx) = serve_values::<(), (Bytes,)>(tx, rx, buf);
+            let (params, tx) = serve_values::<(), (Bytes,)>(tx, rx);
             let ((), io) = params.await.expect("failed to receive parameters");
             tx((Bytes::from_static(b"\xff"),))
                 .await
@@ -948,12 +944,11 @@ async fn rust_oneshot_raw_strings_invalid_utf8_result() -> anyhow::Result<()> {
                 .expect_err("invalid UTF-8 must not be transmitted");
             },
             async {
-                let mut buf = BytesMut::default();
-                let header = accept(&mut rx, &mut buf)
+                let header = accept(&mut rx)
                     .await
                     .expect("failed to read invocation header");
                 let Ok(fut) =
-                    bindings::handle(&Handler, (), &header.instance, &header.name, tx, rx, buf)
+                    bindings::handle(&Handler, (), &header.instance, &header.name, tx, rx)
                 else {
                     panic!("`{func}` is not exported");
                 };

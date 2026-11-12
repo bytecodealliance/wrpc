@@ -10,7 +10,7 @@ use axum::Router;
 use axum::http::header::CONTENT_TYPE;
 use axum::response::Html;
 use axum::routing::get;
-use bytes::{Bytes, BytesMut};
+use bytes::Bytes;
 use clap::Parser;
 use futures::StreamExt as _;
 use quinn::crypto::rustls::{QuicClientConfig, QuicServerConfig};
@@ -676,8 +676,7 @@ export const PORT = "{port}"
                 Some((cx, tx, mut rx)) = rx.recv() => {
                     let handler = handler.clone();
                     tasks.spawn(async move {
-                        let mut buf = BytesMut::default();
-                        let Header { instance, name } = match accept(&mut rx, &mut buf).await {
+                        let Header { instance, name } = match accept(&mut rx).await {
                             Ok(header) => header,
                             Err(err) => {
                                 warn!(?err, "failed to read invocation header");
@@ -685,7 +684,7 @@ export const PORT = "{port}"
                             }
                         };
                         let fut = match store::handle_interface(
-                            &handler, cx, &instance, &name, tx, rx, buf,
+                            &handler, cx, &instance, &name, tx, rx,
                         ) {
                             Ok(fut) => fut,
                             Err(..) => {

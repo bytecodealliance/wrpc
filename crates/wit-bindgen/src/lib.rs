@@ -701,10 +701,9 @@
 ///
 /// `generate!` also generates a `handle` function, which serves an
 /// invocation, whose header was already read by `wrpc_transport::accept`, if
-/// the world exports the invoked function, and returns its context, byte
-/// streams and the bytes read past the header back otherwise, so that the
-/// `handle` functions of several worlds can be chained to serve all of them on
-/// one transport.
+/// the world exports the invoked function, and returns its context and byte
+/// streams back otherwise, so that the `handle` functions of several worlds can
+/// be chained to serve all of them on one transport.
 ///
 /// ## Debugging output to `generate!`
 ///

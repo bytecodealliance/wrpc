@@ -67,8 +67,7 @@ async fn dropped_invocation_closes() -> anyhow::Result<()> {
     clt.write_all(&buf).await?;
     let (stream, ..) = lis.accept().await?;
     let (mut rx, tx) = stream.into_split();
-    let mut buf = BytesMut::default();
-    let header = accept(&mut rx, &mut buf).await?;
+    let header = accept(&mut rx).await?;
     assert_eq!(header.name, "bar");
     drop(tx);
     drop(rx);

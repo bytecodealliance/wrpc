@@ -103,7 +103,7 @@ async fn unhandled_function() -> anyhow::Result<()> {
         let mut srv = pin!(srv.incoming());
         let res = srv.next().await.context("invocation stream ended")?;
         let ((), stx, mut srx) = res.context("failed to accept stream")?;
-        accept(&mut srx, &mut BytesMut::default())
+        accept(&mut srx)
             .await
             .context("failed to read invocation header")?;
         drop(stx);

@@ -6,7 +6,6 @@ use core::time::Duration;
 use std::sync::Arc;
 
 use anyhow::{Context as _, anyhow, bail};
-use bytes::BytesMut;
 use clap::Parser;
 use futures::{Stream, StreamExt as _};
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -219,11 +218,8 @@ async fn serve_exports<C, I, O, E>(
         &str,
         O,
         I,
-        BytesMut,
-    ) -> Result<
-        Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send>>,
-        (C, O, I, BytesMut),
-    > + Send
+    ) -> Result<Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send>>, (C, O, I)>
+    + Send
     + Sync
     + 'static,
 ) -> anyhow::Result<()>
@@ -245,10 +241,9 @@ where
                         let handle = Arc::clone(&handle);
                         tasks.spawn(
                             async move {
-                                let mut buf = BytesMut::default();
                                 let Header { instance, name } = match time::timeout(
                                     timeout,
-                                    accept(&mut rx, &mut buf),
+                                    accept(&mut rx),
                                 )
                                 .await
                                 {
@@ -262,7 +257,7 @@ where
                                         return;
                                     }
                                 };
-                                match handle(cx, &instance, &name, tx, rx, buf) {
+                                match handle(cx, &instance, &name, tx, rx) {
                                     Ok(fut) => {
                                         info!("serving function invocation");
                                         if let Err(err) = fut.await {
@@ -320,7 +315,7 @@ where
             incoming,
             timeout,
             async { Ok(()) },
-            move |cx, instance, func, tx, rx, buf| exports.handle(cx, instance, func, tx, rx, buf),
+            move |cx, instance, func, tx, rx| exports.handle(cx, instance, func, tx, rx),
         )
         .await;
     }
@@ -350,7 +345,7 @@ where
                 Err(err) => Err(err).context("failed to join event loop"),
             }
         },
-        move |cx, instance, func, tx, rx, buf| exports.handle(cx, instance, func, tx, rx, buf),
+        move |cx, instance, func, tx, rx| exports.handle(cx, instance, func, tx, rx),
     )
     .await
 }
@@ -376,7 +371,7 @@ mod tests {
             stream::iter([Ok::<_, std::io::Error>(((), sink(), empty()))]),
             Duration::from_secs(1),
             async { Ok(()) },
-            |cx, _, _, tx, rx, buf| Err((cx, tx, rx, buf)),
+            |cx, _, _, tx, rx| Err((cx, tx, rx)),
         )
         .await
     }

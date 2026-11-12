@@ -110,14 +110,13 @@ pub fn handle_interface<C, I, O, H>(
     func: &str,
     tx: O,
     rx: I,
-    buf: {bytes}::BytesMut,
 ) -> ::core::result::Result<
     ::core::pin::Pin<
         ::std::boxed::Box<
             dyn ::core::future::Future<Output = {anyhow}::Result<()>> + ::core::marker::Send + 'static
         >
     >,
-    (C, O, I, {bytes}::BytesMut),
+    (C, O, I),
 >
 where
     C: ::core::marker::Send + 'static,
@@ -128,7 +127,6 @@ where
     match (instance, func) {{"#,
             resource_traits = trait_names.join(""),
             anyhow = self.r#gen.anyhow_path(),
-            bytes = self.r#gen.bytes_path(),
             tokio = self.r#gen.tokio_path(),
         );
         let instance = match identifier {
@@ -167,7 +165,7 @@ where
                 r#"
         ("{instance}", "{}") => {{
             let handler = handler.clone();
-            let (params, tx) = {wrpc_transport}::serve_values(tx, rx, buf);
+            let (params, tx) = {wrpc_transport}::serve_values(tx, rx);
             ::core::result::Result::Ok(::std::boxed::Box::pin(async move {{
                 let (("#,
                 rpc_func_name(func),
@@ -272,7 +270,7 @@ where
         uwriteln!(
             self.src,
             r#"
-        _ => ::core::result::Result::Err((cx, tx, rx, buf)),
+        _ => ::core::result::Result::Err((cx, tx, rx)),
     }}
 }}"#,
         );

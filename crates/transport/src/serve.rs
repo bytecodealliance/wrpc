@@ -13,20 +13,18 @@ use crate::mux::mux;
 use crate::{Deferred as _, Paths as _, TupleDecode, TupleEncode};
 
 /// Multiplexes the byte streams `tx` and `rx` of an invocation, whose header was read by
-/// [`accept`](crate::accept()) along with the bytes in `buf`, declaring the async `paths`, see
-/// [`invoke`](crate::invoke())
+/// [`accept`](crate::accept()), declaring the async `paths`, see [`invoke`](crate::invoke())
 #[instrument(level = "trace", skip_all)]
 pub fn serve(
     tx: impl AsyncWrite + Send + Unpin + 'static,
     rx: impl AsyncRead + Send + Unpin + 'static,
-    buf: BytesMut,
     paths: impl IntoIterator<Item = impl AsRef<[Option<usize>]>>,
 ) -> (Outgoing, Incoming) {
-    mux(tx, rx, BytesMut::default(), buf, paths)
+    mux(tx, rx, BytesMut::default(), paths)
 }
 
-/// Serves an invocation, whose header was read by [`accept`](crate::accept()) along with the
-/// bytes in `buf`, over the byte streams `tx` and `rx` using typed `Params` and `Results`
+/// Serves an invocation, whose header was read by [`accept`](crate::accept()), over the byte
+/// streams `tx` and `rx` using typed `Params` and `Results`
 ///
 /// Returns a future receiving the parameters, which resolves to the synchronous parameters and
 /// a future, which receives the asynchronous parameters and resolves once the invocation ends,
@@ -34,7 +32,6 @@ pub fn serve(
 pub fn serve_values<Params, Results>(
     tx: impl AsyncWrite + Send + Unpin + 'static,
     rx: impl AsyncRead + Send + Unpin + 'static,
-    buf: BytesMut,
 ) -> (
     impl Future<
         Output = anyhow::Result<(
@@ -56,7 +53,7 @@ where
         core::error::Error + Send + Sync + 'static,
 {
     let span = Span::current();
-    let (mut outgoing, mut incoming) = serve(tx, rx, buf, Params::Decoder::default().paths());
+    let (mut outgoing, mut incoming) = serve(tx, rx, Params::Decoder::default().paths());
     (
         async move {
             let mut dec = Params::Decoder::default();

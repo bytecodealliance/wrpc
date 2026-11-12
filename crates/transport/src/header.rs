@@ -3,8 +3,9 @@
 use core::fmt::{Debug, Display};
 
 use bytes::{Buf as _, BufMut as _, BytesMut};
+use tokio_util::codec::Decoder as _;
 use tracing::{instrument, trace};
-use wasm_tokio::{CoreNameDecoder, CoreNameEncoder};
+use wasm_tokio::{CoreNameEncoder, Leb128DecoderU32};
 
 use crate::DEFAULT_MAX_NAME_LEN;
 
@@ -73,10 +74,14 @@ impl From<std::io::Error> for HeaderReadError {
 /// [Header] decoder
 #[derive(Debug)]
 pub struct HeaderDecoder {
-    instance_dec: CoreNameDecoder,
-    name_dec: CoreNameDecoder,
+    max_instance_len: u32,
+    max_name_len: u32,
     version: bool,
     instance: Option<String>,
+    /// Length of the name being decoded, once decoded
+    len: Option<usize>,
+    /// Minimum number of bytes, which complete the header
+    remaining: usize,
 }
 
 impl HeaderDecoder {
@@ -85,11 +90,56 @@ impl HeaderDecoder {
     #[must_use]
     pub fn new(max_instance_len: u32, max_name_len: u32) -> Self {
         Self {
-            instance_dec: CoreNameDecoder::with_max_len(max_instance_len),
-            name_dec: CoreNameDecoder::with_max_len(max_name_len),
+            max_instance_len,
+            max_name_len,
             version: false,
             instance: None,
+            len: None,
+            remaining: 3,
         }
+    }
+
+    /// Returns the minimum number of bytes, which complete the header once [`decode`] returned
+    /// [None]
+    ///
+    /// [`decode`]: tokio_util::codec::Decoder::decode
+    #[must_use]
+    pub fn min_remaining(&self) -> usize {
+        self.remaining
+    }
+
+    /// Decodes a name of at most `max` bytes, which is followed by `rest` names
+    fn decode_name(
+        &mut self,
+        src: &mut BytesMut,
+        max: u32,
+        rest: usize,
+    ) -> std::io::Result<Option<String>> {
+        let n = if let Some(n) = self.len.take() {
+            n
+        } else {
+            let Some(n) = Leb128DecoderU32.decode(src)? else {
+                self.remaining = rest.saturating_add(1);
+                return Ok(None);
+            };
+            if n > max {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("name length of `{n}` exceeds maximum of `{max}`"),
+                ));
+            }
+            usize::try_from(n)
+                .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))?
+        };
+        if src.len() < n {
+            self.len = Some(n);
+            self.remaining = n.saturating_sub(src.len()).saturating_add(rest);
+            return Ok(None);
+        }
+        let name = src.split_to(n);
+        let name = String::from_utf8(name.to_vec())
+            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))?;
+        Ok(Some(name))
     }
 }
 
@@ -118,16 +168,17 @@ impl tokio_util::codec::Decoder for HeaderDecoder {
         let instance = if let Some(instance) = self.instance.take() {
             instance
         } else {
-            let Some(instance) = self.instance_dec.decode(src)? else {
+            let Some(instance) = self.decode_name(src, self.max_instance_len, 1)? else {
                 return Ok(None);
             };
             instance
         };
-        let Some(name) = self.name_dec.decode(src)? else {
+        let Some(name) = self.decode_name(src, self.max_name_len, 0)? else {
             self.instance = Some(instance);
             return Ok(None);
         };
         self.version = false;
+        self.remaining = 3;
         trace!(instance, name, "decoded header");
         Ok(Some(Header { instance, name }))
     }
@@ -171,7 +222,7 @@ impl tokio_util::codec::Encoder<HeaderRef<'_>> for HeaderEncoder {
 
 #[cfg(test)]
 mod tests {
-    use tokio_util::codec::{Decoder as _, Encoder as _};
+    use tokio_util::codec::Encoder as _;
 
     use super::*;
 

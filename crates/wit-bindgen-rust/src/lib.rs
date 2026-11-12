@@ -461,7 +461,6 @@ with: {{\n\t{with_name:?}: generate\n}}
         let anyhow = self.anyhow_path().to_string();
         let futures = self.futures_path().to_string();
         let tokio = self.tokio_path().to_string();
-        let bytes = self.bytes_path().to_string();
         let wrpc_transport = self.wrpc_transport_path().to_string();
         let max_instance_len = u32::try_from(self.max_export_instance_len).unwrap_or(u32::MAX);
         let max_func_len = u32::try_from(self.max_export_func_len).unwrap_or(u32::MAX);
@@ -475,14 +474,13 @@ pub fn handle<C, I, O, H>(
     func: &str,
     tx: O,
     rx: I,
-    buf: {bytes}::BytesMut,
 ) -> ::core::result::Result<
     ::core::pin::Pin<
         ::std::boxed::Box<
             dyn ::core::future::Future<Output = {anyhow}::Result<()>> + ::core::marker::Send + 'static
         >
     >,
-    (C, O, I, {bytes}::BytesMut),
+    (C, O, I),
 >
 where
     C: ::core::marker::Send + 'static,
@@ -490,16 +488,16 @@ where
     O: {tokio}::io::AsyncWrite + ::core::marker::Send + ::core::marker::Unpin + 'static,
     H: {bound} + ::core::marker::Send + ::core::marker::Sync + ::core::clone::Clone + 'static,
 {{
-    ::core::result::Result::Err((cx, tx, rx, buf))"#
+    ::core::result::Result::Err((cx, tx, rx))"#
         );
         for path in &self.export_paths {
-            self.src.push_str("\n        .or_else(|(cx, tx, rx, buf)| ");
+            self.src.push_str("\n        .or_else(|(cx, tx, rx)| ");
             if !path.is_empty() {
                 self.src.push_str(path);
                 self.src.push_str("::");
             }
             self.src
-                .push_str("handle_interface(handler, cx, instance, func, tx, rx, buf))");
+                .push_str("handle_interface(handler, cx, instance, func, tx, rx))");
         }
         uwriteln!(
             self.src,
@@ -526,12 +524,11 @@ where
         res.map(|(cx, tx, mut rx)| {{
             let handler = handler.clone();
             async move {{
-                let mut buf = {bytes}::BytesMut::default();
                 let {wrpc_transport}::Header {{ instance, name }} = {anyhow}::Context::context(
-                    {wrpc_transport}::accept_with(&mut rx, &mut buf, {max_instance_len}, {max_func_len}).await,
+                    {wrpc_transport}::accept_with(&mut rx, {max_instance_len}, {max_func_len}).await,
                     "failed to read invocation header",
                 )?;
-                match handle(&handler, cx, &instance, &name, tx, rx, buf) {{
+                match handle(&handler, cx, &instance, &name, tx, rx) {{
                     ::core::result::Result::Ok(fut) => fut.await,
                     ::core::result::Result::Err(..) => {anyhow}::bail!(
                         "`{{instance}}#{{name}}` is not exported",

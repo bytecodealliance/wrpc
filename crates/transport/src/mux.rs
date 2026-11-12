@@ -11,7 +11,7 @@ use std::sync::{Arc, Weak};
 use bytes::{Buf, BufMut as _, Bytes, BytesMut};
 use futures::stream::FuturesUnordered;
 use futures::{Stream, StreamExt as _};
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
+use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio::select;
 use tokio_util::codec::{Decoder, Encoder as _};
 use tokio_util::io::poll_read_buf;
@@ -176,8 +176,8 @@ fn lock<T: ?Sized>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> 
 }
 
 /// Multiplexes the [`AsyncWrite`] and [`AsyncRead`] of an invocation declaring the async
-/// `paths`, which sends `tx_buf` before the first frame and receives `rx_buf` before the bytes
-/// read from `rx`, returning the [Outgoing] and [Incoming] handles of the root path.
+/// `paths`, which sends `buffer` before the first frame, returning the [Outgoing] and [Incoming]
+/// handles of the root path.
 ///
 /// The streams are polled by the handles, nothing is spawned: data is received only while a
 /// handle reads or the future returned by [`Incoming::closed`] is polled, and sent only while a
@@ -206,8 +206,7 @@ fn lock<T: ?Sized>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> 
 pub fn mux(
     tx: impl AsyncWrite + Send + Unpin + 'static,
     rx: impl AsyncRead + Send + Unpin + 'static,
-    tx_buf: BytesMut,
-    rx_buf: BytesMut,
+    buffer: BytesMut,
     paths: impl IntoIterator<Item = impl AsRef<[Option<usize>]>>,
 ) -> (Outgoing, Incoming) {
     let paths: Box<[Box<[Option<usize>]>]> = paths
@@ -219,14 +218,14 @@ pub fn mux(
     let depth = u32::try_from(depth).unwrap_or(u32::MAX);
     let header = HeaderDecoder::new(depth, u32::MAX);
     let outgoing_state = Arc::new(std::sync::Mutex::new(OutgoingState {
-        buffer: tx_buf,
+        buffer,
         stream: Box::pin(tx) as _,
         pending: Vec::default(),
         failed: false,
         written: 0,
     }));
     let incoming_state = Arc::new(std::sync::Mutex::new(IncomingState {
-        stream: Box::pin(AsyncReadExt::chain(std::io::Cursor::new(rx_buf), rx)) as _,
+        stream: Box::pin(rx) as _,
         paths,
         header,
         header_buf: BytesMut::default(),
@@ -1007,7 +1006,7 @@ mod tests {
         paths: impl IntoIterator<Item = impl AsRef<[Option<usize>]>>,
     ) -> (DuplexStream, Incoming, Closed) {
         let (tx, rx) = duplex(1024);
-        let (mut root, rx) = mux(sink(), rx, BytesMut::default(), BytesMut::default(), paths);
+        let (mut root, rx) = mux(sink(), rx, BytesMut::default(), paths);
         root.shutdown().await.unwrap();
         let closed = rx.closed();
         (tx, rx, closed)
@@ -1027,7 +1026,6 @@ mod tests {
             sink(),
             rx,
             BytesMut::default(),
-            BytesMut::from(&root[..1]),
             [&[Some(0)][..], &[Some(0), None, Some(0)]],
         );
         outgoing.shutdown().await.unwrap();
@@ -1039,7 +1037,7 @@ mod tests {
         let mut sub = rx.index(&[0]).unwrap();
         let mut nested = rx.index(&[0, 7, 0]).unwrap();
         let frames = [
-            &root[1..],
+            &root[..],
             &frame(&[0], b"\x2b"),
             &frame(&[0], b""),
             &frame(&[0, 7, 0], b"\x2c\x2d"),
@@ -1172,13 +1170,8 @@ mod tests {
     #[test_log::test(tokio::test)]
     async fn outgoing_frames() {
         let (tx, mut rx) = duplex(4);
-        let (mut outgoing, _incoming) = mux(
-            tx,
-            b"".as_slice(),
-            BytesMut::default(),
-            BytesMut::default(),
-            [[None; 0]; 0],
-        );
+        let (mut outgoing, _incoming) =
+            mux(tx, b"".as_slice(), BytesMut::default(), [[None; 0]; 0]);
         let mut sub = outgoing.index(&[1]).unwrap();
         let mut nested = sub.index(&[2]).unwrap();
         let data = b"\x2a".repeat(32);
@@ -1287,7 +1280,6 @@ mod tests {
                 },
                 b"".as_slice(),
                 BytesMut::default(),
-                BytesMut::default(),
                 [[None; 0]; 0],
             );
             outgoing.write_all(&data).await.unwrap();
@@ -1326,13 +1318,7 @@ mod tests {
     #[test_log::test(tokio::test)]
     async fn final_flush() {
         let (tx, mut rx) = duplex(1);
-        let (outgoing, _incoming) = mux(
-            tx,
-            b"".as_slice(),
-            BytesMut::default(),
-            BytesMut::default(),
-            [[None; 0]; 0],
-        );
+        let (outgoing, _incoming) = mux(tx, b"".as_slice(), BytesMut::default(), [[None; 0]; 0]);
         let mut buf = Vec::default();
         let ((), n) = join!(
             async {
@@ -1376,7 +1362,6 @@ mod tests {
             Failing,
             b"\0\0".as_slice(),
             BytesMut::default(),
-            BytesMut::default(),
             [[None; 0]; 0],
         );
         let err = outgoing.write_all(b"\x2a").await.unwrap_err();
@@ -1385,13 +1370,7 @@ mod tests {
         assert_eq!(err.kind(), std::io::ErrorKind::BrokenPipe);
 
         let (mut tx, rx) = duplex(16);
-        let (mut outgoing, incoming) = mux(
-            sink(),
-            rx,
-            BytesMut::default(),
-            BytesMut::default(),
-            [[None; 0]; 0],
-        );
+        let (mut outgoing, incoming) = mux(sink(), rx, BytesMut::default(), [[None; 0]; 0]);
         tx.write_all(&frame(&[1], b"\x2a")).await.unwrap();
         let err = incoming.closed().await.unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
