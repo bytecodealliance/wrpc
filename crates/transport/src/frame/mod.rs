@@ -27,6 +27,9 @@ pub const PROTOCOL: u8 = 1;
 
 const MAX_INITIAL_PATH_CAPACITY: usize = 32;
 
+/// Default maximum length of the instance and function names in a [Header]
+const DEFAULT_MAX_NAME_LEN: u32 = 1 << 10;
+
 /// Owned wRPC frame
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Frame {

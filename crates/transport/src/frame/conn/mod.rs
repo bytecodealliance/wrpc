@@ -28,7 +28,7 @@ mod server;
 pub use client::*;
 pub use server::*;
 
-/// Error returned by [`HeaderDecoder::read`](crate::frame::HeaderDecoder::read)
+/// Error returned by [`HeaderDecoder`](crate::frame::HeaderDecoder)
 pub enum HeaderReadError {
     /// I/O error
     IO(std::io::Error),
@@ -55,6 +55,12 @@ impl Display for HeaderReadError {
 }
 
 impl core::error::Error for HeaderReadError {}
+
+impl From<std::io::Error> for HeaderReadError {
+    fn from(err: std::io::Error) -> Self {
+        Self::IO(err)
+    }
+}
 
 /// wRPC invocation header
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]

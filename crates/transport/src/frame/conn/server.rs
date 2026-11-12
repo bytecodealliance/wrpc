@@ -4,35 +4,42 @@ use std::collections::{HashMap, hash_map};
 use std::sync::Arc;
 
 use anyhow::bail;
+use bytes::BytesMut;
 use futures::{Stream, StreamExt as _};
-use tokio::io::{AsyncBufRead, AsyncWrite};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt as _, AsyncWrite};
 use tokio::sync::{Mutex, mpsc};
 use tokio_stream::wrappers::ReceiverStream;
+use tokio_util::codec::Decoder as _;
 use tracing::{instrument, trace};
 
 use crate::Serve;
-use crate::frame::{Header, HeaderDecoder, HeaderReadError, Incoming, Outgoing};
+use crate::frame::{
+    DEFAULT_MAX_NAME_LEN, Header, HeaderDecoder, HeaderReadError, Incoming, Outgoing,
+};
 
 /// wRPC server for framed transports
 #[derive(Debug)]
 pub struct Server<C, I, O> {
     handlers: Mutex<HashMap<String, HashMap<String, mpsc::Sender<(C, I, O)>>>>,
-    header: HeaderDecoder,
+    max_instance_len: u32,
+    max_name_len: u32,
 }
 
 impl<C, I, O> Server<C, I, O> {
     /// Constructs a new [Server]
     #[must_use]
     pub fn new() -> Self {
-        Self::with_header_decoder(HeaderDecoder::default())
+        Self::with_max_name_len(DEFAULT_MAX_NAME_LEN, DEFAULT_MAX_NAME_LEN)
     }
 
-    /// Constructs a new [Server], which reads invocation headers using `header`
+    /// Constructs a new [Server], which rejects invocations of instance and function names longer
+    /// than `max_instance_len` and `max_name_len` bytes respectively
     #[must_use]
-    pub fn with_header_decoder(header: HeaderDecoder) -> Self {
+    pub fn with_max_name_len(max_instance_len: u32, max_name_len: u32) -> Self {
         Self {
             handlers: Mutex::default(),
-            header,
+            max_instance_len,
+            max_name_len,
         }
     }
 }
@@ -107,7 +114,23 @@ where
     /// Returns an error if handling the invocation fails
     #[instrument(level = "trace", skip_all, ret(level = "trace"))]
     pub async fn accept(&self, cx: C, tx: O, mut rx: I) -> Result<(), AcceptError<C, I, O>> {
-        let Header { instance, name } = self.header.read(&mut rx).await?;
+        let mut dec = HeaderDecoder::new(self.max_instance_len, self.max_name_len);
+        let mut buf = BytesMut::default();
+        let Header { instance, name } = loop {
+            let chunk = rx.fill_buf().await.map_err(HeaderReadError::IO)?;
+            if chunk.is_empty() {
+                return Err(AcceptError::HeaderRead(HeaderReadError::IO(
+                    std::io::ErrorKind::UnexpectedEof.into(),
+                )));
+            }
+            let n = chunk.len();
+            buf.extend_from_slice(chunk);
+            if let Some(header) = dec.decode(&mut buf)? {
+                rx.consume(n.saturating_sub(buf.len()));
+                break header;
+            }
+            rx.consume(n);
+        };
         let h = self
             .handlers
             .lock()
