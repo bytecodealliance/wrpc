@@ -11,7 +11,7 @@ use std::sync::{Arc, Weak};
 use bytes::{Buf, BufMut as _, Bytes, BytesMut};
 use futures::stream::FuturesUnordered;
 use futures::{Stream, StreamExt as _};
-use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt, ReadBuf};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio::select;
 use tokio_util::codec::{Decoder, Encoder as _};
 use tokio_util::io::poll_read_buf;
@@ -25,15 +25,14 @@ use crate::{Deferred as _, DeferredWrite, Encode, Index, READ_CHUNK_SIZE};
 const MAX_PENDING_STREAM_BATCH: usize = 1 << 20;
 
 /// State of an invocation shared by its handles
-struct IncomingState<T> {
-    stream: T,
+struct IncomingState {
+    stream: Pin<Box<dyn AsyncRead + Send + Unpin>>,
     /// Declared paths
     paths: Box<[Box<[Option<usize>]>]>,
     /// Decoder of the frame headers
     header: HeaderDecoder,
-    /// Bytes received, which were not processed yet: at most one read of the stream and a part
-    /// of a frame header
-    rx_buf: BytesMut,
+    /// Part of a frame header received
+    header_buf: BytesMut,
     /// Path of the frame being received, once its header is complete
     frame: Option<Arc<[usize]>>,
     /// Length of the data of the frame being received left to receive
@@ -50,7 +49,7 @@ struct IncomingState<T> {
     failed: bool,
 }
 
-impl<T: AsyncRead + Unpin> IncomingState<T> {
+impl IncomingState {
     fn fail(&mut self) {
         self.failed = true;
         self.wake();
@@ -79,18 +78,19 @@ impl<T: AsyncRead + Unpin> IncomingState<T> {
     /// ingress at the end of the stream
     fn poll_frame(&mut self, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
         let header = loop {
-            let header = self.header.decode(&mut self.rx_buf)?;
+            let header = self.header.decode(&mut self.header_buf)?;
             if header.is_some() {
                 break Ok(header);
             }
-            self.rx_buf.reserve(READ_CHUNK_SIZE);
+            let n = self.header.min_remaining();
+            self.header_buf.reserve(n);
             let n = ready!(poll_read_buf(
-                Pin::new(&mut self.stream),
+                self.stream.as_mut(),
                 cx,
-                &mut self.rx_buf
+                &mut (&mut self.header_buf).limit(n)
             ))?;
             if n == 0 {
-                break self.header.decode_eof(&mut self.rx_buf);
+                break self.header.decode_eof(&mut self.header_buf);
             }
         };
         let Some(FrameHeader { path, size: n }) = header? else {
@@ -121,90 +121,6 @@ impl<T: AsyncRead + Unpin> IncomingState<T> {
         }
         self.frame = Some(path);
         self.remaining = n;
-        Poll::Ready(Ok(()))
-    }
-
-    /// Reads the data of the frame on `path` into `buf` on behalf of its [Incoming] handle,
-    /// receiving frames with `cx` until one is on `path`, and returns whether the path is closed.
-    /// Once the frame is read, receiving the next one is handed off.
-    fn poll_read(
-        &mut self,
-        path: &[usize],
-        cx: &mut Context<'_>,
-        buf: &mut ReadBuf<'_>,
-    ) -> Poll<std::io::Result<bool>> {
-        if self.failed {
-            return Poll::Ready(Err(error_invocation_failed()));
-        }
-        match self.readers.get_mut(path) {
-            Some(reader) => *reader = None,
-            None => {
-                self.readers.insert(path.into(), None);
-            }
-        }
-        loop {
-            let Some(frame) = &self.frame else {
-                if self.ended {
-                    return Poll::Ready(Err(std::io::ErrorKind::UnexpectedEof.into()));
-                }
-                let Poll::Ready(()) = self.poll_frame(cx)? else {
-                    break;
-                };
-                continue;
-            };
-            if **frame != *path {
-                trace!(?frame, "waiting for the frame of another path to be read");
-                break;
-            }
-            let closed = self.remaining == 0;
-            if !closed && self.rx_buf.is_empty() {
-                self.rx_buf.reserve(READ_CHUNK_SIZE);
-                let Poll::Ready(n) =
-                    poll_read_buf(Pin::new(&mut self.stream), cx, &mut self.rx_buf)?
-                else {
-                    break;
-                };
-                if n == 0 {
-                    return Poll::Ready(Err(std::io::ErrorKind::UnexpectedEof.into()));
-                }
-            }
-            let n = buf.remaining().min(self.rx_buf.len()).min(self.remaining);
-            buf.put_slice(&self.rx_buf[..n]);
-            self.rx_buf.advance(n);
-            self.remaining = self.remaining.saturating_sub(n);
-            if closed {
-                trace!("closing path");
-                self.readers.remove(path);
-            }
-            if self.remaining == 0 {
-                self.frame = None;
-                self.readers
-                    .values_mut()
-                    .filter_map(Option::take)
-                    .for_each(Waker::wake);
-                self.closed.drain(..).for_each(Waker::wake);
-            }
-            return Poll::Ready(Ok(closed));
-        }
-        if let Some(reader) = self.readers.get_mut(path) {
-            *reader = Some(cx.waker().clone());
-        }
-        Poll::Pending
-    }
-
-    /// Receives frames with `cx` on behalf of a [Closed] future until ingress ends
-    fn poll_closed(&mut self, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        if self.failed {
-            return Poll::Ready(Err(error_invocation_failed()));
-        }
-        if !self.ended && self.frame.is_none() {
-            let Poll::Ready(()) = self.poll_frame(cx)? else {
-                return pending(&mut self.closed, cx);
-            };
-        }
-        if !self.ended {
-            return pending(&mut self.closed, cx);
-        }
         Poll::Ready(Ok(()))
     }
 }
@@ -244,7 +160,7 @@ fn pending<T>(wakers: &mut Vec<Waker>, cx: &Context<'_>) -> Poll<T> {
 }
 
 /// Fails egress of an invocation, which failed
-fn fail_outgoing<T>(outgoing: &Weak<std::sync::Mutex<OutgoingState<T>>>) {
+fn fail_outgoing(outgoing: &Weak<std::sync::Mutex<OutgoingState>>) {
     if let Some(state) = outgoing.upgrade() {
         let mut state = lock(&state);
         state.failed = true;
@@ -267,7 +183,7 @@ fn lock<T: ?Sized>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> 
 /// handle reads or the future returned by [`Incoming::closed`] is polled, and sent only while a
 /// handle writes, flushes, shuts down or closes. A frame is received as a whole before the next one and
 /// held until the handle of its path reads it, so all handles of an invocation must be read
-/// concurrently.
+/// concurrently. Reads from `rx` are small, so they must be cheap, for example buffered.
 /// The root [Incoming] handle and a handle, which read data of its path, must read the end of
 /// it before it is dropped. Other handles of paths, which carry no value, such as the elements
 /// of a list of futures, need not be read. Every [Outgoing] handle must be closed with
@@ -310,10 +226,10 @@ pub fn mux(
         written: 0,
     }));
     let incoming_state = Arc::new(std::sync::Mutex::new(IncomingState {
-        stream: Box::pin(rx) as _,
+        stream: Box::pin(AsyncReadExt::chain(std::io::Cursor::new(rx_buf), rx)) as _,
         paths,
         header,
-        rx_buf,
+        header_buf: BytesMut::default(),
         frame: None,
         remaining: 0,
         ended: false,
@@ -351,8 +267,8 @@ pub struct Incoming {
     /// Bytes read past the item decoded by [`Self::decode`], which are read before the rest of
     /// the data of the path
     buffer: BytesMut,
-    state: Arc<std::sync::Mutex<IncomingState<Pin<Box<dyn AsyncRead + Send + Unpin>>>>>,
-    outgoing: Weak<std::sync::Mutex<OutgoingState<Pin<Box<dyn AsyncWrite + Send + Unpin>>>>>,
+    state: Arc<std::sync::Mutex<IncomingState>>,
+    outgoing: Weak<std::sync::Mutex<OutgoingState>>,
 }
 
 impl Drop for Incoming {
@@ -485,23 +401,82 @@ impl AsyncRead for Incoming {
         if this.closed {
             return Poll::Ready(Ok(()));
         }
-        let res = {
-            let mut state = lock(&this.state);
-            let res = ready!(state.poll_read(&this.path, cx, buf));
-            res.map_err(|err| state.fail_err(err))
-        };
-        if res.is_err() {
-            fail_outgoing(&this.outgoing);
+        let mut state = lock(&this.state);
+        if state.failed {
+            return Poll::Ready(Err(error_invocation_failed()));
         }
-        this.closed = res?;
-        Poll::Ready(Ok(()))
+        match state.readers.get_mut(&this.path) {
+            Some(reader) => *reader = None,
+            None => {
+                state.readers.insert(this.path.clone(), None);
+            }
+        }
+        let res = 'read: {
+            loop {
+                let Some(frame) = &state.frame else {
+                    if state.ended {
+                        break 'read Err(std::io::ErrorKind::UnexpectedEof.into());
+                    }
+                    match state.poll_frame(cx) {
+                        Poll::Ready(Ok(())) => continue,
+                        Poll::Ready(Err(err)) => break 'read Err(err),
+                        Poll::Pending => break,
+                    }
+                };
+                if **frame != *this.path {
+                    trace!(?frame, "waiting for the frame of another path to be read");
+                    break;
+                }
+                let closed = state.remaining == 0;
+                if !closed {
+                    let filled = buf.filled().len();
+                    let remaining = u64::try_from(state.remaining).unwrap_or(u64::MAX);
+                    let mut stream = state.stream.as_mut().take(remaining);
+                    match Pin::new(&mut stream).poll_read(cx, buf) {
+                        Poll::Ready(Ok(())) => {}
+                        Poll::Ready(Err(err)) => break 'read Err(err),
+                        Poll::Pending => break,
+                    }
+                    let n = buf.filled().len().saturating_sub(filled);
+                    if n == 0 {
+                        break 'read Err(std::io::ErrorKind::UnexpectedEof.into());
+                    }
+                    state.remaining = state.remaining.saturating_sub(n);
+                }
+                if closed {
+                    trace!("closing path");
+                    state.readers.remove(&this.path);
+                }
+                if state.remaining == 0 {
+                    state.frame = None;
+                    state.wake();
+                }
+                break 'read Ok(closed);
+            }
+            if let Some(reader) = state.readers.get_mut(&this.path) {
+                *reader = Some(cx.waker().clone());
+            }
+            return Poll::Pending;
+        };
+        match res {
+            Ok(closed) => {
+                this.closed = closed;
+                Poll::Ready(Ok(()))
+            }
+            Err(err) => {
+                let err = state.fail_err(err);
+                drop(state);
+                fail_outgoing(&this.outgoing);
+                Poll::Ready(Err(err))
+            }
+        }
     }
 }
 
 /// Future returned by [`Incoming::closed`]
 pub struct Closed {
-    state: Arc<std::sync::Mutex<IncomingState<Pin<Box<dyn AsyncRead + Send + Unpin>>>>>,
-    outgoing: Weak<std::sync::Mutex<OutgoingState<Pin<Box<dyn AsyncWrite + Send + Unpin>>>>>,
+    state: Arc<std::sync::Mutex<IncomingState>>,
+    outgoing: Weak<std::sync::Mutex<OutgoingState>>,
 }
 
 impl Drop for Closed {
@@ -514,27 +489,35 @@ impl Future for Closed {
     type Output = std::io::Result<()>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let res = {
-            let mut state = lock(&self.state);
-            let res = ready!(state.poll_closed(cx));
-            res.map_err(|err| state.fail_err(err))
-        };
-        if res.is_err() {
-            fail_outgoing(&self.outgoing);
+        let mut state = lock(&self.state);
+        if state.failed {
+            return Poll::Ready(Err(error_invocation_failed()));
         }
-        Poll::Ready(res)
+        if !state.ended
+            && state.frame.is_none()
+            && let Poll::Ready(Err(err)) = state.poll_frame(cx)
+        {
+            let err = state.fail_err(err);
+            drop(state);
+            fail_outgoing(&self.outgoing);
+            return Poll::Ready(Err(err));
+        }
+        if !state.ended {
+            return pending(&mut state.closed, cx);
+        }
+        Poll::Ready(Ok(()))
     }
 }
 
-struct OutgoingState<T> {
+struct OutgoingState {
     buffer: BytesMut,
-    stream: T,
+    stream: Pin<Box<dyn AsyncWrite + Send + Unpin>>,
     pending: Vec<Waker>,
     failed: bool,
     written: usize,
 }
 
-impl<T> OutgoingState<T> {
+impl OutgoingState {
     fn wake(&mut self) {
         for w in mem::take(&mut self.pending) {
             w.wake();
@@ -542,13 +525,15 @@ impl<T> OutgoingState<T> {
     }
 }
 
-/// Outgoing framed stream
+/// Outgoing framed stream.
+///
+/// After use, this must be closed via [`Outgoing::close`].
 pub struct Outgoing {
     path: Box<[usize]>,
     path_buf: Bytes,
     closed: usize,
-    state: Arc<std::sync::Mutex<OutgoingState<Pin<Box<dyn AsyncWrite + Send + Unpin>>>>>,
-    incoming: Weak<std::sync::Mutex<IncomingState<Pin<Box<dyn AsyncRead + Send + Unpin>>>>>,
+    state: Arc<std::sync::Mutex<OutgoingState>>,
+    incoming: Weak<std::sync::Mutex<IncomingState>>,
 }
 
 impl Outgoing {
@@ -557,7 +542,7 @@ impl Outgoing {
         lock(&self.state).buffer.len()
     }
 
-    fn fail<T>(&self, state: &mut OutgoingState<T>) {
+    fn fail(&self, state: &mut OutgoingState) {
         state.failed = true;
         if let Some(state) = self.incoming.upgrade() {
             lock(&state).fail();
@@ -570,7 +555,7 @@ impl Outgoing {
         let Some(state) = Arc::into_inner(self.state) else {
             return Ok(());
         };
-        let OutgoingState { mut stream, .. } = state
+        let OutgoingState { ref mut stream, .. } = state
             .into_inner()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Err(err) = stream.shutdown().await {
@@ -584,7 +569,7 @@ impl Outgoing {
 
     fn poll_write(
         &self,
-        state: &mut OutgoingState<Pin<Box<dyn AsyncWrite + Send + Unpin>>>,
+        state: &mut OutgoingState,
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<std::io::Result<usize>> {
@@ -693,7 +678,7 @@ impl Outgoing {
 
     fn poll_flush(
         &self,
-        state: &mut OutgoingState<Pin<Box<dyn AsyncWrite + Send + Unpin>>>,
+        state: &mut OutgoingState,
         cx: &mut Context<'_>,
     ) -> Poll<std::io::Result<()>> {
         let res = loop {

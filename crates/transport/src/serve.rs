@@ -15,6 +15,7 @@ use crate::{Deferred as _, Paths as _, TupleDecode, TupleEncode};
 /// Multiplexes the byte streams `tx` and `rx` of an invocation, whose header was read by
 /// [`accept`](crate::accept()) along with the bytes in `buf`, declaring the async `paths`, see
 /// [`invoke`](crate::invoke())
+#[instrument(level = "trace", skip_all)]
 pub fn serve(
     tx: impl AsyncWrite + Send + Unpin + 'static,
     rx: impl AsyncRead + Send + Unpin + 'static,
@@ -30,7 +31,6 @@ pub fn serve(
 /// Returns a future receiving the parameters, which resolves to the synchronous parameters and
 /// a future, which receives the asynchronous parameters and resolves once the invocation ends,
 /// and a function transmitting the results. Nothing is received unless it is polled.
-#[instrument(level = "trace", skip_all)]
 pub fn serve_values<Params, Results>(
     tx: impl AsyncWrite + Send + Unpin + 'static,
     rx: impl AsyncRead + Send + Unpin + 'static,

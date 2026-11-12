@@ -18,6 +18,7 @@ use crate::{Deferred as _, HeaderEncoder, HeaderRef, Paths as _, TupleDecode, Tu
 /// Multiplexes the byte streams `tx` and `rx` of an invocation of function `func` on instance
 /// `instance` declaring the async `paths`, buffering the invocation header, so that it is sent
 /// along with the first frame
+#[instrument(level = "trace", skip(tx, rx, paths))]
 pub fn invoke(
     tx: impl AsyncWrite + Send + Unpin + 'static,
     rx: impl AsyncRead + Send + Unpin + 'static,
@@ -42,7 +43,6 @@ pub fn invoke(
 /// Returns the synchronous results along with a future, which completes once the
 /// asynchronous parameters are transmitted, the asynchronous results are received, if there
 /// are any, and the invocation ends. Nothing is transmitted or received unless it is polled.
-#[instrument(level = "trace", skip(tx, rx, params))]
 pub fn invoke_values<Params, Results>(
     tx: impl AsyncWrite + Send + Unpin + 'static,
     rx: impl AsyncRead + Send + Unpin + 'static,
@@ -154,8 +154,7 @@ where
 /// Invoke function `func` on instance `instance` over the byte streams `tx` and `rx` using typed
 /// `Params` and `Results`
 ///
-/// This is like [`invoke_values`], but it only results once all I/O is done
-#[instrument(level = "trace", skip_all)]
+/// This is like [`invoke_values`], but it only resolves once all I/O is done
 pub async fn invoke_values_blocking<Params, Results>(
     tx: impl AsyncWrite + Send + Unpin + 'static,
     rx: impl AsyncRead + Send + Unpin + 'static,

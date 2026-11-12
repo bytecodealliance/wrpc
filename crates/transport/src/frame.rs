@@ -87,6 +87,18 @@ impl HeaderDecoder {
             path: None,
         }
     }
+
+    /// Returns the minimum number of bytes, which complete the header once [`decode`] returned
+    /// [None]
+    ///
+    /// [`decode`]: tokio_util::codec::Decoder::decode
+    #[must_use]
+    pub fn min_remaining(&self) -> usize {
+        let Some((depth, path)) = &self.path else {
+            return 2;
+        };
+        depth.saturating_sub(path.len()).saturating_add(1)
+    }
 }
 
 impl tokio_util::codec::Decoder for HeaderDecoder {
@@ -390,5 +402,19 @@ mod tests {
         let mut rx = FramedRead::new(b"\x01\x80".as_slice(), Decoder::default());
         let err = rx.try_next().await.unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
+    }
+    #[test]
+    fn header_min_remaining() {
+        use tokio_util::codec::Decoder as _;
+
+        let mut dec = HeaderDecoder::new(DEFAULT_MAX_DEPTH, DEFAULT_MAX_SIZE);
+        assert_eq!(dec.min_remaining(), 2);
+        let mut buf = BytesMut::from(&b"\x02\x80"[..]);
+        assert_eq!(dec.decode(&mut buf).unwrap(), None);
+        assert_eq!(dec.min_remaining(), 3);
+        buf.extend_from_slice(b"\x01\x2a\x00");
+        let header = dec.decode(&mut buf).unwrap().unwrap();
+        assert_eq!(*header.path, [128, 42]);
+        assert_eq!(dec.min_remaining(), 2);
     }
 }
