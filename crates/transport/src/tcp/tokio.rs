@@ -5,6 +5,7 @@ use core::net::SocketAddr;
 use core::task::{Poll, ready};
 
 use futures::{Stream, stream};
+use tokio::io::BufReader;
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::{TcpListener, TcpStream, ToSocketAddrs};
 use tracing::{instrument, warn};
@@ -18,14 +19,14 @@ use crate::Connect;
 /// writes that are each waited on by the peer.
 pub fn incoming(
     lis: impl Borrow<TcpListener>,
-) -> impl Stream<Item = std::io::Result<(SocketAddr, OwnedWriteHalf, OwnedReadHalf)>> {
+) -> impl Stream<Item = std::io::Result<(SocketAddr, OwnedWriteHalf, BufReader<OwnedReadHalf>)>> {
     stream::poll_fn(move |cx| {
         let (stream, addr) = ready!(lis.borrow().poll_accept(cx))?;
         if let Err(err) = stream.set_nodelay(true) {
             warn!(?err, "failed to set `TCP_NODELAY`");
         }
         let (rx, tx) = stream.into_split();
-        Poll::Ready(Some(Ok((addr, tx, rx))))
+        Poll::Ready(Some(Ok((addr, tx, BufReader::new(rx)))))
     })
 }
 
@@ -80,7 +81,7 @@ where
 {
     type Context = ();
     type Outgoing = OwnedWriteHalf;
-    type Incoming = OwnedReadHalf;
+    type Incoming = BufReader<OwnedReadHalf>;
     type Error = std::io::Error;
 
     #[instrument(level = "trace", skip(self))]
@@ -96,6 +97,6 @@ where
             stream.set_zero_linger()?;
         }
         let (rx, tx) = stream.into_split();
-        Ok((tx, rx))
+        Ok((tx, BufReader::new(rx)))
     }
 }

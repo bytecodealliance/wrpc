@@ -6,6 +6,7 @@ use core::task::{Poll, ready};
 use std::path::{Path, PathBuf};
 
 use futures::{Stream, stream};
+use tokio::io::BufReader;
 use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf, SocketAddr};
 use tokio::net::{UnixListener, UnixStream};
 use tracing::instrument;
@@ -16,11 +17,11 @@ use crate::Connect;
 /// the peer address as the context
 pub fn incoming(
     lis: impl Borrow<UnixListener>,
-) -> impl Stream<Item = std::io::Result<(SocketAddr, OwnedWriteHalf, OwnedReadHalf)>> {
+) -> impl Stream<Item = std::io::Result<(SocketAddr, OwnedWriteHalf, BufReader<OwnedReadHalf>)>> {
     stream::poll_fn(move |cx| {
         let (stream, addr) = ready!(lis.borrow().poll_accept(cx))?;
         let (rx, tx) = stream.into_split();
-        Poll::Ready(Some(Ok((addr, tx, rx))))
+        Poll::Ready(Some(Ok((addr, tx, BufReader::new(rx)))))
     })
 }
 
@@ -28,7 +29,7 @@ pub fn incoming(
 ///
 /// [`Connect::connect`] can only be called at most once on [Oneshot],
 /// repeated calls will return an error.
-pub type Oneshot = crate::Oneshot<OwnedReadHalf, OwnedWriteHalf>;
+pub type Oneshot = crate::Oneshot<BufReader<OwnedReadHalf>, OwnedWriteHalf>;
 
 impl Oneshot {
     /// Creates a pair of connected [Oneshot] using [`UnixStream::pair`].
@@ -40,7 +41,8 @@ impl Oneshot {
 
 impl From<UnixStream> for Oneshot {
     fn from(stream: UnixStream) -> Self {
-        stream.into_split().into()
+        let (rx, tx) = stream.into_split();
+        (BufReader::new(rx), tx).into()
     }
 }
 
@@ -81,7 +83,7 @@ impl From<SocketAddr> for Client<SocketAddr> {
 impl Connect for Client<&Path> {
     type Context = ();
     type Outgoing = OwnedWriteHalf;
-    type Incoming = OwnedReadHalf;
+    type Incoming = BufReader<OwnedReadHalf>;
     type Error = std::io::Error;
 
     #[instrument(level = "trace", skip(self))]
@@ -91,14 +93,14 @@ impl Connect for Client<&Path> {
     ) -> std::io::Result<(Self::Outgoing, Self::Incoming)> {
         let stream = UnixStream::connect(self.0).await?;
         let (rx, tx) = stream.into_split();
-        Ok((tx, rx))
+        Ok((tx, BufReader::new(rx)))
     }
 }
 
 impl Connect for Client<PathBuf> {
     type Context = ();
     type Outgoing = OwnedWriteHalf;
-    type Incoming = OwnedReadHalf;
+    type Incoming = BufReader<OwnedReadHalf>;
     type Error = std::io::Error;
 
     #[instrument(level = "trace", skip(self))]
@@ -113,7 +115,7 @@ impl Connect for Client<PathBuf> {
 impl Connect for Client<&SocketAddr> {
     type Context = ();
     type Outgoing = OwnedWriteHalf;
-    type Incoming = OwnedReadHalf;
+    type Incoming = BufReader<OwnedReadHalf>;
     type Error = std::io::Error;
 
     #[instrument(level = "trace", skip(self))]
@@ -123,14 +125,14 @@ impl Connect for Client<&SocketAddr> {
     ) -> std::io::Result<(Self::Outgoing, Self::Incoming)> {
         let stream = UnixStream::connect_addr(self.0).await?;
         let (rx, tx) = stream.into_split();
-        Ok((tx, rx))
+        Ok((tx, BufReader::new(rx)))
     }
 }
 
 impl Connect for Client<SocketAddr> {
     type Context = ();
     type Outgoing = OwnedWriteHalf;
-    type Incoming = OwnedReadHalf;
+    type Incoming = BufReader<OwnedReadHalf>;
     type Error = std::io::Error;
 
     #[instrument(level = "trace", skip(self))]

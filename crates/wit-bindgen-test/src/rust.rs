@@ -275,6 +275,7 @@ use core::time::Duration;
 use std::sync::Arc;
 
 use futures::StreamExt as _;
+use tokio::io::BufReader;
 use tokio::net::TcpListener;
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use wit_bindgen_wrpc::bytes::BytesMut;
@@ -289,7 +290,7 @@ fn serve(
         &str,
         &str,
         OwnedWriteHalf,
-        OwnedReadHalf,
+        BufReader<OwnedReadHalf>,
         BytesMut,
     ) -> Result<Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send>>, String>
     + Send

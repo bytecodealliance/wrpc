@@ -5,7 +5,7 @@ use core::task::{Context, Poll, ready};
 
 use futures::{Stream, stream};
 use quinn::VarInt;
-use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+use tokio::io::{AsyncRead, AsyncWrite, BufReader, ReadBuf};
 use wrpc_transport::Connect;
 
 /// Error code of a stream, which was stopped or reset, because the invocation failed
@@ -114,7 +114,7 @@ impl From<quinn::Connection> for Connection {
 impl Connect for Connection {
     type Context = ();
     type Outgoing = SendStream;
-    type Incoming = RecvStream;
+    type Incoming = BufReader<RecvStream>;
     type Error = quinn::ConnectionError;
 
     async fn connect(
@@ -122,7 +122,7 @@ impl Connect for Connection {
         (): Self::Context,
     ) -> Result<(Self::Outgoing, Self::Incoming), Self::Error> {
         let (tx, rx) = self.0.open_bi().await?;
-        Ok((tx.into(), rx.into()))
+        Ok((tx.into(), BufReader::new(rx.into())))
     }
 }
 
@@ -131,12 +131,12 @@ impl Connection {
     /// which keeps a handle to the connection and ends after the first error
     pub fn incoming(
         &self,
-    ) -> impl Stream<Item = Result<((), SendStream, RecvStream), quinn::ConnectionError>> + use<>
-    {
+    ) -> impl Stream<Item = Result<((), SendStream, BufReader<RecvStream>), quinn::ConnectionError>>
+    + use<> {
         stream::unfold(Some(self.0.clone()), |conn| async move {
             let conn = conn?;
             match conn.accept_bi().await {
-                Ok((tx, rx)) => Some((Ok(((), tx.into(), rx.into())), Some(conn))),
+                Ok((tx, rx)) => Some((Ok(((), tx.into(), BufReader::new(rx.into()))), Some(conn))),
                 Err(err) => Some((Err(err), None)),
             }
         })

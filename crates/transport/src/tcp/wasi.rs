@@ -6,7 +6,7 @@ use core::task::{Context, Poll, Waker, ready};
 use std::sync::Arc;
 
 use anyhow::{Context as _, bail};
-use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+use tokio::io::{AsyncRead, AsyncWrite, BufReader, ReadBuf};
 use tokio::sync::mpsc;
 use tracing::{debug, instrument, trace};
 use wasi::io::poll::Pollable;
@@ -171,7 +171,7 @@ fn connect_ip(
     network: &Network,
     addr: IpSocketAddress,
     pollables: mpsc::UnboundedSender<(Pollable, Waker)>,
-) -> anyhow::Result<(OutgoingStream, IncomingStream)> {
+) -> anyhow::Result<(OutgoingStream, BufReader<IncomingStream>)> {
     let socket = match addr {
         IpSocketAddress::Ipv4(..) => create_tcp_socket(IpAddressFamily::Ipv4),
         IpSocketAddress::Ipv6(..) => create_tcp_socket(IpAddressFamily::Ipv6),
@@ -195,7 +195,7 @@ fn connect_ip(
         socket,
         pollables,
     };
-    Ok((tx, rx))
+    Ok((tx, BufReader::new(rx)))
 }
 
 #[instrument(level = "trace", skip_all)]
@@ -203,7 +203,7 @@ fn connect_unresolved(
     network: &Network,
     addr: &str,
     pollables: mpsc::UnboundedSender<(Pollable, Waker)>,
-) -> anyhow::Result<(OutgoingStream, IncomingStream)> {
+) -> anyhow::Result<(OutgoingStream, BufReader<IncomingStream>)> {
     let (addr, port) = addr.rsplit_once(":").context("address is not valid")?;
     let port = port.parse().context("port is not valid")?;
     let addrs =
@@ -230,7 +230,7 @@ fn connect_unresolved(
 impl Connect for Client<&str, &Network> {
     type Context = mpsc::UnboundedSender<(Pollable, Waker)>;
     type Outgoing = OutgoingStream;
-    type Incoming = IncomingStream;
+    type Incoming = BufReader<IncomingStream>;
     type Error = std::io::Error;
 
     async fn connect(
@@ -244,7 +244,7 @@ impl Connect for Client<&str, &Network> {
 impl Connect for Client<&str, Network> {
     type Context = mpsc::UnboundedSender<(Pollable, Waker)>;
     type Outgoing = OutgoingStream;
-    type Incoming = IncomingStream;
+    type Incoming = BufReader<IncomingStream>;
     type Error = std::io::Error;
 
     async fn connect(
@@ -258,7 +258,7 @@ impl Connect for Client<&str, Network> {
 impl Connect for Client<Box<str>, Network> {
     type Context = mpsc::UnboundedSender<(Pollable, Waker)>;
     type Outgoing = OutgoingStream;
-    type Incoming = IncomingStream;
+    type Incoming = BufReader<IncomingStream>;
     type Error = std::io::Error;
 
     async fn connect(
@@ -272,7 +272,7 @@ impl Connect for Client<Box<str>, Network> {
 impl Connect for Client<IpSocketAddress, &Network> {
     type Context = mpsc::UnboundedSender<(Pollable, Waker)>;
     type Outgoing = OutgoingStream;
-    type Incoming = IncomingStream;
+    type Incoming = BufReader<IncomingStream>;
     type Error = std::io::Error;
 
     async fn connect(
@@ -286,7 +286,7 @@ impl Connect for Client<IpSocketAddress, &Network> {
 impl Connect for Client<IpSocketAddress, Network> {
     type Context = mpsc::UnboundedSender<(Pollable, Waker)>;
     type Outgoing = OutgoingStream;
-    type Incoming = IncomingStream;
+    type Incoming = BufReader<IncomingStream>;
     type Error = std::io::Error;
 
     async fn connect(
