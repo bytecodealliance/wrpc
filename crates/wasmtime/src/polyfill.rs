@@ -189,16 +189,13 @@ async fn invoke(
         ))));
     }
     let tx = async {
-        try_join_all(
-            zip(0.., deferred)
-                .filter_map(|(i, f)| f.map(|f| (outgoing.index(&[i]), f)))
-                .map(|(w, f)| async move {
-                    let w = w.map_err(wasmtime::Error::from)?;
-                    f(w).await
-                }),
-        )
-        .await
-        .context("failed to write asynchronous parameters")?;
+        let deferred = zip(0.., deferred)
+            .filter_map(|(i, f)| f.map(|f| f(&outgoing, &[i])))
+            .collect::<wasmtime::Result<Vec<_>>>()
+            .context("failed to index asynchronous parameters")?;
+        try_join_all(deferred)
+            .await
+            .context("failed to write asynchronous parameters")?;
         let mut outgoing = pin!(outgoing);
         outgoing
             .flush()

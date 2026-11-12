@@ -1517,7 +1517,6 @@ impl<'a> wit_bindgen_core::InterfaceGenerator<'a> for InterfaceGenerator<'a> {
             let mod_name = to_rust_ident(ty_name);
 
             let bytes = self.r#gen.bytes_path().to_string();
-            let tokio = self.r#gen.tokio_path().to_string();
             let tokio_util = self.r#gen.tokio_util_path().to_string();
             let wrpc_transport = self.r#gen.wrpc_transport_path().to_string();
 
@@ -1603,42 +1602,16 @@ mod {mod_name} {{
                     self.src,
                     r"
                 {{
-                    return Some(::std::boxed::Box::new(|w| {{",
-                );
-                for (i, Field { name, .. }) in fields.iter().enumerate() {
-                    let name = to_rust_ident(name);
-                    uwrite!(
-                        self.src,
-                        r"
-                        let f_{name} = f_{name}.map(|f| (f, w.index(&[{i}])));"
-                    );
-                }
-                uwrite!(
-                    self.src,
-                    r"
-                        ::std::boxed::Box::pin(async move {{
-                            {tokio}::try_join!(",
+                    return Some(::std::boxed::Box::new(|w, path| {{
+                        {wrpc_transport}::handle_deferred(w, path, [",
                 );
                 for Field { name, .. } in fields {
                     let name = to_rust_ident(name);
-                    uwrite!(
-                        self.src,
-                        r"
-                                async {{
-                                    match f_{name} {{
-                                        Some((f, Ok(w))) => f(w).await,
-                                        Some((_, Err(err))) => Err(err),
-                                        None => Ok(()),
-                                    }}
-                                }},"
-                    );
+                    uwrite!(self.src, "f_{name}, ");
                 }
                 uwrite!(
                     self.src,
-                    r"
-                            )?;
-                            Ok(())
-                        }})
+                    r"])
                     }}))
                 }}",
                 );
@@ -1710,42 +1683,16 @@ mod {mod_name} {{
                     self.src,
                     r"
                 {{
-                    return Some(::std::boxed::Box::new(|r| {{",
-                );
-                for (i, Field { name, .. }) in fields.iter().enumerate() {
-                    let name = to_rust_ident(name);
-                    uwrite!(
-                        self.src,
-                        r"
-                        let f_{name} = f_{name}.map(|f| (f, r.index(&[{i}])));"
-                    );
-                }
-                uwrite!(
-                    self.src,
-                    r"
-                        ::std::boxed::Box::pin(async move {{
-                            {tokio}::try_join!(",
+                    return Some(::std::boxed::Box::new(|r, path| {{
+                        {wrpc_transport}::handle_deferred(r, path, [",
                 );
                 for Field { name, .. } in fields {
                     let name = to_rust_ident(name);
-                    uwrite!(
-                        self.src,
-                        r"
-                                async {{
-                                    match f_{name} {{
-                                        Some((f, Ok(r))) => f(r).await,
-                                        Some((_, Err(err))) => Err(std::io::Error::other(err)),
-                                        None => Ok(()),
-                                    }}
-                                }},"
-                    );
+                    uwrite!(self.src, "f_{name}, ");
                 }
                 uwrite!(
                     self.src,
-                    r"
-                            )?;
-                            Ok(())
-                        }})
+                    r"])
                     }}))
                 }}",
                 );

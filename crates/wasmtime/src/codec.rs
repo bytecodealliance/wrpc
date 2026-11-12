@@ -35,8 +35,14 @@ use wrpc_transport::{Decode, DeferredWrite as _, Encode, READ_CHUNK_SIZE};
 
 use crate::{RemoteResource, ResourceTypes, WrpcView};
 
-type DeferredFn =
-    Box<dyn FnOnce(Outgoing) -> Pin<Box<dyn Future<Output = wasmtime::Result<()>> + Send>> + Send>;
+type DeferredFn = Box<
+    dyn FnOnce(
+            &Outgoing,
+            &[usize],
+        )
+            -> wasmtime::Result<Pin<Box<dyn Future<Output = wasmtime::Result<()>> + Send>>>
+        + Send,
+>;
 
 /// Synchronous access to a store, which is either borrowed exclusively or reachable through an
 /// [`Accessor`].
@@ -132,20 +138,25 @@ fn flag_bits<'a, T: BitOrAssign + Shl<u8, Output = T> + From<u8>>(
     v
 }
 
-async fn write_deferred<I>(w: Outgoing, deferred: I) -> wasmtime::Result<()>
+fn write_deferred<I>(
+    w: &Outgoing,
+    path: &[usize],
+    deferred: I,
+) -> wasmtime::Result<Pin<Box<dyn Future<Output = wasmtime::Result<()>> + Send>>>
 where
-    I: IntoIterator,
-    I::IntoIter: ExactSizeIterator<Item = Option<DeferredFn>>,
+    I: IntoIterator<Item = Option<DeferredFn>>,
 {
-    let mut futs: FuturesUnordered<_> = zip(0.., deferred)
-        .filter_map(|(i, f)| f.map(|f| (w.index(&[i]), f)))
-        .map(|(w, f)| async move {
-            let w = w.map_err(wasmtime::Error::from)?;
-            f(w).await
-        })
-        .collect();
-    while let Some(()) = futs.try_next().await? {}
-    Ok(())
+    let mut futs = FuturesUnordered::default();
+    for (i, f) in zip(0.., deferred) {
+        if let Some(f) = f {
+            let fut = f(w, &[path, &[i]].concat())?;
+            futs.push(fut);
+        }
+    }
+    Ok(Box::pin(async move {
+        while let Some(()) = futs.try_next().await? {}
+        Ok(())
+    }))
 }
 
 trait Payload: ComponentType + Lift + Lower + Send + Sync + Unpin + 'static {
@@ -292,12 +303,13 @@ where
     let (tx, rx) = oneshot::channel();
     let future = future.try_into_future_reader::<P>()?;
     future.pipe(store, Consumer(Some(tx)))?;
-    Ok(Box::new(move |w| {
-        Box::pin(async move {
+    Ok(Box::new(move |w, path| {
+        let w = w.index(path)?;
+        Ok(Box::pin(async move {
             let v = rx.await.context("future dropped without a value")?;
             w.write_future(offset, ready(v)).await?;
             Ok(())
-        })
+        }))
     }))
 }
 
@@ -343,12 +355,13 @@ where
     let (tx, mut rx) = mpsc::channel(1);
     let stream = stream.try_into_stream_reader::<P>()?;
     stream.pipe(store, Consumer(PollSender::new(tx)))?;
-    Ok(Box::new(move |w| {
-        Box::pin(async move {
+    Ok(Box::new(move |w, path| {
+        let w = w.index(path)?;
+        Ok(Box::pin(async move {
             w.write_stream(offset, stream::poll_fn(move |cx| rx.poll_recv(cx)))
                 .await?;
             Ok(())
-        })
+        }))
     }))
 }
 
@@ -583,7 +596,7 @@ where
                     deferred.push(enc.deferred);
                 }
                 if deferred.iter().any(Option::is_some) {
-                    self.deferred = Some(Box::new(|w| Box::pin(write_deferred(w, deferred))));
+                    self.deferred = Some(Box::new(|w, path| write_deferred(w, path, deferred)));
                 }
                 Ok(())
             }
@@ -604,7 +617,7 @@ where
                     deferred.push(enc.deferred);
                 }
                 if deferred.iter().any(Option::is_some) {
-                    self.deferred = Some(Box::new(|w| Box::pin(write_deferred(w, deferred))));
+                    self.deferred = Some(Box::new(|w, path| write_deferred(w, path, deferred)));
                 }
                 Ok(())
             }
@@ -625,7 +638,7 @@ where
                     deferred.push(enc.deferred);
                 }
                 if deferred.iter().any(Option::is_some) {
-                    self.deferred = Some(Box::new(|w| Box::pin(write_deferred(w, deferred))));
+                    self.deferred = Some(Box::new(|w, path| write_deferred(w, path, deferred)));
                 }
                 Ok(())
             }
@@ -885,8 +898,10 @@ where
                         enc.encode(items, dst)
                             .context("failed to encode input stream")?;
                         if let Some(f) = wrpc_transport::Deferred::take_deferred(&mut enc) {
-                            self.deferred =
-                                Some(Box::new(|w| Box::pin(async move { Ok(f(w).await?) })));
+                            self.deferred = Some(Box::new(|w, path| {
+                                let fut = f(w, path)?;
+                                Ok(Box::pin(async move { fut.await.map_err(Into::into) }))
+                            }));
                         }
                     } else {
                         self.store

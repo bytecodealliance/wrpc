@@ -169,13 +169,14 @@ pub trait InvokeExt: Invoke {
                 .write_all(&buf)
                 .await
                 .context("failed to write parameters")?;
-            let mut tx = enc.take_deferred().map(|tx| {
+            let tx = enc.take_deferred().map(|tx| tx(&outgoing, &[])).transpose();
+            let tx = tx.context("failed to index async parameters")?;
+            drop(outgoing);
+            let mut tx = tx.map(|tx| {
                 AbortOnDropHandle::new(tokio::spawn(
                     async {
                         debug!("transmitting async parameters");
-                        tx(outgoing)
-                            .await
-                            .context("failed to write async parameters")
+                        tx.await.context("failed to write async parameters")
                     }
                     .in_current_span(),
                 ))
@@ -212,6 +213,8 @@ pub trait InvokeExt: Invoke {
                 buffer,
                 inner: dec.into_inner(),
             };
+            let rx = rx.map(|rx| rx(&incoming, &[])).transpose();
+            let rx = rx.context("failed to index async results")?;
             Ok((
                 results,
                 (tx.is_some() || rx.is_some()).then_some(
@@ -221,7 +224,7 @@ pub trait InvokeExt: Invoke {
                                 try_join!(
                                     async {
                                         debug!("receiving async results");
-                                        rx(incoming).await.context("receiving async results failed")
+                                        rx.await.context("receiving async results failed")
                                     },
                                     async {
                                         tx.await.context("transmitting async parameters failed")?
@@ -233,12 +236,11 @@ pub trait InvokeExt: Invoke {
                             }
                             (None, Some(rx)) => {
                                 debug!("receiving async results");
-                                rx(incoming)
-                                    .await
-                                    .context("receiving async results failed")?;
+                                rx.await.context("receiving async results failed")?;
                             }
                             _ => {}
                         }
+                        drop(incoming);
                         Ok(())
                     }
                     .in_current_span(),
