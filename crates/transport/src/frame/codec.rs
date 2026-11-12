@@ -1,13 +1,13 @@
 use std::sync::Arc;
 
-use bytes::{Bytes, BytesMut};
-use tokio::io::{AsyncRead, AsyncReadExt as _};
+use bytes::{Buf as _, Bytes, BytesMut};
 use tracing::{instrument, trace};
-use wasm_tokio::{
-    AsyncReadLeb128 as _, DEFAULT_MAX_INITIAL_CAPACITY, Leb128DecoderU32, Leb128Encoder,
-};
+use wasm_tokio::{CoreNameDecoder, DEFAULT_MAX_INITIAL_CAPACITY, Leb128DecoderU32, Leb128Encoder};
 
-use crate::frame::{Frame, FrameRef, Header, HeaderReadError, MAX_INITIAL_PATH_CAPACITY, PROTOCOL};
+use crate::frame::{
+    DEFAULT_MAX_NAME_LEN, Frame, FrameRef, Header, HeaderReadError, MAX_INITIAL_PATH_CAPACITY,
+    PROTOCOL,
+};
 
 /// Default maximum length of a [Frame] path
 const DEFAULT_MAX_DEPTH: u32 = 64;
@@ -15,14 +15,13 @@ const DEFAULT_MAX_DEPTH: u32 = 64;
 /// Default maximum length of the data of a [Frame]
 const DEFAULT_MAX_SIZE: u32 = 16 << 20;
 
-/// Default maximum length of the instance and function names in a [Header]
-const DEFAULT_MAX_NAME_LEN: u32 = 1 << 10;
-
 /// [Header] decoder
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Debug)]
 pub struct HeaderDecoder {
-    max_instance_len: u32,
-    max_name_len: u32,
+    instance_dec: CoreNameDecoder,
+    name_dec: CoreNameDecoder,
+    version: bool,
+    instance: Option<String>,
 }
 
 impl HeaderDecoder {
@@ -31,29 +30,10 @@ impl HeaderDecoder {
     #[must_use]
     pub fn new(max_instance_len: u32, max_name_len: u32) -> Self {
         Self {
-            max_instance_len,
-            max_name_len,
-        }
-    }
-
-    /// Reads the wRPC header from a byte stream
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if reading the header fails
-    #[instrument(level = "trace", skip_all, ret(level = "trace"))]
-    pub async fn read(&self, mut rx: impl AsyncRead + Unpin) -> Result<Header, HeaderReadError> {
-        match rx.read_u8().await.map_err(HeaderReadError::IO)? {
-            PROTOCOL => {
-                let instance = read_name(&mut rx, self.max_instance_len, "instance")
-                    .await
-                    .map_err(HeaderReadError::IO)?;
-                let name = read_name(&mut rx, self.max_name_len, "function")
-                    .await
-                    .map_err(HeaderReadError::IO)?;
-                Ok(Header { instance, name })
-            }
-            v => Err(HeaderReadError::UnsupportedVersion(v)),
+            instance_dec: CoreNameDecoder::with_max_len(max_instance_len),
+            name_dec: CoreNameDecoder::with_max_len(max_name_len),
+            version: false,
+            instance: None,
         }
     }
 }
@@ -64,24 +44,50 @@ impl Default for HeaderDecoder {
     }
 }
 
-/// Reads a name of at most `max_len` bytes from `rx`
-async fn read_name(
-    mut rx: impl AsyncRead + Unpin,
-    max_len: u32,
-    kind: &str,
-) -> std::io::Result<String> {
-    let n = rx.read_u32_leb128().await?;
-    if n > max_len {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            format!("{kind} name length of `{n}` exceeds maximum of `{max_len}`"),
-        ));
+impl tokio_util::codec::Decoder for HeaderDecoder {
+    type Item = Header;
+    type Error = HeaderReadError;
+
+    #[instrument(level = "trace", skip_all)]
+    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+        if !self.version {
+            let Some(v) = src.first().copied() else {
+                return Ok(None);
+            };
+            if v != PROTOCOL {
+                return Err(HeaderReadError::UnsupportedVersion(v));
+            }
+            src.advance(1);
+            self.version = true;
+        }
+        let instance = if let Some(instance) = self.instance.take() {
+            instance
+        } else {
+            let Some(instance) = self.instance_dec.decode(src)? else {
+                return Ok(None);
+            };
+            instance
+        };
+        let Some(name) = self.name_dec.decode(src)? else {
+            self.instance = Some(instance);
+            return Ok(None);
+        };
+        self.version = false;
+        trace!(instance, name, "decoded header");
+        Ok(Some(Header { instance, name }))
     }
-    let n = usize::try_from(n)
-        .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
-    let mut buf = vec![0; n];
-    rx.read_exact(&mut buf).await?;
-    String::from_utf8(buf).map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))
+
+    fn decode_eof(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+        if let Some(header) = self.decode(src)? {
+            return Ok(Some(header));
+        }
+        if self.version {
+            return Err(HeaderReadError::IO(
+                std::io::ErrorKind::UnexpectedEof.into(),
+            ));
+        }
+        Ok(None)
+    }
 }
 
 /// [Frame] decoder
@@ -130,7 +136,7 @@ impl tokio_util::codec::Decoder for Decoder {
             trace!(n, "decoded path length");
             if n > self.max_depth {
                 return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidInput,
+                    std::io::ErrorKind::InvalidData,
                     format!(
                         "path length of `{n}` exceeds maximum of `{}`",
                         self.max_depth
@@ -163,7 +169,7 @@ impl tokio_util::codec::Decoder for Decoder {
             trace!(n, "decoded data length");
             if n > self.max_size {
                 return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidInput,
+                    std::io::ErrorKind::InvalidData,
                     format!(
                         "payload length of `{n}` exceeds maximum of `{}`",
                         self.max_size
@@ -242,7 +248,7 @@ impl tokio_util::codec::Encoder<&Frame> for Encoder {
 #[cfg(test)]
 mod tests {
     use futures::{SinkExt as _, TryStreamExt as _};
-    use tokio_util::codec::{FramedRead, FramedWrite};
+    use tokio_util::codec::{Decoder as _, FramedRead, FramedWrite};
 
     use super::*;
 
@@ -318,12 +324,25 @@ mod tests {
     async fn decoder_limits() {
         let mut buf = BytesMut::default();
         crate::frame::encode_invocation(&mut buf, "foo", "bar").unwrap();
-        let header = HeaderDecoder::default().read(buf.as_ref()).await.unwrap();
-        assert_eq!(header.instance, "foo");
-        assert_eq!(header.name, "bar");
-        let Err(HeaderReadError::IO(err)) = HeaderDecoder::new(2, 3).read(buf.as_ref()).await
+        let mut dec = HeaderDecoder::default();
+        let mut src = BytesMut::default();
+        let mut header = None;
+        for b in &buf {
+            src.extend_from_slice(&[*b]);
+            header = dec.decode(&mut src).unwrap();
+        }
+        assert_eq!(
+            header,
+            Some(Header {
+                instance: "foo".into(),
+                name: "bar".into(),
+            })
+        );
+        assert!(src.is_empty());
+        let Err(HeaderReadError::IO(err)) =
+            HeaderDecoder::new(2, 3).decode(&mut BytesMut::from(&buf[..2]))
         else {
-            panic!("reading a header with a too long instance name should fail");
+            panic!("decoding a header with a too long instance name should fail");
         };
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
 
@@ -337,10 +356,10 @@ mod tests {
         let tx = tx.into_inner();
         let mut rx = FramedRead::new(tx.as_slice(), Decoder::default());
         let err = rx.try_next().await.unwrap_err();
-        assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
 
         let mut rx = FramedRead::new(b"\0\xff\xff\xff\xff\x0f".as_slice(), Decoder::default());
         let err = rx.try_next().await.unwrap_err();
-        assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
     }
 }
