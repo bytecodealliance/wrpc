@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use anyhow::Context as _;
 use bytes::BytesMut;
-use futures::{Stream, TryStreamExt as _};
+use futures::{FutureExt as _, Stream, TryStreamExt as _};
 use tokio_util::codec::{Decoder as _, Encoder as _, FramedRead};
 use tracing::{Instrument as _, Span, debug, instrument, trace};
 
@@ -110,8 +110,16 @@ pub trait ServeExt: Serve {
                         buffer: mem::take(dec.read_buffer_mut()),
                         inner: dec.into_inner(),
                     };
+                    let rx = rx.map(|rx| rx(&incoming, &[])).transpose();
+                    let rx = rx.context("failed to index async parameters")?;
+                    let rx = rx.map(|rx| {
+                        rx.map(move |res| {
+                            drop(incoming);
+                            res
+                        })
+                    });
                     let span = Span::current();
-                    Ok((cx, params, rx.map(|f| f(incoming)), move |results| {
+                    Ok((cx, params, rx, move |results| {
                         Box::pin(
                             async move {
                                 let mut enc = Results::Encoder::default();
@@ -123,12 +131,13 @@ pub trait ServeExt: Serve {
                                     .write_bytes(buf.freeze())
                                     .await
                                     .context("failed to transmit synchronous results")?;
-                                let tx = enc.take_deferred();
+                                let tx =
+                                    enc.take_deferred().map(|tx| tx(&outgoing, &[])).transpose();
+                                let tx = tx.context("failed to index async results")?;
+                                drop(outgoing);
                                 if let Some(tx) = tx {
                                     debug!("transmitting async results");
-                                    tx(outgoing)
-                                        .await
-                                        .context("failed to write async results")?;
+                                    tx.await.context("failed to write async results")?;
                                 }
                                 Ok(())
                             }

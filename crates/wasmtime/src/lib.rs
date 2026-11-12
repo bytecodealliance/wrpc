@@ -350,16 +350,11 @@ where
         .await
         .context("failed to flush outgoing stream")
         .map_err(CallError::Flush)?;
-    try_join_all(
-        zip(0.., deferred)
-            .filter_map(|(i, f)| f.map(|f| (tx.index(&[i]), f)))
-            .map(|(w, f)| async move {
-                let w = w.map_err(wasmtime::Error::from)?;
-                f(w).await
-            }),
-    )
-    .await
-    .map_err(CallError::Deferred)?;
+    let deferred = zip(0.., deferred)
+        .filter_map(|(i, f)| f.map(|f| f(&tx, &[i])))
+        .collect::<wasmtime::Result<Vec<_>>>()
+        .map_err(CallError::Deferred)?;
+    try_join_all(deferred).await.map_err(CallError::Deferred)?;
     Ok(())
 }
 
