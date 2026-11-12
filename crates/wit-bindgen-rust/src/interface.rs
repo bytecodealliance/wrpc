@@ -1526,7 +1526,7 @@ impl<'a> wit_bindgen_core::InterfaceGenerator<'a> for InterfaceGenerator<'a> {
                 uwriteln!(
                     self.src,
                     r"
-impl<W: {wrpc_transport}::Sink> {wrpc_transport}::Encode<W> for &self::{name}
+impl<W: {wrpc_transport}::DeferredWrite> {wrpc_transport}::Encode<W> for &self::{name}
 {{
     type Encoder = {mod_name}::Encoder<W>;
 }}",
@@ -1535,7 +1535,7 @@ impl<W: {wrpc_transport}::Sink> {wrpc_transport}::Encode<W> for &self::{name}
             uwriteln!(
                 self.src,
                 r"
-impl<W: {wrpc_transport}::Sink> {wrpc_transport}::Encode<W> for self::{name}
+impl<W: {wrpc_transport}::DeferredWrite> {wrpc_transport}::Encode<W> for self::{name}
 {{
     type Encoder = {mod_name}::Encoder<W>;
 }}
@@ -1547,7 +1547,7 @@ impl {wrpc_transport}::Decode for self::{name}
 }}
 
 mod {mod_name} {{
-    pub struct Encoder<W: {wrpc_transport}::Sink> 
+    pub struct Encoder<W: {wrpc_transport}::DeferredWrite> 
     {{",
             );
 
@@ -1565,7 +1565,7 @@ mod {mod_name} {{
                 self.src,
                 r"}}
     #[automatically_derived]
-    impl<W: {wrpc_transport}::Sink> ::core::default::Default for Encoder<W>
+    impl<W: {wrpc_transport}::DeferredWrite> ::core::default::Default for Encoder<W>
     {{
         fn default() -> Self {{
             Self{{"
@@ -1585,7 +1585,7 @@ mod {mod_name} {{
     }}
 
     #[automatically_derived]
-    impl<W: {wrpc_transport}::Sink> {wrpc_transport}::Deferred<W> for Encoder<W>
+    impl<W: {wrpc_transport}::DeferredWrite> {wrpc_transport}::Deferred<W> for Encoder<W>
     {{
         fn take_deferred(&mut self) -> ::core::option::Option<{wrpc_transport}::DeferredFn<W>> {{"
             );
@@ -1798,7 +1798,7 @@ mod {mod_name} {{
                     self.src,
                     r#"
     #[automatically_derived]
-    impl<W: {wrpc_transport}::Sink> {tokio_util}::codec::Encoder<{name}> for Encoder<W> 
+    impl<W: {wrpc_transport}::DeferredWrite> {tokio_util}::codec::Encoder<{name}> for Encoder<W> 
     {{
         type Error = ::std::io::Error;
 
@@ -1941,15 +1941,15 @@ pub struct {}(());",
             uwriteln!(
                 self.src,
                 r#"
-impl<W: {wrpc_transport}::Sink> {wrpc_transport}::Encode<W> for self::{name} {{
+impl<W: {wrpc_transport}::DeferredWrite> {wrpc_transport}::Encode<W> for self::{name} {{
     type Encoder = {mod_name}::Codec;
 }}
 
-impl<W: {wrpc_transport}::Sink> {wrpc_transport}::Encode<W> for &self::{name} {{
+impl<W: {wrpc_transport}::DeferredWrite> {wrpc_transport}::Encode<W> for &self::{name} {{
     type Encoder = {mod_name}::Codec;
 }}
 
-impl<W: {wrpc_transport}::Sink> {wrpc_transport}::Encode<W> for &&self::{name} {{
+impl<W: {wrpc_transport}::DeferredWrite> {wrpc_transport}::Encode<W> for &&self::{name} {{
     type Encoder = {mod_name}::Codec;
 }}
 
@@ -2117,15 +2117,15 @@ mod {mod_name} {{
                 uwriteln!(
                     self.src,
                     r#"
-impl<W: {wrpc_transport}::Sink> {wrpc_transport}::Encode<W> for self::{name} {{
+impl<W: {wrpc_transport}::DeferredWrite> {wrpc_transport}::Encode<W> for self::{name} {{
     type Encoder = {mod_name}::Codec;
 }}
 
-impl<W: {wrpc_transport}::Sink> {wrpc_transport}::Encode<W> for &self::{name} {{
+impl<W: {wrpc_transport}::DeferredWrite> {wrpc_transport}::Encode<W> for &self::{name} {{
     type Encoder = {mod_name}::Codec;
 }}
 
-impl<W: {wrpc_transport}::Sink> {wrpc_transport}::Encode<W> for &&self::{name} {{
+impl<W: {wrpc_transport}::DeferredWrite> {wrpc_transport}::Encode<W> for &&self::{name} {{
     type Encoder = {mod_name}::Codec;
 }}
 
@@ -2210,12 +2210,12 @@ mod {mod_name} {{
                     uwrite!(
                         self.src,
                         r#"
-impl<W: {wrpc_transport}::Sink> {wrpc_transport}::Encode<W> for &self::{name}
+impl<W: {wrpc_transport}::DeferredWrite> {wrpc_transport}::Encode<W> for &self::{name}
 {{
     type Encoder = {mod_name}::Encoder<W>;
 }}
 
-impl<W: {wrpc_transport}::Sink> {wrpc_transport}::Encode<W> for &&self::{name}
+impl<W: {wrpc_transport}::DeferredWrite> {wrpc_transport}::Encode<W> for &&self::{name}
 {{
     type Encoder = {mod_name}::Encoder<W>;
 }}
@@ -2226,7 +2226,7 @@ impl<W: {wrpc_transport}::Sink> {wrpc_transport}::Encode<W> for &&self::{name}
                 uwrite!(
                     self.src,
                     r#"
-impl<W: {wrpc_transport}::Sink> {wrpc_transport}::Encode<W> for self::{name}
+impl<W: {wrpc_transport}::DeferredWrite> {wrpc_transport}::Encode<W> for self::{name}
 {{
     type Encoder = {mod_name}::Encoder<W>;
 }}
@@ -2268,7 +2268,7 @@ mod {mod_name} {{
                         self.src,
                         r#"
     #[automatically_derived]
-    impl<W: {wrpc_transport}::Sink> {tokio_util}::codec::Encoder<{ty}> for Encoder<W> 
+    impl<W: {wrpc_transport}::DeferredWrite> {tokio_util}::codec::Encoder<{ty}> for Encoder<W> 
     {{
         type Error = ::std::io::Error;
 
@@ -2622,11 +2622,11 @@ mod {mod_name} {{
             uwriteln!(
                 self.src,
                 r#"
-impl<W: {wrpc_transport}::Sink> {wrpc_transport}::Encode<W> for self::{name} {{
+impl<W: {wrpc_transport}::DeferredWrite> {wrpc_transport}::Encode<W> for self::{name} {{
     type Encoder = {mod_name}::Codec;
 }}
 
-impl<W: {wrpc_transport}::Sink> {wrpc_transport}::Encode<W> for &self::{name} {{
+impl<W: {wrpc_transport}::DeferredWrite> {wrpc_transport}::Encode<W> for &self::{name} {{
     type Encoder = {mod_name}::Codec;
 }}
 

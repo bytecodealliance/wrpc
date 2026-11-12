@@ -4,7 +4,7 @@ use bytes::BytesMut;
 use tokio_util::codec::Encoder;
 use wasm_wave::value::Value;
 use wasm_wave::wasm::WasmValue;
-use wrpc_transport::{Deferred, DeferredFn, Encode, Sink};
+use wrpc_transport::{Deferred, DeferredFn, DeferredWrite, Encode};
 
 use crate::ValueEncoder;
 
@@ -49,11 +49,11 @@ impl<V: WasmValue> Encoder<TypedValue<V>> for TypedValueEncoder {
     }
 }
 
-impl<V: WasmValue, W: Sink> Encode<W> for TypedValue<V> {
+impl<V: WasmValue, W: DeferredWrite> Encode<W> for TypedValue<V> {
     type Encoder = TypedValueEncoder;
 }
 
-impl<V: WasmValue, W: Sink> Encode<W> for &TypedValue<V> {
+impl<V: WasmValue, W: DeferredWrite> Encode<W> for &TypedValue<V> {
     type Encoder = TypedValueEncoder;
 }
 

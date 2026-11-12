@@ -31,7 +31,7 @@ use wasmtime::component::{
 use wasmtime::error::Context as _;
 use wasmtime::{AsContextMut, StoreContextMut};
 use wrpc_transport::frame::{Incoming, Outgoing};
-use wrpc_transport::{Decode, Encode, READ_CHUNK_SIZE, Sink as _};
+use wrpc_transport::{Decode, DeferredWrite as _, Encode, READ_CHUNK_SIZE};
 
 use crate::{RemoteResource, ResourceTypes, WrpcView};
 
