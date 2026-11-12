@@ -40,7 +40,7 @@ func ReadFuture[T any](r IndexReadCloser, f func(IndexReadCloser, ...uint32) (T,
 	ch := make(chan T, 1)
 	if ok {
 		slog.Debug("reading ready future")
-		v, deferred, err := f(r, path...)
+		v, deferred, err := f(r, append(path, 0)...)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to read ready future: %w", err)
 		}
@@ -60,19 +60,17 @@ func ReadFuture[T any](r IndexReadCloser, f func(IndexReadCloser, ...uint32) (T,
 			defer closeNested(r)
 		}
 		slog.Debug("reading pending future")
-		v, deferred, err := f(r)
+		v, deferred, err := f(r, 0)
 		if err != nil {
 			return fmt.Errorf("failed to read pending future: %w", err)
+		}
+		if r.Buffered() > 0 {
+			return errors.New("received data after pending future value end")
 		}
 		ch <- v
 		close(ch)
 		if deferred != nil {
-			if err := deferred(ctx); err != nil {
-				return err
-			}
-		}
-		if r.Buffered() > 0 {
-			return errors.New("received data after pending future value end")
+			return deferred(ctx)
 		}
 		return nil
 	}, nil
@@ -109,7 +107,7 @@ func WriteFuture[T any](v <-chan T, w ByteWriter, f func(T, ByteWriter) (func(co
 			return fmt.Errorf("failed to write pending future value: %w", err)
 		}
 		if write != nil {
-			return write(ctx, w)
+			return IndexWrite(write, 0)(ctx, w)
 		}
 		return nil
 	}, nil

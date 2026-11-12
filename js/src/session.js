@@ -80,7 +80,7 @@ async function writeFuture(out, ty, value) {
   const w = new Writer();
   /** @type {any[]} */
   const sink = [];
-  if (ty) encodeValue(w, ty, v, sink, []);
+  if (ty) encodeValue(w, ty, v, sink, [0]);
   const bytes = w.finish();
   await (bytes.length > 0 ? out.write(bytes) : out.close());
   await Promise.all(sink.map((e) => writeDeferred(out.index(e.path), e)));
@@ -181,15 +181,16 @@ async function writeChunk(out, elem, chunk, base, tasks) {
  * Decode one value of type `ty` from the async reader `ar`, pulling more input
  * until a whole value is available. Returns the value and the descriptors of
  * any pending `stream`/`future` values nested within it (with paths relative to
- * the value).
+ * the value, prefixed with `path`).
  * @param {AsyncReader} ar
  * @param {Type} ty
+ * @param {number[]} [path]
  */
-function decodeOne(ar, ty) {
+function decodeOne(ar, ty, path = []) {
   return ar.decode(function* (r) {
     /** @type {DecodeDeferred[]} */
     const sink = [];
-    return { value: yield* decodeSteps(r, ty, sink, []), sink };
+    return { value: yield* decodeSteps(r, ty, sink, path), sink };
   });
 }
 
@@ -259,24 +260,19 @@ function expect(mux, path, sink) {
 }
 
 /**
- * Receive the pending values in `sink`, decoded at `path`. A value at `path`
- * itself continues on `ar`, the reader it was decoded from.
+ * Receive the pending values in `sink`, decoded at `path`.
  * @param {Mux} mux @param {number[]} path @param {DecodeDeferred[]} sink
- * @param {AsyncReader} [ar]
  */
-function readNested(mux, path, sink, ar) {
-  return Promise.all(
-    sink.map((e) => readDeferred(mux, [...path, ...e.path], e, e.path.length ? undefined : ar)),
-  );
+function readNested(mux, path, sink) {
+  return Promise.all(sink.map((e) => readDeferred(mux, [...path, ...e.path], e)));
 }
 
 /**
  * Receive one pending value at `path` and feed its placeholder.
  * @param {Mux} mux @param {number[]} path @param {DecodeDeferred} entry
- * @param {AsyncReader} [ar]
  * @returns {Promise<unknown>}
  */
-async function readDeferred(mux, path, entry, ar) {
+async function readDeferred(mux, path, entry) {
   switch (entry.kind) {
     case "inline":
       entry.queue.onCancel(([chunk]) => {
@@ -284,10 +280,10 @@ async function readDeferred(mux, path, entry, ar) {
       });
       return;
     case "future":
-      return readFuture(mux, path, entry, ar ?? mux.incoming(path));
+      return readFuture(mux, path, entry, mux.incoming(path));
     case "stream":
       mux.onDiscard(path, () => entry.queue.cancel(DISCARDED));
-      return readStream(mux, path, entry.ty, entry.queue, ar ?? mux.incoming(path));
+      return readStream(mux, path, entry.ty, entry.queue, mux.incoming(path));
   }
 }
 
@@ -298,7 +294,7 @@ async function readDeferred(mux, path, entry, ar) {
 async function readFuture(mux, path, entry, ar) {
   let decoded;
   try {
-    if (entry.ty) decoded = await decodeOne(ar, entry.ty);
+    if (entry.ty) decoded = await decodeOne(ar, entry.ty, [0]);
     else if (await ar.fill(1)) throw unexpectedError(path);
     else decoded = { value: undefined, sink: [] };
   } catch (err) {
@@ -308,11 +304,9 @@ async function readFuture(mux, path, entry, ar) {
     if (ar.remaining().length) throw unexpectedError(path);
     return;
   }
-  const { value, sink } = decoded;
-  // A value nested at the future's own path continues reading it.
-  if (!sink.some((e) => e.kind !== "inline" && e.path.length === 0)) mux.finish(path, ar);
-  const nested = readNested(mux, path, sink, ar);
-  entry.resolve(value);
+  mux.finish(path, ar);
+  const nested = readNested(mux, path, decoded.sink);
+  entry.resolve(decoded.value);
   await nested;
 }
 

@@ -245,6 +245,49 @@ test("an invocation sends no frames for empty data", async () => {
   }
 });
 
+test("values nested in a future are indexed below it", { timeout: 1000 }, async () => {
+  /** @type {Uint8Array[]} */
+  const sent = [];
+  /** @type {Transport} */
+  const peer = {
+    read: async () => null,
+    write: (bytes) => void sent.push(bytes),
+    closeWrite: () => {},
+  };
+  const ty = t.future(t.future(t.u8));
+  const { done } = await invoke(
+    peer,
+    "foo",
+    "bar",
+    [ty],
+    [Promise.resolve(Promise.resolve(7))],
+    [],
+  );
+  await done;
+  assert.deepEqual(
+    Buffer.concat(sent),
+    Buffer.from("\x01\x03foo\x03bar\x00\x01\x00\x01\x00\x01\x00\x02\x00\x00\x01\x07", "latin1"),
+  );
+
+  for (const frames of /** @type {Frame[][]} */ ([
+    [
+      [[], [0]],
+      [[0], [0]],
+      [[0, 0], [7]],
+    ],
+    [
+      [[], [1, 0]],
+      [[0, 0], [7]],
+    ],
+  ])) {
+    const { inbound, transport } = await feed(frames);
+    inbound.close();
+    const { results, done } = await get(transport, [ty]);
+    assert.equal(await await results[0], 7);
+    await done;
+  }
+});
+
 test("a value split across many frames and chunks decodes", async () => {
   /** @type {Uint8Array[]} */
   const frames = [];
@@ -605,7 +648,7 @@ test(
     const { inbound, transport } = await feed([
       [[], [0]],
       [
-        [0, 0],
+        [0, 0, 0],
         [1, 0],
       ],
       [[0], [0]],
@@ -613,7 +656,7 @@ test(
         { length: 1000 },
         (_, i) =>
           /** @type {Frame} */ ([
-            [0, 0],
+            [0, 0, 0],
             [1, i & 0xff],
           ]),
       ),
@@ -795,17 +838,17 @@ for (const [
     "closed before it is declared",
     t.future(t.tuple(t.future())),
     [[[], [0]]],
-    [0, 0],
+    [0, 0, 0],
     [[[0], [0]]],
   ],
   [
     "not declared by its value",
     t.future(t.tuple(t.u8, t.future(t.u8))),
     [[[], [0]]],
-    [0, 0],
+    [0, 0, 0],
     [
       [[0], [5, 0]],
-      [[0, 1], [6]],
+      [[0, 0, 1], [6]],
     ],
   ],
   ["the reply does not carry", t.option(t.stream(t.u8)), [[[], [0]]], [0], []],
@@ -856,9 +899,9 @@ for (const [
     [
       [[], [0]],
       [[0], [0]],
-      [[0, 0], [5]],
+      [[0, 0, 0], [5]],
     ],
-    [0, 0],
+    [0, 0, 0],
     [],
   ],
 ])) {

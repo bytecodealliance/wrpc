@@ -178,7 +178,7 @@ func TestAsyncTruncatedStream(t *testing.T) {
 
 func TestAsyncEchoTruncatedStream(t *testing.T) {
 	ctx, client := serveAsync(t, integration.AsyncHandler{})
-	r := invokeTruncatedStream(t, ctx, client, wrpc.NewSubscribePath().Index(0))
+	r := invokeTruncatedStream(t, ctx, client, wrpc.NewSubscribePath().Index(0), wrpc.NewSubscribePath().Index(0).Index(0))
 	fut, deferred, err := wrpc.ReadFuture(r, wrpc.ReadByteStream, 0)
 	if err != nil {
 		require.ErrorIs(t, err, syscall.ECONNRESET)
