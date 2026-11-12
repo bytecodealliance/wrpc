@@ -25,8 +25,8 @@ use crate::{Deferred as _, DeferredWrite, Encode, Index, READ_CHUNK_SIZE};
 const MAX_PENDING_STREAM_BATCH: usize = 1 << 20;
 
 /// State of an invocation shared by its handles
-struct IncomingState<I> {
-    rx: I,
+struct IncomingState<T> {
+    stream: T,
     /// Declared paths
     paths: Box<[Box<[Option<usize>]>]>,
     /// Decoder of the frame headers
@@ -50,9 +50,14 @@ struct IncomingState<I> {
     failed: bool,
 }
 
-impl<I: AsyncRead + Unpin> IncomingState<I> {
+impl<T: AsyncRead + Unpin> IncomingState<T> {
+    fn fail(&mut self) {
+        self.failed = true;
+        self.wake();
+    }
+
     /// Fails the invocation with `err`, unless it failed already, waking all handles
-    fn fail(&mut self, err: std::io::Error) -> std::io::Error {
+    fn fail_err(&mut self, err: std::io::Error) -> std::io::Error {
         if !self.failed {
             error!(?err, "invocation failed");
             self.failed = true;
@@ -79,7 +84,11 @@ impl<I: AsyncRead + Unpin> IncomingState<I> {
                 break Ok(header);
             }
             self.rx_buf.reserve(READ_CHUNK_SIZE);
-            let n = ready!(poll_read_buf(Pin::new(&mut self.rx), cx, &mut self.rx_buf))?;
+            let n = ready!(poll_read_buf(
+                Pin::new(&mut self.stream),
+                cx,
+                &mut self.rx_buf
+            ))?;
             if n == 0 {
                 break self.header.decode_eof(&mut self.rx_buf);
             }
@@ -150,7 +159,8 @@ impl<I: AsyncRead + Unpin> IncomingState<I> {
             let closed = self.remaining == 0;
             if !closed && self.rx_buf.is_empty() {
                 self.rx_buf.reserve(READ_CHUNK_SIZE);
-                let Poll::Ready(n) = poll_read_buf(Pin::new(&mut self.rx), cx, &mut self.rx_buf)?
+                let Poll::Ready(n) =
+                    poll_read_buf(Pin::new(&mut self.stream), cx, &mut self.rx_buf)?
                 else {
                     break;
                 };
@@ -234,7 +244,7 @@ fn pending<T>(wakers: &mut Vec<Waker>, cx: &Context<'_>) -> Poll<T> {
 }
 
 /// Fails egress of an invocation, which failed
-fn fail_outgoing<O>(outgoing: &Weak<std::sync::Mutex<OutgoingState<O>>>) {
+fn fail_outgoing<T>(outgoing: &Weak<std::sync::Mutex<OutgoingState<T>>>) {
     if let Some(state) = outgoing.upgrade() {
         let mut state = lock(&state);
         state.failed = true;
@@ -255,13 +265,15 @@ fn lock<T: ?Sized>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> 
 ///
 /// The streams are polled by the handles, nothing is spawned: data is received only while a
 /// handle reads or the future returned by [`Incoming::closed`] is polled, and sent only while a
-/// handle writes, flushes or shuts down. A frame is received as a whole before the next one and
+/// handle writes, flushes, shuts down or closes. A frame is received as a whole before the next one and
 /// held until the handle of its path reads it, so all handles of an invocation must be read
 /// concurrently.
 /// The root [Incoming] handle and a handle, which read data of its path, must read the end of
 /// it before it is dropped. Other handles of paths, which carry no value, such as the elements
-/// of a list of futures, need not be read. The write half of the stream is dropped with the
-/// last [Outgoing] handle and the read half with the last [Incoming] handle and [Closed] future.
+/// of a list of futures, need not be read. Every [Outgoing] handle must be closed with
+/// [`Outgoing::close`], the last one shuts the write half of the stream down, which is otherwise
+/// dropped with the last handle without being shut down. The read half is dropped with the last
+/// [Incoming] handle and [Closed] future.
 /// A handle of a declared path, which did not read data, is not known to expect any, since
 /// merged variant paths may carry none, so a frame received on its path after it was dropped,
 /// or on a closed path, is held like one, whose handle was not indexed yet, stalling ingress
@@ -292,13 +304,13 @@ pub fn mux(
     let header = HeaderDecoder::new(depth, u32::MAX);
     let outgoing_state = Arc::new(std::sync::Mutex::new(OutgoingState {
         buffer: tx_buf,
-        stream: Box::pin(tx) as Pin<Box<dyn AsyncWrite + Send + Unpin>>,
+        stream: Box::pin(tx) as _,
         pending: Vec::default(),
         failed: false,
         written: 0,
     }));
     let incoming_state = Arc::new(std::sync::Mutex::new(IncomingState {
-        rx: Box::pin(rx) as Pin<Box<dyn AsyncRead + Send + Unpin>>,
+        stream: Box::pin(rx) as _,
         paths,
         header,
         rx_buf,
@@ -310,14 +322,15 @@ pub fn mux(
         incoming: 1,
         failed: false,
     }));
+    let incoming = Arc::downgrade(&incoming_state);
     let outgoing = Arc::downgrade(&outgoing_state);
     (
         Outgoing {
             path: Box::default(),
             path_buf: Bytes::from_static(&[0]),
             closed: 0,
-            incoming: Arc::downgrade(&incoming_state),
             state: outgoing_state,
+            incoming,
         },
         Incoming {
             path: Box::default(),
@@ -348,7 +361,7 @@ impl Drop for Incoming {
         state.incoming = state.incoming.saturating_sub(1);
         if state.readers.remove(&self.path).is_some() {
             trace!(path = ?self.path, "dropping handle of an open path");
-            state.fail(std::io::Error::new(
+            state.fail_err(std::io::Error::new(
                 std::io::ErrorKind::BrokenPipe,
                 format!("`{:?}` dropped before it was closed", self.path),
             ));
@@ -359,7 +372,7 @@ impl Drop for Incoming {
             .is_some_and(|frame| state.incoming == 0 || **frame == *self.path);
         if !self.buffer.is_empty() || unread {
             trace!(path = ?self.path, "dropping handle with unprocessed data");
-            state.fail(std::io::Error::new(
+            state.fail_err(std::io::Error::new(
                 std::io::ErrorKind::BrokenPipe,
                 "received data was not processed",
             ));
@@ -475,7 +488,7 @@ impl AsyncRead for Incoming {
         let res = {
             let mut state = lock(&this.state);
             let res = ready!(state.poll_read(&this.path, cx, buf));
-            res.map_err(|err| state.fail(err))
+            res.map_err(|err| state.fail_err(err))
         };
         if res.is_err() {
             fail_outgoing(&this.outgoing);
@@ -504,7 +517,7 @@ impl Future for Closed {
         let res = {
             let mut state = lock(&self.state);
             let res = ready!(state.poll_closed(cx));
-            res.map_err(|err| state.fail(err))
+            res.map_err(|err| state.fail_err(err))
         };
         if res.is_err() {
             fail_outgoing(&self.outgoing);
@@ -513,15 +526,15 @@ impl Future for Closed {
     }
 }
 
-struct OutgoingState<O> {
+struct OutgoingState<T> {
     buffer: BytesMut,
-    stream: O,
+    stream: T,
     pending: Vec<Waker>,
     failed: bool,
-    written: u64,
+    written: usize,
 }
 
-impl<O> OutgoingState<O> {
+impl<T> OutgoingState<T> {
     fn wake(&mut self) {
         for w in mem::take(&mut self.pending) {
             w.wake();
@@ -533,7 +546,7 @@ impl<O> OutgoingState<O> {
 pub struct Outgoing {
     path: Box<[usize]>,
     path_buf: Bytes,
-    closed: u64,
+    closed: usize,
     state: Arc<std::sync::Mutex<OutgoingState<Pin<Box<dyn AsyncWrite + Send + Unpin>>>>>,
     incoming: Weak<std::sync::Mutex<IncomingState<Pin<Box<dyn AsyncRead + Send + Unpin>>>>>,
 }
@@ -544,14 +557,29 @@ impl Outgoing {
         lock(&self.state).buffer.len()
     }
 
-    fn fail<O>(&self, state: &mut OutgoingState<O>) {
+    fn fail<T>(&self, state: &mut OutgoingState<T>) {
         state.failed = true;
-        state.wake();
         if let Some(state) = self.incoming.upgrade() {
-            let mut state = lock(&state);
-            state.failed = true;
-            state.wake();
+            lock(&state).fail();
         }
+    }
+
+    /// Shuts the handle down and drops it, shutting the stream down if it is the last handle
+    pub async fn close(mut self) -> std::io::Result<()> {
+        self.shutdown().await?;
+        let Some(state) = Arc::into_inner(self.state) else {
+            return Ok(());
+        };
+        let OutgoingState { mut stream, .. } = state
+            .into_inner()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Err(err) = stream.shutdown().await {
+            if let Some(state) = self.incoming.upgrade() {
+                lock(&state).fail();
+            }
+            return Err(err);
+        }
+        Ok(())
     }
 
     fn poll_write(
@@ -566,8 +594,7 @@ impl Outgoing {
         let buf = &buf[..n as _];
         let res = if state.stream.is_write_vectored() {
             loop {
-                let buffer = state.buffer.split();
-                let buffered = buffer.len();
+                let buffered = state.buffer.len();
                 let res = if buffered == 0 {
                     state.stream.as_mut().poll_write_vectored(
                         cx,
@@ -581,14 +608,13 @@ impl Outgoing {
                     state.stream.as_mut().poll_write_vectored(
                         cx,
                         &[
-                            IoSlice::new(&buffer),
+                            IoSlice::new(&state.buffer),
                             IoSlice::new(&self.path_buf),
                             IoSlice::new(n_buf),
                             IoSlice::new(buf),
                         ],
                     )
                 };
-                state.buffer.unsplit(buffer);
                 let Poll::Ready(res) = res else {
                     return pending(&mut state.pending, cx);
                 };
@@ -596,9 +622,7 @@ impl Outgoing {
                 match res {
                     Ok(0) => break Err(std::io::ErrorKind::WriteZero.into()),
                     Ok(w) => {
-                        state.written = state
-                            .written
-                            .saturating_add(u64::try_from(w).unwrap_or(u64::MAX));
+                        state.written = state.written.saturating_add(w);
                         let Some(w) = w.checked_sub(buffered) else {
                             state.buffer.advance(w);
                             continue;
@@ -640,9 +664,7 @@ impl Outgoing {
             state.buffer.extend_from_slice(n_buf);
             state.buffer.extend_from_slice(buf);
             loop {
-                let buffer = state.buffer.split();
-                let res = state.stream.as_mut().poll_write(cx, &buffer);
-                state.buffer.unsplit(buffer);
+                let res = state.stream.as_mut().poll_write(cx, &state.buffer);
                 let Poll::Ready(res) = res else {
                     state.buffer.truncate(buffered);
                     return pending(&mut state.pending, cx);
@@ -651,9 +673,7 @@ impl Outgoing {
                 match res {
                     Ok(0) => break Err(std::io::ErrorKind::WriteZero.into()),
                     Ok(w) => {
-                        state.written = state
-                            .written
-                            .saturating_add(u64::try_from(w).unwrap_or(u64::MAX));
+                        state.written = state.written.saturating_add(w);
                         state.buffer.advance(w);
                         if w < buffered {
                             buffered = buffered.saturating_sub(w);
@@ -678,13 +698,11 @@ impl Outgoing {
     ) -> Poll<std::io::Result<()>> {
         let res = loop {
             if state.buffer.is_empty() {
-                match state.stream.as_mut().poll_flush(cx) {
-                    Poll::Ready(res) => {
-                        state.wake();
-                        break res;
-                    }
-                    Poll::Pending => return pending(&mut state.pending, cx),
-                }
+                let Poll::Ready(res) = state.stream.as_mut().poll_flush(cx) else {
+                    return pending(&mut state.pending, cx);
+                };
+                state.wake();
+                break res;
             }
             let Poll::Ready(res) = state.stream.as_mut().poll_write(cx, &state.buffer) else {
                 return pending(&mut state.pending, cx);
@@ -694,9 +712,7 @@ impl Outgoing {
                 Ok(0) => break Err(std::io::ErrorKind::WriteZero.into()),
                 Ok(n) => {
                     state.buffer.advance(n);
-                    state.written = state
-                        .written
-                        .saturating_add(u64::try_from(n).unwrap_or(u64::MAX));
+                    state.written = state.written.saturating_add(n);
                 }
                 Err(err) => break Err(err),
             }
@@ -735,8 +751,8 @@ impl Index for Outgoing {
 
 /// Writes to the stream as frames, buffering the bytes the stream did not accept, which are
 /// written before the next frame of any path. Shutting the handle down closes the path by
-/// writing an empty frame and resolves once the buffered bytes are written. Writing to a handle
-/// after it was shut down is not supported.
+/// writing an empty frame and resolves once it is written, the stream is shut down by
+/// [`Outgoing::close`]. Writing to a handle after it was shut down is not supported.
 impl AsyncWrite for Outgoing {
     #[instrument(
         level = "trace",
@@ -777,19 +793,10 @@ impl AsyncWrite for Outgoing {
         }
         if this.closed == 0 {
             ready!(this.poll_write(&mut state, cx, &[]))?;
-            let buffered = u64::try_from(state.buffer.len()).unwrap_or(u64::MAX);
-            this.closed = state.written.saturating_add(buffered);
+            this.closed = state.written.saturating_add(state.buffer.len());
         }
         if state.written < this.closed {
             ready!(this.poll_flush(&mut state, cx))?;
-        }
-        if Arc::strong_count(&this.state) == 1 {
-            let res = ready!(state.stream.as_mut().poll_shutdown(cx));
-            state.wake();
-            if res.is_err() {
-                this.fail(&mut state);
-            }
-            return Poll::Ready(res);
         }
         Poll::Ready(Ok(()))
     }
@@ -812,8 +819,7 @@ impl DeferredWrite for Outgoing {
         self.write_all(&buf).await?;
         let nested = enc.take_deferred().map(|f| f(&self, &[0]));
         let nested = nested.transpose()?;
-        self.shutdown().await?;
-        drop(self);
+        self.close().await?;
         let Some(nested) = nested else {
             return Ok(());
         };
@@ -879,14 +885,11 @@ impl DeferredWrite for Outgoing {
                     res?;
                 }
                 res = async {
-                    if !buf.is_empty() {
+                    if buf.is_empty() {
+                        self.flush().await.map(|()| 0)
+                    } else {
                         trace!(?buf, "writing bytes from buffer");
                         self.write(&buf).await
-                    } else if ended {
-                        trace!("closing stream");
-                        self.shutdown().await.map(|()| 0)
-                    } else {
-                        self.flush().await.map(|()| 0)
                     }
                 }, if pending || !buf.is_empty() || (ended && !closed) => {
                     let n = res?;
@@ -904,7 +907,7 @@ impl DeferredWrite for Outgoing {
                 }
             }
         }
-        drop(self);
+        self.close().await?;
         while let Some(res) = tasks.next().await {
             res?;
         }
@@ -924,7 +927,7 @@ impl DeferredWrite for Outgoing {
                     let Some(chunk) = chunk else {
                         trace!("writing stream end");
                         self.write_all(&buf).await?;
-                        return self.shutdown().await
+                        return self.close().await
                     };
                     if chunk.is_empty() {
                         continue;
@@ -972,7 +975,7 @@ impl DeferredWrite for Outgoing {
                     if n == 0 {
                         trace!("writing stream end");
                         self.write_all(&buf).await?;
-                        return self.shutdown().await
+                        return self.close().await
                     }
                     let n = u32::try_from(n).map_err(|err| {
                         std::io::Error::new(std::io::ErrorKind::InvalidInput, err)
@@ -1197,18 +1200,15 @@ mod tests {
         let ((), (), (), buf) = join!(
             async {
                 outgoing.write_all(b"\x2b").await.unwrap();
-                outgoing.shutdown().await.unwrap();
-                drop(outgoing);
+                outgoing.close().await.unwrap();
             },
             async {
                 sub.write_all(&data).await.unwrap();
-                sub.shutdown().await.unwrap();
-                drop(sub);
+                sub.close().await.unwrap();
             },
             async {
                 nested.write_all(b"\x2c").await.unwrap();
-                nested.shutdown().await.unwrap();
-                drop(nested);
+                nested.close().await.unwrap();
             },
             async {
                 let mut buf = Vec::default();
@@ -1341,7 +1341,7 @@ mod tests {
     #[test_log::test(tokio::test)]
     async fn final_flush() {
         let (tx, mut rx) = duplex(1);
-        let (mut outgoing, _incoming) = mux(
+        let (outgoing, _incoming) = mux(
             tx,
             b"".as_slice(),
             BytesMut::default(),
@@ -1351,8 +1351,7 @@ mod tests {
         let mut buf = Vec::default();
         let ((), n) = join!(
             async {
-                outgoing.shutdown().await.unwrap();
-                drop(outgoing);
+                outgoing.close().await.unwrap();
             },
             rx.read_to_end(&mut buf),
         );

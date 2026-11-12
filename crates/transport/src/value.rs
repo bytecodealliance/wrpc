@@ -2610,8 +2610,7 @@ mod tests {
             let f = v.encode(&mut T::Encoder::default(), &mut buf)?;
             root.write_all(&buf).await?;
             let f = f.expect("deferred write missing")(&root, &[])?;
-            root.shutdown().await?;
-            drop(root);
+            root.close().await?;
             f.await?;
             let mut frames = Vec::default();
             rx.read_to_end(&mut frames).await?;
@@ -2731,7 +2730,7 @@ mod tests {
 
         for (ready, expected) in [("foo", &b"\x03foo\x03bar"[..]), ("", b"\x03bar")] {
             let (tx, rx) = duplex(1024);
-            let (mut root, _rx) = mux(
+            let (root, _rx) = mux(
                 tx,
                 CLOSED,
                 BytesMut::default(),
@@ -2741,13 +2740,12 @@ mod tests {
             let w = root.index(&[0])?;
             w.write_stream_bytes(0, stream::iter([ready, "bar"].map(Bytes::from)))
                 .await?;
-            root.shutdown().await?;
-            drop(root);
+            root.close().await?;
             let frames = read_frames(rx).await?;
             assert_eq!(frames, expected);
 
             let (tx, rx) = duplex(1024);
-            let (mut root, _rx) = mux(
+            let (root, _rx) = mux(
                 tx,
                 CLOSED,
                 BytesMut::default(),
@@ -2757,8 +2755,7 @@ mod tests {
             let w = root.index(&[0])?;
             w.write_stream_read(0, ready.into(), b"bar".as_slice())
                 .await?;
-            root.shutdown().await?;
-            drop(root);
+            root.close().await?;
             let frames = read_frames(rx).await?;
             assert_eq!(frames, expected);
         }

@@ -109,10 +109,9 @@ where
                     let tx = tx.map(|tx| tx(&outgoing, &[])).transpose();
                     let tx = tx.context("failed to index async results")?;
                     outgoing
-                        .shutdown()
+                        .close()
                         .await
                         .context("failed to close result channel")?;
-                    drop(outgoing);
                     if let Some(tx) = tx {
                         debug!("transmitting async results");
                         tx.await.context("failed to write async results")?;

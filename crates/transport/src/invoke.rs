@@ -80,10 +80,9 @@ where
             let tx = tx.map(|tx| tx(&outgoing, &[])).transpose();
             let tx = tx.context("failed to index async parameters")?;
             outgoing
-                .shutdown()
+                .close()
                 .await
                 .context("failed to close parameter channel")?;
-            drop(outgoing);
             if let Some(tx) = tx {
                 debug!("transmitting async parameters");
                 tx.await.context("failed to write async parameters")?;

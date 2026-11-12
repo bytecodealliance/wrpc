@@ -192,11 +192,10 @@ where
         let deferred = handle_deferred(&tx, &[], deferred)
             .context("failed to index asynchronous result values")
             .map_err(CallError::Deferred)?;
-        tx.shutdown()
+        tx.close()
             .await
             .context("failed to close results")
             .map_err(CallError::Flush)?;
-        drop(tx);
         deferred
             .await
             .context("failed to transmit asynchronous result values")

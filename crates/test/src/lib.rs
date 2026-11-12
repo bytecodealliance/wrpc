@@ -179,10 +179,9 @@ where
                 .await
                 .context("failed to write `foo.bar` parameters")?;
             outgoing
-                .shutdown()
+                .close()
                 .await
                 .context("failed to close `foo.bar` parameters")?;
-            drop(outgoing);
             try_join!(
                 async {
                     info!("reading `foo`");
@@ -203,10 +202,9 @@ where
                         .await
                         .context("failed to write `client->server`")?;
                     nested_tx
-                        .shutdown()
+                        .close()
                         .await
                         .context("failed to close `client->server`")?;
-                    drop(nested_tx);
                     info!("wrote `client->server`");
                     anyhow::Ok(())
                 },
@@ -261,8 +259,7 @@ where
                         .write_all(b"foo")
                         .await
                         .context("failed to write `foo`")?;
-                    outgoing.shutdown().await.context("failed to close `foo`")?;
-                    drop(outgoing);
+                    outgoing.close().await.context("failed to close `foo`")?;
                     info!("wrote `foo`");
                     anyhow::Ok(())
                 },
@@ -273,10 +270,9 @@ where
                         .await
                         .context("failed to write `server->client`")?;
                     nested_tx
-                        .shutdown()
+                        .close()
                         .await
                         .context("failed to close `server->client`")?;
-                    drop(nested_tx);
                     info!("wrote `server->client`");
                     anyhow::Ok(())
                 },
