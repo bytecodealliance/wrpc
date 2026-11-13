@@ -1,32 +1,33 @@
+use core::any::Any;
+use core::borrow::Borrow;
 use core::future::{pending, ready};
-use core::iter::zip;
+use core::iter::{self, zip};
 use core::mem;
-use core::ops::{BitOrAssign, Shl};
+use core::ops::{BitOrAssign, Deref, Shl};
 use core::pin::Pin;
 use core::task::{Context, Poll};
 
 use std::collections::HashSet;
 
-use bytes::{BufMut as _, BytesMut};
+use bytes::{Buf as _, BufMut as _, BytesMut};
 use futures::stream::{self, FuturesUnordered};
 use futures::{StreamExt as _, TryStreamExt as _};
-use tokio::io::{AsyncRead, AsyncReadExt as _};
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::codec::{Decoder, Encoder, FramedRead};
 use tokio_util::sync::PollSender;
-use tracing::{error, instrument, trace, warn};
+use tracing::{debug, error, instrument, trace, warn};
 use uuid::Uuid;
-use wasm_tokio::cm::{AsyncReadValue as _, F32Codec, F64Codec};
+use wasm_tokio::cm::{BoolCodec, F32Codec, F64Codec, S8Codec, U8Codec};
 use wasm_tokio::{
-    AsyncReadCore as _, AsyncReadLeb128 as _, AsyncReadUtf8 as _, CoreNameEncoder,
-    CoreVecEncoderBytes, DEFAULT_MAX_INITIAL_CAPACITY, Leb128Encoder, Utf8Codec,
+    CoreNameDecoder, CoreNameEncoder, CoreVecEncoderBytes, DEFAULT_MAX_INITIAL_CAPACITY,
+    Leb128DecoderI16, Leb128DecoderI32, Leb128DecoderI64, Leb128DecoderU8, Leb128DecoderU16,
+    Leb128DecoderU32, Leb128DecoderU64, Leb128Encoder, Utf8Codec,
 };
 use wasmtime::bail;
 use wasmtime::component::types::{Case, Field};
 use wasmtime::component::{
-    Accessor, ComponentType, Destination, FutureAny, FutureConsumer, FutureReader, Lift, Lower,
-    Source, StreamAny, StreamConsumer, StreamProducer, StreamReader, StreamResult, Type, Val,
-    VecBuffer,
+    Accessor, Destination, FutureAny, FutureConsumer, FutureReader, Lift, Lower, Source, StreamAny,
+    StreamConsumer, StreamProducer, StreamReader, StreamResult, Type, Val, VecBuffer,
 };
 use wasmtime::error::Context as _;
 use wasmtime::{AsContextMut, StoreContextMut};
@@ -159,48 +160,6 @@ where
     }))
 }
 
-trait Payload: ComponentType + Lift + Lower + Send + Sync + Unpin + 'static {
-    fn from_val(v: Option<Val>) -> Option<Self>;
-}
-
-impl Payload for () {
-    fn from_val(v: Option<Val>) -> Option<Self> {
-        v.is_none().then_some(())
-    }
-}
-
-macro_rules! impl_payload {
-    ($($t:ty => $case:ident),+ $(,)?) => {
-        $(
-            impl Payload for $t {
-                fn from_val(v: Option<Val>) -> Option<Self> {
-                    if let Some(Val::$case(v)) = v {
-                        Some(v)
-                    } else {
-                        None
-                    }
-                }
-            }
-        )+
-    };
-}
-
-impl_payload!(
-    bool => Bool,
-    i8 => S8,
-    u8 => U8,
-    i16 => S16,
-    u16 => U16,
-    i32 => S32,
-    u32 => U32,
-    i64 => S64,
-    u64 => U64,
-    f32 => Float32,
-    f64 => Float64,
-    char => Char,
-    String => String,
-);
-
 macro_rules! with_payload {
     ($ty:expr, $p:ident => $body:expr, $unsupported:expr) => {
         match $ty {
@@ -276,12 +235,12 @@ fn encode_future<P, T>(
     offset: usize,
 ) -> wasmtime::Result<DeferredFn>
 where
-    P: Payload + Encode,
+    P: Encode + Lift + Lower + Send + Sync + 'static,
     std::io::Error: From<<P::Encoder as Encoder<P>>::Error>,
 {
     struct Consumer<P>(Option<oneshot::Sender<P>>);
 
-    impl<P: Payload, D> FutureConsumer<D> for Consumer<P> {
+    impl<P: Lift + Lower + Send + Sync + 'static, D> FutureConsumer<D> for Consumer<P> {
         type Item = P;
 
         fn poll_consume(
@@ -319,12 +278,12 @@ fn encode_stream<P, T>(
     offset: usize,
 ) -> wasmtime::Result<DeferredFn>
 where
-    P: Payload + Encode,
+    P: Encode + Lift + Lower + Send + Sync + 'static,
     std::io::Error: From<<P::Encoder as Encoder<P>>::Error>,
 {
     struct Consumer<P: Send + 'static>(PollSender<Vec<P>>);
 
-    impl<P: Payload, D> StreamConsumer<D> for Consumer<P> {
+    impl<P: Lift + Lower + Send + Sync + 'static, D> StreamConsumer<D> for Consumer<P> {
         type Item = P;
 
         fn poll_consume(
@@ -365,165 +324,206 @@ where
     }))
 }
 
-async fn read_payload<P, T>(
-    store: &mut impl WithStore<Data = T>,
-    r: &mut Pin<&mut Incoming>,
-    resources: &ResourceTypes,
-    ty: Option<&Type>,
-    path: &[usize],
-) -> std::io::Result<P>
-where
-    P: Payload,
-    T: WrpcView + 'static,
-{
-    let v = if let Some(ty) = ty {
-        let mut v = Val::Bool(false);
-        Box::pin(read_value(store, r, resources, &mut v, ty, path)).await?;
-        Some(v)
-    } else {
-        None
-    };
-    P::from_val(v).ok_or_else(|| std::io::Error::other("payload value type mismatch"))
+fn report(errors: &mpsc::Sender<std::io::Error>, err: std::io::Error) {
+    if let Err(err) = errors.try_send(err) {
+        debug!(err = %err.into_inner(), "failed to receive asynchronous value");
+    }
 }
 
-async fn read_future<P, T>(
-    store: &mut impl WithStore<Data = T>,
-    r: &mut Pin<&mut Incoming>,
-    resources: &ResourceTypes,
-    ty: Option<&Type>,
-    path: &[usize],
-) -> std::io::Result<FutureAny>
+fn poll_chunk<D, P>(
+    rx: &mut FramedRead<Incoming, D>,
+    cx: &mut Context<'_>,
+) -> Poll<std::io::Result<Option<D::Item>>>
 where
-    P: Payload + Decode,
-    T: WrpcView + 'static,
+    D: Decoder<Item: Deref<Target = [P]>>,
+    std::io::Error: From<D::Error>,
+{
+    let chunk = match rx.poll_next_unpin(cx) {
+        Poll::Ready(Some(Ok(chunk))) => chunk,
+        Poll::Ready(Some(Err(err))) => return Poll::Ready(Err(err.into())),
+        Poll::Pending => return Poll::Pending,
+        Poll::Ready(None) => {
+            return Poll::Ready(Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "stream end missing",
+            )));
+        }
+    };
+    if !chunk.is_empty() {
+        Poll::Ready(Ok(Some(chunk)))
+    } else if rx.read_buffer().is_empty() {
+        Poll::Ready(Ok(None))
+    } else {
+        Poll::Ready(Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "received data after stream end",
+        )))
+    }
+}
+
+fn pending_future<P, D>(
+    mut store: StoreContextMut<'_, D>,
+    r: Incoming,
+    errors: mpsc::Sender<std::io::Error>,
+) -> wasmtime::Result<Val>
+where
+    P: Decode + Lift + Lower + Send + Sync + 'static,
+    D: 'static,
     std::io::Error: From<<P::Decoder as Decoder>::Error>,
 {
-    let fut = if r.read_option_status().await? {
-        let v = read_payload::<P, T>(store, r, resources, ty, path).await?;
-        store.with_store(|mut store| {
-            FutureReader::new(&mut store, ready(wasmtime::error::Ok(v)))
-                .and_then(|fut| fut.try_into_future_any(store))
-        })
-    } else {
-        let r = r.index(path).map_err(std::io::Error::other)?;
-        store.with_store(|mut store| {
-            FutureReader::new(&mut store, async move {
-                let mut rx = FramedRead::new(r, P::Decoder::default());
-                let v = rx.next().await.map(|v| v.map_err(std::io::Error::from));
-                let processed = rx.read_buffer().is_empty();
-                drop(rx);
-                match v {
-                    Some(Ok(v)) if processed => wasmtime::error::Ok(v),
-                    Some(Ok(..)) => {
-                        error!("received data after future value");
-                        pending().await
-                    }
-                    Some(Err(err)) => {
-                        error!(%err, "failed to receive future value");
-                        pending().await
-                    }
-                    None => {
-                        error!("future value missing");
-                        pending().await
-                    }
-                }
-            })
-            .and_then(|fut| fut.try_into_future_any(store))
-        })
-    };
-    fut.map_err(std::io::Error::other)
+    let fut = FutureReader::new(&mut store, async move {
+        let mut rx = FramedRead::new(r, P::Decoder::default());
+        let err = match rx.next().await {
+            Some(Ok(v)) if rx.read_buffer().is_empty() => return wasmtime::error::Ok(v),
+            Some(Ok(..)) => std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "received data after future value",
+            ),
+            Some(Err(err)) => err.into(),
+            None => std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "future value missing"),
+        };
+        report(&errors, err);
+        drop(rx);
+        pending().await
+    })?;
+    let fut = fut.try_into_future_any(store)?;
+    Ok(Val::Future(fut))
 }
 
-async fn read_stream<P, T>(
-    store: &mut impl WithStore<Data = T>,
-    r: &mut Pin<&mut Incoming>,
-    resources: &ResourceTypes,
-    ty: &Type,
-    path: &[usize],
-) -> std::io::Result<StreamAny>
+fn ready_future<P, D>(mut store: StoreContextMut<'_, D>, v: P) -> wasmtime::Result<Val>
 where
-    P: Payload + Decode<ListDecoder: Send>,
-    T: WrpcView + 'static,
+    P: Lift + Lower + Send + Sync + 'static,
+    D: 'static,
+{
+    let fut = FutureReader::new(&mut store, ready(wasmtime::error::Ok(v)))?;
+    let fut = fut.try_into_future_any(store)?;
+    Ok(Val::Future(fut))
+}
+
+struct Producer<P: Decode>(
+    Option<(
+        FramedRead<Incoming, P::ListDecoder>,
+        mpsc::Sender<std::io::Error>,
+    )>,
+);
+
+impl<P, D> StreamProducer<D> for Producer<P>
+where
+    P: Decode<ListDecoder: Send> + Lift + Lower + Send + Sync + 'static,
     std::io::Error: From<<P::ListDecoder as Decoder>::Error>,
 {
-    struct Producer<P: Decode>(Option<FramedRead<Incoming, P::ListDecoder>>);
+    type Item = P;
+    type Buffer = VecBuffer<P>;
 
-    impl<P, D> StreamProducer<D> for Producer<P>
-    where
-        P: Payload + Decode<ListDecoder: Send>,
-        std::io::Error: From<<P::ListDecoder as Decoder>::Error>,
-    {
-        type Item = P;
-        type Buffer = VecBuffer<P>;
-
-        fn poll_produce<'a>(
-            mut self: Pin<&mut Self>,
-            cx: &mut Context<'_>,
-            store: StoreContextMut<'a, D>,
-            mut dst: Destination<'a, P, VecBuffer<P>>,
-            finish: bool,
-        ) -> Poll<wasmtime::Result<StreamResult>> {
-            let n = dst.remaining(store)?;
-            if n == Some(0) {
-                return Poll::Ready(Ok(StreamResult::Completed));
-            }
-            if let Some(rx) = &mut self.0 {
-                match rx.poll_next_unpin(cx) {
-                    Poll::Ready(Some(Ok(chunk)))
-                        if chunk.is_empty() && rx.read_buffer().is_empty() =>
-                    {
-                        self.0 = None;
-                        return Poll::Ready(Ok(StreamResult::Dropped));
-                    }
-                    Poll::Ready(Some(Ok(chunk))) if chunk.is_empty() => {
-                        error!("received data after stream end");
-                        self.0 = None;
-                    }
-                    Poll::Ready(Some(Ok(chunk))) => {
-                        dst.set_buffer(chunk.into());
-                        return Poll::Ready(Ok(StreamResult::Completed));
-                    }
-                    Poll::Ready(Some(Err(err))) => {
-                        error!(err = %std::io::Error::from(err), "failed to receive stream chunk");
-                        self.0 = None;
-                    }
-                    Poll::Ready(None) => {
-                        error!("stream end missing");
-                        self.0 = None;
-                    }
-                    Poll::Pending => {}
+    fn poll_produce<'a>(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        store: StoreContextMut<'a, D>,
+        mut dst: Destination<'a, P, VecBuffer<P>>,
+        finish: bool,
+    ) -> Poll<wasmtime::Result<StreamResult>> {
+        let n = dst.remaining(store)?;
+        if n == Some(0) {
+            return Poll::Ready(Ok(StreamResult::Completed));
+        }
+        if let Some((rx, errors)) = &mut self.0 {
+            match poll_chunk(rx, cx) {
+                Poll::Ready(Ok(Some(chunk))) => {
+                    dst.set_buffer(chunk.into());
+                    return Poll::Ready(Ok(StreamResult::Completed));
                 }
+                Poll::Ready(Ok(None)) => {
+                    self.0 = None;
+                    return Poll::Ready(Ok(StreamResult::Dropped));
+                }
+                Poll::Ready(Err(err)) => {
+                    report(errors, err);
+                    self.0 = None;
+                }
+                Poll::Pending => {}
             }
-            if finish {
-                Poll::Ready(Ok(StreamResult::Cancelled))
-            } else {
-                Poll::Pending
-            }
+        }
+        if finish {
+            Poll::Ready(Ok(StreamResult::Cancelled))
+        } else {
+            Poll::Pending
         }
     }
+}
 
-    let stream = if r.read_option_status().await? {
-        let n = r.read_u32_leb128().await?;
-        let n = usize::try_from(n).unwrap_or(usize::MAX);
-        let mut vs = Vec::with_capacity(n.min(DEFAULT_MAX_INITIAL_CAPACITY / mem::size_of::<P>()));
-        for _ in 0..n {
-            let v = read_payload::<P, T>(store, r, resources, Some(ty), path).await?;
-            vs.push(v);
+fn pending_stream<P, D>(
+    mut store: StoreContextMut<'_, D>,
+    r: Incoming,
+    errors: mpsc::Sender<std::io::Error>,
+) -> wasmtime::Result<Val>
+where
+    P: Decode<ListDecoder: Send> + Lift + Lower + Send + Sync + 'static,
+    D: 'static,
+    std::io::Error: From<<P::ListDecoder as Decoder>::Error>,
+{
+    let rx = FramedRead::new(r, P::ListDecoder::default());
+    let stream = StreamReader::new(&mut store, Producer::<P>(Some((rx, errors))))?;
+    let stream = stream.try_into_stream_any(store)?;
+    Ok(Val::Stream(stream))
+}
+
+fn ready_stream<P, D>(mut store: StoreContextMut<'_, D>, vs: Vec<P>) -> wasmtime::Result<Val>
+where
+    P: Lift + Lower + Send + Sync + Unpin + 'static,
+    D: 'static,
+{
+    let stream = StreamReader::new(&mut store, vs)?;
+    let stream = stream.try_into_stream_any(store)?;
+    Ok(Val::Stream(stream))
+}
+
+#[cfg(feature = "wasmtime-wasi")]
+fn pending_input_stream<T: WrpcView>(
+    store: StoreContextMut<'_, T>,
+    r: Incoming,
+    errors: mpsc::Sender<std::io::Error>,
+) -> wasmtime::Result<Val> {
+    let rx = FramedRead::new(r, <wasm_tokio::CoreVecDecoderBytes>::default());
+    let chunks = stream::try_unfold((rx, errors), |(mut rx, errors)| async move {
+        match core::future::poll_fn(|cx| poll_chunk(&mut rx, cx)).await {
+            Ok(chunk) => Ok(chunk.map(|chunk| (chunk, (rx, errors)))),
+            Err(err) => {
+                let kind = err.kind();
+                report(&errors, err);
+                Err(std::io::Error::from(kind))
+            }
         }
-        store.with_store(|mut store| {
-            StreamReader::new(&mut store, vs).and_then(|stream| stream.try_into_stream_any(store))
-        })
-    } else {
-        let rx = r.index(path).map_err(std::io::Error::other)?;
-        store.with_store(|mut store| {
-            StreamReader::new(
-                &mut store,
-                Producer::<P>(Some(FramedRead::new(rx, P::ListDecoder::default()))),
-            )
-            .and_then(|stream| stream.try_into_stream_any(store))
-        })
-    };
-    stream.map_err(std::io::Error::other)
+    });
+    push_input_stream(
+        store,
+        Box::new(wasmtime_wasi::p2::pipe::AsyncReadStream::new(
+            tokio_util::io::StreamReader::new(chunks),
+        )),
+    )
+}
+
+#[cfg(feature = "wasmtime-wasi")]
+fn ready_input_stream<T: WrpcView>(
+    store: StoreContextMut<'_, T>,
+    buf: bytes::Bytes,
+) -> wasmtime::Result<Val> {
+    push_input_stream(
+        store,
+        Box::new(wasmtime_wasi::p2::pipe::MemoryInputPipe::new(buf)),
+    )
+}
+
+// The stream must be typed as `DynInputStream` (the host resource type),
+// otherwise the resulting resource handle carries the concrete reader type
+// and fails the guest's `own<input-stream>` type check.
+#[cfg(feature = "wasmtime-wasi")]
+fn push_input_stream<T: WrpcView>(
+    mut store: StoreContextMut<'_, T>,
+    stream: wasmtime_wasi::p2::DynInputStream,
+) -> wasmtime::Result<Val> {
+    let stream = store.data_mut().wrpc().table.push(stream)?;
+    let stream = stream.try_into_resource_any(store)?;
+    Ok(Val::Resource(stream))
 }
 
 impl<T> Encoder<&Val> for ValEncoder<'_, T>
@@ -877,7 +877,7 @@ where
                             .table
                             .delete(stream)
                             .context("failed to delete input stream")?;
-                        let items: Pin<Box<dyn AsyncRead + Send>> =
+                        let items: Pin<Box<dyn tokio::io::AsyncRead + Send>> =
                             Box::pin(tokio_util::io::StreamReader::new(
                                 futures::stream::try_unfold(stream, |mut stream| async move {
                                     loop {
@@ -994,411 +994,470 @@ where
     }
 }
 
-#[inline]
-async fn read_flags(n: usize, r: &mut (impl AsyncRead + Unpin)) -> std::io::Result<u128> {
-    let mut buf = 0u128.to_le_bytes();
-    r.read_exact(&mut buf[..n]).await?;
-    Ok(u128::from_le_bytes(buf))
+/// Progress of a [`ValDecoder`] within a partially-received value
+enum Partial {
+    Decoder(Box<dyn Any + Send>),
+    Uuid,
+    Seq {
+        n: usize,
+        vs: Vec<Val>,
+        elem: Option<Box<Partial>>,
+    },
+    Case {
+        v: Val,
+        ty: Type,
+        payload: Option<Box<Partial>>,
+    },
 }
 
-/// Read encoded value of type [`Type`] from an [`AsyncRead`] into a [`Val`]
-#[instrument(level = "trace", skip_all, fields(ty, path))]
-pub async fn read_value<T>(
-    store: &mut impl WithStore<Data = T>,
-    r: &mut Pin<&mut Incoming>,
-    resources: &ResourceTypes,
-    val: &mut Val,
-    ty: &Type,
-    path: &[usize],
-) -> std::io::Result<()>
+/// Decodes a tuple of [`Val`]s of types `tys`, e.g. function parameters.
+///
+/// Resources and asynchronous values are created in the store once their encoding is complete.
+/// Pending asynchronous values are received from the sub-streams of `rx`, which are indexed as
+/// soon as the values are decoded. Failures receiving them are sent on `errors`.
+pub struct ValDecoder<'a, T> {
+    store: T,
+    tys: &'a [Type],
+    resources: &'a ResourceTypes,
+    rx: &'a Incoming,
+    errors: mpsc::Sender<std::io::Error>,
+    state: Option<Box<Partial>>,
+}
+
+impl<T> ValDecoder<'_, T> {
+    #[must_use]
+    pub fn new<'a>(
+        store: T,
+        tys: &'a [Type],
+        resources: &'a ResourceTypes,
+        rx: &'a Incoming,
+        errors: mpsc::Sender<std::io::Error>,
+    ) -> ValDecoder<'a, T> {
+        ValDecoder {
+            store,
+            tys,
+            resources,
+            rx,
+            errors,
+            state: None,
+        }
+    }
+}
+
+fn decode_status(src: &mut BytesMut, kind: &str) -> std::io::Result<Option<usize>> {
+    let Some(&status) = src.first() else {
+        src.reserve(1);
+        return Ok(None);
+    };
+    if status > 1 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("invalid {kind} status byte value `{status}`"),
+        ));
+    }
+    src.advance(1);
+    Ok(Some(status.into()))
+}
+
+fn decode_discriminant(src: &mut BytesMut) -> std::io::Result<Option<usize>> {
+    let Some(v) = Leb128DecoderU32.decode(src)? else {
+        return Ok(None);
+    };
+    let v = usize::try_from(v)
+        .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))?;
+    Ok(Some(v))
+}
+
+fn decode_leaf<T>(
+    mut dec: T,
+    src: &mut BytesMut,
+    f: impl FnOnce(T::Item) -> Val,
+) -> std::io::Result<Option<Val>>
 where
-    T: WrpcView + 'static,
+    T: Decoder<Error = std::io::Error>,
 {
-    match ty {
-        Type::Bool => {
-            let v = r.read_bool().await?;
-            *val = Val::Bool(v);
-            Ok(())
-        }
-        Type::S8 => {
-            let v = r.read_i8().await?;
-            *val = Val::S8(v);
-            Ok(())
-        }
-        Type::U8 => {
-            let v = r.read_u8().await?;
-            *val = Val::U8(v);
-            Ok(())
-        }
-        Type::S16 => {
-            let v = r.read_i16_leb128().await?;
-            *val = Val::S16(v);
-            Ok(())
-        }
-        Type::U16 => {
-            let v = r.read_u16_leb128().await?;
-            *val = Val::U16(v);
-            Ok(())
-        }
-        Type::S32 => {
-            let v = r.read_i32_leb128().await?;
-            *val = Val::S32(v);
-            Ok(())
-        }
-        Type::U32 => {
-            let v = r.read_u32_leb128().await?;
-            *val = Val::U32(v);
-            Ok(())
-        }
-        Type::S64 => {
-            let v = r.read_i64_leb128().await?;
-            *val = Val::S64(v);
-            Ok(())
-        }
-        Type::U64 => {
-            let v = r.read_u64_leb128().await?;
-            *val = Val::U64(v);
-            Ok(())
-        }
-        Type::Float32 => {
-            let v = r.read_f32_le().await?;
-            *val = Val::Float32(v);
-            Ok(())
-        }
-        Type::Float64 => {
-            let v = r.read_f64_le().await?;
-            *val = Val::Float64(v);
-            Ok(())
-        }
-        Type::Char => {
-            let v = r.read_char_utf8().await?;
-            *val = Val::Char(v);
-            Ok(())
-        }
-        Type::String => {
-            let mut s = String::default();
-            r.read_core_name(&mut s, u32::MAX).await?;
-            *val = Val::String(s);
-            Ok(())
-        }
-        Type::List(ty) => {
-            let n = r.read_u32_leb128().await?;
-            let n = usize::try_from(n).unwrap_or(usize::MAX);
-            let mut vs =
-                Vec::with_capacity(n.min(DEFAULT_MAX_INITIAL_CAPACITY / mem::size_of::<Val>()));
-            let ty = ty.ty();
-            let mut path = path.to_vec();
-            for i in 0..n {
-                let mut v = Val::Bool(false);
-                path.push(i);
-                trace!(i, "reading list element value");
-                Box::pin(read_value(store, r, resources, &mut v, &ty, &path)).await?;
-                path.pop();
-                vs.push(v);
-            }
-            *val = Val::List(vs);
-            Ok(())
-        }
-        Type::Record(ty) => {
-            let fields = ty.fields();
-            let mut vs = Vec::with_capacity(fields.len());
-            let mut path = path.to_vec();
-            for (i, Field { name, ty }) in fields.enumerate() {
-                let mut v = Val::Bool(false);
-                path.push(i);
-                trace!(i, "reading struct field value");
-                Box::pin(read_value(store, r, resources, &mut v, &ty, &path)).await?;
-                path.pop();
-                vs.push((name.to_string(), v));
-            }
-            *val = Val::Record(vs);
-            Ok(())
-        }
-        Type::Tuple(ty) => {
-            let types = ty.types();
-            let mut vs = Vec::with_capacity(types.len());
-            let mut path = path.to_vec();
-            for (i, ty) in types.enumerate() {
-                let mut v = Val::Bool(false);
-                path.push(i);
-                trace!(i, "reading tuple element value");
-                Box::pin(read_value(store, r, resources, &mut v, &ty, &path)).await?;
-                path.pop();
-                vs.push(v);
-            }
-            *val = Val::Tuple(vs);
-            Ok(())
-        }
-        Type::Variant(ty) => {
-            let discriminant = r.read_u32_leb128().await?;
-            let discriminant = usize::try_from(discriminant)
-                .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
-            let Case { name, ty } = ty.cases().nth(discriminant).ok_or_else(|| {
-                std::io::Error::new(
-                    std::io::ErrorKind::InvalidInput,
-                    format!("unknown variant discriminant `{discriminant}`"),
-                )
-            })?;
-            let name = name.to_string();
-            if let Some(ty) = ty {
-                let mut v = Val::Bool(false);
-                trace!(variant = name, "reading nested variant value");
-                Box::pin(read_value(store, r, resources, &mut v, &ty, path)).await?;
-                *val = Val::Variant(name, Some(Box::new(v)));
-            } else {
-                *val = Val::Variant(name, None);
-            }
-            Ok(())
-        }
-        Type::Enum(ty) => {
-            let discriminant = r.read_u32_leb128().await?;
-            let discriminant = usize::try_from(discriminant)
-                .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
-            let name = ty.names().nth(discriminant).ok_or_else(|| {
-                std::io::Error::new(
-                    std::io::ErrorKind::InvalidInput,
-                    format!("unknown enum discriminant `{discriminant}`"),
-                )
-            })?;
-            *val = Val::Enum(name.to_string());
-            Ok(())
-        }
-        Type::Option(ty) => {
-            let ok = r.read_option_status().await?;
-            if ok {
-                let mut v = Val::Bool(false);
-                trace!("reading nested `option::some` value");
-                Box::pin(read_value(store, r, resources, &mut v, &ty.ty(), path)).await?;
-                *val = Val::Option(Some(Box::new(v)));
-            } else {
-                *val = Val::Option(None);
-            }
-            Ok(())
-        }
-        Type::Result(ty) => {
-            let ok = r.read_result_status().await?;
-            if ok {
-                if let Some(ty) = ty.ok() {
-                    let mut v = Val::Bool(false);
-                    trace!("reading nested `result::ok` value");
-                    Box::pin(read_value(store, r, resources, &mut v, &ty, path)).await?;
-                    *val = Val::Result(Ok(Some(Box::new(v))));
+    let v = dec.decode(src)?;
+    Ok(v.map(f))
+}
+
+fn decode_with<T>(
+    src: &mut BytesMut,
+    state: &mut Option<Box<Partial>>,
+) -> std::io::Result<Option<T::Item>>
+where
+    T: Decoder + Default + Send + 'static,
+    std::io::Error: From<T::Error>,
+{
+    let mut dec = match state.take().map(|state| *state) {
+        Some(Partial::Decoder(dec)) => dec.downcast().map_or_else(|_| T::default(), |dec| *dec),
+        _ => T::default(),
+    };
+    let v = dec.decode(src)?;
+    if v.is_none() {
+        *state = Some(Box::new(Partial::Decoder(Box::new(dec))));
+    }
+    Ok(v)
+}
+
+impl<T> ValDecoder<'_, T>
+where
+    T: WithStore<Data: WrpcView>,
+{
+    fn decode_seq(
+        &mut self,
+        src: &mut BytesMut,
+        path: &mut Vec<usize>,
+        state: &mut Option<Box<Partial>>,
+        len: Option<usize>,
+        tys: impl IntoIterator<Item: Borrow<Type>>,
+    ) -> std::io::Result<Option<Vec<Val>>> {
+        let (n, mut vs, mut elem) = match state.take().map(|state| *state) {
+            Some(Partial::Seq { n, vs, elem }) => (n, vs, elem),
+            _ => {
+                let n = if let Some(n) = len {
+                    n
                 } else {
-                    *val = Val::Result(Ok(None));
-                }
-            } else if let Some(ty) = ty.err() {
-                let mut v = Val::Bool(false);
-                trace!("reading nested `result::err` value");
-                Box::pin(read_value(store, r, resources, &mut v, &ty, path)).await?;
-                *val = Val::Result(Err(Some(Box::new(v))));
-            } else {
-                *val = Val::Result(Err(None));
+                    let Some(n) = Leb128DecoderU32.decode(src)? else {
+                        return Ok(None);
+                    };
+                    usize::try_from(n).unwrap_or(usize::MAX)
+                };
+                let vs =
+                    Vec::with_capacity(n.min(DEFAULT_MAX_INITIAL_CAPACITY / mem::size_of::<Val>()));
+                (n, vs, None)
             }
-            Ok(())
-        }
-        Type::Flags(ty) => {
-            let names = ty.names();
-            let flags = match names.len() {
-                ..=8 => read_flags(1, r).await?,
-                9..=16 => read_flags(2, r).await?,
-                17..=24 => read_flags(3, r).await?,
-                25..=32 => read_flags(4, r).await?,
-                33..=40 => read_flags(5, r).await?,
-                41..=48 => read_flags(6, r).await?,
-                49..=56 => read_flags(7, r).await?,
-                57..=64 => read_flags(8, r).await?,
-                65..=72 => read_flags(9, r).await?,
-                73..=80 => read_flags(10, r).await?,
-                81..=88 => read_flags(11, r).await?,
-                89..=96 => read_flags(12, r).await?,
-                97..=104 => read_flags(13, r).await?,
-                105..=112 => read_flags(14, r).await?,
-                113..=120 => read_flags(15, r).await?,
-                121..=128 => r.read_u128_le().await?,
-                bits @ 129.. => {
-                    let mut cap = bits / 8;
-                    if bits % 8 != 0 {
-                        cap = cap.saturating_add(1);
-                    }
-                    let mut buf = vec![0; cap];
-                    r.read_exact(&mut buf).await?;
-                    let mut vs = Vec::with_capacity(
-                        usize::try_from(buf.iter().map(|b| b.count_ones()).sum::<u32>())
-                            .unwrap_or(usize::MAX),
-                    );
-                    for (i, name) in names.enumerate() {
-                        if buf[i / 8] & (1 << (i % 8)) != 0 {
-                            vs.push(name.to_string());
-                        }
-                    }
-                    *val = Val::Flags(vs);
-                    return Ok(());
-                }
+        };
+        for ty in tys.into_iter().take(n).skip(vs.len()) {
+            path.push(vs.len());
+            let v = self.decode_ty(src, ty.borrow(), path, &mut elem)?;
+            path.pop();
+            let Some(v) = v else {
+                *state = Some(Box::new(Partial::Seq { n, vs, elem }));
+                return Ok(None);
             };
-            let mut vs =
-                Vec::with_capacity(usize::try_from(flags.count_ones()).unwrap_or(usize::MAX));
-            for (i, name) in zip(0.., names) {
-                if flags & (1 << i) != 0 {
-                    vs.push(name.to_string());
-                }
-            }
-            *val = Val::Flags(vs);
-            Ok(())
+            vs.push(v);
         }
-        Type::Own(ty) | Type::Borrow(ty) => {
-            #[cfg(feature = "wasmtime-wasi")]
-            if *ty == wasmtime::component::ResourceType::host::<wasmtime_wasi::p2::DynInputStream>()
-                || resources.io_streams.contains(ty)
-            {
-                // The stream must be typed as `DynInputStream` (the host resource type),
-                // otherwise the resulting resource handle carries the concrete reader type
-                // and fails the guest's `own<input-stream>` type check.
-                let stream: wasmtime_wasi::p2::DynInputStream =
-                    match r.read_u8().await? {
-                        0 => {
-                            let r = r.index(path).map_err(std::io::Error::other)?;
-                            Box::new(wasmtime_wasi::p2::pipe::AsyncReadStream::new(
-                                tokio_util::io::StreamReader::new(futures::stream::try_unfold(
-                                    tokio_util::codec::FramedRead::new(
-                                        r,
-                                        wasm_tokio::CoreVecDecoderBytes::<
-                                            DEFAULT_MAX_INITIAL_CAPACITY,
-                                        >::default(),
-                                    ),
-                                    |mut framed| async move {
-                                        match futures::StreamExt::next(&mut framed).await {
-                                            Some(Ok(chunk)) if chunk.is_empty() => {
-                                                if framed.read_buffer().is_empty() {
-                                                    Ok(None)
-                                                } else {
-                                                    Err(std::io::Error::new(
-                                                        std::io::ErrorKind::InvalidData,
-                                                        "received data after stream end",
-                                                    ))
-                                                }
-                                            }
-                                            Some(Ok(chunk)) => Ok(Some((chunk, framed))),
-                                            Some(Err(err)) => Err(err),
-                                            None => Err(std::io::ErrorKind::UnexpectedEof.into()),
-                                        }
-                                    },
-                                )),
-                            ))
-                        }
-                        1 => {
-                            let n = r.read_u32_leb128().await?;
-                            let len = usize::try_from(n).unwrap_or(usize::MAX);
-                            let mut buf = Vec::with_capacity(len.min(DEFAULT_MAX_INITIAL_CAPACITY));
-                            if r.take(n.into()).read_to_end(&mut buf).await? != len {
-                                return Err(std::io::ErrorKind::UnexpectedEof.into());
-                            }
-                            Box::new(wasmtime_wasi::p2::pipe::MemoryInputPipe::new(buf))
-                        }
-                        status => {
+        Ok(Some(vs))
+    }
+
+    fn decode_case(
+        &mut self,
+        src: &mut BytesMut,
+        path: &mut Vec<usize>,
+        state: &mut Option<Box<Partial>>,
+        case: impl FnOnce(&mut BytesMut) -> std::io::Result<Option<(Val, Option<Type>)>>,
+    ) -> std::io::Result<Option<Val>> {
+        let (mut v, ty, mut payload) = match state.take().map(|state| *state) {
+            Some(Partial::Case { v, ty, payload }) => (v, ty, payload),
+            _ => {
+                let Some((v, ty)) = case(src)? else {
+                    return Ok(None);
+                };
+                let Some(ty) = ty else {
+                    return Ok(Some(v));
+                };
+                (v, ty, None)
+            }
+        };
+        let Some(p) = self.decode_ty(src, &ty, path, &mut payload)? else {
+            *state = Some(Box::new(Partial::Case { v, ty, payload }));
+            return Ok(None);
+        };
+        if let Val::Variant(.., x) | Val::Option(x) | Val::Result(Ok(x) | Err(x)) = &mut v {
+            *x = Some(Box::new(p));
+        }
+        Ok(Some(v))
+    }
+
+    fn decode_async<D>(
+        &mut self,
+        src: &mut BytesMut,
+        path: &[usize],
+        state: &mut Option<Box<Partial>>,
+        kind: &str,
+        pending: impl FnOnce(
+            StoreContextMut<'_, T::Data>,
+            Incoming,
+            mpsc::Sender<std::io::Error>,
+        ) -> wasmtime::Result<Val>,
+        ready: impl FnOnce(StoreContextMut<'_, T::Data>, D::Item) -> wasmtime::Result<Val>,
+    ) -> std::io::Result<Option<Val>>
+    where
+        D: Decoder + Default + Send + 'static,
+        std::io::Error: From<D::Error>,
+    {
+        if state.is_none() {
+            let Some(status) = decode_status(src, kind)? else {
+                return Ok(None);
+            };
+            if status == 0 {
+                let r = self.rx.index(path)?;
+                let errors = self.errors.clone();
+                let v = self
+                    .store
+                    .with_store(|store| pending(store, r, errors))
+                    .map_err(std::io::Error::other)?;
+                return Ok(Some(v));
+            }
+        }
+        let Some(v) = decode_with::<D>(src, state)? else {
+            return Ok(None);
+        };
+        let v = self
+            .store
+            .with_store(|store| ready(store, v))
+            .map_err(std::io::Error::other)?;
+        Ok(Some(v))
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn decode_ty(
+        &mut self,
+        src: &mut BytesMut,
+        ty: &Type,
+        path: &mut Vec<usize>,
+        state: &mut Option<Box<Partial>>,
+    ) -> std::io::Result<Option<Val>> {
+        match ty {
+            Type::Bool => decode_leaf(BoolCodec, src, Val::Bool),
+            Type::S8 => decode_leaf(S8Codec, src, Val::S8),
+            Type::U8 => decode_leaf(U8Codec, src, Val::U8),
+            Type::S16 => decode_leaf(Leb128DecoderI16, src, Val::S16),
+            Type::U16 => decode_leaf(Leb128DecoderU16, src, Val::U16),
+            Type::S32 => decode_leaf(Leb128DecoderI32, src, Val::S32),
+            Type::U32 => decode_leaf(Leb128DecoderU32, src, Val::U32),
+            Type::S64 => decode_leaf(Leb128DecoderI64, src, Val::S64),
+            Type::U64 => decode_leaf(Leb128DecoderU64, src, Val::U64),
+            Type::Float32 => decode_leaf(F32Codec, src, Val::Float32),
+            Type::Float64 => decode_leaf(F64Codec, src, Val::Float64),
+            Type::Char => decode_leaf(Utf8Codec, src, Val::Char),
+            Type::String => {
+                let v = decode_with::<CoreNameDecoder>(src, state)?;
+                Ok(v.map(Val::String))
+            }
+            Type::List(ty) => {
+                let ty = ty.ty();
+                let vs = self.decode_seq(src, path, state, None, iter::repeat(&ty))?;
+                Ok(vs.map(Val::List))
+            }
+            Type::Record(ty) => {
+                let n = ty.fields().len();
+                let tys = ty.fields().map(|Field { ty, .. }| ty);
+                let Some(vs) = self.decode_seq(src, path, state, Some(n), tys)? else {
+                    return Ok(None);
+                };
+                let vs = zip(ty.fields(), vs)
+                    .map(|(Field { name, .. }, v)| (name.to_string(), v))
+                    .collect();
+                Ok(Some(Val::Record(vs)))
+            }
+            Type::Tuple(ty) => {
+                let n = ty.types().len();
+                let vs = self.decode_seq(src, path, state, Some(n), ty.types())?;
+                Ok(vs.map(Val::Tuple))
+            }
+            Type::Variant(ty) => self.decode_case(src, path, state, |src| {
+                let Some(discriminant) = decode_discriminant(src)? else {
+                    return Ok(None);
+                };
+                let Case { name, ty } = ty.cases().nth(discriminant).ok_or_else(|| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!("unknown variant discriminant `{discriminant}`"),
+                    )
+                })?;
+                Ok(Some((Val::Variant(name.to_string(), None), ty)))
+            }),
+            Type::Enum(ty) => {
+                let Some(discriminant) = decode_discriminant(src)? else {
+                    return Ok(None);
+                };
+                let name = ty.names().nth(discriminant).ok_or_else(|| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!("unknown enum discriminant `{discriminant}`"),
+                    )
+                })?;
+                Ok(Some(Val::Enum(name.to_string())))
+            }
+            Type::Option(ty) => self.decode_case(src, path, state, |src| {
+                let Some(status) = decode_status(src, "option")? else {
+                    return Ok(None);
+                };
+                Ok(Some((Val::Option(None), (status == 1).then(|| ty.ty()))))
+            }),
+            Type::Result(ty) => self.decode_case(src, path, state, |src| {
+                let Some(status) = decode_status(src, "result")? else {
+                    return Ok(None);
+                };
+                Ok(Some(if status == 0 {
+                    (Val::Result(Ok(None)), ty.ok())
+                } else {
+                    (Val::Result(Err(None)), ty.err())
+                }))
+            }),
+            Type::Flags(ty) => {
+                let names = ty.names();
+                let n = names.len().div_ceil(8).max(1);
+                if src.len() < n {
+                    src.reserve(n.saturating_sub(src.len()));
+                    return Ok(None);
+                }
+                let buf = src.split_to(n);
+                let vs = names
+                    .enumerate()
+                    .filter(|(i, ..)| buf[i / 8] & (1 << (i % 8)) != 0)
+                    .map(|(.., name)| name.to_string())
+                    .collect();
+                Ok(Some(Val::Flags(vs)))
+            }
+            Type::Own(ty) | Type::Borrow(ty) => {
+                #[cfg(feature = "wasmtime-wasi")]
+                if *ty
+                    == wasmtime::component::ResourceType::host::<wasmtime_wasi::p2::DynInputStream>(
+                    )
+                    || self.resources.io_streams.contains(ty)
+                {
+                    return self.decode_async::<wasm_tokio::CoreVecDecoderBytes>(
+                        src,
+                        path,
+                        state,
+                        "stream",
+                        pending_input_stream,
+                        ready_input_stream,
+                    );
+                }
+                if self.resources.guest.contains(ty) {
+                    let mut id = uuid::Bytes::default();
+                    if !matches!(state.take().as_deref(), Some(Partial::Uuid)) {
+                        let Some(n) = Leb128DecoderU8.decode(src)? else {
+                            return Ok(None);
+                        };
+                        if usize::from(n) != id.len() {
                             return Err(std::io::Error::new(
                                 std::io::ErrorKind::InvalidData,
-                                format!("invalid stream status byte value `{status}`"),
+                                format!(
+                                    "invalid guest resource handle length {n}, expected {}",
+                                    id.len()
+                                ),
                             ));
                         }
-                    };
-                let v = store.with_store(|mut store| {
-                    let res =
-                        store.data_mut().wrpc().table.push(stream).map_err(|err| {
-                            std::io::Error::new(std::io::ErrorKind::OutOfMemory, err)
-                        })?;
-                    res.try_into_resource_any(store)
-                        .map_err(std::io::Error::other)
-                })?;
-                *val = Val::Resource(v);
-                return Ok(());
+                    }
+                    if src.len() < id.len() {
+                        src.reserve(id.len().saturating_sub(src.len()));
+                        *state = Some(Box::new(Partial::Uuid));
+                        return Ok(None);
+                    }
+                    src.copy_to_slice(&mut id);
+                    let id = Uuid::from_bytes_le(id);
+                    trace!(?id, "lookup shared resource");
+                    let resource = self.store.with_store(|mut store| {
+                        store
+                            .data_mut()
+                            .wrpc()
+                            .shared_resources
+                            .0
+                            .get(&id)
+                            .copied()
+                            .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::NotFound))
+                    })?;
+                    Ok(Some(Val::Resource(resource)))
+                } else {
+                    Err(std::io::Error::new(
+                        std::io::ErrorKind::Unsupported,
+                        "decoding host resources not supported yet",
+                    ))
+                }
             }
-            if resources.guest.contains(ty) {
-                let mut id = uuid::Bytes::default();
-                debug_assert_eq!(id.len(), 16);
-                let n = r.read_u8_leb128().await?;
-                if usize::from(n) != id.len() {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::InvalidInput,
-                        format!(
-                            "invalid guest resource handle length {n}, expected {}",
-                            id.len()
-                        ),
-                    ));
-                }
-                let n = r.read_exact(&mut id).await?;
-                if n != id.len() {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::InvalidInput,
-                        format!(
-                            "invalid amount of guest resource handle bytes read {n}, expected {}",
-                            id.len()
-                        ),
-                    ));
-                }
-
-                let id = Uuid::from_bytes_le(id);
-                trace!(?id, "lookup shared resource");
-                let resource = store.with_store(|mut store| {
-                    store
-                        .data_mut()
-                        .wrpc()
-                        .shared_resources
-                        .0
-                        .get(&id)
-                        .copied()
-                        .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::NotFound))
-                })?;
-                *val = Val::Resource(resource);
-                Ok(())
-            } else {
+            Type::Future(ty) => with_payload!(
+                ty.ty(),
+                P => self.decode_async::<<P as Decode>::Decoder>(
+                    src,
+                    path,
+                    state,
+                    "future",
+                    pending_future::<P, _>,
+                    ready_future::<P, _>,
+                ),
                 Err(std::io::Error::new(
-                    std::io::ErrorKind::Unsupported,
-                    "decoding host resources not supported yet",
-                ))
-            }
-        }
-        Type::Future(ty) => {
-            let payload = ty.ty();
-            let future = with_payload!(
-                payload,
-                P => read_future::<P, T>(store, r, resources, payload.as_ref(), path).await,
-                return Err(std::io::Error::new(
                     std::io::ErrorKind::Unsupported,
                     "`future` payload type not supported, only primitive types and `string` are",
                 ))
-            )?;
-            *val = Val::Future(future);
-            Ok(())
+            ),
+            Type::Stream(ty) => {
+                let Some(payload) = ty.ty() else {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::Unsupported,
+                        "`stream` without a payload type not supported",
+                    ));
+                };
+                with_payload!(
+                    @some payload,
+                    P => self.decode_async::<<P as Decode>::ListDecoder>(
+                        src,
+                        path,
+                        state,
+                        "stream",
+                        pending_stream::<P, _>,
+                        ready_stream::<P, _>,
+                    ),
+                    Err(std::io::Error::new(
+                        std::io::ErrorKind::Unsupported,
+                        "`stream` payload type not supported, only primitive types and `string` are",
+                    ))
+                )
+            }
+            Type::ErrorContext => Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "`error-context` not supported",
+            )),
+            Type::Map(..) => Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "maps not supported",
+            )),
+            Type::FixedLengthList(..) => Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "fixed-length lists not supported",
+            )),
         }
-        Type::Stream(ty) => {
-            let Some(payload) = ty.ty() else {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::Unsupported,
-                    "`stream` without a payload type not supported",
-                ));
-            };
-            let stream = with_payload!(
-                @some payload,
-                P => read_stream::<P, T>(store, r, resources, &payload, path).await,
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::Unsupported,
-                    "`stream` payload type not supported, only primitive types and `string` are",
-                ))
-            )?;
-            *val = Val::Stream(stream);
-            Ok(())
+    }
+}
+
+impl<T> Decoder for ValDecoder<'_, T>
+where
+    T: WithStore<Data: WrpcView>,
+{
+    type Item = Vec<Val>;
+    type Error = std::io::Error;
+
+    fn decode(&mut self, src: &mut BytesMut) -> std::io::Result<Option<Vec<Val>>> {
+        let tys = self.tys;
+        let mut state = self.state.take();
+        let mut path = Vec::default();
+        let vs = self
+            .decode_seq(src, &mut path, &mut state, Some(tys.len()), tys)
+            .map_err(|err| {
+                let kind = err.kind();
+                std::io::Error::new(
+                    kind,
+                    wasmtime::Error::from(err)
+                        .context(format!("failed to decode value at path {path:?}")),
+                )
+            })?;
+        self.state = state;
+        Ok(vs)
+    }
+
+    fn decode_eof(&mut self, src: &mut BytesMut) -> std::io::Result<Option<Vec<Val>>> {
+        if let Some(vs) = self.decode(src)? {
+            return Ok(Some(vs));
         }
-        Type::ErrorContext => Err(std::io::Error::new(
-            std::io::ErrorKind::Unsupported,
-            "`error-context` not supported",
-        )),
-        Type::Map(..) => Err(std::io::Error::new(
-            std::io::ErrorKind::Unsupported,
-            "maps not supported",
-        )),
-        Type::FixedLengthList(..) => Err(std::io::Error::new(
-            std::io::ErrorKind::Unsupported,
-            "fixed-length lists not supported",
-        )),
+        if self.state.is_some() || !src.is_empty() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "parameter values incomplete",
+            ));
+        }
+        Ok(None)
     }
 }
