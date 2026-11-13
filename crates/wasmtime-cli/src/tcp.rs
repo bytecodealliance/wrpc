@@ -13,40 +13,15 @@ pub const DEFAULT_ADDR: &str = "[::1]:7761";
 /// TCP transport
 #[derive(Parser, Debug)]
 pub enum Command {
-    Run(RunArgs),
     Serve(ServeArgs),
-}
-
-/// Run a command component
-#[derive(Parser, Debug)]
-pub struct RunArgs {
-    /// Invocation timeout
-    #[arg(long, default_value = crate::DEFAULT_TIMEOUT)]
-    timeout: humantime::Duration,
-
-    /// Address to send import invocations to
-    #[arg(long, default_value = DEFAULT_ADDR)]
-    import: String,
-
-    /// Environment variable to set for the component, in `NAME=VALUE` form
-    #[arg(long = "env", value_name = "NAME=VALUE", value_parser = parse_env)]
-    envs: Vec<(Box<str>, Box<str>)>,
-
-    /// Path or URL to Wasm command component
-    workload: Box<str>,
 }
 
 /// Serve a reactor component
 #[derive(Parser, Debug)]
 pub struct ServeArgs {
-    /// Invocation timeout, also limiting how long an accepted connection may take to send its
-    /// invocation header
+    /// Limit on how long an accepted connection may take to send its invocation header
     #[arg(long, default_value = crate::DEFAULT_TIMEOUT)]
     timeout: humantime::Duration,
-
-    /// Address to send import invocations to
-    #[arg(long, default_value = DEFAULT_ADDR)]
-    import: String,
 
     /// Address to listen for export invocations on
     #[arg(long, default_value = DEFAULT_ADDR)]
@@ -56,7 +31,7 @@ pub struct ServeArgs {
     #[arg(long = "env", value_name = "NAME=VALUE", value_parser = parse_env)]
     envs: Vec<(Box<str>, Box<str>)>,
 
-    /// Path or URL to Wasm command component
+    /// Path or URL to Wasm reactor component
     workload: Box<str>,
 }
 
@@ -68,30 +43,10 @@ fn parse_env(s: &str) -> anyhow::Result<(Box<str>, Box<str>)> {
 }
 
 #[instrument(level = "trace", ret(level = "trace"))]
-pub async fn handle_run(
-    RunArgs {
-        timeout,
-        import,
-        envs,
-        ref workload,
-    }: RunArgs,
-) -> anyhow::Result<()> {
-    crate::handle_run(
-        wrpc_transport::tcp::Client::from(import),
-        (),
-        *timeout,
-        envs,
-        workload,
-    )
-    .await
-}
-
-#[instrument(level = "trace", ret(level = "trace"))]
 pub async fn handle_serve(
     ServeArgs {
         timeout,
         export,
-        import,
         envs,
         ref workload,
     }: ServeArgs,
@@ -101,15 +56,7 @@ pub async fn handle_serve(
         .with_context(|| format!("failed to bind TCP listener on `{export}`"))?;
     let srv = Arc::new(wrpc_transport::Server::default());
     let timeout = *timeout;
-    let mut handlers = crate::serve(
-        srv.as_ref(),
-        wrpc_transport::tcp::Client::from(import),
-        (),
-        timeout,
-        envs,
-        workload,
-    )
-    .await?;
+    let mut handlers = crate::serve(srv.as_ref(), envs, workload).await?;
     let accept = tokio::spawn({
         let srv = Arc::clone(&srv);
         async move {
@@ -157,7 +104,6 @@ pub async fn handle_serve(
 #[instrument(level = "trace", ret(level = "trace"))]
 pub async fn run(cmd: Command) -> anyhow::Result<()> {
     match cmd {
-        Command::Run(args) => handle_run(args).await,
         Command::Serve(args) => handle_serve(args).await,
     }
 }

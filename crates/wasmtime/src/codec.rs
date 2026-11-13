@@ -7,7 +7,7 @@ use core::task::{Context, Poll};
 
 use std::collections::HashSet;
 
-use bytes::{BufMut as _, Bytes, BytesMut};
+use bytes::{BufMut as _, BytesMut};
 use futures::stream::{self, FuturesUnordered};
 use futures::{StreamExt as _, TryStreamExt as _};
 use tokio::io::{AsyncRead, AsyncReadExt as _};
@@ -25,15 +25,15 @@ use wasmtime::bail;
 use wasmtime::component::types::{Case, Field};
 use wasmtime::component::{
     Accessor, ComponentType, Destination, FutureAny, FutureConsumer, FutureReader, Lift, Lower,
-    ResourceType, Source, StreamAny, StreamConsumer, StreamProducer, StreamReader, StreamResult,
-    Type, Val, VecBuffer,
+    Source, StreamAny, StreamConsumer, StreamProducer, StreamReader, StreamResult, Type, Val,
+    VecBuffer,
 };
 use wasmtime::error::Context as _;
 use wasmtime::{AsContextMut, StoreContextMut};
 use wrpc_transport::frame::{Incoming, Outgoing};
 use wrpc_transport::{Decode, DeferredWrite as _, Encode, READ_CHUNK_SIZE};
 
-use crate::{RemoteResource, ResourceTypes, WrpcView};
+use crate::{ResourceTypes, WrpcView};
 
 type DeferredFn = Box<
     dyn FnOnce(
@@ -861,7 +861,9 @@ where
             }
             (Val::Resource(resource), Type::Own(ty) | Type::Borrow(ty)) => {
                 #[cfg(feature = "wasmtime-wasi")]
-                if *ty == ResourceType::host::<wasmtime_wasi::p2::DynInputStream>()
+                if *ty
+                    == wasmtime::component::ResourceType::host::<wasmtime_wasi::p2::DynInputStream>(
+                    )
                     || self.resources.io_streams.contains(ty)
                 {
                     let stream = resource
@@ -917,27 +919,7 @@ where
                     }
                     return Ok(());
                 }
-                if resource.ty() == ResourceType::host::<RemoteResource>() {
-                    let resource = resource
-                        .try_into_resource(&mut self.store)
-                        .context("resource type mismatch")?;
-                    let table = self.store.data_mut().wrpc().table;
-                    if resource.owned() {
-                        let RemoteResource(buf) = table
-                            .delete(resource)
-                            .context("failed to delete remote resource")?;
-                        CoreVecEncoderBytes
-                            .encode(buf, dst)
-                            .context("failed to encode resource handle")
-                    } else {
-                        let RemoteResource(buf) = table
-                            .get(&resource)
-                            .context("failed to get remote resource")?;
-                        CoreVecEncoderBytes
-                            .encode(buf, dst)
-                            .context("failed to encode resource handle")
-                    }
-                } else if self.resources.guest.contains(ty) {
+                if self.resources.guest.contains(ty) {
                     let id = Uuid::now_v7();
                     CoreVecEncoderBytes
                         .encode(id.to_bytes_le().as_slice(), dst)
@@ -947,8 +929,7 @@ where
                         .store
                         .data_mut()
                         .wrpc()
-                        .ctx
-                        .shared_resources()
+                        .shared_resources
                         .0
                         .insert(id, *resource)
                         .is_some()
@@ -1018,16 +999,6 @@ async fn read_flags(n: usize, r: &mut (impl AsyncRead + Unpin)) -> std::io::Resu
     let mut buf = 0u128.to_le_bytes();
     r.read_exact(&mut buf[..n]).await?;
     Ok(u128::from_le_bytes(buf))
-}
-
-async fn read_bytes(r: &mut (impl AsyncRead + Unpin)) -> std::io::Result<Bytes> {
-    let n = r.read_u32_leb128().await?;
-    let len = usize::try_from(n).unwrap_or(usize::MAX);
-    let mut buf = Vec::with_capacity(len.min(DEFAULT_MAX_INITIAL_CAPACITY));
-    if r.take(n.into()).read_to_end(&mut buf).await? != len {
-        return Err(std::io::ErrorKind::UnexpectedEof.into());
-    }
-    Ok(buf.into())
 }
 
 /// Read encoded value of type [`Type`] from an [`AsyncRead`] into a [`Val`]
@@ -1276,7 +1247,7 @@ where
         }
         Type::Own(ty) | Type::Borrow(ty) => {
             #[cfg(feature = "wasmtime-wasi")]
-            if *ty == ResourceType::host::<wasmtime_wasi::p2::DynInputStream>()
+            if *ty == wasmtime::component::ResourceType::host::<wasmtime_wasi::p2::DynInputStream>()
                 || resources.io_streams.contains(ty)
             {
                 // The stream must be typed as `DynInputStream` (the host resource type),
@@ -1315,7 +1286,12 @@ where
                             ))
                         }
                         1 => {
-                            let buf = read_bytes(r).await?;
+                            let n = r.read_u32_leb128().await?;
+                            let len = usize::try_from(n).unwrap_or(usize::MAX);
+                            let mut buf = Vec::with_capacity(len.min(DEFAULT_MAX_INITIAL_CAPACITY));
+                            if r.take(n.into()).read_to_end(&mut buf).await? != len {
+                                return Err(std::io::ErrorKind::UnexpectedEof.into());
+                            }
                             Box::new(wasmtime_wasi::p2::pipe::MemoryInputPipe::new(buf))
                         }
                         status => {
@@ -1366,8 +1342,7 @@ where
                     store
                         .data_mut()
                         .wrpc()
-                        .ctx
-                        .shared_resources()
+                        .shared_resources
                         .0
                         .get(&id)
                         .copied()
@@ -1376,20 +1351,10 @@ where
                 *val = Val::Resource(resource);
                 Ok(())
             } else {
-                let buf = read_bytes(r).await?;
-                let resource = store.with_store(|mut store| {
-                    let resource = store
-                        .data_mut()
-                        .wrpc()
-                        .table
-                        .push(RemoteResource(buf))
-                        .map_err(|err| std::io::Error::new(std::io::ErrorKind::OutOfMemory, err))?;
-                    resource
-                        .try_into_resource_any(store)
-                        .map_err(std::io::Error::other)
-                })?;
-                *val = Val::Resource(resource);
-                Ok(())
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::Unsupported,
+                    "decoding host resources not supported yet",
+                ))
             }
         }
         Type::Future(ty) => {

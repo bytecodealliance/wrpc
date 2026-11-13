@@ -12,7 +12,7 @@
 //! identify those resources by collecting the component's `wasi:io/streams`
 //! imports up front and comparing against them.
 
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeSet, VecDeque};
 use std::sync::Arc;
 
 use wasmtime::Engine;
@@ -33,17 +33,21 @@ pub fn wasi_io_stream_resources(
     engine: &Engine,
     component: &types::Component,
 ) -> Vec<ResourceType> {
-    let mut imports = BTreeMap::new();
-    crate::collect_component_resource_imports(engine, component, &mut imports);
     let mut out = Vec::new();
-    for (instance, resources) in imports {
+    for (instance, types::ComponentExtern { ty, .. }) in component.imports(engine) {
         // Instance names are versioned, e.g. `wasi:io/streams@0.2.6`.
-        let base = instance.split('@').next().unwrap_or(&instance);
+        let base = instance.split('@').next().unwrap_or(instance);
         if base != "wasi:io/streams" {
             continue;
         }
-        for (name, ty) in resources {
-            if &*name == "input-stream" && !out.contains(&ty) {
+        let types::ComponentItem::ComponentInstance(ty) = ty else {
+            continue;
+        };
+        for (name, types::ComponentExtern { ty, .. }) in ty.exports(engine) {
+            if let types::ComponentItem::Resource(ty) = ty
+                && name == "input-stream"
+                && !out.contains(&ty)
+            {
                 out.push(ty);
             }
         }

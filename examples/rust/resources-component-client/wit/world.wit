@@ -1,5 +1,0 @@
-package wrpc-examples:resources-component-client;
-
-world client {
-    include wrpc-examples:resources/client;
-}
