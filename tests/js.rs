@@ -19,7 +19,7 @@ use tokio::time::timeout;
 use tokio::{select, spawn};
 use tokio_util::codec::BytesCodec;
 use tracing::{info, instrument};
-use wrpc_transport::{Connect as _, Index as _, invoke, tcp};
+use wrpc_transport::{Connect as _, invoke, tcp};
 
 pub mod common;
 

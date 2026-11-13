@@ -11,7 +11,7 @@ use std::collections::HashSet;
 
 use bytes::{Buf as _, BufMut as _, BytesMut};
 use futures::stream;
-use futures::{FutureExt as _, Stream, StreamExt as _};
+use futures::{FutureExt as _, Stream, StreamExt as _, TryFutureExt as _};
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::codec::{Decoder, Encoder};
 use tokio_util::sync::PollSender;
@@ -33,8 +33,7 @@ use wasmtime::error::Context as _;
 use wasmtime::{AsContextMut, StoreContextMut};
 use wrpc_transport::frame::{Incoming, Outgoing};
 use wrpc_transport::{
-    Decode, Deferred, DeferredFn, DeferredWrite as _, Encode, Index as _, READ_CHUNK_SIZE,
-    handle_deferred,
+    Decode, Deferred, DeferredFn, DeferredWrite as _, Encode, READ_CHUNK_SIZE, handle_deferred,
 };
 
 use crate::{ResourceTypes, WrpcView};
@@ -242,13 +241,8 @@ where
     let future = future.try_into_future_reader::<P>()?;
     future.pipe(store, Consumer(Some(tx)))?;
     Ok(Box::new(move |w, path| {
-        let w = w.index(path)?;
-        Ok(Box::pin(async move {
-            let v = rx
-                .await
-                .map_err(|_| std::io::Error::other("future dropped without a value"))?;
-            w.write_future(offset, ready(v)).await
-        }))
+        let item = rx.map_err(|_| std::io::Error::other("future dropped without a value"));
+        Ok(Box::pin(w.write_future(path, offset, item)))
     }))
 }
 
@@ -295,11 +289,8 @@ where
     let stream = stream.try_into_stream_reader::<P>()?;
     stream.pipe(store, Consumer(PollSender::new(tx)))?;
     Ok(Box::new(move |w, path| {
-        let w = w.index(path)?;
-        Ok(Box::pin(async move {
-            w.write_stream(offset, stream::poll_fn(move |cx| rx.poll_recv(cx)))
-                .await
-        }))
+        let items = stream::poll_fn(move |cx| rx.poll_recv(cx));
+        Ok(Box::pin(w.write_stream(path, offset, items)))
     }))
 }
 

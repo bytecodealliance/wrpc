@@ -24,7 +24,7 @@ use tokio::{select, spawn, try_join};
 use tokio_util::codec::BytesCodec;
 use tracing::info;
 use wrpc_transport::frame::{Incoming, Outgoing};
-use wrpc_transport::{Connect, Header, HeaderReadError, Index as _, accept, invoke, serve};
+use wrpc_transport::{Connect, Header, HeaderReadError, accept, invoke, serve};
 
 /// Maximum number of invocations [`serve_until`] serves concurrently
 pub const MAX_INVOCATIONS: usize = 64;

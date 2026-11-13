@@ -19,7 +19,7 @@ use tracing::{debug, error, instrument, trace};
 use wasm_tokio::{Leb128Encoder, put_u32_leb128};
 
 use crate::frame::{FrameHeader, HeaderDecoder};
-use crate::{Deferred as _, DeferredWrite, Encode, Index, READ_CHUNK_SIZE};
+use crate::{Deferred as _, DeferredWrite, Encode, READ_CHUNK_SIZE};
 
 /// Maximum number of bytes of encoded stream chunks buffered before they are written
 const MAX_PENDING_STREAM_BATCH: usize = 1 << 20;
@@ -736,8 +736,10 @@ impl Outgoing {
     }
 }
 
-impl Index for Outgoing {
-    fn index(&self, path: &[usize]) -> std::io::Result<Self> {
+impl Outgoing {
+    /// Index the outgoing stream using a structural `path`, returning a handle to the
+    /// multiplexed sub-stream addressed by it.
+    pub fn index(&self, path: &[usize]) -> std::io::Result<Self> {
         if path.is_empty() {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
@@ -762,190 +764,210 @@ impl Index for Outgoing {
 }
 
 impl DeferredWrite for Outgoing {
-    async fn write_future<T>(
-        mut self,
+    fn write_future<T>(
+        &self,
+        path: &[usize],
         _offset: usize,
-        item: impl Future<Output = T> + Send + 'static,
-    ) -> std::io::Result<()>
+        item: impl Future<Output = std::io::Result<T>> + Send + 'static,
+    ) -> impl Future<Output = std::io::Result<()>> + Send + 'static
     where
         T: Encode<Self>,
         std::io::Error: From<<T::Encoder as tokio_util::codec::Encoder<T>>::Error>,
     {
-        let item = item.await;
-        let mut enc = T::Encoder::default();
-        let mut buf = BytesMut::default();
-        enc.encode(item, &mut buf)?;
-        self.write(&buf).await?;
-        let nested = enc.take_deferred().map(|f| f(&self, &[0]));
-        let nested = nested.transpose()?;
-        self.close().await?;
-        let Some(nested) = nested else {
-            return Ok(());
-        };
-        nested.await
+        let w = self.index(path);
+        async move {
+            let mut w = w?;
+            let item = item.await?;
+            let mut enc = T::Encoder::default();
+            let mut buf = BytesMut::default();
+            enc.encode(item, &mut buf)?;
+            w.write(&buf).await?;
+            let nested = enc.take_deferred().map(|f| f(&w, &[0]));
+            let nested = nested.transpose()?;
+            w.close().await?;
+            let Some(nested) = nested else {
+                return Ok(());
+            };
+            nested.await
+        }
     }
 
-    async fn write_stream<T>(
-        mut self,
+    fn write_stream<T>(
+        &self,
+        path: &[usize],
         _offset: usize,
         mut items: impl Stream<Item = Vec<T>> + Send + Unpin + 'static,
-    ) -> std::io::Result<()>
+    ) -> impl Future<Output = std::io::Result<()>> + Send + 'static
     where
         T: Encode<Self> + Send + 'static,
         std::io::Error: From<<T::Encoder as tokio_util::codec::Encoder<T>>::Error>,
     {
-        let mut enc = T::Encoder::default();
-        let mut buf = BytesMut::default();
-        let mut deferred = Vec::default();
-        let mut tasks = FuturesUnordered::default();
-        let mut pending = false;
-        let mut ended = false;
-        let mut closed = false;
-        let mut i = 0_u64;
-        while !closed {
-            select! {
-                chunk = items.next(), if !ended && buf.len() < MAX_PENDING_STREAM_BATCH => {
-                    let Some(chunk) = chunk else {
-                        trace!("writing stream end");
-                        ended = true;
-                        continue;
-                    };
-                    if chunk.is_empty() {
-                        continue;
-                    }
-                    let n = u32::try_from(chunk.len()).map_err(|err| {
-                        std::io::Error::new(std::io::ErrorKind::InvalidInput, err)
-                    })?;
-                    let end = i.checked_add(n.into()).ok_or_else(|| {
-                        std::io::Error::new(
-                            std::io::ErrorKind::InvalidInput,
-                            "stream element index would overflow u64",
-                        )
-                    })?;
-                    trace!(n, "encoding chunk length");
-                    Leb128Encoder.encode(n, &mut buf)?;
-                    trace!(i, buf = format!("{buf:02x?}"), "writing stream chunk items");
-
-                    buf.reserve(chunk.len());
-                    for (i, item) in zip(i.., chunk) {
-                        enc.encode(item, &mut buf)?;
-                        if let Some(f) = enc.take_deferred() {
-                            let i = usize::try_from(i).map_err(|err| {
-                                std::io::Error::new(std::io::ErrorKind::InvalidInput, err)
-                            })?;
-                            let fut = f(&self, &[i])?;
-                            deferred.push(fut);
+        let w = self.index(path);
+        async move {
+            let mut w = w?;
+            let mut enc = T::Encoder::default();
+            let mut buf = BytesMut::default();
+            let mut deferred = Vec::default();
+            let mut tasks = FuturesUnordered::default();
+            let mut pending = false;
+            let mut ended = false;
+            let mut closed = false;
+            let mut i = 0_u64;
+            while !closed {
+                select! {
+                    chunk = items.next(), if !ended && buf.len() < MAX_PENDING_STREAM_BATCH => {
+                        let Some(chunk) = chunk else {
+                            trace!("writing stream end");
+                            ended = true;
+                            continue;
+                        };
+                        if chunk.is_empty() {
+                            continue;
                         }
+                        let n = u32::try_from(chunk.len()).map_err(|err| {
+                            std::io::Error::new(std::io::ErrorKind::InvalidInput, err)
+                        })?;
+                        let end = i.checked_add(n.into()).ok_or_else(|| {
+                            std::io::Error::new(
+                                std::io::ErrorKind::InvalidInput,
+                                "stream element index would overflow u64",
+                            )
+                        })?;
+                        trace!(n, "encoding chunk length");
+                        Leb128Encoder.encode(n, &mut buf)?;
+                        trace!(i, buf = format!("{buf:02x?}"), "writing stream chunk items");
+
+                        buf.reserve(chunk.len());
+                        for (i, item) in zip(i.., chunk) {
+                            enc.encode(item, &mut buf)?;
+                            if let Some(f) = enc.take_deferred() {
+                                let i = usize::try_from(i).map_err(|err| {
+                                    std::io::Error::new(std::io::ErrorKind::InvalidInput, err)
+                                })?;
+                                let fut = f(&w, &[i])?;
+                                deferred.push(fut);
+                            }
+                        }
+                        i = end;
                     }
-                    i = end;
-                }
-                Some(res) = tasks.next() => {
-                    trace!(?res, "receiver task finished");
-                    res?;
-                }
-                res = async {
-                    if buf.is_empty() {
-                        self.flush().await
-                    } else {
-                        trace!(?buf, "writing bytes from buffer");
-                        self.write(&buf).await
+                    Some(res) = tasks.next() => {
+                        trace!(?res, "receiver task finished");
+                        res?;
                     }
-                }, if pending || !buf.is_empty() || (ended && !closed) => {
-                    res?;
-                    if buf.is_empty() {
-                        pending = false;
-                        closed = ended;
-                    } else {
-                        buf.clear();
-                        pending = true;
+                    res = async {
+                        if buf.is_empty() {
+                            w.flush().await
+                        } else {
+                            trace!(?buf, "writing bytes from buffer");
+                            w.write(&buf).await
+                        }
+                    }, if pending || !buf.is_empty() || (ended && !closed) => {
+                        res?;
+                        if buf.is_empty() {
+                            pending = false;
+                            closed = ended;
+                        } else {
+                            buf.clear();
+                            pending = true;
+                        }
+                        tasks.extend(deferred.drain(..));
                     }
-                    tasks.extend(deferred.drain(..));
                 }
             }
+            w.close().await?;
+            while let Some(res) = tasks.next().await {
+                res?;
+            }
+            Ok(())
         }
-        self.close().await?;
-        while let Some(res) = tasks.next().await {
-            res?;
-        }
-        Ok(())
     }
 
-    async fn write_stream_bytes(
-        mut self,
+    fn write_stream_bytes(
+        &self,
+        path: &[usize],
         _offset: usize,
         mut items: impl Stream<Item = Bytes> + Send + Unpin + 'static,
-    ) -> std::io::Result<()> {
-        let mut buf = BytesMut::default();
-        let mut pending = false;
-        loop {
-            select! {
-                chunk = items.next(), if buf.len() < MAX_PENDING_STREAM_BATCH => {
-                    let Some(chunk) = chunk else {
-                        trace!("writing stream end");
-                        self.write(&buf).await?;
-                        return self.close().await
-                    };
-                    if chunk.is_empty() {
-                        continue;
+    ) -> impl Future<Output = std::io::Result<()>> + Send + 'static {
+        let w = self.index(path);
+        async move {
+            let mut w = w?;
+            let mut buf = BytesMut::default();
+            let mut pending = false;
+            loop {
+                select! {
+                    chunk = items.next(), if buf.len() < MAX_PENDING_STREAM_BATCH => {
+                        let Some(chunk) = chunk else {
+                            trace!("writing stream end");
+                            w.write(&buf).await?;
+                            return w.close().await
+                        };
+                        if chunk.is_empty() {
+                            continue;
+                        }
+                        let n = u32::try_from(chunk.len()).map_err(|err| {
+                            std::io::Error::new(std::io::ErrorKind::InvalidInput, err)
+                        })?;
+                        trace!(n, "encoding chunk length");
+                        Leb128Encoder.encode(n, &mut buf)?;
+                        buf.extend_from_slice(&chunk);
                     }
-                    let n = u32::try_from(chunk.len()).map_err(|err| {
-                        std::io::Error::new(std::io::ErrorKind::InvalidInput, err)
-                    })?;
-                    trace!(n, "encoding chunk length");
-                    Leb128Encoder.encode(n, &mut buf)?;
-                    buf.extend_from_slice(&chunk);
-                }
-                res = self.flush(), if pending || !buf.is_empty() => {
-                    res?;
-                    pending = false;
-                    if !buf.is_empty() {
-                        self.write(&buf).await?;
-                        buf.clear();
-                        pending = true;
+                    res = w.flush(), if pending || !buf.is_empty() => {
+                        res?;
+                        pending = false;
+                        if !buf.is_empty() {
+                            w.write(&buf).await?;
+                            buf.clear();
+                            pending = true;
+                        }
                     }
                 }
             }
         }
     }
 
-    async fn write_stream_read(
-        mut self,
+    fn write_stream_read(
+        &self,
+        path: &[usize],
         _offset: usize,
         mut buf: BytesMut,
         mut items: impl AsyncRead + Send + Unpin + 'static,
-    ) -> std::io::Result<()> {
-        if !buf.is_empty() {
-            let n = u32::try_from(buf.len())
-                .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
-            trace!(n, "writing ready chunk length");
-            self.encode(&mut Leb128Encoder, n).await?;
-        }
-        let mut chunk = BytesMut::with_capacity(READ_CHUNK_SIZE);
-        let mut pending = false;
-        loop {
-            select! {
-                res = items.read_buf(&mut chunk), if buf.len() < MAX_PENDING_STREAM_BATCH => {
-                    let n = res?;
-                    if n == 0 {
-                        trace!("writing stream end");
-                        self.write(&buf).await?;
-                        return self.close().await
+    ) -> impl Future<Output = std::io::Result<()>> + Send + 'static {
+        let w = self.index(path);
+        async move {
+            let mut w = w?;
+            if !buf.is_empty() {
+                let n = u32::try_from(buf.len())
+                    .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
+                trace!(n, "writing ready chunk length");
+                w.encode(&mut Leb128Encoder, n).await?;
+            }
+            let mut chunk = BytesMut::with_capacity(READ_CHUNK_SIZE);
+            let mut pending = false;
+            loop {
+                select! {
+                    res = items.read_buf(&mut chunk), if buf.len() < MAX_PENDING_STREAM_BATCH => {
+                        let n = res?;
+                        if n == 0 {
+                            trace!("writing stream end");
+                            w.write(&buf).await?;
+                            return w.close().await
+                        }
+                        let n = u32::try_from(n).map_err(|err| {
+                            std::io::Error::new(std::io::ErrorKind::InvalidInput, err)
+                        })?;
+                        trace!(n, "encoding chunk length");
+                        Leb128Encoder.encode(n, &mut buf)?;
+                        buf.extend_from_slice(&chunk);
+                        chunk.clear();
                     }
-                    let n = u32::try_from(n).map_err(|err| {
-                        std::io::Error::new(std::io::ErrorKind::InvalidInput, err)
-                    })?;
-                    trace!(n, "encoding chunk length");
-                    Leb128Encoder.encode(n, &mut buf)?;
-                    buf.extend_from_slice(&chunk);
-                    chunk.clear();
-                }
-                res = self.flush(), if pending || !buf.is_empty() => {
-                    res?;
-                    pending = false;
-                    if !buf.is_empty() {
-                        self.write(&buf).await?;
-                        buf.clear();
-                        pending = true;
+                    res = w.flush(), if pending || !buf.is_empty() => {
+                        res?;
+                        pending = false;
+                        if !buf.is_empty() {
+                            w.write(&buf).await?;
+                            buf.clear();
+                            pending = true;
+                        }
                     }
                 }
             }

@@ -8,7 +8,7 @@ use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::join;
 use tokio::net::TcpStream;
 use tokio_util::codec::{BytesCodec, Encoder as _};
-use wrpc_transport::{Connect as _, HeaderEncoder, HeaderRef, Index as _, accept, invoke, tcp};
+use wrpc_transport::{Connect as _, HeaderEncoder, HeaderRef, accept, invoke, tcp};
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn loopback() -> anyhow::Result<()> {

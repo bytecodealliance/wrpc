@@ -53,12 +53,6 @@ use wasm_tokio::Leb128Encoder;
 /// Default maximum length of the instance and function names in a [Header]
 const DEFAULT_MAX_NAME_LEN: u32 = 1 << 10;
 
-/// Multiplexes asynchronous value transmission using a structural `path`
-pub trait Index: Sized {
-    /// Index the entity using a structural `path`
-    fn index(&self, path: &[usize]) -> std::io::Result<Self>;
-}
-
 fn encode_ready_bytes_header(n: usize, dst: &mut BytesMut) -> std::io::Result<()> {
     let n = u32::try_from(n)
         .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
