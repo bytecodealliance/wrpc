@@ -1,5 +1,5 @@
 use core::future::poll_fn;
-use core::pin::Pin;
+use core::pin::{Pin, pin};
 
 use std::sync::Arc;
 
@@ -12,7 +12,7 @@ use tracing::{Instrument as _, Span, debug, instrument};
 use wasmtime::component::types;
 use wasmtime::component::{Accessor, ComponentExportIndex, Instance, InstancePre};
 
-use crate::{ResourceTypes, WrpcView, call, rpc_func_name};
+use crate::{CallError, ResourceTypes, WrpcView, call, rpc_func_name};
 
 type Task<T> = Box<
     dyn for<'a> FnOnce(&'a Accessor<T>) -> Pin<Box<dyn Future<Output = ()> + Send + 'a>> + Send,
@@ -179,26 +179,37 @@ pub trait ServeExt: wrpc_transport::Serve {
                             let func = instance
                                 .get_func(&mut store, idx)
                                 .with_context(|| format!("function export `{name}` not found"))?;
-                            store
+                            let io = store
                                 .run_concurrent(async |store| {
-                                    let res = call(
+                                    let io = call(
                                         store,
                                         rx,
                                         tx,
                                         &resources,
-                                        params_ty.iter(),
+                                        &params_ty,
                                         &results_ty,
                                         func,
                                     )
-                                    .await;
-                                    if res.is_ok() {
-                                        poll_fn(|cx| store.poll_no_interesting_tasks(cx)).await;
+                                    .await?;
+                                    let mut io = Box::pin(io);
+                                    let mut done =
+                                        pin!(poll_fn(|cx| store.poll_no_interesting_tasks(cx)));
+                                    select! {
+                                        res = &mut io => {
+                                            res?;
+                                            done.await;
+                                            Ok::<_, CallError>(None)
+                                        }
+                                        () = &mut done => Ok(Some(io)),
                                     }
-                                    res
                                 })
                                 .await
                                 .map_err(anyhow::Error::from)
                                 .context("failed to run concurrent event loop")??;
+                            drop(store);
+                            if let Some(io) = io {
+                                io.await?;
+                            }
                             Ok(())
                         }
                         .instrument(span.clone()),
@@ -256,7 +267,7 @@ pub trait ServeExt: wrpc_transport::Serve {
                     cx,
                     Box::pin(
                         async move {
-                            store
+                            let io = store
                                 .run(move |store| {
                                     Box::pin(async move {
                                         let func = store
@@ -264,20 +275,22 @@ pub trait ServeExt: wrpc_transport::Serve {
                                             .with_context(|| {
                                                 format!("function export `{name}` not found")
                                             })?;
-                                        call(
+                                        let io = call(
                                             store,
                                             rx,
                                             tx,
                                             &resources,
-                                            params_ty.iter(),
+                                            &params_ty,
                                             &results_ty,
                                             func,
                                         )
                                         .await?;
-                                        anyhow::Ok(())
+                                        anyhow::Ok(io)
                                     })
                                 })
                                 .await??;
+                            drop(store);
+                            io.await?;
                             Ok(())
                         }
                         .instrument(span.clone()),

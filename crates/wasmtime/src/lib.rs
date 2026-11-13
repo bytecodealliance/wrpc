@@ -8,9 +8,12 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use bytes::BytesMut;
+use futures::TryStreamExt as _;
 use futures::future::try_join_all;
 use tokio::io::AsyncWriteExt as _;
-use tokio_util::codec::Encoder;
+use tokio::select;
+use tokio::sync::mpsc;
+use tokio_util::codec::{Encoder, FramedRead};
 use tracing::{debug, instrument, trace, warn};
 use uuid::Uuid;
 use wasmtime::component::{
@@ -113,62 +116,104 @@ impl fmt::Display for CallError {
 
 /// Calls the exported `func` with parameters decoded from `rx` and transmits the results on `tx`.
 ///
+/// Returns a future resolving once the pending asynchronous parameter values are received or
+/// dropped, or once receiving one fails.
+///
 /// The `store` [`Accessor`] is used to call `func` concurrently, it can be acquired, for example,
 /// using [`wasmtime::Store::run_concurrent`].
 pub async fn call<T>(
-    mut store: &Accessor<T>,
-    rx: Incoming,
+    store: &Accessor<T>,
+    mut rx: Incoming,
     mut tx: Outgoing,
     resources: &ResourceTypes,
-    params_ty: impl ExactSizeIterator<Item = &Type>,
+    params_ty: &[Type],
     results_ty: &[Type],
     func: Func,
-) -> Result<(), CallError>
+) -> Result<impl Future<Output = Result<(), CallError>> + Send + use<T>, CallError>
 where
     T: WrpcView + 'static,
 {
-    let mut params = vec![Val::Bool(false); params_ty.len()];
-    let mut rx = pin!(rx);
-    for (i, (v, ty)) in zip(&mut params, params_ty).enumerate() {
-        read_value(&mut store, &mut rx, resources, v, ty, &[i])
+    let (errors_tx, mut errors) = mpsc::channel(1);
+    let r = rx
+        .take_reader()
+        .context("parameters already received")
+        .map_err(CallError::Decode)?;
+    let mut dec = FramedRead::new(
+        r,
+        ValDecoder::new(store, params_ty, resources, &rx, errors_tx),
+    );
+    let params = if params_ty.is_empty() {
+        Vec::default()
+    } else {
+        let params = dec
+            .try_next()
             .await
-            .with_context(|| format!("failed to decode parameter value {i}"))
+            .context("failed to receive parameters")
             .map_err(CallError::Decode)?;
+        params
+            .context("parameters missing")
+            .map_err(CallError::Decode)?
+    };
+    if !dec.read_buffer().is_empty() {
+        return Err(CallError::Decode(wasmtime::Error::msg(
+            "received data after parameter values end",
+        )));
     }
-    let mut results = vec![Val::Bool(false); results_ty.len()];
-    func.call_concurrent(store, &params, &mut results)
-        .await
-        .context("failed to call function")
-        .map_err(CallError::Call)?;
+    drop(dec);
+    let mut call = pin!(async {
+        let mut results = vec![Val::Bool(false); results_ty.len()];
+        func.call_concurrent(store, &params, &mut results)
+            .await
+            .context("failed to call function")
+            .map_err(CallError::Call)?;
 
-    let (buf, deferred) = store.with(|mut store| {
-        let mut buf = BytesMut::default();
-        let mut deferred = vec![];
-        for (i, (v, ty)) in zip(&results, results_ty).enumerate() {
-            let mut enc = ValEncoder::new(store.as_context_mut(), ty, resources);
-            enc.encode(v, &mut buf)
-                .with_context(|| format!("failed to encode result value {i}"))
-                .map_err(CallError::Encode)?;
-            deferred.push(enc.deferred);
+        let (buf, deferred) = store.with(|mut store| {
+            let mut buf = BytesMut::default();
+            let mut deferred = Vec::with_capacity(results.len());
+            for (i, (v, ty)) in zip(&results, results_ty).enumerate() {
+                let mut enc = ValEncoder::new(store.as_context_mut(), ty, resources);
+                enc.encode(v, &mut buf)
+                    .with_context(|| format!("failed to encode result value {i}"))
+                    .map_err(CallError::Encode)?;
+                deferred.push(enc.deferred);
+            }
+            Ok((buf, deferred))
+        })?;
+
+        debug!("transmitting results");
+        tx.write_bytes(buf.freeze())
+            .await
+            .context("failed to transmit results")
+            .map_err(CallError::Write)?;
+        tx.flush()
+            .await
+            .context("failed to flush outgoing stream")
+            .map_err(CallError::Flush)?;
+        let deferred = zip(0.., deferred)
+            .filter_map(|(i, f)| f.map(|f| f(&tx, &[i])))
+            .collect::<wasmtime::Result<Vec<_>>>()
+            .map_err(CallError::Deferred)?;
+        try_join_all(deferred).await.map_err(CallError::Deferred)?;
+        Ok(())
+    });
+    select! {
+        Some(err) = errors.recv() => Err(err)
+            .context("failed to receive asynchronous parameter values")
+            .map_err(CallError::Decode),
+        res = &mut call => {
+            res?;
+            let finished = rx.finished();
+            Ok(async move {
+                select! {
+                    biased;
+                    Some(err) = errors.recv() => Err(err),
+                    res = finished => res,
+                }
+                .context("failed to receive asynchronous parameter values")
+                .map_err(CallError::Decode)
+            })
         }
-        Ok((buf, deferred))
-    })?;
-
-    debug!("transmitting results");
-    tx.write_bytes(buf.freeze())
-        .await
-        .context("failed to transmit results")
-        .map_err(CallError::Write)?;
-    tx.flush()
-        .await
-        .context("failed to flush outgoing stream")
-        .map_err(CallError::Flush)?;
-    let deferred = zip(0.., deferred)
-        .filter_map(|(i, f)| f.map(|f| f(&tx, &[i])))
-        .collect::<wasmtime::Result<Vec<_>>>()
-        .map_err(CallError::Deferred)?;
-    try_join_all(deferred).await.map_err(CallError::Deferred)?;
-    Ok(())
+    }
 }
 
 /// Recursively iterates the component item type and collects all exported resource types
