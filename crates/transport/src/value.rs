@@ -241,6 +241,123 @@ pub trait Deferred<T> {
     fn take_deferred(&mut self) -> Option<DeferredFn<T>>;
 }
 
+/// Paths of the asynchronous values received by a decoder
+pub trait Paths {
+    /// Returns the paths of the asynchronous values relative to the decoded value, in which
+    /// [None] is any index, including the empty path if the value itself is asynchronous
+    fn paths(&self) -> Box<[Box<[Option<usize>]>]>;
+}
+
+/// Prefixes each of `paths` with `i`
+fn nest(
+    i: Option<usize>,
+    paths: impl IntoIterator<Item = Box<[Option<usize>]>>,
+) -> impl Iterator<Item = Box<[Option<usize>]>> {
+    paths
+        .into_iter()
+        .map(move |path| [&[i][..], &path].concat().into())
+}
+
+/// Replaces the indices of `paths` by wildcards wherever another path has a wildcard at the
+/// same position after the same prefix
+fn merge_wildcards(
+    paths: impl IntoIterator<Item = Box<[Option<usize>]>>,
+) -> Box<[Box<[Option<usize>]>]> {
+    let mut paths: Vec<_> = paths.into_iter().collect();
+    let depth = paths
+        .iter()
+        .map(|path| path.len())
+        .max()
+        .unwrap_or_default();
+    for k in 0..depth {
+        let wildcards: Vec<_> = paths
+            .iter()
+            .filter(|path| path.get(k) == Some(&None))
+            .map(|path| path[..k].to_vec())
+            .collect();
+        for path in &mut paths {
+            if path.len() > k && wildcards.iter().any(|prefix| **prefix == path[..k]) {
+                path[k] = None;
+            }
+        }
+    }
+    paths.sort();
+    paths.dedup();
+    paths.into()
+}
+
+macro_rules! impl_sync_decoder {
+    ($($t:ty),+ $(,)?) => {
+        $(
+            impl<T> Deferred<T> for $t {
+                fn take_deferred(&mut self) -> Option<DeferredFn<T>> {
+                    None
+                }
+            }
+
+            impl Paths for $t {
+                fn paths(&self) -> Box<[Box<[Option<usize>]>]> {
+                    Box::default()
+                }
+            }
+        )+
+    };
+}
+
+impl_sync_decoder!(
+    BoolCodec,
+    S8Codec,
+    U8Codec,
+    S16Codec,
+    U16Codec,
+    S32Codec,
+    U32Codec,
+    S64Codec,
+    U64Codec,
+    F32Codec,
+    F64Codec,
+    CoreNameDecoder,
+    CoreVecDecoderBytes,
+    Utf8Codec,
+    Leb128DecoderI8,
+    Leb128DecoderU8,
+    Leb128DecoderI16,
+    Leb128DecoderU16,
+    Leb128DecoderI32,
+    Leb128DecoderU32,
+    Leb128DecoderI64,
+    Leb128DecoderU64,
+    Leb128DecoderI128,
+    Leb128DecoderU128,
+    UnitCodec,
+    ListDecoderU8,
+    CoreVecDecoder<BoolCodec>,
+    CoreVecDecoder<S8Codec>,
+    CoreVecDecoder<U8Codec>,
+    CoreVecDecoder<S16Codec>,
+    CoreVecDecoder<U16Codec>,
+    CoreVecDecoder<S32Codec>,
+    CoreVecDecoder<U32Codec>,
+    CoreVecDecoder<S64Codec>,
+    CoreVecDecoder<U64Codec>,
+    CoreVecDecoder<F32Codec>,
+    CoreVecDecoder<F64Codec>,
+    CoreVecDecoder<CoreNameDecoder>,
+    CoreVecDecoder<CoreVecDecoderBytes>,
+    CoreVecDecoder<Utf8Codec>,
+    CoreVecDecoder<Leb128DecoderI8>,
+    CoreVecDecoder<Leb128DecoderU8>,
+    CoreVecDecoder<Leb128DecoderI16>,
+    CoreVecDecoder<Leb128DecoderU16>,
+    CoreVecDecoder<Leb128DecoderI32>,
+    CoreVecDecoder<Leb128DecoderU32>,
+    CoreVecDecoder<Leb128DecoderI64>,
+    CoreVecDecoder<Leb128DecoderU64>,
+    CoreVecDecoder<Leb128DecoderI128>,
+    CoreVecDecoder<Leb128DecoderU128>,
+    CoreVecDecoder<UnitCodec>,
+);
+
 macro_rules! impl_deferred_sync {
     ($t:ty) => {
         impl<T> Deferred<T> for $t {
@@ -251,64 +368,12 @@ macro_rules! impl_deferred_sync {
     };
 }
 
-impl_deferred_sync!(BoolCodec);
-impl_deferred_sync!(S8Codec);
-impl_deferred_sync!(U8Codec);
-impl_deferred_sync!(S16Codec);
-impl_deferred_sync!(U16Codec);
-impl_deferred_sync!(S32Codec);
-impl_deferred_sync!(U32Codec);
-impl_deferred_sync!(S64Codec);
-impl_deferred_sync!(U64Codec);
-impl_deferred_sync!(F32Codec);
-impl_deferred_sync!(F64Codec);
-impl_deferred_sync!(CoreNameDecoder);
 impl_deferred_sync!(CoreNameEncoder);
-impl_deferred_sync!(CoreVecDecoderBytes);
 impl_deferred_sync!(CoreVecEncoderBytes);
-impl_deferred_sync!(Utf8Codec);
 impl_deferred_sync!(PrimValEncoder);
 impl_deferred_sync!(Utf8BytesEncoder);
 impl_deferred_sync!(Leb128Encoder);
-impl_deferred_sync!(Leb128DecoderI8);
-impl_deferred_sync!(Leb128DecoderU8);
-impl_deferred_sync!(Leb128DecoderI16);
-impl_deferred_sync!(Leb128DecoderU16);
-impl_deferred_sync!(Leb128DecoderI32);
-impl_deferred_sync!(Leb128DecoderU32);
-impl_deferred_sync!(Leb128DecoderI64);
-impl_deferred_sync!(Leb128DecoderU64);
-impl_deferred_sync!(Leb128DecoderI128);
-impl_deferred_sync!(Leb128DecoderU128);
 impl_deferred_sync!(ResourceEncoder);
-impl_deferred_sync!(UnitCodec);
-impl_deferred_sync!(ListDecoderU8);
-
-impl_deferred_sync!(CoreVecDecoder<BoolCodec>);
-impl_deferred_sync!(CoreVecDecoder<S8Codec>);
-impl_deferred_sync!(CoreVecDecoder<U8Codec>);
-impl_deferred_sync!(CoreVecDecoder<S16Codec>);
-impl_deferred_sync!(CoreVecDecoder<U16Codec>);
-impl_deferred_sync!(CoreVecDecoder<S32Codec>);
-impl_deferred_sync!(CoreVecDecoder<U32Codec>);
-impl_deferred_sync!(CoreVecDecoder<S64Codec>);
-impl_deferred_sync!(CoreVecDecoder<U64Codec>);
-impl_deferred_sync!(CoreVecDecoder<F32Codec>);
-impl_deferred_sync!(CoreVecDecoder<F64Codec>);
-impl_deferred_sync!(CoreVecDecoder<CoreNameDecoder>);
-impl_deferred_sync!(CoreVecDecoder<CoreVecDecoderBytes>);
-impl_deferred_sync!(CoreVecDecoder<Utf8Codec>);
-impl_deferred_sync!(CoreVecDecoder<Leb128DecoderI8>);
-impl_deferred_sync!(CoreVecDecoder<Leb128DecoderU8>);
-impl_deferred_sync!(CoreVecDecoder<Leb128DecoderI16>);
-impl_deferred_sync!(CoreVecDecoder<Leb128DecoderU16>);
-impl_deferred_sync!(CoreVecDecoder<Leb128DecoderI32>);
-impl_deferred_sync!(CoreVecDecoder<Leb128DecoderU32>);
-impl_deferred_sync!(CoreVecDecoder<Leb128DecoderI64>);
-impl_deferred_sync!(CoreVecDecoder<Leb128DecoderU64>);
-impl_deferred_sync!(CoreVecDecoder<Leb128DecoderI128>);
-impl_deferred_sync!(CoreVecDecoder<Leb128DecoderU128>);
-impl_deferred_sync!(CoreVecDecoder<UnitCodec>);
 
 /// Codec for synchronous values
 ///
@@ -333,6 +398,12 @@ impl<T> DerefMut for SyncCodec<T> {
 impl<T, C> Deferred<T> for SyncCodec<C> {
     fn take_deferred(&mut self) -> Option<DeferredFn<T>> {
         None
+    }
+}
+
+impl<T> Paths for SyncCodec<T> {
+    fn paths(&self) -> Box<[Box<[Option<usize>]>]> {
+        Box::default()
     }
 }
 
@@ -745,11 +816,12 @@ pub trait Decode: Sized {
     /// Decoder used to decode value
     type Decoder: tokio_util::codec::Decoder<Item = Self>
         + Deferred<BufferedIncoming>
+        + Paths
         + Default
         + Send
         + 'static;
     /// Decoder used to decode lists of value
-    type ListDecoder: tokio_util::codec::Decoder<Item = Vec<Self>> + Default + 'static;
+    type ListDecoder: tokio_util::codec::Decoder<Item = Vec<Self>> + Paths + Default + 'static;
 }
 
 impl<T, W> Deferred<W> for OptionEncoder<T>
@@ -782,6 +854,12 @@ where
 {
     fn take_deferred(&mut self) -> Option<DeferredFn<W>> {
         mem::take(self).into_inner().take_deferred()
+    }
+}
+
+impl<T: Paths + Default> Paths for OptionDecoder<T> {
+    fn paths(&self) -> Box<[Box<[Option<usize>]>]> {
+        T::default().paths()
     }
 }
 
@@ -855,6 +933,17 @@ where
                 }
             }
         }
+    }
+}
+
+impl<O, E> Paths for ResultDecoder<O, E>
+where
+    O: Paths + Default,
+    E: Paths + Default,
+{
+    fn paths(&self) -> Box<[Box<[Option<usize>]>]> {
+        let paths = O::default().paths().into_iter();
+        merge_wildcards(paths.chain(E::default().paths()))
     }
 }
 
@@ -1010,6 +1099,15 @@ where
 {
     fn default() -> Self {
         Self::new(T::default())
+    }
+}
+
+impl<T> Paths for ListDecoder<T>
+where
+    T: tokio_util::codec::Decoder + Paths,
+{
+    fn paths(&self) -> Box<[Box<[Option<usize>]>]> {
+        nest(None, self.dec.paths()).collect()
     }
 }
 
@@ -1172,6 +1270,15 @@ where
             ret: Vec::default(),
             deferred: Vec::default(),
         }
+    }
+}
+
+impl<T, const N: usize> Paths for ArrayDecoder<T, N>
+where
+    T: tokio_util::codec::Decoder + Paths,
+{
+    fn paths(&self) -> Box<[Box<[Option<usize>]>]> {
+        nest(None, self.dec.paths()).collect()
     }
 }
 
@@ -1594,9 +1701,21 @@ impl<T: ?Sized> Default for ResourceBorrowDecoder<T> {
     }
 }
 
+impl<T: ?Sized> Paths for ResourceBorrowDecoder<T> {
+    fn paths(&self) -> Box<[Box<[Option<usize>]>]> {
+        Box::default()
+    }
+}
+
 impl<T: ?Sized> Deferred<BufferedIncoming> for ResourceBorrowDecoder<T> {
     fn take_deferred(&mut self) -> Option<DeferredFn<BufferedIncoming>> {
         None
+    }
+}
+
+impl<T: ?Sized> Paths for CoreVecDecoder<ResourceBorrowDecoder<T>> {
+    fn paths(&self) -> Box<[Box<[Option<usize>]>]> {
+        Box::default()
     }
 }
 
@@ -1639,9 +1758,21 @@ impl<T: ?Sized> Default for ResourceOwnDecoder<T> {
     }
 }
 
+impl<T: ?Sized> Paths for ResourceOwnDecoder<T> {
+    fn paths(&self) -> Box<[Box<[Option<usize>]>]> {
+        Box::default()
+    }
+}
+
 impl<T: ?Sized> Deferred<BufferedIncoming> for ResourceOwnDecoder<T> {
     fn take_deferred(&mut self) -> Option<DeferredFn<BufferedIncoming>> {
         None
+    }
+}
+
+impl<T: ?Sized> Paths for CoreVecDecoder<ResourceOwnDecoder<T>> {
+    fn paths(&self) -> Box<[Box<[Option<usize>]>]> {
+        Box::default()
     }
 }
 
@@ -1766,6 +1897,17 @@ macro_rules! impl_tuple_codec {
             )+
         {
             type Encoder = TupleEncoder::<($($vt::Encoder),+,)>;
+        }
+
+        impl<$($vt),+> Paths
+            for TupleDecoder::<($($vt::Decoder),+,), ($(Option<$vt>),+,)>
+        where
+            $($vt: Decode),+
+        {
+            fn paths(&self) -> Box<[Box<[Option<usize>]>]> {
+                let elems = [ $($vt::Decoder::default().paths()),+ ];
+                zip(0.., elems).flat_map(|(i, paths)| nest(Some(i), paths)).collect()
+            }
         }
 
         impl<$($vt),+> Deferred<BufferedIncoming> for TupleDecoder::<($($vt::Decoder),+,), ($(Option<$vt>),+,)>
@@ -1999,6 +2141,16 @@ where
             deferred: None,
             _ty: PhantomData,
         }
+    }
+}
+
+impl<T> Paths for FutureDecoder<T>
+where
+    T: Decode,
+{
+    fn paths(&self) -> Box<[Box<[Option<usize>]>]> {
+        let paths = nest(Some(0), T::Decoder::default().paths());
+        [Box::default()].into_iter().chain(paths).collect()
     }
 }
 
@@ -2321,6 +2473,16 @@ where
     }
 }
 
+impl<T> Paths for StreamDecoder<T>
+where
+    T: Decode,
+{
+    fn paths(&self) -> Box<[Box<[Option<usize>]>]> {
+        let paths = nest(None, T::Decoder::default().paths());
+        [Box::default()].into_iter().chain(paths).collect()
+    }
+}
+
 impl<T> Deferred<BufferedIncoming> for StreamDecoder<T>
 where
     T: Decode,
@@ -2471,6 +2633,12 @@ pub struct StreamDecoderBytes {
     deferred: Option<DeferredFn<BufferedIncoming>>,
 }
 
+impl Paths for StreamDecoderBytes {
+    fn paths(&self) -> Box<[Box<[Option<usize>]>]> {
+        Box::new([Box::default()])
+    }
+}
+
 impl Deferred<BufferedIncoming> for StreamDecoderBytes {
     fn take_deferred(&mut self) -> Option<DeferredFn<BufferedIncoming>> {
         self.deferred.take()
@@ -2537,6 +2705,12 @@ pub struct StreamDecoderRead {
     dec: StreamDecoderBytes,
 }
 
+impl Paths for StreamDecoderRead {
+    fn paths(&self) -> Box<[Box<[Option<usize>]>]> {
+        Box::new([Box::default()])
+    }
+}
+
 impl Deferred<BufferedIncoming> for StreamDecoderRead {
     fn take_deferred(&mut self) -> Option<DeferredFn<BufferedIncoming>> {
         self.dec.take_deferred()
@@ -2576,6 +2750,12 @@ mod tests {
     use crate::{FrameEncoder, FrameRef};
 
     type StreamBytes = Pin<Box<dyn Stream<Item = Bytes> + Send>>;
+
+    #[test]
+    fn result_paths_merge_wildcards() {
+        let dec = <(Result<(StreamBytes,), Vec<StreamBytes>>,) as Decode>::Decoder::default();
+        assert_eq!(*dec.paths(), [Box::from([Some(0), None])]);
+    }
 
     #[test_log::test(tokio::test)]
     async fn codec() -> anyhow::Result<()> {

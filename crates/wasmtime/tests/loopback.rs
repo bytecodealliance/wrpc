@@ -90,7 +90,7 @@ async fn shared_store_trap() -> anyhow::Result<()> {
                 .await?;
             let event_loop = spawn(event_loop.in_current_span());
             let (_, res) = join!(
-                clt.invoke_values_blocking::<_, (), ()>((), "", "run", (), &[[]; 0]),
+                clt.invoke_values_blocking::<(), ()>((), "", "run", ()),
                 async {
                     let Some(((), fut)) = pin!(run).try_next().await? else {
                         bail!("`run` invocation missing");
@@ -260,7 +260,7 @@ async fn async_values() -> anyhow::Result<()> {
             try_join!(
                 async {
                     let (((s, f, u),), io) = clt
-                        .invoke_values::<_, _, ((ByteStream, StringFuture, UnitFuture),), _>(
+                        .invoke_values::<_, ((ByteStream, StringFuture, UnitFuture),)>(
                             (),
                             "",
                             "run",
@@ -278,7 +278,6 @@ async fn async_values() -> anyhow::Result<()> {
                                 }) as StringFuture,
                                 Box::pin(yield_now()) as UnitFuture,
                             ),
-                            [[Some(0), Some(0)], [Some(0), Some(1)], [Some(0), Some(2)]],
                         )
                         .await?;
                     let (s, f, ()) =
@@ -287,13 +286,7 @@ async fn async_values() -> anyhow::Result<()> {
                     assert_eq!(f, "baz");
 
                     let (((s, f),), io) = clt
-                        .invoke_values::<_, (), ((ByteStream, StringFuture),), _>(
-                            (),
-                            "",
-                            "gen",
-                            (),
-                            [[Some(0), Some(0)], [Some(0), Some(1)]],
-                        )
+                        .invoke_values::<(), ((ByteStream, StringFuture),)>((), "", "gen", ())
                         .await?;
                     let (s, f) = receive(io, async { join!(s.collect::<Vec<_>>(), f) }).await?;
                     assert_eq!(s.concat(), b"foo");

@@ -78,13 +78,7 @@ async fn go_bindgen() -> anyhow::Result<()> {
         common::assert_sync((), &client).await?;
 
         let res = client
-            .invoke_values_blocking::<_, _, (u32,)>(
-                (),
-                "wrpc-test:integration/foo",
-                "f",
-                ("panic",),
-                &[[]; 0],
-            )
+            .invoke_values_blocking::<_, (u32,)>((), "wrpc-test:integration/foo", "f", ("panic",))
             .await;
         let Err(err) = res else {
             bail!("a panicking handler must fail the invocation");
