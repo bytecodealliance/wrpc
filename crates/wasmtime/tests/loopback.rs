@@ -1,8 +1,6 @@
 use core::net::SocketAddr;
 use core::pin::{Pin, pin};
 
-use std::sync::Arc;
-
 use anyhow::{Context as _, bail};
 use futures::{Stream, StreamExt as _, TryStreamExt as _, stream};
 use tokio::io::BufReader;
@@ -10,42 +8,22 @@ use tokio::net::TcpStream;
 use tokio::task::yield_now;
 use tokio::{join, spawn, try_join};
 use tracing::Instrument as _;
-use wasmtime::component::{Component, Linker, ResourceTable, ResourceType, types};
+use wasmtime::component::{Component, Linker, ResourceTable, types};
+use wrpc_transport::InvokeExt as _;
 use wrpc_transport::frame::{ReadHalf, WriteHalf, tcp};
-use wrpc_transport::{InvokeExt as _, ServeExt as _};
 use wrpc_wasmtime::{
-    ResourceTypes, ServeExt as _, SharedResourceTable, SharedStore, WrpcCtx, WrpcCtxView, WrpcView,
-    link_item,
+    ResourceTypes, ServeExt as _, SharedResourceTable, SharedStore, WrpcCtxView, WrpcView,
 };
 
 struct Ctx {
     table: ResourceTable,
-    wrpc: WrpcCtxImpl,
-}
-
-struct WrpcCtxImpl {
-    clt: tcp::Client<SocketAddr>,
     shared_resources: SharedResourceTable,
 }
 
-impl WrpcCtx<tcp::Client<SocketAddr>> for WrpcCtxImpl {
-    fn context(&self) {}
-
-    fn client(&self) -> &tcp::Client<SocketAddr> {
-        &self.clt
-    }
-
-    fn shared_resources(&mut self) -> &mut SharedResourceTable {
-        &mut self.shared_resources
-    }
-}
-
 impl WrpcView for Ctx {
-    type Invoke = tcp::Client<SocketAddr>;
-
-    fn wrpc(&mut self) -> WrpcCtxView<'_, Self::Invoke> {
+    fn wrpc(&mut self) -> WrpcCtxView<'_> {
         WrpcCtxView {
-            ctx: &mut self.wrpc,
+            shared_resources: &mut self.shared_resources,
             table: &mut self.table,
         }
     }
@@ -67,112 +45,11 @@ async fn with_store(
             &engine,
             Ctx {
                 table: ResourceTable::default(),
-                wrpc: WrpcCtxImpl {
-                    clt: clt.clone(),
-                    shared_resources: SharedResourceTable::default(),
-                },
+                shared_resources: SharedResourceTable::default(),
             },
         );
         f(&clt, srv, component, store).await
     })
-    .await
-}
-
-#[test_log::test(tokio::test(flavor = "multi_thread"))]
-async fn polyfill_async() -> anyhow::Result<()> {
-    with_store(
-        r#"
-(component
-  (type $f (func async (param "x" u32) (result u32)))
-  (import "foo" (func $foo (type $f)))
-  (core func $foo (canon lower (func $foo)))
-  (core module $m
-    (import "" "foo" (func $foo (param i32) (result i32)))
-    (func (export "run") (param i32) (result i32)
-      local.get 0
-      call $foo
-      i32.const 1
-      i32.add))
-  (core instance $i (instantiate $m (with "" (instance (export "foo" (func $foo))))))
-  (func (export "run") (type $f) (canon lift (core func $i "run")))
-)"#,
-        async |clt, srv, component, mut store| {
-            let engine = store.engine().clone();
-            let guest_resources: Arc<[ResourceType]> = Arc::default();
-            let host_resources = Arc::default();
-            let mut linker = Linker::new(&engine);
-            for (name, types::ComponentExtern { ty, .. }) in
-                component.component_type().imports(&engine)
-            {
-                link_item(
-                    &engine,
-                    &mut linker.root(),
-                    Arc::clone(&guest_resources),
-                    Arc::clone(&host_resources),
-                    ty,
-                    "",
-                    name,
-                )
-                .map_err(anyhow::Error::from)?;
-            }
-            let instance = linker
-                .instantiate_async(&mut store, &component)
-                .await
-                .map_err(anyhow::Error::from)?;
-            let Some((types::ComponentItem::ComponentFunc(ty), idx)) =
-                component.get_export(None, "run")
-            else {
-                bail!("function export `run` not found");
-            };
-            assert!(ty.async_());
-
-            let (store, event_loop) = SharedStore::new(store);
-            let event_loop = spawn(event_loop.in_current_span());
-            let run = srv
-                .serve_function_shared(
-                    store,
-                    instance,
-                    idx,
-                    ResourceTypes {
-                        guest: guest_resources,
-                        ..ResourceTypes::default()
-                    },
-                    host_resources,
-                    ty,
-                    "",
-                    "run",
-                )
-                .await?;
-            let foo = srv
-                .serve_values::<(u32,), (u32,)>("", "foo", Arc::default())
-                .await?;
-            try_join!(
-                async {
-                    let (v,) = clt
-                        .invoke_values_blocking::<_, _, (u32,)>((), "", "run", (42,), &[[]; 0])
-                        .await?;
-                    assert_eq!(v, 85);
-                    anyhow::Ok(())
-                },
-                async {
-                    let Some(((), fut)) = pin!(run).try_next().await? else {
-                        bail!("`run` invocation missing");
-                    };
-                    fut.await.context("failed to serve `run`")
-                },
-                async {
-                    let Some(((), (x,), rx, tx)) = pin!(foo).try_next().await? else {
-                        bail!("`foo` invocation missing");
-                    };
-                    assert!(rx.is_none());
-                    assert_eq!(x, 42);
-                    tx((x * 2,)).await
-                },
-            )?;
-            let res = event_loop.await?;
-            res.context("event loop failed")
-        },
-    )
     .await
 }
 
@@ -206,7 +83,6 @@ async fn shared_store_trap() -> anyhow::Result<()> {
                     instance,
                     idx,
                     ResourceTypes::default(),
-                    Arc::default(),
                     ty,
                     "",
                     "run",
@@ -275,11 +151,9 @@ async fn async_values() -> anyhow::Result<()> {
   (type $t (tuple $s $f $u))
   (type $g (tuple $s $f))
   (type $fn (func async (param "s" $s) (param "f" $f) (param "u" $u) (result $t)))
-  (import "foo" (func $foo (type $fn)))
   (core module $mem (memory (export "memory") 1))
   (core instance $mem (instantiate $mem))
   (alias core export $mem "memory" (core memory $memory))
-  (core func $foo (canon lower (func $foo) (memory $memory)))
   (core func $stream.new (canon stream.new $s))
   (core func $stream.write (canon stream.write $s async (memory $memory)))
   (core func $stream.drop-writable (canon stream.drop-writable $s))
@@ -291,7 +165,6 @@ async fn async_values() -> anyhow::Result<()> {
   (core func $task.return (canon task.return (result $g)))
   (core module $m
     (import "" "memory" (memory 1))
-    (import "" "foo" (func $foo (param i32 i32 i32 i32)))
     (import "" "stream.new" (func $stream.new (result i64)))
     (import "" "stream.write" (func $stream.write (param i32 i32 i32) (result i32)))
     (import "" "stream.drop-writable" (func $stream.drop-writable (param i32)))
@@ -306,7 +179,9 @@ async fn async_values() -> anyhow::Result<()> {
     (global $f (mut i32) (i32.const 0))
     (data (i32.const 0x100) "foobar")
     (func (export "run") (param i32 i32 i32) (result i32)
-      (call $foo (local.get 0) (local.get 1) (local.get 2) (i32.const 0))
+      (i32.store (i32.const 0) (local.get 0))
+      (i32.store (i32.const 4) (local.get 1))
+      (i32.store (i32.const 8) (local.get 2))
       i32.const 0)
     (func $wait (param $w i32) (result i32)
       (call $waitable.join (local.get $w) (global.get $ws))
@@ -341,7 +216,6 @@ async fn async_values() -> anyhow::Result<()> {
       i32.const 0))
   (core instance $i (instantiate $m (with "" (instance
     (export "memory" (memory $memory))
-    (export "foo" (func $foo))
     (export "stream.new" (func $stream.new))
     (export "stream.write" (func $stream.write))
     (export "stream.drop-writable" (func $stream.drop-writable))
@@ -356,23 +230,7 @@ async fn async_values() -> anyhow::Result<()> {
     (canon lift (core func $i "gen") async (callback (core func $i "cb"))))
 )"#,
         async |clt, srv, component, mut store| {
-            let engine = store.engine().clone();
-            let mut linker = Linker::new(&engine);
-            for (name, types::ComponentExtern { ty, .. }) in
-                component.component_type().imports(&engine)
-            {
-                link_item(
-                    &engine,
-                    &mut linker.root(),
-                    Arc::<[ResourceType]>::default(),
-                    Arc::default(),
-                    ty,
-                    "",
-                    name,
-                )
-                .map_err(anyhow::Error::from)?;
-            }
-            let instance = linker
+            let instance = Linker::new(store.engine())
                 .instantiate_async(&mut store, &component)
                 .await
                 .map_err(anyhow::Error::from)?;
@@ -390,7 +248,6 @@ async fn async_values() -> anyhow::Result<()> {
                     instance,
                     idx,
                     ResourceTypes::default(),
-                    Arc::default(),
                     ty,
                     "",
                     name,
@@ -400,16 +257,6 @@ async fn async_values() -> anyhow::Result<()> {
             let run = serve("run").await?;
             let gen_ = serve("gen").await?;
             drop(store);
-            let foo = srv
-                .serve_values::<
-                    (ByteStream, StringFuture, UnitFuture),
-                    ((ByteStream, StringFuture, UnitFuture),),
-                >(
-                    "",
-                    "foo",
-                    Arc::from([Box::from([Some(0)]), Box::from([Some(1)]), Box::from([Some(2)])]),
-                )
-                .await?;
             try_join!(
                 async {
                     let (((s, f, u),), io) = clt
@@ -436,8 +283,8 @@ async fn async_values() -> anyhow::Result<()> {
                         .await?;
                     let (s, f, ()) =
                         receive(io, async { join!(s.collect::<Vec<_>>(), f, u) }).await?;
-                    assert_eq!(s.concat(), b"FOOBAR");
-                    assert_eq!(f, "BAZ");
+                    assert_eq!(s.concat(), b"foobar");
+                    assert_eq!(f, "baz");
 
                     let (((s, f),), io) = clt
                         .invoke_values::<_, (), ((ByteStream, StringFuture),), _>(
@@ -455,26 +302,6 @@ async fn async_values() -> anyhow::Result<()> {
                 },
                 async { handle(run).await.context("failed to serve `run`") },
                 async { handle(gen_).await.context("failed to serve `gen`") },
-                async {
-                    let Some(((), (s, f, u), rx, tx)) = pin!(foo).try_next().await? else {
-                        bail!("`foo` invocation missing");
-                    };
-                    try_join!(
-                        async {
-                            if let Some(rx) = rx {
-                                rx.await?;
-                            }
-                            anyhow::Ok(())
-                        },
-                        async {
-                            let (s, f) = join!(s.collect::<Vec<_>>(), f);
-                            let s = s.concat().to_ascii_uppercase();
-                            let f = f.to_uppercase();
-                            tx(((Box::pin(stream::iter([s])), Box::pin(async { f }), u),)).await
-                        },
-                    )?;
-                    anyhow::Ok(())
-                },
             )?;
             let res = event_loop.await?;
             res.context("event loop failed")

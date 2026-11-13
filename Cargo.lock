@@ -1156,28 +1156,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
-name = "hello-component-client"
-version = "0.1.0"
-dependencies = [
- "wit-bindgen 0.60.0",
-]
-
-[[package]]
-name = "hello-component-rpc-client"
-version = "0.1.0"
-dependencies = [
- "futures",
- "wit-bindgen 0.60.0",
-]
-
-[[package]]
-name = "hello-component-rpc-server"
-version = "0.1.0"
-dependencies = [
- "wit-bindgen 0.60.0",
-]
-
-[[package]]
 name = "hello-component-server"
 version = "0.1.0"
 dependencies = [
@@ -2416,13 +2394,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "resources-component-client"
-version = "0.1.0"
-dependencies = [
- "wit-bindgen 0.60.0",
-]
-
-[[package]]
 name = "resources-component-server"
 version = "0.1.0"
 dependencies = [
@@ -3518,14 +3489,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "883478de20367e224c0090af9cf5f9fa85bed63a95c1abf3afc5c083ebc06e8c"
 dependencies = [
  "wasip2",
-]
-
-[[package]]
-name = "wasi-keyvalue-component-client"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "wit-bindgen 0.60.0",
 ]
 
 [[package]]
@@ -4790,7 +4753,6 @@ dependencies = [
  "wasm-tokio",
  "wasmtime",
  "wasmtime-wasi",
- "wit-parser 0.254.2",
  "wrpc-introspect",
  "wrpc-test",
  "wrpc-transport",
@@ -4805,7 +4767,6 @@ dependencies = [
  "futures",
  "humantime",
  "reqwest",
- "semver",
  "tokio",
  "tokio-util",
  "tracing",

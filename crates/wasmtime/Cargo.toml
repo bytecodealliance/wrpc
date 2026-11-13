@@ -24,7 +24,6 @@ uuid = { workspace = true, features = ["std", "v7"] }
 wasm-tokio = { workspace = true }
 wasmtime = { workspace = true, features = ["anyhow", "component-model-async", "std"] }
 wasmtime-wasi = { workspace = true, features = ["p2"], optional = true }
-wit-parser = { workspace = true }
 wrpc-introspect = { workspace = true }
 wrpc-transport = { workspace = true }
 

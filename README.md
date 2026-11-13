@@ -67,7 +67,7 @@ wRPC usage examples for different programming languages can be found at [example
 There are 2 different kinds of examples:
 - Native wRPC applications, tied to a particular wRPC transport (like Unix Domain Sockets, TCP, QUIC or WebTransport)
   - TCP and Unix Domain Socket transports open one connection per invocation. QUIC, WebTransport and HTTP/2 multiplex many concurrent invocations over a single long-lived connection and are the recommended choice for sustained high call rates (see [`SPEC.md`](./SPEC.md#tcp)).
-- Generic Wasm components, that need to run in a Wasm runtime. Those can be executed, for example, using `wrpc-wasmtime`, to polyfill imports at runtime and serve exports using wRPC.
+- Wasm reactor components, that need to run in a Wasm runtime. Those can be served, for example, using `wrpc-wasmtime`, which serves their exports using wRPC.
 
 ### Requirements
 
@@ -79,31 +79,20 @@ Nix users can run `nix develop` anywhere in the repository to get all dependenci
 
 In this example we will serve and invoke a simple [`hello`](./examples/wit/hello/hello.wit) application.
 
-#### Rust components
+#### Rust component
 
-We will use the following two Rust components:
-- [examples/rust/hello-component-client](examples/rust/hello-component-client)
+We will use the following Rust component:
 - [examples/rust/hello-component-server](examples/rust/hello-component-server)
 
-We will have to build these components first:
+Build the Wasm `hello` server:
 
-- Build Wasm `hello` client:
+```sh
+cargo build --release -p hello-component-server --target wasm32-wasip2
+```
 
-    ```sh
-    cargo build --release -p hello-component-client --target wasm32-wasip2
-    ```
+> Output is in target/wasm32-wasip2/release/hello_component_server.wasm
 
-    > Output is in target/wasm32-wasip2/release/hello-component-client.wasm
-
-- Build Wasm `hello` server:
-
-    ```sh
-    cargo build --release -p hello-component-server --target wasm32-wasip2
-    ```
-    
-    > Output is in target/wasm32-wasip2/release/hello_component_server.wasm
-
-    > NB: Rust uses `_` separators in the filename, because a component is built as a reactor-style library
+> NB: Rust uses `_` separators in the filename, because a component is built as a reactor-style library
 
 #### Using TCP transport
 
@@ -122,10 +111,10 @@ We will use the following two Rust wRPC applications using TCP transport:
     - Sample output:
     > INFO wrpc_wasmtime_cli: serving instance function name="hello"
 
-3. Call Wasm `hello` server using a Wasm `hello` client via TCP:
+2. Call the Wasm `hello` server using a native wRPC `hello` client via TCP:
 
     ```sh
-    wrpc-wasmtime tcp run ./target/wasm32-wasip2/release/hello-component-client.wasm
+    cargo run -p hello-tcp-client
     ```
 
     - Sample output in the client:
@@ -136,28 +125,16 @@ We will use the following two Rust wRPC applications using TCP transport:
     >
     > INFO wrpc_wasmtime_cli: successfully served instance function invocation
 
-4. Call the Wasm `hello` server using a native wRPC `hello` client via TCP:
-
-    ```sh
-    cargo run -p hello-tcp-client
-    ```
-
-5. Serve native wRPC `hello` server via TCP:
+3. Serve native wRPC `hello` server via TCP:
 
     ```sh
     cargo run -p hello-tcp-server [::1]:7762
     ```
 
-6. Call native wRPC `hello` server using native wRPC `hello` client via TCP:
+4. Call native wRPC `hello` server using native wRPC `hello` client via TCP:
 
     ```sh
     cargo run -p hello-tcp-client [::1]:7762
-    ```
-
-7. Call native wRPC `hello` server using Wasm `hello` client via TCP:
-
-    ```sh
-    wrpc-wasmtime tcp run --import [::1]:7762 ./target/wasm32-wasip2/release/hello-component-client.wasm
     ```
 
 ## Repository structure

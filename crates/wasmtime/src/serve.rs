@@ -1,7 +1,6 @@
 use core::future::poll_fn;
 use core::pin::Pin;
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::{Context as _, anyhow};
@@ -11,7 +10,7 @@ use tokio::select;
 use tokio::sync::{mpsc, oneshot};
 use tracing::{Instrument as _, Span, debug, instrument};
 use wasmtime::component::types;
-use wasmtime::component::{Accessor, ComponentExportIndex, Instance, InstancePre, ResourceType};
+use wasmtime::component::{Accessor, ComponentExportIndex, Instance, InstancePre};
 
 use crate::{ResourceTypes, WrpcView, call, rpc_func_name};
 
@@ -106,14 +105,11 @@ impl<T: Send + 'static> SharedStore<T> {
 pub trait ServeExt: wrpc_transport::Serve {
     /// Serve [`types::ComponentFunc`] from an [`InstancePre`] instantiating it on each call.
     /// This serving method does not support guest-exported resources.
-    #[instrument(level = "trace", skip(self, store, instance_pre, host_resources))]
+    #[instrument(level = "trace", skip(self, store, instance_pre))]
     fn serve_function<T>(
         &self,
         store: impl Fn() -> wasmtime::Store<T> + Send + 'static,
         instance_pre: InstancePre<T>,
-        host_resources: impl Into<
-            Arc<HashMap<Box<str>, HashMap<Box<str>, (ResourceType, ResourceType)>>>,
-        >,
         ty: types::ComponentFunc,
         instance_name: &str,
         name: &str,
@@ -132,7 +128,6 @@ pub trait ServeExt: wrpc_transport::Serve {
         T: WrpcView + 'static,
     {
         let span = Span::current();
-        let host_resources = host_resources.into();
         async move {
             debug!(instance = instance_name, name, "serving function export");
             let component_ty = instance_pre.component();
@@ -164,13 +159,11 @@ pub trait ServeExt: wrpc_transport::Serve {
                 .await?;
             let name = Arc::<str>::from(name);
             let results_ty: Arc<[_]> = ty.results().collect();
-            let host_resources = Arc::clone(&host_resources);
             Ok(invocations.map_ok(move |(cx, tx, rx)| {
                 let instance_pre = instance_pre.clone();
                 let name = Arc::clone(&name);
                 let params_ty = Arc::clone(&params_ty);
                 let results_ty = Arc::clone(&results_ty);
-                let host_resources = Arc::clone(&host_resources);
                 let resources = resources.clone();
 
                 let mut store = store();
@@ -193,7 +186,6 @@ pub trait ServeExt: wrpc_transport::Serve {
                                         rx,
                                         tx,
                                         &resources,
-                                        &host_resources,
                                         params_ty.iter(),
                                         &results_ty,
                                         func,
@@ -219,10 +211,7 @@ pub trait ServeExt: wrpc_transport::Serve {
     /// Like [`Self::serve_function`], but with a shared `store` instance.
     /// This is required to allow for serving functions, which operate on guest-exported resources.
     /// Invocations run concurrently on the event loop of the `store`.
-    #[instrument(
-        level = "trace",
-        skip(self, store, instance, resources, host_resources)
-    )]
+    #[instrument(level = "trace", skip(self, store, instance, resources))]
     #[allow(clippy::too_many_arguments)]
     fn serve_function_shared<T>(
         &self,
@@ -230,9 +219,6 @@ pub trait ServeExt: wrpc_transport::Serve {
         instance: Instance,
         idx: ComponentExportIndex,
         resources: ResourceTypes,
-        host_resources: impl Into<
-            Arc<HashMap<Box<str>, HashMap<Box<str>, (ResourceType, ResourceType)>>>,
-        >,
         ty: types::ComponentFunc,
         instance_name: &str,
         name: &str,
@@ -251,7 +237,6 @@ pub trait ServeExt: wrpc_transport::Serve {
         T: WrpcView + 'static,
     {
         let span = Span::current();
-        let host_resources = host_resources.into();
         async move {
             debug!(instance = instance_name, name, "serving function export");
             let params_ty: Arc<[_]> = ty.params().map(|(_, ty)| ty).collect();
@@ -261,13 +246,11 @@ pub trait ServeExt: wrpc_transport::Serve {
                 .await?;
             let name = Arc::<str>::from(name);
             let results_ty: Arc<[_]> = ty.results().collect();
-            let host_resources = Arc::clone(&host_resources);
             Ok(invocations.map_ok(move |(cx, tx, rx)| {
                 let name = Arc::clone(&name);
                 let params_ty = Arc::clone(&params_ty);
                 let results_ty = Arc::clone(&results_ty);
                 let resources = resources.clone();
-                let host_resources = Arc::clone(&host_resources);
                 let store = store.clone();
                 (
                     cx,
@@ -286,7 +269,6 @@ pub trait ServeExt: wrpc_transport::Serve {
                                             rx,
                                             tx,
                                             &resources,
-                                            &host_resources,
                                             params_ty.iter(),
                                             &results_ty,
                                             func,
