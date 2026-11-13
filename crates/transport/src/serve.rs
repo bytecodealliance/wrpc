@@ -12,7 +12,7 @@ use tokio_util::codec::{Decoder as _, Encoder as _, FramedRead};
 use tracing::{Instrument as _, Span, debug, instrument, trace};
 
 use crate::frame::{Incoming, Outgoing};
-use crate::{BufferedIncoming, Deferred as _, TupleDecode, TupleEncode};
+use crate::{BufferedIncoming, Deferred as _, Paths as _, TupleDecode, TupleEncode};
 
 /// Server-side handle to a wRPC transport
 ///
@@ -42,12 +42,11 @@ pub trait Serve: Sync {
 /// Extension trait for [Serve]
 pub trait ServeExt: Serve {
     /// Serve function `func` from instance `instance` using typed `Params` and `Results`
-    #[instrument(level = "trace", skip(self, paths))]
+    #[instrument(level = "trace", skip(self))]
     fn serve_values<Params, Results>(
         &self,
         instance: &str,
         func: &str,
-        paths: Arc<[Box<[Option<usize>]>]>,
     ) -> impl Future<
         Output = anyhow::Result<
             impl Stream<
@@ -85,7 +84,8 @@ pub trait ServeExt: Serve {
     {
         let span = Span::current();
         async {
-            let invocations = self.serve(instance, func, paths).await?;
+            let paths = Params::Decoder::default().paths();
+            let invocations = self.serve(instance, func, Arc::from(paths)).await?;
             Ok(invocations.and_then(move |(cx, mut outgoing, incoming)| {
                 async {
                     let mut dec = FramedRead::new(incoming, Params::Decoder::default());
@@ -217,11 +217,7 @@ mod tests {
     ) -> impl Future<
         Output = anyhow::Result<Pin<Box<dyn Stream<Item = anyhow::Result<T::Context>> + 'static>>>,
     > {
-        let fut = s.serve_values::<(Bytes,), (Bytes,)>(
-            "foo",
-            "bar",
-            Arc::from([Box::from([Some(42), None]), Box::from([None])]),
-        );
+        let fut = s.serve_values::<(Bytes,), (Bytes,)>("foo", "bar");
         async move {
             let st = fut.await.unwrap();
             Ok(Box::pin(st.and_then(|(cx, _, _, tx)| async {

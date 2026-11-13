@@ -16,7 +16,7 @@ use tokio_util::task::AbortOnDropHandle;
 use tracing::{Instrument as _, debug, instrument, trace};
 
 use crate::frame::{Incoming, Outgoing};
-use crate::{BufferedIncoming, Deferred as _, TupleDecode, TupleEncode};
+use crate::{BufferedIncoming, Deferred as _, Paths as _, TupleDecode, TupleEncode};
 
 /// Client-side handle to a wRPC transport
 ///
@@ -125,28 +125,22 @@ pub trait InvokeExt: Invoke {
     /// results are received, if there are any. The parameters are transmitted
     /// by a task spawned on the runtime, the results are received while the
     /// future is polled; dropping it aborts both.
-    #[instrument(level = "trace", skip(self, cx, params, paths))]
-    fn invoke_values<P, Params, Results, Paths>(
+    #[instrument(level = "trace", skip(self, cx, params))]
+    fn invoke_values<Params, Results>(
         &self,
         cx: Self::Context,
         instance: &str,
         func: &str,
         params: Params,
-        paths: Paths,
     ) -> impl Future<
         Output = anyhow::Result<(
             Results,
             Option<
-                impl Future<Output = anyhow::Result<()>>
-                + Send
-                + 'static
-                + use<Self, P, Params, Results, Paths>,
+                impl Future<Output = anyhow::Result<()>> + Send + 'static + use<Self, Params, Results>,
             >,
         )>,
     > + Send
     where
-        Paths: AsRef<[P]> + Send,
-        P: AsRef<[Option<usize>]> + Send + Sync,
         Params: TupleEncode + Send,
         Results: TupleDecode + Send,
         <Params::Encoder as tokio_util::codec::Encoder<Params>>::Error:
@@ -160,9 +154,10 @@ pub trait InvokeExt: Invoke {
             trace!("encoding parameters");
             enc.encode(params, &mut buf)
                 .context("failed to encode parameters")?;
+            let dec = Results::Decoder::default();
             debug!("invoking function");
             let (mut outgoing, incoming) = self
-                .invoke(cx, instance, func, paths)
+                .invoke(cx, instance, func, dec.paths())
                 .await
                 .context("failed to invoke function")?;
             outgoing
@@ -182,7 +177,7 @@ pub trait InvokeExt: Invoke {
                 ))
             });
 
-            let mut dec = FramedRead::new(incoming, Results::Decoder::default());
+            let mut dec = FramedRead::new(incoming, dec);
             let results = async {
                 debug!("receiving sync results");
                 dec.try_next()
@@ -252,16 +247,14 @@ pub trait InvokeExt: Invoke {
     /// Invoke function `func` on instance `instance` using typed `Params` and `Results`
     /// This is like [`Self::invoke_values`], but it only results once all I/O is done
     #[instrument(level = "trace", skip_all)]
-    fn invoke_values_blocking<P, Params, Results>(
+    fn invoke_values_blocking<Params, Results>(
         &self,
         cx: Self::Context,
         instance: &str,
         func: &str,
         params: Params,
-        paths: impl AsRef<[P]> + Send,
     ) -> impl Future<Output = anyhow::Result<Results>> + Send
     where
-        P: AsRef<[Option<usize>]> + Send + Sync,
         Params: TupleEncode + Send,
         Results: TupleDecode + Send,
         <Params::Encoder as tokio_util::codec::Encoder<Params>>::Error:
@@ -270,9 +263,7 @@ pub trait InvokeExt: Invoke {
             core::error::Error + Send + Sync + 'static,
     {
         async {
-            let (ret, io) = self
-                .invoke_values(cx, instance, func, params, paths)
-                .await?;
+            let (ret, io) = self.invoke_values(cx, instance, func, params).await?;
             if let Some(io) = io {
                 trace!("awaiting I/O completion");
                 io.await?;
@@ -328,13 +319,7 @@ mod tests {
         async {
             let wrpc = T::default();
             let ((r0,), _) = wrpc
-                .invoke_values(
-                    (),
-                    "wrpc-test:integration/async",
-                    "with-streams",
-                    (),
-                    [[None].as_slice()],
-                )
+                .invoke_values((), "wrpc-test:integration/async", "with-streams", ())
                 .await?;
             Ok(r0)
         }
@@ -354,17 +339,7 @@ mod tests {
     {
         let wrpc = T::default();
         let ((r0,), _) = wrpc
-            .invoke_values(
-                (),
-                "wrpc-test:integration/async",
-                "with-streams",
-                (),
-                [
-                    [Some(1), Some(2)].as_slice(),
-                    [None].as_slice(),
-                    [Some(42)].as_slice(),
-                ],
-            )
+            .invoke_values((), "wrpc-test:integration/async", "with-streams", ())
             .await?;
         Ok(r0)
     }

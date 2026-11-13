@@ -502,22 +502,14 @@ async fn assert_dynamic<C: Clone + Send + Sync + 'static>(
         Ok(())
     }
 
-    let paths: Arc<[Box<[Option<usize>]>]> = Arc::from([
-        Box::from([Some(0)]),
-        Box::from([Some(1)]),
-        Box::from([Some(2)]),
-        Box::from([Some(3)]),
-        Box::from([Some(4)]),
-        Box::from([Some(5), None]),
-    ]);
     let reset = srv
-        .serve_values::<(String,), (String,)>("test", "reset", Arc::default())
+        .serve_values::<(String,), (String,)>("test", "reset")
         .await?;
     let sync = srv
-        .serve_values::<SyncValues, SyncValues>("test", "sync", Arc::default())
+        .serve_values::<SyncValues, SyncValues>("test", "sync")
         .await?;
     let async_ = srv
-        .serve_values::<AsyncValues, AsyncValues>("test", "async", Arc::clone(&paths))
+        .serve_values::<AsyncValues, AsyncValues>("test", "async")
         .await?;
     let (mut reset, mut sync, mut async_) = (pin!(reset), pin!(sync), pin!(async_));
     try_join!(
@@ -552,13 +544,7 @@ async fn assert_dynamic<C: Clone + Send + Sync + 'static>(
         async {
             for _ in 0..2 {
                 let res = clt
-                    .invoke_values_blocking::<_, _, (String,)>(
-                        cx.clone(),
-                        "test",
-                        "reset",
-                        ("arg",),
-                        &[[]; 0],
-                    )
+                    .invoke_values_blocking::<_, (String,)>(cx.clone(), "test", "reset", ("arg",))
                     .await;
                 res.expect_err("`test.reset` should have failed");
             }
@@ -568,7 +554,7 @@ async fn assert_dynamic<C: Clone + Send + Sync + 'static>(
             let unpacked = wrpc_transport::unpack(&mut buf)?;
             for params in [sync_values(), unpacked] {
                 let res: SyncValues = clt
-                    .invoke_values_blocking(cx.clone(), "test", "sync", params, &[[]; 0])
+                    .invoke_values_blocking(cx.clone(), "test", "sync", params)
                     .await?;
                 assert_eq!(res, sync_values());
             }
@@ -577,7 +563,7 @@ async fn assert_dynamic<C: Clone + Send + Sync + 'static>(
             let unpacked = wrpc_transport::unpack(&mut buf)?;
             for params in [async_values(), unpacked] {
                 let (res, io) = clt
-                    .invoke_values(cx.clone(), "test", "async", params, &paths)
+                    .invoke_values(cx.clone(), "test", "async", params)
                     .await?;
                 assert_async_values(res, io).await?;
             }
@@ -682,13 +668,11 @@ where
     W: tokio::io::AsyncWrite + Send + Sync + Unpin + 'static,
 {
     let srv = Arc::new(wrpc_transport::frame::Server::default());
-    let invocations = srv
-        .serve_values::<(u32,), (&str,)>("foo", "bar", Arc::default())
-        .await?;
+    let invocations = srv.serve_values::<(u32,), (&str,)>("foo", "bar").await?;
     join!(
         async {
             let (a,) = clt
-                .invoke_values_blocking::<_, _, (String,)>((), "foo", "bar", (42,), &[[]; 0])
+                .invoke_values_blocking::<_, (String,)>((), "foo", "bar", (42,))
                 .await
                 .expect("failed to invoke `foo.bar`");
             assert_eq!(a, "test");
@@ -718,9 +702,7 @@ async fn rust_oneshot_no_params_open_outgoing() -> anyhow::Result<()> {
     let (clt, srv) = Oneshot::duplex(1024);
     let (rx, tx) = split(srv);
     let srv = Arc::new(wrpc_transport::frame::Server::default());
-    let invocations = srv
-        .serve_values::<(), (&str,)>("foo", "bar", Arc::default())
-        .await?;
+    let invocations = srv.serve_values::<(), (&str,)>("foo", "bar").await?;
     let fut = async {
         join!(
             async {
@@ -762,7 +744,7 @@ async fn rust_oneshot_raw() -> anyhow::Result<()> {
     join!(
         async {
             let (a,) = Oneshot::from(clt)
-                .invoke_values_blocking::<_, _, (String,)>((), "foo", "bar", (42,), &[[]; 0])
+                .invoke_values_blocking::<_, (String,)>((), "foo", "bar", (42,))
                 .await
                 .expect("failed to invoke `foo.bar`");
             assert_eq!(a, "test");
@@ -825,7 +807,7 @@ async fn rust_oneshot_raw_strings_invalid_utf8() -> anyhow::Result<()> {
     let (rx, tx) = split(srv);
     let srv = Arc::new(wrpc_transport::frame::Server::default());
     let invocations = srv
-        .serve_values::<(), (Bytes,)>("wrpc-test:raw-strings/strings", "bar", Arc::default())
+        .serve_values::<(), (Bytes,)>("wrpc-test:raw-strings/strings", "bar")
         .await?;
     join!(
         async {
@@ -912,12 +894,11 @@ async fn rust_oneshot_raw_strings_invalid_utf8_result() -> anyhow::Result<()> {
         let (rx, tx) = split(conn);
         join!(
             async {
-                clt.invoke_values_blocking::<_, _, (String,)>(
+                clt.invoke_values_blocking::<_, (String,)>(
                     (),
                     "wrpc-test:raw-strings/strings",
                     func,
                     (),
-                    &[[]; 0],
                 )
                 .await
                 .expect_err("invalid UTF-8 must not be transmitted");

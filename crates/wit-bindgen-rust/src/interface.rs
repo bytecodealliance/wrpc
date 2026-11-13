@@ -184,30 +184,7 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve, H: Handler<T::Context> + 
             } else {
                 format!("{instance}.{}", func.name)
             };
-            let paths = func.params.iter().enumerate().fold(
-                BTreeSet::default(),
-                |mut paths, (i, param)| {
-                    let (nested, fut) = async_paths_ty(self.resolve, &param.ty);
-                    for path in nested {
-                        let mut s = String::with_capacity(3 + path.len() * 6);
-                        s.push_str(&format!("[Some({i})"));
-                        for i in path {
-                            if let Some(i) = i {
-                                s.push_str(&format!(", Some({i})"));
-                            } else {
-                                s.push_str(", None");
-                            }
-                        }
-                        s.push(']');
-                        paths.insert(s);
-                    }
-                    if fut {
-                        paths.insert(format!("[Some({i})]"));
-                    }
-                    paths
-                },
-            );
-            uwrite!(
+            uwriteln!(
                 self.src,
                 r#"
             async {{ 
@@ -215,34 +192,13 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve, H: Handler<T::Context> + 
                     wrpc,
                     "{instance}",
                     "{}",
-                    ::std::sync::Arc::from("#,
-                rpc_func_name(func),
-                anyhow = self.r#gen.anyhow_path(),
-                wrpc_transport = self.r#gen.wrpc_transport_path(),
-            );
-            if paths.is_empty() {
-                self.src.push_str(
-                    r"{
-                       let paths: [::std::boxed::Box<[::core::option::Option<usize>]>; 0] = [];
-                       paths
-                   }",
-                );
-            } else {
-                self.src.push_str("[");
-                for path in paths {
-                    self.src.push_str("::std::boxed::Box::from(");
-                    self.src.push_str(&path);
-                    self.src.push_str("), ");
-                }
-                self.src.push_str("]");
-            }
-            uwriteln!(
-                self.src,
-                r#")
                 )
                 .await,
                 "failed to serve `{fqn}`")
             }},"#,
+                rpc_func_name(func),
+                anyhow = self.r#gen.anyhow_path(),
+                wrpc_transport = self.r#gen.wrpc_transport_path(),
             );
         }
         self.push_str(")?;\n");
@@ -619,34 +575,8 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve, H: Handler<T::Context> + 
         }
         self.src.push_str("#[allow(clippy::all)]\n");
 
-        let async_params = func.params.iter().any(|param| {
-            let (paths, fut) = async_paths_ty(self.resolve, &param.ty);
-            fut || !paths.is_empty()
-        });
-        let paths =
-            func.result
-                .iter()
-                .enumerate()
-                .fold(BTreeSet::default(), |mut paths, (i, ty)| {
-                    let (nested, fut) = async_paths_ty(self.resolve, ty);
-                    for path in nested {
-                        let mut s = String::with_capacity(7 + path.len() * 6);
-                        s.push_str(&format!("[Some({i})"));
-                        for i in path {
-                            if let Some(i) = i {
-                                s.push_str(&format!(", Some({i})"));
-                            } else {
-                                s.push_str(", None");
-                            }
-                        }
-                        s.push(']');
-                        paths.insert(s);
-                    }
-                    if fut {
-                        paths.insert(format!("[Some({i})]"));
-                    }
-                    paths
-                });
+        let async_params = func.params.iter().any(|param| self.is_async(&param.ty));
+        let async_results = func.result.iter().any(|ty| self.is_async(ty));
 
         let anyhow = self.r#gen.anyhow_path().to_string();
 
@@ -663,11 +593,11 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve, H: Handler<T::Context> + 
                     self.src,
                     " -> impl ::core::future::Future<Output = {anyhow}::Result<"
                 );
-                if async_params || !paths.is_empty() {
+                if async_params || async_results {
                     self.push_str("(");
                 }
                 self.print_ty(ty, true, false);
-                if async_params || !paths.is_empty() {
+                if async_params || async_results {
                     uwrite!(
                         self.src,
                         ", ::core::option::Option<impl ::core::future::Future<Output = {anyhow}::Result<()>> + ::core::marker::Send + 'static + use<'a, C__>>)",
@@ -684,7 +614,7 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve, H: Handler<T::Context> + 
                     self.print_ty(ty, true, false);
                     self.push_str(", ");
                 }
-                if async_params || !paths.is_empty() {
+                if async_params || async_results {
                     uwrite!(
                         self.src,
                         "::core::option::Option<impl ::core::future::Future<Output = {anyhow}::Result<()>> + ::core::marker::Send + 'static + use<'a, C__>>",
@@ -708,13 +638,13 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve, H: Handler<T::Context> + 
             .result
             .as_ref()
             .map(|ty| self.decoded_value(ty, "wrpc__"));
-        if func.result.iter().len() == 0 || (!async_params && paths.is_empty()) {
+        if func.result.iter().len() == 0 || (!async_params && !async_results) {
             let decoded = decoded.map_or_else(String::default, |ty| format!(": ({ty},)"));
             uwrite!(
                 self.src,
                 r#"
                 let wrpc__{decoded} = {anyhow}::Context::context(
-                    {wrpc_transport}::InvokeExt::invoke_values_blocking(wrpc__, cx__, "{instance}", "{}", ({params}), "#,
+                    {wrpc_transport}::InvokeExt::invoke_values_blocking(wrpc__, cx__, "{instance}", "{}", ({params})).await,"#,
                 rpc_func_name(func),
                 wrpc_transport = self.r#gen.wrpc_transport_path(),
                 params = {
@@ -726,16 +656,6 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve, H: Handler<T::Context> + 
                     }
                 },
             );
-            self.src.push_str("[");
-            if paths.is_empty() {
-                self.src.push_str("[None; 0]; 0");
-            } else {
-                for path in paths {
-                    self.src.push_str(&path);
-                    self.src.push_str(".as_slice(), ");
-                }
-            }
-            self.src.push_str("]).await,\n");
             uwriteln!(
                 self.src,
                 r#"
@@ -753,7 +673,7 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve, H: Handler<T::Context> + 
                 self.src,
                 r#"
                 let (wrpc__, io__){decoded} = {anyhow}::Context::context(
-                    {wrpc_transport}::InvokeExt::invoke_values(wrpc__, cx__, "{instance}", "{}", ({params}), "#,
+                    {wrpc_transport}::InvokeExt::invoke_values(wrpc__, cx__, "{instance}", "{}", ({params})).await,"#,
                 rpc_func_name(func),
                 wrpc_transport = self.r#gen.wrpc_transport_path(),
                 params = {
@@ -765,16 +685,6 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve, H: Handler<T::Context> + 
                     }
                 },
             );
-            self.src.push_str("[");
-            if paths.is_empty() {
-                self.src.push_str("[None; 0]; 0");
-            } else {
-                for path in paths {
-                    self.src.push_str(&path);
-                    self.src.push_str(".as_slice(), ");
-                }
-            }
-            self.src.push_str("]).await,\n");
             uwriteln!(
                 self.src,
                 r#"
@@ -1102,6 +1012,38 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve, H: Handler<T::Context> + 
         let prev = mem::take(&mut self.src);
         self.print_decoded_ty(ty, false);
         mem::replace(&mut self.src, prev).to_string()
+    }
+
+    fn is_async(&self, ty: &Type) -> bool {
+        let (paths, fut) = async_paths_ty(self.resolve, ty);
+        fut || !paths.is_empty()
+    }
+
+    fn decoder_paths(&self, id: TypeId) -> String {
+        let (nested, fut) = async_paths_tyid(self.resolve, id);
+        let mut paths: Vec<String> = nested
+            .into_iter()
+            .map(|path| {
+                let path: Vec<String> = path
+                    .into_iter()
+                    .map(|i| match i {
+                        Some(i) => format!("::core::option::Option::Some({i})"),
+                        None => "::core::option::Option::None".to_string(),
+                    })
+                    .collect();
+                format!("&[{}][..], ", path.join(", "))
+            })
+            .collect();
+        if fut {
+            paths.push("&[][..], ".to_string());
+        }
+        if paths.is_empty() {
+            return "::std::boxed::Box::default()".to_string();
+        }
+        format!(
+            "::std::boxed::Box::from([{}].map(<::std::boxed::Box<[::core::option::Option<usize>]>>::from))",
+            paths.concat()
+        )
     }
 
     fn print_encoded_ty(&mut self, ty: &Type, submodule: bool) {
@@ -1531,6 +1473,7 @@ impl<W: {wrpc_transport}::DeferredWrite> {wrpc_transport}::Encode<W> for &self::
 }}",
                 );
             }
+            let decoder_paths = self.decoder_paths(id);
             uwriteln!(
                 self.src,
                 r"
@@ -1543,6 +1486,12 @@ impl {wrpc_transport}::Decode for self::{name}
 {{
     type Decoder = {mod_name}::Decoder;
     type ListDecoder = {wrpc_transport}::ListDecoder<Self::Decoder>;
+}}
+
+impl {wrpc_transport}::Paths for {mod_name}::Decoder {{
+    fn paths(&self) -> ::std::boxed::Box<[::std::boxed::Box<[::core::option::Option<usize>]>]> {{
+        {decoder_paths}
+    }}
 }}
 
 mod {mod_name} {{
@@ -1905,6 +1854,12 @@ impl {wrpc_transport}::Decode for self::{name} {{
     type ListDecoder = {wrpc_transport}::SyncCodec<{wasm_tokio}::CoreVecDecoder<Self::Decoder>>;
 }}
 
+impl {wrpc_transport}::Paths for {mod_name}::Codec {{
+    fn paths(&self) -> ::std::boxed::Box<[::std::boxed::Box<[::core::option::Option<usize>]>]> {{
+        ::std::boxed::Box::default()
+    }}
+}}
+
 use {bitflags} as __{mod_name}__bitflags;
 
 mod {mod_name} {{
@@ -2081,6 +2036,12 @@ impl {wrpc_transport}::Decode for self::{name} {{
     type ListDecoder = {wrpc_transport}::SyncCodec<{wasm_tokio}::CoreVecDecoder<Self::Decoder>>;
 }}
 
+impl {wrpc_transport}::Paths for {mod_name}::Codec {{
+    fn paths(&self) -> ::std::boxed::Box<[::std::boxed::Box<[::core::option::Option<usize>]>]> {{
+        ::std::boxed::Box::default()
+    }}
+}}
+
 mod {mod_name} {{
     #[derive(::core::clone::Clone, ::core::marker::Copy, ::core::fmt::Debug, ::core::default::Default, ::core::cmp::PartialEq, ::core::cmp::Eq)]
     pub struct Codec;
@@ -2170,6 +2131,7 @@ impl<W: {wrpc_transport}::DeferredWrite> {wrpc_transport}::Encode<W> for &&self:
                     );
                 }
 
+                let decoder_paths = self.decoder_paths(id);
                 uwrite!(
                     self.src,
                     r#"
@@ -2182,6 +2144,12 @@ impl {wrpc_transport}::Decode for self::{name}
 {{
     type Decoder = {mod_name}::Decoder;
     type ListDecoder = {wrpc_transport}::ListDecoder<Self::Decoder>;
+}}
+
+impl {wrpc_transport}::Paths for {mod_name}::Decoder {{
+    fn paths(&self) -> ::std::boxed::Box<[::std::boxed::Box<[::core::option::Option<usize>]>]> {{
+        {decoder_paths}
+    }}
 }}
 
 mod {mod_name} {{
@@ -2580,6 +2548,12 @@ impl<W: {wrpc_transport}::DeferredWrite> {wrpc_transport}::Encode<W> for &self::
 impl {wrpc_transport}::Decode for self::{name} {{
     type Decoder = {mod_name}::Codec;
     type ListDecoder = {wrpc_transport}::SyncCodec<{wasm_tokio}::CoreVecDecoder<Self::Decoder>>;
+}}
+
+impl {wrpc_transport}::Paths for {mod_name}::Codec {{
+    fn paths(&self) -> ::std::boxed::Box<[::std::boxed::Box<[::core::option::Option<usize>]>]> {{
+        ::std::boxed::Box::default()
+    }}
 }}
 
 mod {mod_name} {{
