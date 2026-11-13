@@ -5,6 +5,7 @@ use anyhow::{Context as _, bail};
 use futures::{Stream, StreamExt as _, TryStreamExt as _, stream};
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _, BufReader};
 use tokio::net::TcpStream;
+use tokio::sync::oneshot;
 use tokio::task::yield_now;
 use tokio::{join, spawn, try_join};
 use tracing::Instrument as _;
@@ -14,6 +15,8 @@ use wrpc_transport::{Invoke as _, InvokeExt as _};
 use wrpc_wasmtime::{
     ResourceTypes, ServeExt as _, SharedResourceTable, SharedStore, WrpcCtxView, WrpcView,
 };
+
+type ByteStream = Pin<Box<dyn Stream<Item = Vec<u8>> + Send>>;
 
 type Server = wrpc_transport::Server<(), BufReader<ReadHalf<TcpStream>>, WriteHalf<TcpStream>>;
 
@@ -136,7 +139,6 @@ async fn shared_store_trap() -> anyhow::Result<()> {
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn async_values() -> anyhow::Result<()> {
-    type ByteStream = Pin<Box<dyn Stream<Item = Vec<u8>> + Send>>;
     type StringFuture = Pin<Box<dyn Future<Output = String> + Send>>;
     type UnitFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
 
@@ -285,6 +287,104 @@ async fn async_values() -> anyhow::Result<()> {
                 async { handle(run).await.context("failed to serve `run`") },
                 async { handle(gen_).await.context("failed to serve `gen`") },
             )?;
+            Ok(())
+        },
+    )
+    .await
+}
+
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+async fn async_params_after_return() -> anyhow::Result<()> {
+    with_store(
+        r#"
+(component
+  (type $s (stream u8))
+  (core module $mem (memory (export "memory") 1))
+  (core instance $mem (instantiate $mem))
+  (alias core export $mem "memory" (core memory $memory))
+  (core func $stream.read (canon stream.read $s async (memory $memory)))
+  (core func $stream.drop-readable (canon stream.drop-readable $s))
+  (core func $waitable-set.new (canon waitable-set.new))
+  (core func $waitable.join (canon waitable.join))
+  (core func $task.return (canon task.return))
+  (core module $m
+    (import "" "memory" (memory 1))
+    (import "" "stream.read" (func $stream.read (param i32 i32 i32) (result i32)))
+    (import "" "stream.drop-readable" (func $stream.drop-readable (param i32)))
+    (import "" "waitable-set.new" (func $waitable-set.new (result i32)))
+    (import "" "waitable.join" (func $waitable.join (param i32 i32)))
+    (import "" "task.return" (func $task.return))
+    (global $ws (mut i32) (i32.const 0))
+    (global $s (mut i32) (i32.const 0))
+    (global $n (mut i32) (i32.const 0))
+    (func $read (result i32)
+      (local $res i32)
+      (loop $l
+        (local.set $res (call $stream.read (global.get $s) (i32.const 0) (i32.const 16)))
+        (if (i32.eq (local.get $res) (i32.const -1))
+          (then
+            (call $waitable.join (global.get $s) (global.get $ws))
+            (return (i32.or (i32.const 2) (i32.shl (global.get $ws) (i32.const 4))))))
+        (global.set $n (i32.add (global.get $n) (i32.shr_u (local.get $res) (i32.const 4))))
+        (br_if $l (i32.eqz (i32.and (local.get $res) (i32.const 0xf)))))
+      (call $stream.drop-readable (global.get $s))
+      i32.const 0)
+    (func (export "run") (param i32) (result i32)
+      (global.set $s (local.get 0))
+      (global.set $ws (call $waitable-set.new))
+      (call $task.return)
+      (call $read))
+    (func (export "cb") (param i32 i32 i32) (result i32)
+      (call $waitable.join (local.get 1) (i32.const 0))
+      (global.set $n (i32.add (global.get $n) (i32.shr_u (local.get 2) (i32.const 4))))
+      (if (i32.and (local.get 2) (i32.const 0xf))
+        (then
+          (call $stream.drop-readable (global.get $s))
+          (return (i32.const 0))))
+      (call $read))
+    (func (export "count") (result i32)
+      global.get $n))
+  (core instance $i (instantiate $m (with "" (instance
+    (export "memory" (memory $memory))
+    (export "stream.read" (func $stream.read))
+    (export "stream.drop-readable" (func $stream.drop-readable))
+    (export "waitable-set.new" (func $waitable-set.new))
+    (export "waitable.join" (func $waitable.join))
+    (export "task.return" (func $task.return))))))
+  (func (export "run") async (param "s" $s)
+    (canon lift (core func $i "run") async (callback (core func $i "cb"))))
+  (func (export "count") (result u32) (canon lift (core func $i "count")))
+)"#,
+        async |clt, srv, component, instance, store| {
+            let run = serve(srv, store, component, instance, "run").await?;
+            let count = serve(srv, store, component, instance, "count").await?;
+            try_join!(
+                async {
+                    let (tx, rx) = oneshot::channel();
+                    let ((), io) = clt
+                        .invoke_values::<_, ()>(
+                            (),
+                            "",
+                            "run",
+                            (Box::pin(stream::once(async {
+                                _ = rx.await;
+                                b"foo".to_vec()
+                            })) as ByteStream,),
+                        )
+                        .await?;
+                    _ = tx.send(());
+                    if let Some(io) = io {
+                        io.await?;
+                    }
+                    anyhow::Ok(())
+                },
+                async { handle(run).await.context("failed to serve `run`") },
+            )?;
+            let ((n,), ()) = try_join!(
+                clt.invoke_values_blocking::<(), (u32,)>((), "", "count", ()),
+                async { handle(count).await.context("failed to serve `count`") },
+            )?;
+            assert_eq!(n, 3);
             Ok(())
         },
     )
