@@ -279,7 +279,7 @@ use tokio::io::BufReader;
 use tokio::net::TcpListener;
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use wrpc_transport::tcp;
-use wrpc_transport::accept;
+use wrpc_transport::Header;
 
 {modules}
 
@@ -302,7 +302,7 @@ fn serve(
             let (.., tx, mut rx) = res.expect("failed to accept connection");
             let handle = Arc::clone(&handle);
             tokio::spawn(async move {
-                let header = match accept(&mut rx).await {
+                let header = match Header::read(&mut rx).await {
                     Ok(header) => header,
                     Err(err) => return eprintln!("failed to read invocation header: {err:?}"),
                 };

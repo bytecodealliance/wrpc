@@ -6,20 +6,22 @@ use std::path::Path;
 use std::process::Stdio;
 
 use anyhow::{Context as _, bail, ensure};
-use bytes::Bytes;
+use bytes::BytesMut;
 use futures::{Stream, StreamExt as _};
 use hyper::client::conn::http2;
 use hyper::server::conn::http1;
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use tempfile::{TempDir, tempdir};
-use tokio::io::{AsyncBufReadExt as _, AsyncRead, AsyncWrite, BufReader};
+use tokio::io::{
+    AsyncBufReadExt as _, AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _, BufReader,
+};
 use tokio::net::TcpListener;
 use tokio::process::{Child, Command};
 use tokio::time::timeout;
 use tokio::{select, spawn};
-use tokio_util::codec::BytesCodec;
+use tokio_util::codec::Encoder as _;
 use tracing::{info, instrument};
-use wrpc_transport::{Connect as _, invoke, tcp};
+use wrpc_transport::{Connect as _, FrameEncoder, FrameRef, HeaderEncoder, HeaderRef, tcp};
 
 pub mod common;
 
@@ -142,18 +144,27 @@ async fn js_server() -> anyhow::Result<()> {
 
     let client = wrpc_transport::tcp::Client::from(addr);
     {
-        let (tx, rx) = client.connect(()).await?;
-        let (tx, mut rx) = invoke(tx, rx, "wrpc-test:integration/foo", "foo", [[]; 0])?;
-        let mut invalid = tx.index(&[1])?;
-        invalid
-            .encode(&mut BytesCodec::default(), Bytes::from_static(b"x"))
-            .await?;
-        let res = timeout(
-            Duration::from_secs(5),
-            rx.decode(&mut BytesCodec::default()),
-        )
-        .await
-        .context("invalid data did not reset the invocation")?;
+        let (mut tx, mut rx) = client.connect(()).await?;
+        let mut buf = BytesMut::default();
+        HeaderEncoder.encode(
+            HeaderRef {
+                instance: "wrpc-test:integration/foo",
+                name: "foo",
+            },
+            &mut buf,
+        )?;
+        FrameEncoder.encode(
+            FrameRef {
+                path: &[1],
+                data: b"x",
+            },
+            &mut buf,
+        )?;
+        tx.write_all(&buf).await?;
+        tx.flush().await?;
+        let res = timeout(Duration::from_secs(5), rx.read_to_end(&mut Vec::default()))
+            .await
+            .context("invalid data did not reset the invocation")?;
         let err = res.expect_err("invalid data must reset the invocation");
         assert_eq!(err.kind(), std::io::ErrorKind::ConnectionReset);
     }

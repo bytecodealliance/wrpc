@@ -33,9 +33,11 @@ use wasmtime::error::Context as _;
 use wasmtime::{AsContextMut, StoreContextMut};
 use wrpc_transport::frame::{Incoming, Outgoing};
 use wrpc_transport::{
-    Decode, Deferred, DeferredFn, DeferredWrite as _, Encode, READ_CHUNK_SIZE, handle_deferred,
+    Decode, Deferred, DeferredFn, DeferredWrite as _, Encode, Paths, READ_CHUNK_SIZE,
+    handle_deferred,
 };
 
+use crate::paths::params_async_paths;
 use crate::{ResourceTypes, WrpcView};
 
 /// Synchronous access to a store, which is either borrowed exclusively or reachable through an
@@ -100,6 +102,65 @@ impl<T> ValEncoder<'_, T> {
 impl<T> Deferred<Outgoing> for ValEncoder<'_, T> {
     fn take_deferred(&mut self) -> Option<DeferredFn<Outgoing>> {
         self.deferred.take()
+    }
+}
+
+/// Encodes a tuple of [`Val`]s of types `tys`, e.g. function results.
+pub struct TupleEncoder<'a, T> {
+    store: T,
+    tys: &'a [Type],
+    resources: &'a ResourceTypes,
+    deferred: Vec<Option<DeferredFn<Outgoing>>>,
+}
+
+impl<T> TupleEncoder<'_, T> {
+    #[must_use]
+    pub fn new<'a>(store: T, tys: &'a [Type], resources: &'a ResourceTypes) -> TupleEncoder<'a, T> {
+        TupleEncoder {
+            store,
+            tys,
+            resources,
+            deferred: Vec::default(),
+        }
+    }
+}
+
+impl<T> Encoder<&[Val]> for TupleEncoder<'_, T>
+where
+    T: WithStore<Data: WrpcView>,
+{
+    type Error = wasmtime::Error;
+
+    fn encode(&mut self, vs: &[Val], dst: &mut BytesMut) -> Result<(), Self::Error> {
+        if vs.len() != self.tys.len() {
+            bail!("value count mismatch");
+        }
+        let Self {
+            store,
+            tys,
+            resources,
+            deferred,
+        } = self;
+        store.with_store(|mut store| {
+            for (i, (v, ty)) in zip(vs, *tys).enumerate() {
+                let mut enc = ValEncoder::new(store.as_context_mut(), ty, resources);
+                enc.encode(v, dst)
+                    .with_context(|| format!("failed to encode value {i}"))?;
+                deferred.push(enc.take_deferred());
+            }
+            Ok(())
+        })
+    }
+}
+
+impl<T> Deferred<Outgoing> for TupleEncoder<'_, T> {
+    fn take_deferred(&mut self) -> Option<DeferredFn<Outgoing>> {
+        let deferred = mem::take(&mut self.deferred);
+        if deferred.iter().any(Option::is_some) {
+            Some(Box::new(|w, path| handle_deferred(w, path, deferred)))
+        } else {
+            None
+        }
     }
 }
 
@@ -1029,6 +1090,12 @@ impl<T> ValDecoder<'_, T> {
             state: None,
             deferred: Vec::default(),
         }
+    }
+}
+
+impl<T> Paths for ValDecoder<'_, T> {
+    fn paths(&self) -> Box<[Box<[Option<usize>]>]> {
+        params_async_paths(self.tys, self.resources)
     }
 }
 

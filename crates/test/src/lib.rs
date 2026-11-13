@@ -7,40 +7,28 @@ use core::time::Duration;
 use std::process::ExitStatus;
 
 use anyhow::{Context, ensure};
-use bytes::Bytes;
-use futures::stream::FuturesUnordered;
+use bytes::{Bytes, BytesMut};
+use futures::stream::{self, FuturesUnordered};
 use futures::{Stream, StreamExt as _, TryStreamExt as _};
 use rcgen::{CertifiedKey, generate_simple_self_signed};
 use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
 use rustls::version::TLS13;
 use rustls::{ClientConfig, RootCertStore, ServerConfig};
-use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _};
 use tokio::net::{TcpListener, TcpStream, ToSocketAddrs};
 use tokio::process::Command;
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 use tokio::time::timeout;
 use tokio::{select, spawn, try_join};
-use tokio_util::codec::BytesCodec;
-use tracing::info;
-use wrpc_transport::frame::{Incoming, Outgoing};
-use wrpc_transport::{Connect, Header, HeaderReadError, accept, invoke, serve};
+use tokio_util::codec::Encoder as _;
+use wrpc_transport::{
+    Connect, Decode, Encode, FrameEncoder, FrameRef, Header, HeaderEncoder, HeaderReadError,
+    HeaderRef, invoke, serve,
+};
 
 /// Maximum number of invocations [`serve_until`] serves concurrently
 pub const MAX_INVOCATIONS: usize = 64;
-
-async fn write(tx: &mut Outgoing, buf: &'static [u8]) -> std::io::Result<()> {
-    tx.encode(&mut BytesCodec::default(), Bytes::from_static(buf))
-        .await
-}
-
-async fn read_to_end(rx: &mut Incoming) -> std::io::Result<Vec<u8>> {
-    let mut buf = Vec::default();
-    while let Some(chunk) = rx.decode(&mut BytesCodec::default()).await? {
-        buf.extend_from_slice(&chunk);
-    }
-    Ok(buf)
-}
 
 /// Polls `fut` to completion while accepting invocations from `incoming`, reading the header
 /// of each and polling the future `f` returns for it, then completes the served invocations.
@@ -65,7 +53,7 @@ where
         {
             let (cx, tx, mut rx) = res.context("failed to accept invocation")?;
             reading.push(async move {
-                let header = accept(&mut rx).await?;
+                let header = Header::read(&mut rx).await?;
                 Ok::<_, HeaderReadError>((cx, header, tx, rx))
             });
         }
@@ -85,22 +73,19 @@ where
 }
 
 /// Accepts an invocation of function `func` on instance `instance` from `incoming`, returning
-/// its context and framed streams, which multiplex the async `paths`
-pub async fn accept_framed<C, I, O, E, P>(
+/// its context and byte streams past the header
+pub async fn accept_invocation<C, I, O, E>(
     incoming: &mut (impl Stream<Item = Result<(C, O, I), E>> + Unpin),
     instance: &str,
     func: &str,
-    paths: impl IntoIterator<Item = P>,
-) -> anyhow::Result<(C, Outgoing, Incoming)>
+) -> anyhow::Result<(C, O, I)>
 where
-    I: AsyncRead + Send + Unpin + 'static,
-    O: AsyncWrite + Send + Unpin + 'static,
+    I: AsyncRead + Unpin,
     E: core::error::Error + Send + Sync + 'static,
-    P: AsRef<[Option<usize>]>,
 {
     let res = incoming.next().await.context("invocation stream ended")?;
     let (cx, tx, mut rx) = res.context("failed to accept invocation")?;
-    let header = accept(&mut rx)
+    let header = Header::read(&mut rx)
         .await
         .context("failed to read invocation header")?;
     ensure!(
@@ -109,7 +94,6 @@ where
         header.instance,
         header.name,
     );
-    let (tx, rx) = serve(tx, rx, paths);
     Ok((cx, tx, rx))
 }
 
@@ -177,105 +161,54 @@ where
     O: AsyncWrite + Send + Unpin + 'static,
     E: core::error::Error + Send + Sync + 'static,
 {
+    type ByteStream = core::pin::Pin<Box<dyn Stream<Item = Bytes> + Send>>;
+    type Values = (Bytes, ByteStream);
+
     let mut srv = pin!(srv);
     let ((), cx) = try_join!(
         async {
             let (tx, rx) = clt.connect(cx).await.context("failed to connect")?;
-            let (mut outgoing, mut incoming) = invoke(tx, rx, "foo", "bar", [&[Some(0), Some(42)]])
-                .context("failed to invoke `foo.bar`")?;
-            let mut nested_tx = outgoing.index(&[42, 0]).context("failed to index `42.0`")?;
-            let mut nested_rx = incoming.index(&[0, 42]).context("failed to index `0.42`")?;
-            write(&mut outgoing, b"testbar")
-                .await
-                .context("failed to write `foo.bar` parameters")?;
-            outgoing
-                .close()
-                .await
-                .context("failed to close `foo.bar` parameters")?;
-            try_join!(
-                async {
-                    info!("reading `foo`");
-                    let buf = read_to_end(&mut incoming)
-                        .await
-                        .context("failed to read `foo`")?;
-                    assert_eq!(buf, b"foo");
-                    info!("read `foo`");
-                    anyhow::Ok(())
-                },
-                async {
-                    info!("writing `client->server`");
-                    write(&mut nested_tx, b"client->server")
-                        .await
-                        .context("failed to write `client->server`")?;
-                    nested_tx
-                        .close()
-                        .await
-                        .context("failed to close `client->server`")?;
-                    info!("wrote `client->server`");
-                    anyhow::Ok(())
-                },
-                async {
-                    info!("reading `server->client`");
-                    let buf = read_to_end(&mut nested_rx)
-                        .await
-                        .context("failed to read `server->client`")?;
-                    assert_eq!(buf, b"server->client");
-                    info!("read `server->client`");
-                    anyhow::Ok(())
-                },
+            let s: ByteStream = Box::pin(stream::iter([Bytes::from_static(b"client->server")]));
+            let ((results, s), io) = invoke(
+                tx,
+                rx,
+                "foo",
+                "bar",
+                <Values as Encode>::Encoder::default(),
+                (Bytes::from_static(b"testbar"), s),
+                <Values as Decode>::Decoder::default(),
+            )
+            .await
+            .context("failed to invoke `foo.bar`")?;
+            assert_eq!(results, b"foo".as_slice());
+            let (buf, ()) = try_join!(
+                async { anyhow::Ok(s.collect::<Vec<_>>().await.concat()) },
+                async { io.await.context("`foo.bar` invocation failed") },
             )?;
-            incoming
-                .closed()
-                .await
-                .context("`foo.bar` invocation failed")?;
+            assert_eq!(buf, b"server->client");
             anyhow::Ok(())
         },
         async {
-            let (cx, mut outgoing, mut incoming) =
-                accept_framed(&mut srv, "foo", "bar", [[Some(42), Some(0)]]).await?;
-            let mut nested_tx = outgoing.index(&[0, 42]).context("failed to index `0.42`")?;
-            let mut nested_rx = incoming.index(&[42, 0]).context("failed to index `42.0`")?;
-            try_join!(
-                async {
-                    info!("reading `testbar`");
-                    let buf = read_to_end(&mut incoming)
-                        .await
-                        .context("failed to read `testbar`")?;
-                    assert_eq!(buf, b"testbar");
-                    info!("read `testbar`");
-                    anyhow::Ok(())
-                },
-                async {
-                    info!("writing `foo`");
-                    write(&mut outgoing, b"foo")
-                        .await
-                        .context("failed to write `foo`")?;
-                    outgoing.close().await.context("failed to close `foo`")?;
-                    info!("wrote `foo`");
-                    anyhow::Ok(())
-                },
-                async {
-                    info!("writing `server->client`");
-                    write(&mut nested_tx, b"server->client")
-                        .await
-                        .context("failed to write `server->client`")?;
-                    nested_tx
-                        .close()
-                        .await
-                        .context("failed to close `server->client`")?;
-                    info!("wrote `server->client`");
-                    anyhow::Ok(())
-                },
-                async {
-                    info!("reading `client->server`");
-                    let buf = read_to_end(&mut nested_rx)
-                        .await
-                        .context("failed to read `client->server`")?;
-                    assert_eq!(buf, b"client->server");
-                    info!("read `client->server`");
-                    anyhow::Ok(())
-                },
+            let (cx, tx, rx) = accept_invocation(&mut srv, "foo", "bar").await?;
+            let (params, outgoing) = serve(tx, rx, <Values as Decode>::Decoder::default());
+            let ((testbar, s), rx) = params
+                .await
+                .context("failed to receive `foo.bar` parameters")?;
+            assert_eq!(testbar, b"testbar".as_slice());
+            let results: ByteStream =
+                Box::pin(stream::iter([Bytes::from_static(b"server->client")]));
+            let tx = outgoing
+                .send(
+                    <Values as Encode>::Encoder::default(),
+                    (Bytes::from_static(b"foo"), results),
+                )
+                .context("failed to encode `foo.bar` results")?;
+            let (buf, (), ()) = try_join!(
+                async { anyhow::Ok(s.collect::<Vec<_>>().await.concat()) },
+                rx,
+                async { tx.await.context("failed to transmit `foo.bar` results") },
             )?;
+            assert_eq!(buf, b"client->server");
             anyhow::Ok(cx)
         },
     )?;
@@ -283,8 +216,8 @@ where
 }
 
 /// A common test used by different transport implementations, which checks that invalid data
-/// fails ingress of a server and a client, and that dropping the writer of the failed side ends
-/// the invocation for the peer.
+/// fails ingress of a server and a client, and that dropping the failed side ends the invocation
+/// for the peer.
 ///
 /// The invocations are accepted from `srv`.
 pub async fn assert_invalid_data_resets<T, C, I, O, E>(
@@ -299,47 +232,81 @@ where
     O: AsyncWrite + Send + Unpin + 'static,
     E: core::error::Error + Send + Sync + 'static,
 {
+    let mut invalid = BytesMut::default();
+    FrameEncoder
+        .encode(
+            FrameRef {
+                path: &[1],
+                data: b"x",
+            },
+            &mut invalid,
+        )
+        .context("failed to encode invalid frame")?;
+
     let mut srv = pin!(srv);
-    let (tx, rx) = clt.connect(cx.clone()).await.context("failed to connect")?;
-    let (outgoing, mut incoming) =
-        invoke(tx, rx, "foo", "baz", [[None; 0]; 0]).context("failed to invoke `foo.baz`")?;
-    let mut invalid = outgoing.index(&[1]).context("failed to index `1`")?;
-    write(&mut invalid, b"x")
+    let (mut tx, mut rx) = clt.connect(cx.clone()).await.context("failed to connect")?;
+    let mut buf = BytesMut::default();
+    HeaderEncoder
+        .encode(
+            HeaderRef {
+                instance: "foo",
+                name: "baz",
+            },
+            &mut buf,
+        )
+        .context("failed to encode invocation header")?;
+    buf.extend_from_slice(&invalid);
+    tx.write_all(&buf)
         .await
         .context("failed to write invalid data")?;
-    let (.., outgoing, srv_incoming) = accept_framed(&mut srv, "foo", "baz", [[Some(0)]]).await?;
-    let finished = srv_incoming.closed();
-    finished
-        .await
-        .expect_err("invalid data must fail server ingress");
+    tx.flush().await.context("failed to flush invalid data")?;
+    let (.., srv_tx, srv_rx) = accept_invocation(&mut srv, "foo", "baz").await?;
+    let (params, outgoing) = serve(srv_tx, srv_rx, <() as Decode>::Decoder::default());
+    let res = params.await;
+    ensure!(res.is_err(), "invalid data must fail server ingress");
     drop(outgoing);
-    let res = timeout(Duration::from_secs(5), read_to_end(&mut incoming))
+    let mut buf = Vec::default();
+    let res = timeout(Duration::from_secs(5), rx.read_to_end(&mut buf))
         .await
-        .context("invalid data did not reset the invocation")?;
-    res.expect_err("invalid data must reset the invocation");
+        .context("invalid data did not end the invocation")?;
+    ensure!(
+        res.is_err() || buf.is_empty(),
+        "server responded to invalid data"
+    );
 
     let (tx, rx) = clt.connect(cx).await.context("failed to connect")?;
-    let (mut clt_outgoing, incoming) =
-        invoke(tx, rx, "foo", "baz", [[None; 0]; 0]).context("failed to invoke `foo.baz`")?;
-    clt_outgoing
-        .flush()
-        .await
-        .context("failed to send invocation header")?;
-    let (.., outgoing, srv_incoming) = accept_framed(&mut srv, "foo", "baz", [[Some(0)]]).await?;
-    let mut nested = srv_incoming.index(&[0]).context("failed to index `0`")?;
-    let mut invalid = outgoing.index(&[1]).context("failed to index `1`")?;
-    write(&mut invalid, b"x")
-        .await
-        .context("failed to write invalid data")?;
-    incoming
-        .closed()
-        .await
-        .expect_err("invalid data must fail client ingress");
-    drop(clt_outgoing);
-    let res = timeout(Duration::from_secs(5), read_to_end(&mut nested))
-        .await
-        .context("invalid data did not reset the invocation")?;
-    res.expect_err("invalid data must reset the invocation");
+    try_join!(
+        async {
+            let res = invoke(
+                tx,
+                rx,
+                "foo",
+                "baz",
+                <() as Encode>::Encoder::default(),
+                (),
+                <() as Decode>::Decoder::default(),
+            )
+            .await;
+            ensure!(res.is_err(), "invalid data must fail client ingress");
+            anyhow::Ok(())
+        },
+        async {
+            let (.., mut srv_tx, mut srv_rx) = accept_invocation(&mut srv, "foo", "baz").await?;
+            srv_tx
+                .write_all(&invalid)
+                .await
+                .context("failed to write invalid data")?;
+            srv_tx
+                .flush()
+                .await
+                .context("failed to flush invalid data")?;
+            let mut buf = Vec::default();
+            _ = timeout(Duration::from_secs(5), srv_rx.read_to_end(&mut buf))
+                .await
+                .context("invalid data did not end the invocation")?;
+            anyhow::Ok(())
+        },
+    )?;
     Ok(())
 }
 

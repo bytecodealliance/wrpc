@@ -1798,7 +1798,8 @@ macro_rules! impl_tuple_codec {
             }
         }
 
-        impl<$($vt),+> Deferred<Incoming> for TupleDecoder::<($($vt::Decoder),+,), ($(Option<$vt>),+,)>
+        impl<$($vt),+> Deferred<Incoming>
+            for TupleDecoder::<($($vt::Decoder),+,), ($(Option<$vt>),+,)>
         where
             $($vt: Decode),+
         {
@@ -2633,13 +2634,13 @@ mod tests {
     use core::time::Duration;
 
     use anyhow::bail;
-    use tokio::io::{duplex, sink};
+    use tokio::io::duplex;
     use tokio::task::yield_now;
     use tokio_util::codec::Decoder as _;
 
     use super::*;
     use crate::frame::{self, FrameRef};
-    use crate::mux::mux;
+    use crate::mux::{egress, ingress};
 
     const CLOSED: &[u8] = b"\0\0";
 
@@ -2654,7 +2655,7 @@ mod tests {
     #[test_log::test(tokio::test)]
     async fn future_flushes_before_nested_value() -> anyhow::Result<()> {
         let (tx, mut rx) = duplex(2);
-        let (w, _rx) = mux(tx, CLOSED, BytesMut::default(), [[None; 0]; 0]);
+        let w = egress(tx, BytesMut::default());
         let nested: Pin<Box<dyn Future<Output = u8> + Send>> = Box::pin(pending());
         let mut buf = [0; 4];
         select! {
@@ -2677,12 +2678,8 @@ mod tests {
             std::io::Error: From<<T::Encoder as tokio_util::codec::Encoder<T>>::Error>,
         {
             let (tx, mut rx) = duplex(1024);
-            let (mut root, _rx) = mux(tx, CLOSED, BytesMut::default(), [[None; 0]; 0]);
-            let mut enc = T::Encoder::default();
-            root.encode(&mut enc, v).await?;
-            let f = enc.take_deferred().expect("deferred write missing")(&root, &[])?;
-            root.close().await?;
-            f.await?;
+            let tx = egress(tx, BytesMut::default()).send(T::Encoder::default(), v)?;
+            tx.await?;
             let mut frames = Vec::default();
             rx.read_to_end(&mut frames).await?;
             Ok(frames)
@@ -2801,7 +2798,7 @@ mod tests {
 
         for (ready, expected) in [("foo", &b"\x03foo\x03bar"[..]), ("", b"\x03bar")] {
             let (tx, rx) = duplex(1024);
-            let (root, _rx) = mux(tx, CLOSED, BytesMut::default(), [[None; 0]; 0]);
+            let root = egress(tx, BytesMut::default());
             root.write_stream_bytes(&[0], 0, stream::iter([ready, "bar"].map(Bytes::from)))
                 .await?;
             root.close().await?;
@@ -2809,7 +2806,7 @@ mod tests {
             assert_eq!(frames, expected);
 
             let (tx, rx) = duplex(1024);
-            let (root, _rx) = mux(tx, CLOSED, BytesMut::default(), [[None; 0]; 0]);
+            let root = egress(tx, BytesMut::default());
             root.write_stream_read(&[0], 0, ready.into(), b"bar".as_slice())
                 .await?;
             root.close().await?;
@@ -2830,14 +2827,10 @@ mod tests {
                 let frame = FrameRef { path, data };
                 frame::Encoder.encode(frame, &mut rx_buf).unwrap();
             }
-            let (tx, rx) = mux(
-                sink(),
+            ingress(
                 std::io::Cursor::new(rx_buf),
-                BytesMut::default(),
                 [&[Some(0)][..], &[Some(0), Some(0)]],
-            );
-            tx.close().await.unwrap();
-            rx
+            )
         }
 
         fn pending<T: Decode>() -> (T, DeferredFn<Incoming>) {

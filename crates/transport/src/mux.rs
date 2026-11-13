@@ -6,7 +6,7 @@ use core::task::{Context, Poll, Waker, ready};
 
 use std::collections::BTreeMap;
 use std::io::IoSlice;
-use std::sync::{Arc, Weak};
+use std::sync::Arc;
 
 use bytes::{Buf, BufMut as _, Bytes, BytesMut};
 use futures::stream::FuturesUnordered;
@@ -15,11 +15,11 @@ use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _};
 use tokio::select;
 use tokio_util::codec::{Decoder, Encoder};
 use tokio_util::io::poll_read_buf;
-use tracing::{debug, error, instrument, trace};
+use tracing::{Instrument as _, debug, error, instrument, trace};
 use wasm_tokio::{Leb128Encoder, put_u32_leb128};
 
 use crate::frame::{FrameHeader, HeaderDecoder};
-use crate::{Deferred as _, DeferredWrite, Encode, READ_CHUNK_SIZE};
+use crate::{Deferred, DeferredWrite, Encode, READ_CHUNK_SIZE};
 
 /// Maximum number of bytes of encoded stream chunks buffered before they are written
 const MAX_PENDING_STREAM_BATCH: usize = 1 << 20;
@@ -50,11 +50,6 @@ struct IncomingState {
 }
 
 impl IncomingState {
-    fn fail(&mut self) {
-        self.failed = true;
-        self.wake();
-    }
-
     /// Fails the invocation with `err`, unless it failed already, waking all handles
     fn fail_err(&mut self, err: std::io::Error) -> std::io::Error {
         if !self.failed {
@@ -159,15 +154,6 @@ fn pending<T>(wakers: &mut Vec<Waker>, cx: &Context<'_>) -> Poll<T> {
     Poll::Pending
 }
 
-/// Fails egress of an invocation, which failed
-fn fail_outgoing(outgoing: &Weak<std::sync::Mutex<OutgoingState>>) {
-    if let Some(state) = outgoing.upgrade() {
-        let mut state = lock(&state);
-        state.failed = true;
-        state.wake();
-    }
-}
-
 /// Locks `mutex`, recovering it if a thread panicked while holding the lock
 fn lock<T: ?Sized>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     mutex
@@ -175,40 +161,55 @@ fn lock<T: ?Sized>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> 
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
-/// Multiplexes the [`AsyncWrite`] and [`AsyncRead`] of an invocation declaring the async
-/// `paths`, which sends `buffer` before the first frame, returning the [Outgoing] and [Incoming]
-/// handles of the root path.
+/// Returns the root [Outgoing] handle of the framed egress of an invocation over `tx`, which
+/// sends `buffer` before the first frame.
 ///
-/// The streams are polled by the handles, nothing is spawned: data is received only while a
-/// handle reads or the future returned by [`Incoming::closed`] is polled, and sent only while a
-/// handle writes, flushes, shuts down or closes. A frame is received as a whole before the next one and
-/// held until the handle of its path reads it, so all handles of an invocation must be read
-/// concurrently. Reads from `rx` are small, so they must be cheap, for example buffered.
-/// The root [Incoming] handle and a handle, which read data of its path, must read the end of
-/// it before it is dropped. Other handles of paths, which carry no value, such as the elements
-/// of a list of futures, need not be read. Every [Outgoing] handle must be closed with
-/// [`Outgoing::close`], the last one shuts the write half of the stream down, which is otherwise
-/// dropped with the last handle without being shut down. The read half is dropped with the last
-/// [Incoming] handle and [Closed] future.
+/// `tx` is polled by the handles, nothing is spawned: data is sent only while a handle writes,
+/// flushes or closes. Every [Outgoing] handle must be closed with [`Outgoing::close`], the last
+/// one shuts the stream down, which is otherwise dropped with the last handle without being shut
+/// down. Every handle of a failed egress fails with [`std::io::ErrorKind::BrokenPipe`].
+pub fn egress(tx: impl AsyncWrite + Send + Unpin + 'static, buffer: BytesMut) -> Outgoing {
+    Outgoing {
+        path: Box::default(),
+        path_buf: Bytes::from_static(&[0]),
+        closed: 0,
+        state: Arc::new(std::sync::Mutex::new(OutgoingState {
+            buffer,
+            stream: Box::pin(tx) as _,
+            pending: Vec::default(),
+            failed: false,
+            written: 0,
+        })),
+    }
+}
+
+/// Returns the root [Incoming] handle of the framed ingress of an invocation over `rx` declaring
+/// the async `paths`.
+///
+/// `rx` is polled by the handles, nothing is spawned: data is received only while a handle reads
+/// or the future returned by [`Incoming::closed`] is polled. A frame is received as a whole
+/// before the next one and held until the handle of its path reads it, so all handles must be
+/// read concurrently. Reads from `rx` are small, so they must be cheap, for example buffered.
+/// The root handle and a handle, which read data of its path, must read the end of it before it
+/// is dropped. Other handles of paths, which carry no value, such as the elements of a list of
+/// futures, need not be read. The stream is dropped with the last handle and [Closed] future.
 /// A handle of a declared path, which did not read data, is not known to expect any, since
 /// merged variant paths may carry none, so a frame received on its path after it was dropped,
 /// or on a closed path, is held like one, whose handle was not indexed yet, stalling ingress
 /// until all handles are dropped.
-/// The invocation fails on a frame received on a path, which is not declared, on a frame
-/// received on a path no handle reads once all handles are dropped, on the stream ending before
-/// a handle read the end of its path, on a handle dropped before it read the end of its path
-/// and on an error of the stream. Every handle of a failed invocation fails with
+/// Ingress fails on a frame received on a path, which is not declared, on a frame received on a
+/// path no handle reads once all handles are dropped, on the stream ending before a handle read
+/// the end of its path, on a handle dropped before it read the end of its path and on an error
+/// of the stream. Every handle of a failed ingress fails with
 /// [`std::io::ErrorKind::BrokenPipe`].
 ///
 /// `paths` must not contain both a wildcard and an index at the same position, so paths of
 /// different variant cases, which are not indexed, must be merged by replacing such indices
 /// by wildcards.
-pub fn mux(
-    tx: impl AsyncWrite + Send + Unpin + 'static,
+pub fn ingress(
     rx: impl AsyncRead + Send + Unpin + 'static,
-    buffer: BytesMut,
     paths: impl IntoIterator<Item = impl AsRef<[Option<usize>]>>,
-) -> (Outgoing, Incoming) {
+) -> Incoming {
     let paths: Box<[Box<[Option<usize>]>]> = paths
         .into_iter()
         .map(|path| Box::<[Option<usize>]>::from(path.as_ref()))
@@ -216,45 +217,24 @@ pub fn mux(
         .collect();
     let depth = paths.iter().map(|path| path.len()).max().unwrap_or(0);
     let depth = u32::try_from(depth).unwrap_or(u32::MAX);
-    let header = HeaderDecoder::new(depth, u32::MAX);
-    let outgoing_state = Arc::new(std::sync::Mutex::new(OutgoingState {
-        buffer,
-        stream: Box::pin(tx) as _,
-        pending: Vec::default(),
-        failed: false,
-        written: 0,
-    }));
-    let incoming_state = Arc::new(std::sync::Mutex::new(IncomingState {
-        stream: Box::pin(rx) as _,
-        paths,
-        header,
-        header_buf: BytesMut::default(),
-        frame: None,
-        remaining: 0,
-        ended: false,
-        readers: BTreeMap::from([(Box::default(), None)]),
-        closed: Vec::default(),
-        incoming: 1,
-        failed: false,
-    }));
-    let incoming = Arc::downgrade(&incoming_state);
-    let outgoing = Arc::downgrade(&outgoing_state);
-    (
-        Outgoing {
-            path: Box::default(),
-            path_buf: Bytes::from_static(&[0]),
-            closed: 0,
-            state: outgoing_state,
-            incoming,
-        },
-        Incoming {
-            path: Box::default(),
-            closed: false,
-            buffer: BytesMut::default(),
-            state: incoming_state,
-            outgoing,
-        },
-    )
+    Incoming {
+        path: Box::default(),
+        closed: false,
+        buffer: BytesMut::default(),
+        state: Arc::new(std::sync::Mutex::new(IncomingState {
+            stream: Box::pin(rx) as _,
+            paths,
+            header: HeaderDecoder::new(depth, u32::MAX),
+            header_buf: BytesMut::default(),
+            frame: None,
+            remaining: 0,
+            ended: false,
+            readers: BTreeMap::from([(Box::default(), None)]),
+            closed: Vec::default(),
+            incoming: 1,
+            failed: false,
+        })),
+    }
 }
 
 /// Incoming framed stream
@@ -266,7 +246,6 @@ pub struct Incoming {
     /// Data of the path received, but not decoded yet
     buffer: BytesMut,
     state: Arc<std::sync::Mutex<IncomingState>>,
-    outgoing: Weak<std::sync::Mutex<OutgoingState>>,
 }
 
 impl Drop for Incoming {
@@ -290,11 +269,6 @@ impl Drop for Incoming {
                 std::io::ErrorKind::BrokenPipe,
                 "received data was not processed",
             ));
-        }
-        let failed = state.failed;
-        drop(state);
-        if failed {
-            fail_outgoing(&self.outgoing);
         }
     }
 }
@@ -326,7 +300,6 @@ impl Incoming {
             closed: !declared,
             buffer: BytesMut::default(),
             state: Arc::clone(&self.state),
-            outgoing: Weak::clone(&self.outgoing),
         })
     }
 
@@ -336,7 +309,6 @@ impl Incoming {
     pub fn closed(&self) -> Closed {
         Closed {
             state: Arc::clone(&self.state),
-            outgoing: Weak::clone(&self.outgoing),
         }
     }
 
@@ -441,12 +413,7 @@ impl Incoming {
                 self.closed = n == 0;
                 Poll::Ready(Ok(n))
             }
-            Err(err) => {
-                let err = state.fail_err(err);
-                drop(state);
-                fail_outgoing(&self.outgoing);
-                Poll::Ready(Err(err))
-            }
+            Err(err) => Poll::Ready(Err(state.fail_err(err))),
         }
     }
 }
@@ -454,7 +421,6 @@ impl Incoming {
 /// Future returned by [`Incoming::closed`]
 pub struct Closed {
     state: Arc<std::sync::Mutex<IncomingState>>,
-    outgoing: Weak<std::sync::Mutex<OutgoingState>>,
 }
 
 impl Drop for Closed {
@@ -475,10 +441,7 @@ impl Future for Closed {
             && state.frame.is_none()
             && let Poll::Ready(Err(err)) = state.poll_frame(cx)
         {
-            let err = state.fail_err(err);
-            drop(state);
-            fail_outgoing(&self.outgoing);
-            return Poll::Ready(Err(err));
+            return Poll::Ready(Err(state.fail_err(err)));
         }
         if !state.ended {
             return pending(&mut state.closed, cx);
@@ -511,15 +474,37 @@ pub struct Outgoing {
     path_buf: Bytes,
     closed: usize,
     state: Arc<std::sync::Mutex<OutgoingState>>,
-    incoming: Weak<std::sync::Mutex<IncomingState>>,
 }
 
 impl Outgoing {
-    fn fail(&self, state: &mut OutgoingState) {
-        state.failed = true;
-        if let Some(state) = self.incoming.upgrade() {
-            lock(&state).fail();
+    /// Encodes `item` using `enc` and returns a future, which writes it, closes the path and
+    /// transmits the values `item` deferred
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if encoding `item` or indexing its deferred values fails
+    #[instrument(level = "trace", skip_all, fields(path = ?self.path))]
+    pub fn send<T, E>(
+        mut self,
+        mut enc: E,
+        item: T,
+    ) -> Result<impl Future<Output = std::io::Result<()>> + Send + 'static, E::Error>
+    where
+        E: Encoder<T> + Deferred<Self>,
+        E::Error: From<std::io::Error>,
+    {
+        let mut buf = BytesMut::default();
+        enc.encode(item, &mut buf)?;
+        let deferred = enc.take_deferred().map(|f| f(&self, &[])).transpose()?;
+        Ok(async move {
+            self.write(&buf).await?;
+            self.close().await?;
+            if let Some(deferred) = deferred {
+                deferred.await?;
+            }
+            Ok(())
         }
+        .in_current_span())
     }
 
     /// Encodes `item` using `enc` and writes it as a frame, buffering the bytes the stream did
@@ -570,13 +555,7 @@ impl Outgoing {
         let OutgoingState { ref mut stream, .. } = state
             .into_inner()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Err(err) = stream.shutdown().await {
-            if let Some(state) = self.incoming.upgrade() {
-                lock(&state).fail();
-            }
-            return Err(err);
-        }
-        Ok(())
+        stream.shutdown().await
     }
 
     async fn write(&mut self, mut buf: &[u8]) -> std::io::Result<()> {
@@ -698,7 +677,7 @@ impl Outgoing {
             }
         };
         if res.is_err() {
-            self.fail(state);
+            state.failed = true;
         }
         Poll::Ready(res)
     }
@@ -730,7 +709,7 @@ impl Outgoing {
             }
         };
         if res.is_err() {
-            self.fail(state);
+            state.failed = true;
         }
         Poll::Ready(res)
     }
@@ -758,7 +737,6 @@ impl Outgoing {
             path_buf: path_buf.freeze(),
             closed: 0,
             state: Arc::clone(&self.state),
-            incoming: Weak::clone(&self.incoming),
         })
     }
 }
@@ -1000,6 +978,15 @@ mod tests {
     async fn write(tx: &mut Outgoing, buf: &[u8]) -> std::io::Result<()> {
         tx.encode(&mut BytesCodec::default(), Bytes::copy_from_slice(buf))
             .await
+    }
+
+    fn mux(
+        tx: impl AsyncWrite + Send + Unpin + 'static,
+        rx: impl AsyncRead + Send + Unpin + 'static,
+        buffer: BytesMut,
+        paths: impl IntoIterator<Item = impl AsRef<[Option<usize>]>>,
+    ) -> (Outgoing, Incoming) {
+        (egress(tx, buffer), ingress(rx, paths))
     }
 
     async fn read_to_end(rx: &mut Incoming) -> std::io::Result<Vec<u8>> {
@@ -1348,24 +1335,17 @@ mod tests {
             }
         }
 
-        let (mut outgoing, mut incoming) = mux(
-            Failing,
-            b"\0\0".as_slice(),
-            BytesMut::default(),
-            [[None; 0]; 0],
-        );
+        let mut outgoing = egress(Failing, BytesMut::default());
         let err = write(&mut outgoing, b"\x2a").await.unwrap_err();
         assert_eq!(err.to_string(), "test");
-        let err = read_to_end(&mut incoming).await.unwrap_err();
+        let err = write(&mut outgoing, b"\x2a").await.unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::BrokenPipe);
 
         let (mut tx, rx) = duplex(16);
-        let (mut outgoing, incoming) = mux(sink(), rx, BytesMut::default(), [[None; 0]; 0]);
+        let incoming = ingress(rx, [[None; 0]; 0]);
         tx.write_all(&frame(&[1], b"\x2a")).await.unwrap();
         let err = incoming.closed().await.unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
-        let err = write(&mut outgoing, b"\x2a").await.unwrap_err();
-        assert_eq!(err.kind(), std::io::ErrorKind::BrokenPipe);
         drop(incoming);
         let err = tx.write_all(b"\x2a").await.unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::BrokenPipe);

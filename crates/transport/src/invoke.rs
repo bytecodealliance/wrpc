@@ -8,89 +8,61 @@ use anyhow::Context as _;
 use bytes::BytesMut;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::try_join;
-use tokio_util::codec::{BytesCodec, Encoder as _};
+use tokio_util::codec::{Decoder, Encoder};
 use tracing::{Instrument as _, debug, instrument, trace};
 
 use crate::frame::{Incoming, Outgoing};
-use crate::mux::mux;
-use crate::{Deferred as _, HeaderEncoder, HeaderRef, Paths as _, TupleDecode, TupleEncode};
+use crate::mux::{egress, ingress};
+use crate::{Deferred, HeaderEncoder, HeaderRef, Paths};
 
-/// Multiplexes the byte streams `tx` and `rx` of an invocation of function `func` on instance
-/// `instance` declaring the async `paths`, buffering the invocation header, so that it is sent
-/// along with the first frame
-#[instrument(level = "trace", skip(tx, rx, paths))]
-pub fn invoke(
+/// Invokes function `func` on instance `instance` over the byte streams `tx` and `rx`, encoding
+/// `args` using `enc` and decoding the results using `dec`
+///
+/// `args` are encoded before this returns, the invocation header is sent along with the first
+/// frame. Returns the synchronous results along with a future, which completes once the
+/// asynchronous parameters are transmitted, the asynchronous results are received, if there
+/// are any, and the invocation ends. Nothing is transmitted or received unless it is polled.
+#[instrument(level = "trace", skip(tx, rx, enc, args, dec))]
+pub fn invoke<E, T, D>(
     tx: impl AsyncWrite + Send + Unpin + 'static,
     rx: impl AsyncRead + Send + Unpin + 'static,
     instance: &str,
     func: &str,
-    paths: impl IntoIterator<Item = impl AsRef<[Option<usize>]>>,
-) -> std::io::Result<(Outgoing, Incoming)> {
+    enc: E,
+    args: T,
+    mut dec: D,
+) -> impl Future<
+    Output = anyhow::Result<(
+        D::Item,
+        impl Future<Output = anyhow::Result<()>> + Send + 'static,
+    )>,
+> + Send
+where
+    E: Encoder<T> + Deferred<Outgoing>,
+    E::Error: core::error::Error + From<std::io::Error> + Send + Sync + 'static,
+    D: Decoder + Deferred<Incoming> + Paths + Send,
+    D::Item: Send,
+    D::Error: core::error::Error + Send + Sync + 'static,
+{
     let mut buf = BytesMut::default();
-    HeaderEncoder.encode(
+    let header = HeaderEncoder.encode(
         HeaderRef {
             instance,
             name: func,
         },
         &mut buf,
-    )?;
-    Ok(mux(tx, rx, buf, paths))
-}
-
-/// Invoke function `func` on instance `instance` over the byte streams `tx` and `rx` using typed
-/// `Params` and `Results`
-///
-/// Returns the synchronous results along with a future, which completes once the
-/// asynchronous parameters are transmitted, the asynchronous results are received, if there
-/// are any, and the invocation ends. Nothing is transmitted or received unless it is polled.
-pub fn invoke_values<Params, Results>(
-    tx: impl AsyncWrite + Send + Unpin + 'static,
-    rx: impl AsyncRead + Send + Unpin + 'static,
-    instance: &str,
-    func: &str,
-    params: Params,
-) -> impl Future<
-    Output = anyhow::Result<(
-        Results,
-        impl Future<Output = anyhow::Result<()>> + Send + 'static,
-    )>,
-> + Send
-where
-    Params: TupleEncode + Send,
-    Results: TupleDecode + Send,
-    <Params::Encoder as tokio_util::codec::Encoder<Params>>::Error:
-        core::error::Error + Send + Sync + 'static,
-    <Results::Decoder as tokio_util::codec::Decoder>::Error:
-        core::error::Error + Send + Sync + 'static,
-{
-    let io = invoke(tx, rx, instance, func, Results::Decoder::default().paths());
+    );
+    let tx = header.map(|()| egress(tx, buf).send(enc, args));
+    let mut incoming = ingress(rx, dec.paths());
     async move {
-        let mut buf = BytesMut::default();
-        trace!("encoding parameters");
-        let tx = params
-            .encode(&mut Params::Encoder::default(), &mut buf)
-            .context("failed to encode parameters")?;
+        let tx = tx.context("failed to encode invocation header")?;
+        let tx = tx.context("failed to encode parameters")?;
         debug!("invoking function");
-        let (mut outgoing, mut incoming) = io.context("failed to invoke function")?;
         let tx = async move {
-            outgoing
-                .encode(&mut BytesCodec::default(), buf)
-                .await
-                .context("failed to write sync parameters")?;
-            let tx = tx.map(|tx| tx(&outgoing, &[])).transpose();
-            let tx = tx.context("failed to index async parameters")?;
-            outgoing
-                .close()
-                .await
-                .context("failed to close parameter channel")?;
-            if let Some(tx) = tx {
-                debug!("transmitting async parameters");
-                tx.await.context("failed to write async parameters")?;
-            }
-            anyhow::Ok(())
+            debug!("transmitting parameters");
+            tx.await.context("failed to transmit parameters")
         }
         .in_current_span();
-        let mut dec = Results::Decoder::default();
         debug!("receiving sync results");
         let mut tx = Some(Box::pin(tx));
         let results = {
@@ -149,28 +121,29 @@ where
             .in_current_span(),
         ))
     }
+    .in_current_span()
 }
 
-/// Invoke function `func` on instance `instance` over the byte streams `tx` and `rx` using typed
-/// `Params` and `Results`
+/// Invokes function `func` on instance `instance`, see [`invoke`]
 ///
-/// This is like [`invoke_values`], but it only resolves once all I/O is done
-pub async fn invoke_values_blocking<Params, Results>(
+/// This is like [`invoke`], but it only resolves once all I/O is done
+pub async fn invoke_blocking<E, T, D>(
     tx: impl AsyncWrite + Send + Unpin + 'static,
     rx: impl AsyncRead + Send + Unpin + 'static,
     instance: &str,
     func: &str,
-    params: Params,
-) -> anyhow::Result<Results>
+    enc: E,
+    args: T,
+    dec: D,
+) -> anyhow::Result<D::Item>
 where
-    Params: TupleEncode + Send,
-    Results: TupleDecode + Send,
-    <Params::Encoder as tokio_util::codec::Encoder<Params>>::Error:
-        core::error::Error + Send + Sync + 'static,
-    <Results::Decoder as tokio_util::codec::Decoder>::Error:
-        core::error::Error + Send + Sync + 'static,
+    E: Encoder<T> + Deferred<Outgoing>,
+    E::Error: core::error::Error + From<std::io::Error> + Send + Sync + 'static,
+    D: Decoder + Deferred<Incoming> + Paths + Send,
+    D::Item: Send,
+    D::Error: core::error::Error + Send + Sync + 'static,
 {
-    let (ret, io) = invoke_values(tx, rx, instance, func, params).await?;
+    let (ret, io) = invoke(tx, rx, instance, func, enc, args, dec).await?;
     trace!("awaiting I/O completion");
     io.await?;
     Ok(ret)
@@ -183,10 +156,10 @@ mod tests {
     use futures::Stream;
 
     use super::*;
-    use crate::Connect;
+    use crate::{Connect, Decode, Encode};
 
     #[allow(clippy::manual_async_fn)]
-    fn _invoke_values_send<T>() -> impl Future<
+    fn _invoke_send<T>() -> impl Future<
         Output = anyhow::Result<(
             Pin<Box<dyn Stream<Item = Vec<Pin<Box<dyn Future<Output = String> + Send>>>> + Send>>,
         )>,
@@ -197,9 +170,24 @@ mod tests {
         async {
             let wrpc = T::default();
             let (tx, rx) = wrpc.connect(()).await?;
-            let ((r0,), ..) =
-                invoke_values(tx, rx, "wrpc-test:integration/async", "with-streams", ()).await?;
-            Ok(r0)
+            let ((r0,), ..) = invoke(
+                tx,
+                rx,
+                "wrpc-test:integration/async",
+                "with-streams",
+                <() as Encode>::Encoder::default(),
+                (),
+                <(
+                    Pin<
+                        Box<
+                            dyn Stream<Item = Vec<Pin<Box<dyn Future<Output = String> + Send>>>>
+                                + Send,
+                        >,
+                    >,
+                ) as Decode>::Decoder::default(),
+            )
+            .await?;
+            Ok((r0,))
         }
     }
 }

@@ -30,7 +30,7 @@ use tracing_subscriber::util::SubscriberInitExt as _;
 use url::Url;
 use uuid::Uuid;
 use web_transport_quinn::Request;
-use wrpc_transport::{Header, ResourceBorrow, ResourceOwn, accept};
+use wrpc_transport::{Header, ResourceBorrow, ResourceOwn};
 use wrpc_wasi_keyvalue::exports::wasi::keyvalue::store;
 
 pub type Result<T, E = store::Error> = core::result::Result<T, E>;
@@ -676,7 +676,7 @@ export const PORT = "{port}"
                 Some((cx, tx, mut rx)) = rx.recv() => {
                     let handler = handler.clone();
                     tasks.spawn(async move {
-                        let Header { instance, name } = match accept(&mut rx).await {
+                        let Header { instance, name } = match Header::read(&mut rx).await {
                             Ok(header) => header,
                             Err(err) => {
                                 warn!(?err, "failed to read invocation header");

@@ -24,8 +24,8 @@ use tokio_util::codec::Encoder as _;
 use tokio_util::io::StreamReader;
 use tracing::instrument;
 use wrpc_transport::{
-    Connect as _, HeaderEncoder, HeaderRef, Oneshot, ResourceBorrow, ResourceOwn, accept,
-    invoke_values, invoke_values_blocking, serve_values, tcp,
+    Connect as _, Decode, Encode, Header, HeaderEncoder, HeaderRef, Oneshot, ResourceBorrow,
+    ResourceOwn, invoke, invoke_blocking, serve, tcp,
 };
 
 async fn serve_bindgen<F, E>(
@@ -524,7 +524,7 @@ where
     {
         let res = srv.next().await.context("invocation stream ended")?;
         let (.., tx, mut rx) = res.context("failed to accept invocation")?;
-        let header = wrpc_transport::accept(&mut rx)
+        let header = Header::read(&mut rx)
             .await
             .context("failed to read invocation header")?;
         ensure!(header.instance == "test" && header.name == func);
@@ -536,7 +536,7 @@ where
         async {
             for spawned in [false, true] {
                 let (tx, rx) = accept(&mut srv, "reset").await?;
-                let inv = serve_values::<(String,), (String,)>(tx, rx);
+                let inv = serve(tx, rx, <(String,) as Decode>::Decoder::default());
                 if spawned {
                     spawn(async move { drop(inv) }).await?;
                 } else {
@@ -545,25 +545,37 @@ where
             }
             for _ in 0..2 {
                 let (tx, rx) = accept(&mut srv, "sync").await?;
-                let (params, tx) = serve_values::<SyncValues, SyncValues>(tx, rx);
+                let (params, tx) = serve(tx, rx, <SyncValues as Decode>::Decoder::default());
                 let (params, io) = params.await?;
                 assert_eq!(params, sync_values());
-                tx(sync_values()).await?;
+                let tx = tx.send(<SyncValues as Encode>::Encoder::default(), sync_values())?;
+                tx.await?;
                 io.await?;
             }
             for _ in 0..2 {
                 let (tx, rx) = accept(&mut srv, "async").await?;
-                let (params, tx) = serve_values::<AsyncValues, AsyncValues>(tx, rx);
+                let (params, tx) = serve(tx, rx, <AsyncValues as Decode>::Decoder::default());
                 let (params, io) = params.await?;
-                try_join!(assert_async_values(params, io), tx(async_values()))?;
+                let tx = tx.send(<AsyncValues as Encode>::Encoder::default(), async_values())?;
+                try_join!(assert_async_values(params, io), async {
+                    tx.await.context("failed to transmit results")
+                })?;
             }
             Ok(())
         },
         async {
             for _ in 0..2 {
                 let (tx, rx) = clt.connect(cx.clone()).await?;
-                let res =
-                    invoke_values_blocking::<_, (String,)>(tx, rx, "test", "reset", ("arg",)).await;
+                let res = invoke_blocking(
+                    tx,
+                    rx,
+                    "test",
+                    "reset",
+                    <(&str,) as Encode>::Encoder::default(),
+                    ("arg",),
+                    <(String,) as Decode>::Decoder::default(),
+                )
+                .await;
                 res.expect_err("`test.reset` should have failed");
             }
 
@@ -572,8 +584,16 @@ where
             let unpacked = wrpc_transport::unpack(&mut buf)?;
             for params in [sync_values(), unpacked] {
                 let (tx, rx) = clt.connect(cx.clone()).await?;
-                let res: SyncValues =
-                    invoke_values_blocking(tx, rx, "test", "sync", params).await?;
+                let res = invoke_blocking(
+                    tx,
+                    rx,
+                    "test",
+                    "sync",
+                    <SyncValues as Encode>::Encoder::default(),
+                    params,
+                    <SyncValues as Decode>::Decoder::default(),
+                )
+                .await?;
                 assert_eq!(res, sync_values());
             }
 
@@ -581,7 +601,16 @@ where
             let unpacked = wrpc_transport::unpack(&mut buf)?;
             for params in [async_values(), unpacked] {
                 let (tx, rx) = clt.connect(cx.clone()).await?;
-                let (res, io) = invoke_values(tx, rx, "test", "async", params).await?;
+                let (res, io) = invoke(
+                    tx,
+                    rx,
+                    "test",
+                    "async",
+                    <AsyncValues as Encode>::Encoder::default(),
+                    params,
+                    <AsyncValues as Decode>::Decoder::default(),
+                )
+                .await?;
                 assert_async_values(res, io).await?;
             }
             anyhow::Ok(())
@@ -707,21 +736,32 @@ where
     join!(
         async {
             let (tx, rx) = clt.connect(()).await.expect("failed to connect");
-            let (a,) = invoke_values_blocking::<_, (String,)>(tx, rx, "foo", "bar", (42,))
-                .await
-                .expect("failed to invoke `foo.bar`");
+            let (a,) = invoke_blocking(
+                tx,
+                rx,
+                "foo",
+                "bar",
+                <(u32,) as Encode>::Encoder::default(),
+                (42,),
+                <(String,) as Decode>::Decoder::default(),
+            )
+            .await
+            .expect("failed to invoke `foo.bar`");
             assert_eq!(a, "test");
         },
         async {
-            let header = accept(&mut rx)
+            let header = Header::read(&mut rx)
                 .await
                 .expect("failed to read invocation header");
             assert_eq!(header.instance, "foo");
             assert_eq!(header.name, "bar");
-            let (params, tx) = serve_values::<(u32,), (&str,)>(tx, rx);
+            let (params, tx) = serve(tx, rx, <(u32,) as Decode>::Decoder::default());
             let (params, io) = params.await.expect("failed to receive parameters");
             assert_eq!(params, (42,));
-            tx(("test",)).await.expect("failed to transmit response");
+            let tx = tx
+                .send(<(&str,) as Encode>::Encoder::default(), ("test",))
+                .expect("failed to encode response");
+            tx.await.expect("failed to transmit response");
             io.await.expect("invocation failed");
         }
     );
@@ -759,14 +799,17 @@ async fn rust_oneshot_no_params() -> anyhow::Result<()> {
                 drop(tx);
             },
             async {
-                let header = accept(&mut rx)
+                let header = Header::read(&mut rx)
                     .await
                     .expect("failed to read invocation header");
                 assert_eq!(header.instance, "foo");
                 assert_eq!(header.name, "bar");
-                let (params, tx) = serve_values::<(), (&str,)>(tx, rx);
+                let (params, tx) = serve(tx, rx, <() as Decode>::Decoder::default());
                 let ((), io) = params.await.expect("failed to receive parameters");
-                tx(("test",)).await.expect("failed to transmit response");
+                let tx = tx
+                    .send(<(&str,) as Encode>::Encoder::default(), ("test",))
+                    .expect("failed to encode response");
+                tx.await.expect("failed to transmit response");
                 io.await.expect("invocation failed");
             }
         )
@@ -788,9 +831,17 @@ async fn rust_oneshot_raw() -> anyhow::Result<()> {
                 .connect(())
                 .await
                 .expect("failed to connect");
-            let (a,) = invoke_values_blocking::<_, (String,)>(tx, rx, "foo", "bar", (42,))
-                .await
-                .expect("failed to invoke `foo.bar`");
+            let (a,) = invoke_blocking(
+                tx,
+                rx,
+                "foo",
+                "bar",
+                <(u32,) as Encode>::Encoder::default(),
+                (42,),
+                <(String,) as Decode>::Decoder::default(),
+            )
+            .await
+            .expect("failed to invoke `foo.bar`");
             assert_eq!(a, "test");
         },
         async {
@@ -857,16 +908,20 @@ async fn rust_oneshot_raw_strings_invalid_utf8() -> anyhow::Result<()> {
                 .expect_err("invalid UTF-8 must be rejected");
         },
         async {
-            let header = accept(&mut rx)
+            let header = Header::read(&mut rx)
                 .await
                 .expect("failed to read invocation header");
             assert_eq!(header.instance, "wrpc-test:raw-strings/strings");
             assert_eq!(header.name, "bar");
-            let (params, tx) = serve_values::<(), (Bytes,)>(tx, rx);
+            let (params, tx) = serve(tx, rx, <() as Decode>::Decoder::default());
             let ((), io) = params.await.expect("failed to receive parameters");
-            tx((Bytes::from_static(b"\xff"),))
-                .await
-                .expect("failed to transmit response");
+            let tx = tx
+                .send(
+                    <(Bytes,) as Encode>::Encoder::default(),
+                    (Bytes::from_static(b"\xff"),),
+                )
+                .expect("failed to encode response");
+            tx.await.expect("failed to transmit response");
             io.await.expect("invocation failed");
         }
     );
@@ -933,18 +988,20 @@ async fn rust_oneshot_raw_strings_invalid_utf8_result() -> anyhow::Result<()> {
         join!(
             async {
                 let (tx, rx) = clt.connect(()).await.expect("failed to connect");
-                invoke_values_blocking::<_, (String,)>(
+                invoke_blocking(
                     tx,
                     rx,
                     "wrpc-test:raw-strings/strings",
                     func,
+                    <() as Encode>::Encoder::default(),
                     (),
+                    <(String,) as Decode>::Decoder::default(),
                 )
                 .await
                 .expect_err("invalid UTF-8 must not be transmitted");
             },
             async {
-                let header = accept(&mut rx)
+                let header = Header::read(&mut rx)
                     .await
                     .expect("failed to read invocation header");
                 let Ok(fut) =

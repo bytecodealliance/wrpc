@@ -2,17 +2,21 @@ use core::net::SocketAddr;
 use core::pin::Pin;
 
 use anyhow::bail;
-use bytes::Bytes;
-use futures::{Stream, StreamExt as _, stream};
+use bytes::BytesMut;
+use futures::{Stream, StreamExt as _, TryStreamExt as _, stream};
+use tokio::io::AsyncWriteExt as _;
 use tokio::net::TcpListener;
 use tokio::sync::oneshot;
 use tokio::task::yield_now;
 use tokio::{join, spawn, try_join};
-use tokio_util::codec::BytesCodec;
+use tokio_util::codec::{Encoder as _, FramedRead};
 use tracing::Instrument as _;
 use wasmtime::component::{Component, Linker, ResourceTable};
 use wrpc_test::serve_until;
-use wrpc_transport::{Connect as _, invoke, invoke_values, invoke_values_blocking, tcp};
+use wrpc_transport::{
+    Connect as _, Decode, Encode, FrameDecoder, FrameEncoder, FrameRef, HeaderEncoder, HeaderRef,
+    invoke, invoke_blocking, tcp,
+};
 use wrpc_wasmtime::{
     ResourceTypes, SharedExports, SharedResourceTable, SharedStore, WrpcCtxView, WrpcView,
 };
@@ -99,7 +103,16 @@ async fn shared_store_trap() -> anyhow::Result<()> {
                 tcp::incoming(srv),
                 async {
                     let (tx, rx) = clt.connect(()).await?;
-                    let res = invoke_values_blocking::<(), ()>(tx, rx, "", "run", ()).await;
+                    let res = invoke_blocking(
+                        tx,
+                        rx,
+                        "",
+                        "run",
+                        <() as Encode>::Encoder::default(),
+                        (),
+                        <() as Decode>::Decoder::default(),
+                    )
+                    .await;
                     res.expect_err("`run` invocation succeeded");
                     Ok(())
                 },
@@ -227,36 +240,44 @@ async fn async_values() -> anyhow::Result<()> {
         async |clt, srv, exports| {
             serve(srv, exports, async {
                 let (tx, rx) = clt.connect(()).await?;
-                let (((s, f, u),), io) =
-                    invoke_values::<_, ((ByteStream, StringFuture, UnitFuture),)>(
-                        tx,
-                        rx,
-                        "",
-                        "run",
-                        (
-                            Box::pin(
-                                stream::once(async {
-                                    yield_now().await;
-                                    b"foo".to_vec()
-                                })
-                                .chain(stream::iter([b"bar".to_vec()])),
-                            ) as ByteStream,
-                            Box::pin(async {
+                let (((s, f, u),), io) = invoke(
+                    tx,
+                    rx,
+                    "",
+                    "run",
+                    <(ByteStream, StringFuture, UnitFuture) as Encode>::Encoder::default(),
+                    (
+                        Box::pin(
+                            stream::once(async {
                                 yield_now().await;
-                                "baz".to_string()
-                            }) as StringFuture,
-                            Box::pin(yield_now()) as UnitFuture,
-                        ),
-                    )
-                    .await?;
+                                b"foo".to_vec()
+                            })
+                            .chain(stream::iter([b"bar".to_vec()])),
+                        ) as ByteStream,
+                        Box::pin(async {
+                            yield_now().await;
+                            "baz".to_string()
+                        }) as StringFuture,
+                        Box::pin(yield_now()) as UnitFuture,
+                    ),
+                    <((ByteStream, StringFuture, UnitFuture),) as Decode>::Decoder::default(),
+                )
+                .await?;
                 let (s, f, ()) = receive(io, async { join!(s.collect::<Vec<_>>(), f, u) }).await?;
                 assert_eq!(s.concat(), b"foobar");
                 assert_eq!(f, "baz");
 
                 let (tx, rx) = clt.connect(()).await?;
-                let (((s, f),), io) =
-                    invoke_values::<(), ((ByteStream, StringFuture),)>(tx, rx, "", "gen", ())
-                        .await?;
+                let (((s, f),), io) = invoke(
+                    tx,
+                    rx,
+                    "",
+                    "gen",
+                    <() as Encode>::Encoder::default(),
+                    (),
+                    <((ByteStream, StringFuture),) as Decode>::Decoder::default(),
+                )
+                .await?;
                 let (s, f) = receive(io, async { join!(s.collect::<Vec<_>>(), f) }).await?;
                 assert_eq!(s.concat(), b"foo");
                 assert_eq!(f, "bar");
@@ -339,13 +360,31 @@ async fn async_params_after_return() -> anyhow::Result<()> {
                 })) as ByteStream;
                 let ((), io) = {
                     let (tx, rx) = clt.connect(()).await?;
-                    invoke_values::<_, ()>(tx, rx, "", "run", (s,)).await?
+                    invoke(
+                        tx,
+                        rx,
+                        "",
+                        "run",
+                        <(ByteStream,) as Encode>::Encoder::default(),
+                        (s,),
+                        <() as Decode>::Decoder::default(),
+                    )
+                    .await?
                 };
                 _ = tx.send(());
                 io.await?;
 
                 let (tx, rx) = clt.connect(()).await?;
-                let (n,) = invoke_values_blocking::<(), (u32,)>(tx, rx, "", "count", ()).await?;
+                let (n,) = invoke_blocking(
+                    tx,
+                    rx,
+                    "",
+                    "count",
+                    <() as Encode>::Encoder::default(),
+                    (),
+                    <(u32,) as Decode>::Decoder::default(),
+                )
+                .await?;
                 assert_eq!(n, 3);
                 Ok(())
             })
@@ -389,18 +428,33 @@ async fn params_byte_by_byte() -> anyhow::Result<()> {
 )"#,
         async |clt, srv, exports| {
             serve(srv, exports, async {
-                let (tx, rx) = clt.connect(()).await?;
-                let (mut tx, mut rx) = invoke(tx, rx, "", "echo", [[None; 0]; 0])?;
-                for b in VALUE.chunks(1) {
-                    tx.encode(&mut BytesCodec::default(), Bytes::copy_from_slice(b))
-                        .await?;
+                let (mut tx, rx) = clt.connect(()).await?;
+                let mut buf = BytesMut::default();
+                HeaderEncoder.encode(
+                    HeaderRef {
+                        instance: "",
+                        name: "echo",
+                    },
+                    &mut buf,
+                )?;
+                tx.write_all(&buf).await?;
+                for data in VALUE.chunks(1).chain([&[][..]]) {
+                    let mut buf = BytesMut::default();
+                    FrameEncoder.encode(FrameRef { path: &[], data }, &mut buf)?;
+                    tx.write_all(&buf).await?;
                     tx.flush().await?;
                 }
-                tx.close().await?;
-                let mut buf = Vec::default();
-                while let Some(chunk) = rx.decode(&mut BytesCodec::default()).await? {
-                    buf.extend_from_slice(&chunk);
-                }
+                tx.shutdown().await?;
+                let frames: Vec<_> = FramedRead::new(rx, FrameDecoder::default())
+                    .try_collect()
+                    .await?;
+                let buf: Vec<_> = frames
+                    .iter()
+                    .flat_map(|frame| {
+                        assert!(frame.path.is_empty());
+                        frame.data.iter().copied()
+                    })
+                    .collect();
                 assert_eq!(buf, VALUE);
                 Ok(())
             })
@@ -435,12 +489,14 @@ async fn unread_param() -> anyhow::Result<()> {
                         yield_now().await;
                         b"foo".to_vec()
                     });
-                    let ((), io) = invoke_values::<(ByteStream,), ()>(
+                    let ((), io) = invoke(
                         tx,
                         rx,
                         "",
                         "run",
+                        <(ByteStream,) as Encode>::Encoder::default(),
                         (Box::pin(s) as ByteStream,),
+                        <() as Decode>::Decoder::default(),
                     )
                     .await?;
                     _ = io.await;

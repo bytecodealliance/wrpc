@@ -97,32 +97,32 @@ impl InterfaceGenerator<'_> {
 
         let trait_names: Vec<_> = traits
             .values()
-            .map(|(name, ..)| format!("{name}<C> + "))
+            .map(|(name, ..)| format!("{name}<C__> + "))
             .collect();
 
         uwrite!(
             self.src,
             r#"
-pub fn handle_interface<C, I, O, H>(
-    handler: &H,
-    cx: C,
+pub fn handle_interface<C__, I__, O__, H__>(
+    handler: &H__,
+    cx: C__,
     instance: &str,
     func: &str,
-    tx: O,
-    rx: I,
+    tx: O__,
+    rx: I__,
 ) -> ::core::result::Result<
     ::core::pin::Pin<
         ::std::boxed::Box<
             dyn ::core::future::Future<Output = {anyhow}::Result<()>> + ::core::marker::Send + 'static
         >
     >,
-    (C, O, I),
+    (C__, O__, I__),
 >
 where
-    C: ::core::marker::Send + 'static,
-    I: {tokio}::io::AsyncRead + ::core::marker::Send + ::core::marker::Unpin + 'static,
-    O: {tokio}::io::AsyncWrite + ::core::marker::Send + ::core::marker::Unpin + 'static,
-    H: Handler<C> + {resource_traits} ::core::marker::Send + ::core::marker::Sync + ::core::clone::Clone + 'static,
+    C__: ::core::marker::Send + 'static,
+    I__: {tokio}::io::AsyncRead + ::core::marker::Send + ::core::marker::Unpin + 'static,
+    O__: {tokio}::io::AsyncWrite + ::core::marker::Send + ::core::marker::Unpin + 'static,
+    H__: Handler<C__> + {resource_traits} ::core::marker::Send + ::core::marker::Sync + ::core::clone::Clone + 'static,
 {{
     match (instance, func) {{"#,
             resource_traits = trait_names.join(""),
@@ -160,12 +160,26 @@ where
             } else {
                 format!("{instance}.{}", func.name)
             };
+            let params_ty = func
+                .params
+                .iter()
+                .map(|param| format!("{}, ", self.decoded_ty(&param.ty)))
+                .collect::<String>();
+            let results_ty = func
+                .result
+                .as_ref()
+                .map(|ty| format!("{}, ", self.encoded_ty(ty)))
+                .unwrap_or_default();
             uwrite!(
                 self.src,
                 r#"
         ("{instance}", "{}") => {{
             let handler = handler.clone();
-            let (params, tx) = {wrpc_transport}::serve_values(tx, rx);
+            let (params, tx) = {wrpc_transport}::serve(
+                tx,
+                rx,
+                <({params_ty}) as {wrpc_transport}::Decode>::Decoder::default(),
+            );
             ::core::result::Result::Ok(::std::boxed::Box::pin(async move {{
                 let (("#,
                 rpc_func_name(func),
@@ -233,7 +247,12 @@ where
                 r"
                     ).await {{
                         Ok(results) => {{
-                            match tx(",
+                            let tx = {anyhow}::Context::context(
+                                tx.send(
+                                    <({results_ty}) as {wrpc_transport}::Encode>::Encoder::default(),
+                                    ",
+                anyhow = self.r#gen.anyhow_path(),
+                wrpc_transport = self.r#gen.wrpc_transport_path(),
             );
             if let Some(ty) = &func.result {
                 // wrap single-element results into a tuple for correct indexing
@@ -244,22 +263,22 @@ where
             }
             uwrite!(
                 self.src,
-                r#"
-                            ).await {{
-                                Ok(()) => {anyhow}::Ok(()),
-                                Err(err) => {{
-                                    {anyhow}::bail!(err.context("failed to transmit `{fqn}` invocation results"))
-                                }},
-                            }}
+                r#",
+                                ),
+                                "failed to encode `{fqn}` invocation results",
+                            )?;
+                            {anyhow}::Context::context(
+                                tx.await,
+                                "failed to transmit `{fqn}` invocation results",
+                            )
                         }},
                         Err(err) => {{
                             {anyhow}::bail!(err.context("failed to serve `{fqn}` invocation"))
                         }},
                     }}
                 }};
-                let (call, rx) = {tokio}::join!(call, rx);
-                call?;
-                rx
+                {tokio}::try_join!(call, rx)?;
+                ::core::result::Result::Ok(())
             }}))
         }}"#,
                 anyhow = self.r#gen.anyhow_path(),
@@ -544,13 +563,32 @@ where
             )?;"#,
             wrpc_transport = self.r#gen.wrpc_transport_path(),
         );
+        let args_ty = func
+            .params
+            .iter()
+            .map(|param| format!("{}, ", self.import_param_ty(&param.ty)))
+            .collect::<String>();
+        let results_ty = func
+            .result
+            .as_ref()
+            .map(|ty| format!("{}, ", self.decoded_ty(ty)))
+            .unwrap_or_default();
         if func.result.iter().len() == 0 || (!async_params && !async_results) {
             let decoded = decoded.map_or_else(String::default, |ty| format!(": ({ty},)"));
             uwrite!(
                 self.src,
                 r#"
                 let wrpc__{decoded} = {anyhow}::Context::context(
-                    {wrpc_transport}::invoke_values_blocking(tx__, rx__, "{instance}", "{}", ({params})).await,"#,
+                    {wrpc_transport}::invoke_blocking(
+                        tx__,
+                        rx__,
+                        "{instance}",
+                        "{}",
+                        <({args_ty}) as {wrpc_transport}::Encode>::Encoder::default(),
+                        ({params}),
+                        <({results_ty}) as {wrpc_transport}::Decode>::Decoder::default(),
+                    ).await,
+"#,
                 rpc_func_name(func),
                 wrpc_transport = self.r#gen.wrpc_transport_path(),
                 params = {
@@ -579,7 +617,16 @@ where
                 self.src,
                 r#"
                 let (wrpc__, io__){decoded} = {anyhow}::Context::context(
-                    {wrpc_transport}::invoke_values(tx__, rx__, "{instance}", "{}", ({params})).await,"#,
+                    {wrpc_transport}::invoke(
+                        tx__,
+                        rx__,
+                        "{instance}",
+                        "{}",
+                        <({args_ty}) as {wrpc_transport}::Encode>::Encoder::default(),
+                        ({params}),
+                        <({results_ty}) as {wrpc_transport}::Decode>::Decoder::default(),
+                    ).await,
+"#,
                 rpc_func_name(func),
                 wrpc_transport = self.r#gen.wrpc_transport_path(),
                 params = {
@@ -950,6 +997,18 @@ where
             "::std::boxed::Box::from([{}].map(<::std::boxed::Box<[::core::option::Option<usize>]>>::from))",
             paths.concat()
         )
+    }
+
+    fn encoded_ty(&mut self, ty: &Type) -> String {
+        let prev = mem::take(&mut self.src);
+        self.print_encoded_ty(ty, false);
+        mem::replace(&mut self.src, prev).to_string()
+    }
+
+    fn import_param_ty(&mut self, ty: &Type) -> String {
+        let prev = mem::take(&mut self.src);
+        self.print_import_param_ty(ty);
+        mem::replace(&mut self.src, prev).to_string()
     }
 
     fn print_encoded_ty(&mut self, ty: &Type, submodule: bool) {

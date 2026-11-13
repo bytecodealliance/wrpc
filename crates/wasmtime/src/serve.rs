@@ -1,5 +1,5 @@
 use core::future::poll_fn;
-use core::pin::{Pin, pin};
+use core::pin::Pin;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -14,10 +14,8 @@ use tracing::{Instrument as _, Span, debug, warn};
 use wasmtime::component::{
     Accessor, Component, ComponentExportIndex, Instance, InstancePre, Type, types,
 };
-use wrpc_transport::frame::{Incoming, Outgoing};
-use wrpc_transport::serve;
 
-use crate::{CallError, ResourceTypes, WrpcView, call, rpc_func_name};
+use crate::{ResourceTypes, WrpcView, call, rpc_func_name};
 
 type Task<T> = Box<
     dyn for<'a> FnOnce(&'a Accessor<T>) -> Pin<Box<dyn Future<Output = ()> + Send + 'a>> + Send,
@@ -111,12 +109,11 @@ struct Export {
     idx: ComponentExportIndex,
     params: Box<[Type]>,
     results: Box<[Type]>,
-    paths: Arc<[Box<[Option<usize>]>]>,
 }
 
 type Exports = HashMap<Box<str>, HashMap<Box<str>, Arc<Export>>>;
 
-fn exports(component: &Component, resources: &ResourceTypes) -> anyhow::Result<Exports> {
+fn exports(component: &Component) -> anyhow::Result<Exports> {
     let engine = component.engine();
     let mut exports = Exports::default();
     let mut insert = |instance: &str,
@@ -128,7 +125,6 @@ fn exports(component: &Component, resources: &ResourceTypes) -> anyhow::Result<E
             .get_export_index(instance_idx, name)
             .with_context(|| format!("export `{name}` not found"))?;
         let params: Box<[_]> = ty.params().map(|(.., ty)| ty).collect();
-        let paths = crate::paths::params_async_paths(params.iter(), resources);
         debug!(instance, name, "serving function export");
         exports.entry(instance.into()).or_default().insert(
             rpc_func_name(name).into(),
@@ -136,7 +132,6 @@ fn exports(component: &Component, resources: &ResourceTypes) -> anyhow::Result<E
                 idx,
                 params,
                 results: ty.results().collect(),
-                paths,
             }),
         );
         Ok(())
@@ -172,17 +167,11 @@ fn lookup<C, I, O>(
     func: &str,
     tx: O,
     rx: I,
-) -> Result<(Arc<Export>, Outgoing, Incoming), (C, O, I)>
-where
-    I: AsyncRead + Send + Unpin + 'static,
-    O: AsyncWrite + Send + Unpin + 'static,
-{
+) -> Result<(Arc<Export>, O, I), (C, O, I)> {
     let Some(export) = exports.get(instance).and_then(|funcs| funcs.get(func)) else {
         return Err((cx, tx, rx));
     };
-    let export = Arc::clone(export);
-    let (tx, rx) = serve(tx, rx, export.paths.iter());
-    Ok((export, tx, rx))
+    Ok((Arc::clone(export), tx, rx))
 }
 
 /// Function exports of a component served from an [`InstancePre`], which is instantiated in a
@@ -216,7 +205,7 @@ where
             .into(),
             ..ResourceTypes::default()
         };
-        let exports = exports(component, &resources)?;
+        let exports = exports(component)?;
         Ok(Self {
             new_store,
             pre,
@@ -227,7 +216,7 @@ where
 
     /// Returns a future serving the invocation of function `func` on instance `instance` over
     /// the byte streams `tx` and `rx`, whose header was read by
-    /// [`accept`](wrpc_transport::accept()), or the context `cx` and the byte streams back if it
+    /// [`Header::read`](wrpc_transport::Header::read), or the context `cx` and the byte streams back if it
     /// does not invoke an exported function
     pub fn handle<C, I, O>(
         &self,
@@ -255,36 +244,26 @@ where
                 let func = instance
                     .get_func(&mut store, export.idx)
                     .context("function export not found")?;
-                let io = store
+                store
                     .run_concurrent(async |store| {
-                        let io = call(
+                        let res = call(
                             store,
-                            rx,
                             tx,
+                            rx,
                             &resources,
                             &export.params,
                             &export.results,
                             func,
                         )
-                        .await?;
-                        let mut io = Box::pin(io);
-                        let mut done = pin!(poll_fn(|cx| store.poll_no_interesting_tasks(cx)));
-                        select! {
-                            res = &mut io => {
-                                res?;
-                                done.await;
-                                Ok::<_, CallError>(None)
-                            }
-                            () = &mut done => Ok(Some(io)),
+                        .await;
+                        if res.is_ok() {
+                            poll_fn(|cx| store.poll_no_interesting_tasks(cx)).await;
                         }
+                        res
                     })
                     .await
                     .map_err(anyhow::Error::from)
                     .context("failed to run concurrent event loop")??;
-                drop(store);
-                if let Some(io) = io {
-                    io.await?;
-                }
                 Ok(())
             }
             .in_current_span(),
@@ -317,7 +296,7 @@ where
         component: &Component,
         resources: ResourceTypes,
     ) -> anyhow::Result<Self> {
-        let exports = exports(component, &resources)?;
+        let exports = exports(component)?;
         Ok(Self {
             store,
             instance,
@@ -328,7 +307,7 @@ where
 
     /// Returns a future serving the invocation of function `func` on instance `instance` over
     /// the byte streams `tx` and `rx`, whose header was read by
-    /// [`accept`](wrpc_transport::accept()), or the context `cx` and the byte streams back if it
+    /// [`Header::read`](wrpc_transport::Header::read), or the context `cx` and the byte streams back if it
     /// does not invoke an exported function
     pub fn handle<C, I, O>(
         &self,
@@ -348,28 +327,26 @@ where
         let resources = self.resources.clone();
         Ok(Box::pin(
             async move {
-                let io = store
+                store
                     .run(move |store| {
                         Box::pin(async move {
                             let func = store
                                 .with(|store| instance.get_func(store, export.idx))
                                 .context("function export not found")?;
-                            let io = call(
+                            call(
                                 store,
-                                rx,
                                 tx,
+                                rx,
                                 &resources,
                                 &export.params,
                                 &export.results,
                                 func,
                             )
                             .await?;
-                            anyhow::Ok(io)
+                            anyhow::Ok(())
                         })
                     })
                     .await??;
-                drop(store);
-                io.await?;
                 Ok(())
             }
             .in_current_span(),

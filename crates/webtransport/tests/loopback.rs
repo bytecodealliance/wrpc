@@ -6,7 +6,9 @@ use futures::{Stream, StreamExt as _, stream};
 use tokio::join;
 use tokio::task::yield_now;
 use tokio_util::codec::Encoder as _;
-use wrpc_transport::{Connect as _, HeaderEncoder, HeaderRef, accept, invoke_values_blocking};
+use wrpc_transport::{
+    Connect as _, Decode, Encode, Header, HeaderEncoder, HeaderRef, invoke_blocking, serve,
+};
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn loopback() -> anyhow::Result<()> {
@@ -36,9 +38,9 @@ async fn reader_dropped() -> anyhow::Result<()> {
             .context("failed to write invocation")?;
         let srv = wrpc_webtransport::Session::from(sc);
         let mut srv = pin!(srv.incoming());
-        let (.., outgoing, incoming) =
-            wrpc_test::accept_framed(&mut srv, "foo", "bar", [[None; 0]; 0]).await?;
-        drop(incoming);
+        let (.., stx, srx) = wrpc_test::accept_invocation(&mut srv, "foo", "bar").await?;
+        let (params, outgoing) = serve(stx, srx, <() as Decode>::Decoder::default());
+        drop(params);
         drop(outgoing);
         let stopped = tx.stopped().await.context("failed to await stream stop")?;
         assert_eq!(stopped, Some(1));
@@ -60,7 +62,16 @@ async fn stopped_mid_params() -> anyhow::Result<()> {
         let (res, srv) = join!(
             async {
                 let (tx, rx) = clt.connect(()).await.expect("failed to connect");
-                invoke_values_blocking::<_, (u32,)>(tx, rx, "foo", "bar", (param,)).await
+                invoke_blocking(
+                    tx,
+                    rx,
+                    "foo",
+                    "bar",
+                    <(Pin<Box<dyn Stream<Item = Bytes> + Send>>,) as Encode>::Encoder::default(),
+                    (param,),
+                    <(u32,) as Decode>::Decoder::default(),
+                )
+                .await
             },
             async {
                 let (mut stx, mut srx) = sc.accept_bi().await.context("failed to accept stream")?;
@@ -103,7 +114,7 @@ async fn unhandled_function() -> anyhow::Result<()> {
         let mut srv = pin!(srv.incoming());
         let res = srv.next().await.context("invocation stream ended")?;
         let ((), stx, mut srx) = res.context("failed to accept stream")?;
-        accept(&mut srx)
+        Header::read(&mut srx)
             .await
             .context("failed to read invocation header")?;
         drop(stx);

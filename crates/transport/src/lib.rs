@@ -12,7 +12,7 @@
 //! - [`invoke()`] - the client side, which *invokes* WIT functions over the byte streams of an
 //!   invocation, for example ones established by a [Connect] implementation
 //! - [`serve()`] - the server side, which *serves* WIT functions over the byte streams of an
-//!   invocation, whose header was read by [`accept()`], for example ones accepted by a transport
+//!   invocation, whose header was read by [`Header::read`], for example ones accepted by a transport
 //!
 //! A transport establishes a single bidirectional byte stream per invocation, which it yields as
 //! any [`AsyncWrite`](tokio::io::AsyncWrite)/[`AsyncRead`](tokio::io::AsyncRead) byte
@@ -26,7 +26,6 @@ pub mod tcp;
 #[cfg(all(unix, feature = "net"))]
 pub mod unix;
 
-mod accept;
 mod connect;
 mod header;
 mod invoke;
@@ -36,14 +35,13 @@ mod pack;
 mod serve;
 mod value;
 
-pub use accept::{accept, accept_with};
 pub use connect::{Connect, ConnectExt, Timeout, TimeoutError};
 pub use frame::{Decoder as FrameDecoder, Encoder as FrameEncoder, Frame, FrameRef};
 pub use header::{Header, HeaderDecoder, HeaderEncoder, HeaderReadError, HeaderRef, PROTOCOL};
-pub use invoke::{invoke, invoke_values, invoke_values_blocking};
+pub use invoke::{invoke, invoke_blocking};
 pub use oneshot::Oneshot;
 pub use pack::{Packer, pack, pack_ready, unpack};
-pub use serve::{serve, serve_values};
+pub use serve::serve;
 pub use value::*;
 
 use bytes::{BufMut as _, BytesMut};

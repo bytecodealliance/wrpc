@@ -3,6 +3,7 @@
 use core::fmt::{Debug, Display};
 
 use bytes::{Buf as _, BufMut as _, BytesMut};
+use tokio::io::{AsyncRead, AsyncReadExt as _};
 use tokio_util::codec::Decoder as _;
 use tracing::{instrument, trace};
 use wasm_tokio::{CoreNameEncoder, Leb128DecoderU32};
@@ -20,6 +21,18 @@ pub struct Header {
 
     /// Name of the function being called
     pub name: String,
+}
+
+impl Header {
+    /// Reads the header of the invocation sent over `rx` using [`HeaderDecoder::default`], see
+    /// [`HeaderDecoder::read`]
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if reading the header fails
+    pub async fn read(rx: &mut (impl AsyncRead + Unpin)) -> Result<Self, HeaderReadError> {
+        HeaderDecoder::default().read(rx).await
+    }
 }
 
 /// wRPC invocation header reference
@@ -99,13 +112,31 @@ impl HeaderDecoder {
         }
     }
 
-    /// Returns the minimum number of bytes, which complete the header once [`decode`] returned
-    /// [None]
+    /// Reads the header of the invocation sent over `rx`. Nothing past the header is read.
     ///
-    /// [`decode`]: tokio_util::codec::Decoder::decode
-    #[must_use]
-    pub fn min_remaining(&self) -> usize {
-        self.remaining
+    /// # Errors
+    ///
+    /// Returns an error if reading the header fails
+    #[instrument(level = "trace", skip_all)]
+    pub async fn read(
+        &mut self,
+        rx: &mut (impl AsyncRead + Unpin),
+    ) -> Result<Header, HeaderReadError> {
+        let mut buf = BytesMut::default();
+        loop {
+            if let Some(header) = self.decode(&mut buf)? {
+                trace!(?header, "read invocation header");
+                return Ok(header);
+            }
+            let n = self.remaining;
+            buf.reserve(n);
+            let n = rx.read_buf(&mut (&mut buf).limit(n)).await?;
+            if n == 0 {
+                return Err(HeaderReadError::IO(
+                    std::io::ErrorKind::UnexpectedEof.into(),
+                ));
+            }
+        }
     }
 
     /// Decodes a name of at most `max` bytes, which is followed by `rest` names

@@ -525,7 +525,7 @@ where
             let handler = handler.clone();
             async move {{
                 let {wrpc_transport}::Header {{ instance, name }} = {anyhow}::Context::context(
-                    {wrpc_transport}::accept_with(&mut rx, {max_instance_len}, {max_func_len}).await,
+                    {wrpc_transport}::HeaderDecoder::new({max_instance_len}, {max_func_len}).read(&mut rx).await,
                     "failed to read invocation header",
                 )?;
                 match handle(&handler, cx, &instance, &name, tx, rx) {{

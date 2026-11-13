@@ -20,7 +20,7 @@ use wasmtime::component::{Component, InstancePre, Linker, ResourceTable, Resourc
 use wasmtime::{Config, Engine, Memory, MemoryType, Store};
 use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpCtxView, WasiHttpView};
-use wrpc_transport::{Header, accept};
+use wrpc_transport::Header;
 use wrpc_wasmtime::{
     InstancePreExports, ResourceTypes, SharedExports, SharedResourceTable, SharedStore,
     WrpcCtxView, WrpcView, collect_component_resource_exports,
@@ -243,7 +243,7 @@ where
                             async move {
                                 let Header { instance, name } = match time::timeout(
                                     timeout,
-                                    accept(&mut rx),
+                                    Header::read(&mut rx),
                                 )
                                 .await
                                 {
