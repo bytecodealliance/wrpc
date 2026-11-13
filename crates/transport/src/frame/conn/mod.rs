@@ -577,7 +577,7 @@ impl Incoming {
     /// Returns a future, which resolves to the result of ingress once it fails, or once it is
     /// complete and all handles are dropped. Ingress is drained while the future is held, see
     /// [`Self::new`].
-    pub fn finished(&self) -> impl Future<Output = std::io::Result<()>> + Send + 'static {
+    pub fn finished(&self) -> impl Future<Output = std::io::Result<()>> + Send + use<> {
         let task = Arc::clone(&self.task);
         let done = finished(self.state.done.subscribe());
         async move {
@@ -741,7 +741,7 @@ impl Outgoing {
     }
 
     /// Returns a future, which resolves to the result of egress once it is complete.
-    pub fn finished(&self) -> impl Future<Output = std::io::Result<()>> + Send + 'static {
+    pub fn finished(&self) -> impl Future<Output = std::io::Result<()>> + Send + use<> {
         finished(self.done.clone())
     }
 
