@@ -10,8 +10,8 @@ use core::task::{Context, Poll};
 use std::collections::HashSet;
 
 use bytes::{Buf as _, BufMut as _, BytesMut};
-use futures::stream::{self, FuturesUnordered};
-use futures::{StreamExt as _, TryStreamExt as _};
+use futures::StreamExt as _;
+use futures::stream;
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::codec::{Decoder, Encoder, FramedRead};
 use tokio_util::sync::PollSender;
@@ -32,18 +32,11 @@ use wasmtime::component::{
 use wasmtime::error::Context as _;
 use wasmtime::{AsContextMut, StoreContextMut};
 use wrpc_transport::frame::{Incoming, Outgoing};
-use wrpc_transport::{Decode, DeferredWrite as _, Encode, READ_CHUNK_SIZE};
+use wrpc_transport::{
+    Decode, Deferred, DeferredFn, DeferredWrite as _, Encode, READ_CHUNK_SIZE, handle_deferred,
+};
 
 use crate::{ResourceTypes, WrpcView};
-
-type DeferredFn = Box<
-    dyn FnOnce(
-            &Outgoing,
-            &[usize],
-        )
-            -> wasmtime::Result<Pin<Box<dyn Future<Output = wasmtime::Result<()>> + Send>>>
-        + Send,
->;
 
 /// Synchronous access to a store, which is either borrowed exclusively or reachable through an
 /// [`Accessor`].
@@ -76,7 +69,7 @@ pub struct ValEncoder<'a, T: 'static> {
     pub store: StoreContextMut<'a, T>,
     pub ty: &'a Type,
     pub resources: &'a ResourceTypes,
-    pub deferred: Option<DeferredFn>,
+    pub deferred: Option<DeferredFn<Outgoing>>,
 }
 
 impl<T> ValEncoder<'_, T> {
@@ -101,6 +94,12 @@ impl<T> ValEncoder<'_, T> {
             resources: self.resources,
             deferred: None,
         }
+    }
+}
+
+impl<T> Deferred<Outgoing> for ValEncoder<'_, T> {
+    fn take_deferred(&mut self) -> Option<DeferredFn<Outgoing>> {
+        self.deferred.take()
     }
 }
 
@@ -137,27 +136,6 @@ fn flag_bits<'a, T: BitOrAssign + Shl<u8, Output = T> + From<u8>>(
         }
     }
     v
-}
-
-fn write_deferred<I>(
-    w: &Outgoing,
-    path: &[usize],
-    deferred: I,
-) -> wasmtime::Result<Pin<Box<dyn Future<Output = wasmtime::Result<()>> + Send>>>
-where
-    I: IntoIterator<Item = Option<DeferredFn>>,
-{
-    let mut futs = FuturesUnordered::default();
-    for (i, f) in zip(0.., deferred) {
-        if let Some(f) = f {
-            let fut = f(w, &[path, &[i]].concat())?;
-            futs.push(fut);
-        }
-    }
-    Ok(Box::pin(async move {
-        while let Some(()) = futs.try_next().await? {}
-        Ok(())
-    }))
 }
 
 macro_rules! with_payload {
@@ -233,7 +211,7 @@ fn encode_future<P, T>(
     store: StoreContextMut<'_, T>,
     future: FutureAny,
     offset: usize,
-) -> wasmtime::Result<DeferredFn>
+) -> wasmtime::Result<DeferredFn<Outgoing>>
 where
     P: Encode + Lift + Lower + Send + Sync + 'static,
     std::io::Error: From<<P::Encoder as Encoder<P>>::Error>,
@@ -265,9 +243,10 @@ where
     Ok(Box::new(move |w, path| {
         let w = w.index(path)?;
         Ok(Box::pin(async move {
-            let v = rx.await.context("future dropped without a value")?;
-            w.write_future(offset, ready(v)).await?;
-            Ok(())
+            let v = rx
+                .await
+                .map_err(|_| std::io::Error::other("future dropped without a value"))?;
+            w.write_future(offset, ready(v)).await
         }))
     }))
 }
@@ -276,7 +255,7 @@ fn encode_stream<P, T>(
     store: StoreContextMut<'_, T>,
     stream: StreamAny,
     offset: usize,
-) -> wasmtime::Result<DeferredFn>
+) -> wasmtime::Result<DeferredFn<Outgoing>>
 where
     P: Encode + Lift + Lower + Send + Sync + 'static,
     std::io::Error: From<<P::Encoder as Encoder<P>>::Error>,
@@ -318,8 +297,7 @@ where
         let w = w.index(path)?;
         Ok(Box::pin(async move {
             w.write_stream(offset, stream::poll_fn(move |cx| rx.poll_recv(cx)))
-                .await?;
-            Ok(())
+                .await
         }))
     }))
 }
@@ -593,10 +571,10 @@ where
                     let mut enc = self.with_type(&ty);
                     enc.encode(v, dst)
                         .context("failed to encode list element")?;
-                    deferred.push(enc.deferred);
+                    deferred.push(enc.take_deferred());
                 }
                 if deferred.iter().any(Option::is_some) {
-                    self.deferred = Some(Box::new(|w, path| write_deferred(w, path, deferred)));
+                    self.deferred = Some(Box::new(|w, path| handle_deferred(w, path, deferred)));
                 }
                 Ok(())
             }
@@ -614,10 +592,10 @@ where
                     let mut enc = self.with_type(ty);
                     enc.encode(v, dst)
                         .with_context(|| format!("failed to encode `{name}` field"))?;
-                    deferred.push(enc.deferred);
+                    deferred.push(enc.take_deferred());
                 }
                 if deferred.iter().any(Option::is_some) {
-                    self.deferred = Some(Box::new(|w, path| write_deferred(w, path, deferred)));
+                    self.deferred = Some(Box::new(|w, path| handle_deferred(w, path, deferred)));
                 }
                 Ok(())
             }
@@ -635,10 +613,10 @@ where
                     let mut enc = self.with_type(ty);
                     enc.encode(v, dst)
                         .context("failed to encode tuple element")?;
-                    deferred.push(enc.deferred);
+                    deferred.push(enc.take_deferred());
                 }
                 if deferred.iter().any(Option::is_some) {
-                    self.deferred = Some(Box::new(|w, path| write_deferred(w, path, deferred)));
+                    self.deferred = Some(Box::new(|w, path| handle_deferred(w, path, deferred)));
                 }
                 Ok(())
             }
@@ -680,7 +658,7 @@ where
                     let mut enc = self.with_type(&ty);
                     enc.encode(v, dst)
                         .context("failed to encode variant value")?;
-                    if let Some(f) = enc.deferred {
+                    if let Some(f) = enc.take_deferred() {
                         self.deferred = Some(f);
                     }
                 } else if ty.is_some() {
@@ -727,7 +705,7 @@ where
                 let mut enc = self.with_type(&ty);
                 enc.encode(v, dst)
                     .context("failed to encode `option::some` value")?;
-                if let Some(f) = enc.deferred {
+                if let Some(f) = enc.take_deferred() {
                     self.deferred = Some(f);
                 }
                 Ok(())
@@ -740,7 +718,7 @@ where
                         let mut enc = self.with_type(&ty);
                         enc.encode(v, dst)
                             .context("failed to encode `result::ok` value")?;
-                        if let Some(f) = enc.deferred {
+                        if let Some(f) = enc.take_deferred() {
                             self.deferred = Some(f);
                         }
                         Ok(())
@@ -760,7 +738,7 @@ where
                         let mut enc = self.with_type(&ty);
                         enc.encode(v, dst)
                             .context("failed to encode `result::err` value")?;
-                        if let Some(f) = enc.deferred {
+                        if let Some(f) = enc.take_deferred() {
                             self.deferred = Some(f);
                         }
                         Ok(())
@@ -899,12 +877,7 @@ where
                         >::default();
                         enc.encode(items, dst)
                             .context("failed to encode input stream")?;
-                        if let Some(f) = wrpc_transport::Deferred::take_deferred(&mut enc) {
-                            self.deferred = Some(Box::new(|w, path| {
-                                let fut = f(w, path)?;
-                                Ok(Box::pin(async move { fut.await.map_err(Into::into) }))
-                            }));
-                        }
+                        self.deferred = enc.take_deferred();
                     } else {
                         self.store
                             .data_mut()

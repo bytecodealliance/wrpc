@@ -9,7 +9,6 @@ use std::sync::Arc;
 
 use bytes::BytesMut;
 use futures::TryStreamExt as _;
-use futures::future::try_join_all;
 use tokio::io::AsyncWriteExt as _;
 use tokio::select;
 use tokio::sync::mpsc;
@@ -22,6 +21,7 @@ use wasmtime::component::{
 use wasmtime::error::Context as _;
 use wasmtime::{AsContextMut, Engine};
 use wrpc_transport::frame::{Incoming, Outgoing};
+use wrpc_transport::{Deferred as _, handle_deferred};
 
 mod codec;
 pub mod paths;
@@ -175,7 +175,7 @@ where
                 enc.encode(v, &mut buf)
                     .with_context(|| format!("failed to encode result value {i}"))
                     .map_err(CallError::Encode)?;
-                deferred.push(enc.deferred);
+                deferred.push(enc.take_deferred());
             }
             Ok((buf, deferred))
         })?;
@@ -189,12 +189,13 @@ where
             .await
             .context("failed to flush outgoing stream")
             .map_err(CallError::Flush)?;
-        let deferred = zip(0.., deferred)
-            .filter_map(|(i, f)| f.map(|f| f(&tx, &[i])))
-            .collect::<wasmtime::Result<Vec<_>>>()
+        let deferred = handle_deferred(&tx, &[], deferred)
+            .context("failed to index asynchronous result values")
             .map_err(CallError::Deferred)?;
-        try_join_all(deferred).await.map_err(CallError::Deferred)?;
-        Ok(())
+        deferred
+            .await
+            .context("failed to transmit asynchronous result values")
+            .map_err(CallError::Deferred)
     });
     select! {
         Some(err) = errors.recv() => Err(err)
