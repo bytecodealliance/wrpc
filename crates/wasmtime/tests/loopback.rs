@@ -3,14 +3,14 @@ use core::pin::{Pin, pin};
 
 use anyhow::{Context as _, bail};
 use futures::{Stream, StreamExt as _, TryStreamExt as _, stream};
-use tokio::io::BufReader;
+use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _, BufReader};
 use tokio::net::TcpStream;
 use tokio::task::yield_now;
 use tokio::{join, spawn, try_join};
 use tracing::Instrument as _;
 use wasmtime::component::{Component, Instance, Linker, ResourceTable, types};
-use wrpc_transport::InvokeExt as _;
 use wrpc_transport::frame::{ReadHalf, WriteHalf, tcp};
+use wrpc_transport::{Invoke as _, InvokeExt as _};
 use wrpc_wasmtime::{
     ResourceTypes, ServeExt as _, SharedResourceTable, SharedStore, WrpcCtxView, WrpcView,
 };
@@ -284,6 +284,61 @@ async fn async_values() -> anyhow::Result<()> {
                 },
                 async { handle(run).await.context("failed to serve `run`") },
                 async { handle(gen_).await.context("failed to serve `gen`") },
+            )?;
+            Ok(())
+        },
+    )
+    .await
+}
+
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+async fn params_byte_by_byte() -> anyhow::Result<()> {
+    const VALUE: &[u8] = b"\x02\x03foo\x01\x07\x01\x02hi\x03\x03bar\x00\x00\x05\x00";
+
+    with_store(
+        r#"
+(component
+  (type $v' (variant (case "x" u32) (case "y" string)))
+  (export $v "v" (type $v'))
+  (type $f' (flags "a" "b"))
+  (export $f "f" (type $f'))
+  (type $l (list (tuple string (option u32) $v $f)))
+  (core module $m
+    (memory (export "memory") 1)
+    (global $heap (mut i32) (i32.const 8))
+    (func (export "realloc") (param i32 i32 i32 i32) (result i32)
+      (local $p i32)
+      (local.set $p (i32.and
+        (i32.add (global.get $heap) (i32.sub (local.get 2) (i32.const 1)))
+        (i32.sub (i32.const 0) (local.get 2))))
+      (global.set $heap (i32.add (local.get $p) (local.get 3)))
+      local.get $p)
+    (func (export "echo") (param i32 i32) (result i32)
+      (i32.store (i32.const 0) (local.get 0))
+      (i32.store (i32.const 4) (local.get 1))
+      i32.const 0))
+  (core instance $i (instantiate $m))
+  (alias core export $i "memory" (core memory $memory))
+  (alias core export $i "realloc" (core func $realloc))
+  (func (export "echo") (param "x" $l) (result $l)
+    (canon lift (core func $i "echo") (memory $memory) (realloc $realloc)))
+)"#,
+        async |clt, srv, component, instance, store| {
+            let echo = serve(srv, store, component, instance, "echo").await?;
+            try_join!(
+                async {
+                    let (mut tx, mut rx) = clt.invoke((), "", "echo", &[[]; 0]).await?;
+                    for b in VALUE.chunks(1) {
+                        tx.write_all(b).await?;
+                        tx.flush().await?;
+                    }
+                    tx.shutdown().await?;
+                    let mut buf = Vec::default();
+                    rx.read_to_end(&mut buf).await?;
+                    assert_eq!(buf, VALUE);
+                    anyhow::Ok(())
+                },
+                async { handle(echo).await.context("failed to serve `echo`") },
             )?;
             Ok(())
         },
