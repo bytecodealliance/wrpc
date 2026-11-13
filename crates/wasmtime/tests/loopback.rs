@@ -8,12 +8,14 @@ use tokio::net::TcpStream;
 use tokio::task::yield_now;
 use tokio::{join, spawn, try_join};
 use tracing::Instrument as _;
-use wasmtime::component::{Component, Linker, ResourceTable, types};
+use wasmtime::component::{Component, Instance, Linker, ResourceTable, types};
 use wrpc_transport::InvokeExt as _;
 use wrpc_transport::frame::{ReadHalf, WriteHalf, tcp};
 use wrpc_wasmtime::{
     ResourceTypes, ServeExt as _, SharedResourceTable, SharedStore, WrpcCtxView, WrpcView,
 };
+
+type Server = wrpc_transport::Server<(), BufReader<ReadHalf<TcpStream>>, WriteHalf<TcpStream>>;
 
 struct Ctx {
     table: ResourceTable,
@@ -33,29 +35,74 @@ async fn with_store(
     wat: &str,
     f: impl AsyncFnOnce(
         &tcp::Client<SocketAddr>,
-        &wrpc_transport::Server<(), BufReader<ReadHalf<TcpStream>>, WriteHalf<TcpStream>>,
-        Component,
-        wasmtime::Store<Ctx>,
+        &Server,
+        &Component,
+        Instance,
+        &SharedStore<Ctx>,
     ) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
     wrpc_test::serve_tcp(async |clt, srv| {
         let engine = wasmtime::Engine::default();
         let component = Component::new(&engine, wat).map_err(anyhow::Error::from)?;
-        let store = wasmtime::Store::new(
+        let mut store = wasmtime::Store::new(
             &engine,
             Ctx {
                 table: ResourceTable::default(),
                 shared_resources: SharedResourceTable::default(),
             },
         );
-        f(&clt, srv, component, store).await
+        let instance = Linker::new(&engine)
+            .instantiate_async(&mut store, &component)
+            .await
+            .map_err(anyhow::Error::from)?;
+        let (store, event_loop) = SharedStore::new(store);
+        let event_loop = spawn(event_loop.in_current_span());
+        f(&clt, srv, &component, instance, &store).await?;
+        drop(store);
+        event_loop.await?
     })
     .await
 }
 
+async fn serve(
+    srv: &Server,
+    store: &SharedStore<Ctx>,
+    component: &Component,
+    instance: Instance,
+    name: &str,
+) -> anyhow::Result<
+    impl Stream<Item = anyhow::Result<((), impl Future<Output = anyhow::Result<()>>)>>,
+> {
+    let Some((types::ComponentItem::ComponentFunc(ty), idx)) = component.get_export(None, name)
+    else {
+        bail!("function export `{name}` not found");
+    };
+    let invocations = srv
+        .serve_function_shared(
+            store.clone(),
+            instance,
+            idx,
+            ResourceTypes::default(),
+            ty,
+            "",
+            name,
+        )
+        .await?;
+    Ok(invocations)
+}
+
+async fn handle(
+    invocations: impl Stream<Item = anyhow::Result<((), impl Future<Output = anyhow::Result<()>>)>>,
+) -> anyhow::Result<()> {
+    let Some(((), fut)) = pin!(invocations).try_next().await? else {
+        bail!("invocation missing");
+    };
+    fut.await
+}
+
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn shared_store_trap() -> anyhow::Result<()> {
-    with_store(
+    let res = with_store(
         r#"
 (component
   (type $f (func))
@@ -65,30 +112,8 @@ async fn shared_store_trap() -> anyhow::Result<()> {
   (core instance $i (instantiate $m))
   (func (export "run") (type $f) (canon lift (core func $i "run")))
 )"#,
-        async |clt, srv, component, mut store| {
-            let instance = Linker::new(store.engine())
-                .instantiate_async(&mut store, &component)
-                .await
-                .map_err(anyhow::Error::from)?;
-            let Some((types::ComponentItem::ComponentFunc(ty), idx)) =
-                component.get_export(None, "run")
-            else {
-                bail!("function export `run` not found");
-            };
-
-            let (store, event_loop) = SharedStore::new(store);
-            let run = srv
-                .serve_function_shared(
-                    store,
-                    instance,
-                    idx,
-                    ResourceTypes::default(),
-                    ty,
-                    "",
-                    "run",
-                )
-                .await?;
-            let event_loop = spawn(event_loop.in_current_span());
+        async |clt, srv, component, instance, store| {
+            let run = serve(srv, store, component, instance, "run").await?;
             let (_, res) = join!(
                 clt.invoke_values_blocking::<(), ()>((), "", "run", ()),
                 async {
@@ -100,13 +125,13 @@ async fn shared_store_trap() -> anyhow::Result<()> {
             );
             let res = res?;
             assert!(res.is_err(), "`run` invocation succeeded");
-            let res = event_loop.await?;
-            let err = res.expect_err("event loop succeeded");
-            assert!(format!("{err:#}").contains("unreachable"), "{err:#}");
             Ok(())
         },
     )
-    .await
+    .await;
+    let err = res.expect_err("event loop succeeded");
+    assert!(format!("{err:#}").contains("unreachable"), "{err:#}");
+    Ok(())
 }
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
@@ -114,17 +139,6 @@ async fn async_values() -> anyhow::Result<()> {
     type ByteStream = Pin<Box<dyn Stream<Item = Vec<u8>> + Send>>;
     type StringFuture = Pin<Box<dyn Future<Output = String> + Send>>;
     type UnitFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
-
-    async fn handle(
-        invocations: impl Stream<
-            Item = anyhow::Result<((), Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send>>)>,
-        >,
-    ) -> anyhow::Result<()> {
-        let Some(((), fut)) = pin!(invocations).try_next().await? else {
-            bail!("invocation missing");
-        };
-        fut.await
-    }
 
     async fn receive<T>(
         io: Option<impl Future<Output = anyhow::Result<()>>>,
@@ -229,34 +243,9 @@ async fn async_values() -> anyhow::Result<()> {
   (func (export "gen") async (result $g)
     (canon lift (core func $i "gen") async (callback (core func $i "cb"))))
 )"#,
-        async |clt, srv, component, mut store| {
-            let instance = Linker::new(store.engine())
-                .instantiate_async(&mut store, &component)
-                .await
-                .map_err(anyhow::Error::from)?;
-
-            let (store, event_loop) = SharedStore::new(store);
-            let event_loop = spawn(event_loop.in_current_span());
-            let serve = async |name| {
-                let Some((types::ComponentItem::ComponentFunc(ty), idx)) =
-                    component.get_export(None, name)
-                else {
-                    bail!("function export `{name}` not found");
-                };
-                srv.serve_function_shared(
-                    store.clone(),
-                    instance,
-                    idx,
-                    ResourceTypes::default(),
-                    ty,
-                    "",
-                    name,
-                )
-                .await
-            };
-            let run = serve("run").await?;
-            let gen_ = serve("gen").await?;
-            drop(store);
+        async |clt, srv, component, instance, store| {
+            let run = serve(srv, store, component, instance, "run").await?;
+            let gen_ = serve(srv, store, component, instance, "gen").await?;
             try_join!(
                 async {
                     let (((s, f, u),), io) = clt
@@ -296,8 +285,7 @@ async fn async_values() -> anyhow::Result<()> {
                 async { handle(run).await.context("failed to serve `run`") },
                 async { handle(gen_).await.context("failed to serve `gen`") },
             )?;
-            let res = event_loop.await?;
-            res.context("event loop failed")
+            Ok(())
         },
     )
     .await
