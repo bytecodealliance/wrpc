@@ -7,25 +7,40 @@ use core::time::Duration;
 use std::process::ExitStatus;
 
 use anyhow::{Context, ensure};
+use bytes::Bytes;
 use futures::stream::FuturesUnordered;
 use futures::{Stream, StreamExt as _, TryStreamExt as _};
 use rcgen::{CertifiedKey, generate_simple_self_signed};
 use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
 use rustls::version::TLS13;
 use rustls::{ClientConfig, RootCertStore, ServerConfig};
-use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _};
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::{TcpListener, TcpStream, ToSocketAddrs};
 use tokio::process::Command;
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 use tokio::time::timeout;
 use tokio::{select, spawn, try_join};
+use tokio_util::codec::BytesCodec;
 use tracing::info;
 use wrpc_transport::frame::{Incoming, Outgoing};
 use wrpc_transport::{Connect, Header, HeaderReadError, Index as _, accept, invoke, serve};
 
 /// Maximum number of invocations [`serve_until`] serves concurrently
 pub const MAX_INVOCATIONS: usize = 64;
+
+async fn write(tx: &mut Outgoing, buf: &'static [u8]) -> std::io::Result<()> {
+    tx.encode(&mut BytesCodec::default(), Bytes::from_static(buf))
+        .await
+}
+
+async fn read_to_end(rx: &mut Incoming) -> std::io::Result<Vec<u8>> {
+    let mut buf = Vec::default();
+    while let Some(chunk) = rx.decode(&mut BytesCodec::default()).await? {
+        buf.extend_from_slice(&chunk);
+    }
+    Ok(buf)
+}
 
 /// Polls `fut` to completion while accepting invocations from `incoming`, reading the header
 /// of each and polling the future `f` returns for it, then completes the served invocations.
@@ -170,8 +185,7 @@ where
                 .context("failed to invoke `foo.bar`")?;
             let mut nested_tx = outgoing.index(&[42, 0]).context("failed to index `42.0`")?;
             let mut nested_rx = incoming.index(&[0, 42]).context("failed to index `0.42`")?;
-            outgoing
-                .write_all(b"testbar")
+            write(&mut outgoing, b"testbar")
                 .await
                 .context("failed to write `foo.bar` parameters")?;
             outgoing
@@ -181,20 +195,16 @@ where
             try_join!(
                 async {
                     info!("reading `foo`");
-                    let mut buf = vec![];
-                    let n = incoming
-                        .read_to_end(&mut buf)
+                    let buf = read_to_end(&mut incoming)
                         .await
                         .context("failed to read `foo`")?;
-                    assert_eq!(n, 3);
                     assert_eq!(buf, b"foo");
                     info!("read `foo`");
                     anyhow::Ok(())
                 },
                 async {
                     info!("writing `client->server`");
-                    nested_tx
-                        .write_all(b"client->server")
+                    write(&mut nested_tx, b"client->server")
                         .await
                         .context("failed to write `client->server`")?;
                     nested_tx
@@ -206,9 +216,7 @@ where
                 },
                 async {
                     info!("reading `server->client`");
-                    let mut buf = vec![];
-                    nested_rx
-                        .read_to_end(&mut buf)
+                    let buf = read_to_end(&mut nested_rx)
                         .await
                         .context("failed to read `server->client`")?;
                     assert_eq!(buf, b"server->client");
@@ -229,30 +237,17 @@ where
             let mut nested_rx = incoming.index(&[42, 0]).context("failed to index `42.0`")?;
             try_join!(
                 async {
-                    info!("reading `test`");
-                    let mut buf = vec![0; 4];
-                    incoming
-                        .read_exact(&mut buf)
+                    info!("reading `testbar`");
+                    let buf = read_to_end(&mut incoming)
                         .await
-                        .context("failed to read `test`")?;
-                    assert_eq!(buf, b"test");
-                    info!("read `test`");
-
-                    info!("reading `bar`");
-                    let mut buf = vec![];
-                    let n = incoming
-                        .read_to_end(&mut buf)
-                        .await
-                        .context("failed to read `bar`")?;
-                    assert_eq!(n, 3);
-                    assert_eq!(buf, b"bar");
-                    info!("read `bar`");
+                        .context("failed to read `testbar`")?;
+                    assert_eq!(buf, b"testbar");
+                    info!("read `testbar`");
                     anyhow::Ok(())
                 },
                 async {
                     info!("writing `foo`");
-                    outgoing
-                        .write_all(b"foo")
+                    write(&mut outgoing, b"foo")
                         .await
                         .context("failed to write `foo`")?;
                     outgoing.close().await.context("failed to close `foo`")?;
@@ -261,8 +256,7 @@ where
                 },
                 async {
                     info!("writing `server->client`");
-                    nested_tx
-                        .write_all(b"server->client")
+                    write(&mut nested_tx, b"server->client")
                         .await
                         .context("failed to write `server->client`")?;
                     nested_tx
@@ -274,12 +268,9 @@ where
                 },
                 async {
                     info!("reading `client->server`");
-                    let mut buf = vec![];
-                    let n = nested_rx
-                        .read_to_end(&mut buf)
+                    let buf = read_to_end(&mut nested_rx)
                         .await
                         .context("failed to read `client->server`")?;
-                    assert_eq!(n, 14);
                     assert_eq!(buf, b"client->server");
                     info!("read `client->server`");
                     anyhow::Ok(())
@@ -313,8 +304,7 @@ where
     let (outgoing, mut incoming) =
         invoke(tx, rx, "foo", "baz", [[None; 0]; 0]).context("failed to invoke `foo.baz`")?;
     let mut invalid = outgoing.index(&[1]).context("failed to index `1`")?;
-    invalid
-        .write_all(b"x")
+    write(&mut invalid, b"x")
         .await
         .context("failed to write invalid data")?;
     let (.., outgoing, srv_incoming) = accept_framed(&mut srv, "foo", "baz", [[Some(0)]]).await?;
@@ -323,12 +313,9 @@ where
         .await
         .expect_err("invalid data must fail server ingress");
     drop(outgoing);
-    let res = timeout(
-        Duration::from_secs(5),
-        incoming.read_to_end(&mut Vec::default()),
-    )
-    .await
-    .context("invalid data did not reset the invocation")?;
+    let res = timeout(Duration::from_secs(5), read_to_end(&mut incoming))
+        .await
+        .context("invalid data did not reset the invocation")?;
     res.expect_err("invalid data must reset the invocation");
 
     let (tx, rx) = clt.connect(cx).await.context("failed to connect")?;
@@ -341,8 +328,7 @@ where
     let (.., outgoing, srv_incoming) = accept_framed(&mut srv, "foo", "baz", [[Some(0)]]).await?;
     let mut nested = srv_incoming.index(&[0]).context("failed to index `0`")?;
     let mut invalid = outgoing.index(&[1]).context("failed to index `1`")?;
-    invalid
-        .write_all(b"x")
+    write(&mut invalid, b"x")
         .await
         .context("failed to write invalid data")?;
     incoming
@@ -350,12 +336,9 @@ where
         .await
         .expect_err("invalid data must fail client ingress");
     drop(clt_outgoing);
-    let res = timeout(
-        Duration::from_secs(5),
-        nested.read_to_end(&mut Vec::default()),
-    )
-    .await
-    .context("invalid data did not reset the invocation")?;
+    let res = timeout(Duration::from_secs(5), read_to_end(&mut nested))
+        .await
+        .context("invalid data did not reset the invocation")?;
     res.expect_err("invalid data must reset the invocation");
     Ok(())
 }

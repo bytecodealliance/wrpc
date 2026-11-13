@@ -11,9 +11,9 @@ use std::sync::{Arc, Weak};
 use bytes::{Buf, BufMut as _, Bytes, BytesMut};
 use futures::stream::FuturesUnordered;
 use futures::{Stream, StreamExt as _};
-use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt, ReadBuf};
+use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _};
 use tokio::select;
-use tokio_util::codec::{Decoder, Encoder as _};
+use tokio_util::codec::{Decoder, Encoder};
 use tokio_util::io::poll_read_buf;
 use tracing::{debug, error, instrument, trace};
 use wasm_tokio::{Leb128Encoder, put_u32_leb128};
@@ -263,8 +263,7 @@ pub struct Incoming {
     /// Whether this handle read the end of the data of its path, which the handle of a path,
     /// which is not declared, carries none of
     closed: bool,
-    /// Bytes read past the item decoded by [`Self::decode`], which are read before the rest of
-    /// the data of the path
+    /// Data of the path received, but not decoded yet
     buffer: BytesMut,
     state: Arc<std::sync::Mutex<IncomingState>>,
     outgoing: Weak<std::sync::Mutex<OutgoingState>>,
@@ -350,14 +349,7 @@ impl Incoming {
             {
                 return Ok(Some(item));
             }
-            let n = poll_fn(|cx| {
-                let mut buf = mem::take(&mut self.buffer);
-                buf.reserve(READ_CHUNK_SIZE);
-                let res = poll_read_buf(Pin::new(&mut *self), cx, &mut buf);
-                self.buffer = buf;
-                res
-            })
-            .await?;
+            let n = poll_fn(|cx| self.poll_read(cx)).await?;
             if n == 0 {
                 return dec.decode_eof(&mut self.buffer);
             }
@@ -370,44 +362,33 @@ impl Incoming {
         if !self.closed && self.buffer.is_empty() && !open {
             return Ok(());
         }
-        let n = self.read(&mut [0]).await?;
-        if n > 0 {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "received data after value end",
-            ));
+        if self.buffer.is_empty() {
+            let n = poll_fn(|cx| self.poll_read(cx)).await?;
+            if n == 0 {
+                return Ok(());
+            }
         }
-        Ok(())
+        Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "received data after value end",
+        ))
     }
-}
 
-impl AsyncRead for Incoming {
+    /// Receives data of the path into the buffer, returning the number of bytes received,
+    /// which is 0 once the path is closed
     #[instrument(level = "trace", skip_all, fields(path = ?self.path), ret(level = "trace"))]
-    fn poll_read(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &mut ReadBuf<'_>,
-    ) -> Poll<std::io::Result<()>> {
-        if buf.remaining() == 0 {
-            return Poll::Ready(Ok(()));
+    fn poll_read(&mut self, cx: &mut Context<'_>) -> Poll<std::io::Result<usize>> {
+        if self.closed {
+            return Poll::Ready(Ok(0));
         }
-        let this = self.get_mut();
-        if !this.buffer.is_empty() {
-            let n = buf.remaining().min(this.buffer.len());
-            buf.put_slice(&this.buffer.split_to(n));
-            return Poll::Ready(Ok(()));
-        }
-        if this.closed {
-            return Poll::Ready(Ok(()));
-        }
-        let mut state = lock(&this.state);
+        let mut state = lock(&self.state);
         if state.failed {
             return Poll::Ready(Err(error_invocation_failed()));
         }
-        match state.readers.get_mut(&this.path) {
+        match state.readers.get_mut(&self.path) {
             Some(reader) => *reader = None,
             None => {
-                state.readers.insert(this.path.clone(), None);
+                state.readers.insert(self.path.clone(), None);
             }
         }
         let res = 'read: {
@@ -422,50 +403,48 @@ impl AsyncRead for Incoming {
                         Poll::Pending => break,
                     }
                 };
-                if **frame != *this.path {
+                if **frame != *self.path {
                     trace!(?frame, "waiting for the frame of another path to be read");
                     break;
                 }
-                let closed = state.remaining == 0;
-                if !closed {
-                    let filled = buf.filled().len();
+                let n = if state.remaining == 0 {
+                    trace!("closing path");
+                    state.readers.remove(&self.path);
+                    0
+                } else {
+                    self.buffer.reserve(state.remaining.min(READ_CHUNK_SIZE));
                     let remaining = u64::try_from(state.remaining).unwrap_or(u64::MAX);
                     let mut stream = state.stream.as_mut().take(remaining);
-                    match Pin::new(&mut stream).poll_read(cx, buf) {
-                        Poll::Ready(Ok(())) => {}
+                    match poll_read_buf(Pin::new(&mut stream), cx, &mut self.buffer) {
+                        Poll::Ready(Ok(0)) => {
+                            break 'read Err(std::io::ErrorKind::UnexpectedEof.into());
+                        }
+                        Poll::Ready(Ok(n)) => n,
                         Poll::Ready(Err(err)) => break 'read Err(err),
                         Poll::Pending => break,
                     }
-                    let n = buf.filled().len().saturating_sub(filled);
-                    if n == 0 {
-                        break 'read Err(std::io::ErrorKind::UnexpectedEof.into());
-                    }
-                    state.remaining = state.remaining.saturating_sub(n);
-                }
-                if closed {
-                    trace!("closing path");
-                    state.readers.remove(&this.path);
-                }
+                };
+                state.remaining = state.remaining.saturating_sub(n);
                 if state.remaining == 0 {
                     state.frame = None;
                     state.wake();
                 }
-                break 'read Ok(closed);
+                break 'read Ok(n);
             }
-            if let Some(reader) = state.readers.get_mut(&this.path) {
+            if let Some(reader) = state.readers.get_mut(&self.path) {
                 *reader = Some(cx.waker().clone());
             }
             return Poll::Pending;
         };
         match res {
-            Ok(closed) => {
-                this.closed = closed;
-                Poll::Ready(Ok(()))
+            Ok(n) => {
+                self.closed = n == 0;
+                Poll::Ready(Ok(n))
             }
             Err(err) => {
                 let err = state.fail_err(err);
                 drop(state);
-                fail_outgoing(&this.outgoing);
+                fail_outgoing(&self.outgoing);
                 Poll::Ready(Err(err))
             }
         }
@@ -536,11 +515,6 @@ pub struct Outgoing {
 }
 
 impl Outgoing {
-    /// Returns the number of bytes buffered, which have not been flushed yet.
-    pub fn buffered(&self) -> usize {
-        lock(&self.state).buffer.len()
-    }
-
     fn fail(&self, state: &mut OutgoingState) {
         state.failed = true;
         if let Some(state) = self.incoming.upgrade() {
@@ -548,9 +522,48 @@ impl Outgoing {
         }
     }
 
-    /// Shuts the handle down and drops it, shutting the stream down if it is the last handle
+    /// Encodes `item` using `enc` and writes it as a frame, buffering the bytes the stream did
+    /// not accept, which are written before the next frame of any path
+    #[instrument(level = "trace", skip_all, fields(path = ?self.path))]
+    pub async fn encode<T, E: Encoder<T>>(&mut self, enc: &mut E, item: T) -> Result<(), E::Error> {
+        let mut buf = BytesMut::default();
+        enc.encode(item, &mut buf)?;
+        self.write(&buf).await?;
+        Ok(())
+    }
+
+    /// Writes the buffered bytes and flushes the stream
+    #[instrument(level = "trace", skip_all, fields(path = ?self.path), ret(level = "trace"))]
+    pub async fn flush(&mut self) -> std::io::Result<()> {
+        poll_fn(|cx| {
+            let mut state = lock(&self.state);
+            if state.failed {
+                return Poll::Ready(Err(error_invocation_failed()));
+            }
+            self.poll_flush(&mut state, cx)
+        })
+        .await
+    }
+
+    /// Closes the path by writing an empty frame and drops the handle, shutting the stream down
+    /// if it is the last handle
+    #[instrument(level = "trace", skip_all, fields(path = ?self.path), ret(level = "trace"))]
     pub async fn close(mut self) -> std::io::Result<()> {
-        self.shutdown().await?;
+        poll_fn(|cx| {
+            let mut state = lock(&self.state);
+            if state.failed {
+                return Poll::Ready(Err(error_invocation_failed()));
+            }
+            if self.closed == 0 {
+                ready!(self.poll_write(&mut state, cx, &[]))?;
+                self.closed = state.written.saturating_add(state.buffer.len());
+            }
+            if state.written < self.closed {
+                ready!(self.poll_flush(&mut state, cx))?;
+            }
+            Poll::Ready(Ok(()))
+        })
+        .await?;
         let Some(state) = Arc::into_inner(self.state) else {
             return Ok(());
         };
@@ -562,6 +575,21 @@ impl Outgoing {
                 lock(&state).fail();
             }
             return Err(err);
+        }
+        Ok(())
+    }
+
+    async fn write(&mut self, mut buf: &[u8]) -> std::io::Result<()> {
+        while !buf.is_empty() {
+            let n = poll_fn(|cx| {
+                let mut state = lock(&self.state);
+                if state.failed {
+                    return Poll::Ready(Err(error_invocation_failed()));
+                }
+                self.poll_write(&mut state, cx, buf)
+            })
+            .await?;
+            buf = &buf[n..];
         }
         Ok(())
     }
@@ -733,59 +761,6 @@ impl Index for Outgoing {
     }
 }
 
-/// Writes to the stream as frames, buffering the bytes the stream did not accept, which are
-/// written before the next frame of any path. Shutting the handle down closes the path by
-/// writing an empty frame and resolves once it is written, the stream is shut down by
-/// [`Outgoing::close`]. Writing to a handle after it was shut down is not supported.
-impl AsyncWrite for Outgoing {
-    #[instrument(
-        level = "trace",
-        skip_all,
-        fields(path = ?self.path, buf = format!("{buf:02x?}")),
-        ret(level = "trace")
-    )]
-    fn poll_write(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &[u8],
-    ) -> Poll<std::io::Result<usize>> {
-        if buf.is_empty() {
-            return Poll::Ready(Ok(0));
-        }
-        let mut state = lock(&self.state);
-        if state.failed {
-            return Poll::Ready(Err(error_invocation_failed()));
-        }
-        self.as_ref().poll_write(&mut state, cx, buf)
-    }
-
-    #[instrument(level = "trace", skip_all, fields(path = ?self.path), ret(level = "trace"))]
-    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        let mut state = lock(&self.state);
-        if state.failed {
-            return Poll::Ready(Err(error_invocation_failed()));
-        }
-        self.as_ref().poll_flush(&mut state, cx)
-    }
-
-    #[instrument(level = "trace", skip_all, fields(path = ?self.path), ret(level = "trace"))]
-    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        let this = self.get_mut();
-        let mut state = lock(&this.state);
-        if state.failed {
-            return Poll::Ready(Err(error_invocation_failed()));
-        }
-        if this.closed == 0 {
-            ready!(this.poll_write(&mut state, cx, &[]))?;
-            this.closed = state.written.saturating_add(state.buffer.len());
-        }
-        if state.written < this.closed {
-            ready!(this.poll_flush(&mut state, cx))?;
-        }
-        Poll::Ready(Ok(()))
-    }
-}
-
 impl DeferredWrite for Outgoing {
     async fn write_future<T>(
         mut self,
@@ -800,7 +775,7 @@ impl DeferredWrite for Outgoing {
         let mut enc = T::Encoder::default();
         let mut buf = BytesMut::default();
         enc.encode(item, &mut buf)?;
-        self.write_all(&buf).await?;
+        self.write(&buf).await?;
         let nested = enc.take_deferred().map(|f| f(&self, &[0]));
         let nested = nested.transpose()?;
         self.close().await?;
@@ -870,24 +845,21 @@ impl DeferredWrite for Outgoing {
                 }
                 res = async {
                     if buf.is_empty() {
-                        self.flush().await.map(|()| 0)
+                        self.flush().await
                     } else {
                         trace!(?buf, "writing bytes from buffer");
                         self.write(&buf).await
                     }
                 }, if pending || !buf.is_empty() || (ended && !closed) => {
-                    let n = res?;
+                    res?;
                     if buf.is_empty() {
                         pending = false;
                         closed = ended;
-                        tasks.extend(deferred.drain(..));
-                        continue;
-                    }
-                    buf.advance(n);
-                    if buf.is_empty() {
+                    } else {
+                        buf.clear();
                         pending = true;
-                        tasks.extend(deferred.drain(..));
                     }
+                    tasks.extend(deferred.drain(..));
                 }
             }
         }
@@ -910,7 +882,7 @@ impl DeferredWrite for Outgoing {
                 chunk = items.next(), if buf.len() < MAX_PENDING_STREAM_BATCH => {
                     let Some(chunk) = chunk else {
                         trace!("writing stream end");
-                        self.write_all(&buf).await?;
+                        self.write(&buf).await?;
                         return self.close().await
                     };
                     if chunk.is_empty() {
@@ -927,7 +899,7 @@ impl DeferredWrite for Outgoing {
                     res?;
                     pending = false;
                     if !buf.is_empty() {
-                        self.write_all(&buf).await?;
+                        self.write(&buf).await?;
                         buf.clear();
                         pending = true;
                     }
@@ -946,9 +918,7 @@ impl DeferredWrite for Outgoing {
             let n = u32::try_from(buf.len())
                 .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
             trace!(n, "writing ready chunk length");
-            let mut header = BytesMut::default();
-            Leb128Encoder.encode(n, &mut header)?;
-            self.write_all(&header).await?;
+            self.encode(&mut Leb128Encoder, n).await?;
         }
         let mut chunk = BytesMut::with_capacity(READ_CHUNK_SIZE);
         let mut pending = false;
@@ -958,7 +928,7 @@ impl DeferredWrite for Outgoing {
                     let n = res?;
                     if n == 0 {
                         trace!("writing stream end");
-                        self.write_all(&buf).await?;
+                        self.write(&buf).await?;
                         return self.close().await
                     }
                     let n = u32::try_from(n).map_err(|err| {
@@ -973,7 +943,7 @@ impl DeferredWrite for Outgoing {
                     res?;
                     pending = false;
                     if !buf.is_empty() {
-                        self.write_all(&buf).await?;
+                        self.write(&buf).await?;
                         buf.clear();
                         pending = true;
                     }
@@ -991,23 +961,39 @@ mod tests {
     use tokio::io::{DuplexStream, duplex, sink};
     use tokio::join;
     use tokio::task::yield_now;
-    use tokio_util::codec::FramedRead;
+    use tokio_util::codec::{BytesCodec, FramedRead};
+    use wasm_tokio::cm::U8Codec;
 
     use super::*;
-    use crate::frame::{Decoder, Encoder, Frame, FrameRef};
+    use crate::frame::{self, Frame, FrameRef};
 
     fn frame(path: &[usize], data: &[u8]) -> Vec<u8> {
         let mut buf = BytesMut::default();
-        Encoder.encode(FrameRef { path, data }, &mut buf).unwrap();
+        frame::Encoder
+            .encode(FrameRef { path, data }, &mut buf)
+            .unwrap();
         buf.to_vec()
+    }
+
+    async fn write(tx: &mut Outgoing, buf: &[u8]) -> std::io::Result<()> {
+        tx.encode(&mut BytesCodec::default(), Bytes::copy_from_slice(buf))
+            .await
+    }
+
+    async fn read_to_end(rx: &mut Incoming) -> std::io::Result<Vec<u8>> {
+        let mut buf = Vec::default();
+        while let Some(chunk) = rx.decode(&mut BytesCodec::default()).await? {
+            buf.extend_from_slice(&chunk);
+        }
+        Ok(buf)
     }
 
     async fn incoming(
         paths: impl IntoIterator<Item = impl AsRef<[Option<usize>]>>,
     ) -> (DuplexStream, Incoming, Closed) {
         let (tx, rx) = duplex(1024);
-        let (mut root, rx) = mux(sink(), rx, BytesMut::default(), paths);
-        root.shutdown().await.unwrap();
+        let (root, rx) = mux(sink(), rx, BytesMut::default(), paths);
+        root.close().await.unwrap();
         let closed = rx.closed();
         (tx, rx, closed)
     }
@@ -1022,13 +1008,13 @@ mod tests {
     async fn incoming_frames() {
         let root = frame(&[], b"\x2a");
         let (mut tx, rx) = duplex(1);
-        let (mut outgoing, mut rx) = mux(
+        let (outgoing, mut rx) = mux(
             sink(),
             rx,
             BytesMut::default(),
             [&[Some(0)][..], &[Some(0), None, Some(0)]],
         );
-        outgoing.shutdown().await.unwrap();
+        outgoing.close().await.unwrap();
         let closed = rx.closed();
         let Err(err) = rx.index(&[1]) else {
             panic!("indexing an undeclared path should fail");
@@ -1050,21 +1036,9 @@ mod tests {
                 tx.write_all(&frames).await.unwrap();
                 drop(tx);
             },
-            async {
-                let mut buf = Vec::default();
-                sub.read_to_end(&mut buf).await.unwrap();
-                buf
-            },
-            async {
-                let mut buf = Vec::default();
-                nested.read_to_end(&mut buf).await.unwrap();
-                buf
-            },
-            async {
-                let mut buf = Vec::default();
-                rx.read_to_end(&mut buf).await.unwrap();
-                buf
-            },
+            async { read_to_end(&mut sub).await.unwrap() },
+            async { read_to_end(&mut nested).await.unwrap() },
+            async { read_to_end(&mut rx).await.unwrap() },
         );
         assert_eq!(sub_buf, b"\x2b");
         assert_eq!(nested_buf, b"\x2c\x2d");
@@ -1079,11 +1053,7 @@ mod tests {
     async fn incoming_wakes_readers() {
         let (mut tx, mut rx, closed) = incoming([[Some(0)]]).await;
         let mut sub = rx.index(&[0]).unwrap();
-        let sub = tokio::spawn(async move {
-            let mut buf = Vec::default();
-            sub.read_to_end(&mut buf).await.unwrap();
-            buf
-        });
+        let sub = tokio::spawn(async move { read_to_end(&mut sub).await.unwrap() });
         yield_now().await;
         let frames = [
             frame(&[0], b"\x2b"),
@@ -1093,8 +1063,7 @@ mod tests {
         ]
         .concat();
         tx.write_all(&frames).await.unwrap();
-        let mut buf = Vec::default();
-        tokio::time::timeout(Duration::from_secs(5), rx.read_to_end(&mut buf))
+        let buf = tokio::time::timeout(Duration::from_secs(5), read_to_end(&mut rx))
             .await
             .expect("frame was not received")
             .unwrap();
@@ -1127,13 +1096,12 @@ mod tests {
             (frame(&[1], b""), std::io::ErrorKind::InvalidData),
         ] {
             let (mut tx, mut rx, closed) = incoming([[Some(0)]]).await;
-            let mut buf = Vec::default();
             let ((), res) = join!(
                 async {
                     tx.write_all(&frames).await.unwrap();
                     drop(tx);
                 },
-                rx.read_to_end(&mut buf),
+                read_to_end(&mut rx),
             );
             assert_eq!(res.unwrap_err().kind(), kind, "{frames:02x?}");
             let err = wait(closed).await.unwrap_err();
@@ -1152,7 +1120,7 @@ mod tests {
         let (mut tx, rx, closed) = incoming([[Some(0)]]).await;
         let mut sub = rx.index(&[0]).unwrap();
         tx.write_all(&frame(&[0], b"\x2a\x2b")).await.unwrap();
-        sub.read_exact(&mut [0; 1]).await.unwrap();
+        sub.decode(&mut U8Codec).await.unwrap();
         drop(sub);
         let err = wait(closed).await.unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::BrokenPipe);
@@ -1160,7 +1128,7 @@ mod tests {
 
         let (mut tx, mut rx, closed) = incoming([[Some(0)]]).await;
         tx.write_all(&frame(&[], b"")).await.unwrap();
-        rx.read_to_end(&mut Vec::default()).await.unwrap();
+        read_to_end(&mut rx).await.unwrap();
         drop(rx);
         tx.write_all(&frame(&[0], b"")).await.unwrap();
         let err = wait(closed).await.unwrap_err();
@@ -1177,15 +1145,15 @@ mod tests {
         let data = b"\x2a".repeat(32);
         let ((), (), (), buf) = join!(
             async {
-                outgoing.write_all(b"\x2b").await.unwrap();
+                write(&mut outgoing, b"\x2b").await.unwrap();
                 outgoing.close().await.unwrap();
             },
             async {
-                sub.write_all(&data).await.unwrap();
+                write(&mut sub, &data).await.unwrap();
                 sub.close().await.unwrap();
             },
             async {
-                nested.write_all(b"\x2c").await.unwrap();
+                write(&mut nested, b"\x2c").await.unwrap();
                 nested.close().await.unwrap();
             },
             async {
@@ -1194,7 +1162,7 @@ mod tests {
                 buf
             },
         );
-        let frames: Vec<Frame> = FramedRead::new(buf.as_slice(), Decoder::default())
+        let frames: Vec<Frame> = FramedRead::new(buf.as_slice(), frame::Decoder::default())
             .try_collect()
             .await
             .unwrap();
@@ -1282,10 +1250,10 @@ mod tests {
                 BytesMut::default(),
                 [[None; 0]; 0],
             );
-            outgoing.write_all(&data).await.unwrap();
-            outgoing.shutdown().await.unwrap();
+            write(&mut outgoing, &data).await.unwrap();
+            outgoing.close().await.unwrap();
             let tx = tx.lock().unwrap().clone();
-            let frames: Vec<Frame> = FramedRead::new(tx.as_slice(), Decoder::default())
+            let frames: Vec<Frame> = FramedRead::new(tx.as_slice(), frame::Decoder::default())
                 .try_collect()
                 .await
                 .unwrap();
@@ -1308,8 +1276,8 @@ mod tests {
         let mut sub = rx.index(&[0]).unwrap();
         tx.write_all(&frame(&[], b"")).await.unwrap();
         drop(tx);
-        rx.read_to_end(&mut Vec::default()).await.unwrap();
-        let err = sub.read_to_end(&mut Vec::default()).await.unwrap_err();
+        read_to_end(&mut rx).await.unwrap();
+        let err = read_to_end(&mut sub).await.unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
         let err = wait(closed).await.unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::BrokenPipe);
@@ -1364,9 +1332,9 @@ mod tests {
             BytesMut::default(),
             [[None; 0]; 0],
         );
-        let err = outgoing.write_all(b"\x2a").await.unwrap_err();
+        let err = write(&mut outgoing, b"\x2a").await.unwrap_err();
         assert_eq!(err.to_string(), "test");
-        let err = incoming.read_to_end(&mut Vec::default()).await.unwrap_err();
+        let err = read_to_end(&mut incoming).await.unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::BrokenPipe);
 
         let (mut tx, rx) = duplex(16);
@@ -1374,7 +1342,7 @@ mod tests {
         tx.write_all(&frame(&[1], b"\x2a")).await.unwrap();
         let err = incoming.closed().await.unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
-        let err = outgoing.write_all(b"\x2a").await.unwrap_err();
+        let err = write(&mut outgoing, b"\x2a").await.unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::BrokenPipe);
         drop(incoming);
         let err = tx.write_all(b"\x2a").await.unwrap_err();

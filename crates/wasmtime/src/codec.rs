@@ -11,9 +11,9 @@ use std::collections::HashSet;
 
 use bytes::{Buf as _, BufMut as _, BytesMut};
 use futures::stream;
-use futures::{FutureExt as _, StreamExt as _};
+use futures::{FutureExt as _, Stream, StreamExt as _};
 use tokio::sync::{mpsc, oneshot};
-use tokio_util::codec::{Decoder, Encoder, FramedRead};
+use tokio_util::codec::{Decoder, Encoder};
 use tokio_util::sync::PollSender;
 use tracing::{debug, error, instrument, trace, warn};
 use uuid::Uuid;
@@ -309,10 +309,21 @@ fn report(errors: &mpsc::Sender<std::io::Error>, err: std::io::Error) {
     }
 }
 
+fn decode_stream<D>(r: Incoming, dec: D) -> impl Stream<Item = std::io::Result<D::Item>>
+where
+    D: Decoder,
+    std::io::Error: From<D::Error>,
+{
+    stream::try_unfold((r, dec), |(mut r, mut dec)| async move {
+        let v = r.decode(&mut dec).await.map_err(std::io::Error::from)?;
+        Ok(v.map(|v| (v, (r, dec))))
+    })
+}
+
 /// Chunks of a pending `stream`, which are received once its sub-stream is indexed
-enum Chunks<D> {
+enum Chunks<D: Decoder> {
     Pending(oneshot::Receiver<Incoming>),
-    Ready(FramedRead<Incoming, D>),
+    Ready(Pin<Box<dyn Stream<Item = std::io::Result<D::Item>> + Send>>),
 }
 
 fn poll_chunk<D, P>(
@@ -320,7 +331,7 @@ fn poll_chunk<D, P>(
     cx: &mut Context<'_>,
 ) -> Poll<std::io::Result<Option<D::Item>>>
 where
-    D: Decoder<Item: Deref<Target = [P]>> + Default,
+    D: Decoder<Item: Deref<Target = [P]>> + Default + Send + 'static,
     std::io::Error: From<D::Error>,
 {
     let rx = loop {
@@ -329,7 +340,7 @@ where
                 let r = ready!(r.poll_unpin(cx)).map_err(|_| {
                     std::io::Error::new(std::io::ErrorKind::BrokenPipe, "stream not indexed")
                 })?;
-                *rx = Chunks::Ready(FramedRead::new(r, D::default()));
+                *rx = Chunks::Ready(Box::pin(decode_stream(r, D::default())));
             }
             Chunks::Ready(rx) => break rx,
         }
@@ -338,7 +349,7 @@ where
         match ready!(rx.poll_next_unpin(cx)) {
             Some(Ok(chunk)) if chunk.is_empty() => {}
             Some(Ok(chunk)) => return Poll::Ready(Ok(Some(chunk))),
-            Some(Err(err)) => return Poll::Ready(Err(err.into())),
+            Some(Err(err)) => return Poll::Ready(Err(err)),
             None => return Poll::Ready(Ok(None)),
         }
     }

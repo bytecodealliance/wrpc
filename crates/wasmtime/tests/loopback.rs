@@ -2,12 +2,13 @@ use core::net::SocketAddr;
 use core::pin::Pin;
 
 use anyhow::bail;
+use bytes::Bytes;
 use futures::{Stream, StreamExt as _, stream};
-use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::net::TcpListener;
 use tokio::sync::oneshot;
 use tokio::task::yield_now;
 use tokio::{join, spawn, try_join};
+use tokio_util::codec::BytesCodec;
 use tracing::Instrument as _;
 use wasmtime::component::{Component, Linker, ResourceTable};
 use wrpc_test::serve_until;
@@ -391,12 +392,15 @@ async fn params_byte_by_byte() -> anyhow::Result<()> {
                 let (tx, rx) = clt.connect(()).await?;
                 let (mut tx, mut rx) = invoke(tx, rx, "", "echo", [[None; 0]; 0])?;
                 for b in VALUE.chunks(1) {
-                    tx.write_all(b).await?;
+                    tx.encode(&mut BytesCodec::default(), Bytes::copy_from_slice(b))
+                        .await?;
                     tx.flush().await?;
                 }
-                tx.shutdown().await?;
+                tx.close().await?;
                 let mut buf = Vec::default();
-                rx.read_to_end(&mut buf).await?;
+                while let Some(chunk) = rx.decode(&mut BytesCodec::default()).await? {
+                    buf.extend_from_slice(&chunk);
+                }
                 assert_eq!(buf, VALUE);
                 Ok(())
             })

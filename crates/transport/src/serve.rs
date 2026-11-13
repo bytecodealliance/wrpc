@@ -4,8 +4,9 @@ use core::pin::Pin;
 
 use anyhow::Context as _;
 use bytes::BytesMut;
-use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt as _};
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::try_join;
+use tokio_util::codec::BytesCodec;
 use tracing::{Instrument as _, Span, debug, instrument, trace};
 
 use crate::frame::{Incoming, Outgoing};
@@ -100,7 +101,7 @@ where
                     let tx = tx.context("failed to encode results")?;
                     debug!("transmitting sync results");
                     outgoing
-                        .write_all(&buf)
+                        .encode(&mut BytesCodec::default(), buf)
                         .await
                         .context("failed to write sync results")?;
                     let tx = tx.map(|tx| tx(&outgoing, &[])).transpose();

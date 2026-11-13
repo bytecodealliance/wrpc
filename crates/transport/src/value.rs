@@ -16,7 +16,7 @@ use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite};
 use tokio::select;
 use tokio::sync::{mpsc, oneshot};
 use tokio::try_join;
-use tokio_util::codec::{Encoder as _, FramedRead};
+use tokio_util::codec::Encoder as _;
 use tokio_util::io::StreamReader;
 use tracing::{Instrument as _, Span, error, instrument, trace};
 use wasm_tokio::cm::{
@@ -2326,7 +2326,7 @@ fn receive_pending_stream<T: Send + 'static>(
 #[instrument(level = "trace", skip(dec, r, tx, end_tx), ret)]
 async fn handle_deferred_stream<C, T>(
     dec: C,
-    r: Incoming,
+    mut r: Incoming,
     tx: mpsc::Sender<Vec<T>>,
     end_tx: oneshot::Sender<()>,
 ) -> std::io::Result<()>
@@ -2334,19 +2334,17 @@ where
     C: tokio_util::codec::Decoder<Item = T> + Deferred<Incoming>,
     std::io::Error: From<C::Error>,
 {
-    let dec = ListDecoder::new(dec);
-    let mut framed = FramedRead::new(r, dec);
+    let mut dec = ListDecoder::new(dec);
     let mut tasks = FuturesUnordered::default();
     let mut pending = None;
     let mut i = 0_usize;
     loop {
         trace!("receiving pending stream chunk");
         select! {
-            chunk = framed.next(), if pending.is_none() => {
-                let Some(chunk) = chunk else {
+            chunk = r.decode(&mut dec), if pending.is_none() => {
+                let Some(chunk) = chunk? else {
                     break;
                 };
-                let chunk = chunk?;
                 if chunk.is_empty() {
                     continue;
                 }
@@ -2357,9 +2355,9 @@ where
                     )
                 })?;
                 trace!(i, end, "received stream chunk");
-                for (i, deferred) in zip(i.., mem::take(&mut framed.decoder_mut().deferred)) {
+                for (i, deferred) in zip(i.., mem::take(&mut dec.deferred)) {
                     if let Some(deferred) = deferred {
-                        let fut = deferred(framed.get_ref(), &[i])?;
+                        let fut = deferred(&r, &[i])?;
                         tasks.push(fut);
                     }
                 }
@@ -2474,17 +2472,18 @@ impl tokio_util::codec::Decoder for StreamDecoderBytes {
         // stream is pending
         let (tx, rx) = mpsc::channel(128);
         let (end_tx, end_rx) = oneshot::channel();
-        let dec = mem::take(&mut self.dec).into_inner();
+        let mut dec = mem::take(&mut self.dec).into_inner();
         let span = Span::current();
         self.deferred = Some(Box::new(|r, path| {
-            let r = r.index(path)?;
+            let mut r = r.index(path)?;
             Ok(Box::pin(
                 async move {
-                    let mut framed = FramedRead::new(r, dec);
                     trace!("receiving pending byte stream chunk");
-                    while let Some(chunk) = framed.next().await {
-                        let chunk = chunk?;
+                    while let Some(chunk) = r.decode(&mut dec).await? {
                         trace!(?chunk, "received pending byte stream chunk");
+                        if chunk.is_empty() {
+                            continue;
+                        }
                         if tx.send(chunk).await.is_err() {
                             return Err(error_receiver_closed());
                         }
@@ -2548,7 +2547,7 @@ mod tests {
     use core::time::Duration;
 
     use anyhow::bail;
-    use tokio::io::{AsyncWriteExt as _, duplex, sink};
+    use tokio::io::{duplex, sink};
     use tokio::task::yield_now;
     use tokio_util::codec::Decoder as _;
 
@@ -2594,10 +2593,9 @@ mod tests {
         {
             let (tx, mut rx) = duplex(1024);
             let (mut root, _rx) = mux(tx, CLOSED, BytesMut::default(), [[None; 0]; 0]);
-            let mut buf = BytesMut::default();
-            let f = v.encode(&mut T::Encoder::default(), &mut buf)?;
-            root.write_all(&buf).await?;
-            let f = f.expect("deferred write missing")(&root, &[])?;
+            let mut enc = T::Encoder::default();
+            root.encode(&mut enc, v).await?;
+            let f = enc.take_deferred().expect("deferred write missing")(&root, &[])?;
             root.close().await?;
             f.await?;
             let mut frames = Vec::default();
@@ -2749,13 +2747,13 @@ mod tests {
                 let frame = FrameRef { path, data };
                 frame::Encoder.encode(frame, &mut rx_buf).unwrap();
             }
-            let (mut tx, rx) = mux(
+            let (tx, rx) = mux(
                 sink(),
                 std::io::Cursor::new(rx_buf),
                 BytesMut::default(),
                 [&[Some(0)][..], &[Some(0), Some(0)]],
             );
-            tx.shutdown().await.unwrap();
+            tx.close().await.unwrap();
             rx
         }
 

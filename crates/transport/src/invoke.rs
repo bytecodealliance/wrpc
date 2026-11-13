@@ -6,9 +6,9 @@ use core::task::{Poll, ready};
 
 use anyhow::Context as _;
 use bytes::BytesMut;
-use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt as _};
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::try_join;
-use tokio_util::codec::Encoder as _;
+use tokio_util::codec::{BytesCodec, Encoder as _};
 use tracing::{Instrument as _, debug, instrument, trace};
 
 use crate::frame::{Incoming, Outgoing};
@@ -74,7 +74,7 @@ where
         let (mut outgoing, mut incoming) = io.context("failed to invoke function")?;
         let tx = async move {
             outgoing
-                .write_all(&buf)
+                .encode(&mut BytesCodec::default(), buf)
                 .await
                 .context("failed to write sync parameters")?;
             let tx = tx.map(|tx| tx(&outgoing, &[])).transpose();

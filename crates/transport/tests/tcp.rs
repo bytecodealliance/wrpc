@@ -3,11 +3,11 @@
 use core::time::Duration;
 
 use anyhow::Context as _;
-use bytes::BytesMut;
+use bytes::{Bytes, BytesMut};
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::join;
 use tokio::net::TcpStream;
-use tokio_util::codec::Encoder as _;
+use tokio_util::codec::{BytesCodec, Encoder as _};
 use wrpc_transport::{Connect as _, HeaderEncoder, HeaderRef, Index as _, accept, invoke, tcp};
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
@@ -29,7 +29,10 @@ async fn unprocessed_stream() -> anyhow::Result<()> {
                     let (tx, _rx) = invoke(tx, rx, "foo", "bar", [[Some(0)]])
                         .expect("failed to invoke `foo.bar`");
                     let mut tx = tx.index(&[0]).expect("failed to index stream");
-                    while let Ok(()) = tx.write_all(b"test").await {}
+                    while let Ok(()) = tx
+                        .encode(&mut BytesCodec::default(), Bytes::from_static(b"test"))
+                        .await
+                    {}
                 },
                 async {
                     _ = wrpc_test::accept_framed(

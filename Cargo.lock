@@ -4677,6 +4677,7 @@ dependencies = [
  "rustls",
  "tempfile",
  "tokio",
+ "tokio-util",
  "tracing",
  "url",
  "web-transport-quinn",

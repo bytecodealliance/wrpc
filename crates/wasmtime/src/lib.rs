@@ -8,10 +8,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use bytes::BytesMut;
-use tokio::io::AsyncWriteExt as _;
 use tokio::select;
 use tokio::sync::mpsc;
-use tokio_util::codec::Encoder;
+use tokio_util::codec::{BytesCodec, Encoder};
 use tracing::{debug, instrument, trace, warn};
 use uuid::Uuid;
 use wasmtime::component::{
@@ -185,7 +184,7 @@ where
         })?;
 
         debug!("transmitting results");
-        tx.write_all(&buf)
+        tx.encode(&mut BytesCodec::default(), buf)
             .await
             .context("failed to transmit results")
             .map_err(CallError::Write)?;
