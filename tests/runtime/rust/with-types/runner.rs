@@ -50,7 +50,7 @@ mod my_types {
 }
 
 pub async fn run(
-    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,
+    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Connect<Context = ()>,
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
     let a = my_types::MyA { inner: 0.0 };
     let _ = crate::client::my::inline::foo::func1(wrpc, (), &a).await?;

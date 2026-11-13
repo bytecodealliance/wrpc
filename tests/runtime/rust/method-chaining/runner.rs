@@ -3,7 +3,7 @@
 use crate::client::foo::bar::i::A;
 
 pub async fn run(
-    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,
+    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Connect<Context = ()>,
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
     let my_a = A::new(wrpc, ()).await?;
     let my_a = my_a.as_borrow();

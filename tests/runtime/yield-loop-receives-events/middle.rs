@@ -2,7 +2,7 @@ use core::future::poll_fn;
 use core::sync::atomic::{AtomicBool, Ordering};
 use core::task::Poll;
 
-use ::wit_bindgen_wrpc::wrpc_transport::Invoke;
+use ::wit_bindgen_wrpc::wrpc_transport::Connect;
 
 use crate::server::exports::test::common::i_runner::Handler;
 use crate::server::test::common::i_middle::f;
@@ -12,7 +12,7 @@ static HIT: AtomicBool = AtomicBool::new(false);
 #[derive(Clone)]
 pub struct Component;
 
-impl<C: Invoke<Context = ()> + 'static> Handler<C> for Component {
+impl<C: Connect<Context = ()> + 'static> Handler<C> for Component {
     async fn f(&self, cx: C) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
         let task = tokio::spawn(async move {
             f(&cx, ()).await?;

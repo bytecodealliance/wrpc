@@ -3,99 +3,60 @@
 
 //! wRPC transport abstractions, codec and framing
 //!
-//! wRPC is an RPC framework based on [WIT](https://component-model.bytecodealliance.org/design/wit.html).
-//! It follows client-server model, where peers (servers) may serve function and method calls invoked by the other peers (clients).
+//! wRPC is an RPC framework based on
+//! [WIT](https://component-model.bytecodealliance.org/design/wit.html). It follows client-server
+//! model, where peers (servers) may serve function and method calls invoked by the other peers
+//! (clients).
 //!
 //! The two main abstractions on top of which wRPC is built are:
-//! - [Invoke] - the client-side handle to a wRPC transport, allowing clients to *invoke* WIT functions over wRPC transport
-//! - [Serve] - the server-side handle to a wRPC transport, allowing servers to *serve* WIT functions over wRPC transport
+//! - [`invoke()`] - the client side, which *invokes* WIT functions over the byte streams of an
+//!   invocation, for example ones established by a [Connect] implementation
+//! - [`serve()`] - the server side, which *serves* WIT functions over the byte streams of an
+//!   invocation, whose header was read by [`accept()`], for example ones accepted by a transport
 //!
-//! [Invoke] and [Serve] establish a single bidirectional byte stream per invocation, over which
-//! wRPC layers its [framing](frame) protocol to multiplex the nested async parameter and result
-//! sub-streams. Both therefore yield the framed [`frame::Outgoing`] and [`frame::Incoming`]
-//! streams regardless of the underlying transport, which only needs to provide any
-//! [`AsyncWrite`](tokio::io::AsyncWrite)/[`AsyncBufRead`](tokio::io::AsyncBufRead) byte stream.
+//! A transport establishes a single bidirectional byte stream per invocation, which it yields as
+//! any [`AsyncWrite`](tokio::io::AsyncWrite)/[`AsyncRead`](tokio::io::AsyncRead) byte
+//! stream pair. [`invoke()`] and [`serve()`] layer the wRPC [framing](frame) protocol on top of
+//! it to multiplex the nested async parameter and result sub-streams as the framed
+//! [`frame::Outgoing`] and [`frame::Incoming`] streams.
 
 pub mod frame;
-pub mod invoke;
-pub mod serve;
+#[cfg(any(all(target_family = "wasm", feature = "wasi"), feature = "net"))]
+pub mod tcp;
+#[cfg(all(unix, feature = "net"))]
+pub mod unix;
 
+mod accept;
+mod connect;
+mod header;
+mod invoke;
+mod mux;
+mod oneshot;
 mod pack;
+mod serve;
 mod value;
 
-pub use frame::{Decoder as FrameDecoder, Encoder as FrameEncoder, Frame, FrameRef, Server};
-pub use invoke::{Invoke, InvokeExt};
+pub use accept::{accept, accept_with};
+pub use connect::{Connect, ConnectExt, Timeout, TimeoutError};
+pub use frame::{Decoder as FrameDecoder, Encoder as FrameEncoder, Frame, FrameRef};
+pub use header::{Header, HeaderDecoder, HeaderEncoder, HeaderReadError, HeaderRef, PROTOCOL};
+pub use invoke::{invoke, invoke_values, invoke_values_blocking};
+pub use oneshot::Oneshot;
 pub use pack::{Packer, pack, pack_ready, unpack};
-pub use serve::{Serve, ServeExt};
+pub use serve::{serve, serve_values};
 pub use value::*;
 
-#[cfg(any(all(target_family = "wasm", feature = "wasi"), feature = "net"))]
-pub use frame::tcp;
-#[cfg(all(unix, feature = "net"))]
-pub use frame::unix;
-
-use core::mem;
-use core::pin::{Pin, pin};
-use core::task::{Context, Poll};
-
 use bytes::{BufMut as _, BytesMut};
-use tokio::io::{AsyncRead, ReadBuf};
 use tokio_util::codec::Encoder as _;
-use tracing::trace;
 use wasm_tokio::Leb128Encoder;
 
-/// Buffered incoming stream used for decoding values
-///
-/// This wraps the multiplexed framed [`frame::Incoming`] stream with a read buffer used to
-/// hold bytes that were read ahead while decoding synchronous values.
-pub struct BufferedIncoming {
-    buffer: BytesMut,
-    inner: frame::Incoming,
-}
+/// Default maximum length of the instance and function names in a [Header]
+const DEFAULT_MAX_NAME_LEN: u32 = 1 << 10;
 
-impl BufferedIncoming {
-    /// Index the incoming stream using a structural `path`, returning a handle to the
-    /// multiplexed sub-stream addressed by it.
-    pub fn index(&self, path: &[usize]) -> anyhow::Result<Self> {
-        let inner = self.inner.index(path)?;
-        Ok(Self {
-            buffer: BytesMut::default(),
-            inner,
-        })
-    }
-}
-
-impl Drop for BufferedIncoming {
-    fn drop(&mut self) {
-        if !self.buffer.is_empty() {
-            self.inner.fail_unprocessed();
-        }
-    }
-}
-
-impl AsyncRead for BufferedIncoming {
-    fn poll_read(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &mut ReadBuf<'_>,
-    ) -> Poll<std::io::Result<()>> {
-        let cap = buf.remaining();
-        if cap == 0 {
-            trace!("attempt to read empty buffer");
-            return Poll::Ready(Ok(()));
-        }
-        if !self.buffer.is_empty() {
-            if self.buffer.len() > cap {
-                trace!(cap, len = self.buffer.len(), "reading part of buffer");
-                buf.put_slice(&self.buffer.split_to(cap));
-            } else {
-                trace!(cap, len = self.buffer.len(), "reading full buffer");
-                buf.put_slice(&mem::take(&mut self.buffer));
-            }
-            return Poll::Ready(Ok(()));
-        }
-        pin!(&mut self.inner).poll_read(cx, buf)
-    }
+/// Multiplexes asynchronous value transmission using a structural `path`
+pub trait Index: Sized {
+    /// Index the entity using a structural `path`
+    fn index(&self, path: &[usize]) -> std::io::Result<Self>;
 }
 
 fn encode_ready_bytes_header(n: usize, dst: &mut BytesMut) -> std::io::Result<()> {
@@ -104,10 +65,6 @@ fn encode_ready_bytes_header(n: usize, dst: &mut BytesMut) -> std::io::Result<()
     dst.reserve(1);
     dst.put_u8(0x01);
     Leb128Encoder.encode(n, dst)
-}
-
-fn copy_io_error(err: &std::io::Error) -> std::io::Error {
-    std::io::Error::new(err.kind(), err.to_string())
 }
 
 /// Returns the error for data received for a closed receiver

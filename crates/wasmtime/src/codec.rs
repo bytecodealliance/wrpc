@@ -33,7 +33,8 @@ use wasmtime::error::Context as _;
 use wasmtime::{AsContextMut, StoreContextMut};
 use wrpc_transport::frame::{Incoming, Outgoing};
 use wrpc_transport::{
-    Decode, Deferred, DeferredFn, DeferredWrite as _, Encode, READ_CHUNK_SIZE, handle_deferred,
+    Decode, Deferred, DeferredFn, DeferredWrite as _, Encode, Index as _, READ_CHUNK_SIZE,
+    handle_deferred,
 };
 
 use crate::{ResourceTypes, WrpcView};
@@ -333,26 +334,13 @@ where
             Chunks::Ready(rx) => break rx,
         }
     };
-    let chunk = match rx.poll_next_unpin(cx) {
-        Poll::Ready(Some(Ok(chunk))) => chunk,
-        Poll::Ready(Some(Err(err))) => return Poll::Ready(Err(err.into())),
-        Poll::Pending => return Poll::Pending,
-        Poll::Ready(None) => {
-            return Poll::Ready(Err(std::io::Error::new(
-                std::io::ErrorKind::UnexpectedEof,
-                "stream end missing",
-            )));
+    loop {
+        match ready!(rx.poll_next_unpin(cx)) {
+            Some(Ok(chunk)) if chunk.is_empty() => {}
+            Some(Ok(chunk)) => return Poll::Ready(Ok(Some(chunk))),
+            Some(Err(err)) => return Poll::Ready(Err(err.into())),
+            None => return Poll::Ready(Ok(None)),
         }
-    };
-    if !chunk.is_empty() {
-        Poll::Ready(Ok(Some(chunk)))
-    } else if rx.read_buffer().is_empty() {
-        Poll::Ready(Ok(None))
-    } else {
-        Poll::Ready(Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "received data after stream end",
-        )))
     }
 }
 
@@ -374,18 +362,23 @@ where
             );
             return pending().await;
         };
-        let mut rx = FramedRead::new(r, P::Decoder::default());
-        let err = match rx.next().await {
-            Some(Ok(v)) if rx.read_buffer().is_empty() => return wasmtime::error::Ok(v),
-            Some(Ok(..)) => std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "received data after future value",
-            ),
-            Some(Err(err)) => err.into(),
-            None => std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "future value missing"),
+        let mut r = r;
+        let v = r
+            .decode(&mut P::Decoder::default())
+            .await
+            .map_err(std::io::Error::from);
+        let err = match v {
+            Ok(Some(v)) => match r.read_end().await {
+                Ok(()) => return wasmtime::error::Ok(v),
+                Err(err) => err,
+            },
+            Ok(None) => {
+                std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "future value missing")
+            }
+            Err(err) => err,
         };
         report(&errors, err);
-        drop(rx);
+        drop(r);
         pending().await
     })?;
     let fut = fut.try_into_future_any(store)?;

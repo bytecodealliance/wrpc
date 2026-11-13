@@ -780,7 +780,7 @@ impl Runner<'_> {
     /// Generates bindings for the `component` specified in the `test` given.
     ///
     /// Unlike upstream `wit-bindgen` this does not compile a standalone guest
-    /// component — wRPC bindings are `Invoke`/`Serve` stubs that are linked into
+    /// component — wRPC bindings are client and server stubs that are linked into
     /// a host binary per `runner`/`test` pair in `runtime_test`. Returns the
     /// directory the bindings were generated into.
     fn compile_component(&self, test: &Test, component: &Component) -> Result<PathBuf> {

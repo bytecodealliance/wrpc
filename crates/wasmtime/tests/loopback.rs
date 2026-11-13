@@ -1,24 +1,22 @@
 use core::net::SocketAddr;
-use core::pin::{Pin, pin};
+use core::pin::Pin;
 
-use anyhow::{Context as _, bail};
-use futures::{Stream, StreamExt as _, TryStreamExt as _, stream};
-use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _, BufReader};
-use tokio::net::TcpStream;
+use anyhow::bail;
+use futures::{Stream, StreamExt as _, stream};
+use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+use tokio::net::TcpListener;
 use tokio::sync::oneshot;
 use tokio::task::yield_now;
 use tokio::{join, spawn, try_join};
 use tracing::Instrument as _;
-use wasmtime::component::{Component, Instance, Linker, ResourceTable, types};
-use wrpc_transport::frame::{ReadHalf, WriteHalf, tcp};
-use wrpc_transport::{Invoke as _, InvokeExt as _};
+use wasmtime::component::{Component, Linker, ResourceTable};
+use wrpc_test::serve_until;
+use wrpc_transport::{Connect as _, invoke, invoke_values, invoke_values_blocking, tcp};
 use wrpc_wasmtime::{
-    ResourceTypes, ServeExt as _, SharedResourceTable, SharedStore, WrpcCtxView, WrpcView,
+    ResourceTypes, SharedExports, SharedResourceTable, SharedStore, WrpcCtxView, WrpcView,
 };
 
 type ByteStream = Pin<Box<dyn Stream<Item = Vec<u8>> + Send>>;
-
-type Server = wrpc_transport::Server<(), BufReader<ReadHalf<TcpStream>>, WriteHalf<TcpStream>>;
 
 struct Ctx {
     table: ResourceTable,
@@ -38,10 +36,8 @@ async fn with_store(
     wat: &str,
     f: impl AsyncFnOnce(
         &tcp::Client<SocketAddr>,
-        &Server,
-        &Component,
-        Instance,
-        &SharedStore<Ctx>,
+        &TcpListener,
+        &SharedExports<Ctx>,
     ) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
     wrpc_test::serve_tcp(async |clt, srv| {
@@ -60,47 +56,29 @@ async fn with_store(
             .map_err(anyhow::Error::from)?;
         let (store, event_loop) = SharedStore::new(store);
         let event_loop = spawn(event_loop.in_current_span());
-        f(&clt, srv, &component, instance, &store).await?;
-        drop(store);
+        let exports = SharedExports::new(store, instance, &component, ResourceTypes::default())?;
+        f(&clt, srv, &exports).await?;
+        drop(exports);
         event_loop.await?
     })
     .await
 }
 
-async fn serve(
-    srv: &Server,
-    store: &SharedStore<Ctx>,
-    component: &Component,
-    instance: Instance,
-    name: &str,
-) -> anyhow::Result<
-    impl Stream<Item = anyhow::Result<((), impl Future<Output = anyhow::Result<()>>)>>,
-> {
-    let Some((types::ComponentItem::ComponentFunc(ty), idx)) = component.get_export(None, name)
-    else {
-        bail!("function export `{name}` not found");
-    };
-    let invocations = srv
-        .serve_function_shared(
-            store.clone(),
-            instance,
-            idx,
-            ResourceTypes::default(),
-            ty,
-            "",
-            name,
-        )
-        .await?;
-    Ok(invocations)
-}
-
-async fn handle(
-    invocations: impl Stream<Item = anyhow::Result<((), impl Future<Output = anyhow::Result<()>>)>>,
-) -> anyhow::Result<()> {
-    let Some(((), fut)) = pin!(invocations).try_next().await? else {
-        bail!("invocation missing");
-    };
-    fut.await
+async fn serve<T>(
+    srv: &TcpListener,
+    exports: &SharedExports<Ctx>,
+    fut: impl Future<Output = anyhow::Result<T>>,
+) -> anyhow::Result<T> {
+    serve_until(tcp::incoming(srv), fut, |cx, header, tx, rx, buf| {
+        let res = exports.handle(cx, &header.instance, &header.name, tx, rx, buf);
+        async move {
+            let Ok(fut) = res else {
+                bail!("unexpected invocation");
+            };
+            fut.await
+        }
+    })
+    .await
 }
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
@@ -115,20 +93,28 @@ async fn shared_store_trap() -> anyhow::Result<()> {
   (core instance $i (instantiate $m))
   (func (export "run") (type $f) (canon lift (core func $i "run")))
 )"#,
-        async |clt, srv, component, instance, store| {
-            let run = serve(srv, store, component, instance, "run").await?;
-            let (_, res) = join!(
-                clt.invoke_values_blocking::<(), ()>((), "", "run", ()),
+        async |clt, srv, exports| {
+            serve_until(
+                tcp::incoming(srv),
                 async {
-                    let Some(((), fut)) = pin!(run).try_next().await? else {
-                        bail!("`run` invocation missing");
-                    };
-                    anyhow::Ok(fut.await)
+                    let (tx, rx) = clt.connect(()).await?;
+                    let res = invoke_values_blocking::<(), ()>(tx, rx, "", "run", ()).await;
+                    res.expect_err("`run` invocation succeeded");
+                    Ok(())
                 },
-            );
-            let res = res?;
-            assert!(res.is_err(), "`run` invocation succeeded");
-            Ok(())
+                |cx, header, tx, rx, buf| {
+                    let res = exports.handle(cx, &header.instance, &header.name, tx, rx, buf);
+                    async move {
+                        let Ok(fut) = res else {
+                            bail!("unexpected invocation");
+                        };
+                        let res = fut.await;
+                        res.expect_err("`run` invocation succeeded");
+                        Ok(())
+                    }
+                },
+            )
+            .await
         },
     )
     .await;
@@ -143,18 +129,10 @@ async fn async_values() -> anyhow::Result<()> {
     type UnitFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
 
     async fn receive<T>(
-        io: Option<impl Future<Output = anyhow::Result<()>>>,
+        io: impl Future<Output = anyhow::Result<()>>,
         values: impl Future<Output = T>,
     ) -> anyhow::Result<T> {
-        let ((), values) = try_join!(
-            async {
-                if let Some(io) = io {
-                    io.await?;
-                }
-                anyhow::Ok(())
-            },
-            async { anyhow::Ok(values.await) },
-        )?;
+        let ((), values) = try_join!(io, async { anyhow::Ok(values.await) })?;
         Ok(values)
     }
 
@@ -245,49 +223,45 @@ async fn async_values() -> anyhow::Result<()> {
   (func (export "gen") async (result $g)
     (canon lift (core func $i "gen") async (callback (core func $i "cb"))))
 )"#,
-        async |clt, srv, component, instance, store| {
-            let run = serve(srv, store, component, instance, "run").await?;
-            let gen_ = serve(srv, store, component, instance, "gen").await?;
-            try_join!(
-                async {
-                    let (((s, f, u),), io) = clt
-                        .invoke_values::<_, ((ByteStream, StringFuture, UnitFuture),)>(
-                            (),
-                            "",
-                            "run",
-                            (
-                                Box::pin(
-                                    stream::once(async {
-                                        yield_now().await;
-                                        b"foo".to_vec()
-                                    })
-                                    .chain(stream::iter([b"bar".to_vec()])),
-                                ) as ByteStream,
-                                Box::pin(async {
+        async |clt, srv, exports| {
+            serve(srv, exports, async {
+                let (tx, rx) = clt.connect(()).await?;
+                let (((s, f, u),), io) =
+                    invoke_values::<_, ((ByteStream, StringFuture, UnitFuture),)>(
+                        tx,
+                        rx,
+                        "",
+                        "run",
+                        (
+                            Box::pin(
+                                stream::once(async {
                                     yield_now().await;
-                                    "baz".to_string()
-                                }) as StringFuture,
-                                Box::pin(yield_now()) as UnitFuture,
-                            ),
-                        )
-                        .await?;
-                    let (s, f, ()) =
-                        receive(io, async { join!(s.collect::<Vec<_>>(), f, u) }).await?;
-                    assert_eq!(s.concat(), b"foobar");
-                    assert_eq!(f, "baz");
+                                    b"foo".to_vec()
+                                })
+                                .chain(stream::iter([b"bar".to_vec()])),
+                            ) as ByteStream,
+                            Box::pin(async {
+                                yield_now().await;
+                                "baz".to_string()
+                            }) as StringFuture,
+                            Box::pin(yield_now()) as UnitFuture,
+                        ),
+                    )
+                    .await?;
+                let (s, f, ()) = receive(io, async { join!(s.collect::<Vec<_>>(), f, u) }).await?;
+                assert_eq!(s.concat(), b"foobar");
+                assert_eq!(f, "baz");
 
-                    let (((s, f),), io) = clt
-                        .invoke_values::<(), ((ByteStream, StringFuture),)>((), "", "gen", ())
+                let (tx, rx) = clt.connect(()).await?;
+                let (((s, f),), io) =
+                    invoke_values::<(), ((ByteStream, StringFuture),)>(tx, rx, "", "gen", ())
                         .await?;
-                    let (s, f) = receive(io, async { join!(s.collect::<Vec<_>>(), f) }).await?;
-                    assert_eq!(s.concat(), b"foo");
-                    assert_eq!(f, "bar");
-                    anyhow::Ok(())
-                },
-                async { handle(run).await.context("failed to serve `run`") },
-                async { handle(gen_).await.context("failed to serve `gen`") },
-            )?;
-            Ok(())
+                let (s, f) = receive(io, async { join!(s.collect::<Vec<_>>(), f) }).await?;
+                assert_eq!(s.concat(), b"foo");
+                assert_eq!(f, "bar");
+                Ok(())
+            })
+            .await
         },
     )
     .await
@@ -355,37 +329,26 @@ async fn async_params_after_return() -> anyhow::Result<()> {
     (canon lift (core func $i "run") async (callback (core func $i "cb"))))
   (func (export "count") (result u32) (canon lift (core func $i "count")))
 )"#,
-        async |clt, srv, component, instance, store| {
-            let run = serve(srv, store, component, instance, "run").await?;
-            let count = serve(srv, store, component, instance, "count").await?;
-            try_join!(
-                async {
-                    let (tx, rx) = oneshot::channel();
-                    let ((), io) = clt
-                        .invoke_values::<_, ()>(
-                            (),
-                            "",
-                            "run",
-                            (Box::pin(stream::once(async {
-                                _ = rx.await;
-                                b"foo".to_vec()
-                            })) as ByteStream,),
-                        )
-                        .await?;
-                    _ = tx.send(());
-                    if let Some(io) = io {
-                        io.await?;
-                    }
-                    anyhow::Ok(())
-                },
-                async { handle(run).await.context("failed to serve `run`") },
-            )?;
-            let ((n,), ()) = try_join!(
-                clt.invoke_values_blocking::<(), (u32,)>((), "", "count", ()),
-                async { handle(count).await.context("failed to serve `count`") },
-            )?;
-            assert_eq!(n, 3);
-            Ok(())
+        async |clt, srv, exports| {
+            serve(srv, exports, async {
+                let (tx, rx) = oneshot::channel();
+                let s = Box::pin(stream::once(async {
+                    _ = rx.await;
+                    b"foo".to_vec()
+                })) as ByteStream;
+                let ((), io) = {
+                    let (tx, rx) = clt.connect(()).await?;
+                    invoke_values::<_, ()>(tx, rx, "", "run", (s,)).await?
+                };
+                _ = tx.send(());
+                io.await?;
+
+                let (tx, rx) = clt.connect(()).await?;
+                let (n,) = invoke_values_blocking::<(), (u32,)>(tx, rx, "", "count", ()).await?;
+                assert_eq!(n, 3);
+                Ok(())
+            })
+            .await
         },
     )
     .await
@@ -423,24 +386,75 @@ async fn params_byte_by_byte() -> anyhow::Result<()> {
   (func (export "echo") (param "x" $l) (result $l)
     (canon lift (core func $i "echo") (memory $memory) (realloc $realloc)))
 )"#,
-        async |clt, srv, component, instance, store| {
-            let echo = serve(srv, store, component, instance, "echo").await?;
-            try_join!(
+        async |clt, srv, exports| {
+            serve(srv, exports, async {
+                let (tx, rx) = clt.connect(()).await?;
+                let (mut tx, mut rx) = invoke(tx, rx, "", "echo", [[None; 0]; 0])?;
+                for b in VALUE.chunks(1) {
+                    tx.write_all(b).await?;
+                    tx.flush().await?;
+                }
+                tx.shutdown().await?;
+                let mut buf = Vec::default();
+                rx.read_to_end(&mut buf).await?;
+                assert_eq!(buf, VALUE);
+                Ok(())
+            })
+            .await
+        },
+    )
+    .await
+}
+
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+async fn unread_param() -> anyhow::Result<()> {
+    with_store(
+        r#"
+(component
+  (type $s (stream u8))
+  (type $fn (func async (param "s" $s)))
+  (core func $stream.drop-readable (canon stream.drop-readable $s))
+  (core module $m
+    (import "" "stream.drop-readable" (func $stream.drop-readable (param i32)))
+    (func (export "run") (param i32)
+      (call $stream.drop-readable (local.get 0))))
+  (core instance $i (instantiate $m (with "" (instance
+    (export "stream.drop-readable" (func $stream.drop-readable))))))
+  (func (export "run") (type $fn) (canon lift (core func $i "run")))
+)"#,
+        async |clt, srv, exports| {
+            serve_until(
+                tcp::incoming(srv),
                 async {
-                    let (mut tx, mut rx) = clt.invoke((), "", "echo", &[[]; 0]).await?;
-                    for b in VALUE.chunks(1) {
-                        tx.write_all(b).await?;
-                        tx.flush().await?;
-                    }
-                    tx.shutdown().await?;
-                    let mut buf = Vec::default();
-                    rx.read_to_end(&mut buf).await?;
-                    assert_eq!(buf, VALUE);
-                    anyhow::Ok(())
+                    let (tx, rx) = clt.connect(()).await?;
+                    let s = stream::once(async {
+                        yield_now().await;
+                        b"foo".to_vec()
+                    });
+                    let ((), io) = invoke_values::<(ByteStream,), ()>(
+                        tx,
+                        rx,
+                        "",
+                        "run",
+                        (Box::pin(s) as ByteStream,),
+                    )
+                    .await?;
+                    _ = io.await;
+                    Ok(())
                 },
-                async { handle(echo).await.context("failed to serve `echo`") },
-            )?;
-            Ok(())
+                |cx, header, tx, rx, buf| {
+                    let res = exports.handle(cx, &header.instance, &header.name, tx, rx, buf);
+                    async move {
+                        let Ok(fut) = res else {
+                            bail!("unexpected invocation");
+                        };
+                        let res = fut.await;
+                        res.expect_err("`run` invocation succeeded");
+                        Ok(())
+                    }
+                },
+            )
+            .await
         },
     )
     .await

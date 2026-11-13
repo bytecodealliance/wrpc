@@ -1,7 +1,7 @@
 use crate::client::test::numbers::numbers::*;
 
 pub async fn run(
-    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,
+    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Connect<Context = ()>,
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
     assert_eq!(roundtrip_u8(wrpc, (), 1).await?, 1);
     assert_eq!(roundtrip_u8(wrpc, (), u8::MIN).await?, u8::MIN);

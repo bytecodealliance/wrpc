@@ -2,107 +2,131 @@ use core::future::poll_fn;
 use core::net::Ipv6Addr;
 use core::pin::pin;
 use core::task::Poll;
+use core::time::Duration;
 
 use std::process::ExitStatus;
-use std::sync::Arc;
 
-use anyhow::Context;
-use futures::TryStreamExt as _;
+use anyhow::{Context, ensure};
+use bytes::BytesMut;
+use futures::stream::FuturesUnordered;
+use futures::{Stream, StreamExt as _, TryStreamExt as _};
 use rcgen::{CertifiedKey, generate_simple_self_signed};
 use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
 use rustls::version::TLS13;
 use rustls::{ClientConfig, RootCertStore, ServerConfig};
-use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _};
 use tokio::net::{TcpListener, TcpStream, ToSocketAddrs};
 use tokio::process::Command;
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
+use tokio::time::timeout;
 use tokio::{select, spawn, try_join};
 use tracing::info;
-use wrpc_transport::{Invoke, Serve};
+use wrpc_transport::frame::{Incoming, Outgoing};
+use wrpc_transport::{Connect, Header, HeaderReadError, Index as _, accept, invoke, serve};
 
-/// Polls `fut` to completion while repeatedly running `accept` to feed established connections
-/// into a server, returning the first error of either.
-pub async fn accept_until<T>(
+/// Maximum number of invocations [`serve_until`] serves concurrently
+pub const MAX_INVOCATIONS: usize = 64;
+
+/// Polls `fut` to completion while accepting invocations from `incoming`, reading the header
+/// of each and polling the future `f` returns for it, which is passed the bytes read past the
+/// header, then completes the served invocations.
+/// At most [`MAX_INVOCATIONS`] are served concurrently. Returns the first error.
+pub async fn serve_until<C, I, O, E, T, Fut>(
+    incoming: impl Stream<Item = Result<(C, O, I), E>>,
     fut: impl Future<Output = anyhow::Result<T>>,
-    accept: impl AsyncFn() -> anyhow::Result<()>,
-) -> anyhow::Result<T> {
-    let mut fut = pin!(fut);
-    let mut accepting = pin!(accept());
-    poll_fn(|cx| {
-        while let Poll::Ready(res) = accepting.as_mut().poll(cx) {
-            res?;
-            accepting.set(accept());
-        }
-        fut.as_mut().poll(cx)
-    })
-    .await
-}
-
-#[cfg(any(feature = "net", feature = "quic", feature = "webtransport"))]
-async fn serve_listener<C, I, O, T>(
-    clt: C,
-    accept: impl AsyncFn() -> anyhow::Result<(I, O)>,
-    f: impl AsyncFnOnce(C, &wrpc_transport::Server<(), I, O>) -> anyhow::Result<T>,
+    mut f: impl FnMut(C, Header, O, I, BytesMut) -> Fut,
 ) -> anyhow::Result<T>
 where
-    I: tokio::io::AsyncBufRead + Unpin + Send + Sync + 'static,
-    O: Send + Sync + 'static,
+    I: AsyncRead + Unpin,
+    E: core::error::Error + Send + Sync + 'static,
+    Fut: Future<Output = anyhow::Result<()>>,
 {
-    let srv = wrpc_transport::Server::default();
-    accept_until(f(clt, &srv), async || {
-        let (rx, tx) = accept().await?;
-        srv.accept((), tx, rx)
-            .await
-            .context("failed to accept invocation")
+    let mut fut = pin!(fut);
+    let mut incoming = pin!(incoming);
+    let mut reading = FuturesUnordered::default();
+    let mut served = FuturesUnordered::default();
+    let res = poll_fn(|ctx| {
+        while reading.len().saturating_add(served.len()) < MAX_INVOCATIONS
+            && let Poll::Ready(Some(res)) = incoming.poll_next_unpin(ctx)
+        {
+            let (cx, tx, mut rx) = res.context("failed to accept invocation")?;
+            reading.push(async move {
+                let mut buf = BytesMut::default();
+                let header = accept(&mut rx, &mut buf).await?;
+                Ok::<_, HeaderReadError>((cx, header, tx, rx, buf))
+            });
+        }
+        while let Poll::Ready(Some(res)) = reading.poll_next_unpin(ctx) {
+            let (cx, header, tx, rx, buf) = res.context("failed to read invocation header")?;
+            served.push(f(cx, header, tx, rx, buf));
+        }
+        while let Poll::Ready(Some(res)) = served.poll_next_unpin(ctx) {
+            res?;
+            ctx.waker().wake_by_ref();
+        }
+        fut.as_mut().poll(ctx)
     })
-    .await
+    .await?;
+    served.try_collect::<()>().await?;
+    Ok(res)
+}
+
+/// Accepts an invocation of function `func` on instance `instance` from `incoming`, returning
+/// its context and framed streams, which multiplex the async `paths`
+pub async fn accept_framed<C, I, O, E, P>(
+    incoming: &mut (impl Stream<Item = Result<(C, O, I), E>> + Unpin),
+    instance: &str,
+    func: &str,
+    paths: impl IntoIterator<Item = P>,
+) -> anyhow::Result<(C, Outgoing, Incoming)>
+where
+    I: AsyncRead + Send + Unpin + 'static,
+    O: AsyncWrite + Send + Unpin + 'static,
+    E: core::error::Error + Send + Sync + 'static,
+    P: AsRef<[Option<usize>]>,
+{
+    let res = incoming.next().await.context("invocation stream ended")?;
+    let (cx, tx, mut rx) = res.context("failed to accept invocation")?;
+    let mut buf = BytesMut::default();
+    let header = accept(&mut rx, &mut buf)
+        .await
+        .context("failed to read invocation header")?;
+    ensure!(
+        header.instance == instance && header.name == func,
+        "unexpected invocation of `{}.{}`",
+        header.instance,
+        header.name,
+    );
+    let (tx, rx) = serve(tx, rx, buf, paths);
+    Ok((cx, tx, rx))
 }
 
 #[cfg(feature = "net")]
 pub async fn serve_tcp<T>(
     f: impl AsyncFnOnce(
         wrpc_transport::tcp::Client<core::net::SocketAddr>,
-        &wrpc_transport::Server<
-            (),
-            tokio::io::BufReader<wrpc_transport::frame::ReadHalf<TcpStream>>,
-            wrpc_transport::frame::WriteHalf<TcpStream>,
-        >,
+        &TcpListener,
     ) -> anyhow::Result<T>,
 ) -> anyhow::Result<T> {
     let lis = tcp_bind().await?;
     let addr = lis
         .local_addr()
         .context("failed to query listener local address")?;
-    let accept = async || {
-        let (stream, addr) = lis.accept().await.context("failed to accept connection")?;
-        anyhow::ensure!(addr.ip().is_loopback(), "unexpected peer address `{addr}`");
-        let (rx, tx) = wrpc_transport::tcp::split(stream);
-        Ok((tokio::io::BufReader::new(rx), tx))
-    };
-    serve_listener(wrpc_transport::tcp::Client::from(addr), accept, f).await
+    f(wrpc_transport::tcp::Client::from(addr), &lis).await
 }
 
 #[cfg(all(unix, feature = "net"))]
 pub async fn serve_unix<T>(
     f: impl AsyncFnOnce(
         wrpc_transport::unix::Client<std::path::PathBuf>,
-        &wrpc_transport::Server<
-            (),
-            tokio::io::BufReader<wrpc_transport::frame::ReadHalf<tokio::net::UnixStream>>,
-            wrpc_transport::frame::WriteHalf<tokio::net::UnixStream>,
-        >,
+        &tokio::net::UnixListener,
     ) -> anyhow::Result<T>,
 ) -> anyhow::Result<T> {
     let dir = tempfile::tempdir().context("failed to create temporary directory")?;
     let path = dir.path().join("sock");
     let lis = tokio::net::UnixListener::bind(&path).context("failed to bind Unix socket")?;
-    let accept = async || {
-        let (stream, ..) = lis.accept().await.context("failed to accept connection")?;
-        let (rx, tx) = wrpc_transport::unix::split(stream);
-        Ok((tokio::io::BufReader::new(rx), tx))
-    };
-    serve_listener(wrpc_transport::unix::Client::from(path), accept, f).await
+    f(wrpc_transport::unix::Client::from(path), &lis).await
 }
 
 pub async fn tcp_bind() -> anyhow::Result<TcpListener> {
@@ -130,33 +154,35 @@ pub async fn free_port() -> anyhow::Result<u16> {
 
 /// A common single-invocation test used by different transport implementations.
 ///
-/// The server is set up via the [`Serve`] implementation `srv`.
-pub async fn assert_single_invocation<C, S>(
-    cx: C::Context,
-    clt: &C,
-    srv: &S,
-) -> anyhow::Result<S::Context>
+/// The invocation is accepted from `srv`.
+pub async fn assert_single_invocation<T, C, I, O, E>(
+    cx: T::Context,
+    clt: &T,
+    srv: impl Stream<Item = Result<(C, O, I), E>>,
+) -> anyhow::Result<C>
 where
-    C: Invoke,
-    S: Serve,
+    T: Connect,
+    I: AsyncRead + Send + Unpin + 'static,
+    O: AsyncWrite + Send + Unpin + 'static,
+    E: core::error::Error + Send + Sync + 'static,
 {
-    let invocations = srv
-        .serve("foo", "bar", Arc::from([Box::from([Some(42), Some(0)])]))
-        .await
-        .context("failed to serve `foo.bar`")?;
-    let mut invocations = pin!(invocations);
+    let mut srv = pin!(srv);
     let ((), cx) = try_join!(
         async {
-            let (mut outgoing, mut incoming) = clt
-                .invoke(cx, "foo", "bar", &[&[Some(0), Some(42)]])
-                .await
+            let (tx, rx) = clt.connect(cx).await.context("failed to connect")?;
+            let (mut outgoing, mut incoming) = invoke(tx, rx, "foo", "bar", [&[Some(0), Some(42)]])
                 .context("failed to invoke `foo.bar`")?;
-            outgoing
-                .write_all(b"test")
-                .await
-                .context("failed to write `foo.bar` parameters")?;
             let mut nested_tx = outgoing.index(&[42, 0]).context("failed to index `42.0`")?;
             let mut nested_rx = incoming.index(&[0, 42]).context("failed to index `0.42`")?;
+            outgoing
+                .write_all(b"testbar")
+                .await
+                .context("failed to write `foo.bar` parameters")?;
+            outgoing
+                .shutdown()
+                .await
+                .context("failed to close `foo.bar` parameters")?;
+            drop(outgoing);
             try_join!(
                 async {
                     info!("reading `foo`");
@@ -171,21 +197,15 @@ where
                     anyhow::Ok(())
                 },
                 async {
-                    info!("writing `bar`");
-                    outgoing
-                        .write_all(b"bar")
-                        .await
-                        .context("failed to write `bar`")?;
-                    drop(outgoing);
-                    info!("wrote `bar`");
-                    anyhow::Ok(())
-                },
-                async {
                     info!("writing `client->server`");
                     nested_tx
                         .write_all(b"client->server")
                         .await
                         .context("failed to write `client->server`")?;
+                    nested_tx
+                        .shutdown()
+                        .await
+                        .context("failed to close `client->server`")?;
                     drop(nested_tx);
                     info!("wrote `client->server`");
                     anyhow::Ok(())
@@ -202,15 +222,15 @@ where
                     anyhow::Ok(())
                 },
             )?;
+            incoming
+                .closed()
+                .await
+                .context("`foo.bar` invocation failed")?;
             anyhow::Ok(())
         },
         async {
-            let invocation = invocations
-                .try_next()
-                .await
-                .context("failed to accept invocation")?;
             let (cx, mut outgoing, mut incoming) =
-                invocation.context("invocation stream unexpectedly finished")?;
+                accept_framed(&mut srv, "foo", "bar", [[Some(42), Some(0)]]).await?;
             let mut nested_tx = outgoing.index(&[0, 42]).context("failed to index `0.42`")?;
             let mut nested_rx = incoming.index(&[42, 0]).context("failed to index `42.0`")?;
             try_join!(
@@ -241,6 +261,7 @@ where
                         .write_all(b"foo")
                         .await
                         .context("failed to write `foo`")?;
+                    outgoing.shutdown().await.context("failed to close `foo`")?;
                     drop(outgoing);
                     info!("wrote `foo`");
                     anyhow::Ok(())
@@ -251,6 +272,10 @@ where
                         .write_all(b"server->client")
                         .await
                         .context("failed to write `server->client`")?;
+                    nested_tx
+                        .shutdown()
+                        .await
+                        .context("failed to close `server->client`")?;
                     drop(nested_tx);
                     info!("wrote `server->client`");
                     anyhow::Ok(())
@@ -272,6 +297,75 @@ where
         },
     )?;
     Ok(cx)
+}
+
+/// A common test used by different transport implementations, which checks that invalid data
+/// fails ingress of a server and a client, and that dropping the writer of the failed side ends
+/// the invocation for the peer.
+///
+/// The invocations are accepted from `srv`.
+pub async fn assert_invalid_data_resets<T, C, I, O, E>(
+    cx: T::Context,
+    clt: &T,
+    srv: impl Stream<Item = Result<(C, O, I), E>>,
+) -> anyhow::Result<()>
+where
+    T: Connect,
+    T::Context: Clone,
+    I: AsyncRead + Send + Unpin + 'static,
+    O: AsyncWrite + Send + Unpin + 'static,
+    E: core::error::Error + Send + Sync + 'static,
+{
+    let mut srv = pin!(srv);
+    let (tx, rx) = clt.connect(cx.clone()).await.context("failed to connect")?;
+    let (outgoing, mut incoming) =
+        invoke(tx, rx, "foo", "baz", [[None; 0]; 0]).context("failed to invoke `foo.baz`")?;
+    let mut invalid = outgoing.index(&[1]).context("failed to index `1`")?;
+    invalid
+        .write_all(b"x")
+        .await
+        .context("failed to write invalid data")?;
+    let (.., outgoing, srv_incoming) = accept_framed(&mut srv, "foo", "baz", [[Some(0)]]).await?;
+    let finished = srv_incoming.closed();
+    finished
+        .await
+        .expect_err("invalid data must fail server ingress");
+    drop(outgoing);
+    let res = timeout(
+        Duration::from_secs(5),
+        incoming.read_to_end(&mut Vec::default()),
+    )
+    .await
+    .context("invalid data did not reset the invocation")?;
+    res.expect_err("invalid data must reset the invocation");
+
+    let (tx, rx) = clt.connect(cx).await.context("failed to connect")?;
+    let (mut clt_outgoing, incoming) =
+        invoke(tx, rx, "foo", "baz", [[None; 0]; 0]).context("failed to invoke `foo.baz`")?;
+    clt_outgoing
+        .flush()
+        .await
+        .context("failed to send invocation header")?;
+    let (.., outgoing, srv_incoming) = accept_framed(&mut srv, "foo", "baz", [[Some(0)]]).await?;
+    let mut nested = srv_incoming.index(&[0]).context("failed to index `0`")?;
+    let mut invalid = outgoing.index(&[1]).context("failed to index `1`")?;
+    invalid
+        .write_all(b"x")
+        .await
+        .context("failed to write invalid data")?;
+    incoming
+        .closed()
+        .await
+        .expect_err("invalid data must fail client ingress");
+    drop(clt_outgoing);
+    let res = timeout(
+        Duration::from_secs(5),
+        nested.read_to_end(&mut Vec::default()),
+    )
+    .await
+    .context("invalid data did not reset the invocation")?;
+    res.expect_err("invalid data must reset the invocation");
+    Ok(())
 }
 
 pub fn spawn_server(
@@ -355,9 +449,9 @@ fn quic_endpoints(
         .try_into()
         .context("failed to convert rustls server config to QUIC server config")?;
 
-    clt_ep.set_default_client_config(ClientConfig::new(Arc::new(clt_cnf)));
+    clt_ep.set_default_client_config(ClientConfig::new(std::sync::Arc::new(clt_cnf)));
     let srv_ep = quinn::Endpoint::server(
-        ServerConfig::with_crypto(Arc::new(srv_cnf)),
+        ServerConfig::with_crypto(std::sync::Arc::new(srv_cnf)),
         (Ipv6Addr::LOCALHOST, 0).into(),
     )
     .context("failed to create server endpoint")?;
@@ -475,16 +569,22 @@ where
     assert!(addr.ip().is_loopback());
 
     let (parts, ()) = http::Request::new(()).into_parts();
-    let (res, (), ()) = try_join!(
-        async { f(parts, sender).await.context("closure failed") },
-        async {
-            hyper::server::conn::http2::Builder::new(exe)
-                .serve_connection(WithHyperIo::new(srv), svc)
-                .await
-                .context("failed to serve connection")
-        },
-        async { clt.await.context("client connection failed") }
-    )?;
+    let mut srv = pin!(
+        hyper::server::conn::http2::Builder::new(exe).serve_connection(WithHyperIo::new(srv), svc)
+    );
+    let clt = async {
+        clt.await.context("client connection failed")?;
+        anyhow::Ok(core::future::pending().await)
+    };
+    let res = select! {
+        res = f(parts, sender) => res.context("closure failed")?,
+        res = &mut srv => {
+            res.context("failed to serve connection")?;
+            anyhow::bail!("server connection ended before the closure")
+        }
+        res = clt => res?,
+    };
+    _ = srv.await;
     Ok(res)
 }
 
@@ -522,33 +622,16 @@ where
 
 #[cfg(feature = "quic")]
 pub async fn serve_quic<T>(
-    f: impl AsyncFnOnce(wrpc_quic::Client, &wrpc_quic::Server) -> anyhow::Result<T>,
+    f: impl AsyncFnOnce(wrpc_quic::Connection, &wrpc_quic::Connection) -> anyhow::Result<T>,
 ) -> anyhow::Result<T> {
-    with_quic(|clt, conn| async move {
-        let accept = async || {
-            let (tx, rx) = conn.accept_bi().await.context("failed to accept stream")?;
-            Ok((rx.into(), tx.into()))
-        };
-        serve_listener(wrpc_quic::Client::from(clt), accept, f).await
-    })
-    .await
+    with_quic(|clt, srv| async move { f(clt.into(), &srv.into()).await }).await
 }
 
 #[cfg(feature = "webtransport")]
 pub async fn serve_webtransport<T>(
-    f: impl AsyncFnOnce(wrpc_webtransport::Client, &wrpc_webtransport::Server) -> anyhow::Result<T>,
+    f: impl AsyncFnOnce(wrpc_webtransport::Session, &wrpc_webtransport::Session) -> anyhow::Result<T>,
 ) -> anyhow::Result<T> {
-    with_webtransport(|clt, session| async move {
-        let accept = async || {
-            let (tx, rx) = session
-                .accept_bi()
-                .await
-                .context("failed to accept stream")?;
-            Ok((rx.into(), tx.into()))
-        };
-        serve_listener(wrpc_webtransport::Client::from(clt), accept, f).await
-    })
-    .await
+    with_webtransport(|clt, srv| async move { f(clt.into(), &srv.into()).await }).await
 }
 
 #[cfg(feature = "http")]
@@ -556,17 +639,12 @@ pub async fn serve_http2<T>(
     f: impl AsyncFnOnce(
         http::request::Parts,
         wrpc_http::Client<hyper::client::conn::http2::SendRequest<wrpc_http::OutgoingBody>>,
-        &wrpc_transport::Server<
-            http::request::Parts,
-            wrpc_http::DynIncomingBodyDataReader,
-            wrpc_http::OutgoingBodyDataWriter,
-        >,
+        &mut wrpc_http::Server,
     ) -> anyhow::Result<T>,
 ) -> anyhow::Result<T> {
-    let srv = Arc::new(wrpc_transport::Server::default());
-    with_http2(
-        wrpc_http::Server::from(Arc::clone(&srv)),
-        |parts, sender| async move { f(parts, wrpc_http::Client::from(sender), &srv).await },
-    )
+    let (svc, mut srv) = wrpc_http::channel(16);
+    with_http2(svc, |parts, sender| async move {
+        f(parts, wrpc_http::Client::from(sender), &mut srv).await
+    })
     .await
 }

@@ -66,12 +66,7 @@ func ReadFuture[T any](r IndexReadCloser, f func(IndexReadCloser, ...uint32) (T,
 		}
 		ch <- v
 		close(ch)
-		if deferred != nil {
-			if err := deferred(ctx); err != nil {
-				return err
-			}
-		}
-		return readFutureEnd(r)
+		return JoinDeferred(func(context.Context) error { return readFutureEnd(r) }, deferred)(ctx)
 	}, nil
 }
 
@@ -116,6 +111,9 @@ func WriteFuture[T any](v <-chan T, w ByteWriter, f func(T, ByteWriter) (func(co
 		}
 		if err := w.WriteBytes(buf.Bytes()); err != nil {
 			return fmt.Errorf("failed to write pending future value: %w", err)
+		}
+		if err := w.ClosePath(); err != nil {
+			return fmt.Errorf("failed to close pending future path: %w", err)
 		}
 		if write != nil {
 			return IndexWrite(write, 0)(ctx, w)

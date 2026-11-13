@@ -3,7 +3,7 @@ use ::wit_bindgen_wrpc::bytes::Bytes;
 use crate::client::test::lists::to_test::*;
 
 pub async fn run(
-    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,
+    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Connect<Context = ()>,
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
     empty_list_param(wrpc, (), &Bytes::new()).await?;
     empty_string_param(wrpc, (), "").await?;

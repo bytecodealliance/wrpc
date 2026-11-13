@@ -1,22 +1,35 @@
 //! wRPC TCP transport using [tokio]
 
-use tokio::io::BufReader;
-use tokio::net::{TcpStream, ToSocketAddrs};
-use tracing::instrument;
+use core::borrow::Borrow;
+use core::net::SocketAddr;
+use core::task::{Poll, ready};
 
-use crate::Invoke;
-use crate::frame::{Incoming, Outgoing, ReadHalf, WriteHalf, invoke};
+use futures::{Stream, stream};
+use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
+use tokio::net::{TcpListener, TcpStream, ToSocketAddrs};
+use tracing::{instrument, warn};
 
-/// Splits a TCP stream into a [`ReadHalf`] and a [`WriteHalf`].
+use crate::Connect;
+
+/// Returns the stream of invocations accepted on `lis`, each carried by one connection, with
+/// the peer address as the context
 ///
-/// If the [`WriteHalf`] is dropped before being shut down, the connection is aborted and reading
-/// from the [`ReadHalf`] fails, unless it already reached the end of the stream.
-#[must_use]
-pub fn split(stream: TcpStream) -> (ReadHalf<TcpStream>, WriteHalf<TcpStream>) {
-    crate::frame::split::split(stream, |stream| _ = stream.set_zero_linger())
+/// `TCP_NODELAY` is enabled on accepted connections, since invocations consist of small
+/// writes that are each waited on by the peer.
+pub fn incoming(
+    lis: impl Borrow<TcpListener>,
+) -> impl Stream<Item = std::io::Result<(SocketAddr, OwnedWriteHalf, OwnedReadHalf)>> {
+    stream::poll_fn(move |cx| {
+        let (stream, addr) = ready!(lis.borrow().poll_accept(cx))?;
+        if let Err(err) = stream.set_nodelay(true) {
+            warn!(?err, "failed to set `TCP_NODELAY`");
+        }
+        let (rx, tx) = stream.into_split();
+        Poll::Ready(Some(Ok((addr, tx, rx))))
+    })
 }
 
-/// [Invoke] implementation of a TCP transport using [tokio]
+/// [Connect] implementation of a TCP transport using [tokio]
 #[derive(Clone, Debug)]
 pub struct Client<T> {
     addr: T,
@@ -61,23 +74,20 @@ where
     }
 }
 
-impl<T> Invoke for Client<T>
+impl<T> Connect for Client<T>
 where
     T: ToSocketAddrs + Clone + Send + Sync,
 {
     type Context = ();
+    type Outgoing = OwnedWriteHalf;
+    type Incoming = OwnedReadHalf;
+    type Error = std::io::Error;
 
-    #[instrument(level = "trace", skip(self, paths))]
-    async fn invoke<P>(
+    #[instrument(level = "trace", skip(self))]
+    async fn connect(
         &self,
         (): Self::Context,
-        instance: &str,
-        func: &str,
-        paths: impl AsRef<[P]> + Send,
-    ) -> anyhow::Result<(Outgoing, Incoming)>
-    where
-        P: AsRef<[Option<usize>]> + Send + Sync,
-    {
+    ) -> std::io::Result<(Self::Outgoing, Self::Incoming)> {
         let stream = TcpStream::connect(self.addr.clone()).await?;
         if let Some(nodelay) = self.nodelay {
             stream.set_nodelay(nodelay)?;
@@ -85,7 +95,7 @@ where
         if self.zero_linger {
             stream.set_zero_linger()?;
         }
-        let (rx, tx) = split(stream);
-        invoke(tx, BufReader::new(rx), instance, func, paths).await
+        let (rx, tx) = stream.into_split();
+        Ok((tx, rx))
     }
 }

@@ -1,5 +1,5 @@
 use ::wit_bindgen_wrpc::bytes::Bytes;
-use ::wit_bindgen_wrpc::wrpc_transport::{Invoke, ResourceBorrow, ResourceOwn};
+use ::wit_bindgen_wrpc::wrpc_transport::{Connect, ResourceBorrow, ResourceOwn};
 
 use crate::server::exports::exports::{
     Float as FloatExport, Handler as HandlerExports, HandlerFloat,
@@ -10,7 +10,7 @@ use crate::server::test::resource_floats::test::Float as ImportFloat2;
 #[derive(Clone)]
 pub struct Component;
 
-impl<C: Invoke<Context = ()>> Handler<C> for Component {
+impl<C: Connect<Context = ()>> Handler<C> for Component {
     async fn add(
         &self,
         cx: C,
@@ -23,9 +23,9 @@ impl<C: Invoke<Context = ()>> Handler<C> for Component {
     }
 }
 
-impl<C: Invoke<Context = ()>> HandlerExports<C> for Component {}
+impl<C: Connect<Context = ()>> HandlerExports<C> for Component {}
 
-impl<C: Invoke<Context = ()>> HandlerFloat<C> for Component {
+impl<C: Connect<Context = ()>> HandlerFloat<C> for Component {
     async fn new(
         &self,
         cx: C,

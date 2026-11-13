@@ -1,7 +1,7 @@
 use crate::client::test::flavorful::to_test::*;
 
 pub async fn run(
-    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,
+    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Connect<Context = ()>,
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
     f_list_in_record1(
         wrpc,

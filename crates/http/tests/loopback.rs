@@ -1,7 +1,5 @@
 use core::time::Duration;
 
-use std::sync::Arc;
-
 use anyhow::{Context as _, anyhow};
 use bytes::Bytes;
 use http_body_util::{BodyExt as _, Full};
@@ -10,14 +8,14 @@ use hyper_util::rt::TokioExecutor;
 use hyper_util::rt::tokio::WithHyperIo;
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::{spawn, try_join};
-use wrpc_http::{Client, OutgoingBody, Server};
-use wrpc_transport::Invoke as _;
+use wrpc_http::{Client, OutgoingBody};
+use wrpc_transport::Connect as _;
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn http2() -> anyhow::Result<()> {
     wrpc_test::serve_http2(async |parts, clt, srv| {
-        wrpc_test::assert_single_invocation(parts, &clt, srv).await?;
-        Ok(())
+        wrpc_test::assert_single_invocation(parts.clone(), &clt, &mut *srv).await?;
+        wrpc_test::assert_invalid_data_resets(parts, &clt, srv).await
     })
     .await
 }
@@ -25,19 +23,19 @@ async fn http2() -> anyhow::Result<()> {
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn pooling() -> anyhow::Result<()> {
     wrpc_test::with_http_pooling(|parts, clt, lis| async move {
-        let srv = Arc::new(wrpc_transport::frame::Server::default());
+        let (svc, mut srv) = wrpc_http::channel(16);
         let clt = Client::from(clt);
         let accept = async {
             let (conn, addr) = lis.accept().await.context("failed to accept connection")?;
             assert!(addr.ip().is_loopback());
             let conn = hyper_util::server::conn::auto::Builder::new(TokioExecutor::new())
-                .serve_connection(WithHyperIo::new(conn), Server::from(Arc::clone(&srv)))
+                .serve_connection(WithHyperIo::new(conn), svc)
                 .into_owned();
             anyhow::Ok(spawn(conn))
         };
         let (conn, _) = try_join!(
             accept,
-            wrpc_test::assert_single_invocation(parts, &clt, srv.as_ref())
+            wrpc_test::assert_single_invocation(parts, &clt, &mut srv)
         )?;
         drop(clt);
         conn.await
@@ -57,9 +55,8 @@ async fn error_response() -> anyhow::Result<()> {
         anyhow::Ok(res)
     });
     let fut = wrpc_test::with_http2(svc, |parts, sender| async move {
-        let (tx, mut rx) = Client::from(sender)
-            .invoke(parts, "foo", "bar", [[None; 0]; 0])
-            .await?;
+        let (mut tx, mut rx) = Client::from(sender).connect(parts).await?;
+        tx.shutdown().await?;
         drop(tx);
         let err = rx
             .read_to_end(&mut vec![])
@@ -76,19 +73,18 @@ async fn error_response() -> anyhow::Result<()> {
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn body_writer_dropped() -> anyhow::Result<()> {
-    for shutdown in [true, false] {
-        let (body, mut tx) = OutgoingBody::new([]);
-        tx.write_all(b"foo").await.context("failed to write body")?;
-        if shutdown {
-            tx.shutdown().await.context("failed to shut down body")?;
-        }
-        drop(tx);
-        let res = body.collect().await;
-        if shutdown {
-            assert_eq!(res.context("failed to read body")?.to_bytes(), "foo");
-        } else {
-            assert_eq!(res.unwrap_err().kind(), std::io::ErrorKind::BrokenPipe);
-        }
-    }
+    let (body, mut tx) = OutgoingBody::new();
+    tx.write_all(b"foo").await.context("failed to write body")?;
+    drop(tx);
+    body.collect()
+        .await
+        .expect_err("dropping the writer before shutting it down must fail the body");
+
+    let (body, mut tx) = OutgoingBody::new();
+    tx.write_all(b"foo").await.context("failed to write body")?;
+    tx.shutdown().await.context("failed to shut down body")?;
+    drop(tx);
+    let res = body.collect().await.context("failed to read body")?;
+    assert_eq!(res.to_bytes(), "foo");
     Ok(())
 }

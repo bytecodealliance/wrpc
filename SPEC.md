@@ -86,7 +86,7 @@ An empty frame, i.e. a frame with empty `data`, closes its `path`: the sender MU
 
 Likewise, if a frame is received on a `path` that carries no pending value the receiver has received or may still receive, the receiver MUST treat it as an error.
 
-A sender MUST send the data of a pending value only after the data carrying it, for example, the data of a pending value in a stream element after the stream chunk containing that element, since a receiver MAY bound the data it buffers for a `path`, which no value it decoded carries yet.
+A sender MUST send the data carrying a pending value before any data of that value, for example, the stream chunk containing a pending element before the data of that element, and MUST NOT send any frame on a `path`, which no value it sent carries. A receiver MUST receive all pending values carried by the data it decoded concurrently, since a receiver MAY hold a received frame until the value at its `path` is read, which stalls the receipt of every other `path`.
 
 Frames do not communicate the end of transmit, i.e. that no more frames follow. A transport communicates it using its native half-close, if it has one, for example, TCP shutdown or finishing a QUIC stream, and otherwise by closing the byte stream (see [Transport](#transport)). If transmit ends while the root or the `path` of a pending value the receiver has decoded is still open, the receiver MUST treat it as a failed invocation.
 
@@ -102,15 +102,15 @@ The server MUST listen on a TCP socket and client MUST establish a new connectio
 
 The write side of the stream MUST be shutdown as soon as data transfer is done, for example, once the client is done sending encoded parameter buffer and all asynchronous parameters, it MUST shutdown the write side of the stream to signal EOF to the server.
 
-To close the stream in both directions (see [Framed stream specification](#framed-stream-specification)), a peer MUST reset the connection (`RST`).
+To close the stream in both directions (see [Framed stream specification](#framed-stream-specification)), a peer MUST close the connection, so that it no longer receives data either. To the peer, this ends transmit just like shutting down the write side does, so the peer detects the failure by the root or the `path` of a pending value still being open.
 
-This mapping is deliberate: a TCP connection provides exactly one byte stream and no stream-level multiplexing, so the TCP transport does not multiplex invocations over a connection itself. Since the client shuts down its write side first, the client performs the active close and holds a `TIME_WAIT` socket per invocation, which bounds the sustained invocation rate from a single client to a single server address by the size of the client's ephemeral port range.
+This mapping is deliberate: a TCP connection provides exactly one byte stream and no stream-level multiplexing, so the TCP transport does not multiplex invocations over a connection itself. The peer, which ends transmit first, performs the active close and holds a `TIME_WAIT` socket. In a successful invocation this is usually the client, once it is done sending parameters, so the client holds a `TIME_WAIT` socket per invocation, which bounds the sustained invocation rate from a single client to a single server address by the size of the client's ephemeral port range.
 
 Peers that need many concurrent invocations over a single long-lived connection, or per-invocation metadata, SHOULD use a transport that natively multiplexes streams, such as [QUIC](#quic), [WebTransport](#webtransport) or [HTTP](#http) over HTTP/2.
 
 ### Unix domain sockets
 
-Unix domain sockets follow the [TCP](#tcp) transport specification, using a stream-oriented (`SOCK_STREAM`) socket in place of a TCP socket and closing the socket in place of resetting the connection.
+Unix domain sockets follow the [TCP](#tcp) transport specification, using a stream-oriented (`SOCK_STREAM`) socket in place of a TCP socket.
 
 ### QUIC
 
@@ -161,7 +161,7 @@ For example:
 
 If `v` is pending, encoded `bool` value is sent on index `[0]` (corresponding to first parameter)
 
-Values nested in the payload of a future are indexed below the payload index `0`, whether the future is pending or `ready`. For example, a pending `v` of type `future<future<bool>>` resolving to a pending future is sent as `pending` on index `[0]`, and the nested `bool` is sent on index `[0, 0]`.
+Once a pending future resolves, the sender sends its value and closes its index, so the value is sent before any value nested in it. Values nested in the payload of a future are indexed below the payload index `0`, whether the future is pending or `ready`. For example, a pending `v` of type `future<future<bool>>` resolving to a pending future is sent as `pending` on index `[0]`, and the nested `bool` is sent on index `[0, 0]`.
 
 A `future` without a payload type has an empty value encoding, so a sender closes its index once it resolves, and closing the index is what resolves it for the receiver.
 

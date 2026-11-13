@@ -6,7 +6,7 @@ use tokio::sync::oneshot;
 use crate::client::my::test::i::*;
 
 pub async fn run(
-    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,
+    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Connect<Context = ()>,
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
     let (tx, rx) = oneshot::channel();
     let (res, ()) = join!(

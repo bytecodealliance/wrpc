@@ -30,3 +30,6 @@ wrpc-transport = { workspace = true }
 [features]
 default = ["macro-string"]
 macro-string = ["wit-bindgen-wrpc-rust-macro/macro-string"]
+
+[dev-dependencies]
+wrpc-transport = { workspace = true, features = ["net"] }

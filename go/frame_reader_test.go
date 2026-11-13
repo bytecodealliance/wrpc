@@ -236,18 +236,21 @@ func TestFrameStreamReader(t *testing.T) {
 	}{
 		"closed": {[]wrpc.Frame{{Path: []uint32{0}, Data: []byte("\x01x")}, {Path: []uint32{0}}}, ""},
 		"open":   {[]wrpc.Frame{{Path: []uint32{0}, Data: []byte("\x01x")}}, "unexpected EOF"},
-		"nested": {[]wrpc.Frame{{Path: []uint32{0}, Data: []byte{0}}, {Path: []uint32{0}, Data: []byte("x")}, {Path: []uint32{0}}}, ""},
+		"nested": {[]wrpc.Frame{{Path: []uint32{0}, Data: []byte{0}}, {Path: []uint32{0}}, {Path: []uint32{0, 0}, Data: []byte("x")}, {Path: []uint32{0, 0}}}, ""},
 	} {
 		t.Run("pending future "+name, func(t *testing.T) {
 			t.Parallel()
 			ctx, ingress := withIngress()
 			frames := append([]wrpc.Frame{{Data: []byte{0}}}, tc.frames...)
-			r := wrpc.NewFrameStreamReader(ctx, closedFrames(t, frames...), wrpc.NewSubscribePath().Index(0))
-			fut, deferred, err := wrpc.ReadFuture(r, func(r wrpc.IndexReadCloser, _ ...uint32) (<-chan byte, func(context.Context) error, error) {
+			r := wrpc.NewFrameStreamReader(ctx, closedFrames(t, frames...),
+				wrpc.NewSubscribePath().Index(0),
+				wrpc.NewSubscribePath().Index(0).Index(0),
+			)
+			fut, deferred, err := wrpc.ReadFuture(r, func(r wrpc.IndexReadCloser, path ...uint32) (<-chan byte, func(context.Context) error, error) {
 				return wrpc.ReadFuture(r, func(r wrpc.IndexReadCloser, _ ...uint32) (byte, func(context.Context) error, error) {
 					b, err := r.ReadByte()
 					return b, nil, err
-				})
+				}, path...)
 			}, 0)
 			if err != nil {
 				t.Fatalf("failed to read future: %s", err)

@@ -8,11 +8,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use bytes::BytesMut;
-use futures::TryStreamExt as _;
 use tokio::io::AsyncWriteExt as _;
 use tokio::select;
 use tokio::sync::mpsc;
-use tokio_util::codec::{Encoder, FramedRead};
+use tokio_util::codec::Encoder;
 use tracing::{debug, instrument, trace, warn};
 use uuid::Uuid;
 use wasmtime::component::{
@@ -84,6 +83,7 @@ pub enum CallError {
     Write(wasmtime::Error),
     Flush(wasmtime::Error),
     Deferred(wasmtime::Error),
+    Closed(wasmtime::Error),
 }
 
 impl core::error::Error for CallError {}
@@ -96,7 +96,8 @@ impl fmt::Debug for CallError {
             | CallError::Call(error)
             | CallError::Write(error)
             | CallError::Flush(error)
-            | CallError::Deferred(error) => error.fmt(f),
+            | CallError::Deferred(error)
+            | CallError::Closed(error) => error.fmt(f),
         }
     }
 }
@@ -109,7 +110,8 @@ impl fmt::Display for CallError {
             | CallError::Call(error)
             | CallError::Write(error)
             | CallError::Flush(error)
-            | CallError::Deferred(error) => error.fmt(f),
+            | CallError::Deferred(error)
+            | CallError::Closed(error) => error.fmt(f),
         }
     }
 }
@@ -134,16 +136,13 @@ where
     T: WrpcView + 'static,
 {
     let (errors_tx, mut errors) = mpsc::channel(1);
-    let r = rx
-        .take_reader()
-        .context("parameters already received")
-        .map_err(CallError::Decode)?;
-    let mut dec = FramedRead::new(r, ValDecoder::new(store, params_ty, resources, errors_tx));
+    let closed = rx.closed();
+    let mut dec = ValDecoder::new(store, params_ty, resources, errors_tx);
     let params = if params_ty.is_empty() {
         Vec::default()
     } else {
-        let params = dec
-            .try_next()
+        let params = rx
+            .decode(&mut dec)
             .await
             .context("failed to receive parameters")
             .map_err(CallError::Decode)?;
@@ -151,12 +150,11 @@ where
             .context("parameters missing")
             .map_err(CallError::Decode)?
     };
-    if !dec.read_buffer().is_empty() {
-        return Err(CallError::Decode(wasmtime::Error::msg(
-            "received data after parameter values end",
-        )));
-    }
-    if let Some(f) = dec.decoder_mut().take_deferred() {
+    rx.read_end()
+        .await
+        .context("failed to receive parameter values")
+        .map_err(CallError::Decode)?;
+    if let Some(f) = dec.take_deferred() {
         let deferred = f(&rx, &[])
             .context("failed to index asynchronous parameter values")
             .map_err(CallError::Decode)?;
@@ -165,8 +163,8 @@ where
             .context("failed to receive asynchronous parameter values")
             .map_err(CallError::Decode)?;
     }
-    drop(dec);
-    let mut call = pin!(async {
+    drop(rx);
+    let mut call = pin!(async move {
         let mut results = vec![Val::Bool(false); results_ty.len()];
         func.call_concurrent(store, &params, &mut results)
             .await
@@ -187,17 +185,18 @@ where
         })?;
 
         debug!("transmitting results");
-        tx.write_bytes(buf.freeze())
+        tx.write_all(&buf)
             .await
             .context("failed to transmit results")
             .map_err(CallError::Write)?;
-        tx.flush()
-            .await
-            .context("failed to flush outgoing stream")
-            .map_err(CallError::Flush)?;
         let deferred = handle_deferred(&tx, &[], deferred)
             .context("failed to index asynchronous result values")
             .map_err(CallError::Deferred)?;
+        tx.shutdown()
+            .await
+            .context("failed to close results")
+            .map_err(CallError::Flush)?;
+        drop(tx);
         deferred
             .await
             .context("failed to transmit asynchronous result values")
@@ -209,15 +208,14 @@ where
             .map_err(CallError::Decode),
         res = &mut call => {
             res?;
-            let finished = rx.finished();
             Ok(async move {
                 select! {
                     biased;
-                    Some(err) = errors.recv() => Err(err),
-                    res = finished => res,
+                    Some(err) = errors.recv() => Err(err)
+                        .context("failed to receive asynchronous parameter values")
+                        .map_err(CallError::Decode),
+                    res = closed => res.context("invocation failed").map_err(CallError::Closed),
                 }
-                .context("failed to receive asynchronous parameter values")
-                .map_err(CallError::Decode)
             })
         }
     }

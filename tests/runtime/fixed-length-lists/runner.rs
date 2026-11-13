@@ -3,7 +3,7 @@
 use crate::client::test::fixed_length_lists::to_test::*;
 
 pub async fn run(
-    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,
+    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Connect<Context = ()>,
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
     list_param(wrpc, (), &[1, 2, 3, 4]).await?;
     list_param2(wrpc, (), &[[1, 2], [3, 4]]).await?;

@@ -10,17 +10,16 @@ use axum::Router;
 use axum::http::header::CONTENT_TYPE;
 use axum::response::Html;
 use axum::routing::get;
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use clap::Parser;
 use futures::StreamExt as _;
-use futures::stream::select_all;
 use quinn::crypto::rustls::{QuicClientConfig, QuicServerConfig};
 use rcgen::{CertificateParams, KeyPair};
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer, ServerName, UnixTime};
 use rustls::version::TLS13;
 use rustls::{DigitallySignedStruct, SignatureScheme};
-use tokio::sync::{Notify, RwLock};
+use tokio::sync::{Notify, RwLock, mpsc};
 use tokio::task::JoinSet;
 use tokio::{select, signal};
 use tower_http::services::ServeDir;
@@ -31,7 +30,7 @@ use tracing_subscriber::util::SubscriberInitExt as _;
 use url::Url;
 use uuid::Uuid;
 use web_transport_quinn::Request;
-use wrpc_transport::{ResourceBorrow, ResourceOwn};
+use wrpc_transport::{Header, ResourceBorrow, ResourceOwn, accept};
 use wrpc_wasi_keyvalue::exports::wasi::keyvalue::store;
 
 pub type Result<T, E = store::Error> = core::result::Result<T, E>;
@@ -82,7 +81,7 @@ enum Bucket {
     Redis(ResourceOwn<store::Bucket>),
     Quic(
         ResourceOwn<wrpc_wasi_keyvalue::wasi::keyvalue::store::Bucket>,
-        wrpc_quic::Client,
+        wrpc_quic::Connection,
     ),
     Tcp(
         ResourceOwn<wrpc_wasi_keyvalue::wasi::keyvalue::store::Bucket>,
@@ -95,7 +94,7 @@ enum Bucket {
     ),
     Web(
         ResourceOwn<wrpc_wasi_keyvalue::wasi::keyvalue::store::Bucket>,
-        Box<wrpc_webtransport::Client>,
+        Box<wrpc_webtransport::Session>,
     ),
 }
 
@@ -203,7 +202,7 @@ impl<C: Send + Sync> store::Handler<C> for Handler {
                     Ok(ep) => ep,
                     Err(err) => return Ok(Err(store::Error::Other(format!("{err:#}")))),
                 };
-                let wrpc = wrpc_quic::Client::from(conn);
+                let wrpc = wrpc_quic::Connection::from(conn);
                 match wrpc_wasi_keyvalue::wasi::keyvalue::store::open(&wrpc, (), suffix).await? {
                     Ok(bucket) => Bucket::Quic(bucket, wrpc),
                     Err(err) => return Ok(Err(err.into())),
@@ -214,7 +213,7 @@ impl<C: Send + Sync> store::Handler<C> for Handler {
                     Ok(addr) => addr,
                     Err(err) => return Ok(Err(err)),
                 };
-                let wrpc = wrpc_transport::frame::tcp::Client::from(addr);
+                let wrpc = wrpc_transport::tcp::Client::from(addr);
                 match wrpc_wasi_keyvalue::wasi::keyvalue::store::open(&wrpc, (), suffix).await? {
                     Ok(bucket) => Bucket::Tcp(bucket, wrpc),
                     Err(err) => return Ok(Err(err.into())),
@@ -227,7 +226,7 @@ impl<C: Send + Sync> store::Handler<C> for Handler {
                         "failed to get filesystem path from URL".to_string(),
                     )));
                 };
-                let wrpc = wrpc_transport::frame::unix::Client::from(path);
+                let wrpc = wrpc_transport::unix::Client::from(path);
                 match wrpc_wasi_keyvalue::wasi::keyvalue::store::open(&wrpc, (), suffix).await? {
                     Ok(bucket) => Bucket::Unix(bucket, wrpc),
                     Err(err) => return Ok(Err(err.into())),
@@ -265,7 +264,7 @@ impl<C: Send + Sync> store::Handler<C> for Handler {
                     Ok(ep) => ep,
                     Err(err) => return Ok(Err(store::Error::Other(format!("{err:#}")))),
                 };
-                let wrpc = wrpc_webtransport::Client::from(conn);
+                let wrpc = wrpc_webtransport::Session::from(conn);
                 match wrpc_wasi_keyvalue::wasi::keyvalue::store::open(&wrpc, (), suffix).await? {
                     Ok(bucket) => Bucket::Web(bucket, Box::new(wrpc)),
                     Err(err) => return Ok(Err(err.into())),
@@ -668,39 +667,43 @@ export const PORT = "{port}"
             .layer(TraceLayer::new_for_http()),
     );
 
-    let srv = Arc::new(wrpc_webtransport::Server::new());
-
-    let invocations = wrpc_wasi_keyvalue::exports::wasi::keyvalue::store::serve_interface(
-        srv.as_ref(),
-        Handler::default(),
-    )
-    .await
-    .context("failed to serve `wasi:keyvalue`")?;
-    let mut invocations = select_all(
-        invocations
-            .into_iter()
-            .map(|(instance, name, invocations)| invocations.map(move |res| (instance, name, res))),
-    );
+    let (tx, mut rx) = mpsc::channel(16);
     let mut wrpc = tokio::spawn(async move {
+        let handler = Handler::default();
         let mut tasks = JoinSet::new();
         loop {
             select! {
-                Some((instance, name, res)) = invocations.next() => {
-                    match res {
-                        Ok(fut) => {
-                            debug!(instance, name, "invocation accepted");
-                            tasks.spawn(async move {
-                                match fut.await { Err(err) => {
-                                    warn!(?err, "failed to handle invocation");
-                                } _ => {
-                                    info!(instance, name, "invocation successfully handled");
-                                }}
-                            });
-                        }
-                        Err(err) => {
-                            warn!(?err, instance, name, "failed to accept invocation");
-                        }
-                    }
+                Some((cx, tx, mut rx)) = rx.recv() => {
+                    let handler = handler.clone();
+                    tasks.spawn(async move {
+                        let mut buf = BytesMut::default();
+                        let Header { instance, name } = match accept(&mut rx, &mut buf).await {
+                            Ok(header) => header,
+                            Err(err) => {
+                                warn!(?err, "failed to read invocation header");
+                                return;
+                            }
+                        };
+                        let fut = match store::handle_interface(
+                            &handler, cx, &instance, &name, tx, rx, buf,
+                        ) {
+                            Ok(fut) => fut,
+                            Err(..) => {
+                                warn!(
+                                    instance,
+                                    func = name,
+                                    "function is not exported"
+                                );
+                                return;
+                            }
+                        };
+                        debug!("invocation accepted");
+                        match fut.await { Err(err) => {
+                            warn!(?err, "failed to handle invocation");
+                        } _ => {
+                            info!("invocation successfully handled");
+                        }}
+                    });
                 }
                 Some(res) = tasks.join_next() => {
                     if let Err(err) = res {
@@ -735,7 +738,7 @@ export const PORT = "{port}"
                 return res.context("failed to serve wRPC invocations");
             }
             Some(conn) = ep.accept() => {
-                let srv = Arc::clone(&srv);
+                let tx = tx.clone();
                 tasks.spawn(async move {
                     let conn = conn.await.context("failed to accept QUIC connection")?;
                     let req = Request::accept(conn)
@@ -745,15 +748,15 @@ export const PORT = "{port}"
                         .ok()
                         .await
                         .context("failed to establish WebTransport connection")?;
-                    loop {
-                        let (tx, rx) = conn
-                            .accept_bi()
-                            .await
-                            .context("failed to accept wRPC connection")?;
-                        srv.accept((), tx.into(), rx.into())
-                            .await
-                            .context("failed to serve wRPC connection")?;
+                    let conn = wrpc_webtransport::Session::from(conn);
+                    let mut incoming = pin!(conn.incoming());
+                    while let Some(invocation) = incoming.next().await {
+                        let invocation = invocation.context("failed to accept wRPC invocation")?;
+                        if tx.send(invocation).await.is_err() {
+                            return Ok(());
+                        }
                     }
+                    Ok(())
                 });
             }
             Some(res) = tasks.join_next() => {
@@ -779,8 +782,8 @@ export const PORT = "{port}"
                     }
                 }
                 http.await.context("HTTP server failed")?;
-                // Drop the last wRPC server reference to shutdown invocation handling task
-                drop(srv);
+                // Drop the last invocation sender to shutdown invocation handling task
+                drop(tx);
                 if let Err(err) = wrpc.await {
                     error!(?err, "wRPC serving task failed");
                 }

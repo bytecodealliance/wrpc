@@ -12,7 +12,7 @@ use tracing::info;
 
 pub async fn assert_async<C: Clone>(
     cx: C,
-    client: &impl wrpc_transport::Invoke<Context = C>,
+    client: &impl wrpc_transport::Connect<Context = C>,
 ) -> anyhow::Result<()> {
     wit_bindgen_wrpc::generate!({
         world: "async-client",
@@ -43,10 +43,8 @@ pub async fn assert_async<C: Clone>(
             );
         },
         async {
-            if let Some(io) = io {
-                info!("performing I/O");
-                io.await.expect("failed to complete async I/O");
-            }
+            info!("performing I/O");
+            io.await.expect("failed to complete async I/O");
         }
     );
 
@@ -67,10 +65,8 @@ pub async fn assert_async<C: Clone>(
             assert_eq!(fut.await.collect::<Vec<Bytes>>().await.concat(), b"foobar");
         },
         async {
-            if let Some(io) = io {
-                info!("performing I/O");
-                io.await.expect("failed to complete async I/O");
-            }
+            info!("performing I/O");
+            io.await.expect("failed to complete async I/O");
         }
     );
 
@@ -95,10 +91,8 @@ pub async fn assert_async<C: Clone>(
             Ok(())
         },
         async {
-            if let Some(io) = io {
-                info!("performing I/O");
-                io.await.context("failed to complete async I/O")?;
-            }
+            info!("performing I/O");
+            io.await.context("failed to complete async I/O")?;
             Ok(())
         }
     )?;
@@ -143,10 +137,8 @@ pub async fn assert_async<C: Clone>(
             Ok(())
         },
         async {
-            if let Some(io) = io {
-                info!("performing I/O");
-                io.await.context("failed to complete async I/O")?;
-            }
+            info!("performing I/O");
+            io.await.context("failed to complete async I/O")?;
             Ok(())
         }
     )?;
@@ -197,10 +189,8 @@ pub async fn assert_async<C: Clone>(
                 Ok(())
             },
             async {
-                if let Some(io) = io {
-                    info!("performing I/O");
-                    io.await.context("failed to complete async I/O")?;
-                }
+                info!("performing I/O");
+                io.await.context("failed to complete async I/O")?;
                 Ok(())
             }
         )?;
@@ -213,7 +203,7 @@ pub async fn assert_async<C: Clone>(
 /// results the `sync-server` world is expected to return.
 pub async fn assert_sync<C: Clone>(
     cx: C,
-    client: &impl wrpc_transport::Invoke<Context = C>,
+    client: &impl wrpc_transport::Connect<Context = C>,
 ) -> anyhow::Result<()> {
     mod bindings {
         wit_bindgen_wrpc::generate!({

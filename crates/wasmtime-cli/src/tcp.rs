@@ -1,12 +1,6 @@
-use std::sync::Arc;
-
 use anyhow::Context as _;
 use clap::Parser;
-use tokio::io::BufReader;
-use tokio::select;
-use tokio::task::JoinSet;
-use tokio::time;
-use tracing::{error, instrument, warn};
+use tracing::instrument;
 
 pub const DEFAULT_ADDR: &str = "[::1]:7761";
 
@@ -54,51 +48,7 @@ pub async fn handle_serve(
     let lis = tokio::net::TcpListener::bind(&export)
         .await
         .with_context(|| format!("failed to bind TCP listener on `{export}`"))?;
-    let srv = Arc::new(wrpc_transport::Server::default());
-    let timeout = *timeout;
-    let mut handlers = crate::serve(srv.as_ref(), envs, workload).await?;
-    let accept = tokio::spawn({
-        let srv = Arc::clone(&srv);
-        async move {
-            let mut conns = JoinSet::default();
-            loop {
-                select! {
-                    res = lis.accept() => match res {
-                        Ok((stream, addr)) => {
-                            if let Err(err) = stream.set_nodelay(true) {
-                                warn!(?err, "failed to set TCP_NODELAY");
-                            }
-                            let (rx, tx) = wrpc_transport::tcp::split(stream);
-                            let rx = BufReader::new(rx);
-                            let srv = Arc::clone(&srv);
-                            conns.spawn(async move {
-                                match time::timeout(timeout, srv.accept(addr, tx, rx)).await {
-                                    Ok(Ok(())) => {}
-                                    Ok(Err(err)) => error!(?err, "failed to serve TCP connection"),
-                                    Err(..) => error!(?addr, "timed out accepting TCP connection"),
-                                }
-                            });
-                        }
-                        Err(err) => error!(?err, "failed to accept TCP connection"),
-                    },
-                    Some(res) = conns.join_next() => {
-                        if let Err(err) = res {
-                            error!(?err, "failed to join TCP connection task");
-                        }
-                    }
-                }
-            }
-        }
-    });
-    let res = async {
-        while let Some(res) = handlers.join_next().await {
-            res.context("failed to join handler")??;
-        }
-        anyhow::Ok(())
-    }
-    .await;
-    accept.abort();
-    res
+    crate::serve(wrpc_transport::tcp::incoming(lis), *timeout, envs, workload).await
 }
 
 #[instrument(level = "trace", ret(level = "trace"))]

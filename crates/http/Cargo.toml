@@ -22,7 +22,6 @@ http1 = ["hyper-util?/http1"]
 http2 = ["hyper/http2"]
 
 [dependencies]
-anyhow = { workspace = true }
 bytes = { workspace = true }
 futures = { workspace = true }
 http = { workspace = true }
@@ -31,12 +30,13 @@ http-body-util = { workspace = true }
 hyper = { workspace = true }
 hyper-util = { workspace = true, optional = true }
 pin-project-lite = { workspace = true }
-tokio = { workspace = true, features = ["rt", "sync"] }
+tokio = { workspace = true, features = ["macros", "rt", "sync"] }
 tokio-util = { workspace = true }
 tracing = { workspace = true }
 wrpc-transport = { workspace = true }
 
 [dev-dependencies]
+anyhow = { workspace = true }
 hyper-util = { workspace = true, features = [
     "client",
     "client-legacy",

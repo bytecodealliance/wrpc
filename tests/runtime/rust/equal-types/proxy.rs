@@ -1,7 +1,7 @@
 //@ args = '--merge-structurally-equal-types'
 
 use ::wit_bindgen_wrpc::bytes::Bytes;
-use ::wit_bindgen_wrpc::wrpc_transport::{Invoke, ResourceBorrow};
+use ::wit_bindgen_wrpc::wrpc_transport::{Connect, ResourceBorrow};
 
 use crate::server::exports::test::equal_types::blag::{
     Handler, HandlerInputStream, InputStream, Kind1, Kind3, Kind4, TStream, Tree,
@@ -11,7 +11,7 @@ use crate::server::test::equal_types::blag;
 #[derive(Clone)]
 pub struct Component;
 
-impl<C: Invoke<Context = ()>> HandlerInputStream<C> for Component {
+impl<C: Connect<Context = ()>> HandlerInputStream<C> for Component {
     async fn read(
         &self,
         _cx: C,
@@ -22,7 +22,7 @@ impl<C: Invoke<Context = ()>> HandlerInputStream<C> for Component {
     }
 }
 
-impl<C: Invoke<Context = ()>> Handler<C> for Component {
+impl<C: Connect<Context = ()>> Handler<C> for Component {
     async fn f(&self, cx: C, x: Kind1) -> ::wit_bindgen_wrpc::anyhow::Result<Kind1> {
         blag::f(&cx, (), &x).await
     }
@@ -45,7 +45,7 @@ use crate::server::exports::test::equal_types::blah::{
 };
 use crate::server::test::equal_types::blah;
 
-impl<C: Invoke<Context = ()>> HHandler<C> for Component {
+impl<C: Connect<Context = ()>> HHandler<C> for Component {
     async fn f(&self, cx: C, x: Kind6) -> ::wit_bindgen_wrpc::anyhow::Result<Kind5> {
         blah::f(&cx, (), &x).await
     }

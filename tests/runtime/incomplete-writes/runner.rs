@@ -11,7 +11,7 @@ use crate::client::my::test::test_interface::{
 };
 
 pub async fn run(
-    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,
+    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Connect<Context = ()>,
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
     {
         // Write the things all at once.  The callee will read them only
@@ -21,12 +21,7 @@ pub async fn run(
         let c = TestThing::new(wrpc, (), "c").await?;
         let things = vec![a, b, c];
         let (stream, io) = short_reads_test(wrpc, (), Box::pin(stream::iter([things]))).await?;
-        let (things, ()) = try_join!(async { Ok(stream.concat().await) }, async {
-            match io {
-                Some(io) => io.await,
-                None => Ok(()),
-            }
-        })?;
+        let (things, ()) = try_join!(async { Ok(stream.concat().await) }, io)?;
         assert_eq!(things.len(), 3);
         let a = TestThing::get(wrpc, (), &things[0].as_borrow()).await?;
         assert_eq!(a, "a");
@@ -44,12 +39,7 @@ pub async fn run(
         let c = LeafThing::new(wrpc, (), "c").await?;
         let things = vec![a, b, c];
         let (stream, io) = short_reads_leaf(wrpc, (), Box::pin(stream::iter([things]))).await?;
-        let (things, ()) = try_join!(async { Ok(stream.concat().await) }, async {
-            match io {
-                Some(io) => io.await,
-                None => Ok(()),
-            }
-        })?;
+        let (things, ()) = try_join!(async { Ok(stream.concat().await) }, io)?;
         assert_eq!(things.len(), 3);
         let a = LeafThing::get(wrpc, (), &things[0].as_borrow()).await?;
         assert_eq!(a, "a");
@@ -74,12 +64,7 @@ pub async fn run(
         .await?;
         // Drop the first future without reading from it and read from
         // the second future and assert it matches what we wrote above.
-        let (thing, ()) = try_join!(async { Ok(f2.await) }, async {
-            match io {
-                Some(io) => io.await,
-                None => Ok(()),
-            }
-        })?;
+        let (thing, ()) = try_join!(async { Ok(f2.await) }, io)?;
         let a = TestThing::get(wrpc, (), &thing.as_borrow()).await?;
         assert_eq!(a, "a");
     }
@@ -99,12 +84,7 @@ pub async fn run(
         .await?;
         // Drop the first future without reading from it and read from
         // the second future and assert it matches what we wrote above.
-        let (thing, ()) = try_join!(async { Ok(f2.await) }, async {
-            match io {
-                Some(io) => io.await,
-                None => Ok(()),
-            }
-        })?;
+        let (thing, ()) = try_join!(async { Ok(f2.await) }, io)?;
         let a = LeafThing::get(wrpc, (), &thing.as_borrow()).await?;
         assert_eq!(a, "a");
     }

@@ -1,4 +1,5 @@
 #![allow(clippy::disallowed_names, clippy::type_complexity)]
+#![recursion_limit = "256"]
 
 pub mod common;
 
@@ -10,29 +11,32 @@ use core::time::Duration;
 
 use std::sync::{Arc, Mutex};
 
-use anyhow::{Context as _, bail, ensure};
+use anyhow::{Context as _, ensure};
 use bytes::{Bytes, BytesMut};
 use common::{assert_async, assert_sync};
 use futures::future::BoxFuture;
 use futures::stream::{BoxStream, FuturesUnordered};
 use futures::{Stream, StreamExt as _, TryStreamExt as _, future, stream};
-use tokio::io::{AsyncRead, AsyncReadExt as _, BufReader, split};
+use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _, split};
 use tokio::task::yield_now;
 use tokio::{join, spawn, try_join};
+use tokio_util::codec::Encoder as _;
 use tokio_util::io::StreamReader;
 use tracing::instrument;
-use wrpc_transport::frame::Oneshot;
-use wrpc_transport::{InvokeExt as _, ResourceBorrow, ResourceOwn, ServeExt as _};
+use wrpc_transport::{
+    Connect as _, HeaderEncoder, HeaderRef, Oneshot, ResourceBorrow, ResourceOwn, accept,
+    invoke_values, invoke_values_blocking, serve_values, tcp,
+};
 
-async fn serve_bindgen<S, F>(
-    invocations: Vec<(&'static str, &'static str, S)>,
+async fn serve_bindgen<F, E>(
+    invocations: impl Stream<Item = Result<F, E>>,
     client: impl Future<Output = anyhow::Result<()>>,
 ) -> anyhow::Result<()>
 where
-    S: Stream<Item = anyhow::Result<F>> + Unpin,
     F: Future<Output = anyhow::Result<()>>,
+    E: core::error::Error + Send + Sync + 'static,
 {
-    let mut invocations = stream::select_all(invocations.into_iter().map(|(.., s)| s));
+    let mut invocations = pin!(invocations);
     let mut served = FuturesUnordered::default();
     let mut client = pin!(client);
     poll_fn(|cx| {
@@ -50,10 +54,18 @@ where
 }
 
 #[instrument(skip_all, ret)]
-async fn assert_bindgen_sync<C, I>(cx: C, clt: &I, srv: &impl wrpc::Serve) -> anyhow::Result<()>
+async fn assert_bindgen_sync<T, C, I, O, E>(
+    cx: T::Context,
+    clt: &T,
+    srv: impl Stream<Item = Result<(C, O, I), E>>,
+) -> anyhow::Result<()>
 where
-    C: Clone + Send + Sync + 'static,
-    I: wrpc::Invoke<Context = C> + Clone + 'static,
+    T: wrpc::Connect + Clone + 'static,
+    T::Context: Clone + Send + Sync + 'static,
+    C: Send + Sync + 'static,
+    I: AsyncRead + Send + Unpin + 'static,
+    O: AsyncWrite + Send + Unpin + 'static,
+    E: core::error::Error + Send + Sync + 'static,
 {
     mod sync_client {
         wit_bindgen_wrpc::generate!({
@@ -86,13 +98,13 @@ where
     }
 
     #[derive(Clone)]
-    struct Handler<I: wrpc::Invoke> {
+    struct Handler<I: wrpc::Connect> {
         counts: Arc<Mutex<Vec<u32>>>,
         clt: I,
         cx: I::Context,
     }
 
-    impl<I: wrpc::Invoke> Handler<I> {
+    impl<I: wrpc::Connect> Handler<I> {
         fn push(&self, count: u32) -> ResourceOwn<Counter> {
             let mut counts = self.counts.lock().unwrap();
             counts.push(count);
@@ -115,7 +127,7 @@ where
         }
     }
 
-    impl<C: Send + Sync, I: wrpc::Invoke + 'static> resources::HandlerFoo<C> for Handler<I> {
+    impl<C: Send + Sync, I: wrpc::Connect + 'static> resources::HandlerFoo<C> for Handler<I> {
         async fn new(&self, _cx: C) -> anyhow::Result<ResourceOwn<Foo>> {
             Ok(ResourceOwn::from(Bytes::from_static(b"foo")))
         }
@@ -131,7 +143,7 @@ where
         }
     }
 
-    impl<C: Send + Sync, I: wrpc::Invoke + 'static> resources::HandlerCounter<C> for Handler<I> {
+    impl<C: Send + Sync, I: wrpc::Connect + 'static> resources::HandlerCounter<C> for Handler<I> {
         async fn new(&self, _cx: C, initial: u32) -> anyhow::Result<ResourceOwn<Counter>> {
             Ok(self.push(initial))
         }
@@ -170,14 +182,14 @@ where
         }
     }
 
-    impl<C: Send + Sync, I: wrpc::Invoke + 'static> resources::Handler<C> for Handler<I> {
+    impl<C: Send + Sync, I: wrpc::Connect + 'static> resources::Handler<C> for Handler<I> {
         async fn bar(&self, _cx: C, v: ResourceBorrow<Foo>) -> anyhow::Result<String> {
             ensure_foo(v)?;
             Ok("bar".into())
         }
     }
 
-    impl<C: Send + Sync, I: wrpc::Invoke + 'static> sync_server::exports::strange::Handler<C>
+    impl<C: Send + Sync, I: wrpc::Connect + 'static> sync_server::exports::strange::Handler<C>
         for Handler<I>
     {
         async fn bar(&self, _cx: C, v: ResourceBorrow<Foo>) -> anyhow::Result<u64> {
@@ -189,7 +201,7 @@ where
     impl<C, I> sync_server::Handler<C> for Handler<I>
     where
         C: Send + Sync,
-        I: wrpc::Invoke + 'static,
+        I: wrpc::Connect + 'static,
         I::Context: Clone,
     {
         async fn ping(&self, _cx: C) -> anyhow::Result<String> {
@@ -202,7 +214,7 @@ where
         }
     }
 
-    impl<C: Send + Sync, I: wrpc::Invoke + 'static> sync::Handler<C> for Handler<I> {
+    impl<C: Send + Sync, I: wrpc::Connect + 'static> sync::Handler<C> for Handler<I> {
         async fn fallible(&self, _cx: C, ok: bool) -> anyhow::Result<Result<bool, String>> {
             Ok(if ok { Ok(true) } else { Err("test".into()) })
         }
@@ -267,7 +279,7 @@ where
         }
     }
 
-    impl<C: Send + Sync, I: wrpc::Invoke + 'static> sync_server::exports::foo::Handler<C>
+    impl<C: Send + Sync, I: wrpc::Connect + 'static> sync_server::exports::foo::Handler<C>
         for Handler<I>
     {
         async fn f(&self, _cx: C, x: String) -> anyhow::Result<u32> {
@@ -286,21 +298,23 @@ where
         clt: clt.clone(),
         cx: cx.clone(),
     };
-    let invocations = sync_server::serve(srv, handler).await?;
-    assert!(
-        invocations
-            .iter()
-            .any(|(instance, name, ..)| instance.is_empty() && *name == "ping")
-    );
-    serve_bindgen(invocations, assert_sync(cx, clt)).await
+    serve_bindgen(sync_server::serve(srv, handler), assert_sync(cx, clt)).await
 }
 
 #[instrument(skip_all, ret)]
-async fn assert_bindgen_async<C: Clone + Send + Sync>(
-    cx: C,
-    clt: &impl wrpc::Invoke<Context = C>,
-    srv: &impl wrpc::Serve,
-) -> anyhow::Result<()> {
+async fn assert_bindgen_async<T, C, I, O, E>(
+    cx: T::Context,
+    clt: &T,
+    srv: impl Stream<Item = Result<(C, O, I), E>>,
+) -> anyhow::Result<()>
+where
+    T: wrpc::Connect,
+    T::Context: Clone + Send + Sync,
+    C: Send + Sync + 'static,
+    I: AsyncRead + Send + Unpin + 'static,
+    O: AsyncWrite + Send + Unpin + 'static,
+    E: core::error::Error + Send + Sync + 'static,
+{
     mod bindings {
         wit_bindgen_wrpc::generate!({
             world: "async-server",
@@ -379,16 +393,22 @@ async fn assert_bindgen_async<C: Clone + Send + Sync>(
         }
     }
 
-    let invocations = bindings::serve(srv, Handler).await?;
-    serve_bindgen(invocations, assert_async(cx, clt)).await
+    serve_bindgen(bindings::serve(srv, Handler), assert_async(cx, clt)).await
 }
 
 #[instrument(skip_all, ret)]
-async fn assert_dynamic<C: Clone + Send + Sync + 'static>(
-    cx: C,
-    clt: &impl wrpc::Invoke<Context = C>,
-    srv: &impl wrpc::Serve,
-) -> anyhow::Result<()> {
+async fn assert_dynamic<T, C, I, O, E>(
+    cx: T::Context,
+    clt: &T,
+    srv: impl Stream<Item = Result<(C, O, I), E>>,
+) -> anyhow::Result<()>
+where
+    T: wrpc::Connect,
+    T::Context: Clone + Send + Sync + 'static,
+    I: AsyncRead + Send + Unpin + 'static,
+    O: AsyncWrite + Send + Unpin + 'static,
+    E: core::error::Error + Send + Sync + 'static,
+{
     type SyncValues = (
         (bool, u8, u16, u32, u64, i8, i16, i32, i64, f32, f64, char),
         String,
@@ -462,13 +482,10 @@ async fn assert_dynamic<C: Clone + Send + Sync + 'static>(
         )
     }
 
-    async fn assert_async_values<E>(
+    async fn assert_async_values(
         (a, b, mut c, d, e, f): AsyncValues,
-        io: Option<impl Future<Output = Result<(), E>>>,
-    ) -> anyhow::Result<()>
-    where
-        anyhow::Error: From<E>,
-    {
+        io: impl Future<Output = anyhow::Result<()>>,
+    ) -> anyhow::Result<()> {
         try_join!(
             async {
                 let (a, b, c, d, e, f) = join!(
@@ -492,32 +509,35 @@ async fn assert_dynamic<C: Clone + Send + Sync + 'static>(
                 assert_eq!(f, ["foo", "bar"]);
                 anyhow::Ok(())
             },
-            async {
-                if let Some(io) = io {
-                    io.await?;
-                }
-                anyhow::Ok(())
-            },
+            io,
         )?;
         Ok(())
     }
 
-    let reset = srv
-        .serve_values::<(String,), (String,)>("test", "reset")
-        .await?;
-    let sync = srv
-        .serve_values::<SyncValues, SyncValues>("test", "sync")
-        .await?;
-    let async_ = srv
-        .serve_values::<AsyncValues, AsyncValues>("test", "async")
-        .await?;
-    let (mut reset, mut sync, mut async_) = (pin!(reset), pin!(sync), pin!(async_));
+    async fn accept<C, I, O, E>(
+        srv: &mut (impl Stream<Item = Result<(C, O, I), E>> + Unpin),
+        func: &str,
+    ) -> anyhow::Result<(O, I, BytesMut)>
+    where
+        I: AsyncRead + Unpin,
+        E: core::error::Error + Send + Sync + 'static,
+    {
+        let res = srv.next().await.context("invocation stream ended")?;
+        let (.., tx, mut rx) = res.context("failed to accept invocation")?;
+        let mut buf = BytesMut::default();
+        let header = wrpc_transport::accept(&mut rx, &mut buf)
+            .await
+            .context("failed to read invocation header")?;
+        ensure!(header.instance == "test" && header.name == func);
+        Ok((tx, rx, buf))
+    }
+
+    let mut srv = pin!(srv);
     try_join!(
         async {
             for spawned in [false, true] {
-                let Some(inv) = reset.try_next().await? else {
-                    bail!("`test.reset` missing");
-                };
+                let (tx, rx, buf) = accept(&mut srv, "reset").await?;
+                let inv = serve_values::<(String,), (String,)>(tx, rx, buf);
                 if spawned {
                     spawn(async move { drop(inv) }).await?;
                 } else {
@@ -525,27 +545,26 @@ async fn assert_dynamic<C: Clone + Send + Sync + 'static>(
                 }
             }
             for _ in 0..2 {
-                let Some((.., params, io, tx)) = sync.try_next().await? else {
-                    bail!("`test.sync` missing");
-                };
-                assert!(io.is_none());
+                let (tx, rx, buf) = accept(&mut srv, "sync").await?;
+                let (params, tx) = serve_values::<SyncValues, SyncValues>(tx, rx, buf);
+                let (params, io) = params.await?;
                 assert_eq!(params, sync_values());
                 tx(sync_values()).await?;
+                io.await?;
             }
             for _ in 0..2 {
-                let Some((.., params, io, tx)) = async_.try_next().await? else {
-                    bail!("`test.async` missing");
-                };
-                assert_async_values(params, io).await?;
-                tx(async_values()).await?;
+                let (tx, rx, buf) = accept(&mut srv, "async").await?;
+                let (params, tx) = serve_values::<AsyncValues, AsyncValues>(tx, rx, buf);
+                let (params, io) = params.await?;
+                try_join!(assert_async_values(params, io), tx(async_values()))?;
             }
             Ok(())
         },
         async {
             for _ in 0..2 {
-                let res = clt
-                    .invoke_values_blocking::<_, (String,)>(cx.clone(), "test", "reset", ("arg",))
-                    .await;
+                let (tx, rx) = clt.connect(cx.clone()).await?;
+                let res =
+                    invoke_values_blocking::<_, (String,)>(tx, rx, "test", "reset", ("arg",)).await;
                 res.expect_err("`test.reset` should have failed");
             }
 
@@ -553,18 +572,17 @@ async fn assert_dynamic<C: Clone + Send + Sync + 'static>(
             wrpc_transport::pack(sync_values(), &mut buf).await?;
             let unpacked = wrpc_transport::unpack(&mut buf)?;
             for params in [sync_values(), unpacked] {
-                let res: SyncValues = clt
-                    .invoke_values_blocking(cx.clone(), "test", "sync", params)
-                    .await?;
+                let (tx, rx) = clt.connect(cx.clone()).await?;
+                let res: SyncValues =
+                    invoke_values_blocking(tx, rx, "test", "sync", params).await?;
                 assert_eq!(res, sync_values());
             }
 
             wrpc_transport::pack(async_values(), &mut buf).await?;
             let unpacked = wrpc_transport::unpack(&mut buf)?;
             for params in [async_values(), unpacked] {
-                let (res, io) = clt
-                    .invoke_values(cx.clone(), "test", "async", params)
-                    .await?;
+                let (tx, rx) = clt.connect(cx.clone()).await?;
+                let (res, io) = invoke_values(tx, rx, "test", "async", params).await?;
                 assert_async_values(res, io).await?;
             }
             anyhow::Ok(())
@@ -575,71 +593,91 @@ async fn assert_dynamic<C: Clone + Send + Sync + 'static>(
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn rust_tcp_bindgen_sync() -> anyhow::Result<()> {
-    wrpc_test::serve_tcp(async |clt, srv| assert_bindgen_sync((), &clt, srv).await).await
+    wrpc_test::serve_tcp(async |clt, srv| assert_bindgen_sync((), &clt, tcp::incoming(srv)).await)
+        .await
 }
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn rust_tcp_bindgen_async() -> anyhow::Result<()> {
-    wrpc_test::serve_tcp(async |clt, srv| assert_bindgen_async((), &clt, srv).await).await
+    wrpc_test::serve_tcp(async |clt, srv| assert_bindgen_async((), &clt, tcp::incoming(srv)).await)
+        .await
 }
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn rust_tcp_dynamic() -> anyhow::Result<()> {
-    wrpc_test::serve_tcp(async |clt, srv| assert_dynamic((), &clt, srv).await).await
+    wrpc_test::serve_tcp(async |clt, srv| assert_dynamic((), &clt, tcp::incoming(srv)).await).await
 }
 
 #[cfg(unix)]
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn rust_uds_bindgen_sync() -> anyhow::Result<()> {
-    wrpc_test::serve_unix(async |clt, srv| assert_bindgen_sync((), &clt, srv).await).await
+    wrpc_test::serve_unix(async |clt, srv| {
+        assert_bindgen_sync((), &clt, wrpc_transport::unix::incoming(srv)).await
+    })
+    .await
 }
 
 #[cfg(unix)]
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn rust_uds_bindgen_async() -> anyhow::Result<()> {
-    wrpc_test::serve_unix(async |clt, srv| assert_bindgen_async((), &clt, srv).await).await
+    wrpc_test::serve_unix(async |clt, srv| {
+        assert_bindgen_async((), &clt, wrpc_transport::unix::incoming(srv)).await
+    })
+    .await
 }
 
 #[cfg(unix)]
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn rust_uds_dynamic() -> anyhow::Result<()> {
-    wrpc_test::serve_unix(async |clt, srv| assert_dynamic((), &clt, srv).await).await
+    wrpc_test::serve_unix(async |clt, srv| {
+        assert_dynamic((), &clt, wrpc_transport::unix::incoming(srv)).await
+    })
+    .await
 }
 
 #[cfg(feature = "quic")]
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn rust_quic_bindgen_sync() -> anyhow::Result<()> {
-    wrpc_test::serve_quic(async |clt, srv| assert_bindgen_sync((), &clt, srv).await).await
+    wrpc_test::serve_quic(async |clt, srv| assert_bindgen_sync((), &clt, srv.incoming()).await)
+        .await
 }
 
 #[cfg(feature = "quic")]
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn rust_quic_bindgen_async() -> anyhow::Result<()> {
-    wrpc_test::serve_quic(async |clt, srv| assert_bindgen_async((), &clt, srv).await).await
+    wrpc_test::serve_quic(async |clt, srv| assert_bindgen_async((), &clt, srv.incoming()).await)
+        .await
 }
 
 #[cfg(feature = "quic")]
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn rust_quic_dynamic() -> anyhow::Result<()> {
-    wrpc_test::serve_quic(async |clt, srv| assert_dynamic((), &clt, srv).await).await
+    wrpc_test::serve_quic(async |clt, srv| assert_dynamic((), &clt, srv.incoming()).await).await
 }
 
 #[cfg(feature = "webtransport")]
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn rust_webtransport_bindgen_sync() -> anyhow::Result<()> {
-    wrpc_test::serve_webtransport(async |clt, srv| assert_bindgen_sync((), &clt, srv).await).await
+    wrpc_test::serve_webtransport(async |clt, srv| {
+        assert_bindgen_sync((), &clt, srv.incoming()).await
+    })
+    .await
 }
 
 #[cfg(feature = "webtransport")]
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn rust_webtransport_bindgen_async() -> anyhow::Result<()> {
-    wrpc_test::serve_webtransport(async |clt, srv| assert_bindgen_async((), &clt, srv).await).await
+    wrpc_test::serve_webtransport(async |clt, srv| {
+        assert_bindgen_async((), &clt, srv.incoming()).await
+    })
+    .await
 }
 
 #[cfg(feature = "webtransport")]
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn rust_webtransport_dynamic() -> anyhow::Result<()> {
-    wrpc_test::serve_webtransport(async |clt, srv| assert_dynamic((), &clt, srv).await).await
+    wrpc_test::serve_webtransport(async |clt, srv| assert_dynamic((), &clt, srv.incoming()).await)
+        .await
 }
 
 #[cfg(feature = "http")]
@@ -661,34 +699,32 @@ async fn rust_http_dynamic() -> anyhow::Result<()> {
 }
 
 #[instrument(skip_all, ret)]
-async fn assert_oneshot<T, R, W>(clt: T, rx: R, tx: W) -> anyhow::Result<()>
+async fn assert_oneshot<T, R, W>(clt: T, mut rx: R, tx: W) -> anyhow::Result<()>
 where
-    T: wrpc::Invoke<Context = ()> + 'static,
+    T: wrpc::Connect<Context = ()> + 'static,
     R: tokio::io::AsyncRead + Send + Sync + Unpin + 'static,
     W: tokio::io::AsyncWrite + Send + Sync + Unpin + 'static,
 {
-    let srv = Arc::new(wrpc_transport::frame::Server::default());
-    let invocations = srv.serve_values::<(u32,), (&str,)>("foo", "bar").await?;
     join!(
         async {
-            let (a,) = clt
-                .invoke_values_blocking::<_, (String,)>((), "foo", "bar", (42,))
+            let (tx, rx) = clt.connect(()).await.expect("failed to connect");
+            let (a,) = invoke_values_blocking::<_, (String,)>(tx, rx, "foo", "bar", (42,))
                 .await
                 .expect("failed to invoke `foo.bar`");
             assert_eq!(a, "test");
         },
         async {
-            srv.accept((), tx, BufReader::new(rx))
+            let mut buf = BytesMut::default();
+            let header = accept(&mut rx, &mut buf)
                 .await
-                .expect("failed to accept connection");
-            let ((), params, rx, tx) = pin!(invocations)
-                .try_next()
-                .await
-                .expect("failed to accept invocation")
-                .expect("unexpected end of stream");
-            assert!(rx.is_none());
+                .expect("failed to read invocation header");
+            assert_eq!(header.instance, "foo");
+            assert_eq!(header.name, "bar");
+            let (params, tx) = serve_values::<(u32,), (&str,)>(tx, rx, buf);
+            let (params, io) = params.await.expect("failed to receive parameters");
             assert_eq!(params, (42,));
             tx(("test",)).await.expect("failed to transmit response");
+            io.await.expect("invocation failed");
         }
     );
     Ok(())
@@ -696,37 +732,45 @@ where
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 #[instrument(ret)]
-async fn rust_oneshot_no_params_open_outgoing() -> anyhow::Result<()> {
-    use wrpc::Invoke as _;
-
+async fn rust_oneshot_no_params() -> anyhow::Result<()> {
     let (clt, srv) = Oneshot::duplex(1024);
-    let (rx, tx) = split(srv);
-    let srv = Arc::new(wrpc_transport::frame::Server::default());
-    let invocations = srv.serve_values::<(), (&str,)>("foo", "bar").await?;
+    let (mut rx, tx) = split(srv);
     let fut = async {
         join!(
             async {
-                let (_tx, mut rx) = clt
-                    .invoke((), "foo", "bar", &[[]; 0])
+                let (mut tx, mut rx) = clt.connect(()).await.expect("failed to connect");
+                let mut buf = BytesMut::default();
+                HeaderEncoder
+                    .encode(
+                        HeaderRef {
+                            instance: "foo",
+                            name: "bar",
+                        },
+                        &mut buf,
+                    )
+                    .expect("failed to encode invocation");
+                buf.extend_from_slice(b"\0\0");
+                tx.write_all(&buf)
                     .await
                     .expect("failed to invoke `foo.bar`");
                 let mut res = Vec::default();
                 rx.read_to_end(&mut res)
                     .await
                     .expect("failed to read results");
-                assert_eq!(res, b"\x04test");
+                assert_eq!(res, b"\0\x05\x04test\0\0");
+                drop(tx);
             },
             async {
-                srv.accept((), tx, BufReader::new(rx))
+                let mut buf = BytesMut::default();
+                let header = accept(&mut rx, &mut buf)
                     .await
-                    .expect("failed to accept connection");
-                let ((), (), rx, tx) = pin!(invocations)
-                    .try_next()
-                    .await
-                    .expect("failed to accept invocation")
-                    .expect("unexpected end of stream");
-                assert!(rx.is_none());
+                    .expect("failed to read invocation header");
+                assert_eq!(header.instance, "foo");
+                assert_eq!(header.name, "bar");
+                let (params, tx) = serve_values::<(), (&str,)>(tx, rx, buf);
+                let ((), io) = params.await.expect("failed to receive parameters");
                 tx(("test",)).await.expect("failed to transmit response");
+                io.await.expect("invocation failed");
             }
         )
     };
@@ -743,15 +787,16 @@ async fn rust_oneshot_raw() -> anyhow::Result<()> {
 
     join!(
         async {
-            let (a,) = Oneshot::from(clt)
-                .invoke_values_blocking::<_, (String,)>((), "foo", "bar", (42,))
+            let (tx, rx) = Oneshot::from(clt)
+                .connect(())
+                .await
+                .expect("failed to connect");
+            let (a,) = invoke_values_blocking::<_, (String,)>(tx, rx, "foo", "bar", (42,))
                 .await
                 .expect("failed to invoke `foo.bar`");
             assert_eq!(a, "test");
         },
         async {
-            use tokio::io::AsyncWriteExt as _;
-            use tokio_util::codec::Encoder as _;
             use wrpc_transport::Encode as _;
 
             let mut req = Vec::default();
@@ -759,10 +804,9 @@ async fn rust_oneshot_raw() -> anyhow::Result<()> {
             eprintln!("request: `{:?}`", Bytes::from(req));
 
             let mut data = bytes::BytesMut::default();
-            let deferred: Option<wrpc_transport::DeferredFn<wrpc_transport::frame::Outgoing>> =
-                ("test",)
-                    .encode(&mut Default::default(), &mut data)
-                    .expect("failed to encode");
+            let deferred: Option<wrpc_transport::DeferredFn<wrpc_transport::Packer>> = ("test",)
+                .encode(&mut Default::default(), &mut data)
+                .expect("failed to encode");
             assert!(deferred.is_none());
 
             let mut res = bytes::BytesMut::default();
@@ -778,6 +822,10 @@ async fn rust_oneshot_raw() -> anyhow::Result<()> {
             eprintln!("response: `{res:?}`");
 
             srv.write_all(&res).await.expect("failed to write response");
+            srv.write_all(b"\0\0")
+                .await
+                .expect("failed to close response root");
+            drop(srv);
         }
     );
     Ok(())
@@ -804,11 +852,7 @@ async fn rust_oneshot_raw_strings_invalid_utf8() -> anyhow::Result<()> {
     }
 
     let (clt, srv) = Oneshot::duplex(1024);
-    let (rx, tx) = split(srv);
-    let srv = Arc::new(wrpc_transport::frame::Server::default());
-    let invocations = srv
-        .serve_values::<(), (Bytes,)>("wrpc-test:raw-strings/strings", "bar")
-        .await?;
+    let (mut rx, tx) = split(srv);
     join!(
         async {
             bindings::wrpc_test::raw_strings::strings::bar(&clt, ())
@@ -816,17 +860,18 @@ async fn rust_oneshot_raw_strings_invalid_utf8() -> anyhow::Result<()> {
                 .expect_err("invalid UTF-8 must be rejected");
         },
         async {
-            srv.accept((), tx, BufReader::new(rx))
+            let mut buf = BytesMut::default();
+            let header = accept(&mut rx, &mut buf)
                 .await
-                .expect("failed to accept connection");
-            let (.., tx) = pin!(invocations)
-                .try_next()
-                .await
-                .expect("failed to accept invocation")
-                .expect("unexpected end of stream");
+                .expect("failed to read invocation header");
+            assert_eq!(header.instance, "wrpc-test:raw-strings/strings");
+            assert_eq!(header.name, "bar");
+            let (params, tx) = serve_values::<(), (Bytes,)>(tx, rx, buf);
+            let ((), io) = params.await.expect("failed to receive parameters");
             tx((Bytes::from_static(b"\xff"),))
                 .await
                 .expect("failed to transmit response");
+            io.await.expect("invocation failed");
         }
     );
     Ok(())
@@ -886,16 +931,15 @@ async fn rust_oneshot_raw_strings_invalid_utf8_result() -> anyhow::Result<()> {
         }
     }
 
-    let srv = Arc::new(wrpc_transport::frame::Server::default());
-    let invocations = bindings::serve(&*srv, Handler).await?;
-    let mut invocations = stream::select_all(invocations.into_iter().map(|(.., s)| s));
     for func in ["bar", "baz", "qux"] {
         let (clt, conn) = Oneshot::duplex(1024);
-        let (rx, tx) = split(conn);
+        let (mut rx, tx) = split(conn);
         join!(
             async {
-                clt.invoke_values_blocking::<_, (String,)>(
-                    (),
+                let (tx, rx) = clt.connect(()).await.expect("failed to connect");
+                invoke_values_blocking::<_, (String,)>(
+                    tx,
+                    rx,
                     "wrpc-test:raw-strings/strings",
                     func,
                     (),
@@ -904,16 +948,16 @@ async fn rust_oneshot_raw_strings_invalid_utf8_result() -> anyhow::Result<()> {
                 .expect_err("invalid UTF-8 must not be transmitted");
             },
             async {
-                srv.accept((), tx, BufReader::new(rx))
+                let mut buf = BytesMut::default();
+                let header = accept(&mut rx, &mut buf)
                     .await
-                    .expect("failed to accept connection");
-                let invocation = invocations
-                    .try_next()
-                    .await
-                    .expect("failed to accept invocation")
-                    .expect("unexpected end of stream");
-                invocation
-                    .await
+                    .expect("failed to read invocation header");
+                let Ok(fut) =
+                    bindings::handle(&Handler, (), &header.instance, &header.name, tx, rx, buf)
+                else {
+                    panic!("`{func}` is not exported");
+                };
+                fut.await
                     .expect_err("invalid UTF-8 must not be transmitted");
             }
         );
@@ -934,6 +978,6 @@ async fn rust_oneshot_duplex() -> anyhow::Result<()> {
 #[instrument(ret)]
 async fn rust_oneshot_uds() -> anyhow::Result<()> {
     let (clt, srv) = Oneshot::unix_pair()?;
-    let (rx, tx) = wrpc_transport::unix::split(srv);
+    let (rx, tx) = srv.into_split();
     assert_oneshot(clt, rx, tx).await
 }

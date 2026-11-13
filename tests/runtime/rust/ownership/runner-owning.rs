@@ -9,7 +9,7 @@ impl PartialEq for thing_in_and_out::Thing {
 }
 
 pub async fn run(
-    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,
+    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Connect<Context = ()>,
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
     let value = vec![vec!["foo".to_owned(), "bar".to_owned()]];
     let res = lists::foo(wrpc, (), &value).await?;

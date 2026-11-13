@@ -261,142 +261,64 @@ enum Edition {
 
 /// The driver linking a `client` (the `runner` world) and its dependencies
 /// (`server` for the first, then each named after its world) into one binary.
-/// Each dependency is served over its own in-process TCP transport and receives
-/// a client routing its imports to the following dependencies as its context.
+/// Each in-process TCP listener serves the chain of dependencies following the
+/// previous one, each receiving a client of the listener serving the chain
+/// following it as its context, so that invocations are served by the nearest
+/// following dependency exporting them.
 const DRIVER: &str = r##"#![allow(warnings)]
 
 use core::future::Future;
-use core::net::{Ipv6Addr, SocketAddr};
+use core::net::Ipv6Addr;
+use core::pin::Pin;
 use core::time::Duration;
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
-use anyhow::bail;
-use futures::{Stream, StreamExt as _, stream};
-use tokio::io::BufReader;
+use futures::StreamExt as _;
 use tokio::net::TcpListener;
-use wit_bindgen_wrpc::bytes::Bytes;
-use wrpc_transport::frame::{Incoming, Outgoing, Server, tcp};
-use wrpc_transport::{Invoke, Serve};
+use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
+use wit_bindgen_wrpc::bytes::BytesMut;
+use wrpc_transport::tcp;
+use wrpc_transport::accept;
 
 {modules}
 
-struct Router(
-    Vec<(
-        Vec<(String, String)>,
-        tcp::Client<SocketAddr>,
-    )>,
-);
-
-impl Invoke for Router {
-    type Context = ();
-
-    async fn invoke<P>(
-        &self,
-        cx: (),
-        instance: &str,
-        func: &str,
-        paths: impl AsRef<[P]> + Send,
-    ) -> anyhow::Result<(Outgoing, Incoming)>
-    where
-        P: AsRef<[Option<usize>]> + Send + Sync,
-    {
-        let Some((.., clt)) = self
-            .0
-            .iter()
-            .find(|(names, ..)| names.iter().any(|(i, f)| *i == instance && *f == func))
-        else {
-            bail!("no component exports `{instance}#{func}`")
-        };
-        clt.invoke(cx, instance, func, paths).await
-    }
-}
-
-struct Recorder<'a, T>(&'a T, Mutex<Vec<(String, String)>>);
-
-impl<'a, T: Serve> Serve for Recorder<'a, T> {
-    type Context = T::Context;
-
-    fn serve(
-        &self,
-        instance: &str,
-        func: &str,
-        paths: Arc<[Box<[Option<usize>]>]>,
-    ) -> impl Future<
-        Output = anyhow::Result<
-            impl Stream<
-                Item = anyhow::Result<(
-                    Self::Context,
-                    Outgoing,
-                    Incoming,
-                )>,
-            > + Send
-            + 'static
-            + use<'a, T>,
-        >,
-    > + Send {
-        self.1
-            .lock()
-            .unwrap()
-            .push((instance.to_string(), func.to_string()));
-        self.0.serve(instance, func, paths)
-    }
-}
-
-macro_rules! serve {
-    ($routes:ident, $component:ident) => {{
-        let lis = TcpListener::bind((Ipv6Addr::LOCALHOST, 0))
-            .await
-            .expect("failed to start TCP listener");
-        let addr = lis.local_addr().expect("failed to get server address");
-
-        let srv = Arc::new(Server::default());
-
-        // Register the exported handlers, then serve each invocation
-        // concurrently in the background.
-        let recorder = Recorder(srv.as_ref(), Default::default());
-        let invocations = $component::serve(&recorder, $component::Component)
-            .await
-            .expect(concat!("failed to serve `", stringify!($component), "` exports"));
-        let names = recorder.1.into_inner().unwrap();
-        tokio::spawn(async move {
-            let mut invocations = stream::select_all(invocations.into_iter().map(
-                |(instance, name, invocations)| {
-                    invocations.map(move |res| (instance, name, res))
-                },
-            ));
-            while let Some((instance, name, invocation)) =
-                invocations.next().await
-            {
-                let invocation = invocation.unwrap_or_else(|err| {
-                    panic!("failed to accept `{instance}#{name}` invocation: {err:?}")
-                });
-                tokio::spawn(async move {
-                    if let Err(err) = invocation.await {
-                        eprintln!("failed to serve `{instance}#{name}` invocation: {err:?}");
+fn serve(
+    lis: TcpListener,
+    handle: impl Fn(
+        &str,
+        &str,
+        OwnedWriteHalf,
+        OwnedReadHalf,
+        BytesMut,
+    ) -> Result<Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send>>, String>
+    + Send
+    + Sync
+    + 'static,
+) {
+    let handle = Arc::new(handle);
+    tokio::spawn(async move {
+        let mut incoming = tcp::incoming(lis);
+        while let Some(res) = incoming.next().await {
+            let (.., tx, mut rx) = res.expect("failed to accept connection");
+            let handle = Arc::clone(&handle);
+            tokio::spawn(async move {
+                let mut buf = BytesMut::default();
+                let header = match accept(&mut rx, &mut buf).await {
+                    Ok(header) => header,
+                    Err(err) => return eprintln!("failed to read invocation header: {err:?}"),
+                };
+                match handle(&header.instance, &header.name, tx, rx, buf) {
+                    Ok(fut) => {
+                        if let Err(err) = fut.await {
+                            eprintln!("failed to serve invocation: {err:?}");
+                        }
                     }
-                });
-            }
-        });
-
-        // Accept connections forever in the background. Each client invocation
-        // opens a new connection.
-        let router = Arc::new(Router($routes.clone()));
-        tokio::spawn(async move {
-            loop {
-                let (stream, _) = lis.accept().await.expect("failed to accept connection");
-                let (rx, tx) = tcp::split(stream);
-                let srv = Arc::clone(&srv);
-                let router = Arc::clone(&router);
-                tokio::spawn(async move {
-                    if let Err(err) = srv.accept(router, tx, BufReader::new(rx)).await {
-                        eprintln!("failed to accept connection: {err}");
-                    }
-                });
-            }
-        });
-        $routes.insert(0, (names, tcp::Client::from(addr)));
-    }};
+                    Err(name) => eprintln!("no component exports `{name}`"),
+                }
+            });
+        }
+    });
 }
 
 #[tokio::main(flavor = "multi_thread")]
@@ -408,12 +330,21 @@ async fn main() -> anyhow::Result<()> {
         std::process::abort();
     }));
 
-    let mut routes = Vec::default();
+    let mut lis = Vec::default();
+    let mut clt = Vec::default();
+    for _ in 0..{listeners} {
+        let l = TcpListener::bind((Ipv6Addr::LOCALHOST, 0))
+            .await
+            .expect("failed to start TCP listener");
+        let addr = l.local_addr().expect("failed to get server address");
+        lis.push(l);
+        clt.push(tcp::Client::from(addr));
+    }
+    let mut lis = lis.into_iter();
     {serve}
 
     // Run the `client` to completion.
-    let clt = Router(routes);
-    tokio::time::timeout(Duration::from_secs(10), client::run(&clt))
+    tokio::time::timeout(Duration::from_secs(10), client::run(&clt[0]))
         .await
         .expect("runtime test timed out")?;
     Ok(())
@@ -523,10 +454,31 @@ impl Runner<'_> {
                 "pub mod {module} {{\n    include!({bindings:?});\n    include!({src:?});\n}}\n\n",
             ));
         }
-        let serve = components[1..]
-            .iter()
-            .rev()
-            .map(|(module, ..)| format!("serve!(routes, {module});"))
+        let serve = (1..=components.len())
+            .map(|i| {
+                let handle = components[i..]
+                    .iter()
+                    .enumerate()
+                    .map(|(j, (module, ..))| {
+                        format!(
+                            "
+                .or_else(|(.., tx, rx, buf)| {{
+                    {module}::handle(&{module}::Component, clt[{}].clone(), instance, func, tx, rx, buf)
+                }})",
+                            i + j
+                        )
+                    })
+                    .collect::<String>();
+                format!(
+                    "serve(lis.next().unwrap(), {{
+        let clt = clt.clone();
+        move |instance, func, tx, rx, buf| {{
+            Err(((), tx, rx, buf)){handle}
+                .map_err(|_| format!(\"{{instance}}#{{func}}\"))
+        }}
+    }});"
+                )
+            })
             .collect::<Vec<_>>()
             .join("\n    ");
 
@@ -535,6 +487,7 @@ impl Runner<'_> {
             &driver,
             DRIVER
                 .replace("{modules}", modules.trim_end())
+                .replace("{listeners}", &components.len().to_string())
                 .replace("{serve}", &serve),
         )?;
 

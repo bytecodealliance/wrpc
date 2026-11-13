@@ -39,7 +39,6 @@ type FrameStreamWriter struct {
 	ch      chan<- Frame
 	path    []uint32
 	gone    atomic.Bool
-	written bool
 	closed  bool
 }
 
@@ -146,7 +145,6 @@ func (w *FrameStreamWriter) Write(p []byte) (int, error) {
 	}
 	data := make([]byte, len(p))
 	copy(data, p)
-	w.written = true
 	if err := sendFrame(w.ctx, w.ch, Frame{
 		Path: w.path,
 		Data: data,
@@ -160,7 +158,6 @@ func (w *FrameStreamWriter) WriteBytes(p []byte) error {
 	if len(p) == 0 {
 		return nil
 	}
-	w.written = true
 	return sendFrame(w.ctx, w.ch, Frame{
 		Path: w.path,
 		Data: p,
@@ -168,7 +165,6 @@ func (w *FrameStreamWriter) WriteBytes(p []byte) error {
 }
 
 func (w *FrameStreamWriter) WriteByte(c byte) error {
-	w.written = true
 	return sendFrame(w.ctx, w.ch, Frame{
 		Path: w.path,
 		Data: []byte{c},
@@ -176,9 +172,6 @@ func (w *FrameStreamWriter) WriteByte(c byte) error {
 }
 
 func (w *FrameStreamWriter) ClosePath() error {
-	if w.closed {
-		return nil
-	}
 	w.closed = true
 	return sendFrame(w.ctx, w.ch, Frame{Path: w.path})
 }
@@ -227,7 +220,7 @@ func (w *FrameStreamWriter) drop() bool {
 
 func (w *FrameStreamWriter) Close() error {
 	defer runtime.SetFinalizer(w, nil)
-	if (w.written || len(w.path) == 0) && !w.closed && !w.gone.Load() && !w.egress.failed.Load() {
+	if len(w.path) == 0 && !w.closed && !w.gone.Load() && !w.egress.failed.Load() {
 		if err := w.ClosePath(); err != nil {
 			slog.DebugContext(w.ctx, "failed to close path", "path", w.path, "err", err)
 		}

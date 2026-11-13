@@ -1,7 +1,7 @@
 use std::sync::Mutex;
 
 use ::wit_bindgen_wrpc::bytes::Bytes;
-use ::wit_bindgen_wrpc::wrpc_transport::{Invoke, ResourceBorrow, ResourceOwn};
+use ::wit_bindgen_wrpc::wrpc_transport::{Connect, ResourceBorrow, ResourceOwn};
 
 use crate::server::exports::exports::{
     Handler, HandlerKebabCase, HandlerX, HandlerZ, KebabCase, X, Z,
@@ -20,7 +20,7 @@ fn z_val(z: &[u8]) -> i32 {
 #[derive(Clone)]
 pub struct Component;
 
-impl<C: Invoke<Context = ()>> Handler<C> for Component {
+impl<C: Connect<Context = ()>> Handler<C> for Component {
     async fn add(
         &self,
         _cx: C,
@@ -74,7 +74,7 @@ impl<C: Invoke<Context = ()>> Handler<C> for Component {
     }
 }
 
-impl<C: Invoke<Context = ()>> HandlerX<C> for Component {
+impl<C: Connect<Context = ()>> HandlerX<C> for Component {
     async fn new(&self, _cx: C, a: i32) -> ::wit_bindgen_wrpc::anyhow::Result<ResourceOwn<X>> {
         let mut xs = XS.lock().unwrap();
         let idx = u32::try_from(xs.len())?;
@@ -113,7 +113,7 @@ impl<C: Invoke<Context = ()>> HandlerX<C> for Component {
     }
 }
 
-impl<C: Invoke<Context = ()>> HandlerZ<C> for Component {
+impl<C: Connect<Context = ()>> HandlerZ<C> for Component {
     async fn new(&self, _cx: C, a: i32) -> ::wit_bindgen_wrpc::anyhow::Result<ResourceOwn<Z>> {
         Ok(ResourceOwn::from(Bytes::copy_from_slice(&a.to_le_bytes())))
     }
@@ -131,7 +131,7 @@ impl<C: Invoke<Context = ()>> HandlerZ<C> for Component {
     }
 }
 
-impl<C: Invoke<Context = ()>> HandlerKebabCase<C> for Component {
+impl<C: Connect<Context = ()>> HandlerKebabCase<C> for Component {
     async fn new(
         &self,
         _cx: C,

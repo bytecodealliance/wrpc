@@ -2,7 +2,7 @@ use crate::client::test::common::test_types::{F1, V1};
 use crate::client::test::common::to_test::{var_f, wrap};
 
 pub async fn run(
-    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,
+    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Connect<Context = ()>,
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
     let res = wrap(wrpc, (), &F1::A).await?;
     assert_eq!(res.b, F1::A);

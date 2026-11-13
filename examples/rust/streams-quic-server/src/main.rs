@@ -6,13 +6,13 @@ use std::sync::Arc;
 use anyhow::Context as _;
 use bytes::Bytes;
 use clap::Parser;
-use futures::stream::select_all;
 use futures::{Stream, StreamExt as _};
 use quinn::crypto::rustls::QuicServerConfig;
 use quinn::{Endpoint, ServerConfig};
 use rcgen::{CertifiedKey, generate_simple_self_signed};
 use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
 use rustls::version::TLS13;
+use tokio::sync::mpsc;
 use tokio::task::JoinSet;
 use tokio::{select, signal};
 use tracing::{debug, error, info, warn};
@@ -80,29 +80,29 @@ async fn main() -> anyhow::Result<()> {
     let ep = Endpoint::server(ServerConfig::with_crypto(Arc::new(conf)), addr)
         .context("failed to create server endpoint")?;
 
-    let srv = Arc::new(wrpc_quic::Server::new());
+    let (tx, mut rx) = mpsc::channel(16);
     let accept = tokio::spawn({
         let mut tasks = JoinSet::<anyhow::Result<()>>::new();
-        let srv = Arc::clone(&srv);
         async move {
             loop {
                 select! {
                     Some(conn) = ep.accept() => {
-                        let srv = Arc::clone(&srv);
+                        let tx = tx.clone();
                         tasks.spawn(async move {
                             let conn = conn
                                 .accept()
                                 .context("failed to accept QUIC connection")?;
                             let conn = conn.await.context("failed to establish QUIC connection")?;
-                            loop {
-                                let (tx, rx) = conn
-                                    .accept_bi()
-                                    .await
-                                    .context("failed to accept wRPC connection")?;
-                                srv.accept((), tx.into(), rx.into())
-                                    .await
-                                    .context("failed to serve wRPC connection")?;
+                            let conn = wrpc_quic::Connection::from(conn);
+                            let invocations = bindings::serve(conn.incoming(), Server);
+                            let mut invocations = pin!(invocations);
+                            while let Some(res) = invocations.next().await {
+                                let fut = res.context("failed to accept wRPC invocation")?;
+                                if tx.send(fut).await.is_err() {
+                                    break;
+                                }
                             }
+                            Ok(())
                         });
                     }
                     Some(res) = tasks.join_next() => {
@@ -124,37 +124,20 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
-    let invocations = bindings::serve(srv.as_ref(), Server)
-        .await
-        .context("failed to serve `wrpc-examples:streams/handler.echo`")?;
-    // NOTE: This will conflate all invocation streams into a single stream via `futures::stream::SelectAll`,
-    // to customize this, iterate over the returned `invocations` and set up custom handling per export
-    let mut invocations = select_all(
-        invocations
-            .into_iter()
-            .map(|(instance, name, invocations)| invocations.map(move |res| (instance, name, res))),
-    );
     let shutdown = signal::ctrl_c();
     let mut shutdown = pin!(shutdown);
     let mut tasks = JoinSet::new();
     loop {
         select! {
-            Some((instance, name, res)) = invocations.next() => {
-                match res {
-                    Ok(fut) => {
-                        debug!(instance, name, "invocation accepted");
-                        tasks.spawn(async move {
-                            match fut.await { Err(err) => {
-                                warn!(?err, "failed to handle invocation");
-                            } _ => {
-                                info!(instance, name, "invocation successfully handled");
-                            }}
-                        });
-                    }
-                    Err(err) => {
-                        warn!(?err, instance, name, "failed to accept invocation");
-                    }
-                }
+            Some(fut) = rx.recv() => {
+                debug!("invocation accepted");
+                tasks.spawn(async move {
+                    match fut.await { Err(err) => {
+                        warn!(?err, "failed to handle invocation");
+                    } _ => {
+                        info!("invocation successfully handled");
+                    }}
+                });
             }
             Some(res) = tasks.join_next() => {
                 if let Err(err) = res {

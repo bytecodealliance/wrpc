@@ -246,34 +246,38 @@ test("an invocation sends only closing frames for empty data", async () => {
   }
 });
 
-test("values nested in a future are indexed below it", { timeout: 1000 }, async () => {
-  /** @type {Uint8Array[]} */
-  const sent = [];
-  const inbound = [Uint8Array.of(0x00, 0x00)];
-  /** @type {Transport} */
-  const peer = {
-    read: async () => inbound.pop() ?? null,
-    write: (bytes) => void sent.push(bytes),
-    closeWrite: () => {},
-  };
-  const ty = t.future(t.future(t.u8));
-  const { done } = await invoke(
-    peer,
-    "foo",
-    "bar",
-    [ty],
-    [Promise.resolve(Promise.resolve(7))],
-    [],
-  );
-  await done;
-  assert.deepEqual(
-    Buffer.concat(sent),
-    Buffer.from(
-      "\x01\x03foo\x03bar\x00\x01\x00\x00\x00\x01\x00\x01\x00\x02\x00\x00\x01\x07\x02\x00\x00\x00\x01\x00\x00",
-      "latin1",
-    ),
-  );
+test("a future is closed before the values nested in it", async () => {
+  for (const [ty, arg, expected] of /** @type {[Type, InputValue, string][]} */ ([
+    [
+      t.future(t.stream(t.u8)),
+      Uint8Array.of(1, 2),
+      "\x01\x00\x01\x00\x01\x00\x00\x02\x00\x00\x03\x02\x01\x02\x02\x00\x00\x00",
+    ],
+    [
+      t.future(t.future(t.u8)),
+      Promise.resolve(Promise.resolve(7)),
+      "\x01\x00\x01\x00\x01\x00\x00\x02\x00\x00\x01\x07\x02\x00\x00\x00",
+    ],
+  ])) {
+    /** @type {Uint8Array[]} */
+    const frames = [];
+    const inbound = [Uint8Array.of(0x00, 0x00)];
+    /** @type {Transport} */
+    const transport = {
+      read: async () => inbound.pop() ?? null,
+      write: (bytes) => void frames.push(bytes),
+      closeWrite: () => {},
+    };
+    const { done } = await invoke(transport, "foo", "bar", [ty], [arg], []);
+    await done;
+    assert.deepEqual(
+      Buffer.concat(frames),
+      Buffer.from(`\x01\x03foo\x03bar\x00\x01\x00\x00\x00${expected}`, "latin1"),
+    );
+  }
+});
 
+test("values nested in a future are received below it", { timeout: 1000 }, async () => {
   for (const frames of /** @type {Frame[][]} */ ([
     [
       [[], [0]],
@@ -292,9 +296,9 @@ test("values nested in a future are indexed below it", { timeout: 1000 }, async 
   ])) {
     const { inbound, transport } = await feed(frames);
     inbound.close();
-    const { results, done } = await get(transport, [ty]);
+    const { results, finished } = await get(transport, [t.future(t.future(t.u8))]);
     assert.equal(await await results[0], 7);
-    await done;
+    await finished;
   }
 });
 

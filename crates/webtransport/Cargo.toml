@@ -10,14 +10,15 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-anyhow = { workspace = true, features = ["std"] }
-tokio = { workspace = true, features = ["io-util"] }
+futures = { workspace = true }
+tokio = { workspace = true, features = ["io-util", "macros", "rt"] }
 web-transport-quinn = { workspace = true }
 wrpc-transport = { workspace = true }
 
 [dev-dependencies]
+anyhow = { workspace = true, features = ["std"] }
 bytes = { workspace = true }
-futures = { workspace = true }
 test-log = { workspace = true, features = ["color", "log", "trace"] }
 tokio = { workspace = true, features = ["rt-multi-thread"] }
+tokio-util = { workspace = true, features = ["codec"] }
 wrpc-test = { workspace = true, features = ["webtransport"] }

@@ -42,6 +42,8 @@ struct RustWrpc {
     world: Option<WorldId>,
 
     export_paths: Vec<String>,
+    max_export_instance_len: usize,
+    max_export_func_len: usize,
     /// Maps wit interface and type names to their Rust identifiers
     with: GenerationConfiguration,
 }
@@ -436,95 +438,108 @@ with: {{\n\t{with_name:?}: generate\n}}
             .unwrap_or("::wit_bindgen_wrpc::wrpc_transport")
     }
 
-    /// Generates a `serve` function for the `world_id` specified.
+    /// Generates `handle` and `serve` functions for the `world_id` specified.
     ///
-    /// This will generate a macro which will then itself invoke all the
-    /// other macros collected in `self.export_paths` prior. All these macros
-    /// are woven together in this single invocation.
+    /// `handle` chains the `handle_interface` functions collected in
+    /// `self.export_paths` prior and `serve` dispatches accepted invocations.
     fn finish_serve_function(&mut self) {
-        const ROOT: &str = "Handler<T::Context>";
-        let mut traits: Vec<String> = self
+        if self.export_paths.is_empty() {
+            return;
+        }
+        let bound = self
             .export_paths
             .iter()
             .map(|path| {
                 if path.is_empty() {
-                    ROOT.to_string()
+                    "Handler<C>".to_string()
                 } else {
-                    format!("{path}::{ROOT}")
+                    format!("{path}::Handler<C>")
                 }
             })
-            .collect();
-        let bound = match traits.len() {
-            0 => return,
-            1 => traits.pop().unwrap(),
-            _ => traits.join(" + "),
-        };
+            .collect::<Vec<_>>()
+            .join(" + ");
         let anyhow = self.anyhow_path().to_string();
         let futures = self.futures_path().to_string();
         let tokio = self.tokio_path().to_string();
+        let bytes = self.bytes_path().to_string();
         let wrpc_transport = self.wrpc_transport_path().to_string();
-        uwriteln!(
+        let max_instance_len = u32::try_from(self.max_export_instance_len).unwrap_or(u32::MAX);
+        let max_func_len = u32::try_from(self.max_export_func_len).unwrap_or(u32::MAX);
+        uwrite!(
             self.src,
             r#"
-#[allow(clippy::manual_async_fn)]
-pub fn serve<'a, T: {wrpc_transport}::Serve, H: {bound} + ::core::marker::Send + ::core::marker::Sync + ::core::clone::Clone + 'static>(
-    wrpc: &'a T,
-    handler: H,
-) -> impl ::core::future::Future<
-        Output = {anyhow}::Result<
-            ::std::vec::Vec<
-                (
-                    &'static str,
-                    &'static str,
-                    ::core::pin::Pin<
-                        ::std::boxed::Box<
-                            dyn {futures}::Stream<
-                                Item = {anyhow}::Result<
-                                    ::core::pin::Pin<
-                                        ::std::boxed::Box<
-                                            dyn ::core::future::Future<
-                                                Output = {anyhow}::Result<()>
-                                            > + ::core::marker::Send + 'static
-                                        >
-                                    >
-                                >
-                            > + ::core::marker::Send + 'static
-                        >
-                    >
-                )
-            >
+pub fn handle<C, I, O, H>(
+    handler: &H,
+    cx: C,
+    instance: &str,
+    func: &str,
+    tx: O,
+    rx: I,
+    buf: {bytes}::BytesMut,
+) -> ::core::result::Result<
+    ::core::pin::Pin<
+        ::std::boxed::Box<
+            dyn ::core::future::Future<Output = {anyhow}::Result<()>> + ::core::marker::Send + 'static
         >
-    > + ::core::marker::Send + use<'a, T, H> {{
-    async move {{
-        let interfaces = {tokio}::try_join!("#
+    >,
+    (C, O, I, {bytes}::BytesMut),
+>
+where
+    C: ::core::marker::Send + 'static,
+    I: {tokio}::io::AsyncRead + ::core::marker::Send + ::core::marker::Unpin + 'static,
+    O: {tokio}::io::AsyncWrite + ::core::marker::Send + ::core::marker::Unpin + 'static,
+    H: {bound} + ::core::marker::Send + ::core::marker::Sync + ::core::clone::Clone + 'static,
+{{
+    ::core::result::Result::Err((cx, tx, rx, buf))"#
         );
         for path in &self.export_paths {
+            self.src.push_str("\n        .or_else(|(cx, tx, rx, buf)| ");
             if !path.is_empty() {
                 self.src.push_str(path);
                 self.src.push_str("::");
             }
-            self.src.push_str("serve_interface(wrpc, handler.clone()),");
+            self.src
+                .push_str("handle_interface(handler, cx, instance, func, tx, rx, buf))");
         }
         uwriteln!(
             self.src,
             r#"
-        )?;
-        let mut streams = Vec::new();"#
-        );
-        for i in 0..self.export_paths.len() {
-            uwrite!(
-                self.src,
-                r"
-        for s in interfaces.{i} {{
-            streams.push(s);
-        }}"
-            );
-        }
-        uwriteln!(
-            self.src,
-            r#"
-        Ok(streams)
-    }}
+}}
+
+pub fn serve<C, I, O, E, H>(
+    incoming: impl {futures}::Stream<Item = ::core::result::Result<(C, O, I), E>>,
+    handler: H,
+) -> impl {futures}::Stream<
+        Item = ::core::result::Result<
+            impl ::core::future::Future<Output = {anyhow}::Result<()>> + ::core::marker::Send + 'static,
+            E,
+        >,
+    >
+where
+    C: ::core::marker::Send + 'static,
+    I: {tokio}::io::AsyncRead + ::core::marker::Send + ::core::marker::Unpin + 'static,
+    O: {tokio}::io::AsyncWrite + ::core::marker::Send + ::core::marker::Unpin + 'static,
+    E: ::core::error::Error + ::core::marker::Send + ::core::marker::Sync + 'static,
+    H: {bound} + ::core::marker::Send + ::core::marker::Sync + ::core::clone::Clone + 'static,
+{{
+    {futures}::StreamExt::map(incoming, move |res| {{
+        res.map(|(cx, tx, mut rx)| {{
+            let handler = handler.clone();
+            async move {{
+                let mut buf = {bytes}::BytesMut::default();
+                let {wrpc_transport}::Header {{ instance, name }} = {anyhow}::Context::context(
+                    {wrpc_transport}::accept_with(&mut rx, &mut buf, {max_instance_len}, {max_func_len}).await,
+                    "failed to read invocation header",
+                )?;
+                match handle(&handler, cx, &instance, &name, tx, rx, buf) {{
+                    ::core::result::Result::Ok(fut) => fut.await,
+                    ::core::result::Result::Err(..) => {anyhow}::bail!(
+                        "`{{instance}}#{{name}}` is not exported",
+                    ),
+                }}
+            }}
+        }})
+    }})
 }}"#
         );
     }

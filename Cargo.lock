@@ -3177,7 +3177,6 @@ dependencies = [
  "bytes",
  "futures-core",
  "futures-sink",
- "futures-util",
  "libc",
  "pin-project-lite",
  "tokio",
@@ -4658,6 +4657,7 @@ dependencies = [
  "quinn",
  "test-log",
  "tokio",
+ "tokio-util",
  "wrpc-test",
  "wrpc-transport",
 ]
@@ -4667,6 +4667,7 @@ name = "wrpc-test"
 version = "0.5.0"
 dependencies = [
  "anyhow",
+ "bytes",
  "futures",
  "http",
  "hyper",
@@ -4692,7 +4693,6 @@ dependencies = [
  "anyhow",
  "bytes",
  "futures",
- "pin-project-lite",
  "test-log",
  "tokio",
  "tokio-stream",
@@ -4763,6 +4763,7 @@ name = "wrpc-wasmtime-cli"
 version = "0.11.0"
 dependencies = [
  "anyhow",
+ "bytes",
  "clap",
  "futures",
  "humantime",
@@ -4807,6 +4808,7 @@ dependencies = [
  "futures",
  "test-log",
  "tokio",
+ "tokio-util",
  "web-transport-quinn",
  "wrpc-test",
  "wrpc-transport",

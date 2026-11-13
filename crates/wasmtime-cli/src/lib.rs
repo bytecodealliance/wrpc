@@ -1,23 +1,30 @@
+#![allow(clippy::type_complexity)]
+
+use core::pin::{Pin, pin};
+use core::time::Duration;
+
 use std::sync::Arc;
 
 use anyhow::{Context as _, anyhow, bail};
+use bytes::BytesMut;
 use clap::Parser;
 use futures::{Stream, StreamExt as _};
-use tokio::fs;
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::task::JoinSet;
-use tracing::{Instrument as _, Span, error, info, instrument, warn};
+use tokio::{fs, select, spawn, time, try_join};
+use tracing::{Instrument as _, error, info, instrument, warn};
 use url::Url;
 use wasi_preview1_component_adapter_provider::{
     WASI_SNAPSHOT_PREVIEW1_ADAPTER_NAME, WASI_SNAPSHOT_PREVIEW1_REACTOR_ADAPTER,
 };
-use wasmtime::component::{Component, InstancePre, Linker, ResourceTable, ResourceType, types};
+use wasmtime::component::{Component, InstancePre, Linker, ResourceTable, ResourceType};
 use wasmtime::{Config, Engine, Memory, MemoryType, Store};
 use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpCtxView, WasiHttpView};
-use wrpc_transport::Serve;
+use wrpc_transport::{Header, accept};
 use wrpc_wasmtime::{
-    ResourceTypes, ServeExt as _, SharedResourceTable, SharedStore, WrpcCtxView, WrpcView,
-    collect_component_resource_exports,
+    InstancePreExports, ResourceTypes, SharedExports, SharedResourceTable, SharedStore,
+    WrpcCtxView, WrpcView, collect_component_resource_exports,
 };
 
 mod tcp;
@@ -201,44 +208,128 @@ fn new_store(
     )
 }
 
-async fn handle_invocations<T>(
-    invocations: impl Stream<Item = anyhow::Result<(T, impl Future<Output = anyhow::Result<()>>)>>,
-    kind: &'static str,
-) {
-    invocations
-        .for_each_concurrent(None, |invocation| async move {
-            match invocation {
-                Ok((_, fut)) => {
-                    info!(kind, "serving function invocation");
-                    if let Err(err) = fut.await {
-                        warn!(?err, kind, "failed to serve function invocation");
-                    } else {
-                        info!(kind, "successfully served function invocation");
+#[instrument(level = "trace", skip_all, ret(level = "trace"))]
+async fn serve_exports<C, I, O, E>(
+    incoming: impl Stream<Item = Result<(C, O, I), E>>,
+    timeout: Duration,
+    event_loop: impl Future<Output = anyhow::Result<()>>,
+    handle: impl Fn(
+        C,
+        &str,
+        &str,
+        O,
+        I,
+        BytesMut,
+    ) -> Result<
+        Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send>>,
+        (C, O, I, BytesMut),
+    > + Send
+    + Sync
+    + 'static,
+) -> anyhow::Result<()>
+where
+    C: Send + 'static,
+    I: AsyncRead + Send + Unpin + 'static,
+    O: AsyncWrite + Send + Unpin + 'static,
+    E: core::error::Error + Send + Sync + 'static,
+{
+    let serve = async move {
+        let handle = Arc::new(handle);
+        let mut incoming = pin!(incoming);
+        let mut tasks = JoinSet::default();
+        let mut done = false;
+        loop {
+            select! {
+                res = incoming.next(), if !done => match res {
+                    Some(Ok((cx, tx, mut rx))) => {
+                        let handle = Arc::clone(&handle);
+                        tasks.spawn(
+                            async move {
+                                let mut buf = BytesMut::default();
+                                let Header { instance, name } = match time::timeout(
+                                    timeout,
+                                    accept(&mut rx, &mut buf),
+                                )
+                                .await
+                                {
+                                    Ok(Ok(header)) => header,
+                                    Ok(Err(err)) => {
+                                        error!(?err, "failed to read invocation header");
+                                        return;
+                                    }
+                                    Err(..) => {
+                                        error!("timed out reading invocation header");
+                                        return;
+                                    }
+                                };
+                                match handle(cx, &instance, &name, tx, rx, buf) {
+                                    Ok(fut) => {
+                                        info!("serving function invocation");
+                                        if let Err(err) = fut.await {
+                                            warn!(?err, "failed to serve function invocation");
+                                        } else {
+                                            info!("successfully served function invocation");
+                                        }
+                                    }
+                                    Err(..) => error!(
+                                        instance,
+                                        func = name,
+                                        "function is not exported"
+                                    ),
+                                }
+                            }
+                            .in_current_span(),
+                        );
+                    }
+                    Some(Err(err)) => error!(?err, "failed to accept invocation"),
+                    None => done = true,
+                },
+                Some(res) = tasks.join_next() => {
+                    if let Err(err) = res {
+                        error!(?err, "failed to join invocation task");
                     }
                 }
-                Err(err) => {
-                    error!(?err, kind, "failed to accept function invocation");
-                }
+                else => return anyhow::Ok(()),
             }
-        })
-        .await;
+        }
+    };
+    try_join!(serve, event_loop)?;
+    Ok(())
 }
 
-#[instrument(level = "trace", skip_all, ret(level = "trace"))]
-pub async fn serve_shared<S: Serve>(
-    handlers: &mut JoinSet<anyhow::Result<()>>,
-    srv: S,
-    mut store: Store<Ctx>,
-    pre: InstancePre<Ctx>,
-    guest_resources: Arc<[ResourceType]>,
-) -> anyhow::Result<()> {
-    let span = Span::current();
+#[instrument(level = "trace", skip(incoming), ret(level = "trace"))]
+pub async fn serve<C, I, O, E>(
+    incoming: impl Stream<Item = Result<(C, O, I), E>>,
+    timeout: Duration,
+    envs: Vec<(Box<str>, Box<str>)>,
+    workload: &str,
+) -> anyhow::Result<()>
+where
+    C: Send + 'static,
+    I: AsyncRead + Send + Unpin + 'static,
+    O: AsyncWrite + Send + Unpin + 'static,
+    E: core::error::Error + Send + Sync + 'static,
+{
+    let (pre, engine, guest_resources) = instantiate_pre(workload).await?;
+    if guest_resources.is_empty() {
+        let exports = InstancePreExports::new(
+            move || new_store(&engine, envs.iter().map(|(k, v)| (k, v))),
+            pre,
+        )?;
+        return serve_exports(
+            incoming,
+            timeout,
+            async { Ok(()) },
+            move |cx, instance, func, tx, rx, buf| exports.handle(cx, instance, func, tx, rx, buf),
+        )
+        .await;
+    }
+    let mut store = new_store(&engine, envs);
     let instance = pre
         .instantiate_async(&mut store)
         .await
         .map_err(anyhow::Error::from)
         .context("failed to instantiate component")?;
-    let engine = store.engine().clone();
     let resources = ResourceTypes {
         guest: guest_resources,
         io_streams: wrpc_wasmtime::paths::wasi_io_stream_resources(
@@ -248,234 +339,20 @@ pub async fn serve_shared<S: Serve>(
         .into(),
     };
     let (store, event_loop) = SharedStore::new(store);
-    handlers.spawn(event_loop.instrument(span.clone()));
-    for (name, types::ComponentExtern { ty, .. }) in
-        pre.component().component_type().exports(&engine)
-    {
-        match (name, ty) {
-            (name, types::ComponentItem::ComponentFunc(ty)) => {
-                info!(?name, "serving root function");
-                let idx = pre
-                    .component()
-                    .get_export_index(None, name)
-                    .with_context(|| format!("export `{name}` not found"))?;
-                let invocations = srv
-                    .serve_function_shared(
-                        store.clone(),
-                        instance,
-                        idx,
-                        resources.clone(),
-                        ty,
-                        "",
-                        name,
-                    )
-                    .await?;
-                handlers.spawn(
-                    async move {
-                        handle_invocations(invocations, "root").await;
-                        Ok(())
-                    }
-                    .instrument(span.clone()),
-                );
+    let exports = SharedExports::new(store, instance, pre.component(), resources)?;
+    let event_loop = spawn(event_loop.in_current_span());
+    serve_exports(
+        incoming,
+        timeout,
+        async {
+            match event_loop.await {
+                Ok(res) => res,
+                Err(err) => Err(err).context("failed to join event loop"),
             }
-            (_, types::ComponentItem::CoreFunc(_)) => {
-                warn!(name, "serving root core function exports not supported yet");
-            }
-            (_, types::ComponentItem::Module(_)) => {
-                warn!(name, "serving root module exports not supported yet");
-            }
-            (_, types::ComponentItem::Component(_)) => {
-                warn!(name, "serving root component exports not supported yet");
-            }
-            (instance_name, types::ComponentItem::ComponentInstance(ty)) => {
-                let instance_idx = pre
-                    .component()
-                    .get_export_index(None, instance_name)
-                    .with_context(|| format!("export `{instance_name}` not found"))?;
-                for (name, types::ComponentExtern { ty, .. }) in ty.exports(&engine) {
-                    match ty {
-                        types::ComponentItem::ComponentFunc(ty) => {
-                            info!(?name, "serving instance function");
-                            let idx = pre
-                                .component()
-                                .get_export_index(Some(&instance_idx), name)
-                                .with_context(|| format!("export `{name}` not found"))?;
-                            let invocations = srv
-                                .serve_function_shared(
-                                    store.clone(),
-                                    instance,
-                                    idx,
-                                    resources.clone(),
-                                    ty,
-                                    instance_name,
-                                    name,
-                                )
-                                .await?;
-                            handlers.spawn(
-                                async move {
-                                    handle_invocations(invocations, "instance").await;
-                                    Ok(())
-                                }
-                                .instrument(span.clone()),
-                            );
-                        }
-                        types::ComponentItem::CoreFunc(_) => {
-                            warn!(
-                                instance_name,
-                                name, "serving instance core function exports not supported yet"
-                            );
-                        }
-                        types::ComponentItem::Module(_) => {
-                            warn!(
-                                instance_name,
-                                name, "serving instance module exports not supported yet"
-                            );
-                        }
-                        types::ComponentItem::Component(_) => {
-                            warn!(
-                                instance_name,
-                                name, "serving instance component exports not supported yet"
-                            );
-                        }
-                        types::ComponentItem::ComponentInstance(_) => {
-                            warn!(
-                                instance_name,
-                                name, "serving nested instance exports not supported yet"
-                            );
-                        }
-                        types::ComponentItem::Type(_) | types::ComponentItem::Resource(_) => {}
-                    }
-                }
-            }
-            (_, types::ComponentItem::Type(_) | types::ComponentItem::Resource(_)) => {}
-        }
-    }
-    Ok(())
-}
-
-#[instrument(level = "trace", skip_all, ret(level = "trace"))]
-pub async fn serve_stateless<S: Serve>(
-    handlers: &mut JoinSet<anyhow::Result<()>>,
-    srv: S,
-    pre: InstancePre<Ctx>,
-    engine: &Engine,
-    envs: Vec<(Box<str>, Box<str>)>,
-) -> anyhow::Result<()> {
-    let span = Span::current();
-    for (name, types::ComponentExtern { ty, .. }) in
-        pre.component().component_type().exports(engine)
-    {
-        match (name, ty) {
-            (name, types::ComponentItem::ComponentFunc(ty)) => {
-                let engine = engine.clone();
-                let envs = envs.clone();
-                info!(?name, "serving root function");
-                let invocations = srv
-                    .serve_function(
-                        move || new_store(&engine, envs.iter().map(|(k, v)| (k, v))),
-                        pre.clone(),
-                        ty,
-                        "",
-                        name,
-                    )
-                    .await?;
-                handlers.spawn(
-                    async move {
-                        handle_invocations(invocations, "root").await;
-                        Ok(())
-                    }
-                    .instrument(span.clone()),
-                );
-            }
-            (_, types::ComponentItem::CoreFunc(_)) => {
-                warn!(name, "serving root core function exports not supported yet");
-            }
-            (_, types::ComponentItem::Module(_)) => {
-                warn!(name, "serving root module exports not supported yet");
-            }
-            (_, types::ComponentItem::Component(_)) => {
-                warn!(name, "serving root component exports not supported yet");
-            }
-            (instance_name, types::ComponentItem::ComponentInstance(ty)) => {
-                for (name, types::ComponentExtern { ty, .. }) in ty.exports(engine) {
-                    match ty {
-                        types::ComponentItem::ComponentFunc(ty) => {
-                            let engine = engine.clone();
-                            let envs = envs.clone();
-                            info!(?name, "serving instance function");
-                            let invocations = srv
-                                .serve_function(
-                                    move || new_store(&engine, envs.iter().map(|(k, v)| (k, v))),
-                                    pre.clone(),
-                                    ty,
-                                    instance_name,
-                                    name,
-                                )
-                                .await?;
-                            handlers.spawn(
-                                async move {
-                                    handle_invocations(invocations, "instance").await;
-                                    Ok(())
-                                }
-                                .instrument(span.clone()),
-                            );
-                        }
-                        types::ComponentItem::CoreFunc(_) => {
-                            warn!(
-                                instance_name,
-                                name, "serving instance core function exports not supported yet"
-                            );
-                        }
-                        types::ComponentItem::Module(_) => {
-                            warn!(
-                                instance_name,
-                                name, "serving instance module exports not supported yet"
-                            );
-                        }
-                        types::ComponentItem::Component(_) => {
-                            warn!(
-                                instance_name,
-                                name, "serving instance component exports not supported yet"
-                            );
-                        }
-                        types::ComponentItem::ComponentInstance(_) => {
-                            warn!(
-                                instance_name,
-                                name, "serving nested instance exports not supported yet"
-                            );
-                        }
-                        types::ComponentItem::Type(_) | types::ComponentItem::Resource(_) => {}
-                    }
-                }
-            }
-            (_, types::ComponentItem::Type(_) | types::ComponentItem::Resource(_)) => {}
-        }
-    }
-    Ok(())
-}
-
-#[instrument(level = "trace", skip(srv), ret(level = "trace"))]
-pub async fn serve<S: Serve>(
-    srv: S,
-    envs: Vec<(Box<str>, Box<str>)>,
-    workload: &str,
-) -> anyhow::Result<JoinSet<anyhow::Result<()>>> {
-    let (pre, engine, guest_resources) = instantiate_pre(workload).await?;
-
-    let mut handlers = JoinSet::new();
-    if guest_resources.is_empty() {
-        serve_stateless(&mut handlers, srv, pre, &engine, envs).await?;
-    } else {
-        serve_shared(
-            &mut handlers,
-            srv,
-            new_store(&engine, envs),
-            pre,
-            guest_resources,
-        )
-        .await?;
-    }
-    Ok(handlers)
+        },
+        move |cx, instance, func, tx, rx, buf| exports.handle(cx, instance, func, tx, rx, buf),
+    )
+    .await
 }
 
 #[instrument(level = "trace", ret(level = "trace"))]
@@ -483,5 +360,24 @@ pub async fn run() -> anyhow::Result<()> {
     wrpc_cli::tracing::init();
     match Command::parse() {
         Command::Tcp(args) => tcp::run(args).await,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use futures::stream;
+    use tokio::io::{empty, sink};
+
+    use super::*;
+
+    #[tokio::test]
+    async fn serve_exports_ends() -> anyhow::Result<()> {
+        serve_exports(
+            stream::iter([Ok::<_, std::io::Error>(((), sink(), empty()))]),
+            Duration::from_secs(1),
+            async { Ok(()) },
+            |cx, _, _, tx, rx, buf| Err((cx, tx, rx, buf)),
+        )
+        .await
     }
 }

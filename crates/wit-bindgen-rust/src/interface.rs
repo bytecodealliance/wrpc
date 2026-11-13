@@ -97,67 +97,39 @@ impl InterfaceGenerator<'_> {
 
         let trait_names: Vec<_> = traits
             .values()
-            .map(|(name, _)| format!("{name}<T::Context> + "))
+            .map(|(name, ..)| format!("{name}<C> + "))
             .collect();
 
-        let n = funcs_to_export.len();
         uwrite!(
             self.src,
             r#"
-#[allow(clippy::manual_async_fn)]
-pub fn serve_interface<'a, T: {wrpc_transport}::Serve, H: Handler<T::Context> + {resource_traits} ::core::marker::Send + ::core::marker::Sync + ::core::clone::Clone + 'static>(
-    wrpc: &'a T,
-    handler: H,
-) -> impl ::core::future::Future<
-        Output = {anyhow}::Result<
-            [
-                (
-                    &'static str,
-                    &'static str,
-                    ::core::pin::Pin<
-                        ::std::boxed::Box<
-                            dyn {futures}::Stream<
-                                Item = {anyhow}::Result<
-                                    ::core::pin::Pin<
-                                        ::std::boxed::Box<
-                                            dyn ::core::future::Future<
-                                                Output = {anyhow}::Result<()>
-                                            > + ::core::marker::Send + 'static
-                                        >
-                                    >
-                                >
-                            > + ::core::marker::Send + 'static
-                        >
-                    >
-                );
-                {n}
-            ] 
+pub fn handle_interface<C, I, O, H>(
+    handler: &H,
+    cx: C,
+    instance: &str,
+    func: &str,
+    tx: O,
+    rx: I,
+    buf: {bytes}::BytesMut,
+) -> ::core::result::Result<
+    ::core::pin::Pin<
+        ::std::boxed::Box<
+            dyn ::core::future::Future<Output = {anyhow}::Result<()>> + ::core::marker::Send + 'static
         >
-    > + ::core::marker::Send + use<'a, T, H> {{
-    async move {{
-        let ("#,
+    >,
+    (C, O, I, {bytes}::BytesMut),
+>
+where
+    C: ::core::marker::Send + 'static,
+    I: {tokio}::io::AsyncRead + ::core::marker::Send + ::core::marker::Unpin + 'static,
+    O: {tokio}::io::AsyncWrite + ::core::marker::Send + ::core::marker::Unpin + 'static,
+    H: Handler<C> + {resource_traits} ::core::marker::Send + ::core::marker::Sync + ::core::clone::Clone + 'static,
+{{
+    match (instance, func) {{"#,
             resource_traits = trait_names.join(""),
             anyhow = self.r#gen.anyhow_path(),
-            futures = self.r#gen.futures_path(),
-            wrpc_transport = self.r#gen.wrpc_transport_path()
-        );
-        for Function { name, kind, .. } in &funcs_to_export {
-            uwriteln!(
-                self.src,
-                "{}_{},",
-                match kind {
-                    FunctionKind::Freestanding | FunctionKind::AsyncFreestanding => "f",
-                    FunctionKind::Method(_) | FunctionKind::AsyncMethod(_) => "m",
-                    FunctionKind::Constructor(_) => "c",
-                    FunctionKind::Static(_) | FunctionKind::AsyncStatic(_) => "s",
-                },
-                to_rust_ident(name)
-            );
-        }
-        uwrite!(
-            self.src,
-            ") = {tokio}::try_join!(",
-            tokio = self.r#gen.tokio_path()
+            bytes = self.r#gen.bytes_path(),
+            tokio = self.r#gen.tokio_path(),
         );
         let instance = match identifier {
             Identifier::Interface(id, name) => {
@@ -179,37 +151,12 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve, H: Handler<T::Context> + 
             Identifier::World => String::new(),
         };
         for func in &funcs_to_export {
-            let fqn = if instance.is_empty() {
-                func.name.to_string()
-            } else {
-                format!("{instance}.{}", func.name)
-            };
-            uwriteln!(
-                self.src,
-                r#"
-            async {{ 
-                {anyhow}::Context::context({wrpc_transport}::ServeExt::serve_values(
-                    wrpc,
-                    "{instance}",
-                    "{}",
-                )
-                .await,
-                "failed to serve `{fqn}`")
-            }},"#,
-                rpc_func_name(func),
-                anyhow = self.r#gen.anyhow_path(),
-                wrpc_transport = self.r#gen.wrpc_transport_path(),
-            );
-        }
-        self.push_str(")?;\n");
-        uwrite!(
-            self.src,
-            r"
-        {anyhow}::Ok([",
-            anyhow = self.r#gen.anyhow_path(),
-        );
-        for func in &funcs_to_export {
-            let name = to_rust_ident(&func.name);
+            self.r#gen.max_export_instance_len =
+                self.r#gen.max_export_instance_len.max(instance.len());
+            self.r#gen.max_export_func_len = self
+                .r#gen
+                .max_export_func_len
+                .max(rpc_func_name(func).len());
             let fqn = if instance.is_empty() {
                 func.name.to_string()
             } else {
@@ -218,30 +165,24 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve, H: Handler<T::Context> + 
             uwrite!(
                 self.src,
                 r#"
-            {{
-                let handler = handler.clone();
-                (
-                    "{instance}",
-                    "{wit_name}",
-                    ::std::boxed::Box::pin(
-                        {futures}::TryStreamExt::map_ok({}_{name}, move |(cx, ("#,
-                match func.kind {
-                    FunctionKind::Freestanding | FunctionKind::AsyncFreestanding => "f",
-                    FunctionKind::Method(_) | FunctionKind::AsyncMethod(_) => "m",
-                    FunctionKind::Constructor(_) => "c",
-                    FunctionKind::Static(_) | FunctionKind::AsyncStatic(_) => "s",
-                },
-                futures = self.r#gen.futures_path(),
-                wit_name = func.name,
+        ("{instance}", "{}") => {{
+            let handler = handler.clone();
+            let (params, tx) = {wrpc_transport}::serve_values(tx, rx, buf);
+            ::core::result::Result::Ok(::std::boxed::Box::pin(async move {{
+                let (("#,
+                rpc_func_name(func),
+                wrpc_transport = self.r#gen.wrpc_transport_path(),
             );
             for i in 0..func.params.len() {
                 uwrite!(self.src, "p{i}, ");
             }
             uwrite!(
                 self.src,
-                r"
-                        ), rx, tx)| {{
-                            let handler = handler.clone();"
+                r#"), rx) = {anyhow}::Context::context(
+                    params.await,
+                    "failed to receive `{fqn}` parameters",
+                )?;"#,
+                anyhow = self.r#gen.anyhow_path(),
             );
             for (i, param) in func.params.iter().enumerate() {
                 if self.has_raw_strings(&param.ty) {
@@ -249,11 +190,6 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve, H: Handler<T::Context> + 
                     uwrite!(self.src, "let p{i}: {ty} = p{i};");
                 }
             }
-            uwrite!(
-                self.src,
-                r"
-                            ::std::boxed::Box::pin(async move {{"
-            );
             let (trait_name, name) = match func.kind {
                 FunctionKind::Freestanding | FunctionKind::AsyncFreestanding => {
                     ("Handler", to_rust_ident(func.item_name()).to_string())
@@ -277,10 +213,16 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve, H: Handler<T::Context> + 
             uwrite!(
                 self.src,
                 r#"
-                                let rx = rx.map({tracing}::Instrument::in_current_span).map({tokio}::spawn);
-                                {tracing}::trace!(instance = "{instance}", func = "{wit_name}", "calling handler");
-                                match {trait_name}::{name}(&handler, cx"#,
-                tokio = self.r#gen.tokio_path(),
+                let rx = async {{
+                    {anyhow}::Context::context(
+                        {tracing}::Instrument::in_current_span(rx).await,
+                        "failed to complete `{fqn}` invocation",
+                    )
+                }};
+                let call = async {{
+                    {tracing}::trace!(instance = "{instance}", func = "{wit_name}", "calling handler");
+                    match {trait_name}::{name}(&handler, cx"#,
+                anyhow = self.r#gen.anyhow_path(),
                 tracing = self.r#gen.tracing_path(),
                 wit_name = func.name,
             );
@@ -291,9 +233,9 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve, H: Handler<T::Context> + 
             uwrite!(
                 self.src,
                 r"
-                                ).await {{
-                                    Ok(results) => {{
-                                        match tx(",
+                    ).await {{
+                        Ok(results) => {{
+                            match tx(",
             );
             if let Some(ty) = &func.result {
                 // wrap single-element results into a tuple for correct indexing
@@ -305,75 +247,32 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve, H: Handler<T::Context> + 
             uwrite!(
                 self.src,
                 r#"
-                                        ).await {{
-                                            Ok(()) => {{
-                                                if let Some(rx) = rx {{
-                                                    {tracing}::trace!(instance = "{instance}", func = "{wit_name}", "receiving async invocation parameters");
-                                                    let rx = {anyhow}::Context::context(
-                                                        rx.await,
-                                                        "`{fqn}` async parameter receipt task failed",
-                                                    )?;
-                                                    {anyhow}::Context::context(
-                                                        rx,
-                                                        "failed to receive `{fqn}` async parameters",
-                                                    )
-                                                }} else {{
-                                                    {anyhow}::Ok(())
-                                                }}
-                                            }},
-                                            Err(err) => {{
-                                                if let Some(rx) = rx {{
-                                                    rx.abort();
-                                                }}
-                                                {anyhow}::bail!(err.context("failed to transmit `{fqn}` invocation results"))
-                                            }},
-                                        }}
-                                    }},
-                                    Err(err) => {{
-                                        if let Some(rx) = rx {{
-                                            rx.abort();
-                                        }}
-                                        {anyhow}::bail!(err.context("failed to serve `{fqn}` invocation"))
-                                    }},
-                                }}
-                            }})
-                            as ::core::pin::Pin<
-                                    ::std::boxed::Box<
-                                        dyn ::core::future::Future<
-                                            Output = {anyhow}::Result<()>
-                                    > + ::core::marker::Send + 'static
-                                >
-                            >
-                        }})
-                    )
-                    as ::core::pin::Pin<
-                        ::std::boxed::Box<
-                            dyn {futures}::Stream<
-                                Item = {anyhow}::Result<
-                                    ::core::pin::Pin<
-                                        ::std::boxed::Box<
-                                            dyn ::core::future::Future<
-                                                Output = {anyhow}::Result<()>
-                                            > + ::core::marker::Send + 'static
-                                        >
-                                    >
-                                >
-                            > + ::core::marker::Send + 'static
-                        >
-                    >
-                )
-            }},"#,
+                            ).await {{
+                                Ok(()) => {anyhow}::Ok(()),
+                                Err(err) => {{
+                                    {anyhow}::bail!(err.context("failed to transmit `{fqn}` invocation results"))
+                                }},
+                            }}
+                        }},
+                        Err(err) => {{
+                            {anyhow}::bail!(err.context("failed to serve `{fqn}` invocation"))
+                        }},
+                    }}
+                }};
+                let (call, rx) = {tokio}::join!(call, rx);
+                call?;
+                rx
+            }}))
+        }}"#,
                 anyhow = self.r#gen.anyhow_path(),
-                futures = self.r#gen.futures_path(),
-                tracing = self.r#gen.tracing_path(),
-                wit_name = func.name,
+                tokio = self.r#gen.tokio_path(),
             );
         }
 
         uwriteln!(
             self.src,
             r#"
-        ])
+        _ => ::core::result::Result::Err((cx, tx, rx, buf)),
     }}
 }}"#,
         );
@@ -600,7 +499,7 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve, H: Handler<T::Context> + 
                 if async_params || async_results {
                     uwrite!(
                         self.src,
-                        ", ::core::option::Option<impl ::core::future::Future<Output = {anyhow}::Result<()>> + ::core::marker::Send + 'static + use<'a, C__>>)",
+                        ", impl ::core::future::Future<Output = {anyhow}::Result<()>> + ::core::marker::Send + 'static + use<'a, C__>)",
                     );
                 }
                 uwrite!(self.src, ">> + Send + 'a");
@@ -617,7 +516,7 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve, H: Handler<T::Context> + 
                 if async_params || async_results {
                     uwrite!(
                         self.src,
-                        "::core::option::Option<impl ::core::future::Future<Output = {anyhow}::Result<()>> + ::core::marker::Send + 'static + use<'a, C__>>",
+                        "impl ::core::future::Future<Output = {anyhow}::Result<()>> + ::core::marker::Send + 'static + use<'a, C__>",
                     );
                 }
                 uwrite!(self.src, ")>> + Send + 'a");
@@ -638,13 +537,22 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve, H: Handler<T::Context> + 
             .result
             .as_ref()
             .map(|ty| self.decoded_value(ty, "wrpc__"));
+        uwrite!(
+            self.src,
+            r#"
+            let (tx__, rx__) = {anyhow}::Context::context(
+                {wrpc_transport}::Connect::connect(wrpc__, cx__).await,
+                "failed to connect",
+            )?;"#,
+            wrpc_transport = self.r#gen.wrpc_transport_path(),
+        );
         if func.result.iter().len() == 0 || (!async_params && !async_results) {
             let decoded = decoded.map_or_else(String::default, |ty| format!(": ({ty},)"));
             uwrite!(
                 self.src,
                 r#"
                 let wrpc__{decoded} = {anyhow}::Context::context(
-                    {wrpc_transport}::InvokeExt::invoke_values_blocking(wrpc__, cx__, "{instance}", "{}", ({params})).await,"#,
+                    {wrpc_transport}::invoke_values_blocking(tx__, rx__, "{instance}", "{}", ({params})).await,"#,
                 rpc_func_name(func),
                 wrpc_transport = self.r#gen.wrpc_transport_path(),
                 params = {
@@ -673,7 +581,7 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve, H: Handler<T::Context> + 
                 self.src,
                 r#"
                 let (wrpc__, io__){decoded} = {anyhow}::Context::context(
-                    {wrpc_transport}::InvokeExt::invoke_values(wrpc__, cx__, "{instance}", "{}", ({params})).await,"#,
+                    {wrpc_transport}::invoke_values(tx__, rx__, "{instance}", "{}", ({params})).await,"#,
                 rpc_func_name(func),
                 wrpc_transport = self.r#gen.wrpc_transport_path(),
                 params = {
@@ -798,7 +706,7 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve, H: Handler<T::Context> + 
         if self.in_import {
             uwrite!(
                 self.src,
-                "<'a, C__: {wrpc_transport}::Invoke>(wrpc__: &'a C__, cx__: C__::Context,",
+                "<'a, C__: {wrpc_transport}::Connect>(wrpc__: &'a C__, cx__: C__::Context,",
                 wrpc_transport = self.r#gen.wrpc_transport_path(),
             );
         } else {
@@ -1523,8 +1431,6 @@ mod {mod_name} {{
                     let name = to_rust_ident(name);
                     uwriteln!(self.src, "{name}: ::core::default::Default::default(),");
                 }
-            } else {
-                uwriteln!(self.src, "_ty: ::core::marker::PhantomData,");
             }
             uwriteln!(
                 self.src,
@@ -1586,8 +1492,6 @@ mod {mod_name} {{
                     self.print_decoded_ty(ty, true);
                     uwriteln!(self.src, ">,");
                 }
-            } else {
-                uwriteln!(self.src, "_ty: ::core::marker::PhantomData<()>,");
             }
             uwriteln!(
                 self.src,
@@ -1604,8 +1508,6 @@ mod {mod_name} {{
                     uwriteln!(self.src, "c_{name}: ::core::default::Default::default(),");
                     uwriteln!(self.src, "v_{name}: ::core::default::Default::default(),");
                 }
-            } else {
-                uwriteln!(self.src, "_ty: ::core::marker::PhantomData,");
             }
             uwriteln!(
                 self.src,
@@ -1614,9 +1516,9 @@ mod {mod_name} {{
     }}
 
     #[automatically_derived]
-    impl {wrpc_transport}::Deferred<{wrpc_transport}::BufferedIncoming> for Decoder
+    impl {wrpc_transport}::Deferred<{wrpc_transport}::frame::Incoming> for Decoder
     {{
-        fn take_deferred(&mut self) -> ::core::option::Option<{wrpc_transport}::DeferredFn<{wrpc_transport}::BufferedIncoming>> {{"
+        fn take_deferred(&mut self) -> ::core::option::Option<{wrpc_transport}::DeferredFn<{wrpc_transport}::frame::Incoming>> {{"
             );
             if !fields.is_empty() {
                 for Field { name, .. } in fields {
@@ -1654,7 +1556,7 @@ mod {mod_name} {{
     }}
 
     #[automatically_derived]
-    impl {tokio_util}::codec::Decoder for Decoder 
+    impl {tokio_util}::codec::Decoder for Decoder
     {{
         type Item = super::{name};
         type Error = ::std::io::Error;
@@ -2261,7 +2163,7 @@ mod {mod_name} {{
     pub enum Decoder
     {{
         Payload(::core::option::Option<PayloadDecoder>),
-        Deferred(::core::option::Option<{wrpc_transport}::DeferredFn<{wrpc_transport}::BufferedIncoming>>)
+        Deferred(::core::option::Option<{wrpc_transport}::DeferredFn<{wrpc_transport}::frame::Incoming>>)
     }}
 
     #[automatically_derived]
@@ -2273,9 +2175,9 @@ mod {mod_name} {{
     }}
 
     #[automatically_derived]
-    impl {wrpc_transport}::Deferred<{wrpc_transport}::BufferedIncoming> for Decoder
+    impl {wrpc_transport}::Deferred<{wrpc_transport}::frame::Incoming> for Decoder
     {{
-        fn take_deferred(&mut self) -> ::core::option::Option<{wrpc_transport}::DeferredFn<{wrpc_transport}::BufferedIncoming>> {{
+        fn take_deferred(&mut self) -> ::core::option::Option<{wrpc_transport}::DeferredFn<{wrpc_transport}::frame::Incoming>> {{
             match self {{
                 Self::Payload(None) => None,"#
                 );
@@ -2307,7 +2209,7 @@ mod {mod_name} {{
     }}
 
     #[automatically_derived]
-    impl {tokio_util}::codec::Decoder for Decoder 
+    impl {tokio_util}::codec::Decoder for Decoder
     {{
         type Item = super::{name};
         type Error = ::std::io::Error;
@@ -2376,7 +2278,7 @@ mod {mod_name} {{
                             let Some(payload) = dec.decode(src)? else {{
                                 return Ok(None)
                             }};
-                            *self = Self::Deferred({wrpc_transport}::Deferred::<{wrpc_transport}::BufferedIncoming>::take_deferred(dec));
+                            *self = Self::Deferred({wrpc_transport}::Deferred::<{wrpc_transport}::frame::Incoming>::take_deferred(dec));
                             Ok(Some(super::{name}::{case}({payload})))
                         }},"
                         );

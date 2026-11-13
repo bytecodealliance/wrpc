@@ -1,5 +1,5 @@
 use ::wit_bindgen_wrpc::bytes::Bytes;
-use ::wit_bindgen_wrpc::wrpc_transport::{Invoke, ResourceBorrow, ResourceOwn};
+use ::wit_bindgen_wrpc::wrpc_transport::{Connect, ResourceBorrow, ResourceOwn};
 
 use crate::server::exports::test::resource_import_and_export::test::{
     Handler as HandlerTest, HandlerThing, Thing as ExportThing,
@@ -8,7 +8,7 @@ use crate::server::exports::test::resource_import_and_export::test::{
 #[derive(Clone)]
 pub struct Component;
 
-impl<C: Invoke<Context = ()>> Handler<C> for Component {
+impl<C: Connect<Context = ()>> Handler<C> for Component {
     async fn toplevel_export(
         &self,
         cx: C,
@@ -18,9 +18,9 @@ impl<C: Invoke<Context = ()>> Handler<C> for Component {
     }
 }
 
-impl<C: Invoke<Context = ()>> HandlerTest<C> for Component {}
+impl<C: Connect<Context = ()>> HandlerTest<C> for Component {}
 
-impl<C: Invoke<Context = ()>> HandlerThing<C> for Component {
+impl<C: Connect<Context = ()>> HandlerThing<C> for Component {
     async fn new(
         &self,
         cx: C,

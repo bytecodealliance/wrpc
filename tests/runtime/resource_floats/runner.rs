@@ -1,7 +1,7 @@
 use crate::client::exports::Float as Float2;
 
 pub async fn run(
-    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,
+    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Connect<Context = ()>,
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
     let a = Float::new(wrpc, (), 42.0).await?;
     let b = Float::new(wrpc, (), 55.0).await?;
