@@ -2,22 +2,27 @@ use core::net::SocketAddr;
 use core::pin::pin;
 
 use anyhow::{Context as _, bail};
+use bytes::BytesMut;
 use futures::future::BoxFuture;
 use futures::stream::BoxStream;
 use futures::{Stream, StreamExt as _, TryStreamExt as _, stream};
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _, BufReader};
 use tokio::net::TcpStream;
-use tokio::sync::oneshot;
+use tokio::sync::{mpsc, oneshot};
 use tokio::task::yield_now;
 use tokio::{join, spawn, try_join};
+use tokio_util::codec::Decoder as _;
 use tracing::Instrument as _;
-use wasmtime::component::{Component, Instance, Linker, ResourceTable, types};
+use wasmtime::AsContextMut as _;
+use wasmtime::component::{Component, Instance, Linker, ResourceTable, Type, Val, types};
 use wrpc_transport::frame::{ReadHalf, WriteHalf, tcp};
 use wrpc_transport::{Invoke as _, InvokeExt as _, Server};
 use wrpc_wasmtime::{
-    ResourceTypes, ServeExt as _, SharedResourceTable, SharedStore, WrpcCtxView, WrpcView,
+    ResourceTypes, ServeExt as _, SharedResourceTable, SharedStore, ValDecoder, WrpcCtxView,
+    WrpcView,
 };
 
+#[derive(Default)]
 struct Ctx {
     table: ResourceTable,
     shared_resources: SharedResourceTable,
@@ -45,13 +50,7 @@ async fn with_store(
     wrpc_test::serve_tcp(async |clt, srv| {
         let engine = wasmtime::Engine::default();
         let component = Component::new(&engine, wat).map_err(anyhow::Error::from)?;
-        let mut store = wasmtime::Store::new(
-            &engine,
-            Ctx {
-                table: ResourceTable::default(),
-                shared_resources: SharedResourceTable::default(),
-            },
-        );
+        let mut store = wasmtime::Store::new(&engine, Ctx::default());
         let instance = Linker::new(&engine)
             .instantiate_async(&mut store, &component)
             .await
@@ -447,4 +446,19 @@ async fn params_byte_by_byte() -> anyhow::Result<()> {
         },
     )
     .await
+}
+
+#[test]
+fn decode_clean_eof() -> anyhow::Result<()> {
+    let mut store = wasmtime::Store::new(&wasmtime::Engine::default(), Ctx::default());
+    let tys = [Type::String];
+    let resources = ResourceTypes::default();
+    let (tx, _rx) = mpsc::channel(1);
+    let mut dec = ValDecoder::new(store.as_context_mut(), &tys, &resources, tx);
+    let mut buf = BytesMut::from(&b"\x03foo"[..]);
+    let v = dec.decode(&mut buf)?;
+    assert_eq!(v, Some(vec![Val::String("foo".into())]));
+    let v = dec.decode_eof(&mut buf)?;
+    assert_eq!(v, None);
+    Ok(())
 }

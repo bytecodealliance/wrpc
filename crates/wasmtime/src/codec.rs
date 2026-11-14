@@ -1290,6 +1290,7 @@ where
 
     fn decode(&mut self, src: &mut BytesMut) -> std::io::Result<Option<Vec<Val>>> {
         let tys = self.tys;
+        let n = self.state.is_none().then_some(src.len());
         let mut state = self.state.take();
         let mut path = Vec::default();
         let vs = self
@@ -1302,7 +1303,9 @@ where
                         .context(format!("failed to decode value at path {path:?}")),
                 )
             })?;
-        self.state = state;
+        if n != Some(src.len()) {
+            self.state = state;
+        }
         Ok(vs)
     }
 
