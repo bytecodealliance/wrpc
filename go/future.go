@@ -64,16 +64,22 @@ func ReadFuture[T any](r IndexReadCloser, f func(IndexReadCloser, ...uint32) (T,
 		if err != nil {
 			return fmt.Errorf("failed to read pending future: %w", err)
 		}
-		if r.Buffered() > 0 {
-			return errors.New("received data after pending future value end")
-		}
 		ch <- v
 		close(ch)
-		if deferred != nil {
-			return deferred(ctx)
-		}
-		return nil
+		return JoinDeferred(func(context.Context) error { return readFutureEnd(r) }, deferred)(ctx)
 	}, nil
+}
+
+// readFutureEnd reads the end of the path of a pending `future` from `r`, failing on any data left
+func readFutureEnd(r ByteReader) error {
+	switch _, err := r.ReadByte(); err {
+	case nil:
+		return errors.New("received data after pending future value end")
+	case io.EOF:
+		return nil
+	default:
+		return fmt.Errorf("failed to wait for `future` path to close: %w", err)
+	}
 }
 
 // WriteFuture writes a `future` received from `v` to `w` using `f` to write its value
@@ -105,6 +111,9 @@ func WriteFuture[T any](v <-chan T, w ByteWriter, f func(T, ByteWriter) (func(co
 		}
 		if err := w.WriteBytes(buf.Bytes()); err != nil {
 			return fmt.Errorf("failed to write pending future value: %w", err)
+		}
+		if err := w.ClosePath(); err != nil {
+			return fmt.Errorf("failed to close pending future path: %w", err)
 		}
 		if write != nil {
 			return IndexWrite(write, 0)(ctx, w)
@@ -140,16 +149,12 @@ func ReadFutureUnit(r IndexReadCloser, path ...uint32) (<-chan struct{}, func(co
 		if len(path) > 0 {
 			defer closeNested(r)
 		}
-		switch _, err := r.ReadByte(); err {
-		case nil:
-			return errors.New("received data for a `future` without a payload")
-		case io.EOF:
-			ch <- struct{}{}
-			close(ch)
-			return nil
-		default:
-			return fmt.Errorf("failed to wait for `future` path to close: %w", err)
+		if err := readFutureEnd(r); err != nil {
+			return err
 		}
+		ch <- struct{}{}
+		close(ch)
+		return nil
 	}, nil
 }
 

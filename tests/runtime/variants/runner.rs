@@ -1,7 +1,7 @@
 use crate::client::test::variants::to_test::*;
 
 pub async fn run(
-    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,
+    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Connect<Context = ()>,
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
     assert_eq!(roundtrip_option(wrpc, (), Some(1.0)).await?, Some(1));
     assert_eq!(roundtrip_option(wrpc, (), None).await?, None);

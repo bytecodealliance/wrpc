@@ -1,229 +1,80 @@
 //! wRPC transport server handle
 
-use core::mem;
-use core::pin::Pin;
-
-use std::sync::Arc;
-
 use anyhow::Context as _;
 use bytes::BytesMut;
-use futures::{FutureExt as _, Stream, TryStreamExt as _};
-use tokio_util::codec::{Decoder as _, Encoder as _, FramedRead};
-use tracing::{Instrument as _, Span, debug, instrument, trace};
+use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::try_join;
+use tokio_util::codec::Decoder;
+use tracing::{Instrument as _, debug, trace};
 
 use crate::frame::{Incoming, Outgoing};
-use crate::{BufferedIncoming, Deferred as _, Paths as _, TupleDecode, TupleEncode};
+use crate::mux::{egress, ingress};
+use crate::{Deferred, Paths};
 
-/// Server-side handle to a wRPC transport
+/// Serves an invocation, whose header was read by [`Header::read`](crate::Header::read), over
+/// the byte streams `tx` and `rx`, decoding the parameters using `dec`
 ///
-/// Invocations are always multiplexed over the wRPC framing layer, so the outgoing and
-/// incoming byte streams are the framed [`Outgoing`] and [`Incoming`] streams regardless of
-/// the underlying transport.
-pub trait Serve: Sync {
-    /// Transport-specific invocation context
-    type Context: Send + Sync + 'static;
-
-    /// Serve function `func` from instance `instance`
-    fn serve(
-        &self,
-        instance: &str,
-        func: &str,
-        paths: Arc<[Box<[Option<usize>]>]>,
-    ) -> impl Future<
-        Output = anyhow::Result<
-            impl Stream<Item = anyhow::Result<(Self::Context, Outgoing, Incoming)>>
-            + Send
-            + 'static
-            + use<Self>,
-        >,
-    > + Send;
-}
-
-/// Extension trait for [Serve]
-pub trait ServeExt: Serve {
-    /// Serve function `func` from instance `instance` using typed `Params` and `Results`
-    #[instrument(level = "trace", skip(self))]
-    fn serve_values<Params, Results>(
-        &self,
-        instance: &str,
-        func: &str,
-    ) -> impl Future<
-        Output = anyhow::Result<
-            impl Stream<
-                Item = anyhow::Result<(
-                    Self::Context,
-                    Params,
-                    Option<
-                        impl Future<Output = std::io::Result<()>>
-                        + Send
-                        + Unpin
-                        + 'static
-                        + use<Self, Params, Results>,
-                    >,
-                    impl FnOnce(
-                        Results,
-                    )
-                        -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + 'static>>
-                    + Send
-                    + 'static
-                    + use<Self, Params, Results>,
-                )>,
-            >
-            + Send
-            + 'static
-            + use<Self, Params, Results>,
-        >,
-    > + Send
-    where
-        Params: TupleDecode + Send + 'static,
-        Results: TupleEncode + Send + 'static,
-        <Params::Decoder as tokio_util::codec::Decoder>::Error:
-            core::error::Error + Send + Sync + 'static,
-        <Results::Encoder as tokio_util::codec::Encoder<Results>>::Error:
-            core::error::Error + Send + Sync + 'static,
-    {
-        let span = Span::current();
-        async {
-            let paths = Params::Decoder::default().paths();
-            let invocations = self.serve(instance, func, Arc::from(paths)).await?;
-            Ok(invocations.and_then(move |(cx, mut outgoing, incoming)| {
-                async {
-                    let mut dec = FramedRead::new(incoming, Params::Decoder::default());
-                    debug!("receiving sync parameters");
-                    let params = match dec
-                        .decoder_mut()
-                        .decode(&mut BytesMut::default())
-                        .context("failed to decode sync parameters")?
-                    {
-                        Some(params) => params,
-                        None => {
-                            let params = dec
-                                .try_next()
-                                .await
-                                .context("failed to receive sync parameters")?;
-                            params.context("incomplete sync parameters")?
-                        }
-                    };
-                    trace!("received sync parameters");
-                    let rx = dec.decoder_mut().take_deferred();
-                    let incoming = BufferedIncoming {
-                        buffer: mem::take(dec.read_buffer_mut()),
-                        inner: dec.into_inner(),
-                    };
+/// Returns a future receiving the parameters, which resolves to the synchronous parameters and
+/// a future, which receives the asynchronous parameters and resolves once the invocation ends,
+/// and the [Outgoing] handle the results are sent on using [`Outgoing::send`]. Nothing is
+/// received unless it is polled.
+pub fn serve<D>(
+    tx: impl AsyncWrite + Send + Unpin + 'static,
+    rx: impl AsyncRead + Send + Unpin + 'static,
+    mut dec: D,
+) -> (
+    impl Future<
+        Output = anyhow::Result<(
+            D::Item,
+            impl Future<Output = anyhow::Result<()>> + Send + 'static,
+        )>,
+    > + Send,
+    Outgoing,
+)
+where
+    D: Decoder + Deferred<Incoming> + Paths + Send,
+    D::Item: Send,
+    D::Error: core::error::Error + Send + Sync + 'static,
+{
+    let mut incoming = ingress(rx, dec.paths());
+    (
+        async move {
+            debug!("receiving sync parameters");
+            let params = incoming
+                .decode(&mut dec)
+                .await
+                .context("failed to receive sync parameters")?;
+            let params = params.context("incomplete sync parameters")?;
+            trace!("received sync parameters");
+            let rx = dec.take_deferred();
+            Ok((
+                params,
+                async move {
+                    let closed = incoming.closed();
                     let rx = rx.map(|rx| rx(&incoming, &[])).transpose();
                     let rx = rx.context("failed to index async parameters")?;
-                    let rx = rx.map(|rx| {
-                        rx.map(move |res| {
-                            drop(incoming);
-                            res
-                        })
-                    });
-                    let span = Span::current();
-                    Ok((cx, params, rx, move |results| {
-                        Box::pin(
-                            async move {
-                                let mut enc = Results::Encoder::default();
-                                let mut buf = BytesMut::default();
-                                enc.encode(results, &mut buf)
-                                    .context("failed to encode synchronous results")?;
-                                debug!("transmitting sync results");
-                                outgoing
-                                    .write_bytes(buf.freeze())
-                                    .await
-                                    .context("failed to transmit synchronous results")?;
-                                let tx =
-                                    enc.take_deferred().map(|tx| tx(&outgoing, &[])).transpose();
-                                let tx = tx.context("failed to index async results")?;
-                                drop(outgoing);
-                                if let Some(tx) = tx {
-                                    debug!("transmitting async results");
-                                    tx.await.context("failed to write async results")?;
-                                }
-                                Ok(())
+                    try_join!(
+                        async {
+                            if let Some(rx) = rx {
+                                debug!("receiving async parameters");
+                                rx.await.context("failed to receive async parameters")?;
                             }
-                            .instrument(span),
-                        ) as Pin<_>
-                    }))
+                            Ok(())
+                        },
+                        async {
+                            incoming
+                                .read_end()
+                                .await
+                                .context("failed to receive sync parameters")
+                        },
+                    )?;
+                    drop(incoming);
+                    closed.await.context("failed to receive parameters")
                 }
-                .instrument(span.clone())
-            }))
+                .in_current_span(),
+            ))
         }
-    }
-}
-
-impl<T: Serve> ServeExt for T {}
-
-#[allow(dead_code)]
-#[cfg(test)]
-mod tests {
-    use bytes::Bytes;
-    use futures::{StreamExt as _, stream};
-
-    use super::*;
-
-    async fn call_serve<T: Serve>(s: &T) -> anyhow::Result<Vec<(T::Context, Outgoing, Incoming)>> {
-        let st = stream::empty()
-            .chain({
-                s.serve(
-                    "foo",
-                    "bar",
-                    Arc::from([Box::from([Some(42), None]), Box::from([None])]),
-                )
-                .await
-                .unwrap()
-            })
-            .chain({
-                s.serve(
-                    "foo",
-                    "bar",
-                    Arc::from([Box::from([Some(42), None]), Box::from([None])]),
-                )
-                .await
-                .unwrap()
-            })
-            .chain({
-                s.serve(
-                    "foo",
-                    "bar",
-                    Arc::from([Box::from([Some(42), None]), Box::from([None])]),
-                )
-                .await
-                .unwrap()
-            });
-        tokio::spawn(async move { st.try_collect().await })
-            .await
-            .unwrap()
-    }
-
-    fn serve_lifetime<T: Serve>(
-        s: &T,
-    ) -> impl Future<
-        Output = anyhow::Result<Pin<Box<dyn Stream<Item = anyhow::Result<T::Context>> + 'static>>>,
-    > {
-        let fut = s.serve(
-            "foo",
-            "bar",
-            Arc::from([Box::from([Some(42), None]), Box::from([None])]),
-        );
-        async move {
-            let st = fut.await.unwrap();
-            Ok(Box::pin(st.and_then(|(cx, _, _)| async { Ok(cx) }))
-                as Pin<Box<dyn Stream<Item = _>>>)
-        }
-    }
-
-    fn serve_values_lifetime<T: Serve>(
-        s: &T,
-    ) -> impl Future<
-        Output = anyhow::Result<Pin<Box<dyn Stream<Item = anyhow::Result<T::Context>> + 'static>>>,
-    > {
-        let fut = s.serve_values::<(Bytes,), (Bytes,)>("foo", "bar");
-        async move {
-            let st = fut.await.unwrap();
-            Ok(Box::pin(st.and_then(|(cx, _, _, tx)| async {
-                tx((Bytes::from("test"),)).await.unwrap();
-                Ok(cx)
-            })) as Pin<Box<dyn Stream<Item = _>>>)
-        }
-    }
+        .in_current_span(),
+        egress(tx, BytesMut::default()),
+    )
 }

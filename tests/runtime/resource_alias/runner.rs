@@ -2,7 +2,7 @@ use crate::client::test::resource_alias::e1::{a as a1, Foo as Foo1, X};
 use crate::client::test::resource_alias::e2::{a as a2, Foo as Foo2};
 
 pub async fn run(
-    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,
+    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Connect<Context = ()>,
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
     let x = X::new(wrpc, (), 42).await?;
     a1(wrpc, (), &Foo1 { x }).await?;

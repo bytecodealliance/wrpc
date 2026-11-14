@@ -1,16 +1,13 @@
-//! wRPC transport stream framing
+//! [Connect] implementation in terms of a single stream pair
 
-use tokio::io::{
-    AsyncRead, AsyncWrite, BufReader, DuplexStream, ReadHalf, WriteHalf, duplex, split,
-};
+use tokio::io::{AsyncRead, AsyncWrite, DuplexStream, ReadHalf, WriteHalf, duplex, split};
 use tracing::instrument;
 
-use crate::Invoke;
-use crate::frame::{Incoming, Outgoing, invoke};
+use crate::Connect;
 
-/// [Invoke] implementation in terms of a single stream pair.
+/// [Connect] implementation in terms of a single stream pair.
 ///
-/// [`Invoke::invoke`] can only be called at most once on [Oneshot],
+/// [`Connect::connect`] can only be called at most once on [Oneshot],
 /// repeated calls will return an error.
 #[derive(Debug)]
 pub struct Oneshot<I, O>(std::sync::Mutex<Option<(I, O)>>);
@@ -52,49 +49,25 @@ impl<I, O> Oneshot<I, O> {
     }
 }
 
-impl<I, O> Invoke for Oneshot<I, O>
+impl<I, O> Connect for Oneshot<I, O>
 where
     I: AsyncRead + Send + Unpin + 'static,
     O: AsyncWrite + Send + Unpin + 'static,
 {
     type Context = ();
+    type Outgoing = O;
+    type Incoming = I;
+    type Error = std::io::Error;
 
-    async fn invoke<P>(
-        &self,
-        cx: Self::Context,
-        instance: &str,
-        func: &str,
-        paths: impl AsRef<[P]> + Send,
-    ) -> anyhow::Result<(Outgoing, Incoming)>
-    where
-        P: AsRef<[Option<usize>]> + Send + Sync,
-    {
-        (&self).invoke(cx, instance, func, paths).await
-    }
-}
-
-impl<I, O> Invoke for &Oneshot<I, O>
-where
-    I: AsyncRead + Send + Unpin + 'static,
-    O: AsyncWrite + Send + Unpin + 'static,
-{
-    type Context = ();
-
-    #[instrument(level = "trace", skip(self, paths))]
-    fn invoke<P>(
+    #[instrument(level = "trace", skip(self))]
+    fn connect(
         &self,
         (): Self::Context,
-        instance: &str,
-        func: &str,
-        paths: impl AsRef<[P]> + Send,
-    ) -> impl Future<Output = anyhow::Result<(Outgoing, Incoming)>>
-    where
-        P: AsRef<[Option<usize>]> + Send + Sync,
-    {
+    ) -> impl Future<Output = std::io::Result<(Self::Outgoing, Self::Incoming)>> {
         let stream = self.try_take_inner();
         async move {
             let (rx, tx) = stream?;
-            invoke(tx, BufReader::new(rx), instance, func, paths).await
+            Ok((tx, rx))
         }
     }
 }

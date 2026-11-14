@@ -3,32 +3,34 @@
 use core::pin::Pin;
 use core::task::{Context, Poll, ready};
 
-use anyhow::Context as _;
-use quinn::{Connection, VarInt};
-use tokio::io::{AsyncBufRead, AsyncRead, AsyncWrite, BufReader, ReadBuf};
-use wrpc_transport::Invoke;
-use wrpc_transport::frame::{Incoming, Outgoing, invoke};
+use futures::{Stream, stream};
+use quinn::VarInt;
+use tokio::io::{AsyncRead, AsyncWrite, BufReader, ReadBuf};
+use wrpc_transport::Connect;
 
-const DONE: VarInt = VarInt::from_u32(0);
+/// Error code of a stream, which was stopped or reset, because the invocation failed
+const FAILED: VarInt = VarInt::from_u32(1);
 
-const ABORTED: VarInt = VarInt::from_u32(1);
-
-/// QUIC server
-pub type Server = wrpc_transport::Server<(), RecvStream, SendStream>;
-
-/// Buffered receive side of a QUIC stream, which stops the stream with application error code
-/// `0` once dropped, signaling the peer that it is done receiving data
-pub struct RecvStream(BufReader<quinn::RecvStream>);
+/// [`quinn::RecvStream`], which is stopped once dropped before reaching the end of the stream,
+/// since that fails the invocation
+#[derive(Debug)]
+pub struct RecvStream {
+    stream: quinn::RecvStream,
+    /// Whether the end of the stream was reached
+    eof: bool,
+}
 
 impl From<quinn::RecvStream> for RecvStream {
-    fn from(rx: quinn::RecvStream) -> Self {
-        Self(BufReader::new(rx))
+    fn from(stream: quinn::RecvStream) -> Self {
+        Self { stream, eof: false }
     }
 }
 
 impl Drop for RecvStream {
     fn drop(&mut self) {
-        _ = self.0.get_mut().stop(DONE);
+        if !self.eof {
+            _ = self.stream.stop(FAILED);
+        }
     }
 }
 
@@ -38,41 +40,41 @@ impl AsyncRead for RecvStream {
         cx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<std::io::Result<()>> {
-        Pin::new(&mut self.get_mut().0).poll_read(cx, buf)
+        if buf.remaining() == 0 {
+            return Poll::Ready(Ok(()));
+        }
+        let this = self.get_mut();
+        let n = buf.filled().len();
+        ready!(Pin::new(&mut this.stream).poll_read(cx, buf))?;
+        if buf.filled().len() == n {
+            this.eof = true;
+        }
+        Poll::Ready(Ok(()))
     }
 }
 
-impl AsyncBufRead for RecvStream {
-    fn poll_fill_buf(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<&[u8]>> {
-        Pin::new(&mut self.get_mut().0).poll_fill_buf(cx)
-    }
-
-    fn consume(self: Pin<&mut Self>, amt: usize) {
-        Pin::new(&mut self.get_mut().0).consume(amt);
-    }
-}
-
-/// Send side of a QUIC stream, which is reset with application error code `1` once
-/// dropped before being shut down
+/// [`quinn::SendStream`], which is reset once dropped before being shut down, since that fails
+/// the invocation
 #[derive(Debug)]
 pub struct SendStream {
-    inner: quinn::SendStream,
-    shutdown: bool,
+    stream: quinn::SendStream,
+    /// Whether the stream was shut down
+    finished: bool,
 }
 
 impl From<quinn::SendStream> for SendStream {
-    fn from(inner: quinn::SendStream) -> Self {
+    fn from(stream: quinn::SendStream) -> Self {
         Self {
-            inner,
-            shutdown: false,
+            stream,
+            finished: false,
         }
     }
 }
 
 impl Drop for SendStream {
     fn drop(&mut self) {
-        if !self.shutdown {
-            _ = self.inner.reset(ABORTED);
+        if !self.finished {
+            _ = self.stream.reset(FAILED);
         }
     }
 }
@@ -83,73 +85,60 @@ impl AsyncWrite for SendStream {
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<std::io::Result<usize>> {
-        AsyncWrite::poll_write(Pin::new(&mut self.get_mut().inner), cx, buf)
+        AsyncWrite::poll_write(Pin::new(&mut self.get_mut().stream), cx, buf)
     }
 
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        AsyncWrite::poll_flush(Pin::new(&mut self.get_mut().inner), cx)
+        Pin::new(&mut self.get_mut().stream).poll_flush(cx)
     }
 
     fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
         let this = self.get_mut();
-        ready!(AsyncWrite::poll_shutdown(Pin::new(&mut this.inner), cx))?;
-        this.shutdown = true;
+        ready!(Pin::new(&mut this.stream).poll_shutdown(cx))?;
+        this.finished = true;
         Poll::Ready(Ok(()))
     }
 }
 
-/// QUIC wRPC client
+/// QUIC connection, which invokes over the bidirectional streams it opens and accepts
+/// invocations over the bidirectional streams the peer opens
 #[derive(Clone, Debug)]
-pub struct Client(Connection);
+pub struct Connection(quinn::Connection);
 
-impl From<Connection> for Client {
-    fn from(conn: Connection) -> Self {
+impl From<quinn::Connection> for Connection {
+    fn from(conn: quinn::Connection) -> Self {
         Self(conn)
     }
 }
 
-impl Invoke for &Client {
+impl Connect for Connection {
     type Context = ();
+    type Outgoing = SendStream;
+    type Incoming = BufReader<RecvStream>;
+    type Error = quinn::ConnectionError;
 
-    async fn invoke<P>(
+    async fn connect(
         &self,
         (): Self::Context,
-        instance: &str,
-        func: &str,
-        paths: impl AsRef<[P]> + Send,
-    ) -> anyhow::Result<(Outgoing, Incoming)>
-    where
-        P: AsRef<[Option<usize>]> + Send + Sync,
-    {
-        let (tx, rx) = self
-            .0
-            .open_bi()
-            .await
-            .context("failed to open parameter stream")?;
-        invoke(
-            SendStream::from(tx),
-            RecvStream::from(rx),
-            instance,
-            func,
-            paths,
-        )
-        .await
+    ) -> Result<(Self::Outgoing, Self::Incoming), Self::Error> {
+        let (tx, rx) = self.0.open_bi().await?;
+        Ok((tx.into(), BufReader::new(rx.into())))
     }
 }
 
-impl Invoke for Client {
-    type Context = ();
-
-    async fn invoke<P>(
+impl Connection {
+    /// Returns the stream of invocations accepted over the bidirectional streams the peer opens,
+    /// which keeps a handle to the connection and ends after the first error
+    pub fn incoming(
         &self,
-        (): Self::Context,
-        instance: &str,
-        func: &str,
-        paths: impl AsRef<[P]> + Send,
-    ) -> anyhow::Result<(Outgoing, Incoming)>
-    where
-        P: AsRef<[Option<usize>]> + Send + Sync,
-    {
-        (&self).invoke((), instance, func, paths).await
+    ) -> impl Stream<Item = Result<((), SendStream, BufReader<RecvStream>), quinn::ConnectionError>>
+    + use<> {
+        stream::unfold(Some(self.0.clone()), |conn| async move {
+            let conn = conn?;
+            match conn.accept_bi().await {
+                Ok((tx, rx)) => Some((Ok(((), tx.into(), BufReader::new(rx.into()))), Some(conn))),
+                Err(err) => Some((Err(err), None)),
+            }
+        })
     }
 }

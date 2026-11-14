@@ -1,4 +1,4 @@
-use ::wit_bindgen_wrpc::wrpc_transport::Invoke;
+use ::wit_bindgen_wrpc::wrpc_transport::Connect;
 
 use crate::server::exports::test::results::test as test_exports;
 use crate::server::test::results::test as test_imports;
@@ -6,7 +6,7 @@ use crate::server::test::results::test as test_imports;
 #[derive(Clone)]
 pub struct Component;
 
-impl<C: Invoke<Context = ()>> test_exports::Handler<C> for Component {
+impl<C: Connect<Context = ()>> test_exports::Handler<C> for Component {
     async fn string_error(
         &self,
         cx: C,

@@ -3,7 +3,7 @@ use crate::client::test::resource_alias_redux::resource_alias2 as a2;
 use crate::client::the_test::test;
 
 pub async fn run(
-    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,
+    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Connect<Context = ()>,
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
     let thing1 = a1::Thing::new(wrpc, (), "Ni Hao").await?;
     let result = test(wrpc, (), &[thing1]).await?;

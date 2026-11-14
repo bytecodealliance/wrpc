@@ -153,10 +153,12 @@ func invokeTruncatedStream(t *testing.T, ctx context.Context, client wrpc.Invoke
 	t.Cleanup(func() { r.Close() })
 	_, err = w.Write([]byte{0x03, 'b', 'a', 'r', 0x00})
 	require.NoError(t, err)
+	require.NoError(t, w.ClosePath())
 	sw, err := w.Index(1)
 	require.NoError(t, err)
 	_, err = sw.Write([]byte{0x02, 'a', 'b', 0x04, 'c'})
 	require.NoError(t, err)
+	require.NoError(t, sw.ClosePath())
 	require.NoError(t, sw.Close())
 	require.NoError(t, w.Close())
 	return r

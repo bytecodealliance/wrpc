@@ -1,18 +1,21 @@
 use core::future::poll_fn;
-use core::pin::{Pin, pin};
+use core::pin::Pin;
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::{Context as _, anyhow};
+use futures::StreamExt as _;
 use futures::stream::FuturesUnordered;
-use futures::{Stream, StreamExt as _, TryStreamExt as _};
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::select;
 use tokio::sync::{mpsc, oneshot};
-use tracing::{Instrument as _, Span, debug, instrument};
-use wasmtime::component::types;
-use wasmtime::component::{Accessor, ComponentExportIndex, Instance, InstancePre};
+use tracing::{Instrument as _, Span, debug, warn};
+use wasmtime::component::{
+    Accessor, Component, ComponentExportIndex, Instance, InstancePre, Type, types,
+};
 
-use crate::{CallError, ResourceTypes, WrpcView, call, rpc_func_name};
+use crate::{ResourceTypes, WrpcView, call, rpc_func_name};
 
 type Task<T> = Box<
     dyn for<'a> FnOnce(&'a Accessor<T>) -> Pin<Box<dyn Future<Output = ()> + Send + 'a>> + Send,
@@ -102,203 +105,251 @@ impl<T: Send + 'static> SharedStore<T> {
     }
 }
 
-pub trait ServeExt: wrpc_transport::Serve {
-    /// Serve [`types::ComponentFunc`] from an [`InstancePre`] instantiating it on each call.
-    /// This serving method does not support guest-exported resources.
-    #[instrument(level = "trace", skip(self, store, instance_pre))]
-    fn serve_function<T>(
-        &self,
-        store: impl Fn() -> wasmtime::Store<T> + Send + 'static,
-        instance_pre: InstancePre<T>,
-        ty: types::ComponentFunc,
-        instance_name: &str,
-        name: &str,
-    ) -> impl Future<
-        Output = anyhow::Result<
-            impl Stream<
-                Item = anyhow::Result<(
-                    Self::Context,
-                    Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + 'static>>,
-                )>,
-            > + Send
-            + 'static,
-        >,
-    > + Send
-    where
-        T: WrpcView + 'static,
-    {
-        let span = Span::current();
-        async move {
-            debug!(instance = instance_name, name, "serving function export");
-            let component_ty = instance_pre.component();
-            let idx = if instance_name.is_empty() {
-                None
-            } else {
-                let idx = component_ty
-                    .get_export_index(None, instance_name)
-                    .with_context(|| format!("export `{instance_name}` not found"))?;
-                Some(idx)
-            };
-            let idx = component_ty
-                .get_export_index(idx.as_ref(), name)
-                .with_context(|| format!("export `{name}` not found"))?;
+struct Export {
+    idx: ComponentExportIndex,
+    params: Box<[Type]>,
+    results: Box<[Type]>,
+}
 
-            let params_ty: Arc<[_]> = ty.params().map(|(_, ty)| ty).collect();
-            let resources = ResourceTypes {
-                #[cfg(feature = "wasmtime-wasi")]
-                io_streams: crate::paths::wasi_io_stream_resources(
-                    component_ty.engine(),
-                    &component_ty.component_type(),
-                )
-                .into(),
-                ..ResourceTypes::default()
-            };
-            let paths = crate::paths::params_async_paths(params_ty.iter(), &resources);
-            let invocations = self
-                .serve(instance_name, rpc_func_name(name), paths)
-                .await?;
-            let name = Arc::<str>::from(name);
-            let results_ty: Arc<[_]> = ty.results().collect();
-            Ok(invocations.map_ok(move |(cx, tx, rx)| {
-                let instance_pre = instance_pre.clone();
-                let name = Arc::clone(&name);
-                let params_ty = Arc::clone(&params_ty);
-                let results_ty = Arc::clone(&results_ty);
-                let resources = resources.clone();
+type Exports = HashMap<Box<str>, HashMap<Box<str>, Arc<Export>>>;
 
-                let mut store = store();
-                (
-                    cx,
-                    Box::pin(
-                        async move {
-                            let instance = instance_pre
-                                .instantiate_async(&mut store)
-                                .await
-                                .map_err(anyhow::Error::from)
-                                .context("failed to instantiate component")?;
-                            let func = instance
-                                .get_func(&mut store, idx)
-                                .with_context(|| format!("function export `{name}` not found"))?;
-                            let io = store
-                                .run_concurrent(async |store| {
-                                    let io = call(
-                                        store,
-                                        rx,
-                                        tx,
-                                        &resources,
-                                        &params_ty,
-                                        &results_ty,
-                                        func,
-                                    )
-                                    .await?;
-                                    let mut io = Box::pin(io);
-                                    let mut done =
-                                        pin!(poll_fn(|cx| store.poll_no_interesting_tasks(cx)));
-                                    select! {
-                                        res = &mut io => {
-                                            res?;
-                                            done.await;
-                                            Ok::<_, CallError>(None)
-                                        }
-                                        () = &mut done => Ok(Some(io)),
-                                    }
-                                })
-                                .await
-                                .map_err(anyhow::Error::from)
-                                .context("failed to run concurrent event loop")??;
-                            drop(store);
-                            if let Some(io) = io {
-                                io.await?;
-                            }
-                            Ok(())
+fn exports(component: &Component) -> anyhow::Result<Exports> {
+    let engine = component.engine();
+    let mut exports = Exports::default();
+    let mut insert = |instance: &str,
+                      instance_idx: Option<&ComponentExportIndex>,
+                      name: &str,
+                      ty: types::ComponentFunc|
+     -> anyhow::Result<()> {
+        let idx = component
+            .get_export_index(instance_idx, name)
+            .with_context(|| format!("export `{name}` not found"))?;
+        let params: Box<[_]> = ty.params().map(|(.., ty)| ty).collect();
+        debug!(instance, name, "serving function export");
+        exports.entry(instance.into()).or_default().insert(
+            rpc_func_name(name).into(),
+            Arc::new(Export {
+                idx,
+                params,
+                results: ty.results().collect(),
+            }),
+        );
+        Ok(())
+    };
+    for (name, types::ComponentExtern { ty, .. }) in component.component_type().exports(engine) {
+        match ty {
+            types::ComponentItem::ComponentFunc(ty) => insert("", None, name, ty)?,
+            types::ComponentItem::ComponentInstance(ty) => {
+                let idx = component
+                    .get_export_index(None, name)
+                    .with_context(|| format!("export `{name}` not found"))?;
+                for (func, types::ComponentExtern { ty, .. }) in ty.exports(engine) {
+                    match ty {
+                        types::ComponentItem::ComponentFunc(ty) => {
+                            insert(name, Some(&idx), func, ty)?;
                         }
-                        .instrument(span.clone()),
-                    ) as Pin<Box<dyn Future<Output = _> + Send + 'static>>,
-                )
-            }))
+                        types::ComponentItem::Type(..) | types::ComponentItem::Resource(..) => {}
+                        _ => warn!(instance = name, name = func, "export kind not supported"),
+                    }
+                }
+            }
+            types::ComponentItem::Type(..) | types::ComponentItem::Resource(..) => {}
+            _ => warn!(name, "export kind not supported"),
         }
     }
+    Ok(exports)
+}
 
-    /// Like [`Self::serve_function`], but with a shared `store` instance.
-    /// This is required to allow for serving functions, which operate on guest-exported resources.
-    /// Invocations run concurrently on the event loop of the `store`.
-    #[instrument(level = "trace", skip(self, store, instance, resources))]
-    #[allow(clippy::too_many_arguments)]
-    fn serve_function_shared<T>(
+fn lookup<C, I, O>(
+    exports: &Exports,
+    cx: C,
+    instance: &str,
+    func: &str,
+    tx: O,
+    rx: I,
+) -> Result<(Arc<Export>, O, I), (C, O, I)> {
+    let Some(export) = exports.get(instance).and_then(|funcs| funcs.get(func)) else {
+        return Err((cx, tx, rx));
+    };
+    Ok((Arc::clone(export), tx, rx))
+}
+
+/// Function exports of a component served from an [`InstancePre`], which is instantiated in a
+/// new store on each invocation. Guest-exported resources are not supported.
+pub struct InstancePreExports<T: 'static, F> {
+    new_store: F,
+    pre: InstancePre<T>,
+    exports: Exports,
+    resources: ResourceTypes,
+}
+
+impl<T, F> InstancePreExports<T, F>
+where
+    T: WrpcView + 'static,
+    F: Fn() -> wasmtime::Store<T>,
+{
+    /// Collects the function exports of the component of `pre`, each invocation of which
+    /// is served in a store returned by `new_store`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if an export cannot be looked up
+    pub fn new(new_store: F, pre: InstancePre<T>) -> anyhow::Result<Self> {
+        let component = pre.component();
+        let resources = ResourceTypes {
+            #[cfg(feature = "wasmtime-wasi")]
+            io_streams: crate::paths::wasi_io_stream_resources(
+                component.engine(),
+                &component.component_type(),
+            )
+            .into(),
+            ..ResourceTypes::default()
+        };
+        let exports = exports(component)?;
+        Ok(Self {
+            new_store,
+            pre,
+            exports,
+            resources,
+        })
+    }
+
+    /// Returns a future serving the invocation of function `func` on instance `instance` over
+    /// the byte streams `tx` and `rx`, whose header was read by
+    /// [`Header::read`](wrpc_transport::Header::read), or the context `cx` and the byte streams back if it
+    /// does not invoke an exported function
+    pub fn handle<C, I, O>(
         &self,
-        store: SharedStore<T>,
-        instance: Instance,
-        idx: ComponentExportIndex,
-        resources: ResourceTypes,
-        ty: types::ComponentFunc,
-        instance_name: &str,
-        name: &str,
-    ) -> impl Future<
-        Output = anyhow::Result<
-            impl Stream<
-                Item = anyhow::Result<(
-                    Self::Context,
-                    Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + 'static>>,
-                )>,
-            > + Send
-            + 'static,
-        >,
-    > + Send
+        cx: C,
+        instance: &str,
+        func: &str,
+        tx: O,
+        rx: I,
+    ) -> Result<Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + 'static>>, (C, O, I)>
     where
-        T: WrpcView + 'static,
+        I: AsyncRead + Send + Unpin + 'static,
+        O: AsyncWrite + Send + Unpin + 'static,
     {
-        let span = Span::current();
-        async move {
-            debug!(instance = instance_name, name, "serving function export");
-            let params_ty: Arc<[_]> = ty.params().map(|(_, ty)| ty).collect();
-            let paths = crate::paths::params_async_paths(params_ty.iter(), &resources);
-            let invocations = self
-                .serve(instance_name, rpc_func_name(name), paths)
-                .await?;
-            let name = Arc::<str>::from(name);
-            let results_ty: Arc<[_]> = ty.results().collect();
-            Ok(invocations.map_ok(move |(cx, tx, rx)| {
-                let name = Arc::clone(&name);
-                let params_ty = Arc::clone(&params_ty);
-                let results_ty = Arc::clone(&results_ty);
-                let resources = resources.clone();
-                let store = store.clone();
-                (
-                    cx,
-                    Box::pin(
-                        async move {
-                            let io = store
-                                .run(move |store| {
-                                    Box::pin(async move {
-                                        let func = store
-                                            .with(|store| instance.get_func(store, idx))
-                                            .with_context(|| {
-                                                format!("function export `{name}` not found")
-                                            })?;
-                                        let io = call(
-                                            store,
-                                            rx,
-                                            tx,
-                                            &resources,
-                                            &params_ty,
-                                            &results_ty,
-                                            func,
-                                        )
-                                        .await?;
-                                        anyhow::Ok(io)
-                                    })
-                                })
-                                .await??;
-                            drop(store);
-                            io.await?;
-                            Ok(())
+        let (export, tx, rx) = lookup(&self.exports, cx, instance, func, tx, rx)?;
+        let mut store = (self.new_store)();
+        let pre = self.pre.clone();
+        let resources = self.resources.clone();
+        Ok(Box::pin(
+            async move {
+                let instance = pre
+                    .instantiate_async(&mut store)
+                    .await
+                    .map_err(anyhow::Error::from)
+                    .context("failed to instantiate component")?;
+                let func = instance
+                    .get_func(&mut store, export.idx)
+                    .context("function export not found")?;
+                store
+                    .run_concurrent(async |store| {
+                        let res = call(
+                            store,
+                            tx,
+                            rx,
+                            &resources,
+                            &export.params,
+                            &export.results,
+                            func,
+                        )
+                        .await;
+                        if res.is_ok() {
+                            poll_fn(|cx| store.poll_no_interesting_tasks(cx)).await;
                         }
-                        .instrument(span.clone()),
-                    ) as Pin<Box<dyn Future<Output = _> + Send + 'static>>,
-                )
-            }))
-        }
+                        res
+                    })
+                    .await
+                    .map_err(anyhow::Error::from)
+                    .context("failed to run concurrent event loop")??;
+                Ok(())
+            }
+            .in_current_span(),
+        ))
     }
 }
 
-impl<T: wrpc_transport::Serve> ServeExt for T {}
+/// Function exports of an [`Instance`] served on a [`SharedStore`], which is required to serve
+/// functions operating on guest-exported resources. Invocations run concurrently on the event
+/// loop of the store.
+pub struct SharedExports<T: 'static> {
+    store: SharedStore<T>,
+    instance: Instance,
+    exports: Exports,
+    resources: ResourceTypes,
+}
+
+impl<T> SharedExports<T>
+where
+    T: WrpcView + 'static,
+{
+    /// Collects the function exports of `component`, which `instance` is an instance of.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if an export cannot be looked up
+    pub fn new(
+        store: SharedStore<T>,
+        instance: Instance,
+        component: &Component,
+        resources: ResourceTypes,
+    ) -> anyhow::Result<Self> {
+        let exports = exports(component)?;
+        Ok(Self {
+            store,
+            instance,
+            exports,
+            resources,
+        })
+    }
+
+    /// Returns a future serving the invocation of function `func` on instance `instance` over
+    /// the byte streams `tx` and `rx`, whose header was read by
+    /// [`Header::read`](wrpc_transport::Header::read), or the context `cx` and the byte streams back if it
+    /// does not invoke an exported function
+    pub fn handle<C, I, O>(
+        &self,
+        cx: C,
+        instance: &str,
+        func: &str,
+        tx: O,
+        rx: I,
+    ) -> Result<Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + 'static>>, (C, O, I)>
+    where
+        I: AsyncRead + Send + Unpin + 'static,
+        O: AsyncWrite + Send + Unpin + 'static,
+    {
+        let (export, tx, rx) = lookup(&self.exports, cx, instance, func, tx, rx)?;
+        let store = self.store.clone();
+        let instance = self.instance;
+        let resources = self.resources.clone();
+        Ok(Box::pin(
+            async move {
+                store
+                    .run(move |store| {
+                        Box::pin(async move {
+                            let func = store
+                                .with(|store| instance.get_func(store, export.idx))
+                                .context("function export not found")?;
+                            call(
+                                store,
+                                tx,
+                                rx,
+                                &resources,
+                                &export.params,
+                                &export.results,
+                                func,
+                            )
+                            .await?;
+                            anyhow::Ok(())
+                        })
+                    })
+                    .await??;
+                Ok(())
+            }
+            .in_current_span(),
+        ))
+    }
+}

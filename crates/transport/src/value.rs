@@ -15,8 +15,8 @@ use futures::{FutureExt as _, Stream, StreamExt as _, TryStreamExt as _};
 use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite};
 use tokio::select;
 use tokio::sync::{mpsc, oneshot};
-use tokio::task::JoinSet;
-use tokio_util::codec::{Encoder as _, FramedRead};
+use tokio::try_join;
+use tokio_util::codec::Encoder as _;
 use tokio_util::io::StreamReader;
 use tracing::{Instrument as _, Span, error, instrument, trace};
 use wasm_tokio::cm::{
@@ -31,13 +31,11 @@ use wasm_tokio::{
     Leb128DecoderU64, Leb128DecoderU128, Leb128Encoder, Utf8Codec,
 };
 
-use crate::frame::Outgoing;
-use crate::{BufferedIncoming, encode_ready_bytes_header, error_receiver_closed};
+use crate::frame::{Incoming, Outgoing};
+use crate::{encode_ready_bytes_header, error_receiver_closed};
 
 /// Size of chunks read from byte streams
 pub const READ_CHUNK_SIZE: usize = 8192;
-
-const MAX_PENDING_STREAM_BATCH: usize = 1 << 20;
 
 fn encode_ready_bytes<T: AsRef<[u8]>>(chunks: &[T], dst: &mut BytesMut) -> std::io::Result<()> {
     let n = chunks.iter().map(|chunk| chunk.as_ref().len()).sum();
@@ -450,237 +448,50 @@ where
     }
 }
 
-/// Multiplexes asynchronous value transmission using a structural `path`
-pub trait Index: Sized {
-    /// Index the entity using a structural `path`
-    fn index(&self, path: &[usize]) -> std::io::Result<Self>;
-}
-
-impl Index for Outgoing {
-    fn index(&self, path: &[usize]) -> std::io::Result<Self> {
-        Self::index(self, path)
-    }
-}
-
-impl Index for BufferedIncoming {
-    fn index(&self, path: &[usize]) -> std::io::Result<Self> {
-        Self::index(self, path).map_err(std::io::Error::other)
-    }
-}
-
 /// Target of deferred transmission of asynchronous values, encoded by [Encode]
 ///
-/// `offset` is the position of the byte written by the encoder of the asynchronous value
-/// in the buffer the value was encoded into.
-pub trait DeferredWrite: Index + Send + 'static {
-    /// Transmits the value of a `future<T>`, and the values deferred by it at index `0`
+/// `path` is the structural path of the asynchronous value relative to the handle and `offset` is
+/// the position of the byte written by the encoder of the asynchronous value in the buffer the
+/// value was encoded into.
+pub trait DeferredWrite: Sized + Send + Sync + 'static {
+    /// Transmits the value of a `future<T>`
     fn write_future<T>(
-        self,
+        &self,
+        path: &[usize],
         offset: usize,
-        item: impl Future<Output = T> + Send + 'static,
-    ) -> impl Future<Output = std::io::Result<()>> + Send
+        item: impl Future<Output = std::io::Result<T>> + Send + 'static,
+    ) -> impl Future<Output = std::io::Result<()>> + Send + 'static
     where
         T: Encode<Self>,
         std::io::Error: From<<T::Encoder as tokio_util::codec::Encoder<T>>::Error>;
 
     /// Transmits the elements of a `stream<T>`
     fn write_stream<T>(
-        self,
+        &self,
+        path: &[usize],
         offset: usize,
         items: impl Stream<Item = Vec<T>> + Send + Unpin + 'static,
-    ) -> impl Future<Output = std::io::Result<()>> + Send
+    ) -> impl Future<Output = std::io::Result<()>> + Send + 'static
     where
         T: Encode<Self> + Send + 'static,
         std::io::Error: From<<T::Encoder as tokio_util::codec::Encoder<T>>::Error>;
 
     /// Transmits the elements of a `stream<u8>` from a [Stream] of [Bytes]
     fn write_stream_bytes(
-        self,
+        &self,
+        path: &[usize],
         offset: usize,
         items: impl Stream<Item = Bytes> + Send + Unpin + 'static,
-    ) -> impl Future<Output = std::io::Result<()>> + Send;
+    ) -> impl Future<Output = std::io::Result<()>> + Send + 'static;
 
     /// Transmits the elements of a `stream<u8>` from `ready` followed by an [AsyncRead]
     fn write_stream_read(
-        self,
+        &self,
+        path: &[usize],
         offset: usize,
         ready: BytesMut,
         items: impl AsyncRead + Send + Unpin + 'static,
-    ) -> impl Future<Output = std::io::Result<()>> + Send;
-}
-
-impl DeferredWrite for Outgoing {
-    async fn write_future<T>(
-        mut self,
-        _offset: usize,
-        item: impl Future<Output = T> + Send + 'static,
-    ) -> std::io::Result<()>
-    where
-        T: Encode<Self>,
-        std::io::Error: From<<T::Encoder as tokio_util::codec::Encoder<T>>::Error>,
-    {
-        let item = item.await;
-        let mut enc = T::Encoder::default();
-        let mut buf = BytesMut::default();
-        enc.encode(item, &mut buf)?;
-        if buf.is_empty() {
-            self.close().await?;
-        } else {
-            self.write_bytes(buf.freeze()).await?;
-        }
-        let fut = handle_deferred(&self, &[], [enc.take_deferred()])?;
-        fut.await
-    }
-
-    async fn write_stream<T>(
-        mut self,
-        _offset: usize,
-        mut items: impl Stream<Item = Vec<T>> + Send + Unpin + 'static,
-    ) -> std::io::Result<()>
-    where
-        T: Encode<Self> + Send + 'static,
-        std::io::Error: From<<T::Encoder as tokio_util::codec::Encoder<T>>::Error>,
-    {
-        let mut enc = T::Encoder::default();
-        let mut buf = BytesMut::default();
-        let mut deferred = Vec::default();
-        let mut tasks = JoinSet::default();
-        let mut i = 0_u64;
-        loop {
-            select! {
-                chunk = items.next(), if buf.len() < MAX_PENDING_STREAM_BATCH => {
-                    let Some(chunk) = chunk else {
-                        trace!("writing stream end");
-                        buf.reserve(1);
-                        buf.put_u8(0x00);
-                        self.write_bytes(buf.split().freeze()).await?;
-                        for f in deferred.drain(..) {
-                            tasks.spawn(f);
-                        }
-                        while let Some(res) = tasks.join_next().await {
-                            trace!(?res, "receiver task finished");
-                            res??;
-                        }
-                        return Ok(())
-                    };
-                    if chunk.is_empty() {
-                        continue;
-                    }
-                    let n = u32::try_from(chunk.len()).map_err(|err| {
-                        std::io::Error::new(std::io::ErrorKind::InvalidInput, err)
-                    })?;
-                    let end = i.checked_add(n.into()).ok_or_else(|| {
-                        std::io::Error::new(
-                            std::io::ErrorKind::InvalidInput,
-                            "stream element index would overflow u64",
-                        )
-                    })?;
-                    trace!(n, "encoding chunk length");
-                    Leb128Encoder.encode(n, &mut buf)?;
-                    trace!(i, buf = format!("{buf:02x?}"), "writing stream chunk items");
-
-                    buf.reserve(chunk.len());
-                    for (i, item) in zip(i.., chunk) {
-                        enc.encode(item, &mut buf)?;
-                        if let Some(f) = enc.take_deferred() {
-                            let i = usize::try_from(i)
-                                .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
-                            let fut = f(&self, &[i])?;
-                            deferred.push(fut);
-                        }
-                    }
-                    i = end;
-                }
-                Some(res) = tasks.join_next() => {
-                    trace!(?res, "receiver task finished");
-                    res??;
-                }
-                res = self.reserve(), if !buf.is_empty() => {
-                    res?;
-                    trace!(?buf, "writing bytes from buffer");
-                    self.send_reserved(buf.split().freeze())?;
-                    for f in deferred.drain(..) {
-                        trace!("spawning transmit task");
-                        tasks.spawn(f);
-                    }
-                }
-            }
-        }
-    }
-
-    async fn write_stream_bytes(
-        mut self,
-        _offset: usize,
-        mut items: impl Stream<Item = Bytes> + Send + Unpin + 'static,
-    ) -> std::io::Result<()> {
-        let mut buf = BytesMut::default();
-        loop {
-            select! {
-                chunk = items.next(), if buf.len() < MAX_PENDING_STREAM_BATCH => {
-                    let Some(chunk) = chunk else {
-                        trace!("writing stream end");
-                        buf.reserve(1);
-                        buf.put_u8(0x00);
-                        return self.write_bytes(buf.split().freeze()).await
-                    };
-                    if chunk.is_empty() {
-                        continue;
-                    }
-                    let n = u32::try_from(chunk.len()).map_err(|err| {
-                        std::io::Error::new(std::io::ErrorKind::InvalidInput, err)
-                    })?;
-                    trace!(n, "encoding chunk length");
-                    Leb128Encoder.encode(n, &mut buf)?;
-                    buf.extend_from_slice(&chunk);
-                }
-                res = self.reserve(), if !buf.is_empty() => {
-                    res?;
-                    self.send_reserved(buf.split().freeze())?;
-                }
-            }
-        }
-    }
-
-    async fn write_stream_read(
-        mut self,
-        _offset: usize,
-        mut buf: BytesMut,
-        mut items: impl AsyncRead + Send + Unpin + 'static,
-    ) -> std::io::Result<()> {
-        if !buf.is_empty() {
-            let n = u32::try_from(buf.len())
-                .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
-            trace!(n, "writing ready chunk length");
-            let mut header = BytesMut::default();
-            Leb128Encoder.encode(n, &mut header)?;
-            self.write_bytes(header.freeze()).await?;
-        }
-        let mut chunk = BytesMut::with_capacity(READ_CHUNK_SIZE);
-        loop {
-            select! {
-                res = items.read_buf(&mut chunk), if buf.len() < MAX_PENDING_STREAM_BATCH => {
-                    let n = res?;
-                    if n == 0 {
-                        trace!("writing stream end");
-                        buf.reserve(1);
-                        buf.put_u8(0x00);
-                        return self.write_bytes(buf.split().freeze()).await
-                    }
-                    let n = u32::try_from(n).map_err(|err| {
-                        std::io::Error::new(std::io::ErrorKind::InvalidInput, err)
-                    })?;
-                    trace!(n, "encoding chunk length");
-                    Leb128Encoder.encode(n, &mut buf)?;
-                    buf.extend_from_slice(&chunk);
-                    chunk.clear();
-                }
-                res = self.reserve(), if !buf.is_empty() => {
-                    res?;
-                    self.send_reserved(buf.split().freeze())?;
-                }
-            }
-        }
-    }
+    ) -> impl Future<Output = std::io::Result<()>> + Send + 'static;
 }
 
 /// Indexes the handles of the values deferred by the elements of a value at `path` relative
@@ -815,7 +626,7 @@ pub trait Encode<W: DeferredWrite = Outgoing>: Sized {
 pub trait Decode: Sized {
     /// Decoder used to decode value
     type Decoder: tokio_util::codec::Decoder<Item = Self>
-        + Deferred<BufferedIncoming>
+        + Deferred<Incoming>
         + Paths
         + Default
         + Send
@@ -833,17 +644,19 @@ where
     }
 }
 
-impl<T, W: DeferredWrite> Encode<W> for Option<T>
+impl<T, W> Encode<W> for Option<T>
 where
     T: Encode<W>,
+    W: DeferredWrite,
 {
     type Encoder = OptionEncoder<T::Encoder>;
 }
 
-impl<'a, T, W: DeferredWrite> Encode<W> for &'a Option<T>
+impl<'a, T, W> Encode<W> for &'a Option<T>
 where
     T: Encode<W>,
     T::Encoder: tokio_util::codec::Encoder<&'a T>,
+    W: DeferredWrite,
 {
     type Encoder = OptionEncoder<T::Encoder>;
 }
@@ -892,22 +705,24 @@ where
     }
 }
 
-impl<O, E, W: DeferredWrite> Encode<W> for Result<O, E>
+impl<O, E, W> Encode<W> for Result<O, E>
 where
     O: Encode<W>,
     E: Encode<W>,
+    W: DeferredWrite,
     std::io::Error: From<<O::Encoder as tokio_util::codec::Encoder<O>>::Error>,
     std::io::Error: From<<E::Encoder as tokio_util::codec::Encoder<E>>::Error>,
 {
     type Encoder = ResultEncoder<O::Encoder, E::Encoder>;
 }
 
-impl<'a, O, E, W: DeferredWrite> Encode<W> for &'a Result<O, E>
+impl<'a, O, E, W> Encode<W> for &'a Result<O, E>
 where
     O: Encode<W>,
     O::Encoder: tokio_util::codec::Encoder<&'a O>,
     E: Encode<W>,
     E::Encoder: tokio_util::codec::Encoder<&'a E>,
+    W: DeferredWrite,
     std::io::Error: From<<O::Encoder as tokio_util::codec::Encoder<&'a O>>::Error>,
     std::io::Error: From<<E::Encoder as tokio_util::codec::Encoder<&'a E>>::Error>,
 {
@@ -959,7 +774,7 @@ where
 }
 
 /// Encoder for `list<T>`
-pub struct ListEncoder<W = Outgoing> {
+pub struct ListEncoder<W> {
     deferred: Option<DeferredFn<W>>,
 }
 
@@ -975,9 +790,10 @@ impl<W> Deferred<W> for ListEncoder<W> {
     }
 }
 
-impl<T, W: DeferredWrite> tokio_util::codec::Encoder<Vec<T>> for ListEncoder<W>
+impl<T, W> tokio_util::codec::Encoder<Vec<T>> for ListEncoder<W>
 where
     T: Encode<W>,
+    W: DeferredWrite,
 {
     type Error = <T::Encoder as tokio_util::codec::Encoder<T>>::Error;
 
@@ -988,10 +804,11 @@ where
     }
 }
 
-impl<'a, T, W: DeferredWrite> tokio_util::codec::Encoder<&'a Vec<T>> for ListEncoder<W>
+impl<'a, T, W> tokio_util::codec::Encoder<&'a Vec<T>> for ListEncoder<W>
 where
     T: Encode<W>,
     T::Encoder: tokio_util::codec::Encoder<&'a T>,
+    W: DeferredWrite,
 {
     type Error = <T::Encoder as tokio_util::codec::Encoder<&'a T>>::Error;
 
@@ -1002,10 +819,11 @@ where
     }
 }
 
-impl<'a, 'b, T, W: DeferredWrite> tokio_util::codec::Encoder<&'a &'b Vec<T>> for ListEncoder<W>
+impl<'a, 'b, T, W> tokio_util::codec::Encoder<&'a &'b Vec<T>> for ListEncoder<W>
 where
     T: Encode<W>,
     T::Encoder: tokio_util::codec::Encoder<&'b T>,
+    W: DeferredWrite,
 {
     type Error = <T::Encoder as tokio_util::codec::Encoder<&'b T>>::Error;
 
@@ -1016,10 +834,11 @@ where
     }
 }
 
-impl<'a, T, W: DeferredWrite> tokio_util::codec::Encoder<&'a [T]> for ListEncoder<W>
+impl<'a, T, W> tokio_util::codec::Encoder<&'a [T]> for ListEncoder<W>
 where
     T: Encode<W>,
     T::Encoder: tokio_util::codec::Encoder<&'a T>,
+    W: DeferredWrite,
 {
     type Error = <T::Encoder as tokio_util::codec::Encoder<&'a T>>::Error;
 
@@ -1030,10 +849,11 @@ where
     }
 }
 
-impl<'a, 'b, T, W: DeferredWrite> tokio_util::codec::Encoder<&'a &'b [T]> for ListEncoder<W>
+impl<'a, 'b, T, W> tokio_util::codec::Encoder<&'a &'b [T]> for ListEncoder<W>
 where
     T: Encode<W>,
     T::Encoder: tokio_util::codec::Encoder<&'b T>,
+    W: DeferredWrite,
 {
     type Error = <T::Encoder as tokio_util::codec::Encoder<&'b T>>::Error;
 
@@ -1044,25 +864,28 @@ where
     }
 }
 
-impl<T, W: DeferredWrite> Encode<W> for Vec<T>
+impl<T, W> Encode<W> for Vec<T>
 where
     T: Encode<W>,
+    W: DeferredWrite,
 {
     type Encoder = ListEncoder<W>;
 }
 
-impl<'a, T, W: DeferredWrite> Encode<W> for &'a Vec<T>
+impl<'a, T, W> Encode<W> for &'a Vec<T>
 where
     T: Encode<W>,
     T::Encoder: tokio_util::codec::Encoder<&'a T>,
+    W: DeferredWrite,
 {
     type Encoder = ListEncoder<W>;
 }
 
-impl<'a, T, W: DeferredWrite> Encode<W> for &'a [T]
+impl<'a, T, W> Encode<W> for &'a [T]
 where
     T: Encode<W>,
     T::Encoder: tokio_util::codec::Encoder<&'a T>,
+    W: DeferredWrite,
 {
     type Encoder = ListEncoder<W>;
 }
@@ -1075,7 +898,7 @@ where
     dec: T,
     ret: Vec<T::Item>,
     cap: usize,
-    deferred: Vec<Option<DeferredFn<BufferedIncoming>>>,
+    deferred: Vec<Option<DeferredFn<Incoming>>>,
 }
 
 impl<T> ListDecoder<T>
@@ -1111,11 +934,11 @@ where
     }
 }
 
-impl<T> Deferred<BufferedIncoming> for ListDecoder<T>
+impl<T> Deferred<Incoming> for ListDecoder<T>
 where
     T: tokio_util::codec::Decoder,
 {
-    fn take_deferred(&mut self) -> Option<DeferredFn<BufferedIncoming>> {
+    fn take_deferred(&mut self) -> Option<DeferredFn<Incoming>> {
         let deferred = mem::take(&mut self.deferred);
         if deferred.iter().any(Option::is_some) {
             Some(Box::new(|r, path| handle_deferred(r, path, deferred)))
@@ -1127,7 +950,7 @@ where
 
 impl<T> tokio_util::codec::Decoder for ListDecoder<T>
 where
-    T: tokio_util::codec::Decoder + Deferred<BufferedIncoming>,
+    T: tokio_util::codec::Decoder + Deferred<Incoming>,
 {
     type Item = Vec<T::Item>;
     type Error = T::Error;
@@ -1161,19 +984,27 @@ where
         }
         Ok(Some(mem::take(&mut self.ret)))
     }
+
+    fn decode_eof(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+        match self.decode(src)? {
+            Some(v) => Ok(Some(v)),
+            None if self.cap == 0 && src.is_empty() => Ok(None),
+            None => Err(std::io::Error::from(std::io::ErrorKind::UnexpectedEof).into()),
+        }
+    }
 }
 
 impl<T> Decode for Vec<T>
 where
     T: Decode + Send,
-    T::ListDecoder: Deferred<BufferedIncoming> + Send,
+    T::ListDecoder: Deferred<Incoming> + Send,
 {
     type Decoder = T::ListDecoder;
     type ListDecoder = ListDecoder<Self::Decoder>;
 }
 
 /// Encoder for `list<T, N>`
-pub struct ArrayEncoder<W = Outgoing> {
+pub struct ArrayEncoder<W> {
     deferred: Option<DeferredFn<W>>,
 }
 
@@ -1189,9 +1020,10 @@ impl<W> Deferred<W> for ArrayEncoder<W> {
     }
 }
 
-impl<T, W: DeferredWrite, const N: usize> tokio_util::codec::Encoder<[T; N]> for ArrayEncoder<W>
+impl<T, W, const N: usize> tokio_util::codec::Encoder<[T; N]> for ArrayEncoder<W>
 where
     T: Encode<W>,
+    W: DeferredWrite,
 {
     type Error = <T::Encoder as tokio_util::codec::Encoder<T>>::Error;
 
@@ -1203,11 +1035,11 @@ where
     }
 }
 
-impl<'a, T, W: DeferredWrite, const N: usize> tokio_util::codec::Encoder<&'a [T; N]>
-    for ArrayEncoder<W>
+impl<'a, T, W, const N: usize> tokio_util::codec::Encoder<&'a [T; N]> for ArrayEncoder<W>
 where
     T: Encode<W>,
     T::Encoder: tokio_util::codec::Encoder<&'a T>,
+    W: DeferredWrite,
 {
     type Error = <T::Encoder as tokio_util::codec::Encoder<&'a T>>::Error;
 
@@ -1219,11 +1051,11 @@ where
     }
 }
 
-impl<'a, 'b, T, W: DeferredWrite, const N: usize> tokio_util::codec::Encoder<&'a &'b [T; N]>
-    for ArrayEncoder<W>
+impl<'a, 'b, T, W, const N: usize> tokio_util::codec::Encoder<&'a &'b [T; N]> for ArrayEncoder<W>
 where
     T: Encode<W>,
     T::Encoder: tokio_util::codec::Encoder<&'b T>,
+    W: DeferredWrite,
 {
     type Error = <T::Encoder as tokio_util::codec::Encoder<&'b T>>::Error;
 
@@ -1235,17 +1067,19 @@ where
     }
 }
 
-impl<T, W: DeferredWrite, const N: usize> Encode<W> for [T; N]
+impl<T, W, const N: usize> Encode<W> for [T; N]
 where
     T: Encode<W>,
+    W: DeferredWrite,
 {
     type Encoder = ArrayEncoder<W>;
 }
 
-impl<'a, T, W: DeferredWrite, const N: usize> Encode<W> for &'a [T; N]
+impl<'a, T, W, const N: usize> Encode<W> for &'a [T; N]
 where
     T: Encode<W>,
     T::Encoder: tokio_util::codec::Encoder<&'a T>,
+    W: DeferredWrite,
 {
     type Encoder = ArrayEncoder<W>;
 }
@@ -1257,7 +1091,7 @@ where
 {
     dec: T,
     ret: Vec<T::Item>,
-    deferred: Vec<Option<DeferredFn<BufferedIncoming>>>,
+    deferred: Vec<Option<DeferredFn<Incoming>>>,
 }
 
 impl<T, const N: usize> Default for ArrayDecoder<T, N>
@@ -1282,11 +1116,11 @@ where
     }
 }
 
-impl<T, const N: usize> Deferred<BufferedIncoming> for ArrayDecoder<T, N>
+impl<T, const N: usize> Deferred<Incoming> for ArrayDecoder<T, N>
 where
     T: tokio_util::codec::Decoder,
 {
-    fn take_deferred(&mut self) -> Option<DeferredFn<BufferedIncoming>> {
+    fn take_deferred(&mut self) -> Option<DeferredFn<Incoming>> {
         let deferred = mem::take(&mut self.deferred);
         if deferred.iter().any(Option::is_some) {
             Some(Box::new(|r, path| handle_deferred(r, path, deferred)))
@@ -1298,7 +1132,7 @@ where
 
 impl<T, const N: usize> tokio_util::codec::Decoder for ArrayDecoder<T, N>
 where
-    T: tokio_util::codec::Decoder + Deferred<BufferedIncoming>,
+    T: tokio_util::codec::Decoder + Deferred<Incoming>,
 {
     type Item = [T::Item; N];
     type Error = T::Error;
@@ -1448,7 +1282,10 @@ impl_copy_codec!(f32, F32Codec);
 impl_copy_codec!(f64, F64Codec);
 impl_copy_codec!(char, Utf8Codec);
 
-impl<W: DeferredWrite> Encode<W> for u8 {
+impl<W> Encode<W> for u8
+where
+    W: DeferredWrite,
+{
     type Encoder = U8Codec;
 
     #[instrument(level = "trace", skip(items))]
@@ -1508,7 +1345,10 @@ impl<W: DeferredWrite> Encode<W> for u8 {
     }
 }
 
-impl<'b, W: DeferredWrite> Encode<W> for &'b u8 {
+impl<'b, W> Encode<W> for &'b u8
+where
+    W: DeferredWrite,
+{
     type Encoder = U8Codec;
 
     #[instrument(level = "trace", skip(items))]
@@ -1561,6 +1401,13 @@ impl tokio_util::codec::Decoder for ListDecoderU8 {
         };
         Ok(Some(buf.into()))
     }
+
+    fn decode_eof(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+        let Some(buf) = self.0.decode_eof(src)? else {
+            return Ok(None);
+        };
+        Ok(Some(buf.into()))
+    }
 }
 
 impl Decode for u8 {
@@ -1568,19 +1415,31 @@ impl Decode for u8 {
     type ListDecoder = ListDecoderU8;
 }
 
-impl<W: DeferredWrite> Encode<W> for &str {
+impl<W> Encode<W> for &str
+where
+    W: DeferredWrite,
+{
     type Encoder = CoreNameEncoder;
 }
 
-impl<W: DeferredWrite> Encode<W> for &&str {
+impl<W> Encode<W> for &&str
+where
+    W: DeferredWrite,
+{
     type Encoder = CoreNameEncoder;
 }
 
-impl<W: DeferredWrite> Encode<W> for String {
+impl<W> Encode<W> for String
+where
+    W: DeferredWrite,
+{
     type Encoder = CoreNameEncoder;
 }
 
-impl<W: DeferredWrite> Encode<W> for &String {
+impl<W> Encode<W> for &String
+where
+    W: DeferredWrite,
+{
     type Encoder = CoreNameEncoder;
 }
 
@@ -1610,15 +1469,25 @@ impl<T: AsRef<[u8]>> tokio_util::codec::Encoder<Utf8Bytes<T>> for Utf8BytesEncod
     }
 }
 
-impl<T: AsRef<[u8]>, W: DeferredWrite> Encode<W> for Utf8Bytes<T> {
+impl<T, W> Encode<W> for Utf8Bytes<T>
+where
+    T: AsRef<[u8]>,
+    W: DeferredWrite,
+{
     type Encoder = Utf8BytesEncoder;
 }
 
-impl<W: DeferredWrite> Encode<W> for Bytes {
+impl<W> Encode<W> for Bytes
+where
+    W: DeferredWrite,
+{
     type Encoder = CoreVecEncoderBytes;
 }
 
-impl<W: DeferredWrite> Encode<W> for &Bytes {
+impl<W> Encode<W> for &Bytes
+where
+    W: DeferredWrite,
+{
     type Encoder = CoreVecEncoderBytes;
 }
 
@@ -1650,11 +1519,19 @@ impl<T: ?Sized> tokio_util::codec::Encoder<&ResourceOwn<T>> for ResourceEncoder 
     }
 }
 
-impl<T: ?Sized, W: DeferredWrite> Encode<W> for ResourceOwn<T> {
+impl<T, W> Encode<W> for ResourceOwn<T>
+where
+    T: ?Sized,
+    W: DeferredWrite,
+{
     type Encoder = ResourceEncoder;
 }
 
-impl<T: ?Sized, W: DeferredWrite> Encode<W> for &ResourceOwn<T> {
+impl<T, W> Encode<W> for &ResourceOwn<T>
+where
+    T: ?Sized,
+    W: DeferredWrite,
+{
     type Encoder = ResourceEncoder;
 }
 
@@ -1676,11 +1553,19 @@ impl<T: ?Sized> tokio_util::codec::Encoder<&ResourceBorrow<T>> for ResourceEncod
     }
 }
 
-impl<T: ?Sized, W: DeferredWrite> Encode<W> for ResourceBorrow<T> {
+impl<T, W> Encode<W> for ResourceBorrow<T>
+where
+    T: ?Sized,
+    W: DeferredWrite,
+{
     type Encoder = ResourceEncoder;
 }
 
-impl<T: ?Sized, W: DeferredWrite> Encode<W> for &ResourceBorrow<T> {
+impl<T, W> Encode<W> for &ResourceBorrow<T>
+where
+    T: ?Sized,
+    W: DeferredWrite,
+{
     type Encoder = ResourceEncoder;
 }
 
@@ -1707,8 +1592,8 @@ impl<T: ?Sized> Paths for ResourceBorrowDecoder<T> {
     }
 }
 
-impl<T: ?Sized> Deferred<BufferedIncoming> for ResourceBorrowDecoder<T> {
-    fn take_deferred(&mut self) -> Option<DeferredFn<BufferedIncoming>> {
+impl<T: ?Sized> Deferred<Incoming> for ResourceBorrowDecoder<T> {
+    fn take_deferred(&mut self) -> Option<DeferredFn<Incoming>> {
         None
     }
 }
@@ -1719,8 +1604,8 @@ impl<T: ?Sized> Paths for CoreVecDecoder<ResourceBorrowDecoder<T>> {
     }
 }
 
-impl<T: ?Sized> Deferred<BufferedIncoming> for CoreVecDecoder<ResourceBorrowDecoder<T>> {
-    fn take_deferred(&mut self) -> Option<DeferredFn<BufferedIncoming>> {
+impl<T: ?Sized> Deferred<Incoming> for CoreVecDecoder<ResourceBorrowDecoder<T>> {
+    fn take_deferred(&mut self) -> Option<DeferredFn<Incoming>> {
         None
     }
 }
@@ -1764,8 +1649,8 @@ impl<T: ?Sized> Paths for ResourceOwnDecoder<T> {
     }
 }
 
-impl<T: ?Sized> Deferred<BufferedIncoming> for ResourceOwnDecoder<T> {
-    fn take_deferred(&mut self) -> Option<DeferredFn<BufferedIncoming>> {
+impl<T: ?Sized> Deferred<Incoming> for ResourceOwnDecoder<T> {
+    fn take_deferred(&mut self) -> Option<DeferredFn<Incoming>> {
         None
     }
 }
@@ -1776,8 +1661,8 @@ impl<T: ?Sized> Paths for CoreVecDecoder<ResourceOwnDecoder<T>> {
     }
 }
 
-impl<T: ?Sized> Deferred<BufferedIncoming> for CoreVecDecoder<ResourceOwnDecoder<T>> {
-    fn take_deferred(&mut self) -> Option<DeferredFn<BufferedIncoming>> {
+impl<T: ?Sized> Deferred<Incoming> for CoreVecDecoder<ResourceOwnDecoder<T>> {
+    fn take_deferred(&mut self) -> Option<DeferredFn<Incoming>> {
         None
     }
 }
@@ -1837,11 +1722,14 @@ pub trait TupleEncode<W: DeferredWrite = Outgoing>: Encode<W> {}
 /// Marker trait for [Decode] tuple types
 pub trait TupleDecode: Decode {}
 
-impl<W: DeferredWrite> Encode<W> for () {
+impl<W> Encode<W> for ()
+where
+    W: DeferredWrite,
+{
     type Encoder = UnitCodec;
 }
 
-impl<W: DeferredWrite> TupleEncode<W> for () {}
+impl<W> TupleEncode<W> for () where W: DeferredWrite {}
 
 impl Decode for () {
     type Decoder = UnitCodec;
@@ -1860,7 +1748,7 @@ macro_rules! impl_tuple_codec {
                 let Self(($(mut $cn),+,)) = mem::take(self);
                 let deferred = [ $($cn.take_deferred()),+ ];
                 if deferred.iter().any(Option::is_some) {
-                    Some(Box::new(|r, path| handle_deferred(r, path, deferred)))
+                    Some(Box::new(|w, path| handle_deferred(w, path, deferred)))
                 } else {
                     None
                 }
@@ -1910,11 +1798,12 @@ macro_rules! impl_tuple_codec {
             }
         }
 
-        impl<$($vt),+> Deferred<BufferedIncoming> for TupleDecoder::<($($vt::Decoder),+,), ($(Option<$vt>),+,)>
+        impl<$($vt),+> Deferred<Incoming>
+            for TupleDecoder::<($($vt::Decoder),+,), ($(Option<$vt>),+,)>
         where
             $($vt: Decode),+
         {
-            fn take_deferred(&mut self) -> Option<DeferredFn<BufferedIncoming>> {
+            fn take_deferred(&mut self) -> Option<DeferredFn<Incoming>> {
                 let ($(mut $cn),+,) = mem::take(self).into_inner();
                 let deferred = [ $($cn.take_deferred()),+ ];
                 if deferred.iter().any(Option::is_some) {
@@ -2062,7 +1951,7 @@ impl_tuple_codec!(
 );
 
 /// Encoder for `future<T>`
-pub struct FutureEncoder<W = Outgoing> {
+pub struct FutureEncoder<W> {
     deferred: Option<DeferredFn<W>>,
 }
 
@@ -2080,7 +1969,7 @@ impl<W> Deferred<W> for FutureEncoder<W> {
 
 impl<T, W, Fut> tokio_util::codec::Encoder<Fut> for FutureEncoder<W>
 where
-    T: Encode<W>,
+    T: Encode<W> + 'static,
     W: DeferredWrite,
     Fut: Future<Output = T> + Send + Unpin + 'static,
     std::io::Error: From<<T::Encoder as tokio_util::codec::Encoder<T>>::Error>,
@@ -2095,7 +1984,7 @@ where
             dst.put_u8(0x01);
             let f = item.encode(&mut T::Encoder::default(), dst)?;
             self.deferred = f.map(|f| -> DeferredFn<W> {
-                Box::new(|w, path| handle_deferred(w, path, [Some(f)]))
+                Box::new(move |w, path| f(w, &[path, &[0]].concat()))
             });
             return Ok(());
         }
@@ -2104,18 +1993,18 @@ where
         dst.put_u8(0x00);
         let span = Span::current();
         self.deferred = Some(Box::new(move |w, path| {
-            let w = w.index(path)?;
             Ok(Box::pin(
-                async move { w.write_future(offset, item).await }.instrument(span),
+                w.write_future(path, offset, item.map(Ok)).instrument(span),
             ))
         }));
         Ok(())
     }
 }
 
-impl<T, W: DeferredWrite> Encode<W> for Pin<Box<dyn Future<Output = T> + Send>>
+impl<T, W> Encode<W> for Pin<Box<dyn Future<Output = T> + Send>>
 where
     T: Encode<W> + 'static,
+    W: DeferredWrite,
     std::io::Error: From<<T::Encoder as tokio_util::codec::Encoder<T>>::Error>,
 {
     type Encoder = FutureEncoder<W>;
@@ -2127,7 +2016,7 @@ where
     T: Decode,
 {
     dec: OptionDecoder<T::Decoder>,
-    deferred: Option<DeferredFn<BufferedIncoming>>,
+    deferred: Option<DeferredFn<Incoming>>,
     _ty: PhantomData<T>,
 }
 
@@ -2154,11 +2043,11 @@ where
     }
 }
 
-impl<T> Deferred<BufferedIncoming> for FutureDecoder<T>
+impl<T> Deferred<Incoming> for FutureDecoder<T>
 where
     T: Decode,
 {
-    fn take_deferred(&mut self) -> Option<DeferredFn<BufferedIncoming>> {
+    fn take_deferred(&mut self) -> Option<DeferredFn<Incoming>> {
         self.deferred.take()
     }
 }
@@ -2177,39 +2066,33 @@ where
             return Ok(None);
         };
         if let Some(item) = item {
-            self.deferred = self
-                .dec
-                .take_deferred()
-                .map(|f| -> DeferredFn<BufferedIncoming> {
-                    Box::new(|r, path| handle_deferred(r, path, [Some(f)]))
-                });
+            self.deferred = self.dec.take_deferred().map(|f| -> DeferredFn<Incoming> {
+                Box::new(move |r, path| f(r, &[path, &[0]].concat()))
+            });
             return Ok(Some(Box::pin(async { item })));
         }
 
         // future is pending
         let (tx, rx) = oneshot::channel();
-        let dec = mem::take(&mut self.dec).into_inner();
+        let mut dec = mem::take(&mut self.dec).into_inner();
         let span = Span::current();
         self.deferred = Some(Box::new(|r, path| {
-            let r = r.index(path).map_err(std::io::Error::other)?;
+            let mut r = r.index(path)?;
             Ok(Box::pin(
                 async move {
-                    let mut dec = FramedRead::new(r, dec);
                     trace!("receiving future element");
-                    let Some(item) = dec.next().await else {
+                    let Some(item) = r.decode(&mut dec).await? else {
                         return Err(std::io::ErrorKind::UnexpectedEof.into());
                     };
-                    let item = item?;
-                    ensure_processed(&dec)?;
-                    let rx = dec.decoder_mut().take_deferred();
+                    let rx = dec.take_deferred();
                     if tx.send(item).is_err() {
                         return Err(error_receiver_closed());
                     }
-                    if let Some(rx) = rx {
-                        let rx = rx(dec.get_ref(), &[0])?;
-                        drop(dec);
-                        rx.await?;
-                    }
+                    let Some(rx) = rx else {
+                        return r.read_end().await;
+                    };
+                    let rx = rx(&r, &[0])?;
+                    try_join!(r.read_end(), rx)?;
                     Ok(())
                 }
                 .instrument(span),
@@ -2235,7 +2118,7 @@ where
 }
 
 /// Encoder for `stream<T>`
-pub struct StreamEncoder<W = Outgoing> {
+pub struct StreamEncoder<W> {
     deferred: Option<DeferredFn<W>>,
 }
 
@@ -2283,25 +2166,25 @@ where
         dst.put_u8(0x00);
         let span = Span::current();
         self.deferred = Some(Box::new(move |w, path| {
-            let w = w.index(path)?;
             Ok(Box::pin(
-                async move { w.write_stream(offset, items).await }.instrument(span),
+                w.write_stream(path, offset, items).instrument(span),
             ))
         }));
         Ok(())
     }
 }
 
-impl<T, W: DeferredWrite> Encode<W> for Pin<Box<dyn Stream<Item = Vec<T>> + Send>>
+impl<T, W> Encode<W> for Pin<Box<dyn Stream<Item = Vec<T>> + Send>>
 where
     T: Encode<W> + Send + 'static,
+    W: DeferredWrite,
     std::io::Error: From<<T::Encoder as tokio_util::codec::Encoder<T>>::Error>,
 {
     type Encoder = StreamEncoder<W>;
 }
 
 /// Encoder for `stream<list<u8>>`
-pub struct StreamEncoderBytes<W = Outgoing> {
+pub struct StreamEncoderBytes<W> {
     deferred: Option<DeferredFn<W>>,
 }
 
@@ -2340,16 +2223,16 @@ where
         dst.reserve(1);
         dst.put_u8(0x00);
         self.deferred = Some(Box::new(move |w, path| {
-            let w = w.index(path)?;
-            Ok(Box::pin(async move {
-                w.write_stream_bytes(offset, items).await
-            }))
+            Ok(Box::pin(w.write_stream_bytes(path, offset, items)))
         }));
         Ok(())
     }
 }
 
-impl<W: DeferredWrite> Encode<W> for Pin<Box<dyn Stream<Item = Bytes> + Send>> {
+impl<W> Encode<W> for Pin<Box<dyn Stream<Item = Bytes> + Send>>
+where
+    W: DeferredWrite,
+{
     type Encoder = StreamEncoderBytes<W>;
 }
 
@@ -2357,7 +2240,7 @@ impl<W: DeferredWrite> Encode<W> for Pin<Box<dyn Stream<Item = Bytes> + Send>> {
 ///
 /// At most `MAX_READY` bytes are read from the stream on encode, any remaining
 /// bytes are transmitted asynchronously.
-pub struct StreamEncoderRead<W = Outgoing, const MAX_READY: usize = { usize::MAX }> {
+pub struct StreamEncoderRead<W, const MAX_READY: usize = { usize::MAX }> {
     deferred: Option<DeferredFn<W>>,
 }
 
@@ -2401,52 +2284,71 @@ where
         dst.reserve(1);
         dst.put_u8(0x00);
         self.deferred = Some(Box::new(move |w, path| {
-            let w = w.index(path)?;
-            Ok(Box::pin(async move {
-                w.write_stream_read(offset, ready, items).await
-            }))
+            Ok(Box::pin(w.write_stream_read(path, offset, ready, items)))
         }));
         Ok(())
     }
 }
 
-impl<W: DeferredWrite> Encode<W> for Pin<Box<dyn AsyncRead + Send>> {
-    type Encoder = StreamEncoderRead<W>;
-}
-
-impl<T, W: DeferredWrite> Encode<W> for std::io::Cursor<T>
+impl<W> Encode<W> for Pin<Box<dyn AsyncRead + Send>>
 where
-    T: AsRef<[u8]> + Send + Unpin + 'static,
+    W: DeferredWrite,
 {
     type Encoder = StreamEncoderRead<W>;
 }
 
-impl<W: DeferredWrite> Encode<W> for tokio::io::Empty {
+impl<T, W> Encode<W> for std::io::Cursor<T>
+where
+    T: AsRef<[u8]> + Send + Unpin + 'static,
+    W: DeferredWrite,
+{
+    type Encoder = StreamEncoderRead<W>;
+}
+
+impl<W> Encode<W> for tokio::io::Empty
+where
+    W: DeferredWrite,
+{
     type Encoder = StreamEncoderRead<W>;
 }
 
 #[cfg(feature = "io-std")]
-impl<W: DeferredWrite> Encode<W> for tokio::io::Stdin {
+impl<W> Encode<W> for tokio::io::Stdin
+where
+    W: DeferredWrite,
+{
     type Encoder = StreamEncoderRead<W>;
 }
 
 #[cfg(feature = "fs")]
-impl<W: DeferredWrite> Encode<W> for tokio::fs::File {
+impl<W> Encode<W> for tokio::fs::File
+where
+    W: DeferredWrite,
+{
     type Encoder = StreamEncoderRead<W>;
 }
 
 #[cfg(feature = "net")]
-impl<W: DeferredWrite> Encode<W> for tokio::net::TcpStream {
+impl<W> Encode<W> for tokio::net::TcpStream
+where
+    W: DeferredWrite,
+{
     type Encoder = StreamEncoderRead<W>;
 }
 
 #[cfg(all(unix, feature = "net"))]
-impl<W: DeferredWrite> Encode<W> for tokio::net::UnixStream {
+impl<W> Encode<W> for tokio::net::UnixStream
+where
+    W: DeferredWrite,
+{
     type Encoder = StreamEncoderRead<W>;
 }
 
 #[cfg(all(unix, feature = "net"))]
-impl<W: DeferredWrite> Encode<W> for tokio::net::unix::pipe::Receiver {
+impl<W> Encode<W> for tokio::net::unix::pipe::Receiver
+where
+    W: DeferredWrite,
+{
     type Encoder = StreamEncoderRead<W>;
 }
 
@@ -2456,7 +2358,7 @@ where
     T: Decode,
 {
     dec: OptionDecoder<T::ListDecoder>,
-    deferred: Option<DeferredFn<BufferedIncoming>>,
+    deferred: Option<DeferredFn<Incoming>>,
     _ty: PhantomData<T>,
 }
 
@@ -2483,23 +2385,12 @@ where
     }
 }
 
-impl<T> Deferred<BufferedIncoming> for StreamDecoder<T>
+impl<T> Deferred<Incoming> for StreamDecoder<T>
 where
     T: Decode,
 {
-    fn take_deferred(&mut self) -> Option<DeferredFn<BufferedIncoming>> {
+    fn take_deferred(&mut self) -> Option<DeferredFn<Incoming>> {
         self.deferred.take()
-    }
-}
-
-fn ensure_processed<D>(framed: &FramedRead<BufferedIncoming, D>) -> std::io::Result<()> {
-    if framed.read_buffer().is_empty() && framed.get_ref().buffer.is_empty() {
-        Ok(())
-    } else {
-        Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "received data after value end",
-        ))
     }
 }
 
@@ -2522,32 +2413,27 @@ fn receive_pending_stream<T: Send + 'static>(
 #[instrument(level = "trace", skip(dec, r, tx, end_tx), ret)]
 async fn handle_deferred_stream<C, T>(
     dec: C,
-    r: BufferedIncoming,
+    mut r: Incoming,
     tx: mpsc::Sender<Vec<T>>,
     end_tx: oneshot::Sender<()>,
 ) -> std::io::Result<()>
 where
-    C: tokio_util::codec::Decoder<Item = T> + Deferred<BufferedIncoming>,
+    C: tokio_util::codec::Decoder<Item = T> + Deferred<Incoming>,
     std::io::Error: From<C::Error>,
 {
-    let dec = ListDecoder::new(dec);
-    let mut framed = FramedRead::new(r, dec);
-    let mut tasks = JoinSet::new();
+    let mut dec = ListDecoder::new(dec);
+    let mut tasks = FuturesUnordered::default();
+    let mut pending = None;
     let mut i = 0_usize;
     loop {
         trace!("receiving pending stream chunk");
         select! {
-            Some(chunk) = framed.next() => {
-                let chunk = chunk?;
+            chunk = r.decode(&mut dec), if pending.is_none() => {
+                let Some(chunk) = chunk? else {
+                    break;
+                };
                 if chunk.is_empty() {
-                    trace!("received stream end");
-                    ensure_processed(&framed)?;
-                    _ = end_tx.send(());
-                    drop(tx);
-                    while let Some(res) = tasks.join_next().await {
-                        res??;
-                    }
-                    return Ok(())
+                    continue;
                 }
                 let end = i.checked_add(chunk.len()).ok_or_else(|| {
                     std::io::Error::new(
@@ -2556,33 +2442,42 @@ where
                     )
                 })?;
                 trace!(i, end, "received stream chunk");
-                for (i, deferred) in zip(i.., mem::take(&mut framed.decoder_mut().deferred)) {
+                for (i, deferred) in zip(i.., mem::take(&mut dec.deferred)) {
                     if let Some(deferred) = deferred {
-                        let fut = deferred(framed.get_ref(), &[i])?;
-                        trace!("spawning receive task");
-                        tasks.spawn(fut);
+                        let fut = deferred(&r, &[i])?;
+                        tasks.push(fut);
                     }
                 }
-                if tx.send(chunk).await.is_err() {
-                    return Err(error_receiver_closed());
-                }
+                pending = Some(chunk);
                 i = end;
             },
-            Some(res) = tasks.join_next() => {
+            permit = tx.reserve(), if pending.is_some() => {
+                let Ok(permit) = permit else {
+                    return Err(error_receiver_closed());
+                };
+                if let Some(chunk) = pending.take() {
+                    permit.send(chunk);
+                }
+            },
+            Some(res) = tasks.next() => {
                 trace!(?res, "receiver task finished");
-                res??;
-            }
-            else => {
-                return Err(std::io::ErrorKind::UnexpectedEof.into());
+                res?;
             }
         }
     }
+    trace!("received stream end");
+    _ = end_tx.send(());
+    drop(tx);
+    while let Some(res) = tasks.next().await {
+        res?;
+    }
+    Ok(())
 }
 
 impl<T> tokio_util::codec::Decoder for StreamDecoder<T>
 where
     T: Decode + Send + 'static,
-    T::ListDecoder: Deferred<BufferedIncoming>,
+    T::ListDecoder: Deferred<Incoming>,
     <T::Decoder as tokio_util::codec::Decoder>::Error: Send,
     std::io::Error: From<<T::Decoder as tokio_util::codec::Decoder>::Error>,
 {
@@ -2606,7 +2501,7 @@ where
         let (tx, rx) = mpsc::channel(128);
         let (end_tx, end_rx) = oneshot::channel();
         self.deferred = Some(Box::new(|r, path| {
-            let r = r.index(path).map_err(std::io::Error::other)?;
+            let r = r.index(path)?;
             Ok(Box::pin(async move {
                 handle_deferred_stream(T::Decoder::default(), r, tx, end_tx).await
             }))
@@ -2618,7 +2513,7 @@ where
 impl<T> Decode for Pin<Box<dyn Stream<Item = Vec<T>> + Send>>
 where
     T: Decode + Send + 'static,
-    T::ListDecoder: Deferred<BufferedIncoming> + Send,
+    T::ListDecoder: Deferred<Incoming> + Send,
     <T::Decoder as tokio_util::codec::Decoder>::Error: Send,
     std::io::Error: From<<T::Decoder as tokio_util::codec::Decoder>::Error>,
 {
@@ -2630,7 +2525,7 @@ where
 #[derive(Default)]
 pub struct StreamDecoderBytes {
     dec: OptionDecoder<CoreVecDecoderBytes>,
-    deferred: Option<DeferredFn<BufferedIncoming>>,
+    deferred: Option<DeferredFn<Incoming>>,
 }
 
 impl Paths for StreamDecoderBytes {
@@ -2639,8 +2534,8 @@ impl Paths for StreamDecoderBytes {
     }
 }
 
-impl Deferred<BufferedIncoming> for StreamDecoderBytes {
-    fn take_deferred(&mut self) -> Option<DeferredFn<BufferedIncoming>> {
+impl Deferred<Incoming> for StreamDecoderBytes {
+    fn take_deferred(&mut self) -> Option<DeferredFn<Incoming>> {
         self.deferred.take()
     }
 }
@@ -2664,28 +2559,25 @@ impl tokio_util::codec::Decoder for StreamDecoderBytes {
         // stream is pending
         let (tx, rx) = mpsc::channel(128);
         let (end_tx, end_rx) = oneshot::channel();
-        let dec = mem::take(&mut self.dec).into_inner();
+        let mut dec = mem::take(&mut self.dec).into_inner();
         let span = Span::current();
         self.deferred = Some(Box::new(|r, path| {
-            let r = r.index(path).map_err(std::io::Error::other)?;
+            let mut r = r.index(path)?;
             Ok(Box::pin(
                 async move {
-                    let mut framed = FramedRead::new(r, dec);
                     trace!("receiving pending byte stream chunk");
-                    while let Some(chunk) = framed.next().await {
-                        let chunk = chunk?;
-                        if chunk.is_empty() {
-                            trace!("received stream end");
-                            ensure_processed(&framed)?;
-                            _ = end_tx.send(());
-                            return Ok(());
-                        }
+                    while let Some(chunk) = r.decode(&mut dec).await? {
                         trace!(?chunk, "received pending byte stream chunk");
+                        if chunk.is_empty() {
+                            continue;
+                        }
                         if tx.send(chunk).await.is_err() {
                             return Err(error_receiver_closed());
                         }
                     }
-                    Err(std::io::ErrorKind::UnexpectedEof.into())
+                    trace!("received stream end");
+                    _ = end_tx.send(());
+                    Ok(())
                 }
                 .instrument(span),
             ))
@@ -2711,8 +2603,8 @@ impl Paths for StreamDecoderRead {
     }
 }
 
-impl Deferred<BufferedIncoming> for StreamDecoderRead {
-    fn take_deferred(&mut self) -> Option<DeferredFn<BufferedIncoming>> {
+impl Deferred<Incoming> for StreamDecoderRead {
+    fn take_deferred(&mut self) -> Option<DeferredFn<Incoming>> {
         self.dec.take_deferred()
     }
 }
@@ -2738,7 +2630,8 @@ impl Decode for Pin<Box<dyn AsyncRead + Send>> {
 
 #[cfg(test)]
 mod tests {
-    use std::io::ErrorKind;
+    use core::future::ready;
+    use core::time::Duration;
 
     use anyhow::bail;
     use tokio::io::duplex;
@@ -2746,8 +2639,10 @@ mod tests {
     use tokio_util::codec::Decoder as _;
 
     use super::*;
-    use crate::frame::Incoming;
-    use crate::{FrameEncoder, FrameRef};
+    use crate::frame::{self, FrameRef};
+    use crate::mux::{egress, ingress};
+
+    const CLOSED: &[u8] = b"\0\0";
 
     type StreamBytes = Pin<Box<dyn Stream<Item = Bytes> + Send>>;
 
@@ -2755,6 +2650,64 @@ mod tests {
     fn result_paths_merge_wildcards() {
         let dec = <(Result<(StreamBytes,), Vec<StreamBytes>>,) as Decode>::Decoder::default();
         assert_eq!(*dec.paths(), [Box::from([Some(0), None])]);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn future_flushes_before_nested_value() -> anyhow::Result<()> {
+        let (tx, mut rx) = duplex(2);
+        let w = egress(tx, BytesMut::default());
+        let nested: Pin<Box<dyn Future<Output = u8> + Send>> = Box::pin(pending());
+        let mut buf = [0; 4];
+        select! {
+            res = w.write_future(&[0], 0, ready(Ok(nested))) => bail!("nested value written: {res:?}"),
+            res = tokio::time::timeout(Duration::from_secs(5), rx.read_exact(&mut buf)) => {
+                res.expect("value was not flushed")?;
+            }
+        }
+        assert_eq!(buf, *b"\x01\x00\x01\x00");
+        Ok(())
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn deferred_writers_close_pending_paths() -> anyhow::Result<()> {
+        type FutureU8 = Pin<Box<dyn Future<Output = u8> + Send>>;
+
+        async fn frames<T>(v: T) -> std::io::Result<Vec<u8>>
+        where
+            T: TupleEncode,
+            std::io::Error: From<<T::Encoder as tokio_util::codec::Encoder<T>>::Error>,
+        {
+            let (tx, mut rx) = duplex(1024);
+            let tx = egress(tx, BytesMut::default()).send(T::Encoder::default(), v)?;
+            tx.await?;
+            let mut frames = Vec::default();
+            rx.read_to_end(&mut frames).await?;
+            Ok(frames)
+        }
+
+        fn pending(v: u8) -> FutureU8 {
+            Box::pin(async move {
+                yield_now().await;
+                v
+            })
+        }
+
+        let buf = frames((vec![pending(1)],)).await?;
+        assert_eq!(
+            buf,
+            b"\x00\x02\x01\x00\x00\x00\x02\x00\x00\x01\x01\x02\x00\x00\x00"
+        );
+
+        let list: Pin<Box<dyn Future<Output = Vec<FutureU8>> + Send>> = Box::pin(async {
+            yield_now().await;
+            vec![pending(2)]
+        });
+        let buf = frames((list,)).await?;
+        assert_eq!(
+            buf,
+            b"\x00\x01\x00\x00\x00\x01\x00\x02\x01\x00\x01\x00\x00\x03\x00\x00\x00\x01\x02\x03\x00\x00\x00\x00"
+        );
+        Ok(())
     }
 
     #[test_log::test(tokio::test)]
@@ -2800,17 +2753,28 @@ mod tests {
         let mut dec = <Vec<StreamBytes> as Decode>::Decoder::default();
         let vs = dec.decode(&mut BytesMut::from("\0"))?;
         assert!(vs.is_some_and(|vs| vs.is_empty()));
-        assert!(Deferred::<BufferedIncoming>::take_deferred(&mut dec).is_none());
+        assert!(Deferred::<Incoming>::take_deferred(&mut dec).is_none());
 
         let n = b"\xff\xff\xff\xff\x0f";
         let err = crate::unpack::<Vec<Vec<String>>>(&mut BytesMut::from(&n[..])).unwrap_err();
-        assert_eq!(err.kind(), ErrorKind::UnexpectedEof);
+        assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
         let err = crate::unpack::<Vec<StreamBytes>>(&mut BytesMut::from(&n[..]))
             .err()
             .unwrap();
-        assert_eq!(err.kind(), ErrorKind::UnexpectedEof);
+        assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
         let err = crate::unpack::<Bytes>(&mut BytesMut::from(&n[..])).unwrap_err();
-        assert_eq!(err.kind(), ErrorKind::UnexpectedEof);
+        assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
+
+        let mut dec = <Vec<Option<u8>> as Decode>::Decoder::default();
+        let err = dec
+            .decode_eof(&mut BytesMut::from(&b"\x02\x01\x07"[..]))
+            .unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
+        let mut dec = <Vec<u8> as Decode>::Decoder::default();
+        let err = dec
+            .decode_eof(&mut BytesMut::from(&b"\x02\x01"[..]))
+            .unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
         Ok(())
     }
 
@@ -2826,24 +2790,28 @@ mod tests {
                 data.extend_from_slice(chunk);
                 buf = rest;
             }
-            if !buf.is_empty() {
+            if buf != CLOSED {
                 bail!("unexpected trailing bytes: {buf:02x?}");
             }
             Ok(data)
         }
 
-        for (ready, expected) in [("foo", &b"\x03foo\x03bar\x00"[..]), ("", b"\x03bar\x00")] {
-            let (tx, rx) = tokio::io::duplex(1024);
-            let w = Outgoing::new(tx).index(&[0])?;
-            w.write_stream_bytes(0, stream::iter([ready, "bar"].map(Bytes::from)))
+        for (ready, expected) in [("foo", &b"\x03foo\x03bar"[..]), ("", b"\x03bar")] {
+            let (tx, rx) = duplex(1024);
+            let root = egress(tx, BytesMut::default());
+            root.write_stream_bytes(&[0], 0, stream::iter([ready, "bar"].map(Bytes::from)))
                 .await?;
-            assert_eq!(read_frames(rx).await?, expected);
+            root.close().await?;
+            let frames = read_frames(rx).await?;
+            assert_eq!(frames, expected);
 
-            let (tx, rx) = tokio::io::duplex(1024);
-            let w = Outgoing::new(tx).index(&[0])?;
-            w.write_stream_read(0, ready.into(), b"bar".as_slice())
+            let (tx, rx) = duplex(1024);
+            let root = egress(tx, BytesMut::default());
+            root.write_stream_read(&[0], 0, ready.into(), b"bar".as_slice())
                 .await?;
-            assert_eq!(read_frames(rx).await?, expected);
+            root.close().await?;
+            let frames = read_frames(rx).await?;
+            assert_eq!(frames, expected);
         }
         Ok(())
     }
@@ -2853,22 +2821,19 @@ mod tests {
         type FutureBytes = Pin<Box<dyn Future<Output = Bytes> + Send>>;
         type UnitFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
 
-        fn buffered(buffer: &[u8]) -> BufferedIncoming {
-            let mut frames = BytesMut::default();
-            if !buffer.is_empty() {
-                let frame = FrameRef {
-                    path: &[0],
-                    data: buffer,
-                };
-                FrameEncoder.encode(frame, &mut frames).unwrap();
+        async fn buffered(frames: &[(&[usize], &[u8])]) -> Incoming {
+            let mut rx_buf = BytesMut::default();
+            for (path, data) in frames {
+                let frame = FrameRef { path, data };
+                frame::Encoder.encode(frame, &mut rx_buf).unwrap();
             }
-            BufferedIncoming {
-                buffer: BytesMut::default(),
-                inner: Incoming::new(std::io::Cursor::new(frames), [[Some(0)]]),
-            }
+            ingress(
+                std::io::Cursor::new(rx_buf),
+                [&[Some(0)][..], &[Some(0), Some(0)]],
+            )
         }
 
-        fn pending<T: Decode>() -> (T, DeferredFn<BufferedIncoming>) {
+        fn pending<T: Decode>() -> (T, DeferredFn<Incoming>) {
             let mut dec = T::Decoder::default();
             let Ok(Some(v)) = dec.decode(&mut BytesMut::from("\0")) else {
                 panic!("value not decoded")
@@ -2878,7 +2843,12 @@ mod tests {
 
         async fn read<T: Decode>(buffer: &[u8]) -> (T, std::io::Result<()>) {
             let (v, f) = pending::<T>();
-            let r = buffered(buffer);
+            let frames: &[(&[usize], &[u8])] = if buffer.is_empty() {
+                &[(&[0], b"")]
+            } else {
+                &[(&[0], buffer), (&[0], b"")]
+            };
+            let r = buffered(frames).await;
             let fut = f(&r, &[0]).expect("failed to index value");
             (v, fut.await)
         }
@@ -2888,75 +2858,62 @@ mod tests {
         fut.await;
 
         let (fut, res) = read::<UnitFuture>(b"\x2a").await;
-        assert_eq!(res.unwrap_err().kind(), ErrorKind::InvalidData);
-        assert!(fut.now_or_never().is_none());
+        assert_eq!(res.unwrap_err().kind(), std::io::ErrorKind::InvalidData);
+        fut.await;
+
+        let data: Bytes = (0..2 * READ_CHUNK_SIZE).map(|i| i as u8).collect();
+        let mut buffer = BytesMut::default();
+        CoreVecEncoderBytes.encode(&data, &mut buffer).unwrap();
+        buffer.extend_from_slice(&b"\x2a".repeat(READ_CHUNK_SIZE));
+        let (.., res) = read::<FutureBytes>(&buffer).await;
+        assert_eq!(res.unwrap_err().kind(), std::io::ErrorKind::InvalidData);
 
         let (.., res) = read::<FutureBytes>(b"\x03foo\x2a").await;
-        assert_eq!(res.unwrap_err().kind(), ErrorKind::InvalidData);
+        assert_eq!(res.unwrap_err().kind(), std::io::ErrorKind::InvalidData);
 
-        let (.., res) = read::<StreamBytes>(b"\x03foo\x00\x2a").await;
-        assert_eq!(res.unwrap_err().kind(), ErrorKind::InvalidData);
+        let (.., res) = read::<StreamBytes>(b"\x03fo").await;
+        assert_eq!(res.unwrap_err().kind(), std::io::ErrorKind::UnexpectedEof);
 
         let (fut, f) = pending::<FutureBytes>();
         drop(fut);
-        let r = buffered(b"\x03foo");
+        let r = buffered(&[(&[0], b"\x03foo"), (&[0], b"")]).await;
         let fut = f(&r, &[0])?;
         let err = fut.await;
-        assert_eq!(err.unwrap_err().kind(), ErrorKind::BrokenPipe);
+        assert_eq!(err.unwrap_err().kind(), std::io::ErrorKind::BrokenPipe);
 
         let (mut s, res) = read::<StreamBytes>(b"\x03foo").await;
-        assert_eq!(res.unwrap_err().kind(), ErrorKind::UnexpectedEof);
+        res?;
         assert_eq!(s.next().await.unwrap(), "foo");
-        assert!(s.next().now_or_never().is_none());
+        assert!(s.next().await.is_none());
 
         let (mut s, res) =
             read::<Pin<Box<dyn Stream<Item = Vec<String>> + Send>>>(b"\x01\x03foo").await;
-        assert_eq!(res.unwrap_err().kind(), ErrorKind::UnexpectedEof);
+        res?;
         assert_eq!(s.next().await.unwrap(), ["foo"]);
-        assert!(s.next().now_or_never().is_none());
+        assert!(s.next().await.is_none());
 
         let (mut r, res) = read::<Pin<Box<dyn AsyncRead + Send>>>(b"\x03foo").await;
-        assert_eq!(res.unwrap_err().kind(), ErrorKind::UnexpectedEof);
+        res?;
         let mut buf = [0; 3];
         r.read_exact(&mut buf).await.unwrap();
         assert_eq!(&buf, b"foo");
-        assert!(r.read(&mut buf).now_or_never().is_none());
-        Ok(())
-    }
+        let n = r.read(&mut buf).await?;
+        assert_eq!(n, 0);
 
-    #[test_log::test(tokio::test)]
-    async fn nested_future() -> anyhow::Result<()> {
-        type FutureU8 = Pin<Box<dyn Future<Output = u8> + Send>>;
-        type FutureFutureU8 = Pin<Box<dyn Future<Output = FutureU8> + Send>>;
-
-        let (tx, mut rx) = duplex(1024);
-        let inner: FutureU8 = Box::pin(yield_now().map(|()| 0x2a));
-        let outer: FutureFutureU8 = Box::pin(yield_now().map(|()| inner));
-        let mut buf = BytesMut::default();
-        let f = outer.encode(&mut FutureEncoder::default(), &mut buf)?;
-        assert_eq!(buf.as_ref(), b"\0");
-        let w = Outgoing::new(tx);
-        let tx = f.expect("deferred write missing")(&w, &[0])?;
-        drop(w);
-        tx.await?;
-        let mut frames = Vec::default();
-        rx.read_to_end(&mut frames).await?;
-        assert_eq!(frames, b"\x01\x00\x01\x00\x02\x00\x00\x01\x2a");
-
-        let r = BufferedIncoming {
-            buffer: BytesMut::default(),
-            inner: Incoming::new(
-                std::io::Cursor::new(frames),
-                [[Some(0)].as_slice(), &[Some(0), Some(0)]],
-            ),
-        };
-        let mut dec = <FutureFutureU8 as Decode>::Decoder::default();
-        let fut = dec.decode(&mut buf)?;
-        let fut = fut.expect("future not decoded");
-        let f = dec.take_deferred().expect("deferred read missing");
+        let data: Bytes = (0..2 * READ_CHUNK_SIZE).map(|i| i as u8).collect();
+        let mut buffer = BytesMut::default();
+        CoreVecEncoderBytes.encode(&data, &mut buffer)?;
+        let r = buffered(&[
+            (&[0], b"\0"),
+            (&[0], b""),
+            (&[0, 0], &buffer),
+            (&[0, 0], b""),
+        ])
+        .await;
+        let (fut, f) = pending::<Pin<Box<dyn Future<Output = FutureBytes> + Send>>>();
         let rx = f(&r, &[0])?;
         rx.await?;
-        assert_eq!(fut.await.await, 0x2a);
+        assert_eq!(fut.await.await, data);
         Ok(())
     }
 }

@@ -10,18 +10,17 @@ async fn go_bindgen() -> anyhow::Result<()> {
     use core::time::Duration;
 
     use std::env::consts::EXE_SUFFIX;
-    use std::io::{Error, ErrorKind};
 
     use anyhow::{anyhow, bail};
     use tempfile::tempdir;
     use tokio::fs;
     use tokio::time::{sleep, timeout};
     use tracing::info;
-    use wrpc_transport::InvokeExt as _;
+    use wrpc_transport::{Connect as _, Decode, Encode, invoke_blocking};
 
     if let Err(err) = fs::remove_dir_all("tests/go/bindings").await {
         match err.kind() {
-            ErrorKind::NotFound => {}
+            std::io::ErrorKind::NotFound => {}
             _ => bail!(anyhow!(err).context("failed to remove `test/go/bindings`")),
         }
     }
@@ -70,23 +69,31 @@ async fn go_bindgen() -> anyhow::Result<()> {
             .spawn()
             .context("failed to run `sync-server-tcp`")?;
 
-        let client = wrpc_transport::frame::tcp::Client::from(addr);
+        let client = wrpc_transport::tcp::Client::from(addr);
 
         // TODO: Remove the need for this
         sleep(Duration::from_secs(1)).await;
 
         common::assert_sync((), &client).await?;
 
-        let res = client
-            .invoke_values_blocking::<_, (u32,)>((), "wrpc-test:integration/foo", "f", ("panic",))
-            .await;
+        let (tx, rx) = client.connect(()).await?;
+        let res = invoke_blocking(
+            tx,
+            rx,
+            "wrpc-test:integration/foo",
+            "f",
+            <(&str,) as Encode>::Encoder::default(),
+            ("panic",),
+            <(u32,) as Decode>::Decoder::default(),
+        )
+        .await;
         let Err(err) = res else {
             bail!("a panicking handler must fail the invocation");
         };
         ensure!(
             err.chain().any(|err| err
-                .downcast_ref::<Error>()
-                .is_some_and(|err| err.kind() == ErrorKind::ConnectionReset)),
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|err| err.kind() == std::io::ErrorKind::ConnectionReset)),
             "expected the connection to be reset, got {err:?}"
         );
         let res = timeout(Duration::from_secs(5), server.wait())
@@ -112,7 +119,7 @@ async fn go_bindgen() -> anyhow::Result<()> {
         // TODO: Remove the need for this
         sleep(Duration::from_secs(1)).await;
 
-        let client = wrpc_transport::frame::tcp::Client::from(addr);
+        let client = wrpc_transport::tcp::Client::from(addr);
         common::assert_async((), &client).await?;
 
         server

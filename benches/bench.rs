@@ -1,24 +1,25 @@
-use core::pin::Pin;
+use core::net::SocketAddr;
+use core::pin::pin;
 
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::{Arc, Mutex, PoisonError};
 
-use anyhow::{Context as _, bail, ensure};
+use anyhow::{Context as _, ensure};
 use criterion::measurement::Measurement;
 use criterion::{BenchmarkGroup, Criterion};
 use futures::{Stream, StreamExt as _};
 use hyper_util::rt::TokioExecutor;
 use hyper_util::rt::tokio::WithHyperIo;
-use tokio::io::BufReader;
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::UnixListener;
 use tokio::runtime::{Handle, Runtime};
 use tokio::task::JoinHandle;
 use tokio::try_join;
 use wasmtime::component::{Component, Linker, ResourceTable};
 use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
-use wrpc_transport::{Invoke, Serve};
+use wrpc_transport::Connect;
 
 mod ping_bindings_wrpc {
     wit_bindgen_wrpc::generate!({
@@ -52,17 +53,6 @@ use greet_bindings_wrpc::exports::wrpc_bench::bench::greet::Handler as _;
 use ping_bindings_wasmtime::PingProxyPre;
 use ping_bindings_wrpc::exports::wrpc_bench::bench::ping::Handler as _;
 
-type Invocations = Pin<
-    Box<
-        dyn Stream<
-                Item = anyhow::Result<
-                    Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + 'static>>,
-                >,
-            > + Send
-            + 'static,
-    >,
->;
-
 trait Handler<C>:
     ping_bindings_wrpc::exports::wrpc_bench::bench::ping::Handler<C>
     + greet_bindings_wrpc::exports::wrpc_bench::bench::greet::Handler<C>
@@ -90,23 +80,7 @@ enum Func {
 }
 
 impl Func {
-    async fn serve<S: Serve>(
-        self,
-        srv: &S,
-        handler: impl Handler<S::Context>,
-    ) -> anyhow::Result<Invocations> {
-        let invocations = match self {
-            Self::Ping => ping_bindings_wrpc::serve(srv, handler).await?,
-            Self::Greet => greet_bindings_wrpc::serve(srv, handler).await?,
-        };
-        let mut invocations = invocations.into_iter();
-        let (Some((_, _, invocations)), None) = (invocations.next(), invocations.next()) else {
-            bail!("invalid invocation stream vector")
-        };
-        Ok(invocations)
-    }
-
-    async fn call<C: Invoke>(self, clt: &C, cx: C::Context) -> anyhow::Result<()> {
+    async fn call<C: Connect>(self, clt: &C, cx: C::Context) -> anyhow::Result<()> {
         match self {
             Self::Ping => ping_bindings_wrpc::wrpc_bench::bench::ping::ping(clt, cx)
                 .await
@@ -309,6 +283,27 @@ impl Tasks {
         })
     }
 
+    fn serve<E>(
+        &self,
+        invocations: impl Stream<
+            Item = Result<impl Future<Output = anyhow::Result<()>> + Send + 'static, E>,
+        > + Send
+        + 'static,
+    ) -> JoinHandle<()>
+    where
+        E: core::error::Error + Send + Sync + 'static,
+    {
+        let tasks = self.clone();
+        self.spawn(async move {
+            let mut invocations = pin!(invocations);
+            while let Some(fut) = invocations.next().await {
+                let fut = fut.context("failed to accept invocation")?;
+                tasks.spawn(async move { fut.await.context("failed to handle invocation") });
+            }
+            Ok(())
+        })
+    }
+
     fn check(&self) -> anyhow::Result<()> {
         let mut errors = self.errors.lock().unwrap_or_else(PoisonError::into_inner);
         match errors.drain(..).next() {
@@ -318,30 +313,25 @@ impl Tasks {
     }
 }
 
-fn spawn_invocations<S: Serve>(
-    rt: &Runtime,
+fn spawn_invocations<C, I, O, E>(
     tasks: &Tasks,
-    srv: &S,
+    incoming: impl Stream<Item = Result<(C, O, I), E>> + Send + 'static,
     func: Func,
-    handler: impl Handler<S::Context>,
-) -> anyhow::Result<()> {
-    let mut invocations = rt
-        .block_on(func.serve(srv, handler))
-        .context("failed to serve bindings")?;
-    tasks.spawn({
-        let tasks = tasks.clone();
-        async move {
-            while let Some(fut) = invocations.next().await {
-                let fut = fut.context("failed to accept invocation")?;
-                tasks.spawn(async move { fut.await.context("failed to handle invocation") });
-            }
-            Ok(())
-        }
-    });
-    Ok(())
+    handler: impl Handler<C>,
+) -> JoinHandle<()>
+where
+    C: Send + 'static,
+    I: AsyncRead + Send + Unpin + 'static,
+    O: AsyncWrite + Send + Unpin + 'static,
+    E: core::error::Error + Send + Sync + 'static,
+{
+    match func {
+        Func::Ping => tasks.serve(ping_bindings_wrpc::serve(incoming, handler)),
+        Func::Greet => tasks.serve(greet_bindings_wrpc::serve(incoming, handler)),
+    }
 }
 
-fn bench_invoke<C: Invoke>(
+fn bench_invoke<C: Connect>(
     g: &mut BenchmarkGroup<impl Measurement>,
     rt: &Runtime,
     tasks: &Tasks,
@@ -375,41 +365,22 @@ fn bench_direct(
 fn bench_tcp(
     g: &mut BenchmarkGroup<impl Measurement>,
     func: Func,
-    handler: impl Handler<()>,
+    handler: impl Handler<SocketAddr>,
 ) -> anyhow::Result<()> {
     let rt = Runtime::new().context("failed to build Tokio runtime")?;
     let lis = rt.block_on(wrpc_test::tcp_bind())?;
     let addr = lis
         .local_addr()
         .context("failed to query listener address")?;
-    let srv = Arc::new(wrpc_transport::frame::Server::default());
     let tasks = Tasks::new(&rt);
-    spawn_invocations(&rt, &tasks, srv.as_ref(), func, handler)?;
-    tasks.spawn({
-        let tasks = tasks.clone();
-        async move {
-            loop {
-                let (stream, _) = lis.accept().await.context("failed to accept connection")?;
-                stream
-                    .set_nodelay(true)
-                    .context("failed to set TCP_NODELAY")?;
-                let srv = Arc::clone(&srv);
-                tasks.spawn(async move {
-                    let (rx, tx) = wrpc_transport::tcp::split(stream);
-                    srv.accept((), tx, BufReader::new(rx))
-                        .await
-                        .context("failed to accept invocation")
-                });
-            }
-        }
-    });
+    spawn_invocations(&tasks, wrpc_transport::tcp::incoming(lis), func, handler);
     bench_invoke(
         g,
         &rt,
         &tasks,
         "tcp",
         func,
-        &wrpc_transport::frame::tcp::Client::from(addr).set_zero_linger(),
+        &wrpc_transport::tcp::Client::from(addr).set_zero_linger(),
         || (),
     )
 }
@@ -417,7 +388,7 @@ fn bench_tcp(
 fn bench_unix(
     g: &mut BenchmarkGroup<impl Measurement>,
     func: Func,
-    handler: impl Handler<()>,
+    handler: impl Handler<tokio::net::unix::SocketAddr>,
 ) -> anyhow::Result<()> {
     let rt = Runtime::new().context("failed to build Tokio runtime")?;
     let dir = tempfile::tempdir().context("failed to create temporary directory")?;
@@ -426,25 +397,9 @@ fn bench_unix(
         let _rt = rt.enter();
         UnixListener::bind(&path).context("failed to bind Unix listener")?
     };
-    let srv = Arc::new(wrpc_transport::frame::Server::default());
     let tasks = Tasks::new(&rt);
-    spawn_invocations(&rt, &tasks, srv.as_ref(), func, handler)?;
-    tasks.spawn({
-        let tasks = tasks.clone();
-        async move {
-            loop {
-                let (stream, _) = lis.accept().await.context("failed to accept connection")?;
-                let srv = Arc::clone(&srv);
-                tasks.spawn(async move {
-                    let (rx, tx) = wrpc_transport::unix::split(stream);
-                    srv.accept((), tx, BufReader::new(rx))
-                        .await
-                        .context("failed to accept invocation")
-                });
-            }
-        }
-    });
-    let clt = wrpc_transport::frame::unix::Client::from(path);
+    spawn_invocations(&tasks, wrpc_transport::unix::incoming(lis), func, handler);
+    let clt = wrpc_transport::unix::Client::from(path);
     bench_invoke(g, &rt, &tasks, "unix", func, &clt, || ())
 }
 
@@ -457,24 +412,14 @@ fn bench_quic(
     let (clt, conn) = rt
         .block_on(wrpc_test::with_quic(async |clt, srv| Ok((clt, srv))))
         .context("failed to establish QUIC connection")?;
-    let srv = Arc::new(wrpc_quic::Server::new());
     let tasks = Tasks::new(&rt);
-    spawn_invocations(&rt, &tasks, srv.as_ref(), func, handler)?;
-    let accept = tasks.spawn({
-        let tasks = tasks.clone();
-        async move {
-            loop {
-                let (tx, rx) = conn.accept_bi().await.context("failed to accept stream")?;
-                let srv = Arc::clone(&srv);
-                tasks.spawn(async move {
-                    srv.accept((), tx.into(), rx.into())
-                        .await
-                        .context("failed to accept invocation")
-                });
-            }
-        }
-    });
-    let clt = wrpc_quic::Client::from(clt);
+    let accept = spawn_invocations(
+        &tasks,
+        wrpc_quic::Connection::from(conn).incoming(),
+        func,
+        handler,
+    );
+    let clt = wrpc_quic::Connection::from(clt);
     let res = bench_invoke(g, &rt, &tasks, "quic", func, &clt, || ());
     accept.abort();
     _ = rt.block_on(accept);
@@ -492,24 +437,14 @@ fn bench_webtransport(
             Ok((clt, srv))
         }))
         .context("failed to establish WebTransport session")?;
-    let srv = Arc::new(wrpc_webtransport::Server::new());
     let tasks = Tasks::new(&rt);
-    spawn_invocations(&rt, &tasks, srv.as_ref(), func, handler)?;
-    let accept = tasks.spawn({
-        let tasks = tasks.clone();
-        async move {
-            loop {
-                let (tx, rx) = conn.accept_bi().await.context("failed to accept stream")?;
-                let srv = Arc::clone(&srv);
-                tasks.spawn(async move {
-                    srv.accept((), tx.into(), rx.into())
-                        .await
-                        .context("failed to accept invocation")
-                });
-            }
-        }
-    });
-    let clt = wrpc_webtransport::Client::from(clt);
+    let accept = spawn_invocations(
+        &tasks,
+        wrpc_webtransport::Session::from(conn).incoming(),
+        func,
+        handler,
+    );
+    let clt = wrpc_webtransport::Session::from(clt);
     let res = bench_invoke(g, &rt, &tasks, "webtransport", func, &clt, || ());
     accept.abort();
     _ = rt.block_on(accept);
@@ -526,9 +461,9 @@ fn bench_http1(
         rt.block_on(wrpc_test::with_http_pooling(async |parts, clt, lis| {
             Ok((parts, clt, lis))
         }))?;
-    let srv = Arc::new(wrpc_transport::frame::Server::default());
+    let (svc, srv) = wrpc_http::channel(16);
     let tasks = Tasks::new(&rt);
-    spawn_invocations(&rt, &tasks, srv.as_ref(), func, handler)?;
+    spawn_invocations(&tasks, srv, func, handler);
     tasks.spawn({
         let tasks = tasks.clone();
         async move {
@@ -537,10 +472,8 @@ fn bench_http1(
                 stream
                     .set_nodelay(true)
                     .context("failed to set TCP_NODELAY")?;
-                let conn = hyper::server::conn::http1::Builder::new().serve_connection(
-                    WithHyperIo::new(stream),
-                    wrpc_http::Server::from(Arc::clone(&srv)),
-                );
+                let conn = hyper::server::conn::http1::Builder::new()
+                    .serve_connection(WithHyperIo::new(stream), svc.clone());
                 tasks.spawn(async move { conn.await.context("failed to serve HTTP/1 connection") });
             }
         }
@@ -576,15 +509,15 @@ fn bench_http2(
         })
         .context("failed to connect over HTTP/2")?;
     stream.set_nodelay(true)?;
-    let srv = wrpc_http::Server::default();
+    let (svc, srv) = wrpc_http::channel(16);
     let tasks = Tasks::new(&rt);
     tasks.spawn(async move {
         conn.await
             .context("failed to drive HTTP/2 client connection")
     });
-    spawn_invocations(&rt, &tasks, srv.as_ref(), func, handler)?;
+    spawn_invocations(&tasks, srv, func, handler);
     let conn = hyper::server::conn::http2::Builder::new(TokioExecutor::default())
-        .serve_connection(WithHyperIo::new(stream), srv);
+        .serve_connection(WithHyperIo::new(stream), svc);
     tasks.spawn(async move { conn.await.context("failed to serve HTTP/2 connection") });
     let (parts, ()) = http::Request::new(()).into_parts();
     let clt = wrpc_http::Client::from(sender);
@@ -597,7 +530,10 @@ fn bench_transports<H>(
     handler: &H,
 ) -> anyhow::Result<()>
 where
-    H: Handler<()> + Handler<http::request::Parts>,
+    H: Handler<()>
+        + Handler<SocketAddr>
+        + Handler<tokio::net::unix::SocketAddr>
+        + Handler<http::request::Parts>,
 {
     bench_tcp(g, func, handler.clone())?;
     bench_unix(g, func, handler.clone())?;

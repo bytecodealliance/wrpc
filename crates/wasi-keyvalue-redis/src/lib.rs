@@ -215,8 +215,15 @@ mod tests {
     use super::*;
 
     #[allow(unused)]
-    async fn bound(s: &impl wrpc_transport::Serve) -> anyhow::Result<()> {
-        wrpc_wasi_keyvalue::serve(s, Handler::default()).await?;
-        Ok(())
+    fn bound<C, I, O, E>(
+        incoming: impl futures::Stream<Item = Result<(C, O, I), E>> + Send,
+    ) -> impl futures::Stream + Send
+    where
+        C: Send + Sync + 'static,
+        I: tokio::io::AsyncRead + Send + Unpin + 'static,
+        O: tokio::io::AsyncWrite + Send + Unpin + 'static,
+        E: core::error::Error + Send + Sync + 'static,
+    {
+        wrpc_wasi_keyvalue::serve(incoming, Handler::default())
     }
 }

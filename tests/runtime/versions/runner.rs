@@ -1,5 +1,5 @@
 pub async fn run(
-    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,
+    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Connect<Context = ()>,
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
     use crate::client::test::dep0_1_0::test as v1;
     assert_eq!(v1::x(wrpc, ()).await?, 1.0);

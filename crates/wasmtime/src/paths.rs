@@ -13,7 +13,6 @@
 //! imports up front and comparing against them.
 
 use std::collections::{BTreeSet, VecDeque};
-use std::sync::Arc;
 
 use wasmtime::Engine;
 use wasmtime::component::ResourceType;
@@ -167,10 +166,10 @@ fn async_paths(ty: &Type, resources: &ResourceTypes) -> (BTreeSet<VecDeque<Optio
 /// Each parameter is treated as an element of a top-level tuple: a parameter at
 /// index `i` whose type carries asynchronous data contributes paths prefixed
 /// with `Some(i)`.
-pub(crate) fn params_async_paths<'a>(
+pub fn params_async_paths<'a>(
     params: impl IntoIterator<Item = &'a Type>,
     resources: &ResourceTypes,
-) -> Arc<[Box<[Option<usize>]>]> {
+) -> Box<[Box<[Option<usize>]>]> {
     let mut out = BTreeSet::new();
     for (i, ty) in params.into_iter().enumerate() {
         let (nested, fut) = async_paths(ty, resources);

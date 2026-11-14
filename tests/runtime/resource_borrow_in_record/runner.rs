@@ -1,7 +1,7 @@
 use crate::client::test::resource_borrow_in_record::to_test::{test, Foo, Thing};
 
 pub async fn run(
-    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,
+    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Connect<Context = ()>,
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
     let thing1 = Thing::new(wrpc, (), "Bonjour").await?;
     let thing2 = Thing::new(wrpc, (), "mon cher").await?;

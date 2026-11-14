@@ -1,7 +1,7 @@
 use crate::client::test::options::to_test::*;
 
 pub async fn run(
-    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,
+    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Connect<Context = ()>,
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
     option_none_param(wrpc, (), None).await?;
     option_some_param(wrpc, (), Some("foo")).await?;

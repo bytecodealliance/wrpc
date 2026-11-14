@@ -3,7 +3,7 @@ use ::wit_bindgen_wrpc::bytes::Bytes;
 use crate::client::test::resource_with_lists::test::Thing;
 
 pub async fn run(
-    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,
+    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Connect<Context = ()>,
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
     let thing_instance = Thing::new(wrpc, (), &Bytes::from_static(b"Hi")).await?;
     let v = Thing::foo(wrpc, (), &thing_instance.as_borrow()).await?;

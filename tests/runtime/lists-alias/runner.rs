@@ -3,7 +3,7 @@ use ::wit_bindgen_wrpc::bytes::Bytes;
 use crate::client::cat::*;
 
 pub async fn run(
-    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,
+    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Connect<Context = ()>,
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
     foo(wrpc, (), &Bytes::from_static(b"hello")).await?;
 

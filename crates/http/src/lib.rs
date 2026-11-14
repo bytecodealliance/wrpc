@@ -1,21 +1,21 @@
 //! wRPC HTTP transport
 
-use core::ops::{Deref, DerefMut};
 use core::pin::Pin;
 use core::sync::atomic::{AtomicBool, Ordering};
 use core::task::{Context, Poll, Waker, ready};
 
-use std::collections::VecDeque;
 use std::io::IoSlice;
 use std::sync::Arc;
 
 use bytes::{Bytes, BytesMut};
-use futures::{Stream, TryStreamExt as _, stream};
+use futures::stream::BoxStream;
+use futures::{Stream, StreamExt as _, TryStreamExt as _, stream};
 use http_body::Frame;
 use http_body_util::BodyExt as _;
 use http_body_util::combinators::MapErr;
 use pin_project_lite::pin_project;
 use tokio::io::{AsyncReadExt as _, AsyncWrite, ReadHalf, SimplexStream, WriteHalf, simplex};
+use tokio::sync::mpsc;
 use tokio_util::io::{StreamReader, poll_read_buf};
 
 /// Body buffer size
@@ -28,6 +28,9 @@ pub type IncomingBodyDataReader<T> = StreamReader<IncomingBodyDataStream<T>, Byt
 
 pub type DynIncomingBodyDataReader =
     IncomingBodyDataReader<Box<dyn FnMut(hyper::Error) -> std::io::Error + Send + Sync + 'static>>;
+
+/// Reader of the data of a response body, see [`data_reader_from_response`]
+pub type ResponseBodyDataReader = StreamReader<BoxStream<'static, std::io::Result<Bytes>>, Bytes>;
 
 /// Writer of the data of an [`OutgoingBody`], which fails the body once dropped before being
 /// shut down
@@ -84,7 +87,6 @@ pin_project! {
     #[project = OutgoingBodyProj]
     #[derive(Debug)]
     pub struct OutgoingBody {
-        chunks: VecDeque<Bytes>,
         buffer: BytesMut,
         #[pin]
         stream: ReadHalf<SimplexStream>,
@@ -94,12 +96,11 @@ pin_project! {
 
 impl OutgoingBody {
     #[must_use]
-    pub fn new(chunks: impl IntoIterator<Item = Bytes>) -> (Self, OutgoingBodyDataWriter) {
+    pub fn new() -> (Self, OutgoingBodyDataWriter) {
         let (rx, tx) = simplex(DEFAULT_BODY_BUFFER_SIZE);
         let aborted = Arc::<AtomicBool>::default();
         (
             Self {
-                chunks: chunks.into_iter().filter(|buf| !buf.is_empty()).collect(),
                 buffer: BytesMut::default(),
                 stream: rx,
                 aborted: Arc::clone(&aborted),
@@ -121,10 +122,6 @@ impl http_body::Body for OutgoingBody {
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
-        if let Some(buf) = self.chunks.pop_front() {
-            return Poll::Ready(Some(Ok(Frame::data(buf))));
-        }
-
         let this = self.as_mut().project();
         this.buffer.reserve(DEFAULT_BODY_BUFFER_SIZE);
         ready!(poll_read_buf(this.stream, cx, this.buffer))?;
@@ -144,9 +141,8 @@ impl http_body::Body for OutgoingBody {
 
 pub fn new_request(
     mut parts: http::request::Parts,
-    chunks: impl IntoIterator<Item = Bytes>,
 ) -> (http::Request<OutgoingBody>, OutgoingBodyDataWriter) {
-    let (rx, tx) = OutgoingBody::new(chunks);
+    let (rx, tx) = OutgoingBody::new();
     parts.method = http::Method::POST;
     (http::Request::from_parts(parts, rx), tx)
 }
@@ -181,7 +177,7 @@ pub fn data_reader_from_incoming(
 /// status and the first 4 KiB of the response body.
 pub fn data_reader_from_response<E>(
     res: impl Future<Output = Result<http::Response<hyper::body::Incoming>, E>> + Send + 'static,
-) -> StreamReader<impl Stream<Item = std::io::Result<Bytes>> + Send + Unpin, Bytes>
+) -> ResponseBodyDataReader
 where
     E: std::error::Error + Send + Sync + 'static,
 {
@@ -206,74 +202,35 @@ where
         Ok(data_stream_from_incoming(body))
     }))
     .try_flatten();
-    StreamReader::new(body)
+    StreamReader::new(body.boxed())
 }
 
-/// wRPC Server
-#[derive(Debug, Default)]
-#[repr(transparent)]
-pub struct Server(
-    pub  Arc<
-        wrpc_transport::frame::Server<
-            http::request::Parts,
-            DynIncomingBodyDataReader,
-            OutgoingBodyDataWriter,
-        >,
-    >,
+/// Creates a [Service], which passes each request to the [Server] as an invocation, waiting
+/// while `buffer` invocations are not yet accepted
+///
+/// # Panics
+///
+/// Panics if `buffer` is zero
+#[must_use]
+pub fn channel(buffer: usize) -> (Service, Server) {
+    let (tx, rx) = mpsc::channel(buffer);
+    (Service(tx), Server(rx))
+}
+
+/// [`hyper::service::Service`], which passes each request to the [Server] as an invocation,
+/// see [channel]
+#[derive(Clone, Debug)]
+pub struct Service(
+    mpsc::Sender<(
+        http::request::Parts,
+        OutgoingBodyDataWriter,
+        DynIncomingBodyDataReader,
+    )>,
 );
 
-impl Deref for Server {
-    type Target = Arc<
-        wrpc_transport::frame::Server<
-            http::request::Parts,
-            DynIncomingBodyDataReader,
-            OutgoingBodyDataWriter,
-        >,
-    >;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl DerefMut for Server {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
-
-impl<T> From<T> for Server
-where
-    T: Into<
-        Arc<
-            wrpc_transport::frame::Server<
-                http::request::Parts,
-                DynIncomingBodyDataReader,
-                OutgoingBodyDataWriter,
-            >,
-        >,
-    >,
-{
-    fn from(s: T) -> Self {
-        Self(s.into())
-    }
-}
-
-impl Server {
-    /// Construct a new [Server]
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-}
-
-impl hyper::service::Service<http::Request<hyper::body::Incoming>> for Server {
+impl hyper::service::Service<http::Request<hyper::body::Incoming>> for Service {
     type Response = http::Response<OutgoingBody>;
-    type Error = wrpc_transport::frame::AcceptError<
-        http::request::Parts,
-        DynIncomingBodyDataReader,
-        OutgoingBodyDataWriter,
-    >;
+    type Error = std::io::Error;
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
 
     fn call(&self, req: http::Request<hyper::body::Incoming>) -> Self::Future {
@@ -282,12 +239,43 @@ impl hyper::service::Service<http::Request<hyper::body::Incoming>> for Server {
             Box::new(io_error_from_hyper);
         let body = body.map_err(map_err).into_data_stream();
         let body = StreamReader::new(body);
-        let (rx, tx) = OutgoingBody::new([]);
-        let srv = Arc::clone(&self.0);
+        let (rx, tx) = OutgoingBody::new();
+        let srv = self.0.clone();
         Box::pin(async move {
-            srv.accept(parts, tx, body).await?;
+            if srv.send((parts, tx, body)).await.is_err() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::BrokenPipe,
+                    "server dropped",
+                ));
+            }
             Ok(http::Response::new(rx))
         })
+    }
+}
+
+/// wRPC server, which yields the invocations passed to it by the [Service], see [channel].
+/// The stream ends once all [Service]s are dropped.
+#[derive(Debug)]
+pub struct Server(
+    mpsc::Receiver<(
+        http::request::Parts,
+        OutgoingBodyDataWriter,
+        DynIncomingBodyDataReader,
+    )>,
+);
+
+impl Stream for Server {
+    type Item = Result<
+        (
+            http::request::Parts,
+            OutgoingBodyDataWriter,
+            DynIncomingBodyDataReader,
+        ),
+        core::convert::Infallible,
+    >;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        self.0.poll_recv(cx).map(|item| item.map(Ok))
     }
 }
 
@@ -298,7 +286,7 @@ impl hyper::service::Service<http::Request<hyper::body::Incoming>> for Server {
 pub struct Client<T>(pub T);
 
 #[cfg(feature = "client")]
-impl<T> Deref for Client<T> {
+impl<T> core::ops::Deref for Client<T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
@@ -307,7 +295,7 @@ impl<T> Deref for Client<T> {
 }
 
 #[cfg(feature = "client")]
-impl<T> DerefMut for Client<T> {
+impl<T> core::ops::DerefMut for Client<T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
     }
@@ -328,75 +316,42 @@ impl<T> Client<T> {
 }
 
 #[cfg(all(feature = "client", feature = "http2"))]
-impl wrpc_transport::Invoke for Client<hyper::client::conn::http2::SendRequest<OutgoingBody>> {
+impl wrpc_transport::Connect for Client<hyper::client::conn::http2::SendRequest<OutgoingBody>> {
     type Context = http::request::Parts;
+    type Outgoing = OutgoingBodyDataWriter;
+    type Incoming = ResponseBodyDataReader;
+    type Error = hyper::Error;
 
-    #[tracing::instrument(level = "trace", skip(self, cx, paths))]
-    async fn invoke<P>(
+    #[tracing::instrument(level = "trace", skip(self, cx))]
+    async fn connect(
         &self,
         cx: Self::Context,
-        instance: &str,
-        func: &str,
-        paths: impl AsRef<[P]> + Send,
-    ) -> anyhow::Result<(
-        wrpc_transport::frame::Outgoing,
-        wrpc_transport::frame::Incoming,
-    )>
-    where
-        P: AsRef<[Option<usize>]> + Send + Sync,
-    {
-        use anyhow::Context as _;
-
+    ) -> Result<(Self::Outgoing, Self::Incoming), Self::Error> {
         let mut sender = self.0.clone();
-        sender.ready().await.context("HTTP connection closed")?;
-
-        let mut buf = BytesMut::default();
-        wrpc_transport::frame::encode_invocation(&mut buf, instance, func)
-            .context("failed to encode invocation")?;
-        let (req, tx) = new_request(cx, [buf.freeze()]);
-
+        sender.ready().await?;
+        let (req, tx) = new_request(cx);
         let rx = data_reader_from_response(sender.send_request(req));
-
-        Ok((
-            wrpc_transport::frame::Outgoing::new(tx),
-            wrpc_transport::frame::Incoming::new(rx, paths.as_ref()),
-        ))
+        Ok((tx, rx))
     }
 }
 
 #[cfg(feature = "client-legacy")]
-impl<C> wrpc_transport::Invoke for Client<hyper_util::client::legacy::Client<C, OutgoingBody>>
+impl<C> wrpc_transport::Connect for Client<hyper_util::client::legacy::Client<C, OutgoingBody>>
 where
     C: hyper_util::client::legacy::connect::Connect + Clone + Send + Sync + 'static,
 {
     type Context = http::request::Parts;
+    type Outgoing = OutgoingBodyDataWriter;
+    type Incoming = ResponseBodyDataReader;
+    type Error = core::convert::Infallible;
 
-    #[tracing::instrument(level = "trace", skip(self, cx, paths))]
-    async fn invoke<P>(
+    #[tracing::instrument(level = "trace", skip(self, cx))]
+    async fn connect(
         &self,
         cx: Self::Context,
-        instance: &str,
-        func: &str,
-        paths: impl AsRef<[P]> + Send,
-    ) -> anyhow::Result<(
-        wrpc_transport::frame::Outgoing,
-        wrpc_transport::frame::Incoming,
-    )>
-    where
-        P: AsRef<[Option<usize>]> + Send + Sync,
-    {
-        use anyhow::Context as _;
-
-        let mut buf = BytesMut::default();
-        wrpc_transport::frame::encode_invocation(&mut buf, instance, func)
-            .context("failed to encode invocation")?;
-        let (req, tx) = new_request(cx, [buf.freeze()]);
-
+    ) -> Result<(Self::Outgoing, Self::Incoming), Self::Error> {
+        let (req, tx) = new_request(cx);
         let rx = data_reader_from_response(self.0.request(req));
-
-        Ok((
-            wrpc_transport::frame::Outgoing::new(tx),
-            wrpc_transport::frame::Incoming::new(rx, paths.as_ref()),
-        ))
+        Ok((tx, rx))
     }
 }

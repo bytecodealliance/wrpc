@@ -19,10 +19,9 @@ use wasi::sockets::network::{
 use wasi::sockets::tcp::ShutdownType;
 use wasi::sockets::tcp_create_socket::{TcpSocket, create_tcp_socket};
 
-use crate::Invoke;
-use crate::frame::{Incoming, Outgoing};
+use crate::Connect;
 
-/// [Invoke] implementation of a TCP transport using `wasi:sockets`
+/// [Connect] implementation of a TCP transport using `wasi:sockets`
 #[derive(Clone, Copy, Debug)]
 pub struct Client<T, N = Network> {
     addr: T,
@@ -72,7 +71,8 @@ impl From<IpSocketAddress> for Client<IpSocketAddress, Network> {
     }
 }
 
-struct IncomingStream {
+/// Receive end of a TCP connection established by [Client]
+pub struct IncomingStream {
     rx: InputStream,
     socket: Arc<TcpSocket>,
     pollables: mpsc::UnboundedSender<(Pollable, Waker)>,
@@ -93,14 +93,14 @@ impl AsyncRead for IncomingStream {
             Ok(chunk) => chunk,
             Err(StreamError::Closed) => return Poll::Ready(Ok(())),
             Err(StreamError::LastOperationFailed(err)) => {
-                return Poll::Ready(Err(std::io::Error::new(std::io::ErrorKind::Other, err)));
+                return Poll::Ready(Err(std::io::Error::other(err)));
             }
         };
         if chunk.is_empty() {
             trace!("sending read pollable");
             self.pollables
                 .send((self.rx.subscribe(), cx.waker().clone()))
-                .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))?;
+                .map_err(std::io::Error::other)?;
             return Poll::Pending;
         }
         buf.put_slice(&chunk);
@@ -118,7 +118,8 @@ impl Drop for IncomingStream {
     }
 }
 
-struct OutgoingStream {
+/// Send end of a TCP connection established by [Client]
+pub struct OutgoingStream {
     tx: OutputStream,
     socket: Arc<TcpSocket>,
     pollables: mpsc::UnboundedSender<(Pollable, Waker)>,
@@ -132,32 +133,25 @@ impl AsyncWrite for OutgoingStream {
         buf: &[u8],
     ) -> Poll<std::io::Result<usize>> {
         trace!("checking write budget");
-        let n = self
-            .tx
-            .check_write()
-            .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))?;
+        let n = self.tx.check_write().map_err(std::io::Error::other)?;
         if n == 0 {
             trace!("sending write pollable");
             self.pollables
                 .send((self.tx.subscribe(), cx.waker().clone()))
-                .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))?;
+                .map_err(std::io::Error::other)?;
             return Poll::Pending;
         }
         let max = buf.len();
         let n = usize::try_from(n).map(|n| n.min(max)).unwrap_or(max);
         let buf = &buf[..n];
         trace!(?buf, "writing buffer");
-        self.tx
-            .write(buf)
-            .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))?;
+        self.tx.write(buf).map_err(std::io::Error::other)?;
         Poll::Ready(Ok(n))
     }
 
     #[instrument(level = "trace", skip_all, ret(level = "trace"))]
     fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        self.tx
-            .flush()
-            .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))?;
+        self.tx.flush().map_err(std::io::Error::other)?;
         Poll::Ready(Ok(()))
     }
 
@@ -167,57 +161,17 @@ impl AsyncWrite for OutgoingStream {
         trace!("shutting down send end of the stream");
         self.socket
             .shutdown(ShutdownType::Send)
-            .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))?;
+            .map_err(std::io::Error::other)?;
         Poll::Ready(Ok(()))
     }
 }
 
-#[instrument(level = "trace", skip(socket, paths, pollables))]
-async fn finish_invoke<P>(
-    socket: TcpSocket,
-    instance: &str,
-    func: &str,
-    paths: impl AsRef<[P]> + Send,
-    pollables: mpsc::UnboundedSender<(Pollable, Waker)>,
-) -> anyhow::Result<(Outgoing, Incoming)>
-where
-    P: AsRef<[Option<usize>]> + Send + Sync,
-{
-    socket.subscribe().block();
-    let (rx, tx) = socket
-        .finish_connect()
-        .context("failed to finish connection")?;
-    let socket = Arc::new(socket);
-    crate::frame::invoke(
-        OutgoingStream {
-            tx,
-            socket: Arc::clone(&socket),
-            pollables: pollables.clone(),
-        },
-        BufReader::new(IncomingStream {
-            rx,
-            socket,
-            pollables,
-        }),
-        instance,
-        func,
-        paths,
-    )
-    .await
-}
-
 #[instrument(level = "trace", skip_all)]
-async fn invoke_ip<P>(
+fn connect_ip(
     network: &Network,
     addr: IpSocketAddress,
-    instance: &str,
-    func: &str,
-    paths: impl AsRef<[P]> + Send,
     pollables: mpsc::UnboundedSender<(Pollable, Waker)>,
-) -> anyhow::Result<(Outgoing, Incoming)>
-where
-    P: AsRef<[Option<usize>]> + Send + Sync,
-{
+) -> anyhow::Result<(OutgoingStream, BufReader<IncomingStream>)> {
     let socket = match addr {
         IpSocketAddress::Ipv4(..) => create_tcp_socket(IpAddressFamily::Ipv4),
         IpSocketAddress::Ipv6(..) => create_tcp_socket(IpAddressFamily::Ipv6),
@@ -226,21 +180,30 @@ where
     socket
         .start_connect(network, addr)
         .context("failed to start connection")?;
-    finish_invoke(socket, instance, func, paths, pollables).await
+    socket.subscribe().block();
+    let (rx, tx) = socket
+        .finish_connect()
+        .context("failed to finish connection")?;
+    let socket = Arc::new(socket);
+    let tx = OutgoingStream {
+        tx,
+        socket: Arc::clone(&socket),
+        pollables: pollables.clone(),
+    };
+    let rx = IncomingStream {
+        rx,
+        socket,
+        pollables,
+    };
+    Ok((tx, BufReader::new(rx)))
 }
 
 #[instrument(level = "trace", skip_all)]
-async fn invoke_unresolved<P>(
+fn connect_unresolved(
     network: &Network,
     addr: &str,
-    instance: &str,
-    func: &str,
-    paths: impl AsRef<[P]> + Send,
     pollables: mpsc::UnboundedSender<(Pollable, Waker)>,
-) -> anyhow::Result<(Outgoing, Incoming)>
-where
-    P: AsRef<[Option<usize>]> + Send + Sync,
-{
+) -> anyhow::Result<(OutgoingStream, BufReader<IncomingStream>)> {
     let (addr, port) = addr.rsplit_once(":").context("address is not valid")?;
     let port = port.parse().context("port is not valid")?;
     let addrs =
@@ -252,117 +215,85 @@ where
     else {
         bail!("`{addr}` cannot be resolved")
     };
-    let (socket, addr) = match addr {
-        IpAddress::Ipv4(address) => {
-            let socket =
-                create_tcp_socket(IpAddressFamily::Ipv4).context("failed to create TCP socket")?;
-            (
-                socket,
-                IpSocketAddress::Ipv4(Ipv4SocketAddress { port, address }),
-            )
-        }
-        IpAddress::Ipv6(address) => {
-            let socket =
-                create_tcp_socket(IpAddressFamily::Ipv6).context("failed to create TCP socket")?;
-            (
-                socket,
-                IpSocketAddress::Ipv6(Ipv6SocketAddress {
-                    port,
-                    flow_info: 0,
-                    address,
-                    scope_id: 0,
-                }),
-            )
-        }
+    let addr = match addr {
+        IpAddress::Ipv4(address) => IpSocketAddress::Ipv4(Ipv4SocketAddress { port, address }),
+        IpAddress::Ipv6(address) => IpSocketAddress::Ipv6(Ipv6SocketAddress {
+            port,
+            flow_info: 0,
+            address,
+            scope_id: 0,
+        }),
     };
-    socket
-        .start_connect(network, addr)
-        .context("failed to start connection")?;
-    finish_invoke(socket, instance, func, paths, pollables).await
+    connect_ip(network, addr, pollables)
 }
 
-impl Invoke for Client<&str, &Network> {
+impl Connect for Client<&str, &Network> {
     type Context = mpsc::UnboundedSender<(Pollable, Waker)>;
+    type Outgoing = OutgoingStream;
+    type Incoming = BufReader<IncomingStream>;
+    type Error = std::io::Error;
 
-    async fn invoke<P>(
+    async fn connect(
         &self,
         pollables: Self::Context,
-        instance: &str,
-        func: &str,
-        paths: impl AsRef<[P]> + Send,
-    ) -> anyhow::Result<(Outgoing, Incoming)>
-    where
-        P: AsRef<[Option<usize>]> + Send + Sync,
-    {
-        invoke_unresolved(self.network, self.addr, instance, func, paths, pollables).await
+    ) -> std::io::Result<(Self::Outgoing, Self::Incoming)> {
+        connect_unresolved(self.network, self.addr, pollables).map_err(std::io::Error::other)
     }
 }
 
-impl Invoke for Client<&str, Network> {
+impl Connect for Client<&str, Network> {
     type Context = mpsc::UnboundedSender<(Pollable, Waker)>;
+    type Outgoing = OutgoingStream;
+    type Incoming = BufReader<IncomingStream>;
+    type Error = std::io::Error;
 
-    async fn invoke<P>(
+    async fn connect(
         &self,
         pollables: Self::Context,
-        instance: &str,
-        func: &str,
-        paths: impl AsRef<[P]> + Send,
-    ) -> anyhow::Result<(Outgoing, Incoming)>
-    where
-        P: AsRef<[Option<usize>]> + Send + Sync,
-    {
-        invoke_unresolved(&self.network, self.addr, instance, func, paths, pollables).await
+    ) -> std::io::Result<(Self::Outgoing, Self::Incoming)> {
+        connect_unresolved(&self.network, self.addr, pollables).map_err(std::io::Error::other)
     }
 }
 
-impl Invoke for Client<Box<str>, Network> {
+impl Connect for Client<Box<str>, Network> {
     type Context = mpsc::UnboundedSender<(Pollable, Waker)>;
+    type Outgoing = OutgoingStream;
+    type Incoming = BufReader<IncomingStream>;
+    type Error = std::io::Error;
 
-    async fn invoke<P>(
+    async fn connect(
         &self,
         pollables: Self::Context,
-        instance: &str,
-        func: &str,
-        paths: impl AsRef<[P]> + Send,
-    ) -> anyhow::Result<(Outgoing, Incoming)>
-    where
-        P: AsRef<[Option<usize>]> + Send + Sync,
-    {
-        invoke_unresolved(&self.network, &self.addr, instance, func, paths, pollables).await
+    ) -> std::io::Result<(Self::Outgoing, Self::Incoming)> {
+        connect_unresolved(&self.network, &self.addr, pollables).map_err(std::io::Error::other)
     }
 }
 
-impl Invoke for Client<IpSocketAddress, &Network> {
+impl Connect for Client<IpSocketAddress, &Network> {
     type Context = mpsc::UnboundedSender<(Pollable, Waker)>;
+    type Outgoing = OutgoingStream;
+    type Incoming = BufReader<IncomingStream>;
+    type Error = std::io::Error;
 
-    async fn invoke<P>(
+    async fn connect(
         &self,
         pollables: Self::Context,
-        instance: &str,
-        func: &str,
-        paths: impl AsRef<[P]> + Send,
-    ) -> anyhow::Result<(Outgoing, Incoming)>
-    where
-        P: AsRef<[Option<usize>]> + Send + Sync,
-    {
-        invoke_ip(self.network, self.addr, instance, func, paths, pollables).await
+    ) -> std::io::Result<(Self::Outgoing, Self::Incoming)> {
+        connect_ip(self.network, self.addr, pollables).map_err(std::io::Error::other)
     }
 }
 
-impl Invoke for Client<IpSocketAddress, Network> {
+impl Connect for Client<IpSocketAddress, Network> {
     type Context = mpsc::UnboundedSender<(Pollable, Waker)>;
+    type Outgoing = OutgoingStream;
+    type Incoming = BufReader<IncomingStream>;
+    type Error = std::io::Error;
 
-    async fn invoke<P>(
+    async fn connect(
         &self,
         pollables: Self::Context,
-        instance: &str,
-        func: &str,
-        paths: impl AsRef<[P]> + Send,
-    ) -> anyhow::Result<(Outgoing, Incoming)>
-    where
-        P: AsRef<[Option<usize>]> + Send + Sync,
-    {
-        invoke_ip(&self.network, self.addr, instance, func, paths, pollables).await
+    ) -> std::io::Result<(Self::Outgoing, Self::Incoming)> {
+        connect_ip(&self.network, self.addr, pollables).map_err(std::io::Error::other)
     }
 }
 

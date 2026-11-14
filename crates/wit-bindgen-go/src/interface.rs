@@ -2566,6 +2566,15 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
     }}"#,
                 );
             }
+            uwrite!(
+                self.src,
+                r#"
+    err__ = w__.ClosePath()
+    if err__ != nil {{
+        err__ = {fmt}.Errorf("failed to close parameters: %w", err__)
+        return
+    }}"#,
+            );
             if async_params || async_results > 0 {
                 let sync = self.deps.sync();
                 let count = if async_params {

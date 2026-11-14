@@ -3,14 +3,12 @@
 use std::collections::VecDeque;
 
 use bytes::{BufMut as _, Bytes, BytesMut};
-use futures::{Stream, StreamExt as _};
+use futures::{FutureExt as _, Stream, StreamExt as _};
 use tokio::io::{AsyncRead, AsyncReadExt as _};
 use tokio::sync::mpsc;
 use tokio_util::codec::{Decoder, Encoder};
 
-use crate::{
-    Decode, Deferred as _, DeferredFn, DeferredWrite, Encode, Index, encode_ready_bytes_header,
-};
+use crate::{Decode, Deferred as _, DeferredFn, DeferredWrite, Encode, encode_ready_bytes_header};
 
 /// [DeferredWrite] used by [pack], which collects the packed asynchronous values
 #[derive(Clone)]
@@ -31,57 +29,63 @@ impl Packer {
     }
 }
 
-impl Index for Packer {
-    fn index(&self, _: &[usize]) -> std::io::Result<Self> {
-        Ok(self.clone())
-    }
-}
-
 impl DeferredWrite for Packer {
-    async fn write_future<T>(
-        self,
+    fn write_future<T>(
+        &self,
+        _: &[usize],
         offset: usize,
-        item: impl Future<Output = T> + Send + 'static,
-    ) -> std::io::Result<()>
+        item: impl Future<Output = std::io::Result<T>> + Send + 'static,
+    ) -> impl Future<Output = std::io::Result<()>> + Send + 'static
     where
         T: Encode<Self>,
         std::io::Error: From<<T::Encoder as Encoder<T>>::Error>,
     {
-        let mut buf = BytesMut::default();
-        buf.put_u8(0x01);
-        let deferred = T::encode(item.await, &mut T::Encoder::default(), &mut buf)?;
-        fill(deferred, &mut buf).await?;
-        self.push(offset, VecDeque::from([buf.freeze()]))
+        let packer = self.clone();
+        async move {
+            let item = item.await?;
+            let mut buf = BytesMut::default();
+            buf.put_u8(0x01);
+            let deferred = T::encode(item, &mut T::Encoder::default(), &mut buf)?;
+            fill(deferred, &mut buf).await?;
+            packer.push(offset, VecDeque::from([buf.freeze()]))
+        }
     }
 
-    async fn write_stream<T>(
-        self,
+    fn write_stream<T>(
+        &self,
+        path: &[usize],
         offset: usize,
         items: impl Stream<Item = Vec<T>> + Send + Unpin + 'static,
-    ) -> std::io::Result<()>
+    ) -> impl Future<Output = std::io::Result<()>> + Send + 'static
     where
         T: Encode<Self> + Send + 'static,
         std::io::Error: From<<T::Encoder as Encoder<T>>::Error>,
     {
-        self.write_future(offset, items.concat()).await
+        self.write_future(path, offset, items.concat().map(Ok))
     }
 
-    async fn write_stream_bytes(
-        self,
+    fn write_stream_bytes(
+        &self,
+        _: &[usize],
         offset: usize,
         items: impl Stream<Item = Bytes> + Send + Unpin + 'static,
-    ) -> std::io::Result<()> {
-        self.push_bytes(offset, items.collect().await)
+    ) -> impl Future<Output = std::io::Result<()>> + Send + 'static {
+        let packer = self.clone();
+        async move { packer.push_bytes(offset, items.collect().await) }
     }
 
-    async fn write_stream_read(
-        self,
+    fn write_stream_read(
+        &self,
+        _: &[usize],
         offset: usize,
         mut ready: BytesMut,
         mut items: impl AsyncRead + Send + Unpin + 'static,
-    ) -> std::io::Result<()> {
-        while items.read_buf(&mut ready).await? > 0 {}
-        self.push_bytes(offset, VecDeque::from([ready.freeze()]))
+    ) -> impl Future<Output = std::io::Result<()>> + Send + 'static {
+        let packer = self.clone();
+        async move {
+            while items.read_buf(&mut ready).await? > 0 {}
+            packer.push_bytes(offset, VecDeque::from([ready.freeze()]))
+        }
     }
 }
 
@@ -206,7 +210,6 @@ mod tests {
     use core::future::{pending, ready};
     use core::pin::Pin;
 
-    use futures::FutureExt as _;
     use futures::future::{self, BoxFuture};
     use futures::stream::{self, BoxStream};
     use tokio::task::yield_now;

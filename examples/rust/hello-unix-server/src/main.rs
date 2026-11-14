@@ -1,13 +1,10 @@
 use core::pin::pin;
 
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use anyhow::Context as _;
 use clap::Parser;
 use futures::StreamExt as _;
-use futures::stream::select_all;
-use tokio::io::BufReader;
 use tokio::task::JoinSet;
 use tokio::{fs, select, signal};
 use tracing::{debug, error, info, warn};
@@ -54,64 +51,27 @@ async fn main() -> anyhow::Result<()> {
     }
     let lis = tokio::net::UnixListener::bind(&path)
         .with_context(|| format!("failed to bind Unix listener on `{}`", path.display()))?;
-    let srv = Arc::new(wrpc_transport::Server::default());
-    let invocations = bindings::serve(srv.as_ref(), Server)
-        .await
-        .context("failed to serve `wrpc-examples.hello/handler.hello`")?;
-    let accept = tokio::spawn({
-        let srv = Arc::clone(&srv);
-        async move {
-            let mut conns = JoinSet::default();
-            loop {
-                select! {
-                    res = lis.accept() => match res {
-                        Ok((stream, addr)) => {
-                            let (rx, tx) = wrpc_transport::unix::split(stream);
-                            let srv = Arc::clone(&srv);
-                            conns.spawn(async move {
-                                if let Err(err) = srv.accept(addr, tx, BufReader::new(rx)).await {
-                                    error!(?err, "failed to serve Unix connection");
-                                }
-                            });
-                        }
-                        Err(err) => error!(?err, "failed to accept Unix connection"),
-                    },
-                    Some(res) = conns.join_next() => {
-                        if let Err(err) = res {
-                            error!(?err, "failed to join Unix connection task");
-                        }
-                    }
-                }
-            }
-        }
-    });
-
-    // NOTE: This will conflate all invocation streams into a single stream via `futures::stream::SelectAll`,
-    // to customize this, iterate over the returned `invocations` and set up custom handling per export
-    let mut invocations = select_all(
-        invocations
-            .into_iter()
-            .map(|(instance, name, invocations)| invocations.map(move |res| (instance, name, res))),
-    );
+    let invocations = bindings::serve(wrpc_transport::unix::incoming(lis), Server);
+    let mut invocations = pin!(invocations);
     let shutdown = signal::ctrl_c();
     let mut shutdown = pin!(shutdown);
     let mut tasks = JoinSet::new();
     loop {
         select! {
-            Some((instance, name, res)) = invocations.next() => {
+            Some(res) = invocations.next() => {
                 match res {
                     Ok(fut) => {
-                        debug!(instance, name, "invocation accepted");
+                        debug!("invocation accepted");
                         tasks.spawn(async move {
                             match fut.await { Err(err) => {
                                 warn!(?err, "failed to handle invocation");
                             } _ => {
-                                info!(instance, name, "invocation successfully handled");
+                                info!("invocation successfully handled");
                             }}
                         });
                     }
                     Err(err) => {
-                        warn!(?err, instance, name, "failed to accept invocation");
+                        warn!(?err, "failed to accept invocation");
                     }
                 }
             }
@@ -121,7 +81,6 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
             res = &mut shutdown => {
-                accept.abort();
                 // wait for all invocations to complete
                 while let Some(res) = tasks.join_next().await {
                     if let Err(err) = res {

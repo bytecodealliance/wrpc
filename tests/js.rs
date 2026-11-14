@@ -2,24 +2,26 @@ use core::net::{Ipv6Addr, SocketAddr};
 use core::pin::pin;
 use core::time::Duration;
 
-use std::io::ErrorKind;
 use std::path::Path;
 use std::process::Stdio;
-use std::sync::Arc;
 
 use anyhow::{Context as _, bail, ensure};
-use futures::{StreamExt as _, stream};
+use bytes::BytesMut;
+use futures::{Stream, StreamExt as _};
 use hyper::client::conn::http2;
 use hyper::server::conn::http1;
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use tempfile::{TempDir, tempdir};
-use tokio::io::{AsyncBufReadExt as _, AsyncReadExt as _, AsyncWriteExt as _, BufReader};
-use tokio::net::{TcpListener, TcpStream};
+use tokio::io::{
+    AsyncBufReadExt as _, AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _, BufReader,
+};
+use tokio::net::TcpListener;
 use tokio::process::{Child, Command};
 use tokio::time::timeout;
 use tokio::{select, spawn};
+use tokio_util::codec::Encoder as _;
 use tracing::{info, instrument};
-use wrpc_transport::Invoke as _;
+use wrpc_transport::{Connect as _, FrameEncoder, FrameRef, HeaderEncoder, HeaderRef, tcp};
 
 pub mod common;
 
@@ -66,18 +68,17 @@ async fn start_server(addr: &str, bindings: &Path) -> anyhow::Result<Child> {
     Ok(server)
 }
 
-/// Serve the `echo-server` world of `tests/js/wit` on `srv`, passing each
-/// connection accepted on `lis` to `accept`, until `tests/js/client.js`, run
-/// against `addr`, exits.
-async fn serve_echo<S>(
-    srv: &S,
-    lis: TcpListener,
+/// Serve the `echo-server` world of `tests/js/wit` on `incoming` until
+/// `tests/js/client.js`, run against `addr`, exits.
+async fn serve_echo<C, I, O, E>(
+    incoming: impl Stream<Item = Result<(C, O, I), E>>,
     addr: &str,
-    mut accept: impl AsyncFnMut(TcpStream, SocketAddr),
 ) -> anyhow::Result<()>
 where
-    S: wrpc_transport::Serve,
-    S::Context: 'static,
+    C: Send + 'static,
+    I: AsyncRead + Send + Unpin + 'static,
+    O: AsyncWrite + Send + Unpin + 'static,
+    E: core::error::Error + Send + Sync + 'static,
 {
     mod bindings {
         wit_bindgen_wrpc::generate!({
@@ -101,14 +102,7 @@ where
         }
     }
 
-    let invocations = bindings::serve(srv, Echo)
-        .await
-        .context("failed to serve `wrpc-test:js/echo`")?;
-    let mut invocations = stream::select_all(
-        invocations
-            .into_iter()
-            .map(|(instance, name, invocations)| invocations.map(move |res| (instance, name, res))),
-    );
+    let mut invocations = pin!(bindings::serve(incoming, Echo));
 
     let bindings = bindgen("tests/js/wit", &["echo-client"]).await?;
     info!("running `tests/js/client.js`");
@@ -126,16 +120,11 @@ where
                 ensure!(status.success(), "`tests/js/client.js` failed");
                 return Ok(());
             }
-            res = lis.accept() => {
-                let (stream, addr) = res.expect("failed to accept connection");
-                accept(stream, addr).await;
-            }
-            Some((instance, name, invocation)) = invocations.next() => {
-                let invocation = invocation
-                    .unwrap_or_else(|err| panic!("failed to accept `{instance}.{name}` invocation: {err:?}"));
+            Some(invocation) = invocations.next() => {
+                let invocation = invocation.expect("failed to accept invocation");
                 spawn(async move {
                     if let Err(err) = invocation.await {
-                        panic!("failed to serve `{instance}.{name}`: {err:?}");
+                        panic!("failed to serve invocation: {err:?}");
                     }
                 });
             }
@@ -153,18 +142,31 @@ async fn js_server() -> anyhow::Result<()> {
     let addr = SocketAddr::from((Ipv6Addr::LOCALHOST, port));
     let mut server = start_server(&addr.to_string(), bindings.path()).await?;
 
-    let client = wrpc_transport::frame::tcp::Client::from(addr);
+    let client = wrpc_transport::tcp::Client::from(addr);
     {
-        let (tx, mut rx) = client
-            .invoke((), "wrpc-test:integration/foo", "foo", &[[]; 0])
-            .await?;
-        let mut invalid = tx.index(&[1])?;
-        invalid.write_all(b"x").await?;
+        let (mut tx, mut rx) = client.connect(()).await?;
+        let mut buf = BytesMut::default();
+        HeaderEncoder.encode(
+            HeaderRef {
+                instance: "wrpc-test:integration/foo",
+                name: "foo",
+            },
+            &mut buf,
+        )?;
+        FrameEncoder.encode(
+            FrameRef {
+                path: &[1],
+                data: b"x",
+            },
+            &mut buf,
+        )?;
+        tx.write_all(&buf).await?;
+        tx.flush().await?;
         let res = timeout(Duration::from_secs(5), rx.read_to_end(&mut Vec::default()))
             .await
             .context("invalid data did not reset the invocation")?;
         let err = res.expect_err("invalid data must reset the invocation");
-        assert_eq!(err.kind(), ErrorKind::ConnectionReset);
+        assert_eq!(err.kind(), std::io::ErrorKind::ConnectionReset);
     }
 
     common::assert_sync((), &client).await?;
@@ -210,14 +212,7 @@ async fn js_client() -> anyhow::Result<()> {
         .await
         .context("failed to start TCP listener")?;
     let addr = lis.local_addr().context("failed to get server address")?;
-    let srv = wrpc_transport::frame::Server::default();
-    serve_echo(&srv, lis, &addr.to_string(), async |stream, addr| {
-        let (rx, tx) = wrpc_transport::tcp::split(stream);
-        srv.accept(addr, tx, BufReader::new(rx))
-            .await
-            .expect("failed to accept invocation");
-    })
-    .await
+    serve_echo(tcp::incoming(lis), &addr.to_string()).await
 }
 
 #[instrument(ret)]
@@ -227,20 +222,20 @@ async fn js_http_client() -> anyhow::Result<()> {
         .await
         .context("failed to start TCP listener")?;
     let addr = lis.local_addr().context("failed to get server address")?;
-    let srv = wrpc_http::Server::default();
-    serve_echo(
-        srv.0.as_ref(),
-        lis,
-        &format!("http://{addr}"),
-        async |stream, _| {
-            let svc = wrpc_http::Server::from(Arc::clone(&srv.0));
+    let (svc, srv) = wrpc_http::channel(16);
+    let conns = spawn(async move {
+        loop {
+            let (stream, ..) = lis.accept().await.expect("failed to accept connection");
+            let svc = svc.clone();
             spawn(async move {
                 http1::Builder::new()
                     .serve_connection(TokioIo::new(stream), svc)
                     .await
                     .expect("failed to serve HTTP connection");
             });
-        },
-    )
-    .await
+        }
+    });
+    let res = serve_echo(srv, &format!("http://{addr}")).await;
+    conns.abort();
+    res
 }

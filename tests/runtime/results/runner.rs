@@ -1,7 +1,7 @@
 use crate::client::test::results::test::*;
 
 pub async fn run(
-    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,
+    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Connect<Context = ()>,
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
     let v = string_error(wrpc, (), 0.0).await?;
     assert_eq!(v, Err("zero".to_owned()));

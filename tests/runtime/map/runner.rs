@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use crate::client::test::maps::to_test::*;
 
 pub async fn run(
-    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,
+    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Connect<Context = ()>,
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
     test_named_roundtrip(wrpc).await?;
     test_bytes_roundtrip(wrpc).await?;
@@ -24,7 +24,7 @@ pub async fn run(
 }
 
 async fn test_named_roundtrip(
-    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,
+    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Connect<Context = ()>,
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
     let mut input = NamesById::new();
     input.insert(1, "one".to_string());
@@ -38,7 +38,7 @@ async fn test_named_roundtrip(
 }
 
 async fn test_bytes_roundtrip(
-    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,
+    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Connect<Context = ()>,
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
     let mut bytes_input = BytesByName::new();
     bytes_input.insert("hello".to_string(), b"world".to_vec());
@@ -56,7 +56,7 @@ async fn test_bytes_roundtrip(
 }
 
 async fn test_empty_roundtrip(
-    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,
+    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Connect<Context = ()>,
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
     let empty = NamesById::new();
     let result = empty_roundtrip(wrpc, (), &empty).await?;
@@ -65,7 +65,7 @@ async fn test_empty_roundtrip(
 }
 
 async fn test_option_roundtrip(
-    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,
+    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Connect<Context = ()>,
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
     let mut input = HashMap::new();
     input.insert("some".to_string(), Some(42));
@@ -78,7 +78,7 @@ async fn test_option_roundtrip(
 }
 
 async fn test_record_roundtrip(
-    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,
+    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Connect<Context = ()>,
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
     let mut values = NamesById::new();
     values.insert(10, "ten".to_string());
@@ -96,7 +96,7 @@ async fn test_record_roundtrip(
 }
 
 async fn test_inline_roundtrip(
-    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,
+    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Connect<Context = ()>,
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
     let mut input = HashMap::new();
     input.insert(1, "one".to_string());
@@ -109,7 +109,7 @@ async fn test_inline_roundtrip(
 }
 
 async fn test_large_map(
-    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,
+    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Connect<Context = ()>,
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
     let mut input = NamesById::new();
     for i in 0..100 {
@@ -127,7 +127,7 @@ async fn test_large_map(
 }
 
 async fn test_multi_param_roundtrip(
-    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,
+    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Connect<Context = ()>,
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
     let mut names = NamesById::new();
     names.insert(1, "one".to_string());
@@ -147,7 +147,7 @@ async fn test_multi_param_roundtrip(
 }
 
 async fn test_nested_roundtrip(
-    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,
+    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Connect<Context = ()>,
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
     let mut inner_a = HashMap::new();
     inner_a.insert(1, "one".to_string());
@@ -168,7 +168,7 @@ async fn test_nested_roundtrip(
 }
 
 async fn test_variant_roundtrip(
-    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,
+    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Connect<Context = ()>,
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
     let mut map = NamesById::new();
     map.insert(1, "one".to_string());
@@ -189,7 +189,7 @@ async fn test_variant_roundtrip(
 }
 
 async fn test_result_roundtrip(
-    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,
+    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Connect<Context = ()>,
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
     let mut map = NamesById::new();
     map.insert(5, "five".to_string());
@@ -208,7 +208,7 @@ async fn test_result_roundtrip(
 }
 
 async fn test_tuple_roundtrip(
-    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,
+    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Connect<Context = ()>,
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
     let mut map = NamesById::new();
     map.insert(7, "seven".to_string());
@@ -220,7 +220,7 @@ async fn test_tuple_roundtrip(
 }
 
 async fn test_single_entry_roundtrip(
-    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,
+    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Connect<Context = ()>,
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
     let mut input = NamesById::new();
     input.insert(99, "ninety-nine".to_string());

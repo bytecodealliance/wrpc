@@ -11,9 +11,9 @@ use std::collections::HashSet;
 
 use bytes::{Buf as _, BufMut as _, BytesMut};
 use futures::stream;
-use futures::{FutureExt as _, StreamExt as _};
+use futures::{FutureExt as _, Stream, StreamExt as _, TryFutureExt as _};
 use tokio::sync::{mpsc, oneshot};
-use tokio_util::codec::{Decoder, Encoder, FramedRead};
+use tokio_util::codec::{Decoder, Encoder};
 use tokio_util::sync::PollSender;
 use tracing::{debug, error, instrument, trace, warn};
 use uuid::Uuid;
@@ -33,9 +33,11 @@ use wasmtime::error::Context as _;
 use wasmtime::{AsContextMut, StoreContextMut};
 use wrpc_transport::frame::{Incoming, Outgoing};
 use wrpc_transport::{
-    Decode, Deferred, DeferredFn, DeferredWrite as _, Encode, READ_CHUNK_SIZE, handle_deferred,
+    Decode, Deferred, DeferredFn, DeferredWrite as _, Encode, Paths, READ_CHUNK_SIZE,
+    handle_deferred,
 };
 
+use crate::paths::params_async_paths;
 use crate::{ResourceTypes, WrpcView};
 
 /// Synchronous access to a store, which is either borrowed exclusively or reachable through an
@@ -100,6 +102,65 @@ impl<T> ValEncoder<'_, T> {
 impl<T> Deferred<Outgoing> for ValEncoder<'_, T> {
     fn take_deferred(&mut self) -> Option<DeferredFn<Outgoing>> {
         self.deferred.take()
+    }
+}
+
+/// Encodes a tuple of [`Val`]s of types `tys`, e.g. function results.
+pub struct TupleEncoder<'a, T> {
+    store: T,
+    tys: &'a [Type],
+    resources: &'a ResourceTypes,
+    deferred: Vec<Option<DeferredFn<Outgoing>>>,
+}
+
+impl<T> TupleEncoder<'_, T> {
+    #[must_use]
+    pub fn new<'a>(store: T, tys: &'a [Type], resources: &'a ResourceTypes) -> TupleEncoder<'a, T> {
+        TupleEncoder {
+            store,
+            tys,
+            resources,
+            deferred: Vec::default(),
+        }
+    }
+}
+
+impl<T> Encoder<&[Val]> for TupleEncoder<'_, T>
+where
+    T: WithStore<Data: WrpcView>,
+{
+    type Error = wasmtime::Error;
+
+    fn encode(&mut self, vs: &[Val], dst: &mut BytesMut) -> Result<(), Self::Error> {
+        if vs.len() != self.tys.len() {
+            bail!("value count mismatch");
+        }
+        let Self {
+            store,
+            tys,
+            resources,
+            deferred,
+        } = self;
+        store.with_store(|mut store| {
+            for (i, (v, ty)) in zip(vs, *tys).enumerate() {
+                let mut enc = ValEncoder::new(store.as_context_mut(), ty, resources);
+                enc.encode(v, dst)
+                    .with_context(|| format!("failed to encode value {i}"))?;
+                deferred.push(enc.take_deferred());
+            }
+            Ok(())
+        })
+    }
+}
+
+impl<T> Deferred<Outgoing> for TupleEncoder<'_, T> {
+    fn take_deferred(&mut self) -> Option<DeferredFn<Outgoing>> {
+        let deferred = mem::take(&mut self.deferred);
+        if deferred.iter().any(Option::is_some) {
+            Some(Box::new(|w, path| handle_deferred(w, path, deferred)))
+        } else {
+            None
+        }
     }
 }
 
@@ -241,13 +302,8 @@ where
     let future = future.try_into_future_reader::<P>()?;
     future.pipe(store, Consumer(Some(tx)))?;
     Ok(Box::new(move |w, path| {
-        let w = w.index(path)?;
-        Ok(Box::pin(async move {
-            let v = rx
-                .await
-                .map_err(|_| std::io::Error::other("future dropped without a value"))?;
-            w.write_future(offset, ready(v)).await
-        }))
+        let item = rx.map_err(|_| std::io::Error::other("future dropped without a value"));
+        Ok(Box::pin(w.write_future(path, offset, item)))
     }))
 }
 
@@ -294,11 +350,8 @@ where
     let stream = stream.try_into_stream_reader::<P>()?;
     stream.pipe(store, Consumer(PollSender::new(tx)))?;
     Ok(Box::new(move |w, path| {
-        let w = w.index(path)?;
-        Ok(Box::pin(async move {
-            w.write_stream(offset, stream::poll_fn(move |cx| rx.poll_recv(cx)))
-                .await
-        }))
+        let items = stream::poll_fn(move |cx| rx.poll_recv(cx));
+        Ok(Box::pin(w.write_stream(path, offset, items)))
     }))
 }
 
@@ -308,10 +361,21 @@ fn report(errors: &mpsc::Sender<std::io::Error>, err: std::io::Error) {
     }
 }
 
+fn decode_stream<D>(r: Incoming, dec: D) -> impl Stream<Item = std::io::Result<D::Item>>
+where
+    D: Decoder,
+    std::io::Error: From<D::Error>,
+{
+    stream::try_unfold((r, dec), |(mut r, mut dec)| async move {
+        let v = r.decode(&mut dec).await.map_err(std::io::Error::from)?;
+        Ok(v.map(|v| (v, (r, dec))))
+    })
+}
+
 /// Chunks of a pending `stream`, which are received once its sub-stream is indexed
-enum Chunks<D> {
+enum Chunks<D: Decoder> {
     Pending(oneshot::Receiver<Incoming>),
-    Ready(FramedRead<Incoming, D>),
+    Ready(Pin<Box<dyn Stream<Item = std::io::Result<D::Item>> + Send>>),
 }
 
 fn poll_chunk<D, P>(
@@ -319,7 +383,7 @@ fn poll_chunk<D, P>(
     cx: &mut Context<'_>,
 ) -> Poll<std::io::Result<Option<D::Item>>>
 where
-    D: Decoder<Item: Deref<Target = [P]>> + Default,
+    D: Decoder<Item: Deref<Target = [P]>> + Default + Send + 'static,
     std::io::Error: From<D::Error>,
 {
     let rx = loop {
@@ -328,31 +392,18 @@ where
                 let r = ready!(r.poll_unpin(cx)).map_err(|_| {
                     std::io::Error::new(std::io::ErrorKind::BrokenPipe, "stream not indexed")
                 })?;
-                *rx = Chunks::Ready(FramedRead::new(r, D::default()));
+                *rx = Chunks::Ready(Box::pin(decode_stream(r, D::default())));
             }
             Chunks::Ready(rx) => break rx,
         }
     };
-    let chunk = match rx.poll_next_unpin(cx) {
-        Poll::Ready(Some(Ok(chunk))) => chunk,
-        Poll::Ready(Some(Err(err))) => return Poll::Ready(Err(err.into())),
-        Poll::Pending => return Poll::Pending,
-        Poll::Ready(None) => {
-            return Poll::Ready(Err(std::io::Error::new(
-                std::io::ErrorKind::UnexpectedEof,
-                "stream end missing",
-            )));
+    loop {
+        match ready!(rx.poll_next_unpin(cx)) {
+            Some(Ok(chunk)) if chunk.is_empty() => {}
+            Some(Ok(chunk)) => return Poll::Ready(Ok(Some(chunk))),
+            Some(Err(err)) => return Poll::Ready(Err(err)),
+            None => return Poll::Ready(Ok(None)),
         }
-    };
-    if !chunk.is_empty() {
-        Poll::Ready(Ok(Some(chunk)))
-    } else if rx.read_buffer().is_empty() {
-        Poll::Ready(Ok(None))
-    } else {
-        Poll::Ready(Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "received data after stream end",
-        )))
     }
 }
 
@@ -374,18 +425,23 @@ where
             );
             return pending().await;
         };
-        let mut rx = FramedRead::new(r, P::Decoder::default());
-        let err = match rx.next().await {
-            Some(Ok(v)) if rx.read_buffer().is_empty() => return wasmtime::error::Ok(v),
-            Some(Ok(..)) => std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "received data after future value",
-            ),
-            Some(Err(err)) => err.into(),
-            None => std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "future value missing"),
+        let mut r = r;
+        let v = r
+            .decode(&mut P::Decoder::default())
+            .await
+            .map_err(std::io::Error::from);
+        let err = match v {
+            Ok(Some(v)) => match r.read_end().await {
+                Ok(()) => return wasmtime::error::Ok(v),
+                Err(err) => err,
+            },
+            Ok(None) => {
+                std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "future value missing")
+            }
+            Err(err) => err,
         };
         report(&errors, err);
-        drop(rx);
+        drop(r);
         pending().await
     })?;
     let fut = fut.try_into_future_any(store)?;
@@ -1034,6 +1090,12 @@ impl<T> ValDecoder<'_, T> {
             state: None,
             deferred: Vec::default(),
         }
+    }
+}
+
+impl<T> Paths for ValDecoder<'_, T> {
+    fn paths(&self) -> Box<[Box<[Option<usize>]>]> {
+        params_async_paths(self.tys, self.resources)
     }
 }
 

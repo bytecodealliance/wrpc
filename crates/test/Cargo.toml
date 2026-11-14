@@ -19,6 +19,7 @@ webtransport = ["dep:quinn", "dep:url", "dep:web-transport-quinn", "dep:wrpc-web
 
 [dependencies]
 anyhow = { workspace = true }
+bytes = { workspace = true }
 futures = { workspace = true }
 http = { workspace = true, optional = true }
 hyper = { workspace = true, features = [
@@ -37,7 +38,8 @@ quinn = { workspace = true, features = [
 rcgen = { workspace = true, features = ["crypto", "ring", "zeroize"] }
 rustls = { workspace = true, features = ["logging", "ring", "std"] }
 tempfile = { workspace = true, optional = true }
-tokio = { workspace = true, features = ["net", "process", "rt-multi-thread"] }
+tokio = { workspace = true, features = ["net", "process", "rt-multi-thread", "time"] }
+tokio-util = { workspace = true, features = ["codec"] }
 tracing = { workspace = true }
 url = { workspace = true, optional = true }
 web-transport-quinn = { workspace = true, optional = true }

@@ -1,6 +1,6 @@
 use core::future::Future;
 use core::pin::Pin;
-use core::task::Context;
+use core::task::{Context, Poll};
 
 use futures::task::noop_waker_ref;
 
@@ -35,11 +35,15 @@ impl<Ctx: Send> Handler<Ctx> for Component {
         mut data: Pin<Box<dyn Future<Output = u32> + Send>>,
         signal: Pin<Box<dyn Future<Output = ()> + Send>>,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
-        let _ = data
+        let res = data
             .as_mut()
             .poll(&mut Context::from_waker(noop_waker_ref()));
         signal.await;
-        assert_eq!(data.await, 4);
+        let v = match res {
+            Poll::Ready(v) => v,
+            Poll::Pending => data.await,
+        };
+        assert_eq!(v, 4);
         Ok(())
     }
 }

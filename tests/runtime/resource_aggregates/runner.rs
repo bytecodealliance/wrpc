@@ -3,7 +3,7 @@ use crate::client::test::resource_aggregates::to_test::{
 };
 
 pub async fn run(
-    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,
+    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Connect<Context = ()>,
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
     let thing1 = Thing::new(wrpc, (), 1).await?;
     let thing2 = Thing::new(wrpc, (), 2).await?;

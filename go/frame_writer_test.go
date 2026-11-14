@@ -26,6 +26,14 @@ func assertClose(t *testing.T, w io.Closer) {
 	}
 }
 
+func assertClosePath(t *testing.T, w wrpc.IndexWriteCloser) {
+	t.Helper()
+	if err := w.ClosePath(); err != nil {
+		t.Fatalf("failed to close path: %s", err)
+	}
+	assertClose(t, w)
+}
+
 func assertWriteByte(t *testing.T, w io.ByteWriter, b byte) {
 	t.Helper()
 	if err := w.WriteByte(b); err != nil {
@@ -86,19 +94,23 @@ func TestFrameStreamWriter(t *testing.T) {
 
 		assertWriteString(t, w0, "hello")
 		w0_1 := assertIndex(t, w0, 1)
-		assertClose(t, w0)
+		assertClosePath(t, w0)
 
 		assertWriteString(t, w0_1, "test")
-		assertClose(t, w0_1)
+		assertClosePath(t, w0_1)
 
 		assertWriteByte(t, w42_41, 0xfe)
-		assertClose(t, w42_41)
+		assertClosePath(t, w42_41)
 
 		r := bytes.NewBuffer(dst.Bytes())
 		assertReadFrame(t, r, []byte{42})
+		assertReadFrame(t, r, nil)
 		assertReadFrame(t, r, []byte("hello"), 0)
+		assertReadFrame(t, r, nil, 0)
 		assertReadFrame(t, r, []byte("test"), 0, 1)
+		assertReadFrame(t, r, nil, 0, 1)
 		assertReadFrame(t, r, []byte{0xfe}, 42, 41)
+		assertReadFrame(t, r, nil, 42, 41)
 		if n := r.Len(); n > 0 {
 			t.Fatalf("%v trailing bytes left in buffer: %s", n, r.String())
 		}
@@ -111,15 +123,10 @@ func TestFrameStreamWriter(t *testing.T) {
 		w0 := assertIndex(t, w, 0)
 		assertWriteString(t, w0, "hello")
 		assertWriteString(t, w0, "")
-		if err := w0.ClosePath(); err != nil {
-			t.Fatalf("failed to close path: %s", err)
-		}
+		assertClosePath(t, w0)
 		assertClose(t, w0)
-		assertClose(t, w0)
-		if err := w.ClosePath(); err != nil {
-			t.Fatalf("failed to close path: %s", err)
-		}
-		assertClose(t, w)
+		assertClose(t, assertIndex(t, w, 1))
+		assertClosePath(t, w)
 
 		r := bytes.NewBuffer(dst.Bytes())
 		assertReadFrame(t, r, []byte("hello"), 0)
@@ -129,6 +136,31 @@ func TestFrameStreamWriter(t *testing.T) {
 			t.Fatalf("%v trailing bytes left in buffer: %s", n, r.String())
 		}
 	})
+}
+
+func TestWriteByteStreamEmpty(t *testing.T) {
+	ch := make(chan []byte)
+	close(ch)
+	var buf bytes.Buffer
+	write, err := wrpc.WriteByteStream(ch, &buf)
+	if err != nil {
+		t.Fatalf("failed to write stream: %s", err)
+	}
+	var dst sink
+	w := wrpc.NewFrameStreamWriter(context.Background(), &dst)
+	w0 := assertIndex(t, w, 0)
+	if err := write(context.Background(), w0); err != nil {
+		t.Fatalf("failed to write pending stream: %s", err)
+	}
+	assertClose(t, w0)
+	assertClose(t, w)
+
+	r := bytes.NewBuffer(dst.Bytes())
+	assertReadFrame(t, r, nil, 0)
+	assertReadFrame(t, r, nil)
+	if n := r.Len(); n > 0 {
+		t.Fatalf("%v trailing bytes left in buffer: %s", n, r.String())
+	}
 }
 
 type blockingWriter struct {
