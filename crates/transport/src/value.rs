@@ -1851,14 +1851,14 @@ impl Decode for () {
 impl TupleDecode for () {}
 
 macro_rules! impl_tuple_codec {
-    ($($vn:ident),+; $($vt:ident),+; $($cn:ident),+; $($ct:ident),+) => {
+    (@impl $($t:ident $ct:ident $c:ident),+) => {
         impl<W: DeferredWrite, $($ct),+> Deferred<W> for TupleEncoder::<($($ct),+,)>
         where
             $($ct: Deferred<W> + Default + 'static),+
         {
             fn take_deferred(&mut self) -> Option<DeferredFn<W>> {
-                let Self(($(mut $cn),+,)) = mem::take(self);
-                let deferred = [ $($cn.take_deferred()),+ ];
+                let Self(($(mut $c),+,)) = mem::take(self);
+                let deferred = [ $($c.take_deferred()),+ ];
                 if deferred.iter().any(Option::is_some) {
                     Some(Box::new(|r, path| handle_deferred(r, path, deferred)))
                 } else {
@@ -1867,56 +1867,56 @@ macro_rules! impl_tuple_codec {
             }
         }
 
-        impl<E, W: DeferredWrite, $($vt),+> Encode<W> for ($($vt),+,)
+        impl<E, W: DeferredWrite, $($t),+> Encode<W> for ($($t),+,)
         where
             E: From<std::io::Error>,
             $(
-                $vt: Encode<W>,
-                $vt::Encoder: tokio_util::codec::Encoder<$vt, Error = E> + 'static,
+                $t: Encode<W>,
+                $t::Encoder: tokio_util::codec::Encoder<$t, Error = E> + 'static,
             )+
         {
-            type Encoder = TupleEncoder::<($($vt::Encoder),+,)>;
+            type Encoder = TupleEncoder::<($($t::Encoder),+,)>;
         }
 
-        impl<E, W: DeferredWrite, $($vt),+> TupleEncode<W> for ($($vt),+,)
+        impl<E, W: DeferredWrite, $($t),+> TupleEncode<W> for ($($t),+,)
         where
             E: From<std::io::Error>,
             $(
-                $vt: Encode<W>,
-                $vt::Encoder: tokio_util::codec::Encoder<$vt, Error = E> + 'static,
+                $t: Encode<W>,
+                $t::Encoder: tokio_util::codec::Encoder<$t, Error = E> + 'static,
             )+
         {
         }
 
-        impl<'a, E, W: DeferredWrite, $($vt),+> Encode<W> for &'a ($($vt),+,)
+        impl<'a, E, W: DeferredWrite, $($t),+> Encode<W> for &'a ($($t),+,)
         where
             E: From<std::io::Error>,
             $(
-                $vt: Encode<W>,
-                $vt::Encoder: tokio_util::codec::Encoder<&'a $vt, Error = E> + 'static,
+                $t: Encode<W>,
+                $t::Encoder: tokio_util::codec::Encoder<&'a $t, Error = E> + 'static,
             )+
         {
-            type Encoder = TupleEncoder::<($($vt::Encoder),+,)>;
+            type Encoder = TupleEncoder::<($($t::Encoder),+,)>;
         }
 
-        impl<$($vt),+> Paths
-            for TupleDecoder::<($($vt::Decoder),+,), ($(Option<$vt>),+,)>
+        impl<$($t),+> Paths
+            for TupleDecoder::<($($t::Decoder),+,), ($(Option<$t>),+,)>
         where
-            $($vt: Decode),+
+            $($t: Decode),+
         {
             fn paths(&self) -> Box<[Box<[Option<usize>]>]> {
-                let elems = [ $($vt::Decoder::default().paths()),+ ];
+                let elems = [ $($t::Decoder::default().paths()),+ ];
                 zip(0.., elems).flat_map(|(i, paths)| nest(Some(i), paths)).collect()
             }
         }
 
-        impl<$($vt),+> Deferred<BufferedIncoming> for TupleDecoder::<($($vt::Decoder),+,), ($(Option<$vt>),+,)>
+        impl<$($t),+> Deferred<BufferedIncoming> for TupleDecoder::<($($t::Decoder),+,), ($(Option<$t>),+,)>
         where
-            $($vt: Decode),+
+            $($t: Decode),+
         {
             fn take_deferred(&mut self) -> Option<DeferredFn<BufferedIncoming>> {
-                let ($(mut $cn),+,) = mem::take(self).into_inner();
-                let deferred = [ $($cn.take_deferred()),+ ];
+                let ($(mut $c),+,) = mem::take(self).into_inner();
+                let deferred = [ $($c.take_deferred()),+ ];
                 if deferred.iter().any(Option::is_some) {
                     Some(Box::new(|r, path| handle_deferred(r, path, deferred)))
                 } else {
@@ -1925,140 +1925,41 @@ macro_rules! impl_tuple_codec {
             }
         }
 
-        impl<E, $($vt),+> Decode for ($($vt),+,)
+        impl<E, $($t),+> Decode for ($($t),+,)
         where
             E: From<std::io::Error>,
             $(
-                $vt: Decode + Send + 'static,
-                $vt::Decoder: tokio_util::codec::Decoder<Error = E> + Send + 'static,
+                $t: Decode + Send + 'static,
+                $t::Decoder: tokio_util::codec::Decoder<Error = E> + Send + 'static,
             )+
         {
-            type Decoder = TupleDecoder::<($($vt::Decoder),+,), ($(Option<$vt>),+,)>;
+            type Decoder = TupleDecoder::<($($t::Decoder),+,), ($(Option<$t>),+,)>;
             type ListDecoder = ListDecoder<Self::Decoder>;
         }
 
-        impl<E, $($vt),+> TupleDecode for ($($vt),+,)
+        impl<E, $($t),+> TupleDecode for ($($t),+,)
         where
             E: From<std::io::Error>,
             $(
-                $vt: Decode + Send + 'static,
-                $vt::Decoder: tokio_util::codec::Decoder<Error = E> + Send + 'static,
+                $t: Decode + Send + 'static,
+                $t::Decoder: tokio_util::codec::Decoder<Error = E> + Send + 'static,
             )+
         {
         }
     };
+    ($($t:ident $ct:ident $c:ident),*;) => {};
+    ($($t:ident $ct:ident $c:ident),*; $nt:ident $nct:ident $nc:ident $(, $rt:ident $rct:ident $rc:ident)*) => {
+        impl_tuple_codec!(@impl $($t $ct $c,)* $nt $nct $nc);
+        impl_tuple_codec!($($t $ct $c,)* $nt $nct $nc; $($rt $rct $rc),*);
+    };
 }
 
 impl_tuple_codec!(
-    v0;
-    V0;
-    c0;
-    C0
-);
-
-impl_tuple_codec!(
-    v0, v1;
-    V0, V1;
-    c0, c1;
-    C0, C1
-);
-
-impl_tuple_codec!(
-    v0, v1, v2;
-    V0, V1, V2;
-    c0, c1, c2;
-    C0, C1, C2
-);
-
-impl_tuple_codec!(
-    v0, v1, v2, v3;
-    V0, V1, V2, V3;
-    c0, c1, c2, c3;
-    C0, C1, C2, C3
-);
-
-impl_tuple_codec!(
-    v0, v1, v2, v3, v4;
-    V0, V1, V2, V3, V4;
-    c0, c1, c2, c3, c4;
-    C0, C1, C2, C3, C4
-);
-
-impl_tuple_codec!(
-    v0, v1, v2, v3, v4, v5;
-    V0, V1, V2, V3, V4, V5;
-    c0, c1, c2, c3, c4, c5;
-    C0, C1, C2, C3, C4, C5
-);
-
-impl_tuple_codec!(
-    v0, v1, v2, v3, v4, v5, v6;
-    V0, V1, V2, V3, V4, V5, V6;
-    c0, c1, c2, c3, c4, c5, c6;
-    C0, C1, C2, C3, C4, C5, C6
-);
-
-impl_tuple_codec!(
-    v0, v1, v2, v3, v4, v5, v6, v7;
-    V0, V1, V2, V3, V4, V5, V6, V7;
-    c0, c1, c2, c3, c4, c5, c6, c7;
-    C0, C1, C2, C3, C4, C5, C6, C7
-);
-
-impl_tuple_codec!(
-    v0, v1, v2, v3, v4, v5, v6, v7, v8;
-    V0, V1, V2, V3, V4, V5, V6, V7, V8;
-    c0, c1, c2, c3, c4, c5, c6, c7, c8;
-    C0, C1, C2, C3, C4, C5, C6, C7, C8
-);
-
-impl_tuple_codec!(
-    v0, v1, v2, v3, v4, v5, v6, v7, v8, v9;
-    V0, V1, V2, V3, V4, V5, V6, V7, V8, V9;
-    c0, c1, c2, c3, c4, c5, c6, c7, c8, c9;
-    C0, C1, C2, C3, C4, C5, C6, C7, C8, C9
-);
-
-impl_tuple_codec!(
-    v0, v1, v2, v3, v4, v5, v6, v7, v8, v9, v10;
-    V0, V1, V2, V3, V4, V5, V6, V7, V8, V9, V10;
-    c0, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10;
-    C0, C1, C2, C3, C4, C5, C6, C7, C8, C9, C10
-);
-
-impl_tuple_codec!(
-    v0, v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11;
-    V0, V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11;
-    c0, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11;
-    C0, C1, C2, C3, C4, C5, C6, C7, C8, C9, C10, C11
-);
-
-impl_tuple_codec!(
-    v0, v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12;
-    V0, V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12;
-    c0, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12;
-    C0, C1, C2, C3, C4, C5, C6, C7, C8, C9, C10, C11, C12
-);
-
-impl_tuple_codec!(
-    v0, v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13;
-    V0, V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13;
-    c0, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13;
-    C0, C1, C2, C3, C4, C5, C6, C7, C8, C9, C10, C11, C12, C13
-);
-
-impl_tuple_codec!(
-    v0, v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14;
-    V0, V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14;
-    c0, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14;
-    C0, C1, C2, C3, C4, C5, C6, C7, C8, C9, C10, C11, C12, C13, C14
-);
-
-impl_tuple_codec!(
-    v0, v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15;
-    V0, V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15;
-    c0, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15;
-    C0, C1, C2, C3, C4, C5, C6, C7, C8, C9, C10, C11, C12, C13, C14, C15
+    ;
+    V0 C0 c0, V1 C1 c1, V2 C2 c2, V3 C3 c3,
+    V4 C4 c4, V5 C5 c5, V6 C6 c6, V7 C7 c7,
+    V8 C8 c8, V9 C9 c9, V10 C10 c10, V11 C11 c11,
+    V12 C12 c12, V13 C13 c13, V14 C14 c14, V15 C15 c15
 );
 
 /// Encoder for `future<T>`
