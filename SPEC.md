@@ -58,7 +58,7 @@ The indexing rules are as follows:
 
 ### Framing
 
-Transports provide a single bidirectional byte stream per wRPC invocation. wRPC defines a mandatory framing format, described below, that multiplexes the asynchronous data streams of an invocation (each identified by its [index](#indexing)) over that single byte stream.
+Transports provide bidirectional byte streams, each carrying one or more wRPC invocations one after another (see [Framed stream specification](#framed-stream-specification)). wRPC defines a mandatory framing format, described below, that multiplexes the asynchronous data streams of an invocation (each identified by its [index](#indexing)) over its byte stream.
 
 All wRPC transports use this framing. A transport implementation only needs to provide a single bidirectional byte stream; the framing layer supplies the multiplexing, so transports do not implement their own indexing scheme.
 
@@ -90,21 +90,23 @@ A sender MUST send the complete encoding of the value carrying a pending value, 
 
 Frames do not communicate the end of transmit, i.e. that no more frames follow. A transport communicates it using its native half-close, if it has one, for example, TCP shutdown or finishing a QUIC stream, and otherwise by closing the byte stream (see [Transport](#transport)). A receiver completes the invocation once the root and the `path` of every pending value it decoded are closed, without waiting for the end of transmit. If transmit ends while the root or the `path` of a pending value the receiver has decoded is still open, the receiver MUST treat it as a failed invocation.
 
-A receiver, which treats received data as an error, MUST fail the invocation. A peer, which fails an invocation, MUST end transmit without closing the open paths, SHOULD close the invocation's byte stream in both directions using the transport's mechanism (see [Transport specifications](#transport-specifications)), and MUST NOT close a connection or session carrying other invocations.
+A byte stream carries one or more invocations one after another. Once the client finished transmitting an invocation, i.e. closed the root and the `path` of every pending value it sent, it MAY send the next one over the same byte stream without waiting for the results of the previous one: its framed stream, beginning with the version byte, follows the last frame of the previous one, so the server reads it once it completed the previous one. The server serves the invocations on a byte stream one after another in order, sending all frames of the results of an invocation before any of the next one, until the client ends transmit in place of the next one. Since further invocations may follow, the server MUST NOT end transmit before the client does, except to fail an invocation or to close an idle byte stream, i.e. one on which it completed the previous invocation and received no part of the next one, for example, after a timeout. A client MUST treat an invocation, for which the byte stream ended before its results were received, as failed. Since the server need not receive the next invocation before it is done with the previous one, a client MUST keep receiving results while it sends further invocations. A failed invocation ends the byte stream, which fails the invocations following it, too.
+
+A receiver, which treats received data as an error, MUST fail the invocation. A peer, which fails an invocation, MUST end transmit without closing the open paths, SHOULD close the invocation's byte stream in both directions using the transport's mechanism (see [Transport specifications](#transport-specifications)), and MUST NOT otherwise close a connection or session carrying other invocations.
 
 ## Transport specifications
 
 ### TCP
 
-TCP relies on [Framed stream specification](#framed-stream-specification) to map a single TCP stream to a single wRPC invocation.
+TCP relies on [Framed stream specification](#framed-stream-specification) to map a single TCP stream to wRPC invocations, one after another.
 
-The server MUST listen on a TCP socket and client MUST establish a new connection to that socket per each invocation.
+The server MUST listen on a TCP socket and the client MUST establish a connection to that socket, which carries one or more invocations (see [Framed stream specification](#framed-stream-specification)). Once the client ended transmit and the server sent the results of the last invocation, the server closes the connection.
 
-A peer MAY shut down the write side of the stream once it is done sending, since the invocation completes once all paths are closed (see [Framing](#framing)).
+The client MAY shut down the write side once it is done sending and does not send any further invocations over the connection, for example, right after sending the parameters of its last one, since the invocation completes once all paths are closed (see [Framing](#framing)).
 
 To close the stream in both directions (see [Framed stream specification](#framed-stream-specification)), a peer MUST close the connection, so that it no longer receives data either. To the peer, this ends transmit just like shutting down the write side does, so the peer detects the failure by the root or the `path` of a pending value still being open.
 
-This mapping is deliberate: a TCP connection provides exactly one byte stream and no stream-level multiplexing, so the TCP transport does not multiplex invocations over a connection itself. The peer, which ends transmit first, performs the active close and holds a `TIME_WAIT` socket. In a successful invocation this is usually the client, once it is done sending parameters, so the client holds a `TIME_WAIT` socket per invocation, which bounds the sustained invocation rate from a single client to a single server address by the size of the client's ephemeral port range.
+This mapping is deliberate: a TCP connection provides exactly one byte stream and no stream-level multiplexing, so the TCP transport does not multiplex invocations over a connection itself. The client ends transmit first, so it performs the active close and holds a `TIME_WAIT` socket per connection. A client establishing a connection per invocation is therefore bounded in its sustained invocation rate to a single server address by the size of its ephemeral port range, which reusing connections avoids.
 
 Peers that need many concurrent invocations over a single long-lived connection, or per-invocation metadata, SHOULD use a transport that natively multiplexes streams, such as [QUIC](#quic), [WebTransport](#webtransport) or [HTTP](#http) over HTTP/2.
 
@@ -114,11 +116,11 @@ Unix domain sockets follow the [TCP](#tcp) transport specification, using a stre
 
 ### QUIC
 
-QUIC relies on [Framed stream specification](#framed-stream-specification) to map a single bidirectional QUIC stream to a single wRPC invocation.
+QUIC relies on [Framed stream specification](#framed-stream-specification) to map a bidirectional QUIC stream to wRPC invocations, one after another.
 
-The client MUST open a new client-initiated bidirectional stream per each invocation. A single QUIC connection MAY carry multiple concurrent invocations.
+The client MUST open a client-initiated bidirectional stream, which carries one or more invocations (see [Framed stream specification](#framed-stream-specification)), and MAY open a new one per invocation. A single QUIC connection MAY carry multiple concurrent invocations over separate streams.
 
-A peer SHOULD finish the send side of the stream once it is done sending.
+A peer SHOULD finish the send side of the stream once it is done sending, the server only once the client finished its send side.
 
 Once a peer is done receiving data, it SHOULD stop the receive side of the stream with application error code `0`. A peer MUST treat its send side being stopped with application error code `0` after it finished the stream as successful completion.
 
@@ -134,15 +136,15 @@ A single WebTransport session MAY carry multiple concurrent invocations.
 
 ### HTTP
 
-HTTP relies on [Framed stream specification](#framed-stream-specification) to map a single HTTP request-response exchange to a single wRPC invocation.
+HTTP relies on [Framed stream specification](#framed-stream-specification) to map an HTTP request-response exchange to wRPC invocations, one after another.
 
-The client MUST send a `POST` request per each invocation, with the request body carrying the data sent by the client and the response body carrying the data sent by the server. The end of the request or response body communicates the end of transmit.
+The client MUST send a `POST` request, which carries one or more invocations (see [Framed stream specification](#framed-stream-specification)), and MAY send a new one per invocation, with the request body carrying the data sent by the client and the response body carrying the data sent by the server. The end of the request or response body communicates the end of transmit.
 
 To close the exchange in both directions (see [Framed stream specification](#framed-stream-specification)), a peer SHOULD reset its stream with an error code other than `NO_ERROR`, for example, `RST_STREAM` with `INTERNAL_ERROR` in HTTP/2. Where the exchange has no stream of its own, as in HTTP/1.1, a peer MUST close the connection instead.
 
 The request target and header fields are application-defined and not interpreted by wRPC.
 
-A server accepting the invocation MUST respond with a `2xx` status code without waiting for the request body to complete, and the client MUST NOT wait for the response before sending the request body. A client MUST treat a response with a status code other than `2xx` as a failed invocation.
+A server accepting the request MUST respond with a `2xx` status code without waiting for the request body to complete, and the client MUST NOT wait for the response before sending the request body. A client MUST treat a response with a status code other than `2xx` as a failed invocation.
 
 Since data is transferred concurrently in both directions, the HTTP version used SHOULD support full-duplex exchange, for example, HTTP/2.
 
