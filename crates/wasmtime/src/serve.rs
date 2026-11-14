@@ -19,7 +19,7 @@ use wasmtime::component::{
 };
 use wrpc_transport::{FrameDecoder, Header, HeaderDecoder, Server};
 
-use crate::{ResourceTypes, TupleEncoder, ValDecoder, WrpcView, call};
+use crate::{ResourceTypes, TupleDecoder, TupleEncoder, WrpcView, call};
 
 // this returns the RPC name for a wasmtime function name.
 // Unfortunately, the [`types::ComponentFunc`] does not include the kind information and we want to
@@ -308,7 +308,7 @@ where
                     .run_concurrent(async |store| {
                         let srv = Server {
                             enc: TupleEncoder::new(store, &export.results, &self.resources),
-                            dec: ValDecoder::new(store, &export.params, &self.resources),
+                            dec: TupleDecoder::new(store, &export.params, &self.resources),
                         };
                         let res = call(store, srv, &mut tx, &mut frames, func).await;
                         if res.is_ok() {
@@ -388,7 +388,7 @@ where
                                 .context("function export not found")?;
                             let srv = Server {
                                 enc: TupleEncoder::new(store, &export.results, &resources),
-                                dec: ValDecoder::new(store, &export.params, &resources),
+                                dec: TupleDecoder::new(store, &export.params, &resources),
                             };
                             call(store, srv, &mut tx, &mut frames, func).await?;
                             Ok((tx, frames))

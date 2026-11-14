@@ -9,7 +9,7 @@ use wasmtime::component::{Accessor, Func, Val};
 use wasmtime::error::Context as _;
 use wrpc_transport::{FrameDecoder, Server};
 
-use crate::{TupleEncoder, ValDecoder, WrpcView};
+use crate::{TupleDecoder, TupleEncoder, WrpcView};
 
 /// Error type returned by [call]
 pub enum CallError {
@@ -53,7 +53,7 @@ impl fmt::Display for CallError {
 /// using [`wasmtime::Store::run_concurrent`].
 pub async fn call<T, R, I, O>(
     store: &Accessor<T>,
-    srv: Server<TupleEncoder<'_, &Accessor<T>>, ValDecoder<'_, &Accessor<T>>>,
+    srv: Server<TupleEncoder<'_, &Accessor<T>>, TupleDecoder<'_, &Accessor<T>>>,
     tx: O,
     rx: R,
     func: Func,
