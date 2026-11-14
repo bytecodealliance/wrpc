@@ -19,7 +19,22 @@ use wasmtime::component::{
 };
 use wrpc_transport::{FrameDecoder, Header, HeaderDecoder, Server};
 
-use crate::{ResourceTypes, TupleEncoder, ValDecoder, WrpcView, call, rpc_func_name};
+use crate::{ResourceTypes, TupleEncoder, ValDecoder, WrpcView, call};
+
+// this returns the RPC name for a wasmtime function name.
+// Unfortunately, the [`types::ComponentFunc`] does not include the kind information and we want to
+// avoid (re-)parsing the WIT here.
+fn rpc_func_name(name: &str) -> &str {
+    if let Some(name) = name.strip_prefix("[constructor]") {
+        name
+    } else if let Some(name) = name.strip_prefix("[static]") {
+        name
+    } else if let Some(name) = name.strip_prefix("[method]") {
+        name
+    } else {
+        name
+    }
+}
 
 /// A [`wasmtime::Store`] shared by concurrent tasks, which are all driven by a single long-running
 /// [`wasmtime::Store::run_concurrent`] event loop.
