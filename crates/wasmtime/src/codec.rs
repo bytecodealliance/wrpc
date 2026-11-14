@@ -574,8 +574,11 @@ where
                 }
                 dst.reserve(vs.len());
                 let mut deferred = Vec::with_capacity(vs.len());
-                for ((name, v), Field { ref ty, .. }) in zip(vs, ty.fields()) {
-                    let mut enc = self.with_type(ty);
+                for ((name, v), Field { name: field, ty }) in zip(vs, ty.fields()) {
+                    if name != field {
+                        bail!("record field `{name}` does not match `{field}`");
+                    }
+                    let mut enc = self.with_type(&ty);
                     enc.encode(v, dst)
                         .with_context(|| format!("failed to encode `{name}` field"))?;
                     deferred.push(enc.take_deferred());
