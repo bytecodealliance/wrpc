@@ -4,166 +4,19 @@ use core::borrow::Borrow;
 use core::fmt::Display;
 use core::iter::{self, zip};
 use core::mem;
-use core::pin::pin;
-use core::task::{Context, Poll, Waker};
+use core::task::{Context, Poll};
 
 use std::borrow::Cow;
 
 use bytes::{Buf as _, BytesMut};
-use tokio::io::{AsyncRead, AsyncReadExt as _};
 use tokio_util::codec::Decoder;
 use wasm_tokio::cm::{BoolCodec, F32Codec, F64Codec, S8Codec, U8Codec};
 use wasm_tokio::{
-    AsyncReadCore as _, AsyncReadLeb128 as _, AsyncReadUtf8 as _, CoreNameDecoder,
-    DEFAULT_MAX_INITIAL_CAPACITY, Leb128DecoderI16, Leb128DecoderI32, Leb128DecoderI64,
-    Leb128DecoderU16, Leb128DecoderU32, Leb128DecoderU64, Utf8Codec, cm::AsyncReadValue as _,
+    CoreNameDecoder, DEFAULT_MAX_INITIAL_CAPACITY, Leb128DecoderI16, Leb128DecoderI32,
+    Leb128DecoderI64, Leb128DecoderU16, Leb128DecoderU32, Leb128DecoderU64, Utf8Codec,
 };
 use wasm_wave::wasm::{WasmType, WasmTypeKind, WasmValue};
 use wrpc_transport::{Receive, error_unknown_path};
-
-/// Read a value of type `ty` from `r`
-///
-/// # Errors
-///
-/// - [`UnexpectedEof`](std::io::ErrorKind::UnexpectedEof) if `r` ends before the value is complete
-/// - [`InvalidData`](std::io::ErrorKind::InvalidData) if the encoding is malformed
-/// - Any error returned by `r`
-#[allow(clippy::too_many_lines)]
-pub async fn read_value<V, R>(r: &mut R, ty: &V::Type) -> std::io::Result<V>
-where
-    V: WasmValue,
-    R: AsyncRead + Unpin,
-{
-    match ty.kind() {
-        WasmTypeKind::Bool => Ok(V::make_bool(r.read_bool().await?)),
-        WasmTypeKind::S8 => Ok(V::make_s8(r.read_i8().await?)),
-        WasmTypeKind::U8 => Ok(V::make_u8(r.read_u8().await?)),
-        WasmTypeKind::S16 => Ok(V::make_s16(r.read_i16_leb128().await?)),
-        WasmTypeKind::U16 => Ok(V::make_u16(r.read_u16_leb128().await?)),
-        WasmTypeKind::S32 => Ok(V::make_s32(r.read_i32_leb128().await?)),
-        WasmTypeKind::U32 => Ok(V::make_u32(r.read_u32_leb128().await?)),
-        WasmTypeKind::S64 => Ok(V::make_s64(r.read_i64_leb128().await?)),
-        WasmTypeKind::U64 => Ok(V::make_u64(r.read_u64_leb128().await?)),
-        WasmTypeKind::F32 => Ok(V::make_f32(r.read_f32_le().await?)),
-        WasmTypeKind::F64 => Ok(V::make_f64(r.read_f64_le().await?)),
-        WasmTypeKind::Char => Ok(V::make_char(r.read_char_utf8().await?)),
-        WasmTypeKind::String => {
-            let mut s = String::default();
-            r.read_core_name(&mut s, u32::MAX).await?;
-            Ok(V::make_string(Cow::Owned(s)))
-        }
-        WasmTypeKind::List => {
-            let n = r.read_u32_leb128().await?;
-            let n = usize::try_from(n).unwrap_or(usize::MAX);
-            let element_type = ty
-                .list_element_type()
-                .ok_or_else(|| io_error("list type missing element type"))?;
-            let mut elements = Vec::with_capacity(
-                n.min(DEFAULT_MAX_INITIAL_CAPACITY / mem::size_of::<V>().max(1)),
-            );
-            for _ in 0..n {
-                elements.push(Box::pin(read_value(r, &element_type)).await?);
-            }
-            V::make_list(ty, elements).map_err(io_error)
-        }
-        WasmTypeKind::Record => {
-            let (names, types): (Vec<_>, Vec<_>) = ty.record_fields().unzip();
-            let mut values = Vec::with_capacity(types.len());
-            for ty in types {
-                values.push(Box::pin(read_value(r, &ty)).await?);
-            }
-            V::make_record(ty, names.iter().map(AsRef::as_ref).zip(values)).map_err(io_error)
-        }
-        WasmTypeKind::Tuple => {
-            let element_types: Vec<_> = ty.tuple_element_types().collect();
-            let mut elements = Vec::with_capacity(element_types.len());
-            for element_type in element_types {
-                elements.push(Box::pin(read_value(r, &element_type)).await?);
-            }
-            V::make_tuple(ty, elements).map_err(io_error)
-        }
-        WasmTypeKind::Variant => {
-            let discriminant = r.read_u32_leb128().await?;
-            let cases: Vec<_> = ty.variant_cases().collect();
-            let (name, payload_type) = usize::try_from(discriminant)
-                .ok()
-                .and_then(|i| cases.get(i))
-                .ok_or_else(|| io_error(format!("unknown variant discriminant: {discriminant}")))?;
-            let payload = match payload_type {
-                Some(payload_type) => Some(Box::pin(read_value(r, payload_type)).await?),
-                None => None,
-            };
-            V::make_variant(ty, name, payload).map_err(io_error)
-        }
-        WasmTypeKind::Enum => {
-            let discriminant = r.read_u32_leb128().await?;
-            let names: Vec<_> = ty.enum_cases().collect();
-            let name = usize::try_from(discriminant)
-                .ok()
-                .and_then(|i| names.get(i))
-                .ok_or_else(|| io_error(format!("unknown enum discriminant: {discriminant}")))?;
-            V::make_enum(ty, name).map_err(io_error)
-        }
-        WasmTypeKind::Option => {
-            let v = if r.read_option_status().await? {
-                let ty = ty
-                    .option_some_type()
-                    .ok_or_else(|| io_error("option type missing some type"))?;
-                Some(Box::pin(read_value(r, &ty)).await?)
-            } else {
-                None
-            };
-            V::make_option(ty, v).map_err(io_error)
-        }
-        WasmTypeKind::Result => {
-            let ok = r.read_result_status().await?;
-            let (ok_type, err_type) = ty
-                .result_types()
-                .ok_or_else(|| io_error("result type missing ok/err types"))?;
-            let payload_type = if ok { ok_type } else { err_type };
-            let payload = match payload_type {
-                Some(ty) => Some(Box::pin(read_value(r, &ty)).await?),
-                None => None,
-            };
-            V::make_result(ty, if ok { Ok(payload) } else { Err(payload) }).map_err(io_error)
-        }
-        WasmTypeKind::Flags => {
-            let names: Vec<_> = ty.flags_names().collect();
-            let mut buf = vec![0u8; names.len().div_ceil(8).max(1)];
-            r.read_exact(&mut buf).await?;
-            let set = names
-                .iter()
-                .enumerate()
-                .filter(|(i, _)| buf[i / 8] & (1 << (i % 8)) != 0)
-                .map(|(_, name)| name.as_ref());
-            V::make_flags(ty, set).map_err(io_error)
-        }
-        kind => Err(io_error(format!("unsupported value type: {kind:?}"))),
-    }
-}
-
-/// Decode a value of type `ty` from `buf`
-///
-/// # Errors
-///
-/// Returns the errors of [`read_value`] and [`InvalidData`](std::io::ErrorKind::InvalidData) if
-/// `buf` is not fully consumed.
-pub fn decode_value<V: WasmValue>(mut buf: &[u8], ty: &V::Type) -> std::io::Result<V> {
-    let Poll::Ready(v) =
-        pin!(read_value(&mut buf, ty)).poll(&mut Context::from_waker(Waker::noop()))
-    else {
-        return Err(std::io::ErrorKind::WouldBlock.into());
-    };
-    let v = v?;
-    if !buf.is_empty() {
-        return Err(io_error("buffer contains trailing bytes"));
-    }
-    Ok(v)
-}
-
-fn io_error(err: impl core::fmt::Display) -> std::io::Error {
-    std::io::Error::new(std::io::ErrorKind::InvalidData, err.to_string())
-}
 
 /// Progress of decoding a partially received value
 enum Partial<V> {
@@ -484,7 +337,7 @@ mod tests {
             return Err(std::io::ErrorKind::UnexpectedEof.into());
         };
         if !buf.is_empty() {
-            return Err(io_error("buffer contains trailing bytes"));
+            return Err(error_invalid_data("buffer contains trailing bytes"));
         }
         Ok(v)
     }
