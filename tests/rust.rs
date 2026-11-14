@@ -532,13 +532,11 @@ async fn assert_dynamic<C: Clone + Send + Sync + 'static>(
                 assert_eq!(params, sync_values());
                 tx(sync_values()).await?;
             }
-            for _ in 0..2 {
-                let Some((.., params, io, tx)) = async_.try_next().await? else {
-                    bail!("`test.async` missing");
-                };
-                assert_async_values(params, io).await?;
-                tx(async_values()).await?;
-            }
+            let Some((.., params, io, tx)) = async_.try_next().await? else {
+                bail!("`test.async` missing");
+            };
+            assert_async_values(params, io).await?;
+            tx(async_values()).await?;
             Ok(())
         },
         async {
@@ -550,7 +548,7 @@ async fn assert_dynamic<C: Clone + Send + Sync + 'static>(
             }
 
             let mut buf = BytesMut::default();
-            wrpc_transport::pack(sync_values(), &mut buf).await?;
+            wrpc_transport::pack(sync_values(), &mut buf)?;
             let unpacked = wrpc_transport::unpack(&mut buf)?;
             for params in [sync_values(), unpacked] {
                 let res: SyncValues = clt
@@ -559,14 +557,10 @@ async fn assert_dynamic<C: Clone + Send + Sync + 'static>(
                 assert_eq!(res, sync_values());
             }
 
-            wrpc_transport::pack(async_values(), &mut buf).await?;
-            let unpacked = wrpc_transport::unpack(&mut buf)?;
-            for params in [async_values(), unpacked] {
-                let (res, io) = clt
-                    .invoke_values(cx.clone(), "test", "async", params)
-                    .await?;
-                assert_async_values(res, io).await?;
-            }
+            let (res, io) = clt
+                .invoke_values(cx, "test", "async", async_values())
+                .await?;
+            assert_async_values(res, io).await?;
             anyhow::Ok(())
         },
     )?;
