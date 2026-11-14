@@ -307,8 +307,8 @@ where
                 store
                     .run_concurrent(async |store| {
                         let srv = Server {
-                            enc: TupleEncoder::new(store, &export.results, &self.resources),
-                            dec: TupleDecoder::new(store, &export.params, &self.resources),
+                            enc: TupleEncoder::new(store, &export.results, self.resources.clone()),
+                            dec: TupleDecoder::new(store, &export.params, self.resources.clone()),
                         };
                         let res = call(store, srv, &mut tx, &mut frames, func).await;
                         if res.is_ok() {
@@ -387,8 +387,8 @@ where
                                 .with(|store| instance.get_func(store, export.idx))
                                 .context("function export not found")?;
                             let srv = Server {
-                                enc: TupleEncoder::new(store, &export.results, &resources),
-                                dec: TupleDecoder::new(store, &export.params, &resources),
+                                enc: TupleEncoder::new(store, &export.results, resources.clone()),
+                                dec: TupleDecoder::new(store, &export.params, resources),
                             };
                             call(store, srv, &mut tx, &mut frames, func).await?;
                             Ok((tx, frames))

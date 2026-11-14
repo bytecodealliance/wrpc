@@ -74,14 +74,14 @@ impl WithStore for () {
 pub struct ValEncoder<'a, T> {
     pub store: T,
     pub ty: &'a Type,
-    pub resources: &'a ResourceTypes,
+    pub resources: ResourceTypes,
     pub nested: Option<Box<dyn Transmit + Send>>,
 }
 
-impl<T> ValEncoder<'_, T> {
+impl<'a, T> ValEncoder<'a, T> {
     #[must_use]
-    pub fn new<'a>(store: T, ty: &'a Type, resources: &'a ResourceTypes) -> ValEncoder<'a, T> {
-        ValEncoder {
+    pub fn new(store: T, ty: &'a Type, resources: ResourceTypes) -> Self {
+        Self {
             store,
             ty,
             resources,
@@ -112,14 +112,14 @@ impl<T> Transmit for ValEncoder<'_, T> {
 pub struct TupleEncoder<'a, T> {
     store: T,
     pub(crate) tys: &'a [Type],
-    resources: &'a ResourceTypes,
+    resources: ResourceTypes,
     nested: BTreeMap<usize, Box<dyn Transmit + Send>>,
 }
 
-impl<T> TupleEncoder<'_, T> {
+impl<'a, T> TupleEncoder<'a, T> {
     #[must_use]
-    pub fn new<'a>(store: T, tys: &'a [Type], resources: &'a ResourceTypes) -> TupleEncoder<'a, T> {
-        TupleEncoder {
+    pub fn new(store: T, tys: &'a [Type], resources: ResourceTypes) -> Self {
+        Self {
             store,
             tys,
             resources,
@@ -149,10 +149,9 @@ where
             bail!("value count mismatch");
         }
         for (i, (v, ty)) in zip(vs, self.tys).enumerate() {
-            let mut enc = ValEncoder::new(&mut self.store, ty, self.resources);
-            enc.encode_val(v, dst)
-                .with_context(|| format!("failed to encode value {i}"))?;
-            if let Some(t) = enc.nested {
+            if let Some(t) = encode_val(&mut self.store, &self.resources, ty, v, dst)
+                .with_context(|| format!("failed to encode value {i}"))?
+            {
                 self.nested.insert(i, t);
             }
         }
@@ -255,464 +254,452 @@ where
     type Error = std::io::Error;
 
     fn encode(&mut self, v: &Val, dst: &mut BytesMut) -> Result<(), Self::Error> {
-        let mut enc = ValEncoder::new(&mut self.store, self.ty, self.resources);
-        enc.encode_val(v, dst)
+        let nested = encode_val(&mut self.store, &self.resources, self.ty, v, dst)
             .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
-        if let Some(t) = enc.nested {
+        if let Some(t) = nested {
             self.nested = Some(t);
         }
         Ok(())
     }
 }
 
-impl<T> ValEncoder<'_, &mut T>
+#[allow(clippy::too_many_lines)]
+#[instrument(level = "trace", skip(store, resources, ty))]
+fn encode_val<T>(
+    store: &mut T,
+    resources: &ResourceTypes,
+    ty: &Type,
+    v: &Val,
+    dst: &mut BytesMut,
+) -> wasmtime::Result<Option<Box<dyn Transmit + Send>>>
 where
     T: WithStore<Data: WrpcView>,
 {
-    fn with_type<'a>(&'a mut self, ty: &'a Type) -> ValEncoder<'a, &'a mut T> {
-        ValEncoder::new(&mut *self.store, ty, self.resources)
-    }
-
-    #[allow(clippy::too_many_lines)]
-    #[instrument(level = "trace", skip(self))]
-    fn encode_val(&mut self, v: &Val, dst: &mut BytesMut) -> wasmtime::Result<()> {
-        match (v, self.ty) {
-            (Val::Bool(v), Type::Bool) => {
-                dst.reserve(1);
-                dst.put_u8((*v).into());
-                Ok(())
-            }
-            (Val::S8(v), Type::S8) => {
-                dst.reserve(1);
-                dst.put_i8(*v);
-                Ok(())
-            }
-            (Val::U8(v), Type::U8) => {
-                dst.reserve(1);
-                dst.put_u8(*v);
-                Ok(())
-            }
-            (Val::S16(v), Type::S16) => Leb128Encoder
-                .encode(*v, dst)
-                .context("failed to encode s16"),
-            (Val::U16(v), Type::U16) => Leb128Encoder
-                .encode(*v, dst)
-                .context("failed to encode u16"),
-            (Val::S32(v), Type::S32) => Leb128Encoder
-                .encode(*v, dst)
-                .context("failed to encode s32"),
-            (Val::U32(v), Type::U32) => Leb128Encoder
-                .encode(*v, dst)
-                .context("failed to encode u32"),
-            (Val::S64(v), Type::S64) => Leb128Encoder
-                .encode(*v, dst)
-                .context("failed to encode s64"),
-            (Val::U64(v), Type::U64) => Leb128Encoder
-                .encode(*v, dst)
-                .context("failed to encode u64"),
-            (Val::Float32(v), Type::Float32) => {
-                F32Codec.encode(*v, dst).context("failed to encode f32")
-            }
-            (Val::Float64(v), Type::Float64) => {
-                F64Codec.encode(*v, dst).context("failed to encode f64")
-            }
-            (Val::Char(v), Type::Char) => {
-                Utf8Codec.encode(*v, dst).context("failed to encode char")
-            }
-            (Val::String(v), Type::String) => CoreNameEncoder
-                .encode(v.as_str(), dst)
-                .context("failed to encode string"),
-            (Val::List(vs), Type::List(ty)) => {
-                let ty = ty.ty();
-                let n = u32::try_from(vs.len()).context("list length does not fit in u32")?;
-                dst.reserve(5 + vs.len());
-                Leb128Encoder
-                    .encode(n, dst)
-                    .context("failed to encode list length")?;
-                let mut nested = BTreeMap::<usize, Box<dyn Transmit + Send>>::default();
-                for (i, v) in vs.iter().enumerate() {
-                    let mut enc = self.with_type(&ty);
-                    enc.encode_val(v, dst)
-                        .context("failed to encode list element")?;
-                    if let Some(t) = enc.nested {
-                        nested.insert(i, t);
-                    }
-                }
-                if !nested.is_empty() {
-                    self.nested = Some(Box::new(nested));
-                }
-                Ok(())
-            }
-            (Val::Record(vs), Type::Record(ty)) => {
-                if vs.len() != ty.fields().len() {
-                    bail!(
-                        "record has {} fields, expected {}",
-                        vs.len(),
-                        ty.fields().len()
-                    );
-                }
-                for ((name, ..), Field { name: field, .. }) in zip(vs, ty.fields()) {
-                    if name != field {
-                        bail!("record field `{name}` does not match `{field}`");
-                    }
-                }
-                dst.reserve(vs.len());
-                let mut nested = BTreeMap::<usize, Box<dyn Transmit + Send>>::default();
-                for (i, ((name, v), Field { ref ty, .. })) in zip(vs, ty.fields()).enumerate() {
-                    let mut enc = self.with_type(ty);
-                    enc.encode_val(v, dst)
-                        .with_context(|| format!("failed to encode `{name}` field"))?;
-                    if let Some(t) = enc.nested {
-                        nested.insert(i, t);
-                    }
-                }
-                if !nested.is_empty() {
-                    self.nested = Some(Box::new(nested));
-                }
-                Ok(())
-            }
-            (Val::Tuple(vs), Type::Tuple(ty)) => {
-                if vs.len() != ty.types().len() {
-                    bail!(
-                        "tuple has {} elements, expected {}",
-                        vs.len(),
-                        ty.types().len()
-                    );
-                }
-                dst.reserve(vs.len());
-                let mut nested = BTreeMap::<usize, Box<dyn Transmit + Send>>::default();
-                for (i, (v, ref ty)) in zip(vs, ty.types()).enumerate() {
-                    let mut enc = self.with_type(ty);
-                    enc.encode_val(v, dst)
-                        .context("failed to encode tuple element")?;
-                    if let Some(t) = enc.nested {
-                        nested.insert(i, t);
-                    }
-                }
-                if !nested.is_empty() {
-                    self.nested = Some(Box::new(nested));
-                }
-                Ok(())
-            }
-            (Val::Variant(discriminant, v), Type::Variant(ty)) => {
-                let cases = ty.cases();
-                let ty = match cases.len() {
-                    ..=0x0000_00ff => {
-                        let (discriminant, ty) =
-                            find_variant_discriminant(0u8.., cases, discriminant)?;
-                        dst.reserve(2 + usize::from(v.is_some()));
-                        Leb128Encoder.encode(discriminant, dst)?;
-                        ty
-                    }
-                    0x0000_0100..=0x0000_ffff => {
-                        let (discriminant, ty) =
-                            find_variant_discriminant(0u16.., cases, discriminant)?;
-                        dst.reserve(3 + usize::from(v.is_some()));
-                        Leb128Encoder.encode(discriminant, dst)?;
-                        ty
-                    }
-                    0x0001_0000..=0x00ff_ffff => {
-                        let (discriminant, ty) =
-                            find_variant_discriminant(0u32.., cases, discriminant)?;
-                        dst.reserve(4 + usize::from(v.is_some()));
-                        Leb128Encoder.encode(discriminant, dst)?;
-                        ty
-                    }
-                    0x0100_0000..=0xffff_ffff => {
-                        let (discriminant, ty) =
-                            find_variant_discriminant(0u32.., cases, discriminant)?;
-                        dst.reserve(5 + usize::from(v.is_some()));
-                        Leb128Encoder.encode(discriminant, dst)?;
-                        ty
-                    }
-                    0x1_0000_0000.. => bail!("case count does not fit in u32"),
-                };
-                if let Some(v) = v {
-                    let ty = ty.context("type missing for variant")?;
-                    let mut enc = self.with_type(&ty);
-                    enc.encode_val(v, dst)
-                        .context("failed to encode variant value")?;
-                    self.nested = enc.nested;
-                } else if ty.is_some() {
-                    bail!("payload missing for variant `{discriminant}`");
-                }
-                Ok(())
-            }
-            (Val::Enum(discriminant), Type::Enum(ty)) => {
-                let names = ty.names();
-                match names.len() {
-                    ..=0x0000_00ff => {
-                        let discriminant = find_enum_discriminant(0u8.., names, discriminant)?;
-                        dst.reserve(2);
-                        Leb128Encoder.encode(discriminant, dst)?;
-                    }
-                    0x0000_0100..=0x0000_ffff => {
-                        let discriminant = find_enum_discriminant(0u16.., names, discriminant)?;
-                        dst.reserve(3);
-                        Leb128Encoder.encode(discriminant, dst)?;
-                    }
-                    0x0001_0000..=0x00ff_ffff => {
-                        let discriminant = find_enum_discriminant(0u32.., names, discriminant)?;
-                        dst.reserve(4);
-                        Leb128Encoder.encode(discriminant, dst)?;
-                    }
-                    0x0100_0000..=0xffff_ffff => {
-                        let discriminant = find_enum_discriminant(0u32.., names, discriminant)?;
-                        dst.reserve(5);
-                        Leb128Encoder.encode(discriminant, dst)?;
-                    }
-                    0x1_0000_0000.. => bail!("name count does not fit in u32"),
-                }
-                Ok(())
-            }
-            (Val::Option(None), Type::Option(_)) => {
-                dst.reserve(1);
-                dst.put_u8(0);
-                Ok(())
-            }
-            (Val::Option(Some(v)), Type::Option(ty)) => {
-                dst.reserve(2);
-                dst.put_u8(1);
-                let ty = ty.ty();
-                let mut enc = self.with_type(&ty);
-                enc.encode_val(v, dst)
-                    .context("failed to encode `option::some` value")?;
-                self.nested = enc.nested;
-                Ok(())
-            }
-            (Val::Result(v), Type::Result(ty)) => match v {
-                Ok(v) => match (v, ty.ok()) {
-                    (Some(v), Some(ty)) => {
-                        dst.reserve(2);
-                        dst.put_u8(0);
-                        let mut enc = self.with_type(&ty);
-                        enc.encode_val(v, dst)
-                            .context("failed to encode `result::ok` value")?;
-                        self.nested = enc.nested;
-                        Ok(())
-                    }
-                    (Some(_v), None) => bail!("`result::ok` value of unknown type"),
-                    (None, Some(_ty)) => bail!("`result::ok` value missing"),
-                    (None, None) => {
-                        dst.reserve(1);
-                        dst.put_u8(0);
-                        Ok(())
-                    }
-                },
-                Err(v) => match (v, ty.err()) {
-                    (Some(v), Some(ty)) => {
-                        dst.reserve(2);
-                        dst.put_u8(1);
-                        let mut enc = self.with_type(&ty);
-                        enc.encode_val(v, dst)
-                            .context("failed to encode `result::err` value")?;
-                        self.nested = enc.nested;
-                        Ok(())
-                    }
-                    (Some(_v), None) => bail!("`result::err` value of unknown type"),
-                    (None, Some(_ty)) => bail!("`result::err` value missing"),
-                    (None, None) => {
-                        dst.reserve(1);
-                        dst.put_u8(1);
-                        Ok(())
-                    }
-                },
-            },
-            (Val::Flags(vs), Type::Flags(ty)) => {
-                let names = ty.names();
-                let vs = vs.iter().map(String::as_str);
-                match names.len() {
-                    ..=8 => {
-                        dst.reserve(1);
-                        dst.put_u8(flag_bits(names, vs));
-                    }
-                    9..=16 => {
-                        dst.reserve(2);
-                        dst.put_u16_le(flag_bits(names, vs));
-                    }
-                    17..=24 => {
-                        dst.reserve(3);
-                        dst.put_slice(&u32::to_le_bytes(flag_bits(names, vs))[..3]);
-                    }
-                    25..=32 => {
-                        dst.reserve(4);
-                        dst.put_u32_le(flag_bits(names, vs));
-                    }
-                    33..=40 => {
-                        dst.reserve(5);
-                        dst.put_slice(&u64::to_le_bytes(flag_bits(names, vs))[..5]);
-                    }
-                    41..=48 => {
-                        dst.reserve(6);
-                        dst.put_slice(&u64::to_le_bytes(flag_bits(names, vs))[..6]);
-                    }
-                    49..=56 => {
-                        dst.reserve(7);
-                        dst.put_slice(&u64::to_le_bytes(flag_bits(names, vs))[..7]);
-                    }
-                    57..=64 => {
-                        dst.reserve(8);
-                        dst.put_u64_le(flag_bits(names, vs));
-                    }
-                    65..=72 => {
-                        dst.reserve(9);
-                        dst.put_slice(&u128::to_le_bytes(flag_bits(names, vs))[..9]);
-                    }
-                    73..=80 => {
-                        dst.reserve(10);
-                        dst.put_slice(&u128::to_le_bytes(flag_bits(names, vs))[..10]);
-                    }
-                    81..=88 => {
-                        dst.reserve(11);
-                        dst.put_slice(&u128::to_le_bytes(flag_bits(names, vs))[..11]);
-                    }
-                    89..=96 => {
-                        dst.reserve(12);
-                        dst.put_slice(&u128::to_le_bytes(flag_bits(names, vs))[..12]);
-                    }
-                    97..=104 => {
-                        dst.reserve(13);
-                        dst.put_slice(&u128::to_le_bytes(flag_bits(names, vs))[..13]);
-                    }
-                    105..=112 => {
-                        dst.reserve(14);
-                        dst.put_slice(&u128::to_le_bytes(flag_bits(names, vs))[..14]);
-                    }
-                    113..=120 => {
-                        dst.reserve(15);
-                        dst.put_slice(&u128::to_le_bytes(flag_bits(names, vs))[..15]);
-                    }
-                    121..=128 => {
-                        dst.reserve(16);
-                        dst.put_u128_le(flag_bits(names, vs));
-                    }
-                    bits @ 129.. => {
-                        let mut cap = bits / 8;
-                        if bits % 8 != 0 {
-                            cap = cap.saturating_add(1);
-                        }
-                        let mut buf = vec![0; cap];
-                        let flags: HashSet<&str> = vs.into_iter().collect();
-                        for (i, name) in names.enumerate() {
-                            if flags.contains(name) {
-                                buf[i / 8] |= 1 << (i % 8);
-                            }
-                        }
-                        dst.extend_from_slice(&buf);
-                    }
-                }
-                Ok(())
-            }
-            (Val::Resource(resource), Type::Own(ty) | Type::Borrow(ty)) => {
-                #[cfg(feature = "wasmtime-wasi")]
-                if *ty
-                    == wasmtime::component::ResourceType::host::<wasmtime_wasi::p2::DynInputStream>(
-                    )
-                    || self.resources.io_streams.contains(ty)
+    match (v, ty) {
+        (Val::Bool(v), Type::Bool) => {
+            dst.reserve(1);
+            dst.put_u8((*v).into());
+            Ok(None)
+        }
+        (Val::S8(v), Type::S8) => {
+            dst.reserve(1);
+            dst.put_i8(*v);
+            Ok(None)
+        }
+        (Val::U8(v), Type::U8) => {
+            dst.reserve(1);
+            dst.put_u8(*v);
+            Ok(None)
+        }
+        (Val::S16(v), Type::S16) => Leb128Encoder
+            .encode(*v, dst)
+            .context("failed to encode s16")
+            .map(|()| None),
+        (Val::U16(v), Type::U16) => Leb128Encoder
+            .encode(*v, dst)
+            .context("failed to encode u16")
+            .map(|()| None),
+        (Val::S32(v), Type::S32) => Leb128Encoder
+            .encode(*v, dst)
+            .context("failed to encode s32")
+            .map(|()| None),
+        (Val::U32(v), Type::U32) => Leb128Encoder
+            .encode(*v, dst)
+            .context("failed to encode u32")
+            .map(|()| None),
+        (Val::S64(v), Type::S64) => Leb128Encoder
+            .encode(*v, dst)
+            .context("failed to encode s64")
+            .map(|()| None),
+        (Val::U64(v), Type::U64) => Leb128Encoder
+            .encode(*v, dst)
+            .context("failed to encode u64")
+            .map(|()| None),
+        (Val::Float32(v), Type::Float32) => F32Codec
+            .encode(*v, dst)
+            .context("failed to encode f32")
+            .map(|()| None),
+        (Val::Float64(v), Type::Float64) => F64Codec
+            .encode(*v, dst)
+            .context("failed to encode f64")
+            .map(|()| None),
+        (Val::Char(v), Type::Char) => Utf8Codec
+            .encode(*v, dst)
+            .context("failed to encode char")
+            .map(|()| None),
+        (Val::String(v), Type::String) => CoreNameEncoder
+            .encode(v.as_str(), dst)
+            .context("failed to encode string")
+            .map(|()| None),
+        (Val::List(vs), Type::List(ty)) => {
+            let ty = ty.ty();
+            let n = u32::try_from(vs.len()).context("list length does not fit in u32")?;
+            dst.reserve(5 + vs.len());
+            Leb128Encoder
+                .encode(n, dst)
+                .context("failed to encode list length")?;
+            let mut nested = BTreeMap::<usize, Box<dyn Transmit + Send>>::default();
+            for (i, v) in vs.iter().enumerate() {
+                if let Some(t) = encode_val(store, resources, &ty, v, dst)
+                    .context("failed to encode list element")?
                 {
-                    let stream = self.store.with_store(|mut store| {
-                        let stream = resource
-                            .try_into_resource::<wasmtime_wasi::p2::DynInputStream>(&mut store)
-                            .context("failed to downcast `wasi:io/input-stream`")?;
-                        if !stream.owned() {
-                            store
-                                .data_mut()
-                                .wrpc()
-                                .table
-                                .get_mut(&stream)
-                                .context("failed to get input stream")?;
-                            // NOTE: In order to handle this we'd need to know how many bytes the
-                            // receiver has read. That means that some kind of callback would be required from
-                            // the receiver. This is not trivial and generally should be a very rare use case.
-                            bail!("encoding borrowed `wasi:io/input-stream` not supported yet");
+                    nested.insert(i, t);
+                }
+            }
+            if nested.is_empty() {
+                return Ok(None);
+            }
+            Ok(Some(Box::new(nested)))
+        }
+        (Val::Record(vs), Type::Record(ty)) => {
+            if vs.len() != ty.fields().len() {
+                bail!(
+                    "record has {} fields, expected {}",
+                    vs.len(),
+                    ty.fields().len()
+                );
+            }
+            for ((name, ..), Field { name: field, .. }) in zip(vs, ty.fields()) {
+                if name != field {
+                    bail!("record field `{name}` does not match `{field}`");
+                }
+            }
+            dst.reserve(vs.len());
+            let mut nested = BTreeMap::<usize, Box<dyn Transmit + Send>>::default();
+            for (i, ((name, v), Field { ref ty, .. })) in zip(vs, ty.fields()).enumerate() {
+                if let Some(t) = encode_val(store, resources, ty, v, dst)
+                    .with_context(|| format!("failed to encode `{name}` field"))?
+                {
+                    nested.insert(i, t);
+                }
+            }
+            if nested.is_empty() {
+                return Ok(None);
+            }
+            Ok(Some(Box::new(nested)))
+        }
+        (Val::Tuple(vs), Type::Tuple(ty)) => {
+            if vs.len() != ty.types().len() {
+                bail!(
+                    "tuple has {} elements, expected {}",
+                    vs.len(),
+                    ty.types().len()
+                );
+            }
+            dst.reserve(vs.len());
+            let mut nested = BTreeMap::<usize, Box<dyn Transmit + Send>>::default();
+            for (i, (v, ref ty)) in zip(vs, ty.types()).enumerate() {
+                if let Some(t) = encode_val(store, resources, ty, v, dst)
+                    .context("failed to encode tuple element")?
+                {
+                    nested.insert(i, t);
+                }
+            }
+            if nested.is_empty() {
+                return Ok(None);
+            }
+            Ok(Some(Box::new(nested)))
+        }
+        (Val::Variant(discriminant, v), Type::Variant(ty)) => {
+            let cases = ty.cases();
+            let ty = match cases.len() {
+                ..=0x0000_00ff => {
+                    let (discriminant, ty) = find_variant_discriminant(0u8.., cases, discriminant)?;
+                    dst.reserve(2 + usize::from(v.is_some()));
+                    Leb128Encoder.encode(discriminant, dst)?;
+                    ty
+                }
+                0x0000_0100..=0x0000_ffff => {
+                    let (discriminant, ty) =
+                        find_variant_discriminant(0u16.., cases, discriminant)?;
+                    dst.reserve(3 + usize::from(v.is_some()));
+                    Leb128Encoder.encode(discriminant, dst)?;
+                    ty
+                }
+                0x0001_0000..=0x00ff_ffff => {
+                    let (discriminant, ty) =
+                        find_variant_discriminant(0u32.., cases, discriminant)?;
+                    dst.reserve(4 + usize::from(v.is_some()));
+                    Leb128Encoder.encode(discriminant, dst)?;
+                    ty
+                }
+                0x0100_0000..=0xffff_ffff => {
+                    let (discriminant, ty) =
+                        find_variant_discriminant(0u32.., cases, discriminant)?;
+                    dst.reserve(5 + usize::from(v.is_some()));
+                    Leb128Encoder.encode(discriminant, dst)?;
+                    ty
+                }
+                0x1_0000_0000.. => bail!("case count does not fit in u32"),
+            };
+            if let Some(v) = v {
+                let ty = ty.context("type missing for variant")?;
+                encode_val(store, resources, &ty, v, dst).context("failed to encode variant value")
+            } else if ty.is_some() {
+                bail!("payload missing for variant `{discriminant}`")
+            } else {
+                Ok(None)
+            }
+        }
+        (Val::Enum(discriminant), Type::Enum(ty)) => {
+            let names = ty.names();
+            match names.len() {
+                ..=0x0000_00ff => {
+                    let discriminant = find_enum_discriminant(0u8.., names, discriminant)?;
+                    dst.reserve(2);
+                    Leb128Encoder.encode(discriminant, dst)?;
+                }
+                0x0000_0100..=0x0000_ffff => {
+                    let discriminant = find_enum_discriminant(0u16.., names, discriminant)?;
+                    dst.reserve(3);
+                    Leb128Encoder.encode(discriminant, dst)?;
+                }
+                0x0001_0000..=0x00ff_ffff => {
+                    let discriminant = find_enum_discriminant(0u32.., names, discriminant)?;
+                    dst.reserve(4);
+                    Leb128Encoder.encode(discriminant, dst)?;
+                }
+                0x0100_0000..=0xffff_ffff => {
+                    let discriminant = find_enum_discriminant(0u32.., names, discriminant)?;
+                    dst.reserve(5);
+                    Leb128Encoder.encode(discriminant, dst)?;
+                }
+                0x1_0000_0000.. => bail!("name count does not fit in u32"),
+            }
+            Ok(None)
+        }
+        (Val::Option(None), Type::Option(_)) => {
+            dst.reserve(1);
+            dst.put_u8(0);
+            Ok(None)
+        }
+        (Val::Option(Some(v)), Type::Option(ty)) => {
+            dst.reserve(2);
+            dst.put_u8(1);
+            let ty = ty.ty();
+            encode_val(store, resources, &ty, v, dst)
+                .context("failed to encode `option::some` value")
+        }
+        (Val::Result(v), Type::Result(ty)) => match v {
+            Ok(v) => match (v, ty.ok()) {
+                (Some(v), Some(ty)) => {
+                    dst.reserve(2);
+                    dst.put_u8(0);
+                    encode_val(store, resources, &ty, v, dst)
+                        .context("failed to encode `result::ok` value")
+                }
+                (Some(_v), None) => bail!("`result::ok` value of unknown type"),
+                (None, Some(_ty)) => bail!("`result::ok` value missing"),
+                (None, None) => {
+                    dst.reserve(1);
+                    dst.put_u8(0);
+                    Ok(None)
+                }
+            },
+            Err(v) => match (v, ty.err()) {
+                (Some(v), Some(ty)) => {
+                    dst.reserve(2);
+                    dst.put_u8(1);
+                    encode_val(store, resources, &ty, v, dst)
+                        .context("failed to encode `result::err` value")
+                }
+                (Some(_v), None) => bail!("`result::err` value of unknown type"),
+                (None, Some(_ty)) => bail!("`result::err` value missing"),
+                (None, None) => {
+                    dst.reserve(1);
+                    dst.put_u8(1);
+                    Ok(None)
+                }
+            },
+        },
+        (Val::Flags(vs), Type::Flags(ty)) => {
+            let names = ty.names();
+            let vs = vs.iter().map(String::as_str);
+            match names.len() {
+                ..=8 => {
+                    dst.reserve(1);
+                    dst.put_u8(flag_bits(names, vs));
+                }
+                9..=16 => {
+                    dst.reserve(2);
+                    dst.put_u16_le(flag_bits(names, vs));
+                }
+                17..=24 => {
+                    dst.reserve(3);
+                    dst.put_slice(&u32::to_le_bytes(flag_bits(names, vs))[..3]);
+                }
+                25..=32 => {
+                    dst.reserve(4);
+                    dst.put_u32_le(flag_bits(names, vs));
+                }
+                33..=40 => {
+                    dst.reserve(5);
+                    dst.put_slice(&u64::to_le_bytes(flag_bits(names, vs))[..5]);
+                }
+                41..=48 => {
+                    dst.reserve(6);
+                    dst.put_slice(&u64::to_le_bytes(flag_bits(names, vs))[..6]);
+                }
+                49..=56 => {
+                    dst.reserve(7);
+                    dst.put_slice(&u64::to_le_bytes(flag_bits(names, vs))[..7]);
+                }
+                57..=64 => {
+                    dst.reserve(8);
+                    dst.put_u64_le(flag_bits(names, vs));
+                }
+                65..=72 => {
+                    dst.reserve(9);
+                    dst.put_slice(&u128::to_le_bytes(flag_bits(names, vs))[..9]);
+                }
+                73..=80 => {
+                    dst.reserve(10);
+                    dst.put_slice(&u128::to_le_bytes(flag_bits(names, vs))[..10]);
+                }
+                81..=88 => {
+                    dst.reserve(11);
+                    dst.put_slice(&u128::to_le_bytes(flag_bits(names, vs))[..11]);
+                }
+                89..=96 => {
+                    dst.reserve(12);
+                    dst.put_slice(&u128::to_le_bytes(flag_bits(names, vs))[..12]);
+                }
+                97..=104 => {
+                    dst.reserve(13);
+                    dst.put_slice(&u128::to_le_bytes(flag_bits(names, vs))[..13]);
+                }
+                105..=112 => {
+                    dst.reserve(14);
+                    dst.put_slice(&u128::to_le_bytes(flag_bits(names, vs))[..14]);
+                }
+                113..=120 => {
+                    dst.reserve(15);
+                    dst.put_slice(&u128::to_le_bytes(flag_bits(names, vs))[..15]);
+                }
+                121..=128 => {
+                    dst.reserve(16);
+                    dst.put_u128_le(flag_bits(names, vs));
+                }
+                bits @ 129.. => {
+                    let mut cap = bits / 8;
+                    if bits % 8 != 0 {
+                        cap = cap.saturating_add(1);
+                    }
+                    let mut buf = vec![0; cap];
+                    let flags: HashSet<&str> = vs.into_iter().collect();
+                    for (i, name) in names.enumerate() {
+                        if flags.contains(name) {
+                            buf[i / 8] |= 1 << (i % 8);
                         }
+                    }
+                    dst.extend_from_slice(&buf);
+                }
+            }
+            Ok(None)
+        }
+        (Val::Resource(resource), Type::Own(ty) | Type::Borrow(ty)) => {
+            #[cfg(feature = "wasmtime-wasi")]
+            if *ty == wasmtime::component::ResourceType::host::<wasmtime_wasi::p2::DynInputStream>()
+                || resources.io_streams.contains(ty)
+            {
+                let stream = store.with_store(|mut store| {
+                    let stream = resource
+                        .try_into_resource::<wasmtime_wasi::p2::DynInputStream>(&mut store)
+                        .context("failed to downcast `wasi:io/input-stream`")?;
+                    if !stream.owned() {
                         store
                             .data_mut()
                             .wrpc()
                             .table
-                            .delete(stream)
-                            .context("failed to delete input stream")
-                    })??;
-                    let items: core::pin::Pin<Box<dyn tokio::io::AsyncRead + Send>> =
-                        Box::pin(tokio_util::io::StreamReader::new(
-                            futures::stream::try_unfold(stream, |mut stream| async move {
-                                loop {
-                                    stream.ready().await;
-                                    match stream.read(wrpc_transport::READ_CHUNK_SIZE) {
-                                        Ok(buf) if buf.is_empty() => {}
-                                        Ok(buf) => return Ok(Some((buf, stream))),
-                                        Err(wasmtime_wasi::p2::StreamError::Closed) => {
-                                            return Ok(None);
-                                        }
-                                        Err(err) => return Err(std::io::Error::other(err)),
+                            .get_mut(&stream)
+                            .context("failed to get input stream")?;
+                        // NOTE: In order to handle this we'd need to know how many bytes the
+                        // receiver has read. That means that some kind of callback would be required from
+                        // the receiver. This is not trivial and generally should be a very rare use case.
+                        bail!("encoding borrowed `wasi:io/input-stream` not supported yet");
+                    }
+                    store
+                        .data_mut()
+                        .wrpc()
+                        .table
+                        .delete(stream)
+                        .context("failed to delete input stream")
+                })??;
+                let items: core::pin::Pin<Box<dyn tokio::io::AsyncRead + Send>> =
+                    Box::pin(tokio_util::io::StreamReader::new(
+                        futures::stream::try_unfold(stream, |mut stream| async move {
+                            loop {
+                                stream.ready().await;
+                                match stream.read(wrpc_transport::READ_CHUNK_SIZE) {
+                                    Ok(buf) if buf.is_empty() => {}
+                                    Ok(buf) => return Ok(Some((buf, stream))),
+                                    Err(wasmtime_wasi::p2::StreamError::Closed) => {
+                                        return Ok(None);
                                     }
+                                    Err(err) => return Err(std::io::Error::other(err)),
                                 }
-                            }),
-                        ));
-                    let mut enc = wrpc_transport::StreamEncoderRead::<
-                        { wrpc_transport::READ_CHUNK_SIZE },
-                    >::default();
-                    enc.encode(items, dst)
-                        .context("failed to encode input stream")?;
-                    if !enc.is_closed() {
-                        self.nested = Some(Box::new(enc));
-                    }
-                    return Ok(());
+                            }
+                        }),
+                    ));
+                let mut enc = wrpc_transport::StreamEncoderRead::<
+                    { wrpc_transport::READ_CHUNK_SIZE },
+                >::default();
+                enc.encode(items, dst)
+                    .context("failed to encode input stream")?;
+                if enc.is_closed() {
+                    return Ok(None);
                 }
-                if self.resources.guest.contains(ty) {
-                    let id = Uuid::now_v7();
-                    CoreVecEncoderBytes
-                        .encode(id.to_bytes_le().as_slice(), dst)
-                        .context("failed to encode resource handle")?;
-                    trace!(?id, "store shared resource");
-                    let prev = self.store.with_store(|mut store| {
-                        store
-                            .data_mut()
-                            .wrpc()
-                            .shared_resources
-                            .0
-                            .insert(id, *resource)
-                    })?;
-                    if prev.is_some() {
-                        error!(?id, "duplicate resource ID generated");
-                    }
-                    Ok(())
-                } else {
-                    bail!("encoding host resources not supported yet")
+                return Ok(Some(Box::new(enc)));
+            }
+            if resources.guest.contains(ty) {
+                let id = Uuid::now_v7();
+                CoreVecEncoderBytes
+                    .encode(id.to_bytes_le().as_slice(), dst)
+                    .context("failed to encode resource handle")?;
+                trace!(?id, "store shared resource");
+                let prev = store.with_store(|mut store| {
+                    store
+                        .data_mut()
+                        .wrpc()
+                        .shared_resources
+                        .0
+                        .insert(id, *resource)
+                })?;
+                if prev.is_some() {
+                    error!(?id, "duplicate resource ID generated");
                 }
+                Ok(None)
+            } else {
+                bail!("encoding host resources not supported yet")
             }
-
-            #[cfg(feature = "async")]
-            (Val::Future(future), Type::Future(ty)) => {
-                let nested = self
-                    .store
-                    .with_store(|store| concurrent::encode_future(store, future, ty))??;
-                dst.reserve(1);
-                dst.put_u8(0);
-                self.nested = Some(nested);
-                Ok(())
-            }
-            #[cfg(feature = "async")]
-            (Val::Stream(stream), Type::Stream(ty)) => {
-                let nested = self
-                    .store
-                    .with_store(|store| concurrent::encode_stream(store, stream, ty))??;
-                dst.reserve(1);
-                dst.put_u8(0);
-                self.nested = Some(nested);
-                Ok(())
-            }
-            (_, Type::ErrorContext) => {
-                bail!("`error-context` not supported")
-            }
-            (_, Type::Map(..)) => {
-                bail!("maps not supported")
-            }
-            (_, Type::FixedLengthList(..)) => {
-                bail!("fixed-length lists not supported")
-            }
-            _ => bail!("value type mismatch"),
         }
+
+        #[cfg(feature = "async")]
+        (Val::Future(future), Type::Future(ty)) => {
+            let nested =
+                store.with_store(|store| concurrent::encode_future(store, future, ty))??;
+            dst.reserve(1);
+            dst.put_u8(0);
+            Ok(Some(nested))
+        }
+        #[cfg(feature = "async")]
+        (Val::Stream(stream), Type::Stream(ty)) => {
+            let nested =
+                store.with_store(|store| concurrent::encode_stream(store, stream, ty))??;
+            dst.reserve(1);
+            dst.put_u8(0);
+            Ok(Some(nested))
+        }
+        (_, Type::ErrorContext) => {
+            bail!("`error-context` not supported")
+        }
+        (_, Type::Map(..)) => {
+            bail!("maps not supported")
+        }
+        (_, Type::FixedLengthList(..)) => {
+            bail!("fixed-length lists not supported")
+        }
+        _ => bail!("value type mismatch"),
     }
 }
 
@@ -732,17 +719,17 @@ enum Partial {
     },
 }
 
-struct Inner<'a, T> {
+struct Inner<T> {
     store: T,
-    resources: &'a ResourceTypes,
+    resources: ResourceTypes,
     max_len: u32,
     state: Option<Box<Partial>>,
     /// Decoders of the pending asynchronous values keyed by their paths
     nested: BTreeMap<Box<[usize]>, Box<dyn Receive + Send>>,
 }
 
-impl<'a, T> Inner<'a, T> {
-    fn new(store: T, resources: &'a ResourceTypes) -> Self {
+impl<T> Inner<T> {
+    fn new(store: T, resources: ResourceTypes) -> Self {
         Self {
             store,
             resources,
@@ -753,7 +740,7 @@ impl<'a, T> Inner<'a, T> {
     }
 }
 
-impl<T> Receive for Inner<'_, T> {
+impl<T> Receive for Inner<T> {
     fn poll_receive(
         &mut self,
         cx: &mut Context<'_>,
@@ -787,13 +774,13 @@ impl<T> Receive for Inner<'_, T> {
 /// Pending asynchronous values are received using [`Receive::poll_receive`].
 pub struct ValDecoder<'a, T> {
     ty: &'a Type,
-    inner: Inner<'a, T>,
+    inner: Inner<T>,
 }
 
-impl<T> ValDecoder<'_, T> {
+impl<'a, T> ValDecoder<'a, T> {
     #[must_use]
-    pub fn new<'a>(store: T, ty: &'a Type, resources: &'a ResourceTypes) -> ValDecoder<'a, T> {
-        ValDecoder {
+    pub fn new(store: T, ty: &'a Type, resources: ResourceTypes) -> Self {
+        Self {
             ty,
             inner: Inner::new(store, resources),
         }
@@ -829,13 +816,13 @@ impl<T> Receive for ValDecoder<'_, T> {
 /// Pending asynchronous values are received using [`Receive::poll_receive`].
 pub struct TupleDecoder<'a, T> {
     tys: &'a [Type],
-    inner: Inner<'a, T>,
+    inner: Inner<T>,
 }
 
-impl<T> TupleDecoder<'_, T> {
+impl<'a, T> TupleDecoder<'a, T> {
     #[must_use]
-    pub fn new<'a>(store: T, tys: &'a [Type], resources: &'a ResourceTypes) -> TupleDecoder<'a, T> {
-        TupleDecoder {
+    pub fn new(store: T, tys: &'a [Type], resources: ResourceTypes) -> Self {
+        Self {
             tys,
             inner: Inner::new(store, resources),
         }
@@ -921,7 +908,7 @@ where
     Ok(v)
 }
 
-impl<T> Inner<'_, T>
+impl<T> Inner<T>
 where
     T: WithStore<Data: WrpcView>,
 {
