@@ -11,15 +11,15 @@ use tokio::net::TcpStream;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::yield_now;
 use tokio::{join, spawn, try_join};
-use tokio_util::codec::Decoder as _;
+use tokio_util::codec::{Decoder as _, Encoder as _};
 use tracing::Instrument as _;
 use wasmtime::AsContextMut as _;
 use wasmtime::component::{Component, Instance, Linker, ResourceTable, Type, Val, types};
 use wrpc_transport::frame::{ReadHalf, WriteHalf, tcp};
 use wrpc_transport::{Invoke as _, InvokeExt as _, Server};
 use wrpc_wasmtime::{
-    ResourceTypes, ServeExt as _, SharedResourceTable, SharedStore, ValDecoder, WrpcCtxView,
-    WrpcView,
+    ResourceTypes, ServeExt as _, SharedResourceTable, SharedStore, ValDecoder, ValEncoder,
+    WrpcCtxView, WrpcView,
 };
 
 #[derive(Default)]
@@ -460,5 +460,32 @@ fn decode_clean_eof() -> anyhow::Result<()> {
     assert_eq!(v, Some(vec![Val::String("foo".into())]));
     let v = dec.decode_eof(&mut buf)?;
     assert_eq!(v, None);
+    Ok(())
+}
+
+#[test]
+fn encode_record_field_names() -> anyhow::Result<()> {
+    let engine = wasmtime::Engine::default();
+    let component = Component::new(
+        &engine,
+        r#"
+(component
+  (type $r' (record (field "a" u32) (field "b" u32)))
+  (export $r "r" (type $r'))
+)"#,
+    )?;
+    let Some((types::ComponentItem::Type(ty), ..)) = component.get_export(None, "r") else {
+        bail!("type export `r` not found");
+    };
+    let mut store = wasmtime::Store::new(&engine, Ctx::default());
+    let resources = ResourceTypes::default();
+    let mut buf = BytesMut::default();
+    let v = Val::Record(vec![("a".into(), Val::U32(42)), ("b".into(), Val::U32(1))]);
+    ValEncoder::new(store.as_context_mut(), &ty, &resources).encode(&v, &mut buf)?;
+    assert_eq!(buf, b"\x2a\x01"[..]);
+    let v = Val::Record(vec![("b".into(), Val::U32(1)), ("a".into(), Val::U32(42))]);
+    ValEncoder::new(store.as_context_mut(), &ty, &resources)
+        .encode(&v, &mut buf)
+        .unwrap_err();
     Ok(())
 }
