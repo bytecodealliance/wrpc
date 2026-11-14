@@ -21,6 +21,6 @@ mod decode;
 mod encode;
 mod typed;
 
-pub use decode::{decode_value, read_value};
+pub use decode::{ValueDecoder, decode_value, read_value};
 pub use encode::ValueEncoder;
 pub use typed::{TypedValue, TypedValueEncoder};
