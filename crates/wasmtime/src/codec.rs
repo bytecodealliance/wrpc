@@ -5,13 +5,13 @@ use core::iter::{self, zip};
 use core::mem;
 use core::ops::{BitOrAssign, Deref, Shl};
 use core::pin::Pin;
-use core::task::{Context, Poll};
+use core::task::{Context, Poll, ready};
 
 use std::collections::HashSet;
 
 use bytes::{Buf as _, BufMut as _, BytesMut};
-use futures::StreamExt as _;
 use futures::stream;
+use futures::{FutureExt as _, StreamExt as _};
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::codec::{Decoder, Encoder, FramedRead};
 use tokio_util::sync::PollSender;
@@ -308,14 +308,31 @@ fn report(errors: &mpsc::Sender<std::io::Error>, err: std::io::Error) {
     }
 }
 
+/// Chunks of a pending `stream`, which are received once its sub-stream is indexed
+enum Chunks<D> {
+    Pending(oneshot::Receiver<Incoming>),
+    Ready(FramedRead<Incoming, D>),
+}
+
 fn poll_chunk<D, P>(
-    rx: &mut FramedRead<Incoming, D>,
+    rx: &mut Chunks<D>,
     cx: &mut Context<'_>,
 ) -> Poll<std::io::Result<Option<D::Item>>>
 where
-    D: Decoder<Item: Deref<Target = [P]>>,
+    D: Decoder<Item: Deref<Target = [P]>> + Default,
     std::io::Error: From<D::Error>,
 {
+    let rx = loop {
+        match rx {
+            Chunks::Pending(r) => {
+                let r = ready!(r.poll_unpin(cx)).map_err(|_| {
+                    std::io::Error::new(std::io::ErrorKind::BrokenPipe, "stream not indexed")
+                })?;
+                *rx = Chunks::Ready(FramedRead::new(r, D::default()));
+            }
+            Chunks::Ready(rx) => break rx,
+        }
+    };
     let chunk = match rx.poll_next_unpin(cx) {
         Poll::Ready(Some(Ok(chunk))) => chunk,
         Poll::Ready(Some(Err(err))) => return Poll::Ready(Err(err.into())),
@@ -341,7 +358,7 @@ where
 
 fn pending_future<P, D>(
     mut store: StoreContextMut<'_, D>,
-    r: Incoming,
+    r: oneshot::Receiver<Incoming>,
     errors: mpsc::Sender<std::io::Error>,
 ) -> wasmtime::Result<Val>
 where
@@ -350,6 +367,13 @@ where
     std::io::Error: From<<P::Decoder as Decoder>::Error>,
 {
     let fut = FutureReader::new(&mut store, async move {
+        let Ok(r) = r.await else {
+            report(
+                &errors,
+                std::io::Error::new(std::io::ErrorKind::BrokenPipe, "future not indexed"),
+            );
+            return pending().await;
+        };
         let mut rx = FramedRead::new(r, P::Decoder::default());
         let err = match rx.next().await {
             Some(Ok(v)) if rx.read_buffer().is_empty() => return wasmtime::error::Ok(v),
@@ -378,12 +402,7 @@ where
     Ok(Val::Future(fut))
 }
 
-struct Producer<P: Decode>(
-    Option<(
-        FramedRead<Incoming, P::ListDecoder>,
-        mpsc::Sender<std::io::Error>,
-    )>,
-);
+struct Producer<P: Decode>(Option<(Chunks<P::ListDecoder>, mpsc::Sender<std::io::Error>)>);
 
 impl<P, D> StreamProducer<D> for Producer<P>
 where
@@ -431,7 +450,7 @@ where
 
 fn pending_stream<P, D>(
     mut store: StoreContextMut<'_, D>,
-    r: Incoming,
+    r: oneshot::Receiver<Incoming>,
     errors: mpsc::Sender<std::io::Error>,
 ) -> wasmtime::Result<Val>
 where
@@ -439,8 +458,10 @@ where
     D: 'static,
     std::io::Error: From<<P::ListDecoder as Decoder>::Error>,
 {
-    let rx = FramedRead::new(r, P::ListDecoder::default());
-    let stream = StreamReader::new(&mut store, Producer::<P>(Some((rx, errors))))?;
+    let stream = StreamReader::new(
+        &mut store,
+        Producer::<P>(Some((Chunks::Pending(r), errors))),
+    )?;
     let stream = stream.try_into_stream_any(store)?;
     Ok(Val::Stream(stream))
 }
@@ -458,10 +479,10 @@ where
 #[cfg(feature = "wasmtime-wasi")]
 fn pending_input_stream<T: WrpcView>(
     store: StoreContextMut<'_, T>,
-    r: Incoming,
+    r: oneshot::Receiver<Incoming>,
     errors: mpsc::Sender<std::io::Error>,
 ) -> wasmtime::Result<Val> {
-    let rx = FramedRead::new(r, <wasm_tokio::CoreVecDecoderBytes>::default());
+    let rx = Chunks::<wasm_tokio::CoreVecDecoderBytes>::Pending(r);
     let chunks = stream::try_unfold((rx, errors), |(mut rx, errors)| async move {
         match core::future::poll_fn(|cx| poll_chunk(&mut rx, cx)).await {
             Ok(chunk) => Ok(chunk.map(|chunk| (chunk, (rx, errors)))),
@@ -986,15 +1007,15 @@ enum Partial {
 /// Decodes a tuple of [`Val`]s of types `tys`, e.g. function parameters.
 ///
 /// Resources and asynchronous values are created in the store once their encoding is complete.
-/// Pending asynchronous values are received from the sub-streams of `rx`, which are indexed as
-/// soon as the values are decoded. Failures receiving them are sent on `errors`.
+/// Pending asynchronous values are received from the sub-streams indexed by the operation
+/// returned by [`Deferred::take_deferred`]. Failures receiving them are sent on `errors`.
 pub struct ValDecoder<'a, T> {
     store: T,
     tys: &'a [Type],
     resources: &'a ResourceTypes,
-    rx: &'a Incoming,
     errors: mpsc::Sender<std::io::Error>,
     state: Option<Box<Partial>>,
+    deferred: Vec<(Box<[usize]>, oneshot::Sender<Incoming>)>,
 }
 
 impl<T> ValDecoder<'_, T> {
@@ -1003,17 +1024,32 @@ impl<T> ValDecoder<'_, T> {
         store: T,
         tys: &'a [Type],
         resources: &'a ResourceTypes,
-        rx: &'a Incoming,
         errors: mpsc::Sender<std::io::Error>,
     ) -> ValDecoder<'a, T> {
         ValDecoder {
             store,
             tys,
             resources,
-            rx,
             errors,
             state: None,
+            deferred: Vec::default(),
         }
+    }
+}
+
+impl<T> Deferred<Incoming> for ValDecoder<'_, T> {
+    fn take_deferred(&mut self) -> Option<DeferredFn<Incoming>> {
+        if self.deferred.is_empty() {
+            return None;
+        }
+        let deferred = mem::take(&mut self.deferred);
+        Some(Box::new(move |r, path| {
+            for (p, tx) in deferred {
+                let r = r.index(&[path, &p].concat())?;
+                _ = tx.send(r);
+            }
+            Ok(Box::pin(ready(Ok(()))))
+        }))
     }
 }
 
@@ -1150,7 +1186,7 @@ where
         kind: &str,
         pending: impl FnOnce(
             StoreContextMut<'_, T::Data>,
-            Incoming,
+            oneshot::Receiver<Incoming>,
             mpsc::Sender<std::io::Error>,
         ) -> wasmtime::Result<Val>,
         ready: impl FnOnce(StoreContextMut<'_, T::Data>, D::Item) -> wasmtime::Result<Val>,
@@ -1164,12 +1200,13 @@ where
                 return Ok(None);
             };
             if status == 0 {
-                let r = self.rx.index(path)?;
+                let (tx, rx) = oneshot::channel();
                 let errors = self.errors.clone();
                 let v = self
                     .store
-                    .with_store(|store| pending(store, r, errors))
+                    .with_store(|store| pending(store, rx, errors))
                     .map_err(std::io::Error::other)?;
+                self.deferred.push((path.into(), tx));
                 return Ok(Some(v));
             }
         }

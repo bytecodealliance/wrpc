@@ -138,10 +138,7 @@ where
         .take_reader()
         .context("parameters already received")
         .map_err(CallError::Decode)?;
-    let mut dec = FramedRead::new(
-        r,
-        ValDecoder::new(store, params_ty, resources, &rx, errors_tx),
-    );
+    let mut dec = FramedRead::new(r, ValDecoder::new(store, params_ty, resources, errors_tx));
     let params = if params_ty.is_empty() {
         Vec::default()
     } else {
@@ -158,6 +155,15 @@ where
         return Err(CallError::Decode(wasmtime::Error::msg(
             "received data after parameter values end",
         )));
+    }
+    if let Some(f) = dec.decoder_mut().take_deferred() {
+        let deferred = f(&rx, &[])
+            .context("failed to index asynchronous parameter values")
+            .map_err(CallError::Decode)?;
+        deferred
+            .await
+            .context("failed to receive asynchronous parameter values")
+            .map_err(CallError::Decode)?;
     }
     drop(dec);
     let mut call = pin!(async {
