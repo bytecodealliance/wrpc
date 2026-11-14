@@ -70,6 +70,58 @@ impl<T: WasmType> Transmit for ValueEncoder<'_, T> {
     }
 }
 
+/// [Encoder] of tuples of values of types `tys`, e.g. function parameters
+#[derive(Debug)]
+pub struct TupleEncoder<'a, T: WasmType> {
+    tys: &'a [T],
+}
+
+impl<'a, T: WasmType> TupleEncoder<'a, T> {
+    /// Creates a new [`TupleEncoder`] of tuples of values of types `tys`
+    #[must_use]
+    pub fn new(tys: &'a [T]) -> Self {
+        Self { tys }
+    }
+}
+
+impl<V, T> Encoder<&[V]> for TupleEncoder<'_, T>
+where
+    V: WasmValue<Type = T>,
+    T: WasmType,
+{
+    type Error = std::io::Error;
+
+    #[instrument(level = "trace", skip_all)]
+    fn encode(&mut self, vs: &[V], dst: &mut BytesMut) -> std::io::Result<()> {
+        if vs.len() != self.tys.len() {
+            return Err(error_invalid_input(format!(
+                "expected {} values, got {}",
+                self.tys.len(),
+                vs.len()
+            )));
+        }
+        for (ty, v) in zip(self.tys, vs) {
+            encode_value(ty, v, dst)?;
+        }
+        Ok(())
+    }
+}
+
+impl<T: WasmType> Transmit for TupleEncoder<'_, T> {
+    fn poll_transmit(
+        &mut self,
+        _cx: &mut Context<'_>,
+        _path: &mut Vec<usize>,
+        _dst: &mut BytesMut,
+    ) -> Poll<std::io::Result<()>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn is_closed(&self) -> bool {
+        true
+    }
+}
+
 fn error_invalid_input(msg: impl Display) -> std::io::Error {
     std::io::Error::new(std::io::ErrorKind::InvalidInput, msg.to_string())
 }
