@@ -19,7 +19,7 @@ use wasmtime::component::{
 };
 use wrpc_transport::{FrameDecoder, Header, HeaderDecoder, Server};
 
-use crate::{ResourceTypes, TupleDecoder, TupleEncoder, WrpcView, call};
+use crate::{DEFAULT_MAX_LEN, ResourceTypes, TupleDecoder, TupleEncoder, WrpcView, call};
 
 // this returns the RPC name for a wasmtime function name.
 // Unfortunately, the [`types::ComponentFunc`] does not include the kind information and we want to
@@ -243,6 +243,7 @@ pub struct InstancePreExports<T: 'static, F> {
     pre: InstancePre<T>,
     exports: HashMap<Box<str>, HashMap<Box<str>, Arc<Export>>>,
     resources: ResourceTypes,
+    max_len: u32,
 }
 
 impl<T, F> InstancePreExports<T, F>
@@ -273,7 +274,16 @@ where
             pre,
             exports,
             resources,
+            max_len: DEFAULT_MAX_LEN,
         })
+    }
+
+    /// Sets the `max_len` of decoded parameters, see
+    /// [`TupleDecoder::with_max_len`](crate::TupleDecoder::with_max_len).
+    #[must_use]
+    pub fn with_max_len(mut self, max_len: u32) -> Self {
+        self.max_len = max_len;
+        self
     }
 
     /// Serves the invocations sent over the byte streams `tx` and `rx` of a connection one after
@@ -316,7 +326,8 @@ where
                                 store,
                                 Arc::clone(&export.params),
                                 self.resources.clone(),
-                            ),
+                            )
+                            .with_max_len(self.max_len),
                         };
                         let res = call(store, srv, &mut tx, &mut frames, func).await;
                         if res.is_ok() {
@@ -342,6 +353,7 @@ pub struct SharedExports<T: 'static> {
     instance: Instance,
     exports: HashMap<Box<str>, HashMap<Box<str>, Arc<Export>>>,
     resources: ResourceTypes,
+    max_len: u32,
 }
 
 impl<T> SharedExports<T>
@@ -365,7 +377,16 @@ where
             instance,
             exports,
             resources,
+            max_len: DEFAULT_MAX_LEN,
         })
+    }
+
+    /// Sets the `max_len` of decoded parameters, see
+    /// [`TupleDecoder::with_max_len`](crate::TupleDecoder::with_max_len).
+    #[must_use]
+    pub fn with_max_len(mut self, max_len: u32) -> Self {
+        self.max_len = max_len;
+        self
     }
 
     /// Serves the invocations sent over the byte streams `tx` and `rx` of a connection one after
@@ -388,6 +409,7 @@ where
             |export, mut tx, mut frames| async move {
                 let instance = self.instance;
                 let resources = self.resources.clone();
+                let max_len = self.max_len;
                 self.store
                     .run(move |store| {
                         Box::pin(async move {
@@ -404,7 +426,8 @@ where
                                     store,
                                     Arc::clone(&export.params),
                                     resources,
-                                ),
+                                )
+                                .with_max_len(max_len),
                             };
                             call(store, srv, &mut tx, &mut frames, func).await?;
                             Ok((tx, frames))

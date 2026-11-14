@@ -31,7 +31,8 @@ use crate::{ResourceTypes, WrpcView};
 #[cfg(feature = "async")]
 mod concurrent;
 
-const DEFAULT_MAX_LEN: u32 = 1 << 24;
+/// Default `max_len` of [`ValDecoder`] and [`TupleDecoder`]
+pub const DEFAULT_MAX_LEN: u32 = 1 << 24;
 
 /// Synchronous access to a store, which is either borrowed exclusively or reachable through an
 /// `Accessor`.
@@ -788,7 +789,7 @@ impl<T> ValDecoder<T> {
     }
 
     /// Rejects strings and ready `input-stream`s longer than `max_len` bytes and lists longer than
-    /// `max_len` elements, `1 << 24` by default.
+    /// `max_len` elements, [`DEFAULT_MAX_LEN`] by default.
     #[must_use]
     pub fn with_max_len(mut self, max_len: u32) -> Self {
         self.inner.max_len = max_len;
@@ -830,7 +831,7 @@ impl<T> TupleDecoder<T> {
     }
 
     /// Rejects strings and ready `input-stream`s longer than `max_len` bytes and lists longer than
-    /// `max_len` elements, `1 << 24` by default.
+    /// `max_len` elements, [`DEFAULT_MAX_LEN`] by default.
     #[must_use]
     pub fn with_max_len(mut self, max_len: u32) -> Self {
         self.inner.max_len = max_len;
