@@ -1,5 +1,7 @@
 #![allow(clippy::type_complexity)] // TODO: https://github.com/bytecodealliance/wrpc/issues/2
 
+use core::convert::Infallible;
+
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -48,6 +50,12 @@ pub trait WrpcView: Send {
 impl<T: WrpcView> WrpcView for &mut T {
     fn wrpc(&mut self) -> WrpcCtxView<'_> {
         T::wrpc(self)
+    }
+}
+
+impl WrpcView for Infallible {
+    fn wrpc(&mut self) -> WrpcCtxView<'_> {
+        match *self {}
     }
 }
 

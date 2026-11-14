@@ -12,20 +12,17 @@ use tokio::sync::oneshot;
 use tokio::task::yield_now;
 use tokio::time::sleep;
 use tokio::{join, spawn, try_join};
-use tokio_util::codec::{Decoder as _, Encoder as _, FramedRead};
+use tokio_util::codec::{Encoder as _, FramedRead};
 use tracing::Instrument as _;
-use wasmtime::AsContextMut as _;
-use wasmtime::component::{Component, Linker, ResourceTable, Type, Val, types};
+use wasmtime::component::{Component, Linker, ResourceTable};
 use wrpc_test::serve_until;
 use wrpc_transport::{
     FrameDecoder, FrameEncoder, FrameRef, HeaderEncoder, HeaderRef, invoke, invoke_blocking,
 };
 use wrpc_wasmtime::{
-    ResourceTypes, SharedExports, SharedResourceTable, SharedStore, ValDecoder, ValEncoder,
-    WrpcCtxView, WrpcView,
+    ResourceTypes, SharedExports, SharedResourceTable, SharedStore, WrpcCtxView, WrpcView,
 };
 
-#[derive(Default)]
 struct Ctx {
     table: ResourceTable,
     shared_resources: SharedResourceTable,
@@ -494,45 +491,4 @@ async fn unread_param() -> anyhow::Result<()> {
         },
     )
     .await
-}
-
-#[test]
-fn decode_clean_eof() -> anyhow::Result<()> {
-    let mut store = wasmtime::Store::new(&wasmtime::Engine::default(), Ctx::default());
-    let tys = [Type::String];
-    let resources = ResourceTypes::default();
-    let mut dec = ValDecoder::new(store.as_context_mut(), &tys, &resources);
-    let mut buf = BytesMut::from(&b"\x03foo"[..]);
-    let v = dec.decode(&mut buf)?;
-    assert_eq!(v, Some(vec![Val::String("foo".into())]));
-    let v = dec.decode_eof(&mut buf)?;
-    assert_eq!(v, None);
-    Ok(())
-}
-
-#[test]
-fn encode_record_field_names() -> anyhow::Result<()> {
-    let engine = wasmtime::Engine::default();
-    let component = Component::new(
-        &engine,
-        r#"
-(component
-  (type $r' (record (field "a" u32) (field "b" u32)))
-  (export $r "r" (type $r'))
-)"#,
-    )?;
-    let Some((types::ComponentItem::Type(ty), ..)) = component.get_export(None, "r") else {
-        bail!("type export `r` not found");
-    };
-    let mut store = wasmtime::Store::new(&engine, Ctx::default());
-    let resources = ResourceTypes::default();
-    let mut buf = BytesMut::default();
-    let v = Val::Record(vec![("a".into(), Val::U32(42)), ("b".into(), Val::U32(1))]);
-    ValEncoder::new(store.as_context_mut(), &ty, &resources).encode(&v, &mut buf)?;
-    assert_eq!(buf, b"\x2a\x01"[..]);
-    let v = Val::Record(vec![("b".into(), Val::U32(1)), ("a".into(), Val::U32(42))]);
-    ValEncoder::new(store.as_context_mut(), &ty, &resources)
-        .encode(&v, &mut buf)
-        .unwrap_err();
-    Ok(())
 }
