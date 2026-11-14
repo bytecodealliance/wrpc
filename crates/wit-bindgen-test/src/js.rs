@@ -46,11 +46,7 @@ impl LanguageMethods for Js {
             name,
             // The wRPC JavaScript generator does not yet support fixed-length
             // lists or `map`.
-            "fixed-length-lists"
-                | "map"
-                // Invocations cannot be cancelled: aborting the transport of
-                // one fails the remote invocation.
-                | "cancel-import"
+            "fixed-length-lists" | "map"
         )
     }
 
@@ -294,7 +290,6 @@ async function listen(serve, handlers) {{
   const server = net.createServer({{ allowHalfOpen: true }}, (sock) => {{
     serve(transport(sock), ...handlers).catch((err) => {{
       console.error("failed to serve invocation:", err);
-      process.exit(1);
     }});
   }});
   servers.push(server);
