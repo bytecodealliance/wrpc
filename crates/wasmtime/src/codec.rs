@@ -3,7 +3,7 @@ use core::borrow::Borrow;
 use core::future::{pending, ready};
 use core::iter::{self, zip};
 use core::mem;
-use core::ops::{BitOrAssign, Deref, Shl};
+use core::ops::Deref;
 use core::pin::Pin;
 use core::task::{Context, Poll, ready};
 
@@ -101,41 +101,6 @@ impl<T> Deferred<Outgoing> for ValEncoder<'_, T> {
     fn take_deferred(&mut self) -> Option<DeferredFn<Outgoing>> {
         self.deferred.take()
     }
-}
-
-fn find_enum_discriminant<'a, T>(
-    iter: impl IntoIterator<Item = T>,
-    names: impl IntoIterator<Item = &'a str>,
-    discriminant: &str,
-) -> wasmtime::Result<T> {
-    zip(iter, names)
-        .find_map(|(i, name)| (name == discriminant).then_some(i))
-        .context("unknown enum discriminant")
-}
-
-fn find_variant_discriminant<'a, T>(
-    iter: impl IntoIterator<Item = T>,
-    cases: impl IntoIterator<Item = Case<'a>>,
-    discriminant: &str,
-) -> wasmtime::Result<(T, Option<Type>)> {
-    zip(iter, cases)
-        .find_map(|(i, Case { name, ty })| (name == discriminant).then_some((i, ty)))
-        .context("unknown variant discriminant")
-}
-
-#[inline]
-fn flag_bits<'a, T: BitOrAssign + Shl<u8, Output = T> + From<u8>>(
-    names: impl IntoIterator<Item = &'a str>,
-    flags: impl IntoIterator<Item = &'a str>,
-) -> T {
-    let mut v = T::from(0);
-    let flags: HashSet<&str> = flags.into_iter().collect();
-    for (i, name) in zip(0u8.., names) {
-        if flags.contains(name) {
-            v |= T::from(1) << i;
-        }
-    }
-    v
 }
 
 macro_rules! with_payload {
@@ -642,38 +607,11 @@ where
                 Ok(())
             }
             (Val::Variant(discriminant, v), Type::Variant(ty)) => {
-                let cases = ty.cases();
-                let ty = match cases.len() {
-                    ..=0x0000_00ff => {
-                        let (discriminant, ty) =
-                            find_variant_discriminant(0u8.., cases, discriminant)?;
-                        dst.reserve(2 + usize::from(v.is_some()));
-                        Leb128Encoder.encode(discriminant, dst)?;
-                        ty
-                    }
-                    0x0000_0100..=0x0000_ffff => {
-                        let (discriminant, ty) =
-                            find_variant_discriminant(0u16.., cases, discriminant)?;
-                        dst.reserve(3 + usize::from(v.is_some()));
-                        Leb128Encoder.encode(discriminant, dst)?;
-                        ty
-                    }
-                    0x0001_0000..=0x00ff_ffff => {
-                        let (discriminant, ty) =
-                            find_variant_discriminant(0u32.., cases, discriminant)?;
-                        dst.reserve(4 + usize::from(v.is_some()));
-                        Leb128Encoder.encode(discriminant, dst)?;
-                        ty
-                    }
-                    0x0100_0000..=0xffff_ffff => {
-                        let (discriminant, ty) =
-                            find_variant_discriminant(0u32.., cases, discriminant)?;
-                        dst.reserve(5 + usize::from(v.is_some()));
-                        Leb128Encoder.encode(discriminant, dst)?;
-                        ty
-                    }
-                    0x1_0000_0000.. => bail!("case count does not fit in u32"),
-                };
+                let (i, ty) = zip(0u32.., ty.cases())
+                    .find_map(|(i, Case { name, ty })| (name == discriminant).then_some((i, ty)))
+                    .context("unknown variant discriminant")?;
+                dst.reserve(5 + usize::from(v.is_some()));
+                Leb128Encoder.encode(i, dst)?;
                 if let Some(v) = v {
                     let ty = ty.context("type missing for variant")?;
                     let mut enc = self.with_type(&ty);
@@ -688,30 +626,11 @@ where
                 Ok(())
             }
             (Val::Enum(discriminant), Type::Enum(ty)) => {
-                let names = ty.names();
-                match names.len() {
-                    ..=0x0000_00ff => {
-                        let discriminant = find_enum_discriminant(0u8.., names, discriminant)?;
-                        dst.reserve(2);
-                        Leb128Encoder.encode(discriminant, dst)?;
-                    }
-                    0x0000_0100..=0x0000_ffff => {
-                        let discriminant = find_enum_discriminant(0u16.., names, discriminant)?;
-                        dst.reserve(3);
-                        Leb128Encoder.encode(discriminant, dst)?;
-                    }
-                    0x0001_0000..=0x00ff_ffff => {
-                        let discriminant = find_enum_discriminant(0u32.., names, discriminant)?;
-                        dst.reserve(4);
-                        Leb128Encoder.encode(discriminant, dst)?;
-                    }
-                    0x0100_0000..=0xffff_ffff => {
-                        let discriminant = find_enum_discriminant(0u32.., names, discriminant)?;
-                        dst.reserve(5);
-                        Leb128Encoder.encode(discriminant, dst)?;
-                    }
-                    0x1_0000_0000.. => bail!("name count does not fit in u32"),
-                }
+                let i = zip(0u32.., ty.names())
+                    .find_map(|(i, name)| (name == discriminant).then_some(i))
+                    .context("unknown enum discriminant")?;
+                dst.reserve(5);
+                Leb128Encoder.encode(i, dst)?;
                 Ok(())
             }
             (Val::Option(None), Type::Option(_)) => {
@@ -774,86 +693,15 @@ where
                 },
             },
             (Val::Flags(vs), Type::Flags(ty)) => {
+                let flags: HashSet<&str> = vs.iter().map(String::as_str).collect();
                 let names = ty.names();
-                let vs = vs.iter().map(String::as_str);
-                match names.len() {
-                    ..=8 => {
-                        dst.reserve(1);
-                        dst.put_u8(flag_bits(names, vs));
-                    }
-                    9..=16 => {
-                        dst.reserve(2);
-                        dst.put_u16_le(flag_bits(names, vs));
-                    }
-                    17..=24 => {
-                        dst.reserve(3);
-                        dst.put_slice(&u32::to_le_bytes(flag_bits(names, vs))[..3]);
-                    }
-                    25..=32 => {
-                        dst.reserve(4);
-                        dst.put_u32_le(flag_bits(names, vs));
-                    }
-                    33..=40 => {
-                        dst.reserve(5);
-                        dst.put_slice(&u64::to_le_bytes(flag_bits(names, vs))[..5]);
-                    }
-                    41..=48 => {
-                        dst.reserve(6);
-                        dst.put_slice(&u64::to_le_bytes(flag_bits(names, vs))[..6]);
-                    }
-                    49..=56 => {
-                        dst.reserve(7);
-                        dst.put_slice(&u64::to_le_bytes(flag_bits(names, vs))[..7]);
-                    }
-                    57..=64 => {
-                        dst.reserve(8);
-                        dst.put_u64_le(flag_bits(names, vs));
-                    }
-                    65..=72 => {
-                        dst.reserve(9);
-                        dst.put_slice(&u128::to_le_bytes(flag_bits(names, vs))[..9]);
-                    }
-                    73..=80 => {
-                        dst.reserve(10);
-                        dst.put_slice(&u128::to_le_bytes(flag_bits(names, vs))[..10]);
-                    }
-                    81..=88 => {
-                        dst.reserve(11);
-                        dst.put_slice(&u128::to_le_bytes(flag_bits(names, vs))[..11]);
-                    }
-                    89..=96 => {
-                        dst.reserve(12);
-                        dst.put_slice(&u128::to_le_bytes(flag_bits(names, vs))[..12]);
-                    }
-                    97..=104 => {
-                        dst.reserve(13);
-                        dst.put_slice(&u128::to_le_bytes(flag_bits(names, vs))[..13]);
-                    }
-                    105..=112 => {
-                        dst.reserve(14);
-                        dst.put_slice(&u128::to_le_bytes(flag_bits(names, vs))[..14]);
-                    }
-                    113..=120 => {
-                        dst.reserve(15);
-                        dst.put_slice(&u128::to_le_bytes(flag_bits(names, vs))[..15]);
-                    }
-                    121..=128 => {
-                        dst.reserve(16);
-                        dst.put_u128_le(flag_bits(names, vs));
-                    }
-                    bits @ 129.. => {
-                        let mut cap = bits / 8;
-                        if bits % 8 != 0 {
-                            cap = cap.saturating_add(1);
-                        }
-                        let mut buf = vec![0; cap];
-                        let flags: HashSet<&str> = vs.into_iter().collect();
-                        for (i, name) in names.enumerate() {
-                            if flags.contains(name) {
-                                buf[i / 8] |= 1 << (i % 8);
-                            }
-                        }
-                        dst.extend_from_slice(&buf);
+                let n = names.len().div_ceil(8).max(1);
+                let start = dst.len();
+                dst.put_bytes(0, n);
+                let buf = &mut dst[start..];
+                for (i, name) in names.enumerate() {
+                    if flags.contains(name) {
+                        buf[i / 8] |= 1 << (i % 8);
                     }
                 }
                 Ok(())
