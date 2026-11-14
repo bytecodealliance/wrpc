@@ -49,6 +49,12 @@ fn plain_values() -> wasmtime::Result<()> {
     assert_eq!(buf, b"\x2a\x01\x03foo\x01"[..]);
     let decoded = unpack(ValDecoder::new((), &tys, &resources), &mut buf)?;
     assert_eq!(decoded, vs);
+
+    for buf in [&b"\x2a\x03"[..], &b"\x2a\x01\x03foo\x01"[..]] {
+        let dec = ValDecoder::new((), &tys, &resources).with_max_len(2);
+        let err = unpack(dec, &mut buf.into()).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    }
     Ok(())
 }
 
