@@ -10,13 +10,11 @@ use uuid::Uuid;
 use wrpc_transport::{ResourceBorrow, ResourceOwn};
 use wrpc_wasi_keyvalue::exports::wasi::keyvalue::{atomics, batch, store};
 
-pub type Result<T, E = store::Error> = core::result::Result<T, E>;
-
 #[derive(Clone, Default)]
 pub struct Handler(pub Arc<RwLock<HashMap<Bytes, ConnectionManager>>>);
 
 impl Handler {
-    async fn bucket(&self, bucket: impl AsRef<[u8]>) -> Result<ConnectionManager> {
+    async fn bucket(&self, bucket: impl AsRef<[u8]>) -> Result<ConnectionManager, store::Error> {
         trace!("looking up bucket");
         let store = self.0.read().await;
         store
@@ -33,7 +31,7 @@ impl<C: Send + Sync> store::Handler<C> for Handler {
         &self,
         _cx: C,
         identifier: String,
-    ) -> anyhow::Result<Result<ResourceOwn<store::Bucket>>> {
+    ) -> anyhow::Result<Result<ResourceOwn<store::Bucket>, store::Error>> {
         let client = match redis::Client::open(identifier).context("failed to open Redis client") {
             Ok(client) => client,
             Err(err) => return Ok(Err(store::Error::Other(format!("{err:#}")))),
@@ -61,7 +59,7 @@ impl<C: Send + Sync> store::HandlerBucket<C> for Handler {
         _cx: C,
         bucket: ResourceBorrow<store::Bucket>,
         key: String,
-    ) -> anyhow::Result<Result<Option<Bytes>>> {
+    ) -> anyhow::Result<Result<Option<Bytes>, store::Error>> {
         let mut conn = match self.bucket(bucket).await {
             Ok(conn) => conn,
             Err(err) => return Ok(Err(err)),
@@ -83,7 +81,7 @@ impl<C: Send + Sync> store::HandlerBucket<C> for Handler {
         bucket: ResourceBorrow<store::Bucket>,
         key: String,
         value: Bytes,
-    ) -> anyhow::Result<Result<()>> {
+    ) -> anyhow::Result<Result<(), store::Error>> {
         let mut conn = match self.bucket(bucket).await {
             Ok(conn) => conn,
             Err(err) => return Ok(Err(err)),
@@ -100,7 +98,7 @@ impl<C: Send + Sync> store::HandlerBucket<C> for Handler {
         _cx: C,
         bucket: ResourceBorrow<store::Bucket>,
         key: String,
-    ) -> anyhow::Result<Result<()>> {
+    ) -> anyhow::Result<Result<(), store::Error>> {
         let mut conn = match self.bucket(bucket).await {
             Ok(conn) => conn,
             Err(err) => return Ok(Err(err)),
@@ -117,7 +115,7 @@ impl<C: Send + Sync> store::HandlerBucket<C> for Handler {
         _cx: C,
         bucket: ResourceBorrow<store::Bucket>,
         key: String,
-    ) -> anyhow::Result<Result<bool>> {
+    ) -> anyhow::Result<Result<bool, store::Error>> {
         let mut conn = match self.bucket(bucket).await {
             Ok(conn) => conn,
             Err(err) => return Ok(Err(err)),
@@ -134,7 +132,7 @@ impl<C: Send + Sync> store::HandlerBucket<C> for Handler {
         _cx: C,
         bucket: ResourceBorrow<store::Bucket>,
         cursor: Option<String>,
-    ) -> anyhow::Result<Result<store::KeyResponse>> {
+    ) -> anyhow::Result<Result<store::KeyResponse, store::Error>> {
         Ok(Err(store::Error::Other("not supported".into())))
     }
 }
@@ -146,7 +144,7 @@ impl<C: Send + Sync> atomics::Handler<C> for Handler {
         _bucket: ResourceBorrow<store::Bucket>,
         _key: String,
         _delta: i64,
-    ) -> anyhow::Result<Result<i64>> {
+    ) -> anyhow::Result<Result<i64, store::Error>> {
         Ok(Err(store::Error::Other("not supported".into())))
     }
 
@@ -168,7 +166,7 @@ impl<C: Send + Sync> atomics::HandlerCas<C> for Handler {
         _cx: C,
         _bucket: ResourceBorrow<store::Bucket>,
         _key: String,
-    ) -> anyhow::Result<Result<ResourceOwn<atomics::Cas>>> {
+    ) -> anyhow::Result<Result<ResourceOwn<atomics::Cas>, store::Error>> {
         Ok(Err(store::Error::Other("not supported".into())))
     }
 
@@ -176,7 +174,7 @@ impl<C: Send + Sync> atomics::HandlerCas<C> for Handler {
         &self,
         _cx: C,
         _bucket: ResourceBorrow<atomics::Cas>,
-    ) -> anyhow::Result<Result<Option<Bytes>>> {
+    ) -> anyhow::Result<Result<Option<Bytes>, store::Error>> {
         Ok(Err(store::Error::Other("not supported".into())))
     }
 }
@@ -187,7 +185,7 @@ impl<C: Send + Sync> batch::Handler<C> for Handler {
         _cx: C,
         _bucket: ResourceBorrow<store::Bucket>,
         _keys: Vec<String>,
-    ) -> anyhow::Result<Result<Vec<Option<(String, Bytes)>>>> {
+    ) -> anyhow::Result<Result<Vec<Option<(String, Bytes)>>, store::Error>> {
         Ok(Err(store::Error::Other("not supported".into())))
     }
 
@@ -196,7 +194,7 @@ impl<C: Send + Sync> batch::Handler<C> for Handler {
         _cx: C,
         _bucket: ResourceBorrow<store::Bucket>,
         _key_values: Vec<(String, Bytes)>,
-    ) -> anyhow::Result<Result<()>> {
+    ) -> anyhow::Result<Result<(), store::Error>> {
         Ok(Err(store::Error::Other("not supported".into())))
     }
 
@@ -205,7 +203,7 @@ impl<C: Send + Sync> batch::Handler<C> for Handler {
         _cx: C,
         _bucket: ResourceBorrow<store::Bucket>,
         _keys: Vec<String>,
-    ) -> anyhow::Result<Result<()>> {
+    ) -> anyhow::Result<Result<(), store::Error>> {
         Ok(Err(store::Error::Other("not supported".into())))
     }
 }

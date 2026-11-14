@@ -14,14 +14,15 @@ use wasmtime::component::{Accessor, ComponentExportIndex, Instance, InstancePre}
 
 use crate::{CallError, ResourceTypes, WrpcView, call, rpc_func_name};
 
-type Task<T> = Box<
-    dyn for<'a> FnOnce(&'a Accessor<T>) -> Pin<Box<dyn Future<Output = ()> + Send + 'a>> + Send,
->;
-
 /// A [`wasmtime::Store`] shared by concurrent tasks, which are all driven by a single long-running
 /// [`wasmtime::Store::run_concurrent`] event loop.
 pub struct SharedStore<T: 'static> {
-    tx: mpsc::Sender<Task<T>>,
+    tx: mpsc::Sender<
+        Box<
+            dyn for<'a> FnOnce(&'a Accessor<T>) -> Pin<Box<dyn Future<Output = ()> + Send + 'a>>
+                + Send,
+        >,
+    >,
 }
 
 impl<T> Clone for SharedStore<T> {
@@ -46,7 +47,12 @@ impl<T: Send + 'static> SharedStore<T> {
         Self,
         impl Future<Output = anyhow::Result<()>> + Send + 'static,
     ) {
-        let (tx, mut rx) = mpsc::channel::<Task<T>>(1);
+        let (tx, mut rx) = mpsc::channel::<
+            Box<
+                dyn for<'a> FnOnce(&'a Accessor<T>) -> Pin<Box<dyn Future<Output = ()> + Send + 'a>>
+                    + Send,
+            >,
+        >(1);
         let event_loop = async move {
             store
                 .run_concurrent(async |store| {
@@ -81,7 +87,10 @@ impl<T: Send + 'static> SharedStore<T> {
     {
         let (mut tx, rx) = oneshot::channel();
         let span = Span::current();
-        let task: Task<T> = Box::new(move |store| {
+        let task: Box<
+            dyn for<'a> FnOnce(&'a Accessor<T>) -> Pin<Box<dyn Future<Output = ()> + Send + 'a>>
+                + Send,
+        > = Box::new(move |store| {
             Box::pin(
                 async move {
                     select! {

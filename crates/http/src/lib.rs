@@ -12,8 +12,8 @@ use std::sync::Arc;
 use bytes::{Bytes, BytesMut};
 use futures::{Stream, TryStreamExt as _, stream};
 use http_body::Frame;
-use http_body_util::BodyExt as _;
 use http_body_util::combinators::MapErr;
+use http_body_util::{BodyDataStream, BodyExt as _};
 use pin_project_lite::pin_project;
 use tokio::io::{AsyncReadExt as _, AsyncWrite, ReadHalf, SimplexStream, WriteHalf, simplex};
 use tokio_util::io::{StreamReader, poll_read_buf};
@@ -21,13 +21,10 @@ use tokio_util::io::{StreamReader, poll_read_buf};
 /// Body buffer size
 pub const DEFAULT_BODY_BUFFER_SIZE: usize = 8192;
 
-pub type IncomingBodyDataStream<T> =
-    http_body_util::BodyDataStream<MapErr<hyper::body::Incoming, T>>;
-
-pub type IncomingBodyDataReader<T> = StreamReader<IncomingBodyDataStream<T>, Bytes>;
-
-pub type DynIncomingBodyDataReader =
-    IncomingBodyDataReader<Box<dyn FnMut(hyper::Error) -> std::io::Error + Send + Sync + 'static>>;
+pub type IncomingBodyDataReader = StreamReader<
+    BodyDataStream<MapErr<hyper::body::Incoming, fn(hyper::Error) -> std::io::Error>>,
+    Bytes,
+>;
 
 /// Writer of the data of an [`OutgoingBody`], which fails the body once dropped before being
 /// shut down
@@ -162,15 +159,16 @@ pub fn io_error_from_hyper(err: hyper::Error) -> std::io::Error {
 
 pub fn data_stream_from_incoming(
     body: hyper::body::Incoming,
-) -> IncomingBodyDataStream<impl FnMut(hyper::Error) -> std::io::Error> {
+) -> BodyDataStream<MapErr<hyper::body::Incoming, impl FnMut(hyper::Error) -> std::io::Error>> {
     body.map_err(io_error_from_hyper).into_data_stream()
 }
 
 #[must_use]
-pub fn data_reader_from_incoming(
-    body: hyper::body::Incoming,
-) -> IncomingBodyDataReader<impl FnMut(hyper::Error) -> std::io::Error> {
-    StreamReader::new(data_stream_from_incoming(body))
+pub fn data_reader_from_incoming(body: hyper::body::Incoming) -> IncomingBodyDataReader {
+    StreamReader::new(
+        body.map_err(io_error_from_hyper as fn(_) -> _)
+            .into_data_stream(),
+    )
 }
 
 /// Returns a reader of the body of the response `res` resolves to.
@@ -216,7 +214,7 @@ pub struct Server(
     pub  Arc<
         wrpc_transport::frame::Server<
             http::request::Parts,
-            DynIncomingBodyDataReader,
+            IncomingBodyDataReader,
             OutgoingBodyDataWriter,
         >,
     >,
@@ -226,7 +224,7 @@ impl Deref for Server {
     type Target = Arc<
         wrpc_transport::frame::Server<
             http::request::Parts,
-            DynIncomingBodyDataReader,
+            IncomingBodyDataReader,
             OutgoingBodyDataWriter,
         >,
     >;
@@ -248,7 +246,7 @@ where
         Arc<
             wrpc_transport::frame::Server<
                 http::request::Parts,
-                DynIncomingBodyDataReader,
+                IncomingBodyDataReader,
                 OutgoingBodyDataWriter,
             >,
         >,
@@ -271,17 +269,14 @@ impl hyper::service::Service<http::Request<hyper::body::Incoming>> for Server {
     type Response = http::Response<OutgoingBody>;
     type Error = wrpc_transport::frame::AcceptError<
         http::request::Parts,
-        DynIncomingBodyDataReader,
+        IncomingBodyDataReader,
         OutgoingBodyDataWriter,
     >;
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
 
     fn call(&self, req: http::Request<hyper::body::Incoming>) -> Self::Future {
         let (parts, body) = req.into_parts();
-        let map_err: Box<dyn FnMut(hyper::Error) -> std::io::Error + Send + Sync + 'static> =
-            Box::new(io_error_from_hyper);
-        let body = body.map_err(map_err).into_data_stream();
-        let body = StreamReader::new(body);
+        let body = data_reader_from_incoming(body);
         let (rx, tx) = OutgoingBody::new([]);
         let srv = Arc::clone(&self.0);
         Box::pin(async move {
