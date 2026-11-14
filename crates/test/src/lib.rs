@@ -3,7 +3,6 @@ use core::net::Ipv6Addr;
 use core::pin::pin;
 use core::task::Poll;
 
-use std::process::ExitStatus;
 use std::sync::Arc;
 
 use anyhow::Context;
@@ -14,10 +13,7 @@ use rustls::version::TLS13;
 use rustls::{ClientConfig, RootCertStore, ServerConfig};
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::net::{TcpListener, TcpStream, ToSocketAddrs};
-use tokio::process::Command;
-use tokio::sync::oneshot;
-use tokio::task::JoinHandle;
-use tokio::{select, spawn, try_join};
+use tokio::try_join;
 use tracing::info;
 use wrpc_transport::{Invoke, Serve};
 
@@ -274,30 +270,6 @@ where
     Ok(cx)
 }
 
-pub fn spawn_server(
-    cmd: &mut Command,
-) -> anyhow::Result<(JoinHandle<anyhow::Result<ExitStatus>>, oneshot::Sender<()>)> {
-    let mut child = cmd
-        .kill_on_drop(true)
-        .spawn()
-        .context("failed to spawn child")?;
-    let (stop_tx, stop_rx) = oneshot::channel();
-    let child = spawn(async move {
-        select!(
-            res = stop_rx => {
-                res.context("failed to wait for shutdown")?;
-                child.kill().await.context("failed to kill child")?;
-                child.wait().await
-            }
-            status = child.wait() => {
-                status
-            }
-        )
-        .context("failed to wait for child")
-    });
-    Ok((child, stop_tx))
-}
-
 pub fn cert_pair() -> anyhow::Result<(rustls::ServerConfig, rustls::ClientConfig)> {
     let CertifiedKey {
         cert: srv_crt,
@@ -368,39 +340,26 @@ fn quic_endpoints(
 }
 
 #[cfg(feature = "quic")]
-pub async fn with_quic_endpoints<T, Fut>(
-    f: impl FnOnce(core::net::SocketAddr, quinn::Endpoint, quinn::Endpoint) -> Fut,
-) -> anyhow::Result<T>
-where
-    Fut: Future<Output = anyhow::Result<T>>,
-{
-    let (srv_addr, clt_ep, srv_ep) = quic_endpoints(Vec::default())?;
-    f(srv_addr, clt_ep, srv_ep).await.context("closure failed")
-}
-
-#[cfg(feature = "quic")]
 pub async fn with_quic<T, Fut>(
     f: impl FnOnce(quinn::Connection, quinn::Connection) -> Fut,
 ) -> anyhow::Result<T>
 where
     Fut: Future<Output = anyhow::Result<T>>,
 {
-    with_quic_endpoints(|addr, clt, srv| async move {
-        let (clt, srv) = try_join!(
-            async move {
-                let conn = clt
-                    .connect(addr, "::1")
-                    .context("failed to connect to server")?;
-                conn.await.context("failed to establish client connection")
-            },
-            async move {
-                let conn = srv.accept().await.context("failed to accept connection")?;
-                conn.await.context("failed to establish server connection")
-            }
-        )?;
-        f(clt, srv).await.context("closure failed")
-    })
-    .await
+    let (addr, clt, srv) = quic_endpoints(Vec::default())?;
+    let (clt, srv) = try_join!(
+        async move {
+            let conn = clt
+                .connect(addr, "::1")
+                .context("failed to connect to server")?;
+            conn.await.context("failed to establish client connection")
+        },
+        async move {
+            let conn = srv.accept().await.context("failed to accept connection")?;
+            conn.await.context("failed to establish server connection")
+        }
+    )?;
+    f(clt, srv).await.context("closure failed")
 }
 
 #[cfg(feature = "webtransport")]
