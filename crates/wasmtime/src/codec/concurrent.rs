@@ -312,11 +312,12 @@ where
     ) -> std::io::Result<Option<Val>> {
         with_payload!(
             ty.ty(),
-            P => self.decode_async::<<P as Decode>::Decoder>(
+            P => self.decode_async(
                 src,
                 path,
                 state,
                 "future",
+                <P as Decode>::Decoder::default(),
                 pending_future::<P, _>,
                 ready_future::<P, _>,
             ),
@@ -342,11 +343,12 @@ where
         };
         with_payload!(
             @some payload,
-            P => self.decode_async::<<P as Decode>::ListDecoder>(
+            P => self.decode_async(
                 src,
                 path,
                 state,
                 "stream",
+                <P as Decode>::ListDecoder::default(),
                 pending_stream::<P, _>,
                 ready_stream::<P, _>,
             ),

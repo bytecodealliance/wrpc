@@ -30,6 +30,8 @@ use crate::{ResourceTypes, WrpcView};
 #[cfg(feature = "async")]
 mod concurrent;
 
+const DEFAULT_MAX_LEN: u32 = 1 << 24;
+
 /// Synchronous access to a store, which is either borrowed exclusively or reachable through an
 /// `Accessor`.
 ///
@@ -749,6 +751,7 @@ pub struct ValDecoder<'a, T> {
     store: T,
     tys: &'a [Type],
     resources: &'a ResourceTypes,
+    max_len: u32,
     state: Option<Box<Partial>>,
     /// Decoders of the pending asynchronous values keyed by their paths
     nested: BTreeMap<Box<[usize]>, Box<dyn Receive + Send>>,
@@ -761,9 +764,18 @@ impl<T> ValDecoder<'_, T> {
             store,
             tys,
             resources,
+            max_len: DEFAULT_MAX_LEN,
             state: None,
             nested: BTreeMap::default(),
         }
+    }
+
+    /// Rejects strings and ready `input-stream`s longer than `max_len` bytes and lists longer than
+    /// `max_len` elements, `1 << 24` by default.
+    #[must_use]
+    pub fn with_max_len(mut self, max_len: u32) -> Self {
+        self.max_len = max_len;
+        self
     }
 }
 
@@ -834,14 +846,15 @@ where
 fn decode_with<T>(
     src: &mut BytesMut,
     state: &mut Option<Box<Partial>>,
+    dec: T,
 ) -> std::io::Result<Option<T::Item>>
 where
-    T: Decoder + Default + Send + 'static,
+    T: Decoder + Send + 'static,
     std::io::Error: From<T::Error>,
 {
     let mut dec = match state.take().map(|state| *state) {
-        Some(Partial::Decoder(dec)) => dec.downcast().map_or_else(|_| T::default(), |dec| *dec),
-        _ => T::default(),
+        Some(Partial::Decoder(prev)) => prev.downcast().map_or(dec, |prev| *prev),
+        _ => dec,
     };
     let v = dec.decode(src)?;
     if v.is_none() {
@@ -871,6 +884,15 @@ where
                     let Some(n) = Leb128DecoderU32.decode(src)? else {
                         return Ok(None);
                     };
+                    if n > self.max_len {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            format!(
+                                "list length `{n}` exceeds the maximum of `{}`",
+                                self.max_len
+                            ),
+                        ));
+                    }
                     usize::try_from(n).unwrap_or(usize::MAX)
                 };
                 let vs =
@@ -920,6 +942,7 @@ where
         Ok(Some(v))
     }
 
+    #[allow(clippy::too_many_arguments)]
     #[cfg(any(feature = "async", feature = "wasmtime-wasi"))]
     fn decode_async<D>(
         &mut self,
@@ -927,13 +950,14 @@ where
         path: &[usize],
         state: &mut Option<Box<Partial>>,
         kind: &str,
+        dec: D,
         pending: impl FnOnce(
             StoreContextMut<'_, T::Data>,
         ) -> wasmtime::Result<(Val, Box<dyn Receive + Send>)>,
         ready: impl FnOnce(StoreContextMut<'_, T::Data>, D::Item) -> wasmtime::Result<Val>,
     ) -> std::io::Result<Option<Val>>
     where
-        D: Decoder + Default + Send + 'static,
+        D: Decoder + Send + 'static,
         std::io::Error: From<D::Error>,
     {
         if state.is_none() {
@@ -947,7 +971,7 @@ where
                 return Ok(Some(v));
             }
         }
-        let Some(v) = decode_with::<D>(src, state)? else {
+        let Some(v) = decode_with(src, state, dec)? else {
             return Ok(None);
         };
         let v = self.store.with_store(|store| ready(store, v))?;
@@ -977,7 +1001,7 @@ where
             Type::Float64 => decode_leaf(F64Codec, src, Val::Float64),
             Type::Char => decode_leaf(Utf8Codec, src, Val::Char),
             Type::String => {
-                let v = decode_with::<CoreNameDecoder>(src, state)?;
+                let v = decode_with(src, state, <CoreNameDecoder>::with_max_len(self.max_len))?;
                 Ok(v.map(Val::String))
             }
             Type::List(ty) => {
@@ -1063,11 +1087,12 @@ where
                     )
                     || self.resources.io_streams.contains(ty)
                 {
-                    return self.decode_async::<wasm_tokio::CoreVecDecoderBytes>(
+                    return self.decode_async(
                         src,
                         path,
                         state,
                         "stream",
+                        <wasm_tokio::CoreVecDecoderBytes>::with_max_len(self.max_len),
                         pending_input_stream,
                         ready_input_stream,
                     );
