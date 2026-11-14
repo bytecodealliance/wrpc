@@ -1,5 +1,3 @@
-use core::pin::Pin;
-
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
@@ -8,7 +6,9 @@ use std::sync::{Arc, Mutex, PoisonError};
 use anyhow::{Context as _, bail, ensure};
 use criterion::measurement::Measurement;
 use criterion::{BenchmarkGroup, Criterion};
-use futures::{Stream, StreamExt as _};
+use futures::StreamExt as _;
+use futures::future::BoxFuture;
+use futures::stream::BoxStream;
 use hyper_util::rt::TokioExecutor;
 use hyper_util::rt::tokio::WithHyperIo;
 use tokio::io::BufReader;
@@ -52,17 +52,6 @@ use greet_bindings_wrpc::exports::wrpc_bench::bench::greet::Handler as _;
 use ping_bindings_wasmtime::PingProxyPre;
 use ping_bindings_wrpc::exports::wrpc_bench::bench::ping::Handler as _;
 
-type Invocations = Pin<
-    Box<
-        dyn Stream<
-                Item = anyhow::Result<
-                    Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + 'static>>,
-                >,
-            > + Send
-            + 'static,
-    >,
->;
-
 trait Handler<C>:
     ping_bindings_wrpc::exports::wrpc_bench::bench::ping::Handler<C>
     + greet_bindings_wrpc::exports::wrpc_bench::bench::greet::Handler<C>
@@ -94,7 +83,8 @@ impl Func {
         self,
         srv: &S,
         handler: impl Handler<S::Context>,
-    ) -> anyhow::Result<Invocations> {
+    ) -> anyhow::Result<BoxStream<'static, anyhow::Result<BoxFuture<'static, anyhow::Result<()>>>>>
+    {
         let invocations = match self {
             Self::Ping => ping_bindings_wrpc::serve(srv, handler).await?,
             Self::Greet => greet_bindings_wrpc::serve(srv, handler).await?,

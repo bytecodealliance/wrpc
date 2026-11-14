@@ -2642,6 +2642,8 @@ mod tests {
     use std::io::ErrorKind;
 
     use anyhow::bail;
+    use futures::future::BoxFuture;
+    use futures::stream::BoxStream;
     use tokio::io::duplex;
     use tokio::task::yield_now;
     use tokio_util::codec::Decoder as _;
@@ -2650,11 +2652,11 @@ mod tests {
     use crate::frame::Incoming;
     use crate::{FrameEncoder, FrameRef};
 
-    type StreamBytes = Pin<Box<dyn Stream<Item = Bytes> + Send>>;
-
     #[test]
     fn result_paths_merge_wildcards() {
-        let dec = <(Result<(StreamBytes,), Vec<StreamBytes>>,) as Decode>::Decoder::default();
+        let dec = <(
+            Result<(BoxStream<'static, Bytes>,), Vec<BoxStream<'static, Bytes>>>,
+        ) as Decode>::Decoder::default();
         assert_eq!(*dec.paths(), [Box::from([Some(0), None])]);
     }
 
@@ -2695,10 +2697,10 @@ mod tests {
         let v = dec.decode(&mut buf)?;
         assert_eq!(v, Some(vec![vec!["b".to_string()]]));
 
-        let mut dec = <Vec<StreamBytes> as Decode>::Decoder::default();
+        let mut dec = <Vec<BoxStream<'static, Bytes>> as Decode>::Decoder::default();
         let mut buf = BytesMut::from(&b"\x02\0\xff\xff\xff\xff\xff"[..]);
         assert!(dec.decode(&mut buf).is_err());
-        let mut dec = <Vec<StreamBytes> as Decode>::Decoder::default();
+        let mut dec = <Vec<BoxStream<'static, Bytes>> as Decode>::Decoder::default();
         let vs = dec.decode(&mut BytesMut::from("\0"))?;
         assert!(vs.is_some_and(|vs| vs.is_empty()));
         assert!(Deferred::<BufferedIncoming>::take_deferred(&mut dec).is_none());
@@ -2706,7 +2708,7 @@ mod tests {
         let n = b"\xff\xff\xff\xff\x0f";
         let err = crate::unpack::<Vec<Vec<String>>>(&mut BytesMut::from(&n[..])).unwrap_err();
         assert_eq!(err.kind(), ErrorKind::UnexpectedEof);
-        let err = crate::unpack::<Vec<StreamBytes>>(&mut BytesMut::from(&n[..]))
+        let err = crate::unpack::<Vec<BoxStream<'static, Bytes>>>(&mut BytesMut::from(&n[..]))
             .err()
             .unwrap();
         assert_eq!(err.kind(), ErrorKind::UnexpectedEof);
@@ -2751,9 +2753,6 @@ mod tests {
 
     #[test_log::test(tokio::test)]
     async fn deferred_decoder() -> anyhow::Result<()> {
-        type FutureBytes = Pin<Box<dyn Future<Output = Bytes> + Send>>;
-        type UnitFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
-
         fn buffered(buffer: &[u8]) -> BufferedIncoming {
             let mut frames = BytesMut::default();
             if !buffer.is_empty() {
@@ -2784,28 +2783,28 @@ mod tests {
             (v, fut.await)
         }
 
-        let (fut, res) = read::<UnitFuture>(b"").await;
+        let (fut, res) = read::<BoxFuture<'static, ()>>(b"").await;
         res.unwrap();
         fut.await;
 
-        let (fut, res) = read::<UnitFuture>(b"\x2a").await;
+        let (fut, res) = read::<BoxFuture<'static, ()>>(b"\x2a").await;
         assert_eq!(res.unwrap_err().kind(), ErrorKind::InvalidData);
         assert!(fut.now_or_never().is_none());
 
-        let (.., res) = read::<FutureBytes>(b"\x03foo\x2a").await;
+        let (.., res) = read::<BoxFuture<'static, Bytes>>(b"\x03foo\x2a").await;
         assert_eq!(res.unwrap_err().kind(), ErrorKind::InvalidData);
 
-        let (.., res) = read::<StreamBytes>(b"\x03foo\x00\x2a").await;
+        let (.., res) = read::<BoxStream<'static, Bytes>>(b"\x03foo\x00\x2a").await;
         assert_eq!(res.unwrap_err().kind(), ErrorKind::InvalidData);
 
-        let (fut, f) = pending::<FutureBytes>();
+        let (fut, f) = pending::<BoxFuture<'static, Bytes>>();
         drop(fut);
         let r = buffered(b"\x03foo");
         let fut = f(&r, &[0])?;
         let err = fut.await;
         assert_eq!(err.unwrap_err().kind(), ErrorKind::BrokenPipe);
 
-        let (mut s, res) = read::<StreamBytes>(b"\x03foo").await;
+        let (mut s, res) = read::<BoxStream<'static, Bytes>>(b"\x03foo").await;
         assert_eq!(res.unwrap_err().kind(), ErrorKind::UnexpectedEof);
         assert_eq!(s.next().await.unwrap(), "foo");
         assert!(s.next().now_or_never().is_none());
@@ -2827,12 +2826,10 @@ mod tests {
 
     #[test_log::test(tokio::test)]
     async fn nested_future() -> anyhow::Result<()> {
-        type FutureU8 = Pin<Box<dyn Future<Output = u8> + Send>>;
-        type FutureFutureU8 = Pin<Box<dyn Future<Output = FutureU8> + Send>>;
-
         let (tx, mut rx) = duplex(1024);
-        let inner: FutureU8 = Box::pin(yield_now().map(|()| 0x2a));
-        let outer: FutureFutureU8 = Box::pin(yield_now().map(|()| inner));
+        let inner: BoxFuture<'static, u8> = Box::pin(yield_now().map(|()| 0x2a));
+        let outer: BoxFuture<'static, BoxFuture<'static, u8>> =
+            Box::pin(yield_now().map(|()| inner));
         let mut buf = BytesMut::default();
         let f = outer.encode(&mut FutureEncoder::default(), &mut buf)?;
         assert_eq!(buf.as_ref(), b"\0");
@@ -2851,7 +2848,7 @@ mod tests {
                 [[Some(0)].as_slice(), &[Some(0), Some(0)]],
             ),
         };
-        let mut dec = <FutureFutureU8 as Decode>::Decoder::default();
+        let mut dec = <BoxFuture<'static, BoxFuture<'static, u8>> as Decode>::Decoder::default();
         let fut = dec.decode(&mut buf)?;
         let fut = fut.expect("future not decoded");
         let f = dec.take_deferred().expect("deferred read missing");

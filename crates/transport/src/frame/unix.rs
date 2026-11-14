@@ -7,7 +7,7 @@ use tokio::net::UnixStream;
 use tracing::instrument;
 
 use crate::Invoke;
-use crate::frame::{Incoming, Outgoing, ReadHalf, WriteHalf, invoke};
+use crate::frame::{Incoming, Oneshot, Outgoing, ReadHalf, WriteHalf, invoke};
 
 /// Splits a Unix domain socket stream into a [`ReadHalf`] and a [`WriteHalf`].
 ///
@@ -18,21 +18,15 @@ pub fn split(stream: UnixStream) -> (ReadHalf<UnixStream>, WriteHalf<UnixStream>
     crate::frame::split::split(stream, |_| {})
 }
 
-/// [Invoke] implementation in terms of a single [`UnixStream`].
-///
-/// [`Invoke::invoke`] can only be called at most once on [Oneshot],
-/// repeated calls will return an error.
-pub type Oneshot = super::Oneshot<ReadHalf<UnixStream>, WriteHalf<UnixStream>>;
-
-impl Oneshot {
+impl Oneshot<ReadHalf<UnixStream>, WriteHalf<UnixStream>> {
     /// Creates a pair of connected [Oneshot] using [`UnixStream::pair`].
-    pub fn unix_pair() -> std::io::Result<(Oneshot, UnixStream)> {
+    pub fn unix_pair() -> std::io::Result<(Self, UnixStream)> {
         let (clt, srv) = UnixStream::pair()?;
         Ok((clt.into(), srv))
     }
 }
 
-impl From<UnixStream> for Oneshot {
+impl From<UnixStream> for Oneshot<ReadHalf<UnixStream>, WriteHalf<UnixStream>> {
     fn from(stream: UnixStream) -> Self {
         split(stream).into()
     }

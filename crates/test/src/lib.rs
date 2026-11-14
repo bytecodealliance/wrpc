@@ -558,7 +558,7 @@ pub async fn serve_http2<T>(
         wrpc_http::Client<hyper::client::conn::http2::SendRequest<wrpc_http::OutgoingBody>>,
         &wrpc_transport::Server<
             http::request::Parts,
-            wrpc_http::DynIncomingBodyDataReader,
+            wrpc_http::IncomingBodyDataReader,
             wrpc_http::OutgoingBodyDataWriter,
         >,
     ) -> anyhow::Result<T>,

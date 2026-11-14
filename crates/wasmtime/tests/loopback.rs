@@ -1,7 +1,9 @@
 use core::net::SocketAddr;
-use core::pin::{Pin, pin};
+use core::pin::pin;
 
 use anyhow::{Context as _, bail};
+use futures::future::BoxFuture;
+use futures::stream::BoxStream;
 use futures::{Stream, StreamExt as _, TryStreamExt as _, stream};
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _, BufReader};
 use tokio::net::TcpStream;
@@ -11,14 +13,10 @@ use tokio::{join, spawn, try_join};
 use tracing::Instrument as _;
 use wasmtime::component::{Component, Instance, Linker, ResourceTable, types};
 use wrpc_transport::frame::{ReadHalf, WriteHalf, tcp};
-use wrpc_transport::{Invoke as _, InvokeExt as _};
+use wrpc_transport::{Invoke as _, InvokeExt as _, Server};
 use wrpc_wasmtime::{
     ResourceTypes, ServeExt as _, SharedResourceTable, SharedStore, WrpcCtxView, WrpcView,
 };
-
-type ByteStream = Pin<Box<dyn Stream<Item = Vec<u8>> + Send>>;
-
-type Server = wrpc_transport::Server<(), BufReader<ReadHalf<TcpStream>>, WriteHalf<TcpStream>>;
 
 struct Ctx {
     table: ResourceTable,
@@ -38,7 +36,7 @@ async fn with_store(
     wat: &str,
     f: impl AsyncFnOnce(
         &tcp::Client<SocketAddr>,
-        &Server,
+        &Server<(), BufReader<ReadHalf<TcpStream>>, WriteHalf<TcpStream>>,
         &Component,
         Instance,
         &SharedStore<Ctx>,
@@ -68,7 +66,7 @@ async fn with_store(
 }
 
 async fn serve(
-    srv: &Server,
+    srv: &Server<(), BufReader<ReadHalf<TcpStream>>, WriteHalf<TcpStream>>,
     store: &SharedStore<Ctx>,
     component: &Component,
     instance: Instance,
@@ -139,9 +137,6 @@ async fn shared_store_trap() -> anyhow::Result<()> {
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn async_values() -> anyhow::Result<()> {
-    type StringFuture = Pin<Box<dyn Future<Output = String> + Send>>;
-    type UnitFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
-
     async fn receive<T>(
         io: Option<impl Future<Output = anyhow::Result<()>>>,
         values: impl Future<Output = T>,
@@ -251,7 +246,11 @@ async fn async_values() -> anyhow::Result<()> {
             try_join!(
                 async {
                     let (((s, f, u),), io) = clt
-                        .invoke_values::<_, ((ByteStream, StringFuture, UnitFuture),)>(
+                        .invoke_values::<_, ((
+                            BoxStream<'static, Vec<u8>>,
+                            BoxFuture<'static, String>,
+                            BoxFuture<'static, ()>,
+                        ),)>(
                             (),
                             "",
                             "run",
@@ -262,12 +261,12 @@ async fn async_values() -> anyhow::Result<()> {
                                         b"foo".to_vec()
                                     })
                                     .chain(stream::iter([b"bar".to_vec()])),
-                                ) as ByteStream,
+                                ) as BoxStream<'static, Vec<u8>>,
                                 Box::pin(async {
                                     yield_now().await;
                                     "baz".to_string()
-                                }) as StringFuture,
-                                Box::pin(yield_now()) as UnitFuture,
+                                }) as BoxFuture<'static, String>,
+                                Box::pin(yield_now()) as BoxFuture<'static, ()>,
                             ),
                         )
                         .await?;
@@ -277,7 +276,10 @@ async fn async_values() -> anyhow::Result<()> {
                     assert_eq!(f, "baz");
 
                     let (((s, f),), io) = clt
-                        .invoke_values::<(), ((ByteStream, StringFuture),)>((), "", "gen", ())
+                        .invoke_values::<(), ((
+                            BoxStream<'static, Vec<u8>>,
+                            BoxFuture<'static, String>,
+                        ),)>((), "", "gen", ())
                         .await?;
                     let (s, f) = receive(io, async { join!(s.collect::<Vec<_>>(), f) }).await?;
                     assert_eq!(s.concat(), b"foo");
@@ -369,7 +371,8 @@ async fn async_params_after_return() -> anyhow::Result<()> {
                             (Box::pin(stream::once(async {
                                 _ = rx.await;
                                 b"foo".to_vec()
-                            })) as ByteStream,),
+                            }))
+                                as BoxStream<'static, Vec<u8>>,),
                         )
                         .await?;
                     _ = tx.send(());
