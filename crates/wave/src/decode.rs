@@ -82,6 +82,54 @@ impl<V: WasmValue> Receive for ValueDecoder<'_, V> {
     }
 }
 
+/// [Decoder] of tuples of values of types `tys`, e.g. function results
+pub struct TupleDecoder<'a, V: WasmValue> {
+    tys: &'a [V::Type],
+    state: Option<Box<Partial<V>>>,
+}
+
+impl<'a, V: WasmValue> TupleDecoder<'a, V> {
+    /// Creates a new [`TupleDecoder`] of tuples of values of types `tys`
+    #[must_use]
+    pub fn new(tys: &'a [V::Type]) -> Self {
+        Self { tys, state: None }
+    }
+}
+
+impl<V: WasmValue> Decoder for TupleDecoder<'_, V> {
+    type Item = Vec<V>;
+    type Error = std::io::Error;
+
+    fn decode(&mut self, src: &mut BytesMut) -> std::io::Result<Option<Vec<V>>> {
+        let n = self.state.is_none().then_some(src.len());
+        let vs = decode_seq(src, &mut self.state, Some(self.tys.len()), self.tys)?;
+        if n == Some(src.len()) {
+            self.state = None;
+        }
+        Ok(vs)
+    }
+
+    fn decode_eof(&mut self, src: &mut BytesMut) -> std::io::Result<Option<Vec<V>>> {
+        let vs = self.decode(src)?;
+        decode_eof(vs, self.state.is_some(), src)
+    }
+}
+
+impl<V: WasmValue> Receive for TupleDecoder<'_, V> {
+    fn poll_receive(
+        &mut self,
+        _cx: &mut Context<'_>,
+        path: &[usize],
+        _src: &mut BytesMut,
+    ) -> Poll<std::io::Result<()>> {
+        Poll::Ready(Err(error_unknown_path(path)))
+    }
+
+    fn is_closed(&self) -> bool {
+        true
+    }
+}
+
 fn error_invalid_data(msg: impl Display) -> std::io::Error {
     std::io::Error::new(std::io::ErrorKind::InvalidData, msg.to_string())
 }
