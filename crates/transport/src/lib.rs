@@ -15,11 +15,11 @@
 //!   header read by [`Header::read`] from the byte streams of an invocation, for example ones
 //!   accepted by a transport
 //!
-//! A transport establishes a single bidirectional byte stream per invocation, which it yields as
-//! any [`AsyncWrite`](tokio::io::AsyncWrite)/[`AsyncRead`](tokio::io::AsyncRead) byte
-//! stream pair. [`invoke()`] and [`serve()`] layer the wRPC [framing](frame) protocol on top of
-//! it to multiplex the asynchronous values nested in parameters and results, which encoders
-//! [Transmit] and decoders [Receive].
+//! A transport establishes bidirectional byte streams, each carrying invocations one after
+//! another, which it yields as any [`AsyncWrite`](tokio::io::AsyncWrite)/
+//! [`AsyncRead`](tokio::io::AsyncRead) byte stream pair. [`invoke()`] and [`serve()`] layer the
+//! wRPC [framing](frame) protocol on top of it to multiplex the asynchronous values nested in
+//! parameters and results, which encoders [Transmit] and decoders [Receive].
 //!
 //! Over TCP, enable `TCP_NODELAY`, since invocations consist of small writes, each awaited by
 //! the peer.
