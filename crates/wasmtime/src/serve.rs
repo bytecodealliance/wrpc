@@ -1,22 +1,23 @@
-use core::borrow::BorrowMut;
 use core::future::poll_fn;
+use core::mem;
 use core::pin::Pin;
+use core::time::Duration;
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::{Context as _, anyhow};
-use futures::StreamExt as _;
 use futures::stream::FuturesUnordered;
+use futures::{StreamExt as _, TryStreamExt as _};
 use tokio::io::{AsyncRead, AsyncWrite};
-use tokio::select;
 use tokio::sync::{mpsc, oneshot};
-use tokio_util::codec::FramedRead;
+use tokio::{select, time};
+use tokio_util::codec::{Decoder as _, FramedRead};
 use tracing::{Instrument as _, Span, debug, warn};
 use wasmtime::component::{
     Accessor, Component, ComponentExportIndex, Instance, InstancePre, Type, types,
 };
-use wrpc_transport::FrameDecoder;
+use wrpc_transport::{FrameDecoder, Header, HeaderDecoder};
 
 use crate::{ResourceTypes, WrpcView, call, rpc_func_name};
 
@@ -172,18 +173,52 @@ fn exports(
     Ok(exports)
 }
 
-fn lookup<C, I, O>(
+fn lookup(
     exports: &HashMap<Box<str>, HashMap<Box<str>, Arc<Export>>>,
-    cx: C,
     instance: &str,
     func: &str,
-    tx: O,
+) -> anyhow::Result<Arc<Export>> {
+    exports
+        .get(instance)
+        .and_then(|funcs| funcs.get(func))
+        .map(Arc::clone)
+        .with_context(|| format!("`{instance}#{func}` is not exported"))
+}
+
+/// Serves the invocations sent over the byte streams `tx` and `rx` one after another using `f`
+async fn serve<I, O, Fut>(
+    exports: &HashMap<Box<str>, HashMap<Box<str>, Arc<Export>>>,
+    mut tx: O,
     rx: I,
-) -> Result<(Arc<Export>, O, I), (C, O, I)> {
-    let Some(export) = exports.get(instance).and_then(|funcs| funcs.get(func)) else {
-        return Err((cx, tx, rx));
-    };
-    Ok((Arc::clone(export), tx, rx))
+    timeout: Option<Duration>,
+    mut f: impl FnMut(Arc<Export>, O, FramedRead<I, FrameDecoder>) -> Fut,
+) -> anyhow::Result<()>
+where
+    I: AsyncRead + Unpin,
+    Fut: Future<Output = anyhow::Result<(O, FramedRead<I, FrameDecoder>)>>,
+{
+    let mut rx = FramedRead::new(rx, HeaderDecoder::default());
+    loop {
+        let header = match timeout {
+            Some(timeout) => time::timeout(timeout, rx.try_next()).await,
+            None => Ok(rx.try_next().await),
+        };
+        let Ok(header) = header else {
+            let mut buf = mem::take(rx.read_buffer_mut());
+            rx.decoder_mut()
+                .decode_eof(&mut buf)
+                .context("timed out reading invocation header")?;
+            return Ok(());
+        };
+        let Some(Header { instance, name }) = header.context("failed to read invocation header")?
+        else {
+            return Ok(());
+        };
+        let export = lookup(exports, &instance, &name)?;
+        let frames;
+        (tx, frames) = f(export, tx, rx.map_decoder(|_| FrameDecoder::default())).await?;
+        rx = frames.map_decoder(|_| HeaderDecoder::default());
+    }
 }
 
 /// Function exports of a component served from an [`InstancePre`], which is instantiated in a
@@ -226,30 +261,27 @@ where
         })
     }
 
-    /// Returns a future serving the invocation of function `func` on instance `instance` over
-    /// the byte stream `tx` and the frames `rx` following the header read by
-    /// [`Header::read`](wrpc_transport::Header::read), or the context `cx`, `tx` and `rx` back if
-    /// it does not invoke an exported function
-    pub fn handle<'a, C, R, I, O>(
-        &self,
-        cx: C,
-        instance: &str,
-        func: &str,
-        tx: O,
-        rx: R,
-    ) -> Result<Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + 'a>>, (C, O, R)>
+    /// Serves the invocations sent over the byte streams `tx` and `rx` of a connection one after
+    /// another, until the client ends transmit, an invocation fails or the connection stays idle
+    /// for longer than `timeout`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if serving an invocation fails or `timeout` elapses within a header
+    pub async fn serve<I, O>(&self, tx: O, rx: I, timeout: Option<Duration>) -> anyhow::Result<()>
     where
-        R: BorrowMut<FramedRead<I, FrameDecoder>> + Send + 'a,
-        I: AsyncRead + Send + Unpin + 'a,
-        O: AsyncWrite + Send + Unpin + 'a,
+        I: AsyncRead + Unpin,
+        O: AsyncWrite + Unpin,
     {
-        let (export, tx, rx) = lookup(&self.exports, cx, instance, func, tx, rx)?;
-        let mut store = (self.new_store)();
-        let pre = self.pre.clone();
-        let resources = self.resources.clone();
-        Ok(Box::pin(
-            async move {
-                let instance = pre
+        serve(
+            &self.exports,
+            tx,
+            rx,
+            timeout,
+            |export, mut tx, mut frames| async move {
+                let mut store = (self.new_store)();
+                let instance = self
+                    .pre
                     .instantiate_async(&mut store)
                     .await
                     .map_err(anyhow::Error::from)
@@ -261,9 +293,9 @@ where
                     .run_concurrent(async |store| {
                         let res = call(
                             store,
-                            tx,
-                            rx,
-                            &resources,
+                            &mut tx,
+                            &mut frames,
+                            &self.resources,
                             &export.params,
                             &export.results,
                             func,
@@ -277,10 +309,10 @@ where
                     .await
                     .map_err(anyhow::Error::from)
                     .context("failed to run concurrent event loop")??;
-                Ok(())
-            }
-            .in_current_span(),
-        ))
+                Ok((tx, frames))
+            },
+        )
+        .await
     }
 }
 
@@ -318,30 +350,27 @@ where
         })
     }
 
-    /// Returns a future serving the invocation of function `func` on instance `instance` over
-    /// the byte stream `tx` and the frames `rx` following the header read by
-    /// [`Header::read`](wrpc_transport::Header::read), or the context `cx`, `tx` and `rx` back if
-    /// it does not invoke an exported function
-    pub fn handle<C, R, I, O>(
-        &self,
-        cx: C,
-        instance: &str,
-        func: &str,
-        tx: O,
-        rx: R,
-    ) -> Result<Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + 'static>>, (C, O, R)>
+    /// Serves the invocations sent over the byte streams `tx` and `rx` of a connection one after
+    /// another, until the client ends transmit, an invocation fails or the connection stays idle
+    /// for longer than `timeout`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if serving an invocation fails or `timeout` elapses within a header
+    pub async fn serve<I, O>(&self, tx: O, rx: I, timeout: Option<Duration>) -> anyhow::Result<()>
     where
-        R: BorrowMut<FramedRead<I, FrameDecoder>> + Send + 'static,
         I: AsyncRead + Send + Unpin + 'static,
         O: AsyncWrite + Send + Unpin + 'static,
     {
-        let (export, tx, rx) = lookup(&self.exports, cx, instance, func, tx, rx)?;
-        let store = self.store.clone();
-        let instance = self.instance;
-        let resources = self.resources.clone();
-        Ok(Box::pin(
-            async move {
-                store
+        serve(
+            &self.exports,
+            tx,
+            rx,
+            timeout,
+            |export, mut tx, mut frames| async move {
+                let instance = self.instance;
+                let resources = self.resources.clone();
+                self.store
                     .run(move |store| {
                         Box::pin(async move {
                             let func = store
@@ -349,21 +378,20 @@ where
                                 .context("function export not found")?;
                             call(
                                 store,
-                                tx,
-                                rx,
+                                &mut tx,
+                                &mut frames,
                                 &resources,
                                 &export.params,
                                 &export.results,
                                 func,
                             )
                             .await?;
-                            anyhow::Ok(())
+                            Ok((tx, frames))
                         })
                     })
-                    .await??;
-                Ok(())
-            }
-            .in_current_span(),
-        ))
+                    .await?
+            },
+        )
+        .await
     }
 }

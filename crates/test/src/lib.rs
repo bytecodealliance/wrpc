@@ -20,43 +20,36 @@ use tokio::try_join;
 use tokio_stream::wrappers::TcpListenerStream;
 use tokio_util::codec::{Encoder as _, FramedRead};
 use wrpc_transport::{
-    Decode, Encode, FrameDecoder, FrameEncoder, FrameRef, Header, HeaderEncoder, HeaderReadError,
-    HeaderRef, invoke, serve,
+    Decode, Encode, FrameDecoder, FrameEncoder, FrameRef, Header, HeaderEncoder, HeaderRef, invoke,
+    serve,
 };
 
-/// Maximum number of invocations [`serve_until`] serves concurrently
-const MAX_INVOCATIONS: usize = 64;
+/// Maximum number of connections [`serve_until`] serves concurrently
+const MAX_CONNECTIONS: usize = 64;
 
-/// Polls `fut` to completion while accepting invocations from `incoming`, reading the header
-/// of each and polling the future `f` returns for it, then completes the served invocations.
-/// At most `MAX_INVOCATIONS` are served concurrently. Returns the first error.
-pub async fn serve_until<C, I, O, E, T, Fut>(
-    incoming: impl Stream<Item = Result<(C, O, I), E>>,
+/// Polls `fut` to completion while accepting connections on `lis` with `TCP_NODELAY` enabled and
+/// polling the future `f` returns for each, then completes the served connections. At most
+/// `MAX_CONNECTIONS` are served concurrently. Returns the first error.
+pub async fn serve_until<T, Fut>(
+    lis: TcpListener,
     fut: impl Future<Output = anyhow::Result<T>>,
-    mut f: impl FnMut(C, Header, O, FramedRead<I, FrameDecoder>) -> Fut,
+    mut f: impl FnMut(OwnedWriteHalf, OwnedReadHalf) -> Fut,
 ) -> anyhow::Result<T>
 where
-    I: AsyncRead + Unpin,
-    E: core::error::Error + Send + Sync + 'static,
     Fut: Future<Output = anyhow::Result<()>>,
 {
     let mut fut = pin!(fut);
-    let mut incoming = pin!(incoming);
-    let mut reading = FuturesUnordered::default();
     let mut served = FuturesUnordered::default();
     let res = poll_fn(|ctx| {
-        while reading.len().saturating_add(served.len()) < MAX_INVOCATIONS
-            && let Poll::Ready(Some(res)) = incoming.poll_next_unpin(ctx)
+        while served.len() < MAX_CONNECTIONS
+            && let Poll::Ready(res) = lis.poll_accept(ctx)
         {
-            let (cx, tx, rx) = res.context("failed to accept invocation")?;
-            reading.push(async move {
-                let (header, rx) = Header::read(rx).await?;
-                Ok::<_, HeaderReadError>((cx, header, tx, rx))
-            });
-        }
-        while let Poll::Ready(Some(res)) = reading.poll_next_unpin(ctx) {
-            let (cx, header, tx, rx) = res.context("failed to read invocation header")?;
-            served.push(f(cx, header, tx, rx));
+            let (stream, ..) = res.context("failed to accept connection")?;
+            stream
+                .set_nodelay(true)
+                .context("failed to set `TCP_NODELAY`")?;
+            let (rx, tx) = stream.into_split();
+            served.push(f(tx, rx));
         }
         while let Poll::Ready(Some(res)) = served.poll_next_unpin(ctx) {
             res?;

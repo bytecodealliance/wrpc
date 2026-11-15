@@ -17,7 +17,7 @@ default = ["wasmtime-wasi"]
 anyhow = { workspace = true, features = ["std"] }
 bytes = { workspace = true }
 futures = { workspace = true, features = ["alloc"] }
-tokio = { workspace = true, features = ["macros"] }
+tokio = { workspace = true, features = ["macros", "time"] }
 tokio-util = { workspace = true, features = ["codec", "io"] }
 tracing = { workspace = true, features = ["attributes"] }
 uuid = { workspace = true, features = ["std", "v7"] }
@@ -28,6 +28,6 @@ wrpc-transport = { workspace = true }
 
 [dev-dependencies]
 test-log = { workspace = true, features = ["trace"] }
-tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "rt-multi-thread"] }
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "rt-multi-thread", "time"] }
 wasmtime = { workspace = true, features = ["cranelift", "wat"] }
 wrpc-test = { workspace = true }

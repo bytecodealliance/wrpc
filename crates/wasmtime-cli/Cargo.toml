@@ -24,9 +24,7 @@ clap = { workspace = true, features = [
 futures = { workspace = true }
 humantime = { workspace = true }
 reqwest = { workspace = true }
-tokio = { workspace = true, features = ["fs", "macros", "net", "time"] }
-tokio-stream = { workspace = true, features = ["net"] }
-tokio-util = { workspace = true, features = ["codec"] }
+tokio = { workspace = true, features = ["fs", "macros", "net"] }
 tracing = { workspace = true, features = ["attributes"] }
 url = { workspace = true }
 wasi-preview1-component-adapter-provider = { workspace = true }
@@ -68,5 +66,4 @@ wasmtime-wasi = { workspace = true, features = ["p2", "p3"] }
 wasmtime-wasi-http = { workspace = true, features = ["default-send-request", "p2", "p3"] }
 wit-component = { workspace = true }
 wrpc-cli = { workspace = true }
-wrpc-transport = { workspace = true }
 wrpc-wasmtime = { workspace = true, features = ["wasmtime-wasi"] }

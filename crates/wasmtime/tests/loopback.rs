@@ -1,14 +1,16 @@
 use core::net::SocketAddr;
+use core::time::Duration;
 
 use anyhow::bail;
 use bytes::BytesMut;
 use futures::future::BoxFuture;
 use futures::stream::{self, BoxStream};
 use futures::{StreamExt as _, TryStreamExt as _};
-use tokio::io::AsyncWriteExt as _;
+use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::net::TcpListener;
 use tokio::sync::oneshot;
 use tokio::task::yield_now;
+use tokio::time::sleep;
 use tokio::{join, spawn, try_join};
 use tokio_util::codec::{Decoder as _, Encoder as _, FramedRead};
 use tracing::Instrument as _;
@@ -72,16 +74,7 @@ async fn serve<T>(
     exports: &SharedExports<Ctx>,
     fut: impl Future<Output = anyhow::Result<T>>,
 ) -> anyhow::Result<T> {
-    serve_until(wrpc_test::tcp_incoming(srv), fut, |cx, header, tx, rx| {
-        let res = exports.handle(cx, &header.instance, &header.name, tx, rx);
-        async move {
-            let Ok(fut) = res else {
-                bail!("unexpected invocation");
-            };
-            fut.await
-        }
-    })
-    .await
+    serve_until(srv, fut, |tx, rx| exports.serve(tx, rx, None)).await
 }
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
@@ -98,7 +91,7 @@ async fn shared_store_trap() -> anyhow::Result<()> {
 )"#,
         async |addr, srv, exports| {
             serve_until(
-                wrpc_test::tcp_incoming(srv),
+                srv,
                 async {
                     let (tx, rx) = wrpc_test::tcp_streams(addr).await?;
                     let res = invoke_blocking(
@@ -114,16 +107,10 @@ async fn shared_store_trap() -> anyhow::Result<()> {
                     res.expect_err("`run` invocation succeeded");
                     Ok(())
                 },
-                |cx, header, tx, rx| {
-                    let res = exports.handle(cx, &header.instance, &header.name, tx, rx);
-                    async move {
-                        let Ok(fut) = res else {
-                            bail!("unexpected invocation");
-                        };
-                        let res = fut.await;
-                        res.expect_err("`run` invocation succeeded");
-                        Ok(())
-                    }
+                |tx, rx| async {
+                    let res = exports.serve(tx, rx, None).await;
+                    res.expect_err("`run` invocation succeeded");
+                    Ok(())
                 },
             )
             .await
@@ -133,6 +120,24 @@ async fn shared_store_trap() -> anyhow::Result<()> {
     let err = res.expect_err("event loop succeeded");
     assert!(format!("{err:#}").contains("unreachable"), "{err:#}");
     Ok(())
+}
+
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+async fn idle_timeout() -> anyhow::Result<()> {
+    with_store("(component)", async |addr, srv, exports| {
+        serve_until(
+            srv,
+            async {
+                let (_tx, mut rx) = wrpc_test::tcp_streams(addr).await?;
+                let n = rx.read(&mut [0]).await?;
+                assert_eq!(n, 0);
+                Ok(())
+            },
+            |tx, rx| exports.serve(tx, rx, Some(Duration::from_millis(10))),
+        )
+        .await
+    })
+    .await
 }
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
@@ -234,10 +239,10 @@ async fn async_values() -> anyhow::Result<()> {
 )"#,
         async |addr, srv, exports| {
             serve(srv, exports, async {
-                let (tx, rx) = wrpc_test::tcp_streams(addr).await?;
+                let (mut tx, mut rx) = wrpc_test::tcp_streams(addr).await?;
                 let (((s, f, u),), io) = invoke(
-                    tx,
-                    rx,
+                    &mut tx,
+                    &mut rx,
                     "",
                     "run",
                     <(BoxStream<'static, Vec<u8>>, BoxFuture<'static, String>, BoxFuture<'static, ()>) as Encode>::Encoder::default(),
@@ -262,7 +267,6 @@ async fn async_values() -> anyhow::Result<()> {
                 assert_eq!(s.concat(), b"foobar");
                 assert_eq!(f, "baz");
 
-                let (tx, rx) = wrpc_test::tcp_streams(addr).await?;
                 let (((s, f),), io) = invoke(
                     tx,
                     rx,
@@ -353,35 +357,37 @@ async fn async_params_after_return() -> anyhow::Result<()> {
                     _ = rx.await;
                     b"foo".to_vec()
                 })) as BoxStream<'static, Vec<u8>>;
-                let ((), io) = {
-                    let (tx, rx) = wrpc_test::tcp_streams(addr).await?;
-                    invoke(
-                        tx,
-                        rx,
-                        "",
-                        "run",
-                        <(BoxStream<'static, Vec<u8>>,) as Encode>::Encoder::default(),
-                        (s,),
-                        <() as Decode>::Decoder::default(),
-                    )
-                    .await?
-                };
+                let (mut clt_tx, mut clt_rx) = wrpc_test::tcp_streams(addr).await?;
+                let ((), io) = invoke(
+                    &mut clt_tx,
+                    &mut clt_rx,
+                    "",
+                    "run",
+                    <(BoxStream<'static, Vec<u8>>,) as Encode>::Encoder::default(),
+                    (s,),
+                    <() as Decode>::Decoder::default(),
+                )
+                .await?;
                 _ = tx.send(());
                 io.await?;
 
-                let (tx, rx) = wrpc_test::tcp_streams(addr).await?;
-                let (n,) = invoke_blocking(
-                    tx,
-                    rx,
-                    "",
-                    "count",
-                    <() as Encode>::Encoder::default(),
-                    (),
-                    <(u32,) as Decode>::Decoder::default(),
-                )
-                .await?;
-                assert_eq!(n, 3);
-                Ok(())
+                for _ in 0..100 {
+                    let (n,) = invoke_blocking(
+                        &mut clt_tx,
+                        &mut clt_rx,
+                        "",
+                        "count",
+                        <() as Encode>::Encoder::default(),
+                        (),
+                        <(u32,) as Decode>::Decoder::default(),
+                    )
+                    .await?;
+                    if n == 3 {
+                        return Ok(());
+                    }
+                    sleep(Duration::from_millis(10)).await;
+                }
+                bail!("guest did not read the stream")
             })
             .await
         },
@@ -473,7 +479,7 @@ async fn unread_param() -> anyhow::Result<()> {
 )"#,
         async |addr, srv, exports| {
             serve_until(
-                wrpc_test::tcp_incoming(srv),
+                srv,
                 async {
                     let (tx, rx) = wrpc_test::tcp_streams(addr).await?;
                     let (returned_tx, returned_rx) = oneshot::channel();
@@ -495,16 +501,10 @@ async fn unread_param() -> anyhow::Result<()> {
                     _ = io.await;
                     Ok(())
                 },
-                |cx, header, tx, rx| {
-                    let res = exports.handle(cx, &header.instance, &header.name, tx, rx);
-                    async move {
-                        let Ok(fut) = res else {
-                            bail!("unexpected invocation");
-                        };
-                        let res = fut.await;
-                        res.expect_err("`run` invocation succeeded");
-                        Ok(())
-                    }
+                |tx, rx| async {
+                    let res = exports.serve(tx, rx, None).await;
+                    res.expect_err("`run` invocation succeeded");
+                    Ok(())
                 },
             )
             .await

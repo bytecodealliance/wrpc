@@ -4751,8 +4751,6 @@ dependencies = [
  "humantime",
  "reqwest",
  "tokio",
- "tokio-stream",
- "tokio-util",
  "tracing",
  "url",
  "wasi-preview1-component-adapter-provider",
@@ -4763,7 +4761,6 @@ dependencies = [
  "wasmtime-wasi-http",
  "wit-component 0.263.0",
  "wrpc-cli",
- "wrpc-transport",
  "wrpc-wasmtime",
 ]
 
