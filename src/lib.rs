@@ -8,12 +8,6 @@ pub mod transport {
 
     #[cfg(feature = "http")]
     pub use wrpc_http as http;
-
-    #[cfg(feature = "quic")]
-    pub use wrpc_quic as quic;
-
-    #[cfg(feature = "webtransport")]
-    pub use wrpc_webtransport as web;
 }
 
 /// wRPC runtime
