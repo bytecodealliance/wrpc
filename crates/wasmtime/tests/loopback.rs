@@ -1,27 +1,31 @@
 use core::net::SocketAddr;
+use core::time::Duration;
 
-use anyhow::bail;
+use anyhow::{Context as _, bail};
 use bytes::BytesMut;
 use futures::future::BoxFuture;
 use futures::stream::{self, BoxStream};
 use futures::{StreamExt as _, TryStreamExt as _};
 use tokio::io::AsyncWriteExt as _;
 use tokio::net::TcpListener;
+use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::sync::oneshot;
 use tokio::task::yield_now;
-use tokio::{join, spawn, try_join};
+use tokio::time::sleep;
+use tokio::{join, try_join};
 use tokio_util::codec::{Decoder as _, Encoder as _, FramedRead};
-use tracing::Instrument as _;
 use wasmtime::AsContextMut as _;
-use wasmtime::component::{Component, Linker, ResourceTable, Type, Val, types};
+use wasmtime::component::{
+    Accessor, Component, Instance, InstancePre, Linker, ResourceTable, Type, Val, types,
+};
 use wrpc_test::serve_until;
 use wrpc_transport::{
-    Decode, Encode, FrameDecoder, FrameEncoder, FrameRef, HeaderEncoder, HeaderRef, invoke,
-    invoke_blocking,
+    Decode, Encode, FrameDecoder, FrameEncoder, FrameRef, HeaderEncoder, HeaderRef, Listener,
+    invoke, invoke_blocking,
 };
 use wrpc_wasmtime::{
-    ResourceTypes, SharedExports, SharedResourceTable, SharedStore, ValDecoder, ValEncoder,
-    WrpcCtxView, WrpcView,
+    Exports, ResourceTypes, SharedResourceTable, ValDecoder, ValEncoder, WrpcCtxView, WrpcView,
+    call,
 };
 
 #[derive(Default)]
@@ -39,9 +43,15 @@ impl WrpcView for Ctx {
     }
 }
 
+struct Guest<'a> {
+    store: &'a Accessor<Ctx>,
+    instance: Instance,
+    exports: Exports,
+}
+
 async fn with_store(
     wat: &str,
-    f: impl AsyncFnOnce(SocketAddr, TcpListener, &SharedExports<Ctx>) -> anyhow::Result<()>,
+    f: impl AsyncFnOnce(SocketAddr, TcpListener, &Guest<'_>) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
     wrpc_test::serve_tcp(async |addr, srv| {
         let engine = wasmtime::Engine::default();
@@ -57,31 +67,115 @@ async fn with_store(
             .instantiate_async(&mut store, &component)
             .await
             .map_err(anyhow::Error::from)?;
-        let (store, event_loop) = SharedStore::new(store);
-        let event_loop = spawn(event_loop.in_current_span());
-        let exports = SharedExports::new(store, instance, &component, ResourceTypes::default())?;
-        f(addr, srv, &exports).await?;
-        drop(exports);
-        event_loop.await?
+        let exports = Exports::new(&component)?;
+        store
+            .run_concurrent(async |store| {
+                f(
+                    addr,
+                    srv,
+                    &Guest {
+                        store,
+                        instance,
+                        exports,
+                    },
+                )
+                .await
+            })
+            .await
+            .map_err(anyhow::Error::from)?
     })
     .await
 }
 
-async fn serve<T>(
-    srv: TcpListener,
-    exports: &SharedExports<Ctx>,
-    fut: impl Future<Output = anyhow::Result<T>>,
-) -> anyhow::Result<T> {
-    serve_until(wrpc_test::tcp_incoming(srv), fut, |cx, header, tx, rx| {
-        let res = exports.handle(cx, &header.instance, &header.name, tx, rx);
-        async move {
-            let Ok(fut) = res else {
-                bail!("unexpected invocation");
-            };
-            fut.await
-        }
+async fn serve_conn_shared(
+    guest: &Guest<'_>,
+    tx: OwnedWriteHalf,
+    rx: OwnedReadHalf,
+) -> anyhow::Result<()> {
+    let mut lis = Listener::new(tx, rx);
+    while let Some((header, tx, rx)) = lis.accept().await? {
+        let export = guest
+            .exports
+            .get(&header.instance, &header.name)
+            .context("function not exported")?;
+        let func = guest
+            .store
+            .with(|store| guest.instance.get_func(store, export.idx))
+            .context("function export not found")?;
+        call(
+            guest.store,
+            tx,
+            rx,
+            &ResourceTypes::default(),
+            &export.params,
+            &export.results,
+            func,
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+async fn with_pre(
+    wat: &str,
+    f: impl AsyncFnOnce(SocketAddr, TcpListener, &InstancePre<Ctx>, &Exports) -> anyhow::Result<()>,
+) -> anyhow::Result<()> {
+    wrpc_test::serve_tcp(async |addr, srv| {
+        let engine = wasmtime::Engine::default();
+        let component = Component::new(&engine, wat).map_err(anyhow::Error::from)?;
+        let pre = Linker::new(&engine)
+            .instantiate_pre(&component)
+            .map_err(anyhow::Error::from)?;
+        let exports = Exports::new(&component)?;
+        f(addr, srv, &pre, &exports).await
     })
     .await
+}
+
+async fn serve_conn(
+    pre: &InstancePre<Ctx>,
+    exports: &Exports,
+    tx: OwnedWriteHalf,
+    rx: OwnedReadHalf,
+) -> anyhow::Result<()> {
+    let mut lis = Listener::new(tx, rx);
+    while let Some((header, tx, rx)) = lis.accept().await? {
+        let export = exports
+            .get(&header.instance, &header.name)
+            .context("function not exported")?;
+        let mut store = wasmtime::Store::new(pre.engine(), Ctx::default());
+        let instance = pre
+            .instantiate_async(&mut store)
+            .await
+            .map_err(anyhow::Error::from)?;
+        let func = instance
+            .get_func(&mut store, export.idx)
+            .context("function export not found")?;
+        store
+            .run_concurrent(async |store| {
+                call(
+                    store,
+                    tx,
+                    rx,
+                    &ResourceTypes::default(),
+                    &export.params,
+                    &export.results,
+                    func,
+                )
+                .await
+            })
+            .await
+            .map_err(anyhow::Error::from)??;
+    }
+    Ok(())
+}
+
+async fn serve<T>(
+    srv: TcpListener,
+    guest: &Guest<'_>,
+    fut: impl Future<Output = anyhow::Result<T>>,
+) -> anyhow::Result<T> {
+    serve_until(srv, fut, |tx, rx| serve_conn_shared(guest, tx, rx)).await
 }
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
@@ -96,9 +190,9 @@ async fn shared_store_trap() -> anyhow::Result<()> {
   (core instance $i (instantiate $m))
   (func (export "run") (type $f) (canon lift (core func $i "run")))
 )"#,
-        async |addr, srv, exports| {
+        async |addr, srv, guest| {
             serve_until(
-                wrpc_test::tcp_incoming(srv),
+                srv,
                 async {
                     let (tx, rx) = wrpc_test::tcp_streams(addr).await?;
                     let res = invoke_blocking(
@@ -114,16 +208,10 @@ async fn shared_store_trap() -> anyhow::Result<()> {
                     res.expect_err("`run` invocation succeeded");
                     Ok(())
                 },
-                |cx, header, tx, rx| {
-                    let res = exports.handle(cx, &header.instance, &header.name, tx, rx);
-                    async move {
-                        let Ok(fut) = res else {
-                            bail!("unexpected invocation");
-                        };
-                        let res = fut.await;
-                        res.expect_err("`run` invocation succeeded");
-                        Ok(())
-                    }
+                |tx, rx| async {
+                    let res = serve_conn_shared(guest, tx, rx).await;
+                    res.expect_err("`run` invocation succeeded");
+                    Ok(())
                 },
             )
             .await
@@ -232,12 +320,12 @@ async fn async_values() -> anyhow::Result<()> {
   (func (export "gen") async (result $g)
     (canon lift (core func $i "gen") async (callback (core func $i "cb"))))
 )"#,
-        async |addr, srv, exports| {
-            serve(srv, exports, async {
-                let (tx, rx) = wrpc_test::tcp_streams(addr).await?;
+        async |addr, srv, guest| {
+            serve(srv, guest, async {
+                let (mut tx, mut rx) = wrpc_test::tcp_streams(addr).await?;
                 let (((s, f, u),), io) = invoke(
-                    tx,
-                    rx,
+                    &mut tx,
+                    &mut rx,
                     "",
                     "run",
                     <(BoxStream<'static, Vec<u8>>, BoxFuture<'static, String>, BoxFuture<'static, ()>) as Encode>::Encoder::default(),
@@ -262,7 +350,6 @@ async fn async_values() -> anyhow::Result<()> {
                 assert_eq!(s.concat(), b"foobar");
                 assert_eq!(f, "baz");
 
-                let (tx, rx) = wrpc_test::tcp_streams(addr).await?;
                 let (((s, f),), io) = invoke(
                     tx,
                     rx,
@@ -346,42 +433,44 @@ async fn async_params_after_return() -> anyhow::Result<()> {
     (canon lift (core func $i "run") async (callback (core func $i "cb"))))
   (func (export "count") (result u32) (canon lift (core func $i "count")))
 )"#,
-        async |addr, srv, exports| {
-            serve(srv, exports, async {
+        async |addr, srv, guest| {
+            serve(srv, guest, async {
                 let (tx, rx) = oneshot::channel();
                 let s = Box::pin(stream::once(async {
                     _ = rx.await;
                     b"foo".to_vec()
                 })) as BoxStream<'static, Vec<u8>>;
-                let ((), io) = {
-                    let (tx, rx) = wrpc_test::tcp_streams(addr).await?;
-                    invoke(
-                        tx,
-                        rx,
-                        "",
-                        "run",
-                        <(BoxStream<'static, Vec<u8>>,) as Encode>::Encoder::default(),
-                        (s,),
-                        <() as Decode>::Decoder::default(),
-                    )
-                    .await?
-                };
+                let (mut clt_tx, mut clt_rx) = wrpc_test::tcp_streams(addr).await?;
+                let ((), io) = invoke(
+                    &mut clt_tx,
+                    &mut clt_rx,
+                    "",
+                    "run",
+                    <(BoxStream<'static, Vec<u8>>,) as Encode>::Encoder::default(),
+                    (s,),
+                    <() as Decode>::Decoder::default(),
+                )
+                .await?;
                 _ = tx.send(());
                 io.await?;
 
-                let (tx, rx) = wrpc_test::tcp_streams(addr).await?;
-                let (n,) = invoke_blocking(
-                    tx,
-                    rx,
-                    "",
-                    "count",
-                    <() as Encode>::Encoder::default(),
-                    (),
-                    <(u32,) as Decode>::Decoder::default(),
-                )
-                .await?;
-                assert_eq!(n, 3);
-                Ok(())
+                for _ in 0..100 {
+                    let (n,) = invoke_blocking(
+                        &mut clt_tx,
+                        &mut clt_rx,
+                        "",
+                        "count",
+                        <() as Encode>::Encoder::default(),
+                        (),
+                        <(u32,) as Decode>::Decoder::default(),
+                    )
+                    .await?;
+                    if n == 3 {
+                        return Ok(());
+                    }
+                    sleep(Duration::from_millis(10)).await;
+                }
+                bail!("guest did not read the stream")
             })
             .await
         },
@@ -393,7 +482,7 @@ async fn async_params_after_return() -> anyhow::Result<()> {
 async fn params_byte_by_byte() -> anyhow::Result<()> {
     const VALUE: &[u8] = b"\x02\x03foo\x01\x07\x01\x02hi\x03\x03bar\x00\x00\x05\x00";
 
-    with_store(
+    with_pre(
         r#"
 (component
   (type $v' (variant (case "x" u32) (case "y" string)))
@@ -421,34 +510,38 @@ async fn params_byte_by_byte() -> anyhow::Result<()> {
   (func (export "echo") (param "x" $l) (result $l)
     (canon lift (core func $i "echo") (memory $memory) (realloc $realloc)))
 )"#,
-        async |addr, srv, exports| {
-            serve(srv, exports, async {
-                let (mut tx, rx) = wrpc_test::tcp_streams(addr).await?;
-                let mut buf = BytesMut::default();
-                HeaderEncoder.encode(
-                    HeaderRef {
-                        instance: "",
-                        name: "echo",
-                    },
-                    &mut buf,
-                )?;
-                tx.write_all(&buf).await?;
-                for data in VALUE.chunks(1).chain([&[][..]]) {
+        async |addr, srv, pre, exports| {
+            serve_until(
+                srv,
+                async {
+                    let (mut tx, rx) = wrpc_test::tcp_streams(addr).await?;
                     let mut buf = BytesMut::default();
-                    FrameEncoder.encode(FrameRef { path: &[], data }, &mut buf)?;
+                    HeaderEncoder.encode(
+                        HeaderRef {
+                            instance: "",
+                            name: "echo",
+                        },
+                        &mut buf,
+                    )?;
                     tx.write_all(&buf).await?;
-                    tx.flush().await?;
-                }
-                tx.shutdown().await?;
-                let mut rx = FramedRead::new(rx, FrameDecoder::default());
-                let mut buf = Vec::default();
-                while let Some(data) = rx.try_next().await? {
-                    assert!(rx.decoder().path().is_empty());
-                    buf.extend_from_slice(&data);
-                }
-                assert_eq!(buf, VALUE);
-                Ok(())
-            })
+                    for data in VALUE.chunks(1).chain([&[][..]]) {
+                        let mut buf = BytesMut::default();
+                        FrameEncoder.encode(FrameRef { path: &[], data }, &mut buf)?;
+                        tx.write_all(&buf).await?;
+                        tx.flush().await?;
+                    }
+                    tx.shutdown().await?;
+                    let mut rx = FramedRead::new(rx, FrameDecoder::default());
+                    let mut buf = Vec::default();
+                    while let Some(data) = rx.try_next().await? {
+                        assert!(rx.decoder().path().is_empty());
+                        buf.extend_from_slice(&data);
+                    }
+                    assert_eq!(buf, VALUE);
+                    Ok(())
+                },
+                |tx, rx| serve_conn(pre, exports, tx, rx),
+            )
             .await
         },
     )
@@ -457,7 +550,7 @@ async fn params_byte_by_byte() -> anyhow::Result<()> {
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn unread_param() -> anyhow::Result<()> {
-    with_store(
+    with_pre(
         r#"
 (component
   (type $s (stream u8))
@@ -471,9 +564,9 @@ async fn unread_param() -> anyhow::Result<()> {
     (export "stream.drop-readable" (func $stream.drop-readable))))))
   (func (export "run") (type $fn) (canon lift (core func $i "run")))
 )"#,
-        async |addr, srv, exports| {
+        async |addr, srv, pre, exports| {
             serve_until(
-                wrpc_test::tcp_incoming(srv),
+                srv,
                 async {
                     let (tx, rx) = wrpc_test::tcp_streams(addr).await?;
                     let (returned_tx, returned_rx) = oneshot::channel();
@@ -495,16 +588,10 @@ async fn unread_param() -> anyhow::Result<()> {
                     _ = io.await;
                     Ok(())
                 },
-                |cx, header, tx, rx| {
-                    let res = exports.handle(cx, &header.instance, &header.name, tx, rx);
-                    async move {
-                        let Ok(fut) = res else {
-                            bail!("unexpected invocation");
-                        };
-                        let res = fut.await;
-                        res.expect_err("`run` invocation succeeded");
-                        Ok(())
-                    }
+                |tx, rx| async {
+                    let res = serve_conn(pre, exports, tx, rx).await;
+                    res.expect_err("`run` invocation succeeded");
+                    Ok(())
                 },
             )
             .await

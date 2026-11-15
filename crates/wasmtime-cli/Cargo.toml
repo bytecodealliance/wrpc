@@ -21,12 +21,10 @@ clap = { workspace = true, features = [
     "suggestions",
     "usage",
 ] }
-futures = { workspace = true }
+futures = { workspace = true, features = ["alloc"] }
 humantime = { workspace = true }
 reqwest = { workspace = true }
-tokio = { workspace = true, features = ["fs", "macros", "net", "time"] }
-tokio-stream = { workspace = true, features = ["net"] }
-tokio-util = { workspace = true, features = ["codec"] }
+tokio = { workspace = true, features = ["fs", "macros", "net", "sync", "time"] }
 tracing = { workspace = true, features = ["attributes"] }
 url = { workspace = true }
 wasi-preview1-component-adapter-provider = { workspace = true }

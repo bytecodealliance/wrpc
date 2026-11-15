@@ -1,5 +1,12 @@
 #![allow(clippy::type_complexity)] // TODO: https://github.com/bytecodealliance/wrpc/issues/2
 
+//! wRPC integration for Wasmtime
+//!
+//! `call` serves an invocation by calling a component function export, which [`Exports`] looks up
+//! by the instance and function names of the invocation. The host owns stores and instances, for
+//! example, it instantiates the component for each invocation or serves all connections in one
+//! instance from a single `run_concurrent` event loop, which guest-exported resources require.
+
 use core::borrow::BorrowMut;
 use core::fmt;
 
@@ -19,10 +26,10 @@ use wasmtime::error::Context as _;
 use wrpc_transport::{FrameDecoder, serve};
 
 mod codec;
-mod serve;
+mod export;
 
 pub use codec::*;
-pub use serve::*;
+pub use export::*;
 
 // this returns the RPC name for a wasmtime function name.
 // Unfortunately, the [`types::ComponentFunc`] does not include the kind information and we want to
