@@ -1,32 +1,32 @@
 //! wRPC HTTP transport
 
-use core::pin::Pin;
+use core::pin::{Pin, pin};
 use core::task::{Context, Poll, ready};
 
 use bytes::{Bytes, BytesMut};
 use futures::stream::BoxStream;
-use futures::{Stream, StreamExt as _, TryStreamExt as _, stream};
+use futures::{StreamExt as _, TryStreamExt as _, stream};
 use http_body::Frame;
 use http_body_util::combinators::MapErr;
 use http_body_util::{BodyDataStream, BodyExt as _};
 use pin_project_lite::pin_project;
 use tokio::io::{AsyncReadExt as _, DuplexStream, duplex};
-use tokio::sync::mpsc;
 use tokio_util::io::{StreamReader, poll_read_buf};
 
 /// Body buffer size
 pub const DEFAULT_BODY_BUFFER_SIZE: usize = 8192;
 
-/// Reader of the data of a request body, see [Server]
-pub type IncomingBodyDataReader = StreamReader<
-    BodyDataStream<MapErr<hyper::body::Incoming, fn(hyper::Error) -> std::io::Error>>,
-    Bytes,
+/// Reader of the data of a request body, see [accept]
+pub type RequestBodyReader<T> = StreamReader<
+    BodyDataStream<MapErr<T, fn(<T as http_body::Body>::Error) -> std::io::Error>>,
+    <T as http_body::Body>::Data,
 >;
 
-/// Reader of the data of a response body, see [`data_reader_from_response`]
+/// Reader of the data of a response body, see [response]
 pub type ResponseBodyReader = StreamReader<BoxStream<'static, std::io::Result<Bytes>>, Bytes>;
 
 pin_project! {
+    /// Body streaming the data written to the [DuplexStream] returned by [`OutgoingBody::new`]
     #[project = OutgoingBodyProj]
     #[derive(Debug)]
     pub struct OutgoingBody {
@@ -37,6 +37,7 @@ pin_project! {
 }
 
 impl OutgoingBody {
+    /// Returns the body and the writer of its data
     #[must_use]
     pub fn new() -> (Self, DuplexStream) {
         let (rx, tx) = duplex(DEFAULT_BODY_BUFFER_SIZE);
@@ -70,55 +71,55 @@ impl http_body::Body for OutgoingBody {
     }
 }
 
-pub fn new_request(mut parts: http::request::Parts) -> (http::Request<OutgoingBody>, DuplexStream) {
-    let (rx, tx) = OutgoingBody::new();
+/// Accepts a wRPC request with `body`, returning the response to send without waiting for the
+/// request body, the response body writer and the request body reader
+///
+/// Read the request body to its end before dropping its reader: dropping it earlier may cancel
+/// the response before the peer received it.
+pub fn accept<T>(
+    body: T,
+) -> (
+    http::Response<OutgoingBody>,
+    DuplexStream,
+    RequestBodyReader<T>,
+)
+where
+    T: http_body::Body,
+    T::Error: Into<Box<dyn core::error::Error + Send + Sync>>,
+{
+    let rx = StreamReader::new(body.map_err(io_error as fn(_) -> _).into_data_stream());
+    let (body, tx) = OutgoingBody::new();
+    (http::Response::new(body), tx, rx)
+}
+
+/// Returns a wRPC request with `parts` and its body writer
+#[must_use]
+pub fn request(mut parts: http::request::Parts) -> (http::Request<OutgoingBody>, DuplexStream) {
+    let (body, tx) = OutgoingBody::new();
     parts.method = http::Method::POST;
-    (http::Request::from_parts(parts, rx), tx)
-}
-
-#[must_use]
-pub fn io_error_from_hyper(err: hyper::Error) -> std::io::Error {
-    if err.is_timeout() {
-        std::io::Error::new(std::io::ErrorKind::TimedOut, err)
-    } else {
-        std::io::Error::other(err)
-    }
-}
-
-pub fn data_stream_from_incoming(
-    body: hyper::body::Incoming,
-) -> BodyDataStream<MapErr<hyper::body::Incoming, impl FnMut(hyper::Error) -> std::io::Error>> {
-    body.map_err(io_error_from_hyper).into_data_stream()
-}
-
-#[must_use]
-pub fn data_reader_from_incoming(
-    body: hyper::body::Incoming,
-) -> StreamReader<
-    BodyDataStream<MapErr<hyper::body::Incoming, impl FnMut(hyper::Error) -> std::io::Error>>,
-    Bytes,
-> {
-    StreamReader::new(data_stream_from_incoming(body))
+    (http::Request::from_parts(parts, body), tx)
 }
 
 /// Returns a reader of the body of the response `res` resolves to.
 ///
-/// The response is awaited lazily, on first read, so that the request body
-/// can be completed independently of the response.
+/// The response is awaited on first read, so that the request body can be sent first.
 /// Response status codes other than 2xx surface as an [`std::io::Error`] on read, carrying the
 /// status and the first 4 KiB of the response body.
-pub fn data_reader_from_response<E>(
-    res: impl Future<Output = Result<http::Response<hyper::body::Incoming>, E>> + Send + 'static,
+pub fn response<T, E>(
+    res: impl Future<Output = Result<http::Response<T>, E>> + Send + 'static,
 ) -> ResponseBodyReader
 where
-    E: std::error::Error + Send + Sync + 'static,
+    T: http_body::Body<Data = Bytes> + Send + 'static,
+    T::Error: Into<Box<dyn core::error::Error + Send + Sync>>,
+    E: Into<Box<dyn core::error::Error + Send + Sync>>,
 {
     let body = stream::once(Box::pin(async move {
-        let res = res.await.map_err(std::io::Error::other)?;
+        let res = res.await.map_err(io_error)?;
         let (http::response::Parts { status, .. }, body) = res.into_parts();
+        let body = body.map_err(io_error).into_data_stream();
         if !status.is_success() {
             let mut buf = Vec::default();
-            let _ = data_reader_from_incoming(body)
+            let _ = pin!(StreamReader::new(body))
                 .take(4096)
                 .read_to_end(&mut buf)
                 .await;
@@ -131,72 +132,39 @@ where
                 )
             }));
         }
-        Ok(data_stream_from_incoming(body))
+        Ok(body)
     }))
     .try_flatten();
     StreamReader::new(body.boxed())
 }
 
-/// Creates a [Service], which passes each request to the [Server] as an invocation, waiting
-/// while `buffer` invocations are not yet accepted
+/// Serves wRPC requests on HTTP/2 connection `io`, calling `f` with the parts of each and the
+/// byte streams [accept] returns for its body
 ///
-/// # Panics
-///
-/// Panics if `buffer` is zero
-#[must_use]
-pub fn channel(buffer: usize) -> (Service, Server) {
-    let (tx, rx) = mpsc::channel(buffer);
-    (Service(tx), Server(rx))
+/// As with [accept], read each request body to its end before dropping its reader.
+#[cfg(feature = "server")]
+pub async fn serve<T>(
+    io: T,
+    f: impl Fn(http::request::Parts, DuplexStream, RequestBodyReader<hyper::body::Incoming>),
+) -> Result<(), hyper::Error>
+where
+    T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
+    hyper::server::conn::http2::Builder::new(hyper_util::rt::TokioExecutor::default())
+        .serve_connection(
+            hyper_util::rt::TokioIo::new(io),
+            hyper::service::service_fn(move |req| {
+                let (parts, body) = req.into_parts();
+                let (res, tx, rx) = accept(body);
+                f(parts, tx, rx);
+                core::future::ready(Ok::<_, core::convert::Infallible>(res))
+            }),
+        )
+        .await
 }
 
-/// [`hyper::service::Service`], which passes each request to the [Server] as an invocation,
-/// see [channel]
-#[derive(Clone, Debug)]
-pub struct Service(mpsc::Sender<(http::request::Parts, DuplexStream, IncomingBodyDataReader)>);
-
-impl hyper::service::Service<http::Request<hyper::body::Incoming>> for Service {
-    type Response = http::Response<OutgoingBody>;
-    type Error = std::io::Error;
-    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
-
-    fn call(&self, req: http::Request<hyper::body::Incoming>) -> Self::Future {
-        let (parts, body) = req.into_parts();
-        let body = body
-            .map_err(io_error_from_hyper as fn(_) -> _)
-            .into_data_stream();
-        let body = StreamReader::new(body);
-        let (rx, tx) = OutgoingBody::new();
-        let srv = self.0.clone();
-        Box::pin(async move {
-            if srv.send((parts, tx, body)).await.is_err() {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::BrokenPipe,
-                    "server dropped",
-                ));
-            }
-            Ok(http::Response::new(rx))
-        })
-    }
-}
-
-/// wRPC server, which yields the invocations passed to it by the [Service], see [channel].
-/// The stream ends once all [Service]s are dropped.
-#[derive(Debug)]
-pub struct Server(mpsc::Receiver<(http::request::Parts, DuplexStream, IncomingBodyDataReader)>);
-
-impl Stream for Server {
-    type Item = Result<
-        (http::request::Parts, DuplexStream, IncomingBodyDataReader),
-        core::convert::Infallible,
-    >;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        self.0.poll_recv(cx).map(|item| item.map(Ok))
-    }
-}
-
-/// Sends a wRPC invocation request with `parts` on `sender`, returning the request body writer
-/// and the response body reader
+/// Sends a wRPC request with `parts` on `sender`, returning the request body writer and the
+/// response body reader
 #[cfg(all(feature = "client", feature = "http2"))]
 #[tracing::instrument(level = "trace", skip_all)]
 pub async fn open(
@@ -204,22 +172,22 @@ pub async fn open(
     parts: http::request::Parts,
 ) -> Result<(DuplexStream, ResponseBodyReader), hyper::Error> {
     sender.ready().await?;
-    let (req, tx) = new_request(parts);
-    let rx = data_reader_from_response(sender.send_request(req));
+    let (req, tx) = request(parts);
+    let rx = response(sender.send_request(req));
     Ok((tx, rx))
 }
 
-/// Sends a wRPC invocation request with `parts` using `client`, returning the request body writer
-/// and the response body reader
-#[cfg(feature = "client-legacy")]
-pub fn open_pooled<C>(
-    client: &hyper_util::client::legacy::Client<C, OutgoingBody>,
-    parts: http::request::Parts,
-) -> (DuplexStream, ResponseBodyReader)
-where
-    C: hyper_util::client::legacy::connect::Connect + Clone + Send + Sync + 'static,
-{
-    let (req, tx) = new_request(parts);
-    let rx = data_reader_from_response(client.request(req));
-    (tx, rx)
+fn io_error(err: impl Into<Box<dyn core::error::Error + Send + Sync>>) -> std::io::Error {
+    let err = match err.into().downcast::<std::io::Error>() {
+        Ok(err) => return *err,
+        Err(err) => err,
+    };
+    #[cfg(any(feature = "client", feature = "server"))]
+    if err
+        .downcast_ref::<hyper::Error>()
+        .is_some_and(hyper::Error::is_timeout)
+    {
+        return std::io::Error::new(std::io::ErrorKind::TimedOut, err);
+    }
+    std::io::Error::other(err)
 }

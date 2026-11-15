@@ -1,25 +1,26 @@
 use core::time::Duration;
 
-use anyhow::{Context as _, anyhow};
+use anyhow::Context as _;
 use bytes::Bytes;
 use http_body_util::{BodyExt as _, Full};
+use hyper::server::conn::http2;
 use hyper::service::service_fn;
-use hyper_util::rt::TokioExecutor;
-use hyper_util::rt::tokio::WithHyperIo;
+use hyper_util::rt::{TokioExecutor, TokioIo};
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+use tokio::sync::mpsc;
 use tokio::{spawn, try_join};
 use wrpc_http::OutgoingBody;
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn http2() -> anyhow::Result<()> {
     wrpc_test::serve_http2(async |parts, sender, srv| {
-        let connect = || wrpc_http::open(sender.clone(), parts.clone());
-        let (tx, rx) = connect().await?;
+        let open = || wrpc_http::open(sender.clone(), parts.clone());
+        let (tx, rx) = open().await?;
         wrpc_test::assert_single_invocation(tx, rx, async || {
             wrpc_test::http_accept(&mut *srv).await
         })
         .await?;
-        wrpc_test::assert_invalid_data_resets(connect, async || {
+        wrpc_test::assert_invalid_data_resets(open, async || {
             wrpc_test::http_accept(&mut *srv).await
         })
         .await
@@ -30,27 +31,22 @@ async fn http2() -> anyhow::Result<()> {
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn pooling() -> anyhow::Result<()> {
     wrpc_test::with_http_pooling(|parts, clt, lis| async move {
-        let (svc, mut srv) = wrpc_http::channel(16);
+        let (tx, mut rx) = mpsc::channel(16);
         let accept = async {
             let (conn, addr) = lis.accept().await.context("failed to accept connection")?;
             assert!(addr.ip().is_loopback());
-            let conn = hyper_util::server::conn::auto::Builder::new(TokioExecutor::new())
-                .serve_connection(WithHyperIo::new(conn), svc)
-                .into_owned();
-            anyhow::Ok(spawn(conn))
+            anyhow::Ok(spawn(wrpc_test::serve_http1(conn, tx)))
         };
-        let (tx, rx) = wrpc_http::open_pooled(&clt, parts);
+        let (req, req_tx) = wrpc_http::request(parts);
+        let req_rx = wrpc_http::response(clt.request(req));
         let (conn, _) = try_join!(
             accept,
-            wrpc_test::assert_single_invocation(tx, rx, async || {
-                wrpc_test::http_accept(&mut srv).await
+            wrpc_test::assert_single_invocation(req_tx, req_rx, async || {
+                wrpc_test::http_accept(&mut rx).await
             })
         )?;
         drop(clt);
-        conn.await
-            .context("connection task panicked")?
-            .map_err(|err| anyhow!(err).context("failed to serve connection"))?;
-        Ok(())
+        conn.await.context("connection task panicked")?
     })
     .await
 }
@@ -63,7 +59,13 @@ async fn error_response() -> anyhow::Result<()> {
         *res.status_mut() = hyper::StatusCode::INTERNAL_SERVER_ERROR;
         anyhow::Ok(res)
     });
-    let fut = wrpc_test::with_http2(svc, |parts, sender| async move {
+    let serve = async |stream| {
+        http2::Builder::new(TokioExecutor::default())
+            .serve_connection(TokioIo::new(stream), svc)
+            .await
+            .context("failed to serve connection")
+    };
+    let fut = wrpc_test::with_http2(serve, |parts, sender| async move {
         let (mut tx, mut rx) = wrpc_http::open(sender, parts).await?;
         tx.shutdown().await?;
         drop(tx);

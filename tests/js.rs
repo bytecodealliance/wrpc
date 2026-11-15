@@ -8,7 +8,6 @@ use std::process::Stdio;
 use anyhow::{Context as _, bail, ensure};
 use bytes::BytesMut;
 use hyper::client::conn::http2;
-use hyper::server::conn::http1;
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use tempfile::{TempDir, tempdir};
 use tokio::io::{
@@ -16,6 +15,7 @@ use tokio::io::{
 };
 use tokio::net::TcpListener;
 use tokio::process::{Child, Command};
+use tokio::sync::mpsc;
 use tokio::time::timeout;
 use tokio::{select, spawn};
 use tokio_util::codec::Encoder as _;
@@ -225,21 +225,20 @@ async fn js_http_client() -> anyhow::Result<()> {
         .await
         .context("failed to start TCP listener")?;
     let addr = lis.local_addr().context("failed to get server address")?;
-    let (svc, mut srv) = wrpc_http::channel(16);
+    let (tx, mut rx) = mpsc::channel(16);
     let conns = spawn(async move {
         loop {
             let (stream, ..) = lis.accept().await.expect("failed to accept connection");
-            let svc = svc.clone();
+            let tx = tx.clone();
             spawn(async move {
-                http1::Builder::new()
-                    .serve_connection(TokioIo::new(stream), svc)
+                wrpc_test::serve_http1(stream, tx)
                     .await
                     .expect("failed to serve HTTP connection");
             });
         }
     });
     let res = serve_echo(
-        async || wrpc_test::http_accept(&mut srv).await,
+        async || wrpc_test::http_accept(&mut rx).await,
         &format!("http://{addr}"),
     )
     .await;

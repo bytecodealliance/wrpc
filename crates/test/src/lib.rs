@@ -490,23 +490,17 @@ where
 }
 
 #[cfg(feature = "http")]
-pub async fn with_http2<S, B, T, Fut>(
-    svc: S,
+pub async fn with_http2<B, T, Fut>(
+    serve: impl AsyncFnOnce(TcpStream) -> anyhow::Result<()>,
     f: impl FnOnce(http::request::Parts, hyper::client::conn::http2::SendRequest<B>) -> Fut,
 ) -> anyhow::Result<T>
 where
-    S: hyper::service::HttpService<hyper::body::Incoming> + Send,
-    S::ResBody: Send + 'static,
-    S::Future: Send + 'static,
-    <S::ResBody as hyper::body::Body>::Data: Send + 'static,
-    <S::ResBody as hyper::body::Body>::Error: Send + Sync + core::error::Error + 'static,
     B: hyper::body::Body + Send + Unpin + 'static,
     B::Data: Send + Sync + 'static,
     B::Error: Send + Sync + core::error::Error + 'static,
     Fut: Future<Output = anyhow::Result<T>>,
 {
     use hyper_util::rt::tokio::WithHyperIo;
-    let exe = hyper_util::rt::TokioExecutor::new();
 
     let lis = tcp_bind().await?;
     let addr = lis
@@ -516,18 +510,19 @@ where
     let ((sender, clt), (srv, addr)) = try_join!(
         async {
             let conn = tcp_connect(addr).await?;
-            hyper::client::conn::http2::handshake(exe.clone(), WithHyperIo::new(conn))
-                .await
-                .context("failed to establish HTTP/2 connection")
+            hyper::client::conn::http2::handshake(
+                hyper_util::rt::TokioExecutor::default(),
+                WithHyperIo::new(conn),
+            )
+            .await
+            .context("failed to establish HTTP/2 connection")
         },
         async { lis.accept().await.context("failed to accept connection") }
     )?;
     assert!(addr.ip().is_loopback());
 
     let (parts, ()) = http::Request::new(()).into_parts();
-    let mut srv = pin!(
-        hyper::server::conn::http2::Builder::new(exe).serve_connection(WithHyperIo::new(srv), svc)
-    );
+    let mut srv = pin!(serve(srv));
     let clt = async {
         clt.await.context("client connection failed")?;
         anyhow::Ok(core::future::pending().await)
@@ -535,7 +530,7 @@ where
     let res = tokio::select! {
         res = f(parts, sender) => res.context("closure failed")?,
         res = &mut srv => {
-            res.context("failed to serve connection")?;
+            res?;
             anyhow::bail!("server connection ended before the closure")
         }
         res = clt => res?,
@@ -576,15 +571,47 @@ where
     f(parts, clt, lis).await.context("closure failed")
 }
 
-/// Accepts a request from `srv`, returning the byte streams
+/// Receives the byte streams of a request from `rx`
 #[cfg(feature = "http")]
 pub async fn http_accept(
-    srv: &mut wrpc_http::Server,
-) -> std::io::Result<(tokio::io::DuplexStream, wrpc_http::IncomingBodyDataReader)> {
-    match srv.next().await {
-        Some(Ok((.., tx, rx))) => Ok((tx, rx)),
-        None => Err(std::io::ErrorKind::UnexpectedEof.into()),
-    }
+    rx: &mut tokio::sync::mpsc::Receiver<(
+        tokio::io::DuplexStream,
+        wrpc_http::RequestBodyReader<hyper::body::Incoming>,
+    )>,
+) -> std::io::Result<(
+    tokio::io::DuplexStream,
+    wrpc_http::RequestBodyReader<hyper::body::Incoming>,
+)> {
+    rx.recv()
+        .await
+        .ok_or_else(|| std::io::ErrorKind::UnexpectedEof.into())
+}
+
+/// Serves HTTP/1 connection `stream`, sending the byte streams of each request to `tx`
+#[cfg(feature = "http")]
+pub async fn serve_http1(
+    stream: TcpStream,
+    tx: tokio::sync::mpsc::Sender<(
+        tokio::io::DuplexStream,
+        wrpc_http::RequestBodyReader<hyper::body::Incoming>,
+    )>,
+) -> anyhow::Result<()> {
+    hyper::server::conn::http1::Builder::new()
+        .serve_connection(
+            hyper_util::rt::TokioIo::new(stream),
+            hyper::service::service_fn(move |req| {
+                let (res, body_tx, body_rx) = wrpc_http::accept(req.into_body());
+                let tx = tx.clone();
+                async move {
+                    tx.send((body_tx, body_rx))
+                        .await
+                        .map_err(|_| std::io::Error::from(std::io::ErrorKind::BrokenPipe))?;
+                    Ok::<_, std::io::Error>(res)
+                }
+            }),
+        )
+        .await
+        .context("failed to serve HTTP/1 connection")
 }
 
 #[cfg(feature = "http")]
@@ -592,12 +619,23 @@ pub async fn serve_http2<T>(
     f: impl AsyncFnOnce(
         http::request::Parts,
         hyper::client::conn::http2::SendRequest<wrpc_http::OutgoingBody>,
-        &mut wrpc_http::Server,
+        &mut tokio::sync::mpsc::Receiver<(
+            tokio::io::DuplexStream,
+            wrpc_http::RequestBodyReader<hyper::body::Incoming>,
+        )>,
     ) -> anyhow::Result<T>,
 ) -> anyhow::Result<T> {
-    let (svc, mut srv) = wrpc_http::channel(16);
-    with_http2(svc, |parts, sender| async move {
-        f(parts, sender, &mut srv).await
-    })
+    let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+    with_http2(
+        async |stream| {
+            wrpc_http::serve(stream, move |_, body_tx, body_rx| {
+                tx.try_send((body_tx, body_rx))
+                    .expect("failed to send request byte streams");
+            })
+            .await
+            .context("failed to serve HTTP/2 connection")
+        },
+        |parts, sender| async move { f(parts, sender, &mut rx).await },
+    )
     .await
 }
