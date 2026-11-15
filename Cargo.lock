@@ -1174,7 +1174,6 @@ dependencies = [
  "wasi 0.14.7+wasi-0.2.4",
  "wit-bindgen 0.60.0",
  "wit-bindgen-wrpc",
- "wrpc-transport",
 ]
 
 [[package]]
@@ -4651,7 +4650,6 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
- "wasi 0.14.7+wasi-0.2.4",
  "wasm-tokio",
  "wrpc-test",
 ]
