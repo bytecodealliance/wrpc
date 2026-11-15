@@ -38,7 +38,7 @@ pub struct ServeArgs {
 fn parse_env(s: &str) -> anyhow::Result<(Box<str>, Box<str>)> {
     let (key, val) = s
         .split_once('=')
-        .with_context(|| "invalid `--env` value `{s}`: expected `NAME=VALUE`")?;
+        .with_context(|| format!("invalid `--env` value `{s}`: expected `NAME=VALUE`"))?;
     Ok((key.into(), val.into()))
 }
 
