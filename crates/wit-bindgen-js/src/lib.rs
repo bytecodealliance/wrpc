@@ -1115,7 +1115,7 @@ impl WorldGenerator for JsWrpc {
         let m = mem::take(&mut self.world_module);
         let mut r#gen = self.module(self.world.clone(), m);
         if !self.exports.is_empty() {
-            r#gen.m.runtime.insert("accept");
+            r#gen.m.runtime.insert("serve");
             let mut params = vec!["transport".to_string()];
             r#gen.m.wrpc_types = true;
             let mut ts_params = vec!["transport: $wrpc.Transport".to_string()];
@@ -1142,18 +1142,13 @@ impl WorldGenerator for JsWrpc {
             );
             uwrite!(
                 r#gen.m.js,
-                "export async function serve({}) {{
-  const inv = await $accept(transport);
-  try {{
+                "export function serve({}) {{
+  return $serve(transport, async (inv) => {{
     switch (inv.instance) {{
 {cases}      default:
         throw new globalThis.Error(`unknown instance \\`${{inv.instance}}\\``);
     }}
-    await inv.finished;
-  }} catch (err) {{
-    inv.mux.abort(err);
-    throw err;
-  }}
+  }});
 }}
 ",
                 params.join(", ")
