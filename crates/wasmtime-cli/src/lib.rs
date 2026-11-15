@@ -1,35 +1,37 @@
-#![allow(clippy::type_complexity)]
-
-use core::pin::{Pin, pin};
+use core::future::poll_fn;
 use core::time::Duration;
 
 use std::sync::Arc;
 
 use anyhow::{Context as _, anyhow, bail};
 use clap::Parser;
-use futures::{Stream, StreamExt as _};
-use tokio::io::{AsyncRead, AsyncWrite};
+use futures::StreamExt as _;
+use futures::stream::FuturesUnordered;
+use tokio::net::TcpListener;
+use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::task::JoinSet;
-use tokio::{fs, select, spawn, time, try_join};
-use tokio_util::codec::FramedRead;
+use tokio::{fs, select, time};
 use tracing::{Instrument as _, error, info, instrument, warn};
 use url::Url;
 use wasi_preview1_component_adapter_provider::{
     WASI_SNAPSHOT_PREVIEW1_ADAPTER_NAME, WASI_SNAPSHOT_PREVIEW1_REACTOR_ADAPTER,
 };
-use wasmtime::component::{Component, InstancePre, Linker, ResourceTable, ResourceType};
+use wasmtime::component::{
+    Accessor, Component, Instance, InstancePre, Linker, ResourceTable, ResourceType,
+};
 use wasmtime::{Config, Engine, Memory, MemoryType, Store};
 use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpCtxView, WasiHttpView};
-use wrpc_transport::{FrameDecoder, Header};
+use wrpc_transport::Listener;
 use wrpc_wasmtime::{
-    InstancePreExports, ResourceTypes, SharedExports, SharedResourceTable, SharedStore,
-    WrpcCtxView, WrpcView, collect_component_resource_exports,
+    Exports, ResourceTypes, SharedResourceTable, WrpcCtxView, WrpcView, call,
+    collect_component_resource_exports,
 };
 
 mod tcp;
 
-const DEFAULT_TIMEOUT: &str = "10s";
+/// Maximum number of connections served concurrently
+const MAX_CONNECTIONS: usize = 1 << 10;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -208,122 +210,103 @@ fn new_store(
     )
 }
 
-#[instrument(level = "trace", skip_all, ret(level = "trace"))]
-async fn serve_exports<C, I, O, E>(
-    incoming: impl Stream<Item = Result<(C, O, I), E>>,
+async fn accept(lis: &TcpListener) -> std::io::Result<Listener<OwnedReadHalf, OwnedWriteHalf>> {
+    let (stream, addr) = lis.accept().await?;
+    info!(?addr, "accepted connection");
+    if let Err(err) = stream.set_nodelay(true) {
+        warn!(?err, "failed to set `TCP_NODELAY`");
+    }
+    let (rx, tx) = stream.into_split();
+    Ok(Listener::new(tx, rx))
+}
+
+async fn serve_conn(
+    mut lis: Listener<OwnedReadHalf, OwnedWriteHalf>,
     timeout: Duration,
-    event_loop: impl Future<Output = anyhow::Result<()>>,
-    handle: impl Fn(
-        C,
-        &str,
-        &str,
-        O,
-        FramedRead<I, FrameDecoder>,
-    ) -> Result<
-        Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send>>,
-        (C, O, FramedRead<I, FrameDecoder>),
-    > + Send
-    + Sync
-    + 'static,
-) -> anyhow::Result<()>
-where
-    C: Send + 'static,
-    I: AsyncRead + Send + Unpin + 'static,
-    O: AsyncWrite + Send + Unpin + 'static,
-    E: core::error::Error + Send + Sync + 'static,
-{
-    let serve = async move {
-        let handle = Arc::new(handle);
-        let mut incoming = pin!(incoming);
-        let mut tasks = JoinSet::default();
-        let mut done = false;
-        loop {
-            select! {
-                res = incoming.next(), if !done => match res {
-                    Some(Ok((cx, tx, rx))) => {
-                        let handle = Arc::clone(&handle);
-                        tasks.spawn(
-                            async move {
-                                let header = time::timeout(timeout, Header::read(rx)).await;
-                                let (Header { instance, name }, rx) = match header {
-                                    Ok(Ok(header)) => header,
-                                    Ok(Err(err)) => {
-                                        error!(?err, "failed to read invocation header");
-                                        return;
-                                    }
-                                    Err(..) => {
-                                        error!("timed out reading invocation header");
-                                        return;
-                                    }
-                                };
-                                match handle(cx, &instance, &name, tx, rx) {
-                                    Ok(fut) => {
-                                        info!("serving function invocation");
-                                        if let Err(err) = fut.await {
-                                            warn!(?err, "failed to serve function invocation");
-                                        } else {
-                                            info!("successfully served function invocation");
-                                        }
-                                    }
-                                    Err(..) => error!(
-                                        instance,
-                                        func = name,
-                                        "function is not exported"
-                                    ),
-                                }
-                            }
-                            .in_current_span(),
-                        );
-                    }
-                    Some(Err(err)) => error!(?err, "failed to accept invocation"),
-                    None => done = true,
-                },
-                Some(res) = tasks.join_next() => {
-                    if let Err(err) = res {
-                        error!(?err, "failed to join invocation task");
-                    }
-                }
-                else => return anyhow::Ok(()),
-            }
-        }
-    };
-    try_join!(serve, event_loop)?;
+    pre: &InstancePre<Ctx>,
+    envs: &[(Box<str>, Box<str>)],
+    exports: &Exports,
+    resources: &ResourceTypes,
+) -> anyhow::Result<()> {
+    while let Ok(next) = time::timeout(timeout, lis.accept()).await {
+        let Some((header, tx, rx)) = next.context("failed to read invocation header")? else {
+            break;
+        };
+        let export = exports
+            .get(&header.instance, &header.name)
+            .with_context(|| format!("`{}#{}` is not exported", header.instance, header.name))?;
+        let mut store = new_store(pre.engine(), envs.iter().map(|(k, v)| (k, v)));
+        let instance = pre
+            .instantiate_async(&mut store)
+            .await
+            .map_err(anyhow::Error::from)
+            .context("failed to instantiate component")?;
+        let func = instance
+            .get_func(&mut store, export.idx)
+            .context("function export not found")?;
+        store
+            .run_concurrent(async |store| {
+                call(
+                    store,
+                    tx,
+                    rx,
+                    resources,
+                    &export.params,
+                    &export.results,
+                    func,
+                )
+                .await?;
+                poll_fn(|cx| store.poll_no_interesting_tasks(cx)).await;
+                anyhow::Ok(())
+            })
+            .await
+            .map_err(anyhow::Error::from)
+            .context("failed to run concurrent event loop")??;
+    }
     Ok(())
 }
 
-#[instrument(level = "trace", skip(incoming), ret(level = "trace"))]
-pub async fn serve<C, I, O, E>(
-    incoming: impl Stream<Item = Result<(C, O, I), E>>,
+async fn serve_conn_shared(
+    store: &Accessor<Ctx>,
+    mut lis: Listener<OwnedReadHalf, OwnedWriteHalf>,
+    timeout: Duration,
+    instance: Instance,
+    exports: &Exports,
+    resources: &ResourceTypes,
+) -> anyhow::Result<()> {
+    while let Ok(next) = time::timeout(timeout, lis.accept()).await {
+        let Some((header, tx, rx)) = next.context("failed to read invocation header")? else {
+            break;
+        };
+        let export = exports
+            .get(&header.instance, &header.name)
+            .with_context(|| format!("`{}#{}` is not exported", header.instance, header.name))?;
+        let func = store
+            .with(|store| instance.get_func(store, export.idx))
+            .context("function export not found")?;
+        call(
+            store,
+            tx,
+            rx,
+            resources,
+            &export.params,
+            &export.results,
+            func,
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+#[instrument(level = "trace", skip(lis), ret(level = "trace"))]
+pub async fn serve(
+    lis: TcpListener,
     timeout: Duration,
     envs: Vec<(Box<str>, Box<str>)>,
     workload: &str,
-) -> anyhow::Result<()>
-where
-    C: Send + 'static,
-    I: AsyncRead + Send + Unpin + 'static,
-    O: AsyncWrite + Send + Unpin + 'static,
-    E: core::error::Error + Send + Sync + 'static,
-{
+) -> anyhow::Result<()> {
     let (pre, engine, guest_resources) = instantiate_pre(workload).await?;
-    if guest_resources.is_empty() {
-        let exports = InstancePreExports::new(
-            move || new_store(&engine, envs.iter().map(|(k, v)| (k, v))),
-            pre,
-        )?;
-        return serve_exports(
-            incoming,
-            timeout,
-            async { Ok(()) },
-            move |cx, instance, func, tx, rx| exports.handle(cx, instance, func, tx, rx),
-        )
-        .await;
-    }
-    let mut store = new_store(&engine, envs);
-    let instance = pre
-        .instantiate_async(&mut store)
-        .await
-        .map_err(anyhow::Error::from)
-        .context("failed to instantiate component")?;
+    let exports = Exports::new(pre.component())?;
     let resources = ResourceTypes {
         guest: guest_resources,
         io_streams: wrpc_wasmtime::wasi_io_stream_resources(
@@ -332,21 +315,68 @@ where
         )
         .into(),
     };
-    let (store, event_loop) = SharedStore::new(store);
-    let exports = SharedExports::new(store, instance, pre.component(), resources)?;
-    let event_loop = spawn(event_loop.in_current_span());
-    serve_exports(
-        incoming,
-        timeout,
-        async {
-            match event_loop.await {
-                Ok(res) => res,
-                Err(err) => Err(err).context("failed to join event loop"),
+    if resources.guest.is_empty() {
+        let envs = Arc::<[_]>::from(envs);
+        let exports = Arc::new(exports);
+        let mut tasks = JoinSet::default();
+        loop {
+            select! {
+                res = accept(&lis), if tasks.len() < MAX_CONNECTIONS => match res {
+                    Ok(conn) => {
+                        let pre = pre.clone();
+                        let envs = Arc::clone(&envs);
+                        let exports = Arc::clone(&exports);
+                        let resources = resources.clone();
+                        tasks.spawn(
+                            async move {
+                                let res =
+                                    serve_conn(conn, timeout, &pre, &envs, &exports, &resources)
+                                        .await;
+                                if let Err(err) = res {
+                                    warn!(?err, "failed to serve connection");
+                                }
+                            }
+                            .in_current_span(),
+                        );
+                    }
+                    Err(err) => error!(?err, "failed to accept connection"),
+                },
+                Some(res) = tasks.join_next() => {
+                    if let Err(err) = res {
+                        error!(?err, "failed to join connection task");
+                    }
+                }
             }
-        },
-        move |cx, instance, func, tx, rx| exports.handle(cx, instance, func, tx, rx),
-    )
-    .await
+        }
+    }
+    let mut store = new_store(&engine, envs);
+    let instance = pre
+        .instantiate_async(&mut store)
+        .await
+        .map_err(anyhow::Error::from)
+        .context("failed to instantiate component")?;
+    store
+        .run_concurrent(async |store| {
+            let mut conns = FuturesUnordered::default();
+            loop {
+                select! {
+                    res = accept(&lis), if conns.len() < MAX_CONNECTIONS => match res {
+                        Ok(conn) => conns.push(serve_conn_shared(
+                            store, conn, timeout, instance, &exports, &resources,
+                        )),
+                        Err(err) => error!(?err, "failed to accept connection"),
+                    },
+                    Some(res) = conns.next() => {
+                        if let Err(err) = res {
+                            warn!(?err, "failed to serve connection");
+                        }
+                    }
+                }
+            }
+        })
+        .await
+        .map_err(anyhow::Error::from)
+        .context("failed to run concurrent event loop")
 }
 
 #[instrument(level = "trace", ret(level = "trace"))]
@@ -354,24 +384,5 @@ pub async fn run() -> anyhow::Result<()> {
     wrpc_cli::tracing::init();
     match Command::parse() {
         Command::Tcp(args) => tcp::run(args).await,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use futures::stream;
-    use tokio::io::{empty, sink};
-
-    use super::*;
-
-    #[tokio::test]
-    async fn serve_exports_ends() -> anyhow::Result<()> {
-        serve_exports(
-            stream::iter([Ok::<_, std::io::Error>(((), sink(), empty()))]),
-            Duration::from_secs(1),
-            async { Ok(()) },
-            |cx, _, _, tx, rx| Err((cx, tx, rx)),
-        )
-        .await
     }
 }

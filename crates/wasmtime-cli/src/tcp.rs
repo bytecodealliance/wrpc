@@ -1,10 +1,10 @@
 use anyhow::Context as _;
 use clap::Parser;
-use futures::StreamExt as _;
-use tokio_stream::wrappers::TcpListenerStream;
 use tracing::instrument;
 
 pub const DEFAULT_ADDR: &str = "[::1]:7761";
+
+const DEFAULT_TIMEOUT: &str = "10s";
 
 /// TCP transport
 #[derive(Parser, Debug)]
@@ -15,8 +15,8 @@ pub enum Command {
 /// Serve a reactor component
 #[derive(Parser, Debug)]
 pub struct ServeArgs {
-    /// Limit on how long an accepted connection may take to send its invocation header
-    #[arg(long, default_value = crate::DEFAULT_TIMEOUT)]
+    /// Limit on how long a connection may stay idle waiting for its next invocation header
+    #[arg(long, default_value = DEFAULT_TIMEOUT)]
     timeout: humantime::Duration,
 
     /// Address to listen for export invocations on
@@ -50,13 +50,7 @@ pub async fn handle_serve(
     let lis = tokio::net::TcpListener::bind(&export)
         .await
         .with_context(|| format!("failed to bind TCP listener on `{export}`"))?;
-    let incoming = TcpListenerStream::new(lis).map(|res| {
-        let stream = res?;
-        stream.set_nodelay(true)?;
-        let (rx, tx) = stream.into_split();
-        std::io::Result::Ok(((), tx, rx))
-    });
-    crate::serve(incoming, *timeout, envs, workload).await
+    crate::serve(lis, *timeout, envs, workload).await
 }
 
 #[instrument(level = "trace", ret(level = "trace"))]
