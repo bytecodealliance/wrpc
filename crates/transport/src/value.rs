@@ -559,6 +559,42 @@ where
     }
 }
 
+/// Codec of encoded values without asynchronous values nested in them
+///
+/// Decodes all data of a path once it is closed.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct RawCodec;
+
+impl Transmit for RawCodec {
+    sync_transmit!();
+}
+
+impl Receive for RawCodec {
+    sync_receive!();
+}
+
+impl<T: AsRef<[u8]>> tokio_util::codec::Encoder<T> for RawCodec {
+    type Error = std::io::Error;
+
+    fn encode(&mut self, item: T, dst: &mut BytesMut) -> Result<(), Self::Error> {
+        dst.extend_from_slice(item.as_ref());
+        Ok(())
+    }
+}
+
+impl tokio_util::codec::Decoder for RawCodec {
+    type Item = Bytes;
+    type Error = std::io::Error;
+
+    fn decode(&mut self, _src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+        Ok(None)
+    }
+
+    fn decode_eof(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+        Ok(Some(src.split().freeze()))
+    }
+}
+
 /// Defines value encoding
 pub trait Encode: Sized {
     /// Encoder used to encode the value

@@ -223,10 +223,10 @@ mod tests {
     use futures::stream::BoxStream;
     use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _, duplex};
     use tokio::try_join;
-    use tokio_util::codec::{BytesCodec, FramedRead};
+    use tokio_util::codec::FramedRead;
 
     use super::*;
-    use crate::{Decode, SyncCodec};
+    use crate::{Decode, RawCodec};
 
     fn frame(path: &[usize], data: &[u8]) -> Vec<u8> {
         let mut buf = BytesMut::default();
@@ -265,6 +265,15 @@ mod tests {
     }
 
     #[test_log::test(tokio::test)]
+    async fn ingress_raw() {
+        let frames = [frame(&[], b"foo"), frame(&[], b"bar"), frame(&[], b"")].concat();
+        let rx = FramedRead::new(frames.as_slice(), FrameDecoder::default());
+        let (buf, rx) = receive(RawCodec, rx).await.unwrap();
+        rx.await.unwrap();
+        assert_eq!(buf, b"foobar".as_slice());
+    }
+
+    #[test_log::test(tokio::test)]
     async fn ingress_rejects_invalid_frames() {
         let root = [frame(&[], b"\0"), frame(&[], b"")].concat();
         for (frames, kind) in [
@@ -293,12 +302,7 @@ mod tests {
     async fn egress_partial_writes() {
         let data: Bytes = (0..1 << 18).map(|i: usize| i.to_le_bytes()[0]).collect();
         let (tx, rx) = duplex(1000);
-        let tx = transmit(
-            SyncCodec(BytesCodec::default()),
-            FramedWrite::new(tx, FrameEncoder),
-            data.clone(),
-        )
-        .unwrap();
+        let tx = transmit(RawCodec, FramedWrite::new(tx, FrameEncoder), data.clone()).unwrap();
         let (chunks, ()) = try_join!(
             FramedRead::new(rx, FrameDecoder::default()).try_collect::<Vec<_>>(),
             tx
@@ -317,7 +321,7 @@ mod tests {
     async fn egress_keeps_stream() {
         let (mut tx, mut rx) = duplex(16);
         let fut = transmit(
-            SyncCodec(BytesCodec::default()),
+            RawCodec,
             FramedWrite::new(&mut tx, FrameEncoder),
             Bytes::default(),
         )
