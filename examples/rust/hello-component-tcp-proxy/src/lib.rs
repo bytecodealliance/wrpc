@@ -1,5 +1,8 @@
 use clap::Parser;
 
+#[cfg(target_family = "wasm")]
+mod tcp;
+
 mod bindings {
     use crate::Handler;
 
@@ -73,7 +76,7 @@ async fn invoke(addr: &str) -> String {
     use tokio::sync::mpsc::error::TryRecvError;
 
     let (pollables_tx, mut pollables_rx) = tokio::sync::mpsc::unbounded_channel();
-    let (tx, rx) = wrpc_transport::tcp::connect(
+    let (tx, rx) = tcp::connect(
         &wasi::sockets::instance_network::instance_network(),
         addr,
         pollables_tx,

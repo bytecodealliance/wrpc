@@ -25,8 +25,6 @@
 //! the peer.
 
 pub mod frame;
-#[cfg(all(target_family = "wasm", feature = "wasi"))]
-pub mod tcp;
 
 mod header;
 mod invoke;

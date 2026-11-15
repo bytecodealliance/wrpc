@@ -14,7 +14,6 @@ default = ["fs", "net", "io-std"]
 fs = ["tokio/fs"]
 net = ["tokio/net", "wrpc-test/net"]
 io-std = ["tokio/io-std"]
-wasi = ["dep:anyhow", "dep:wasi"]
 
 [dependencies]
 bytes = { workspace = true }
@@ -24,10 +23,6 @@ tokio = { workspace = true }
 tokio-util = { workspace = true, features = ["codec", "io"] }
 tracing = { workspace = true, features = ["attributes"] }
 wasm-tokio = { workspace = true, features = ["tracing"] }
-
-[target.'cfg(target_family = "wasm")'.dependencies]
-anyhow = { workspace = true, features = ["std"], optional = true }
-wasi = { workspace = true, features = ["std"], optional = true }
 
 [dev-dependencies]
 anyhow = { workspace = true, features = ["std"] }
