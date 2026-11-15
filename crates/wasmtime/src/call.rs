@@ -53,7 +53,7 @@ impl fmt::Display for CallError {
 /// using [`wasmtime::Store::run_concurrent`].
 pub async fn call<T, R, I, O>(
     store: &Accessor<T>,
-    srv: Server<TupleEncoder<'_, &Accessor<T>>, TupleDecoder<'_, &Accessor<T>>>,
+    srv: Server<TupleEncoder<&Accessor<T>>, TupleDecoder<&Accessor<T>>>,
     tx: O,
     rx: R,
     func: Func,

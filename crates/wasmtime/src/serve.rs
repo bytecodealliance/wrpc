@@ -135,8 +135,8 @@ impl<T: Send + 'static> SharedStore<T> {
 
 struct Export {
     idx: ComponentExportIndex,
-    params: Box<[Type]>,
-    results: Box<[Type]>,
+    params: Arc<[Type]>,
+    results: Arc<[Type]>,
 }
 
 fn exports(
@@ -152,7 +152,7 @@ fn exports(
         let idx = component
             .get_export_index(instance_idx, name)
             .with_context(|| format!("export `{name}` not found"))?;
-        let params: Box<[_]> = ty.params().map(|(.., ty)| ty).collect();
+        let params: Arc<[_]> = ty.params().map(|(.., ty)| ty).collect();
         debug!(instance, name, "serving function export");
         exports.entry(instance.into()).or_default().insert(
             rpc_func_name(name).into(),
@@ -307,8 +307,16 @@ where
                 store
                     .run_concurrent(async |store| {
                         let srv = Server {
-                            enc: TupleEncoder::new(store, &export.results, self.resources.clone()),
-                            dec: TupleDecoder::new(store, &export.params, self.resources.clone()),
+                            enc: TupleEncoder::new(
+                                store,
+                                Arc::clone(&export.results),
+                                self.resources.clone(),
+                            ),
+                            dec: TupleDecoder::new(
+                                store,
+                                Arc::clone(&export.params),
+                                self.resources.clone(),
+                            ),
                         };
                         let res = call(store, srv, &mut tx, &mut frames, func).await;
                         if res.is_ok() {
@@ -387,8 +395,16 @@ where
                                 .with(|store| instance.get_func(store, export.idx))
                                 .context("function export not found")?;
                             let srv = Server {
-                                enc: TupleEncoder::new(store, &export.results, resources.clone()),
-                                dec: TupleDecoder::new(store, &export.params, resources),
+                                enc: TupleEncoder::new(
+                                    store,
+                                    Arc::clone(&export.results),
+                                    resources.clone(),
+                                ),
+                                dec: TupleDecoder::new(
+                                    store,
+                                    Arc::clone(&export.params),
+                                    resources,
+                                ),
                             };
                             call(store, srv, &mut tx, &mut frames, func).await?;
                             Ok((tx, frames))
