@@ -441,7 +441,7 @@ with: {{\n\t{with_name:?}: generate\n}}
     /// Generates `handle` and `serve` functions for the `world_id` specified.
     ///
     /// `handle` chains the `handle_interface` functions collected in
-    /// `self.export_paths` prior and `serve` dispatches accepted invocations.
+    /// `self.export_paths` prior and `serve` serves the invocations of a connection.
     fn finish_serve_function(&mut self) {
         if self.export_paths.is_empty() {
             return;
@@ -506,38 +506,33 @@ where
             r#"
 }}
 
-pub fn serve<'a, C, I, O, E, H>(
-    incoming: impl {futures}::Stream<Item = ::core::result::Result<(C, O, I), E>>,
-    handler: H,
-) -> impl {futures}::Stream<
-        Item = ::core::result::Result<
-            impl ::core::future::Future<Output = {anyhow}::Result<()>> + ::core::marker::Send + 'a,
-            E,
-        >,
-    >
+pub async fn serve<C, I, O, H>(cx: C, mut tx: O, rx: I, handler: H) -> {anyhow}::Result<()>
 where
-    C: ::core::marker::Send + 'a,
-    I: {tokio}::io::AsyncRead + ::core::marker::Send + ::core::marker::Unpin + 'a,
-    O: {tokio}::io::AsyncWrite + ::core::marker::Send + ::core::marker::Unpin + 'a,
+    C: ::core::clone::Clone + ::core::marker::Send,
+    I: {tokio}::io::AsyncRead + ::core::marker::Send + ::core::marker::Unpin,
+    O: {tokio}::io::AsyncWrite + ::core::marker::Send + ::core::marker::Unpin,
     H: {bound} + ::core::marker::Send + ::core::marker::Sync + ::core::clone::Clone + 'static,
 {{
-    {futures}::StreamExt::map(incoming, move |res| {{
-        res.map(|(cx, tx, rx)| {{
-            let handler = handler.clone();
-            async move {{
-                let ({wrpc_transport}::Header {{ instance, name }}, rx) = {anyhow}::Context::context(
-                    {wrpc_transport}::HeaderDecoder::new({max_instance_len}, {max_func_len}).read(rx).await,
-                    "failed to read invocation header",
-                )?;
-                match handle(&handler, cx, &instance, &name, tx, rx) {{
-                    ::core::result::Result::Ok(fut) => fut.await,
-                    ::core::result::Result::Err(..) => {anyhow}::bail!(
-                        "`{{instance}}#{{name}}` is not exported",
-                    ),
-                }}
-            }}
-        }})
-    }})
+    let mut rx = {tokio_util}::codec::FramedRead::new(
+        rx,
+        {wrpc_transport}::HeaderDecoder::new({max_instance_len}, {max_func_len}),
+    );
+    loop {{
+        let ::core::option::Option::Some({wrpc_transport}::Header {{ instance, name }}) = {anyhow}::Context::context(
+            {futures}::TryStreamExt::try_next(&mut rx).await,
+            "failed to read invocation header",
+        )? else {{
+            return ::core::result::Result::Ok(());
+        }};
+        let mut frames = rx.map_decoder(|_| {wrpc_transport}::FrameDecoder::default());
+        match handle(&handler, cx.clone(), &instance, &name, &mut tx, &mut frames) {{
+            ::core::result::Result::Ok(fut) => fut.await?,
+            ::core::result::Result::Err(..) => {anyhow}::bail!(
+                "`{{instance}}#{{name}}` is not exported",
+            ),
+        }}
+        rx = frames.map_decoder(|_| {wrpc_transport}::HeaderDecoder::new({max_instance_len}, {max_func_len}));
+    }}
 }}"#
         );
     }

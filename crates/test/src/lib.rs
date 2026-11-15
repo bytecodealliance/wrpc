@@ -7,7 +7,7 @@ use core::time::Duration;
 use anyhow::{Context, ensure};
 use bytes::{Bytes, BytesMut};
 use futures::stream::{self, BoxStream, FuturesUnordered};
-use futures::{Stream, StreamExt as _, TryStreamExt as _};
+use futures::{StreamExt as _, TryStreamExt as _};
 use rcgen::{CertifiedKey, generate_simple_self_signed};
 use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
 use rustls::version::TLS13;
@@ -17,11 +17,10 @@ use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::{TcpListener, TcpStream, ToSocketAddrs};
 use tokio::time::timeout;
 use tokio::try_join;
-use tokio_stream::wrappers::TcpListenerStream;
 use tokio_util::codec::{Encoder as _, FramedRead};
 use wrpc_transport::{
-    Decode, Encode, FrameDecoder, FrameEncoder, FrameRef, Header, HeaderEncoder, HeaderRef, invoke,
-    serve,
+    Decode, Encode, FrameDecoder, FrameEncoder, FrameRef, Header, HeaderDecoder, HeaderEncoder,
+    HeaderRef, invoke, serve,
 };
 
 /// Maximum number of connections [`serve_until`] serves concurrently
@@ -62,29 +61,29 @@ where
     Ok(res)
 }
 
-/// Accepts an invocation of function `func` on instance `instance` from `incoming`, returning
-/// its context, outgoing byte stream and the frames following the header
-pub async fn accept_invocation<C, I, O, E>(
-    incoming: &mut (impl Stream<Item = Result<(C, O, I), E>> + Unpin),
+/// Reads the header of the next invocation from `rx`, ensures that it invokes function `func` on
+/// instance `instance` and returns the frames following it
+pub async fn read_invocation<I>(
+    mut rx: FramedRead<I, HeaderDecoder>,
     instance: &str,
     func: &str,
-) -> anyhow::Result<(C, O, FramedRead<I, FrameDecoder>)>
+) -> anyhow::Result<FramedRead<I, FrameDecoder>>
 where
     I: AsyncRead + Unpin,
-    E: core::error::Error + Send + Sync + 'static,
 {
-    let res = incoming.next().await.context("invocation stream ended")?;
-    let (cx, tx, rx) = res.context("failed to accept invocation")?;
-    let (header, rx) = Header::read(rx)
+    let header = rx
+        .try_next()
         .await
         .context("failed to read invocation header")?;
+    let Header {
+        instance: inst,
+        name,
+    } = header.context("byte stream ended")?;
     ensure!(
-        header.instance == instance && header.name == func,
-        "unexpected invocation of `{}.{}`",
-        header.instance,
-        header.name,
+        inst == instance && name == func,
+        "unexpected invocation of `{inst}.{name}`",
     );
-    Ok((cx, tx, rx))
+    Ok(rx.map_decoder(|_| FrameDecoder::default()))
 }
 
 /// Reads `rx` to EOF, ensuring that no frames are left
@@ -139,34 +138,25 @@ pub async fn unix_streams(
     Ok((tx, rx))
 }
 
-/// Returns the stream of invocations accepted on `lis`, each carried by one connection with
-/// `TCP_NODELAY` enabled
-pub fn tcp_incoming(
-    lis: TcpListener,
-) -> impl Stream<Item = std::io::Result<((), OwnedWriteHalf, OwnedReadHalf)>> + Unpin {
-    TcpListenerStream::new(lis).map(|res| {
-        let stream = res?;
-        stream.set_nodelay(true)?;
-        let (rx, tx) = stream.into_split();
-        Ok(((), tx, rx))
-    })
+/// Accepts a connection on `lis` with `TCP_NODELAY` enabled, returning the byte streams
+pub async fn tcp_accept(lis: &TcpListener) -> std::io::Result<(OwnedWriteHalf, OwnedReadHalf)> {
+    let (stream, ..) = lis.accept().await?;
+    stream.set_nodelay(true)?;
+    let (rx, tx) = stream.into_split();
+    Ok((tx, rx))
 }
 
-/// Returns the stream of invocations accepted on `lis`, each carried by one connection
+/// Accepts a connection on `lis`, returning the byte streams
 #[cfg(unix)]
-pub fn unix_incoming(
-    lis: tokio::net::UnixListener,
-) -> impl Stream<
-    Item = std::io::Result<(
-        (),
-        tokio::net::unix::OwnedWriteHalf,
-        tokio::net::unix::OwnedReadHalf,
-    )>,
-> + Unpin {
-    tokio_stream::wrappers::UnixListenerStream::new(lis).map_ok(|stream| {
-        let (rx, tx) = stream.into_split();
-        ((), tx, rx)
-    })
+pub async fn unix_accept(
+    lis: &tokio::net::UnixListener,
+) -> std::io::Result<(
+    tokio::net::unix::OwnedWriteHalf,
+    tokio::net::unix::OwnedReadHalf,
+)> {
+    let (stream, ..) = lis.accept().await?;
+    let (rx, tx) = stream.into_split();
+    Ok((tx, rx))
 }
 
 pub async fn tcp_bind() -> anyhow::Result<TcpListener> {
@@ -191,23 +181,21 @@ pub async fn free_port() -> anyhow::Result<u16> {
 
 /// A common single-invocation test used by different transport implementations.
 ///
-/// The invocation is accepted from `srv`.
-pub async fn assert_single_invocation<CI, CO, CE, C, I, O, E>(
-    connect: impl AsyncFn() -> Result<(CO, CI), CE>,
-    srv: impl Stream<Item = Result<(C, O, I), E>>,
-) -> anyhow::Result<C>
+/// The invocation is made on `tx` and `rx` and accepted using `accept`.
+pub async fn assert_single_invocation<CI, CO, I, O, E>(
+    tx: CO,
+    rx: CI,
+    accept: impl AsyncFnOnce() -> Result<(O, I), E>,
+) -> anyhow::Result<()>
 where
     CI: AsyncRead + Send + Unpin,
     CO: AsyncWrite + Send + Unpin,
-    CE: core::error::Error + Send + Sync + 'static,
     I: AsyncRead + Send + Unpin + 'static,
     O: AsyncWrite + Send + Unpin + 'static,
     E: core::error::Error + Send + Sync + 'static,
 {
-    let mut srv = pin!(srv);
-    let ((), cx) = try_join!(
+    try_join!(
         async {
-            let (tx, rx) = connect().await.context("failed to connect")?;
             let s: BoxStream<'static, Bytes> =
                 Box::pin(stream::iter([Bytes::from_static(b"client->server")]));
             let ((results, s), io) = invoke(
@@ -230,7 +218,10 @@ where
             anyhow::Ok(())
         },
         async {
-            let (cx, tx, mut frames) = accept_invocation(&mut srv, "foo", "bar").await?;
+            let (tx, rx) = accept().await.context("failed to accept")?;
+            let mut frames =
+                read_invocation(FramedRead::new(rx, HeaderDecoder::default()), "foo", "bar")
+                    .await?;
             let (params, outgoing) = serve(
                 tx,
                 &mut frames,
@@ -255,20 +246,20 @@ where
             )?;
             assert_eq!(buf, b"client->server");
             read_eof(&mut frames).await?;
-            anyhow::Ok(cx)
+            anyhow::Ok(())
         },
     )?;
-    Ok(cx)
+    Ok(())
 }
 
 /// A common test used by different transport implementations, which checks that invalid data
 /// fails ingress of a server and a client, and that dropping the failed side ends the invocation
 /// for the peer.
 ///
-/// The invocations are accepted from `srv`.
-pub async fn assert_invalid_data_resets<CI, CO, CE, C, I, O, E>(
+/// The invocations are accepted using `accept`.
+pub async fn assert_invalid_data_resets<CI, CO, CE, I, O, E>(
     connect: impl AsyncFn() -> Result<(CO, CI), CE>,
-    srv: impl Stream<Item = Result<(C, O, I), E>>,
+    mut accept: impl AsyncFnMut() -> Result<(O, I), E>,
 ) -> anyhow::Result<()>
 where
     CI: AsyncRead + Send + Unpin,
@@ -289,7 +280,6 @@ where
         )
         .context("failed to encode invalid frame")?;
 
-    let mut srv = pin!(srv);
     let mut buf = BytesMut::default();
     HeaderEncoder
         .encode(
@@ -301,7 +291,7 @@ where
         )
         .context("failed to encode invocation header")?;
     buf.extend_from_slice(&invalid);
-    let ((_tx, mut rx), (.., srv_tx, srv_rx)) = try_join!(
+    let ((_tx, mut rx), (srv_tx, srv_rx)) = try_join!(
         async {
             let (mut tx, rx) = connect().await.context("failed to connect")?;
             tx.write_all(&buf)
@@ -310,7 +300,12 @@ where
             tx.flush().await.context("failed to flush invalid data")?;
             anyhow::Ok((tx, rx))
         },
-        accept_invocation(&mut srv, "foo", "baz"),
+        async {
+            let (tx, rx) = accept().await.context("failed to accept")?;
+            let rx = read_invocation(FramedRead::new(rx, HeaderDecoder::default()), "foo", "baz")
+                .await?;
+            anyhow::Ok((tx, rx))
+        },
     )?;
     let (params, outgoing) = serve(srv_tx, srv_rx, <() as Decode>::Decoder::default());
     let res = params.await;
@@ -342,7 +337,13 @@ where
             anyhow::Ok(())
         },
         async {
-            let (.., mut srv_tx, srv_rx) = accept_invocation(&mut srv, "foo", "baz").await?;
+            let (mut srv_tx, srv_rx) = accept().await.context("failed to accept")?;
+            let srv_rx = read_invocation(
+                FramedRead::new(srv_rx, HeaderDecoder::default()),
+                "foo",
+                "baz",
+            )
+            .await?;
             srv_tx
                 .write_all(&invalid)
                 .await
@@ -573,6 +574,17 @@ where
     let (mut parts, ()) = http::Request::new(()).into_parts();
     parts.uri = format!("http://{addr}").parse().unwrap();
     f(parts, clt, lis).await.context("closure failed")
+}
+
+/// Accepts a request from `srv`, returning the byte streams
+#[cfg(feature = "http")]
+pub async fn http_accept(
+    srv: &mut wrpc_http::Server,
+) -> std::io::Result<(tokio::io::DuplexStream, wrpc_http::IncomingBodyDataReader)> {
+    match srv.next().await {
+        Some(Ok((.., tx, rx))) => Ok((tx, rx)),
+        None => Err(std::io::ErrorKind::UnexpectedEof.into()),
+    }
 }
 
 #[cfg(feature = "http")]

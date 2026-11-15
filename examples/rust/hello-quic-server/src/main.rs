@@ -5,7 +5,6 @@ use std::sync::Arc;
 
 use anyhow::Context as _;
 use clap::Parser;
-use futures::StreamExt as _;
 use quinn::crypto::rustls::QuicServerConfig;
 use quinn::{Endpoint, ServerConfig};
 use rcgen::{CertifiedKey, generate_simple_self_signed};
@@ -83,11 +82,10 @@ async fn main() -> anyhow::Result<()> {
                                 .accept()
                                 .context("failed to accept QUIC connection")?;
                             let conn = conn.await.context("failed to establish QUIC connection")?;
-                            let invocations = bindings::serve(wrpc_quic::incoming(conn), Handler);
-                            let mut invocations = pin!(invocations);
-                            while let Some(res) = invocations.next().await {
-                                let fut = res.context("failed to accept wRPC invocation")?;
-                                if tx.send(fut).await.is_err() {
+                            loop {
+                                let (send, recv) = conn.accept_bi().await.context("failed to accept stream")?;
+                                let res = tx.send(bindings::serve((), send, recv, Handler)).await;
+                                if res.is_err() {
                                     break;
                                 }
                             }
@@ -119,13 +117,13 @@ async fn main() -> anyhow::Result<()> {
     loop {
         select! {
             Some(fut) = rx.recv() => {
-                debug!("invocation accepted");
+                debug!("stream accepted");
                 tasks.spawn(async move {
-                    match fut.await { Err(err) => {
-                        warn!(?err, "failed to handle invocation");
-                    } _ => {
-                        info!("invocation successfully handled");
-                    }}
+                    if let Err(err) = fut.await {
+                        warn!(?err, "failed to serve stream");
+                    } else {
+                        info!("stream successfully served");
+                    }
                 });
             }
             Some(res) = tasks.join_next() => {
@@ -135,12 +133,6 @@ async fn main() -> anyhow::Result<()> {
             }
             res = &mut shutdown => {
                 accept.abort();
-                // wait for all invocations to complete
-                while let Some(res) = tasks.join_next().await {
-                    if let Err(err) = res {
-                        error!(?err, "failed to join task");
-                    }
-                }
                 return res.context("failed to listen for ^C")
             }
         }

@@ -11,7 +11,7 @@ use crate::frame::{self, Outgoing};
 use crate::mux::ingress;
 
 /// Serves an invocation over the byte stream `tx` and the frames `rx`, which follow the header
-/// read by [`Header::read`](crate::Header::read), decoding the parameters using `dec`
+/// read by [`HeaderDecoder`](crate::HeaderDecoder), decoding the parameters using `dec`
 ///
 /// Returns a future receiving the parameters, which resolves to the synchronous parameters and
 /// a future, which receives the asynchronous parameters and resolves once all are received,

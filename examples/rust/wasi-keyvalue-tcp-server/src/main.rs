@@ -2,10 +2,8 @@ use core::pin::pin;
 
 use anyhow::Context as _;
 use clap::Parser;
-use futures::StreamExt as _;
 use tokio::task::JoinSet;
 use tokio::{select, signal};
-use tokio_stream::wrappers::TcpListenerStream;
 use tracing::{debug, error, info, warn};
 
 #[derive(Parser, Debug)]
@@ -25,34 +23,31 @@ async fn main() -> anyhow::Result<()> {
     let lis = tokio::net::TcpListener::bind(&addr)
         .await
         .with_context(|| format!("failed to bind TCP listener on `{addr}`"))?;
-    let incoming = TcpListenerStream::new(lis).map(|res| {
-        let stream = res?;
-        stream.set_nodelay(true)?;
-        let (rx, tx) = stream.into_split();
-        std::io::Result::Ok(((), tx, rx))
-    });
-    let invocations =
-        wrpc_wasi_keyvalue::serve(incoming, wrpc_wasi_keyvalue_mem::Handler::default());
-    let mut invocations = pin!(invocations);
+    let handler = wrpc_wasi_keyvalue_mem::Handler::default();
     let shutdown = signal::ctrl_c();
     let mut shutdown = pin!(shutdown);
     let mut tasks = JoinSet::new();
     loop {
         select! {
-            Some(res) = invocations.next() => {
+            res = lis.accept() => {
                 match res {
-                    Ok(fut) => {
-                        debug!("invocation accepted");
+                    Ok((stream, ..)) => {
+                        debug!("connection accepted");
+                        if let Err(err) = stream.set_nodelay(true) {
+                            warn!(?err, "failed to set `TCP_NODELAY`");
+                        }
+                        let (rx, tx) = stream.into_split();
+                        let handler = handler.clone();
                         tasks.spawn(async move {
-                            match fut.await { Err(err) => {
-                                warn!(?err, "failed to handle invocation");
-                            } _ => {
-                                info!("invocation successfully handled");
-                            }}
+                            if let Err(err) = wrpc_wasi_keyvalue::serve((), tx, rx, handler).await {
+                                warn!(?err, "failed to serve connection");
+                            } else {
+                                info!("connection successfully served");
+                            }
                         });
                     }
                     Err(err) => {
-                        warn!(?err, "failed to accept invocation");
+                        warn!(?err, "failed to accept connection");
                     }
                 }
             }
@@ -61,15 +56,7 @@ async fn main() -> anyhow::Result<()> {
                     error!(?err, "failed to join task");
                 }
             }
-            res = &mut shutdown => {
-                // wait for all invocations to complete
-                while let Some(res) = tasks.join_next().await {
-                    if let Err(err) = res {
-                        error!(?err, "failed to join task");
-                    }
-                }
-                return res.context("failed to listen for ^C")
-            }
+            res = &mut shutdown => return res.context("failed to listen for ^C"),
         }
     }
 }

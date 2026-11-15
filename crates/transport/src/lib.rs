@@ -12,7 +12,7 @@
 //! - [`invoke()`] - the client side, which *invokes* WIT functions over the byte streams of an
 //!   invocation
 //! - [`serve()`] - the server side, which *serves* WIT functions over the frames following the
-//!   header read by [`Header::read`] from the byte streams of an invocation, for example ones
+//!   header read by [`HeaderDecoder`] from the byte streams of an invocation, for example ones
 //!   accepted by a transport
 //!
 //! A transport establishes bidirectional byte streams, each carrying invocations one after

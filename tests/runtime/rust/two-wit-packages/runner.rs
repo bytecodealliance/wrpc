@@ -1,9 +1,8 @@
 pub async fn run(
     wrpc: &crate::Client,
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
-    let (tx, rx) = wrpc.connect().await?;
-    crate::client::a::b::x::f1(tx, rx).await?;
-    let (tx, rx) = wrpc.connect().await?;
-    crate::client::other::c::x::f2(tx, rx).await?;
+    let (mut tx, mut rx) = wrpc.connect().await?;
+    crate::client::a::b::x::f1(&mut tx, &mut rx).await?;
+    crate::client::other::c::x::f2(&mut tx, &mut rx).await?;
     Ok(())
 }

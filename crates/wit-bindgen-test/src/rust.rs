@@ -274,10 +274,11 @@ use core::time::Duration;
 
 use std::sync::Arc;
 
+use futures::TryStreamExt as _;
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::{TcpListener, TcpStream};
 use wit_bindgen_wrpc::tokio_util::codec::FramedRead;
-use wrpc_transport::{FrameDecoder, Header};
+use wrpc_transport::{FrameDecoder, Header, HeaderDecoder};
 
 {modules}
 
@@ -295,12 +296,12 @@ impl Client {
 
 fn serve(
     lis: TcpListener,
-    handle: impl Fn(
+    handle: impl for<'a> Fn(
         &str,
         &str,
-        OwnedWriteHalf,
-        FramedRead<OwnedReadHalf, FrameDecoder>,
-    ) -> Result<Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send>>, String>
+        &'a mut OwnedWriteHalf,
+        &'a mut FramedRead<OwnedReadHalf, FrameDecoder>,
+    ) -> Result<Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + 'a>>, String>
     + Send
     + Sync
     + 'static,
@@ -312,20 +313,26 @@ fn serve(
             if let Err(err) = stream.set_nodelay(true) {
                 eprintln!("failed to set `TCP_NODELAY`: {err:?}");
             }
-            let (rx, tx) = stream.into_split();
+            let (rx, mut tx) = stream.into_split();
             let handle = Arc::clone(&handle);
             tokio::spawn(async move {
-                let (header, rx) = match Header::read(rx).await {
-                    Ok(header) => header,
-                    Err(err) => return eprintln!("failed to read invocation header: {err:?}"),
-                };
-                match handle(&header.instance, &header.name, tx, rx) {
-                    Ok(fut) => {
-                        if let Err(err) = fut.await {
-                            eprintln!("failed to serve invocation: {err:?}");
+                let mut rx = FramedRead::new(rx, HeaderDecoder::default());
+                loop {
+                    let Header { instance, name } = match rx.try_next().await {
+                        Ok(Some(header)) => header,
+                        Ok(None) => return,
+                        Err(err) => return eprintln!("failed to read invocation header: {err:?}"),
+                    };
+                    let mut frames = rx.map_decoder(|_| FrameDecoder::default());
+                    match handle(&instance, &name, &mut tx, &mut frames) {
+                        Ok(fut) => {
+                            if let Err(err) = fut.await {
+                                return eprintln!("failed to serve invocation: {err:?}");
+                            }
                         }
+                        Err(name) => return eprintln!("no component exports `{name}`"),
                     }
-                    Err(name) => eprintln!("no component exports `{name}`"),
+                    rx = frames.map_decoder(|_| HeaderDecoder::default());
                 }
             });
         }

@@ -39,6 +39,7 @@ tokio = { workspace = true, features = [
     "signal",
     "net",
 ] }
+tokio-util = { workspace = true, features = ["codec"] }
 tower = { workspace = true }
 tower-http = { workspace = true, features = ["fs", "trace"] }
 tracing = { workspace = true, features = ["attributes"] }
@@ -54,7 +55,6 @@ uuid = { workspace = true, features = ["std", "v7"] }
 web-transport-quinn = { workspace = true, features = ["ring"] }
 wit-bindgen-wrpc = { workspace = true }
 wrpc-transport = { workspace = true }
-wrpc-webtransport = { workspace = true }
 wrpc-wasi-keyvalue = { workspace = true }
 wrpc-wasi-keyvalue-mem = { workspace = true }
 wrpc-wasi-keyvalue-redis = { workspace = true }

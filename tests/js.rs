@@ -7,7 +7,6 @@ use std::process::Stdio;
 
 use anyhow::{Context as _, bail, ensure};
 use bytes::BytesMut;
-use futures::{Stream, StreamExt as _};
 use hyper::client::conn::http2;
 use hyper::server::conn::http1;
 use hyper_util::rt::{TokioExecutor, TokioIo};
@@ -68,14 +67,13 @@ async fn start_server(addr: &str, bindings: &Path) -> anyhow::Result<Child> {
     Ok(server)
 }
 
-/// Serve the `echo-server` world of `tests/js/wit` on `incoming` until
-/// `tests/js/client.js`, run against `addr`, exits.
-async fn serve_echo<C, I, O, E>(
-    incoming: impl Stream<Item = Result<(C, O, I), E>>,
+/// Serve the `echo-server` world of `tests/js/wit` on the connections accepted using `accept`
+/// until `tests/js/client.js`, run against `addr`, exits.
+async fn serve_echo<I, O, E>(
+    mut accept: impl AsyncFnMut() -> Result<(O, I), E>,
     addr: &str,
 ) -> anyhow::Result<()>
 where
-    C: Send + 'static,
     I: AsyncRead + Send + Unpin + 'static,
     O: AsyncWrite + Send + Unpin + 'static,
     E: core::error::Error + Send + Sync + 'static,
@@ -102,8 +100,6 @@ where
         }
     }
 
-    let mut invocations = pin!(bindings::serve(incoming, Echo));
-
     let bindings = bindgen("tests/js/wit", &["echo-client"]).await?;
     info!("running `tests/js/client.js`");
     let mut client = pin!(
@@ -120,11 +116,11 @@ where
                 ensure!(status.success(), "`tests/js/client.js` failed");
                 return Ok(());
             }
-            Some(invocation) = invocations.next() => {
-                let invocation = invocation.expect("failed to accept invocation");
+            res = accept() => {
+                let (tx, rx) = res.expect("failed to accept connection");
                 spawn(async move {
-                    if let Err(err) = invocation.await {
-                        panic!("failed to serve invocation: {err:?}");
+                    if let Err(err) = bindings::serve((), tx, rx, Echo).await {
+                        panic!("failed to serve connection: {err:?}");
                     }
                 });
             }
@@ -169,8 +165,10 @@ async fn js_server() -> anyhow::Result<()> {
         assert_eq!(err.kind(), std::io::ErrorKind::ConnectionReset);
     }
 
-    common::assert_sync(|| wrpc_test::tcp_streams(addr)).await?;
-    common::assert_async(|| wrpc_test::tcp_streams(addr)).await?;
+    let (mut tx, mut rx) = wrpc_test::tcp_streams(addr).await?;
+    common::assert_sync(&mut tx, &mut rx).await?;
+    common::assert_async(&mut tx, &mut rx).await?;
+    common::assert_eof(tx, rx).await?;
 
     server.start_kill().context("failed to kill `node`")?;
     server.wait().await.context("failed to wait for `node`")?;
@@ -196,9 +194,10 @@ async fn js_http_server() -> anyhow::Result<()> {
     parts.uri = format!("http://{addr}/")
         .parse()
         .context("failed to parse request URI")?;
-    let connect = || wrpc_http::open(sender.clone(), parts.clone());
-    common::assert_sync(connect).await?;
-    common::assert_async(connect).await?;
+    let (mut tx, mut rx) = wrpc_http::open(sender, parts).await?;
+    common::assert_sync(&mut tx, &mut rx).await?;
+    common::assert_async(&mut tx, &mut rx).await?;
+    common::assert_eof(tx, rx).await?;
 
     server.start_kill().context("failed to kill `node`")?;
     server.wait().await.context("failed to wait for `node`")?;
@@ -212,7 +211,11 @@ async fn js_client() -> anyhow::Result<()> {
         .await
         .context("failed to start TCP listener")?;
     let addr = lis.local_addr().context("failed to get server address")?;
-    serve_echo(wrpc_test::tcp_incoming(lis), &addr.to_string()).await
+    serve_echo(
+        async || wrpc_test::tcp_accept(&lis).await,
+        &addr.to_string(),
+    )
+    .await
 }
 
 #[instrument(ret)]
@@ -222,7 +225,7 @@ async fn js_http_client() -> anyhow::Result<()> {
         .await
         .context("failed to start TCP listener")?;
     let addr = lis.local_addr().context("failed to get server address")?;
-    let (svc, srv) = wrpc_http::channel(16);
+    let (svc, mut srv) = wrpc_http::channel(16);
     let conns = spawn(async move {
         loop {
             let (stream, ..) = lis.accept().await.expect("failed to accept connection");
@@ -235,7 +238,11 @@ async fn js_http_client() -> anyhow::Result<()> {
             });
         }
     });
-    let res = serve_echo(srv, &format!("http://{addr}")).await;
+    let res = serve_echo(
+        async || wrpc_test::http_accept(&mut srv).await,
+        &format!("http://{addr}"),
+    )
+    .await;
     conns.abort();
     res
 }

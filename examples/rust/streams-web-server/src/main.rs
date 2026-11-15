@@ -4,7 +4,7 @@ use core::pin::{Pin, pin};
 use anyhow::Context as _;
 use bytes::Bytes;
 use clap::Parser;
-use futures::{Stream, StreamExt as _};
+use futures::Stream;
 use rcgen::{CertifiedKey, generate_simple_self_signed};
 use rustls::pki_types::PrivatePkcs8KeyDer;
 use tokio::sync::mpsc;
@@ -86,11 +86,10 @@ async fn main() -> anyhow::Result<()> {
                                 .ok()
                                 .await
                                 .context("failed to establish WebTransport connection")?;
-                            let invocations = bindings::serve(wrpc_webtransport::incoming(conn), Server);
-                            let mut invocations = pin!(invocations);
-                            while let Some(res) = invocations.next().await {
-                                let fut = res.context("failed to accept wRPC invocation")?;
-                                if tx.send(fut).await.is_err() {
+                            loop {
+                                let (send, recv) = conn.accept_bi().await.context("failed to accept stream")?;
+                                let res = tx.send(bindings::serve((), send, recv, Server)).await;
+                                if res.is_err() {
                                     break;
                                 }
                             }
@@ -116,13 +115,13 @@ async fn main() -> anyhow::Result<()> {
     loop {
         select! {
             Some(fut) = rx.recv() => {
-                debug!("invocation accepted");
+                debug!("stream accepted");
                 tasks.spawn(async move {
-                    match fut.await { Err(err) => {
-                        warn!(?err, "failed to handle invocation");
-                    } _ => {
-                        info!("invocation successfully handled");
-                    }}
+                    if let Err(err) = fut.await {
+                        warn!(?err, "failed to serve stream");
+                    } else {
+                        info!("stream successfully served");
+                    }
                 });
             }
             Some(res) = tasks.join_next() => {
@@ -132,11 +131,6 @@ async fn main() -> anyhow::Result<()> {
             }
             res = &mut shutdown => {
                 accept.abort();
-                while let Some(res) = tasks.join_next().await {
-                    if let Err(err) = res {
-                        error!(?err, "failed to join task");
-                    }
-                }
                 return res.context("failed to listen for ^C")
             }
         }

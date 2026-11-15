@@ -197,15 +197,12 @@ mod tests {
     use super::*;
 
     #[allow(unused)]
-    fn bound<C, I, O, E>(
-        incoming: impl futures::Stream<Item = Result<(C, O, I), E>> + Send,
-    ) -> impl futures::Stream + Send
+    fn bound<C, I, O>(cx: C, tx: O, rx: I) -> impl Future<Output = anyhow::Result<()>> + Send
     where
-        C: Send + Sync + 'static,
+        C: Clone + Send + Sync + 'static,
         I: tokio::io::AsyncRead + Send + Unpin + 'static,
         O: tokio::io::AsyncWrite + Send + Unpin + 'static,
-        E: core::error::Error + Send + Sync + 'static,
     {
-        wrpc_wasi_keyvalue::serve(incoming, Handler::default())
+        wrpc_wasi_keyvalue::serve(cx, tx, rx, Handler::default())
     }
 }

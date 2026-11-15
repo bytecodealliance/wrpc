@@ -1,4 +1,3 @@
-use core::convert::Infallible;
 use core::time::Duration;
 
 use anyhow::{Context as _, anyhow};
@@ -15,8 +14,15 @@ use wrpc_http::OutgoingBody;
 async fn http2() -> anyhow::Result<()> {
     wrpc_test::serve_http2(async |parts, sender, srv| {
         let connect = || wrpc_http::open(sender.clone(), parts.clone());
-        wrpc_test::assert_single_invocation(connect, &mut *srv).await?;
-        wrpc_test::assert_invalid_data_resets(connect, srv).await
+        let (tx, rx) = connect().await?;
+        wrpc_test::assert_single_invocation(tx, rx, async || {
+            wrpc_test::http_accept(&mut *srv).await
+        })
+        .await?;
+        wrpc_test::assert_invalid_data_resets(connect, async || {
+            wrpc_test::http_accept(&mut *srv).await
+        })
+        .await
     })
     .await
 }
@@ -33,12 +39,12 @@ async fn pooling() -> anyhow::Result<()> {
                 .into_owned();
             anyhow::Ok(spawn(conn))
         };
+        let (tx, rx) = wrpc_http::open_pooled(&clt, parts);
         let (conn, _) = try_join!(
             accept,
-            wrpc_test::assert_single_invocation(
-                async || Ok::<_, Infallible>(wrpc_http::open_pooled(&clt, parts.clone())),
-                &mut srv
-            )
+            wrpc_test::assert_single_invocation(tx, rx, async || {
+                wrpc_test::http_accept(&mut srv).await
+            })
         )?;
         drop(clt);
         conn.await

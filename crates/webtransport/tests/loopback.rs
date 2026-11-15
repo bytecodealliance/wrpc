@@ -1,4 +1,4 @@
-use core::pin::{Pin, pin};
+use core::pin::Pin;
 
 use anyhow::Context as _;
 use bytes::Bytes;
@@ -10,9 +10,10 @@ use wrpc_transport::{Decode, Encode, invoke_blocking};
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn loopback() -> anyhow::Result<()> {
     wrpc_test::with_webtransport(async |clt, srv| {
-        let mut srv = pin!(wrpc_webtransport::incoming(srv));
-        wrpc_test::assert_single_invocation(|| clt.open_bi(), srv.as_mut()).await?;
-        wrpc_test::assert_invalid_data_resets(|| clt.open_bi(), srv).await
+        let accept = async || srv.accept_bi().await;
+        let (tx, rx) = clt.open_bi().await?;
+        wrpc_test::assert_single_invocation(tx, rx, accept).await?;
+        wrpc_test::assert_invalid_data_resets(|| clt.open_bi(), accept).await
     })
     .await
 }

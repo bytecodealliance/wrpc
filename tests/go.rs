@@ -72,13 +72,11 @@ async fn go_bindgen() -> anyhow::Result<()> {
         // TODO: Remove the need for this
         sleep(Duration::from_secs(1)).await;
 
-        common::assert_sync(|| wrpc_test::tcp_streams(&addr)).await?;
-
-        let mut stream = wrpc_test::tcp_connect(&addr).await?;
-        let (rx, tx) = stream.split();
+        let (mut tx, mut rx) = wrpc_test::tcp_streams(&addr).await?;
+        common::assert_sync(&mut tx, &mut rx).await?;
         let res = invoke_blocking(
-            tx,
-            rx,
+            &mut tx,
+            &mut rx,
             "wrpc-test:integration/foo",
             "f",
             <(&str,) as Encode>::Encoder::default(),
@@ -116,7 +114,9 @@ async fn go_bindgen() -> anyhow::Result<()> {
         // TODO: Remove the need for this
         sleep(Duration::from_secs(1)).await;
 
-        common::assert_async(|| wrpc_test::tcp_streams(&addr)).await?;
+        let (mut tx, mut rx) = wrpc_test::tcp_streams(&addr).await?;
+        common::assert_async(&mut tx, &mut rx).await?;
+        common::assert_eof(tx, rx).await?;
 
         server
             .start_kill()

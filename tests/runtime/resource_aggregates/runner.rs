@@ -5,50 +5,46 @@ use crate::client::test::resource_aggregates::to_test::{
 pub async fn run(
     wrpc: &crate::Client,
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
-    let thing = async |n| {
-        let (tx, rx) = wrpc.connect().await?;
-        Thing::new(tx, rx, n).await
-    };
+    let (mut tx, mut rx) = wrpc.connect().await?;
+    let mut thing = async |n| Thing::new(&mut tx, &mut rx, n).await;
+    let thing0 = thing(0).await?;
     let thing1 = thing(1).await?;
     let thing2 = thing(2).await?;
+    let thing3 = thing(3).await?;
+    let thing4 = thing(4).await?;
+    let thing5 = thing(5).await?;
     let thing6 = thing(6).await?;
+    let thing7 = thing(7).await?;
     let thing8 = thing(8).await?;
+    let thing9 = thing(9).await?;
+    let thing10 = thing(10).await?;
     let thing11 = thing(11).await?;
     let thing12 = thing(12).await?;
+    let thing13 = thing(13).await?;
     let thing14 = thing(14).await?;
+    let thing15 = thing(15).await?;
     let thing16 = thing(16).await?;
 
-    let (tx, rx) = wrpc.connect().await?;
     let result = foo(
-        tx,
-        rx,
-        &R1 {
-            thing: thing(0).await?,
-        },
+        &mut tx,
+        &mut rx,
+        &R1 { thing: thing0 },
         &R2 {
             thing: thing1.as_borrow(),
         },
         &R3 {
             thing1: thing2.as_borrow(),
-            thing2: thing(3).await?,
+            thing2: thing3,
         },
-        (
-            thing(4).await?,
-            R1 {
-                thing: thing(5).await?,
-            },
-        ),
+        (thing4, R1 { thing: thing5 }),
         (thing6.as_borrow(),),
-        &V1::Thing(thing(7).await?),
+        &V1::Thing(thing7),
         &V2::Thing(thing8.as_borrow()),
-        &[
-            thing(9).await?,
-            thing(10).await?,
-        ],
+        &[thing9, thing10],
         &[thing11.as_borrow(), thing12.as_borrow()],
-        Some(thing(13).await?),
+        Some(thing13),
         Some(thing14.as_borrow()),
-        &Ok(thing(15).await?),
+        &Ok(thing15),
         &Ok(thing16.as_borrow()),
     )
     .await?;

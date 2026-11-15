@@ -13,21 +13,16 @@ pub struct Component;
 
 impl b_exports::Handler<crate::Client> for Component {
     async fn b(&self, cx: crate::Client) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
-        let (tx, rx) = cx.connect().await?;
-        a_imports::f(tx, rx).await?;
-        let (tx, rx) = cx.connect().await?;
-        b_imports::b(tx, rx).await?;
+        let (mut tx, mut rx) = cx.connect().await?;
+        a_imports::f(&mut tx, &mut rx).await?;
+        b_imports::b(&mut tx, &mut rx).await?;
 
-        let (tx, rx) = cx.connect().await?;
-        let x = a_imports::X::new(tx, rx).await?;
-        let (tx, rx) = cx.connect().await?;
-        a_imports::X::foo(tx, rx, &x.as_borrow()).await?;
+        let x = a_imports::X::new(&mut tx, &mut rx).await?;
+        a_imports::X::foo(&mut tx, &mut rx, &x.as_borrow()).await?;
         drop(x);
 
-        let (tx, rx) = cx.connect().await?;
-        let x = b_imports::X::new(tx, rx).await?;
-        let (tx, rx) = cx.connect().await?;
-        b_imports::X::foo(tx, rx, &x.as_borrow()).await?;
+        let x = b_imports::X::new(&mut tx, &mut rx).await?;
+        b_imports::X::foo(&mut tx, &mut rx, &x.as_borrow()).await?;
         drop(x);
         Ok(())
     }

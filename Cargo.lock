@@ -1216,7 +1216,6 @@ dependencies = [
  "anyhow",
  "bytes",
  "clap",
- "futures",
  "quinn",
  "rcgen",
  "rustls",
@@ -1224,7 +1223,6 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "wit-bindgen-wrpc",
- "wrpc-quic",
 ]
 
 [[package]]
@@ -1244,9 +1242,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
- "futures",
  "tokio",
- "tokio-stream",
  "tracing",
  "tracing-subscriber",
  "wit-bindgen-wrpc",
@@ -1269,9 +1265,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
- "futures",
  "tokio",
- "tokio-stream",
  "tracing",
  "tracing-subscriber",
  "wit-bindgen-wrpc",
@@ -1296,7 +1290,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
- "futures",
  "rcgen",
  "rustls",
  "tokio",
@@ -1304,7 +1297,6 @@ dependencies = [
  "tracing-subscriber",
  "web-transport-quinn",
  "wit-bindgen-wrpc",
- "wrpc-webtransport",
 ]
 
 [[package]]
@@ -2823,7 +2815,6 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "wit-bindgen-wrpc",
- "wrpc-quic",
 ]
 
 [[package]]
@@ -2850,7 +2841,6 @@ dependencies = [
  "clap",
  "futures",
  "tokio",
- "tokio-stream",
  "tracing",
  "tracing-subscriber",
  "wit-bindgen-wrpc",
@@ -2888,7 +2878,6 @@ dependencies = [
  "tracing-subscriber",
  "web-transport-quinn",
  "wit-bindgen-wrpc",
- "wrpc-webtransport",
 ]
 
 [[package]]
@@ -3509,14 +3498,12 @@ dependencies = [
  "anyhow",
  "bytes",
  "clap",
- "futures",
  "quinn",
  "rcgen",
  "rustls",
  "tokio",
  "tracing",
  "tracing-subscriber",
- "wrpc-quic",
  "wrpc-wasi-keyvalue",
  "wrpc-wasi-keyvalue-mem",
 ]
@@ -3541,9 +3528,7 @@ dependencies = [
  "anyhow",
  "bytes",
  "clap",
- "futures",
  "tokio",
- "tokio-stream",
  "tracing",
  "tracing-subscriber",
  "wrpc-wasi-keyvalue",
@@ -3557,9 +3542,7 @@ dependencies = [
  "anyhow",
  "bytes",
  "clap",
- "futures",
  "tokio",
- "tokio-stream",
  "tracing",
  "tracing-subscriber",
  "wrpc-wasi-keyvalue",
@@ -3580,6 +3563,7 @@ dependencies = [
  "rustls",
  "time",
  "tokio",
+ "tokio-util",
  "tower",
  "tower-http 0.7.1",
  "tracing",
@@ -3592,7 +3576,6 @@ dependencies = [
  "wrpc-wasi-keyvalue",
  "wrpc-wasi-keyvalue-mem",
  "wrpc-wasi-keyvalue-redis",
- "wrpc-webtransport",
 ]
 
 [[package]]
@@ -3602,7 +3585,6 @@ dependencies = [
  "anyhow",
  "bytes",
  "clap",
- "futures",
  "rcgen",
  "rustls",
  "tokio",
@@ -3611,7 +3593,6 @@ dependencies = [
  "web-transport-quinn",
  "wrpc-wasi-keyvalue",
  "wrpc-wasi-keyvalue-mem",
- "wrpc-webtransport",
 ]
 
 [[package]]
@@ -4400,7 +4381,6 @@ dependencies = [
  "bytes",
  "futures",
  "tokio",
- "tokio-stream",
  "tokio-util",
  "tracing",
  "wasm-tokio",
@@ -4661,7 +4641,6 @@ dependencies = [
  "rustls",
  "tempfile",
  "tokio",
- "tokio-stream",
  "tokio-util",
  "tracing",
  "url",
@@ -4700,7 +4679,6 @@ version = "0.4.0"
 dependencies = [
  "anyhow",
  "bytes",
- "futures",
  "tokio",
  "tracing",
  "wrpc-transport",
@@ -4713,7 +4691,6 @@ version = "0.4.0"
 dependencies = [
  "anyhow",
  "bytes",
- "futures",
  "redis",
  "tokio",
  "tracing",

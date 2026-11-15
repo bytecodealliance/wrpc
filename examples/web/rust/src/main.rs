@@ -12,7 +12,7 @@ use axum::response::Html;
 use axum::routing::get;
 use bytes::Bytes;
 use clap::Parser;
-use futures::StreamExt as _;
+use futures::TryStreamExt as _;
 use quinn::crypto::rustls::{QuicClientConfig, QuicServerConfig};
 use rcgen::{CertificateParams, KeyPair};
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
@@ -24,6 +24,7 @@ use tokio::net::TcpStream;
 use tokio::sync::{Notify, RwLock, mpsc};
 use tokio::task::JoinSet;
 use tokio::{select, signal};
+use tokio_util::codec::FramedRead;
 use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
 use tracing::{debug, error, info, instrument, trace, warn};
@@ -32,7 +33,7 @@ use tracing_subscriber::util::SubscriberInitExt as _;
 use url::Url;
 use uuid::Uuid;
 use web_transport_quinn::Request;
-use wrpc_transport::{Header, ResourceBorrow, ResourceOwn};
+use wrpc_transport::{FrameDecoder, Header, HeaderDecoder, ResourceBorrow, ResourceOwn};
 use wrpc_wasi_keyvalue::exports::wasi::keyvalue::store;
 
 pub type Result<T, E = store::Error> = core::result::Result<T, E>;
@@ -577,35 +578,41 @@ export const PORT = "{port}"
         let mut tasks = JoinSet::new();
         loop {
             select! {
-                Some((cx, tx, rx)) = rx.recv() => {
+                Some((mut tx, rx)) = rx.recv() => {
                     let handler = handler.clone();
                     tasks.spawn(async move {
-                        let (Header { instance, name }, rx) = match Header::read(rx).await {
-                            Ok(header) => header,
-                            Err(err) => {
-                                warn!(?err, "failed to read invocation header");
+                        let mut rx = FramedRead::new(rx, HeaderDecoder::default());
+                        loop {
+                            let Header { instance, name } = match rx.try_next().await {
+                                Ok(Some(header)) => header,
+                                Ok(None) => return,
+                                Err(err) => {
+                                    warn!(?err, "failed to read invocation header");
+                                    return;
+                                }
+                            };
+                            let mut frames = rx.map_decoder(|_| FrameDecoder::default());
+                            let fut = match store::handle_interface(
+                                &handler, (), &instance, &name, &mut tx, &mut frames,
+                            ) {
+                                Ok(fut) => fut,
+                                Err(..) => {
+                                    warn!(
+                                        instance,
+                                        func = name,
+                                        "function is not exported"
+                                    );
+                                    return;
+                                }
+                            };
+                            debug!("invocation accepted");
+                            if let Err(err) = fut.await {
+                                warn!(?err, "failed to handle invocation");
                                 return;
                             }
-                        };
-                        let fut = match store::handle_interface(
-                            &handler, cx, &instance, &name, tx, rx,
-                        ) {
-                            Ok(fut) => fut,
-                            Err(..) => {
-                                warn!(
-                                    instance,
-                                    func = name,
-                                    "function is not exported"
-                                );
-                                return;
-                            }
-                        };
-                        debug!("invocation accepted");
-                        match fut.await { Err(err) => {
-                            warn!(?err, "failed to handle invocation");
-                        } _ => {
                             info!("invocation successfully handled");
-                        }}
+                            rx = frames.map_decoder(|_| HeaderDecoder::default());
+                        }
                     });
                 }
                 Some(res) = tasks.join_next() => {
@@ -651,14 +658,13 @@ export const PORT = "{port}"
                         .ok()
                         .await
                         .context("failed to establish WebTransport connection")?;
-                    let mut incoming = pin!(wrpc_webtransport::incoming(conn));
-                    while let Some(invocation) = incoming.next().await {
-                        let invocation = invocation.context("failed to accept wRPC invocation")?;
-                        if tx.send(invocation).await.is_err() {
+                    loop {
+                        let streams = conn.accept_bi().await.context("failed to accept stream")?;
+                        let res = tx.send(streams).await;
+                        if res.is_err() {
                             return Ok(());
                         }
                     }
-                    Ok(())
                 });
             }
             Some(res) = tasks.join_next() => {

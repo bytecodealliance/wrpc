@@ -9,15 +9,17 @@ use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::join;
 use tokio::net::TcpStream;
 use tokio::task::yield_now;
-use tokio_util::codec::Encoder as _;
-use wrpc_transport::{Decode, Encode, Header, HeaderEncoder, HeaderRef, invoke};
+use tokio_util::codec::{Encoder as _, FramedRead};
+use wrpc_transport::{Decode, Encode, Header, HeaderDecoder, HeaderEncoder, HeaderRef, invoke};
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn loopback() -> anyhow::Result<()> {
     wrpc_test::serve_tcp(async |addr, lis| {
-        let mut srv = wrpc_test::tcp_incoming(lis);
-        wrpc_test::assert_single_invocation(|| wrpc_test::tcp_streams(addr), &mut srv).await?;
-        wrpc_test::assert_invalid_data_resets(|| wrpc_test::tcp_streams(addr), srv).await
+        let connect = || wrpc_test::tcp_streams(addr);
+        let accept = async || wrpc_test::tcp_accept(&lis).await;
+        let (tx, rx) = connect().await?;
+        wrpc_test::assert_single_invocation(tx, rx, accept).await?;
+        wrpc_test::assert_invalid_data_resets(connect, accept).await
     })
     .await
 }
@@ -50,13 +52,16 @@ async fn unprocessed_stream() -> anyhow::Result<()> {
                     }
                 },
                 async {
-                    _ = wrpc_test::accept_invocation(
-                        &mut wrpc_test::tcp_incoming(lis),
+                    let (_tx, rx) = wrpc_test::tcp_accept(&lis)
+                        .await
+                        .expect("failed to accept connection");
+                    _ = wrpc_test::read_invocation(
+                        FramedRead::new(rx, HeaderDecoder::default()),
                         "foo",
                         "bar",
                     )
                     .await
-                    .expect("failed to accept invocation");
+                    .expect("failed to read invocation");
                 }
             )
         };

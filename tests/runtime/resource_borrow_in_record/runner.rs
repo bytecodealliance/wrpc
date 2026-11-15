@@ -3,14 +3,12 @@ use crate::client::test::resource_borrow_in_record::to_test::{test, Foo, Thing};
 pub async fn run(
     wrpc: &crate::Client,
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
-    let (tx, rx) = wrpc.connect().await?;
-    let thing1 = Thing::new(tx, rx, "Bonjour").await?;
-    let (tx, rx) = wrpc.connect().await?;
-    let thing2 = Thing::new(tx, rx, "mon cher").await?;
-    let (tx, rx) = wrpc.connect().await?;
+    let (mut tx, mut rx) = wrpc.connect().await?;
+    let thing1 = Thing::new(&mut tx, &mut rx, "Bonjour").await?;
+    let thing2 = Thing::new(&mut tx, &mut rx, "mon cher").await?;
     let things = test(
-        tx,
-        rx,
+        &mut tx,
+        &mut rx,
         &[
             Foo {
                 thing: thing1.as_borrow(),
@@ -23,8 +21,7 @@ pub async fn run(
     .await?;
     let mut result = Vec::new();
     for thing in &things {
-        let (tx, rx) = wrpc.connect().await?;
-        result.push(Thing::get(tx, rx, &thing.as_borrow()).await?);
+        result.push(Thing::get(&mut tx, &mut rx, &thing.as_borrow()).await?);
     }
     assert_eq!(result, ["Bonjour new test get", "mon cher new test get"]);
     Ok(())

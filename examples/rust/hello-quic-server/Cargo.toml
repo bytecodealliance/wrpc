@@ -21,7 +21,6 @@ clap = { workspace = true, features = [
     "suggestions",
     "usage",
 ] }
-futures = { workspace = true }
 quinn = { workspace = true, features = [
     "log",
     "platform-verifier",
@@ -39,4 +38,3 @@ tracing-subscriber = { workspace = true, features = [
     "fmt",
 ] }
 wit-bindgen-wrpc = { workspace = true }
-wrpc-quic = { workspace = true }
