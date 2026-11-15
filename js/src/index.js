@@ -13,4 +13,5 @@ export { Reader, Writer, AsyncReader, Chan, atomic } from "./io.js";
 export { encodeValue, decodeValue, decodeSteps } from "./value.js";
 export { DISCARDED, Mux, Outgoing, PROTOCOL, fromWebStreams } from "./mux.js";
 export { fromFetch, fromRequest } from "./http.js";
+export { fromWebSocket } from "./websockets.js";
 export { invoke, accept, serve } from "./session.js";

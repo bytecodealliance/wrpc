@@ -10,10 +10,11 @@ license.workspace = true
 repository.workspace = true
 
 [features]
-default = ["http", "quic", "webtransport"]
+default = ["http", "quic", "websockets", "webtransport"]
 http = ["dep:http", "dep:hyper", "dep:hyper-util", "dep:wrpc-http"]
 net = ["dep:tempfile", "wrpc-transport/net"]
 quic = ["dep:quinn"]
+websockets = ["dep:http", "dep:tokio-websockets", "dep:wrpc-websockets"]
 webtransport = ["dep:quinn", "dep:url", "dep:web-transport-quinn"]
 
 [dependencies]
@@ -40,8 +41,15 @@ rustls = { workspace = true, features = ["logging", "ring", "std"] }
 tempfile = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
 tokio-util = { workspace = true, features = ["codec"] }
+tokio-websockets = { workspace = true, features = [
+    "client",
+    "rand",
+    "ring",
+    "server",
+], optional = true }
 tracing = { workspace = true }
 url = { workspace = true, optional = true }
 web-transport-quinn = { workspace = true, optional = true }
 wrpc-http = { workspace = true, features = ["client", "http2", "server"], optional = true }
 wrpc-transport = { workspace = true }
+wrpc-websockets = { workspace = true, optional = true }

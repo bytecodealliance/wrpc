@@ -480,6 +480,33 @@ fn bench_webtransport(
     res
 }
 
+fn bench_websocket(
+    g: &mut BenchmarkGroup<WallTime>,
+    func: Func,
+    handler: impl Handler,
+) -> anyhow::Result<()> {
+    let rt = Runtime::new().context("failed to build Tokio runtime")?;
+    let lis = rt.block_on(wrpc_test::tcp_bind())?;
+    let addr = lis
+        .local_addr()
+        .context("failed to query listener address")?;
+    let tasks = Tasks::new(&rt);
+    tasks.spawn({
+        let tasks = tasks.clone();
+        async move {
+            loop {
+                let (tx, rx) = wrpc_test::websocket_accept(&lis).await?;
+                tasks.serve(func, tx, rx, handler.clone());
+            }
+        }
+    });
+    bench_invoke(g, &rt, &tasks, "websocket", func, async {
+        let stream = TcpStream::connect(addr).await?;
+        let (tx, rx) = wrpc_test::websocket_streams(stream).await?;
+        Ok((tx, rx))
+    })
+}
+
 fn bench_http1(
     g: &mut BenchmarkGroup<WallTime>,
     func: Func,
@@ -579,6 +606,7 @@ fn bench_transports(
     bench_unix(g, func, handler.clone())?;
     bench_quic(g, func, handler.clone())?;
     bench_webtransport(g, func, handler.clone())?;
+    bench_websocket(g, func, handler.clone())?;
     bench_http1(g, func, handler.clone())?;
     bench_http2(g, func, handler.clone())?;
     Ok(())

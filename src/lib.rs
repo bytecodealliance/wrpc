@@ -8,6 +8,9 @@ pub mod transport {
 
     #[cfg(feature = "http")]
     pub use wrpc_http as http;
+
+    #[cfg(feature = "websockets")]
+    pub use wrpc_websockets as websockets;
 }
 
 /// wRPC runtime

@@ -9,6 +9,7 @@ use (
 	./examples/go/wasi-keyvalue-client
 	./examples/go/wasi-keyvalue-server
 	./go
+	./go/x/websockets
 	./tests/go
 )
 

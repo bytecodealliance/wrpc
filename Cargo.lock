@@ -3154,6 +3154,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "tokio-websockets"
+version = "0.13.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d52efb639344a7c6adb8e62c6f3d2c19c001ff1b79a5041ba1c6ed42e19c6aa5"
+dependencies = [
+ "base64 0.22.1",
+ "bytes",
+ "futures-core",
+ "futures-sink",
+ "http",
+ "httparse",
+ "rand",
+ "ring",
+ "simdutf8",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
 name = "toml"
 version = "1.2.1+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4572,6 +4591,7 @@ dependencies = [
  "wrpc-transport",
  "wrpc-wasmtime",
  "wrpc-wasmtime-cli",
+ "wrpc-websockets",
 ]
 
 [[package]]
@@ -4625,11 +4645,13 @@ dependencies = [
  "tempfile",
  "tokio",
  "tokio-util",
+ "tokio-websockets",
  "tracing",
  "url",
  "web-transport-quinn",
  "wrpc-http",
  "wrpc-transport",
+ "wrpc-websockets",
 ]
 
 [[package]]
@@ -4736,6 +4758,20 @@ dependencies = [
  "wasm-wave",
  "wasmtime",
  "wrpc-transport",
+]
+
+[[package]]
+name = "wrpc-websockets"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "futures",
+ "test-log",
+ "tokio",
+ "tokio-util",
+ "tokio-websockets",
+ "wrpc-test",
 ]
 
 [[package]]

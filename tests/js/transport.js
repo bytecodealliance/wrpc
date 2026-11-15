@@ -1,11 +1,12 @@
-// TCP and HTTP plumbing shared by the scripts `tests/js.rs` drives. An
-// address of the form `http://host:port` selects HTTP, any other TCP.
+// TCP, HTTP and WebSocket plumbing shared by the scripts `tests/js.rs` drives.
+// An address of the form `http://host:port` selects HTTP, `ws://host:port` a
+// WebSocket client, any other TCP.
 
 import http2 from "node:http2";
 import net from "node:net";
 import { Duplex, Readable, pipeline } from "node:stream";
 
-import { fromFetch, fromRequest, fromWebStreams } from "../../js/src/index.js";
+import { fromFetch, fromRequest, fromWebSocket, fromWebStreams } from "../../js/src/index.js";
 
 /**
  * @typedef {import("../../js/src/index.js").Transport} Transport
@@ -39,6 +40,7 @@ export const transport = (sock) => ({
  */
 export function connect(addr) {
   if (addr.startsWith("http:")) return Promise.resolve(fromFetch(addr));
+  if (addr.startsWith("ws:")) return Promise.resolve(fromWebSocket(new WebSocket(addr)));
   return new Promise((resolve, reject) => {
     const sock = net.connect({ ...parse(addr), allowHalfOpen: true }, () =>
       resolve(transport(sock)),

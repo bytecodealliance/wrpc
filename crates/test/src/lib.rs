@@ -165,6 +165,41 @@ pub async fn unix_accept(
     Ok((tx, rx))
 }
 
+/// Performs the WebSocket handshake over `stream` with `TCP_NODELAY` enabled, returning the byte
+/// streams
+#[cfg(feature = "websockets")]
+pub async fn websocket_streams(
+    stream: TcpStream,
+) -> Result<(impl AsyncWrite, impl AsyncRead), tokio_websockets::Error> {
+    stream.set_nodelay(true)?;
+    let (ws, ..) =
+        tokio_websockets::ClientBuilder::from_uri(http::Uri::from_static("ws://localhost/"))
+            .limits(
+                tokio_websockets::Limits::default()
+                    .max_payload_len(Some(wrpc_websockets::MAX_MESSAGE_LEN)),
+            )
+            .connect_on(stream)
+            .await?;
+    Ok(wrpc_websockets::split(ws))
+}
+
+/// Accepts a WebSocket connection on `lis` with `TCP_NODELAY` enabled, returning the byte streams
+#[cfg(feature = "websockets")]
+pub async fn websocket_accept(
+    lis: &TcpListener,
+) -> Result<(impl AsyncWrite + use<>, impl AsyncRead + use<>), tokio_websockets::Error> {
+    let (stream, ..) = lis.accept().await?;
+    stream.set_nodelay(true)?;
+    let (.., ws) = tokio_websockets::ServerBuilder::new()
+        .limits(
+            tokio_websockets::Limits::default()
+                .max_payload_len(Some(wrpc_websockets::MAX_MESSAGE_LEN)),
+        )
+        .accept(stream)
+        .await?;
+    Ok(wrpc_websockets::split(ws))
+}
+
 pub async fn tcp_bind() -> anyhow::Result<TcpListener> {
     TcpListener::bind((Ipv6Addr::LOCALHOST, 0))
         .await

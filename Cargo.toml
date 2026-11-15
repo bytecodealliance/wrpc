@@ -32,6 +32,7 @@ default = [
     "wasmtime",
     "wasmtime-async",
     "wasmtime-wasi",
+    "websockets",
 ]
 
 bin = ["bin-bindgen", "bin-wasmtime"]
@@ -51,6 +52,7 @@ net = ["wrpc-transport/net"]
 wasmtime = ["dep:wrpc-wasmtime"]
 wasmtime-async = ["wrpc-wasmtime?/async"]
 wasmtime-wasi = ["wrpc-wasmtime?/wasmtime-wasi"]
+websockets = ["dep:wrpc-websockets"]
 
 [[bin]]
 name = "wit-bindgen-wrpc"
@@ -93,6 +95,7 @@ wrpc-http = { workspace = true, optional = true }
 wrpc-transport = { workspace = true }
 wrpc-wasmtime = { workspace = true, optional = true }
 wrpc-wasmtime-cli = { workspace = true, optional = true }
+wrpc-websockets = { workspace = true, optional = true }
 
 [dev-dependencies]
 anyhow = { workspace = true }
@@ -131,6 +134,7 @@ wrpc-test = { workspace = true, features = [
     "http",
     "net",
     "quic",
+    "websockets",
     "webtransport",
 ] }
 wrpc-http = { workspace = true, features = ["client", "http2", "server"] }
@@ -174,6 +178,7 @@ time = { version = "0.3", default-features = false }
 tokio = { version = "1.50", default-features = false }
 tokio-stream = { version = "0.1", default-features = false }
 tokio-util = { version = "0.7.12", default-features = false }
+tokio-websockets = { version = "0.13", default-features = false }
 toml = { version = "1.1", default-features = false }
 tower = { version = "0.5", default-features = false }
 tower-http = { version = "0.7", default-features = false }
@@ -211,3 +216,4 @@ wrpc-wasi-keyvalue-mem = { version = "0.4", path = "./crates/wasi-keyvalue-mem",
 wrpc-wasi-keyvalue-redis = { version = "0.4", path = "./crates/wasi-keyvalue-redis", default-features = false }
 wrpc-wasmtime = { version = "0.2", path = "./crates/wasmtime", default-features = false }
 wrpc-wasmtime-cli = { version = "0.11", path = "./crates/wasmtime-cli", default-features = false }
+wrpc-websockets = { version = "0.2", path = "./crates/websockets", default-features = false }
