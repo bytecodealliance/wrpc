@@ -1,12 +1,13 @@
 // The framing multiplexer: the layer that turns a transport's single
 // bidirectional byte stream into the indexed sub-streams an invocation needs.
 //
-// Every wRPC transport (TCP, Unix, QUIC, WebTransport, …) provides
-// one bidirectional byte stream per invocation; this module implements the
-// mandatory wRPC framing on top of it (see `SPEC.md`, "Framed stream
-// specification"). Outgoing data is written as frames `[path][data]`, where
-// `path` is a `list<u32>` index identifying the (sub-)stream; incoming frames
-// are demultiplexed back to the reader registered for their path.
+// Every wRPC transport (TCP, Unix, QUIC, WebTransport, …) provides a
+// bidirectional byte stream per invocation, which some reuse for the following
+// ones; this module implements the mandatory wRPC framing on top of it (see
+// `SPEC.md`, "Framed stream specification"). Outgoing data is written as
+// frames `[path][data]`, where `path` is a `list<u32>` index identifying the
+// (sub-)stream; incoming frames are demultiplexed back to the reader
+// registered for their path.
 
 import { AsyncReader, Chan, UNEXPECTED_EOF, Writer, atomic, readVarU32 } from "./io.js";
 
@@ -110,6 +111,17 @@ function complete(n) {
   if (!n.sealed || (n.chan && !n.closed)) return false;
   for (const c of n.children.values()) if (!complete(c)) return false;
   return true;
+}
+
+/**
+ * Whether the sub-stream at `n`, if expected, or one nested in it is not
+ * closed yet.
+ * @param {Node} n @returns {boolean}
+ */
+function open(n) {
+  if (n.chan && !n.closed) return true;
+  for (const c of n.children.values()) if (open(c)) return true;
+  return false;
 }
 
 /** @param {Undecided} at @param {Pending} pending */
@@ -285,8 +297,10 @@ export class Mux {
    * Aborts `transport` and throws a `TypeError` if it does not implement
    * `closeWrite`.
    * @param {Transport} transport
+   * @param {AsyncReader} [master] the reader over `transport`, holding the
+   *   bytes it read past the previous invocation on it
    */
-  constructor(transport) {
+  constructor(transport, master = new AsyncReader(() => transport.read())) {
     if (typeof transport.closeWrite !== "function") {
       const err = new TypeError(
         "a transport must implement `closeWrite` to communicate end of transmit",
@@ -296,7 +310,7 @@ export class Mux {
     }
     this.transport = transport;
     /** Reader over the raw inbound byte stream (header, then frames). */
-    this.master = new AsyncReader(() => transport.read());
+    this.master = master;
     /** The expected sub-streams, rooted at the one carrying the synchronous values. */
     this.root = node(false);
     this.root.chan = new Chan(CAPACITY);
@@ -347,8 +361,6 @@ export class Mux {
   #fail = () => {};
   /** Whether every expected sub-stream is closed and no more may be expected. */
   #completed = false;
-  /** @type {() => void} */
-  #complete = () => {};
 
   /** Write the invocation header: the protocol byte and instance/function names.
    * @param {string} instance @param {string} func
@@ -373,11 +385,11 @@ export class Mux {
   async _ingress() {
     const m = this.master;
     while (!this.aborted && !this.#completed) {
-      /** @type {Promise<void>} */
-      const completed = new Promise((resolve) => (this.#complete = resolve));
-      // Stop cleanly at a frame boundary once the peer closes the stream or
-      // no more data may be expected.
-      if (!(await Promise.race([m.fill(1), completed]))) break;
+      if (!open(this.root)) {
+        await new Promise((resolve) => this.pendingWaiters.push(() => resolve(undefined)));
+        continue;
+      }
+      if (!(await m.fill(1))) break;
       const [path, n, len] = await m.decode((r) => readFrameHeader(r, this.maxDepth));
       if (len > this.maxDepth) {
         throw new Error(`unexpected data for a sub-stream path of length ${len}`);
@@ -424,9 +436,7 @@ export class Mux {
    */
   _wake() {
     for (const f of this.pendingWaiters.splice(0)) f();
-    if (this.#completed || !complete(this.root)) return;
-    this.#completed = true;
-    this.#complete();
+    if (!this.#completed && complete(this.root)) this.#completed = true;
   }
 
   /** Stop counting `pending` towards {@link MAX_PENDING}. @param {Pending} pending */

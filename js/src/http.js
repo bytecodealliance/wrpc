@@ -1,4 +1,4 @@
-// The HTTP transport: one `POST` per invocation, whose request body carries
+// The HTTP transport: a `POST` request, whose request body carries
 // the client's data and whose response body carries the server's.
 
 import { fromWebStreams } from "./mux.js";

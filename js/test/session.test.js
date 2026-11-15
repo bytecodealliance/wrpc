@@ -5,7 +5,7 @@ import { runInNewContext } from "node:vm";
 import * as t from "../src/types.js";
 import { Chan, Writer } from "../src/io.js";
 import { Mux, fromWebStreams } from "../src/mux.js";
-import { invoke, accept } from "../src/session.js";
+import { invoke, accept, serve } from "../src/session.js";
 import { encodeValue } from "../src/value.js";
 
 /**
@@ -26,7 +26,7 @@ const HEADER = Uint8Array.of(1, 1, 0x69, 1, 0x66);
 
 /**
  * A pair of in-memory transports wired back to back, modelling a single
- * bidirectional byte stream per invocation.
+ * bidirectional byte stream.
  */
 function duplexPair() {
   const a = new Chan();
@@ -341,6 +341,41 @@ test("a failed transport fails the invocation", async () => {
   await assert.rejects(done, /connection reset/);
 });
 
+test("invocations on a transport are served one after another", async () => {
+  const [client, server] = duplexPair();
+  const serving = serve(server, async (inv) => {
+    const { params, done } = await inv.receiveParams([t.stream(t.future(t.u8))]);
+    await tick();
+    let v;
+    for await (const chunk of params[0]) for (const f of chunk) v = await f;
+    await Promise.all([done, inv.sendResults([t.u8], [v])]);
+  });
+  const w = new Writer();
+  for (const c of [1, 2]) {
+    w.bytes(HEADER);
+    for (const [path, data] of /** @type {Frame[]} */ ([
+      [[], [0]],
+      [[], []],
+      [[0], [1, 0]],
+      [[0, 0], [c]],
+      [[0, 0], []],
+      [[0], []],
+    ])) {
+      w.varU(path.length);
+      for (const p of path) w.varU(p);
+      w.varU(data.length);
+      w.bytes(data);
+    }
+  }
+  await client.write(w.finish());
+  /** @type {number[]} */
+  const results = [];
+  while (results.length < 10) results.push(...((await client.read()) ?? []));
+  assert.deepEqual(results, [0, 1, 1, 0, 0, 0, 1, 2, 0, 0]);
+  await client.closeWrite();
+  await serving;
+});
+
 test("aborting after the peer closed fails the sub-streams declared later", async () => {
   const inbound = [Uint8Array.of(0x00, 0x00)];
   const mux = new Mux({
@@ -348,11 +383,12 @@ test("aborting after the peer closed fails the sub-streams declared later", asyn
     write: () => {},
     closeWrite: () => {},
   });
+  mux.seal([], [{ path: [0], nested: true }]);
   mux.start();
   await mux.ingress;
   mux.abort(new Error("boom"));
-  mux.seal([], [{ path: [0], nested: false }]);
-  await assert.rejects(mux.incoming([0]).u8(), /boom/);
+  mux.seal([0], [{ path: [0], nested: false }]);
+  await assert.rejects(mux.incoming([0, 0]).u8(), /boom/);
 });
 
 test("a transport must communicate end of transmit", async () => {

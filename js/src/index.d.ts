@@ -283,9 +283,11 @@ export class Outgoing {
 export class Mux {
   /**
    * Aborts `transport` and throws a `TypeError` if it does not implement
-   * `closeWrite`.
+   * `closeWrite`. `master` is the reader over `transport`, which must be
+   * shared by the invocations on it, since it holds the bytes read past the
+   * previous one.
    */
-  constructor(transport: Transport);
+  constructor(transport: Transport, master?: AsyncReader);
   master: AsyncReader;
   /**
    * Resolves once the root and every sub-stream expected are closed and no
@@ -342,7 +344,7 @@ export interface FetchOptions extends Omit<RequestInit, "method" | "body" | "sig
   buffer?: boolean;
 }
 
-/** A client transport sending a `POST` request to `input` per invocation. */
+/** A client transport sending a `POST` request to `input`. */
 export function fromFetch(input: RequestInfo | URL, options?: FetchOptions): Transport;
 
 /** A server transport over `request`, with the response carrying the server's data. */
@@ -394,3 +396,15 @@ export function accept(
   transport: Transport,
   options?: { maxInstanceLength?: number; maxNameLength?: number },
 ): Promise<Invocation>;
+
+/**
+ * Serve the invocations on `transport` one after another, until the peer ends
+ * transmit in place of the next one, and then half-close the write side,
+ * passing each accepted invocation to `f`, which must start receiving its
+ * parameters before it resolves, and reading the next one once it is finished.
+ */
+export function serve(
+  transport: Transport,
+  f: (inv: Invocation) => Promise<void>,
+  options?: { maxInstanceLength?: number; maxNameLength?: number },
+): Promise<void>;

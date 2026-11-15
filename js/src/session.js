@@ -9,7 +9,7 @@
 // such value; the helpers below walk those descriptors, spawning a reader or
 // writer task per sub-stream.
 
-import { Writer, atomic, readVarU32 } from "./io.js";
+import { AsyncReader, Writer, atomic, readVarU32 } from "./io.js";
 import { DISCARDED, Mux, PROTOCOL, unexpectedError } from "./mux.js";
 import {
   asyncDepth,
@@ -24,7 +24,6 @@ import {
 
 /** @typedef {import("./index.d.ts").Type} Type */
 /** @typedef {import("./index.d.ts").DecodeDeferred} DecodeDeferred */
-/** @typedef {import("./io.js").AsyncReader} AsyncReader */
 /** @typedef {import("./mux.js").Transport} Transport */
 /** @typedef {import("./mux.js").Outgoing} Outgoing */
 
@@ -471,8 +470,59 @@ export async function invoke(transport, instance, func, paramTypes, args, result
  * @param {Transport} transport
  * @param {{ maxInstanceLength?: number, maxNameLength?: number }} [options]
  */
-export async function accept(transport, { maxInstanceLength = 1024, maxNameLength = 1024 } = {}) {
-  const mux = new Mux(transport);
+export async function accept(transport, options) {
+  return acceptMux(new Mux(transport), options);
+}
+
+/**
+ * Serve the invocations on `transport` one after another, until the peer ends
+ * transmit in place of the next one, and then half-close the write side. Each
+ * invocation is accepted like {@link accept} does and passed to `f`, which
+ * must start receiving its parameters before it resolves, and the next one is
+ * read once it is finished. If any of it fails, the transport is aborted.
+ *
+ * @param {Transport} transport
+ * @param {(inv: Awaited<ReturnType<typeof accept>>) => Promise<void>} f
+ * @param {{ maxInstanceLength?: number, maxNameLength?: number }} [options]
+ */
+export async function serve(transport, f, options) {
+  const master = new AsyncReader(() => transport.read());
+  /** @type {Transport} */
+  const conn = {
+    read: () => transport.read(),
+    write: (bytes) => transport.write(bytes),
+    closeWrite: () => {},
+    abort: (reason) => transport.abort?.(reason),
+  };
+  for (;;) {
+    const mux = new Mux(conn, master);
+    try {
+      if (!(await master.fill(1))) {
+        await transport.closeWrite();
+        return;
+      }
+    } catch (err) {
+      mux.abort(err);
+      throw err;
+    }
+    const inv = await acceptMux(mux, options);
+    try {
+      await f(inv);
+      if (!mux.ingress) throw new Error("invocation parameters were not received");
+      await inv.finished;
+    } catch (err) {
+      mux.abort(err);
+      throw err;
+    }
+  }
+}
+
+/**
+ * Accept a single invocation on `mux` (see {@link accept}).
+ * @param {Mux} mux
+ * @param {{ maxInstanceLength?: number, maxNameLength?: number }} [options]
+ */
+async function acceptMux(mux, { maxInstanceLength = 1024, maxNameLength = 1024 } = {}) {
   let instance;
   let func;
   try {
