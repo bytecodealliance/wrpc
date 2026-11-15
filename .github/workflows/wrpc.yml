@@ -13,8 +13,6 @@ on:
       - 'crates/http/v[0-9].[0-9]+.[0-9]+-*'
       - 'crates/introspect/v[0-9].[0-9]+.[0-9]+'
       - 'crates/introspect/v[0-9].[0-9]+.[0-9]+-*'
-      - 'crates/quic/v[0-9].[0-9]+.[0-9]+'
-      - 'crates/quic/v[0-9].[0-9]+.[0-9]+-*'
       - 'crates/test/v[0-9].[0-9]+.[0-9]+'
       - 'crates/test/v[0-9].[0-9]+.[0-9]+-*'
       - 'crates/transport/v[0-9].[0-9]+.[0-9]+'
@@ -31,8 +29,6 @@ on:
       - 'crates/wasmtime/v[0-9].[0-9]+.[0-9]+-*'
       - 'crates/wave/v[0-9].[0-9]+.[0-9]+'
       - 'crates/wave/v[0-9].[0-9]+.[0-9]+-*'
-      - 'crates/webtransport/v[0-9].[0-9]+.[0-9]+'
-      - 'crates/webtransport/v[0-9].[0-9]+.[0-9]+-*'
       - 'crates/wit-bindgen-go/v[0-9].[0-9]+.[0-9]+'
       - 'crates/wit-bindgen-go/v[0-9].[0-9]+.[0-9]+-*'
       - 'crates/wit-bindgen-js/v[0-9].[0-9]+.[0-9]+'
@@ -221,9 +217,6 @@ jobs:
 
           - crate: transport
 
-          - crate: quic
-            workspace-dependencies: true
-
           - crate: wasi-keyvalue
             workspace-dependencies: true
 
@@ -240,9 +233,6 @@ jobs:
             workspace-dependencies: true
 
           - crate: wave
-            workspace-dependencies: true
-
-          - crate: webtransport
             workspace-dependencies: true
 
           - crate: wit-bindgen
