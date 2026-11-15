@@ -236,18 +236,21 @@ func TestFrameStreamReader(t *testing.T) {
 	}{
 		"closed": {[]wrpc.Frame{{Path: []uint32{0}, Data: []byte("\x01x")}, {Path: []uint32{0}}}, ""},
 		"open":   {[]wrpc.Frame{{Path: []uint32{0}, Data: []byte("\x01x")}}, "unexpected EOF"},
-		"nested": {[]wrpc.Frame{{Path: []uint32{0}, Data: []byte{0}}, {Path: []uint32{0}, Data: []byte("x")}, {Path: []uint32{0}}}, ""},
+		"nested": {[]wrpc.Frame{{Path: []uint32{0}, Data: []byte{0}}, {Path: []uint32{0}}, {Path: []uint32{0, 0}, Data: []byte("x")}, {Path: []uint32{0, 0}}}, ""},
 	} {
 		t.Run("pending future "+name, func(t *testing.T) {
 			t.Parallel()
 			ctx, ingress := withIngress()
 			frames := append([]wrpc.Frame{{Data: []byte{0}}}, tc.frames...)
-			r := wrpc.NewFrameStreamReader(ctx, closedFrames(t, frames...), wrpc.NewSubscribePath().Index(0))
-			fut, deferred, err := wrpc.ReadFuture(r, func(r wrpc.IndexReadCloser, _ ...uint32) (<-chan byte, func(context.Context) error, error) {
+			r := wrpc.NewFrameStreamReader(ctx, closedFrames(t, frames...),
+				wrpc.NewSubscribePath().Index(0),
+				wrpc.NewSubscribePath().Index(0).Index(0),
+			)
+			fut, deferred, err := wrpc.ReadFuture(r, func(r wrpc.IndexReadCloser, path ...uint32) (<-chan byte, func(context.Context) error, error) {
 				return wrpc.ReadFuture(r, func(r wrpc.IndexReadCloser, _ ...uint32) (byte, func(context.Context) error, error) {
 					b, err := r.ReadByte()
 					return b, nil, err
-				})
+				}, path...)
 			}, 0)
 			if err != nil {
 				t.Fatalf("failed to read future: %s", err)
@@ -258,7 +261,7 @@ func TestFrameStreamReader(t *testing.T) {
 				t.Fatalf("expected `x`, got `%c`", v)
 			}
 			assertClose(t, r)
-			assertIngress(t, ingress, "")
+			assertIngress(t, ingress, tc.err)
 		})
 	}
 
@@ -392,6 +395,24 @@ func TestFrameStreamReaderDrain(t *testing.T) {
 		assertIngress(t, ingress, "")
 	})
 
+	t.Run("without end of transmit", func(t *testing.T) {
+		t.Parallel()
+		ctx, ingress := withIngress()
+		pr, pw := io.Pipe()
+		r := wrpc.NewFrameStreamReader(ctx, pipeReader(pr), wrpc.NewSubscribePath().Index(0))
+		writeFrames(t, pw, wrpc.Frame{Data: []byte{0}}, wrpc.Frame{})
+		_, deferred, err := wrpc.ReadFutureUnit(r, 0)
+		if err != nil {
+			t.Fatalf("failed to read future: %s", err)
+		}
+		assertClose(t, r)
+		writeFrames(t, pw, wrpc.Frame{Path: []uint32{0}})
+		if err := deferred(ctx); err != nil {
+			t.Fatalf("failed to resolve future: %s", err)
+		}
+		assertIngress(t, ingress, "")
+	})
+
 	t.Run("data", func(t *testing.T) {
 		t.Parallel()
 		ctx, ingress := withIngress()
@@ -456,6 +477,7 @@ func TestFrameStreamReaderDrain(t *testing.T) {
 		ctx, ingress := withIngress()
 		r := wrpc.NewFrameStreamReader(ctx, closedFrames(t,
 			wrpc.Frame{Path: []uint32{0}, Data: []byte("hello")},
+			wrpc.Frame{Path: []uint32{0}},
 		), wrpc.NewSubscribePath().Index(0))
 		assertReadAll(t, r, "", "")
 		assertClose(t, r)

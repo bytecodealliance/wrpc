@@ -26,6 +26,14 @@ func assertClose(t *testing.T, w io.Closer) {
 	}
 }
 
+func assertClosePath(t *testing.T, w wrpc.IndexWriteCloser) {
+	t.Helper()
+	if err := w.ClosePath(); err != nil {
+		t.Fatalf("failed to close path: %s", err)
+	}
+	assertClose(t, w)
+}
+
 func assertWriteByte(t *testing.T, w io.ByteWriter, b byte) {
 	t.Helper()
 	if err := w.WriteByte(b); err != nil {
@@ -86,13 +94,13 @@ func TestFrameStreamWriter(t *testing.T) {
 
 		assertWriteString(t, w0, "hello")
 		w0_1 := assertIndex(t, w0, 1)
-		assertClose(t, w0)
+		assertClosePath(t, w0)
 
 		assertWriteString(t, w0_1, "test")
-		assertClose(t, w0_1)
+		assertClosePath(t, w0_1)
 
 		assertWriteByte(t, w42_41, 0xfe)
-		assertClose(t, w42_41)
+		assertClosePath(t, w42_41)
 
 		r := bytes.NewBuffer(dst.Bytes())
 		assertReadFrame(t, r, []byte{42})
@@ -115,16 +123,10 @@ func TestFrameStreamWriter(t *testing.T) {
 		w0 := assertIndex(t, w, 0)
 		assertWriteString(t, w0, "hello")
 		assertWriteString(t, w0, "")
-		if err := w0.ClosePath(); err != nil {
-			t.Fatalf("failed to close path: %s", err)
-		}
-		assertClose(t, w0)
+		assertClosePath(t, w0)
 		assertClose(t, w0)
 		assertClose(t, assertIndex(t, w, 1))
-		if err := w.ClosePath(); err != nil {
-			t.Fatalf("failed to close path: %s", err)
-		}
-		assertClose(t, w)
+		assertClosePath(t, w)
 
 		r := bytes.NewBuffer(dst.Bytes())
 		assertReadFrame(t, r, []byte("hello"), 0)

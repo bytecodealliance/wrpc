@@ -50,7 +50,7 @@ const [opened] = results;
 if (opened.kind === "error") throw opened.value;
 const bucket = opened.value; // a Uint8Array handle
 await done; // all asynchronous I/O has completed
-await finished; // the server ended transmit too
+await finished; // the server closed every path it sent too
 ```
 
 `invoke` runs the framing (a single connection per invocation, the protocol
@@ -62,10 +62,11 @@ sub-streams — and `done` resolves once every asynchronous parameter and result
 has been transmitted. If the arguments do not match their types, or any of
 that I/O fails, the invocation fails and the transport is aborted.
 
-`finished` resolves once, in addition, the peer has ended transmit and every
-frame it sent has been received and decoded, and rejects if the invocation
-fails before then, including after `done`: for example, when the peer sends
-data for a sub-stream that has already ended.
+`finished` resolves once, in addition, the peer has closed every path it sent,
+without waiting for it to end transmit, and every frame it sent has been
+received and decoded, and rejects if the invocation fails before then,
+including after `done`: for example, when the peer sends data for a sub-stream
+that has already ended.
 
 ### Streams and futures
 
@@ -137,7 +138,7 @@ await Promise.all([
   rx,
   inv.sendResults([t.result(t.own("bucket"), error)], [{ kind: "ok", value: handle }]),
 ]);
-await inv.finished; // the client ended transmit, its data was decoded and the results were sent
+await inv.finished; // the client closed every path it sent, its data was decoded and the results were sent
 ```
 
 ### Transports
@@ -148,8 +149,7 @@ sends an outbound chunk; `closeWrite()` communicates end of transmit to the
 peer while still reading; and `abort(reason)`, if given, tears both directions
 down when an invocation fails. Frames do not communicate end of transmit, so
 every transport must: `closeWrite` is required, and an invocation fails if
-the transport does not implement it. A peer that reads until end of transmit,
-such as the Rust implementation, otherwise waits forever.
+the transport does not implement it.
 
 `fromWebStreams` maps `closeWrite` to closing the writable side and `abort` to
 cancelling the readable and aborting the writable side, which suits byte
