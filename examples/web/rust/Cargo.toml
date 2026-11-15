@@ -53,8 +53,7 @@ url = { workspace = true }
 uuid = { workspace = true, features = ["std", "v7"] }
 web-transport-quinn = { workspace = true, features = ["ring"] }
 wit-bindgen-wrpc = { workspace = true }
-wrpc-transport = { workspace = true, features = ["net"] }
-wrpc-quic = { workspace = true }
+wrpc-transport = { workspace = true }
 wrpc-webtransport = { workspace = true }
 wrpc-wasi-keyvalue = { workspace = true }
 wrpc-wasi-keyvalue-mem = { workspace = true }

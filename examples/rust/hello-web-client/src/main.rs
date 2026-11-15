@@ -32,8 +32,8 @@ async fn main() -> anyhow::Result<()> {
         .connect(addr)
         .await
         .context("failed to connect to server")?;
-    let wrpc = wrpc_webtransport::Client::from(session);
-    let hello = bindings::wrpc_examples::hello::handler::hello(&wrpc, ())
+    let (tx, rx) = session.open_bi().await.context("failed to open stream")?;
+    let hello = bindings::wrpc_examples::hello::handler::hello(tx, rx)
         .await
         .context("failed to invoke `wrpc-examples.hello/handler.hello`")?;
     eprintln!("{hello}");

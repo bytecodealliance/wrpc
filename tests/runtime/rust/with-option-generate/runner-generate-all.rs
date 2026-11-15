@@ -1,8 +1,9 @@
 //@ args = '--generate-all'
 
 pub async fn run(
-    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,
+    wrpc: &crate::Client,
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
-    crate::client::foo::baz::a::x(wrpc, ()).await?;
+    let (tx, rx) = wrpc.connect().await?;
+    crate::client::foo::baz::a::x(tx, rx).await?;
     Ok(())
 }

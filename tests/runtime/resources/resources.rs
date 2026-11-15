@@ -1,7 +1,7 @@
 use std::sync::Mutex;
 
 use ::wit_bindgen_wrpc::bytes::Bytes;
-use ::wit_bindgen_wrpc::wrpc_transport::{Invoke, ResourceBorrow, ResourceOwn};
+use ::wit_bindgen_wrpc::wrpc_transport::{ResourceBorrow, ResourceOwn};
 
 use crate::server::exports::exports::{
     Handler, HandlerKebabCase, HandlerX, HandlerZ, KebabCase, X, Z,
@@ -20,10 +20,10 @@ fn z_val(z: &[u8]) -> i32 {
 #[derive(Clone)]
 pub struct Component;
 
-impl<C: Invoke<Context = ()>> Handler<C> for Component {
+impl Handler<crate::Client> for Component {
     async fn add(
         &self,
-        _cx: C,
+        _cx: crate::Client,
         a: ResourceBorrow<Z>,
         b: ResourceBorrow<Z>,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<ResourceOwn<Z>> {
@@ -33,49 +33,67 @@ impl<C: Invoke<Context = ()>> Handler<C> for Component {
         )))
     }
 
-    async fn consume(&self, _cx: C, x: ResourceOwn<X>) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+    async fn consume(&self, _cx: crate::Client, x: ResourceOwn<X>) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
         drop(x);
         Ok(())
     }
 
-    async fn test_imports(&self, cx: C) -> ::wit_bindgen_wrpc::anyhow::Result<Result<(), String>> {
+    async fn test_imports(&self, cx: crate::Client) -> ::wit_bindgen_wrpc::anyhow::Result<Result<(), String>> {
         use crate::server::imports::*;
 
-        let y = Y::new(&cx, (), 10).await?;
-        let v = Y::get_a(&cx, (), &y.as_borrow()).await?;
+        let (tx, rx) = cx.connect().await?;
+        let y = Y::new(tx, rx, 10).await?;
+        let (tx, rx) = cx.connect().await?;
+        let v = Y::get_a(tx, rx, &y.as_borrow()).await?;
         assert_eq!(v, 10);
-        Y::set_a(&cx, (), &y.as_borrow(), 20).await?;
-        let v = Y::get_a(&cx, (), &y.as_borrow()).await?;
+        let (tx, rx) = cx.connect().await?;
+        Y::set_a(tx, rx, &y.as_borrow(), 20).await?;
+        let (tx, rx) = cx.connect().await?;
+        let v = Y::get_a(tx, rx, &y.as_borrow()).await?;
         assert_eq!(v, 20);
-        let y2 = Y::add(&cx, (), &y, 20).await?;
-        let v = Y::get_a(&cx, (), &y2.as_borrow()).await?;
+        let (tx, rx) = cx.connect().await?;
+        let y2 = Y::add(tx, rx, &y, 20).await?;
+        let (tx, rx) = cx.connect().await?;
+        let v = Y::get_a(tx, rx, &y2.as_borrow()).await?;
         assert_eq!(v, 40);
 
         // test multiple instances
-        let y1 = Y::new(&cx, (), 1).await?;
-        let y2 = Y::new(&cx, (), 2).await?;
-        let v = Y::get_a(&cx, (), &y1.as_borrow()).await?;
+        let (tx, rx) = cx.connect().await?;
+        let y1 = Y::new(tx, rx, 1).await?;
+        let (tx, rx) = cx.connect().await?;
+        let y2 = Y::new(tx, rx, 2).await?;
+        let (tx, rx) = cx.connect().await?;
+        let v = Y::get_a(tx, rx, &y1.as_borrow()).await?;
         assert_eq!(v, 1);
-        let v = Y::get_a(&cx, (), &y2.as_borrow()).await?;
+        let (tx, rx) = cx.connect().await?;
+        let v = Y::get_a(tx, rx, &y2.as_borrow()).await?;
         assert_eq!(v, 2);
-        Y::set_a(&cx, (), &y1.as_borrow(), 10).await?;
-        Y::set_a(&cx, (), &y2.as_borrow(), 20).await?;
-        let v = Y::get_a(&cx, (), &y1.as_borrow()).await?;
+        let (tx, rx) = cx.connect().await?;
+        Y::set_a(tx, rx, &y1.as_borrow(), 10).await?;
+        let (tx, rx) = cx.connect().await?;
+        Y::set_a(tx, rx, &y2.as_borrow(), 20).await?;
+        let (tx, rx) = cx.connect().await?;
+        let v = Y::get_a(tx, rx, &y1.as_borrow()).await?;
         assert_eq!(v, 10);
-        let v = Y::get_a(&cx, (), &y2.as_borrow()).await?;
+        let (tx, rx) = cx.connect().await?;
+        let v = Y::get_a(tx, rx, &y2.as_borrow()).await?;
         assert_eq!(v, 20);
-        let y3 = Y::add(&cx, (), &y1, 20).await?;
-        let y4 = Y::add(&cx, (), &y2, 30).await?;
-        let v = Y::get_a(&cx, (), &y3.as_borrow()).await?;
+        let (tx, rx) = cx.connect().await?;
+        let y3 = Y::add(tx, rx, &y1, 20).await?;
+        let (tx, rx) = cx.connect().await?;
+        let y4 = Y::add(tx, rx, &y2, 30).await?;
+        let (tx, rx) = cx.connect().await?;
+        let v = Y::get_a(tx, rx, &y3.as_borrow()).await?;
         assert_eq!(v, 30);
-        let v = Y::get_a(&cx, (), &y4.as_borrow()).await?;
+        let (tx, rx) = cx.connect().await?;
+        let v = Y::get_a(tx, rx, &y4.as_borrow()).await?;
         assert_eq!(v, 50);
         Ok(Ok(()))
     }
 }
 
-impl<C: Invoke<Context = ()>> HandlerX<C> for Component {
-    async fn new(&self, _cx: C, a: i32) -> ::wit_bindgen_wrpc::anyhow::Result<ResourceOwn<X>> {
+impl HandlerX<crate::Client> for Component {
+    async fn new(&self, _cx: crate::Client, a: i32) -> ::wit_bindgen_wrpc::anyhow::Result<ResourceOwn<X>> {
         let mut xs = XS.lock().unwrap();
         let idx = u32::try_from(xs.len())?;
         xs.push(a);
@@ -86,7 +104,7 @@ impl<C: Invoke<Context = ()>> HandlerX<C> for Component {
 
     async fn get_a(
         &self,
-        _cx: C,
+        _cx: crate::Client,
         self_: ResourceBorrow<X>,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<i32> {
         Ok(XS.lock().unwrap()[x_index(self_.as_ref())])
@@ -94,7 +112,7 @@ impl<C: Invoke<Context = ()>> HandlerX<C> for Component {
 
     async fn set_a(
         &self,
-        _cx: C,
+        _cx: crate::Client,
         self_: ResourceBorrow<X>,
         a: i32,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
@@ -104,7 +122,7 @@ impl<C: Invoke<Context = ()>> HandlerX<C> for Component {
 
     async fn add(
         &self,
-        _cx: C,
+        _cx: crate::Client,
         x: ResourceOwn<X>,
         a: i32,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<ResourceOwn<X>> {
@@ -113,28 +131,28 @@ impl<C: Invoke<Context = ()>> HandlerX<C> for Component {
     }
 }
 
-impl<C: Invoke<Context = ()>> HandlerZ<C> for Component {
-    async fn new(&self, _cx: C, a: i32) -> ::wit_bindgen_wrpc::anyhow::Result<ResourceOwn<Z>> {
+impl HandlerZ<crate::Client> for Component {
+    async fn new(&self, _cx: crate::Client, a: i32) -> ::wit_bindgen_wrpc::anyhow::Result<ResourceOwn<Z>> {
         Ok(ResourceOwn::from(Bytes::copy_from_slice(&a.to_le_bytes())))
     }
 
     async fn get_a(
         &self,
-        _cx: C,
+        _cx: crate::Client,
         self_: ResourceBorrow<Z>,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<i32> {
         Ok(z_val(self_.as_ref()))
     }
 
-    async fn num_dropped(&self, _cx: C) -> ::wit_bindgen_wrpc::anyhow::Result<u32> {
+    async fn num_dropped(&self, _cx: crate::Client) -> ::wit_bindgen_wrpc::anyhow::Result<u32> {
         Ok(1)
     }
 }
 
-impl<C: Invoke<Context = ()>> HandlerKebabCase<C> for Component {
+impl HandlerKebabCase<crate::Client> for Component {
     async fn new(
         &self,
-        _cx: C,
+        _cx: crate::Client,
         a: u32,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<ResourceOwn<KebabCase>> {
         Ok(ResourceOwn::from(Bytes::copy_from_slice(&a.to_le_bytes())))
@@ -142,7 +160,7 @@ impl<C: Invoke<Context = ()>> HandlerKebabCase<C> for Component {
 
     async fn get_a(
         &self,
-        _cx: C,
+        _cx: crate::Client,
         self_: ResourceBorrow<KebabCase>,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<u32> {
         let bytes: &[u8] = self_.as_ref();
@@ -151,7 +169,7 @@ impl<C: Invoke<Context = ()>> HandlerKebabCase<C> for Component {
 
     async fn take_owned(
         &self,
-        cx: C,
+        cx: crate::Client,
         k: ResourceOwn<KebabCase>,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<u32> {
         HandlerKebabCase::get_a(self, cx, k.into()).await

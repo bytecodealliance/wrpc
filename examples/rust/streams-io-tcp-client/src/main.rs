@@ -2,6 +2,7 @@ use anyhow::Context as _;
 use bytes::Bytes;
 use clap::Parser;
 use futures::stream;
+use tokio::net::TcpStream;
 use tokio::try_join;
 use tracing::debug;
 
@@ -33,24 +34,26 @@ async fn main() -> anyhow::Result<()> {
 
     let Args { addr, payload } = Args::parse();
 
-    let wrpc = wrpc_transport::tcp::Client::from(&addr);
+    let mut stream = TcpStream::connect(&addr)
+        .await
+        .with_context(|| format!("failed to connect to `{addr}`"))?;
+    stream
+        .set_nodelay(true)
+        .context("failed to set TCP_NODELAY")?;
+    let (rx, tx) = stream.split();
 
     // A `stream<u8>` is chunked using [`Bytes`]. The component server reads it
     // as a `wasi:io/streams.input-stream` and counts the bytes.
     let data = Box::pin(stream::iter([Bytes::from(payload.clone().into_bytes())]));
 
-    let (total, io) = count(&wrpc, (), data)
+    let (total, io) = count(tx, rx, data)
         .await
         .context("failed to invoke `wrpc-examples:streams-io/handler.count`")?;
 
     try_join!(
         async {
-            if let Some(io) = io {
-                debug!("performing async I/O");
-                io.await.context("failed to complete async I/O")
-            } else {
-                Ok(())
-            }
+            debug!("performing async I/O");
+            io.await.context("failed to complete async I/O")
         },
         async {
             eprintln!("sent {} bytes, server counted {total}", payload.len());

@@ -1,10 +1,13 @@
 use crate::client::test::xcrate::b_exports::{X, b};
 
 pub async fn run(
-    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,
+    wrpc: &crate::Client,
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
-    b(wrpc, ()).await?;
-    let x = X::new(wrpc, ()).await?;
-    X::foo(wrpc, (), &x.as_borrow()).await?;
+    let (tx, rx) = wrpc.connect().await?;
+    b(tx, rx).await?;
+    let (tx, rx) = wrpc.connect().await?;
+    let x = X::new(tx, rx).await?;
+    let (tx, rx) = wrpc.connect().await?;
+    X::foo(tx, rx, &x.as_borrow()).await?;
     Ok(())
 }

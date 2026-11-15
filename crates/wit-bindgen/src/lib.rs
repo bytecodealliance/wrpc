@@ -160,10 +160,16 @@
 ///
 /// use bindings::Celsius;
 ///
-/// async fn test(wrpc: &impl wrpc_transport::Invoke<Context = ()>) -> anyhow::Result<()> {
-///     let current_temp = bindings::what_temperature_is_it(wrpc, ()).await?;
+/// async fn test<I, O>(connect: impl AsyncFn() -> std::io::Result<(O, I)>) -> anyhow::Result<()>
+/// where
+///     I: tokio::io::AsyncRead + Send + Unpin,
+///     O: tokio::io::AsyncWrite + Send + Unpin,
+/// {
+///     let (tx, rx) = connect().await?;
+///     let current_temp = bindings::what_temperature_is_it(tx, rx).await?;
 ///     println!("current temp in fahrenheit is {}", current_temp.degrees);
-///     let in_celsius: Celsius = bindings::convert_to_celsius(wrpc, (), &current_temp).await?;
+///     let (tx, rx) = connect().await?;
+///     let in_celsius: Celsius = bindings::convert_to_celsius(tx, rx, &current_temp).await?;
 ///     println!("current temp in celsius is {}", in_celsius.degrees);
 ///     Ok(())
 /// }
@@ -206,12 +212,19 @@
 /// // interface name.
 /// use my::test::logging::Level;
 ///
-/// async fn test(wrpc: &impl wrpc_transport::Invoke<Context = ()>) -> anyhow::Result<()> {
-///     let current_level = global_logger::get_current_level(wrpc, ()).await?;
+/// async fn test<I, O>(connect: impl AsyncFn() -> std::io::Result<(O, I)>) -> anyhow::Result<()>
+/// where
+///     I: tokio::io::AsyncRead + Send + Unpin,
+///     O: tokio::io::AsyncWrite + Send + Unpin,
+/// {
+///     let (tx, rx) = connect().await?;
+///     let current_level = global_logger::get_current_level(tx, rx).await?;
 ///     println!("current logging level is {current_level:?}");
-///     global_logger::set_current_level(wrpc, (), Level::Error).await?;
+///     let (tx, rx) = connect().await?;
+///     global_logger::set_current_level(tx, rx, Level::Error).await?;
 ///
-///     my::test::logging::log(wrpc, (), Level::Info, "Hello there!").await?;
+///     let (tx, rx) = connect().await?;
+///     my::test::logging::log(tx, rx, Level::Info, "Hello there!").await?;
 ///     Ok(())
 /// }
 /// #
@@ -225,7 +238,7 @@
 /// `ResourceOwn<T>` and `ResourceBorrow<T>` handle types from `wrpc_transport`,
 /// which represent owned and borrowed handles respectively. The resource's
 /// constructor, methods, and static functions are generated as associated
-/// functions on the marker type, each taking the wRPC transport and a context
+/// functions on the marker type, each taking the byte streams of an invocation
 /// as their first two arguments; methods additionally take a
 /// `&ResourceBorrow<T>` receiver, obtained from an owned handle via
 /// `ResourceOwn::as_borrow`.
@@ -263,12 +276,20 @@
 ///
 /// use my::test::logger::{self, Level};
 ///
-/// async fn test(wrpc: &impl wrpc_transport::Invoke<Context = ()>) -> anyhow::Result<()> {
-///     let logger = get_global_logger(wrpc, ()).await?;
-///     Logger::log(wrpc, (), &logger.as_borrow(), Level::Debug, "This is a global message").await?;
+/// async fn test<I, O>(connect: impl AsyncFn() -> std::io::Result<(O, I)>) -> anyhow::Result<()>
+/// where
+///     I: tokio::io::AsyncRead + Send + Unpin,
+///     O: tokio::io::AsyncWrite + Send + Unpin,
+/// {
+///     let (tx, rx) = connect().await?;
+///     let logger = get_global_logger(tx, rx).await?;
+///     let (tx, rx) = connect().await?;
+///     Logger::log(tx, rx, &logger.as_borrow(), Level::Debug, "This is a global message").await?;
 ///
-///     let logger2 = Logger::new(wrpc, (), "/tmp/other.log").await?;
-///     Logger::log(wrpc, (), &logger2.as_borrow(), Level::Info, "This is not a global message").await?;
+///     let (tx, rx) = connect().await?;
+///     let logger2 = Logger::new(tx, rx, "/tmp/other.log").await?;
+///     let (tx, rx) = connect().await?;
+///     Logger::log(tx, rx, &logger2.as_borrow(), Level::Info, "This is not a global message").await?;
 ///     Ok(())
 /// }
 /// #
@@ -292,7 +313,10 @@
 /// A minimal example of this is:
 ///
 /// ```
-/// use futures::stream::TryStreamExt as _;
+/// use core::pin::pin;
+///
+/// use futures::{StreamExt as _, TryStreamExt as _};
+/// use tokio_stream::wrappers::TcpListenerStream;
 /// use wit_bindgen_wrpc::generate;
 ///
 /// generate!({
@@ -312,14 +336,20 @@
 ///     async fn hello(&self, cx: Ctx) -> anyhow::Result<()> { Ok(()) }
 /// }
 ///
-/// async fn serve_exports(wrpc: &impl wrpc_transport::Serve) {
-///     let invocations = serve(wrpc, MyComponent).await.unwrap();
-///     invocations.into_iter().for_each(|(instance, name, st)| {
+/// async fn serve_exports(lis: tokio::net::TcpListener) {
+///     let incoming = TcpListenerStream::new(lis).map_ok(|stream| {
+///         let (rx, tx) = stream.into_split();
+///         ((), tx, rx)
+///     });
+///     let mut invocations = pin!(serve(incoming, MyComponent));
+///     while let Some(invocation) = invocations.next().await {
+///         let invocation = invocation.unwrap();
 ///         tokio::spawn(async move {
-///             eprintln!("serving {instance} {name}");
-///             st.try_collect::<Vec<_>>().await.unwrap();
+///             if let Err(err) = invocation.await {
+///                 eprintln!("failed to serve invocation: {err:?}");
+///             }
 ///         });
-///     })
+///     }
 /// }
 /// ```
 ///
@@ -340,7 +370,10 @@
 /// `Handler` here and are namespaced appropriately in modules:
 ///
 /// ```
-/// use futures::stream::TryStreamExt as _;
+/// use core::pin::pin;
+///
+/// use futures::{StreamExt as _, TryStreamExt as _};
+/// use tokio_stream::wrappers::TcpListenerStream;
 /// use wit_bindgen_wrpc::generate;
 ///
 /// generate!({
@@ -378,14 +411,20 @@
 ///     async fn func_in_b(&self, cx: Ctx) -> anyhow::Result<()> { Ok(()) }
 /// }
 ///
-/// async fn serve_exports(wrpc: &impl wrpc_transport::Serve) {
-///     let invocations = serve(wrpc, MyComponent).await.unwrap();
-///     invocations.into_iter().for_each(|(instance, name, st)| {
+/// async fn serve_exports(lis: tokio::net::TcpListener) {
+///     let incoming = TcpListenerStream::new(lis).map_ok(|stream| {
+///         let (rx, tx) = stream.into_split();
+///         ((), tx, rx)
+///     });
+///     let mut invocations = pin!(serve(incoming, MyComponent));
+///     while let Some(invocation) = invocations.next().await {
+///         let invocation = invocation.unwrap();
 ///         tokio::spawn(async move {
-///             eprintln!("serving {instance} {name}");
-///             st.try_collect::<Vec<_>>().await.unwrap();
+///             if let Err(err) = invocation.await {
+///                 eprintln!("failed to serve invocation: {err:?}");
+///             }
 ///         });
-///     })
+///     }
 /// }
 /// ```
 ///
@@ -398,7 +437,10 @@
 /// generated:
 ///
 /// ```
-/// use futures::stream::TryStreamExt as _;
+/// use core::pin::pin;
+///
+/// use futures::{StreamExt as _, TryStreamExt as _};
+/// use tokio_stream::wrappers::TcpListenerStream;
 ///
 /// mod bindings {
 ///     use wit_bindgen_wrpc::generate;
@@ -431,14 +473,21 @@
 ///     }
 /// }
 ///
-/// async fn serve_exports(wrpc: &impl wrpc_transport::Serve) {
-///     let invocations = bindings::serve(wrpc, MyComponent).await.unwrap();
-///     invocations.into_iter().for_each(|(instance, name, st)| {
+/// async fn serve_exports(lis: tokio::net::TcpListener) {
+///     let incoming = TcpListenerStream::new(lis).map_ok(|stream| {
+///         let (rx, tx) = stream.into_split();
+///         ((), tx, rx)
+///     });
+///     let invocations = bindings::serve(incoming, MyComponent);
+///     let mut invocations = pin!(invocations);
+///     while let Some(invocation) = invocations.next().await {
+///         let invocation = invocation.unwrap();
 ///         tokio::spawn(async move {
-///             eprintln!("serving {instance} {name}");
-///             st.try_collect::<Vec<_>>().await.unwrap();
+///             if let Err(err) = invocation.await {
+///                 eprintln!("failed to serve invocation: {err:?}");
+///             }
 ///         });
-///     })
+///     }
 /// }
 /// ```
 ///
@@ -468,7 +517,10 @@
 ///
 /// use anyhow::Context;
 /// use bytes::Bytes;
-/// use futures::stream::TryStreamExt as _;
+/// use core::pin::pin;
+///
+/// use futures::{StreamExt as _, TryStreamExt as _};
+/// use tokio_stream::wrappers::TcpListenerStream;
 /// use wrpc_transport::{ResourceBorrow, ResourceOwn};
 ///
 /// mod bindings {
@@ -560,14 +612,21 @@
 ///     }
 /// }
 ///
-/// async fn serve_exports(wrpc: &impl wrpc_transport::Serve) {
-///     let invocations = bindings::serve(wrpc, MyComponent::default()).await.unwrap();
-///     invocations.into_iter().for_each(|(instance, name, st)| {
+/// async fn serve_exports(lis: tokio::net::TcpListener) {
+///     let incoming = TcpListenerStream::new(lis).map_ok(|stream| {
+///         let (rx, tx) = stream.into_split();
+///         ((), tx, rx)
+///     });
+///     let invocations = bindings::serve(incoming, MyComponent::default());
+///     let mut invocations = pin!(invocations);
+///     while let Some(invocation) = invocations.next().await {
+///         let invocation = invocation.unwrap();
 ///         tokio::spawn(async move {
-///             eprintln!("serving {instance} {name}");
-///             st.try_collect::<Vec<_>>().await.unwrap();
+///             if let Err(err) = invocation.await {
+///                 eprintln!("failed to serve invocation: {err:?}");
+///             }
 ///         });
-///     })
+///     }
 /// }
 /// ```
 ///
@@ -581,15 +640,22 @@
 /// Exported functions are served at runtime by the generated `serve` function,
 /// which is not created when `generate!` is invoked. Instead you first define
 /// your own type and implement the various `Handler` `trait`s for it, and then
-/// pass it to `serve` along with a `wrpc_transport::Serve` transport to start
+/// pass it to `serve` along with a stream of incoming invocations to start
 /// handling invocations.
 ///
 /// Each call to `generate!` itself generates a `serve` function adjacent to the
-/// generated bindings. Its first argument is the transport to serve on and its
-/// second argument is a value that implements the generated `Handler` traits:
+/// generated bindings. Its first argument is a stream yielding the context and
+/// the byte streams of each incoming invocation and its second argument is a
+/// value that implements the generated `Handler` traits. It returns a stream
+/// yielding a future per incoming invocation, which reads the invocation header,
+/// dispatches it to the handler and completes once the invocation is served.
+/// Nothing is spawned, the caller drives the futures:
 ///
 /// ```
-/// use futures::stream::TryStreamExt as _;
+/// use core::pin::pin;
+///
+/// use futures::{StreamExt as _, TryStreamExt as _};
+/// use tokio_stream::wrappers::TcpListenerStream;
 /// use wit_bindgen_wrpc::generate;
 ///
 /// generate!({
@@ -611,14 +677,20 @@
 ///     // ...
 /// }
 ///
-/// async fn serve_exports(wrpc: &impl wrpc_transport::Serve) {
-///     let invocations = serve(wrpc, MyComponent).await.unwrap();
-///     invocations.into_iter().for_each(|(instance, name, st)| {
+/// async fn serve_exports(lis: tokio::net::TcpListener) {
+///     let incoming = TcpListenerStream::new(lis).map_ok(|stream| {
+///         let (rx, tx) = stream.into_split();
+///         ((), tx, rx)
+///     });
+///     let mut invocations = pin!(serve(incoming, MyComponent));
+///     while let Some(invocation) = invocations.next().await {
+///         let invocation = invocation.unwrap();
 ///         tokio::spawn(async move {
-///             eprintln!("serving {instance} {name}");
-///             st.try_collect::<Vec<_>>().await.unwrap();
+///             if let Err(err) = invocation.await {
+///                 eprintln!("failed to serve invocation: {err:?}");
+///             }
 ///         });
-///     })
+///     }
 /// }
 /// ```
 ///
@@ -630,7 +702,10 @@
 /// namespaced under that module, just like the rest of the generated bindings:
 ///
 /// ```
-/// use futures::stream::TryStreamExt as _;
+/// use core::pin::pin;
+///
+/// use futures::{StreamExt as _, TryStreamExt as _};
+/// use tokio_stream::wrappers::TcpListenerStream;
 ///
 /// mod bindings {
 ///     wit_bindgen_wrpc::generate!({
@@ -654,16 +729,29 @@
 ///     // ...
 /// }
 ///
-/// async fn serve_exports(wrpc: &impl wrpc_transport::Serve) {
-///     let invocations = bindings::serve(wrpc, MyComponent).await.unwrap();
-///     invocations.into_iter().for_each(|(instance, name, st)| {
+/// async fn serve_exports(lis: tokio::net::TcpListener) {
+///     let incoming = TcpListenerStream::new(lis).map_ok(|stream| {
+///         let (rx, tx) = stream.into_split();
+///         ((), tx, rx)
+///     });
+///     let invocations = bindings::serve(incoming, MyComponent);
+///     let mut invocations = pin!(invocations);
+///     while let Some(invocation) = invocations.next().await {
+///         let invocation = invocation.unwrap();
 ///         tokio::spawn(async move {
-///             eprintln!("serving {instance} {name}");
-///             st.try_collect::<Vec<_>>().await.unwrap();
+///             if let Err(err) = invocation.await {
+///                 eprintln!("failed to serve invocation: {err:?}");
+///             }
 ///         });
-///     })
+///     }
 /// }
 /// ```
+///
+/// `generate!` also generates a `handle` function, which serves an
+/// invocation, whose header was already read by `wrpc_transport::accept`, if
+/// the world exports the invoked function, and returns its context and byte
+/// streams back otherwise, so that the `handle` functions of several worlds can
+/// be chained to serve all of them on one transport.
 ///
 /// ## Debugging output to `generate!`
 ///

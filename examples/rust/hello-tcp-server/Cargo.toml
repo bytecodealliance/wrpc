@@ -21,7 +21,7 @@ clap = { workspace = true, features = [
 ] }
 futures = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "signal", "net"] }
+tokio-stream = { workspace = true, features = ["net"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["ansi", "fmt"] }
 wit-bindgen-wrpc = { workspace = true }
-wrpc-transport = { workspace = true, features = ["net"] }

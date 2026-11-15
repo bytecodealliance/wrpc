@@ -1,11 +1,12 @@
 use crate::client::my::inline::blah::{bar, Foo};
 
 pub async fn run(
-    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,
+    wrpc: &crate::Client,
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+    let (tx, rx) = wrpc.connect().await?;
     bar(
-        wrpc,
-        (),
+        tx,
+        rx,
         &Foo {
             field1: "x".to_string(),
             field2: vec![2, 3, 3, 4],

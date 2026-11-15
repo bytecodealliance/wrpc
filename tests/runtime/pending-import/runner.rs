@@ -11,14 +11,15 @@ use tokio::task::yield_now;
 use crate::client::my::test::i::*;
 
 pub async fn run(
-    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,
+    wrpc: &crate::Client,
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
     // Test that Rust-level polling twice works.
     {
         let (tx, rx) = oneshot::channel();
+        let (wrpc_tx, wrpc_rx) = wrpc.connect().await?;
         let mut import = pin!(pending_import(
-            wrpc,
-            (),
+            wrpc_tx,
+            wrpc_rx,
             Box::pin(async move { rx.await.unwrap() })
         ));
         assert!(
@@ -43,9 +44,10 @@ pub async fn run(
     // it.
     {
         let (tx, rx) = oneshot::channel();
+        let (wrpc_tx, wrpc_rx) = wrpc.connect().await?;
         let mut import = Box::pin(pending_import(
-            wrpc,
-            (),
+            wrpc_tx,
+            wrpc_rx,
             Box::pin(async move { rx.await.unwrap() }),
         ));
         assert!(

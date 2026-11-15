@@ -4,7 +4,7 @@ use anyhow::Context as _;
 use clap::Parser;
 use http::uri::PathAndQuery;
 use hyper_util::rt::{TokioExecutor, TokioIo};
-use tokio::net::TcpListener;
+use tokio::net::{TcpListener, TcpStream};
 use tracing::{error, info};
 
 mod bindings {
@@ -27,31 +27,38 @@ struct Args {
     egress: String,
 }
 
+async fn hello(addr: &str) -> anyhow::Result<String> {
+    let mut stream = TcpStream::connect(addr)
+        .await
+        .with_context(|| format!("failed to connect to `{addr}`"))?;
+    stream
+        .set_nodelay(true)
+        .context("failed to set TCP_NODELAY")?;
+    let (rx, tx) = stream.split();
+    bindings::wrpc_examples::hello::handler::hello(tx, rx)
+        .await
+        .context("failed to invoke `wrpc-examples.hello/handler.hello`")
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt().init();
 
     let Args { egress, ingress } = Args::parse();
-    let wrpc = wrpc_transport::tcp::Client::from(egress);
-    let wrpc = Arc::new(wrpc);
+    let egress = Arc::<str>::from(egress);
 
     let svc = hyper::service::service_fn(move |req| {
-        let wrpc = Arc::clone(&wrpc);
+        let egress = Arc::clone(&egress);
         async move {
             let (http::request::Parts { method, uri, .. }, _) = req.into_parts();
             match (
                 method.as_str(),
                 uri.path_and_query().map(PathAndQuery::as_str),
             ) {
-                ("GET", Some("/hello")) => {
-                    match bindings::wrpc_examples::hello::handler::hello(wrpc.as_ref(), ())
-                        .await
-                        .context("failed to invoke `wrpc-examples.hello/handler.hello`")
-                    {
-                        Ok(hello) => Ok(http::Response::new(format!(r#""{hello}""#))),
-                        Err(err) => Err(format!("{err:#}")),
-                    }
-                }
+                ("GET", Some("/hello")) => match hello(&egress).await {
+                    Ok(hello) => Ok(http::Response::new(format!(r#""{hello}""#))),
+                    Err(err) => Err(format!("{err:#}")),
+                },
                 (method, Some(path)) => {
                     Err(format!("method `{method}` not supported for path `{path}`"))
                 }

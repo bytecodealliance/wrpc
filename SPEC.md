@@ -86,11 +86,11 @@ An empty frame, i.e. a frame with empty `data`, closes its `path`: the sender MU
 
 Likewise, if a frame is received on a `path` that carries no pending value the receiver has received or may still receive, the receiver MUST treat it as an error.
 
-A sender MUST send the data of a pending value only after the data carrying it, for example, the data of a pending value in a stream element after the stream chunk containing that element, since a receiver MAY bound the data it buffers for a `path`, which no value it decoded carries yet.
+A sender MUST send the complete encoding of the value carrying a pending value, for example, the root value or the stream chunk containing a pending element, before any frame on the `path` of that pending value, and MUST NOT send any frame on a `path`, which no value it sent carries. The value carrying a pending value need not be complete otherwise, for example, the chunks of a pending `stream<future<T>>` and the values of the pending futures in them MAY be sent concurrently. A receiver MAY stop receiving while the consumer of a received value is not ready to take more data, which stalls the receipt of every other `path`, so all pending values carried by the data a receiver decoded MUST be consumed concurrently.
 
-Frames do not communicate the end of transmit, i.e. that no more frames follow. A transport communicates it using its native half-close, if it has one, for example, TCP shutdown or finishing a QUIC stream, and otherwise by closing the byte stream (see [Transport](#transport)). If transmit ends while the root or the `path` of a pending value the receiver has decoded is still open, the receiver MUST treat it as a failed invocation.
+Frames do not communicate the end of transmit, i.e. that no more frames follow. A transport communicates it using its native half-close, if it has one, for example, TCP shutdown or finishing a QUIC stream, and otherwise by closing the byte stream (see [Transport](#transport)). A receiver completes the invocation once the root and the `path` of every pending value it decoded are closed, without waiting for the end of transmit. If transmit ends while the root or the `path` of a pending value the receiver has decoded is still open, the receiver MUST treat it as a failed invocation.
 
-A receiver, which treats received data as an error, MUST fail the invocation. A peer, which fails an invocation, MUST close the invocation's byte stream in both directions using the transport's mechanism (see [Transport specifications](#transport-specifications)), and MUST NOT close a connection or session carrying other invocations.
+A receiver, which treats received data as an error, MUST fail the invocation. A peer, which fails an invocation, MUST end transmit without closing the open paths, SHOULD close the invocation's byte stream in both directions using the transport's mechanism (see [Transport specifications](#transport-specifications)), and MUST NOT close a connection or session carrying other invocations.
 
 ## Transport specifications
 
@@ -100,17 +100,17 @@ TCP relies on [Framed stream specification](#framed-stream-specification) to map
 
 The server MUST listen on a TCP socket and client MUST establish a new connection to that socket per each invocation.
 
-The write side of the stream MUST be shutdown as soon as data transfer is done, for example, once the client is done sending encoded parameter buffer and all asynchronous parameters, it MUST shutdown the write side of the stream to signal EOF to the server.
+A peer MAY shut down the write side of the stream once it is done sending, since the invocation completes once all paths are closed (see [Framing](#framing)).
 
-To close the stream in both directions (see [Framed stream specification](#framed-stream-specification)), a peer MUST reset the connection (`RST`).
+To close the stream in both directions (see [Framed stream specification](#framed-stream-specification)), a peer MUST close the connection, so that it no longer receives data either. To the peer, this ends transmit just like shutting down the write side does, so the peer detects the failure by the root or the `path` of a pending value still being open.
 
-This mapping is deliberate: a TCP connection provides exactly one byte stream and no stream-level multiplexing, so the TCP transport does not multiplex invocations over a connection itself. Since the client shuts down its write side first, the client performs the active close and holds a `TIME_WAIT` socket per invocation, which bounds the sustained invocation rate from a single client to a single server address by the size of the client's ephemeral port range.
+This mapping is deliberate: a TCP connection provides exactly one byte stream and no stream-level multiplexing, so the TCP transport does not multiplex invocations over a connection itself. The peer, which ends transmit first, performs the active close and holds a `TIME_WAIT` socket. In a successful invocation this is usually the client, once it is done sending parameters, so the client holds a `TIME_WAIT` socket per invocation, which bounds the sustained invocation rate from a single client to a single server address by the size of the client's ephemeral port range.
 
 Peers that need many concurrent invocations over a single long-lived connection, or per-invocation metadata, SHOULD use a transport that natively multiplexes streams, such as [QUIC](#quic), [WebTransport](#webtransport) or [HTTP](#http) over HTTP/2.
 
 ### Unix domain sockets
 
-Unix domain sockets follow the [TCP](#tcp) transport specification, using a stream-oriented (`SOCK_STREAM`) socket in place of a TCP socket and closing the socket in place of resetting the connection.
+Unix domain sockets follow the [TCP](#tcp) transport specification, using a stream-oriented (`SOCK_STREAM`) socket in place of a TCP socket.
 
 ### QUIC
 
@@ -118,11 +118,11 @@ QUIC relies on [Framed stream specification](#framed-stream-specification) to ma
 
 The client MUST open a new client-initiated bidirectional stream per each invocation. A single QUIC connection MAY carry multiple concurrent invocations.
 
-A peer MUST communicate the end of transmit by finishing the send side of the stream.
+A peer SHOULD finish the send side of the stream once it is done sending.
 
 Once a peer is done receiving data, it SHOULD stop the receive side of the stream with application error code `0`. A peer MUST treat its send side being stopped with application error code `0` after it finished the stream as successful completion.
 
-To close the stream in both directions (see [Framed stream specification](#framed-stream-specification)), a peer MUST stop the receive side and reset the send side of the stream, both with application error code `1`, which indicates a failed invocation.
+To close the stream in both directions (see [Framed stream specification](#framed-stream-specification)), a peer SHOULD stop the receive side and reset the send side of the stream, both with application error code `1`, which indicates a failed invocation.
 
 TLS configuration, including the ALPN protocol, is application-defined.
 
@@ -138,7 +138,7 @@ HTTP relies on [Framed stream specification](#framed-stream-specification) to ma
 
 The client MUST send a `POST` request per each invocation, with the request body carrying the data sent by the client and the response body carrying the data sent by the server. The end of the request or response body communicates the end of transmit.
 
-To close the exchange in both directions (see [Framed stream specification](#framed-stream-specification)), a peer MUST reset its stream with an error code other than `NO_ERROR`, for example, `RST_STREAM` with `INTERNAL_ERROR` in HTTP/2. Where the exchange has no stream of its own, as in HTTP/1.1, a peer MUST close the connection instead.
+To close the exchange in both directions (see [Framed stream specification](#framed-stream-specification)), a peer SHOULD reset its stream with an error code other than `NO_ERROR`, for example, `RST_STREAM` with `INTERNAL_ERROR` in HTTP/2. Where the exchange has no stream of its own, as in HTTP/1.1, a peer MUST close the connection instead.
 
 The request target and header fields are application-defined and not interpreted by wRPC.
 
@@ -161,7 +161,7 @@ For example:
 
 If `v` is pending, encoded `bool` value is sent on index `[0]` (corresponding to first parameter)
 
-Values nested in the payload of a future are indexed below the payload index `0`, whether the future is pending or `ready`. For example, a pending `v` of type `future<future<bool>>` resolving to a pending future is sent as `pending` on index `[0]`, and the nested `bool` is sent on index `[0, 0]`.
+Once a pending future resolves, the sender sends its value and closes its index, so the value is sent before any value nested in it. Values nested in the payload of a future are indexed below the payload index `0`, whether the future is pending or `ready`. For example, a pending `v` of type `future<future<bool>>` resolving to a pending future is sent as `pending` on index `[0]`, and the nested `bool` is sent on index `[0, 0]`.
 
 A `future` without a payload type has an empty value encoding, so a sender closes its index once it resolves, and closing the index is what resolves it for the receiver.
 

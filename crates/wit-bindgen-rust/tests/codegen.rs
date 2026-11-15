@@ -39,14 +39,13 @@ mod inline_and_path {
 #[allow(unused, reason = "testing codegen, not functionality")]
 mod newtyped_list {
     use core::marker::PhantomData;
+    use core::task::{Context, Poll};
 
     use std::ops::Deref;
 
     use wit_bindgen_wrpc::bytes::BytesMut;
     use wit_bindgen_wrpc::tokio_util::codec::{Decoder, Encoder};
-    use wit_bindgen_wrpc::wrpc_transport::{
-        Decode, Deferred, DeferredFn, DeferredWrite, Encode, Paths,
-    };
+    use wit_bindgen_wrpc::wrpc_transport::{Decode, Encode, Receive, Transmit, error_unknown_path};
 
     wit_bindgen_wrpc::generate!({
         inline: r#"
@@ -183,21 +182,39 @@ mod newtyped_list {
         }
     }
 
-    impl<T, W> Deferred<W> for Codec<T> {
-        fn take_deferred(&mut self) -> Option<DeferredFn<W>> {
-            None
+    impl<T> Transmit for Codec<T> {
+        fn poll_transmit(
+            &mut self,
+            cx: &mut Context<'_>,
+            path: &mut Vec<usize>,
+            dst: &mut BytesMut,
+        ) -> Poll<std::io::Result<()>> {
+            Poll::Ready(Ok(()))
+        }
+
+        fn is_closed(&self) -> bool {
+            true
         }
     }
 
-    impl<T> Paths for Codec<T> {
-        fn paths(&self) -> Box<[Box<[Option<usize>]>]> {
-            Box::default()
+    impl<T> Receive for Codec<T> {
+        fn poll_receive(
+            &mut self,
+            cx: &mut Context<'_>,
+            path: &[usize],
+            src: &mut BytesMut,
+        ) -> Poll<std::io::Result<()>> {
+            Poll::Ready(Err(error_unknown_path(path)))
+        }
+
+        fn is_closed(&self) -> bool {
+            true
         }
     }
 
     macro_rules! impl_codec {
         ($t:ty) => {
-            impl<W: DeferredWrite> Encode<W> for $t {
+            impl Encode for $t {
                 type Encoder = Codec<Self>;
             }
 
