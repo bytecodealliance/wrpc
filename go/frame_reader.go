@@ -98,6 +98,7 @@ type frameSub struct {
 	ch      chan []byte
 	dropped chan struct{}
 	taken   bool
+	open    bool
 }
 
 func newFrameSub() *frameSub {
@@ -138,6 +139,7 @@ type frameSubscriptions struct {
 	unclaimed map[string]struct{}
 	next      map[string]uint64
 	failed    chan struct{}
+	open      int
 	done      bool
 	drained   bool
 }
@@ -320,6 +322,10 @@ func (s *frameSubscriptions) claim(path []uint32) (*frameSub, []string, error) {
 		return nil, elements, nil
 	}
 	sub.taken = true
+	if _, ok := s.closed[indexPath(path...)]; !ok && !sub.open {
+		sub.open = true
+		s.open++
+	}
 	return sub, elements, nil
 }
 
@@ -376,8 +382,10 @@ func newFrameStreamReader(r *FrameStreamReader) *FrameStreamReader {
 // `paths` must not contain both a wildcard and an index at the same position, so paths of
 // different variant cases, which are not indexed, must be merged by replacing such indices
 // by wildcards.
-// Once the data received is processed or `ctx` is done, `r` is closed. If receiving fails
-// otherwise, e.g. on invalid data, `r` is closed with the error instead (see `CloseWithError`).
+// Once the root and the paths of all data received or indexed are closed and the data received
+// is processed, `r` is closed without reading it to its end, as it is once `ctx` is done. If
+// receiving fails otherwise, e.g. on invalid data, `r` is closed with the error instead (see
+// `CloseWithError`).
 // Closing a reader, which received data it did not read, fails receiving immediately, closing
 // `r` with the error even while it is being read.
 func NewFrameStreamReader(ctx context.Context, r ByteReadCloser, paths ...SubscribePath) *FrameStreamReader {
@@ -393,10 +401,12 @@ func NewFrameStreamReader(ctx context.Context, r ByteReadCloser, paths ...Subscr
 		unclaimed: make(map[string]struct{}),
 		next:      make(map[string]uint64),
 		failed:    make(chan struct{}),
+		open:      1,
 	}
 	subs.cond = sync.NewCond(&subs.mu)
 	root := newFrameSub()
 	root.taken = true
+	root.open = true
 	subs.nest[""] = root
 	var maxDepth uint32
 	for _, path := range paths {
@@ -435,11 +445,18 @@ func NewFrameStreamReader(ctx context.Context, r ByteReadCloser, paths ...Subscr
 			if n == 0 {
 				slog.DebugContext(ctx, "received empty frame, closing path", "path", path)
 				subs.closed[p] = struct{}{}
+				if sub.open {
+					subs.open--
+				}
 				close(sub.ch)
 				return nil, nil
 			}
 			if sub.isDropped() {
 				return nil, subs.errDropped(path)
+			}
+			if !sub.open {
+				sub.open = true
+				subs.open++
 			}
 			return sub, nil
 		}
@@ -492,9 +509,9 @@ func NewFrameStreamReader(ctx context.Context, r ByteReadCloser, paths ...Subscr
 				depth, err := readFramePathLen(r)
 				if err == io.EOF {
 					subs.mu.Lock()
-					_, closed := subs.closed[""]
+					open := subs.open
 					subs.mu.Unlock()
-					if !closed {
+					if open > 0 {
 						return io.ErrUnexpectedEOF
 					}
 					return nil
@@ -515,6 +532,18 @@ func NewFrameStreamReader(ctx context.Context, r ByteReadCloser, paths ...Subscr
 				)
 				if err := handle(path, n); err != nil {
 					return err
+				}
+				if n > 0 {
+					continue
+				}
+				subs.mu.Lock()
+				for subs.open == 0 && !subs.drained && !subs.isFailed() && ctx.Err() == nil {
+					subs.cond.Wait()
+				}
+				complete := subs.open == 0 && subs.drained
+				subs.mu.Unlock()
+				if complete {
+					return nil
 				}
 			}
 		}()
