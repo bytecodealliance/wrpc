@@ -132,8 +132,8 @@ func TestServerInvalidFrame(t *testing.T) {
 	if _, err := io.ReadAll(c); !errors.Is(err, syscall.ECONNRESET) {
 		t.Fatalf("expected connection to be reset, got `%v`", err)
 	}
-	if err := <-accepted; err != nil {
-		t.Fatalf("failed to accept: %s", err)
+	if err := <-accepted; err == nil {
+		t.Fatal("expected the invocation to fail")
 	}
 	if err := <-written; err == nil {
 		t.Fatal("expected writing results to fail")

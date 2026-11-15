@@ -22,7 +22,10 @@ func TestFramedServerHeaderNameLimit(t *testing.T) {
 			opts = append(opts, wrpc.WithMaxHeaderNameLen(max, 1))
 		}
 		srv := wrpc.NewFramedServer(context.Background(), opts...)
-		stop, err := srv.Serve(instance, "f", func(context.Context, wrpc.IndexWriteCloser, wrpc.IndexReadCloser) {})
+		stop, err := srv.Serve(instance, "f", func(_ context.Context, w wrpc.IndexWriteCloser, r wrpc.IndexReadCloser) {
+			r.Close()
+			w.Close()
+		})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -32,6 +35,9 @@ func TestFramedServerHeaderNameLimit(t *testing.T) {
 			t.Fatal(err)
 		}
 		if _, err := wrpc.WriteString("f", &hdr); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := wrpc.WriteFrame(wrpc.Frame{}, &hdr); err != nil {
 			t.Fatal(err)
 		}
 		err = srv.Accept(context.Background(), nopWriteCloser{io.Discard}, io.NopCloser(&hdr))

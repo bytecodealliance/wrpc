@@ -28,8 +28,9 @@ func (s *Server) Serve(instance string, name string, f wrpc.HandleFunc, paths ..
 	return s.srv.Serve(instance, name, f, paths...)
 }
 
-// Accept accepts a TCP connection, returning a function, which reads the invocation on it and
-// calls its handler in a new goroutine. Reading the invocation is aborted once `ctx` is done.
+// Accept accepts a TCP connection, returning a function, which serves the invocations on it one
+// after another until the client ends transmit (see `wrpc.FramedServer.Accept`). Reading an
+// invocation header is aborted once `ctx` is done.
 func (s *Server) Accept() (func(ctx context.Context) error, error) {
 	conn, err := s.l.AcceptTCP()
 	if err != nil {
@@ -38,7 +39,7 @@ func (s *Server) Accept() (func(ctx context.Context) error, error) {
 	w, r := newConn(conn)
 	return func(ctx context.Context) error {
 		if err := s.srv.Accept(ctx, w, r); err != nil {
-			return fmt.Errorf("failed to accept invocation: %w", err)
+			return fmt.Errorf("failed to serve connection: %w", err)
 		}
 		return nil
 	}, nil
