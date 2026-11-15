@@ -31,10 +31,8 @@ default = [
     "bin",
     "http",
     "net",
-    "quic",
     "wasmtime",
     "wasmtime-wasi",
-    "webtransport",
 ]
 
 bin = ["bin-bindgen", "bin-wasmtime"]
@@ -51,11 +49,9 @@ bin-bindgen = [
 bin-wasmtime = ["dep:tokio", "dep:wrpc-wasmtime-cli", "tokio/rt-multi-thread"]
 http = ["dep:wrpc-http"]
 net = ["wrpc-transport/net"]
-quic = ["dep:wrpc-quic"]
 wasi = ["wrpc-transport/wasi"]
 wasmtime = ["dep:wrpc-wasmtime"]
 wasmtime-wasi = ["wrpc-wasmtime?/wasmtime-wasi"]
-webtransport = ["dep:wrpc-webtransport"]
 
 [[bin]]
 name = "wit-bindgen-wrpc"
@@ -95,11 +91,9 @@ wit-bindgen-wrpc-rust = { workspace = true, optional = true }
 wit-bindgen-wrpc-test = { workspace = true, optional = true }
 wrpc-cli = { workspace = true, optional = true }
 wrpc-http = { workspace = true, optional = true }
-wrpc-quic = { workspace = true, optional = true }
 wrpc-transport = { workspace = true }
 wrpc-wasmtime = { workspace = true, optional = true }
 wrpc-wasmtime-cli = { workspace = true, optional = true }
-wrpc-webtransport = { workspace = true, optional = true }
 
 [dev-dependencies]
 anyhow = { workspace = true }
@@ -217,7 +211,6 @@ wit-parser = { version = "0.254", default-features = false }
 wrpc-cli = { version = "0.9", path = "./crates/cli", default-features = false }
 wrpc-http = { version = "0.2", path = "./crates/http", default-features = false }
 wrpc-introspect = { version = "0.8", default-features = false, path = "./crates/introspect" }
-wrpc-quic = { version = "0.2", path = "./crates/quic", default-features = false }
 wrpc-test = { path = "./crates/test", default-features = false }
 wrpc-transport = { version = "0.31", path = "./crates/transport", default-features = false }
 wrpc-wasi-keyvalue = { version = "0.4", path = "./crates/wasi-keyvalue", default-features = false }
@@ -225,4 +218,3 @@ wrpc-wasi-keyvalue-mem = { version = "0.4", path = "./crates/wasi-keyvalue-mem",
 wrpc-wasi-keyvalue-redis = { version = "0.4", path = "./crates/wasi-keyvalue-redis", default-features = false }
 wrpc-wasmtime = { version = "0.2", path = "./crates/wasmtime", default-features = false }
 wrpc-wasmtime-cli = { version = "0.11", path = "./crates/wasmtime-cli", default-features = false }
-wrpc-webtransport = { version = "0.2", path = "./crates/webtransport", default-features = false }

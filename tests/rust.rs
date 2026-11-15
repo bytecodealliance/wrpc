@@ -405,12 +405,11 @@ where
 }
 
 #[instrument(skip_all, ret)]
-async fn assert_dynamic<F, CI, CO, CE, I, O, E>(
-    connect: impl Fn() -> F,
+async fn assert_dynamic<CI, CO, CE, I, O, E>(
+    connect: impl AsyncFn() -> Result<(CO, CI), CE>,
     mut accept: impl AsyncFnMut() -> Result<(O, I), E>,
 ) -> anyhow::Result<()>
 where
-    F: Future<Output = Result<(CO, CI), CE>>,
     CI: AsyncRead + Send + Unpin,
     CO: AsyncWrite + Send + Unpin,
     CE: core::error::Error + Send + Sync + 'static,
@@ -688,7 +687,6 @@ async fn rust_uds_dynamic() -> anyhow::Result<()> {
     .await
 }
 
-#[cfg(feature = "quic")]
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn rust_quic_bindgen_sync() -> anyhow::Result<()> {
     wrpc_test::with_quic(async |clt, srv| {
@@ -701,7 +699,6 @@ async fn rust_quic_bindgen_sync() -> anyhow::Result<()> {
     .await
 }
 
-#[cfg(feature = "quic")]
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn rust_quic_bindgen_async() -> anyhow::Result<()> {
     wrpc_test::with_quic(async |clt, srv| {
@@ -711,20 +708,70 @@ async fn rust_quic_bindgen_async() -> anyhow::Result<()> {
     .await
 }
 
-#[cfg(feature = "quic")]
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn rust_quic_dynamic() -> anyhow::Result<()> {
     wrpc_test::with_quic(async |clt, srv| {
-        let connect = move || {
-            let clt = clt.clone();
-            async move { clt.open_bi().await }
-        };
-        assert_dynamic(connect, async || srv.accept_bi().await).await
+        assert_dynamic(async || clt.open_bi().await, async || srv.accept_bi().await).await
     })
     .await
 }
 
-#[cfg(feature = "webtransport")]
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+async fn rust_quic_loopback() -> anyhow::Result<()> {
+    wrpc_test::with_quic(async |clt, srv| {
+        let connect = async || clt.open_bi().await;
+        let accept = async || srv.accept_bi().await;
+        let (tx, rx) = connect().await?;
+        wrpc_test::assert_single_invocation(tx, rx, accept).await?;
+        wrpc_test::assert_invalid_data_resets(connect, accept).await
+    })
+    .await
+}
+
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+async fn rust_quic_stopped_mid_params() -> anyhow::Result<()> {
+    wrpc_test::with_quic(async |clt, srv| {
+        let param: BoxStream<'static, Bytes> = Box::pin(
+            stream::repeat(Bytes::from_static(b"x")).then(|chunk| async {
+                yield_now().await;
+                chunk
+            }),
+        );
+        let (res, srv) = join!(
+            async {
+                let (tx, rx) = clt.open_bi().await.expect("failed to open stream");
+                invoke_blocking(
+                    tx,
+                    rx,
+                    "foo",
+                    "bar",
+                    <(BoxStream<'static, Bytes>,) as Encode>::Encoder::default(),
+                    (param,),
+                    <(u32,) as Decode>::Decoder::default(),
+                )
+                .await
+            },
+            async {
+                let (mut stx, mut srx) =
+                    srv.accept_bi().await.context("failed to accept stream")?;
+                srx.read_exact(&mut [0; 1])
+                    .await
+                    .context("failed to read invocation")?;
+                srx.stop(0u32.into()).context("failed to stop stream")?;
+                stx.write_all(b"\0\x01\x2a\0\0")
+                    .await
+                    .context("failed to write results")?;
+                stx.finish().context("failed to finish stream")?;
+                anyhow::Ok(())
+            }
+        );
+        srv?;
+        res.expect_err("stopping the parameters must fail the invocation");
+        Ok(())
+    })
+    .await
+}
+
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn rust_webtransport_bindgen_sync() -> anyhow::Result<()> {
     wrpc_test::with_webtransport(async |clt, srv| {
@@ -737,7 +784,6 @@ async fn rust_webtransport_bindgen_sync() -> anyhow::Result<()> {
     .await
 }
 
-#[cfg(feature = "webtransport")]
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn rust_webtransport_bindgen_async() -> anyhow::Result<()> {
     wrpc_test::with_webtransport(async |clt, srv| {
@@ -747,15 +793,66 @@ async fn rust_webtransport_bindgen_async() -> anyhow::Result<()> {
     .await
 }
 
-#[cfg(feature = "webtransport")]
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn rust_webtransport_dynamic() -> anyhow::Result<()> {
     wrpc_test::with_webtransport(async |clt, srv| {
-        let connect = move || {
-            let clt = clt.clone();
-            async move { clt.open_bi().await }
-        };
-        assert_dynamic(connect, async || srv.accept_bi().await).await
+        assert_dynamic(async || clt.open_bi().await, async || srv.accept_bi().await).await
+    })
+    .await
+}
+
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+async fn rust_webtransport_loopback() -> anyhow::Result<()> {
+    wrpc_test::with_webtransport(async |clt, srv| {
+        let connect = async || clt.open_bi().await;
+        let accept = async || srv.accept_bi().await;
+        let (tx, rx) = connect().await?;
+        wrpc_test::assert_single_invocation(tx, rx, accept).await?;
+        wrpc_test::assert_invalid_data_resets(connect, accept).await
+    })
+    .await
+}
+
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+async fn rust_webtransport_stopped_mid_params() -> anyhow::Result<()> {
+    wrpc_test::with_webtransport(async |clt, srv| {
+        let param: BoxStream<'static, Bytes> = Box::pin(
+            stream::repeat(Bytes::from_static(b"x")).then(|chunk| async {
+                yield_now().await;
+                chunk
+            }),
+        );
+        let (res, srv) = join!(
+            async {
+                let (tx, rx) = clt.open_bi().await.expect("failed to open stream");
+                invoke_blocking(
+                    tx,
+                    rx,
+                    "foo",
+                    "bar",
+                    <(BoxStream<'static, Bytes>,) as Encode>::Encoder::default(),
+                    (param,),
+                    <(u32,) as Decode>::Decoder::default(),
+                )
+                .await
+            },
+            async {
+                let (mut stx, mut srx) =
+                    srv.accept_bi().await.context("failed to accept stream")?;
+                srx.read_exact(&mut [0; 1])
+                    .await
+                    .context("failed to read invocation")?;
+                srx.stop(0).context("failed to stop stream")?;
+                stx.write_all(b"\0\x01\x2a\0\0")
+                    .await
+                    .context("failed to write results")?;
+                stx.finish().context("failed to finish stream")?;
+                anyhow::Ok(())
+            }
+        );
+        srv?;
+        res.expect_err("stopping the parameters must fail the invocation");
+        Ok(())
     })
     .await
 }

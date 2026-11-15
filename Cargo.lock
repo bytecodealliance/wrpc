@@ -4569,12 +4569,10 @@ dependencies = [
  "wit-bindgen-wrpc-test",
  "wrpc-cli",
  "wrpc-http",
- "wrpc-quic",
  "wrpc-test",
  "wrpc-transport",
  "wrpc-wasmtime",
  "wrpc-wasmtime-cli",
- "wrpc-webtransport",
 ]
 
 [[package]]
@@ -4609,21 +4607,6 @@ name = "wrpc-introspect"
 version = "0.8.0"
 dependencies = [
  "wit-parser 0.254.2",
-]
-
-[[package]]
-name = "wrpc-quic"
-version = "0.2.0"
-dependencies = [
- "anyhow",
- "bytes",
- "futures",
- "quinn",
- "test-log",
- "tokio",
- "tokio-util",
- "wrpc-test",
- "wrpc-transport",
 ]
 
 [[package]]
@@ -4753,21 +4736,6 @@ dependencies = [
  "wasm-tokio",
  "wasm-wave",
  "wasmtime",
- "wrpc-transport",
-]
-
-[[package]]
-name = "wrpc-webtransport"
-version = "0.2.0"
-dependencies = [
- "anyhow",
- "bytes",
- "futures",
- "test-log",
- "tokio",
- "tokio-util",
- "web-transport-quinn",
- "wrpc-test",
  "wrpc-transport",
 ]
 
