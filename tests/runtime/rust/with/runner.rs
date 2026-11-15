@@ -21,11 +21,12 @@ mod other {
 }
 
 pub async fn run(
-    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,
+    wrpc: &crate::Client,
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
     let msg = other::my::inline::foo::Msg {
         field: "hello".to_string(),
     };
-    crate::client::my::inline::bar::bar(wrpc, (), &msg).await?;
+    let (tx, rx) = wrpc.connect().await?;
+    crate::client::my::inline::bar::bar(tx, rx, &msg).await?;
     Ok(())
 }

@@ -21,5 +21,3 @@ pub mod runtime {
     #[cfg(feature = "wasmtime")]
     pub use wrpc_wasmtime as wasmtime;
 }
-
-pub use transport::{Invoke, Serve};

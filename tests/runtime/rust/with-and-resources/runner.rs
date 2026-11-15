@@ -20,9 +20,11 @@ mod other {
 }
 
 pub async fn run(
-    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,
+    wrpc: &crate::Client,
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
-    let resource = other::my::inline::foo::bar(wrpc, ()).await?;
-    let _ = crate::client::my::inline::bar::bar(wrpc, (), &resource).await?;
+    let (tx, rx) = wrpc.connect().await?;
+    let resource = other::my::inline::foo::bar(tx, rx).await?;
+    let (tx, rx) = wrpc.connect().await?;
+    let _ = crate::client::my::inline::bar::bar(tx, rx, &resource).await?;
     Ok(())
 }

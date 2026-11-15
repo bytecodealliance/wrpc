@@ -97,67 +97,40 @@ impl InterfaceGenerator<'_> {
 
         let trait_names: Vec<_> = traits
             .values()
-            .map(|(name, _)| format!("{name}<T::Context> + "))
+            .map(|(name, ..)| format!("{name}<C__> + "))
             .collect();
 
-        let n = funcs_to_export.len();
         uwrite!(
             self.src,
             r#"
-#[allow(clippy::manual_async_fn)]
-pub fn serve_interface<'a, T: {wrpc_transport}::Serve, H: Handler<T::Context> + {resource_traits} ::core::marker::Send + ::core::marker::Sync + ::core::clone::Clone + 'static>(
-    wrpc: &'a T,
-    handler: H,
-) -> impl ::core::future::Future<
-        Output = {anyhow}::Result<
-            [
-                (
-                    &'static str,
-                    &'static str,
-                    ::core::pin::Pin<
-                        ::std::boxed::Box<
-                            dyn {futures}::Stream<
-                                Item = {anyhow}::Result<
-                                    ::core::pin::Pin<
-                                        ::std::boxed::Box<
-                                            dyn ::core::future::Future<
-                                                Output = {anyhow}::Result<()>
-                                            > + ::core::marker::Send + 'static
-                                        >
-                                    >
-                                >
-                            > + ::core::marker::Send + 'static
-                        >
-                    >
-                );
-                {n}
-            ] 
+pub fn handle_interface<'a__, C__, R__, I__, O__, H__>(
+    handler: &H__,
+    cx: C__,
+    instance: &str,
+    func: &str,
+    tx: O__,
+    rx: R__,
+) -> ::core::result::Result<
+    ::core::pin::Pin<
+        ::std::boxed::Box<
+            dyn ::core::future::Future<Output = {anyhow}::Result<()>> + ::core::marker::Send + 'a__
         >
-    > + ::core::marker::Send + use<'a, T, H> {{
-    async move {{
-        let ("#,
+    >,
+    (C__, O__, R__),
+>
+where
+    C__: ::core::marker::Send + 'a__,
+    R__: ::core::borrow::BorrowMut<{tokio_util}::codec::FramedRead<I__, {wrpc_transport}::FrameDecoder>> + ::core::marker::Send + 'a__,
+    I__: {tokio}::io::AsyncRead + ::core::marker::Send + ::core::marker::Unpin + 'a__,
+    O__: {tokio}::io::AsyncWrite + ::core::marker::Send + ::core::marker::Unpin + 'a__,
+    H__: Handler<C__> + {resource_traits} ::core::marker::Send + ::core::marker::Sync + ::core::clone::Clone + 'static,
+{{
+    match (instance, func) {{"#,
             resource_traits = trait_names.join(""),
             anyhow = self.r#gen.anyhow_path(),
-            futures = self.r#gen.futures_path(),
-            wrpc_transport = self.r#gen.wrpc_transport_path()
-        );
-        for Function { name, kind, .. } in &funcs_to_export {
-            uwriteln!(
-                self.src,
-                "{}_{},",
-                match kind {
-                    FunctionKind::Freestanding | FunctionKind::AsyncFreestanding => "f",
-                    FunctionKind::Method(_) | FunctionKind::AsyncMethod(_) => "m",
-                    FunctionKind::Constructor(_) => "c",
-                    FunctionKind::Static(_) | FunctionKind::AsyncStatic(_) => "s",
-                },
-                to_rust_ident(name)
-            );
-        }
-        uwrite!(
-            self.src,
-            ") = {tokio}::try_join!(",
-            tokio = self.r#gen.tokio_path()
+            tokio_util = self.r#gen.tokio_util_path(),
+            tokio = self.r#gen.tokio_path(),
+            wrpc_transport = self.r#gen.wrpc_transport_path(),
         );
         let instance = match identifier {
             Identifier::Interface(id, name) => {
@@ -179,69 +152,53 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve, H: Handler<T::Context> + 
             Identifier::World => String::new(),
         };
         for func in &funcs_to_export {
+            self.r#gen.max_export_instance_len =
+                self.r#gen.max_export_instance_len.max(instance.len());
+            self.r#gen.max_export_func_len = self
+                .r#gen
+                .max_export_func_len
+                .max(rpc_func_name(func).len());
             let fqn = if instance.is_empty() {
                 func.name.to_string()
             } else {
                 format!("{instance}.{}", func.name)
             };
-            uwriteln!(
-                self.src,
-                r#"
-            async {{ 
-                {anyhow}::Context::context({wrpc_transport}::ServeExt::serve_values(
-                    wrpc,
-                    "{instance}",
-                    "{}",
-                )
-                .await,
-                "failed to serve `{fqn}`")
-            }},"#,
-                rpc_func_name(func),
-                anyhow = self.r#gen.anyhow_path(),
-                wrpc_transport = self.r#gen.wrpc_transport_path(),
-            );
-        }
-        self.push_str(")?;\n");
-        uwrite!(
-            self.src,
-            r"
-        {anyhow}::Ok([",
-            anyhow = self.r#gen.anyhow_path(),
-        );
-        for func in &funcs_to_export {
-            let name = to_rust_ident(&func.name);
-            let fqn = if instance.is_empty() {
-                func.name.to_string()
-            } else {
-                format!("{instance}.{}", func.name)
-            };
+            let params_ty = func
+                .params
+                .iter()
+                .map(|param| format!("{}, ", self.decoded_ty(&param.ty)))
+                .collect::<String>();
+            let results_ty = func
+                .result
+                .as_ref()
+                .map(|ty| format!("{}, ", self.encoded_ty(ty)))
+                .unwrap_or_default();
             uwrite!(
                 self.src,
                 r#"
-            {{
-                let handler = handler.clone();
-                (
-                    "{instance}",
-                    "{wit_name}",
-                    ::std::boxed::Box::pin(
-                        {futures}::TryStreamExt::map_ok({}_{name}, move |(cx, ("#,
-                match func.kind {
-                    FunctionKind::Freestanding | FunctionKind::AsyncFreestanding => "f",
-                    FunctionKind::Method(_) | FunctionKind::AsyncMethod(_) => "m",
-                    FunctionKind::Constructor(_) => "c",
-                    FunctionKind::Static(_) | FunctionKind::AsyncStatic(_) => "s",
-                },
-                futures = self.r#gen.futures_path(),
-                wit_name = func.name,
+        ("{instance}", "{}") => {{
+            let handler = handler.clone();
+            let (params, tx) = {wrpc_transport}::serve(
+                tx,
+                rx,
+                <({params_ty}) as {wrpc_transport}::Decode>::Decoder::default(),
+            );
+            ::core::result::Result::Ok(::std::boxed::Box::pin(async move {{
+                let (("#,
+                rpc_func_name(func),
+                wrpc_transport = self.r#gen.wrpc_transport_path(),
             );
             for i in 0..func.params.len() {
                 uwrite!(self.src, "p{i}, ");
             }
             uwrite!(
                 self.src,
-                r"
-                        ), rx, tx)| {{
-                            let handler = handler.clone();"
+                r#"), rx) = {anyhow}::Context::context(
+                    {wrpc_transport}::SendFuture::send(params).await,
+                    "failed to receive `{fqn}` parameters",
+                )?;"#,
+                anyhow = self.r#gen.anyhow_path(),
+                wrpc_transport = self.r#gen.wrpc_transport_path(),
             );
             for (i, param) in func.params.iter().enumerate() {
                 if self.has_raw_strings(&param.ty) {
@@ -249,11 +206,6 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve, H: Handler<T::Context> + 
                     uwrite!(self.src, "let p{i}: {ty} = p{i};");
                 }
             }
-            uwrite!(
-                self.src,
-                r"
-                            ::std::boxed::Box::pin(async move {{"
-            );
             let (trait_name, name) = match func.kind {
                 FunctionKind::Freestanding | FunctionKind::AsyncFreestanding => {
                     ("Handler", to_rust_ident(func.item_name()).to_string())
@@ -277,11 +229,19 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve, H: Handler<T::Context> + 
             uwrite!(
                 self.src,
                 r#"
-                                let rx = rx.map({tracing}::Instrument::in_current_span).map({tokio}::spawn);
-                                {tracing}::trace!(instance = "{instance}", func = "{wit_name}", "calling handler");
-                                match {trait_name}::{name}(&handler, cx"#,
-                tokio = self.r#gen.tokio_path(),
+                let rx = {wrpc_transport}::SendFuture::send(rx);
+                let rx = async {{
+                    {anyhow}::Context::context(
+                        {tracing}::Instrument::in_current_span(rx).await,
+                        "failed to complete `{fqn}` invocation",
+                    )
+                }};
+                let call = async {{
+                    {tracing}::trace!(instance = "{instance}", func = "{wit_name}", "calling handler");
+                    match {trait_name}::{name}(&handler, cx"#,
+                anyhow = self.r#gen.anyhow_path(),
                 tracing = self.r#gen.tracing_path(),
+                wrpc_transport = self.r#gen.wrpc_transport_path(),
                 wit_name = func.name,
             );
             for (i, param) in func.params.iter().enumerate() {
@@ -291,9 +251,14 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve, H: Handler<T::Context> + 
             uwrite!(
                 self.src,
                 r"
-                                ).await {{
-                                    Ok(results) => {{
-                                        match tx(",
+                    ).await {{
+                        Ok(results) => {{
+                            let tx = {anyhow}::Context::context(
+                                tx.send(
+                                    <({results_ty}) as {wrpc_transport}::Encode>::Encoder::default(),
+                                    ",
+                anyhow = self.r#gen.anyhow_path(),
+                wrpc_transport = self.r#gen.wrpc_transport_path(),
             );
             if let Some(ty) = &func.result {
                 // wrap single-element results into a tuple for correct indexing
@@ -304,76 +269,34 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve, H: Handler<T::Context> + 
             }
             uwrite!(
                 self.src,
-                r#"
-                                        ).await {{
-                                            Ok(()) => {{
-                                                if let Some(rx) = rx {{
-                                                    {tracing}::trace!(instance = "{instance}", func = "{wit_name}", "receiving async invocation parameters");
-                                                    let rx = {anyhow}::Context::context(
-                                                        rx.await,
-                                                        "`{fqn}` async parameter receipt task failed",
-                                                    )?;
-                                                    {anyhow}::Context::context(
-                                                        rx,
-                                                        "failed to receive `{fqn}` async parameters",
-                                                    )
-                                                }} else {{
-                                                    {anyhow}::Ok(())
-                                                }}
-                                            }},
-                                            Err(err) => {{
-                                                if let Some(rx) = rx {{
-                                                    rx.abort();
-                                                }}
-                                                {anyhow}::bail!(err.context("failed to transmit `{fqn}` invocation results"))
-                                            }},
-                                        }}
-                                    }},
-                                    Err(err) => {{
-                                        if let Some(rx) = rx {{
-                                            rx.abort();
-                                        }}
-                                        {anyhow}::bail!(err.context("failed to serve `{fqn}` invocation"))
-                                    }},
-                                }}
-                            }})
-                            as ::core::pin::Pin<
-                                    ::std::boxed::Box<
-                                        dyn ::core::future::Future<
-                                            Output = {anyhow}::Result<()>
-                                    > + ::core::marker::Send + 'static
-                                >
-                            >
-                        }})
-                    )
-                    as ::core::pin::Pin<
-                        ::std::boxed::Box<
-                            dyn {futures}::Stream<
-                                Item = {anyhow}::Result<
-                                    ::core::pin::Pin<
-                                        ::std::boxed::Box<
-                                            dyn ::core::future::Future<
-                                                Output = {anyhow}::Result<()>
-                                            > + ::core::marker::Send + 'static
-                                        >
-                                    >
-                                >
-                            > + ::core::marker::Send + 'static
-                        >
-                    >
-                )
-            }},"#,
+                r#",
+                                ),
+                                "failed to encode `{fqn}` invocation results",
+                            )?;
+                            {anyhow}::Context::context(
+                                {wrpc_transport}::SendFuture::send(tx).await,
+                                "failed to transmit `{fqn}` invocation results",
+                            )
+                        }},
+                        Err(err) => {{
+                            {anyhow}::bail!(err.context("failed to serve `{fqn}` invocation"))
+                        }},
+                    }}
+                }};
+                {tokio}::try_join!(call, rx)?;
+                ::core::result::Result::Ok(())
+            }}))
+        }}"#,
                 anyhow = self.r#gen.anyhow_path(),
-                futures = self.r#gen.futures_path(),
-                tracing = self.r#gen.tracing_path(),
-                wit_name = func.name,
+                tokio = self.r#gen.tokio_path(),
+                wrpc_transport = self.r#gen.wrpc_transport_path(),
             );
         }
 
         uwriteln!(
             self.src,
             r#"
-        ])
+        _ => ::core::result::Result::Err((cx, tx, rx)),
     }}
 }}"#,
         );
@@ -585,7 +508,7 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve, H: Handler<T::Context> + 
             [] => {
                 uwrite!(
                     self.src,
-                    " -> impl ::core::future::Future<Output = {anyhow}::Result<()>> + Send + 'a"
+                    " -> impl ::core::future::Future<Output = {anyhow}::Result<()>> + Send + use<'a, I__, O__>"
                 );
             }
             [ty] => {
@@ -600,10 +523,10 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve, H: Handler<T::Context> + 
                 if async_params || async_results {
                     uwrite!(
                         self.src,
-                        ", ::core::option::Option<impl ::core::future::Future<Output = {anyhow}::Result<()>> + ::core::marker::Send + 'static + use<'a, C__>>)",
+                        ", impl ::core::future::Future<Output = ::std::io::Result<()>> + ::core::marker::Send + use<I__, O__>)",
                     );
                 }
-                uwrite!(self.src, ">> + Send + 'a");
+                uwrite!(self.src, ">> + Send + use<'a, I__, O__>");
             }
             types => {
                 uwrite!(
@@ -617,10 +540,10 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve, H: Handler<T::Context> + 
                 if async_params || async_results {
                     uwrite!(
                         self.src,
-                        "::core::option::Option<impl ::core::future::Future<Output = {anyhow}::Result<()>> + ::core::marker::Send + 'static + use<'a, C__>>",
+                        "impl ::core::future::Future<Output = ::std::io::Result<()>> + ::core::marker::Send + use<I__, O__>",
                     );
                 }
-                uwrite!(self.src, ")>> + Send + 'a");
+                uwrite!(self.src, ")>> + Send + use<'a, I__, O__>");
             }
         };
         self.push_str(
@@ -638,13 +561,32 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve, H: Handler<T::Context> + 
             .result
             .as_ref()
             .map(|ty| self.decoded_value(ty, "wrpc__"));
+        let args_ty = func
+            .params
+            .iter()
+            .map(|param| format!("{}, ", self.import_param_ty(&param.ty)))
+            .collect::<String>();
+        let results_ty = func
+            .result
+            .as_ref()
+            .map(|ty| format!("{}, ", self.decoded_ty(ty)))
+            .unwrap_or_default();
         if func.result.iter().len() == 0 || (!async_params && !async_results) {
             let decoded = decoded.map_or_else(String::default, |ty| format!(": ({ty},)"));
             uwrite!(
                 self.src,
                 r#"
                 let wrpc__{decoded} = {anyhow}::Context::context(
-                    {wrpc_transport}::InvokeExt::invoke_values_blocking(wrpc__, cx__, "{instance}", "{}", ({params})).await,"#,
+                    {wrpc_transport}::SendFuture::send({wrpc_transport}::invoke_blocking(
+                        tx__,
+                        rx__,
+                        "{instance}",
+                        "{}",
+                        <({args_ty}) as {wrpc_transport}::Encode>::Encoder::default(),
+                        ({params}),
+                        <({results_ty}) as {wrpc_transport}::Decode>::Decoder::default(),
+                    )).await,
+"#,
                 rpc_func_name(func),
                 wrpc_transport = self.r#gen.wrpc_transport_path(),
                 params = {
@@ -668,12 +610,21 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve, H: Handler<T::Context> + 
                 self.push_str("Ok(wrpc__)\n");
             }
         } else {
-            let decoded = decoded.map_or_else(String::default, |ty| format!(": (({ty},), _)"));
+            let decoded = decoded.map_or_else(|| "_".to_string(), |ty| format!("({ty},)"));
             uwrite!(
                 self.src,
                 r#"
-                let (wrpc__, io__){decoded} = {anyhow}::Context::context(
-                    {wrpc_transport}::InvokeExt::invoke_values(wrpc__, cx__, "{instance}", "{}", ({params})).await,"#,
+                let (wrpc__, io__): ({decoded}, _) = {anyhow}::Context::context(
+                    {wrpc_transport}::SendFuture::send({wrpc_transport}::invoke(
+                        tx__,
+                        rx__,
+                        "{instance}",
+                        "{}",
+                        <({args_ty}) as {wrpc_transport}::Encode>::Encoder::default(),
+                        ({params}),
+                        <({results_ty}) as {wrpc_transport}::Decode>::Decoder::default(),
+                    )).await,
+"#,
                 rpc_func_name(func),
                 wrpc_transport = self.r#gen.wrpc_transport_path(),
                 params = {
@@ -798,8 +749,8 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve, H: Handler<T::Context> + 
         if self.in_import {
             uwrite!(
                 self.src,
-                "<'a, C__: {wrpc_transport}::Invoke>(wrpc__: &'a C__, cx__: C__::Context,",
-                wrpc_transport = self.r#gen.wrpc_transport_path(),
+                "<'a, I__: {tokio}::io::AsyncRead + ::core::marker::Send + ::core::marker::Unpin, O__: {tokio}::io::AsyncWrite + ::core::marker::Send + ::core::marker::Unpin>(tx__: O__, rx__: I__,",
+                tokio = self.r#gen.tokio_path(),
             );
         } else {
             self.push_str("(");
@@ -1019,31 +970,16 @@ pub fn serve_interface<'a, T: {wrpc_transport}::Serve, H: Handler<T::Context> + 
         fut || !paths.is_empty()
     }
 
-    fn decoder_paths(&self, id: TypeId) -> String {
-        let (nested, fut) = async_paths_tyid(self.resolve, id);
-        let mut paths: Vec<String> = nested
-            .into_iter()
-            .map(|path| {
-                let path: Vec<String> = path
-                    .into_iter()
-                    .map(|i| match i {
-                        Some(i) => format!("::core::option::Option::Some({i})"),
-                        None => "::core::option::Option::None".to_string(),
-                    })
-                    .collect();
-                format!("&[{}][..], ", path.join(", "))
-            })
-            .collect();
-        if fut {
-            paths.push("&[][..], ".to_string());
-        }
-        if paths.is_empty() {
-            return "::std::boxed::Box::default()".to_string();
-        }
-        format!(
-            "::std::boxed::Box::from([{}].map(<::std::boxed::Box<[::core::option::Option<usize>]>>::from))",
-            paths.concat()
-        )
+    fn encoded_ty(&mut self, ty: &Type) -> String {
+        let prev = mem::take(&mut self.src);
+        self.print_encoded_ty(ty, false);
+        mem::replace(&mut self.src, prev).to_string()
+    }
+
+    fn import_param_ty(&mut self, ty: &Type) -> String {
+        let prev = mem::take(&mut self.src);
+        self.print_import_param_ty(ty);
+        mem::replace(&mut self.src, prev).to_string()
     }
 
     fn print_encoded_ty(&mut self, ty: &Type, submodule: bool) {
@@ -1467,19 +1403,18 @@ impl<'a> wit_bindgen_core::InterfaceGenerator<'a> for InterfaceGenerator<'a> {
                 uwriteln!(
                     self.src,
                     r"
-impl<W: {wrpc_transport}::DeferredWrite> {wrpc_transport}::Encode<W> for &self::{name}
+impl {wrpc_transport}::Encode for &self::{name}
 {{
-    type Encoder = {mod_name}::Encoder<W>;
+    type Encoder = {mod_name}::Encoder;
 }}",
                 );
             }
-            let decoder_paths = self.decoder_paths(id);
             uwriteln!(
                 self.src,
                 r"
-impl<W: {wrpc_transport}::DeferredWrite> {wrpc_transport}::Encode<W> for self::{name}
+impl {wrpc_transport}::Encode for self::{name}
 {{
-    type Encoder = {mod_name}::Encoder<W>;
+    type Encoder = {mod_name}::Encoder;
 }}
 
 impl {wrpc_transport}::Decode for self::{name}
@@ -1488,14 +1423,8 @@ impl {wrpc_transport}::Decode for self::{name}
     type ListDecoder = {wrpc_transport}::ListDecoder<Self::Decoder>;
 }}
 
-impl {wrpc_transport}::Paths for {mod_name}::Decoder {{
-    fn paths(&self) -> ::std::boxed::Box<[::std::boxed::Box<[::core::option::Option<usize>]>]> {{
-        {decoder_paths}
-    }}
-}}
-
 mod {mod_name} {{
-    pub struct Encoder<W: {wrpc_transport}::DeferredWrite> 
+    pub struct Encoder
     {{",
             );
 
@@ -1504,16 +1433,14 @@ mod {mod_name} {{
                     let name = to_rust_ident(name);
                     uwrite!(self.src, "{name}: <");
                     self.print_encoded_ty(ty, true);
-                    uwriteln!(self.src, " as {wrpc_transport}::Encode<W>>::Encoder,");
+                    uwriteln!(self.src, " as {wrpc_transport}::Encode>::Encoder,");
                 }
-            } else {
-                uwriteln!(self.src, "_ty: ::core::marker::PhantomData<W>,");
             }
             uwriteln!(
                 self.src,
                 r"}}
     #[automatically_derived]
-    impl<W: {wrpc_transport}::DeferredWrite> ::core::default::Default for Encoder<W>
+    impl ::core::default::Default for Encoder
     {{
         fn default() -> Self {{
             Self{{"
@@ -1523,8 +1450,6 @@ mod {mod_name} {{
                     let name = to_rust_ident(name);
                     uwriteln!(self.src, "{name}: ::core::default::Default::default(),");
                 }
-            } else {
-                uwriteln!(self.src, "_ty: ::core::marker::PhantomData,");
             }
             uwriteln!(
                 self.src,
@@ -1533,42 +1458,52 @@ mod {mod_name} {{
     }}
 
     #[automatically_derived]
-    impl<W: {wrpc_transport}::DeferredWrite> {wrpc_transport}::Deferred<W> for Encoder<W>
+    impl {wrpc_transport}::Transmit for Encoder
     {{
-        fn take_deferred(&mut self) -> ::core::option::Option<{wrpc_transport}::DeferredFn<W>> {{"
+        fn poll_transmit(&mut self, cx: &mut ::core::task::Context<'_>, path: &mut ::std::vec::Vec<usize>, dst: &mut {bytes}::BytesMut) -> ::core::task::Poll<::std::io::Result<()>> {{
+            let mut ready = true;"
             );
-            if !fields.is_empty() {
-                for Field { name, .. } in fields {
-                    let name = to_rust_ident(name);
-                    uwriteln!(self.src, "let f_{name} = self.{name}.take_deferred();");
-                }
-                self.push_str("if false");
-                for Field { name, .. } in fields {
-                    let name = to_rust_ident(name);
-                    uwrite!(self.src, " || f_{name}.is_some()");
-                }
-                uwrite!(
+            for (i, Field { name, .. }) in fields.iter().enumerate() {
+                let name = to_rust_ident(name);
+                uwriteln!(
                     self.src,
                     r"
-                {{
-                    return Some(::std::boxed::Box::new(|w, path| {{
-                        {wrpc_transport}::handle_deferred(w, path, [",
-                );
-                for Field { name, .. } in fields {
-                    let name = to_rust_ident(name);
-                    uwrite!(self.src, "f_{name}, ");
-                }
-                uwrite!(
-                    self.src,
-                    r"])
-                    }}))
-                }}",
+            path.push({i});
+            let res = {wrpc_transport}::Transmit::poll_transmit(&mut self.{name}, cx, path, dst);
+            path.pop();
+            match res {{
+                ::core::task::Poll::Ready(Ok(())) => {{}}
+                ::core::task::Poll::Ready(Err(err)) => return ::core::task::Poll::Ready(Err(err)),
+                ::core::task::Poll::Pending => ready = false,
+            }}"
                 );
             }
+            let closed: Vec<String> = fields
+                .iter()
+                .map(|Field { name, .. }| {
+                    format!(
+                        "{wrpc_transport}::Transmit::is_closed(&self.{})",
+                        to_rust_ident(name)
+                    )
+                })
+                .collect();
+            let closed = if closed.is_empty() {
+                "true".to_string()
+            } else {
+                closed.join(" && ")
+            };
             uwriteln!(
                 self.src,
                 r"
-            None
+            if ready {{
+                ::core::task::Poll::Ready(Ok(()))
+            }} else {{
+                ::core::task::Poll::Pending
+            }}
+        }}
+
+        fn is_closed(&self) -> bool {{
+            {closed}
         }}
     }}
 
@@ -1586,8 +1521,6 @@ mod {mod_name} {{
                     self.print_decoded_ty(ty, true);
                     uwriteln!(self.src, ">,");
                 }
-            } else {
-                uwriteln!(self.src, "_ty: ::core::marker::PhantomData<()>,");
             }
             uwriteln!(
                 self.src,
@@ -1604,8 +1537,6 @@ mod {mod_name} {{
                     uwriteln!(self.src, "c_{name}: ::core::default::Default::default(),");
                     uwriteln!(self.src, "v_{name}: ::core::default::Default::default(),");
                 }
-            } else {
-                uwriteln!(self.src, "_ty: ::core::marker::PhantomData,");
             }
             uwriteln!(
                 self.src,
@@ -1614,47 +1545,45 @@ mod {mod_name} {{
     }}
 
     #[automatically_derived]
-    impl {wrpc_transport}::Deferred<{wrpc_transport}::BufferedIncoming> for Decoder
+    impl {wrpc_transport}::Receive for Decoder
     {{
-        fn take_deferred(&mut self) -> ::core::option::Option<{wrpc_transport}::DeferredFn<{wrpc_transport}::BufferedIncoming>> {{"
+        fn poll_receive(&mut self, cx: &mut ::core::task::Context<'_>, path: &[usize], src: &mut {bytes}::BytesMut) -> ::core::task::Poll<::std::io::Result<()>> {{
+            match path.split_first() {{"
             );
-            if !fields.is_empty() {
-                for Field { name, .. } in fields {
-                    let name = to_rust_ident(name);
-                    uwriteln!(self.src, "let f_{name} = self.c_{name}.take_deferred();");
-                }
-                self.push_str("if false");
-                for Field { name, .. } in fields {
-                    let name = to_rust_ident(name);
-                    uwrite!(self.src, " || f_{name}.is_some()");
-                }
-                uwrite!(
+            for (i, Field { name, .. }) in fields.iter().enumerate() {
+                let name = to_rust_ident(name);
+                uwriteln!(
                     self.src,
-                    r"
-                {{
-                    return Some(::std::boxed::Box::new(|r, path| {{
-                        {wrpc_transport}::handle_deferred(r, path, [",
-                );
-                for Field { name, .. } in fields {
-                    let name = to_rust_ident(name);
-                    uwrite!(self.src, "f_{name}, ");
-                }
-                uwrite!(
-                    self.src,
-                    r"])
-                    }}))
-                }}",
+                    "Some(({i}, rest)) => {wrpc_transport}::Receive::poll_receive(&mut self.c_{name}, cx, rest, src),"
                 );
             }
+            let closed: Vec<String> = fields
+                .iter()
+                .map(|Field { name, .. }| {
+                    format!(
+                        "{wrpc_transport}::Receive::is_closed(&self.c_{})",
+                        to_rust_ident(name)
+                    )
+                })
+                .collect();
+            let closed = if closed.is_empty() {
+                "true".to_string()
+            } else {
+                closed.join(" && ")
+            };
             uwriteln!(
                 self.src,
-                r#"
-            None
+                r#"_ => ::core::task::Poll::Ready(::core::result::Result::Err({wrpc_transport}::error_unknown_path(path))),
+            }}
+        }}
+
+        fn is_closed(&self) -> bool {{
+            {closed}
         }}
     }}
 
     #[automatically_derived]
-    impl {tokio_util}::codec::Decoder for Decoder 
+    impl {tokio_util}::codec::Decoder for Decoder
     {{
         type Item = super::{name};
         type Error = ::std::io::Error;
@@ -1694,7 +1623,7 @@ mod {mod_name} {{
                     self.src,
                     r#"
     #[automatically_derived]
-    impl<W: {wrpc_transport}::DeferredWrite> {tokio_util}::codec::Encoder<{name}> for Encoder<W> 
+    impl {tokio_util}::codec::Encoder<{name}> for Encoder 
     {{
         type Error = ::std::io::Error;
 
@@ -1837,15 +1766,15 @@ pub struct {}(());",
             uwriteln!(
                 self.src,
                 r#"
-impl<W: {wrpc_transport}::DeferredWrite> {wrpc_transport}::Encode<W> for self::{name} {{
+impl {wrpc_transport}::Encode for self::{name} {{
     type Encoder = {mod_name}::Codec;
 }}
 
-impl<W: {wrpc_transport}::DeferredWrite> {wrpc_transport}::Encode<W> for &self::{name} {{
+impl {wrpc_transport}::Encode for &self::{name} {{
     type Encoder = {mod_name}::Codec;
 }}
 
-impl<W: {wrpc_transport}::DeferredWrite> {wrpc_transport}::Encode<W> for &&self::{name} {{
+impl {wrpc_transport}::Encode for &&self::{name} {{
     type Encoder = {mod_name}::Codec;
 }}
 
@@ -1854,9 +1783,13 @@ impl {wrpc_transport}::Decode for self::{name} {{
     type ListDecoder = {wrpc_transport}::SyncCodec<{wasm_tokio}::CoreVecDecoder<Self::Decoder>>;
 }}
 
-impl {wrpc_transport}::Paths for {mod_name}::Codec {{
-    fn paths(&self) -> ::std::boxed::Box<[::std::boxed::Box<[::core::option::Option<usize>]>]> {{
-        ::std::boxed::Box::default()
+impl {wrpc_transport}::Receive for {mod_name}::Codec {{
+    fn poll_receive(&mut self, _: &mut ::core::task::Context<'_>, path: &[usize], _: &mut {bytes}::BytesMut) -> ::core::task::Poll<::std::io::Result<()>> {{
+        ::core::task::Poll::Ready(::core::result::Result::Err({wrpc_transport}::error_unknown_path(path)))
+    }}
+
+    fn is_closed(&self) -> bool {{
+        true
     }}
 }}
 
@@ -1867,9 +1800,13 @@ mod {mod_name} {{
     pub struct Codec;
 
     #[automatically_derived]
-    impl<T> {wrpc_transport}::Deferred<T> for Codec {{
-        fn take_deferred(&mut self) -> ::core::option::Option<{wrpc_transport}::DeferredFn<T>> {{
-            None
+    impl {wrpc_transport}::Transmit for Codec {{
+        fn poll_transmit(&mut self, _: &mut ::core::task::Context<'_>, _: &mut ::std::vec::Vec<usize>, _: &mut {bytes}::BytesMut) -> ::core::task::Poll<::std::io::Result<()>> {{
+            ::core::task::Poll::Ready(::core::result::Result::Ok(()))
+        }}
+
+        fn is_closed(&self) -> bool {{
+            true
         }}
     }}
 
@@ -2019,15 +1956,15 @@ mod {mod_name} {{
                 uwriteln!(
                     self.src,
                     r#"
-impl<W: {wrpc_transport}::DeferredWrite> {wrpc_transport}::Encode<W> for self::{name} {{
+impl {wrpc_transport}::Encode for self::{name} {{
     type Encoder = {mod_name}::Codec;
 }}
 
-impl<W: {wrpc_transport}::DeferredWrite> {wrpc_transport}::Encode<W> for &self::{name} {{
+impl {wrpc_transport}::Encode for &self::{name} {{
     type Encoder = {mod_name}::Codec;
 }}
 
-impl<W: {wrpc_transport}::DeferredWrite> {wrpc_transport}::Encode<W> for &&self::{name} {{
+impl {wrpc_transport}::Encode for &&self::{name} {{
     type Encoder = {mod_name}::Codec;
 }}
 
@@ -2036,9 +1973,13 @@ impl {wrpc_transport}::Decode for self::{name} {{
     type ListDecoder = {wrpc_transport}::SyncCodec<{wasm_tokio}::CoreVecDecoder<Self::Decoder>>;
 }}
 
-impl {wrpc_transport}::Paths for {mod_name}::Codec {{
-    fn paths(&self) -> ::std::boxed::Box<[::std::boxed::Box<[::core::option::Option<usize>]>]> {{
-        ::std::boxed::Box::default()
+impl {wrpc_transport}::Receive for {mod_name}::Codec {{
+    fn poll_receive(&mut self, _: &mut ::core::task::Context<'_>, path: &[usize], _: &mut {bytes}::BytesMut) -> ::core::task::Poll<::std::io::Result<()>> {{
+        ::core::task::Poll::Ready(::core::result::Result::Err({wrpc_transport}::error_unknown_path(path)))
+    }}
+
+    fn is_closed(&self) -> bool {{
+        true
     }}
 }}
 
@@ -2047,9 +1988,13 @@ mod {mod_name} {{
     pub struct Codec;
 
     #[automatically_derived]
-    impl<T> {wrpc_transport}::Deferred<T> for Codec {{
-        fn take_deferred(&mut self) -> ::core::option::Option<{wrpc_transport}::DeferredFn<T>> {{
-            None
+    impl {wrpc_transport}::Transmit for Codec {{
+        fn poll_transmit(&mut self, _: &mut ::core::task::Context<'_>, _: &mut ::std::vec::Vec<usize>, _: &mut {bytes}::BytesMut) -> ::core::task::Poll<::std::io::Result<()>> {{
+            ::core::task::Poll::Ready(::core::result::Result::Ok(()))
+        }}
+
+        fn is_closed(&self) -> bool {{
+            true
         }}
     }}
 
@@ -2118,26 +2063,25 @@ mod {mod_name} {{
                     uwrite!(
                         self.src,
                         r#"
-impl<W: {wrpc_transport}::DeferredWrite> {wrpc_transport}::Encode<W> for &self::{name}
+impl {wrpc_transport}::Encode for &self::{name}
 {{
-    type Encoder = {mod_name}::Encoder<W>;
+    type Encoder = {mod_name}::Encoder;
 }}
 
-impl<W: {wrpc_transport}::DeferredWrite> {wrpc_transport}::Encode<W> for &&self::{name}
+impl {wrpc_transport}::Encode for &&self::{name}
 {{
-    type Encoder = {mod_name}::Encoder<W>;
+    type Encoder = {mod_name}::Encoder;
 }}
 "#
                     );
                 }
 
-                let decoder_paths = self.decoder_paths(id);
                 uwrite!(
                     self.src,
                     r#"
-impl<W: {wrpc_transport}::DeferredWrite> {wrpc_transport}::Encode<W> for self::{name}
+impl {wrpc_transport}::Encode for self::{name}
 {{
-    type Encoder = {mod_name}::Encoder<W>;
+    type Encoder = {mod_name}::Encoder;
 }}
 
 impl {wrpc_transport}::Decode for self::{name}
@@ -2146,26 +2090,59 @@ impl {wrpc_transport}::Decode for self::{name}
     type ListDecoder = {wrpc_transport}::ListDecoder<Self::Decoder>;
 }}
 
-impl {wrpc_transport}::Paths for {mod_name}::Decoder {{
-    fn paths(&self) -> ::std::boxed::Box<[::std::boxed::Box<[::core::option::Option<usize>]>]> {{
-        {decoder_paths}
-    }}
-}}
-
 mod {mod_name} {{
-    pub struct Encoder<W>(::core::option::Option<{wrpc_transport}::DeferredFn<W>>);
+    pub struct Encoder(::core::option::Option<PayloadEncoder>);
 
     #[automatically_derived]
-    impl<W> ::core::default::Default for Encoder<W> {{
-        fn default() -> Self {{ 
+    impl ::core::default::Default for Encoder {{
+        fn default() -> Self {{
             Self(None)
         }}
     }}
 
+    pub enum PayloadEncoder
+    {{"#
+                );
+                let mut poll_transmit = String::default();
+                let mut is_closed = String::default();
+                for Case {
+                    name: case_name,
+                    ty,
+                    ..
+                } in cases
+                {
+                    if let Some(ty) = ty {
+                        let case = case_name.to_upper_camel_case();
+                        uwrite!(self.src, "{case}(<");
+                        self.print_encoded_ty(ty, true);
+                        uwriteln!(self.src, " as {wrpc_transport}::Encode>::Encoder),");
+                        poll_transmit.push_str(&format!(
+                            "Some(PayloadEncoder::{case}(enc)) => {wrpc_transport}::Transmit::poll_transmit(enc, cx, path, dst),"
+                        ));
+                        is_closed.push_str(&format!(
+                            "Some(PayloadEncoder::{case}(enc)) => {wrpc_transport}::Transmit::is_closed(enc),"
+                        ));
+                    }
+                }
+                uwrite!(
+                    self.src,
+                    r#"}}
+
     #[automatically_derived]
-    impl<W> {wrpc_transport}::Deferred<W> for Encoder<W> {{
-        fn take_deferred(&mut self) -> ::core::option::Option<{wrpc_transport}::DeferredFn<W>> {{
-            self.0.take()
+    impl {wrpc_transport}::Transmit for Encoder
+    {{
+        fn poll_transmit(&mut self, cx: &mut ::core::task::Context<'_>, path: &mut ::std::vec::Vec<usize>, dst: &mut {bytes}::BytesMut) -> ::core::task::Poll<::std::io::Result<()>> {{
+            match &mut self.0 {{
+                {poll_transmit}
+                None => ::core::task::Poll::Ready(Ok(())),
+            }}
+        }}
+
+        fn is_closed(&self) -> bool {{
+            match &self.0 {{
+                {is_closed}
+                None => true,
+            }}
         }}
     }}"#
                 );
@@ -2183,7 +2160,7 @@ mod {mod_name} {{
                         self.src,
                         r#"
     #[automatically_derived]
-    impl<W: {wrpc_transport}::DeferredWrite> {tokio_util}::codec::Encoder<{ty}> for Encoder<W> 
+    impl {tokio_util}::codec::Encoder<{ty}> for Encoder 
     {{
         type Error = ::std::io::Error;
 
@@ -2207,7 +2184,9 @@ mod {mod_name} {{
                                 r"
                 super::{name}::{case}(payload) => {{
                     {wasm_tokio}::Leb128Encoder.encode({i}_u32, dst)?;
-                    self.0 = {wrpc_transport}::Encode::<W>::encode({payload}, &mut ::core::default::Default::default(), dst)?;
+                    let mut enc = ::core::default::Default::default();
+                    {tokio_util}::codec::Encoder::encode(&mut enc, {payload}, dst)?;
+                    self.0 = Some(PayloadEncoder::{case}(enc));
                     Ok(())
                 }},"
                             );
@@ -2215,7 +2194,10 @@ mod {mod_name} {{
                             uwrite!(
                                 self.src,
                                 "
-                super::{name}::{case} => {wasm_tokio}::Leb128Encoder.encode({i}_u32, dst),"
+                super::{name}::{case} => {{
+                    self.0 = None;
+                    {wasm_tokio}::Leb128Encoder.encode({i}_u32, dst)
+                }},"
                             );
                         }
                     }
@@ -2260,60 +2242,66 @@ mod {mod_name} {{
 
     pub enum Decoder
     {{
-        Payload(::core::option::Option<PayloadDecoder>),
-        Deferred(::core::option::Option<{wrpc_transport}::DeferredFn<{wrpc_transport}::BufferedIncoming>>)
+        Decoding(PayloadDecoder),
+        Decoded(::core::option::Option<PayloadDecoder>),
     }}
 
     #[automatically_derived]
     impl ::core::default::Default for Decoder
     {{
         fn default() -> Self {{
-            Self::Payload(None)
+            Self::Decoded(None)
         }}
     }}
-
-    #[automatically_derived]
-    impl {wrpc_transport}::Deferred<{wrpc_transport}::BufferedIncoming> for Decoder
-    {{
-        fn take_deferred(&mut self) -> ::core::option::Option<{wrpc_transport}::DeferredFn<{wrpc_transport}::BufferedIncoming>> {{
-            match self {{
-                Self::Payload(None) => None,"#
+"#
                 );
+                let mut poll_receive = String::default();
+                let mut is_closed = String::default();
                 for Case {
                     name: case_name,
                     ty,
                     ..
                 } in cases
                 {
-                    let case = case_name.to_upper_camel_case();
                     if ty.is_some() {
-                        uwrite!(
-                            self.src,
-                            r"
-                Self::Payload(Some(PayloadDecoder::{case}(dec))) => dec.take_deferred(),"
-                        );
+                        let case = case_name.to_upper_camel_case();
+                        poll_receive.push_str(&format!(
+                            "Self::Decoded(Some(PayloadDecoder::{case}(dec))) => {wrpc_transport}::Receive::poll_receive(dec, cx, path, src),"
+                        ));
+                        is_closed.push_str(&format!(
+                            "Self::Decoded(Some(PayloadDecoder::{case}(dec))) => {wrpc_transport}::Receive::is_closed(dec),"
+                        ));
                     }
                 }
                 uwriteln!(
                     self.src,
                     r#"
-                Self::Deferred(f) => {{
-                    let f = f.take();
-                    *self = Self::Payload(None);
-                    f
-                }},
+    #[automatically_derived]
+    impl {wrpc_transport}::Receive for Decoder
+    {{
+        fn poll_receive(&mut self, cx: &mut ::core::task::Context<'_>, path: &[usize], src: &mut {bytes}::BytesMut) -> ::core::task::Poll<::std::io::Result<()>> {{
+            match self {{
+                {poll_receive}
+                _ => ::core::task::Poll::Ready(::core::result::Result::Err({wrpc_transport}::error_unknown_path(path))),
+            }}
+        }}
+
+        fn is_closed(&self) -> bool {{
+            match self {{
+                {is_closed}
+                _ => true,
             }}
         }}
     }}
 
     #[automatically_derived]
-    impl {tokio_util}::codec::Decoder for Decoder 
+    impl {tokio_util}::codec::Decoder for Decoder
     {{
         type Item = super::{name};
         type Error = ::std::io::Error;
 
         fn decode(&mut self, src: &mut {bytes}::BytesMut) -> ::core::result::Result<::core::option::Option<Self::Item>, Self::Error> {{
-            let state = if let Self::Payload(Some(state)) = self {{
+            let state = if let Self::Decoding(state) = self {{
                 state
             }} else {{
                 let Some(disc) = {wasm_tokio}::Leb128DecoderU32.decode(src)? else {{
@@ -2336,18 +2324,21 @@ mod {mod_name} {{
                             self.src,
                             r"
                     {i} => {{
-                        *self = Self::Payload(::core::option::Option::default());
-                        let Self::Payload(dec) = self else {{
+                        *self = Self::Decoding(PayloadDecoder::{case}(::core::default::Default::default()));
+                        let Self::Decoding(state) = self else {{
                             unreachable!()
                         }};
-                        dec.insert(PayloadDecoder::{case}(::core::default::Default::default()))
+                        state
                     }},"
                         );
                     } else {
                         uwrite!(
                             self.src,
                             "
-                    {i} => return Ok(Some(super::{name}::{case})),"
+                    {i} => {{
+                        *self = Self::Decoded(None);
+                        return Ok(Some(super::{name}::{case}))
+                    }},"
                         );
                     }
                 }
@@ -2358,7 +2349,7 @@ mod {mod_name} {{
                 }}
             }};
 
-            match state {{"#
+            let item = match state {{"#
                 );
                 for Case {
                     name: case_name,
@@ -2376,8 +2367,7 @@ mod {mod_name} {{
                             let Some(payload) = dec.decode(src)? else {{
                                 return Ok(None)
                             }};
-                            *self = Self::Deferred({wrpc_transport}::Deferred::<{wrpc_transport}::BufferedIncoming>::take_deferred(dec));
-                            Ok(Some(super::{name}::{case}({payload})))
+                            super::{name}::{case}({payload})
                         }},"
                         );
                     }
@@ -2385,7 +2375,11 @@ mod {mod_name} {{
                 uwriteln!(
                     self.src,
                     r#"
+            }};
+            if let Self::Decoding(dec) = ::core::mem::take(self) {{
+                *self = Self::Decoded(Some(dec));
             }}
+            Ok(Some(item))
         }}
     }}
 }}"#,
@@ -2537,11 +2531,11 @@ mod {mod_name} {{
             uwriteln!(
                 self.src,
                 r#"
-impl<W: {wrpc_transport}::DeferredWrite> {wrpc_transport}::Encode<W> for self::{name} {{
+impl {wrpc_transport}::Encode for self::{name} {{
     type Encoder = {mod_name}::Codec;
 }}
 
-impl<W: {wrpc_transport}::DeferredWrite> {wrpc_transport}::Encode<W> for &self::{name} {{
+impl {wrpc_transport}::Encode for &self::{name} {{
     type Encoder = {mod_name}::Codec;
 }}
 
@@ -2550,9 +2544,13 @@ impl {wrpc_transport}::Decode for self::{name} {{
     type ListDecoder = {wrpc_transport}::SyncCodec<{wasm_tokio}::CoreVecDecoder<Self::Decoder>>;
 }}
 
-impl {wrpc_transport}::Paths for {mod_name}::Codec {{
-    fn paths(&self) -> ::std::boxed::Box<[::std::boxed::Box<[::core::option::Option<usize>]>]> {{
-        ::std::boxed::Box::default()
+impl {wrpc_transport}::Receive for {mod_name}::Codec {{
+    fn poll_receive(&mut self, _: &mut ::core::task::Context<'_>, path: &[usize], _: &mut {bytes}::BytesMut) -> ::core::task::Poll<::std::io::Result<()>> {{
+        ::core::task::Poll::Ready(::core::result::Result::Err({wrpc_transport}::error_unknown_path(path)))
+    }}
+
+    fn is_closed(&self) -> bool {{
+        true
     }}
 }}
 
@@ -2561,9 +2559,13 @@ mod {mod_name} {{
     pub struct Codec;
 
     #[automatically_derived]
-    impl<T> {wrpc_transport}::Deferred<T> for Codec {{
-        fn take_deferred(&mut self) -> ::core::option::Option<{wrpc_transport}::DeferredFn<T>> {{
-            None
+    impl {wrpc_transport}::Transmit for Codec {{
+        fn poll_transmit(&mut self, _: &mut ::core::task::Context<'_>, _: &mut ::std::vec::Vec<usize>, _: &mut {bytes}::BytesMut) -> ::core::task::Poll<::std::io::Result<()>> {{
+            ::core::task::Poll::Ready(::core::result::Result::Ok(()))
+        }}
+
+        fn is_closed(&self) -> bool {{
+            true
         }}
     }}
 

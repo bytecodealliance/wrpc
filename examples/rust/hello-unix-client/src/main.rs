@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use anyhow::Context as _;
 use clap::Parser;
+use tokio::net::UnixStream;
 
 mod bindings {
     wit_bindgen_wrpc::generate!({
@@ -24,8 +25,11 @@ async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt().init();
 
     let Args { path } = Args::parse();
-    let wrpc = wrpc_transport::unix::Client::from(path.as_path());
-    let hello = bindings::wrpc_examples::hello::handler::hello(&wrpc, ())
+    let mut stream = UnixStream::connect(&path)
+        .await
+        .with_context(|| format!("failed to connect to `{}`", path.display()))?;
+    let (rx, tx) = stream.split();
+    let hello = bindings::wrpc_examples::hello::handler::hello(tx, rx)
         .await
         .context("failed to invoke `wrpc-examples.hello/handler.hello`")?;
     eprintln!("{hello}");

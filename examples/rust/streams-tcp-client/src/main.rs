@@ -4,6 +4,7 @@ use anyhow::Context as _;
 use bytes::Bytes;
 use clap::Parser;
 use futures::{StreamExt as _, stream};
+use tokio::net::TcpStream;
 use tokio::{time, try_join};
 use tokio_stream::wrappers::IntervalStream;
 use tracing::debug;
@@ -32,7 +33,13 @@ async fn main() -> anyhow::Result<()> {
 
     let Args { addr } = Args::parse();
 
-    let wrpc = wrpc_transport::tcp::Client::from(&addr);
+    let mut stream = TcpStream::connect(&addr)
+        .await
+        .with_context(|| format!("failed to connect to `{addr}`"))?;
+    stream
+        .set_nodelay(true)
+        .context("failed to set TCP_NODELAY")?;
+    let (rx, tx) = stream.split();
 
     let numbers = Box::pin(
         stream::iter(1..)
@@ -51,17 +58,13 @@ async fn main() -> anyhow::Result<()> {
             .map(Bytes::from),
     );
 
-    let ((mut numbers, mut bytes), io) = echo(&wrpc, (), Req { numbers, bytes })
+    let ((mut numbers, mut bytes), io) = echo(tx, rx, Req { numbers, bytes })
         .await
         .context("failed to invoke `wrpc-examples:streams/handler.echo`")?;
     try_join!(
         async {
-            if let Some(io) = io {
-                debug!("performing async I/O");
-                io.await.context("failed to complete async I/O")
-            } else {
-                Ok(())
-            }
+            debug!("performing async I/O");
+            io.await.context("failed to complete async I/O")
         },
         async {
             while let Some(item) = numbers.next().await {

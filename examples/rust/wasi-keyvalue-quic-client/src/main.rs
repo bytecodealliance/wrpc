@@ -80,28 +80,33 @@ async fn main() -> anyhow::Result<()> {
         .connect_with(conf, addr, "localhost")?
         .await
         .context("failed to connect to server")?;
-    let wrpc = wrpc_quic::Client::from(connection);
-    let bucket = store::open(&wrpc, (), "example")
+    let connect = async || connection.open_bi().await.context("failed to open stream");
+    let (tx, rx) = connect().await?;
+    let bucket = store::open(tx, rx, "example")
         .await
         .context("failed to invoke `open`")?
         .context("failed to open empty bucket")?;
-    store::Bucket::set(&wrpc, (), &bucket.as_borrow(), "foo", &Bytes::from("bar"))
+    let (tx, rx) = connect().await?;
+    store::Bucket::set(tx, rx, &bucket.as_borrow(), "foo", &Bytes::from("bar"))
         .await
         .context("failed to invoke `set`")?
         .context("failed to set `foo`")?;
-    let ok = store::Bucket::exists(&wrpc, (), &bucket.as_borrow(), "foo")
+    let (tx, rx) = connect().await?;
+    let ok = store::Bucket::exists(tx, rx, &bucket.as_borrow(), "foo")
         .await
         .context("failed to invoke `exists`")?
         .context("failed to check if `foo` exists")?;
     ensure!(ok);
-    let v = store::Bucket::get(&wrpc, (), &bucket.as_borrow(), "foo")
+    let (tx, rx) = connect().await?;
+    let v = store::Bucket::get(tx, rx, &bucket.as_borrow(), "foo")
         .await
         .context("failed to invoke `get`")?
         .context("failed to get `foo`")?;
     ensure!(v.as_deref() == Some(b"bar".as_slice()));
 
+    let (tx, rx) = connect().await?;
     let store::KeyResponse { keys, cursor: _ } =
-        store::Bucket::list_keys(&wrpc, (), &bucket.as_borrow(), None)
+        store::Bucket::list_keys(tx, rx, &bucket.as_borrow(), None)
             .await
             .context("failed to invoke `list-keys`")?
             .context("failed to list keys")?;

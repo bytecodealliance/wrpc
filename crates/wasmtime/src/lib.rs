@@ -1,30 +1,24 @@
 #![allow(clippy::type_complexity)] // TODO: https://github.com/bytecodealliance/wrpc/issues/2
 
+use core::borrow::BorrowMut;
 use core::fmt;
-use core::iter::zip;
-use core::pin::pin;
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use bytes::BytesMut;
-use futures::TryStreamExt as _;
-use tokio::io::AsyncWriteExt as _;
-use tokio::select;
-use tokio::sync::mpsc;
-use tokio_util::codec::{Encoder, FramedRead};
+use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::try_join;
+use tokio_util::codec::FramedRead;
 use tracing::{debug, instrument, trace, warn};
 use uuid::Uuid;
+use wasmtime::Engine;
 use wasmtime::component::{
     Accessor, Func, ResourceAny, ResourceTable, ResourceType, Type, Val, types,
 };
 use wasmtime::error::Context as _;
-use wasmtime::{AsContextMut, Engine};
-use wrpc_transport::frame::{Incoming, Outgoing};
-use wrpc_transport::{Deferred as _, handle_deferred};
+use wrpc_transport::{FrameDecoder, serve};
 
 mod codec;
-pub mod paths;
 mod serve;
 
 pub use codec::*;
@@ -82,8 +76,7 @@ pub enum CallError {
     Encode(wasmtime::Error),
     Call(wasmtime::Error),
     Write(wasmtime::Error),
-    Flush(wasmtime::Error),
-    Deferred(wasmtime::Error),
+    Closed(wasmtime::Error),
 }
 
 impl core::error::Error for CallError {}
@@ -95,8 +88,7 @@ impl fmt::Debug for CallError {
             | CallError::Encode(error)
             | CallError::Call(error)
             | CallError::Write(error)
-            | CallError::Flush(error)
-            | CallError::Deferred(error) => error.fmt(f),
+            | CallError::Closed(error) => error.fmt(f),
         }
     }
 }
@@ -108,119 +100,55 @@ impl fmt::Display for CallError {
             | CallError::Encode(error)
             | CallError::Call(error)
             | CallError::Write(error)
-            | CallError::Flush(error)
-            | CallError::Deferred(error) => error.fmt(f),
+            | CallError::Closed(error) => error.fmt(f),
         }
     }
 }
 
-/// Calls the exported `func` with parameters decoded from `rx` and transmits the results on `tx`.
-///
-/// Returns a future resolving once the pending asynchronous parameter values are received or
-/// dropped, or once receiving one fails.
+/// Calls the exported `func` with parameters received from the frames `rx` and transmits the
+/// results on `tx`.
 ///
 /// The `store` [`Accessor`] is used to call `func` concurrently, it can be acquired, for example,
 /// using [`wasmtime::Store::run_concurrent`].
-pub async fn call<T>(
+pub async fn call<T, R, I, O>(
     store: &Accessor<T>,
-    mut rx: Incoming,
-    mut tx: Outgoing,
+    tx: O,
+    rx: R,
     resources: &ResourceTypes,
     params_ty: &[Type],
     results_ty: &[Type],
     func: Func,
-) -> Result<impl Future<Output = Result<(), CallError>> + Send + use<T>, CallError>
+) -> Result<(), CallError>
 where
     T: WrpcView + 'static,
+    R: BorrowMut<FramedRead<I, FrameDecoder>>,
+    I: AsyncRead + Unpin,
+    O: AsyncWrite + Unpin,
 {
-    let (errors_tx, mut errors) = mpsc::channel(1);
-    let r = rx
-        .take_reader()
-        .context("parameters already received")
-        .map_err(CallError::Decode)?;
-    let mut dec = FramedRead::new(r, ValDecoder::new(store, params_ty, resources, errors_tx));
-    let params = if params_ty.is_empty() {
-        Vec::default()
-    } else {
-        let params = dec
-            .try_next()
-            .await
-            .context("failed to receive parameters")
-            .map_err(CallError::Decode)?;
-        params
-            .context("parameters missing")
-            .map_err(CallError::Decode)?
-    };
-    if !dec.read_buffer().is_empty() {
-        return Err(CallError::Decode(wasmtime::Error::msg(
-            "received data after parameter values end",
-        )));
-    }
-    if let Some(f) = dec.decoder_mut().take_deferred() {
-        let deferred = f(&rx, &[])
-            .context("failed to index asynchronous parameter values")
-            .map_err(CallError::Decode)?;
-        deferred
-            .await
-            .context("failed to receive asynchronous parameter values")
-            .map_err(CallError::Decode)?;
-    }
-    drop(dec);
-    let mut call = pin!(async {
-        let mut results = vec![Val::Bool(false); results_ty.len()];
-        func.call_concurrent(store, &params, &mut results)
-            .await
-            .context("failed to call function")
-            .map_err(CallError::Call)?;
-
-        let (buf, deferred) = store.with(|mut store| {
-            let mut buf = BytesMut::default();
-            let mut deferred = Vec::with_capacity(results.len());
-            for (i, (v, ty)) in zip(&results, results_ty).enumerate() {
-                let mut enc = ValEncoder::new(store.as_context_mut(), ty, resources);
-                enc.encode(v, &mut buf)
-                    .with_context(|| format!("failed to encode result value {i}"))
-                    .map_err(CallError::Encode)?;
-                deferred.push(enc.take_deferred());
-            }
-            Ok((buf, deferred))
-        })?;
-
-        debug!("transmitting results");
-        tx.write_bytes(buf.freeze())
-            .await
-            .context("failed to transmit results")
-            .map_err(CallError::Write)?;
-        tx.flush()
-            .await
-            .context("failed to flush outgoing stream")
-            .map_err(CallError::Flush)?;
-        let deferred = handle_deferred(&tx, &[], deferred)
-            .context("failed to index asynchronous result values")
-            .map_err(CallError::Deferred)?;
-        deferred
-            .await
-            .context("failed to transmit asynchronous result values")
-            .map_err(CallError::Deferred)
-    });
-    select! {
-        Some(err) = errors.recv() => Err(err)
-            .context("failed to receive asynchronous parameter values")
-            .map_err(CallError::Decode),
-        res = &mut call => {
-            res?;
-            let finished = rx.finished();
-            Ok(async move {
-                select! {
-                    biased;
-                    Some(err) = errors.recv() => Err(err),
-                    res = finished => res,
-                }
-                .context("failed to receive asynchronous parameter values")
-                .map_err(CallError::Decode)
-            })
-        }
-    }
+    let (params, outgoing) = serve(tx, rx, ValDecoder::new(store, params_ty, resources));
+    let (params, rx) = params.await.map_err(|err| CallError::Decode(err.into()))?;
+    try_join!(
+        async { rx.await.map_err(|err| CallError::Closed(err.into())) },
+        async {
+            let mut results = vec![Val::Bool(false); results_ty.len()];
+            func.call_concurrent(store, &params, &mut results)
+                .await
+                .context("failed to call function")
+                .map_err(CallError::Call)?;
+            let tx = outgoing.send(
+                TupleEncoder::new(store, results_ty, resources),
+                results.as_slice(),
+            );
+            let tx = tx
+                .context("failed to encode results")
+                .map_err(CallError::Encode)?;
+            debug!("transmitting results");
+            tx.await
+                .context("failed to transmit results")
+                .map_err(CallError::Write)
+        },
+    )?;
+    Ok(())
 }
 
 /// Recursively iterates the component item type and collects all exported resource types
@@ -273,4 +201,34 @@ pub fn collect_component_resource_exports(
         trace!(name, ?ty, "collect component item resource exports");
         collect_item_resource_exports(engine, ty, resources);
     }
+}
+
+/// Collect the (uninstantiated) resource types of the component's imported
+/// `wasi:io/streams` `input-stream`, against which parameter resource types can
+/// be compared at serve time, before the component is instantiated.
+#[must_use]
+pub fn wasi_io_stream_resources(
+    engine: &Engine,
+    component: &types::Component,
+) -> Vec<ResourceType> {
+    let mut out = Vec::default();
+    for (instance, types::ComponentExtern { ty, .. }) in component.imports(engine) {
+        // Instance names are versioned, e.g. `wasi:io/streams@0.2.6`.
+        let base = instance.split('@').next().unwrap_or(instance);
+        if base != "wasi:io/streams" {
+            continue;
+        }
+        let types::ComponentItem::ComponentInstance(ty) = ty else {
+            continue;
+        };
+        for (name, types::ComponentExtern { ty, .. }) in ty.exports(engine) {
+            if let types::ComponentItem::Resource(ty) = ty
+                && name == "input-stream"
+                && !out.contains(&ty)
+            {
+                out.push(ty);
+            }
+        }
+    }
+    out
 }

@@ -20,10 +20,13 @@ mod d {
 }
 
 pub async fn run(
-    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,
+    wrpc: &crate::Client,
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
-    a::test::suffix::imports::foo(wrpc, ()).await?;
-    crate::client::foo::f(wrpc, ()).await?;
-    crate::client::bar::f(wrpc, ()).await?;
+    let (tx, rx) = wrpc.connect().await?;
+    a::test::suffix::imports::foo(tx, rx).await?;
+    let (tx, rx) = wrpc.connect().await?;
+    crate::client::foo::f(tx, rx).await?;
+    let (tx, rx) = wrpc.connect().await?;
+    crate::client::bar::f(tx, rx).await?;
     Ok(())
 }

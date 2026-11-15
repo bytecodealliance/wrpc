@@ -8,8 +8,9 @@ use crate::client::foo::bar::component::UnusedRecord as _;
 use crate::client::foo::bar::component::UnusedVariant as _;
 
 pub async fn run(
-    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,
+    wrpc: &crate::Client,
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
-    crate::client::foo::bar::component::foo(wrpc, ()).await?;
+    let (tx, rx) = wrpc.connect().await?;
+    crate::client::foo::bar::component::foo(tx, rx).await?;
     Ok(())
 }

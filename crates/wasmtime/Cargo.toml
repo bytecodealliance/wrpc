@@ -24,12 +24,10 @@ uuid = { workspace = true, features = ["std", "v7"] }
 wasm-tokio = { workspace = true }
 wasmtime = { workspace = true, features = ["anyhow", "component-model-async", "std"] }
 wasmtime-wasi = { workspace = true, features = ["p2"], optional = true }
-wrpc-introspect = { workspace = true }
 wrpc-transport = { workspace = true }
 
 [dev-dependencies]
 test-log = { workspace = true, features = ["trace"] }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "rt-multi-thread"] }
 wasmtime = { workspace = true, features = ["cranelift", "wat"] }
-wrpc-test = { workspace = true, features = ["net"] }
-wrpc-transport = { workspace = true, features = ["net"] }
+wrpc-test = { workspace = true }

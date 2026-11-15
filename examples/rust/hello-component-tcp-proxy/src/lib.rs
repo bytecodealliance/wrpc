@@ -72,11 +72,16 @@ async fn invoke(addr: &str) -> String {
     use tokio::join;
     use tokio::sync::mpsc::error::TryRecvError;
 
-    let wrpc = wrpc_transport::tcp::Client::from(addr);
     let (pollables_tx, mut pollables_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (tx, rx) = wrpc_transport::tcp::connect(
+        &wasi::sockets::instance_network::instance_network(),
+        addr,
+        pollables_tx,
+    )
+    .expect("failed to connect");
     let (s, _) = join!(
         async {
-            wrpc_bindings::wrpc_examples::hello::handler::hello(&wrpc, pollables_tx)
+            wrpc_bindings::wrpc_examples::hello::handler::hello(tx, rx)
                 .await
                 .expect("failed to invoke `wrpc-examples.hello/handler.hello`")
         },
@@ -103,6 +108,7 @@ async fn invoke(addr: &str) -> String {
                         while !pollables.is_empty() {
                             wake_ready(&mut pollables, None);
                         }
+                        return;
                     }
                 }
             }
@@ -113,8 +119,12 @@ async fn invoke(addr: &str) -> String {
 
 #[cfg(not(target_family = "wasm"))]
 async fn invoke(addr: &str) -> String {
-    let wrpc = wrpc_transport::tcp::Client::from(addr);
-    wrpc_bindings::wrpc_examples::hello::handler::hello(&wrpc, ())
+    let mut stream = tokio::net::TcpStream::connect(addr)
+        .await
+        .expect("failed to connect");
+    stream.set_nodelay(true).expect("failed to set TCP_NODELAY");
+    let (rx, tx) = stream.split();
+    wrpc_bindings::wrpc_examples::hello::handler::hello(tx, rx)
         .await
         .expect("failed to invoke `wrpc-examples.hello/handler.hello`")
 }

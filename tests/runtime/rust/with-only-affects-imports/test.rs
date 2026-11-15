@@ -2,8 +2,6 @@
 
 use core::any::TypeId;
 
-use ::wit_bindgen_wrpc::wrpc_transport::Invoke;
-
 use crate::server::exports::my::inline::foo::{A, Handler};
 
 mod other {
@@ -27,9 +25,10 @@ mod other {
 #[derive(Clone)]
 pub struct Component;
 
-impl<C: Invoke<Context = ()>> Handler<C> for Component {
-    async fn bar(&self, cx: C, a: A) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+impl Handler<crate::Client> for Component {
+    async fn bar(&self, cx: crate::Client, a: A) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
         assert!(TypeId::of::<A>() != TypeId::of::<other::my::inline::foo::A>());
-        other::my::inline::foo::bar(&cx, (), &other::my::inline::foo::A { b: a.b }).await
+        let (tx, rx) = cx.connect().await?;
+        other::my::inline::foo::bar(tx, rx, &other::my::inline::foo::A { b: a.b }).await
     }
 }
