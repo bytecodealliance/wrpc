@@ -49,7 +49,6 @@ bin-bindgen = [
 bin-wasmtime = ["dep:tokio", "dep:wrpc-wasmtime-cli", "tokio/rt-multi-thread"]
 http = ["dep:wrpc-http"]
 net = ["wrpc-transport/net"]
-wasi = ["wrpc-transport/wasi"]
 wasmtime = ["dep:wrpc-wasmtime"]
 wasmtime-wasi = ["wrpc-wasmtime?/wasmtime-wasi"]
 

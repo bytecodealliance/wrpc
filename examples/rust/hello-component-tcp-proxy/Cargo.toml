@@ -26,10 +26,9 @@ clap = { workspace = true, features = [
 tokio = { workspace = true, features = ["rt"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["ansi", "fmt"] }
-wasi = { workspace = true }
+wasi = { workspace = true, features = ["std"] }
 wit-bindgen = { workspace = true, features = ["realloc", "macros"] }
 wit-bindgen-wrpc = { workspace = true }
-wrpc-transport = { workspace = true, features = ["wasi"] }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 tokio = { workspace = true, features = ["net"] }
