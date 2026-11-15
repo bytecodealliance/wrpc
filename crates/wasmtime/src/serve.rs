@@ -17,9 +17,9 @@ use tracing::{Instrument as _, Span, debug, warn};
 use wasmtime::component::{
     Accessor, Component, ComponentExportIndex, Instance, InstancePre, Type, types,
 };
-use wrpc_transport::{FrameDecoder, Header, HeaderDecoder};
+use wrpc_transport::{FrameDecoder, Header, HeaderDecoder, Server};
 
-use crate::{ResourceTypes, WrpcView, call, rpc_func_name};
+use crate::{ResourceTypes, TupleEncoder, ValDecoder, WrpcView, call, rpc_func_name};
 
 /// A [`wasmtime::Store`] shared by concurrent tasks, which are all driven by a single long-running
 /// [`wasmtime::Store::run_concurrent`] event loop.
@@ -291,16 +291,11 @@ where
                     .context("function export not found")?;
                 store
                     .run_concurrent(async |store| {
-                        let res = call(
-                            store,
-                            &mut tx,
-                            &mut frames,
-                            &self.resources,
-                            &export.params,
-                            &export.results,
-                            func,
-                        )
-                        .await;
+                        let srv = Server {
+                            enc: TupleEncoder::new(store, &export.results, &self.resources),
+                            dec: ValDecoder::new(store, &export.params, &self.resources),
+                        };
+                        let res = call(store, srv, &mut tx, &mut frames, func).await;
                         if res.is_ok() {
                             poll_fn(|cx| store.poll_no_interesting_tasks(cx)).await;
                         }
@@ -376,16 +371,11 @@ where
                             let func = store
                                 .with(|store| instance.get_func(store, export.idx))
                                 .context("function export not found")?;
-                            call(
-                                store,
-                                &mut tx,
-                                &mut frames,
-                                &resources,
-                                &export.params,
-                                &export.results,
-                                func,
-                            )
-                            .await?;
+                            let srv = Server {
+                                enc: TupleEncoder::new(store, &export.results, &resources),
+                                dec: ValDecoder::new(store, &export.params, &resources),
+                            };
+                            call(store, srv, &mut tx, &mut frames, func).await?;
                             Ok((tx, frames))
                         })
                     })

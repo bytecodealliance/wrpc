@@ -12,9 +12,7 @@ use tokio_util::codec::FramedRead;
 use tracing::{debug, instrument, trace, warn};
 use uuid::Uuid;
 use wasmtime::Engine;
-use wasmtime::component::{
-    Accessor, Func, ResourceAny, ResourceTable, ResourceType, Type, Val, types,
-};
+use wasmtime::component::{Accessor, Func, ResourceAny, ResourceTable, ResourceType, Val, types};
 use wasmtime::error::Context as _;
 use wrpc_transport::{FrameDecoder, Server};
 
@@ -106,17 +104,15 @@ impl fmt::Display for CallError {
 }
 
 /// Calls the exported `func` with parameters received from the frames `rx` and transmits the
-/// results on `tx`.
+/// results on `tx` using `srv`, the codecs of which must match the type of `func`.
 ///
 /// The `store` [`Accessor`] is used to call `func` concurrently, it can be acquired, for example,
 /// using [`wasmtime::Store::run_concurrent`].
 pub async fn call<T, R, I, O>(
     store: &Accessor<T>,
+    srv: Server<TupleEncoder<'_, &Accessor<T>>, ValDecoder<'_, &Accessor<T>>>,
     tx: O,
     rx: R,
-    resources: &ResourceTypes,
-    params_ty: &[Type],
-    results_ty: &[Type],
     func: Func,
 ) -> Result<(), CallError>
 where
@@ -125,16 +121,13 @@ where
     I: AsyncRead + Unpin,
     O: AsyncWrite + Unpin,
 {
-    let (params, outgoing) = Server {
-        enc: TupleEncoder::new(store, results_ty, resources),
-        dec: ValDecoder::new(store, params_ty, resources),
-    }
-    .serve(tx, rx);
+    let n = srv.enc.tys.len();
+    let (params, outgoing) = srv.serve(tx, rx);
     let (params, rx) = params.await.map_err(|err| CallError::Decode(err.into()))?;
     try_join!(
         async { rx.await.map_err(|err| CallError::Closed(err.into())) },
         async {
-            let mut results = vec![Val::Bool(false); results_ty.len()];
+            let mut results = vec![Val::Bool(false); n];
             func.call_concurrent(store, &params, &mut results)
                 .await
                 .context("failed to call function")
