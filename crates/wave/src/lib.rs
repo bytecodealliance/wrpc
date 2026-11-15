@@ -14,8 +14,8 @@
 //! let ty = Type::list(Type::U32);
 //! let v = Value::make_list(&ty, [Value::make_u32(1), Value::make_u32(2)]).unwrap();
 //! let mut buf = BytesMut::default();
-//! ValueEncoder::new(&ty).encode(&v, &mut buf).unwrap();
-//! assert_eq!(ValueDecoder::new(&ty).decode(&mut buf).unwrap(), Some(v));
+//! ValueEncoder::new(ty.clone()).encode(&v, &mut buf).unwrap();
+//! assert_eq!(ValueDecoder::new(ty).decode(&mut buf).unwrap(), Some(v));
 //! ```
 
 mod decode;

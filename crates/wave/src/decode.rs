@@ -7,6 +7,7 @@ use core::mem;
 use core::task::{Context, Poll};
 
 use std::borrow::Cow;
+use std::sync::Arc;
 
 use bytes::{Buf as _, BytesMut};
 use tokio_util::codec::Decoder;
@@ -35,26 +36,26 @@ enum Partial<V> {
 /// [Decoder] of values of type `ty`
 ///
 /// Resources, futures and streams are not supported.
-pub struct ValueDecoder<'a, V: WasmValue> {
-    ty: &'a V::Type,
+pub struct ValueDecoder<V: WasmValue> {
+    ty: V::Type,
     state: Option<Box<Partial<V>>>,
 }
 
-impl<'a, V: WasmValue> ValueDecoder<'a, V> {
+impl<V: WasmValue> ValueDecoder<V> {
     /// Creates a new [`ValueDecoder`] of values of type `ty`
     #[must_use]
-    pub fn new(ty: &'a V::Type) -> Self {
+    pub fn new(ty: V::Type) -> Self {
         Self { ty, state: None }
     }
 }
 
-impl<V: WasmValue> Decoder for ValueDecoder<'_, V> {
+impl<V: WasmValue> Decoder for ValueDecoder<V> {
     type Item = V;
     type Error = std::io::Error;
 
     fn decode(&mut self, src: &mut BytesMut) -> std::io::Result<Option<V>> {
         let n = self.state.is_none().then_some(src.len());
-        let v = decode_ty(self.ty, src, &mut self.state)?;
+        let v = decode_ty(&self.ty, src, &mut self.state)?;
         if n == Some(src.len()) {
             self.state = None;
         }
@@ -67,7 +68,7 @@ impl<V: WasmValue> Decoder for ValueDecoder<'_, V> {
     }
 }
 
-impl<V: WasmValue> Receive for ValueDecoder<'_, V> {
+impl<V: WasmValue> Receive for ValueDecoder<V> {
     fn poll_receive(
         &mut self,
         _cx: &mut Context<'_>,
@@ -83,26 +84,26 @@ impl<V: WasmValue> Receive for ValueDecoder<'_, V> {
 }
 
 /// [Decoder] of tuples of values of types `tys`, e.g. function results
-pub struct TupleDecoder<'a, V: WasmValue> {
-    tys: &'a [V::Type],
+pub struct TupleDecoder<V: WasmValue> {
+    tys: Arc<[V::Type]>,
     state: Option<Box<Partial<V>>>,
 }
 
-impl<'a, V: WasmValue> TupleDecoder<'a, V> {
+impl<V: WasmValue> TupleDecoder<V> {
     /// Creates a new [`TupleDecoder`] of tuples of values of types `tys`
     #[must_use]
-    pub fn new(tys: &'a [V::Type]) -> Self {
+    pub fn new(tys: Arc<[V::Type]>) -> Self {
         Self { tys, state: None }
     }
 }
 
-impl<V: WasmValue> Decoder for TupleDecoder<'_, V> {
+impl<V: WasmValue> Decoder for TupleDecoder<V> {
     type Item = Vec<V>;
     type Error = std::io::Error;
 
     fn decode(&mut self, src: &mut BytesMut) -> std::io::Result<Option<Vec<V>>> {
         let n = self.state.is_none().then_some(src.len());
-        let vs = decode_seq(src, &mut self.state, Some(self.tys.len()), self.tys)?;
+        let vs = decode_seq(src, &mut self.state, Some(self.tys.len()), self.tys.iter())?;
         if n == Some(src.len()) {
             self.state = None;
         }
@@ -115,7 +116,7 @@ impl<V: WasmValue> Decoder for TupleDecoder<'_, V> {
     }
 }
 
-impl<V: WasmValue> Receive for TupleDecoder<'_, V> {
+impl<V: WasmValue> Receive for TupleDecoder<V> {
     fn poll_receive(
         &mut self,
         _cx: &mut Context<'_>,
