@@ -5,7 +5,7 @@
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { accept } from "../../js/src/index.js";
+import { serve } from "../../js/src/index.js";
 import { listen } from "./transport.js";
 
 const [addr, bindings] = process.argv.slice(2);
@@ -107,15 +107,8 @@ const instances = {
   "wrpc-test:integration/async": (inv) => async.serveInterface(inv, asyncHandler),
 };
 
-listen(addr, async (transport) => {
-  let inv;
-  try {
-    inv = await accept(transport);
-    const serve = instances[inv.instance] ?? fail(`unknown instance \`${inv.instance}\``);
-    await serve(inv);
-    await inv.finished;
-  } catch (err) {
-    inv?.mux.abort(err);
-    console.error(`failed to serve \`${inv?.instance}.${inv?.func}\`:`, err);
-  }
-});
+listen(addr, (transport) =>
+  serve(transport, (inv) =>
+    (instances[inv.instance] ?? fail(`unknown instance \`${inv.instance}\``))(inv),
+  ).catch((err) => console.error("failed to serve:", err)),
+);

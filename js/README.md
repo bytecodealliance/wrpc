@@ -53,7 +53,7 @@ await done; // all asynchronous I/O has completed
 await finished; // the server closed every path it sent too
 ```
 
-`invoke` runs the framing (a single connection per invocation, the protocol
+`invoke` runs the framing (the protocol
 byte and instance/function names, then the root parameter and result frames)
 and resolves with the decoded `results` as soon as the synchronous reply
 arrives. `stream` results are async iterables of chunks and `future` results
@@ -141,6 +141,12 @@ await Promise.all([
 await inv.finished; // the client closed every path it sent, its data was decoded and the results were sent
 ```
 
+`serve(transport, f)` serves the invocations on a transport one after another:
+it accepts each, passes it to `f`, which must start receiving its parameters
+before it resolves, and reads the next one once it is `finished`, until the client ends transmit, and then calls `closeWrite`. A
+client may likewise `invoke` again on a transport once the previous invocation
+on it is `finished`, if its `closeWrite` does not end the connection.
+
 ### Transports
 
 A transport is `{ read, write, closeWrite, abort? }`: `read()` resolves to the
@@ -183,7 +189,7 @@ and the `response` to reply with without waiting for the request body:
 ```js
 Deno.serve((request) => {
   const { transport, response } = fromRequest(request);
-  serve(transport); // `accept(transport)`, then receive the parameters and send the results
+  serve(transport, handler); // the `serve` of a generated world module
   return response;
 });
 ```
@@ -215,9 +221,10 @@ import * as handler from "./client/wrpc-examples/hello/handler.js";
 console.log(await handler.hello(transport));
 ```
 
-The world module's `serve` accepts an invocation of the world's exports from a
-transport and calls the corresponding method of their handlers, with the
-parameters, and sends what it returns. It takes a handler for the functions the
+The world module's `serve` serves the invocations of the world's exports on a
+transport one after another, like `serve(transport, f)` does, calling the
+corresponding method of their handlers, with the parameters, and sending what
+it returns. It takes a handler for the functions the
 world exports itself, if any, followed by one per exported interface with
 functions, in the order of the world (`exports/<namespace>/<package>/<interface>.js` declares
 its `Handler`):
@@ -229,11 +236,12 @@ await serve(transport, { hello: () => "hello from JavaScript" });
 ```
 
 To route invocations yourself, for example to serve several worlds on one
-listener, pass each invocation `accept` returns to the `serveInterface(inv,
-handler)` of the module of its instance, or of the world module for the
-world's own functions. Like `serve` does, abort the invocation's `mux` if that
-fails and then await its `finished`. The world module's `served` lists the
-`[instance, function]` pairs `serve` dispatches.
+listener, pass each invocation `serve(transport, f)` passes to `f`, or `accept`
+returns, to the `serveInterface(inv, handler)` of the module of its instance, or
+of the world module for the world's own functions. With `accept`, like `serve`
+does, abort the invocation's `mux` if that fails and then await its `finished`.
+The world module's `served` lists the `[instance, function]` pairs `serve`
+dispatches.
 
 Names follow the [JS-API draft], so functions are camel case and types are
 Pascal case. `map` types and fixed-length lists are not supported yet.
@@ -311,6 +319,7 @@ It deviates from the draft in that:
 - `t` / `types` — type-tree builders (`bool`, `list`, `record`, `result`, `stream`, `future`, …).
 - `invoke(transport, instance, func, paramTypes, args, resultTypes?)` — invoke a function; resolves to `{ results, done, finished }`.
 - `accept(transport)` — accept an invocation; resolves to `{ instance, func, receiveParams, sendResults, finished, mux }`.
+- `serve(transport, f)` — serve the invocations on `transport` one after another with `f`.
 - `fromWebStreams({ readable, writable })` — adapt a WHATWG stream duplex to a transport
   (see [Transports](#transports)).
 - `fromFetch(input, options?)` / `fromRequest(request)` — the HTTP client and server transports
