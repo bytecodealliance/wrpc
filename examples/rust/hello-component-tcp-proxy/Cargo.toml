@@ -30,3 +30,6 @@ wasi = { workspace = true }
 wit-bindgen = { workspace = true, features = ["realloc", "macros"] }
 wit-bindgen-wrpc = { workspace = true }
 wrpc-transport = { workspace = true, features = ["wasi"] }
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+tokio = { workspace = true, features = ["net"] }

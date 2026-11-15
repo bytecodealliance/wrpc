@@ -1,16 +1,13 @@
 use core::net::SocketAddr;
 use core::pin::{Pin, pin};
 
-use std::sync::Arc;
-
 use anyhow::Context as _;
 use bytes::Bytes;
 use clap::Parser;
-use futures::stream::select_all;
 use futures::{Stream, StreamExt as _};
-use tokio::io::BufReader;
 use tokio::task::JoinSet;
 use tokio::{select, signal};
+use tokio_stream::wrappers::TcpListenerStream;
 use tracing::{debug, error, info, warn};
 
 mod bindings {
@@ -37,12 +34,13 @@ struct Server;
 impl bindings::exports::wrpc_examples::streams::handler::Handler<SocketAddr> for Server {
     async fn echo(
         &self,
-        _ctx: SocketAddr,
+        addr: SocketAddr,
         Req { numbers, bytes }: Req,
     ) -> anyhow::Result<(
         Pin<Box<dyn Stream<Item = Vec<u64>> + Send>>,
         Pin<Box<dyn Stream<Item = Bytes> + Send>>,
     )> {
+        info!(?addr, "received echo");
         Ok((numbers, bytes))
     }
 }
@@ -56,67 +54,34 @@ async fn main() -> anyhow::Result<()> {
     let lis = tokio::net::TcpListener::bind(&addr)
         .await
         .with_context(|| format!("failed to bind TCP listener on `{addr}`"))?;
-    let srv = Arc::new(wrpc_transport::Server::default());
-    let invocations = bindings::serve(srv.as_ref(), Server)
-        .await
-        .context("failed to serve `wrpc-examples:streams/handler.echo`")?;
-    let accept = tokio::spawn({
-        let srv = Arc::clone(&srv);
-        async move {
-            let mut conns = JoinSet::default();
-            loop {
-                select! {
-                    res = lis.accept() => match res {
-                        Ok((stream, addr)) => {
-                            if let Err(err) = stream.set_nodelay(true) {
-                                warn!(?err, "failed to set TCP_NODELAY");
-                            }
-                            let (rx, tx) = wrpc_transport::tcp::split(stream);
-                            let srv = Arc::clone(&srv);
-                            conns.spawn(async move {
-                                if let Err(err) = srv.accept(addr, tx, BufReader::new(rx)).await {
-                                    error!(?err, "failed to serve TCP connection");
-                                }
-                            });
-                        }
-                        Err(err) => error!(?err, "failed to accept TCP connection"),
-                    },
-                    Some(res) = conns.join_next() => {
-                        if let Err(err) = res {
-                            error!(?err, "failed to join TCP connection task");
-                        }
-                    }
-                }
-            }
-        }
+    let incoming = TcpListenerStream::new(lis).map(|res| {
+        let stream = res?;
+        stream.set_nodelay(true)?;
+        let addr = stream.peer_addr()?;
+        let (rx, tx) = stream.into_split();
+        std::io::Result::Ok((addr, tx, rx))
     });
-
-    // NOTE: This will conflate all invocation streams into a single stream via `futures::stream::SelectAll`,
-    // to customize this, iterate over the returned `invocations` and set up custom handling per export
-    let mut invocations = select_all(
-        invocations
-            .into_iter()
-            .map(|(instance, name, invocations)| invocations.map(move |res| (instance, name, res))),
-    );
+    let invocations = bindings::serve(incoming, Server);
+    let mut invocations = pin!(invocations);
     let shutdown = signal::ctrl_c();
     let mut shutdown = pin!(shutdown);
     let mut tasks = JoinSet::new();
     loop {
         select! {
-            Some((instance, name, res)) = invocations.next() => {
+            Some(res) = invocations.next() => {
                 match res {
                     Ok(fut) => {
-                        debug!(instance, name, "invocation accepted");
+                        debug!("invocation accepted");
                         tasks.spawn(async move {
                             match fut.await { Err(err) => {
                                 warn!(?err, "failed to handle invocation");
                             } _ => {
-                                info!(instance, name, "invocation successfully handled");
+                                info!("invocation successfully handled");
                             }}
                         });
                     }
                     Err(err) => {
-                        warn!(?err, instance, name, "failed to accept invocation");
+                        warn!(?err, "failed to accept invocation");
                     }
                 }
             }
@@ -126,7 +91,6 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
             res = &mut shutdown => {
-                accept.abort();
                 // wait for all invocations to complete
                 while let Some(res) = tasks.join_next().await {
                     if let Err(err) = res {

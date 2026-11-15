@@ -1190,7 +1190,6 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "wit-bindgen-wrpc",
- "wrpc-transport",
 ]
 
 [[package]]
@@ -1208,8 +1207,6 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "wit-bindgen-wrpc",
- "wrpc-quic",
- "wrpc-transport",
 ]
 
 [[package]]
@@ -1228,7 +1225,6 @@ dependencies = [
  "tracing-subscriber",
  "wit-bindgen-wrpc",
  "wrpc-quic",
- "wrpc-transport",
 ]
 
 [[package]]
@@ -1240,7 +1236,6 @@ dependencies = [
  "tokio",
  "tracing-subscriber",
  "wit-bindgen-wrpc",
- "wrpc-transport",
 ]
 
 [[package]]
@@ -1251,10 +1246,10 @@ dependencies = [
  "clap",
  "futures",
  "tokio",
+ "tokio-stream",
  "tracing",
  "tracing-subscriber",
  "wit-bindgen-wrpc",
- "wrpc-transport",
 ]
 
 [[package]]
@@ -1266,7 +1261,6 @@ dependencies = [
  "tokio",
  "tracing-subscriber",
  "wit-bindgen-wrpc",
- "wrpc-transport",
 ]
 
 [[package]]
@@ -1277,10 +1271,10 @@ dependencies = [
  "clap",
  "futures",
  "tokio",
+ "tokio-stream",
  "tracing",
  "tracing-subscriber",
  "wit-bindgen-wrpc",
- "wrpc-transport",
 ]
 
 [[package]]
@@ -1294,8 +1288,6 @@ dependencies = [
  "url",
  "web-transport-quinn",
  "wit-bindgen-wrpc",
- "wrpc-transport",
- "wrpc-webtransport",
 ]
 
 [[package]]
@@ -1312,7 +1304,6 @@ dependencies = [
  "tracing-subscriber",
  "web-transport-quinn",
  "wit-bindgen-wrpc",
- "wrpc-transport",
  "wrpc-webtransport",
 ]
 
@@ -2618,6 +2609,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "send-future"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "224e328af6e080cddbab3c770b1cf50f0351ba0577091ef2410c3951d835ff87"
+
+[[package]]
 name = "serde"
 version = "1.0.229"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2789,7 +2786,6 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "wit-bindgen-wrpc",
- "wrpc-transport",
 ]
 
 [[package]]
@@ -2809,8 +2805,6 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "wit-bindgen-wrpc",
- "wrpc-quic",
- "wrpc-transport",
 ]
 
 [[package]]
@@ -2830,7 +2824,6 @@ dependencies = [
  "url",
  "wit-bindgen-wrpc",
  "wrpc-quic",
- "wrpc-transport",
 ]
 
 [[package]]
@@ -2846,7 +2839,6 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "wit-bindgen-wrpc",
- "wrpc-transport",
 ]
 
 [[package]]
@@ -2858,10 +2850,10 @@ dependencies = [
  "clap",
  "futures",
  "tokio",
+ "tokio-stream",
  "tracing",
  "tracing-subscriber",
  "wit-bindgen-wrpc",
- "wrpc-transport",
 ]
 
 [[package]]
@@ -2879,8 +2871,6 @@ dependencies = [
  "url",
  "web-transport-quinn",
  "wit-bindgen-wrpc",
- "wrpc-transport",
- "wrpc-webtransport",
 ]
 
 [[package]]
@@ -2898,7 +2888,6 @@ dependencies = [
  "tracing-subscriber",
  "web-transport-quinn",
  "wit-bindgen-wrpc",
- "wrpc-transport",
  "wrpc-webtransport",
 ]
 
@@ -3177,7 +3166,6 @@ dependencies = [
  "bytes",
  "futures-core",
  "futures-sink",
- "futures-util",
  "libc",
  "pin-project-lite",
  "tokio",
@@ -3511,7 +3499,6 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
- "wrpc-quic",
  "wrpc-wasi-keyvalue",
 ]
 
@@ -3530,7 +3517,6 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "wrpc-quic",
- "wrpc-transport",
  "wrpc-wasi-keyvalue",
  "wrpc-wasi-keyvalue-mem",
 ]
@@ -3545,7 +3531,6 @@ dependencies = [
  "tokio",
  "tracing-subscriber",
  "url",
- "wrpc-transport",
  "wrpc-wasi-keyvalue",
 ]
 
@@ -3558,9 +3543,9 @@ dependencies = [
  "clap",
  "futures",
  "tokio",
+ "tokio-stream",
  "tracing",
  "tracing-subscriber",
- "wrpc-transport",
  "wrpc-wasi-keyvalue",
  "wrpc-wasi-keyvalue-mem",
 ]
@@ -3574,9 +3559,9 @@ dependencies = [
  "clap",
  "futures",
  "tokio",
+ "tokio-stream",
  "tracing",
  "tracing-subscriber",
- "wrpc-transport",
  "wrpc-wasi-keyvalue",
  "wrpc-wasi-keyvalue-mem",
 ]
@@ -3603,7 +3588,6 @@ dependencies = [
  "uuid",
  "web-transport-quinn",
  "wit-bindgen-wrpc",
- "wrpc-quic",
  "wrpc-transport",
  "wrpc-wasi-keyvalue",
  "wrpc-wasi-keyvalue-mem",
@@ -3625,7 +3609,6 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "web-transport-quinn",
- "wrpc-transport",
  "wrpc-wasi-keyvalue",
  "wrpc-wasi-keyvalue-mem",
  "wrpc-webtransport",
@@ -3747,9 +3730,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-tokio"
-version = "0.9.0"
+version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "303af0642a445efac326ff7db92e2579eedd9134908a519dc5389d7cfd45cbc7"
+checksum = "b9d7d97c619024c625bdd2e096217b6bef894f706e3b7c41531ae652048fdd85"
 dependencies = [
  "leb128-tokio",
  "tokio",
@@ -4417,6 +4400,7 @@ dependencies = [
  "bytes",
  "futures",
  "tokio",
+ "tokio-stream",
  "tokio-util",
  "tracing",
  "wasm-tokio",
@@ -4638,7 +4622,6 @@ dependencies = [
  "tokio-util",
  "tracing",
  "wrpc-test",
- "wrpc-transport",
 ]
 
 [[package]]
@@ -4658,6 +4641,7 @@ dependencies = [
  "quinn",
  "test-log",
  "tokio",
+ "tokio-util",
  "wrpc-test",
  "wrpc-transport",
 ]
@@ -4667,6 +4651,7 @@ name = "wrpc-test"
 version = "0.5.0"
 dependencies = [
  "anyhow",
+ "bytes",
  "futures",
  "http",
  "hyper",
@@ -4676,13 +4661,13 @@ dependencies = [
  "rustls",
  "tempfile",
  "tokio",
+ "tokio-stream",
+ "tokio-util",
  "tracing",
  "url",
  "web-transport-quinn",
  "wrpc-http",
- "wrpc-quic",
  "wrpc-transport",
- "wrpc-webtransport",
 ]
 
 [[package]]
@@ -4692,10 +4677,9 @@ dependencies = [
  "anyhow",
  "bytes",
  "futures",
- "pin-project-lite",
+ "send-future",
  "test-log",
  "tokio",
- "tokio-stream",
  "tokio-util",
  "tracing",
  "wasi 0.14.7+wasi-0.2.4",
@@ -4753,7 +4737,6 @@ dependencies = [
  "wasm-tokio",
  "wasmtime",
  "wasmtime-wasi",
- "wrpc-introspect",
  "wrpc-test",
  "wrpc-transport",
 ]
@@ -4768,6 +4751,7 @@ dependencies = [
  "humantime",
  "reqwest",
  "tokio",
+ "tokio-stream",
  "tokio-util",
  "tracing",
  "url",
@@ -4807,6 +4791,7 @@ dependencies = [
  "futures",
  "test-log",
  "tokio",
+ "tokio-util",
  "web-transport-quinn",
  "wrpc-test",
  "wrpc-transport",

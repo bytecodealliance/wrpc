@@ -1,21 +1,21 @@
 use core::any::Any;
 use core::borrow::Borrow;
-use core::future::{pending, ready};
+use core::future::ready;
 use core::iter::{self, zip};
 use core::mem;
-use core::ops::Deref;
+use core::ops::{BitOrAssign, Bound, Shl};
 use core::pin::Pin;
 use core::task::{Context, Poll, ready};
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 
 use bytes::{Buf as _, BufMut as _, BytesMut};
 use futures::stream;
-use futures::{FutureExt as _, StreamExt as _};
+use futures::{Stream, StreamExt as _, TryFutureExt as _};
 use tokio::sync::{mpsc, oneshot};
-use tokio_util::codec::{Decoder, Encoder, FramedRead};
+use tokio_util::codec::{Decoder, Encoder};
 use tokio_util::sync::PollSender;
-use tracing::{debug, error, instrument, trace, warn};
+use tracing::{error, instrument, trace, warn};
 use uuid::Uuid;
 use wasm_tokio::cm::{BoolCodec, F32Codec, F64Codec, S8Codec, U8Codec};
 use wasm_tokio::{
@@ -31,9 +31,9 @@ use wasmtime::component::{
 };
 use wasmtime::error::Context as _;
 use wasmtime::{AsContextMut, StoreContextMut};
-use wrpc_transport::frame::{Incoming, Outgoing};
 use wrpc_transport::{
-    Decode, Deferred, DeferredFn, DeferredWrite as _, Encode, READ_CHUNK_SIZE, handle_deferred,
+    Decode, Encode, FutureDecoder, FutureEncoder, READ_CHUNK_SIZE, Receive, StreamDecoder,
+    StreamEncoder, Transmit, error_unknown_path,
 };
 
 use crate::{ResourceTypes, WrpcView};
@@ -69,7 +69,7 @@ pub struct ValEncoder<'a, T: 'static> {
     pub store: StoreContextMut<'a, T>,
     pub ty: &'a Type,
     pub resources: &'a ResourceTypes,
-    pub deferred: Option<DeferredFn<Outgoing>>,
+    pub nested: Option<Box<dyn Transmit + Send>>,
 }
 
 impl<T> ValEncoder<'_, T> {
@@ -83,7 +83,7 @@ impl<T> ValEncoder<'_, T> {
             store,
             ty,
             resources,
-            deferred: None,
+            nested: None,
         }
     }
 
@@ -92,15 +92,137 @@ impl<T> ValEncoder<'_, T> {
             store: self.store.as_context_mut(),
             ty,
             resources: self.resources,
-            deferred: None,
+            nested: None,
         }
     }
 }
 
-impl<T> Deferred<Outgoing> for ValEncoder<'_, T> {
-    fn take_deferred(&mut self) -> Option<DeferredFn<Outgoing>> {
-        self.deferred.take()
+impl<T> Transmit for ValEncoder<'_, T> {
+    fn poll_transmit(
+        &mut self,
+        cx: &mut Context<'_>,
+        path: &mut Vec<usize>,
+        dst: &mut BytesMut,
+    ) -> Poll<std::io::Result<()>> {
+        let Some(nested) = &mut self.nested else {
+            return Poll::Ready(Ok(()));
+        };
+        nested.poll_transmit(cx, path, dst)
     }
+
+    fn is_closed(&self) -> bool {
+        self.nested.as_ref().is_none_or(|nested| nested.is_closed())
+    }
+}
+
+/// Encodes a tuple of [`Val`]s of types `tys`, e.g. function results.
+pub struct TupleEncoder<'a, T> {
+    store: T,
+    tys: &'a [Type],
+    resources: &'a ResourceTypes,
+    nested: BTreeMap<usize, Box<dyn Transmit + Send>>,
+}
+
+impl<T> TupleEncoder<'_, T> {
+    #[must_use]
+    pub fn new<'a>(store: T, tys: &'a [Type], resources: &'a ResourceTypes) -> TupleEncoder<'a, T> {
+        TupleEncoder {
+            store,
+            tys,
+            resources,
+            nested: BTreeMap::default(),
+        }
+    }
+}
+
+impl<T> Encoder<&[Val]> for TupleEncoder<'_, T>
+where
+    T: WithStore<Data: WrpcView>,
+{
+    type Error = std::io::Error;
+
+    fn encode(&mut self, vs: &[Val], dst: &mut BytesMut) -> Result<(), Self::Error> {
+        self.encode_vals(vs, dst)
+            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))
+    }
+}
+
+impl<T> TupleEncoder<'_, T>
+where
+    T: WithStore<Data: WrpcView>,
+{
+    fn encode_vals(&mut self, vs: &[Val], dst: &mut BytesMut) -> wasmtime::Result<()> {
+        if vs.len() != self.tys.len() {
+            bail!("value count mismatch");
+        }
+        let Self {
+            store,
+            tys,
+            resources,
+            nested,
+        } = self;
+        store.with_store(|mut store| {
+            for (i, (v, ty)) in zip(vs, *tys).enumerate() {
+                let mut enc = ValEncoder::new(store.as_context_mut(), ty, resources);
+                enc.encode_val(v, dst)
+                    .with_context(|| format!("failed to encode value {i}"))?;
+                if let Some(t) = enc.nested {
+                    nested.insert(i, t);
+                }
+            }
+            Ok(())
+        })
+    }
+}
+
+impl<T> Transmit for TupleEncoder<'_, T> {
+    fn poll_transmit(
+        &mut self,
+        cx: &mut Context<'_>,
+        path: &mut Vec<usize>,
+        dst: &mut BytesMut,
+    ) -> Poll<std::io::Result<()>> {
+        self.nested.poll_transmit(cx, path, dst)
+    }
+
+    fn is_closed(&self) -> bool {
+        self.nested.is_closed()
+    }
+}
+
+fn find_enum_discriminant<'a, T>(
+    iter: impl IntoIterator<Item = T>,
+    names: impl IntoIterator<Item = &'a str>,
+    discriminant: &str,
+) -> wasmtime::Result<T> {
+    zip(iter, names)
+        .find_map(|(i, name)| (name == discriminant).then_some(i))
+        .context("unknown enum discriminant")
+}
+
+fn find_variant_discriminant<'a, T>(
+    iter: impl IntoIterator<Item = T>,
+    cases: impl IntoIterator<Item = Case<'a>>,
+    discriminant: &str,
+) -> wasmtime::Result<(T, Option<Type>)> {
+    zip(iter, cases)
+        .find_map(|(i, Case { name, ty })| (name == discriminant).then_some((i, ty)))
+        .context("unknown variant discriminant")
+}
+
+#[inline]
+fn flag_bits<'a, T: BitOrAssign + Shl<u8, Output = T> + From<u8>>(
+    names: impl IntoIterator<Item = &'a str>,
+    flags: impl IntoIterator<Item = &'a str>,
+) -> T {
+    let mut v = T::from(0);
+    let flags: HashSet<&str> = flags.into_iter().collect();
+    for (i, name) in zip(0u8.., names) {
+        if flags.contains(name) {
+            v |= T::from(1) << i;
+        }
+    }
+    v
 }
 
 macro_rules! with_payload {
@@ -175,11 +297,9 @@ macro_rules! with_payload {
 fn encode_future<P, T>(
     store: StoreContextMut<'_, T>,
     future: FutureAny,
-    offset: usize,
-) -> wasmtime::Result<DeferredFn<Outgoing>>
+) -> wasmtime::Result<Box<dyn Transmit + Send>>
 where
     P: Encode + Lift + Lower + Send + Sync + 'static,
-    std::io::Error: From<<P::Encoder as Encoder<P>>::Error>,
 {
     struct Consumer<P>(Option<oneshot::Sender<P>>);
 
@@ -205,25 +325,16 @@ where
     let (tx, rx) = oneshot::channel();
     let future = future.try_into_future_reader::<P>()?;
     future.pipe(store, Consumer(Some(tx)))?;
-    Ok(Box::new(move |w, path| {
-        let w = w.index(path)?;
-        Ok(Box::pin(async move {
-            let v = rx
-                .await
-                .map_err(|_| std::io::Error::other("future dropped without a value"))?;
-            w.write_future(offset, ready(v)).await
-        }))
-    }))
+    let item = rx.map_err(|_| std::io::Error::other("future dropped without a value"));
+    Ok(Box::new(FutureEncoder::pending(item)))
 }
 
 fn encode_stream<P, T>(
     store: StoreContextMut<'_, T>,
     stream: StreamAny,
-    offset: usize,
-) -> wasmtime::Result<DeferredFn<Outgoing>>
+) -> wasmtime::Result<Box<dyn Transmit + Send>>
 where
     P: Encode + Lift + Lower + Send + Sync + 'static,
-    std::io::Error: From<<P::Encoder as Encoder<P>>::Error>,
 {
     struct Consumer<P: Send + 'static>(PollSender<Vec<P>>);
 
@@ -258,103 +369,21 @@ where
     let (tx, mut rx) = mpsc::channel(1);
     let stream = stream.try_into_stream_reader::<P>()?;
     stream.pipe(store, Consumer(PollSender::new(tx)))?;
-    Ok(Box::new(move |w, path| {
-        let w = w.index(path)?;
-        Ok(Box::pin(async move {
-            w.write_stream(offset, stream::poll_fn(move |cx| rx.poll_recv(cx)))
-                .await
-        }))
-    }))
-}
-
-fn report(errors: &mpsc::Sender<std::io::Error>, err: std::io::Error) {
-    if let Err(err) = errors.try_send(err) {
-        debug!(err = %err.into_inner(), "failed to receive asynchronous value");
-    }
-}
-
-/// Chunks of a pending `stream`, which are received once its sub-stream is indexed
-enum Chunks<D> {
-    Pending(oneshot::Receiver<Incoming>),
-    Ready(FramedRead<Incoming, D>),
-}
-
-fn poll_chunk<D, P>(
-    rx: &mut Chunks<D>,
-    cx: &mut Context<'_>,
-) -> Poll<std::io::Result<Option<D::Item>>>
-where
-    D: Decoder<Item: Deref<Target = [P]>> + Default,
-    std::io::Error: From<D::Error>,
-{
-    let rx = loop {
-        match rx {
-            Chunks::Pending(r) => {
-                let r = ready!(r.poll_unpin(cx)).map_err(|_| {
-                    std::io::Error::new(std::io::ErrorKind::BrokenPipe, "stream not indexed")
-                })?;
-                *rx = Chunks::Ready(FramedRead::new(r, D::default()));
-            }
-            Chunks::Ready(rx) => break rx,
-        }
-    };
-    let chunk = match rx.poll_next_unpin(cx) {
-        Poll::Ready(Some(Ok(chunk))) => chunk,
-        Poll::Ready(Some(Err(err))) => return Poll::Ready(Err(err.into())),
-        Poll::Pending => return Poll::Pending,
-        Poll::Ready(None) => {
-            return Poll::Ready(Err(std::io::Error::new(
-                std::io::ErrorKind::UnexpectedEof,
-                "stream end missing",
-            )));
-        }
-    };
-    if !chunk.is_empty() {
-        Poll::Ready(Ok(Some(chunk)))
-    } else if rx.read_buffer().is_empty() {
-        Poll::Ready(Ok(None))
-    } else {
-        Poll::Ready(Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "received data after stream end",
-        )))
-    }
+    let items = stream::poll_fn(move |cx| rx.poll_recv(cx));
+    Ok(Box::new(StreamEncoder::pending(items)))
 }
 
 fn pending_future<P, D>(
     mut store: StoreContextMut<'_, D>,
-    r: oneshot::Receiver<Incoming>,
-    errors: mpsc::Sender<std::io::Error>,
-) -> wasmtime::Result<Val>
+) -> wasmtime::Result<(Val, Box<dyn Receive + Send>)>
 where
     P: Decode + Lift + Lower + Send + Sync + 'static,
     D: 'static,
-    std::io::Error: From<<P::Decoder as Decoder>::Error>,
 {
-    let fut = FutureReader::new(&mut store, async move {
-        let Ok(r) = r.await else {
-            report(
-                &errors,
-                std::io::Error::new(std::io::ErrorKind::BrokenPipe, "future not indexed"),
-            );
-            return pending().await;
-        };
-        let mut rx = FramedRead::new(r, P::Decoder::default());
-        let err = match rx.next().await {
-            Some(Ok(v)) if rx.read_buffer().is_empty() => return wasmtime::error::Ok(v),
-            Some(Ok(..)) => std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "received data after future value",
-            ),
-            Some(Err(err)) => err.into(),
-            None => std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "future value missing"),
-        };
-        report(&errors, err);
-        drop(rx);
-        pending().await
-    })?;
+    let (r, v) = FutureDecoder::<P>::pending();
+    let fut = FutureReader::new(&mut store, async { wasmtime::error::Ok(v.await) })?;
     let fut = fut.try_into_future_any(store)?;
-    Ok(Val::Future(fut))
+    Ok((Val::Future(fut), Box::new(r)))
 }
 
 fn ready_future<P, D>(mut store: StoreContextMut<'_, D>, v: P) -> wasmtime::Result<Val>
@@ -367,12 +396,11 @@ where
     Ok(Val::Future(fut))
 }
 
-struct Producer<P: Decode>(Option<(Chunks<P::ListDecoder>, mpsc::Sender<std::io::Error>)>);
+struct Producer<P>(Option<Pin<Box<dyn Stream<Item = Vec<P>> + Send>>>);
 
 impl<P, D> StreamProducer<D> for Producer<P>
 where
-    P: Decode<ListDecoder: Send> + Lift + Lower + Send + Sync + 'static,
-    std::io::Error: From<<P::ListDecoder as Decoder>::Error>,
+    P: Lift + Lower + Send + Sync + 'static,
 {
     type Item = P;
     type Buffer = VecBuffer<P>;
@@ -388,19 +416,15 @@ where
         if n == Some(0) {
             return Poll::Ready(Ok(StreamResult::Completed));
         }
-        if let Some((rx, errors)) = &mut self.0 {
-            match poll_chunk(rx, cx) {
-                Poll::Ready(Ok(Some(chunk))) => {
+        if let Some(rx) = &mut self.0 {
+            match rx.poll_next_unpin(cx) {
+                Poll::Ready(Some(chunk)) => {
                     dst.set_buffer(chunk.into());
                     return Poll::Ready(Ok(StreamResult::Completed));
                 }
-                Poll::Ready(Ok(None)) => {
+                Poll::Ready(None) => {
                     self.0 = None;
                     return Poll::Ready(Ok(StreamResult::Dropped));
-                }
-                Poll::Ready(Err(err)) => {
-                    report(errors, err);
-                    self.0 = None;
                 }
                 Poll::Pending => {}
             }
@@ -415,20 +439,15 @@ where
 
 fn pending_stream<P, D>(
     mut store: StoreContextMut<'_, D>,
-    r: oneshot::Receiver<Incoming>,
-    errors: mpsc::Sender<std::io::Error>,
-) -> wasmtime::Result<Val>
+) -> wasmtime::Result<(Val, Box<dyn Receive + Send>)>
 where
-    P: Decode<ListDecoder: Send> + Lift + Lower + Send + Sync + 'static,
+    P: Decode + Lift + Lower + Send + Sync + 'static,
     D: 'static,
-    std::io::Error: From<<P::ListDecoder as Decoder>::Error>,
 {
-    let stream = StreamReader::new(
-        &mut store,
-        Producer::<P>(Some((Chunks::Pending(r), errors))),
-    )?;
+    let (r, rx) = StreamDecoder::<P>::pending();
+    let stream = StreamReader::new(&mut store, Producer(Some(Box::pin(rx))))?;
     let stream = stream.try_into_stream_any(store)?;
-    Ok(Val::Stream(stream))
+    Ok((Val::Stream(stream), Box::new(r)))
 }
 
 fn ready_stream<P, D>(mut store: StoreContextMut<'_, D>, vs: Vec<P>) -> wasmtime::Result<Val>
@@ -444,26 +463,15 @@ where
 #[cfg(feature = "wasmtime-wasi")]
 fn pending_input_stream<T: WrpcView>(
     store: StoreContextMut<'_, T>,
-    r: oneshot::Receiver<Incoming>,
-    errors: mpsc::Sender<std::io::Error>,
-) -> wasmtime::Result<Val> {
-    let rx = Chunks::<wasm_tokio::CoreVecDecoderBytes>::Pending(r);
-    let chunks = stream::try_unfold((rx, errors), |(mut rx, errors)| async move {
-        match core::future::poll_fn(|cx| poll_chunk(&mut rx, cx)).await {
-            Ok(chunk) => Ok(chunk.map(|chunk| (chunk, (rx, errors)))),
-            Err(err) => {
-                let kind = err.kind();
-                report(&errors, err);
-                Err(std::io::Error::from(kind))
-            }
-        }
-    });
-    push_input_stream(
+) -> wasmtime::Result<(Val, Box<dyn Receive + Send>)> {
+    let (r, rx) = wrpc_transport::StreamDecoderBytes::pending();
+    let v = push_input_stream(
         store,
         Box::new(wasmtime_wasi::p2::pipe::AsyncReadStream::new(
-            tokio_util::io::StreamReader::new(chunks),
+            tokio_util::io::StreamReader::new(rx.map(Ok::<_, std::io::Error>)),
         )),
-    )
+    )?;
+    Ok((v, Box::new(r)))
 }
 
 #[cfg(feature = "wasmtime-wasi")]
@@ -494,11 +502,21 @@ impl<T> Encoder<&Val> for ValEncoder<'_, T>
 where
     T: WrpcView,
 {
-    type Error = wasmtime::Error;
+    type Error = std::io::Error;
 
+    fn encode(&mut self, v: &Val, dst: &mut BytesMut) -> Result<(), Self::Error> {
+        self.encode_val(v, dst)
+            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))
+    }
+}
+
+impl<T> ValEncoder<'_, T>
+where
+    T: WrpcView,
+{
     #[allow(clippy::too_many_lines)]
     #[instrument(level = "trace", skip(self))]
-    fn encode(&mut self, v: &Val, dst: &mut BytesMut) -> Result<(), Self::Error> {
+    fn encode_val(&mut self, v: &Val, dst: &mut BytesMut) -> wasmtime::Result<()> {
         match (v, self.ty) {
             (Val::Bool(v), Type::Bool) => {
                 dst.reserve(1);
@@ -552,15 +570,17 @@ where
                 Leb128Encoder
                     .encode(n, dst)
                     .context("failed to encode list length")?;
-                let mut deferred = Vec::with_capacity(vs.len());
-                for v in vs {
+                let mut nested = BTreeMap::<usize, Box<dyn Transmit + Send>>::default();
+                for (i, v) in vs.iter().enumerate() {
                     let mut enc = self.with_type(&ty);
-                    enc.encode(v, dst)
+                    enc.encode_val(v, dst)
                         .context("failed to encode list element")?;
-                    deferred.push(enc.take_deferred());
+                    if let Some(t) = enc.nested {
+                        nested.insert(i, t);
+                    }
                 }
-                if deferred.iter().any(Option::is_some) {
-                    self.deferred = Some(Box::new(|w, path| handle_deferred(w, path, deferred)));
+                if !nested.is_empty() {
+                    self.nested = Some(Box::new(nested));
                 }
                 Ok(())
             }
@@ -572,19 +592,23 @@ where
                         ty.fields().len()
                     );
                 }
-                dst.reserve(vs.len());
-                let mut deferred = Vec::with_capacity(vs.len());
-                for ((name, v), Field { name: field, ty }) in zip(vs, ty.fields()) {
+                for ((name, ..), Field { name: field, .. }) in zip(vs, ty.fields()) {
                     if name != field {
                         bail!("record field `{name}` does not match `{field}`");
                     }
-                    let mut enc = self.with_type(&ty);
-                    enc.encode(v, dst)
-                        .with_context(|| format!("failed to encode `{name}` field"))?;
-                    deferred.push(enc.take_deferred());
                 }
-                if deferred.iter().any(Option::is_some) {
-                    self.deferred = Some(Box::new(|w, path| handle_deferred(w, path, deferred)));
+                dst.reserve(vs.len());
+                let mut nested = BTreeMap::<usize, Box<dyn Transmit + Send>>::default();
+                for (i, ((name, v), Field { ref ty, .. })) in zip(vs, ty.fields()).enumerate() {
+                    let mut enc = self.with_type(ty);
+                    enc.encode_val(v, dst)
+                        .with_context(|| format!("failed to encode `{name}` field"))?;
+                    if let Some(t) = enc.nested {
+                        nested.insert(i, t);
+                    }
+                }
+                if !nested.is_empty() {
+                    self.nested = Some(Box::new(nested));
                 }
                 Ok(())
             }
@@ -597,43 +621,89 @@ where
                     );
                 }
                 dst.reserve(vs.len());
-                let mut deferred = Vec::with_capacity(vs.len());
-                for (v, ref ty) in zip(vs, ty.types()) {
+                let mut nested = BTreeMap::<usize, Box<dyn Transmit + Send>>::default();
+                for (i, (v, ref ty)) in zip(vs, ty.types()).enumerate() {
                     let mut enc = self.with_type(ty);
-                    enc.encode(v, dst)
+                    enc.encode_val(v, dst)
                         .context("failed to encode tuple element")?;
-                    deferred.push(enc.take_deferred());
+                    if let Some(t) = enc.nested {
+                        nested.insert(i, t);
+                    }
                 }
-                if deferred.iter().any(Option::is_some) {
-                    self.deferred = Some(Box::new(|w, path| handle_deferred(w, path, deferred)));
+                if !nested.is_empty() {
+                    self.nested = Some(Box::new(nested));
                 }
                 Ok(())
             }
             (Val::Variant(discriminant, v), Type::Variant(ty)) => {
-                let (i, ty) = zip(0u32.., ty.cases())
-                    .find_map(|(i, Case { name, ty })| (name == discriminant).then_some((i, ty)))
-                    .context("unknown variant discriminant")?;
-                dst.reserve(5 + usize::from(v.is_some()));
-                Leb128Encoder.encode(i, dst)?;
+                let cases = ty.cases();
+                let ty = match cases.len() {
+                    ..=0x0000_00ff => {
+                        let (discriminant, ty) =
+                            find_variant_discriminant(0u8.., cases, discriminant)?;
+                        dst.reserve(2 + usize::from(v.is_some()));
+                        Leb128Encoder.encode(discriminant, dst)?;
+                        ty
+                    }
+                    0x0000_0100..=0x0000_ffff => {
+                        let (discriminant, ty) =
+                            find_variant_discriminant(0u16.., cases, discriminant)?;
+                        dst.reserve(3 + usize::from(v.is_some()));
+                        Leb128Encoder.encode(discriminant, dst)?;
+                        ty
+                    }
+                    0x0001_0000..=0x00ff_ffff => {
+                        let (discriminant, ty) =
+                            find_variant_discriminant(0u32.., cases, discriminant)?;
+                        dst.reserve(4 + usize::from(v.is_some()));
+                        Leb128Encoder.encode(discriminant, dst)?;
+                        ty
+                    }
+                    0x0100_0000..=0xffff_ffff => {
+                        let (discriminant, ty) =
+                            find_variant_discriminant(0u32.., cases, discriminant)?;
+                        dst.reserve(5 + usize::from(v.is_some()));
+                        Leb128Encoder.encode(discriminant, dst)?;
+                        ty
+                    }
+                    0x1_0000_0000.. => bail!("case count does not fit in u32"),
+                };
                 if let Some(v) = v {
                     let ty = ty.context("type missing for variant")?;
                     let mut enc = self.with_type(&ty);
-                    enc.encode(v, dst)
+                    enc.encode_val(v, dst)
                         .context("failed to encode variant value")?;
-                    if let Some(f) = enc.take_deferred() {
-                        self.deferred = Some(f);
-                    }
+                    self.nested = enc.nested;
                 } else if ty.is_some() {
                     bail!("payload missing for variant `{discriminant}`");
                 }
                 Ok(())
             }
             (Val::Enum(discriminant), Type::Enum(ty)) => {
-                let i = zip(0u32.., ty.names())
-                    .find_map(|(i, name)| (name == discriminant).then_some(i))
-                    .context("unknown enum discriminant")?;
-                dst.reserve(5);
-                Leb128Encoder.encode(i, dst)?;
+                let names = ty.names();
+                match names.len() {
+                    ..=0x0000_00ff => {
+                        let discriminant = find_enum_discriminant(0u8.., names, discriminant)?;
+                        dst.reserve(2);
+                        Leb128Encoder.encode(discriminant, dst)?;
+                    }
+                    0x0000_0100..=0x0000_ffff => {
+                        let discriminant = find_enum_discriminant(0u16.., names, discriminant)?;
+                        dst.reserve(3);
+                        Leb128Encoder.encode(discriminant, dst)?;
+                    }
+                    0x0001_0000..=0x00ff_ffff => {
+                        let discriminant = find_enum_discriminant(0u32.., names, discriminant)?;
+                        dst.reserve(4);
+                        Leb128Encoder.encode(discriminant, dst)?;
+                    }
+                    0x0100_0000..=0xffff_ffff => {
+                        let discriminant = find_enum_discriminant(0u32.., names, discriminant)?;
+                        dst.reserve(5);
+                        Leb128Encoder.encode(discriminant, dst)?;
+                    }
+                    0x1_0000_0000.. => bail!("name count does not fit in u32"),
+                }
                 Ok(())
             }
             (Val::Option(None), Type::Option(_)) => {
@@ -646,11 +716,9 @@ where
                 dst.put_u8(1);
                 let ty = ty.ty();
                 let mut enc = self.with_type(&ty);
-                enc.encode(v, dst)
+                enc.encode_val(v, dst)
                     .context("failed to encode `option::some` value")?;
-                if let Some(f) = enc.take_deferred() {
-                    self.deferred = Some(f);
-                }
+                self.nested = enc.nested;
                 Ok(())
             }
             (Val::Result(v), Type::Result(ty)) => match v {
@@ -659,11 +727,9 @@ where
                         dst.reserve(2);
                         dst.put_u8(0);
                         let mut enc = self.with_type(&ty);
-                        enc.encode(v, dst)
+                        enc.encode_val(v, dst)
                             .context("failed to encode `result::ok` value")?;
-                        if let Some(f) = enc.take_deferred() {
-                            self.deferred = Some(f);
-                        }
+                        self.nested = enc.nested;
                         Ok(())
                     }
                     (Some(_v), None) => bail!("`result::ok` value of unknown type"),
@@ -679,11 +745,9 @@ where
                         dst.reserve(2);
                         dst.put_u8(1);
                         let mut enc = self.with_type(&ty);
-                        enc.encode(v, dst)
+                        enc.encode_val(v, dst)
                             .context("failed to encode `result::err` value")?;
-                        if let Some(f) = enc.take_deferred() {
-                            self.deferred = Some(f);
-                        }
+                        self.nested = enc.nested;
                         Ok(())
                     }
                     (Some(_v), None) => bail!("`result::err` value of unknown type"),
@@ -696,15 +760,86 @@ where
                 },
             },
             (Val::Flags(vs), Type::Flags(ty)) => {
-                let flags: HashSet<&str> = vs.iter().map(String::as_str).collect();
                 let names = ty.names();
-                let n = names.len().div_ceil(8).max(1);
-                let start = dst.len();
-                dst.put_bytes(0, n);
-                let buf = &mut dst[start..];
-                for (i, name) in names.enumerate() {
-                    if flags.contains(name) {
-                        buf[i / 8] |= 1 << (i % 8);
+                let vs = vs.iter().map(String::as_str);
+                match names.len() {
+                    ..=8 => {
+                        dst.reserve(1);
+                        dst.put_u8(flag_bits(names, vs));
+                    }
+                    9..=16 => {
+                        dst.reserve(2);
+                        dst.put_u16_le(flag_bits(names, vs));
+                    }
+                    17..=24 => {
+                        dst.reserve(3);
+                        dst.put_slice(&u32::to_le_bytes(flag_bits(names, vs))[..3]);
+                    }
+                    25..=32 => {
+                        dst.reserve(4);
+                        dst.put_u32_le(flag_bits(names, vs));
+                    }
+                    33..=40 => {
+                        dst.reserve(5);
+                        dst.put_slice(&u64::to_le_bytes(flag_bits(names, vs))[..5]);
+                    }
+                    41..=48 => {
+                        dst.reserve(6);
+                        dst.put_slice(&u64::to_le_bytes(flag_bits(names, vs))[..6]);
+                    }
+                    49..=56 => {
+                        dst.reserve(7);
+                        dst.put_slice(&u64::to_le_bytes(flag_bits(names, vs))[..7]);
+                    }
+                    57..=64 => {
+                        dst.reserve(8);
+                        dst.put_u64_le(flag_bits(names, vs));
+                    }
+                    65..=72 => {
+                        dst.reserve(9);
+                        dst.put_slice(&u128::to_le_bytes(flag_bits(names, vs))[..9]);
+                    }
+                    73..=80 => {
+                        dst.reserve(10);
+                        dst.put_slice(&u128::to_le_bytes(flag_bits(names, vs))[..10]);
+                    }
+                    81..=88 => {
+                        dst.reserve(11);
+                        dst.put_slice(&u128::to_le_bytes(flag_bits(names, vs))[..11]);
+                    }
+                    89..=96 => {
+                        dst.reserve(12);
+                        dst.put_slice(&u128::to_le_bytes(flag_bits(names, vs))[..12]);
+                    }
+                    97..=104 => {
+                        dst.reserve(13);
+                        dst.put_slice(&u128::to_le_bytes(flag_bits(names, vs))[..13]);
+                    }
+                    105..=112 => {
+                        dst.reserve(14);
+                        dst.put_slice(&u128::to_le_bytes(flag_bits(names, vs))[..14]);
+                    }
+                    113..=120 => {
+                        dst.reserve(15);
+                        dst.put_slice(&u128::to_le_bytes(flag_bits(names, vs))[..15]);
+                    }
+                    121..=128 => {
+                        dst.reserve(16);
+                        dst.put_u128_le(flag_bits(names, vs));
+                    }
+                    bits @ 129.. => {
+                        let mut cap = bits / 8;
+                        if bits % 8 != 0 {
+                            cap = cap.saturating_add(1);
+                        }
+                        let mut buf = vec![0; cap];
+                        let flags: HashSet<&str> = vs.into_iter().collect();
+                        for (i, name) in names.enumerate() {
+                            if flags.contains(name) {
+                                buf[i / 8] |= 1 << (i % 8);
+                            }
+                        }
+                        dst.extend_from_slice(&buf);
                     }
                 }
                 Ok(())
@@ -744,12 +879,13 @@ where
                                 }),
                             ));
                         let mut enc = wrpc_transport::StreamEncoderRead::<
-                            Outgoing,
                             { wrpc_transport::READ_CHUNK_SIZE },
                         >::default();
                         enc.encode(items, dst)
                             .context("failed to encode input stream")?;
-                        self.deferred = enc.take_deferred();
+                        if !enc.is_closed() {
+                            self.nested = Some(Box::new(enc));
+                        }
                     } else {
                         self.store
                             .data_mut()
@@ -788,11 +924,10 @@ where
             }
 
             (Val::Future(future), Type::Future(ty)) => {
-                let offset = dst.len();
                 let store = self.store.as_context_mut();
-                let deferred = with_payload!(
+                let nested = with_payload!(
                     ty.ty(),
-                    P => encode_future::<P, T>(store, future.clone(), offset),
+                    P => encode_future::<P, T>(store, future.clone()),
                     {
                         future.clone().close(store)?;
                         bail!("`future` payload type not supported, only primitive types and `string` are")
@@ -800,16 +935,15 @@ where
                 )?;
                 dst.reserve(1);
                 dst.put_u8(0);
-                self.deferred = Some(deferred);
+                self.nested = Some(nested);
                 Ok(())
             }
             (Val::Stream(stream), Type::Stream(ty)) => {
-                let offset = dst.len();
                 let store = self.store.as_context_mut();
-                let deferred = match ty.ty() {
+                let nested = match ty.ty() {
                     Some(payload) => with_payload!(
                         @some payload,
-                        P => encode_stream::<P, T>(store, stream.clone(), offset),
+                        P => encode_stream::<P, T>(store, stream.clone()),
                         {
                             stream.clone().close(store)?;
                             bail!("`stream` payload type not supported, only primitive types and `string` are")
@@ -822,7 +956,7 @@ where
                 }?;
                 dst.reserve(1);
                 dst.put_u8(0);
-                self.deferred = Some(deferred);
+                self.nested = Some(nested);
                 Ok(())
             }
             (_, Type::ErrorContext) => {
@@ -858,49 +992,54 @@ enum Partial {
 /// Decodes a tuple of [`Val`]s of types `tys`, e.g. function parameters.
 ///
 /// Resources and asynchronous values are created in the store once their encoding is complete.
-/// Pending asynchronous values are received from the sub-streams indexed by the operation
-/// returned by [`Deferred::take_deferred`]. Failures receiving them are sent on `errors`.
+/// Pending asynchronous values are received using [`Receive::poll_receive`].
 pub struct ValDecoder<'a, T> {
     store: T,
     tys: &'a [Type],
     resources: &'a ResourceTypes,
-    errors: mpsc::Sender<std::io::Error>,
     state: Option<Box<Partial>>,
-    deferred: Vec<(Box<[usize]>, oneshot::Sender<Incoming>)>,
+    /// Decoders of the pending asynchronous values keyed by their paths
+    nested: BTreeMap<Box<[usize]>, Box<dyn Receive + Send>>,
 }
 
 impl<T> ValDecoder<'_, T> {
     #[must_use]
-    pub fn new<'a>(
-        store: T,
-        tys: &'a [Type],
-        resources: &'a ResourceTypes,
-        errors: mpsc::Sender<std::io::Error>,
-    ) -> ValDecoder<'a, T> {
+    pub fn new<'a>(store: T, tys: &'a [Type], resources: &'a ResourceTypes) -> ValDecoder<'a, T> {
         ValDecoder {
             store,
             tys,
             resources,
-            errors,
             state: None,
-            deferred: Vec::default(),
+            nested: BTreeMap::default(),
         }
     }
 }
 
-impl<T> Deferred<Incoming> for ValDecoder<'_, T> {
-    fn take_deferred(&mut self) -> Option<DeferredFn<Incoming>> {
-        if self.deferred.is_empty() {
-            return None;
+impl<T> Receive for ValDecoder<'_, T> {
+    fn poll_receive(
+        &mut self,
+        cx: &mut Context<'_>,
+        path: &[usize],
+        src: &mut BytesMut,
+    ) -> Poll<std::io::Result<()>> {
+        let Some((p, r)) = self
+            .nested
+            .range_mut::<[usize], _>((Bound::Unbounded, Bound::Included(path)))
+            .next_back()
+            .filter(|(p, ..)| path.starts_with(p))
+        else {
+            return Poll::Ready(Err(error_unknown_path(path)));
+        };
+        ready!(r.poll_receive(cx, &path[p.len()..], src))?;
+        if r.is_closed() {
+            let p = p.clone();
+            self.nested.remove(&p);
         }
-        let deferred = mem::take(&mut self.deferred);
-        Some(Box::new(move |r, path| {
-            for (p, tx) in deferred {
-                let r = r.index(&[path, &p].concat())?;
-                _ = tx.send(r);
-            }
-            Ok(Box::pin(ready(Ok(()))))
-        }))
+        Poll::Ready(Ok(()))
+    }
+
+    fn is_closed(&self) -> bool {
+        self.nested.is_empty()
     }
 }
 
@@ -1037,9 +1176,7 @@ where
         kind: &str,
         pending: impl FnOnce(
             StoreContextMut<'_, T::Data>,
-            oneshot::Receiver<Incoming>,
-            mpsc::Sender<std::io::Error>,
-        ) -> wasmtime::Result<Val>,
+        ) -> wasmtime::Result<(Val, Box<dyn Receive + Send>)>,
         ready: impl FnOnce(StoreContextMut<'_, T::Data>, D::Item) -> wasmtime::Result<Val>,
     ) -> std::io::Result<Option<Val>>
     where
@@ -1051,13 +1188,11 @@ where
                 return Ok(None);
             };
             if status == 0 {
-                let (tx, rx) = oneshot::channel();
-                let errors = self.errors.clone();
-                let v = self
+                let (v, r) = self
                     .store
-                    .with_store(|store| pending(store, rx, errors))
+                    .with_store(pending)
                     .map_err(std::io::Error::other)?;
-                self.deferred.push((path.into(), tx));
+                self.nested.insert(path.into(), r);
                 return Ok(Some(v));
             }
         }

@@ -11,7 +11,6 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-anyhow = { workspace = true, features = ["std"] }
 bytes = { workspace = true }
 tokio = { workspace = true, features = ["io-util"] }
 tokio-util = { workspace = true, features = ["codec"] }
@@ -21,4 +20,5 @@ wasm-wave = { workspace = true }
 wrpc-transport = { workspace = true }
 
 [dev-dependencies]
+anyhow = { workspace = true, features = ["std"] }
 wasmtime = { workspace = true, features = ["runtime", "wave"] }

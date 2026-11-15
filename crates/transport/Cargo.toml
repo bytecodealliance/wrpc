@@ -14,22 +14,23 @@ default = ["fs", "net", "io-std"]
 fs = ["tokio/fs"]
 net = ["tokio/net", "wrpc-test/net"]
 io-std = ["tokio/io-std"]
+wasi = ["dep:anyhow", "dep:wasi"]
 
 [dependencies]
-anyhow = { workspace = true, features = ["std"] }
 bytes = { workspace = true }
 futures = { workspace = true, features = ["std"] }
-pin-project-lite = { workspace = true }
-tokio = { workspace = true, features = ["macros", "rt", "time"] }
-tokio-stream = { workspace = true }
-tokio-util = { workspace = true, features = ["codec", "io", "rt"] }
+send-future = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true, features = ["codec", "io"] }
 tracing = { workspace = true, features = ["attributes"] }
 wasm-tokio = { workspace = true, features = ["tracing"] }
 
 [target.'cfg(target_family = "wasm")'.dependencies]
+anyhow = { workspace = true, features = ["std"], optional = true }
 wasi = { workspace = true, features = ["std"], optional = true }
 
 [dev-dependencies]
+anyhow = { workspace = true, features = ["std"] }
 test-log = { workspace = true, features = ["color", "log", "trace"] }
-tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
 wrpc-test = { workspace = true }

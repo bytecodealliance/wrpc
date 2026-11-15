@@ -1,6 +1,7 @@
 use anyhow::{Context as _, ensure};
 use bytes::Bytes;
 use clap::Parser;
+use tokio::net::TcpStream;
 use wrpc_wasi_keyvalue::wasi::keyvalue::store;
 
 #[derive(Parser, Debug)]
@@ -17,28 +18,42 @@ async fn main() -> anyhow::Result<()> {
 
     let Args { addr } = Args::parse();
 
-    let wrpc = wrpc_transport::tcp::Client::from(addr);
-    let bucket = store::open(&wrpc, (), "example")
+    let connect = async || {
+        let stream = TcpStream::connect(&addr)
+            .await
+            .with_context(|| format!("failed to connect to `{addr}`"))?;
+        stream
+            .set_nodelay(true)
+            .context("failed to set TCP_NODELAY")?;
+        let (rx, tx) = stream.into_split();
+        anyhow::Ok((tx, rx))
+    };
+    let (tx, rx) = connect().await?;
+    let bucket = store::open(tx, rx, "example")
         .await
         .context("failed to invoke `open`")?
         .context("failed to open empty bucket")?;
-    store::Bucket::set(&wrpc, (), &bucket.as_borrow(), "foo", &Bytes::from("bar"))
+    let (tx, rx) = connect().await?;
+    store::Bucket::set(tx, rx, &bucket.as_borrow(), "foo", &Bytes::from("bar"))
         .await
         .context("failed to invoke `set`")?
         .context("failed to set `foo`")?;
-    let ok = store::Bucket::exists(&wrpc, (), &bucket.as_borrow(), "foo")
+    let (tx, rx) = connect().await?;
+    let ok = store::Bucket::exists(tx, rx, &bucket.as_borrow(), "foo")
         .await
         .context("failed to invoke `exists`")?
         .context("failed to check if `foo` exists")?;
     ensure!(ok);
-    let v = store::Bucket::get(&wrpc, (), &bucket.as_borrow(), "foo")
+    let (tx, rx) = connect().await?;
+    let v = store::Bucket::get(tx, rx, &bucket.as_borrow(), "foo")
         .await
         .context("failed to invoke `get`")?
         .context("failed to get `foo`")?;
     ensure!(v.as_deref() == Some(b"bar".as_slice()));
 
+    let (tx, rx) = connect().await?;
     let store::KeyResponse { keys, cursor: _ } =
-        store::Bucket::list_keys(&wrpc, (), &bucket.as_borrow(), None)
+        store::Bucket::list_keys(tx, rx, &bucket.as_borrow(), None)
             .await
             .context("failed to invoke `list-keys`")?
             .context("failed to list keys")?;

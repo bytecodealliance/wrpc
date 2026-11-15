@@ -4,7 +4,7 @@ use bytes::BytesMut;
 use tokio_util::codec::Encoder;
 use wasm_wave::value::Value;
 use wasm_wave::wasm::WasmValue;
-use wrpc_transport::{Deferred, DeferredFn, DeferredWrite, Encode};
+use wrpc_transport::{Encode, SyncCodec};
 
 use crate::ValueEncoder;
 
@@ -14,10 +14,12 @@ use crate::ValueEncoder;
 /// use bytes::BytesMut;
 /// use wasm_wave::value::{Type, Value};
 /// use wasm_wave::wasm::WasmValue as _;
-/// use wrpc_wave::TypedValue;
+/// use wrpc_transport::SyncCodec;
+/// use wrpc_wave::{TypedValue, TypedValueEncoder};
 ///
 /// let mut buf = BytesMut::default();
-/// wrpc_transport::pack(TypedValue(Value::make_u32(42), Type::U32), &mut buf).unwrap();
+/// let v = TypedValue(Value::make_u32(42), Type::U32);
+/// wrpc_transport::pack(SyncCodec(TypedValueEncoder), v, &mut buf).unwrap();
 /// assert_eq!(buf.as_ref(), [42]);
 /// ```
 #[derive(Clone, Debug)]
@@ -27,41 +29,38 @@ pub struct TypedValue<V: WasmValue = Value>(pub V, pub V::Type);
 #[derive(Debug, Default)]
 pub struct TypedValueEncoder;
 
-impl<W> Deferred<W> for TypedValueEncoder {
-    fn take_deferred(&mut self) -> Option<DeferredFn<W>> {
-        None
-    }
-}
-
 impl<V: WasmValue> Encoder<&TypedValue<V>> for TypedValueEncoder {
-    type Error = anyhow::Error;
+    type Error = std::io::Error;
 
-    fn encode(&mut self, v: &TypedValue<V>, dst: &mut BytesMut) -> Result<(), Self::Error> {
+    fn encode(&mut self, v: &TypedValue<V>, dst: &mut BytesMut) -> std::io::Result<()> {
         ValueEncoder::new(&v.1).encode(&v.0, dst)
     }
 }
 
 impl<V: WasmValue> Encoder<TypedValue<V>> for TypedValueEncoder {
-    type Error = anyhow::Error;
+    type Error = std::io::Error;
 
-    fn encode(&mut self, v: TypedValue<V>, dst: &mut BytesMut) -> Result<(), Self::Error> {
+    fn encode(&mut self, v: TypedValue<V>, dst: &mut BytesMut) -> std::io::Result<()> {
         self.encode(&v, dst)
     }
 }
 
-impl<V: WasmValue, W: DeferredWrite> Encode<W> for TypedValue<V> {
-    type Encoder = TypedValueEncoder;
+impl<V: WasmValue> Encode for TypedValue<V> {
+    type Encoder = SyncCodec<TypedValueEncoder>;
 }
 
-impl<V: WasmValue, W: DeferredWrite> Encode<W> for &TypedValue<V> {
-    type Encoder = TypedValueEncoder;
+impl<V: WasmValue> Encode for &TypedValue<V> {
+    type Encoder = SyncCodec<TypedValueEncoder>;
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use wasm_wave::value::Type;
-    use wrpc_transport::pack;
+
+    fn pack<T: Encode>(v: T, dst: &mut BytesMut) -> std::io::Result<()> {
+        wrpc_transport::pack(T::Encoder::default(), v, dst)
+    }
 
     #[test]
     fn test_pack_bool() -> anyhow::Result<()> {

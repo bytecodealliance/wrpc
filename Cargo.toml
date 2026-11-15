@@ -176,6 +176,7 @@ redis = { version = "1.2", default-features = false }
 regex = { version = "1", default-features = false }
 reqwest = { version = "0.13", default-features = false }
 rustls = { version = "0.23", default-features = false }
+send-future = { version = "0.1", default-features = false }
 serde = { version = "1", default-features = false }
 serde_json = { version = "1", default-features = false }
 syn = { version = "2", default-features = false, features = ["printing"] }
@@ -195,7 +196,7 @@ url = { version = "2" }
 uuid = { version = "1", default-features = false }
 wasi = { version = "0.14", default-features = false }
 wasi-preview1-component-adapter-provider = { version = "50", default-features = false }
-wasm-tokio = { version = "0.9", default-features = false }
+wasm-tokio = { version = "0.9.1", default-features = false }
 wasm-wave = { version = "0.263", default-features = false }
 wasmparser = { version = "0.263", default-features = false }
 wasmtime = { version = "51.0.0-rc.1", default-features = false }

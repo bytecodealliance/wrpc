@@ -1,4 +1,5 @@
 #![allow(clippy::disallowed_names, clippy::type_complexity)]
+#![recursion_limit = "256"]
 
 pub mod common;
 
@@ -16,23 +17,31 @@ use common::{assert_async, assert_sync};
 use futures::future::BoxFuture;
 use futures::stream::{BoxStream, FuturesUnordered};
 use futures::{Stream, StreamExt as _, TryStreamExt as _, future, stream};
-use tokio::io::{AsyncRead, AsyncReadExt as _, BufReader, split};
+use tokio::io::{
+    AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _, duplex, sink, split,
+};
+use tokio::sync::{mpsc, oneshot};
 use tokio::task::yield_now;
+use tokio::time;
 use tokio::{join, spawn, try_join};
+use tokio_util::codec::{Encoder as _, FramedParts, FramedRead};
 use tokio_util::io::StreamReader;
 use tracing::instrument;
-use wrpc_transport::frame::Oneshot;
-use wrpc_transport::{InvokeExt as _, ResourceBorrow, ResourceOwn, ServeExt as _};
+use wrpc_test::{accept_invocation, read_eof};
+use wrpc_transport::{
+    Decode, Encode, FrameDecoder, FrameEncoder, FrameRef, Header, HeaderDecoder, HeaderEncoder,
+    HeaderRef, ResourceBorrow, ResourceOwn, invoke, invoke_blocking, serve,
+};
 
-async fn serve_bindgen<S, F>(
-    invocations: Vec<(&'static str, &'static str, S)>,
+async fn serve_bindgen<F, E>(
+    invocations: impl Stream<Item = Result<F, E>>,
     client: impl Future<Output = anyhow::Result<()>>,
 ) -> anyhow::Result<()>
 where
-    S: Stream<Item = anyhow::Result<F>> + Unpin,
     F: Future<Output = anyhow::Result<()>>,
+    E: core::error::Error + Send + Sync + 'static,
 {
-    let mut invocations = stream::select_all(invocations.into_iter().map(|(.., s)| s));
+    let mut invocations = pin!(invocations);
     let mut served = FuturesUnordered::default();
     let mut client = pin!(client);
     poll_fn(|cx| {
@@ -50,10 +59,20 @@ where
 }
 
 #[instrument(skip_all, ret)]
-async fn assert_bindgen_sync<C, I>(cx: C, clt: &I, srv: &impl wrpc::Serve) -> anyhow::Result<()>
+async fn assert_bindgen_sync<F, Fut, CI, CO, CE, C, I, O, E>(
+    connect: F,
+    srv: impl Stream<Item = Result<(C, O, I), E>>,
+) -> anyhow::Result<()>
 where
-    C: Clone + Send + Sync + 'static,
-    I: wrpc::Invoke<Context = C> + Clone + 'static,
+    F: Fn() -> Fut + Clone + Send + Sync + 'static,
+    Fut: Future<Output = Result<(CO, CI), CE>> + Send,
+    CI: AsyncRead + Send + Unpin,
+    CO: AsyncWrite + Send + Unpin,
+    CE: core::error::Error + Send + Sync + 'static,
+    C: Send + Sync + 'static,
+    I: AsyncRead + Send + Unpin + 'static,
+    O: AsyncWrite + Send + Unpin + 'static,
+    E: core::error::Error + Send + Sync + 'static,
 {
     mod sync_client {
         wit_bindgen_wrpc::generate!({
@@ -86,13 +105,12 @@ where
     }
 
     #[derive(Clone)]
-    struct Handler<I: wrpc::Invoke> {
+    struct Handler<F> {
         counts: Arc<Mutex<Vec<u32>>>,
-        clt: I,
-        cx: I::Context,
+        connect: F,
     }
 
-    impl<I: wrpc::Invoke> Handler<I> {
+    impl<F> Handler<F> {
         fn push(&self, count: u32) -> ResourceOwn<Counter> {
             let mut counts = self.counts.lock().unwrap();
             counts.push(count);
@@ -115,7 +133,7 @@ where
         }
     }
 
-    impl<C: Send + Sync, I: wrpc::Invoke + 'static> resources::HandlerFoo<C> for Handler<I> {
+    impl<C: Send + Sync, F: Send + Sync + 'static> resources::HandlerFoo<C> for Handler<F> {
         async fn new(&self, _cx: C) -> anyhow::Result<ResourceOwn<Foo>> {
             Ok(ResourceOwn::from(Bytes::from_static(b"foo")))
         }
@@ -131,7 +149,7 @@ where
         }
     }
 
-    impl<C: Send + Sync, I: wrpc::Invoke + 'static> resources::HandlerCounter<C> for Handler<I> {
+    impl<C: Send + Sync, F: Send + Sync + 'static> resources::HandlerCounter<C> for Handler<F> {
         async fn new(&self, _cx: C, initial: u32) -> anyhow::Result<ResourceOwn<Counter>> {
             Ok(self.push(initial))
         }
@@ -170,15 +188,15 @@ where
         }
     }
 
-    impl<C: Send + Sync, I: wrpc::Invoke + 'static> resources::Handler<C> for Handler<I> {
+    impl<C: Send + Sync, F: Send + Sync + 'static> resources::Handler<C> for Handler<F> {
         async fn bar(&self, _cx: C, v: ResourceBorrow<Foo>) -> anyhow::Result<String> {
             ensure_foo(v)?;
             Ok("bar".into())
         }
     }
 
-    impl<C: Send + Sync, I: wrpc::Invoke + 'static> sync_server::exports::strange::Handler<C>
-        for Handler<I>
+    impl<C: Send + Sync, F: Send + Sync + 'static> sync_server::exports::strange::Handler<C>
+        for Handler<F>
     {
         async fn bar(&self, _cx: C, v: ResourceBorrow<Foo>) -> anyhow::Result<u64> {
             ensure_foo(v)?;
@@ -186,23 +204,28 @@ where
         }
     }
 
-    impl<C, I> sync_server::Handler<C> for Handler<I>
+    impl<C, F, Fut, I, O, E> sync_server::Handler<C> for Handler<F>
     where
         C: Send + Sync,
-        I: wrpc::Invoke + 'static,
-        I::Context: Clone,
+        F: Fn() -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<(O, I), E>> + Send,
+        I: AsyncRead + Send + Unpin,
+        O: AsyncWrite + Send + Unpin,
+        E: core::error::Error + Send + Sync + 'static,
     {
         async fn ping(&self, _cx: C) -> anyhow::Result<String> {
             use sync_client::wrpc_test::integration::resources::Counter;
 
-            let counter = Counter::new(&self.clt, self.cx.clone(), 42).await?;
-            let n = Counter::get_count(&self.clt, self.cx.clone(), &counter.as_borrow()).await?;
+            let (tx, rx) = (self.connect)().await?;
+            let counter = Counter::new(tx, rx, 42).await?;
+            let (tx, rx) = (self.connect)().await?;
+            let n = Counter::get_count(tx, rx, &counter.as_borrow()).await?;
             ensure!(n == 42);
             Ok("pong".into())
         }
     }
 
-    impl<C: Send + Sync, I: wrpc::Invoke + 'static> sync::Handler<C> for Handler<I> {
+    impl<C: Send + Sync, F: Send + Sync + 'static> sync::Handler<C> for Handler<F> {
         async fn fallible(&self, _cx: C, ok: bool) -> anyhow::Result<Result<bool, String>> {
             Ok(if ok { Ok(true) } else { Err("test".into()) })
         }
@@ -267,8 +290,8 @@ where
         }
     }
 
-    impl<C: Send + Sync, I: wrpc::Invoke + 'static> sync_server::exports::foo::Handler<C>
-        for Handler<I>
+    impl<C: Send + Sync, F: Send + Sync + 'static> sync_server::exports::foo::Handler<C>
+        for Handler<F>
     {
         async fn f(&self, _cx: C, x: String) -> anyhow::Result<u32> {
             assert_eq!(x, "f");
@@ -283,24 +306,26 @@ where
 
     let handler = Handler {
         counts: Arc::default(),
-        clt: clt.clone(),
-        cx: cx.clone(),
+        connect: connect.clone(),
     };
-    let invocations = sync_server::serve(srv, handler).await?;
-    assert!(
-        invocations
-            .iter()
-            .any(|(instance, name, ..)| instance.is_empty() && *name == "ping")
-    );
-    serve_bindgen(invocations, assert_sync(cx, clt)).await
+    serve_bindgen(sync_server::serve(srv, handler), assert_sync(connect)).await
 }
 
 #[instrument(skip_all, ret)]
-async fn assert_bindgen_async<C: Clone + Send + Sync>(
-    cx: C,
-    clt: &impl wrpc::Invoke<Context = C>,
-    srv: &impl wrpc::Serve,
-) -> anyhow::Result<()> {
+async fn assert_bindgen_async<F, CI, CO, CE, C, I, O, E>(
+    connect: impl Fn() -> F,
+    srv: impl Stream<Item = Result<(C, O, I), E>>,
+) -> anyhow::Result<()>
+where
+    F: Future<Output = Result<(CO, CI), CE>>,
+    CI: AsyncRead + Send + Unpin,
+    CO: AsyncWrite + Send + Unpin,
+    CE: core::error::Error + Send + Sync + 'static,
+    C: Send + Sync + 'static,
+    I: AsyncRead + Send + Unpin + 'static,
+    O: AsyncWrite + Send + Unpin + 'static,
+    E: core::error::Error + Send + Sync + 'static,
+{
     mod bindings {
         wit_bindgen_wrpc::generate!({
             world: "async-server",
@@ -379,16 +404,23 @@ async fn assert_bindgen_async<C: Clone + Send + Sync>(
         }
     }
 
-    let invocations = bindings::serve(srv, Handler).await?;
-    serve_bindgen(invocations, assert_async(cx, clt)).await
+    serve_bindgen(bindings::serve(srv, Handler), assert_async(connect)).await
 }
 
 #[instrument(skip_all, ret)]
-async fn assert_dynamic<C: Clone + Send + Sync + 'static>(
-    cx: C,
-    clt: &impl wrpc::Invoke<Context = C>,
-    srv: &impl wrpc::Serve,
-) -> anyhow::Result<()> {
+async fn assert_dynamic<F, CI, CO, CE, C, I, O, E>(
+    connect: impl Fn() -> F,
+    srv: impl Stream<Item = Result<(C, O, I), E>>,
+) -> anyhow::Result<()>
+where
+    F: Future<Output = Result<(CO, CI), CE>>,
+    CI: AsyncRead + Send + Unpin,
+    CO: AsyncWrite + Send + Unpin,
+    CE: core::error::Error + Send + Sync + 'static,
+    I: AsyncRead + Send + Unpin + 'static,
+    O: AsyncWrite + Send + Unpin + 'static,
+    E: core::error::Error + Send + Sync + 'static,
+{
     type SyncValues = (
         (bool, u8, u16, u32, u64, i8, i16, i32, i64, f32, f64, char),
         String,
@@ -462,13 +494,10 @@ async fn assert_dynamic<C: Clone + Send + Sync + 'static>(
         )
     }
 
-    async fn assert_async_values<E>(
+    async fn assert_async_values(
         (a, b, mut c, d, e, f): AsyncValues,
-        io: Option<impl Future<Output = Result<(), E>>>,
-    ) -> anyhow::Result<()>
-    where
-        anyhow::Error: From<E>,
-    {
+        io: impl Future<Output = std::io::Result<()>>,
+    ) -> anyhow::Result<()> {
         try_join!(
             async {
                 let (a, b, c, d, e, f) = join!(
@@ -492,32 +521,17 @@ async fn assert_dynamic<C: Clone + Send + Sync + 'static>(
                 assert_eq!(f, ["foo", "bar"]);
                 anyhow::Ok(())
             },
-            async {
-                if let Some(io) = io {
-                    io.await?;
-                }
-                anyhow::Ok(())
-            },
+            async { io.await.context("failed to complete I/O") },
         )?;
         Ok(())
     }
 
-    let reset = srv
-        .serve_values::<(String,), (String,)>("test", "reset")
-        .await?;
-    let sync = srv
-        .serve_values::<SyncValues, SyncValues>("test", "sync")
-        .await?;
-    let async_ = srv
-        .serve_values::<AsyncValues, AsyncValues>("test", "async")
-        .await?;
-    let (mut reset, mut sync, mut async_) = (pin!(reset), pin!(sync), pin!(async_));
+    let mut srv = pin!(srv);
     try_join!(
         async {
             for spawned in [false, true] {
-                let Some(inv) = reset.try_next().await? else {
-                    bail!("`test.reset` missing");
-                };
+                let (.., tx, rx) = accept_invocation(&mut srv, "test", "reset").await?;
+                let inv = serve(tx, rx, <(String,) as Decode>::Decoder::default());
                 if spawned {
                     spawn(async move { drop(inv) }).await?;
                 } else {
@@ -525,41 +539,71 @@ async fn assert_dynamic<C: Clone + Send + Sync + 'static>(
                 }
             }
             for _ in 0..2 {
-                let Some((.., params, io, tx)) = sync.try_next().await? else {
-                    bail!("`test.sync` missing");
-                };
-                assert!(io.is_none());
+                let (.., tx, mut rx) = accept_invocation(&mut srv, "test", "sync").await?;
+                let (params, tx) = serve(tx, &mut rx, <SyncValues as Decode>::Decoder::default());
+                let (params, io) = params.await?;
                 assert_eq!(params, sync_values());
-                tx(sync_values()).await?;
+                let tx = tx.send(<SyncValues as Encode>::Encoder::default(), sync_values())?;
+                tx.await?;
+                io.await?;
+                read_eof(&mut rx).await?;
             }
-            let Some((.., params, io, tx)) = async_.try_next().await? else {
-                bail!("`test.async` missing");
-            };
-            assert_async_values(params, io).await?;
-            tx(async_values()).await?;
-            Ok(())
+            let (.., tx, mut rx) = accept_invocation(&mut srv, "test", "async").await?;
+            let (params, tx) = serve(tx, &mut rx, <AsyncValues as Decode>::Decoder::default());
+            let (params, io) = params.await?;
+            let tx = tx.send(<AsyncValues as Encode>::Encoder::default(), async_values())?;
+            try_join!(assert_async_values(params, io), async {
+                tx.await.context("failed to transmit results")
+            })?;
+            read_eof(&mut rx).await
         },
         async {
             for _ in 0..2 {
-                let res = clt
-                    .invoke_values_blocking::<_, (String,)>(cx.clone(), "test", "reset", ("arg",))
-                    .await;
+                let (tx, rx) = connect().await?;
+                let res = invoke_blocking(
+                    tx,
+                    rx,
+                    "test",
+                    "reset",
+                    <(&str,) as Encode>::Encoder::default(),
+                    ("arg",),
+                    <(String,) as Decode>::Decoder::default(),
+                )
+                .await;
                 res.expect_err("`test.reset` should have failed");
             }
 
             let mut buf = BytesMut::default();
-            wrpc_transport::pack(sync_values(), &mut buf)?;
-            let unpacked = wrpc_transport::unpack(&mut buf)?;
+            let enc = <SyncValues as Encode>::Encoder::default();
+            wrpc_transport::pack(enc, sync_values(), &mut buf)?;
+            let dec = <SyncValues as Decode>::Decoder::default();
+            let unpacked = wrpc_transport::unpack(dec, &mut buf)?;
             for params in [sync_values(), unpacked] {
-                let res: SyncValues = clt
-                    .invoke_values_blocking(cx.clone(), "test", "sync", params)
-                    .await?;
+                let (tx, rx) = connect().await?;
+                let res = invoke_blocking(
+                    tx,
+                    rx,
+                    "test",
+                    "sync",
+                    <SyncValues as Encode>::Encoder::default(),
+                    params,
+                    <SyncValues as Decode>::Decoder::default(),
+                )
+                .await?;
                 assert_eq!(res, sync_values());
             }
 
-            let (res, io) = clt
-                .invoke_values(cx, "test", "async", async_values())
-                .await?;
+            let (tx, rx) = connect().await?;
+            let (res, io) = invoke(
+                tx,
+                rx,
+                "test",
+                "async",
+                <AsyncValues as Encode>::Encoder::default(),
+                async_values(),
+                <AsyncValues as Decode>::Decoder::default(),
+            )
+            .await?;
             assert_async_values(res, io).await?;
             anyhow::Ok(())
         },
@@ -569,120 +613,221 @@ async fn assert_dynamic<C: Clone + Send + Sync + 'static>(
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn rust_tcp_bindgen_sync() -> anyhow::Result<()> {
-    wrpc_test::serve_tcp(async |clt, srv| assert_bindgen_sync((), &clt, srv).await).await
+    wrpc_test::serve_tcp(async |addr, lis| {
+        assert_bindgen_sync(
+            move || wrpc_test::tcp_streams(addr),
+            wrpc_test::tcp_incoming(lis),
+        )
+        .await
+    })
+    .await
 }
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn rust_tcp_bindgen_async() -> anyhow::Result<()> {
-    wrpc_test::serve_tcp(async |clt, srv| assert_bindgen_async((), &clt, srv).await).await
+    wrpc_test::serve_tcp(async |addr, lis| {
+        assert_bindgen_async(
+            move || wrpc_test::tcp_streams(addr),
+            wrpc_test::tcp_incoming(lis),
+        )
+        .await
+    })
+    .await
 }
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn rust_tcp_dynamic() -> anyhow::Result<()> {
-    wrpc_test::serve_tcp(async |clt, srv| assert_dynamic((), &clt, srv).await).await
+    wrpc_test::serve_tcp(async |addr, lis| {
+        assert_dynamic(
+            move || wrpc_test::tcp_streams(addr),
+            wrpc_test::tcp_incoming(lis),
+        )
+        .await
+    })
+    .await
 }
 
 #[cfg(unix)]
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn rust_uds_bindgen_sync() -> anyhow::Result<()> {
-    wrpc_test::serve_unix(async |clt, srv| assert_bindgen_sync((), &clt, srv).await).await
+    wrpc_test::serve_unix(async |path, lis| {
+        assert_bindgen_sync(
+            move || wrpc_test::unix_streams(path.clone()),
+            wrpc_test::unix_incoming(lis),
+        )
+        .await
+    })
+    .await
 }
 
 #[cfg(unix)]
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn rust_uds_bindgen_async() -> anyhow::Result<()> {
-    wrpc_test::serve_unix(async |clt, srv| assert_bindgen_async((), &clt, srv).await).await
+    wrpc_test::serve_unix(async |path, lis| {
+        assert_bindgen_async(
+            move || wrpc_test::unix_streams(path.clone()),
+            wrpc_test::unix_incoming(lis),
+        )
+        .await
+    })
+    .await
 }
 
 #[cfg(unix)]
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn rust_uds_dynamic() -> anyhow::Result<()> {
-    wrpc_test::serve_unix(async |clt, srv| assert_dynamic((), &clt, srv).await).await
+    wrpc_test::serve_unix(async |path, lis| {
+        assert_dynamic(
+            move || wrpc_test::unix_streams(path.clone()),
+            wrpc_test::unix_incoming(lis),
+        )
+        .await
+    })
+    .await
 }
 
 #[cfg(feature = "quic")]
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn rust_quic_bindgen_sync() -> anyhow::Result<()> {
-    wrpc_test::serve_quic(async |clt, srv| assert_bindgen_sync((), &clt, srv).await).await
+    wrpc_test::with_quic(async |clt, srv| {
+        let connect = move || {
+            let clt = clt.clone();
+            async move { clt.open_bi().await }
+        };
+        assert_bindgen_sync(connect, wrpc_quic::incoming(srv)).await
+    })
+    .await
 }
 
 #[cfg(feature = "quic")]
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn rust_quic_bindgen_async() -> anyhow::Result<()> {
-    wrpc_test::serve_quic(async |clt, srv| assert_bindgen_async((), &clt, srv).await).await
+    wrpc_test::with_quic(async |clt, srv| {
+        let connect = move || {
+            let clt = clt.clone();
+            async move { clt.open_bi().await }
+        };
+        assert_bindgen_async(connect, wrpc_quic::incoming(srv)).await
+    })
+    .await
 }
 
 #[cfg(feature = "quic")]
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn rust_quic_dynamic() -> anyhow::Result<()> {
-    wrpc_test::serve_quic(async |clt, srv| assert_dynamic((), &clt, srv).await).await
+    wrpc_test::with_quic(async |clt, srv| {
+        let connect = move || {
+            let clt = clt.clone();
+            async move { clt.open_bi().await }
+        };
+        assert_dynamic(connect, wrpc_quic::incoming(srv)).await
+    })
+    .await
 }
 
 #[cfg(feature = "webtransport")]
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn rust_webtransport_bindgen_sync() -> anyhow::Result<()> {
-    wrpc_test::serve_webtransport(async |clt, srv| assert_bindgen_sync((), &clt, srv).await).await
+    wrpc_test::with_webtransport(async |clt, srv| {
+        let connect = move || {
+            let clt = clt.clone();
+            async move { clt.open_bi().await }
+        };
+        assert_bindgen_sync(connect, wrpc_webtransport::incoming(srv)).await
+    })
+    .await
 }
 
 #[cfg(feature = "webtransport")]
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn rust_webtransport_bindgen_async() -> anyhow::Result<()> {
-    wrpc_test::serve_webtransport(async |clt, srv| assert_bindgen_async((), &clt, srv).await).await
+    wrpc_test::with_webtransport(async |clt, srv| {
+        let connect = move || {
+            let clt = clt.clone();
+            async move { clt.open_bi().await }
+        };
+        assert_bindgen_async(connect, wrpc_webtransport::incoming(srv)).await
+    })
+    .await
 }
 
 #[cfg(feature = "webtransport")]
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn rust_webtransport_dynamic() -> anyhow::Result<()> {
-    wrpc_test::serve_webtransport(async |clt, srv| assert_dynamic((), &clt, srv).await).await
+    wrpc_test::with_webtransport(async |clt, srv| {
+        let connect = move || {
+            let clt = clt.clone();
+            async move { clt.open_bi().await }
+        };
+        assert_dynamic(connect, wrpc_webtransport::incoming(srv)).await
+    })
+    .await
 }
 
 #[cfg(feature = "http")]
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn rust_http_bindgen_sync() -> anyhow::Result<()> {
-    wrpc_test::serve_http2(async |cx, clt, srv| assert_bindgen_sync(cx, &clt, srv).await).await
+    wrpc_test::serve_http2(async |parts, sender, srv| {
+        assert_bindgen_sync(move || wrpc_http::open(sender.clone(), parts.clone()), srv).await
+    })
+    .await
 }
 
 #[cfg(feature = "http")]
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn rust_http_bindgen_async() -> anyhow::Result<()> {
-    wrpc_test::serve_http2(async |cx, clt, srv| assert_bindgen_async(cx, &clt, srv).await).await
+    wrpc_test::serve_http2(async |parts, sender, srv| {
+        assert_bindgen_async(move || wrpc_http::open(sender.clone(), parts.clone()), srv).await
+    })
+    .await
 }
 
 #[cfg(feature = "http")]
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn rust_http_dynamic() -> anyhow::Result<()> {
-    wrpc_test::serve_http2(async |cx, clt, srv| assert_dynamic(cx, &clt, srv).await).await
+    wrpc_test::serve_http2(async |parts, sender, srv| {
+        assert_dynamic(move || wrpc_http::open(sender.clone(), parts.clone()), srv).await
+    })
+    .await
 }
 
 #[instrument(skip_all, ret)]
-async fn assert_oneshot<T, R, W>(clt: T, rx: R, tx: W) -> anyhow::Result<()>
+async fn assert_oneshot<CI, CO, I, O>(clt_tx: CO, clt_rx: CI, tx: O, rx: I) -> anyhow::Result<()>
 where
-    T: wrpc::Invoke<Context = ()> + 'static,
-    R: tokio::io::AsyncRead + Send + Sync + Unpin + 'static,
-    W: tokio::io::AsyncWrite + Send + Sync + Unpin + 'static,
+    CI: AsyncRead + Send + Unpin,
+    CO: AsyncWrite + Send + Unpin,
+    I: AsyncRead + Send + Sync + Unpin + 'static,
+    O: AsyncWrite + Send + Sync + Unpin + 'static,
 {
-    let srv = Arc::new(wrpc_transport::frame::Server::default());
-    let invocations = srv.serve_values::<(u32,), (&str,)>("foo", "bar").await?;
     join!(
         async {
-            let (a,) = clt
-                .invoke_values_blocking::<_, (String,)>((), "foo", "bar", (42,))
-                .await
-                .expect("failed to invoke `foo.bar`");
+            let (a,) = invoke_blocking(
+                clt_tx,
+                clt_rx,
+                "foo",
+                "bar",
+                <(u32,) as Encode>::Encoder::default(),
+                (42,),
+                <(String,) as Decode>::Decoder::default(),
+            )
+            .await
+            .expect("failed to invoke `foo.bar`");
             assert_eq!(a, "test");
         },
         async {
-            srv.accept((), tx, BufReader::new(rx))
+            let (header, rx) = Header::read(rx)
                 .await
-                .expect("failed to accept connection");
-            let ((), params, rx, tx) = pin!(invocations)
-                .try_next()
-                .await
-                .expect("failed to accept invocation")
-                .expect("unexpected end of stream");
-            assert!(rx.is_none());
+                .expect("failed to read invocation header");
+            assert_eq!(header.instance, "foo");
+            assert_eq!(header.name, "bar");
+            let (params, tx) = serve(tx, rx, <(u32,) as Decode>::Decoder::default());
+            let (params, io) = params.await.expect("failed to receive parameters");
             assert_eq!(params, (42,));
-            tx(("test",)).await.expect("failed to transmit response");
+            let tx = tx
+                .send(<(&str,) as Encode>::Encoder::default(), ("test",))
+                .expect("failed to encode response");
+            tx.await.expect("failed to transmit response");
+            io.await.expect("invocation failed");
         }
     );
     Ok(())
@@ -690,37 +835,49 @@ where
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 #[instrument(ret)]
-async fn rust_oneshot_no_params_open_outgoing() -> anyhow::Result<()> {
-    use wrpc::Invoke as _;
-
-    let (clt, srv) = Oneshot::duplex(1024);
+async fn rust_oneshot_no_params() -> anyhow::Result<()> {
+    let (clt, srv) = duplex(1024);
+    let (mut clt_rx, mut clt_tx) = split(clt);
     let (rx, tx) = split(srv);
-    let srv = Arc::new(wrpc_transport::frame::Server::default());
-    let invocations = srv.serve_values::<(), (&str,)>("foo", "bar").await?;
     let fut = async {
         join!(
             async {
-                let (_tx, mut rx) = clt
-                    .invoke((), "foo", "bar", &[[]; 0])
+                let mut buf = BytesMut::default();
+                HeaderEncoder
+                    .encode(
+                        HeaderRef {
+                            instance: "foo",
+                            name: "bar",
+                        },
+                        &mut buf,
+                    )
+                    .expect("failed to encode invocation");
+                buf.extend_from_slice(b"\0\0");
+                clt_tx
+                    .write_all(&buf)
                     .await
                     .expect("failed to invoke `foo.bar`");
                 let mut res = Vec::default();
-                rx.read_to_end(&mut res)
+                clt_rx
+                    .read_to_end(&mut res)
                     .await
                     .expect("failed to read results");
-                assert_eq!(res, b"\x04test");
+                assert_eq!(res, b"\0\x05\x04test\0\0");
+                drop(clt_tx);
             },
             async {
-                srv.accept((), tx, BufReader::new(rx))
+                let (header, rx) = Header::read(rx)
                     .await
-                    .expect("failed to accept connection");
-                let ((), (), rx, tx) = pin!(invocations)
-                    .try_next()
-                    .await
-                    .expect("failed to accept invocation")
-                    .expect("unexpected end of stream");
-                assert!(rx.is_none());
-                tx(("test",)).await.expect("failed to transmit response");
+                    .expect("failed to read invocation header");
+                assert_eq!(header.instance, "foo");
+                assert_eq!(header.name, "bar");
+                let (params, tx) = serve(tx, rx, <() as Decode>::Decoder::default());
+                let ((), io) = params.await.expect("failed to receive parameters");
+                let tx = tx
+                    .send(<(&str,) as Encode>::Encoder::default(), ("test",))
+                    .expect("failed to encode response");
+                tx.await.expect("failed to transmit response");
+                io.await.expect("invocation failed");
             }
         )
     };
@@ -730,41 +887,98 @@ async fn rust_oneshot_no_params_open_outgoing() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[test_log::test(tokio::test)]
+async fn rust_reuse_streams() -> anyhow::Result<()> {
+    let (clt, srv) = duplex(1024);
+    let (mut clt_rx, mut clt_tx) = split(clt);
+    let (srv_rx, mut srv_tx) = split(srv);
+    try_join!(
+        async {
+            for n in [1u32, 2] {
+                let (m,) = invoke_blocking(
+                    &mut clt_tx,
+                    &mut clt_rx,
+                    "foo",
+                    "bar",
+                    <(u32,) as Encode>::Encoder::default(),
+                    (n,),
+                    <(u32,) as Decode>::Decoder::default(),
+                )
+                .await?;
+                ensure!(m == n + 1);
+            }
+            anyhow::Ok(())
+        },
+        async {
+            let mut rx = FramedRead::new(srv_rx, HeaderDecoder::default());
+            for _ in 0..2 {
+                let Some(Header { instance, name }) = rx.try_next().await? else {
+                    bail!("stream ended");
+                };
+                ensure!(instance == "foo" && name == "bar");
+                let mut frames = rx.map_decoder(|_| FrameDecoder::default());
+                let (params, outgoing) = serve(
+                    &mut srv_tx,
+                    &mut frames,
+                    <(u32,) as Decode>::Decoder::default(),
+                );
+                let ((n,), io) = params.await?;
+                io.await?;
+                let tx = outgoing.send(<(u32,) as Encode>::Encoder::default(), (n + 1,))?;
+                tx.await?;
+                rx = frames.map_decoder(|_| HeaderDecoder::default());
+            }
+            anyhow::Ok(())
+        },
+    )?;
+    Ok(())
+}
+
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 #[instrument(ret)]
 async fn rust_oneshot_raw() -> anyhow::Result<()> {
-    let (clt, mut srv) = tokio::io::duplex(1024);
+    let (mut clt, mut srv) = duplex(1024);
 
     join!(
         async {
-            let (a,) = Oneshot::from(clt)
-                .invoke_values_blocking::<_, (String,)>((), "foo", "bar", (42,))
-                .await
-                .expect("failed to invoke `foo.bar`");
+            let (rx, tx) = split(&mut clt);
+            let (a,) = invoke_blocking(
+                tx,
+                rx,
+                "foo",
+                "bar",
+                <(u32,) as Encode>::Encoder::default(),
+                (42,),
+                <(String,) as Decode>::Decoder::default(),
+            )
+            .await
+            .expect("failed to invoke `foo.bar`");
             assert_eq!(a, "test");
         },
         async {
-            use tokio::io::AsyncWriteExt as _;
-            use tokio_util::codec::Encoder as _;
-            use wrpc_transport::Encode as _;
-
-            let mut req = Vec::default();
-            _ = srv.read_to_end(&mut req).await;
-            eprintln!("request: `{:?}`", Bytes::from(req));
+            let (header, rx) = Header::read(&mut srv).await.expect("failed to read header");
+            assert_eq!(header.instance, "foo");
+            assert_eq!(header.name, "bar");
+            let FramedParts { io, read_buf, .. } = rx.into_parts();
+            let mut req = [0; 5];
+            read_buf
+                .as_ref()
+                .chain(io)
+                .read_exact(&mut req)
+                .await
+                .expect("failed to read request");
+            assert_eq!(&req, b"\0\x01\x2a\0\0");
 
             let mut data = bytes::BytesMut::default();
-            let deferred: Option<wrpc_transport::DeferredFn<wrpc_transport::frame::Outgoing>> =
-                ("test",)
-                    .encode(&mut Default::default(), &mut data)
-                    .expect("failed to encode");
-            assert!(deferred.is_none());
+            let enc = <(&str,) as Encode>::Encoder::default();
+            wrpc_transport::pack(enc, ("test",), &mut data).expect("failed to encode");
 
             let mut res = bytes::BytesMut::default();
-            wrpc_transport::FrameEncoder
+            FrameEncoder
                 .encode(
-                    &wrpc_transport::Frame {
-                        path: Arc::default(),
-                        data: data.freeze(),
+                    FrameRef {
+                        path: &[],
+                        data: &data,
                     },
                     &mut res,
                 )
@@ -772,6 +986,10 @@ async fn rust_oneshot_raw() -> anyhow::Result<()> {
             eprintln!("response: `{res:?}`");
 
             srv.write_all(&res).await.expect("failed to write response");
+            srv.write_all(b"\0\0")
+                .await
+                .expect("failed to close response root");
+            drop(srv);
         }
     );
     Ok(())
@@ -797,30 +1015,31 @@ async fn rust_oneshot_raw_strings_invalid_utf8() -> anyhow::Result<()> {
         });
     }
 
-    let (clt, srv) = Oneshot::duplex(1024);
+    let (clt, srv) = duplex(1024);
+    let (clt_rx, clt_tx) = split(clt);
     let (rx, tx) = split(srv);
-    let srv = Arc::new(wrpc_transport::frame::Server::default());
-    let invocations = srv
-        .serve_values::<(), (Bytes,)>("wrpc-test:raw-strings/strings", "bar")
-        .await?;
     join!(
         async {
-            bindings::wrpc_test::raw_strings::strings::bar(&clt, ())
+            bindings::wrpc_test::raw_strings::strings::bar(clt_tx, clt_rx)
                 .await
                 .expect_err("invalid UTF-8 must be rejected");
         },
         async {
-            srv.accept((), tx, BufReader::new(rx))
+            let (header, rx) = Header::read(rx)
                 .await
-                .expect("failed to accept connection");
-            let (.., tx) = pin!(invocations)
-                .try_next()
-                .await
-                .expect("failed to accept invocation")
-                .expect("unexpected end of stream");
-            tx((Bytes::from_static(b"\xff"),))
-                .await
-                .expect("failed to transmit response");
+                .expect("failed to read invocation header");
+            assert_eq!(header.instance, "wrpc-test:raw-strings/strings");
+            assert_eq!(header.name, "bar");
+            let (params, tx) = serve(tx, rx, <() as Decode>::Decoder::default());
+            let ((), io) = params.await.expect("failed to receive parameters");
+            let tx = tx
+                .send(
+                    <(Bytes,) as Encode>::Encoder::default(),
+                    (Bytes::from_static(b"\xff"),),
+                )
+                .expect("failed to encode response");
+            tx.await.expect("failed to transmit response");
+            io.await.expect("invocation failed");
         }
     );
     Ok(())
@@ -880,34 +1099,34 @@ async fn rust_oneshot_raw_strings_invalid_utf8_result() -> anyhow::Result<()> {
         }
     }
 
-    let srv = Arc::new(wrpc_transport::frame::Server::default());
-    let invocations = bindings::serve(&*srv, Handler).await?;
-    let mut invocations = stream::select_all(invocations.into_iter().map(|(.., s)| s));
     for func in ["bar", "baz", "qux"] {
-        let (clt, conn) = Oneshot::duplex(1024);
-        let (rx, tx) = split(conn);
+        let (clt, srv) = duplex(1024);
+        let (clt_rx, clt_tx) = split(clt);
+        let (rx, tx) = split(srv);
         join!(
             async {
-                clt.invoke_values_blocking::<_, (String,)>(
-                    (),
+                invoke_blocking(
+                    clt_tx,
+                    clt_rx,
                     "wrpc-test:raw-strings/strings",
                     func,
+                    <() as Encode>::Encoder::default(),
                     (),
+                    <(String,) as Decode>::Decoder::default(),
                 )
                 .await
                 .expect_err("invalid UTF-8 must not be transmitted");
             },
             async {
-                srv.accept((), tx, BufReader::new(rx))
+                let (header, rx) = Header::read(rx)
                     .await
-                    .expect("failed to accept connection");
-                let invocation = invocations
-                    .try_next()
-                    .await
-                    .expect("failed to accept invocation")
-                    .expect("unexpected end of stream");
-                invocation
-                    .await
+                    .expect("failed to read invocation header");
+                let Ok(fut) =
+                    bindings::handle(&Handler, (), &header.instance, &header.name, tx, rx)
+                else {
+                    panic!("`{func}` is not exported");
+                };
+                fut.await
                     .expect_err("invalid UTF-8 must not be transmitted");
             }
         );
@@ -915,19 +1134,181 @@ async fn rust_oneshot_raw_strings_invalid_utf8_result() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[test_log::test(tokio::test)]
+async fn rust_oneshot_borrowed() -> anyhow::Result<()> {
+    mod bindings {
+        wit_bindgen_wrpc::generate!({
+            inline: "
+                package wrpc-test:borrowed;
+
+                world server {
+                    export greet: func(name: string) -> string;
+                }
+            ",
+        });
+    }
+
+    #[derive(Clone, Copy)]
+    struct Handler;
+
+    impl<C: Send> bindings::Handler<C> for Handler {
+        async fn greet(&self, _cx: C, name: String) -> anyhow::Result<String> {
+            Ok(format!("Hello, {name}"))
+        }
+    }
+
+    let mut req = BytesMut::default();
+    HeaderEncoder.encode(
+        HeaderRef {
+            instance: "",
+            name: "greet",
+        },
+        &mut req,
+    )?;
+    FrameEncoder.encode(
+        FrameRef {
+            path: &[],
+            data: b"\x05world",
+        },
+        &mut req,
+    )?;
+    FrameEncoder.encode(
+        FrameRef {
+            path: &[],
+            data: &[],
+        },
+        &mut req,
+    )?;
+    let mut res = Vec::default();
+    {
+        let invocations = bindings::serve(
+            stream::iter([std::io::Result::Ok(((), &mut res, req.as_ref()))]),
+            Handler,
+        );
+        let mut invocations = pin!(invocations);
+        let Some(invocation) = invocations.try_next().await? else {
+            bail!("no invocation accepted");
+        };
+        invocation.await?;
+    }
+    let (greeting,) = invoke_blocking(
+        sink(),
+        res.as_slice(),
+        "",
+        "greet",
+        <(&str,) as Encode>::Encoder::default(),
+        ("world",),
+        <(String,) as Decode>::Decoder::default(),
+    )
+    .await?;
+    assert_eq!(greeting, "Hello, world");
+    Ok(())
+}
+
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 #[instrument(ret)]
 async fn rust_oneshot_duplex() -> anyhow::Result<()> {
-    let (clt, srv) = Oneshot::duplex(1024);
+    let (clt, srv) = duplex(1024);
+    let (clt_rx, clt_tx) = split(clt);
     let (rx, tx) = split(srv);
-    assert_oneshot(clt, rx, tx).await
+    assert_oneshot(clt_tx, clt_rx, tx, rx).await
 }
 
 #[cfg(unix)]
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 #[instrument(ret)]
 async fn rust_oneshot_uds() -> anyhow::Result<()> {
-    let (clt, srv) = Oneshot::unix_pair()?;
-    let (rx, tx) = wrpc_transport::unix::split(srv);
-    assert_oneshot(clt, rx, tx).await
+    let (mut clt, srv) = tokio::net::UnixStream::pair()?;
+    let (clt_rx, clt_tx) = clt.split();
+    let (rx, tx) = srv.into_split();
+    assert_oneshot(clt_tx, clt_rx, tx, rx).await
+}
+
+#[test_log::test(tokio::test)]
+async fn rust_stream_of_futures() -> anyhow::Result<()> {
+    fn pending(rx: oneshot::Receiver<u8>) -> BoxFuture<'static, u8> {
+        Box::pin(async { rx.await.unwrap() })
+    }
+
+    async fn next<const N: usize>(
+        s: &mut BoxStream<'static, Vec<BoxFuture<'static, u8>>>,
+    ) -> anyhow::Result<[BoxFuture<'static, u8>; N]> {
+        let chunk = time::timeout(Duration::from_secs(5), s.next()).await?;
+        let chunk = chunk.context("stream ended")?;
+        let Ok(chunk) = chunk.try_into() else {
+            bail!("unexpected chunk length");
+        };
+        Ok(chunk)
+    }
+
+    async fn resolve(f: BoxFuture<'static, u8>) -> anyhow::Result<u8> {
+        let v = time::timeout(Duration::from_secs(5), f).await?;
+        Ok(v)
+    }
+
+    let (clt_tx, srv_rx) = duplex(1024);
+    let (srv_tx, clt_rx) = duplex(1024);
+    let (chunks_tx, mut chunks_rx) = mpsc::unbounded_channel();
+    let s: BoxStream<'static, Vec<BoxFuture<'static, u8>>> =
+        Box::pin(stream::poll_fn(move |cx| chunks_rx.poll_recv(cx)));
+    let srv = async move {
+        let (.., srv_rx) = Header::read(srv_rx).await?;
+        let (params, results) = serve(
+            srv_tx,
+            srv_rx,
+            <(BoxStream<'static, Vec<BoxFuture<'static, u8>>>,) as Decode>::Decoder::default(),
+        );
+        let ((s,), io) = params.await?;
+        let tx = results.send(<() as Encode>::Encoder::default(), ())?;
+        tx.await?;
+        anyhow::Ok((s, io))
+    };
+    let clt = invoke(
+        clt_tx,
+        clt_rx,
+        "test",
+        "f",
+        <(BoxStream<'static, Vec<BoxFuture<'static, u8>>>,) as Encode>::Encoder::default(),
+        (s,),
+        <() as Decode>::Decoder::default(),
+    );
+    let ((mut s, srv_io), ((), clt_io)) = try_join!(srv, async {
+        clt.await.context("failed to invoke `test.f`")
+    })?;
+    let srv_io = spawn(srv_io);
+    let clt_io = spawn(clt_io);
+
+    let (p0_tx, p0_rx) = oneshot::channel();
+    let Ok(()) = chunks_tx.send(vec![pending(p0_rx), Box::pin(future::ready(1))]) else {
+        bail!("stream dropped");
+    };
+    let [f0, f1] = next(&mut s).await?;
+    let f1 = resolve(f1).await?;
+    assert_eq!(f1, 1);
+    _ = p0_tx.send(10);
+    let f0 = resolve(f0).await?;
+    assert_eq!(f0, 10);
+
+    let (p2_tx, p2_rx) = oneshot::channel();
+    let Ok(()) = chunks_tx.send(vec![pending(p2_rx), Box::pin(future::ready(3))]) else {
+        bail!("stream dropped");
+    };
+    let [f2, f3] = next(&mut s).await?;
+    let f3 = resolve(f3).await?;
+    assert_eq!(f3, 3);
+    _ = p2_tx.send(12);
+    let f2 = resolve(f2).await?;
+    assert_eq!(f2, 12);
+
+    let Ok(()) = chunks_tx.send(vec![Box::pin(future::ready(4))]) else {
+        bail!("stream dropped");
+    };
+    let [f4] = next(&mut s).await?;
+    let f4 = resolve(f4).await?;
+    assert_eq!(f4, 4);
+    drop(chunks_tx);
+    assert!(s.next().await.is_none());
+    srv_io.await??;
+    clt_io.await??;
+    Ok(())
 }

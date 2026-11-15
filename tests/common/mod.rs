@@ -4,16 +4,20 @@ use core::time::Duration;
 use anyhow::{Context as _, bail, ensure};
 use bytes::Bytes;
 use futures::{StreamExt as _, future, stream};
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::oneshot;
 use tokio::task::yield_now;
 use tokio::time::timeout;
 use tokio::{join, try_join};
 use tracing::info;
 
-pub async fn assert_async<C: Clone>(
-    cx: C,
-    client: &impl wrpc_transport::Invoke<Context = C>,
-) -> anyhow::Result<()> {
+pub async fn assert_async<F, I, O, E>(connect: impl Fn() -> F) -> anyhow::Result<()>
+where
+    F: Future<Output = Result<(O, I), E>>,
+    I: AsyncRead + Send + Unpin,
+    O: AsyncWrite + Send + Unpin,
+    E: core::error::Error + Send + Sync + 'static,
+{
     wit_bindgen_wrpc::generate!({
         world: "async-client",
         path: "tests/wit",
@@ -27,7 +31,8 @@ pub async fn assert_async<C: Clone>(
     }
 
     info!("calling `wrpc-test:integration/async.with-streams`");
-    let ((a, b), io) = wrpc_test::integration::async_::with_streams(client, cx.clone())
+    let (tx, rx) = connect().await.context("failed to connect")?;
+    let ((a, b), io) = wrpc_test::integration::async_::with_streams(tx, rx)
         .await
         .context("failed to call `wrpc-test:integration/async.with-streams`")?;
     join!(
@@ -43,17 +48,16 @@ pub async fn assert_async<C: Clone>(
             );
         },
         async {
-            if let Some(io) = io {
-                info!("performing I/O");
-                io.await.expect("failed to complete async I/O");
-            }
+            info!("performing I/O");
+            io.await.expect("failed to complete async I/O");
         }
     );
 
     info!("calling `wrpc-test:integration/async.with-future`");
+    let (tx, rx) = connect().await.context("failed to connect")?;
     let (fut, io) = wrpc_test::integration::async_::with_future(
-        client,
-        cx.clone(),
+        tx,
+        rx,
         &wrpc_test::integration::async_::Something {
             foo: "bar".to_string(),
         },
@@ -67,19 +71,18 @@ pub async fn assert_async<C: Clone>(
             assert_eq!(fut.await.collect::<Vec<Bytes>>().await.concat(), b"foobar");
         },
         async {
-            if let Some(io) = io {
-                info!("performing I/O");
-                io.await.expect("failed to complete async I/O");
-            }
+            info!("performing I/O");
+            io.await.expect("failed to complete async I/O");
         }
     );
 
     info!("calling `wrpc-test:integration/async.identity-future`");
-    let (tx, rx) = oneshot::channel();
+    let (fut_tx, fut_rx) = oneshot::channel();
+    let (tx, rx) = connect().await.context("failed to connect")?;
     let (mut fut, io) = wrpc_test::integration::async_::identity_future(
-        client,
-        cx.clone(),
-        Box::pin(async { rx.await.expect("sender dropped") }),
+        tx,
+        rx,
+        Box::pin(async { fut_rx.await.expect("sender dropped") }),
     )
     .await
     .context("failed to call `wrpc-test:integration/async.identity-future`")?;
@@ -90,15 +93,13 @@ pub async fn assert_async<C: Clone>(
                 timeout(Duration::from_millis(100), &mut fut).await.is_err(),
                 "future resolved before its parameter"
             );
-            tx.send(()).expect("receiver dropped");
+            fut_tx.send(()).expect("receiver dropped");
             fut.await;
             Ok(())
         },
         async {
-            if let Some(io) = io {
-                info!("performing I/O");
-                io.await.context("failed to complete async I/O")?;
-            }
+            info!("performing I/O");
+            io.await.context("failed to complete async I/O")?;
             Ok(())
         }
     )?;
@@ -107,9 +108,10 @@ pub async fn assert_async<C: Clone>(
     let (o_tx, o_rx) = oneshot::channel();
     let (r_tx, r_rx) = oneshot::channel();
     let (v_tx, v_rx) = oneshot::channel();
+    let (tx, rx) = connect().await.context("failed to connect")?;
     let ((o, r, v), io) = wrpc_test::integration::async_::identity_cases(
-        client,
-        cx.clone(),
+        tx,
+        rx,
         Some(Box::pin(async { o_rx.await.expect("sender dropped") })),
         Err(Box::pin(async { r_rx.await.expect("sender dropped") })),
         wrpc_test::integration::async_::AsyncCase::Fut(Box::pin(async {
@@ -143,10 +145,8 @@ pub async fn assert_async<C: Clone>(
             Ok(())
         },
         async {
-            if let Some(io) = io {
-                info!("performing I/O");
-                io.await.context("failed to complete async I/O")?;
-            }
+            info!("performing I/O");
+            io.await.context("failed to complete async I/O")?;
             Ok(())
         }
     )?;
@@ -160,9 +160,10 @@ pub async fn assert_async<C: Clone>(
         ]))),
     ] {
         info!(?v, "calling `wrpc-test:integration/async.identity-cases`");
+        let (tx, rx) = connect().await.context("failed to connect")?;
         let ((o, r, v), io) = wrpc_test::integration::async_::identity_cases(
-            client,
-            cx.clone(),
+            tx,
+            rx,
             None,
             Err(Box::pin(async { 42 })),
             v,
@@ -197,10 +198,8 @@ pub async fn assert_async<C: Clone>(
                 Ok(())
             },
             async {
-                if let Some(io) = io {
-                    info!("performing I/O");
-                    io.await.context("failed to complete async I/O")?;
-                }
+                info!("performing I/O");
+                io.await.context("failed to complete async I/O")?;
                 Ok(())
             }
         )?;
@@ -211,10 +210,13 @@ pub async fn assert_async<C: Clone>(
 
 /// Call every function of the `sync-client` world in `tests/wit` and check the
 /// results the `sync-server` world is expected to return.
-pub async fn assert_sync<C: Clone>(
-    cx: C,
-    client: &impl wrpc_transport::Invoke<Context = C>,
-) -> anyhow::Result<()> {
+pub async fn assert_sync<F, I, O, E>(connect: impl Fn() -> F) -> anyhow::Result<()>
+where
+    F: Future<Output = Result<(O, I), E>>,
+    I: AsyncRead + Send + Unpin,
+    O: AsyncWrite + Send + Unpin,
+    E: core::error::Error + Send + Sync + 'static,
+{
     mod bindings {
         wit_bindgen_wrpc::generate!({
             world: "sync-client",
@@ -229,30 +231,35 @@ pub async fn assert_sync<C: Clone>(
     use bindings::{foo, strange};
 
     info!("calling `wrpc-test:integration/sync-client.foo.f`");
-    let v = foo::f(client, cx.clone(), "f")
+    let (tx, rx) = connect().await.context("failed to connect")?;
+    let v = foo::f(tx, rx, "f")
         .await
         .context("failed to call `wrpc-test:integration/sync-client.foo.f`")?;
     ensure!(v == 42);
 
     info!("calling `wrpc-test:integration/sync-client.foo.foo`");
-    foo::foo(client, cx.clone(), "foo")
+    let (tx, rx) = connect().await.context("failed to connect")?;
+    foo::foo(tx, rx, "foo")
         .await
         .context("failed to call `wrpc-test:integration/sync-client.foo.foo`")?;
 
     info!("calling `wrpc-test:integration/sync.fallible`");
-    let res = sync::fallible(client, cx.clone(), true)
+    let (tx, rx) = connect().await.context("failed to connect")?;
+    let res = sync::fallible(tx, rx, true)
         .await
         .context("failed to call `wrpc-test:integration/sync.fallible`")?;
     ensure!(res == Ok(true));
 
     info!("calling `wrpc-test:integration/sync.fallible`");
-    let res = sync::fallible(client, cx.clone(), false)
+    let (tx, rx) = connect().await.context("failed to connect")?;
+    let res = sync::fallible(tx, rx, false)
         .await
         .context("failed to call `wrpc-test:integration/sync.fallible`")?;
     ensure!(res == Err("test".to_string()));
 
     info!("calling `wrpc-test:integration/sync.numbers`");
-    let (a, b, c, d, e, f, g, h, i, j) = sync::numbers(client, cx.clone())
+    let (tx, rx) = connect().await.context("failed to connect")?;
+    let (a, b, c, d, e, f, g, h, i, j) = sync::numbers(tx, rx)
         .await
         .context("failed to call `wrpc-test:integration/sync.numbers`")?;
     ensure!(a == 1);
@@ -267,19 +274,22 @@ pub async fn assert_sync<C: Clone>(
     ensure!(j == 10.);
 
     info!("calling `wrpc-test:integration/sync.with-flags`");
-    let v = sync::with_flags(client, cx.clone(), true, false, true)
+    let (tx, rx) = connect().await.context("failed to connect")?;
+    let v = sync::with_flags(tx, rx, true, false, true)
         .await
         .context("failed to call `wrpc-test:integration/sync.with-flags`")?;
     ensure!(v == Abc::A | Abc::C, "{v:?}");
 
     info!("calling `wrpc-test:integration/sync.with-variant-option`");
-    let v = sync::with_variant_option(client, cx.clone(), false)
+    let (tx, rx) = connect().await.context("failed to connect")?;
+    let v = sync::with_variant_option(tx, rx, false)
         .await
         .context("failed to call `wrpc-test:integration/sync.with-variant-option`")?;
     ensure!(v.is_none(), "{v:?}");
 
     info!("calling `wrpc-test:integration/sync.with-variant-option`");
-    let v = sync::with_variant_option(client, cx.clone(), true)
+    let (tx, rx) = connect().await.context("failed to connect")?;
+    let v = sync::with_variant_option(tx, rx, true)
         .await
         .context("failed to call `wrpc-test:integration/sync.with-variant-option`")?;
     ensure!(
@@ -292,7 +302,8 @@ pub async fn assert_sync<C: Clone>(
     );
 
     info!("calling `wrpc-test:integration/sync.with-variant-list`");
-    let v = sync::with_variant_list(client, cx.clone())
+    let (tx, rx) = connect().await.context("failed to connect")?;
+    let v = sync::with_variant_list(tx, rx)
         .await
         .context("failed to call `wrpc-test:integration/sync.with-variant-list`")?;
     ensure!(
@@ -316,7 +327,8 @@ pub async fn assert_sync<C: Clone>(
     );
 
     info!("calling `wrpc-test:integration/sync.with-record`");
-    let v = sync::with_record(client, cx.clone())
+    let (tx, rx) = connect().await.context("failed to connect")?;
+    let v = sync::with_record(tx, rx)
         .await
         .context("failed to call `wrpc-test:integration/sync.with-record`")?;
     ensure!(
@@ -329,13 +341,15 @@ pub async fn assert_sync<C: Clone>(
     );
 
     info!("calling `wrpc-test:integration/sync.with-record-list`");
-    let v = sync::with_record_list(client, cx.clone(), 0)
+    let (tx, rx) = connect().await.context("failed to connect")?;
+    let v = sync::with_record_list(tx, rx, 0)
         .await
         .context("failed to call `wrpc-test:integration/sync.with-record-list`")?;
     ensure!(v.is_empty(), "{v:?}");
 
     info!("calling `wrpc-test:integration/sync.with-record-list`");
-    let v = sync::with_record_list(client, cx.clone(), 3)
+    let (tx, rx) = connect().await.context("failed to connect")?;
+    let v = sync::with_record_list(tx, rx, 3)
         .await
         .context("failed to call `wrpc-test:integration/sync.with-record-list`")?;
     ensure!(
@@ -360,7 +374,8 @@ pub async fn assert_sync<C: Clone>(
     );
 
     info!("calling `wrpc-test:integration/sync.with-record-tuple`");
-    let v = sync::with_record_tuple(client, cx.clone())
+    let (tx, rx) = connect().await.context("failed to connect")?;
+    let v = sync::with_record_tuple(tx, rx)
         .await
         .context("failed to call `wrpc-test:integration/sync.with-record-tuple`")?;
     ensure!(
@@ -380,14 +395,16 @@ pub async fn assert_sync<C: Clone>(
     );
 
     info!("calling `wrpc-test:integration/sync.with-enum`");
-    let v = sync::with_enum(client, cx.clone())
+    let (tx, rx) = connect().await.context("failed to connect")?;
+    let v = sync::with_enum(tx, rx)
         .await
         .context("failed to call `wrpc-test:integration/sync.with-enum`")?;
     ensure!(v == Foobar::Bar, "{v:?}");
 
     for c in ['a', 'é', '🚩'] {
         info!("calling `wrpc-test:integration/sync.identity-char`");
-        let v = sync::identity_char(client, cx.clone(), c)
+        let (tx, rx) = connect().await.context("failed to connect")?;
+        let v = sync::identity_char(tx, rx, c)
             .await
             .context("failed to call `wrpc-test:integration/sync.identity-char`")?;
         ensure!(v == c, "{v:?}");
@@ -402,77 +419,90 @@ pub async fn assert_sync<C: Clone>(
             .as_ref()
             .map(|b| b.iter().map(String::as_str).collect::<Vec<_>>());
         info!("calling `wrpc-test:integration/sync.identity-option-lists`");
-        let v = sync::identity_option_lists(client, cx.clone(), a.as_ref(), b_ref.as_deref())
+        let (tx, rx) = connect().await.context("failed to connect")?;
+        let v = sync::identity_option_lists(tx, rx, a.as_ref(), b_ref.as_deref())
             .await
             .context("failed to call `wrpc-test:integration/sync.identity-option-lists`")?;
         ensure!(v == (a, b), "{v:?}");
     }
 
     info!("calling `wrpc-test:integration/sync-client.ping`");
-    let v = bindings::ping(client, cx.clone())
+    let (tx, rx) = connect().await.context("failed to connect")?;
+    let v = bindings::ping(tx, rx)
         .await
         .context("failed to call `wrpc-test:integration/sync-client.ping`")?;
     ensure!(v == "pong", "{v:?}");
 
     info!("calling `wrpc-test:integration/resources.[constructor]foo`");
-    let res = Foo::new(client, cx.clone())
+    let (tx, rx) = connect().await.context("failed to connect")?;
+    let res = Foo::new(tx, rx)
         .await
         .context("failed to call `wrpc-test:integration/resources.[constructor]foo`")?;
 
     info!("calling `wrpc-test:integration/resources.[method]foo.bar`");
-    let v = Foo::bar(client, cx.clone(), &res.as_borrow())
+    let (tx, rx) = connect().await.context("failed to connect")?;
+    let v = Foo::bar(tx, rx, &res.as_borrow())
         .await
         .context("failed to call `wrpc-test:integration/resources.[method]foo.bar`")?;
     ensure!(v == "bar", "{v:?}");
 
     info!("calling `wrpc-test:integration/resources.bar`");
-    let v = resources::bar(client, cx.clone(), &res.as_borrow())
+    let (tx, rx) = connect().await.context("failed to connect")?;
+    let v = resources::bar(tx, rx, &res.as_borrow())
         .await
         .context("failed to call `wrpc-test:integration/resources.bar`")?;
     ensure!(v == "bar", "{v:?}");
 
     info!("calling `wrpc-test:integration/sync-client.strange.bar`");
-    let v = strange::bar(client, cx.clone(), &res.as_borrow())
+    let (tx, rx) = connect().await.context("failed to connect")?;
+    let v = strange::bar(tx, rx, &res.as_borrow())
         .await
         .context("failed to call `wrpc-test:integration/sync-client.strange.bar`")?;
     ensure!(v == 42, "{v:?}");
 
     info!("calling `wrpc-test:integration/resources.[static]foo.foo`");
-    let v = Foo::foo(client, cx.clone(), &res)
+    let (tx, rx) = connect().await.context("failed to connect")?;
+    let v = Foo::foo(tx, rx, &res)
         .await
         .context("failed to call `wrpc-test:integration/resources.[static]foo.foo`")?;
     ensure!(v == "foo", "{v:?}");
 
     info!("calling `wrpc-test:integration/resources.[constructor]counter`");
-    let a = Counter::new(client, cx.clone(), 1)
+    let (tx, rx) = connect().await.context("failed to connect")?;
+    let a = Counter::new(tx, rx, 1)
         .await
         .context("failed to call `wrpc-test:integration/resources.[constructor]counter`")?;
 
     info!("calling `wrpc-test:integration/resources.[method]counter.increment-by`");
-    Counter::increment_by(client, cx.clone(), &a.as_borrow(), 2)
+    let (tx, rx) = connect().await.context("failed to connect")?;
+    Counter::increment_by(tx, rx, &a.as_borrow(), 2)
         .await
         .context("failed to call `wrpc-test:integration/resources.[method]counter.increment-by`")?;
 
     info!("calling `wrpc-test:integration/resources.[method]counter.get-count`");
-    let v = Counter::get_count(client, cx.clone(), &a.as_borrow())
+    let (tx, rx) = connect().await.context("failed to connect")?;
+    let v = Counter::get_count(tx, rx, &a.as_borrow())
         .await
         .context("failed to call `wrpc-test:integration/resources.[method]counter.get-count`")?;
     ensure!(v == 3, "{v:?}");
 
     info!("calling `wrpc-test:integration/resources.[method]counter.clone-counter`");
-    let b = Counter::clone_counter(client, cx.clone(), &a.as_borrow())
+    let (tx, rx) = connect().await.context("failed to connect")?;
+    let b = Counter::clone_counter(tx, rx, &a.as_borrow())
         .await
         .context(
             "failed to call `wrpc-test:integration/resources.[method]counter.clone-counter`",
         )?;
 
     info!("calling `wrpc-test:integration/resources.[method]counter.increment-by`");
-    Counter::increment_by(client, cx.clone(), &b.as_borrow(), 1)
+    let (tx, rx) = connect().await.context("failed to connect")?;
+    Counter::increment_by(tx, rx, &b.as_borrow(), 1)
         .await
         .context("failed to call `wrpc-test:integration/resources.[method]counter.increment-by`")?;
 
     info!("calling `wrpc-test:integration/resources.[static]counter.sum`");
-    let v = Counter::sum(client, cx, &a.as_borrow(), &b.as_borrow())
+    let (tx, rx) = connect().await.context("failed to connect")?;
+    let v = Counter::sum(tx, rx, &a.as_borrow(), &b.as_borrow())
         .await
         .context("failed to call `wrpc-test:integration/resources.[static]counter.sum`")?;
     ensure!(v == 7, "{v:?}");

@@ -1,11 +1,15 @@
 use crate::client::test::strings::to_test::*;
 
 pub async fn run(
-    wrpc: &impl ::wit_bindgen_wrpc::wrpc_transport::Invoke<Context = ()>,
+    wrpc: &crate::Client,
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
-    take_basic(wrpc, (), "latin utf16").await?;
-    assert_eq!(return_unicode(wrpc, ()).await?, "🚀🚀🚀 𠈄𓀀");
-    assert_eq!(return_empty(wrpc, ()).await?, "");
-    assert_eq!(roundtrip(wrpc, (), "🚀🚀🚀 𠈄𓀀").await?, "🚀🚀🚀 𠈄𓀀");
+    let (tx, rx) = wrpc.connect().await?;
+    take_basic(tx, rx, "latin utf16").await?;
+    let (tx, rx) = wrpc.connect().await?;
+    assert_eq!(return_unicode(tx, rx).await?, "🚀🚀🚀 𠈄𓀀");
+    let (tx, rx) = wrpc.connect().await?;
+    assert_eq!(return_empty(tx, rx).await?, "");
+    let (tx, rx) = wrpc.connect().await?;
+    assert_eq!(roundtrip(tx, rx, "🚀🚀🚀 𠈄𓀀").await?, "🚀🚀🚀 𠈄𓀀");
     Ok(())
 }

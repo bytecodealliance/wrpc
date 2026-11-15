@@ -39,5 +39,4 @@ tracing-subscriber = { workspace = true, features = [
     "fmt",
 ] }
 wit-bindgen-wrpc = { workspace = true }
-wrpc-transport = { workspace = true }
 wrpc-quic = { workspace = true }

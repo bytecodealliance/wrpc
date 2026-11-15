@@ -1,111 +1,51 @@
 //! wRPC HTTP transport
 
-use core::ops::{Deref, DerefMut};
 use core::pin::Pin;
-use core::sync::atomic::{AtomicBool, Ordering};
-use core::task::{Context, Poll, Waker, ready};
-
-use std::collections::VecDeque;
-use std::io::IoSlice;
-use std::sync::Arc;
+use core::task::{Context, Poll, ready};
 
 use bytes::{Bytes, BytesMut};
-use futures::{Stream, TryStreamExt as _, stream};
+use futures::stream::BoxStream;
+use futures::{Stream, StreamExt as _, TryStreamExt as _, stream};
 use http_body::Frame;
 use http_body_util::combinators::MapErr;
 use http_body_util::{BodyDataStream, BodyExt as _};
 use pin_project_lite::pin_project;
-use tokio::io::{AsyncReadExt as _, AsyncWrite, ReadHalf, SimplexStream, WriteHalf, simplex};
+use tokio::io::{AsyncReadExt as _, DuplexStream, duplex};
+use tokio::sync::mpsc;
 use tokio_util::io::{StreamReader, poll_read_buf};
 
 /// Body buffer size
 pub const DEFAULT_BODY_BUFFER_SIZE: usize = 8192;
 
+/// Reader of the data of a request body, see [Server]
 pub type IncomingBodyDataReader = StreamReader<
     BodyDataStream<MapErr<hyper::body::Incoming, fn(hyper::Error) -> std::io::Error>>,
     Bytes,
 >;
 
-/// Writer of the data of an [`OutgoingBody`], which fails the body once dropped before being
-/// shut down
-#[derive(Debug)]
-pub struct OutgoingBodyDataWriter {
-    stream: WriteHalf<SimplexStream>,
-    aborted: Arc<AtomicBool>,
-    shutdown: bool,
-}
-
-impl Drop for OutgoingBodyDataWriter {
-    fn drop(&mut self) {
-        if !self.shutdown {
-            self.aborted.store(true, Ordering::Relaxed);
-            _ = Pin::new(&mut self.stream).poll_shutdown(&mut Context::from_waker(Waker::noop()));
-        }
-    }
-}
-
-impl AsyncWrite for OutgoingBodyDataWriter {
-    fn poll_write(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &[u8],
-    ) -> Poll<std::io::Result<usize>> {
-        Pin::new(&mut self.get_mut().stream).poll_write(cx, buf)
-    }
-
-    fn poll_write_vectored(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        bufs: &[IoSlice<'_>],
-    ) -> Poll<std::io::Result<usize>> {
-        Pin::new(&mut self.get_mut().stream).poll_write_vectored(cx, bufs)
-    }
-
-    fn is_write_vectored(&self) -> bool {
-        self.stream.is_write_vectored()
-    }
-
-    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        Pin::new(&mut self.get_mut().stream).poll_flush(cx)
-    }
-
-    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        let this = self.get_mut();
-        ready!(Pin::new(&mut this.stream).poll_shutdown(cx))?;
-        this.shutdown = true;
-        Poll::Ready(Ok(()))
-    }
-}
+/// Reader of the data of a response body, see [`data_reader_from_response`]
+pub type ResponseBodyReader = StreamReader<BoxStream<'static, std::io::Result<Bytes>>, Bytes>;
 
 pin_project! {
     #[project = OutgoingBodyProj]
     #[derive(Debug)]
     pub struct OutgoingBody {
-        chunks: VecDeque<Bytes>,
         buffer: BytesMut,
         #[pin]
-        stream: ReadHalf<SimplexStream>,
-        aborted: Arc<AtomicBool>,
+        stream: DuplexStream,
     }
 }
 
 impl OutgoingBody {
     #[must_use]
-    pub fn new(chunks: impl IntoIterator<Item = Bytes>) -> (Self, OutgoingBodyDataWriter) {
-        let (rx, tx) = simplex(DEFAULT_BODY_BUFFER_SIZE);
-        let aborted = Arc::<AtomicBool>::default();
+    pub fn new() -> (Self, DuplexStream) {
+        let (rx, tx) = duplex(DEFAULT_BODY_BUFFER_SIZE);
         (
             Self {
-                chunks: chunks.into_iter().filter(|buf| !buf.is_empty()).collect(),
                 buffer: BytesMut::default(),
                 stream: rx,
-                aborted: Arc::clone(&aborted),
             },
-            OutgoingBodyDataWriter {
-                stream: tx,
-                aborted,
-                shutdown: false,
-            },
+            tx,
         )
     }
 }
@@ -118,20 +58,11 @@ impl http_body::Body for OutgoingBody {
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
-        if let Some(buf) = self.chunks.pop_front() {
-            return Poll::Ready(Some(Ok(Frame::data(buf))));
-        }
-
         let this = self.as_mut().project();
         this.buffer.reserve(DEFAULT_BODY_BUFFER_SIZE);
         ready!(poll_read_buf(this.stream, cx, this.buffer))?;
         let buf = self.buffer.split().freeze();
-        if buf.is_empty() && self.aborted.load(Ordering::Relaxed) {
-            Poll::Ready(Some(Err(std::io::Error::new(
-                std::io::ErrorKind::BrokenPipe,
-                "body writer dropped before being shut down",
-            ))))
-        } else if buf.is_empty() {
+        if buf.is_empty() {
             Poll::Ready(None)
         } else {
             Poll::Ready(Some(Ok(Frame::data(buf))))
@@ -139,11 +70,8 @@ impl http_body::Body for OutgoingBody {
     }
 }
 
-pub fn new_request(
-    mut parts: http::request::Parts,
-    chunks: impl IntoIterator<Item = Bytes>,
-) -> (http::Request<OutgoingBody>, OutgoingBodyDataWriter) {
-    let (rx, tx) = OutgoingBody::new(chunks);
+pub fn new_request(mut parts: http::request::Parts) -> (http::Request<OutgoingBody>, DuplexStream) {
+    let (rx, tx) = OutgoingBody::new();
     parts.method = http::Method::POST;
     (http::Request::from_parts(parts, rx), tx)
 }
@@ -164,11 +92,13 @@ pub fn data_stream_from_incoming(
 }
 
 #[must_use]
-pub fn data_reader_from_incoming(body: hyper::body::Incoming) -> IncomingBodyDataReader {
-    StreamReader::new(
-        body.map_err(io_error_from_hyper as fn(_) -> _)
-            .into_data_stream(),
-    )
+pub fn data_reader_from_incoming(
+    body: hyper::body::Incoming,
+) -> StreamReader<
+    BodyDataStream<MapErr<hyper::body::Incoming, impl FnMut(hyper::Error) -> std::io::Error>>,
+    Bytes,
+> {
+    StreamReader::new(data_stream_from_incoming(body))
 }
 
 /// Returns a reader of the body of the response `res` resolves to.
@@ -179,7 +109,7 @@ pub fn data_reader_from_incoming(body: hyper::body::Incoming) -> IncomingBodyDat
 /// status and the first 4 KiB of the response body.
 pub fn data_reader_from_response<E>(
     res: impl Future<Output = Result<http::Response<hyper::body::Incoming>, E>> + Send + 'static,
-) -> StreamReader<impl Stream<Item = std::io::Result<Bytes>> + Send + Unpin, Bytes>
+) -> ResponseBodyReader
 where
     E: std::error::Error + Send + Sync + 'static,
 {
@@ -204,194 +134,92 @@ where
         Ok(data_stream_from_incoming(body))
     }))
     .try_flatten();
-    StreamReader::new(body)
+    StreamReader::new(body.boxed())
 }
 
-/// wRPC Server
-#[derive(Debug, Default)]
-#[repr(transparent)]
-pub struct Server(
-    pub  Arc<
-        wrpc_transport::frame::Server<
-            http::request::Parts,
-            IncomingBodyDataReader,
-            OutgoingBodyDataWriter,
-        >,
-    >,
-);
-
-impl Deref for Server {
-    type Target = Arc<
-        wrpc_transport::frame::Server<
-            http::request::Parts,
-            IncomingBodyDataReader,
-            OutgoingBodyDataWriter,
-        >,
-    >;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
+/// Creates a [Service], which passes each request to the [Server] as an invocation, waiting
+/// while `buffer` invocations are not yet accepted
+///
+/// # Panics
+///
+/// Panics if `buffer` is zero
+#[must_use]
+pub fn channel(buffer: usize) -> (Service, Server) {
+    let (tx, rx) = mpsc::channel(buffer);
+    (Service(tx), Server(rx))
 }
 
-impl DerefMut for Server {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
+/// [`hyper::service::Service`], which passes each request to the [Server] as an invocation,
+/// see [channel]
+#[derive(Clone, Debug)]
+pub struct Service(mpsc::Sender<(http::request::Parts, DuplexStream, IncomingBodyDataReader)>);
 
-impl<T> From<T> for Server
-where
-    T: Into<
-        Arc<
-            wrpc_transport::frame::Server<
-                http::request::Parts,
-                IncomingBodyDataReader,
-                OutgoingBodyDataWriter,
-            >,
-        >,
-    >,
-{
-    fn from(s: T) -> Self {
-        Self(s.into())
-    }
-}
-
-impl Server {
-    /// Construct a new [Server]
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-}
-
-impl hyper::service::Service<http::Request<hyper::body::Incoming>> for Server {
+impl hyper::service::Service<http::Request<hyper::body::Incoming>> for Service {
     type Response = http::Response<OutgoingBody>;
-    type Error = wrpc_transport::frame::AcceptError<
-        http::request::Parts,
-        IncomingBodyDataReader,
-        OutgoingBodyDataWriter,
-    >;
+    type Error = std::io::Error;
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
 
     fn call(&self, req: http::Request<hyper::body::Incoming>) -> Self::Future {
         let (parts, body) = req.into_parts();
-        let body = data_reader_from_incoming(body);
-        let (rx, tx) = OutgoingBody::new([]);
-        let srv = Arc::clone(&self.0);
+        let body = body
+            .map_err(io_error_from_hyper as fn(_) -> _)
+            .into_data_stream();
+        let body = StreamReader::new(body);
+        let (rx, tx) = OutgoingBody::new();
+        let srv = self.0.clone();
         Box::pin(async move {
-            srv.accept(parts, tx, body).await?;
+            if srv.send((parts, tx, body)).await.is_err() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::BrokenPipe,
+                    "server dropped",
+                ));
+            }
             Ok(http::Response::new(rx))
         })
     }
 }
 
-/// Client wrapper
-#[cfg(feature = "client")]
-#[derive(Clone, Debug, Default)]
-#[repr(transparent)]
-pub struct Client<T>(pub T);
+/// wRPC server, which yields the invocations passed to it by the [Service], see [channel].
+/// The stream ends once all [Service]s are dropped.
+#[derive(Debug)]
+pub struct Server(mpsc::Receiver<(http::request::Parts, DuplexStream, IncomingBodyDataReader)>);
 
-#[cfg(feature = "client")]
-impl<T> Deref for Client<T> {
-    type Target = T;
+impl Stream for Server {
+    type Item = Result<
+        (http::request::Parts, DuplexStream, IncomingBodyDataReader),
+        core::convert::Infallible,
+    >;
 
-    fn deref(&self) -> &Self::Target {
-        &self.0
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        self.0.poll_recv(cx).map(|item| item.map(Ok))
     }
 }
 
-#[cfg(feature = "client")]
-impl<T> DerefMut for Client<T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
-
-#[cfg(feature = "client")]
-impl<T> From<T> for Client<T> {
-    fn from(c: T) -> Self {
-        Self(c)
-    }
-}
-
-#[cfg(feature = "client")]
-impl<T> Client<T> {
-    pub fn new(c: T) -> Self {
-        Self(c)
-    }
-}
-
+/// Sends a wRPC invocation request with `parts` on `sender`, returning the request body writer
+/// and the response body reader
 #[cfg(all(feature = "client", feature = "http2"))]
-impl wrpc_transport::Invoke for Client<hyper::client::conn::http2::SendRequest<OutgoingBody>> {
-    type Context = http::request::Parts;
-
-    #[tracing::instrument(level = "trace", skip(self, cx, paths))]
-    async fn invoke<P>(
-        &self,
-        cx: Self::Context,
-        instance: &str,
-        func: &str,
-        paths: impl AsRef<[P]> + Send,
-    ) -> anyhow::Result<(
-        wrpc_transport::frame::Outgoing,
-        wrpc_transport::frame::Incoming,
-    )>
-    where
-        P: AsRef<[Option<usize>]> + Send + Sync,
-    {
-        use anyhow::Context as _;
-
-        let mut sender = self.0.clone();
-        sender.ready().await.context("HTTP connection closed")?;
-
-        let mut buf = BytesMut::default();
-        wrpc_transport::frame::encode_invocation(&mut buf, instance, func)
-            .context("failed to encode invocation")?;
-        let (req, tx) = new_request(cx, [buf.freeze()]);
-
-        let rx = data_reader_from_response(sender.send_request(req));
-
-        Ok((
-            wrpc_transport::frame::Outgoing::new(tx),
-            wrpc_transport::frame::Incoming::new(rx, paths.as_ref()),
-        ))
-    }
+#[tracing::instrument(level = "trace", skip_all)]
+pub async fn open(
+    mut sender: hyper::client::conn::http2::SendRequest<OutgoingBody>,
+    parts: http::request::Parts,
+) -> Result<(DuplexStream, ResponseBodyReader), hyper::Error> {
+    sender.ready().await?;
+    let (req, tx) = new_request(parts);
+    let rx = data_reader_from_response(sender.send_request(req));
+    Ok((tx, rx))
 }
 
+/// Sends a wRPC invocation request with `parts` using `client`, returning the request body writer
+/// and the response body reader
 #[cfg(feature = "client-legacy")]
-impl<C> wrpc_transport::Invoke for Client<hyper_util::client::legacy::Client<C, OutgoingBody>>
+pub fn open_pooled<C>(
+    client: &hyper_util::client::legacy::Client<C, OutgoingBody>,
+    parts: http::request::Parts,
+) -> (DuplexStream, ResponseBodyReader)
 where
     C: hyper_util::client::legacy::connect::Connect + Clone + Send + Sync + 'static,
 {
-    type Context = http::request::Parts;
-
-    #[tracing::instrument(level = "trace", skip(self, cx, paths))]
-    async fn invoke<P>(
-        &self,
-        cx: Self::Context,
-        instance: &str,
-        func: &str,
-        paths: impl AsRef<[P]> + Send,
-    ) -> anyhow::Result<(
-        wrpc_transport::frame::Outgoing,
-        wrpc_transport::frame::Incoming,
-    )>
-    where
-        P: AsRef<[Option<usize>]> + Send + Sync,
-    {
-        use anyhow::Context as _;
-
-        let mut buf = BytesMut::default();
-        wrpc_transport::frame::encode_invocation(&mut buf, instance, func)
-            .context("failed to encode invocation")?;
-        let (req, tx) = new_request(cx, [buf.freeze()]);
-
-        let rx = data_reader_from_response(self.0.request(req));
-
-        Ok((
-            wrpc_transport::frame::Outgoing::new(tx),
-            wrpc_transport::frame::Incoming::new(rx, paths.as_ref()),
-        ))
-    }
+    let (req, tx) = new_request(parts);
+    let rx = data_reader_from_response(client.request(req));
+    (tx, rx)
 }

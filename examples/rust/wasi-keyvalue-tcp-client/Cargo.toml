@@ -21,12 +21,11 @@ clap = { workspace = true, features = [
     "suggestions",
     "usage",
 ] }
-tokio = { workspace = true, features = ["rt-multi-thread"] }
+tokio = { workspace = true, features = ["net", "rt-multi-thread"] }
 tracing-subscriber = { workspace = true, features = [
     "ansi",
     "env-filter",
     "fmt",
 ] }
 url = { workspace = true }
-wrpc-transport = { workspace = true, features = ["net"] }
 wrpc-wasi-keyvalue = { workspace = true }
