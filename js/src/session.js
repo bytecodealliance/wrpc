@@ -81,10 +81,9 @@ async function writeFuture(out, ty, value) {
   /** @type {any[]} */
   const sink = [];
   if (ty) encodeValue(w, ty, v, sink, [0]);
-  const bytes = w.finish();
-  await out.write(bytes);
-  await Promise.all(sink.map((e) => writeDeferred(out.index(e.path), e)));
+  await out.write(w.finish());
   await out.close();
+  await Promise.all(sink.map((e) => writeDeferred(out.index(e.path), e)));
 }
 
 /**
@@ -382,8 +381,8 @@ async function readStream(mux, path, elem, queue, ar) {
 // ----- public API -----------------------------------------------------------
 
 /**
- * Resolves once `mux` ended transmit both ways and `decoded`, the decoding of
- * all the data received, resolved; rejects with any failure of the invocation.
+ * Resolves once `mux` ended both ways and `decoded`, the decoding of all the
+ * data received, resolved; rejects with any failure of the invocation.
  * @param {Mux} mux @param {Promise<unknown>} decoded
  * @returns {Promise<void>}
  */
@@ -402,8 +401,8 @@ function finished(mux, decoded) {
  * results are promises, both fed as their data arrives — together with a
  * `done` promise that resolves once all asynchronous I/O (parameters and
  * results) has completed, and a `finished` promise that resolves once the
- * peer has also ended transmit and all the data it sent has been decoded,
- * reporting any failure after `done` too. If the arguments do not match
+ * peer has also closed every path it sent and all the data it sent has been
+ * decoded, reporting any failure after `done` too. If the arguments do not match
  * `paramTypes`, or any of it fails, the transport is aborted.
  *
  * @param {Transport} transport
@@ -463,11 +462,11 @@ export async function invoke(transport, instance, func, paramTypes, args, result
  * handle exposing the invoked `instance`/`func`, methods to receive the
  * parameters and send the results, the underlying multiplexer, and a
  * `finished` promise that resolves once the parameters have been received,
- * the peer has ended transmit, the results have been sent and all the data the
- * peer sent has been decoded, reporting any failure after the parameters'
- * `done` too. If any I/O fails, the transport is aborted. Instance and function
- * names longer than `maxInstanceLength` and `maxNameLength` bytes, 1 KiB by
- * default, are rejected.
+ * the peer has closed every path it sent, the results have been sent and all
+ * the data the peer sent has been decoded, reporting any failure after the
+ * parameters' `done` too. If any I/O fails, the transport is aborted. Instance
+ * and function names longer than `maxInstanceLength` and `maxNameLength`
+ * bytes, 1 KiB by default, are rejected.
  *
  * @param {Transport} transport
  * @param {{ maxInstanceLength?: number, maxNameLength?: number }} [options]

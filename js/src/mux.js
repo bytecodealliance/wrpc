@@ -101,6 +101,17 @@ function* chans(n) {
   for (const c of n.children.values()) yield* chans(c);
 }
 
+/**
+ * Whether the sub-stream at `n`, if any, and those nested in it are closed and
+ * no more may be expected.
+ * @param {Node} n @returns {boolean}
+ */
+function complete(n) {
+  if (!n.sealed || (n.chan && !n.closed)) return false;
+  for (const c of n.children.values()) if (!complete(c)) return false;
+  return true;
+}
+
 /** @param {Undecided} at @param {Pending} pending */
 function attach({ at, i }, pending) {
   let group = at.pending?.get(i);
@@ -312,10 +323,11 @@ export class Mux {
     /** @type {Promise<never>} */
     const failed = new Promise((_, reject) => (this.#fail = reject));
     /**
-     * Resolves once the peer ended transmit and every frame it sent was
-     * routed, and the write side was half-closed, unless the multiplexer is
-     * aborted first: then it rejects with the error it was aborted with. The
-     * data routed may still be being decoded.
+     * Resolves once the root and every sub-stream expected are closed and no
+     * more may be expected, or the peer ended transmit and every frame it sent
+     * was routed, and the write side was half-closed, unless the multiplexer
+     * is aborted first: then it rejects with the error it was aborted with.
+     * The data routed may still be being decoded.
      * @type {Promise<void>}
      */
     this.ended = Promise.race([Promise.all([inbound, outbound]).then(() => {}), failed]);
@@ -333,6 +345,10 @@ export class Mux {
   #endOutbound = () => {};
   /** @type {(err: unknown) => void} */
   #fail = () => {};
+  /** Whether every expected sub-stream is closed and no more may be expected. */
+  #completed = false;
+  /** @type {() => void} */
+  #complete = () => {};
 
   /** Write the invocation header: the protocol byte and instance/function names.
    * @param {string} instance @param {string} func
@@ -356,9 +372,12 @@ export class Mux {
 
   async _ingress() {
     const m = this.master;
-    while (!this.aborted) {
-      // Stop cleanly at a frame boundary once the peer closes the stream.
-      if (!(await m.fill(1))) break;
+    while (!this.aborted && !this.#completed) {
+      /** @type {Promise<void>} */
+      const completed = new Promise((resolve) => (this.#complete = resolve));
+      // Stop cleanly at a frame boundary once the peer closes the stream or
+      // no more data may be expected.
+      if (!(await Promise.race([m.fill(1), completed]))) break;
       const [path, n, len] = await m.decode((r) => readFrameHeader(r, this.maxDepth));
       if (len > this.maxDepth) {
         throw new Error(`unexpected data for a sub-stream path of length ${len}`);
@@ -367,6 +386,7 @@ export class Mux {
       if (n === 0) {
         this._route(path, true).close();
         this._prune(path);
+        this._wake();
         continue;
       }
       const chan = this._route(path);
@@ -379,7 +399,7 @@ export class Mux {
         if (!(await chan.send(data)) && !this.aborted) unexpected(path);
       }
     }
-    if (this.aborted) return;
+    if (this.aborted || this.#completed) return;
     if (!this.root.closed) throw new RangeError(UNEXPECTED_EOF);
     this._closeInbound(new RangeError(UNEXPECTED_EOF));
   }
@@ -398,9 +418,15 @@ export class Mux {
     }
   }
 
-  /** Wake the frame waiting in {@link Mux._room}, to look its path up again. */
+  /**
+   * Wake the frame waiting in {@link Mux._room}, to look its path up again,
+   * and ingress, once no more data may be expected.
+   */
   _wake() {
     for (const f of this.pendingWaiters.splice(0)) f();
+    if (this.#completed || !complete(this.root)) return;
+    this.#completed = true;
+    this.#complete();
   }
 
   /** Stop counting `pending` towards {@link MAX_PENDING}. @param {Pending} pending */

@@ -288,9 +288,10 @@ export class Mux {
   constructor(transport: Transport);
   master: AsyncReader;
   /**
-   * Resolves once the peer ended transmit and every frame it sent was routed,
-   * and the write side was half-closed, unless the multiplexer is aborted
-   * first: then it rejects with the error it was aborted with.
+   * Resolves once the root and every sub-stream expected are closed and no
+   * more may be expected, or the peer ended transmit and every frame it sent
+   * was routed, and the write side was half-closed, unless the multiplexer is
+   * aborted first: then it rejects with the error it was aborted with.
    */
   readonly ended: Promise<void>;
   /** Rejects with the error the multiplexer is aborted with, once it is. */
@@ -351,8 +352,8 @@ export function fromRequest(request: Request): { transport: Transport; response:
 
 /**
  * `done` resolves once all asynchronous parameters and results have been
- * transmitted; `finished` once the peer has also ended transmit and all the
- * data it sent has been decoded, rejecting with any failure of the
+ * transmitted; `finished` once the peer has also closed every path it sent and
+ * all the data it sent has been decoded, rejecting with any failure of the
  * invocation, including those after `done`.
  */
 export function invoke(
@@ -369,10 +370,10 @@ export interface Invocation {
   func: string;
   mux: Mux;
   /**
-   * Resolves once the parameters have been received, the peer has ended
-   * transmit, the results have been sent and all the data the peer sent has
-   * been decoded, rejecting with any failure of the invocation, including
-   * those after the parameters' `done`.
+   * Resolves once the parameters have been received, the peer has closed
+   * every path it sent, the results have been sent and all the data the peer
+   * sent has been decoded, rejecting with any failure of the invocation,
+   * including those after the parameters' `done`.
    */
   finished: Promise<void>;
   /**
