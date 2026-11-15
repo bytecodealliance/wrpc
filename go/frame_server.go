@@ -90,85 +90,130 @@ func (s *FramedServer) Serve(instance string, name string, f HandleFunc, paths .
 	}, nil
 }
 
-// Accept reads the invocation header from `r` and calls the handler of the invoked function
-// in a new goroutine. Reading the header is aborted once `ctx` is done.
-// If accepting fails, `w` and `r` are closed with the error (see `CloseWithError`).
+// Accept serves the invocations on `w` and `r` one after another, until `r` ends in place of the
+// next one, and then closes `w` and `r`. It reads each invocation header from `r`, which is
+// aborted once `ctx` is done, calls the handler of the invoked function in a new goroutine and
+// waits for the invocation to complete before reading the next one.
+// If an invocation fails, `w` and `r` are closed with the error (see `CloseWithError`).
 func (s *FramedServer) Accept(ctx context.Context, w io.WriteCloser, r io.ReadCloser) error {
+	br := bufio.NewReader(r)
+	for {
+		err := s.accept(ctx, w, r, br)
+		if err == io.EOF {
+			if err := w.Close(); err != nil {
+				slog.DebugContext(s.ctx, "failed to close writer", "err", err)
+			}
+			if err := r.Close(); err != nil {
+				slog.DebugContext(s.ctx, "failed to close reader", "err", err)
+			}
+			return nil
+		}
+		if err != nil {
+			if cErr := CloseWithError(r, err); cErr != nil {
+				slog.DebugContext(s.ctx, "failed to close reader", "err", cErr)
+			}
+			if cErr := CloseWithError(w, err); cErr != nil {
+				slog.DebugContext(s.ctx, "failed to close writer", "err", cErr)
+			}
+			return err
+		}
+	}
+}
+
+type invocationCloser struct {
+	io.Closer
+	once sync.Once
+	done chan<- error
+}
+
+func (c *invocationCloser) Close() error {
+	return c.CloseWithError(nil)
+}
+
+func (c *invocationCloser) CloseWithError(err error) (cErr error) {
+	c.once.Do(func() {
+		if err != nil {
+			cErr = CloseWithError(c.Closer, err)
+		}
+		c.done <- err
+	})
+	return cErr
+}
+
+func (s *FramedServer) accept(ctx context.Context, w io.WriteCloser, r io.ReadCloser, br *bufio.Reader) error {
 	stop := context.AfterFunc(ctx, func() {
 		if err := CloseWithError(r, context.Cause(ctx)); err != nil {
 			slog.DebugContext(s.ctx, "failed to close reader", "err", err)
 		}
 	})
-	if err := s.accept(w, r, func() error {
-		if !stop() {
-			return context.Cause(ctx)
-		}
-		return nil
-	}); err != nil {
-		stop()
-		if cErr := CloseWithError(r, err); cErr != nil {
-			slog.DebugContext(s.ctx, "failed to close reader", "err", cErr)
-		}
-		if cErr := CloseWithError(w, err); cErr != nil {
-			slog.DebugContext(s.ctx, "failed to close writer", "err", cErr)
-		}
-		return err
-	}
-	return nil
-}
+	defer stop()
 
-func (s *FramedServer) accept(w io.WriteCloser, r io.ReadCloser, headerRead func() error) error {
-	br := bufio.NewReader(r)
 	b, err := br.ReadByte()
+	if err == io.EOF && stop() {
+		return io.EOF
+	}
 	if err != nil {
 		return fmt.Errorf("failed to read version byte: %w", err)
 	}
-	switch b {
-	case frameVersion:
-		slog.DebugContext(s.ctx, "reading instance name string")
-		instance, err := readHeaderName(br, s.maxInstanceLen)
-		if err != nil {
-			return fmt.Errorf("failed to read instance name string: %w", err)
-		}
-
-		slog.DebugContext(s.ctx, "reading function name string")
-		name, err := readHeaderName(br, s.maxNameLen)
-		if err != nil {
-			return fmt.Errorf("failed to read function name string: %w", err)
-		}
-		if err := headerRead(); err != nil {
-			return fmt.Errorf("failed to read invocation header: %w", err)
-		}
-
-		s.handlersMu.RLock()
-		defer s.handlersMu.RUnlock()
-
-		hs, ok := s.handlers[instance]
-		if !ok {
-			return fmt.Errorf("received an invocation for unknown instance `%s`", instance)
-		}
-		h, ok := hs[name]
-		if !ok {
-			return fmt.Errorf("received an invocation for unknown function `%s#%s`", instance, name)
-		}
-
-		h.Add(1)
-		go func() {
-			defer h.Add(-1)
-			slog.DebugContext(h.Context, "calling handler", "instance", instance, "name", name)
-			h.HandleFunc(
-				h.Context,
-				NewFrameStreamWriter(h.Context, w),
-				NewFrameStreamReader(h.Context, BufReadCloser{
-					Reader: br,
-					Closer: r,
-				}, h.paths...))
-		}()
-		return nil
-
-	default:
+	if b != frameVersion {
 		return fmt.Errorf("unsupported version byte: `0x%x`", b)
 	}
+	slog.DebugContext(s.ctx, "reading instance name string")
+	instance, err := readHeaderName(br, s.maxInstanceLen)
+	if err != nil {
+		return fmt.Errorf("failed to read instance name string: %w", err)
+	}
+
+	slog.DebugContext(s.ctx, "reading function name string")
+	name, err := readHeaderName(br, s.maxNameLen)
+	if err != nil {
+		return fmt.Errorf("failed to read function name string: %w", err)
+	}
+	if !stop() {
+		return fmt.Errorf("failed to read invocation header: %w", context.Cause(ctx))
+	}
+
+	h, err := s.handler(instance, name)
+	if err != nil {
+		return err
+	}
+	done := make(chan error, 2)
+	go func() {
+		defer h.Add(-1)
+		slog.DebugContext(h.Context, "calling handler", "instance", instance, "name", name)
+		h.HandleFunc(
+			h.Context,
+			NewFrameStreamWriter(h.Context, struct {
+				io.Writer
+				*invocationCloser
+			}{w, &invocationCloser{Closer: w, done: done}}),
+			NewFrameStreamReader(h.Context, BufReadCloser{
+				Reader: br,
+				Closer: &invocationCloser{Closer: r, done: done},
+			}, h.paths...))
+	}()
+	for range 2 {
+		if err := <-done; err != nil {
+			return err
+		}
+	}
+	return h.Context.Err()
+}
+
+func (s *FramedServer) handler(instance, name string) (handler, error) {
+	s.handlersMu.RLock()
+	defer s.handlersMu.RUnlock()
+
+	hs, ok := s.handlers[instance]
+	if !ok {
+		return handler{}, fmt.Errorf("received an invocation for unknown instance `%s`", instance)
+	}
+	h, ok := hs[name]
+	if !ok {
+		return handler{}, fmt.Errorf("received an invocation for unknown function `%s#%s`", instance, name)
+	}
+	h.Add(1)
+	return h, nil
 }
 
 // readHeaderName reads a name of at most `max` bytes from `r`
