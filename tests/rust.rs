@@ -28,7 +28,7 @@ use tracing::instrument;
 use wrpc_test::{read_eof, read_invocation};
 use wrpc_transport::{
     Decode, Encode, FrameDecoder, FrameEncoder, FrameRef, Header, HeaderDecoder, HeaderEncoder,
-    HeaderRef, ResourceBorrow, ResourceOwn, invoke, invoke_blocking, serve,
+    HeaderRef, Invoker, ResourceBorrow, ResourceOwn, invoke, invoke_blocking, serve,
 };
 
 #[instrument(skip_all, ret)]
@@ -532,7 +532,7 @@ where
                     "reset",
                 )
                 .await?;
-                let inv = serve(tx, rx, <(String,) as Decode>::Decoder::default());
+                let inv = serve::<(String,), (), _, _, _>(tx, rx);
                 if spawned {
                     spawn(async move { drop(inv) }).await?;
                 } else {
@@ -543,23 +543,19 @@ where
             let mut rx = FramedRead::new(rx, HeaderDecoder::default());
             for _ in 0..2 {
                 let mut frames = read_invocation(rx, "test", "sync").await?;
-                let (params, outgoing) = serve(
-                    &mut tx,
-                    &mut frames,
-                    <SyncValues as Decode>::Decoder::default(),
-                );
+                let (params, outgoing) =
+                    serve::<SyncValues, SyncValues, _, _, _>(&mut tx, &mut frames);
                 let (params, io) = params.await?;
                 assert_eq!(params, sync_values());
-                let results =
-                    outgoing.send(<SyncValues as Encode>::Encoder::default(), sync_values())?;
+                let results = outgoing.send(sync_values())?;
                 results.await?;
                 io.await?;
                 rx = frames.map_decoder(|_| HeaderDecoder::default());
             }
             let mut frames = read_invocation(rx, "test", "async").await?;
-            let (params, tx) = serve(tx, &mut frames, <AsyncValues as Decode>::Decoder::default());
+            let (params, tx) = serve::<AsyncValues, AsyncValues, _, _, _>(tx, &mut frames);
             let (params, io) = params.await?;
-            let tx = tx.send(<AsyncValues as Encode>::Encoder::default(), async_values())?;
+            let tx = tx.send(async_values())?;
             try_join!(assert_async_values(params, io), async {
                 tx.await.context("failed to transmit results")
             })?;
@@ -568,16 +564,8 @@ where
         async {
             for _ in 0..2 {
                 let (tx, rx) = connect().await?;
-                let res = invoke_blocking(
-                    tx,
-                    rx,
-                    "test",
-                    "reset",
-                    <(&str,) as Encode>::Encoder::default(),
-                    ("arg",),
-                    <(String,) as Decode>::Decoder::default(),
-                )
-                .await;
+                let res =
+                    invoke_blocking::<(&str,), (String,)>(tx, rx, "test", "reset", ("arg",)).await;
                 res.expect_err("`test.reset` should have failed");
             }
 
@@ -588,27 +576,19 @@ where
             let unpacked = wrpc_transport::unpack(dec, &mut buf)?;
             let (mut tx, mut rx) = connect().await?;
             for params in [sync_values(), unpacked] {
-                let res = invoke_blocking(
-                    &mut tx,
-                    &mut rx,
-                    "test",
-                    "sync",
-                    <SyncValues as Encode>::Encoder::default(),
-                    params,
-                    <SyncValues as Decode>::Decoder::default(),
+                let res = invoke_blocking::<SyncValues, SyncValues>(
+                    &mut tx, &mut rx, "test", "sync", params,
                 )
                 .await?;
                 assert_eq!(res, sync_values());
             }
 
-            let (res, io) = invoke(
+            let (res, io) = invoke::<AsyncValues, AsyncValues, _, _>(
                 &mut tx,
                 &mut rx,
                 "test",
                 "async",
-                <AsyncValues as Encode>::Encoder::default(),
                 async_values(),
-                <AsyncValues as Decode>::Decoder::default(),
             )
             .await?;
             assert_async_values(res, io).await?;
@@ -740,14 +720,12 @@ async fn rust_quic_stopped_mid_params() -> anyhow::Result<()> {
         let (res, srv) = join!(
             async {
                 let (tx, rx) = clt.open_bi().await.expect("failed to open stream");
-                invoke_blocking(
+                invoke_blocking::<(BoxStream<'static, Bytes>,), (u32,)>(
                     tx,
                     rx,
                     "foo",
                     "bar",
-                    <(BoxStream<'static, Bytes>,) as Encode>::Encoder::default(),
                     (param,),
-                    <(u32,) as Decode>::Decoder::default(),
                 )
                 .await
             },
@@ -825,14 +803,12 @@ async fn rust_webtransport_stopped_mid_params() -> anyhow::Result<()> {
         let (res, srv) = join!(
             async {
                 let (tx, rx) = clt.open_bi().await.expect("failed to open stream");
-                invoke_blocking(
+                invoke_blocking::<(BoxStream<'static, Bytes>,), (u32,)>(
                     tx,
                     rx,
                     "foo",
                     "bar",
-                    <(BoxStream<'static, Bytes>,) as Encode>::Encoder::default(),
                     (param,),
-                    <(u32,) as Decode>::Decoder::default(),
                 )
                 .await
             },
@@ -903,17 +879,9 @@ where
 {
     join!(
         async {
-            let (a,) = invoke_blocking(
-                clt_tx,
-                clt_rx,
-                "foo",
-                "bar",
-                <(u32,) as Encode>::Encoder::default(),
-                (42,),
-                <(String,) as Decode>::Decoder::default(),
-            )
-            .await
-            .expect("failed to invoke `foo.bar`");
+            let (a,) = invoke_blocking::<(u32,), (String,)>(clt_tx, clt_rx, "foo", "bar", (42,))
+                .await
+                .expect("failed to invoke `foo.bar`");
             assert_eq!(a, "test");
         },
         async {
@@ -922,12 +890,10 @@ where
                 .expect("failed to read invocation header");
             assert_eq!(header.instance, "foo");
             assert_eq!(header.name, "bar");
-            let (params, tx) = serve(tx, rx, <(u32,) as Decode>::Decoder::default());
+            let (params, tx) = serve::<(u32,), (&str,), _, _, _>(tx, rx);
             let (params, io) = params.await.expect("failed to receive parameters");
             assert_eq!(params, (42,));
-            let tx = tx
-                .send(<(&str,) as Encode>::Encoder::default(), ("test",))
-                .expect("failed to encode response");
+            let tx = tx.send(("test",)).expect("failed to encode response");
             tx.await.expect("failed to transmit response");
             io.await.expect("invocation failed");
         }
@@ -973,11 +939,9 @@ async fn rust_oneshot_no_params() -> anyhow::Result<()> {
                     .expect("failed to read invocation header");
                 assert_eq!(header.instance, "foo");
                 assert_eq!(header.name, "bar");
-                let (params, tx) = serve(tx, rx, <() as Decode>::Decoder::default());
+                let (params, tx) = serve::<(), (&str,), _, _, _>(tx, rx);
                 let ((), io) = params.await.expect("failed to receive parameters");
-                let tx = tx
-                    .send(<(&str,) as Encode>::Encoder::default(), ("test",))
-                    .expect("failed to encode response");
+                let tx = tx.send(("test",)).expect("failed to encode response");
                 tx.await.expect("failed to transmit response");
                 io.await.expect("invocation failed");
             }
@@ -997,36 +961,39 @@ async fn rust_reuse_streams() -> anyhow::Result<()> {
     try_join!(
         async {
             for n in [1u32, 2] {
-                let (m,) = invoke_blocking(
-                    &mut clt_tx,
-                    &mut clt_rx,
-                    "foo",
-                    "bar",
-                    <(u32,) as Encode>::Encoder::default(),
-                    (n,),
-                    <(u32,) as Decode>::Decoder::default(),
-                )
-                .await?;
+                let (m,) =
+                    invoke_blocking::<(u32,), (u32,)>(&mut clt_tx, &mut clt_rx, "foo", "bar", (n,))
+                        .await?;
+                ensure!(m == n + 1);
+            }
+            let mut pending = Vec::default();
+            for n in [3u32, 4] {
+                let (tx, results) =
+                    Invoker::<<(u32,) as Encode>::Encoder, <(u32,) as Decode>::Decoder>::default()
+                        .send(&mut clt_tx, "foo", "bar", (n,))?;
+                tx.await?;
+                pending.push((n, results));
+            }
+            let mut rx = FramedRead::new(clt_rx, FrameDecoder::default());
+            for (n, results) in pending {
+                let ((m,), io) = results.receive(&mut rx).await?;
+                io.await?;
                 ensure!(m == n + 1);
             }
             anyhow::Ok(())
         },
         async {
             let mut rx = FramedRead::new(srv_rx, HeaderDecoder::default());
-            for _ in 0..2 {
+            for _ in 0..4 {
                 let Some(Header { instance, name }) = rx.try_next().await? else {
                     bail!("stream ended");
                 };
                 ensure!(instance == "foo" && name == "bar");
                 let mut frames = rx.map_decoder(|_| FrameDecoder::default());
-                let (params, outgoing) = serve(
-                    &mut srv_tx,
-                    &mut frames,
-                    <(u32,) as Decode>::Decoder::default(),
-                );
+                let (params, outgoing) = serve::<(u32,), (u32,), _, _, _>(&mut srv_tx, &mut frames);
                 let ((n,), io) = params.await?;
                 io.await?;
-                let tx = outgoing.send(<(u32,) as Encode>::Encoder::default(), (n + 1,))?;
+                let tx = outgoing.send((n + 1,))?;
                 tx.await?;
                 rx = frames.map_decoder(|_| HeaderDecoder::default());
             }
@@ -1044,17 +1011,9 @@ async fn rust_oneshot_raw() -> anyhow::Result<()> {
     join!(
         async {
             let (rx, tx) = split(&mut clt);
-            let (a,) = invoke_blocking(
-                tx,
-                rx,
-                "foo",
-                "bar",
-                <(u32,) as Encode>::Encoder::default(),
-                (42,),
-                <(String,) as Decode>::Decoder::default(),
-            )
-            .await
-            .expect("failed to invoke `foo.bar`");
+            let (a,) = invoke_blocking::<(u32,), (String,)>(tx, rx, "foo", "bar", (42,))
+                .await
+                .expect("failed to invoke `foo.bar`");
             assert_eq!(a, "test");
         },
         async {
@@ -1132,13 +1091,10 @@ async fn rust_oneshot_raw_strings_invalid_utf8() -> anyhow::Result<()> {
                 .expect("failed to read invocation header");
             assert_eq!(header.instance, "wrpc-test:raw-strings/strings");
             assert_eq!(header.name, "bar");
-            let (params, tx) = serve(tx, rx, <() as Decode>::Decoder::default());
+            let (params, tx) = serve::<(), (Bytes,), _, _, _>(tx, rx);
             let ((), io) = params.await.expect("failed to receive parameters");
             let tx = tx
-                .send(
-                    <(Bytes,) as Encode>::Encoder::default(),
-                    (Bytes::from_static(b"\xff"),),
-                )
+                .send((Bytes::from_static(b"\xff"),))
                 .expect("failed to encode response");
             tx.await.expect("failed to transmit response");
             io.await.expect("invocation failed");
@@ -1207,14 +1163,12 @@ async fn rust_oneshot_raw_strings_invalid_utf8_result() -> anyhow::Result<()> {
         let (rx, tx) = split(srv);
         join!(
             async {
-                invoke_blocking(
+                invoke_blocking::<(), (String,)>(
                     clt_tx,
                     clt_rx,
                     "wrpc-test:raw-strings/strings",
                     func,
-                    <() as Encode>::Encoder::default(),
                     (),
-                    <(String,) as Decode>::Decoder::default(),
                 )
                 .await
                 .expect_err("invalid UTF-8 must not be transmitted");
@@ -1283,16 +1237,9 @@ async fn rust_oneshot_borrowed() -> anyhow::Result<()> {
     )?;
     let mut res = Vec::default();
     bindings::serve((), &mut res, req.as_ref(), Handler).await?;
-    let (greeting,) = invoke_blocking(
-        sink(),
-        res.as_slice(),
-        "",
-        "greet",
-        <(&str,) as Encode>::Encoder::default(),
-        ("world",),
-        <(String,) as Decode>::Decoder::default(),
-    )
-    .await?;
+    let (greeting,) =
+        invoke_blocking::<(&str,), (String,)>(sink(), res.as_slice(), "", "greet", ("world",))
+            .await?;
     assert_eq!(greeting, "Hello, world");
     Ok(())
 }
@@ -1345,24 +1292,21 @@ async fn rust_stream_of_futures() -> anyhow::Result<()> {
         Box::pin(stream::poll_fn(move |cx| chunks_rx.poll_recv(cx)));
     let srv = async move {
         let (.., srv_rx) = Header::read(srv_rx).await?;
-        let (params, results) = serve(
-            srv_tx,
-            srv_rx,
-            <(BoxStream<'static, Vec<BoxFuture<'static, u8>>>,) as Decode>::Decoder::default(),
-        );
+        let (params, results) =
+            serve::<(BoxStream<'static, Vec<BoxFuture<'static, u8>>>,), (), _, _, _>(
+                srv_tx, srv_rx,
+            );
         let ((s,), io) = params.await?;
-        let tx = results.send(<() as Encode>::Encoder::default(), ())?;
+        let tx = results.send(())?;
         tx.await?;
         anyhow::Ok((s, io))
     };
-    let clt = invoke(
+    let clt = invoke::<(BoxStream<'static, Vec<BoxFuture<'static, u8>>>,), (), _, _>(
         clt_tx,
         clt_rx,
         "test",
         "f",
-        <(BoxStream<'static, Vec<BoxFuture<'static, u8>>>,) as Encode>::Encoder::default(),
         (s,),
-        <() as Decode>::Decoder::default(),
     );
     let ((mut s, srv_io), ((), clt_io)) = try_join!(srv, async {
         clt.await.context("failed to invoke `test.f`")

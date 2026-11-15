@@ -16,7 +16,7 @@ use wasmtime::component::{
     Accessor, Func, ResourceAny, ResourceTable, ResourceType, Type, Val, types,
 };
 use wasmtime::error::Context as _;
-use wrpc_transport::{FrameDecoder, serve};
+use wrpc_transport::{FrameDecoder, Server};
 
 mod codec;
 mod serve;
@@ -125,7 +125,11 @@ where
     I: AsyncRead + Unpin,
     O: AsyncWrite + Unpin,
 {
-    let (params, outgoing) = serve(tx, rx, ValDecoder::new(store, params_ty, resources));
+    let (params, outgoing) = Server {
+        enc: TupleEncoder::new(store, results_ty, resources),
+        dec: ValDecoder::new(store, params_ty, resources),
+    }
+    .serve(tx, rx);
     let (params, rx) = params.await.map_err(|err| CallError::Decode(err.into()))?;
     try_join!(
         async { rx.await.map_err(|err| CallError::Closed(err.into())) },
@@ -135,11 +139,8 @@ where
                 .await
                 .context("failed to call function")
                 .map_err(CallError::Call)?;
-            let tx = outgoing.send(
-                TupleEncoder::new(store, results_ty, resources),
-                results.as_slice(),
-            );
-            let tx = tx
+            let tx = outgoing
+                .send(results.as_slice())
                 .context("failed to encode results")
                 .map_err(CallError::Encode)?;
             debug!("transmitting results");

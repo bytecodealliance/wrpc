@@ -2395,8 +2395,9 @@ mod tests {
         let (tx, rx) = duplex(1024);
         let tx = Outgoing {
             tx: FramedWrite::new(tx, frame::Encoder),
+            enc: <V as Encode>::Encoder::default(),
         }
-        .send(<V as Encode>::Encoder::default(), v)?;
+        .send(v)?;
         let tx = spawn(tx);
         let ((a, b, c, d, e, mut f), rx) = ingress(
             FramedRead::new(rx, frame::Decoder::default()),
@@ -2427,8 +2428,9 @@ mod tests {
         let (tx, rx) = duplex(1024);
         let tx = Outgoing {
             tx: FramedWrite::new(tx, frame::Encoder),
+            enc: <V as Encode>::Encoder::default(),
         }
-        .send(<V as Encode>::Encoder::default(), (outer,))?;
+        .send((outer,))?;
         let rx = async {
             let ((outer,), rx) = ingress(
                 FramedRead::new(rx, frame::Decoder::default()),

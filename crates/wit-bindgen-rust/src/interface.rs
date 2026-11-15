@@ -178,11 +178,7 @@ where
                 r#"
         ("{instance}", "{}") => {{
             let handler = handler.clone();
-            let (params, tx) = {wrpc_transport}::serve(
-                tx,
-                rx,
-                <({params_ty}) as {wrpc_transport}::Decode>::Decoder::default(),
-            );
+            let (params, tx) = {wrpc_transport}::serve::<({params_ty}), ({results_ty}), _, _, _>(tx, rx);
             ::core::result::Result::Ok(::std::boxed::Box::pin(async move {{
                 let (("#,
                 rpc_func_name(func),
@@ -236,7 +232,7 @@ where
                         "failed to complete `{fqn}` invocation",
                     )
                 }};
-                let call = async {{
+                let call = {wrpc_transport}::SendFuture::send(async {{
                     {tracing}::trace!(instance = "{instance}", func = "{wit_name}", "calling handler");
                     match {trait_name}::{name}(&handler, cx"#,
                 anyhow = self.r#gen.anyhow_path(),
@@ -255,10 +251,8 @@ where
                         Ok(results) => {{
                             let tx = {anyhow}::Context::context(
                                 tx.send(
-                                    <({results_ty}) as {wrpc_transport}::Encode>::Encoder::default(),
                                     ",
                 anyhow = self.r#gen.anyhow_path(),
-                wrpc_transport = self.r#gen.wrpc_transport_path(),
             );
             if let Some(ty) = &func.result {
                 // wrap single-element results into a tuple for correct indexing
@@ -282,7 +276,7 @@ where
                             {anyhow}::bail!(err.context("failed to serve `{fqn}` invocation"))
                         }},
                     }}
-                }};
+                }});
                 {tokio}::try_join!(call, rx)?;
                 ::core::result::Result::Ok(())
             }}))
@@ -577,14 +571,12 @@ where
                 self.src,
                 r#"
                 let wrpc__{decoded} = {anyhow}::Context::context(
-                    {wrpc_transport}::SendFuture::send({wrpc_transport}::invoke_blocking(
+                    {wrpc_transport}::SendFuture::send({wrpc_transport}::invoke_blocking::<({args_ty}), ({results_ty})>(
                         tx__,
                         rx__,
                         "{instance}",
                         "{}",
-                        <({args_ty}) as {wrpc_transport}::Encode>::Encoder::default(),
                         ({params}),
-                        <({results_ty}) as {wrpc_transport}::Decode>::Decoder::default(),
                     )).await,
 "#,
                 rpc_func_name(func),
@@ -615,14 +607,12 @@ where
                 self.src,
                 r#"
                 let (wrpc__, io__): ({decoded}, _) = {anyhow}::Context::context(
-                    {wrpc_transport}::SendFuture::send({wrpc_transport}::invoke(
+                    {wrpc_transport}::SendFuture::send({wrpc_transport}::invoke::<({args_ty}), ({results_ty}), _, _>(
                         tx__,
                         rx__,
                         "{instance}",
                         "{}",
-                        <({args_ty}) as {wrpc_transport}::Encode>::Encoder::default(),
                         ({params}),
-                        <({results_ty}) as {wrpc_transport}::Decode>::Decoder::default(),
                     )).await,
 "#,
                 rpc_func_name(func),

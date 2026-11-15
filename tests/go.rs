@@ -16,7 +16,7 @@ async fn go_bindgen() -> anyhow::Result<()> {
     use tokio::fs;
     use tokio::time::{sleep, timeout};
     use tracing::info;
-    use wrpc_transport::{Decode, Encode, invoke_blocking};
+    use wrpc_transport::invoke_blocking;
 
     if let Err(err) = fs::remove_dir_all("tests/go/bindings").await {
         match err.kind() {
@@ -74,14 +74,12 @@ async fn go_bindgen() -> anyhow::Result<()> {
 
         let (mut tx, mut rx) = wrpc_test::tcp_streams(&addr).await?;
         common::assert_sync(&mut tx, &mut rx).await?;
-        let res = invoke_blocking(
+        let res = invoke_blocking::<(&str,), (u32,)>(
             &mut tx,
             &mut rx,
             "wrpc-test:integration/foo",
             "f",
-            <(&str,) as Encode>::Encoder::default(),
             ("panic",),
-            <(u32,) as Decode>::Decoder::default(),
         )
         .await;
         let Err(err) = res else {

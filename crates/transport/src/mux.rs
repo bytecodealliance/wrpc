@@ -83,7 +83,9 @@ where
     ))
 }
 
-/// Future receiving the asynchronous values nested in a value, see [`ingress`]
+/// Future receiving the asynchronous values nested in a value
+///
+/// Resolves once all paths are closed.
 #[must_use]
 pub struct Receipt<F, I, D> {
     rx: F,
@@ -145,19 +147,21 @@ where
     }
 }
 
-/// Outgoing framed stream of an invocation
-pub struct Outgoing<O> {
+/// Outgoing framed stream of an invocation, the value of which is encoded using the encoder of
+/// the [`Server`](crate::Server) or [`Invoker`](crate::Invoker)
+pub struct Outgoing<O, E> {
     pub(crate) tx: FramedWrite<O, frame::Encoder>,
+    pub(crate) enc: E,
 }
 
-impl<O: AsyncWrite + Unpin> Outgoing<O> {
-    /// Encodes `item` using `enc` as the value of the root path and returns the [Transmission]
-    /// of it and of the asynchronous values nested in it
-    pub fn send<T, E>(self, mut enc: E, item: T) -> std::io::Result<Transmission<O, E>>
+impl<O: AsyncWrite + Unpin, E: Transmit> Outgoing<O, E> {
+    /// Encodes `item` as the value of the root path and returns the [Transmission] of it and of
+    /// the asynchronous values nested in it
+    pub fn send<T>(self, item: T) -> std::io::Result<Transmission<O, E>>
     where
-        E: Encoder<T, Error = std::io::Error> + Transmit,
+        E: Encoder<T, Error = std::io::Error>,
     {
-        let Self { mut tx } = self;
+        let Self { mut tx, mut enc } = self;
         let mut data = BytesMut::default();
         enc.encode(item, &mut data)?;
         encode_frames(&[], &data, tx.write_buffer_mut())?;
@@ -281,11 +285,11 @@ mod tests {
     async fn egress_partial_writes() {
         let data: Bytes = (0..1 << 18).map(|i: usize| i.to_le_bytes()[0]).collect();
         let (tx, rx) = duplex(1000);
-        let enc = SyncCodec(BytesCodec::default());
         let tx = Outgoing {
             tx: FramedWrite::new(tx, frame::Encoder),
+            enc: SyncCodec(BytesCodec::default()),
         }
-        .send(enc, data.clone())
+        .send(data.clone())
         .unwrap();
         let (chunks, ()) = try_join!(
             FramedRead::new(rx, frame::Decoder::default()).try_collect::<Vec<_>>(),
@@ -304,11 +308,11 @@ mod tests {
     #[test_log::test(tokio::test)]
     async fn egress_keeps_stream() {
         let (mut tx, mut rx) = duplex(16);
-        let enc = SyncCodec(BytesCodec::default());
         let fut = Outgoing {
             tx: FramedWrite::new(&mut tx, frame::Encoder),
+            enc: SyncCodec(BytesCodec::default()),
         }
-        .send(enc, Bytes::default())
+        .send(Bytes::default())
         .unwrap();
         fut.await.unwrap();
         tx.write_all(b"\x2a").await.unwrap();

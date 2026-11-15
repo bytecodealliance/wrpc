@@ -9,15 +9,15 @@
 //! (clients).
 //!
 //! The two main abstractions on top of which wRPC is built are:
-//! - [`invoke()`] - the client side, which *invokes* WIT functions over the byte streams of an
-//!   invocation
-//! - [`serve()`] - the server side, which *serves* WIT functions over the frames following the
+//! - [`Invoker`] - the client side, which *invokes* WIT functions over the byte streams of an
+//!   invocation, [`invoke()`] uses the default codecs
+//! - [`Server`] - the server side, which *serves* WIT functions over the frames following the
 //!   header read by [`HeaderDecoder`] from the byte streams of an invocation, for example ones
-//!   accepted by a transport
+//!   accepted by a transport, [`serve()`] uses the default codecs
 //!
 //! A transport establishes bidirectional byte streams, each carrying invocations one after
 //! another, which it yields as any [`AsyncWrite`](tokio::io::AsyncWrite)/
-//! [`AsyncRead`](tokio::io::AsyncRead) byte stream pair. [`invoke()`] and [`serve()`] layer the
+//! [`AsyncRead`](tokio::io::AsyncRead) byte stream pair. [`Invoker`] and [`Server`] layer the
 //! wRPC [framing](frame) protocol on top of it to multiplex the asynchronous values nested in
 //! parameters and results, which encoders [Transmit] and decoders [Receive].
 //!
@@ -40,40 +40,43 @@ pub use frame::{
     FrameHeaderRef, FrameRef,
 };
 pub use header::{Header, HeaderDecoder, HeaderEncoder, HeaderReadError, HeaderRef, PROTOCOL};
-pub use invoke::{Invocation, invoke, invoke_blocking};
+pub use invoke::{Invocation, Invoker, Pending, invoke, invoke_blocking};
 pub use pack::{pack, unpack};
-/// Awaiting the futures returned by [`invoke()`] and [`serve()`] in a [`Send`] future may fail to
-/// compile with "one type is more general than the other" or "implementation of ... is not
-/// general enough" due to [rust-lang/rust#96865](https://github.com/rust-lang/rust/issues/96865),
+/// Awaiting the futures returned by [`invoke()`], [`serve()`] and the methods of [`Invoker`],
+/// [`Pending`] and [`Server`], or futures holding an [`Outgoing`](frame::Outgoing) across an
+/// await, in a [`Send`] future may fail to compile with "one type is more general than the other"
+/// or "implementation of ... is not general enough" due to
+/// [rust-lang/rust#96865](https://github.com/rust-lang/rust/issues/96865),
 /// call [`send`](SendFuture::send) on them before awaiting to work around it:
 ///
 /// ```
+/// use futures::StreamExt as _;
 /// use futures::stream::BoxStream;
 /// use tokio::io::{AsyncRead, AsyncWrite};
-/// use wrpc_transport::{Decode, Encode, SendFuture as _, invoke};
+/// use tokio::try_join;
+/// use wrpc_transport::{SendFuture as _, invoke};
 ///
 /// fn invoke_send(
 ///     tx: impl AsyncWrite + Send + Unpin,
 ///     rx: impl AsyncRead + Send + Unpin,
-/// ) -> impl Future<Output = std::io::Result<BoxStream<'static, Vec<String>>>> + Send {
+/// ) -> impl Future<Output = std::io::Result<Vec<String>>> + Send {
 ///     async {
-///         let ((s,), ..) = invoke(
+///         let ((s,), io) = invoke::<_, (BoxStream<'static, Vec<String>>,), _, _>(
 ///             tx,
 ///             rx,
 ///             "wrpc-test:integration/async",
 ///             "with-streams",
-///             <() as Encode>::Encoder::default(),
 ///             (),
-///             <(BoxStream<'static, Vec<String>>,) as Decode>::Decoder::default(),
 ///         )
 ///         .send()
 ///         .await?;
+///         let (s, ()) = try_join!(async { Ok(s.concat().await) }, io)?;
 ///         Ok(s)
 ///     }
 /// }
 /// ```
 pub use send_future::SendFuture;
-pub use serve::serve;
+pub use serve::{Server, serve};
 pub use value::*;
 
 use bytes::BytesMut;

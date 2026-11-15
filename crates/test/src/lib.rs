@@ -19,8 +19,8 @@ use tokio::time::timeout;
 use tokio::try_join;
 use tokio_util::codec::{Encoder as _, FramedRead};
 use wrpc_transport::{
-    Decode, Encode, FrameDecoder, FrameEncoder, FrameRef, Header, HeaderDecoder, HeaderEncoder,
-    HeaderRef, invoke, serve,
+    FrameDecoder, FrameEncoder, FrameRef, Header, HeaderDecoder, HeaderEncoder, HeaderRef, invoke,
+    serve,
 };
 
 /// Maximum number of connections [`serve_until`] serves concurrently
@@ -198,14 +198,12 @@ where
         async {
             let s: BoxStream<'static, Bytes> =
                 Box::pin(stream::iter([Bytes::from_static(b"client->server")]));
-            let ((results, s), io) = invoke(
+            let ((results, s), io) = invoke::<_, (Bytes, BoxStream<'static, Bytes>), _, _>(
                 tx,
                 rx,
                 "foo",
                 "bar",
-                <(Bytes, BoxStream<'static, Bytes>) as Encode>::Encoder::default(),
                 (Bytes::from_static(b"testbar"), s),
-                <(Bytes, BoxStream<'static, Bytes>) as Decode>::Decoder::default(),
             )
             .await
             .context("failed to invoke `foo.bar`")?;
@@ -222,11 +220,13 @@ where
             let mut frames =
                 read_invocation(FramedRead::new(rx, HeaderDecoder::default()), "foo", "bar")
                     .await?;
-            let (params, outgoing) = serve(
-                tx,
-                &mut frames,
-                <(Bytes, BoxStream<'static, Bytes>) as Decode>::Decoder::default(),
-            );
+            let (params, outgoing) = serve::<
+                (Bytes, BoxStream<'static, Bytes>),
+                (Bytes, BoxStream<'static, Bytes>),
+                _,
+                _,
+                _,
+            >(tx, &mut frames);
             let ((testbar, s), rx) = params
                 .await
                 .context("failed to receive `foo.bar` parameters")?;
@@ -234,10 +234,7 @@ where
             let results: BoxStream<'static, Bytes> =
                 Box::pin(stream::iter([Bytes::from_static(b"server->client")]));
             let tx = outgoing
-                .send(
-                    <(Bytes, BoxStream<'static, Bytes>) as Encode>::Encoder::default(),
-                    (Bytes::from_static(b"foo"), results),
-                )
+                .send((Bytes::from_static(b"foo"), results))
                 .context("failed to encode `foo.bar` results")?;
             let (buf, (), ()) = try_join!(
                 async { anyhow::Ok(s.collect::<Vec<_>>().await.concat()) },
@@ -307,7 +304,7 @@ where
             anyhow::Ok((tx, rx))
         },
     )?;
-    let (params, outgoing) = serve(srv_tx, srv_rx, <() as Decode>::Decoder::default());
+    let (params, outgoing) = serve::<(), (), _, _, _>(srv_tx, srv_rx);
     let res = params.await;
     ensure!(res.is_err(), "invalid data must fail server ingress");
     drop(outgoing);
@@ -323,16 +320,7 @@ where
     try_join!(
         async {
             let (tx, rx) = connect().await.context("failed to connect")?;
-            let res = invoke(
-                tx,
-                rx,
-                "foo",
-                "baz",
-                <() as Encode>::Encoder::default(),
-                (),
-                <() as Decode>::Decoder::default(),
-            )
-            .await;
+            let res = invoke::<(), (), _, _>(tx, rx, "foo", "baz", ()).await;
             ensure!(res.is_err(), "invalid data must fail client ingress");
             anyhow::Ok(())
         },

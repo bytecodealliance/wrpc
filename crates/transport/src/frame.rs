@@ -21,7 +21,7 @@ use bytes::BytesMut;
 use tracing::{instrument, trace};
 use wasm_tokio::{Leb128DecoderU32, Leb128Encoder};
 
-pub use crate::mux::{Outgoing, Transmission};
+pub use crate::mux::{Outgoing, Receipt, Transmission};
 
 /// Default maximum length of a frame path
 pub(crate) const DEFAULT_MAX_DEPTH: u32 = 64;
