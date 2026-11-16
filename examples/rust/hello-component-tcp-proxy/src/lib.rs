@@ -59,11 +59,11 @@ fn wake_ready(
     tracing::trace!(?ns, "poll returned");
     ns.sort_by_key(|i| core::cmp::Reverse(*i));
     let mut ns = ns.as_slice();
-    if let (Some(i), Some(_)) = (ns.first(), timeout) {
-        if usize::try_from(*i) == Ok(pollables.len()) {
-            tracing::debug!("polling timed out");
-            ns = &ns[1..]
-        }
+    if let (Some(i), Some(_)) = (ns.first(), timeout)
+        && usize::try_from(*i) == Ok(pollables.len())
+    {
+        tracing::debug!("polling timed out");
+        ns = &ns[1..]
     }
     for i in ns {
         let (_, w) = pollables.remove(*i as _);
