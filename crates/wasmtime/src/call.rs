@@ -15,7 +15,7 @@ use crate::{TupleDecoder, TupleEncoder, WrpcView};
 /// using [`wasmtime::Store::run_concurrent`].
 pub async fn call<T, I, O>(
     store: &Accessor<T>,
-    codec: Codec<TupleEncoder<'_, &Accessor<T>>, TupleDecoder<'_, &Accessor<T>>>,
+    codec: Codec<TupleEncoder<&Accessor<T>>, TupleDecoder<&Accessor<T>>>,
     tx: impl BorrowMut<FramedWrite<O, FrameEncoder>>,
     rx: impl BorrowMut<FramedRead<I, FrameDecoder>>,
     func: Func,

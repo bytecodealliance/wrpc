@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use anyhow::Context as _;
 use tracing::{debug, warn};
@@ -26,9 +27,9 @@ pub struct Export {
     /// looks up the function by
     pub idx: ComponentExportIndex,
     /// Parameter types
-    pub params: Box<[Type]>,
+    pub params: Arc<[Type]>,
     /// Result types
-    pub results: Box<[Type]>,
+    pub results: Arc<[Type]>,
 }
 
 /// Function exports of a component by the instance and function names invocations of them carry
@@ -52,7 +53,7 @@ impl Exports {
             let idx = component
                 .get_export_index(instance_idx, name)
                 .with_context(|| format!("export `{name}` not found"))?;
-            let params: Box<[_]> = ty.params().map(|(.., ty)| ty).collect();
+            let params: Arc<[_]> = ty.params().map(|(.., ty)| ty).collect();
             debug!(instance, name, "collected function export");
             exports.entry(instance.into()).or_default().insert(
                 rpc_func_name(name).into(),

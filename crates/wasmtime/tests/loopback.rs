@@ -1,6 +1,8 @@
 use core::net::SocketAddr;
 use core::time::Duration;
 
+use std::sync::Arc;
+
 use anyhow::{Context as _, bail};
 use bytes::BytesMut;
 use futures::future::BoxFuture;
@@ -94,8 +96,16 @@ async fn serve_conn_shared(
             .with(|store| guest.instance.get_func(store, export.idx))
             .context("function export not found")?;
         let codec = Codec {
-            enc: TupleEncoder::new(guest.store, &export.results, ResourceTypes::default()),
-            dec: TupleDecoder::new(guest.store, &export.params, ResourceTypes::default()),
+            enc: TupleEncoder::new(
+                guest.store,
+                Arc::clone(&export.results),
+                ResourceTypes::default(),
+            ),
+            dec: TupleDecoder::new(
+                guest.store,
+                Arc::clone(&export.params),
+                ResourceTypes::default(),
+            ),
         };
         call(guest.store, codec, tx, rx, func).await?;
     }
@@ -140,8 +150,16 @@ async fn serve_conn(
         store
             .run_concurrent(async |store| {
                 let codec = Codec {
-                    enc: TupleEncoder::new(store, &export.results, ResourceTypes::default()),
-                    dec: TupleDecoder::new(store, &export.params, ResourceTypes::default()),
+                    enc: TupleEncoder::new(
+                        store,
+                        Arc::clone(&export.results),
+                        ResourceTypes::default(),
+                    ),
+                    dec: TupleDecoder::new(
+                        store,
+                        Arc::clone(&export.params),
+                        ResourceTypes::default(),
+                    ),
                 };
                 call(store, codec, tx, rx, func).await
             })

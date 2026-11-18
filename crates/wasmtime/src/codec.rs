@@ -7,6 +7,7 @@ use core::ops::{BitOrAssign, Bound, Shl};
 use core::task::{Context, Poll, ready};
 
 use std::collections::{BTreeMap, HashSet};
+use std::sync::Arc;
 
 use bytes::{Buf as _, BufMut as _, BytesMut};
 use tokio_util::codec::{Decoder, Encoder};
@@ -71,16 +72,16 @@ impl WithStore for () {
     }
 }
 
-pub struct ValEncoder<'a, T> {
+pub struct ValEncoder<T> {
     pub store: T,
-    pub ty: &'a Type,
+    pub ty: Type,
     pub resources: ResourceTypes,
     pub nested: Option<Box<dyn Transmit + Send>>,
 }
 
-impl<'a, T> ValEncoder<'a, T> {
+impl<T> ValEncoder<T> {
     #[must_use]
-    pub fn new(store: T, ty: &'a Type, resources: ResourceTypes) -> Self {
+    pub fn new(store: T, ty: Type, resources: ResourceTypes) -> Self {
         Self {
             store,
             ty,
@@ -90,7 +91,7 @@ impl<'a, T> ValEncoder<'a, T> {
     }
 }
 
-impl<T> Transmit for ValEncoder<'_, T> {
+impl<T> Transmit for ValEncoder<T> {
     fn poll_transmit(
         &mut self,
         cx: &mut Context<'_>,
@@ -109,16 +110,16 @@ impl<T> Transmit for ValEncoder<'_, T> {
 }
 
 /// Encodes a tuple of [`Val`]s of types `tys`, e.g. function results.
-pub struct TupleEncoder<'a, T> {
+pub struct TupleEncoder<T> {
     store: T,
-    pub(crate) tys: &'a [Type],
+    pub(crate) tys: Arc<[Type]>,
     resources: ResourceTypes,
     nested: BTreeMap<usize, Box<dyn Transmit + Send>>,
 }
 
-impl<'a, T> TupleEncoder<'a, T> {
+impl<T> TupleEncoder<T> {
     #[must_use]
-    pub fn new(store: T, tys: &'a [Type], resources: ResourceTypes) -> Self {
+    pub fn new(store: T, tys: Arc<[Type]>, resources: ResourceTypes) -> Self {
         Self {
             store,
             tys,
@@ -128,7 +129,7 @@ impl<'a, T> TupleEncoder<'a, T> {
     }
 }
 
-impl<T> Encoder<&[Val]> for TupleEncoder<'_, T>
+impl<T> Encoder<&[Val]> for TupleEncoder<T>
 where
     T: WithStore<Data: WrpcView>,
 {
@@ -140,7 +141,7 @@ where
     }
 }
 
-impl<T> Encoder<Vec<Val>> for TupleEncoder<'_, T>
+impl<T> Encoder<Vec<Val>> for TupleEncoder<T>
 where
     T: WithStore<Data: WrpcView>,
 {
@@ -151,7 +152,7 @@ where
     }
 }
 
-impl<T> TupleEncoder<'_, T>
+impl<T> TupleEncoder<T>
 where
     T: WithStore<Data: WrpcView>,
 {
@@ -159,7 +160,7 @@ where
         if vs.len() != self.tys.len() {
             bail!("value count mismatch");
         }
-        for (i, (v, ty)) in zip(vs, self.tys).enumerate() {
+        for (i, (v, ty)) in zip(vs, &*self.tys).enumerate() {
             if let Some(t) = encode_val(&mut self.store, &self.resources, ty, v, dst)
                 .with_context(|| format!("failed to encode value {i}"))?
             {
@@ -170,7 +171,7 @@ where
     }
 }
 
-impl<T> Transmit for TupleEncoder<'_, T> {
+impl<T> Transmit for TupleEncoder<T> {
     fn poll_transmit(
         &mut self,
         cx: &mut Context<'_>,
@@ -258,14 +259,14 @@ fn push_input_stream<T: WrpcView>(
     Ok(Val::Resource(stream))
 }
 
-impl<T> Encoder<&Val> for ValEncoder<'_, T>
+impl<T> Encoder<&Val> for ValEncoder<T>
 where
     T: WithStore<Data: WrpcView>,
 {
     type Error = std::io::Error;
 
     fn encode(&mut self, v: &Val, dst: &mut BytesMut) -> Result<(), Self::Error> {
-        let nested = encode_val(&mut self.store, &self.resources, self.ty, v, dst)
+        let nested = encode_val(&mut self.store, &self.resources, &self.ty, v, dst)
             .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
         if let Some(t) = nested {
             self.nested = Some(t);
@@ -780,14 +781,14 @@ impl<T> Receive for Inner<T> {
 ///
 /// Resources and asynchronous values are created in the store once their encoding is complete.
 /// Pending asynchronous values are received using [`Receive::poll_receive`].
-pub struct ValDecoder<'a, T> {
-    ty: &'a Type,
+pub struct ValDecoder<T> {
+    ty: Type,
     inner: Inner<T>,
 }
 
-impl<'a, T> ValDecoder<'a, T> {
+impl<T> ValDecoder<T> {
     #[must_use]
-    pub fn new(store: T, ty: &'a Type, resources: ResourceTypes) -> Self {
+    pub fn new(store: T, ty: Type, resources: ResourceTypes) -> Self {
         Self {
             ty,
             inner: Inner::new(store, resources),
@@ -803,7 +804,7 @@ impl<'a, T> ValDecoder<'a, T> {
     }
 }
 
-impl<T> Receive for ValDecoder<'_, T> {
+impl<T> Receive for ValDecoder<T> {
     fn poll_receive(
         &mut self,
         cx: &mut Context<'_>,
@@ -822,14 +823,14 @@ impl<T> Receive for ValDecoder<'_, T> {
 ///
 /// Resources and asynchronous values are created in the store once their encoding is complete.
 /// Pending asynchronous values are received using [`Receive::poll_receive`].
-pub struct TupleDecoder<'a, T> {
-    tys: &'a [Type],
+pub struct TupleDecoder<T> {
+    tys: Arc<[Type]>,
     inner: Inner<T>,
 }
 
-impl<'a, T> TupleDecoder<'a, T> {
+impl<T> TupleDecoder<T> {
     #[must_use]
-    pub fn new(store: T, tys: &'a [Type], resources: ResourceTypes) -> Self {
+    pub fn new(store: T, tys: Arc<[Type]>, resources: ResourceTypes) -> Self {
         Self {
             tys,
             inner: Inner::new(store, resources),
@@ -845,7 +846,7 @@ impl<'a, T> TupleDecoder<'a, T> {
     }
 }
 
-impl<T> Receive for TupleDecoder<'_, T> {
+impl<T> Receive for TupleDecoder<T> {
     fn poll_receive(
         &mut self,
         cx: &mut Context<'_>,
@@ -1254,7 +1255,7 @@ where
     }
 }
 
-impl<T> Decoder for ValDecoder<'_, T>
+impl<T> Decoder for ValDecoder<T>
 where
     T: WithStore<Data: WrpcView>,
 {
@@ -1262,7 +1263,7 @@ where
     type Error = std::io::Error;
 
     fn decode(&mut self, src: &mut BytesMut) -> std::io::Result<Option<Val>> {
-        let ty = self.ty;
+        let ty = &self.ty;
         self.inner.decode(src, |inner, src, path, state| {
             inner.decode_ty(src, ty, path, state)
         })
@@ -1274,7 +1275,7 @@ where
     }
 }
 
-impl<T> Decoder for TupleDecoder<'_, T>
+impl<T> Decoder for TupleDecoder<T>
 where
     T: WithStore<Data: WrpcView>,
 {
@@ -1282,7 +1283,7 @@ where
     type Error = std::io::Error;
 
     fn decode(&mut self, src: &mut BytesMut) -> std::io::Result<Option<Vec<Val>>> {
-        let tys = self.tys;
+        let tys = &*self.tys;
         self.inner.decode(src, |inner, src, path, state| {
             inner.decode_seq(src, path, state, Some(tys.len()), tys)
         })
