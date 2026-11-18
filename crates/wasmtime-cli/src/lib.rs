@@ -56,7 +56,6 @@ impl WrpcView for Ctx {
     fn wrpc(&mut self) -> WrpcCtxView<'_> {
         WrpcCtxView {
             shared_resources: &mut self.shared_resources,
-            table: &mut self.table,
         }
     }
 }
@@ -304,11 +303,6 @@ pub async fn serve(
     let exports = Exports::new(pre.component())?;
     let resources = ResourceTypes {
         guest: guest_resources,
-        io_streams: wrpc_wasmtime::wasi_io_stream_resources(
-            &engine,
-            &pre.component().component_type(),
-        )
-        .into(),
     };
     if resources.guest.is_empty() {
         let envs = Arc::<[_]>::from(envs);

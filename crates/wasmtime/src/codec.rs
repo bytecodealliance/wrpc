@@ -222,44 +222,6 @@ fn flag_bits<'a, T: BitOrAssign + Shl<u8, Output = T> + From<u8>>(
     v
 }
 
-#[cfg(feature = "wasmtime-wasi")]
-fn pending_input_stream(
-    store: StoreContextMut<'_, impl WrpcView>,
-) -> wasmtime::Result<(Val, Box<dyn Receive + Send>)> {
-    let (r, rx) = wrpc_transport::StreamDecoderBytes::pending();
-    let v = push_input_stream(
-        store,
-        Box::new(wasmtime_wasi::p2::pipe::AsyncReadStream::new(
-            tokio_util::io::StreamReader::new(futures::StreamExt::map(rx, Ok::<_, std::io::Error>)),
-        )),
-    )?;
-    Ok((v, Box::new(r)))
-}
-
-#[cfg(feature = "wasmtime-wasi")]
-fn ready_input_stream(
-    store: StoreContextMut<'_, impl WrpcView>,
-    buf: bytes::Bytes,
-) -> wasmtime::Result<Val> {
-    push_input_stream(
-        store,
-        Box::new(wasmtime_wasi::p2::pipe::MemoryInputPipe::new(buf)),
-    )
-}
-
-// The stream must be typed as `DynInputStream` (the host resource type),
-// otherwise the resulting resource handle carries the concrete reader type
-// and fails the guest's `own<input-stream>` type check.
-#[cfg(feature = "wasmtime-wasi")]
-fn push_input_stream(
-    mut store: StoreContextMut<'_, impl WrpcView>,
-    stream: wasmtime_wasi::p2::DynInputStream,
-) -> wasmtime::Result<Val> {
-    let stream = store.data_mut().wrpc().table.push(stream)?;
-    let stream = stream.try_into_resource_any(store)?;
-    Ok(Val::Resource(stream))
-}
-
 impl<T> Encoder<&Val> for ValEncoder<T>
 where
     T: WithStore<Data: WrpcView>,
@@ -608,59 +570,6 @@ fn encode_val(
             Ok(None)
         }
         (Val::Resource(resource), Type::Own(ty) | Type::Borrow(ty)) => {
-            #[cfg(feature = "wasmtime-wasi")]
-            if *ty == wasmtime::component::ResourceType::host::<wasmtime_wasi::p2::DynInputStream>()
-                || resources.io_streams.contains(ty)
-            {
-                let stream = store.with_store(|mut store| {
-                    let stream = resource
-                        .try_into_resource::<wasmtime_wasi::p2::DynInputStream>(&mut store)
-                        .context("failed to downcast `wasi:io/input-stream`")?;
-                    if !stream.owned() {
-                        store
-                            .data_mut()
-                            .wrpc()
-                            .table
-                            .get_mut(&stream)
-                            .context("failed to get input stream")?;
-                        // NOTE: In order to handle this we'd need to know how many bytes the
-                        // receiver has read. That means that some kind of callback would be required from
-                        // the receiver. This is not trivial and generally should be a very rare use case.
-                        bail!("encoding borrowed `wasi:io/input-stream` not supported yet");
-                    }
-                    store
-                        .data_mut()
-                        .wrpc()
-                        .table
-                        .delete(stream)
-                        .context("failed to delete input stream")
-                })??;
-                let items: core::pin::Pin<Box<dyn tokio::io::AsyncRead + Send>> =
-                    Box::pin(tokio_util::io::StreamReader::new(
-                        futures::stream::try_unfold(stream, |mut stream| async move {
-                            loop {
-                                stream.ready().await;
-                                match stream.read(wrpc_transport::READ_CHUNK_SIZE) {
-                                    Ok(buf) if buf.is_empty() => {}
-                                    Ok(buf) => return Ok(Some((buf, stream))),
-                                    Err(wasmtime_wasi::p2::StreamError::Closed) => {
-                                        return Ok(None);
-                                    }
-                                    Err(err) => return Err(std::io::Error::other(err)),
-                                }
-                            }
-                        }),
-                    ));
-                let mut enc = wrpc_transport::StreamEncoderRead::<
-                    { wrpc_transport::READ_CHUNK_SIZE },
-                >::default();
-                enc.encode(items, dst)
-                    .context("failed to encode input stream")?;
-                if enc.is_closed() {
-                    return Ok(None);
-                }
-                return Ok(Some(Box::new(enc)));
-            }
             if resources.guest.contains(ty) {
                 let id = Uuid::now_v7();
                 CoreVecEncoderBytes
@@ -796,8 +705,8 @@ impl<T> ValDecoder<T> {
         }
     }
 
-    /// Rejects strings and ready `input-stream`s longer than `max_len` bytes and lists longer than
-    /// `max_len` elements, [`DEFAULT_MAX_LEN`] by default.
+    /// Rejects strings longer than `max_len` bytes and lists longer than `max_len` elements,
+    /// [`DEFAULT_MAX_LEN`] by default.
     #[must_use]
     pub fn with_max_len(mut self, max_len: u32) -> Self {
         self.inner.max_len = max_len;
@@ -838,8 +747,8 @@ impl<T> TupleDecoder<T> {
         }
     }
 
-    /// Rejects strings and ready `input-stream`s longer than `max_len` bytes and lists longer than
-    /// `max_len` elements, [`DEFAULT_MAX_LEN`] by default.
+    /// Rejects strings longer than `max_len` bytes and lists longer than `max_len` elements,
+    /// [`DEFAULT_MAX_LEN`] by default.
     #[must_use]
     pub fn with_max_len(mut self, max_len: u32) -> Self {
         self.inner.max_len = max_len;
@@ -1034,43 +943,6 @@ where
         Ok(Some(v))
     }
 
-    #[allow(clippy::too_many_arguments)]
-    #[cfg(any(feature = "async", feature = "wasmtime-wasi"))]
-    fn decode_async<D>(
-        &mut self,
-        src: &mut BytesMut,
-        path: &[usize],
-        state: &mut Option<Box<Partial>>,
-        kind: &str,
-        dec: D,
-        pending: impl FnOnce(
-            StoreContextMut<'_, T::Data>,
-        ) -> wasmtime::Result<(Val, Box<dyn Receive + Send>)>,
-        ready: impl FnOnce(StoreContextMut<'_, T::Data>, D::Item) -> wasmtime::Result<Val>,
-    ) -> std::io::Result<Option<Val>>
-    where
-        D: Decoder + Send + 'static,
-        std::io::Error: From<D::Error>,
-    {
-        if state.is_none() {
-            let Some(status) = decode_status(src, kind)? else {
-                return Ok(None);
-            };
-            if status == 0 {
-                let res = self.store.with_store(pending)?;
-                let (v, r) = res.map_err(std::io::Error::other)?;
-                self.nested.insert(path.into(), r);
-                return Ok(Some(v));
-            }
-        }
-        let Some(v) = decode_with(src, state, dec)? else {
-            return Ok(None);
-        };
-        let v = self.store.with_store(|store| ready(store, v))?;
-        let v = v.map_err(std::io::Error::other)?;
-        Ok(Some(v))
-    }
-
     #[allow(clippy::too_many_lines)]
     fn decode_ty(
         &mut self,
@@ -1173,22 +1045,6 @@ where
                 Ok(Some(Val::Flags(vs)))
             }
             Type::Own(ty) | Type::Borrow(ty) => {
-                #[cfg(feature = "wasmtime-wasi")]
-                if *ty
-                    == wasmtime::component::ResourceType::host::<wasmtime_wasi::p2::DynInputStream>(
-                    )
-                    || self.resources.io_streams.contains(ty)
-                {
-                    return self.decode_async(
-                        src,
-                        path,
-                        state,
-                        "stream",
-                        <wasm_tokio::CoreVecDecoderBytes>::with_max_len(self.max_len),
-                        pending_input_stream,
-                        ready_input_stream,
-                    );
-                }
                 if self.resources.guest.contains(ty) {
                     let mut id = uuid::Bytes::default();
                     if !matches!(state.take().as_deref(), Some(Partial::Uuid)) {

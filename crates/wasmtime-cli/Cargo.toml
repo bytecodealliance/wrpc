@@ -66,4 +66,4 @@ wasmtime-wasi-http = { workspace = true, features = ["default-send-request", "p2
 wit-component = { workspace = true }
 wrpc-cli = { workspace = true }
 wrpc-transport = { workspace = true }
-wrpc-wasmtime = { workspace = true, features = ["async", "wasmtime-wasi"] }
+wrpc-wasmtime = { workspace = true, features = ["async"] }
