@@ -4602,6 +4602,7 @@ dependencies = [
  "tokio-util",
  "tracing",
  "wrpc-test",
+ "wrpc-transport",
 ]
 
 [[package]]

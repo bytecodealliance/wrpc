@@ -1,3 +1,6 @@
+use core::convert::Infallible;
+use core::future;
+
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
@@ -7,7 +10,7 @@ use std::time::Instant;
 use anyhow::{Context as _, bail, ensure};
 use criterion::measurement::WallTime;
 use criterion::{BenchmarkGroup, Criterion};
-use futures::StreamExt as _;
+use hyper::service;
 use hyper_util::rt::TokioExecutor;
 use hyper_util::rt::tokio::WithHyperIo;
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -316,18 +319,6 @@ impl Tasks {
     }
 }
 
-fn serve_http(tasks: &Tasks, mut srv: wrpc_http::Server, func: Func, handler: impl Handler) {
-    tasks.spawn({
-        let tasks = tasks.clone();
-        async move {
-            while let Some(Ok((.., tx, rx))) = srv.next().await {
-                tasks.serve(func, tx, rx, handler.clone());
-            }
-            Ok(())
-        }
-    });
-}
-
 fn bench_invoke<I, O>(
     g: &mut BenchmarkGroup<WallTime>,
     rt: &Runtime,
@@ -493,9 +484,7 @@ fn bench_http1(
         rt.block_on(wrpc_test::with_http_pooling(async |parts, clt, lis| {
             Ok((parts, clt, lis))
         }))?;
-    let (svc, srv) = wrpc_http::channel(16);
     let tasks = Tasks::new(&rt);
-    serve_http(&tasks, srv, func, handler);
     tasks.spawn({
         let tasks = tasks.clone();
         async move {
@@ -504,14 +493,25 @@ fn bench_http1(
                 stream
                     .set_nodelay(true)
                     .context("failed to set TCP_NODELAY")?;
+                let svc = service::service_fn({
+                    let tasks = tasks.clone();
+                    let handler = handler.clone();
+                    move |req| {
+                        let (res, tx, rx) = wrpc_http::accept(req.into_body());
+                        tasks.serve(func, tx, rx, handler.clone());
+                        future::ready(Ok::<_, Infallible>(res))
+                    }
+                });
                 let conn = hyper::server::conn::http1::Builder::new()
-                    .serve_connection(WithHyperIo::new(stream), svc.clone());
+                    .serve_connection(WithHyperIo::new(stream), svc);
                 tasks.spawn(async move { conn.await.context("failed to serve HTTP/1 connection") });
             }
         }
     });
     bench_invoke(g, &rt, &tasks, "http1", func, async || {
-        Ok(wrpc_http::open_pooled(&clt, parts.clone()))
+        let (req, tx) = wrpc_http::request(parts.clone());
+        let rx = wrpc_http::response(clt.request(req));
+        Ok((tx, rx))
     })
 }
 
@@ -542,16 +542,21 @@ fn bench_http2(
         })
         .context("failed to connect over HTTP/2")?;
     stream.set_nodelay(true)?;
-    let (svc, srv) = wrpc_http::channel(16);
     let tasks = Tasks::new(&rt);
     tasks.spawn(async move {
         conn.await
             .context("failed to drive HTTP/2 client connection")
     });
-    serve_http(&tasks, srv, func, handler);
-    let conn = hyper::server::conn::http2::Builder::new(TokioExecutor::default())
-        .serve_connection(WithHyperIo::new(stream), svc);
-    tasks.spawn(async move { conn.await.context("failed to serve HTTP/2 connection") });
+    tasks.spawn({
+        let tasks = tasks.clone();
+        async move {
+            wrpc_http::serve(stream, |_, tx, rx| {
+                tasks.serve(func, tx, rx, handler.clone());
+            })
+            .await
+            .context("failed to serve HTTP/2 connection")
+        }
+    });
     let (parts, ()) = http::Request::new(()).into_parts();
     bench_invoke(g, &rt, &tasks, "http2", func, async || {
         let (tx, rx) = wrpc_http::open(sender.clone(), parts.clone()).await?;
