@@ -19,6 +19,10 @@ pub struct ServeArgs {
     #[arg(long, default_value = DEFAULT_TIMEOUT)]
     timeout: humantime::Duration,
 
+    /// Limit on the length of a string in bytes and of a list in elements decoded from parameters
+    #[arg(long, default_value_t = wrpc_wasmtime::DEFAULT_MAX_LEN)]
+    max_len: u32,
+
     /// Address to listen for export invocations on
     #[arg(long, default_value = DEFAULT_ADDR)]
     export: String,
@@ -42,6 +46,7 @@ fn parse_env(s: &str) -> anyhow::Result<(Box<str>, Box<str>)> {
 pub async fn handle_serve(
     ServeArgs {
         timeout,
+        max_len,
         export,
         envs,
         ref workload,
@@ -50,7 +55,7 @@ pub async fn handle_serve(
     let lis = tokio::net::TcpListener::bind(&export)
         .await
         .with_context(|| format!("failed to bind TCP listener on `{export}`"))?;
-    crate::serve(lis, *timeout, envs, workload).await
+    crate::serve(lis, *timeout, max_len, envs, workload).await
 }
 
 #[instrument(level = "trace", ret(level = "trace"))]
