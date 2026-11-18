@@ -846,7 +846,7 @@ async fn rust_webtransport_stopped_mid_params() -> anyhow::Result<()> {
 async fn rust_http_bindgen_sync() -> anyhow::Result<()> {
     wrpc_test::serve_http2(async |parts, sender, srv| {
         assert_bindgen_sync(
-            move || wrpc_http::open(sender.clone(), parts.clone()),
+            move || wrpc_test::http_open(sender.clone(), parts.clone()),
             async || wrpc_test::http_accept(srv).await,
         )
         .await
@@ -858,7 +858,7 @@ async fn rust_http_bindgen_sync() -> anyhow::Result<()> {
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn rust_http_bindgen_async() -> anyhow::Result<()> {
     wrpc_test::serve_http2(async |parts, sender, srv| {
-        let (tx, rx) = wrpc_http::open(sender, parts).await?;
+        let (tx, rx) = wrpc_test::http_open(sender, parts).await?;
         assert_bindgen_async(tx, rx, wrpc_test::http_accept(srv)).await
     })
     .await
@@ -869,7 +869,7 @@ async fn rust_http_bindgen_async() -> anyhow::Result<()> {
 async fn rust_http_dynamic() -> anyhow::Result<()> {
     wrpc_test::serve_http2(async |parts, sender, srv| {
         assert_dynamic(
-            || wrpc_http::open(sender.clone(), parts.clone()),
+            || wrpc_test::http_open(sender.clone(), parts.clone()),
             async || wrpc_test::http_accept(srv).await,
         )
         .await

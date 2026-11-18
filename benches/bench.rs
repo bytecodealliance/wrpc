@@ -565,7 +565,7 @@ fn bench_http2(
     });
     let (parts, ()) = http::Request::new(()).into_parts();
     bench_invoke(g, &rt, &tasks, "http2", func, async {
-        let (tx, rx) = wrpc_http::open(sender.clone(), parts.clone()).await?;
+        let (tx, rx) = wrpc_test::http_open(sender.clone(), parts.clone()).await?;
         Ok((tx, rx))
     })
 }

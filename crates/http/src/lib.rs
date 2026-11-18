@@ -1,20 +1,25 @@
 //! wRPC HTTP transport
 
-use core::pin::{Pin, pin};
+use core::pin::Pin;
 use core::task::{Context, Poll, ready};
 
 use bytes::{Bytes, BytesMut};
 use futures::stream::BoxStream;
 use futures::{StreamExt as _, TryStreamExt as _, stream};
+use http::HeaderValue;
+use http::header::CONTENT_TYPE;
 use http_body::Frame;
 use http_body_util::combinators::MapErr;
 use http_body_util::{BodyDataStream, BodyExt as _};
 use pin_project_lite::pin_project;
-use tokio::io::{AsyncReadExt as _, DuplexStream, duplex};
+use tokio::io::{DuplexStream, duplex};
 use tokio_util::io::{StreamReader, poll_read_buf};
 
 /// Body buffer size
 pub const DEFAULT_BODY_BUFFER_SIZE: usize = 8192;
+
+/// Media type of wRPC request and response bodies
+pub const MEDIA_TYPE: &str = "application/vnd.bytecodealliance.wrpc";
 
 /// Reader of the data of a request body, see [accept]
 pub type RequestBodyReader<T> = StreamReader<
@@ -72,7 +77,8 @@ impl http_body::Body for OutgoingBody {
 }
 
 /// Accepts a wRPC request with `body`, returning the response to send without waiting for the
-/// request body, the response body writer and the request body reader
+/// request body, with content type [`MEDIA_TYPE`], the response body writer and the request body
+/// reader
 ///
 /// Read the request body to its end before dropping its reader: dropping it earlier may cancel
 /// the response before the peer received it.
@@ -89,22 +95,29 @@ where
 {
     let rx = StreamReader::new(body.map_err(io_error as fn(_) -> _).into_data_stream());
     let (body, tx) = OutgoingBody::new();
-    (http::Response::new(body), tx, rx)
+    let mut res = http::Response::new(body);
+    res.headers_mut()
+        .insert(CONTENT_TYPE, HeaderValue::from_static(MEDIA_TYPE));
+    (res, tx, rx)
 }
 
-/// Returns a wRPC request with `parts` and its body writer
+/// Returns a `POST` wRPC request with `parts`, with content type [`MEDIA_TYPE`] unless `parts` set
+/// one, and its body writer
 #[must_use]
 pub fn request(mut parts: http::request::Parts) -> (http::Request<OutgoingBody>, DuplexStream) {
     let (body, tx) = OutgoingBody::new();
     parts.method = http::Method::POST;
+    parts
+        .headers
+        .entry(CONTENT_TYPE)
+        .or_insert(HeaderValue::from_static(MEDIA_TYPE));
     (http::Request::from_parts(parts, body), tx)
 }
 
-/// Returns a reader of the body of the response `res` resolves to.
+/// Returns a reader of the body of the response `res` resolves to
 ///
-/// The response is awaited on first read, so that the request body can be sent first.
-/// Response status codes other than 2xx surface as an [`std::io::Error`] on read, carrying the
-/// status and the first 4 KiB of the response body.
+/// The response is awaited on first read, so that the request body can be sent first. Its status
+/// and headers are not checked: to act on them, map `res`, failing reads with its error.
 pub fn response<'a>(
     res: impl Future<
         Output = Result<
@@ -122,32 +135,14 @@ pub fn response<'a>(
 ) -> ResponseBodyReader<'a> {
     let body = stream::once(Box::pin(async move {
         let res = res.await.map_err(io_error)?;
-        let (http::response::Parts { status, .. }, body) = res.into_parts();
-        let body = body.map_err(io_error).into_data_stream();
-        if !status.is_success() {
-            let mut buf = Vec::default();
-            let _ = pin!(StreamReader::new(body))
-                .take(4096)
-                .read_to_end(&mut buf)
-                .await;
-            return Err(std::io::Error::other(if buf.is_empty() {
-                format!("HTTP request failed with status `{status}`")
-            } else {
-                format!(
-                    "HTTP request failed with status `{status}`: {}",
-                    String::from_utf8_lossy(&buf)
-                )
-            }));
-        }
-        Ok(body)
+        Ok::<_, std::io::Error>(res.into_body().map_err(io_error).into_data_stream())
     }))
     .try_flatten();
     StreamReader::new(body.boxed())
 }
 
 /// Serves wRPC requests on HTTP/2 connection `io`, calling `f` with the parts of each, the parts
-/// of its response (200 OK without headers by default) and the byte streams [accept] returns for
-/// its body
+/// of its response (as [accept] returns them) and the byte streams [accept] returns for its body
 ///
 /// The response is sent once `f` returns. As with [accept], read each request body to its end
 /// before dropping its reader.
@@ -176,18 +171,23 @@ pub async fn serve(
         .await
 }
 
-/// Sends a wRPC request with `parts` on `sender`, returning the request body writer and the
-/// response body reader
+/// Sends the wRPC [request] with `parts` on `sender`, returning the request body writer and the
+/// response future to pass to [response]
 #[cfg(all(feature = "client", feature = "http2"))]
 #[tracing::instrument(level = "trace", skip_all)]
 pub async fn open(
     mut sender: hyper::client::conn::http2::SendRequest<OutgoingBody>,
     parts: http::request::Parts,
-) -> Result<(DuplexStream, ResponseBodyReader<'static>), hyper::Error> {
+) -> Result<
+    (
+        DuplexStream,
+        impl Future<Output = Result<http::Response<hyper::body::Incoming>, hyper::Error>> + Send,
+    ),
+    hyper::Error,
+> {
     sender.ready().await?;
     let (req, tx) = request(parts);
-    let rx = response(sender.send_request(req));
-    Ok((tx, rx))
+    Ok((tx, sender.send_request(req)))
 }
 
 fn io_error(err: impl Into<Box<dyn core::error::Error + Send + Sync>>) -> std::io::Error {
