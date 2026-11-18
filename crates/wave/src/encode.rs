@@ -5,6 +5,7 @@ use core::iter::zip;
 use core::task::{Context, Poll};
 
 use std::borrow::Cow;
+use std::sync::Arc;
 
 use bytes::{BufMut as _, BytesMut};
 use tokio_util::codec::Encoder;
@@ -26,23 +27,23 @@ use wrpc_transport::Transmit;
 /// use wrpc_wave::ValueEncoder;
 ///
 /// let mut buf = BytesMut::default();
-/// ValueEncoder::new(&Type::U32).encode(&Value::make_u32(42), &mut buf).unwrap();
+/// ValueEncoder::new(Type::U32).encode(&Value::make_u32(42), &mut buf).unwrap();
 /// assert_eq!(buf.as_ref(), [42]);
 /// ```
 #[derive(Debug)]
-pub struct ValueEncoder<'a, T: WasmType> {
-    ty: &'a T,
+pub struct ValueEncoder<T: WasmType> {
+    ty: T,
 }
 
-impl<'a, T: WasmType> ValueEncoder<'a, T> {
+impl<T: WasmType> ValueEncoder<T> {
     /// Creates a new [`ValueEncoder`] of values of type `ty`
     #[must_use]
-    pub fn new(ty: &'a T) -> Self {
+    pub fn new(ty: T) -> Self {
         Self { ty }
     }
 }
 
-impl<V, T> Encoder<&V> for ValueEncoder<'_, T>
+impl<V, T> Encoder<&V> for ValueEncoder<T>
 where
     V: WasmValue<Type = T>,
     T: WasmType,
@@ -51,11 +52,11 @@ where
 
     #[instrument(level = "trace", skip_all)]
     fn encode(&mut self, v: &V, dst: &mut BytesMut) -> std::io::Result<()> {
-        encode_value(self.ty, v, dst)
+        encode_value(&self.ty, v, dst)
     }
 }
 
-impl<T: WasmType> Transmit for ValueEncoder<'_, T> {
+impl<T: WasmType> Transmit for ValueEncoder<T> {
     fn poll_transmit(
         &mut self,
         _cx: &mut Context<'_>,
@@ -72,19 +73,19 @@ impl<T: WasmType> Transmit for ValueEncoder<'_, T> {
 
 /// [Encoder] of tuples of values of types `tys`, e.g. function parameters
 #[derive(Debug)]
-pub struct TupleEncoder<'a, T: WasmType> {
-    tys: &'a [T],
+pub struct TupleEncoder<T: WasmType> {
+    tys: Arc<[T]>,
 }
 
-impl<'a, T: WasmType> TupleEncoder<'a, T> {
+impl<T: WasmType> TupleEncoder<T> {
     /// Creates a new [`TupleEncoder`] of tuples of values of types `tys`
     #[must_use]
-    pub fn new(tys: &'a [T]) -> Self {
+    pub fn new(tys: Arc<[T]>) -> Self {
         Self { tys }
     }
 }
 
-impl<V, T> Encoder<&[V]> for TupleEncoder<'_, T>
+impl<V, T> Encoder<&[V]> for TupleEncoder<T>
 where
     V: WasmValue<Type = T>,
     T: WasmType,
@@ -100,14 +101,14 @@ where
                 vs.len()
             )));
         }
-        for (ty, v) in zip(self.tys, vs) {
+        for (ty, v) in zip(self.tys.iter(), vs) {
             encode_value(ty, v, dst)?;
         }
         Ok(())
     }
 }
 
-impl<T: WasmType> Transmit for TupleEncoder<'_, T> {
+impl<T: WasmType> Transmit for TupleEncoder<T> {
     fn poll_transmit(
         &mut self,
         _cx: &mut Context<'_>,
@@ -144,7 +145,11 @@ fn encode_payload<T: WasmValue>(
     }
 }
 
-fn encode_value<T: WasmValue>(ty: &T::Type, v: &T, dst: &mut BytesMut) -> std::io::Result<()> {
+pub(crate) fn encode_value<T: WasmValue>(
+    ty: &T::Type,
+    v: &T,
+    dst: &mut BytesMut,
+) -> std::io::Result<()> {
     let kind = ty.kind();
     if v.kind() != kind {
         return Err(error_invalid_input(format!(
