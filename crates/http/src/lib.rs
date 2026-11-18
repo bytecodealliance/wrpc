@@ -145,14 +145,21 @@ pub fn response<'a>(
     StreamReader::new(body.boxed())
 }
 
-/// Serves wRPC requests on HTTP/2 connection `io`, calling `f` with the parts of each and the
-/// byte streams [accept] returns for its body
+/// Serves wRPC requests on HTTP/2 connection `io`, calling `f` with the parts of each, the parts
+/// of its response (200 OK without headers by default) and the byte streams [accept] returns for
+/// its body
 ///
-/// As with [accept], read each request body to its end before dropping its reader.
+/// The response is sent once `f` returns. As with [accept], read each request body to its end
+/// before dropping its reader.
 #[cfg(feature = "server")]
 pub async fn serve(
     io: impl hyper::rt::Read + hyper::rt::Write + Unpin,
-    f: impl Fn(http::request::Parts, DuplexStream, RequestBodyReader<hyper::body::Incoming>),
+    f: impl Fn(
+        http::request::Parts,
+        &mut http::response::Parts,
+        DuplexStream,
+        RequestBodyReader<hyper::body::Incoming>,
+    ),
 ) -> Result<(), hyper::Error> {
     hyper::server::conn::http2::Builder::new(hyper_util::rt::TokioExecutor::default())
         .serve_connection(
@@ -160,7 +167,9 @@ pub async fn serve(
             hyper::service::service_fn(move |req| {
                 let (parts, body) = req.into_parts();
                 let (res, tx, rx) = accept(body);
-                f(parts, tx, rx);
+                let (mut res, body) = res.into_parts();
+                f(parts, &mut res, tx, rx);
+                let res = http::Response::from_parts(res, body);
                 core::future::ready(Ok::<_, core::convert::Infallible>(res))
             }),
         )

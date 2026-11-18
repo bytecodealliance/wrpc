@@ -556,7 +556,7 @@ fn bench_http2(
     tasks.spawn({
         let tasks = tasks.clone();
         async move {
-            wrpc_http::serve(WithHyperIo::new(stream), |_, tx, rx| {
+            wrpc_http::serve(WithHyperIo::new(stream), |_, _, tx, rx| {
                 tasks.serve(func, tx, rx, handler.clone());
             })
             .await

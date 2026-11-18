@@ -2,7 +2,8 @@ use core::time::Duration;
 
 use anyhow::{Context as _, ensure};
 use bytes::Bytes;
-use http_body_util::{BodyExt as _, Full};
+use http::{HeaderValue, StatusCode};
+use http_body_util::{BodyExt as _, Empty, Full};
 use hyper::server::conn::http2;
 use hyper::service::service_fn;
 use hyper_util::rt::{TokioExecutor, TokioIo};
@@ -44,6 +45,28 @@ async fn pooling() -> anyhow::Result<()> {
         )?;
         drop(clt);
         conn.await.context("connection task panicked")?
+    })
+    .await
+}
+
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+async fn response_parts() -> anyhow::Result<()> {
+    let serve = async |stream| {
+        wrpc_http::serve(TokioIo::new(stream), |_, res, tx, mut rx| {
+            res.status = StatusCode::ACCEPTED;
+            res.headers.insert("foo", HeaderValue::from_static("bar"));
+            drop(tx);
+            spawn(async move { rx.read_to_end(&mut Vec::default()).await });
+        })
+        .await
+        .context("failed to serve connection")
+    };
+    wrpc_test::with_http2(serve, |parts, mut sender| async move {
+        let req = http::Request::from_parts(parts, Empty::<Bytes>::default());
+        let res = sender.send_request(req).await?;
+        assert_eq!(res.status(), StatusCode::ACCEPTED);
+        assert_eq!(res.headers()["foo"], "bar");
+        Ok(())
     })
     .await
 }
