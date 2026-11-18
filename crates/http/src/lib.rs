@@ -151,12 +151,12 @@ pub fn response<'a>(
 /// As with [accept], read each request body to its end before dropping its reader.
 #[cfg(feature = "server")]
 pub async fn serve(
-    io: impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+    io: impl hyper::rt::Read + hyper::rt::Write + Unpin,
     f: impl Fn(http::request::Parts, DuplexStream, RequestBodyReader<hyper::body::Incoming>),
 ) -> Result<(), hyper::Error> {
     hyper::server::conn::http2::Builder::new(hyper_util::rt::TokioExecutor::default())
         .serve_connection(
-            hyper_util::rt::TokioIo::new(io),
+            io,
             hyper::service::service_fn(move |req| {
                 let (parts, body) = req.into_parts();
                 let (res, tx, rx) = accept(body);
