@@ -39,7 +39,7 @@ use crate::{
 /// Size of chunks read from byte streams
 pub const READ_CHUNK_SIZE: usize = 8192;
 
-fn encode_ready_bytes<T: AsRef<[u8]>>(chunks: &[T], dst: &mut BytesMut) -> std::io::Result<()> {
+fn encode_ready_bytes(chunks: &[impl AsRef<[u8]>], dst: &mut BytesMut) -> std::io::Result<()> {
     let n = chunks.iter().map(|chunk| chunk.as_ref().len()).sum();
     let len = u32::try_from(n)
         .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;

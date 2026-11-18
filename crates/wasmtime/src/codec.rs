@@ -223,8 +223,8 @@ fn flag_bits<'a, T: BitOrAssign + Shl<u8, Output = T> + From<u8>>(
 }
 
 #[cfg(feature = "wasmtime-wasi")]
-fn pending_input_stream<T: WrpcView>(
-    store: StoreContextMut<'_, T>,
+fn pending_input_stream(
+    store: StoreContextMut<'_, impl WrpcView>,
 ) -> wasmtime::Result<(Val, Box<dyn Receive + Send>)> {
     let (r, rx) = wrpc_transport::StreamDecoderBytes::pending();
     let v = push_input_stream(
@@ -237,8 +237,8 @@ fn pending_input_stream<T: WrpcView>(
 }
 
 #[cfg(feature = "wasmtime-wasi")]
-fn ready_input_stream<T: WrpcView>(
-    store: StoreContextMut<'_, T>,
+fn ready_input_stream(
+    store: StoreContextMut<'_, impl WrpcView>,
     buf: bytes::Bytes,
 ) -> wasmtime::Result<Val> {
     push_input_stream(
@@ -251,8 +251,8 @@ fn ready_input_stream<T: WrpcView>(
 // otherwise the resulting resource handle carries the concrete reader type
 // and fails the guest's `own<input-stream>` type check.
 #[cfg(feature = "wasmtime-wasi")]
-fn push_input_stream<T: WrpcView>(
-    mut store: StoreContextMut<'_, T>,
+fn push_input_stream(
+    mut store: StoreContextMut<'_, impl WrpcView>,
     stream: wasmtime_wasi::p2::DynInputStream,
 ) -> wasmtime::Result<Val> {
     let stream = store.data_mut().wrpc().table.push(stream)?;
