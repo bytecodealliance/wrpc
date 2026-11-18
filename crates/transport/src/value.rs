@@ -2381,8 +2381,8 @@ mod tests {
     use tokio_util::codec::{FramedRead, FramedWrite};
 
     use super::*;
-    use crate::frame::{self, FrameRef};
-    use crate::mux::{Outgoing, ingress};
+    use crate::mux::{receive, transmit};
+    use crate::{FrameDecoder, FrameEncoder, FrameRef};
 
     #[test_log::test(tokio::test)]
     async fn roundtrip() -> anyhow::Result<()> {
@@ -2415,14 +2415,15 @@ mod tests {
             Box::pin(std::io::Cursor::new(data.clone())),
         );
         let (tx, rx) = duplex(1024);
-        let tx = Outgoing {
-            tx: FramedWrite::new(tx, frame::Encoder),
-        }
-        .send(<V as Encode>::Encoder::default(), v)?;
+        let tx = transmit(
+            <V as Encode>::Encoder::default(),
+            FramedWrite::new(tx, FrameEncoder),
+            v,
+        )?;
         let tx = spawn(tx);
-        let ((a, b, c, d, e, mut f), rx) = ingress(
-            FramedRead::new(rx, frame::Decoder::default()),
+        let ((a, b, c, d, e, mut f), rx) = receive(
             <V as Decode>::Decoder::default(),
+            FramedRead::new(rx, FrameDecoder::default()),
         )
         .await?;
         let rx = spawn(rx);
@@ -2447,14 +2448,15 @@ mod tests {
         let outer: BoxFuture<'static, BoxFuture<'static, u8>> =
             Box::pin(yield_now().map(|()| Box::pin(pending()) as BoxFuture<'static, u8>));
         let (tx, rx) = duplex(1024);
-        let tx = Outgoing {
-            tx: FramedWrite::new(tx, frame::Encoder),
-        }
-        .send(<V as Encode>::Encoder::default(), (outer,))?;
+        let tx = transmit(
+            <V as Encode>::Encoder::default(),
+            FramedWrite::new(tx, FrameEncoder),
+            (outer,),
+        )?;
         let rx = async {
-            let ((outer,), rx) = ingress(
-                FramedRead::new(rx, frame::Decoder::default()),
+            let ((outer,), rx) = receive(
                 <V as Decode>::Decoder::default(),
+                FramedRead::new(rx, FrameDecoder::default()),
             )
             .await?;
             select! {
@@ -2470,7 +2472,7 @@ mod tests {
 
     #[test_log::test(tokio::test)]
     async fn ingress_fails_fast() -> anyhow::Result<()> {
-        async fn receive<T>(
+        async fn receive_value<T>(
             data: &[u8],
         ) -> std::io::Result<(T, impl Future<Output = std::io::Result<()>> + use<T>)>
         where
@@ -2480,25 +2482,25 @@ mod tests {
             let frames: [(&[usize], &[u8]); 4] =
                 [(&[], b"\0"), (&[], b""), (&[0], data), (&[0], b"")];
             for (path, data) in frames {
-                frame::Encoder.encode(FrameRef { path, data }, &mut buf)?;
+                FrameEncoder.encode(FrameRef { path, data }, &mut buf)?;
             }
-            let rx = FramedRead::new(std::io::Cursor::new(buf), frame::Decoder::default());
+            let rx = FramedRead::new(std::io::Cursor::new(buf), FrameDecoder::default());
             let dec = <(T,) as Decode>::Decoder::default();
-            let Ok(((v,), rx)) = ingress(rx, dec).await else {
+            let Ok(((v,), rx)) = receive(dec, rx).await else {
                 panic!("value not decoded")
             };
             Ok((v, rx))
         }
 
-        let (_fut, rx) = receive::<BoxFuture<'static, ()>>(b"\x2a").await?;
+        let (_fut, rx) = receive_value::<BoxFuture<'static, ()>>(b"\x2a").await?;
         let err = rx.await.unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
 
-        let (_fut, rx) = receive::<BoxFuture<'static, Bytes>>(b"\x03foo\x2a").await?;
+        let (_fut, rx) = receive_value::<BoxFuture<'static, Bytes>>(b"\x03foo\x2a").await?;
         let err = rx.await.unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
 
-        let (fut, rx) = receive::<BoxFuture<'static, Bytes>>(b"\x03foo").await?;
+        let (fut, rx) = receive_value::<BoxFuture<'static, Bytes>>(b"\x03foo").await?;
         drop(fut);
         let err = rx.await.unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::BrokenPipe);

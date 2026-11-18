@@ -1,6 +1,6 @@
 use core::time::Duration;
 
-use anyhow::Context as _;
+use anyhow::{Context as _, ensure};
 use bytes::Bytes;
 use http_body_util::{BodyExt as _, Full};
 use hyper::server::conn::http2;
@@ -9,8 +9,9 @@ use hyper_util::rt::{TokioExecutor, TokioIo};
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::sync::mpsc;
 use tokio::{spawn, try_join};
+use tokio_util::codec::{FramedRead, FramedWrite};
 use wrpc_http::OutgoingBody;
-use wrpc_transport::{Decode, Encode, Header};
+use wrpc_transport::{FrameDecoder, FrameEncoder, Listener};
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn http2() -> anyhow::Result<()> {
@@ -98,22 +99,24 @@ async fn buffered() -> anyhow::Result<()> {
             req: http::Request<Full<Bytes>>,
         ) -> anyhow::Result<(http::response::Parts, Bytes)> {
             let (res, tx, rx) = wrpc_http::accept(req.into_body());
-            let (header, mut frames) = Header::read(rx).await?;
-            assert_eq!(
-                header,
-                Header {
-                    instance: "foo".into(),
-                    name: "bar".into(),
-                }
-            );
-            let (params, outgoing) =
-                wrpc_transport::serve(tx, &mut frames, <Bytes as Decode>::Decoder::default());
-            let (params, rx) = params.await?;
-            rx.await?;
-            wrpc_test::read_eof(&mut frames).await?;
-            let tx = outgoing.send(<Bytes as Encode>::Encoder::default(), params)?;
             let (parts, body) = res.into_parts();
-            let ((), body) = try_join!(tx, body.collect())?;
+            let ((), body) = try_join!(
+                async {
+                    let mut lis = Listener::new(tx, rx);
+                    let (tx, rx) = wrpc_test::next_invocation(&mut lis, "foo", "bar").await?;
+                    wrpc_transport::serve::<Bytes, Bytes, _, _, _, _>(tx, rx, async |params| {
+                        anyhow::Ok(params)
+                    })
+                    .await?;
+                    let next = lis.accept().await?;
+                    ensure!(next.is_none(), "unexpected invocation");
+                    Ok(())
+                },
+                async {
+                    let body = body.collect().await?;
+                    anyhow::Ok(body)
+                },
+            )?;
             Ok((parts, body.to_bytes()))
         }
     }
@@ -129,16 +132,11 @@ async fn buffered() -> anyhow::Result<()> {
         let (parts, body) = transport.request(req).await?;
         Ok::<_, anyhow::Error>(http::Response::from_parts(parts, Full::new(body)))
     });
-    let results = wrpc_transport::invoke_blocking(
-        tx,
-        rx,
-        "foo",
-        "bar",
-        <Bytes as Encode>::Encoder::default(),
-        params.clone(),
-        <Bytes as Decode>::Decoder::default(),
-    )
-    .await?;
+    let tx = FramedWrite::new(tx, FrameEncoder);
+    let rx = FramedRead::new(rx, FrameDecoder::default());
+    let results =
+        wrpc_transport::invoke_blocking::<_, Bytes, _, _>(tx, rx, "foo", "bar", params.clone())
+            .await?;
     assert_eq!(results, params);
     Ok(())
 }

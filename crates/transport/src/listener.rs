@@ -4,35 +4,35 @@ use core::mem;
 
 use futures::TryStreamExt as _;
 use tokio::io::AsyncRead;
-use tokio_util::codec::FramedRead;
+use tokio_util::codec::{FramedRead, FramedWrite};
 
-use crate::{Header, HeaderDecoder, error_connection_failed, frame};
+use crate::{FrameDecoder, FrameEncoder, Header, HeaderDecoder, error_connection_failed};
 
 enum Rx<I> {
     Header(FramedRead<I, HeaderDecoder>),
-    Frames(FramedRead<I, frame::Decoder>),
+    Frames(FramedRead<I, FrameDecoder>),
     Failed,
 }
 
 /// Accepts the invocations sent over a byte stream pair one after another
 pub struct Listener<I, O> {
-    tx: O,
+    tx: FramedWrite<O, FrameEncoder>,
     rx: Rx<I>,
     header_decoder: HeaderDecoder,
-    frame_decoder: frame::Decoder,
+    frame_decoder: FrameDecoder,
 }
 
 impl<I, O> Listener<I, O> {
     /// Constructs a new [Listener] over the byte streams `tx` and `rx`
     pub fn new(tx: O, rx: I) -> Self {
-        Self::with_decoders(tx, rx, HeaderDecoder::default(), frame::Decoder::default())
+        Self::with_decoders(tx, rx, HeaderDecoder::default(), FrameDecoder::default())
     }
 
     /// Constructs a new [Listener] over the byte streams `tx` and `rx`, which decodes the
     /// invocation headers with `header` and their frames with `frames`
-    pub fn with_decoders(tx: O, rx: I, header: HeaderDecoder, frames: frame::Decoder) -> Self {
+    pub fn with_decoders(tx: O, rx: I, header: HeaderDecoder, frames: FrameDecoder) -> Self {
         Self {
-            tx,
+            tx: FramedWrite::new(tx, FrameEncoder),
             rx: Rx::Header(FramedRead::new(rx, header.clone())),
             header_decoder: header,
             frame_decoder: frames,
@@ -40,15 +40,21 @@ impl<I, O> Listener<I, O> {
     }
 
     /// Receives the header of the next invocation, once the previous one was served, and returns
-    /// it along with `tx` and the frames read from `rx` to serve the invocation over, or `None`
-    /// once `rx` reaches EOF
+    /// it along with the frames written to `tx` and read from `rx` to serve the invocation over,
+    /// or `None` once `rx` reaches EOF
     ///
     /// This is cancel-safe, a partially received header is completed by the next call. Once
     /// receiving a header failed, this always fails. Once serving an invocation failed, the
     /// connection must be dropped, since its unread frames would be received as a header.
     pub async fn accept(
         &mut self,
-    ) -> std::io::Result<Option<(Header, &mut O, &mut FramedRead<I, frame::Decoder>)>>
+    ) -> std::io::Result<
+        Option<(
+            Header,
+            &mut FramedWrite<O, FrameEncoder>,
+            &mut FramedRead<I, FrameDecoder>,
+        )>,
+    >
     where
         I: AsyncRead + Unpin,
     {
@@ -64,7 +70,7 @@ impl<I, O> Listener<I, O> {
             Ok(None) => return Ok(None),
             Err(err) => {
                 self.rx = Rx::Failed;
-                return Err(err.into());
+                return Err(err);
             }
         };
         self.rx = match mem::replace(&mut self.rx, Rx::Failed) {

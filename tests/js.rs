@@ -18,9 +18,11 @@ use tokio::process::{Child, Command};
 use tokio::sync::mpsc;
 use tokio::time::timeout;
 use tokio::{select, spawn};
-use tokio_util::codec::Encoder as _;
+use tokio_util::codec::{Encoder as _, FramedRead, FramedWrite};
 use tracing::{info, instrument};
-use wrpc_transport::{FrameEncoder, FrameRef, Header, HeaderEncoder, HeaderRef, Listener};
+use wrpc_transport::{
+    FrameDecoder, FrameEncoder, FrameRef, Header, HeaderEncoder, HeaderRef, Listener,
+};
 
 pub mod common;
 
@@ -173,7 +175,9 @@ async fn js_server() -> anyhow::Result<()> {
         assert_eq!(err.kind(), std::io::ErrorKind::ConnectionReset);
     }
 
-    let (mut tx, mut rx) = wrpc_test::tcp_streams(addr).await?;
+    let (tx, rx) = wrpc_test::tcp_streams(addr).await?;
+    let mut tx = FramedWrite::new(tx, FrameEncoder);
+    let mut rx = FramedRead::new(rx, FrameDecoder::default());
     common::assert_sync(&mut tx, &mut rx).await?;
     common::assert_async(&mut tx, &mut rx).await?;
     common::assert_eof(tx, rx).await?;
@@ -202,7 +206,9 @@ async fn js_http_server() -> anyhow::Result<()> {
     parts.uri = format!("http://{addr}/")
         .parse()
         .context("failed to parse request URI")?;
-    let (mut tx, mut rx) = wrpc_http::open(sender, parts).await?;
+    let (tx, rx) = wrpc_http::open(sender, parts).await?;
+    let mut tx = FramedWrite::new(tx, FrameEncoder);
+    let mut rx = FramedRead::new(rx, FrameDecoder::default());
     common::assert_sync(&mut tx, &mut rx).await?;
     common::assert_async(&mut tx, &mut rx).await?;
     common::assert_eof(tx, rx).await?;

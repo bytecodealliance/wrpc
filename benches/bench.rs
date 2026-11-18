@@ -18,9 +18,10 @@ use tokio::net::{TcpStream, UnixListener};
 use tokio::runtime::{Handle, Runtime};
 use tokio::task::JoinHandle;
 use tokio::try_join;
+use tokio_util::codec::{FramedRead, FramedWrite};
 use wasmtime::component::{Component, Linker, ResourceTable};
 use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
-use wrpc_transport::{Header, Listener};
+use wrpc_transport::{FrameDecoder, FrameEncoder, Header, Listener};
 
 mod ping_bindings_wrpc {
     wit_bindgen_wrpc::generate!({
@@ -81,19 +82,21 @@ enum Func {
 }
 
 impl Func {
-    async fn call<I, O>(self, tx: O, rx: I) -> anyhow::Result<()>
-    where
-        I: AsyncRead + Send + Unpin,
-        O: AsyncWrite + Send + Unpin,
-    {
+    async fn call(
+        self,
+        tx: &mut FramedWrite<impl AsyncWrite + Send + Unpin, FrameEncoder>,
+        rx: &mut FramedRead<impl AsyncRead + Send + Unpin, FrameDecoder>,
+    ) -> anyhow::Result<()> {
         match self {
-            Self::Ping => ping_bindings_wrpc::wrpc_bench::bench::ping::ping(tx, rx)
+            Self::Ping => ping_bindings_wrpc::wrpc_bench::bench::ping::ping(&mut *tx, &mut *rx)
                 .await
                 .context("failed to call `ping`"),
             Self::Greet => {
-                let greeting = greet_bindings_wrpc::wrpc_bench::bench::greet::greet(tx, rx, "test")
-                    .await
-                    .context("failed to call `greet`")?;
+                let greeting = greet_bindings_wrpc::wrpc_bench::bench::greet::greet(
+                    &mut *tx, &mut *rx, "test",
+                )
+                .await
+                .context("failed to call `greet`")?;
                 ensure!(
                     greeting == "Hello, test",
                     "unexpected greeting `{greeting}`"
@@ -319,19 +322,22 @@ impl Tasks {
     }
 }
 
-fn bench_invoke<I, O>(
+fn bench_invoke(
     g: &mut BenchmarkGroup<WallTime>,
     rt: &Runtime,
     tasks: &Tasks,
     transport: &str,
     func: Func,
-    connect: impl AsyncFnOnce() -> anyhow::Result<(O, I)>,
-) -> anyhow::Result<()>
-where
-    I: AsyncRead + Send + Unpin,
-    O: AsyncWrite + Send + Unpin,
-{
-    let (mut tx, mut rx) = rt.block_on(connect())?;
+    connect: impl Future<
+        Output = anyhow::Result<(
+            impl AsyncWrite + Send + Unpin,
+            impl AsyncRead + Send + Unpin,
+        )>,
+    >,
+) -> anyhow::Result<()> {
+    let (tx, rx) = rt.block_on(connect)?;
+    let mut tx = FramedWrite::new(tx, FrameEncoder);
+    let mut rx = FramedRead::new(rx, FrameDecoder::default());
     g.bench_function(transport, |b| {
         b.iter_custom(|n| {
             rt.block_on(async {
@@ -380,7 +386,7 @@ fn bench_tcp(
             }
         }
     });
-    bench_invoke(g, &rt, &tasks, "tcp", func, async || {
+    bench_invoke(g, &rt, &tasks, "tcp", func, async {
         let stream = TcpStream::connect(addr).await?;
         stream.set_nodelay(true)?;
         let (rx, tx) = stream.into_split();
@@ -410,7 +416,7 @@ fn bench_unix(
             }
         }
     });
-    bench_invoke(g, &rt, &tasks, "unix", func, async || {
+    bench_invoke(g, &rt, &tasks, "unix", func, async {
         let (tx, rx) = wrpc_test::unix_streams(path.clone()).await?;
         Ok((tx, rx))
     })
@@ -435,7 +441,7 @@ fn bench_quic(
             }
         }
     });
-    let res = bench_invoke(g, &rt, &tasks, "quic", func, async || {
+    let res = bench_invoke(g, &rt, &tasks, "quic", func, async {
         let (tx, rx) = clt.open_bi().await?;
         Ok((tx, rx))
     });
@@ -465,7 +471,7 @@ fn bench_webtransport(
             }
         }
     });
-    let res = bench_invoke(g, &rt, &tasks, "webtransport", func, async || {
+    let res = bench_invoke(g, &rt, &tasks, "webtransport", func, async {
         let (tx, rx) = clt.open_bi().await?;
         Ok((tx, rx))
     });
@@ -508,7 +514,7 @@ fn bench_http1(
             }
         }
     });
-    bench_invoke(g, &rt, &tasks, "http1", func, async || {
+    bench_invoke(g, &rt, &tasks, "http1", func, async {
         let (req, tx) = wrpc_http::request(parts.clone());
         let rx = wrpc_http::response(clt.request(req));
         Ok((tx, rx))
@@ -558,7 +564,7 @@ fn bench_http2(
         }
     });
     let (parts, ()) = http::Request::new(()).into_parts();
-    bench_invoke(g, &rt, &tasks, "http2", func, async || {
+    bench_invoke(g, &rt, &tasks, "http2", func, async {
         let (tx, rx) = wrpc_http::open(sender.clone(), parts.clone()).await?;
         Ok((tx, rx))
     })

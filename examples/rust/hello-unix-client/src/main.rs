@@ -3,6 +3,8 @@ use std::path::PathBuf;
 use anyhow::Context as _;
 use clap::Parser;
 use tokio::net::UnixStream;
+use wit_bindgen_wrpc::tokio_util::codec::{FramedRead, FramedWrite};
+use wit_bindgen_wrpc::wrpc_transport::{FrameDecoder, FrameEncoder};
 
 mod bindings {
     wit_bindgen_wrpc::generate!({
@@ -29,6 +31,8 @@ async fn main() -> anyhow::Result<()> {
         .await
         .with_context(|| format!("failed to connect to `{}`", path.display()))?;
     let (rx, tx) = stream.split();
+    let tx = FramedWrite::new(tx, FrameEncoder);
+    let rx = FramedRead::new(rx, FrameDecoder::default());
     let hello = bindings::wrpc_examples::hello::handler::hello(tx, rx)
         .await
         .context("failed to invoke `wrpc-examples.hello/handler.hello`")?;

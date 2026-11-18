@@ -31,7 +31,8 @@ use tracing_subscriber::util::SubscriberInitExt as _;
 use url::Url;
 use uuid::Uuid;
 use web_transport_quinn::Request;
-use wrpc_transport::{Header, Listener, ResourceBorrow, ResourceOwn};
+use wit_bindgen_wrpc::tokio_util::codec::{FramedRead, FramedWrite};
+use wrpc_transport::{FrameDecoder, FrameEncoder, Header, Listener, ResourceBorrow, ResourceOwn};
 use wrpc_wasi_keyvalue::exports::wasi::keyvalue::store;
 
 pub type Result<T, E = store::Error> = core::result::Result<T, E>;
@@ -89,31 +90,38 @@ impl Remote {
     async fn connect(
         &self,
     ) -> anyhow::Result<(
-        Box<dyn AsyncWrite + Send + Unpin>,
-        Box<dyn AsyncRead + Send + Unpin>,
+        FramedWrite<Box<dyn AsyncWrite + Send + Unpin>, FrameEncoder>,
+        FramedRead<Box<dyn AsyncRead + Send + Unpin>, FrameDecoder>,
     )> {
-        match self {
+        let (tx, rx): (
+            Box<dyn AsyncWrite + Send + Unpin>,
+            Box<dyn AsyncRead + Send + Unpin>,
+        ) = match self {
             Self::Quic(conn) => {
                 let (tx, rx) = conn.open_bi().await?;
-                Ok((Box::new(tx), Box::new(rx)))
+                (Box::new(tx), Box::new(rx))
             }
             Self::Tcp(addr) => {
                 let stream = TcpStream::connect(addr).await?;
                 stream.set_nodelay(true)?;
                 let (rx, tx) = stream.into_split();
-                Ok((Box::new(tx), Box::new(rx)))
+                (Box::new(tx), Box::new(rx))
             }
             #[cfg(unix)]
             Self::Unix(path) => {
                 let stream = tokio::net::UnixStream::connect(path).await?;
                 let (rx, tx) = stream.into_split();
-                Ok((Box::new(tx), Box::new(rx)))
+                (Box::new(tx), Box::new(rx))
             }
             Self::Web(session) => {
                 let (tx, rx) = session.open_bi().await?;
-                Ok((Box::new(tx), Box::new(rx)))
+                (Box::new(tx), Box::new(rx))
             }
-        }
+        };
+        Ok((
+            FramedWrite::new(tx, FrameEncoder),
+            FramedRead::new(rx, FrameDecoder::default()),
+        ))
     }
 }
 

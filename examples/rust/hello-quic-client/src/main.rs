@@ -11,6 +11,8 @@ use rustls::{
     pki_types::{CertificateDer, ServerName, UnixTime},
     version::TLS13,
 };
+use wit_bindgen_wrpc::tokio_util::codec::{FramedRead, FramedWrite};
+use wit_bindgen_wrpc::wrpc_transport::{FrameDecoder, FrameEncoder};
 
 mod bindings {
     wit_bindgen_wrpc::generate!({
@@ -90,6 +92,8 @@ async fn main() -> anyhow::Result<()> {
         .open_bi()
         .await
         .context("failed to open stream")?;
+    let tx = FramedWrite::new(tx, FrameEncoder);
+    let rx = FramedRead::new(rx, FrameDecoder::default());
     let hello = bindings::wrpc_examples::hello::handler::hello(tx, rx)
         .await
         .context("failed to invoke `wrpc-examples.hello/handler.hello`")?;

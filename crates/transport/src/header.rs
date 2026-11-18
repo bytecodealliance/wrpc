@@ -1,15 +1,11 @@
 //! wRPC invocation header
 
-use core::fmt::{Debug, Display};
-
 use bytes::{Buf as _, BufMut as _, BytesMut};
-use futures::TryStreamExt as _;
-use tokio::io::AsyncRead;
-use tokio_util::codec::{Decoder as _, FramedRead};
+use tokio_util::codec::Decoder as _;
 use tracing::{instrument, trace};
 use wasm_tokio::{CoreNameEncoder, Leb128DecoderU32};
 
-use crate::{DEFAULT_MAX_NAME_LEN, frame};
+use crate::DEFAULT_MAX_NAME_LEN;
 
 /// wRPC protocol version
 pub const PROTOCOL: u8 = 1;
@@ -22,20 +18,6 @@ pub struct Header {
 
     /// Name of the function being called
     pub name: String,
-}
-
-impl Header {
-    /// Reads the header of the invocation sent over `rx` using [`HeaderDecoder::default`], see
-    /// [`HeaderDecoder::read`]
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if reading the header fails
-    pub async fn read<I: AsyncRead + Unpin>(
-        rx: I,
-    ) -> Result<(Self, FramedRead<I, frame::Decoder>), HeaderReadError> {
-        HeaderDecoder::default().read(rx).await
-    }
 }
 
 /// wRPC invocation header reference
@@ -53,52 +35,9 @@ impl<'a> From<&'a Header> for HeaderRef<'a> {
     }
 }
 
-/// Error returned by [`HeaderDecoder`]
-pub enum HeaderReadError {
-    /// I/O error
-    IO(std::io::Error),
-    /// Protocol version is not supported
-    UnsupportedVersion(u8),
-}
-
-impl Debug for HeaderReadError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::IO(err) => Debug::fmt(err, f),
-            Self::UnsupportedVersion(v) => write!(f, "unsupported version byte: {v}"),
-        }
-    }
-}
-
-impl Display for HeaderReadError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::IO(err) => Display::fmt(err, f),
-            Self::UnsupportedVersion(v) => write!(f, "unsupported version byte: {v}"),
-        }
-    }
-}
-
-impl core::error::Error for HeaderReadError {}
-
-impl From<std::io::Error> for HeaderReadError {
-    fn from(err: std::io::Error) -> Self {
-        Self::IO(err)
-    }
-}
-
-impl From<HeaderReadError> for std::io::Error {
-    fn from(err: HeaderReadError) -> Self {
-        match err {
-            HeaderReadError::IO(err) => err,
-            HeaderReadError::UnsupportedVersion(..) => {
-                Self::new(std::io::ErrorKind::InvalidData, err)
-            }
-        }
-    }
-}
-
-/// [Header] decoder
+/// [Header] decoder, which can be used, for example, with [`FramedRead`](tokio_util::codec::FramedRead)
+/// and switched to the [`FrameDecoder`](crate::FrameDecoder) of the invocation following the
+/// header using [`FramedRead::map_decoder`](tokio_util::codec::FramedRead::map_decoder)
 #[derive(Clone, Debug)]
 pub struct HeaderDecoder {
     max_instance_len: u32,
@@ -121,27 +60,6 @@ impl HeaderDecoder {
             instance: None,
             len: None,
         }
-    }
-
-    /// Reads the header of the invocation sent over `rx`, returning it along with the frames of
-    /// the invocation following it, which are read using a [`frame::Decoder`] from the same read
-    /// buffer, see [`serve`](crate::serve())
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if reading the header fails
-    #[instrument(level = "trace", skip_all)]
-    pub async fn read<I: AsyncRead + Unpin>(
-        self,
-        rx: I,
-    ) -> Result<(Header, FramedRead<I, frame::Decoder>), HeaderReadError> {
-        let mut rx = FramedRead::new(rx, self);
-        let Some(header) = rx.try_next().await? else {
-            return Err(HeaderReadError::IO(
-                std::io::ErrorKind::UnexpectedEof.into(),
-            ));
-        };
-        Ok((header, rx.map_decoder(|_| frame::Decoder::default())))
     }
 
     /// Decodes a name of at most `max` bytes
@@ -180,7 +98,7 @@ impl Default for HeaderDecoder {
 
 impl tokio_util::codec::Decoder for HeaderDecoder {
     type Item = Header;
-    type Error = HeaderReadError;
+    type Error = std::io::Error;
 
     #[instrument(level = "trace", skip_all)]
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
@@ -189,7 +107,10 @@ impl tokio_util::codec::Decoder for HeaderDecoder {
                 return Ok(None);
             };
             if v != PROTOCOL {
-                return Err(HeaderReadError::UnsupportedVersion(v));
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("unsupported version byte: {v}"),
+                ));
             }
             src.advance(1);
             self.version = true;
@@ -216,9 +137,7 @@ impl tokio_util::codec::Decoder for HeaderDecoder {
             return Ok(Some(header));
         }
         if self.version || !src.is_empty() {
-            return Err(HeaderReadError::IO(
-                std::io::ErrorKind::UnexpectedEof.into(),
-            ));
+            return Err(std::io::ErrorKind::UnexpectedEof.into());
         }
         Ok(None)
     }
@@ -266,11 +185,9 @@ mod tests {
                 &mut buf,
             )
             .unwrap();
-        let Err(HeaderReadError::IO(err)) =
-            HeaderDecoder::new(2, 3).decode(&mut BytesMut::from(&buf[..2]))
-        else {
-            panic!("decoding a header with a too long instance name should fail");
-        };
+        let err = HeaderDecoder::new(2, 3)
+            .decode(&mut BytesMut::from(&buf[..2]))
+            .expect_err("decoding a header with a too long instance name should fail");
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
         let mut dec = HeaderDecoder::default();
         let mut src = BytesMut::default();

@@ -147,6 +147,17 @@ where
     }
 }
 
+impl<T> Encoder<Vec<Val>> for TupleEncoder<'_, T>
+where
+    T: WithStore<Data: WrpcView>,
+{
+    type Error = std::io::Error;
+
+    fn encode(&mut self, vs: Vec<Val>, dst: &mut BytesMut) -> Result<(), Self::Error> {
+        self.encode(vs.as_slice(), dst)
+    }
+}
+
 impl<T> TupleEncoder<'_, T>
 where
     T: WithStore<Data: WrpcView>,

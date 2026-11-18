@@ -8,14 +8,12 @@
 //! instance from a single `run_concurrent` event loop, which guest-exported resources require.
 
 use core::borrow::BorrowMut;
-use core::fmt;
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use tokio::io::{AsyncRead, AsyncWrite};
-use tokio::try_join;
-use tokio_util::codec::FramedRead;
+use tokio_util::codec::{FramedRead, FramedWrite};
 use tracing::{debug, instrument, trace, warn};
 use uuid::Uuid;
 use wasmtime::Engine;
@@ -23,7 +21,7 @@ use wasmtime::component::{
     Accessor, Func, ResourceAny, ResourceTable, ResourceType, Type, Val, types,
 };
 use wasmtime::error::Context as _;
-use wrpc_transport::{FrameDecoder, serve};
+use wrpc_transport::{Codec, FrameDecoder, FrameEncoder};
 
 mod codec;
 mod export;
@@ -77,85 +75,39 @@ impl<T: WrpcView> WrpcView for &mut T {
     }
 }
 
-/// Error type returned by [call]
-pub enum CallError {
-    Decode(wasmtime::Error),
-    Encode(wasmtime::Error),
-    Call(wasmtime::Error),
-    Write(wasmtime::Error),
-    Closed(wasmtime::Error),
-}
-
-impl core::error::Error for CallError {}
-
-impl fmt::Debug for CallError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            CallError::Decode(error)
-            | CallError::Encode(error)
-            | CallError::Call(error)
-            | CallError::Write(error)
-            | CallError::Closed(error) => error.fmt(f),
-        }
-    }
-}
-
-impl fmt::Display for CallError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            CallError::Decode(error)
-            | CallError::Encode(error)
-            | CallError::Call(error)
-            | CallError::Write(error)
-            | CallError::Closed(error) => error.fmt(f),
-        }
-    }
-}
-
 /// Calls the exported `func` with parameters received from the frames `rx` and transmits the
-/// results on `tx`.
+/// results to the frames `tx`.
 ///
 /// The `store` [`Accessor`] is used to call `func` concurrently, it can be acquired, for example,
 /// using [`wasmtime::Store::run_concurrent`].
-pub async fn call<T, R, I, O>(
+pub async fn call<T, R, W, I, O>(
     store: &Accessor<T>,
-    tx: O,
+    tx: W,
     rx: R,
     resources: &ResourceTypes,
     params_ty: &[Type],
     results_ty: &[Type],
     func: Func,
-) -> Result<(), CallError>
+) -> wasmtime::Result<()>
 where
     T: WrpcView + 'static,
     R: BorrowMut<FramedRead<I, FrameDecoder>>,
+    W: BorrowMut<FramedWrite<O, FrameEncoder>>,
     I: AsyncRead + Unpin,
     O: AsyncWrite + Unpin,
 {
-    let (params, outgoing) = serve(tx, rx, ValDecoder::new(store, params_ty, resources));
-    let (params, rx) = params.await.map_err(|err| CallError::Decode(err.into()))?;
-    try_join!(
-        async { rx.await.map_err(|err| CallError::Closed(err.into())) },
-        async {
-            let mut results = vec![Val::Bool(false); results_ty.len()];
-            func.call_concurrent(store, &params, &mut results)
-                .await
-                .context("failed to call function")
-                .map_err(CallError::Call)?;
-            let tx = outgoing.send(
-                TupleEncoder::new(store, results_ty, resources),
-                results.as_slice(),
-            );
-            let tx = tx
-                .context("failed to encode results")
-                .map_err(CallError::Encode)?;
-            debug!("transmitting results");
-            tx.await
-                .context("failed to transmit results")
-                .map_err(CallError::Write)
-        },
-    )?;
-    Ok(())
+    Codec {
+        enc: TupleEncoder::new(store, results_ty, resources),
+        dec: ValDecoder::new(store, params_ty, resources),
+    }
+    .serve(tx, rx, async |params: Vec<Val>| {
+        let mut results = vec![Val::Bool(false); results_ty.len()];
+        func.call_concurrent(store, &params, &mut results)
+            .await
+            .context("failed to call function")?;
+        Ok(results)
+    })
+    .await
 }
 
 /// Recursively iterates the component item type and collects all exported resource types

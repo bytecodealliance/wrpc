@@ -15,6 +15,8 @@ mod bindings {
 }
 
 use bindings::wrpc_examples::streams_io::handler::count;
+use wit_bindgen_wrpc::tokio_util::codec::{FramedRead, FramedWrite};
+use wit_bindgen_wrpc::wrpc_transport::{FrameDecoder, FrameEncoder};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -46,6 +48,8 @@ async fn main() -> anyhow::Result<()> {
     // as a `wasi:io/streams.input-stream` and counts the bytes.
     let data = Box::pin(stream::iter([Bytes::from(payload.clone().into_bytes())]));
 
+    let tx = FramedWrite::new(tx, FrameEncoder);
+    let rx = FramedRead::new(rx, FrameDecoder::default());
     let (total, io) = count(tx, rx, data)
         .await
         .context("failed to invoke `wrpc-examples:streams-io/handler.count`")?;

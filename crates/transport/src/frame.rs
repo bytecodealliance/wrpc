@@ -1,27 +1,8 @@
 //! wRPC transport stream framing
-//!
-//! Frames are read using a [`FramedRead`](tokio_util::codec::FramedRead) with a [Decoder]:
-//!
-//! ```
-//! # async fn read(rx: impl tokio::io::AsyncRead + Unpin) -> std::io::Result<()> {
-//! use futures::TryStreamExt as _;
-//! use tokio_util::codec::FramedRead;
-//! use wrpc_transport::FrameDecoder;
-//!
-//! let mut rx = FramedRead::new(rx, FrameDecoder::default());
-//! while let Some(data) = rx.try_next().await? {
-//!     let path = rx.decoder().path();
-//!     println!("{path:?}: {data:?}");
-//! }
-//! # Ok(())
-//! # }
-//! ```
 
 use bytes::BytesMut;
 use tracing::{instrument, trace};
 use wasm_tokio::{Leb128DecoderU32, Leb128Encoder};
-
-pub use crate::mux::{Outgoing, Transmission};
 
 /// Default maximum length of a frame path
 pub(crate) const DEFAULT_MAX_DEPTH: u32 = 64;
@@ -136,17 +117,34 @@ impl tokio_util::codec::Decoder for FrameHeaderDecoder {
 }
 
 /// Frame decoder, which yields the data of each frame in chunks as soon as it is received, so
-/// frames are never buffered, and exposes the frame path using [`Decoder::path`]
+/// frames are never buffered, and exposes the frame path using [`FrameDecoder::path`]
 ///
 /// A frame with empty data, which closes its path, is yielded as a single empty chunk.
+///
+/// Frames are read using a [`FramedRead`](tokio_util::codec::FramedRead):
+///
+/// ```
+/// # async fn read(rx: impl tokio::io::AsyncRead + Unpin) -> std::io::Result<()> {
+/// use futures::TryStreamExt as _;
+/// use tokio_util::codec::FramedRead;
+/// use wrpc_transport::FrameDecoder;
+///
+/// let mut rx = FramedRead::new(rx, FrameDecoder::default());
+/// while let Some(data) = rx.try_next().await? {
+///     let path = rx.decoder().path();
+///     println!("{path:?}: {data:?}");
+/// }
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Clone, Debug)]
-pub struct Decoder {
+pub struct FrameDecoder {
     header: FrameHeaderDecoder,
     /// Length of the data left of the frame being decoded
     size: usize,
 }
 
-impl Decoder {
+impl FrameDecoder {
     /// Construct a new frame decoder, which rejects paths longer than `max_depth`
     #[must_use]
     pub fn new(max_depth: u32) -> Self {
@@ -164,13 +162,13 @@ impl Decoder {
     }
 }
 
-impl Default for Decoder {
+impl Default for FrameDecoder {
     fn default() -> Self {
         Self::new(DEFAULT_MAX_DEPTH)
     }
 }
 
-impl tokio_util::codec::Decoder for Decoder {
+impl tokio_util::codec::Decoder for FrameDecoder {
     type Item = BytesMut;
     type Error = std::io::Error;
 
@@ -240,9 +238,9 @@ impl tokio_util::codec::Encoder<FrameHeaderRef<'_>> for FrameHeaderEncoder {
 
 /// Frame encoder
 #[derive(Clone, Copy, Debug, Default)]
-pub struct Encoder;
+pub struct FrameEncoder;
 
-impl tokio_util::codec::Encoder<FrameRef<'_>> for Encoder {
+impl tokio_util::codec::Encoder<FrameRef<'_>> for FrameEncoder {
     type Error = std::io::Error;
 
     #[instrument(level = "trace", skip_all)]
@@ -272,7 +270,7 @@ mod tests {
 
     #[test_log::test(tokio::test)]
     async fn codec() -> std::io::Result<()> {
-        let mut tx = FramedWrite::new(vec![], Encoder::default());
+        let mut tx = FramedWrite::new(vec![], FrameEncoder);
 
         tx.send(FrameRef {
             path: &[0, 1, 2],
@@ -303,7 +301,7 @@ mod tests {
             .as_bytes()
         );
 
-        let mut rx = FramedRead::new(tx.as_slice(), Decoder::default());
+        let mut rx = FramedRead::new(tx.as_slice(), FrameDecoder::default());
 
         let data = rx.try_next().await?;
         assert_eq!(data.as_deref(), Some(b"test".as_slice()));
@@ -336,9 +334,9 @@ mod tests {
                 data: b"",
             },
         ] {
-            Encoder::default().encode(frame, &mut buf).unwrap();
+            FrameEncoder.encode(frame, &mut buf).unwrap();
         }
-        let mut dec = Decoder::default();
+        let mut dec = FrameDecoder::default();
         let mut src = buf.split_to(5);
         let data = dec.decode(&mut src).unwrap();
         assert_eq!(data.as_deref(), Some(b"t".as_slice()));
@@ -357,7 +355,7 @@ mod tests {
 
     #[test_log::test(tokio::test)]
     async fn frame_limits() {
-        let mut tx = FramedWrite::new(vec![], Encoder::default());
+        let mut tx = FramedWrite::new(vec![], FrameEncoder);
         tx.send(FrameRef {
             path: &[0; DEFAULT_MAX_DEPTH as usize + 1],
             data: b"",
@@ -365,11 +363,11 @@ mod tests {
         .await
         .unwrap();
         let tx = tx.into_inner();
-        let mut rx = FramedRead::new(tx.as_slice(), Decoder::default());
+        let mut rx = FramedRead::new(tx.as_slice(), FrameDecoder::default());
         let err = rx.try_next().await.unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
 
-        let mut rx = FramedRead::new(b"\x01\x80".as_slice(), Decoder::default());
+        let mut rx = FramedRead::new(b"\x01\x80".as_slice(), FrameDecoder::default());
         let err = rx.try_next().await.unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
     }

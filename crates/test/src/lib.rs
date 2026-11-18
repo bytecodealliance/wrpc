@@ -17,10 +17,10 @@ use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::{TcpListener, TcpStream, ToSocketAddrs};
 use tokio::time::timeout;
 use tokio::try_join;
-use tokio_util::codec::{Encoder as _, FramedRead};
+use tokio_util::codec::{Encoder as _, FramedRead, FramedWrite};
 use wrpc_transport::{
-    Decode, Encode, FrameDecoder, FrameEncoder, FrameRef, Header, HeaderDecoder, HeaderEncoder,
-    HeaderRef, invoke, serve,
+    Decode, FrameDecoder, FrameEncoder, FrameRef, Header, HeaderEncoder, HeaderRef, Listener,
+    invoke, receive, serve,
 };
 
 /// Maximum number of connections [`serve_until`] serves concurrently
@@ -61,29 +61,36 @@ where
     Ok(res)
 }
 
-/// Reads the header of the next invocation from `rx`, ensures that it invokes function `func` on
-/// instance `instance` and returns the frames following it
-pub async fn read_invocation<I>(
-    mut rx: FramedRead<I, HeaderDecoder>,
+/// Receives the header of the next invocation over `lis`, ensures that it invokes function `func`
+/// on instance `instance` and returns the frames to serve it over
+pub async fn next_invocation<'a, I, O>(
+    lis: &'a mut Listener<I, O>,
     instance: &str,
     func: &str,
-) -> anyhow::Result<FramedRead<I, FrameDecoder>>
+) -> anyhow::Result<(
+    &'a mut FramedWrite<O, FrameEncoder>,
+    &'a mut FramedRead<I, FrameDecoder>,
+)>
 where
     I: AsyncRead + Unpin,
 {
-    let header = rx
-        .try_next()
+    let next = lis
+        .accept()
         .await
         .context("failed to read invocation header")?;
-    let Header {
-        instance: inst,
-        name,
-    } = header.context("byte stream ended")?;
+    let (
+        Header {
+            instance: inst,
+            name,
+        },
+        tx,
+        rx,
+    ) = next.context("byte stream ended")?;
     ensure!(
         inst == instance && name == func,
         "unexpected invocation of `{inst}.{name}`",
     );
-    Ok(rx.map_decoder(|_| FrameDecoder::default()))
+    Ok((tx, rx))
 }
 
 /// Reads `rx` to EOF, ensuring that no frames are left
@@ -198,14 +205,14 @@ pub async fn assert_single_invocation(
         async {
             let s: BoxStream<'static, Bytes> =
                 Box::pin(stream::iter([Bytes::from_static(b"client->server")]));
-            let ((results, s), io) = invoke(
+            let tx = FramedWrite::new(tx, FrameEncoder);
+            let rx = FramedRead::new(rx, FrameDecoder::default());
+            let ((results, s), io) = invoke::<_, (Bytes, BoxStream<'static, Bytes>), _, _, _, _>(
                 tx,
                 rx,
                 "foo",
                 "bar",
-                <(Bytes, BoxStream<'static, Bytes>) as Encode>::Encoder::default(),
                 (Bytes::from_static(b"testbar"), s),
-                <(Bytes, BoxStream<'static, Bytes>) as Decode>::Decoder::default(),
             )
             .await
             .context("failed to invoke `foo.bar`")?;
@@ -219,33 +226,27 @@ pub async fn assert_single_invocation(
         },
         async {
             let (tx, rx) = accept.await.context("failed to accept")?;
-            let mut frames =
-                read_invocation(FramedRead::new(rx, HeaderDecoder::default()), "foo", "bar")
-                    .await?;
-            let (params, outgoing) = serve(
-                tx,
-                &mut frames,
-                <(Bytes, BoxStream<'static, Bytes>) as Decode>::Decoder::default(),
-            );
-            let ((testbar, s), rx) = params
-                .await
-                .context("failed to receive `foo.bar` parameters")?;
-            assert_eq!(testbar, b"testbar".as_slice());
-            let results: BoxStream<'static, Bytes> =
-                Box::pin(stream::iter([Bytes::from_static(b"server->client")]));
-            let tx = outgoing
-                .send(
-                    <(Bytes, BoxStream<'static, Bytes>) as Encode>::Encoder::default(),
-                    (Bytes::from_static(b"foo"), results),
-                )
-                .context("failed to encode `foo.bar` results")?;
-            let (buf, (), ()) = try_join!(
-                async { anyhow::Ok(s.collect::<Vec<_>>().await.concat()) },
-                async { rx.await.context("failed to receive `foo.bar` parameters") },
-                async { tx.await.context("failed to transmit `foo.bar` results") },
-            )?;
-            assert_eq!(buf, b"client->server");
-            read_eof(&mut frames).await?;
+            let mut lis = Listener::new(tx, rx);
+            let (tx, rx) = next_invocation(&mut lis, "foo", "bar").await?;
+            serve::<
+                (Bytes, BoxStream<'static, Bytes>),
+                (Bytes, BoxStream<'static, Bytes>),
+                _,
+                _,
+                _,
+                _,
+            >(tx, rx, async |(testbar, s)| {
+                assert_eq!(testbar, b"testbar".as_slice());
+                let buf = s.collect::<Vec<_>>().await.concat();
+                assert_eq!(buf, b"client->server");
+                let results: BoxStream<'static, Bytes> =
+                    Box::pin(stream::iter([Bytes::from_static(b"server->client")]));
+                anyhow::Ok((Bytes::from_static(b"foo"), results))
+            })
+            .await
+            .context("failed to serve `foo.bar`")?;
+            let next = lis.accept().await?;
+            ensure!(next.is_none(), "unexpected invocation");
             anyhow::Ok(())
         },
     )?;
@@ -291,7 +292,7 @@ where
         )
         .context("failed to encode invocation header")?;
     buf.extend_from_slice(&invalid);
-    let ((_tx, mut rx), (srv_tx, srv_rx)) = try_join!(
+    let ((_tx, mut rx), mut lis) = try_join!(
         async {
             let (mut tx, rx) = connect().await.context("failed to connect")?;
             tx.write_all(&buf)
@@ -302,15 +303,13 @@ where
         },
         async {
             let (tx, rx) = accept().await.context("failed to accept")?;
-            let rx = read_invocation(FramedRead::new(rx, HeaderDecoder::default()), "foo", "baz")
-                .await?;
-            anyhow::Ok((tx, rx))
+            anyhow::Ok(Listener::new(tx, rx))
         },
     )?;
-    let (params, outgoing) = serve(srv_tx, srv_rx, <() as Decode>::Decoder::default());
-    let res = params.await;
+    let (_, srv_rx) = next_invocation(&mut lis, "foo", "baz").await?;
+    let res = receive(<() as Decode>::Decoder::default(), srv_rx).await;
     ensure!(res.is_err(), "invalid data must fail server ingress");
-    drop(outgoing);
+    drop(lis);
     let mut buf = Vec::default();
     let res = timeout(Duration::from_secs(5), rx.read_to_end(&mut buf))
         .await
@@ -323,27 +322,17 @@ where
     try_join!(
         async {
             let (tx, rx) = connect().await.context("failed to connect")?;
-            let res = invoke(
-                tx,
-                rx,
-                "foo",
-                "baz",
-                <() as Encode>::Encoder::default(),
-                (),
-                <() as Decode>::Decoder::default(),
-            )
-            .await;
+            let tx = FramedWrite::new(tx, FrameEncoder);
+            let rx = FramedRead::new(rx, FrameDecoder::default());
+            let res = invoke::<(), (), _, _, _, _>(tx, rx, "foo", "baz", ()).await;
             ensure!(res.is_err(), "invalid data must fail client ingress");
             anyhow::Ok(())
         },
         async {
-            let (mut srv_tx, srv_rx) = accept().await.context("failed to accept")?;
-            let srv_rx = read_invocation(
-                FramedRead::new(srv_rx, HeaderDecoder::default()),
-                "foo",
-                "baz",
-            )
-            .await?;
+            let (tx, rx) = accept().await.context("failed to accept")?;
+            let mut lis = Listener::new(tx, rx);
+            let (srv_tx, srv_rx) = next_invocation(&mut lis, "foo", "baz").await?;
+            let srv_tx = srv_tx.get_mut();
             srv_tx
                 .write_all(&invalid)
                 .await

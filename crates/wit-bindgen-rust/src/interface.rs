@@ -100,11 +100,11 @@ impl InterfaceGenerator<'_> {
         uwrite!(
             self.src,
             r#"
-pub fn handle_interface<'a__, R__, I__, O__, H__>(
+pub fn handle_interface<'a__, R__, W__, I__, O__, H__>(
     handler: &H__,
     instance: &str,
     func: &str,
-    tx: O__,
+    tx: W__,
     rx: R__,
 ) -> ::core::result::Result<
     ::core::pin::Pin<
@@ -112,10 +112,11 @@ pub fn handle_interface<'a__, R__, I__, O__, H__>(
             dyn ::core::future::Future<Output = {anyhow}::Result<()>> + ::core::marker::Send + 'a__
         >
     >,
-    (O__, R__),
+    (W__, R__),
 >
 where
     R__: ::core::borrow::BorrowMut<{tokio_util}::codec::FramedRead<I__, {wrpc_transport}::FrameDecoder>> + ::core::marker::Send + 'a__,
+    W__: ::core::borrow::BorrowMut<{tokio_util}::codec::FramedWrite<O__, {wrpc_transport}::FrameEncoder>> + ::core::marker::Send + 'a__,
     I__: {tokio}::io::AsyncRead + ::core::marker::Send + ::core::marker::Unpin + 'a__,
     O__: {tokio}::io::AsyncWrite + ::core::marker::Send + ::core::marker::Unpin + 'a__,
     H__: Handler + {resource_traits} ::core::marker::Send + ::core::marker::Sync + ::core::clone::Clone + 'static,
@@ -167,28 +168,15 @@ where
                 r#"
         ("{instance}", "{}") => {{
             let handler = handler.clone();
-            let (params, tx) = {wrpc_transport}::serve(
-                tx,
-                rx,
-                <({params_ty}) as {wrpc_transport}::Decode>::Decoder::default(),
-            );
             ::core::result::Result::Ok(::std::boxed::Box::pin(async move {{
-                let (("#,
+                let res = {wrpc_transport}::serve::<({params_ty}), ({results_ty}), _, _, _, _>(tx, rx, move |("#,
                 rpc_func_name(func),
                 wrpc_transport = self.r#gen.wrpc_transport_path(),
             );
             for i in 0..func.params.len() {
                 uwrite!(self.src, "p{i}, ");
             }
-            uwrite!(
-                self.src,
-                r#"), rx) = {anyhow}::Context::context(
-                    {wrpc_transport}::SendFuture::send(params).await,
-                    "failed to receive `{fqn}` parameters",
-                )?;"#,
-                anyhow = self.r#gen.anyhow_path(),
-                wrpc_transport = self.r#gen.wrpc_transport_path(),
-            );
+            self.push_str(")| async move {");
             for (i, param) in func.params.iter().enumerate() {
                 if self.has_raw_strings(&param.ty) {
                     let ty = self.decoded_ty(&param.ty);
@@ -218,66 +206,34 @@ where
             uwrite!(
                 self.src,
                 r#"
-                let rx = {wrpc_transport}::SendFuture::send(rx);
-                let rx = async {{
-                    {anyhow}::Context::context(
-                        {tracing}::Instrument::in_current_span(rx).await,
-                        "failed to complete `{fqn}` invocation",
-                    )
-                }};
-                let call = async {{
                     {tracing}::trace!(instance = "{instance}", func = "{wit_name}", "calling handler");
-                    match {trait_name}::{name}(&handler"#,
-                anyhow = self.r#gen.anyhow_path(),
+                    let results = {trait_name}::{name}(&handler"#,
                 tracing = self.r#gen.tracing_path(),
-                wrpc_transport = self.r#gen.wrpc_transport_path(),
                 wit_name = func.name,
             );
             for (i, param) in func.params.iter().enumerate() {
                 let p = self.decoded_value(&param.ty, &format!("p{i}"));
                 uwrite!(self.src, ", {p}");
             }
-            uwrite!(
-                self.src,
-                r"
-                    ).await {{
-                        Ok(results) => {{
-                            let tx = {anyhow}::Context::context(
-                                tx.send(
-                                    <({results_ty}) as {wrpc_transport}::Encode>::Encoder::default(),
-                                    ",
-                anyhow = self.r#gen.anyhow_path(),
-                wrpc_transport = self.r#gen.wrpc_transport_path(),
-            );
-            if let Some(ty) = &func.result {
+            self.push_str(").await?;\n");
+            let results = if let Some(ty) = &func.result {
                 // wrap single-element results into a tuple for correct indexing
-                let results = self.encoded_value(ty, "results", false);
-                uwrite!(self.src, "({results},)");
+                format!("({},)", self.encoded_value(ty, "results", false))
             } else {
-                self.push_str("results");
-            }
+                "results".to_string()
+            };
             uwrite!(
                 self.src,
-                r#",
-                                ),
-                                "failed to encode `{fqn}` invocation results",
-                            )?;
-                            {anyhow}::Context::context(
-                                {wrpc_transport}::SendFuture::send(tx).await,
-                                "failed to transmit `{fqn}` invocation results",
-                            )
-                        }},
-                        Err(err) => {{
-                            {anyhow}::bail!(err.context("failed to serve `{fqn}` invocation"))
-                        }},
-                    }}
-                }};
-                {tokio}::try_join!(call, rx)?;
-                ::core::result::Result::Ok(())
+                r#"
+                    ::core::result::Result::Ok::<_, {anyhow}::Error>({results})
+                }});
+                {anyhow}::Context::context(
+                    {wrpc_transport}::SendFuture::send(res).await,
+                    "failed to serve `{fqn}` invocation",
+                )
             }}))
         }}"#,
                 anyhow = self.r#gen.anyhow_path(),
-                tokio = self.r#gen.tokio_path(),
                 wrpc_transport = self.r#gen.wrpc_transport_path(),
             );
         }
@@ -497,7 +453,7 @@ where
             [] => {
                 uwrite!(
                     self.src,
-                    " -> impl ::core::future::Future<Output = {anyhow}::Result<()>> + Send + use<'a, I__, O__>"
+                    " -> impl ::core::future::Future<Output = {anyhow}::Result<()>> + Send + use<'a, R__, W__, I__, O__>"
                 );
             }
             [ty] => {
@@ -512,10 +468,10 @@ where
                 if async_params || async_results {
                     uwrite!(
                         self.src,
-                        ", impl ::core::future::Future<Output = ::std::io::Result<()>> + ::core::marker::Send + use<I__, O__>)",
+                        ", impl ::core::future::Future<Output = ::std::io::Result<()>> + ::core::marker::Send + use<R__, W__, I__, O__>)",
                     );
                 }
-                uwrite!(self.src, ">> + Send + use<'a, I__, O__>");
+                uwrite!(self.src, ">> + Send + use<'a, R__, W__, I__, O__>");
             }
             types => {
                 uwrite!(
@@ -529,10 +485,10 @@ where
                 if async_params || async_results {
                     uwrite!(
                         self.src,
-                        "impl ::core::future::Future<Output = ::std::io::Result<()>> + ::core::marker::Send + use<I__, O__>",
+                        "impl ::core::future::Future<Output = ::std::io::Result<()>> + ::core::marker::Send + use<R__, W__, I__, O__>",
                     );
                 }
-                uwrite!(self.src, ")>> + Send + use<'a, I__, O__>");
+                uwrite!(self.src, ")>> + Send + use<'a, R__, W__, I__, O__>");
             }
         };
         self.push_str(
@@ -566,14 +522,12 @@ where
                 self.src,
                 r#"
                 let wrpc__{decoded} = {anyhow}::Context::context(
-                    {wrpc_transport}::SendFuture::send({wrpc_transport}::invoke_blocking(
+                    {wrpc_transport}::SendFuture::send({wrpc_transport}::invoke_blocking::<({args_ty}), ({results_ty}), _, _>(
                         tx__,
                         rx__,
                         "{instance}",
                         "{}",
-                        <({args_ty}) as {wrpc_transport}::Encode>::Encoder::default(),
                         ({params}),
-                        <({results_ty}) as {wrpc_transport}::Decode>::Decoder::default(),
                     )).await,
 "#,
                 rpc_func_name(func),
@@ -604,14 +558,12 @@ where
                 self.src,
                 r#"
                 let (wrpc__, io__): ({decoded}, _) = {anyhow}::Context::context(
-                    {wrpc_transport}::SendFuture::send({wrpc_transport}::invoke(
+                    {wrpc_transport}::SendFuture::send({wrpc_transport}::invoke::<({args_ty}), ({results_ty}), _, _, _, _>(
                         tx__,
                         rx__,
                         "{instance}",
                         "{}",
-                        <({args_ty}) as {wrpc_transport}::Encode>::Encoder::default(),
                         ({params}),
-                        <({results_ty}) as {wrpc_transport}::Decode>::Decoder::default(),
                     )).await,
 "#,
                 rpc_func_name(func),
@@ -738,8 +690,10 @@ where
         if self.in_import {
             uwrite!(
                 self.src,
-                "<'a, I__: {tokio}::io::AsyncRead + ::core::marker::Send + ::core::marker::Unpin, O__: {tokio}::io::AsyncWrite + ::core::marker::Send + ::core::marker::Unpin>(tx__: O__, rx__: I__,",
+                "<'a, R__: ::core::borrow::BorrowMut<{tokio_util}::codec::FramedRead<I__, {wrpc_transport}::FrameDecoder>> + ::core::marker::Send, W__: ::core::borrow::BorrowMut<{tokio_util}::codec::FramedWrite<O__, {wrpc_transport}::FrameEncoder>> + ::core::marker::Send, I__: {tokio}::io::AsyncRead + ::core::marker::Send + ::core::marker::Unpin, O__: {tokio}::io::AsyncWrite + ::core::marker::Send + ::core::marker::Unpin>(tx__: W__, rx__: R__,",
                 tokio = self.r#gen.tokio_path(),
+                tokio_util = self.r#gen.tokio_util_path(),
+                wrpc_transport = self.r#gen.wrpc_transport_path(),
             );
         } else {
             self.push_str("(");

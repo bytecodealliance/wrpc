@@ -1,4 +1,6 @@
 use clap::Parser;
+use wit_bindgen_wrpc::tokio_util::codec::{FramedRead, FramedWrite};
+use wrpc_transport::{FrameDecoder, FrameEncoder};
 
 mod bindings {
     use crate::Handler;
@@ -79,6 +81,8 @@ async fn invoke(addr: &str) -> String {
         pollables_tx,
     )
     .expect("failed to connect");
+    let tx = FramedWrite::new(tx, FrameEncoder);
+    let rx = FramedRead::new(rx, FrameDecoder::default());
     let (s, _) = join!(
         async {
             wrpc_bindings::wrpc_examples::hello::handler::hello(tx, rx)
@@ -124,6 +128,8 @@ async fn invoke(addr: &str) -> String {
         .expect("failed to connect");
     stream.set_nodelay(true).expect("failed to set TCP_NODELAY");
     let (rx, tx) = stream.split();
+    let tx = FramedWrite::new(tx, FrameEncoder);
+    let rx = FramedRead::new(rx, FrameDecoder::default());
     wrpc_bindings::wrpc_examples::hello::handler::hello(tx, rx)
         .await
         .expect("failed to invoke `wrpc-examples.hello/handler.hello`")
