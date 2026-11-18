@@ -206,7 +206,7 @@ async fn js_http_server() -> anyhow::Result<()> {
     parts.uri = format!("http://{addr}/")
         .parse()
         .context("failed to parse request URI")?;
-    let (tx, rx) = wrpc_http::open(sender, parts).await?;
+    let (tx, rx) = wrpc_test::http_open(sender, parts).await?;
     let mut tx = FramedWrite::new(tx, FrameEncoder);
     let mut rx = FramedRead::new(rx, FrameDecoder::default());
     common::assert_sync(&mut tx, &mut rx).await?;

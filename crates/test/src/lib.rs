@@ -561,6 +561,23 @@ where
     f(parts, clt, lis).await.context("closure failed")
 }
 
+/// Opens a wRPC request with `parts` on `sender`, returning its body writer and the response body
+/// reader
+#[cfg(feature = "http")]
+pub async fn http_open(
+    sender: hyper::client::conn::http2::SendRequest<wrpc_http::OutgoingBody>,
+    parts: http::request::Parts,
+) -> Result<
+    (
+        tokio::io::DuplexStream,
+        wrpc_http::ResponseBodyReader<'static>,
+    ),
+    hyper::Error,
+> {
+    let (tx, res) = wrpc_http::open(sender, parts).await?;
+    Ok((tx, wrpc_http::response(res)))
+}
+
 /// Receives the byte streams of a request from `rx`
 #[cfg(feature = "http")]
 pub async fn http_accept(
