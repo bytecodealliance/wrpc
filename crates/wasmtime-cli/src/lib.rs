@@ -22,10 +22,10 @@ use wasmtime::component::{
 use wasmtime::{Config, Engine, Memory, MemoryType, Store};
 use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpCtxView, WasiHttpView};
-use wrpc_transport::Listener;
+use wrpc_transport::{Codec, Listener};
 use wrpc_wasmtime::{
-    Exports, ResourceTypes, SharedResourceTable, WrpcCtxView, WrpcView, call,
-    collect_component_resource_exports,
+    Exports, ResourceTypes, SharedResourceTable, TupleEncoder, ValDecoder, WrpcCtxView, WrpcView,
+    call, collect_component_resource_exports,
 };
 
 mod tcp;
@@ -246,16 +246,11 @@ async fn serve_conn(
             .context("function export not found")?;
         store
             .run_concurrent(async |store| {
-                call(
-                    store,
-                    tx,
-                    rx,
-                    resources,
-                    &export.params,
-                    &export.results,
-                    func,
-                )
-                .await?;
+                let codec = Codec {
+                    enc: TupleEncoder::new(store, &export.results, resources),
+                    dec: ValDecoder::new(store, &export.params, resources),
+                };
+                call(store, codec, tx, rx, func).await?;
                 poll_fn(|cx| store.poll_no_interesting_tasks(cx)).await;
                 anyhow::Ok(())
             })
@@ -284,16 +279,11 @@ async fn serve_conn_shared(
         let func = store
             .with(|store| instance.get_func(store, export.idx))
             .context("function export not found")?;
-        call(
-            store,
-            tx,
-            rx,
-            resources,
-            &export.params,
-            &export.results,
-            func,
-        )
-        .await?;
+        let codec = Codec {
+            enc: TupleEncoder::new(store, &export.results, resources),
+            dec: ValDecoder::new(store, &export.params, resources),
+        };
+        call(store, codec, tx, rx, func).await?;
     }
     Ok(())
 }
