@@ -3,7 +3,7 @@ use tokio_util::codec::Decoder as _;
 use wasmtime::component::{Component, Type, Val, types};
 use wasmtime::{Engine, bail};
 use wrpc_transport::{pack, unpack};
-use wrpc_wasmtime::{ResourceTypes, TupleEncoder, ValDecoder, ValEncoder};
+use wrpc_wasmtime::{ResourceTypes, TupleDecoder, TupleEncoder, ValDecoder, ValEncoder};
 
 #[test]
 fn plain_values() -> wasmtime::Result<()> {
@@ -34,6 +34,8 @@ fn plain_values() -> wasmtime::Result<()> {
     let mut buf = BytesMut::default();
     pack(ValEncoder::new((), &ty, &resources), &v, &mut buf)?;
     assert_eq!(buf, b"\x2a\x01\x03foo"[..]);
+    let decoded = unpack(ValDecoder::new((), &ty, &resources), &mut buf)?;
+    assert_eq!(decoded, v);
 
     let renamed = Val::Record(vec![
         ("c".into(), Val::U32(42)),
@@ -47,11 +49,11 @@ fn plain_values() -> wasmtime::Result<()> {
     let mut buf = BytesMut::default();
     pack(TupleEncoder::new((), &tys, &resources), &vs[..], &mut buf)?;
     assert_eq!(buf, b"\x2a\x01\x03foo\x01"[..]);
-    let decoded = unpack(ValDecoder::new((), &tys, &resources), &mut buf)?;
+    let decoded = unpack(TupleDecoder::new((), &tys, &resources), &mut buf)?;
     assert_eq!(decoded, vs);
 
     for buf in [&b"\x2a\x03"[..], &b"\x2a\x01\x03foo\x01"[..]] {
-        let dec = ValDecoder::new((), &tys, &resources).with_max_len(2);
+        let dec = TupleDecoder::new((), &tys, &resources).with_max_len(2);
         let err = unpack(dec, &mut buf.into()).unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
     }
@@ -62,7 +64,7 @@ fn plain_values() -> wasmtime::Result<()> {
 fn clean_eof() -> wasmtime::Result<()> {
     let tys = [Type::String];
     let resources = ResourceTypes::default();
-    let mut dec = ValDecoder::new((), &tys, &resources);
+    let mut dec = TupleDecoder::new((), &tys, &resources);
     let mut buf = BytesMut::from(&b"\x03foo"[..]);
     let v = dec.decode(&mut buf)?;
     assert_eq!(v, Some(vec![Val::String("foo".into())]));

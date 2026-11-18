@@ -21,7 +21,7 @@ use wrpc_transport::{
     invoke_blocking,
 };
 use wrpc_wasmtime::{
-    Exports, ResourceTypes, SharedResourceTable, TupleEncoder, ValDecoder, WrpcCtxView, WrpcView,
+    Exports, ResourceTypes, SharedResourceTable, TupleDecoder, TupleEncoder, WrpcCtxView, WrpcView,
     call,
 };
 
@@ -96,7 +96,7 @@ async fn serve_conn_shared(
         let resources = ResourceTypes::default();
         let codec = Codec {
             enc: TupleEncoder::new(guest.store, &export.results, &resources),
-            dec: ValDecoder::new(guest.store, &export.params, &resources),
+            dec: TupleDecoder::new(guest.store, &export.params, &resources),
         };
         call(guest.store, codec, tx, rx, func).await?;
     }
@@ -143,7 +143,7 @@ async fn serve_conn(
                 let resources = ResourceTypes::default();
                 let codec = Codec {
                     enc: TupleEncoder::new(store, &export.results, &resources),
-                    dec: ValDecoder::new(store, &export.params, &resources),
+                    dec: TupleDecoder::new(store, &export.params, &resources),
                 };
                 call(store, codec, tx, rx, func).await
             })

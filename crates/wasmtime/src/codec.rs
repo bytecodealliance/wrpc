@@ -727,7 +727,7 @@ where
     }
 }
 
-/// Progress of a [`ValDecoder`] within a partially-received value
+/// Progress of a [`ValDecoder`] or [`TupleDecoder`] within a partially-received value
 enum Partial {
     Decoder(Box<dyn Any + Send>),
     Uuid,
@@ -743,13 +743,8 @@ enum Partial {
     },
 }
 
-/// Decodes a tuple of [`Val`]s of types `tys`, e.g. function parameters.
-///
-/// Resources and asynchronous values are created in the store once their encoding is complete.
-/// Pending asynchronous values are received using [`Receive::poll_receive`].
-pub struct ValDecoder<'a, T> {
+struct Inner<'a, T> {
     store: T,
-    tys: &'a [Type],
     resources: &'a ResourceTypes,
     max_len: u32,
     state: Option<Box<Partial>>,
@@ -757,29 +752,19 @@ pub struct ValDecoder<'a, T> {
     nested: BTreeMap<Box<[usize]>, Box<dyn Receive + Send>>,
 }
 
-impl<T> ValDecoder<'_, T> {
-    #[must_use]
-    pub fn new<'a>(store: T, tys: &'a [Type], resources: &'a ResourceTypes) -> ValDecoder<'a, T> {
-        ValDecoder {
+impl<'a, T> Inner<'a, T> {
+    fn new(store: T, resources: &'a ResourceTypes) -> Self {
+        Self {
             store,
-            tys,
             resources,
             max_len: DEFAULT_MAX_LEN,
             state: None,
             nested: BTreeMap::default(),
         }
     }
-
-    /// Rejects strings and ready `input-stream`s longer than `max_len` bytes and lists longer than
-    /// `max_len` elements, `1 << 24` by default.
-    #[must_use]
-    pub fn with_max_len(mut self, max_len: u32) -> Self {
-        self.max_len = max_len;
-        self
-    }
 }
 
-impl<T> Receive for ValDecoder<'_, T> {
+impl<T> Receive for Inner<'_, T> {
     fn poll_receive(
         &mut self,
         cx: &mut Context<'_>,
@@ -804,6 +789,90 @@ impl<T> Receive for ValDecoder<'_, T> {
 
     fn is_closed(&self) -> bool {
         self.nested.is_empty()
+    }
+}
+
+/// Decodes a [`Val`] of type `ty`.
+///
+/// Resources and asynchronous values are created in the store once their encoding is complete.
+/// Pending asynchronous values are received using [`Receive::poll_receive`].
+pub struct ValDecoder<'a, T> {
+    ty: &'a Type,
+    inner: Inner<'a, T>,
+}
+
+impl<T> ValDecoder<'_, T> {
+    #[must_use]
+    pub fn new<'a>(store: T, ty: &'a Type, resources: &'a ResourceTypes) -> ValDecoder<'a, T> {
+        ValDecoder {
+            ty,
+            inner: Inner::new(store, resources),
+        }
+    }
+
+    /// Rejects strings and ready `input-stream`s longer than `max_len` bytes and lists longer than
+    /// `max_len` elements, `1 << 24` by default.
+    #[must_use]
+    pub fn with_max_len(mut self, max_len: u32) -> Self {
+        self.inner.max_len = max_len;
+        self
+    }
+}
+
+impl<T> Receive for ValDecoder<'_, T> {
+    fn poll_receive(
+        &mut self,
+        cx: &mut Context<'_>,
+        path: &[usize],
+        src: &mut BytesMut,
+    ) -> Poll<std::io::Result<()>> {
+        self.inner.poll_receive(cx, path, src)
+    }
+
+    fn is_closed(&self) -> bool {
+        self.inner.is_closed()
+    }
+}
+
+/// Decodes a tuple of [`Val`]s of types `tys`, e.g. function parameters.
+///
+/// Resources and asynchronous values are created in the store once their encoding is complete.
+/// Pending asynchronous values are received using [`Receive::poll_receive`].
+pub struct TupleDecoder<'a, T> {
+    tys: &'a [Type],
+    inner: Inner<'a, T>,
+}
+
+impl<T> TupleDecoder<'_, T> {
+    #[must_use]
+    pub fn new<'a>(store: T, tys: &'a [Type], resources: &'a ResourceTypes) -> TupleDecoder<'a, T> {
+        TupleDecoder {
+            tys,
+            inner: Inner::new(store, resources),
+        }
+    }
+
+    /// Rejects strings and ready `input-stream`s longer than `max_len` bytes and lists longer than
+    /// `max_len` elements, `1 << 24` by default.
+    #[must_use]
+    pub fn with_max_len(mut self, max_len: u32) -> Self {
+        self.inner.max_len = max_len;
+        self
+    }
+}
+
+impl<T> Receive for TupleDecoder<'_, T> {
+    fn poll_receive(
+        &mut self,
+        cx: &mut Context<'_>,
+        path: &[usize],
+        src: &mut BytesMut,
+    ) -> Poll<std::io::Result<()>> {
+        self.inner.poll_receive(cx, path, src)
+    }
+
+    fn is_closed(&self) -> bool {
+        self.inner.is_closed()
     }
 }
 
@@ -863,10 +932,47 @@ where
     Ok(v)
 }
 
-impl<T> ValDecoder<'_, T>
+impl<T> Inner<'_, T>
 where
     T: WithStore<Data: WrpcView>,
 {
+    fn decode<V>(
+        &mut self,
+        src: &mut BytesMut,
+        f: impl FnOnce(
+            &mut Self,
+            &mut BytesMut,
+            &mut Vec<usize>,
+            &mut Option<Box<Partial>>,
+        ) -> std::io::Result<Option<V>>,
+    ) -> std::io::Result<Option<V>> {
+        let n = self.state.is_none().then_some(src.len());
+        let mut state = self.state.take();
+        let mut path = Vec::default();
+        let v = f(self, src, &mut path, &mut state).map_err(|err| {
+            let kind = err.kind();
+            std::io::Error::new(
+                kind,
+                wasmtime::Error::from(err)
+                    .context(format!("failed to decode value at path {path:?}")),
+            )
+        })?;
+        if n != Some(src.len()) {
+            self.state = state;
+        }
+        Ok(v)
+    }
+
+    fn decode_eof<V>(&self, v: Option<V>, src: &BytesMut) -> std::io::Result<Option<V>> {
+        if v.is_none() && (self.state.is_some() || !src.is_empty()) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "value incomplete",
+            ));
+        }
+        Ok(v)
+    }
+
     fn decode_seq(
         &mut self,
         src: &mut BytesMut,
@@ -1168,40 +1274,38 @@ impl<T> Decoder for ValDecoder<'_, T>
 where
     T: WithStore<Data: WrpcView>,
 {
+    type Item = Val;
+    type Error = std::io::Error;
+
+    fn decode(&mut self, src: &mut BytesMut) -> std::io::Result<Option<Val>> {
+        let ty = self.ty;
+        self.inner.decode(src, |inner, src, path, state| {
+            inner.decode_ty(src, ty, path, state)
+        })
+    }
+
+    fn decode_eof(&mut self, src: &mut BytesMut) -> std::io::Result<Option<Val>> {
+        let v = self.decode(src)?;
+        self.inner.decode_eof(v, src)
+    }
+}
+
+impl<T> Decoder for TupleDecoder<'_, T>
+where
+    T: WithStore<Data: WrpcView>,
+{
     type Item = Vec<Val>;
     type Error = std::io::Error;
 
     fn decode(&mut self, src: &mut BytesMut) -> std::io::Result<Option<Vec<Val>>> {
         let tys = self.tys;
-        let n = self.state.is_none().then_some(src.len());
-        let mut state = self.state.take();
-        let mut path = Vec::default();
-        let vs = self
-            .decode_seq(src, &mut path, &mut state, Some(tys.len()), tys)
-            .map_err(|err| {
-                let kind = err.kind();
-                std::io::Error::new(
-                    kind,
-                    wasmtime::Error::from(err)
-                        .context(format!("failed to decode value at path {path:?}")),
-                )
-            })?;
-        if n != Some(src.len()) {
-            self.state = state;
-        }
-        Ok(vs)
+        self.inner.decode(src, |inner, src, path, state| {
+            inner.decode_seq(src, path, state, Some(tys.len()), tys)
+        })
     }
 
     fn decode_eof(&mut self, src: &mut BytesMut) -> std::io::Result<Option<Vec<Val>>> {
-        if let Some(vs) = self.decode(src)? {
-            return Ok(Some(vs));
-        }
-        if self.state.is_some() || !src.is_empty() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::UnexpectedEof,
-                "parameter values incomplete",
-            ));
-        }
-        Ok(None)
+        let vs = self.decode(src)?;
+        self.inner.decode_eof(vs, src)
     }
 }

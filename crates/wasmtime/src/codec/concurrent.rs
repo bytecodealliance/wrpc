@@ -19,8 +19,8 @@ use wrpc_transport::{
     StreamEncoder, Transmit,
 };
 
-use crate::codec::Partial;
-use crate::{ValDecoder, WithStore, WrpcView};
+use crate::codec::{Inner, Partial};
+use crate::{WithStore, WrpcView};
 
 impl<T: 'static> WithStore for &Accessor<T> {
     type Data = T;
@@ -299,7 +299,7 @@ pub(super) fn encode_stream<T>(
     )
 }
 
-impl<T> ValDecoder<'_, T>
+impl<T> Inner<'_, T>
 where
     T: WithStore<Data: WrpcView>,
 {
