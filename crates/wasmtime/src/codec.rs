@@ -118,7 +118,7 @@ impl<T> Transmit for ValEncoder<'_, T> {
 /// Encodes a tuple of [`Val`]s of types `tys`, e.g. function results.
 pub struct TupleEncoder<'a, T> {
     store: T,
-    tys: &'a [Type],
+    pub(crate) tys: &'a [Type],
     resources: &'a ResourceTypes,
     nested: BTreeMap<usize, Box<dyn Transmit + Send>>,
 }

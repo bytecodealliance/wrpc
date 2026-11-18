@@ -20,12 +20,12 @@ use wasmtime::component::{
 };
 use wrpc_test::serve_until;
 use wrpc_transport::{
-    FrameDecoder, FrameEncoder, FrameRef, HeaderEncoder, HeaderRef, Listener, invoke,
+    Codec, FrameDecoder, FrameEncoder, FrameRef, HeaderEncoder, HeaderRef, Listener, invoke,
     invoke_blocking,
 };
 use wrpc_wasmtime::{
-    Exports, ResourceTypes, SharedResourceTable, ValDecoder, ValEncoder, WrpcCtxView, WrpcView,
-    call,
+    Exports, ResourceTypes, SharedResourceTable, TupleEncoder, ValDecoder, ValEncoder, WrpcCtxView,
+    WrpcView, call,
 };
 
 #[derive(Default)]
@@ -102,16 +102,12 @@ async fn serve_conn_shared(
             .store
             .with(|store| guest.instance.get_func(store, export.idx))
             .context("function export not found")?;
-        call(
-            guest.store,
-            tx,
-            rx,
-            &ResourceTypes::default(),
-            &export.params,
-            &export.results,
-            func,
-        )
-        .await?;
+        let resources = ResourceTypes::default();
+        let codec = Codec {
+            enc: TupleEncoder::new(guest.store, &export.results, &resources),
+            dec: ValDecoder::new(guest.store, &export.params, &resources),
+        };
+        call(guest.store, codec, tx, rx, func).await?;
     }
     Ok(())
 }
@@ -153,16 +149,12 @@ async fn serve_conn(
             .context("function export not found")?;
         store
             .run_concurrent(async |store| {
-                call(
-                    store,
-                    tx,
-                    rx,
-                    &ResourceTypes::default(),
-                    &export.params,
-                    &export.results,
-                    func,
-                )
-                .await
+                let resources = ResourceTypes::default();
+                let codec = Codec {
+                    enc: TupleEncoder::new(store, &export.results, &resources),
+                    dec: ValDecoder::new(store, &export.params, &resources),
+                };
+                call(store, codec, tx, rx, func).await
             })
             .await
             .map_err(anyhow::Error::from)??;

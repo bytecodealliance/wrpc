@@ -17,9 +17,7 @@ use tokio_util::codec::{FramedRead, FramedWrite};
 use tracing::{debug, instrument, trace, warn};
 use uuid::Uuid;
 use wasmtime::Engine;
-use wasmtime::component::{
-    Accessor, Func, ResourceAny, ResourceTable, ResourceType, Type, Val, types,
-};
+use wasmtime::component::{Accessor, Func, ResourceAny, ResourceTable, ResourceType, Val, types};
 use wasmtime::error::Context as _;
 use wrpc_transport::{Codec, FrameDecoder, FrameEncoder};
 
@@ -76,17 +74,15 @@ impl<T: WrpcView> WrpcView for &mut T {
 }
 
 /// Calls the exported `func` with parameters received from the frames `rx` and transmits the
-/// results to the frames `tx`.
+/// results to the frames `tx` using `codec`, which must match the type of `func`.
 ///
 /// The `store` [`Accessor`] is used to call `func` concurrently, it can be acquired, for example,
 /// using [`wasmtime::Store::run_concurrent`].
 pub async fn call<T, R, W, I, O>(
     store: &Accessor<T>,
+    codec: Codec<TupleEncoder<'_, &Accessor<T>>, ValDecoder<'_, &Accessor<T>>>,
     tx: W,
     rx: R,
-    resources: &ResourceTypes,
-    params_ty: &[Type],
-    results_ty: &[Type],
     func: Func,
 ) -> wasmtime::Result<()>
 where
@@ -96,18 +92,16 @@ where
     I: AsyncRead + Unpin,
     O: AsyncWrite + Unpin,
 {
-    Codec {
-        enc: TupleEncoder::new(store, results_ty, resources),
-        dec: ValDecoder::new(store, params_ty, resources),
-    }
-    .serve(tx, rx, async |params: Vec<Val>| {
-        let mut results = vec![Val::Bool(false); results_ty.len()];
-        func.call_concurrent(store, &params, &mut results)
-            .await
-            .context("failed to call function")?;
-        Ok(results)
-    })
-    .await
+    let n = codec.enc.tys.len();
+    codec
+        .serve(tx, rx, async |params: Vec<Val>| {
+            let mut results = vec![Val::Bool(false); n];
+            func.call_concurrent(store, &params, &mut results)
+                .await
+                .context("failed to call function")?;
+            Ok(results)
+        })
+        .await
 }
 
 /// Recursively iterates the component item type and collects all exported resource types
