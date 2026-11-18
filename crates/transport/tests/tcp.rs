@@ -9,8 +9,11 @@ use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::join;
 use tokio::net::TcpStream;
 use tokio::task::yield_now;
+use tokio::time::timeout;
 use tokio_util::codec::Encoder as _;
-use wrpc_transport::{Decode, Encode, Header, HeaderEncoder, HeaderRef, invoke};
+use wrpc_transport::{
+    Decode, Encode, FrameDecoder, Header, HeaderDecoder, HeaderEncoder, HeaderRef, Listener, invoke,
+};
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn loopback() -> anyhow::Result<()> {
@@ -60,7 +63,7 @@ async fn unprocessed_stream() -> anyhow::Result<()> {
                 }
             )
         };
-        tokio::time::timeout(Duration::from_secs(10), fut)
+        timeout(Duration::from_secs(10), fut)
             .await
             .context("unprocessed stream data did not fail the invocation")?;
         Ok(())
@@ -90,5 +93,63 @@ async fn dropped_invocation_closes() -> anyhow::Result<()> {
     drop(rx);
     let n = clt.read_to_end(&mut Vec::default()).await?;
     assert_eq!(n, 0);
+    Ok(())
+}
+
+#[test_log::test(tokio::test)]
+async fn conn_idle_timeout() -> anyhow::Result<()> {
+    let lis = wrpc_test::tcp_bind().await?;
+    let addr = lis.local_addr()?;
+    let mut clt = TcpStream::connect(addr).await?;
+    let (stream, ..) = lis.accept().await?;
+    let (rx, tx) = stream.into_split();
+    let mut lis = Listener::new(tx, rx);
+    let mut buf = BytesMut::default();
+    HeaderEncoder.encode(
+        HeaderRef {
+            instance: "foo",
+            name: "bar",
+        },
+        &mut buf,
+    )?;
+    clt.write_all(&buf[..3]).await?;
+    let res = timeout(Duration::from_millis(10), lis.accept()).await;
+    assert!(res.is_err(), "header returned before it was sent");
+    clt.write_all(&buf[3..]).await?;
+    let next = lis.accept().await?;
+    let (header, ..) = next.context("connection closed")?;
+    assert_eq!(
+        header,
+        Header {
+            instance: "foo".into(),
+            name: "bar".into(),
+        }
+    );
+    Ok(())
+}
+
+#[test_log::test(tokio::test)]
+async fn conn_header_limits() -> anyhow::Result<()> {
+    let lis = wrpc_test::tcp_bind().await?;
+    let addr = lis.local_addr()?;
+    let mut clt = TcpStream::connect(addr).await?;
+    let (stream, ..) = lis.accept().await?;
+    let (rx, tx) = stream.into_split();
+    let mut lis =
+        Listener::with_decoders(tx, rx, HeaderDecoder::new(2, 3), FrameDecoder::default());
+    let mut buf = BytesMut::default();
+    HeaderEncoder.encode(
+        HeaderRef {
+            instance: "foo",
+            name: "bar",
+        },
+        &mut buf,
+    )?;
+    clt.write_all(&buf).await?;
+    let res = lis.accept().await;
+    let err = res.err().context("too long instance name accepted")?;
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    let res = lis.accept().await;
+    assert!(res.is_err(), "failed connection reused");
     Ok(())
 }

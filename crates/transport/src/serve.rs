@@ -11,7 +11,8 @@ use crate::frame::{self, Outgoing};
 use crate::mux::ingress;
 
 /// Serves an invocation over the byte stream `tx` and the frames `rx`, which follow the header
-/// read by [`Header::read`](crate::Header::read), decoding the parameters using `dec`
+/// read by [`HeaderDecoder`](crate::HeaderDecoder), for example, ones returned by
+/// [`Listener::accept`](crate::Listener::accept), decoding the parameters using `dec`
 ///
 /// Returns a future receiving the parameters, which resolves to the synchronous parameters and
 /// a future, which receives the asynchronous parameters and resolves once all are received,
@@ -20,7 +21,7 @@ use crate::mux::ingress;
 ///
 /// No frame past the invocation is read from `rx`, but it may have read bytes past it into its
 /// read buffer, so to reuse the byte stream pass `rx` by `&mut` and keep reading from it once
-/// all parameters are received, for example, using [`FramedRead::map_decoder`].
+/// all parameters are received, for example, using [`Listener`](crate::Listener).
 pub fn serve<R, I, O, D>(
     tx: O,
     rx: R,
