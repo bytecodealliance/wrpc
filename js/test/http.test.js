@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import * as t from "../src/types.js";
-import { fromFetch, fromRequest } from "../src/http.js";
+import { MEDIA_TYPE, fromFetch, fromRequest } from "../src/http.js";
 import { accept, invoke } from "../src/session.js";
 
 const ADDR = "http://localhost/rpc";
@@ -40,16 +40,42 @@ test("values echo over HTTP", async () => {
   }
 });
 
-test("a response status other than 2xx fails the invocation", async () => {
-  for (const [body, message] of [
-    ["nope", "HTTP request failed with status 404: nope"],
-    ["", "HTTP request failed with status 404"],
-    ["x".repeat(5000), `HTTP request failed with status 404: ${"x".repeat(4096)}`],
-  ]) {
-    /** @type {typeof globalThis.fetch} */
-    const fetch = async () => new Response(body, { status: 404 });
-    await assert.rejects(invoke(fromFetch(ADDR, { fetch }), "i", "f", [], [], [t.u8]), {
-      message,
-    });
-  }
+test("callers decide on the response", async () => {
+  /** @type {Promise<unknown>[]} */
+  const serving = [];
+  /** @type {typeof globalThis.fetch} */
+  const serve = async (input, init) => {
+    const req = new Request(input, init);
+    assert.equal(req.headers.get("content-type"), MEDIA_TYPE);
+    const { transport, response } = fromRequest(req);
+    serving.push(
+      (async () => {
+        const inv = await accept(transport);
+        const { done } = await inv.receiveParams([]);
+        await Promise.all([done, inv.sendResults([t.u8], [42]), inv.finished]);
+      })(),
+    );
+    response.headers.set("foo", "bar");
+    return new Response(response.body, { status: 418, headers: response.headers });
+  };
+  /** @type {Response | undefined} */
+  let res;
+  /** @type {typeof globalThis.fetch} */
+  const fetch = async (input, init) => (res = await serve(input, init));
+  const { results, finished } = await invoke(fromFetch(ADDR, { fetch }), "i", "f", [], [], [t.u8]);
+  assert.deepEqual(results, [42]);
+  await Promise.all([finished, ...serving]);
+  assert.equal(res?.status, 418);
+  assert.equal(res?.headers.get("content-type"), MEDIA_TYPE);
+  assert.equal(res?.headers.get("foo"), "bar");
+
+  /** @type {typeof globalThis.fetch} */
+  const reject = async () => {
+    const res = new Response("nope", { status: 418 });
+    if (!res.ok) throw new Error(`status ${res.status}`);
+    return res;
+  };
+  await assert.rejects(invoke(fromFetch(ADDR, { fetch: reject }), "i", "f", [], [], [t.u8]), {
+    message: "status 418",
+  });
 });

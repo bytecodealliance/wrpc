@@ -172,9 +172,22 @@ const transport = {
 
 `fromFetch(input, options?)` returns an HTTP client transport for one
 invocation, sending a `POST` request to `input` with `options.fetch`
-(`globalThis.fetch` by default) and failing the invocation unless the response
-status is `2xx`, with an error carrying the status and the first 4 KiB of the
-response body. The other `options`, such as `headers`, are passed to `fetch`.
+(`globalThis.fetch` by default) and reading the response body, whatever the
+response status. The other `options`, such as `headers`, are passed to `fetch`;
+the `content-type` defaults to `MEDIA_TYPE`
+(`application/vnd.bytecodealliance.wrpc`). To act on the response status or
+headers, wrap `fetch` and reject to fail the invocation:
+
+```js
+const transport = fromFetch(url, {
+  fetch: async (input, init) => {
+    const res = await fetch(input, init);
+    if (!res.ok) throw new Error(`HTTP request failed with status ${res.status}`);
+    return res;
+  },
+});
+```
+
 The request body is streamed, which needs a runtime that supports streaming
 request bodies: Firefox and Safari do not, and Chromium only does over HTTP/2
 and only exposes the response once the request body is complete. With
@@ -184,7 +197,8 @@ parameter is complete.
 
 `fromRequest(request)` serves an invocation over a WHATWG `Request`, such as
 in Deno, Bun or a service worker, returning the `transport` to `accept` it on
-and the `response` to reply with without waiting for the request body:
+and the `response`, with `content-type` set to `MEDIA_TYPE`, to reply with
+without waiting for the request body:
 
 ```js
 Deno.serve((request) => {
@@ -324,7 +338,7 @@ It deviates from the draft in that:
 - `fromWebStreams({ readable, writable })` — adapt a WHATWG stream duplex to a transport
   (see [Transports](#transports)).
 - `fromFetch(input, options?)` / `fromRequest(request)` — the HTTP client and server transports
-  (see [Transports](#transports)).
+  (see [Transports](#transports)); `MEDIA_TYPE` is their default `content-type`.
 - `encodeValue(writer, ty, value, sink?, path?)` / `decodeValue(reader, ty, sink?, path?)` — the low-level value codec.
 - `decodeSteps(reader, ty, sink?, path?)` / `atomic(reader, f)` — the resumable form of the decoder, driven by `AsyncReader.decode` across chunk boundaries.
 - `Mux` / `Outgoing` — the framing multiplexer, for custom session control; `DISCARDED` is the error the reader of a discarded sub-stream fails with.
