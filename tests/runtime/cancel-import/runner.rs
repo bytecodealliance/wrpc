@@ -67,8 +67,8 @@ pub async fn run(
 
         // request the other component sets its backpressure flag meaning we
         // won't be able to create new tasks in the "started" state.
-        let (wrpc_tx, wrpc_rx) = wrpc.connect().await?;
-        backpressure_set(wrpc_tx, wrpc_rx, true).await?;
+        let (mut bp_tx, mut bp_rx) = wrpc.connect().await?;
+        backpressure_set(&mut bp_tx, &mut bp_rx, true).await?;
         let (wrpc_tx, wrpc_rx) = wrpc.connect().await?;
         let mut starting_import = Box::pin(pending_import(
             wrpc_tx,
@@ -89,8 +89,7 @@ pub async fn run(
         // cancel our in-progress export
         drop(started_import);
 
-        let (wrpc_tx, wrpc_rx) = wrpc.connect().await?;
-        backpressure_set(wrpc_tx, wrpc_rx, false).await?;
+        backpressure_set(&mut bp_tx, &mut bp_rx, false).await?;
 
         // both channels should be dropped
         tx1.closed().await;
@@ -152,8 +151,8 @@ pub async fn run(
 
         // force the next subtask to start out in the "starting" state, not the
         // "started" state.
-        let (wrpc_tx, wrpc_rx) = wrpc.connect().await?;
-        backpressure_set(wrpc_tx, wrpc_rx, true).await?;
+        let (mut bp_tx, mut bp_rx) = wrpc.connect().await?;
+        backpressure_set(&mut bp_tx, &mut bp_rx, true).await?;
         let (mut tx2, rx2) = oneshot::channel();
         let (wrpc_tx, wrpc_rx) = wrpc.connect().await?;
         let mut starting_import = Box::pin(pending_import(
@@ -171,8 +170,7 @@ pub async fn run(
         // Disable backpressure in the other component which will let the
         // `starting_import`, previously in the "STARTING" state, get a queued up
         // notification that it's entered the "STARTED" state.
-        let (wrpc_tx, wrpc_rx) = wrpc.connect().await?;
-        backpressure_set(wrpc_tx, wrpc_rx, false).await?;
+        backpressure_set(&mut bp_tx, &mut bp_rx, false).await?;
         for _ in 0..5 {
             yield_now().await;
         }

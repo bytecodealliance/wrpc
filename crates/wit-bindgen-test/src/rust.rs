@@ -277,7 +277,7 @@ use std::sync::Arc;
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::{TcpListener, TcpStream};
 use wit_bindgen_wrpc::tokio_util::codec::FramedRead;
-use wrpc_transport::{FrameDecoder, Header};
+use wrpc_transport::{FrameDecoder, Header, Listener};
 
 {modules}
 
@@ -295,12 +295,12 @@ impl Client {
 
 fn serve(
     lis: TcpListener,
-    handle: impl Fn(
+    handle: impl for<'a> Fn(
         &str,
         &str,
-        OwnedWriteHalf,
-        FramedRead<OwnedReadHalf, FrameDecoder>,
-    ) -> Result<Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send>>, String>
+        &'a mut OwnedWriteHalf,
+        &'a mut FramedRead<OwnedReadHalf, FrameDecoder>,
+    ) -> Result<Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + 'a>>, String>
     + Send
     + Sync
     + 'static,
@@ -315,17 +315,21 @@ fn serve(
             let (rx, tx) = stream.into_split();
             let handle = Arc::clone(&handle);
             tokio::spawn(async move {
-                let (header, rx) = match Header::read(rx).await {
-                    Ok(header) => header,
-                    Err(err) => return eprintln!("failed to read invocation header: {err:?}"),
-                };
-                match handle(&header.instance, &header.name, tx, rx) {
-                    Ok(fut) => {
-                        if let Err(err) = fut.await {
-                            eprintln!("failed to serve invocation: {err:?}");
+                let mut lis = Listener::new(tx, rx);
+                loop {
+                    let (Header { instance, name }, tx, rx) = match lis.accept().await {
+                        Ok(Some(next)) => next,
+                        Ok(None) => return,
+                        Err(err) => return eprintln!("failed to read invocation header: {err:?}"),
+                    };
+                    match handle(&instance, &name, tx, rx) {
+                        Ok(fut) => {
+                            if let Err(err) = fut.await {
+                                return eprintln!("failed to serve invocation: {err:?}");
+                            }
                         }
+                        Err(name) => return eprintln!("no component exports `{name}`"),
                     }
-                    Err(name) => eprintln!("no component exports `{name}`"),
                 }
             });
         }

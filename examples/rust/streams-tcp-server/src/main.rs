@@ -1,14 +1,15 @@
 use core::net::SocketAddr;
 use core::pin::{Pin, pin};
 
-use anyhow::Context as _;
+use anyhow::{Context as _, bail};
 use bytes::Bytes;
 use clap::Parser;
-use futures::{Stream, StreamExt as _};
+use futures::Stream;
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::task::JoinSet;
 use tokio::{select, signal};
-use tokio_stream::wrappers::TcpListenerStream;
 use tracing::{debug, error, info, warn};
+use wit_bindgen_wrpc::wrpc_transport::{Header, Listener};
 
 mod bindings {
     wit_bindgen_wrpc::generate!({
@@ -45,6 +46,21 @@ impl bindings::exports::wrpc_examples::streams::handler::Handler<SocketAddr> for
     }
 }
 
+async fn serve(
+    addr: SocketAddr,
+    tx: impl AsyncWrite + Send + Unpin,
+    rx: impl AsyncRead + Send + Unpin,
+) -> anyhow::Result<()> {
+    let mut lis = Listener::new(tx, rx);
+    while let Some((Header { instance, name }, tx, rx)) = lis.accept().await? {
+        let Ok(fut) = bindings::handle(&Server, addr, &instance, &name, tx, rx) else {
+            bail!("`{instance}#{name}` is not exported");
+        };
+        fut.await?;
+    }
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt().init();
@@ -54,34 +70,29 @@ async fn main() -> anyhow::Result<()> {
     let lis = tokio::net::TcpListener::bind(&addr)
         .await
         .with_context(|| format!("failed to bind TCP listener on `{addr}`"))?;
-    let incoming = TcpListenerStream::new(lis).map(|res| {
-        let stream = res?;
-        stream.set_nodelay(true)?;
-        let addr = stream.peer_addr()?;
-        let (rx, tx) = stream.into_split();
-        std::io::Result::Ok((addr, tx, rx))
-    });
-    let invocations = bindings::serve(incoming, Server);
-    let mut invocations = pin!(invocations);
     let shutdown = signal::ctrl_c();
     let mut shutdown = pin!(shutdown);
     let mut tasks = JoinSet::new();
     loop {
         select! {
-            Some(res) = invocations.next() => {
+            res = lis.accept() => {
                 match res {
-                    Ok(fut) => {
-                        debug!("invocation accepted");
+                    Ok((stream, addr)) => {
+                        debug!("connection accepted");
+                        if let Err(err) = stream.set_nodelay(true) {
+                            warn!(?err, "failed to set `TCP_NODELAY`");
+                        }
+                        let (rx, tx) = stream.into_split();
                         tasks.spawn(async move {
-                            match fut.await { Err(err) => {
-                                warn!(?err, "failed to handle invocation");
-                            } _ => {
-                                info!("invocation successfully handled");
-                            }}
+                            if let Err(err) = serve(addr, tx, rx).await {
+                                warn!(?err, "failed to serve connection");
+                            } else {
+                                info!("connection successfully served");
+                            }
                         });
                     }
                     Err(err) => {
-                        warn!(?err, "failed to accept invocation");
+                        warn!(?err, "failed to accept connection");
                     }
                 }
             }
@@ -90,15 +101,7 @@ async fn main() -> anyhow::Result<()> {
                     error!(?err, "failed to join task");
                 }
             }
-            res = &mut shutdown => {
-                // wait for all invocations to complete
-                while let Some(res) = tasks.join_next().await {
-                    if let Err(err) = res {
-                        error!(?err, "failed to join task");
-                    }
-                }
-                return res.context("failed to listen for ^C")
-            }
+            res = &mut shutdown => return res.context("failed to listen for ^C"),
         }
     }
 }

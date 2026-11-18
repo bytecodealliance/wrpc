@@ -22,7 +22,6 @@ clap = { workspace = true, features = [
     "suggestions",
     "usage",
 ] }
-futures = { workspace = true }
 quinn = { workspace = true, features = [
     "log",
     "platform-verifier",
@@ -54,7 +53,6 @@ uuid = { workspace = true, features = ["std", "v7"] }
 web-transport-quinn = { workspace = true, features = ["ring"] }
 wit-bindgen-wrpc = { workspace = true }
 wrpc-transport = { workspace = true }
-wrpc-webtransport = { workspace = true }
 wrpc-wasi-keyvalue = { workspace = true }
 wrpc-wasi-keyvalue-mem = { workspace = true }
 wrpc-wasi-keyvalue-redis = { workspace = true }

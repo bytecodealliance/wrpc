@@ -3,20 +3,18 @@
 
 pub mod common;
 
-use core::future::poll_fn;
 use core::iter;
-use core::pin::{Pin, pin};
-use core::task::Poll;
+use core::pin::Pin;
 use core::time::Duration;
 
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Context as _, bail, ensure};
 use bytes::{Bytes, BytesMut};
-use common::{assert_async, assert_sync};
+use common::{assert_async, assert_eof, assert_sync};
 use futures::future::BoxFuture;
-use futures::stream::{BoxStream, FuturesUnordered};
-use futures::{Stream, StreamExt as _, TryStreamExt as _, future, stream};
+use futures::stream::BoxStream;
+use futures::{StreamExt as _, TryStreamExt as _, future, stream};
 use tokio::io::{
     AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _, duplex, sink, split,
 };
@@ -27,49 +25,22 @@ use tokio::{join, spawn, try_join};
 use tokio_util::codec::{Encoder as _, FramedParts, FramedRead};
 use tokio_util::io::StreamReader;
 use tracing::instrument;
-use wrpc_test::{accept_invocation, read_eof};
+use wrpc_test::{read_eof, read_invocation};
 use wrpc_transport::{
     Decode, Encode, FrameDecoder, FrameEncoder, FrameRef, Header, HeaderDecoder, HeaderEncoder,
-    HeaderRef, ResourceBorrow, ResourceOwn, invoke, invoke_blocking, serve,
+    HeaderRef, Listener, ResourceBorrow, ResourceOwn, invoke, invoke_blocking, serve,
 };
 
-async fn serve_bindgen<F, E>(
-    invocations: impl Stream<Item = Result<F, E>>,
-    client: impl Future<Output = anyhow::Result<()>>,
-) -> anyhow::Result<()>
-where
-    F: Future<Output = anyhow::Result<()>>,
-    E: core::error::Error + Send + Sync + 'static,
-{
-    let mut invocations = pin!(invocations);
-    let mut served = FuturesUnordered::default();
-    let mut client = pin!(client);
-    poll_fn(|cx| {
-        while let Poll::Ready(Some(invocation)) = invocations.poll_next_unpin(cx) {
-            let invocation = invocation?;
-            served.push(invocation);
-        }
-        while let Poll::Ready(Some(res)) = served.poll_next_unpin(cx) {
-            res?;
-        }
-        client.as_mut().poll(cx)
-    })
-    .await?;
-    served.try_collect().await
-}
-
 #[instrument(skip_all, ret)]
-async fn assert_bindgen_sync<F, Fut, CI, CO, CE, C, I, O, E>(
-    connect: F,
-    srv: impl Stream<Item = Result<(C, O, I), E>>,
+async fn assert_bindgen_sync<Fut, CI, CO, CE, I, O, E>(
+    connect: impl Fn() -> Fut + Clone + Send + Sync + 'static,
+    mut accept: impl AsyncFnMut() -> Result<(O, I), E>,
 ) -> anyhow::Result<()>
 where
-    F: Fn() -> Fut + Clone + Send + Sync + 'static,
     Fut: Future<Output = Result<(CO, CI), CE>> + Send,
     CI: AsyncRead + Send + Unpin,
     CO: AsyncWrite + Send + Unpin,
     CE: core::error::Error + Send + Sync + 'static,
-    C: Send + Sync + 'static,
     I: AsyncRead + Send + Unpin + 'static,
     O: AsyncWrite + Send + Unpin + 'static,
     E: core::error::Error + Send + Sync + 'static,
@@ -216,11 +187,11 @@ where
         async fn ping(&self, _cx: C) -> anyhow::Result<String> {
             use sync_client::wrpc_test::integration::resources::Counter;
 
-            let (tx, rx) = (self.connect)().await?;
-            let counter = Counter::new(tx, rx, 42).await?;
-            let (tx, rx) = (self.connect)().await?;
-            let n = Counter::get_count(tx, rx, &counter.as_borrow()).await?;
+            let (mut tx, mut rx) = (self.connect)().await?;
+            let counter = Counter::new(&mut tx, &mut rx, 42).await?;
+            let n = Counter::get_count(&mut tx, &mut rx, &counter.as_borrow()).await?;
             ensure!(n == 42);
+            assert_eof(tx, rx).await?;
             Ok("pong".into())
         }
     }
@@ -308,20 +279,42 @@ where
         counts: Arc::default(),
         connect: connect.clone(),
     };
-    serve_bindgen(sync_server::serve(srv, handler), assert_sync(connect)).await
+    let serve = async |tx, rx| {
+        let mut lis = Listener::new(tx, rx);
+        while let Some((Header { instance, name }, tx, rx)) = lis.accept().await? {
+            let Ok(fut) = sync_server::handle(&handler, (), &instance, &name, tx, rx) else {
+                bail!("`{instance}#{name}` is not exported");
+            };
+            fut.await?;
+        }
+        anyhow::Ok(())
+    };
+    try_join!(
+        async {
+            let (srv_tx, srv_rx) = accept().await.context("failed to accept")?;
+            try_join!(serve(srv_tx, srv_rx), async {
+                let (srv_tx, srv_rx) = accept().await.context("failed to accept")?;
+                serve(srv_tx, srv_rx).await
+            })
+        },
+        async {
+            let (mut tx, mut rx) = connect().await.context("failed to connect")?;
+            assert_sync(&mut tx, &mut rx).await?;
+            assert_eof(tx, rx).await
+        },
+    )?;
+    Ok(())
 }
 
 #[instrument(skip_all, ret)]
-async fn assert_bindgen_async<F, CI, CO, CE, C, I, O, E>(
-    connect: impl Fn() -> F,
-    srv: impl Stream<Item = Result<(C, O, I), E>>,
+async fn assert_bindgen_async<CI, CO, I, O, E>(
+    mut tx: CO,
+    mut rx: CI,
+    accept: impl AsyncFnOnce() -> Result<(O, I), E>,
 ) -> anyhow::Result<()>
 where
-    F: Future<Output = Result<(CO, CI), CE>>,
     CI: AsyncRead + Send + Unpin,
     CO: AsyncWrite + Send + Unpin,
-    CE: core::error::Error + Send + Sync + 'static,
-    C: Send + Sync + 'static,
     I: AsyncRead + Send + Unpin + 'static,
     O: AsyncWrite + Send + Unpin + 'static,
     E: core::error::Error + Send + Sync + 'static,
@@ -404,13 +397,30 @@ where
         }
     }
 
-    serve_bindgen(bindings::serve(srv, Handler), assert_async(connect)).await
+    try_join!(
+        async {
+            let (srv_tx, srv_rx) = accept().await.context("failed to accept")?;
+            let mut lis = Listener::new(srv_tx, srv_rx);
+            while let Some((Header { instance, name }, tx, rx)) = lis.accept().await? {
+                let Ok(fut) = bindings::handle(&Handler, (), &instance, &name, tx, rx) else {
+                    bail!("`{instance}#{name}` is not exported");
+                };
+                fut.await?;
+            }
+            anyhow::Ok(())
+        },
+        async {
+            assert_async(&mut tx, &mut rx).await?;
+            assert_eof(tx, rx).await
+        },
+    )?;
+    Ok(())
 }
 
 #[instrument(skip_all, ret)]
-async fn assert_dynamic<F, CI, CO, CE, C, I, O, E>(
+async fn assert_dynamic<F, CI, CO, CE, I, O, E>(
     connect: impl Fn() -> F,
-    srv: impl Stream<Item = Result<(C, O, I), E>>,
+    mut accept: impl AsyncFnMut() -> Result<(O, I), E>,
 ) -> anyhow::Result<()>
 where
     F: Future<Output = Result<(CO, CI), CE>>,
@@ -526,11 +536,16 @@ where
         Ok(())
     }
 
-    let mut srv = pin!(srv);
     try_join!(
         async {
             for spawned in [false, true] {
-                let (.., tx, rx) = accept_invocation(&mut srv, "test", "reset").await?;
+                let (tx, rx) = accept().await.context("failed to accept")?;
+                let rx = read_invocation(
+                    FramedRead::new(rx, HeaderDecoder::default()),
+                    "test",
+                    "reset",
+                )
+                .await?;
                 let inv = serve(tx, rx, <(String,) as Decode>::Decoder::default());
                 if spawned {
                     spawn(async move { drop(inv) }).await?;
@@ -538,24 +553,31 @@ where
                     drop(inv);
                 }
             }
+            let (mut tx, rx) = accept().await.context("failed to accept")?;
+            let mut rx = FramedRead::new(rx, HeaderDecoder::default());
             for _ in 0..2 {
-                let (.., tx, mut rx) = accept_invocation(&mut srv, "test", "sync").await?;
-                let (params, tx) = serve(tx, &mut rx, <SyncValues as Decode>::Decoder::default());
+                let mut frames = read_invocation(rx, "test", "sync").await?;
+                let (params, outgoing) = serve(
+                    &mut tx,
+                    &mut frames,
+                    <SyncValues as Decode>::Decoder::default(),
+                );
                 let (params, io) = params.await?;
                 assert_eq!(params, sync_values());
-                let tx = tx.send(<SyncValues as Encode>::Encoder::default(), sync_values())?;
-                tx.await?;
+                let results =
+                    outgoing.send(<SyncValues as Encode>::Encoder::default(), sync_values())?;
+                results.await?;
                 io.await?;
-                read_eof(&mut rx).await?;
+                rx = frames.map_decoder(|_| HeaderDecoder::default());
             }
-            let (.., tx, mut rx) = accept_invocation(&mut srv, "test", "async").await?;
-            let (params, tx) = serve(tx, &mut rx, <AsyncValues as Decode>::Decoder::default());
+            let mut frames = read_invocation(rx, "test", "async").await?;
+            let (params, tx) = serve(tx, &mut frames, <AsyncValues as Decode>::Decoder::default());
             let (params, io) = params.await?;
             let tx = tx.send(<AsyncValues as Encode>::Encoder::default(), async_values())?;
             try_join!(assert_async_values(params, io), async {
                 tx.await.context("failed to transmit results")
             })?;
-            read_eof(&mut rx).await
+            read_eof(&mut frames).await
         },
         async {
             for _ in 0..2 {
@@ -578,11 +600,11 @@ where
             wrpc_transport::pack(enc, sync_values(), &mut buf)?;
             let dec = <SyncValues as Decode>::Decoder::default();
             let unpacked = wrpc_transport::unpack(dec, &mut buf)?;
+            let (mut tx, mut rx) = connect().await?;
             for params in [sync_values(), unpacked] {
-                let (tx, rx) = connect().await?;
                 let res = invoke_blocking(
-                    tx,
-                    rx,
+                    &mut tx,
+                    &mut rx,
                     "test",
                     "sync",
                     <SyncValues as Encode>::Encoder::default(),
@@ -593,10 +615,9 @@ where
                 assert_eq!(res, sync_values());
             }
 
-            let (tx, rx) = connect().await?;
             let (res, io) = invoke(
-                tx,
-                rx,
+                &mut tx,
+                &mut rx,
                 "test",
                 "async",
                 <AsyncValues as Encode>::Encoder::default(),
@@ -605,7 +626,7 @@ where
             )
             .await?;
             assert_async_values(res, io).await?;
-            anyhow::Ok(())
+            assert_eof(tx, rx).await
         },
     )?;
     Ok(())
@@ -616,7 +637,7 @@ async fn rust_tcp_bindgen_sync() -> anyhow::Result<()> {
     wrpc_test::serve_tcp(async |addr, lis| {
         assert_bindgen_sync(
             move || wrpc_test::tcp_streams(addr),
-            wrpc_test::tcp_incoming(lis),
+            async || wrpc_test::tcp_accept(&lis).await,
         )
         .await
     })
@@ -626,11 +647,8 @@ async fn rust_tcp_bindgen_sync() -> anyhow::Result<()> {
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn rust_tcp_bindgen_async() -> anyhow::Result<()> {
     wrpc_test::serve_tcp(async |addr, lis| {
-        assert_bindgen_async(
-            move || wrpc_test::tcp_streams(addr),
-            wrpc_test::tcp_incoming(lis),
-        )
-        .await
+        let (tx, rx) = wrpc_test::tcp_streams(addr).await?;
+        assert_bindgen_async(tx, rx, async || wrpc_test::tcp_accept(&lis).await).await
     })
     .await
 }
@@ -640,7 +658,7 @@ async fn rust_tcp_dynamic() -> anyhow::Result<()> {
     wrpc_test::serve_tcp(async |addr, lis| {
         assert_dynamic(
             move || wrpc_test::tcp_streams(addr),
-            wrpc_test::tcp_incoming(lis),
+            async || wrpc_test::tcp_accept(&lis).await,
         )
         .await
     })
@@ -653,7 +671,7 @@ async fn rust_uds_bindgen_sync() -> anyhow::Result<()> {
     wrpc_test::serve_unix(async |path, lis| {
         assert_bindgen_sync(
             move || wrpc_test::unix_streams(path.clone()),
-            wrpc_test::unix_incoming(lis),
+            async || wrpc_test::unix_accept(&lis).await,
         )
         .await
     })
@@ -664,11 +682,8 @@ async fn rust_uds_bindgen_sync() -> anyhow::Result<()> {
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn rust_uds_bindgen_async() -> anyhow::Result<()> {
     wrpc_test::serve_unix(async |path, lis| {
-        assert_bindgen_async(
-            move || wrpc_test::unix_streams(path.clone()),
-            wrpc_test::unix_incoming(lis),
-        )
-        .await
+        let (tx, rx) = wrpc_test::unix_streams(path).await?;
+        assert_bindgen_async(tx, rx, async || wrpc_test::unix_accept(&lis).await).await
     })
     .await
 }
@@ -679,7 +694,7 @@ async fn rust_uds_dynamic() -> anyhow::Result<()> {
     wrpc_test::serve_unix(async |path, lis| {
         assert_dynamic(
             move || wrpc_test::unix_streams(path.clone()),
-            wrpc_test::unix_incoming(lis),
+            async || wrpc_test::unix_accept(&lis).await,
         )
         .await
     })
@@ -694,7 +709,7 @@ async fn rust_quic_bindgen_sync() -> anyhow::Result<()> {
             let clt = clt.clone();
             async move { clt.open_bi().await }
         };
-        assert_bindgen_sync(connect, wrpc_quic::incoming(srv)).await
+        assert_bindgen_sync(connect, async || srv.accept_bi().await).await
     })
     .await
 }
@@ -703,11 +718,8 @@ async fn rust_quic_bindgen_sync() -> anyhow::Result<()> {
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn rust_quic_bindgen_async() -> anyhow::Result<()> {
     wrpc_test::with_quic(async |clt, srv| {
-        let connect = move || {
-            let clt = clt.clone();
-            async move { clt.open_bi().await }
-        };
-        assert_bindgen_async(connect, wrpc_quic::incoming(srv)).await
+        let (tx, rx) = clt.open_bi().await?;
+        assert_bindgen_async(tx, rx, async || srv.accept_bi().await).await
     })
     .await
 }
@@ -720,7 +732,7 @@ async fn rust_quic_dynamic() -> anyhow::Result<()> {
             let clt = clt.clone();
             async move { clt.open_bi().await }
         };
-        assert_dynamic(connect, wrpc_quic::incoming(srv)).await
+        assert_dynamic(connect, async || srv.accept_bi().await).await
     })
     .await
 }
@@ -733,7 +745,7 @@ async fn rust_webtransport_bindgen_sync() -> anyhow::Result<()> {
             let clt = clt.clone();
             async move { clt.open_bi().await }
         };
-        assert_bindgen_sync(connect, wrpc_webtransport::incoming(srv)).await
+        assert_bindgen_sync(connect, async || srv.accept_bi().await).await
     })
     .await
 }
@@ -742,11 +754,8 @@ async fn rust_webtransport_bindgen_sync() -> anyhow::Result<()> {
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn rust_webtransport_bindgen_async() -> anyhow::Result<()> {
     wrpc_test::with_webtransport(async |clt, srv| {
-        let connect = move || {
-            let clt = clt.clone();
-            async move { clt.open_bi().await }
-        };
-        assert_bindgen_async(connect, wrpc_webtransport::incoming(srv)).await
+        let (tx, rx) = clt.open_bi().await?;
+        assert_bindgen_async(tx, rx, async || srv.accept_bi().await).await
     })
     .await
 }
@@ -759,7 +768,7 @@ async fn rust_webtransport_dynamic() -> anyhow::Result<()> {
             let clt = clt.clone();
             async move { clt.open_bi().await }
         };
-        assert_dynamic(connect, wrpc_webtransport::incoming(srv)).await
+        assert_dynamic(connect, async || srv.accept_bi().await).await
     })
     .await
 }
@@ -768,7 +777,11 @@ async fn rust_webtransport_dynamic() -> anyhow::Result<()> {
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn rust_http_bindgen_sync() -> anyhow::Result<()> {
     wrpc_test::serve_http2(async |parts, sender, srv| {
-        assert_bindgen_sync(move || wrpc_http::open(sender.clone(), parts.clone()), srv).await
+        assert_bindgen_sync(
+            move || wrpc_http::open(sender.clone(), parts.clone()),
+            async || wrpc_test::http_accept(srv).await,
+        )
+        .await
     })
     .await
 }
@@ -777,7 +790,8 @@ async fn rust_http_bindgen_sync() -> anyhow::Result<()> {
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn rust_http_bindgen_async() -> anyhow::Result<()> {
     wrpc_test::serve_http2(async |parts, sender, srv| {
-        assert_bindgen_async(move || wrpc_http::open(sender.clone(), parts.clone()), srv).await
+        let (tx, rx) = wrpc_http::open(sender, parts).await?;
+        assert_bindgen_async(tx, rx, async || wrpc_test::http_accept(srv).await).await
     })
     .await
 }
@@ -786,7 +800,11 @@ async fn rust_http_bindgen_async() -> anyhow::Result<()> {
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn rust_http_dynamic() -> anyhow::Result<()> {
     wrpc_test::serve_http2(async |parts, sender, srv| {
-        assert_dynamic(move || wrpc_http::open(sender.clone(), parts.clone()), srv).await
+        assert_dynamic(
+            || wrpc_http::open(sender.clone(), parts.clone()),
+            async || wrpc_test::http_accept(srv).await,
+        )
+        .await
     })
     .await
 }
@@ -1179,17 +1197,11 @@ async fn rust_oneshot_borrowed() -> anyhow::Result<()> {
         &mut req,
     )?;
     let mut res = Vec::default();
-    {
-        let invocations = bindings::serve(
-            stream::iter([std::io::Result::Ok(((), &mut res, req.as_ref()))]),
-            Handler,
-        );
-        let mut invocations = pin!(invocations);
-        let Some(invocation) = invocations.try_next().await? else {
-            bail!("no invocation accepted");
-        };
-        invocation.await?;
-    }
+    let (Header { instance, name }, rx) = Header::read(req.as_ref()).await?;
+    let Ok(fut) = bindings::handle(&Handler, (), &instance, &name, &mut res, rx) else {
+        bail!("`{instance}#{name}` is not exported");
+    };
+    fut.await?;
     let (greeting,) = invoke_blocking(
         sink(),
         res.as_slice(),

@@ -39,7 +39,6 @@ rcgen = { workspace = true, features = ["crypto", "ring", "zeroize"] }
 rustls = { workspace = true, features = ["logging", "ring", "std"] }
 tempfile = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "time"] }
-tokio-stream = { workspace = true, features = ["net"] }
 tokio-util = { workspace = true, features = ["codec"] }
 tracing = { workspace = true }
 url = { workspace = true, optional = true }

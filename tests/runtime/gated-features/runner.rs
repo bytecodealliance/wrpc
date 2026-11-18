@@ -3,9 +3,8 @@
 pub async fn run(
     wrpc: &crate::Client,
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
-    let (tx, rx) = wrpc.connect().await?;
-    crate::client::foo::bar::bindings::y(tx, rx).await?;
-    let (tx, rx) = wrpc.connect().await?;
-    crate::client::foo::bar::bindings::z(tx, rx).await?;
+    let (mut tx, mut rx) = wrpc.connect().await?;
+    crate::client::foo::bar::bindings::y(&mut tx, &mut rx).await?;
+    crate::client::foo::bar::bindings::z(&mut tx, &mut rx).await?;
     Ok(())
 }

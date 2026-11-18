@@ -42,8 +42,6 @@ struct RustWrpc {
     world: Option<WorldId>,
 
     export_paths: Vec<String>,
-    max_export_instance_len: usize,
-    max_export_func_len: usize,
     /// Maps wit interface and type names to their Rust identifiers
     with: GenerationConfiguration,
 }
@@ -438,11 +436,9 @@ with: {{\n\t{with_name:?}: generate\n}}
             .unwrap_or("::wit_bindgen_wrpc::wrpc_transport")
     }
 
-    /// Generates `handle` and `serve` functions for the `world_id` specified.
-    ///
-    /// `handle` chains the `handle_interface` functions collected in
-    /// `self.export_paths` prior and `serve` dispatches accepted invocations.
-    fn finish_serve_function(&mut self) {
+    /// Generates the `handle` function for the `world_id` specified, which chains the
+    /// `handle_interface` functions collected in `self.export_paths` prior.
+    fn finish_handle_function(&mut self) {
         if self.export_paths.is_empty() {
             return;
         }
@@ -459,12 +455,9 @@ with: {{\n\t{with_name:?}: generate\n}}
             .collect::<Vec<_>>()
             .join(" + ");
         let anyhow = self.anyhow_path().to_string();
-        let futures = self.futures_path().to_string();
         let tokio = self.tokio_path().to_string();
         let tokio_util = self.tokio_util_path().to_string();
         let wrpc_transport = self.wrpc_transport_path().to_string();
-        let max_instance_len = u32::try_from(self.max_export_instance_len).unwrap_or(u32::MAX);
-        let max_func_len = u32::try_from(self.max_export_func_len).unwrap_or(u32::MAX);
         uwrite!(
             self.src,
             r#"
@@ -501,45 +494,7 @@ where
             self.src
                 .push_str("handle_interface(handler, cx, instance, func, tx, rx))");
         }
-        uwriteln!(
-            self.src,
-            r#"
-}}
-
-pub fn serve<'a, C, I, O, E, H>(
-    incoming: impl {futures}::Stream<Item = ::core::result::Result<(C, O, I), E>>,
-    handler: H,
-) -> impl {futures}::Stream<
-        Item = ::core::result::Result<
-            impl ::core::future::Future<Output = {anyhow}::Result<()>> + ::core::marker::Send + 'a,
-            E,
-        >,
-    >
-where
-    C: ::core::marker::Send + 'a,
-    I: {tokio}::io::AsyncRead + ::core::marker::Send + ::core::marker::Unpin + 'a,
-    O: {tokio}::io::AsyncWrite + ::core::marker::Send + ::core::marker::Unpin + 'a,
-    H: {bound} + ::core::marker::Send + ::core::marker::Sync + ::core::clone::Clone + 'static,
-{{
-    {futures}::StreamExt::map(incoming, move |res| {{
-        res.map(|(cx, tx, rx)| {{
-            let handler = handler.clone();
-            async move {{
-                let ({wrpc_transport}::Header {{ instance, name }}, rx) = {anyhow}::Context::context(
-                    {wrpc_transport}::HeaderDecoder::new({max_instance_len}, {max_func_len}).read(rx).await,
-                    "failed to read invocation header",
-                )?;
-                match handle(&handler, cx, &instance, &name, tx, rx) {{
-                    ::core::result::Result::Ok(fut) => fut.await,
-                    ::core::result::Result::Err(..) => {anyhow}::bail!(
-                        "`{{instance}}#{{name}}` is not exported",
-                    ),
-                }}
-            }}
-        }})
-    }})
-}}"#
-        );
+        uwriteln!(self.src, "\n}}");
     }
 }
 
@@ -800,7 +755,7 @@ impl WorldGenerator for RustWrpc {
         let exports = mem::take(&mut self.export_modules);
         self.emit_modules(exports);
 
-        self.finish_serve_function();
+        self.finish_handle_function();
 
         if self.opts.stubs {
             self.src.push_str(
