@@ -618,10 +618,13 @@ pub async fn serve_http2<T>(
     let (tx, mut rx) = tokio::sync::mpsc::channel(16);
     with_http2(
         async |stream| {
-            wrpc_http::serve(stream, move |_, body_tx, body_rx| {
-                tx.try_send((body_tx, body_rx))
-                    .expect("failed to send request byte streams");
-            })
+            wrpc_http::serve(
+                hyper_util::rt::TokioIo::new(stream),
+                move |_, body_tx, body_rx| {
+                    tx.try_send((body_tx, body_rx))
+                        .expect("failed to send request byte streams");
+                },
+            )
             .await
             .context("failed to serve HTTP/2 connection")
         },
