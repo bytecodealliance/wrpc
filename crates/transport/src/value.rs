@@ -2089,6 +2089,37 @@ fn receive_pending_stream<T: Send + 'static>(
     })
 }
 
+fn poll_receive_stream<D, T>(
+    cx: &mut Context<'_>,
+    tx: &mut Option<(PollSender<T>, oneshot::Sender<()>)>,
+    dec: &mut D,
+    buf: &mut BytesMut,
+    src: &mut BytesMut,
+    decode: impl FnOnce(&mut D, &mut BytesMut) -> std::io::Result<Option<T>>,
+) -> Poll<std::io::Result<()>>
+where
+    D: tokio_util::codec::Decoder<Error = std::io::Error>,
+    T: Send,
+{
+    if src.is_empty() {
+        let Some((.., end)) = tx.take() else {
+            return Poll::Ready(Err(error_data_after_end()));
+        };
+        dec.decode_eof(buf)?;
+        _ = end.send(());
+        return Poll::Ready(Ok(()));
+    }
+    let Some((tx, ..)) = tx else {
+        return Poll::Ready(Err(error_data_after_end()));
+    };
+    ready!(tx.poll_reserve(cx)).map_err(|_| error_receiver_closed())?;
+    buf.unsplit(src.split());
+    if let Some(chunk) = decode(dec, buf)? {
+        tx.send_item(chunk).map_err(|_| error_receiver_closed())?;
+    }
+    Poll::Ready(Ok(()))
+}
+
 /// Decoder for `stream<T>`, whose chunks are received on its path and the values nested in its
 /// elements below their indices
 pub struct StreamDecoder<T>
@@ -2149,38 +2180,31 @@ where
         if !path.is_empty() {
             return self.nested.poll_receive(cx, path, src);
         }
-        if src.is_empty() {
-            let Some((.., end)) = self.tx.take() else {
-                return Poll::Ready(Err(error_data_after_end()));
-            };
-            self.dec.get_mut().decode_eof(&mut self.buf)?;
-            _ = end.send(());
-            return Poll::Ready(Ok(()));
-        }
-        let Some((tx, ..)) = &mut self.tx else {
-            return Poll::Ready(Err(error_data_after_end()));
-        };
-        ready!(tx.poll_reserve(cx)).map_err(|_| error_receiver_closed())?;
-        self.buf.unsplit(src.split());
-        let mut chunk = Vec::default();
-        while let Some(items) = self.dec.get_mut().decode(&mut self.buf)? {
-            let offset = self.offset;
-            self.offset = offset.checked_add(items.len()).ok_or_else(|| {
-                std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "stream element index would overflow usize",
-                )
-            })?;
-            let nested = mem::take(&mut self.dec.get_mut().nested)
-                .into_iter()
-                .map(|(i, dec)| (offset.saturating_add(i), dec));
-            self.nested.extend(nested);
-            chunk.extend(items);
-        }
-        if !chunk.is_empty() {
-            tx.send_item(chunk).map_err(|_| error_receiver_closed())?;
-        }
-        Poll::Ready(Ok(()))
+        poll_receive_stream(
+            cx,
+            &mut self.tx,
+            self.dec.get_mut(),
+            &mut self.buf,
+            src,
+            |dec, buf| {
+                let mut chunk = Vec::default();
+                while let Some(items) = dec.decode(buf)? {
+                    let offset = self.offset;
+                    self.offset = offset.checked_add(items.len()).ok_or_else(|| {
+                        std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            "stream element index would overflow usize",
+                        )
+                    })?;
+                    let nested = mem::take(&mut dec.nested)
+                        .into_iter()
+                        .map(|(i, dec)| (offset.saturating_add(i), dec));
+                    self.nested.extend(nested);
+                    chunk.extend(items);
+                }
+                Ok((!chunk.is_empty()).then_some(chunk))
+            },
+        )
     }
 
     fn is_closed(&self) -> bool {
@@ -2254,28 +2278,20 @@ impl Receive for StreamDecoderBytes {
         if !path.is_empty() {
             return Poll::Ready(Err(error_unknown_path(path)));
         }
-        if src.is_empty() {
-            let Some((.., end)) = self.tx.take() else {
-                return Poll::Ready(Err(error_data_after_end()));
-            };
-            self.dec.get_mut().decode_eof(&mut self.buf)?;
-            _ = end.send(());
-            return Poll::Ready(Ok(()));
-        }
-        let Some((tx, ..)) = &mut self.tx else {
-            return Poll::Ready(Err(error_data_after_end()));
-        };
-        ready!(tx.poll_reserve(cx)).map_err(|_| error_receiver_closed())?;
-        self.buf.unsplit(src.split());
-        let mut chunk = BytesMut::default();
-        while let Some(buf) = self.dec.get_mut().decode(&mut self.buf)? {
-            chunk.extend_from_slice(&buf);
-        }
-        if !chunk.is_empty() {
-            tx.send_item(chunk.freeze())
-                .map_err(|_| error_receiver_closed())?;
-        }
-        Poll::Ready(Ok(()))
+        poll_receive_stream(
+            cx,
+            &mut self.tx,
+            self.dec.get_mut(),
+            &mut self.buf,
+            src,
+            |dec, buf| {
+                let mut chunk = BytesMut::default();
+                while let Some(data) = dec.decode(buf)? {
+                    chunk.extend_from_slice(&data);
+                }
+                Ok((!chunk.is_empty()).then(|| chunk.freeze()))
+            },
+        )
     }
 
     fn is_closed(&self) -> bool {
