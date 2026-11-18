@@ -77,7 +77,7 @@ pub use send_future::SendFuture;
 pub use serve::{Server, serve};
 pub use value::*;
 
-use bytes::BytesMut;
+use bytes::{Buf, BufMut as _, BytesMut};
 use tokio_util::codec::Encoder as _;
 
 /// Default maximum length of the instance and function names in a [Header]
@@ -87,9 +87,11 @@ const DEFAULT_MAX_NAME_LEN: u32 = 1 << 10;
 const MAX_FRAME_DATA: usize = 1 << 16;
 
 /// Encodes `data` as frames on `path` into `dst`, encoding nothing if `data` is empty
-fn encode_frames(path: &[usize], data: &[u8], dst: &mut BytesMut) -> std::io::Result<()> {
-    for data in data.chunks(MAX_FRAME_DATA) {
-        frame::Encoder.encode(FrameRef { path, data }, dst)?;
+fn encode_frames(path: &[usize], mut data: impl Buf, dst: &mut BytesMut) -> std::io::Result<()> {
+    while data.has_remaining() {
+        let size = data.remaining().min(MAX_FRAME_DATA);
+        FrameHeaderEncoder.encode(FrameHeaderRef { path, size }, dst)?;
+        dst.put((&mut data).take(size));
     }
     Ok(())
 }

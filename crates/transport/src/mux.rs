@@ -164,7 +164,7 @@ impl<O: AsyncWrite + Unpin, E: Transmit> Outgoing<O, E> {
         let Self { mut tx, mut enc } = self;
         let mut data = BytesMut::default();
         enc.encode(item, &mut data)?;
-        encode_frames(&[], &data, tx.write_buffer_mut())?;
+        encode_frames(&[], data, tx.write_buffer_mut())?;
         encode_close(&[], tx.write_buffer_mut())?;
         Ok(Transmission {
             tx,

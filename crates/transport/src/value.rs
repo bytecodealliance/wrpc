@@ -11,7 +11,7 @@ use core::task::{Context, Poll, ready};
 
 use std::collections::BTreeMap;
 
-use bytes::{BufMut as _, Bytes, BytesMut};
+use bytes::{Buf, BufMut as _, Bytes, BytesMut};
 use futures::stream;
 use futures::{FutureExt as _, Stream, StreamExt as _};
 use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite};
@@ -29,7 +29,7 @@ use wasm_tokio::{
     CoreNameDecoder, CoreNameEncoder, CoreVecDecoder, CoreVecDecoderBytes, CoreVecEncoderBytes,
     DEFAULT_MAX_INITIAL_CAPACITY, Leb128DecoderI8, Leb128DecoderI16, Leb128DecoderI32,
     Leb128DecoderI64, Leb128DecoderI128, Leb128DecoderU8, Leb128DecoderU16, Leb128DecoderU32,
-    Leb128DecoderU64, Leb128DecoderU128, Leb128Encoder, Utf8Codec,
+    Leb128DecoderU64, Leb128DecoderU128, Leb128Encoder, Utf8Codec, put_u32_leb128,
 };
 
 use crate::{
@@ -51,6 +51,14 @@ fn encode_ready_bytes<T: AsRef<[u8]>>(chunks: &[T], dst: &mut BytesMut) -> std::
         dst.extend_from_slice(chunk.as_ref());
     }
     Ok(())
+}
+
+fn encode_bytes_frames(path: &[usize], data: &[u8], dst: &mut BytesMut) -> std::io::Result<()> {
+    let n = u32::try_from(data.len())
+        .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
+    let mut len = [0; 5];
+    let len = put_u32_leb128(&mut len, n);
+    encode_frames(path, Buf::chain(&*len, data), dst)
 }
 
 /// Borrowed resource handle, represented as an opaque byte blob
@@ -1589,7 +1597,7 @@ where
             self.fut = None;
             let mut buf = BytesMut::default();
             self.nested.encode(v, &mut buf)?;
-            encode_frames(path, &buf, dst)?;
+            encode_frames(path, buf, dst)?;
             encode_close(path, dst)?;
         }
         path.push(0);
@@ -1824,7 +1832,7 @@ where
                         .into_iter()
                         .map(|(i, enc)| (offset.saturating_add(i), enc));
                     self.nested.extend(nested);
-                    encode_frames(path, &buf, dst)?;
+                    encode_frames(path, buf, dst)?;
                     break;
                 }
                 Poll::Ready(None) => {
@@ -1904,9 +1912,7 @@ impl Transmit for StreamEncoderBytes {
             match ready!(items.as_mut().poll_next(cx)) {
                 Some(chunk) if chunk.is_empty() => {}
                 Some(chunk) => {
-                    let mut buf = BytesMut::default();
-                    CoreVecEncoderBytes.encode(chunk, &mut buf)?;
-                    encode_frames(path, &buf, dst)?;
+                    encode_bytes_frames(path, &chunk, dst)?;
                     return Poll::Pending;
                 }
                 None => {
@@ -1986,10 +1992,8 @@ impl<const MAX_READY: usize> Transmit for StreamEncoderRead<MAX_READY> {
                 return Poll::Ready(Ok(()));
             }
         }
-        let mut buf = BytesMut::default();
-        CoreVecEncoderBytes.encode(&self.buf, &mut buf)?;
+        encode_bytes_frames(path, &self.buf, dst)?;
         self.buf.clear();
-        encode_frames(path, &buf, dst)?;
         Poll::Pending
     }
 
