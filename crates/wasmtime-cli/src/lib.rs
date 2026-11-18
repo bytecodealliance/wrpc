@@ -24,7 +24,7 @@ use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpCtxView, WasiHttpView};
 use wrpc_transport::{Codec, Listener};
 use wrpc_wasmtime::{
-    Exports, ResourceTypes, SharedResourceTable, TupleEncoder, ValDecoder, WrpcCtxView, WrpcView,
+    Exports, ResourceTypes, SharedResourceTable, TupleDecoder, TupleEncoder, WrpcCtxView, WrpcView,
     call, collect_component_resource_exports,
 };
 
@@ -248,7 +248,7 @@ async fn serve_conn(
             .run_concurrent(async |store| {
                 let codec = Codec {
                     enc: TupleEncoder::new(store, &export.results, resources),
-                    dec: ValDecoder::new(store, &export.params, resources),
+                    dec: TupleDecoder::new(store, &export.params, resources),
                 };
                 call(store, codec, tx, rx, func).await?;
                 poll_fn(|cx| store.poll_no_interesting_tasks(cx)).await;
@@ -281,7 +281,7 @@ async fn serve_conn_shared(
             .context("function export not found")?;
         let codec = Codec {
             enc: TupleEncoder::new(store, &export.results, resources),
-            dec: ValDecoder::new(store, &export.params, resources),
+            dec: TupleDecoder::new(store, &export.params, resources),
         };
         call(store, codec, tx, rx, func).await?;
     }

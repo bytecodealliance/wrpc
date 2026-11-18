@@ -6,7 +6,7 @@ use wasmtime::component::{Accessor, Func, Val};
 use wasmtime::error::Context as _;
 use wrpc_transport::{Codec, FrameDecoder, FrameEncoder};
 
-use crate::{TupleEncoder, ValDecoder, WrpcView};
+use crate::{TupleDecoder, TupleEncoder, WrpcView};
 
 /// Calls the exported `func` with parameters received from the frames `rx` and transmits the
 /// results to the frames `tx` using `codec`, which must match the type of `func`.
@@ -15,7 +15,7 @@ use crate::{TupleEncoder, ValDecoder, WrpcView};
 /// using [`wasmtime::Store::run_concurrent`].
 pub async fn call<T, I, O>(
     store: &Accessor<T>,
-    codec: Codec<TupleEncoder<'_, &Accessor<T>>, ValDecoder<'_, &Accessor<T>>>,
+    codec: Codec<TupleEncoder<'_, &Accessor<T>>, TupleDecoder<'_, &Accessor<T>>>,
     tx: impl BorrowMut<FramedWrite<O, FrameEncoder>>,
     rx: impl BorrowMut<FramedRead<I, FrameDecoder>>,
     func: Func,
