@@ -87,8 +87,19 @@ impl From<std::io::Error> for HeaderReadError {
     }
 }
 
+impl From<HeaderReadError> for std::io::Error {
+    fn from(err: HeaderReadError) -> Self {
+        match err {
+            HeaderReadError::IO(err) => err,
+            HeaderReadError::UnsupportedVersion(..) => {
+                Self::new(std::io::ErrorKind::InvalidData, err)
+            }
+        }
+    }
+}
+
 /// [Header] decoder
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct HeaderDecoder {
     max_instance_len: u32,
     max_name_len: u32,

@@ -12,14 +12,14 @@
 //! - [`invoke()`] - the client side, which *invokes* WIT functions over the byte streams of an
 //!   invocation
 //! - [`serve()`] - the server side, which *serves* WIT functions over the frames following the
-//!   header read by [`Header::read`] from the byte streams of an invocation, for example ones
-//!   accepted by a transport
+//!   header of an invocation
 //!
 //! A transport establishes bidirectional byte streams, each carrying invocations one after
 //! another, which it yields as any [`AsyncWrite`](tokio::io::AsyncWrite)/
 //! [`AsyncRead`](tokio::io::AsyncRead) byte stream pair. [`invoke()`] and [`serve()`] layer the
 //! wRPC [framing](frame) protocol on top of it to multiplex the asynchronous values nested in
-//! parameters and results, which encoders [Transmit] and decoders [Receive].
+//! parameters and results, which encoders [Transmit] and decoders [Receive]. [`Listener`]
+//! accepts the invocations sent over a byte stream pair one after another.
 //!
 //! Over TCP, enable `TCP_NODELAY`, since invocations consist of small writes, each awaited by
 //! the peer.
@@ -30,6 +30,7 @@ pub mod tcp;
 
 mod header;
 mod invoke;
+mod listener;
 mod mux;
 mod pack;
 mod serve;
@@ -41,6 +42,7 @@ pub use frame::{
 };
 pub use header::{Header, HeaderDecoder, HeaderEncoder, HeaderReadError, HeaderRef, PROTOCOL};
 pub use invoke::{Invocation, invoke, invoke_blocking};
+pub use listener::Listener;
 pub use pack::{pack, unpack};
 /// Awaiting the futures returned by [`invoke()`] and [`serve()`] in a [`Send`] future may fail to
 /// compile with "one type is more general than the other" or "implementation of ... is not
@@ -113,6 +115,11 @@ fn error_data_after_end() -> std::io::Error {
         std::io::ErrorKind::InvalidData,
         "received data after value end",
     )
+}
+
+/// Returns the error for a connection, on which receiving an invocation header failed
+fn error_connection_failed() -> std::io::Error {
+    std::io::Error::new(std::io::ErrorKind::InvalidInput, "connection failed")
 }
 
 /// Returns the error for data received for a closed receiver
