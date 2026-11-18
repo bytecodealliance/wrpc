@@ -4,7 +4,20 @@ use anyhow::Context as _;
 use tracing::{debug, warn};
 use wasmtime::component::{Component, ComponentExportIndex, Type, types};
 
-use crate::rpc_func_name;
+// this returns the RPC name for a wasmtime function name.
+// Unfortunately, the [`types::ComponentFunc`] does not include the kind information and we want to
+// avoid (re-)parsing the WIT here.
+fn rpc_func_name(name: &str) -> &str {
+    if let Some(name) = name.strip_prefix("[constructor]") {
+        name
+    } else if let Some(name) = name.strip_prefix("[static]") {
+        name
+    } else if let Some(name) = name.strip_prefix("[method]") {
+        name
+    } else {
+        name
+    }
+}
 
 /// Function export of a component
 #[derive(Clone, Debug)]
