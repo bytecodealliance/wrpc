@@ -620,7 +620,7 @@ pub async fn serve_http2<T>(
         async |stream| {
             wrpc_http::serve(
                 hyper_util::rt::TokioIo::new(stream),
-                move |_, body_tx, body_rx| {
+                move |_, _, body_tx, body_rx| {
                     tx.try_send((body_tx, body_rx))
                         .expect("failed to send request byte streams");
                 },
