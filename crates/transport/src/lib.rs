@@ -27,7 +27,7 @@
 //! Over TCP, enable `TCP_NODELAY`, since invocations consist of small writes, each awaited by
 //! the peer.
 
-pub mod frame;
+mod frame;
 
 mod header;
 mod invoke;
