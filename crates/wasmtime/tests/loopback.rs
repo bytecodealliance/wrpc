@@ -16,7 +16,7 @@ use tokio::task::yield_now;
 use tokio::time::sleep;
 use tokio::{join, try_join};
 use tokio_util::codec::{Encoder as _, FramedRead, FramedWrite};
-use wasmtime::component::{Accessor, Component, Instance, InstancePre, Linker, ResourceTable};
+use wasmtime::component::{Accessor, Component, Instance, InstancePre, Linker};
 use wrpc_test::serve_until;
 use wrpc_transport::{
     Codec, FrameDecoder, FrameEncoder, FrameRef, HeaderEncoder, HeaderRef, Listener, invoke,
@@ -29,7 +29,6 @@ use wrpc_wasmtime::{
 
 #[derive(Default)]
 struct Ctx {
-    table: ResourceTable,
     shared_resources: SharedResourceTable,
 }
 
@@ -37,7 +36,6 @@ impl WrpcView for Ctx {
     fn wrpc(&mut self) -> WrpcCtxView<'_> {
         WrpcCtxView {
             shared_resources: &mut self.shared_resources,
-            table: &mut self.table,
         }
     }
 }

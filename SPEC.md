@@ -20,7 +20,7 @@ Examples of supported wRPC transports are: TCP, Unix Domain Sockets, QUIC, WebTr
 
 As WIT interfaces and associated values are asynchronous in nature, callers and callees require ability to asynchronously, bidirectionally transfer (portions of) function parameter and result value data.
 
-For example, caller of `wasi:http/outgoing-handler.handle` function MUST be able to simultaneously send data over the passed `output-stream` as well as receive data from the returned `input-stream`. For this purpose wRPC *multiplexes* these data streams over a single bidirectional byte stream provided by the transport, allowing for bidirectional concurrent transfer of multiple data streams (see [Framing](#framing)).
+For example, caller of a function taking a `stream<u8>` parameter and returning a `stream<u8>` MUST be able to simultaneously send data over the passed `stream` as well as receive data from the returned `stream`. For this purpose wRPC *multiplexes* these data streams over a single bidirectional byte stream provided by the transport, allowing for bidirectional concurrent transfer of multiple data streams (see [Framing](#framing)).
 
 wRPC uses a concept of "indexing" for differentiating and identifying the data streams used as part of processing of a single WIT function invocation.
 

@@ -31,7 +31,6 @@ default = [
     "net",
     "wasmtime",
     "wasmtime-async",
-    "wasmtime-wasi",
 ]
 
 bin = ["bin-bindgen", "bin-wasmtime"]
@@ -50,7 +49,6 @@ http = ["dep:wrpc-http"]
 net = ["wrpc-transport/net"]
 wasmtime = ["dep:wrpc-wasmtime"]
 wasmtime-async = ["wrpc-wasmtime?/async"]
-wasmtime-wasi = ["wrpc-wasmtime?/wasmtime-wasi"]
 
 [[bin]]
 name = "wit-bindgen-wrpc"

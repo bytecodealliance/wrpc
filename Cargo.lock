@@ -2752,28 +2752,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
 
 [[package]]
-name = "streams-io-component-server"
-version = "0.1.0"
-dependencies = [
- "wit-bindgen 0.60.0",
-]
-
-[[package]]
-name = "streams-io-tcp-client"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bytes",
- "clap",
- "futures",
- "tokio",
- "tokio-stream",
- "tracing",
- "tracing-subscriber",
- "wit-bindgen-wrpc",
-]
-
-[[package]]
 name = "streams-quic-client"
 version = "0.1.0"
 dependencies = [
@@ -4694,7 +4672,6 @@ dependencies = [
  "uuid",
  "wasm-tokio",
  "wasmtime",
- "wasmtime-wasi",
  "wrpc-test",
  "wrpc-transport",
 ]

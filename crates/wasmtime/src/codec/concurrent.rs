@@ -6,6 +6,7 @@ use bytes::BytesMut;
 use futures::stream;
 use futures::{Stream, StreamExt as _, TryFutureExt as _};
 use tokio::sync::{mpsc, oneshot};
+use tokio_util::codec::Decoder;
 use tokio_util::sync::PollSender;
 use wasmtime::bail;
 use wasmtime::component::types::{FutureType, StreamType};
@@ -19,7 +20,7 @@ use wrpc_transport::{
     StreamEncoder, Transmit,
 };
 
-use crate::codec::{Inner, Partial};
+use crate::codec::{Inner, Partial, decode_status, decode_with};
 use crate::{WithStore, WrpcView};
 
 impl<T: 'static> WithStore for &Accessor<T> {
@@ -303,6 +304,42 @@ impl<T> Inner<T>
 where
     T: WithStore<Data: WrpcView>,
 {
+    #[allow(clippy::too_many_arguments)]
+    fn decode_async<D>(
+        &mut self,
+        src: &mut BytesMut,
+        path: &[usize],
+        state: &mut Option<Box<Partial>>,
+        kind: &str,
+        dec: D,
+        pending: impl FnOnce(
+            StoreContextMut<'_, T::Data>,
+        ) -> wasmtime::Result<(Val, Box<dyn Receive + Send>)>,
+        ready: impl FnOnce(StoreContextMut<'_, T::Data>, D::Item) -> wasmtime::Result<Val>,
+    ) -> std::io::Result<Option<Val>>
+    where
+        D: Decoder + Send + 'static,
+        std::io::Error: From<D::Error>,
+    {
+        if state.is_none() {
+            let Some(status) = decode_status(src, kind)? else {
+                return Ok(None);
+            };
+            if status == 0 {
+                let res = self.store.with_store(pending)?;
+                let (v, r) = res.map_err(std::io::Error::other)?;
+                self.nested.insert(path.into(), r);
+                return Ok(Some(v));
+            }
+        }
+        let Some(v) = decode_with(src, state, dec)? else {
+            return Ok(None);
+        };
+        let v = self.store.with_store(|store| ready(store, v))?;
+        let v = v.map_err(std::io::Error::other)?;
+        Ok(Some(v))
+    }
+
     pub(super) fn decode_future(
         &mut self,
         src: &mut BytesMut,

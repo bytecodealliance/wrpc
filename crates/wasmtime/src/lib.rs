@@ -15,7 +15,7 @@ use std::sync::Arc;
 use tracing::{debug, instrument, trace};
 use uuid::Uuid;
 use wasmtime::Engine;
-use wasmtime::component::{ResourceAny, ResourceTable, ResourceType, types};
+use wasmtime::component::{ResourceAny, ResourceType, types};
 
 #[cfg(feature = "async")]
 mod call;
@@ -33,10 +33,6 @@ pub struct ResourceTypes {
     /// Guest-exported resource types, handles of which are transmitted as references to
     /// [`SharedResourceTable`] entries
     pub guest: Arc<[ResourceType]>,
-    /// Resource types bridged to wRPC `stream<u8>` (`wasi:io` `input-stream`), identified by
-    /// their possibly-uninstantiated type
-    #[cfg(feature = "wasmtime-wasi")]
-    pub io_streams: Arc<[ResourceType]>,
 }
 
 /// A table of shared resources exported by the component
@@ -45,7 +41,6 @@ pub struct SharedResourceTable(HashMap<Uuid, ResourceAny>);
 
 pub struct WrpcCtxView<'a> {
     pub shared_resources: &'a mut SharedResourceTable,
-    pub table: &'a mut ResourceTable,
 }
 
 pub trait WrpcView: Send {
@@ -114,34 +109,4 @@ pub fn collect_component_resource_exports(
         trace!(name, ?ty, "collect component item resource exports");
         collect_item_resource_exports(engine, ty, resources);
     }
-}
-
-/// Collect the (uninstantiated) resource types of the component's imported
-/// `wasi:io/streams` `input-stream`, against which parameter resource types can
-/// be compared at serve time, before the component is instantiated.
-#[must_use]
-pub fn wasi_io_stream_resources(
-    engine: &Engine,
-    component: &types::Component,
-) -> Vec<ResourceType> {
-    let mut out = Vec::default();
-    for (instance, types::ComponentExtern { ty, .. }) in component.imports(engine) {
-        // Instance names are versioned, e.g. `wasi:io/streams@0.2.6`.
-        let base = instance.split('@').next().unwrap_or(instance);
-        if base != "wasi:io/streams" {
-            continue;
-        }
-        let types::ComponentItem::ComponentInstance(ty) = ty else {
-            continue;
-        };
-        for (name, types::ComponentExtern { ty, .. }) in ty.exports(engine) {
-            if let types::ComponentItem::Resource(ty) = ty
-                && name == "input-stream"
-                && !out.contains(&ty)
-            {
-                out.push(ty);
-            }
-        }
-    }
-    out
 }
