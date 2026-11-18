@@ -7,6 +7,8 @@
 //! example, it instantiates the component for each invocation or serves all connections in one
 //! instance from a single `run_concurrent` event loop, which guest-exported resources require.
 
+use core::convert::Infallible;
+
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -53,6 +55,12 @@ pub trait WrpcView: Send {
 impl<T: WrpcView> WrpcView for &mut T {
     fn wrpc(&mut self) -> WrpcCtxView<'_> {
         T::wrpc(self)
+    }
+}
+
+impl WrpcView for Infallible {
+    fn wrpc(&mut self) -> WrpcCtxView<'_> {
+        match *self {}
     }
 }
 

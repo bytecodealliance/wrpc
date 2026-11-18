@@ -25,8 +25,8 @@ use crate::{ValDecoder, WithStore, WrpcView};
 impl<T: 'static> WithStore for &Accessor<T> {
     type Data = T;
 
-    fn with_store<R>(&mut self, f: impl FnOnce(StoreContextMut<'_, T>) -> R) -> R {
-        self.with(|mut store| f(store.as_context_mut()))
+    fn with_store<R>(&mut self, f: impl FnOnce(StoreContextMut<'_, T>) -> R) -> std::io::Result<R> {
+        Ok(self.with(|mut store| f(store.as_context_mut())))
     }
 }
 
