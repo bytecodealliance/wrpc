@@ -1,11 +1,159 @@
+use core::fmt::Debug;
+
+use std::io::ErrorKind;
+
 use anyhow::Context as _;
+use bytes::{BufMut as _, BytesMut};
 use tokio::io::{duplex, split};
 use tokio::try_join;
-use tokio_util::codec::{FramedRead, FramedWrite};
+use tokio_util::codec::{Decoder as _, Encoder, FramedRead, FramedWrite};
 use wasm_wave::value::{Type, Value};
 use wasm_wave::wasm::WasmValue as _;
-use wrpc_transport::{Codec, FrameDecoder, FrameEncoder, Listener};
-use wrpc_wave::{TupleDecoder, TupleEncoder};
+use wrpc_transport::{Codec, Encode, FrameDecoder, FrameEncoder, Listener};
+use wrpc_wave::{TupleDecoder, TupleEncoder, ValueDecoder, ValueEncoder};
+
+#[test]
+fn roundtrip() -> anyhow::Result<()> {
+    fn encode<T: Encode>(v: T) -> BytesMut
+    where
+        <T::Encoder as Encoder<T>>::Error: Debug,
+    {
+        let mut buf = BytesMut::default();
+        T::Encoder::default()
+            .encode(v, &mut buf)
+            .expect("failed to encode");
+        buf
+    }
+
+    let names = |n| (0..n).map(|i| format!("c{i}"));
+    let variant = Type::variant(names(200).map(|name| {
+        let ty = (name == "c150").then_some(Type::STRING);
+        (name, ty)
+    }))
+    .context("invalid variant")?;
+    let enum_ty = Type::enum_ty(names(200)).context("invalid enum")?;
+    let flags_12 = Type::flags(names(12)).context("invalid flags")?;
+    let flags_70 = Type::flags(names(70)).context("invalid flags")?;
+    let record = Type::record([("a", Type::U32), ("b", Type::STRING)]).context("invalid record")?;
+    let tuple = Type::tuple([Type::S8, Type::BOOL]).context("invalid tuple")?;
+    let payload = Type::tuple([Type::U8, Type::STRING]).context("invalid tuple")?;
+    let case = Type::variant([("a", None), ("b", Some(payload))]).context("invalid variant")?;
+    let nested = Type::record([
+        ("x", Type::option(case)),
+        ("y", Type::result(Some(Type::list(Type::STRING)), None)),
+    ])
+    .context("invalid record")?;
+    for (ty, s, expected) in [
+        (Type::BOOL, "true", encode(true)),
+        (Type::S8, "-42", encode(-42i8)),
+        (Type::U8, "255", encode(u8::MAX)),
+        (Type::S16, "-32768", encode(i16::MIN)),
+        (Type::U16, "65535", encode(u16::MAX)),
+        (Type::S32, "-100000", encode(-100_000i32)),
+        (Type::U32, "4294967295", encode(u32::MAX)),
+        (Type::S64, "-9223372036854775808", encode(i64::MIN)),
+        (Type::U64, "18446744073709551615", encode(u64::MAX)),
+        (Type::F32, "1.5", encode(1.5f32)),
+        (Type::F64, "-2.5", encode(-2.5f64)),
+        (Type::CHAR, "'😀'", encode('😀')),
+        (Type::STRING, r#""hello 😀""#, encode("hello 😀")),
+        (Type::list(Type::U32), "[1, 300]", encode(vec![1u32, 300])),
+        (record, r#"{a: 42, b: "foo"}"#, encode((42u32, "foo"))),
+        (tuple, "(-1, false)", encode((-1i8, false))),
+        (Type::option(Type::U32), "none", encode(None::<u32>)),
+        (Type::option(Type::U32), "some(42)", encode(Some(42u32))),
+        (
+            Type::result(Some(Type::U32), Some(Type::STRING)),
+            r#"err("x")"#,
+            encode(Err::<u32, _>("x")),
+        ),
+        (Type::result(None, None), "ok", encode(Ok::<_, ()>(()))),
+        (variant.clone(), r#"c150("x")"#, encode((150u32, "x"))),
+        (variant, "c199", encode(199u32)),
+        (enum_ty, "c199", encode(199u32)),
+        (flags_12, "{c0, c9}", BytesMut::from(&b"\x01\x02"[..])),
+        (
+            flags_70,
+            "{c0, c8, c69}",
+            BytesMut::from(&b"\x01\x01\0\0\0\0\0\0\x20"[..]),
+        ),
+        (
+            Type::list(nested),
+            r#"[{x: some(b((7, "a"))), y: ok(["b"])}, {x: none, y: err}]"#,
+            encode(vec![
+                (Some((1u32, (7u8, "a"))), Ok(vec!["b"])),
+                (None, Err(())),
+            ]),
+        ),
+    ] {
+        let v: Value = wasm_wave::from_str(&ty, s)?;
+        let mut buf = BytesMut::default();
+        ValueEncoder::new(&ty).encode(&v, &mut buf)?;
+        assert_eq!(buf, expected, "{s}");
+
+        let mut src = buf.clone();
+        let got = ValueDecoder::new(&ty).decode(&mut src)?;
+        assert_eq!(got, Some(v.clone()), "{s}");
+        assert!(src.is_empty());
+
+        let (last, init) = buf.split_last().context("empty encoding")?;
+        let mut dec = ValueDecoder::new(&ty);
+        for b in init {
+            src.put_u8(*b);
+            let got = dec.decode(&mut src)?;
+            assert_eq!(got, None, "{s}");
+        }
+        src.put_u8(*last);
+        let got = dec.decode(&mut src)?;
+        assert_eq!(got, Some(v), "{s}");
+        assert!(src.is_empty());
+        let got = dec.decode(&mut src)?;
+        assert_eq!(got, None, "{s}");
+        let got = dec.decode_eof(&mut src)?;
+        assert_eq!(got, None, "{s}");
+    }
+    Ok(())
+}
+
+#[test]
+fn errors() -> anyhow::Result<()> {
+    let enum_ty = Type::enum_ty(["a", "b"]).context("invalid enum")?;
+    let map = Type::map(Type::STRING, Type::U32).context("invalid map")?;
+    for (ty, src, kind) in [
+        (Type::BOOL, &b"\x02"[..], ErrorKind::InvalidData),
+        (Type::STRING, b"\x01\xff", ErrorKind::InvalidData),
+        (Type::option(Type::U32), b"\x02", ErrorKind::InvalidData),
+        (enum_ty, b"\x02", ErrorKind::InvalidData),
+        (
+            Type::list(Type::STRING),
+            b"\x01\x03ab",
+            ErrorKind::UnexpectedEof,
+        ),
+        (Type::U32, b"\x80", ErrorKind::UnexpectedEof),
+        (map, b"\0", ErrorKind::Unsupported),
+    ] {
+        let err = ValueDecoder::<Value>::new(&ty)
+            .decode_eof(&mut BytesMut::from(src))
+            .expect_err("decoding should fail");
+        assert_eq!(err.kind(), kind, "{ty}");
+    }
+
+    let mut src = BytesMut::from(&b"\x2a\x63"[..]);
+    let v = ValueDecoder::new(&Type::U8).decode(&mut src)?;
+    assert_eq!(v, Some(Value::make_u8(42)));
+    assert_eq!(src, b"\x63"[..]);
+
+    let mut buf = BytesMut::default();
+    let err = ValueEncoder::new(&Type::STRING)
+        .encode(&Value::make_u32(42), &mut buf)
+        .expect_err("encoding should fail");
+    assert_eq!(err.kind(), ErrorKind::InvalidInput);
+    let err = TupleEncoder::new(&[Type::U32])
+        .encode(&[] as &[Value], &mut buf)
+        .expect_err("encoding should fail");
+    assert_eq!(err.kind(), ErrorKind::InvalidInput);
+    Ok(())
+}
 
 #[tokio::test]
 async fn invoke_tuple() -> anyhow::Result<()> {
@@ -15,21 +163,13 @@ async fn invoke_tuple() -> anyhow::Result<()> {
         Type::list(Type::option(Type::BOOL)),
     ];
     let result_tys = [Type::result(Some(Type::U64), None), Type::CHAR];
-    let params = vec![
-        Value::make_u32(42),
-        Value::make_string("foo".into()),
-        Value::make_list(
-            &param_tys[2],
-            [
-                Value::make_option(&Type::option(Type::BOOL), None)?,
-                Value::make_option(&Type::option(Type::BOOL), Some(Value::make_bool(true)))?,
-            ],
-        )?,
-    ];
-    let results = vec![
-        Value::make_result(&result_tys[0], Ok(Some(Value::make_u64(u64::MAX))))?,
-        Value::make_char('😀'),
-    ];
+    let option_ty = Type::option(Type::BOOL);
+    let none = Value::make_option(&option_ty, None)?;
+    let some = Value::make_option(&option_ty, Some(Value::make_bool(true)))?;
+    let list = Value::make_list(&param_tys[2], [none, some])?;
+    let params = vec![Value::make_u32(42), Value::make_string("foo".into()), list];
+    let result = Value::make_result(&result_tys[0], Ok(Some(Value::make_u64(u64::MAX))))?;
+    let results = vec![result, Value::make_char('😀')];
 
     let (clt, srv) = duplex(64);
     let (clt_rx, clt_tx) = split(clt);
