@@ -12,5 +12,5 @@ export * as types from "./types.js";
 export { Reader, Writer, AsyncReader, Chan, atomic } from "./io.js";
 export { encodeValue, decodeValue, decodeSteps } from "./value.js";
 export { DISCARDED, Mux, Outgoing, PROTOCOL, fromWebStreams } from "./mux.js";
-export { fromFetch, fromRequest } from "./http.js";
+export { MEDIA_TYPE, fromFetch, fromRequest } from "./http.js";
 export { invoke, accept, serve } from "./session.js";

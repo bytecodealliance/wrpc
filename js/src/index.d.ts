@@ -340,6 +340,9 @@ export class Mux {
 
 // ----- http.js --------------------------------------------------------------
 
+/** The media type of wRPC request and response bodies. */
+export const MEDIA_TYPE: "application/vnd.bytecodealliance.wrpc";
+
 /** Options of {@link fromFetch}: the `fetch` request options, except for the method, body and signal. */
 export interface FetchOptions extends Omit<RequestInit, "method" | "body" | "signal"> {
   /** The `fetch` implementation to use, `globalThis.fetch` by default. */
@@ -348,10 +351,14 @@ export interface FetchOptions extends Omit<RequestInit, "method" | "body" | "sig
   buffer?: boolean;
 }
 
-/** A client transport sending a `POST` request to `input`. */
+/**
+ * A client transport sending a `POST` request to `input`, with the
+ * {@link MEDIA_TYPE} unless `headers` set one, and reading the body of the
+ * response, whatever its status. To act on the response, wrap `fetch`.
+ */
 export function fromFetch(input: RequestInfo | URL, options?: FetchOptions): Transport;
 
-/** A server transport over `request`, with the response carrying the server's data. */
+/** A server transport over `request`, with the response carrying the server's data, with the {@link MEDIA_TYPE}. */
 export function fromRequest(request: Request): { transport: Transport; response: Response };
 
 // ----- session.js -----------------------------------------------------------

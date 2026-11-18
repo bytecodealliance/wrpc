@@ -63,7 +63,7 @@ export function listen(addr, f) {
           new Request(new URL(req.url, addr), /** @type {RequestInit} */ (init)),
         );
         f(transport);
-        res.writeHead(response.status);
+        res.writeHead(response.status, Object.fromEntries(response.headers));
         pipeline(Readable.fromWeb(/** @type {any} */ (response.body)), res, () => {});
       })
       .listen(Number(port), hostname.replace(/^\[(.*)\]$/, "$1"), () => console.log("listening"));
