@@ -1,5 +1,6 @@
 use core::any::Any;
 use core::borrow::Borrow;
+use core::convert::Infallible;
 use core::iter::{self, zip};
 use core::mem;
 use core::ops::{BitOrAssign, Bound, Shl};
@@ -34,22 +35,42 @@ mod concurrent;
 ///
 /// Wasmtime only provides an `Accessor` to host functions implementing `async func` imports,
 /// host functions implementing other imports hold a [`StoreContextMut`] across `await` points.
+///
+/// `()` provides no store, so values requiring one, such as resources, futures and streams, fail
+/// to encode and decode.
 pub trait WithStore {
     type Data: 'static;
 
-    fn with_store<R>(&mut self, f: impl FnOnce(StoreContextMut<'_, Self::Data>) -> R) -> R;
+    fn with_store<R>(
+        &mut self,
+        f: impl FnOnce(StoreContextMut<'_, Self::Data>) -> R,
+    ) -> std::io::Result<R>;
 }
 
 impl<T: 'static> WithStore for StoreContextMut<'_, T> {
     type Data = T;
 
-    fn with_store<R>(&mut self, f: impl FnOnce(StoreContextMut<'_, T>) -> R) -> R {
-        f(self.as_context_mut())
+    fn with_store<R>(&mut self, f: impl FnOnce(StoreContextMut<'_, T>) -> R) -> std::io::Result<R> {
+        Ok(f(self.as_context_mut()))
     }
 }
 
-pub struct ValEncoder<'a, T: 'static> {
-    pub store: StoreContextMut<'a, T>,
+impl WithStore for () {
+    type Data = Infallible;
+
+    fn with_store<R>(
+        &mut self,
+        _: impl FnOnce(StoreContextMut<'_, Infallible>) -> R,
+    ) -> std::io::Result<R> {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "value requires a store",
+        ))
+    }
+}
+
+pub struct ValEncoder<'a, T> {
+    pub store: T,
     pub ty: &'a Type,
     pub resources: &'a ResourceTypes,
     pub nested: Option<Box<dyn Transmit + Send>>,
@@ -57,24 +78,11 @@ pub struct ValEncoder<'a, T: 'static> {
 
 impl<T> ValEncoder<'_, T> {
     #[must_use]
-    pub fn new<'a>(
-        store: StoreContextMut<'a, T>,
-        ty: &'a Type,
-        resources: &'a ResourceTypes,
-    ) -> ValEncoder<'a, T> {
+    pub fn new<'a>(store: T, ty: &'a Type, resources: &'a ResourceTypes) -> ValEncoder<'a, T> {
         ValEncoder {
             store,
             ty,
             resources,
-            nested: None,
-        }
-    }
-
-    pub fn with_type<'a>(&'a mut self, ty: &'a Type) -> ValEncoder<'a, T> {
-        ValEncoder {
-            store: self.store.as_context_mut(),
-            ty,
-            resources: self.resources,
             nested: None,
         }
     }
@@ -149,23 +157,15 @@ where
         if vs.len() != self.tys.len() {
             bail!("value count mismatch");
         }
-        let Self {
-            store,
-            tys,
-            resources,
-            nested,
-        } = self;
-        store.with_store(|mut store| {
-            for (i, (v, ty)) in zip(vs, *tys).enumerate() {
-                let mut enc = ValEncoder::new(store.as_context_mut(), ty, resources);
-                enc.encode_val(v, dst)
-                    .with_context(|| format!("failed to encode value {i}"))?;
-                if let Some(t) = enc.nested {
-                    nested.insert(i, t);
-                }
+        for (i, (v, ty)) in zip(vs, self.tys).enumerate() {
+            let mut enc = ValEncoder::new(&mut self.store, ty, self.resources);
+            enc.encode_val(v, dst)
+                .with_context(|| format!("failed to encode value {i}"))?;
+            if let Some(t) = enc.nested {
+                self.nested.insert(i, t);
             }
-            Ok(())
-        })
+        }
+        Ok(())
     }
 }
 
@@ -259,20 +259,29 @@ fn push_input_stream<T: WrpcView>(
 
 impl<T> Encoder<&Val> for ValEncoder<'_, T>
 where
-    T: WrpcView,
+    T: WithStore<Data: WrpcView>,
 {
     type Error = std::io::Error;
 
     fn encode(&mut self, v: &Val, dst: &mut BytesMut) -> Result<(), Self::Error> {
-        self.encode_val(v, dst)
-            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))
+        let mut enc = ValEncoder::new(&mut self.store, self.ty, self.resources);
+        enc.encode_val(v, dst)
+            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
+        if let Some(t) = enc.nested {
+            self.nested = Some(t);
+        }
+        Ok(())
     }
 }
 
-impl<T> ValEncoder<'_, T>
+impl<T> ValEncoder<'_, &mut T>
 where
-    T: WrpcView,
+    T: WithStore<Data: WrpcView>,
 {
+    fn with_type<'a>(&'a mut self, ty: &'a Type) -> ValEncoder<'a, &'a mut T> {
+        ValEncoder::new(&mut *self.store, ty, self.resources)
+    }
+
     #[allow(clippy::too_many_lines)]
     #[instrument(level = "trace", skip(self))]
     fn encode_val(&mut self, v: &Val, dst: &mut BytesMut) -> wasmtime::Result<()> {
@@ -610,52 +619,52 @@ where
                     )
                     || self.resources.io_streams.contains(ty)
                 {
-                    let stream = resource
-                        .try_into_resource::<wasmtime_wasi::p2::DynInputStream>(&mut self.store)
-                        .context("failed to downcast `wasi:io/input-stream`")?;
-                    if stream.owned() {
-                        let stream = self
-                            .store
+                    let stream = self.store.with_store(|mut store| {
+                        let stream = resource
+                            .try_into_resource::<wasmtime_wasi::p2::DynInputStream>(&mut store)
+                            .context("failed to downcast `wasi:io/input-stream`")?;
+                        if !stream.owned() {
+                            store
+                                .data_mut()
+                                .wrpc()
+                                .table
+                                .get_mut(&stream)
+                                .context("failed to get input stream")?;
+                            // NOTE: In order to handle this we'd need to know how many bytes the
+                            // receiver has read. That means that some kind of callback would be required from
+                            // the receiver. This is not trivial and generally should be a very rare use case.
+                            bail!("encoding borrowed `wasi:io/input-stream` not supported yet");
+                        }
+                        store
                             .data_mut()
                             .wrpc()
                             .table
                             .delete(stream)
-                            .context("failed to delete input stream")?;
-                        let items: core::pin::Pin<Box<dyn tokio::io::AsyncRead + Send>> =
-                            Box::pin(tokio_util::io::StreamReader::new(
-                                futures::stream::try_unfold(stream, |mut stream| async move {
-                                    loop {
-                                        stream.ready().await;
-                                        match stream.read(wrpc_transport::READ_CHUNK_SIZE) {
-                                            Ok(buf) if buf.is_empty() => {}
-                                            Ok(buf) => return Ok(Some((buf, stream))),
-                                            Err(wasmtime_wasi::p2::StreamError::Closed) => {
-                                                return Ok(None);
-                                            }
-                                            Err(err) => return Err(std::io::Error::other(err)),
+                            .context("failed to delete input stream")
+                    })??;
+                    let items: core::pin::Pin<Box<dyn tokio::io::AsyncRead + Send>> =
+                        Box::pin(tokio_util::io::StreamReader::new(
+                            futures::stream::try_unfold(stream, |mut stream| async move {
+                                loop {
+                                    stream.ready().await;
+                                    match stream.read(wrpc_transport::READ_CHUNK_SIZE) {
+                                        Ok(buf) if buf.is_empty() => {}
+                                        Ok(buf) => return Ok(Some((buf, stream))),
+                                        Err(wasmtime_wasi::p2::StreamError::Closed) => {
+                                            return Ok(None);
                                         }
+                                        Err(err) => return Err(std::io::Error::other(err)),
                                     }
-                                }),
-                            ));
-                        let mut enc = wrpc_transport::StreamEncoderRead::<
-                            { wrpc_transport::READ_CHUNK_SIZE },
-                        >::default();
-                        enc.encode(items, dst)
-                            .context("failed to encode input stream")?;
-                        if !enc.is_closed() {
-                            self.nested = Some(Box::new(enc));
-                        }
-                    } else {
-                        self.store
-                            .data_mut()
-                            .wrpc()
-                            .table
-                            .get_mut(&stream)
-                            .context("failed to get input stream")?;
-                        // NOTE: In order to handle this we'd need to know how many bytes the
-                        // receiver has read. That means that some kind of callback would be required from
-                        // the receiver. This is not trivial and generally should be a very rare use case.
-                        bail!("encoding borrowed `wasi:io/input-stream` not supported yet");
+                                }
+                            }),
+                        ));
+                    let mut enc = wrpc_transport::StreamEncoderRead::<
+                        { wrpc_transport::READ_CHUNK_SIZE },
+                    >::default();
+                    enc.encode(items, dst)
+                        .context("failed to encode input stream")?;
+                    if !enc.is_closed() {
+                        self.nested = Some(Box::new(enc));
                     }
                     return Ok(());
                 }
@@ -665,15 +674,15 @@ where
                         .encode(id.to_bytes_le().as_slice(), dst)
                         .context("failed to encode resource handle")?;
                     trace!(?id, "store shared resource");
-                    if self
-                        .store
-                        .data_mut()
-                        .wrpc()
-                        .shared_resources
-                        .0
-                        .insert(id, *resource)
-                        .is_some()
-                    {
+                    let prev = self.store.with_store(|mut store| {
+                        store
+                            .data_mut()
+                            .wrpc()
+                            .shared_resources
+                            .0
+                            .insert(id, *resource)
+                    })?;
+                    if prev.is_some() {
                         error!(?id, "duplicate resource ID generated");
                     }
                     Ok(())
@@ -684,7 +693,9 @@ where
 
             #[cfg(feature = "async")]
             (Val::Future(future), Type::Future(ty)) => {
-                let nested = concurrent::encode_future(self.store.as_context_mut(), future, ty)?;
+                let nested = self
+                    .store
+                    .with_store(|store| concurrent::encode_future(store, future, ty))??;
                 dst.reserve(1);
                 dst.put_u8(0);
                 self.nested = Some(nested);
@@ -692,7 +703,9 @@ where
             }
             #[cfg(feature = "async")]
             (Val::Stream(stream), Type::Stream(ty)) => {
-                let nested = concurrent::encode_stream(self.store.as_context_mut(), stream, ty)?;
+                let nested = self
+                    .store
+                    .with_store(|store| concurrent::encode_stream(store, stream, ty))??;
                 dst.reserve(1);
                 dst.put_u8(0);
                 self.nested = Some(nested);
@@ -928,10 +941,8 @@ where
                 return Ok(None);
             };
             if status == 0 {
-                let (v, r) = self
-                    .store
-                    .with_store(pending)
-                    .map_err(std::io::Error::other)?;
+                let res = self.store.with_store(pending)?;
+                let (v, r) = res.map_err(std::io::Error::other)?;
                 self.nested.insert(path.into(), r);
                 return Ok(Some(v));
             }
@@ -939,10 +950,8 @@ where
         let Some(v) = decode_with::<D>(src, state)? else {
             return Ok(None);
         };
-        let v = self
-            .store
-            .with_store(|store| ready(store, v))
-            .map_err(std::io::Error::other)?;
+        let v = self.store.with_store(|store| ready(store, v))?;
+        let v = v.map_err(std::io::Error::other)?;
         Ok(Some(v))
     }
 
@@ -1096,7 +1105,7 @@ where
                             .get(&id)
                             .copied()
                             .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::NotFound))
-                    })?;
+                    })??;
                     Ok(Some(Val::Resource(resource)))
                 } else {
                     Err(std::io::Error::new(
