@@ -54,15 +54,19 @@ func assertWriteString(t *testing.T, w io.Writer, s string) {
 
 func assertReadFrame(t *testing.T, r wrpc.ByteReader, data []byte, path ...uint32) {
 	t.Helper()
-	frame, err := wrpc.ReadFrame(r)
+	p, n, err := wrpc.ReadFrameHeader(r)
 	if err != nil {
-		t.Fatalf("failed to read frame: %s", err)
+		t.Fatalf("failed to read frame header: %s", err)
 	}
-	if !slices.Equal(frame.Path, path) {
-		t.Fatalf("unexpected frame path `%v`", frame.Path)
+	if !slices.Equal(p, path) {
+		t.Fatalf("unexpected frame path `%v`", p)
 	}
-	if !slices.Equal(frame.Data, data) {
-		t.Fatalf("expected `%s`, got `%s`", data, frame.Data)
+	buf, err := wrpc.ReadBytes(r, n)
+	if err != nil {
+		t.Fatalf("failed to read frame data: %s", err)
+	}
+	if !slices.Equal(buf, data) {
+		t.Fatalf("expected `%s`, got `%s`", data, buf)
 	}
 }
 

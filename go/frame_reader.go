@@ -506,7 +506,7 @@ func NewFrameStreamReader(ctx context.Context, r ByteReadCloser, paths ...Subscr
 					return errUnprocessed
 				}
 				slog.DebugContext(ctx, "reading frame")
-				depth, err := readFramePathLen(r)
+				path, n, err := ReadFrameHeader(r, WithMaxFrameDepth(maxDepth))
 				if err == io.EOF {
 					subs.mu.Lock()
 					open := subs.open
@@ -518,13 +518,6 @@ func NewFrameStreamReader(ctx context.Context, r ByteReadCloser, paths ...Subscr
 				}
 				if err != nil {
 					return err
-				}
-				path, n, err := readFramePath(r, depth, maxDepth)
-				if err != nil {
-					return err
-				}
-				if depth > maxDepth {
-					return fmt.Errorf("path length of %d exceeds maximum of %d", depth, maxDepth)
 				}
 				slog.DebugContext(ctx, "read frame header",
 					"path", path,
