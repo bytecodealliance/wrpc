@@ -2,13 +2,13 @@ use core::pin::pin;
 
 use std::path::PathBuf;
 
-use anyhow::Context as _;
+use anyhow::{Context as _, bail};
 use clap::Parser;
-use futures::{StreamExt as _, TryStreamExt as _};
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::task::JoinSet;
 use tokio::{fs, select, signal};
-use tokio_stream::wrappers::UnixListenerStream;
 use tracing::{debug, error, info, warn};
+use wrpc_transport::{Header, Listener};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -16,6 +16,21 @@ struct Args {
     /// Path to serve `wasi:keyvalue` on
     #[arg(default_value = "/tmp/wrpc/wasi/keyvalue.sock")]
     path: PathBuf,
+}
+
+async fn serve(
+    handler: wrpc_wasi_keyvalue_mem::Handler,
+    tx: impl AsyncWrite + Send + Unpin,
+    rx: impl AsyncRead + Send + Unpin,
+) -> anyhow::Result<()> {
+    let mut lis = Listener::new(tx, rx);
+    while let Some((Header { instance, name }, tx, rx)) = lis.accept().await? {
+        let Ok(fut) = wrpc_wasi_keyvalue::handle(&handler, (), &instance, &name, tx, rx) else {
+            bail!("`{instance}#{name}` is not exported");
+        };
+        fut.await?;
+    }
+    Ok(())
 }
 
 #[tokio::main]
@@ -33,32 +48,28 @@ async fn main() -> anyhow::Result<()> {
     }
     let lis = tokio::net::UnixListener::bind(&path)
         .with_context(|| format!("failed to bind Unix listener on `{}`", path.display()))?;
-    let incoming = UnixListenerStream::new(lis).map_ok(|stream| {
-        let (rx, tx) = stream.into_split();
-        ((), tx, rx)
-    });
-    let invocations =
-        wrpc_wasi_keyvalue::serve(incoming, wrpc_wasi_keyvalue_mem::Handler::default());
-    let mut invocations = pin!(invocations);
+    let handler = wrpc_wasi_keyvalue_mem::Handler::default();
     let shutdown = signal::ctrl_c();
     let mut shutdown = pin!(shutdown);
     let mut tasks = JoinSet::new();
     loop {
         select! {
-            Some(res) = invocations.next() => {
+            res = lis.accept() => {
                 match res {
-                    Ok(fut) => {
-                        debug!("invocation accepted");
+                    Ok((stream, ..)) => {
+                        debug!("connection accepted");
+                        let (rx, tx) = stream.into_split();
+                        let handler = handler.clone();
                         tasks.spawn(async move {
-                            match fut.await { Err(err) => {
-                                warn!(?err, "failed to handle invocation");
-                            } _ => {
-                                info!("invocation successfully handled");
-                            }}
+                            if let Err(err) = serve(handler, tx, rx).await {
+                                warn!(?err, "failed to serve connection");
+                            } else {
+                                info!("connection successfully served");
+                            }
                         });
                     }
                     Err(err) => {
-                        warn!(?err, "failed to accept invocation");
+                        warn!(?err, "failed to accept connection");
                     }
                 }
             }
@@ -67,15 +78,7 @@ async fn main() -> anyhow::Result<()> {
                     error!(?err, "failed to join task");
                 }
             }
-            res = &mut shutdown => {
-                // wait for all invocations to complete
-                while let Some(res) = tasks.join_next().await {
-                    if let Err(err) = res {
-                        error!(?err, "failed to join task");
-                    }
-                }
-                return res.context("failed to listen for ^C")
-            }
+            res = &mut shutdown => return res.context("failed to listen for ^C"),
         }
     }
 }

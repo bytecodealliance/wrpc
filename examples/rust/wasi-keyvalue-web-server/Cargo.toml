@@ -21,7 +21,6 @@ clap = { workspace = true, features = [
     "suggestions",
     "usage",
 ] }
-futures = { workspace = true }
 rcgen = { workspace = true, features = ["crypto", "ring", "zeroize"] }
 rustls = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "signal"] }
@@ -32,6 +31,6 @@ tracing-subscriber = { workspace = true, features = [
     "fmt",
 ] }
 web-transport-quinn = { workspace = true, features = ["ring"] }
-wrpc-webtransport = { workspace = true }
+wrpc-transport = { workspace = true }
 wrpc-wasi-keyvalue = { workspace = true }
 wrpc-wasi-keyvalue-mem = { workspace = true }

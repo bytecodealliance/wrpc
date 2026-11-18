@@ -12,14 +12,13 @@ pub async fn run(
     wrpc: &crate::Client,
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
     let value = &[&["foo", "bar"] as &[_]] as &[_];
-    let (tx, rx) = wrpc.connect().await?;
-    let res = lists::foo(tx, rx, value).await?;
+    let (mut tx, mut rx) = wrpc.connect().await?;
+    let res = lists::foo(&mut tx, &mut rx, value).await?;
     assert_eq!(vec![vec!["foo".to_owned(), "bar".to_owned()]], res);
 
-    let (tx, rx) = wrpc.connect().await?;
     thing_in::bar(
-        tx,
-        rx,
+        &mut tx,
+        &mut rx,
         thing_in::Thing {
             name: "thing 1",
             value: &["some value", "another value"],
@@ -31,17 +30,14 @@ pub async fn run(
         name: "thing 1".to_owned(),
         value: vec!["some value".to_owned(), "another value".to_owned()],
     };
-    let (tx, rx) = wrpc.connect().await?;
-    let res = thing_in_and_out::baz(tx, rx, &value).await?;
+    let res = thing_in_and_out::baz(&mut tx, &mut rx, &value).await?;
     assert_eq!(value, res);
 
     let strings = vec!["foo", "bar", "baz"];
-    let (tx, rx) = wrpc.connect().await?;
-    let resource = both_list_and_resource::TheResource::new(tx, rx, &strings).await?;
-    let (tx, rx) = wrpc.connect().await?;
+    let resource = both_list_and_resource::TheResource::new(&mut tx, &mut rx, &strings).await?;
     both_list_and_resource::list_and_resource(
-        tx,
-        rx,
+        &mut tx,
+        &mut rx,
         both_list_and_resource::Thing {
             a: strings.iter().map(|s| s.to_string()).collect(),
             b: resource,

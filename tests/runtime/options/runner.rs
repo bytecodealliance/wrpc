@@ -3,30 +3,23 @@ use crate::client::test::options::to_test::*;
 pub async fn run(
     wrpc: &crate::Client,
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
-    let (tx, rx) = wrpc.connect().await?;
-    option_none_param(tx, rx, None).await?;
-    let (tx, rx) = wrpc.connect().await?;
-    option_some_param(tx, rx, Some("foo")).await?;
-    let (tx, rx) = wrpc.connect().await?;
-    assert!(option_none_result(tx, rx).await?.is_none());
-    let (tx, rx) = wrpc.connect().await?;
-    assert_eq!(option_some_result(tx, rx).await?, Some("foo".to_string()));
-    let (tx, rx) = wrpc.connect().await?;
+    let (mut tx, mut rx) = wrpc.connect().await?;
+    option_none_param(&mut tx, &mut rx, None).await?;
+    option_some_param(&mut tx, &mut rx, Some("foo")).await?;
+    assert!(option_none_result(&mut tx, &mut rx).await?.is_none());
+    assert_eq!(option_some_result(&mut tx, &mut rx).await?, Some("foo".to_string()));
     assert_eq!(
-        option_roundtrip(tx, rx, Some("foo")).await?,
+        option_roundtrip(&mut tx, &mut rx, Some("foo")).await?,
         Some("foo".to_string())
     );
-    let (tx, rx) = wrpc.connect().await?;
     assert_eq!(
-        double_option_roundtrip(tx, rx, Some(Some(42))).await?,
+        double_option_roundtrip(&mut tx, &mut rx, Some(Some(42))).await?,
         Some(Some(42))
     );
-    let (tx, rx) = wrpc.connect().await?;
     assert_eq!(
-        double_option_roundtrip(tx, rx, Some(None)).await?,
+        double_option_roundtrip(&mut tx, &mut rx, Some(None)).await?,
         Some(None)
     );
-    let (tx, rx) = wrpc.connect().await?;
-    assert_eq!(double_option_roundtrip(tx, rx, None).await?, None);
+    assert_eq!(double_option_roundtrip(&mut tx, &mut rx, None).await?, None);
     Ok(())
 }

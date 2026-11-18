@@ -39,4 +39,3 @@ tracing-subscriber = { workspace = true, features = [
 ] }
 url = { workspace = true }
 wit-bindgen-wrpc = { workspace = true }
-wrpc-quic = { workspace = true }

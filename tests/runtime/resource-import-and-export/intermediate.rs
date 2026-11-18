@@ -62,9 +62,8 @@ impl HandlerThing<crate::Client> for Component {
     ) -> ::wit_bindgen_wrpc::anyhow::Result<ResourceOwn<ExportThing>> {
         let a = ResourceOwn::from(Bytes::from(a));
         let b = ResourceOwn::from(Bytes::from(b));
-        let (tx, rx) = cx.connect().await?;
-        let thing = Thing::baz(tx, rx, &a, &b).await?;
-        let (tx, rx) = cx.connect().await?;
+        let (mut tx, mut rx) = cx.connect().await?;
+        let thing = Thing::baz(&mut tx, &mut rx, &a, &b).await?;
         let result = Thing::foo(tx, rx, &thing.as_borrow()).await?;
         HandlerThing::new(self, cx, result + 4).await
     }

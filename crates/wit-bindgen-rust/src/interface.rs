@@ -152,12 +152,6 @@ where
             Identifier::World => String::new(),
         };
         for func in &funcs_to_export {
-            self.r#gen.max_export_instance_len =
-                self.r#gen.max_export_instance_len.max(instance.len());
-            self.r#gen.max_export_func_len = self
-                .r#gen
-                .max_export_func_len
-                .max(rpc_func_name(func).len());
             let fqn = if instance.is_empty() {
                 func.name.to_string()
             } else {

@@ -5,11 +5,10 @@ use crate::client::cat::*;
 pub async fn run(
     wrpc: &crate::Client,
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
-    let (tx, rx) = wrpc.connect().await?;
-    foo(tx, rx, &Bytes::from_static(b"hello")).await?;
+    let (mut tx, mut rx) = wrpc.connect().await?;
+    foo(&mut tx, &mut rx, &Bytes::from_static(b"hello")).await?;
 
-    let (tx, rx) = wrpc.connect().await?;
-    let t: Bytes = bar(tx, rx).await?;
+    let t: Bytes = bar(&mut tx, &mut rx).await?;
     assert_eq!(t, &b"world"[..]);
     Ok(())
 }

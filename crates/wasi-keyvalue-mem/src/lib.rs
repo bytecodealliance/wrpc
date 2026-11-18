@@ -191,21 +191,3 @@ impl<C: Send + Sync> batch::Handler<C> for Handler {
         Ok(Err(store::Error::Other("not supported".to_string())))
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[allow(unused)]
-    fn bound<C, I, O, E>(
-        incoming: impl futures::Stream<Item = Result<(C, O, I), E>> + Send,
-    ) -> impl futures::Stream + Send
-    where
-        C: Send + Sync + 'static,
-        I: tokio::io::AsyncRead + Send + Unpin + 'static,
-        O: tokio::io::AsyncWrite + Send + Unpin + 'static,
-        E: core::error::Error + Send + Sync + 'static,
-    {
-        wrpc_wasi_keyvalue::serve(incoming, Handler::default())
-    }
-}

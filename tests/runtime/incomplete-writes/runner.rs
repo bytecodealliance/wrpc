@@ -13,53 +13,42 @@ use crate::client::my::test::test_interface::{
 pub async fn run(
     wrpc: &crate::Client,
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+    let (mut tx, mut rx) = wrpc.connect().await?;
     {
         // Write the things all at once.  The callee will read them only
         // one at a time.
-        let (tx, rx) = wrpc.connect().await?;
-        let a = TestThing::new(tx, rx, "a").await?;
-        let (tx, rx) = wrpc.connect().await?;
-        let b = TestThing::new(tx, rx, "b").await?;
-        let (tx, rx) = wrpc.connect().await?;
-        let c = TestThing::new(tx, rx, "c").await?;
+        let a = TestThing::new(&mut tx, &mut rx, "a").await?;
+        let b = TestThing::new(&mut tx, &mut rx, "b").await?;
+        let c = TestThing::new(&mut tx, &mut rx, "c").await?;
         let things = vec![a, b, c];
-        let (tx, rx) = wrpc.connect().await?;
-        let (stream, io) = short_reads_test(tx, rx, Box::pin(stream::iter([things]))).await?;
+        let (stream, io) =
+            short_reads_test(&mut tx, &mut rx, Box::pin(stream::iter([things]))).await?;
         let (things, ()) = try_join!(async { Ok(stream.concat().await) }, io)?;
         assert_eq!(things.len(), 3);
-        let (tx, rx) = wrpc.connect().await?;
-        let a = TestThing::get(tx, rx, &things[0].as_borrow()).await?;
+        let a = TestThing::get(&mut tx, &mut rx, &things[0].as_borrow()).await?;
         assert_eq!(a, "a");
-        let (tx, rx) = wrpc.connect().await?;
-        let b = TestThing::get(tx, rx, &things[1].as_borrow()).await?;
+        let b = TestThing::get(&mut tx, &mut rx, &things[1].as_borrow()).await?;
         assert_eq!(b, "b");
-        let (tx, rx) = wrpc.connect().await?;
-        let c = TestThing::get(tx, rx, &things[2].as_borrow()).await?;
+        let c = TestThing::get(&mut tx, &mut rx, &things[2].as_borrow()).await?;
         assert_eq!(c, "c");
     }
 
     {
         // Write the things all at once.  The callee will read them only
         // one at a time.
-        let (tx, rx) = wrpc.connect().await?;
-        let a = LeafThing::new(tx, rx, "a").await?;
-        let (tx, rx) = wrpc.connect().await?;
-        let b = LeafThing::new(tx, rx, "b").await?;
-        let (tx, rx) = wrpc.connect().await?;
-        let c = LeafThing::new(tx, rx, "c").await?;
+        let a = LeafThing::new(&mut tx, &mut rx, "a").await?;
+        let b = LeafThing::new(&mut tx, &mut rx, "b").await?;
+        let c = LeafThing::new(&mut tx, &mut rx, "c").await?;
         let things = vec![a, b, c];
-        let (tx, rx) = wrpc.connect().await?;
-        let (stream, io) = short_reads_leaf(tx, rx, Box::pin(stream::iter([things]))).await?;
+        let (stream, io) =
+            short_reads_leaf(&mut tx, &mut rx, Box::pin(stream::iter([things]))).await?;
         let (things, ()) = try_join!(async { Ok(stream.concat().await) }, io)?;
         assert_eq!(things.len(), 3);
-        let (tx, rx) = wrpc.connect().await?;
-        let a = LeafThing::get(tx, rx, &things[0].as_borrow()).await?;
+        let a = LeafThing::get(&mut tx, &mut rx, &things[0].as_borrow()).await?;
         assert_eq!(a, "a");
-        let (tx, rx) = wrpc.connect().await?;
-        let b = LeafThing::get(tx, rx, &things[1].as_borrow()).await?;
+        let b = LeafThing::get(&mut tx, &mut rx, &things[1].as_borrow()).await?;
         assert_eq!(b, "b");
-        let (tx, rx) = wrpc.connect().await?;
-        let c = LeafThing::get(tx, rx, &things[2].as_borrow()).await?;
+        let c = LeafThing::get(&mut tx, &mut rx, &things[2].as_borrow()).await?;
         assert_eq!(c, "c");
     }
 
@@ -67,13 +56,11 @@ pub async fn run(
         // Write a thing to the first future, the read end of which the
         // callee will drop without reading from, then write it again to
         // the second future, which the callee will read.
-        let (tx, rx) = wrpc.connect().await?;
-        let thing = TestThing::new(tx, rx, "a").await?;
+        let thing = TestThing::new(&mut tx, &mut rx, "a").await?;
         let thing = Bytes::from(thing);
-        let (tx, rx) = wrpc.connect().await?;
         let ((.., f2), io) = dropped_reader_test(
-            tx,
-            rx,
+            &mut tx,
+            &mut rx,
             Box::pin(future::ready(ResourceOwn::from(thing.clone()))),
             Box::pin(future::ready(ResourceOwn::from(thing))),
         )
@@ -81,8 +68,7 @@ pub async fn run(
         // Drop the first future without reading from it and read from
         // the second future and assert it matches what we wrote above.
         let (thing, ()) = try_join!(async { Ok(f2.await) }, io)?;
-        let (tx, rx) = wrpc.connect().await?;
-        let a = TestThing::get(tx, rx, &thing.as_borrow()).await?;
+        let a = TestThing::get(&mut tx, &mut rx, &thing.as_borrow()).await?;
         assert_eq!(a, "a");
     }
 
@@ -90,13 +76,11 @@ pub async fn run(
         // Write a thing to the first future, the read end of which the
         // callee will drop without reading from, then write it again to
         // the second future, which the callee will read.
-        let (tx, rx) = wrpc.connect().await?;
-        let thing = LeafThing::new(tx, rx, "a").await?;
+        let thing = LeafThing::new(&mut tx, &mut rx, "a").await?;
         let thing = Bytes::from(thing);
-        let (tx, rx) = wrpc.connect().await?;
         let ((.., f2), io) = dropped_reader_leaf(
-            tx,
-            rx,
+            &mut tx,
+            &mut rx,
             Box::pin(future::ready(ResourceOwn::from(thing.clone()))),
             Box::pin(future::ready(ResourceOwn::from(thing))),
         )
@@ -104,8 +88,7 @@ pub async fn run(
         // Drop the first future without reading from it and read from
         // the second future and assert it matches what we wrote above.
         let (thing, ()) = try_join!(async { Ok(f2.await) }, io)?;
-        let (tx, rx) = wrpc.connect().await?;
-        let a = LeafThing::get(tx, rx, &thing.as_borrow()).await?;
+        let a = LeafThing::get(&mut tx, &mut rx, &thing.as_borrow()).await?;
         assert_eq!(a, "a");
     }
     Ok(())

@@ -12,7 +12,6 @@ use axum::response::Html;
 use axum::routing::get;
 use bytes::Bytes;
 use clap::Parser;
-use futures::StreamExt as _;
 use quinn::crypto::rustls::{QuicClientConfig, QuicServerConfig};
 use rcgen::{CertificateParams, KeyPair};
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
@@ -21,9 +20,9 @@ use rustls::version::TLS13;
 use rustls::{DigitallySignedStruct, SignatureScheme};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
-use tokio::sync::{Notify, RwLock, mpsc};
+use tokio::sync::{Notify, RwLock};
 use tokio::task::JoinSet;
-use tokio::{select, signal};
+use tokio::{select, signal, spawn};
 use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
 use tracing::{debug, error, info, instrument, trace, warn};
@@ -32,7 +31,7 @@ use tracing_subscriber::util::SubscriberInitExt as _;
 use url::Url;
 use uuid::Uuid;
 use web_transport_quinn::Request;
-use wrpc_transport::{Header, ResourceBorrow, ResourceOwn};
+use wrpc_transport::{Header, Listener, ResourceBorrow, ResourceOwn};
 use wrpc_wasi_keyvalue::exports::wasi::keyvalue::store;
 
 pub type Result<T, E = store::Error> = core::result::Result<T, E>;
@@ -477,6 +476,47 @@ struct Args {
     addr: SocketAddr,
 }
 
+async fn serve_conn(handler: Handler, conn: quinn::Incoming) -> anyhow::Result<()> {
+    let conn = conn.await.context("failed to accept QUIC connection")?;
+    let req = Request::accept(conn)
+        .await
+        .context("failed to accept WebTransport session request")?;
+    let conn = req
+        .ok()
+        .await
+        .context("failed to establish WebTransport connection")?;
+    loop {
+        let (tx, rx) = conn.accept_bi().await.context("failed to accept stream")?;
+        let handler = handler.clone();
+        spawn(async move {
+            let mut lis = Listener::new(tx, rx);
+            loop {
+                let (Header { instance, name }, tx, rx) = match lis.accept().await {
+                    Ok(Some(next)) => next,
+                    Ok(None) => return,
+                    Err(err) => {
+                        warn!(?err, "failed to read invocation header");
+                        return;
+                    }
+                };
+                let fut = match store::handle_interface(&handler, (), &instance, &name, tx, rx) {
+                    Ok(fut) => fut,
+                    Err(..) => {
+                        warn!(instance, func = name, "function is not exported");
+                        return;
+                    }
+                };
+                debug!("invocation accepted");
+                if let Err(err) = fut.await {
+                    warn!(?err, "failed to handle invocation");
+                    return;
+                }
+                info!("invocation successfully handled");
+            }
+        });
+    }
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::registry()
@@ -571,54 +611,7 @@ export const PORT = "{port}"
             .layer(TraceLayer::new_for_http()),
     );
 
-    let (tx, mut rx) = mpsc::channel(16);
-    let mut wrpc = tokio::spawn(async move {
-        let handler = Handler::default();
-        let mut tasks = JoinSet::new();
-        loop {
-            select! {
-                Some((cx, tx, rx)) = rx.recv() => {
-                    let handler = handler.clone();
-                    tasks.spawn(async move {
-                        let (Header { instance, name }, rx) = match Header::read(rx).await {
-                            Ok(header) => header,
-                            Err(err) => {
-                                warn!(?err, "failed to read invocation header");
-                                return;
-                            }
-                        };
-                        let fut = match store::handle_interface(
-                            &handler, cx, &instance, &name, tx, rx,
-                        ) {
-                            Ok(fut) => fut,
-                            Err(..) => {
-                                warn!(
-                                    instance,
-                                    func = name,
-                                    "function is not exported"
-                                );
-                                return;
-                            }
-                        };
-                        debug!("invocation accepted");
-                        match fut.await { Err(err) => {
-                            warn!(?err, "failed to handle invocation");
-                        } _ => {
-                            info!("invocation successfully handled");
-                        }}
-                    });
-                }
-                Some(res) = tasks.join_next() => {
-                    if let Err(err) = res {
-                        error!(?err, "failed to join task");
-                    }
-                }
-                else => {
-                    return
-                }
-            }
-        }
-    });
+    let handler = Handler::default();
 
     let http_shutdown = Arc::new(Notify::new());
     let http = http.with_graceful_shutdown({
@@ -628,7 +621,7 @@ export const PORT = "{port}"
     let mut http = http.into_future();
     let shutdown = signal::ctrl_c();
     let mut shutdown = pin!(shutdown);
-    let mut tasks = JoinSet::<anyhow::Result<()>>::new();
+    let mut tasks = JoinSet::new();
     info!("serving HTTP on: http://{addr}");
     loop {
         select! {
@@ -636,40 +629,18 @@ export const PORT = "{port}"
                 trace!("HTTP serving stopped");
                 return res.context("failed to serve HTTP");
             }
-            res = &mut wrpc => {
-                trace!("wRPC serving task stopped");
-                return res.context("failed to serve wRPC invocations");
-            }
             Some(conn) = ep.accept() => {
-                let tx = tx.clone();
+                debug!("connection accepted");
+                let handler = handler.clone();
                 tasks.spawn(async move {
-                    let conn = conn.await.context("failed to accept QUIC connection")?;
-                    let req = Request::accept(conn)
-                        .await
-                        .context("failed to accept WebTransport session request")?;
-                    let conn = req
-                        .ok()
-                        .await
-                        .context("failed to establish WebTransport connection")?;
-                    let mut incoming = pin!(wrpc_webtransport::incoming(conn));
-                    while let Some(invocation) = incoming.next().await {
-                        let invocation = invocation.context("failed to accept wRPC invocation")?;
-                        if tx.send(invocation).await.is_err() {
-                            return Ok(());
-                        }
+                    if let Err(err) = serve_conn(handler, conn).await {
+                        warn!(?err, "failed to serve connection");
                     }
-                    Ok(())
                 });
             }
             Some(res) = tasks.join_next() => {
-                match res {
-                    Ok(Ok(())) => {}
-                    Ok(Err(err)) => {
-                        warn!(?err, "failed to serve WebTransport invocation");
-                    }
-                    Err(err) => {
-                        error!(?err, "failed to join WebTransport invocation task");
-                    }
+                if let Err(err) = res {
+                    error!(?err, "failed to join task");
                 }
             }
             res = &mut shutdown => {
@@ -684,11 +655,6 @@ export const PORT = "{port}"
                     }
                 }
                 http.await.context("HTTP server failed")?;
-                // Drop the last invocation sender to shutdown invocation handling task
-                drop(tx);
-                if let Err(err) = wrpc.await {
-                    error!(?err, "wRPC serving task failed");
-                }
                 res.context("failed to listen for ^C")?;
                 return Ok(())
             }

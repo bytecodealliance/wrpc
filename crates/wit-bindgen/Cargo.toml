@@ -32,4 +32,4 @@ default = ["macro-string"]
 macro-string = ["wit-bindgen-wrpc-rust-macro/macro-string"]
 
 [dev-dependencies]
-tokio-stream = { workspace = true, features = ["net"] }
+tokio = { workspace = true, features = ["net"] }

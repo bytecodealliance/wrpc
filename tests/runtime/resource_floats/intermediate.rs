@@ -17,12 +17,10 @@ impl Handler<crate::Client> for Component {
         a: ResourceBorrow<Float>,
         b: ResourceBorrow<Float>,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<ResourceOwn<Float>> {
-        let (tx, rx) = cx.connect().await?;
-        let a = ImportFloat2::get(tx, rx, &a).await?;
-        let (tx, rx) = cx.connect().await?;
-        let b = ImportFloat2::get(tx, rx, &b).await?;
-        let (tx, rx) = cx.connect().await?;
-        ImportFloat2::new(tx, rx, a + b + 5.0).await
+        let (mut tx, mut rx) = cx.connect().await?;
+        let a = ImportFloat2::get(&mut tx, &mut rx, &a).await?;
+        let b = ImportFloat2::get(&mut tx, &mut rx, &b).await?;
+        ImportFloat2::new(&mut tx, &mut rx, a + b + 5.0).await
     }
 }
 
@@ -57,10 +55,9 @@ impl HandlerFloat<crate::Client> for Component {
         b: f64,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<ResourceOwn<FloatExport>> {
         let a = ResourceOwn::from(Bytes::from(a));
-        let (tx, rx) = cx.connect().await?;
-        let a = ImportFloat1::add(tx, rx, &a, b).await?;
-        let (tx, rx) = cx.connect().await?;
-        let v = ImportFloat1::get(tx, rx, &a.as_borrow()).await?;
+        let (mut tx, mut rx) = cx.connect().await?;
+        let a = ImportFloat1::add(&mut tx, &mut rx, &a, b).await?;
+        let v = ImportFloat1::get(&mut tx, &mut rx, &a.as_borrow()).await?;
         self.new(cx, v + 5.0).await
     }
 }
