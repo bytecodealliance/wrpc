@@ -139,6 +139,20 @@ fn errors() -> anyhow::Result<()> {
         assert_eq!(err.kind(), kind, "{ty}");
     }
 
+    let tys: Arc<[Type]> = Arc::from([Type::list(Type::U8), Type::STRING]);
+    let v = TupleDecoder::<Value>::new(Arc::clone(&tys))
+        .with_max_len(2)
+        .decode(&mut BytesMut::from(&b"\x02\x01\x02\x02ab"[..]))?;
+    let list = Value::make_list(&tys[0], [Value::make_u8(1), Value::make_u8(2)])?;
+    assert_eq!(v, Some(vec![list, Value::make_string("ab".into())]));
+    for src in [&b"\x03"[..], b"\x00\x03foo"] {
+        let err = TupleDecoder::<Value>::new(Arc::clone(&tys))
+            .with_max_len(2)
+            .decode(&mut BytesMut::from(src))
+            .expect_err("decoding should fail");
+        assert_eq!(err.kind(), ErrorKind::InvalidData);
+    }
+
     let mut src = BytesMut::from(&b"\x2a\x63"[..]);
     let v = ValueDecoder::new(Type::U8).decode(&mut src)?;
     assert_eq!(v, Some(Value::make_u8(42)));

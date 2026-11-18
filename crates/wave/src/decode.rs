@@ -19,6 +19,9 @@ use wasm_tokio::{
 use wasm_wave::wasm::{WasmType, WasmTypeKind, WasmValue};
 use wrpc_transport::{Receive, error_unknown_path};
 
+/// Default `max_len` of [`ValueDecoder`] and [`TupleDecoder`]
+pub const DEFAULT_MAX_LEN: u32 = 1 << 24;
+
 /// Progress of decoding a partially received value
 enum Partial<V> {
     String(CoreNameDecoder),
@@ -38,6 +41,7 @@ enum Partial<V> {
 /// Resources, futures and streams are not supported.
 pub struct ValueDecoder<V: WasmValue> {
     ty: V::Type,
+    max_len: u32,
     state: Option<Box<Partial<V>>>,
 }
 
@@ -45,7 +49,19 @@ impl<V: WasmValue> ValueDecoder<V> {
     /// Creates a new [`ValueDecoder`] of values of type `ty`
     #[must_use]
     pub fn new(ty: V::Type) -> Self {
-        Self { ty, state: None }
+        Self {
+            ty,
+            max_len: DEFAULT_MAX_LEN,
+            state: None,
+        }
+    }
+
+    /// Rejects strings longer than `max_len` bytes and lists longer than `max_len` elements,
+    /// [`DEFAULT_MAX_LEN`] by default.
+    #[must_use]
+    pub fn with_max_len(mut self, max_len: u32) -> Self {
+        self.max_len = max_len;
+        self
     }
 }
 
@@ -55,7 +71,7 @@ impl<V: WasmValue> Decoder for ValueDecoder<V> {
 
     fn decode(&mut self, src: &mut BytesMut) -> std::io::Result<Option<V>> {
         let n = self.state.is_none().then_some(src.len());
-        let v = decode_ty(&self.ty, src, &mut self.state)?;
+        let v = decode_ty(&self.ty, src, &mut self.state, self.max_len)?;
         if n == Some(src.len()) {
             self.state = None;
         }
@@ -86,6 +102,7 @@ impl<V: WasmValue> Receive for ValueDecoder<V> {
 /// [Decoder] of tuples of values of types `tys`, e.g. function results
 pub struct TupleDecoder<V: WasmValue> {
     tys: Arc<[V::Type]>,
+    max_len: u32,
     state: Option<Box<Partial<V>>>,
 }
 
@@ -93,7 +110,19 @@ impl<V: WasmValue> TupleDecoder<V> {
     /// Creates a new [`TupleDecoder`] of tuples of values of types `tys`
     #[must_use]
     pub fn new(tys: Arc<[V::Type]>) -> Self {
-        Self { tys, state: None }
+        Self {
+            tys,
+            max_len: DEFAULT_MAX_LEN,
+            state: None,
+        }
+    }
+
+    /// Rejects strings longer than `max_len` bytes and lists longer than `max_len` elements,
+    /// [`DEFAULT_MAX_LEN`] by default.
+    #[must_use]
+    pub fn with_max_len(mut self, max_len: u32) -> Self {
+        self.max_len = max_len;
+        self
     }
 }
 
@@ -103,7 +132,13 @@ impl<V: WasmValue> Decoder for TupleDecoder<V> {
 
     fn decode(&mut self, src: &mut BytesMut) -> std::io::Result<Option<Vec<V>>> {
         let n = self.state.is_none().then_some(src.len());
-        let vs = decode_seq(src, &mut self.state, Some(self.tys.len()), self.tys.iter())?;
+        let vs = decode_seq(
+            src,
+            &mut self.state,
+            self.max_len,
+            Some(self.tys.len()),
+            self.tys.iter(),
+        )?;
         if n == Some(src.len()) {
             self.state = None;
         }
@@ -178,6 +213,7 @@ fn decode_status(src: &mut BytesMut) -> std::io::Result<Option<usize>> {
 fn decode_seq<T: WasmValue>(
     src: &mut BytesMut,
     state: &mut Option<Box<Partial<T>>>,
+    max_len: u32,
     len: Option<usize>,
     tys: impl IntoIterator<Item: Borrow<T::Type>>,
 ) -> std::io::Result<Option<Vec<T>>> {
@@ -187,17 +223,22 @@ fn decode_seq<T: WasmValue>(
             let n = if let Some(n) = len {
                 n
             } else {
-                let Some(n) = decode_discriminant(src)? else {
+                let Some(n) = Leb128DecoderU32.decode(src)? else {
                     return Ok(None);
                 };
-                n
+                if n > max_len {
+                    return Err(error_invalid_data(format!(
+                        "list length `{n}` exceeds the maximum of `{max_len}`"
+                    )));
+                }
+                usize::try_from(n).unwrap_or(usize::MAX)
             };
             let cap = n.min(DEFAULT_MAX_INITIAL_CAPACITY / mem::size_of::<T>().max(1));
             (n, Vec::with_capacity(cap), None)
         }
     };
     for ty in tys.into_iter().take(n).skip(vs.len()) {
-        let Some(v) = decode_ty(ty.borrow(), src, &mut elem)? else {
+        let Some(v) = decode_ty(ty.borrow(), src, &mut elem, max_len)? else {
             *state = Some(Box::new(Partial::Seq { n, vs, elem }));
             return Ok(None);
         };
@@ -209,6 +250,7 @@ fn decode_seq<T: WasmValue>(
 fn decode_case<T: WasmValue>(
     src: &mut BytesMut,
     state: &mut Option<Box<Partial<T>>>,
+    max_len: u32,
     discriminant: impl FnOnce(&mut BytesMut) -> std::io::Result<Option<usize>>,
     payload: impl FnOnce(usize) -> std::io::Result<Option<T::Type>>,
 ) -> std::io::Result<Option<(usize, Option<T>)>> {
@@ -227,7 +269,7 @@ fn decode_case<T: WasmValue>(
     let Some(ty) = payload(i)? else {
         return Ok(Some((i, None)));
     };
-    let Some(v) = decode_ty(&ty, src, &mut state_payload)? else {
+    let Some(v) = decode_ty(&ty, src, &mut state_payload, max_len)? else {
         *state = Some(Box::new(Partial::Case {
             discriminant: i,
             payload: state_payload,
@@ -241,6 +283,7 @@ fn decode_ty<T: WasmValue>(
     ty: &T::Type,
     src: &mut BytesMut,
     state: &mut Option<Box<Partial<T>>>,
+    max_len: u32,
 ) -> std::io::Result<Option<T>> {
     match ty.kind() {
         WasmTypeKind::Bool => decode_leaf(BoolCodec, src, T::make_bool),
@@ -258,7 +301,7 @@ fn decode_ty<T: WasmValue>(
         WasmTypeKind::String => {
             let mut dec = match state.take().map(|state| *state) {
                 Some(Partial::String(dec)) => dec,
-                _ => CoreNameDecoder::default(),
+                _ => CoreNameDecoder::with_max_len(max_len),
             };
             let Some(s) = dec.decode(src)? else {
                 *state = Some(Box::new(Partial::String(dec)));
@@ -270,14 +313,14 @@ fn decode_ty<T: WasmValue>(
             let elem = ty
                 .list_element_type()
                 .ok_or_else(|| error_invalid_data("list type missing element type"))?;
-            let Some(vs) = decode_seq(src, state, None, iter::repeat(&elem))? else {
+            let Some(vs) = decode_seq(src, state, max_len, None, iter::repeat(&elem))? else {
                 return Ok(None);
             };
             T::make_list(ty, vs).map(Some).map_err(error_invalid_data)
         }
         WasmTypeKind::Record => {
             let (names, tys): (Vec<_>, Vec<_>) = ty.record_fields().unzip();
-            let Some(vs) = decode_seq(src, state, Some(tys.len()), &tys)? else {
+            let Some(vs) = decode_seq(src, state, max_len, Some(tys.len()), &tys)? else {
                 return Ok(None);
             };
             let fields = zip(names.iter().map(AsRef::as_ref), vs);
@@ -287,7 +330,7 @@ fn decode_ty<T: WasmValue>(
         }
         WasmTypeKind::Tuple => {
             let tys: Vec<_> = ty.tuple_element_types().collect();
-            let Some(vs) = decode_seq(src, state, Some(tys.len()), &tys)? else {
+            let Some(vs) = decode_seq(src, state, max_len, Some(tys.len()), &tys)? else {
                 return Ok(None);
             };
             T::make_tuple(ty, vs).map(Some).map_err(error_invalid_data)
@@ -298,7 +341,7 @@ fn decode_ty<T: WasmValue>(
                     error_invalid_data(format!("unknown variant discriminant `{i}`"))
                 })
             };
-            let Some((i, v)) = decode_case(src, state, decode_discriminant, |i| {
+            let Some((i, v)) = decode_case(src, state, max_len, decode_discriminant, |i| {
                 let (.., ty) = case(i)?;
                 Ok(ty)
             })?
@@ -323,7 +366,7 @@ fn decode_ty<T: WasmValue>(
                 .map_err(error_invalid_data)
         }
         WasmTypeKind::Option => {
-            let Some((.., v)) = decode_case(src, state, decode_status, |i| {
+            let Some((.., v)) = decode_case(src, state, max_len, decode_status, |i| {
                 if i == 0 {
                     return Ok(None);
                 }
@@ -341,7 +384,7 @@ fn decode_ty<T: WasmValue>(
             let (ok, err) = ty
                 .result_types()
                 .ok_or_else(|| error_invalid_data("result type missing ok/err types"))?;
-            let Some((i, v)) = decode_case(src, state, decode_status, |i| {
+            let Some((i, v)) = decode_case(src, state, max_len, decode_status, |i| {
                 Ok(if i == 0 { ok } else { err })
             })?
             else {
