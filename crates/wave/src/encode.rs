@@ -192,6 +192,13 @@ pub(crate) fn encode_value<T: WasmValue>(
                     tys.len()
                 )));
             }
+            for ((name, ..), (field, ..)) in zip(&vs, &tys) {
+                if name != field {
+                    return Err(error_invalid_input(format!(
+                        "record field `{name}` does not match `{field}`"
+                    )));
+                }
+            }
             for ((.., v), (.., ty)) in zip(vs, tys) {
                 encode_value(&ty, &*v, dst)?;
             }
