@@ -163,6 +163,13 @@ fn errors() -> anyhow::Result<()> {
         .encode(&Value::make_u32(42), &mut buf)
         .expect_err("encoding should fail");
     assert_eq!(err.kind(), ErrorKind::InvalidInput);
+    let ab = Type::record([("a", Type::U32), ("b", Type::U32)]).context("invalid record")?;
+    let ba = Type::record([("b", Type::U32), ("a", Type::U32)]).context("invalid record")?;
+    let v = Value::make_record(&ab, [("a", Value::make_u32(1)), ("b", Value::make_u32(2))])?;
+    let err = ValueEncoder::new(ba)
+        .encode(&v, &mut buf)
+        .expect_err("encoding should fail");
+    assert_eq!(err.kind(), ErrorKind::InvalidInput);
     let err = TupleEncoder::new(Arc::from([Type::U32]))
         .encode(&[] as &[Value], &mut buf)
         .expect_err("encoding should fail");
