@@ -45,43 +45,6 @@ pub use invoke::{Invocation, invoke, invoke_blocking};
 pub use listener::Listener;
 pub use mux::{Receipt, Transmission, receive, transmit};
 pub use pack::{pack, unpack};
-/// Awaiting the futures returned by [`invoke()`], [`serve()`], [`receive()`] and the methods of
-/// [`Codec`], or
-/// futures holding a [`Transmission`](frame::Transmission) across an await, in a [`Send`] future may fail to compile with "one type is more general than the other"
-/// or "implementation of ... is not general enough" due to
-/// [rust-lang/rust#96865](https://github.com/rust-lang/rust/issues/96865),
-/// call [`send`](SendFuture::send) on them before awaiting to work around it:
-///
-/// ```
-/// use futures::StreamExt as _;
-/// use futures::stream::BoxStream;
-/// use tokio::io::{AsyncRead, AsyncWrite};
-/// use tokio::try_join;
-/// use tokio_util::codec::{FramedRead, FramedWrite};
-/// use wrpc_transport::{FrameDecoder, FrameEncoder, SendFuture as _, invoke};
-///
-/// fn invoke_send(
-///     tx: impl AsyncWrite + Send + Unpin,
-///     rx: impl AsyncRead + Send + Unpin,
-/// ) -> impl Future<Output = std::io::Result<Vec<String>>> + Send {
-///     async {
-///         let tx = FramedWrite::new(tx, FrameEncoder);
-///         let rx = FramedRead::new(rx, FrameDecoder::default());
-///         let ((s,), io) = invoke::<_, (BoxStream<'static, Vec<String>>,), _, _, _, _>(
-///             tx,
-///             rx,
-///             "wrpc-test:integration/async",
-///             "with-streams",
-///             (),
-///         )
-///         .send()
-///         .await?;
-///         let (s, ()) = try_join!(async { Ok(s.concat().await) }, io)?;
-///         Ok(s)
-///     }
-/// }
-/// ```
-pub use send_future::SendFuture;
 pub use serve::serve;
 pub use value::*;
 

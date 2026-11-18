@@ -1271,6 +1271,68 @@ async fn rust_oneshot_borrowed() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[test_log::test(tokio::test)]
+async fn rust_bindgen_not_send() -> anyhow::Result<()> {
+    mod bindings {
+        wit_bindgen_wrpc::generate!({
+            inline: "
+                package wrpc-test:not-send;
+
+                interface greeter {
+                    greet: func(name: future<string>) -> string;
+                }
+
+                world greeter-world {
+                    import greeter;
+                    export greeter;
+                }
+            ",
+        });
+    }
+
+    #[derive(Clone, Copy)]
+    struct Handler;
+
+    impl bindings::exports::wrpc_test::not_send::greeter::Handler for Handler {
+        async fn greet(&self, name: BoxFuture<'static, String>) -> anyhow::Result<String> {
+            let name = name.await;
+            Ok(format!("Hello, {name}"))
+        }
+    }
+
+    let (clt, srv) = duplex(1024);
+    let (clt_rx, clt_tx) = split(clt);
+    let clt_rx: Box<dyn AsyncRead + Unpin> = Box::new(clt_rx);
+    let clt_tx: Box<dyn AsyncWrite + Unpin> = Box::new(clt_tx);
+    let clt_tx = FramedWrite::new(clt_tx, FrameEncoder);
+    let clt_rx = FramedRead::new(clt_rx, FrameDecoder::default());
+    let (rx, tx) = split(srv);
+    let (greeting, ()) = try_join!(
+        async {
+            let (greeting, io) = bindings::wrpc_test::not_send::greeter::greet(
+                clt_tx,
+                clt_rx,
+                Box::pin(async { "world".into() }),
+            )
+            .await?;
+            io.await?;
+            anyhow::Ok(greeting)
+        },
+        async {
+            let mut lis = Listener::new(tx, rx);
+            while let Some((Header { instance, name }, tx, rx)) = lis.accept().await? {
+                let Ok(fut) = bindings::handle(&Handler, &instance, &name, tx, rx) else {
+                    bail!("`{instance}#{name}` is not exported");
+                };
+                fut.await?;
+            }
+            anyhow::Ok(())
+        },
+    )?;
+    assert_eq!(greeting, "Hello, world");
+    Ok(())
+}
+
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 #[instrument(ret)]
 async fn rust_oneshot_duplex() -> anyhow::Result<()> {
