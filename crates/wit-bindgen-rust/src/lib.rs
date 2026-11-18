@@ -493,7 +493,17 @@ where
             self.src
                 .push_str("handle_interface(handler, instance, func, tx, rx))");
         }
-        uwriteln!(self.src, "\n}}");
+        uwriteln!(
+            self.src,
+            r#"
+}}
+
+fn send__<T: ::core::future::Future + ::core::marker::Send>(
+    fut: T,
+) -> impl ::core::future::Future<Output = T::Output> + ::core::marker::Send {{
+    fut
+}}"#
+        );
     }
 }
 

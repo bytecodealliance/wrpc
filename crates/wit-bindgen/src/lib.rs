@@ -166,8 +166,8 @@
 ///     connect: impl AsyncFn() -> std::io::Result<(FramedWrite<O, FrameEncoder>, FramedRead<I, FrameDecoder>)>,
 /// ) -> anyhow::Result<()>
 /// where
-///     I: tokio::io::AsyncRead + Send + Unpin,
-///     O: tokio::io::AsyncWrite + Send + Unpin,
+///     I: tokio::io::AsyncRead + Unpin,
+///     O: tokio::io::AsyncWrite + Unpin,
 /// {
 ///     let (tx, rx) = connect().await?;
 ///     let current_temp = bindings::what_temperature_is_it(tx, rx).await?;
@@ -222,8 +222,8 @@
 ///     connect: impl AsyncFn() -> std::io::Result<(FramedWrite<O, FrameEncoder>, FramedRead<I, FrameDecoder>)>,
 /// ) -> anyhow::Result<()>
 /// where
-///     I: tokio::io::AsyncRead + Send + Unpin,
-///     O: tokio::io::AsyncWrite + Send + Unpin,
+///     I: tokio::io::AsyncRead + Unpin,
+///     O: tokio::io::AsyncWrite + Unpin,
 /// {
 ///     let (tx, rx) = connect().await?;
 ///     let current_level = global_logger::get_current_level(tx, rx).await?;
@@ -290,8 +290,8 @@
 ///     connect: impl AsyncFn() -> std::io::Result<(FramedWrite<O, FrameEncoder>, FramedRead<I, FrameDecoder>)>,
 /// ) -> anyhow::Result<()>
 /// where
-///     I: tokio::io::AsyncRead + Send + Unpin,
-///     O: tokio::io::AsyncWrite + Send + Unpin,
+///     I: tokio::io::AsyncRead + Unpin,
+///     O: tokio::io::AsyncWrite + Unpin,
 /// {
 ///     let (tx, rx) = connect().await?;
 ///     let logger = get_global_logger(tx, rx).await?;
@@ -397,6 +397,7 @@
 /// impl exports::b::Handler for MyComponent {
 ///     async fn func_in_b(&self) -> anyhow::Result<()> { Ok(()) }
 /// }
+/// # fn main() {}
 /// ```
 ///
 /// Here note that there were three `Handler` traits generated for each of the
