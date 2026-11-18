@@ -10,16 +10,16 @@ license.workspace = true
 repository.workspace = true
 
 [features]
-default = ["client", "client-legacy", "http1", "http2"]
-client = ["hyper/client"]
-client-legacy = [
-    "client",
+default = ["client", "http2", "server"]
+client = ["dep:hyper", "hyper/client"]
+http2 = ["hyper?/http2"]
+server = [
+    "dep:hyper",
     "dep:hyper-util",
-    "hyper-util/client-legacy",
-    "hyper-util/http2",
+    "hyper/http2",
+    "hyper/server",
+    "hyper-util/tokio",
 ]
-http1 = ["hyper-util?/http1"]
-http2 = ["hyper/http2"]
 
 [dependencies]
 bytes = { workspace = true }
@@ -27,10 +27,10 @@ futures = { workspace = true, features = ["std"] }
 http = { workspace = true }
 http-body = { workspace = true }
 http-body-util = { workspace = true }
-hyper = { workspace = true }
+hyper = { workspace = true, optional = true }
 hyper-util = { workspace = true, optional = true }
 pin-project-lite = { workspace = true }
-tokio = { workspace = true, features = ["io-util", "macros", "rt", "sync"] }
+tokio = { workspace = true, features = ["io-util"] }
 tokio-util = { workspace = true, features = ["io"] }
 tracing = { workspace = true, features = ["attributes"] }
 
@@ -41,9 +41,9 @@ hyper-util = { workspace = true, features = [
     "client-legacy",
     "http1",
     "http2",
-    "server",
     "tokio",
 ] }
 test-log = { workspace = true, features = ["color", "log", "trace"] }
-tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread"] }
+tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "sync"] }
 wrpc-test = { workspace = true, features = ["http"] }
+wrpc-transport = { workspace = true }
