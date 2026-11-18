@@ -223,6 +223,7 @@ async fn accept(lis: &TcpListener) -> std::io::Result<Listener<OwnedReadHalf, Ow
 async fn serve_conn(
     mut lis: Listener<OwnedReadHalf, OwnedWriteHalf>,
     timeout: Duration,
+    max_len: u32,
     pre: &InstancePre<Ctx>,
     envs: &[(Box<str>, Box<str>)],
     exports: &Exports,
@@ -248,7 +249,8 @@ async fn serve_conn(
             .run_concurrent(async |store| {
                 let codec = Codec {
                     enc: TupleEncoder::new(store, Arc::clone(&export.results), resources.clone()),
-                    dec: TupleDecoder::new(store, Arc::clone(&export.params), resources.clone()),
+                    dec: TupleDecoder::new(store, Arc::clone(&export.params), resources.clone())
+                        .with_max_len(max_len),
                 };
                 call(store, codec, tx, rx, func).await?;
                 poll_fn(|cx| store.poll_no_interesting_tasks(cx)).await;
@@ -265,6 +267,7 @@ async fn serve_conn_shared(
     store: &Accessor<Ctx>,
     mut lis: Listener<OwnedReadHalf, OwnedWriteHalf>,
     timeout: Duration,
+    max_len: u32,
     instance: Instance,
     exports: &Exports,
     resources: &ResourceTypes,
@@ -281,7 +284,8 @@ async fn serve_conn_shared(
             .context("function export not found")?;
         let codec = Codec {
             enc: TupleEncoder::new(store, Arc::clone(&export.results), resources.clone()),
-            dec: TupleDecoder::new(store, Arc::clone(&export.params), resources.clone()),
+            dec: TupleDecoder::new(store, Arc::clone(&export.params), resources.clone())
+                .with_max_len(max_len),
         };
         call(store, codec, tx, rx, func).await?;
     }
@@ -292,6 +296,7 @@ async fn serve_conn_shared(
 pub async fn serve(
     lis: TcpListener,
     timeout: Duration,
+    max_len: u32,
     envs: Vec<(Box<str>, Box<str>)>,
     workload: &str,
 ) -> anyhow::Result<()> {
@@ -320,7 +325,7 @@ pub async fn serve(
                         tasks.spawn(
                             async move {
                                 let res =
-                                    serve_conn(conn, timeout, &pre, &envs, &exports, &resources)
+                                    serve_conn(conn, timeout, max_len, &pre, &envs, &exports, &resources)
                                         .await;
                                 if let Err(err) = res {
                                     warn!(?err, "failed to serve connection");
@@ -352,7 +357,7 @@ pub async fn serve(
                 select! {
                     res = accept(&lis), if conns.len() < MAX_CONNECTIONS => match res {
                         Ok(conn) => conns.push(serve_conn_shared(
-                            store, conn, timeout, instance, &exports, &resources,
+                            store, conn, timeout, max_len, instance, &exports, &resources,
                         )),
                         Err(err) => error!(?err, "failed to accept connection"),
                     },
