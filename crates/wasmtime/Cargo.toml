@@ -11,7 +11,8 @@ license.workspace = true
 repository.workspace = true
 
 [features]
-default = ["wasmtime-wasi"]
+default = ["async", "wasmtime-wasi"]
+async = ["wasmtime/component-model-async"]
 
 [dependencies]
 anyhow = { workspace = true, features = ["std"] }
@@ -22,7 +23,7 @@ tokio-util = { workspace = true, features = ["codec", "io"] }
 tracing = { workspace = true, features = ["attributes"] }
 uuid = { workspace = true, features = ["std", "v7"] }
 wasm-tokio = { workspace = true }
-wasmtime = { workspace = true, features = ["anyhow", "component-model-async", "std"] }
+wasmtime = { workspace = true, features = ["anyhow", "component-model", "runtime", "std"] }
 wasmtime-wasi = { workspace = true, features = ["p2"], optional = true }
 wrpc-transport = { workspace = true }
 
@@ -31,3 +32,7 @@ test-log = { workspace = true, features = ["trace"] }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "rt-multi-thread"] }
 wasmtime = { workspace = true, features = ["cranelift", "wat"] }
 wrpc-test = { workspace = true }
+
+[[test]]
+name = "loopback"
+required-features = ["async"]

@@ -7,40 +7,23 @@
 //! example, it instantiates the component for each invocation or serves all connections in one
 //! instance from a single `run_concurrent` event loop, which guest-exported resources require.
 
-use core::borrow::BorrowMut;
-
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use tokio::io::{AsyncRead, AsyncWrite};
-use tokio_util::codec::{FramedRead, FramedWrite};
-use tracing::{debug, instrument, trace, warn};
+use tracing::{debug, instrument, trace};
 use uuid::Uuid;
 use wasmtime::Engine;
-use wasmtime::component::{Accessor, Func, ResourceAny, ResourceTable, ResourceType, Val, types};
-use wasmtime::error::Context as _;
-use wrpc_transport::{Codec, FrameDecoder, FrameEncoder};
+use wasmtime::component::{ResourceAny, ResourceTable, ResourceType, types};
 
+#[cfg(feature = "async")]
+mod call;
 mod codec;
 mod export;
 
+#[cfg(feature = "async")]
+pub use call::*;
 pub use codec::*;
 pub use export::*;
-
-// this returns the RPC name for a wasmtime function name.
-// Unfortunately, the [`types::ComponentFunc`] does not include the kind information and we want to
-// avoid (re-)parsing the WIT here.
-fn rpc_func_name(name: &str) -> &str {
-    if let Some(name) = name.strip_prefix("[constructor]") {
-        name
-    } else if let Some(name) = name.strip_prefix("[static]") {
-        name
-    } else if let Some(name) = name.strip_prefix("[method]") {
-        name
-    } else {
-        name
-    }
-}
 
 /// Resource types, values of which are given special treatment by the wRPC value codec
 #[derive(Clone, Debug, Default)]
@@ -71,37 +54,6 @@ impl<T: WrpcView> WrpcView for &mut T {
     fn wrpc(&mut self) -> WrpcCtxView<'_> {
         T::wrpc(self)
     }
-}
-
-/// Calls the exported `func` with parameters received from the frames `rx` and transmits the
-/// results to the frames `tx` using `codec`, which must match the type of `func`.
-///
-/// The `store` [`Accessor`] is used to call `func` concurrently, it can be acquired, for example,
-/// using [`wasmtime::Store::run_concurrent`].
-pub async fn call<T, R, W, I, O>(
-    store: &Accessor<T>,
-    codec: Codec<TupleEncoder<'_, &Accessor<T>>, ValDecoder<'_, &Accessor<T>>>,
-    tx: W,
-    rx: R,
-    func: Func,
-) -> wasmtime::Result<()>
-where
-    T: WrpcView + 'static,
-    R: BorrowMut<FramedRead<I, FrameDecoder>>,
-    W: BorrowMut<FramedWrite<O, FrameEncoder>>,
-    I: AsyncRead + Unpin,
-    O: AsyncWrite + Unpin,
-{
-    let n = codec.enc.tys.len();
-    codec
-        .serve(tx, rx, async |params: Vec<Val>| {
-            let mut results = vec![Val::Bool(false); n];
-            func.call_concurrent(store, &params, &mut results)
-                .await
-                .context("failed to call function")?;
-            Ok(results)
-        })
-        .await
 }
 
 /// Recursively iterates the component item type and collects all exported resource types
