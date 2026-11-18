@@ -247,8 +247,8 @@ async fn serve_conn(
         store
             .run_concurrent(async |store| {
                 let codec = Codec {
-                    enc: TupleEncoder::new(store, &export.results, resources),
-                    dec: TupleDecoder::new(store, &export.params, resources),
+                    enc: TupleEncoder::new(store, &export.results, resources.clone()),
+                    dec: TupleDecoder::new(store, &export.params, resources.clone()),
                 };
                 call(store, codec, tx, rx, func).await?;
                 poll_fn(|cx| store.poll_no_interesting_tasks(cx)).await;
@@ -280,8 +280,8 @@ async fn serve_conn_shared(
             .with(|store| instance.get_func(store, export.idx))
             .context("function export not found")?;
         let codec = Codec {
-            enc: TupleEncoder::new(store, &export.results, resources),
-            dec: TupleDecoder::new(store, &export.params, resources),
+            enc: TupleEncoder::new(store, &export.results, resources.clone()),
+            dec: TupleDecoder::new(store, &export.params, resources.clone()),
         };
         call(store, codec, tx, rx, func).await?;
     }

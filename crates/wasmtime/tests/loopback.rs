@@ -93,10 +93,9 @@ async fn serve_conn_shared(
             .store
             .with(|store| guest.instance.get_func(store, export.idx))
             .context("function export not found")?;
-        let resources = ResourceTypes::default();
         let codec = Codec {
-            enc: TupleEncoder::new(guest.store, &export.results, &resources),
-            dec: TupleDecoder::new(guest.store, &export.params, &resources),
+            enc: TupleEncoder::new(guest.store, &export.results, ResourceTypes::default()),
+            dec: TupleDecoder::new(guest.store, &export.params, ResourceTypes::default()),
         };
         call(guest.store, codec, tx, rx, func).await?;
     }
@@ -140,10 +139,9 @@ async fn serve_conn(
             .context("function export not found")?;
         store
             .run_concurrent(async |store| {
-                let resources = ResourceTypes::default();
                 let codec = Codec {
-                    enc: TupleEncoder::new(store, &export.results, &resources),
-                    dec: TupleDecoder::new(store, &export.params, &resources),
+                    enc: TupleEncoder::new(store, &export.results, ResourceTypes::default()),
+                    dec: TupleDecoder::new(store, &export.params, ResourceTypes::default()),
                 };
                 call(store, codec, tx, rx, func).await
             })
