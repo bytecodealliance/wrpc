@@ -3,10 +3,10 @@
 use crate::server::exports::exports::Handler;
 
 #[derive(Clone)]
-pub struct Component;
+pub struct Component(pub crate::Client);
 
-impl<Ctx: Send> Handler<Ctx> for Component {
-    async fn bar(&self, _cx: Ctx) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+impl Handler for Component {
+    async fn bar(&self) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
         Ok(())
     }
 }

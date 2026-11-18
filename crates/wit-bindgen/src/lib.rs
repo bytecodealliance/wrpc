@@ -328,8 +328,8 @@
 /// #[derive(Clone)]
 /// struct MyComponent;
 ///
-/// impl<Ctx: Send> Handler<Ctx> for MyComponent {
-///     async fn hello(&self, cx: Ctx) -> anyhow::Result<()> { Ok(()) }
+/// impl Handler for MyComponent {
+///     async fn hello(&self) -> anyhow::Result<()> { Ok(()) }
 /// }
 /// ```
 ///
@@ -373,17 +373,17 @@
 /// #[derive(Clone)]
 /// struct MyComponent;
 ///
-/// impl<Ctx: Send> Handler<Ctx> for MyComponent {
-///     async fn c(&self, cx: Ctx) -> anyhow::Result<()> { Ok(()) }
+/// impl Handler for MyComponent {
+///     async fn c(&self) -> anyhow::Result<()> { Ok(()) }
 /// }
 ///
-/// impl<Ctx: Send> exports::my::test::a::Handler<Ctx> for MyComponent {
-///     async fn func_in_a(&self, cx: Ctx) -> anyhow::Result<()> { Ok(()) }
-///     async fn second_func_in_a(&self, cx: Ctx) -> anyhow::Result<()> { Ok(()) }
+/// impl exports::my::test::a::Handler for MyComponent {
+///     async fn func_in_a(&self) -> anyhow::Result<()> { Ok(()) }
+///     async fn second_func_in_a(&self) -> anyhow::Result<()> { Ok(()) }
 /// }
 ///
-/// impl<Ctx: Send> exports::b::Handler<Ctx> for MyComponent {
-///     async fn func_in_b(&self, cx: Ctx) -> anyhow::Result<()> { Ok(()) }
+/// impl exports::b::Handler for MyComponent {
+///     async fn func_in_b(&self) -> anyhow::Result<()> { Ok(()) }
 /// }
 /// ```
 ///
@@ -421,8 +421,8 @@
 /// #[derive(Clone)]
 /// struct MyComponent;
 ///
-/// impl<Ctx: Send> bindings::exports::b::Handler<Ctx> for MyComponent {
-///     async fn foo(&self, cx: Ctx) -> anyhow::Result<u32> {
+/// impl bindings::exports::b::Handler for MyComponent {
+///     async fn foo(&self) -> anyhow::Result<u32> {
 ///         Ok(42)
 ///     }
 /// }
@@ -495,15 +495,15 @@
 /// // The `logging` interface has no functions of its own, but its `Handler`
 /// // trait requires the per-resource `HandlerLogger` trait as a supertrait, so
 /// // it must still be implemented here — with an empty body.
-/// impl<Ctx: Send> Handler<Ctx> for MyComponent {}
+/// impl Handler for MyComponent {}
 ///
 /// struct MyLogger {
 ///     level: RwLock<Level>,
 ///     contents: RwLock<String>,
 /// }
 ///
-/// impl<Ctx: Send> HandlerLogger<Ctx> for MyComponent {
-///     async fn new(&self, cx: Ctx, level: Level) -> anyhow::Result<ResourceOwn<Logger>> {
+/// impl HandlerLogger for MyComponent {
+///     async fn new(&self, level: Level) -> anyhow::Result<ResourceOwn<Logger>> {
 ///         let mut loggers = self.loggers.write().unwrap();
 ///         let handle = loggers.len().to_le_bytes();
 ///         loggers.push(MyLogger {
@@ -513,7 +513,7 @@
 ///         Ok(ResourceOwn::from(Bytes::copy_from_slice(&handle)))
 ///     }
 ///
-///     async fn log(&self, cx: Ctx, logger: ResourceBorrow<Logger>, level: Level, msg: String) -> anyhow::Result<()> {
+///     async fn log(&self, logger: ResourceBorrow<Logger>, level: Level, msg: String) -> anyhow::Result<()> {
 ///         let i = Bytes::from(logger).as_ref().try_into()?;
 ///         let i = usize::from_le_bytes(i);
 ///         let loggers = self.loggers.read().unwrap();
@@ -526,7 +526,7 @@
 ///         Ok(())
 ///     }
 ///
-///     async fn level(&self, cx: Ctx, logger: ResourceBorrow<Logger>) -> anyhow::Result<Level> {
+///     async fn level(&self, logger: ResourceBorrow<Logger>) -> anyhow::Result<Level> {
 ///         let i = Bytes::from(logger).as_ref().try_into()?;
 ///         let i = usize::from_le_bytes(i);
 ///         let loggers = self.loggers.read().unwrap();
@@ -535,7 +535,7 @@
 ///         Ok(level.clone())
 ///     }
 ///
-///     async fn set_level(&self, cx: Ctx, logger: ResourceBorrow<Logger>, level: Level) -> anyhow::Result<()> {
+///     async fn set_level(&self, logger: ResourceBorrow<Logger>, level: Level) -> anyhow::Result<()> {
 ///         let i = Bytes::from(logger).as_ref().try_into()?;
 ///         let i = usize::from_le_bytes(i);
 ///         let loggers = self.loggers.read().unwrap();
@@ -561,13 +561,13 @@
 ///
 /// Each call to `generate!` itself generates a `handle` function adjacent to
 /// the generated bindings. It takes a value that implements the generated
-/// `Handler` traits, the context passed to the handler, the instance and
-/// function name of the invocation header and the byte stream and frames
-/// returned by `wrpc_transport::Listener::accept`. It returns a future serving the invocation
-/// if the world exports the invoked function, and the context and byte streams
-/// back otherwise, so that the `handle` functions of several worlds can be
-/// chained to serve all of them on one connection. Nothing is spawned and the
-/// caller accepts the connections and drives them:
+/// `Handler` traits, the instance and function name of the invocation header
+/// and the byte stream and frames returned by
+/// `wrpc_transport::Listener::accept`. It returns a future serving the invocation
+/// if the world exports the invoked function, and the byte stream and frames
+/// back otherwise, so that the `handle` functions of several worlds can be chained
+/// to serve all of them on one connection. Nothing is spawned and the caller
+/// accepts the connections and drives them:
 ///
 /// ```
 /// use tokio::io::{AsyncRead, AsyncWrite};
@@ -588,8 +588,8 @@
 /// #[derive(Clone)]
 /// struct MyComponent;
 ///
-/// impl<Ctx: Send> Handler<Ctx> for MyComponent {
-/// #   async fn hello(&self, cx: Ctx) -> anyhow::Result<()> { Ok(()) }
+/// impl Handler for MyComponent {
+/// #   async fn hello(&self) -> anyhow::Result<()> { Ok(()) }
 ///     // ...
 /// }
 ///
@@ -599,7 +599,7 @@
 /// ) -> anyhow::Result<()> {
 ///     let mut lis = Listener::new(tx, rx);
 ///     while let Some((Header { instance, name }, tx, rx)) = lis.accept().await? {
-///         let Ok(fut) = handle(&MyComponent, (), &instance, &name, tx, rx) else {
+///         let Ok(fut) = handle(&MyComponent, &instance, &name, tx, rx) else {
 ///             anyhow::bail!("`{instance}#{name}` is not exported");
 ///         };
 ///         fut.await?;
@@ -636,8 +636,8 @@
 /// #[derive(Clone)]
 /// struct MyComponent;
 ///
-/// impl<Ctx: Send> bindings::Handler<Ctx> for MyComponent {
-/// #   async fn hello(&self, cx: Ctx) -> anyhow::Result<()> { Ok(()) }
+/// impl bindings::Handler for MyComponent {
+/// #   async fn hello(&self) -> anyhow::Result<()> { Ok(()) }
 ///     // ...
 /// }
 ///
@@ -647,7 +647,7 @@
 /// ) -> anyhow::Result<()> {
 ///     let mut lis = Listener::new(tx, rx);
 ///     while let Some((Header { instance, name }, tx, rx)) = lis.accept().await? {
-///         let Ok(fut) = bindings::handle(&MyComponent, (), &instance, &name, tx, rx) else {
+///         let Ok(fut) = bindings::handle(&MyComponent, &instance, &name, tx, rx) else {
 ///             anyhow::bail!("`{instance}#{name}` is not exported");
 ///         };
 ///         fut.await?;
@@ -893,8 +893,8 @@ pub use wit_bindgen_wrpc_rust_macro::generate;
 /// ```
 ///
 /// The `enable_method_chaining` option is not supported (upstream #1586; wRPC
-/// resource methods take the transport, context and handle explicitly and
-/// return futures, so there is no `self` to chain on):
+/// resource methods take the transport and handle explicitly and return
+/// futures, so there is no `self` to chain on):
 ///
 /// ```compile_fail
 /// wit_bindgen_wrpc::generate!({

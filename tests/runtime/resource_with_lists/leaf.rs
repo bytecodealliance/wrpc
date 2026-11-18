@@ -13,14 +13,13 @@ fn index(thing: &ResourceBorrow<Thing>) -> usize {
 }
 
 #[derive(Clone)]
-pub struct Component;
+pub struct Component(pub crate::Client);
 
-impl<Ctx: Send> Handler<Ctx> for Component {}
+impl Handler for Component {}
 
-impl<Ctx: Send> HandlerThing<Ctx> for Component {
+impl HandlerThing for Component {
     async fn new(
         &self,
-        _cx: Ctx,
         l: Bytes,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<ResourceOwn<Thing>> {
         let mut l = l.to_vec();
@@ -35,7 +34,6 @@ impl<Ctx: Send> HandlerThing<Ctx> for Component {
 
     async fn foo(
         &self,
-        _cx: Ctx,
         self_: ResourceBorrow<Thing>,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<Bytes> {
         let mut list = THINGS.lock().unwrap()[index(&self_)].clone();
@@ -45,7 +43,6 @@ impl<Ctx: Send> HandlerThing<Ctx> for Component {
 
     async fn bar(
         &self,
-        _cx: Ctx,
         self_: ResourceBorrow<Thing>,
         l: Bytes,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
@@ -55,7 +52,7 @@ impl<Ctx: Send> HandlerThing<Ctx> for Component {
         Ok(())
     }
 
-    async fn baz(&self, _cx: Ctx, l: Bytes) -> ::wit_bindgen_wrpc::anyhow::Result<Bytes> {
+    async fn baz(&self, l: Bytes) -> ::wit_bindgen_wrpc::anyhow::Result<Bytes> {
         let mut l = l.to_vec();
         l.extend_from_slice(" HostThing.baz".as_bytes());
         Ok(l.into())

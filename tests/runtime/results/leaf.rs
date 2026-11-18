@@ -1,12 +1,11 @@
 use crate::leaf::exports::test::results::test as imports;
 
 #[derive(Clone)]
-pub struct Component;
+pub struct Component(pub crate::Client);
 
-impl<Ctx: Send> imports::Handler<Ctx> for Component {
+impl imports::Handler for Component {
     async fn string_error(
         &self,
-        _cx: Ctx,
         a: f32,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<Result<f32, String>> {
         if a == 0.0 {
@@ -18,7 +17,6 @@ impl<Ctx: Send> imports::Handler<Ctx> for Component {
 
     async fn enum_error(
         &self,
-        _cx: Ctx,
         a: f32,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<Result<f32, imports::E>> {
         if a == 0.0 {
@@ -30,7 +28,6 @@ impl<Ctx: Send> imports::Handler<Ctx> for Component {
 
     async fn record_error(
         &self,
-        _cx: Ctx,
         a: f32,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<Result<f32, imports::E2>> {
         if a == 0.0 {
@@ -50,7 +47,6 @@ impl<Ctx: Send> imports::Handler<Ctx> for Component {
 
     async fn variant_error(
         &self,
-        _cx: Ctx,
         a: f32,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<Result<f32, imports::E3>> {
         if a == 0.0 {
@@ -69,7 +65,6 @@ impl<Ctx: Send> imports::Handler<Ctx> for Component {
 
     async fn empty_error(
         &self,
-        _cx: Ctx,
         a: u32,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<Result<u32, ()>> {
         if a == 0 {
@@ -83,7 +78,6 @@ impl<Ctx: Send> imports::Handler<Ctx> for Component {
 
     async fn double_error(
         &self,
-        _cx: Ctx,
         a: u32,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<Result<Result<(), String>, String>> {
         if a == 0 {

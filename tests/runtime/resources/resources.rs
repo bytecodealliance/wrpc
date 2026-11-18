@@ -18,12 +18,11 @@ fn z_val(z: &[u8]) -> i32 {
 }
 
 #[derive(Clone)]
-pub struct Component;
+pub struct Component(pub crate::Client);
 
-impl Handler<crate::Client> for Component {
+impl Handler for Component {
     async fn add(
         &self,
-        _cx: crate::Client,
         a: ResourceBorrow<Z>,
         b: ResourceBorrow<Z>,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<ResourceOwn<Z>> {
@@ -33,15 +32,15 @@ impl Handler<crate::Client> for Component {
         )))
     }
 
-    async fn consume(&self, _cx: crate::Client, x: ResourceOwn<X>) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+    async fn consume(&self, x: ResourceOwn<X>) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
         drop(x);
         Ok(())
     }
 
-    async fn test_imports(&self, cx: crate::Client) -> ::wit_bindgen_wrpc::anyhow::Result<Result<(), String>> {
+    async fn test_imports(&self) -> ::wit_bindgen_wrpc::anyhow::Result<Result<(), String>> {
         use crate::server::imports::*;
 
-        let (mut tx, mut rx) = cx.connect().await?;
+        let (mut tx, mut rx) = self.0.connect().await?;
         let y = Y::new(&mut tx, &mut rx, 10).await?;
         let v = Y::get_a(&mut tx, &mut rx, &y.as_borrow()).await?;
         assert_eq!(v, 10);
@@ -75,8 +74,8 @@ impl Handler<crate::Client> for Component {
     }
 }
 
-impl HandlerX<crate::Client> for Component {
-    async fn new(&self, _cx: crate::Client, a: i32) -> ::wit_bindgen_wrpc::anyhow::Result<ResourceOwn<X>> {
+impl HandlerX for Component {
+    async fn new(&self, a: i32) -> ::wit_bindgen_wrpc::anyhow::Result<ResourceOwn<X>> {
         let mut xs = XS.lock().unwrap();
         let idx = u32::try_from(xs.len())?;
         xs.push(a);
@@ -87,7 +86,6 @@ impl HandlerX<crate::Client> for Component {
 
     async fn get_a(
         &self,
-        _cx: crate::Client,
         self_: ResourceBorrow<X>,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<i32> {
         Ok(XS.lock().unwrap()[x_index(self_.as_ref())])
@@ -95,7 +93,6 @@ impl HandlerX<crate::Client> for Component {
 
     async fn set_a(
         &self,
-        _cx: crate::Client,
         self_: ResourceBorrow<X>,
         a: i32,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
@@ -105,7 +102,6 @@ impl HandlerX<crate::Client> for Component {
 
     async fn add(
         &self,
-        _cx: crate::Client,
         x: ResourceOwn<X>,
         a: i32,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<ResourceOwn<X>> {
@@ -114,28 +110,26 @@ impl HandlerX<crate::Client> for Component {
     }
 }
 
-impl HandlerZ<crate::Client> for Component {
-    async fn new(&self, _cx: crate::Client, a: i32) -> ::wit_bindgen_wrpc::anyhow::Result<ResourceOwn<Z>> {
+impl HandlerZ for Component {
+    async fn new(&self, a: i32) -> ::wit_bindgen_wrpc::anyhow::Result<ResourceOwn<Z>> {
         Ok(ResourceOwn::from(Bytes::copy_from_slice(&a.to_le_bytes())))
     }
 
     async fn get_a(
         &self,
-        _cx: crate::Client,
         self_: ResourceBorrow<Z>,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<i32> {
         Ok(z_val(self_.as_ref()))
     }
 
-    async fn num_dropped(&self, _cx: crate::Client) -> ::wit_bindgen_wrpc::anyhow::Result<u32> {
+    async fn num_dropped(&self) -> ::wit_bindgen_wrpc::anyhow::Result<u32> {
         Ok(1)
     }
 }
 
-impl HandlerKebabCase<crate::Client> for Component {
+impl HandlerKebabCase for Component {
     async fn new(
         &self,
-        _cx: crate::Client,
         a: u32,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<ResourceOwn<KebabCase>> {
         Ok(ResourceOwn::from(Bytes::copy_from_slice(&a.to_le_bytes())))
@@ -143,7 +137,6 @@ impl HandlerKebabCase<crate::Client> for Component {
 
     async fn get_a(
         &self,
-        _cx: crate::Client,
         self_: ResourceBorrow<KebabCase>,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<u32> {
         let bytes: &[u8] = self_.as_ref();
@@ -152,9 +145,8 @@ impl HandlerKebabCase<crate::Client> for Component {
 
     async fn take_owned(
         &self,
-        cx: crate::Client,
         k: ResourceOwn<KebabCase>,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<u32> {
-        HandlerKebabCase::get_a(self, cx, k.into()).await
+        HandlerKebabCase::get_a(self, k.into()).await
     }
 }

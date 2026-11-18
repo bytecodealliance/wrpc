@@ -11,10 +11,10 @@ use crate::server::exports::my::inline::blah::{Foo, Handler as HandlerBlah, Igno
 use std::collections::{hash_map::RandomState, HashSet};
 
 #[derive(Clone)]
-pub struct Component;
+pub struct Component(pub crate::Client);
 
-impl<Ctx: Send> HandlerBlah<Ctx> for Component {
-    async fn bar(&self, _cx: Ctx, cool: Foo) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+impl HandlerBlah for Component {
+    async fn bar(&self, cool: Foo) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
         let _blah: HashSet<Foo, RandomState> = HashSet::from_iter([
             Foo {
                 field1: "hello".to_string(),
@@ -25,17 +25,16 @@ impl<Ctx: Send> HandlerBlah<Ctx> for Component {
         Ok(())
     }
 
-    async fn barry(&self, _cx: Ctx, _warm: Ignoreme) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+    async fn barry(&self, _warm: Ignoreme) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
         Ok(())
     }
 }
 
-impl<Ctx: Send> HandlerBlag<Ctx> for Component {}
+impl HandlerBlag for Component {}
 
-impl<Ctx: Send> HandlerInputStream<Ctx> for Component {
+impl HandlerInputStream for Component {
     async fn read(
         &self,
-        _cx: Ctx,
         _stream: ::wit_bindgen_wrpc::wrpc_transport::ResourceBorrow<
             crate::server::exports::my::inline::blag::InputStream,
         >,

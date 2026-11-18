@@ -1,13 +1,13 @@
 #[derive(Clone)]
-pub struct Component;
+pub struct Component(pub crate::Client);
 
-impl<Ctx: Send> crate::server::exports::cat::Handler<Ctx> for Component {
-    async fn foo(&self, _cx: Ctx, x: String) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+impl crate::server::exports::cat::Handler for Component {
+    async fn foo(&self, x: String) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
         assert_eq!(x, "hello");
         Ok(())
     }
 
-    async fn bar(&self, _cx: Ctx) -> ::wit_bindgen_wrpc::anyhow::Result<String> {
+    async fn bar(&self) -> ::wit_bindgen_wrpc::anyhow::Result<String> {
         Ok("world".into())
     }
 }

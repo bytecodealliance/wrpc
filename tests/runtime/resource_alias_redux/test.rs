@@ -3,12 +3,11 @@ use crate::server::exports::test::resource_alias_redux::resource_alias2 as a2;
 use crate::server::exports::the_test;
 
 #[derive(Clone)]
-pub struct Component;
+pub struct Component(pub crate::Client);
 
-impl<Ctx: Send> a1::Handler<Ctx> for Component {
+impl a1::Handler for Component {
     async fn a(
         &self,
-        _cx: Ctx,
         f: a1::Foo,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<
         Vec<::wit_bindgen_wrpc::wrpc_transport::ResourceOwn<a1::Thing>>,
@@ -17,10 +16,9 @@ impl<Ctx: Send> a1::Handler<Ctx> for Component {
     }
 }
 
-impl<Ctx: Send> a1::HandlerThing<Ctx> for Component {
+impl a1::HandlerThing for Component {
     async fn new(
         &self,
-        _cx: Ctx,
         s: String,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<
         ::wit_bindgen_wrpc::wrpc_transport::ResourceOwn<a1::Thing>,
@@ -33,7 +31,6 @@ impl<Ctx: Send> a1::HandlerThing<Ctx> for Component {
 
     async fn get(
         &self,
-        _cx: Ctx,
         self_: ::wit_bindgen_wrpc::wrpc_transport::ResourceBorrow<a1::Thing>,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<String> {
         let repr: &[u8] = self_.as_ref();
@@ -42,10 +39,9 @@ impl<Ctx: Send> a1::HandlerThing<Ctx> for Component {
     }
 }
 
-impl<Ctx: Send> a2::Handler<Ctx> for Component {
+impl a2::Handler for Component {
     async fn b(
         &self,
-        _cx: Ctx,
         f: a2::Foo,
         g: a2::Bar,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<
@@ -55,10 +51,9 @@ impl<Ctx: Send> a2::Handler<Ctx> for Component {
     }
 }
 
-impl<Ctx: Send> the_test::Handler<Ctx> for Component {
+impl the_test::Handler for Component {
     async fn test(
         &self,
-        _cx: Ctx,
         things: Vec<::wit_bindgen_wrpc::wrpc_transport::ResourceOwn<the_test::Thing>>,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<
         Vec<::wit_bindgen_wrpc::wrpc_transport::ResourceOwn<the_test::Thing>>,

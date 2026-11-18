@@ -3,7 +3,7 @@ use crate::server::exports::test::resource_borrow_in_record::to_test::{
 };
 
 #[derive(Clone)]
-pub struct Component;
+pub struct Component(pub crate::Client);
 
 fn contents_of(repr: &[u8]) -> String {
     String::from_utf8(repr.to_vec()).unwrap()
@@ -15,10 +15,9 @@ fn handle_from(contents: &str) -> ::wit_bindgen_wrpc::wrpc_transport::ResourceOw
     )
 }
 
-impl<Ctx: Send> Handler<Ctx> for Component {
+impl Handler for Component {
     async fn test(
         &self,
-        _cx: Ctx,
         a: Vec<Foo>,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<
         Vec<::wit_bindgen_wrpc::wrpc_transport::ResourceOwn<Thing>>,
@@ -33,10 +32,9 @@ impl<Ctx: Send> Handler<Ctx> for Component {
     }
 }
 
-impl<Ctx: Send> HandlerThing<Ctx> for Component {
+impl HandlerThing for Component {
     async fn new(
         &self,
-        _cx: Ctx,
         s: String,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<
         ::wit_bindgen_wrpc::wrpc_transport::ResourceOwn<Thing>,
@@ -46,7 +44,6 @@ impl<Ctx: Send> HandlerThing<Ctx> for Component {
 
     async fn get(
         &self,
-        _cx: Ctx,
         self_: ::wit_bindgen_wrpc::wrpc_transport::ResourceBorrow<Thing>,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<String> {
         let contents = contents_of(self_.as_ref());

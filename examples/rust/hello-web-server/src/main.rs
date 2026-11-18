@@ -31,8 +31,8 @@ struct Args {
 #[derive(Clone, Copy)]
 struct Handler;
 
-impl bindings::exports::wrpc_examples::hello::handler::Handler<()> for Handler {
-    async fn hello(&self, (): ()) -> anyhow::Result<String> {
+impl bindings::exports::wrpc_examples::hello::handler::Handler for Handler {
+    async fn hello(&self) -> anyhow::Result<String> {
         Ok("hello from Rust".to_string())
     }
 }
@@ -43,7 +43,7 @@ async fn serve(
 ) -> anyhow::Result<()> {
     let mut lis = Listener::new(tx, rx);
     while let Some((Header { instance, name }, tx, rx)) = lis.accept().await? {
-        let Ok(fut) = bindings::handle(&Handler, (), &instance, &name, tx, rx) else {
+        let Ok(fut) = bindings::handle(&Handler, &instance, &name, tx, rx) else {
             bail!("`{instance}#{name}` is not exported");
         };
         fut.await?;

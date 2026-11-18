@@ -8,12 +8,13 @@ use crate::server::test::common::i_middle::f;
 static HIT: AtomicBool = AtomicBool::new(false);
 
 #[derive(Clone)]
-pub struct Component;
+pub struct Component(pub crate::Client);
 
-impl Handler<crate::Client> for Component {
-    async fn f(&self, cx: crate::Client) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+impl Handler for Component {
+    async fn f(&self) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+        let clt = self.0;
         let task = tokio::spawn(async move {
-            let (tx, rx) = cx.connect().await?;
+            let (tx, rx) = clt.connect().await?;
             f(tx, rx).await?;
             HIT.store(true, Ordering::Relaxed);
             ::wit_bindgen_wrpc::anyhow::Ok(())

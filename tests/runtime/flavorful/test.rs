@@ -1,12 +1,11 @@
 use crate::server::exports::test::flavorful::to_test::*;
 
 #[derive(Clone)]
-pub struct Component;
+pub struct Component(pub crate::Client);
 
-impl<Ctx: Send> crate::server::exports::test::flavorful::to_test::Handler<Ctx> for Component {
+impl crate::server::exports::test::flavorful::to_test::Handler for Component {
     async fn f_list_in_record1(
         &self,
-        _cx: Ctx,
         ty: ListInRecord1,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
         assert_eq!(ty.a, "list_in_record1");
@@ -15,7 +14,6 @@ impl<Ctx: Send> crate::server::exports::test::flavorful::to_test::Handler<Ctx> f
 
     async fn f_list_in_record2(
         &self,
-        _cx: Ctx,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<ListInRecord2> {
         Ok(ListInRecord2 {
             a: "list_in_record2".to_string(),
@@ -24,7 +22,6 @@ impl<Ctx: Send> crate::server::exports::test::flavorful::to_test::Handler<Ctx> f
 
     async fn f_list_in_record3(
         &self,
-        _cx: Ctx,
         a: ListInRecord3,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<ListInRecord3> {
         assert_eq!(a.a, "list_in_record3 input");
@@ -35,7 +32,6 @@ impl<Ctx: Send> crate::server::exports::test::flavorful::to_test::Handler<Ctx> f
 
     async fn f_list_in_record4(
         &self,
-        _cx: Ctx,
         a: ListInAlias,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<ListInAlias> {
         assert_eq!(a.a, "input4");
@@ -46,7 +42,6 @@ impl<Ctx: Send> crate::server::exports::test::flavorful::to_test::Handler<Ctx> f
 
     async fn f_list_in_variant1(
         &self,
-        _cx: Ctx,
         a: ListInVariant1V1,
         b: ListInVariant1V2,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
@@ -57,14 +52,12 @@ impl<Ctx: Send> crate::server::exports::test::flavorful::to_test::Handler<Ctx> f
 
     async fn f_list_in_variant2(
         &self,
-        _cx: Ctx,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<ListInVariant2> {
         Ok(Some("list_in_variant2".to_string()))
     }
 
     async fn f_list_in_variant3(
         &self,
-        _cx: Ctx,
         a: ListInVariant3,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<ListInVariant3> {
         assert_eq!(a.unwrap(), "input3");
@@ -73,7 +66,6 @@ impl<Ctx: Send> crate::server::exports::test::flavorful::to_test::Handler<Ctx> f
 
     async fn errno_result(
         &self,
-        _cx: Ctx,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<::core::result::Result<(), MyErrno>> {
         static FIRST: ::std::sync::atomic::AtomicBool = ::std::sync::atomic::AtomicBool::new(true);
         MyErrno::A.to_string();
@@ -90,7 +82,6 @@ impl<Ctx: Send> crate::server::exports::test::flavorful::to_test::Handler<Ctx> f
 
     async fn list_typedefs(
         &self,
-        _cx: Ctx,
         a: ListTypedef,
         c: ListTypedef3,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<(ListTypedef2, ListTypedef3)> {
@@ -105,7 +96,6 @@ impl<Ctx: Send> crate::server::exports::test::flavorful::to_test::Handler<Ctx> f
 
     async fn list_of_variants(
         &self,
-        _cx: Ctx,
         bools: Vec<bool>,
         results: Vec<::core::result::Result<(), ()>>,
         enums: Vec<MyErrno>,

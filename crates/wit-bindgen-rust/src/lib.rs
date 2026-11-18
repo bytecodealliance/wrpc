@@ -447,9 +447,9 @@ with: {{\n\t{with_name:?}: generate\n}}
             .iter()
             .map(|path| {
                 if path.is_empty() {
-                    "Handler<C>".to_string()
+                    "Handler".to_string()
                 } else {
-                    format!("{path}::Handler<C>")
+                    format!("{path}::Handler")
                 }
             })
             .collect::<Vec<_>>()
@@ -461,9 +461,8 @@ with: {{\n\t{with_name:?}: generate\n}}
         uwrite!(
             self.src,
             r#"
-pub fn handle<'a, C, R, I, O, H>(
+pub fn handle<'a, R, I, O, H>(
     handler: &H,
-    cx: C,
     instance: &str,
     func: &str,
     tx: O,
@@ -474,25 +473,24 @@ pub fn handle<'a, C, R, I, O, H>(
             dyn ::core::future::Future<Output = {anyhow}::Result<()>> + ::core::marker::Send + 'a
         >
     >,
-    (C, O, R),
+    (O, R),
 >
 where
-    C: ::core::marker::Send + 'a,
     R: ::core::borrow::BorrowMut<{tokio_util}::codec::FramedRead<I, {wrpc_transport}::FrameDecoder>> + ::core::marker::Send + 'a,
     I: {tokio}::io::AsyncRead + ::core::marker::Send + ::core::marker::Unpin + 'a,
     O: {tokio}::io::AsyncWrite + ::core::marker::Send + ::core::marker::Unpin + 'a,
     H: {bound} + ::core::marker::Send + ::core::marker::Sync + ::core::clone::Clone + 'static,
 {{
-    ::core::result::Result::Err((cx, tx, rx))"#
+    ::core::result::Result::Err((tx, rx))"#
         );
         for path in &self.export_paths {
-            self.src.push_str("\n        .or_else(|(cx, tx, rx)| ");
+            self.src.push_str("\n        .or_else(|(tx, rx)| ");
             if !path.is_empty() {
                 self.src.push_str(path);
                 self.src.push_str("::");
             }
             self.src
-                .push_str("handle_interface(handler, cx, instance, func, tx, rx))");
+                .push_str("handle_interface(handler, instance, func, tx, rx))");
         }
         uwriteln!(self.src, "\n}}");
     }

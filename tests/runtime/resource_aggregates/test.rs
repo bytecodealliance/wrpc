@@ -3,17 +3,16 @@ use crate::server::exports::test::resource_aggregates::to_test::{
 };
 
 #[derive(Clone)]
-pub struct Component;
+pub struct Component(pub crate::Client);
 
 fn val(repr: &[u8]) -> u32 {
     u32::from_le_bytes(repr.try_into().unwrap())
 }
 
-impl<Ctx: Send> Handler<Ctx> for Component {
+impl Handler for Component {
     #[allow(clippy::too_many_arguments)]
     async fn foo(
         &self,
-        _cx: Ctx,
         r1: R1,
         r2: R2,
         r3: R3,
@@ -64,10 +63,9 @@ impl<Ctx: Send> Handler<Ctx> for Component {
     }
 }
 
-impl<Ctx: Send> HandlerThing<Ctx> for Component {
+impl HandlerThing for Component {
     async fn new(
         &self,
-        _cx: Ctx,
         v: u32,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<
         ::wit_bindgen_wrpc::wrpc_transport::ResourceOwn<Thing>,

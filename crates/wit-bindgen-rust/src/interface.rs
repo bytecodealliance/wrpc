@@ -70,13 +70,10 @@ impl InterfaceGenerator<'_> {
 
         let (name, methods) = traits.remove(&None).unwrap();
         if !methods.is_empty() || !traits.is_empty() {
-            let resource_traits: Vec<_> = traits
-                .values()
-                .map(|(name, _)| format!("{name}<Ctx>"))
-                .collect();
+            let resource_traits: Vec<_> = traits.values().map(|(name, _)| name.as_str()).collect();
             let resource_traits = resource_traits.join(" + ");
 
-            uwriteln!(self.src, "pub trait {name}<Ctx>: {resource_traits} {{");
+            uwriteln!(self.src, "pub trait {name}: {resource_traits} {{");
             for method in methods {
                 self.src.push_str(&method);
             }
@@ -84,7 +81,7 @@ impl InterfaceGenerator<'_> {
         }
 
         for (trait_name, methods) in traits.values() {
-            uwriteln!(self.src, "pub trait {trait_name}<Ctx>: 'static {{");
+            uwriteln!(self.src, "pub trait {trait_name}: 'static {{");
             for method in methods {
                 self.src.push_str(method);
             }
@@ -97,15 +94,14 @@ impl InterfaceGenerator<'_> {
 
         let trait_names: Vec<_> = traits
             .values()
-            .map(|(name, ..)| format!("{name}<C__> + "))
+            .map(|(name, ..)| format!("{name} + "))
             .collect();
 
         uwrite!(
             self.src,
             r#"
-pub fn handle_interface<'a__, C__, R__, I__, O__, H__>(
+pub fn handle_interface<'a__, R__, I__, O__, H__>(
     handler: &H__,
-    cx: C__,
     instance: &str,
     func: &str,
     tx: O__,
@@ -116,14 +112,13 @@ pub fn handle_interface<'a__, C__, R__, I__, O__, H__>(
             dyn ::core::future::Future<Output = {anyhow}::Result<()>> + ::core::marker::Send + 'a__
         >
     >,
-    (C__, O__, R__),
+    (O__, R__),
 >
 where
-    C__: ::core::marker::Send + 'a__,
     R__: ::core::borrow::BorrowMut<{tokio_util}::codec::FramedRead<I__, {wrpc_transport}::FrameDecoder>> + ::core::marker::Send + 'a__,
     I__: {tokio}::io::AsyncRead + ::core::marker::Send + ::core::marker::Unpin + 'a__,
     O__: {tokio}::io::AsyncWrite + ::core::marker::Send + ::core::marker::Unpin + 'a__,
-    H__: Handler<C__> + {resource_traits} ::core::marker::Send + ::core::marker::Sync + ::core::clone::Clone + 'static,
+    H__: Handler + {resource_traits} ::core::marker::Send + ::core::marker::Sync + ::core::clone::Clone + 'static,
 {{
     match (instance, func) {{"#,
             resource_traits = trait_names.join(""),
@@ -232,7 +227,7 @@ where
                 }};
                 let call = async {{
                     {tracing}::trace!(instance = "{instance}", func = "{wit_name}", "calling handler");
-                    match {trait_name}::{name}(&handler, cx"#,
+                    match {trait_name}::{name}(&handler"#,
                 anyhow = self.r#gen.anyhow_path(),
                 tracing = self.r#gen.tracing_path(),
                 wrpc_transport = self.r#gen.wrpc_transport_path(),
@@ -290,7 +285,7 @@ where
         uwriteln!(
             self.src,
             r#"
-        _ => ::core::result::Result::Err((cx, tx, rx)),
+        _ => ::core::result::Result::Err((tx, rx)),
     }}
 }}"#,
         );
@@ -378,10 +373,10 @@ where
 
         let (name, methods) = traits.remove(&None).unwrap();
         if !methods.is_empty() || !traits.is_empty() {
-            uwriteln!(self.src, "impl<Ctx> {name}<Ctx> for Stub {{\n{methods}}}");
+            uwriteln!(self.src, "impl {name} for Stub {{\n{methods}}}");
         }
         for (name, methods) in traits.values() {
-            uwriteln!(self.src, "impl<Ctx> {name}<Ctx> for Stub {{\n{methods}}}");
+            uwriteln!(self.src, "impl {name} for Stub {{\n{methods}}}");
         }
     }
 
@@ -752,7 +747,6 @@ where
                 self.push_str(arg);
                 self.push_str(",");
             }
-            self.push_str("cx: Ctx,");
         }
         let mut params = Vec::new();
         for (

@@ -104,43 +104,41 @@ where
         }
     }
 
-    impl<C: Send + Sync, F: Send + Sync + 'static> resources::HandlerFoo<C> for Handler<F> {
-        async fn new(&self, _cx: C) -> anyhow::Result<ResourceOwn<Foo>> {
+    impl<F: Send + Sync + 'static> resources::HandlerFoo for Handler<F> {
+        async fn new(&self) -> anyhow::Result<ResourceOwn<Foo>> {
             Ok(ResourceOwn::from(Bytes::from_static(b"foo")))
         }
 
-        async fn foo(&self, _cx: C, v: ResourceOwn<Foo>) -> anyhow::Result<String> {
+        async fn foo(&self, v: ResourceOwn<Foo>) -> anyhow::Result<String> {
             ensure_foo(v)?;
             Ok("foo".into())
         }
 
-        async fn bar(&self, _cx: C, self_: ResourceBorrow<Foo>) -> anyhow::Result<String> {
+        async fn bar(&self, self_: ResourceBorrow<Foo>) -> anyhow::Result<String> {
             ensure_foo(self_)?;
             Ok("bar".into())
         }
     }
 
-    impl<C: Send + Sync, F: Send + Sync + 'static> resources::HandlerCounter<C> for Handler<F> {
-        async fn new(&self, _cx: C, initial: u32) -> anyhow::Result<ResourceOwn<Counter>> {
+    impl<F: Send + Sync + 'static> resources::HandlerCounter for Handler<F> {
+        async fn new(&self, initial: u32) -> anyhow::Result<ResourceOwn<Counter>> {
             Ok(self.push(initial))
         }
 
         async fn clone_counter(
             &self,
-            _cx: C,
             self_: ResourceBorrow<Counter>,
         ) -> anyhow::Result<ResourceOwn<Counter>> {
             let count = self.with(self_, |count| *count)?;
             Ok(self.push(count))
         }
 
-        async fn get_count(&self, _cx: C, self_: ResourceBorrow<Counter>) -> anyhow::Result<u32> {
+        async fn get_count(&self, self_: ResourceBorrow<Counter>) -> anyhow::Result<u32> {
             self.with(self_, |count| *count)
         }
 
         async fn increment_by(
             &self,
-            _cx: C,
             self_: ResourceBorrow<Counter>,
             num: u32,
         ) -> anyhow::Result<()> {
@@ -149,7 +147,6 @@ where
 
         async fn sum(
             &self,
-            _cx: C,
             a: ResourceBorrow<Counter>,
             b: ResourceBorrow<Counter>,
         ) -> anyhow::Result<u32> {
@@ -159,32 +156,29 @@ where
         }
     }
 
-    impl<C: Send + Sync, F: Send + Sync + 'static> resources::Handler<C> for Handler<F> {
-        async fn bar(&self, _cx: C, v: ResourceBorrow<Foo>) -> anyhow::Result<String> {
+    impl<F: Send + Sync + 'static> resources::Handler for Handler<F> {
+        async fn bar(&self, v: ResourceBorrow<Foo>) -> anyhow::Result<String> {
             ensure_foo(v)?;
             Ok("bar".into())
         }
     }
 
-    impl<C: Send + Sync, F: Send + Sync + 'static> sync_server::exports::strange::Handler<C>
-        for Handler<F>
-    {
-        async fn bar(&self, _cx: C, v: ResourceBorrow<Foo>) -> anyhow::Result<u64> {
+    impl<F: Send + Sync + 'static> sync_server::exports::strange::Handler for Handler<F> {
+        async fn bar(&self, v: ResourceBorrow<Foo>) -> anyhow::Result<u64> {
             ensure_foo(v)?;
             Ok(42)
         }
     }
 
-    impl<C, F, Fut, I, O, E> sync_server::Handler<C> for Handler<F>
+    impl<F, Fut, I, O, E> sync_server::Handler for Handler<F>
     where
-        C: Send + Sync,
         F: Fn() -> Fut + Send + Sync + 'static,
         Fut: Future<Output = Result<(O, I), E>> + Send,
         I: AsyncRead + Send + Unpin,
         O: AsyncWrite + Send + Unpin,
         E: core::error::Error + Send + Sync + 'static,
     {
-        async fn ping(&self, _cx: C) -> anyhow::Result<String> {
+        async fn ping(&self) -> anyhow::Result<String> {
             use sync_client::wrpc_test::integration::resources::Counter;
 
             let (mut tx, mut rx) = (self.connect)().await?;
@@ -196,19 +190,18 @@ where
         }
     }
 
-    impl<C: Send + Sync, F: Send + Sync + 'static> sync::Handler<C> for Handler<F> {
-        async fn fallible(&self, _cx: C, ok: bool) -> anyhow::Result<Result<bool, String>> {
+    impl<F: Send + Sync + 'static> sync::Handler for Handler<F> {
+        async fn fallible(&self, ok: bool) -> anyhow::Result<Result<bool, String>> {
             Ok(if ok { Ok(true) } else { Err("test".into()) })
         }
 
         async fn numbers(
             &self,
-            _cx: C,
         ) -> anyhow::Result<(u8, u16, u32, u64, i8, i16, i32, i64, f32, f64)> {
             Ok((1, 2, 3, 4, 5, 6, 7, 8, 9., 10.))
         }
 
-        async fn with_flags(&self, _cx: C, a: bool, b: bool, c: bool) -> anyhow::Result<Abc> {
+        async fn with_flags(&self, a: bool, b: bool, c: bool) -> anyhow::Result<Abc> {
             let mut v = Abc::empty();
             v.set(Abc::A, a);
             v.set(Abc::B, b);
@@ -216,11 +209,11 @@ where
             Ok(v)
         }
 
-        async fn with_variant_option(&self, _cx: C, ok: bool) -> anyhow::Result<Option<Var>> {
+        async fn with_variant_option(&self, ok: bool) -> anyhow::Result<Option<Var>> {
             Ok(ok.then(|| Var::Var(rec("bar"))))
         }
 
-        async fn with_variant_list(&self, _cx: C) -> anyhow::Result<Vec<Var>> {
+        async fn with_variant_list(&self) -> anyhow::Result<Vec<Var>> {
             Ok(vec![
                 Var::Empty,
                 Var::Var(rec("foo")),
@@ -231,29 +224,28 @@ where
             ])
         }
 
-        async fn with_record(&self, _cx: C) -> anyhow::Result<Rec> {
+        async fn with_record(&self) -> anyhow::Result<Rec> {
             Ok(rec("foo"))
         }
 
-        async fn with_record_list(&self, _cx: C, n: u8) -> anyhow::Result<Vec<Rec>> {
+        async fn with_record_list(&self, n: u8) -> anyhow::Result<Vec<Rec>> {
             Ok((0..n).map(|i| rec(i.to_string())).collect())
         }
 
-        async fn with_record_tuple(&self, _cx: C) -> anyhow::Result<(Rec, Rec)> {
+        async fn with_record_tuple(&self) -> anyhow::Result<(Rec, Rec)> {
             Ok((rec("0"), rec("1")))
         }
 
-        async fn with_enum(&self, _cx: C) -> anyhow::Result<Foobar> {
+        async fn with_enum(&self) -> anyhow::Result<Foobar> {
             Ok(Foobar::Bar)
         }
 
-        async fn identity_char(&self, _cx: C, c: char) -> anyhow::Result<char> {
+        async fn identity_char(&self, c: char) -> anyhow::Result<char> {
             Ok(c)
         }
 
         async fn identity_option_lists(
             &self,
-            _cx: C,
             a: Option<Bytes>,
             b: Option<Vec<String>>,
         ) -> anyhow::Result<(Option<Bytes>, Option<Vec<String>>)> {
@@ -261,15 +253,13 @@ where
         }
     }
 
-    impl<C: Send + Sync, F: Send + Sync + 'static> sync_server::exports::foo::Handler<C>
-        for Handler<F>
-    {
-        async fn f(&self, _cx: C, x: String) -> anyhow::Result<u32> {
+    impl<F: Send + Sync + 'static> sync_server::exports::foo::Handler for Handler<F> {
+        async fn f(&self, x: String) -> anyhow::Result<u32> {
             assert_eq!(x, "f");
             Ok(42)
         }
 
-        async fn foo(&self, _cx: C, x: String) -> anyhow::Result<()> {
+        async fn foo(&self, x: String) -> anyhow::Result<()> {
             assert_eq!(x, "foo");
             Ok(())
         }
@@ -282,7 +272,7 @@ where
     let serve = async |tx, rx| {
         let mut lis = Listener::new(tx, rx);
         while let Some((Header { instance, name }, tx, rx)) = lis.accept().await? {
-            let Ok(fut) = sync_server::handle(&handler, (), &instance, &name, tx, rx) else {
+            let Ok(fut) = sync_server::handle(&handler, &instance, &name, tx, rx) else {
                 bail!("`{instance}#{name}` is not exported");
             };
             fut.await?;
@@ -331,10 +321,9 @@ where
     #[derive(Clone)]
     struct Handler;
 
-    impl<C: Send + Sync> async_::Handler<C> for Handler {
+    impl async_::Handler for Handler {
         async fn with_streams(
             &self,
-            _cx: C,
         ) -> anyhow::Result<(
             BoxStream<'static, Bytes>,
             BoxStream<'static, Vec<Vec<String>>>,
@@ -350,7 +339,6 @@ where
 
         async fn with_future(
             &self,
-            _cx: C,
             x: Something,
             s: BoxStream<'static, Bytes>,
         ) -> anyhow::Result<BoxFuture<'static, BoxStream<'static, Bytes>>> {
@@ -360,7 +348,6 @@ where
 
         async fn identity_nested_async(
             &self,
-            _cx: C,
             v: BoxFuture<
                 'static,
                 BoxFuture<'static, BoxFuture<'static, BoxStream<'static, Vec<String>>>>,
@@ -376,7 +363,6 @@ where
 
         async fn identity_future(
             &self,
-            _cx: C,
             v: BoxFuture<'static, ()>,
         ) -> anyhow::Result<BoxFuture<'static, ()>> {
             Ok(v)
@@ -384,7 +370,6 @@ where
 
         async fn identity_cases(
             &self,
-            _cx: C,
             o: Option<BoxFuture<'static, ()>>,
             r: Result<BoxStream<'static, Bytes>, BoxFuture<'static, u32>>,
             v: AsyncCase,
@@ -402,7 +387,7 @@ where
             let (srv_tx, srv_rx) = accept().await.context("failed to accept")?;
             let mut lis = Listener::new(srv_tx, srv_rx);
             while let Some((Header { instance, name }, tx, rx)) = lis.accept().await? {
-                let Ok(fut) = bindings::handle(&Handler, (), &instance, &name, tx, rx) else {
+                let Ok(fut) = bindings::handle(&Handler, &instance, &name, tx, rx) else {
                     bail!("`{instance}#{name}` is not exported");
                 };
                 fut.await?;
@@ -1096,12 +1081,12 @@ async fn rust_oneshot_raw_strings_invalid_utf8_result() -> anyhow::Result<()> {
     #[derive(Clone, Copy)]
     struct Handler;
 
-    impl<C: Send + Sync> bindings::exports::wrpc_test::raw_strings::strings::Handler<C> for Handler {
-        async fn bar(&self, _cx: C) -> anyhow::Result<Vec<u8>> {
+    impl bindings::exports::wrpc_test::raw_strings::strings::Handler for Handler {
+        async fn bar(&self) -> anyhow::Result<Vec<u8>> {
             Ok(b"\xff".to_vec())
         }
 
-        async fn baz(&self, _cx: C) -> anyhow::Result<Rec> {
+        async fn baz(&self) -> anyhow::Result<Rec> {
             Ok(Rec {
                 s: b"\xff".to_vec(),
                 l: Vec::default(),
@@ -1111,7 +1096,7 @@ async fn rust_oneshot_raw_strings_invalid_utf8_result() -> anyhow::Result<()> {
             })
         }
 
-        async fn qux(&self, _cx: C) -> anyhow::Result<Var> {
+        async fn qux(&self) -> anyhow::Result<Var> {
             Ok(Var::S(b"\xff".to_vec()))
         }
     }
@@ -1138,8 +1123,7 @@ async fn rust_oneshot_raw_strings_invalid_utf8_result() -> anyhow::Result<()> {
                 let (header, rx) = Header::read(rx)
                     .await
                     .expect("failed to read invocation header");
-                let Ok(fut) =
-                    bindings::handle(&Handler, (), &header.instance, &header.name, tx, rx)
+                let Ok(fut) = bindings::handle(&Handler, &header.instance, &header.name, tx, rx)
                 else {
                     panic!("`{func}` is not exported");
                 };
@@ -1168,8 +1152,8 @@ async fn rust_oneshot_borrowed() -> anyhow::Result<()> {
     #[derive(Clone, Copy)]
     struct Handler;
 
-    impl<C: Send> bindings::Handler<C> for Handler {
-        async fn greet(&self, _cx: C, name: String) -> anyhow::Result<String> {
+    impl bindings::Handler for Handler {
+        async fn greet(&self, name: String) -> anyhow::Result<String> {
             Ok(format!("Hello, {name}"))
         }
     }
@@ -1198,7 +1182,7 @@ async fn rust_oneshot_borrowed() -> anyhow::Result<()> {
     )?;
     let mut res = Vec::default();
     let (Header { instance, name }, rx) = Header::read(req.as_ref()).await?;
-    let Ok(fut) = bindings::handle(&Handler, (), &instance, &name, &mut res, rx) else {
+    let Ok(fut) = bindings::handle(&Handler, &instance, &name, &mut res, rx) else {
         bail!("`{instance}#{name}` is not exported");
     };
     fut.await?;

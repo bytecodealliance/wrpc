@@ -51,9 +51,9 @@ use greet_bindings_wrpc::exports::wrpc_bench::bench::greet::Handler as _;
 use ping_bindings_wasmtime::PingProxyPre;
 use ping_bindings_wrpc::exports::wrpc_bench::bench::ping::Handler as _;
 
-trait Handler<C>:
-    ping_bindings_wrpc::exports::wrpc_bench::bench::ping::Handler<C>
-    + greet_bindings_wrpc::exports::wrpc_bench::bench::greet::Handler<C>
+trait Handler:
+    ping_bindings_wrpc::exports::wrpc_bench::bench::ping::Handler
+    + greet_bindings_wrpc::exports::wrpc_bench::bench::greet::Handler
     + Clone
     + Send
     + Sync
@@ -61,9 +61,9 @@ trait Handler<C>:
 {
 }
 
-impl<C, T> Handler<C> for T where
-    T: ping_bindings_wrpc::exports::wrpc_bench::bench::ping::Handler<C>
-        + greet_bindings_wrpc::exports::wrpc_bench::bench::greet::Handler<C>
+impl<T> Handler for T where
+    T: ping_bindings_wrpc::exports::wrpc_bench::bench::ping::Handler
+        + greet_bindings_wrpc::exports::wrpc_bench::bench::greet::Handler
         + Clone
         + Send
         + Sync
@@ -102,10 +102,10 @@ impl Func {
 
     async fn call_direct(self, handler: &WasmHandler) {
         match self {
-            Self::Ping => handler.ping(()).await.expect("failed to call handler"),
+            Self::Ping => handler.ping().await.expect("failed to call handler"),
             Self::Greet => {
                 let greeting = handler
-                    .greet((), "test".into())
+                    .greet("test".into())
                     .await
                     .expect("failed to call handler");
                 assert_eq!(greeting, "Hello, test");
@@ -117,14 +117,14 @@ impl Func {
 #[derive(Clone, Copy)]
 struct NativeHandler;
 
-impl<T: Send> ping_bindings_wrpc::exports::wrpc_bench::bench::ping::Handler<T> for NativeHandler {
-    async fn ping(&self, _cx: T) -> anyhow::Result<()> {
+impl ping_bindings_wrpc::exports::wrpc_bench::bench::ping::Handler for NativeHandler {
+    async fn ping(&self) -> anyhow::Result<()> {
         Ok(())
     }
 }
 
-impl<T: Send> greet_bindings_wrpc::exports::wrpc_bench::bench::greet::Handler<T> for NativeHandler {
-    async fn greet(&self, _cx: T, name: String) -> anyhow::Result<String> {
+impl greet_bindings_wrpc::exports::wrpc_bench::bench::greet::Handler for NativeHandler {
+    async fn greet(&self, name: String) -> anyhow::Result<String> {
         Ok(format!("Hello, {name}"))
     }
 }
@@ -224,8 +224,8 @@ impl WasmHandler {
     }
 }
 
-impl<T: Send> ping_bindings_wrpc::exports::wrpc_bench::bench::ping::Handler<T> for WasmHandler {
-    async fn ping(&self, _cx: T) -> anyhow::Result<()> {
+impl ping_bindings_wrpc::exports::wrpc_bench::bench::ping::Handler for WasmHandler {
+    async fn ping(&self) -> anyhow::Result<()> {
         let mut store = self.new_store();
         let ping = self
             .ping_pre
@@ -239,8 +239,8 @@ impl<T: Send> ping_bindings_wrpc::exports::wrpc_bench::bench::ping::Handler<T> f
     }
 }
 
-impl<T: Send> greet_bindings_wrpc::exports::wrpc_bench::bench::greet::Handler<T> for WasmHandler {
-    async fn greet(&self, _cx: T, name: String) -> anyhow::Result<String> {
+impl greet_bindings_wrpc::exports::wrpc_bench::bench::greet::Handler for WasmHandler {
+    async fn greet(&self, name: String) -> anyhow::Result<String> {
         let mut store = self.new_store();
         let greet = self
             .greet_pre
@@ -284,22 +284,19 @@ impl Tasks {
         })
     }
 
-    fn serve<C, I, O>(&self, func: Func, cx: C, tx: O, rx: I, handler: impl Handler<C>)
-    where
-        C: Clone + Send + 'static,
-        I: AsyncRead + Send + Unpin + 'static,
-        O: AsyncWrite + Send + Unpin + 'static,
-    {
+    fn serve(
+        &self,
+        func: Func,
+        tx: impl AsyncWrite + Send + Unpin + 'static,
+        rx: impl AsyncRead + Send + Unpin + 'static,
+        handler: impl Handler,
+    ) {
         self.spawn(async move {
             let mut lis = Listener::new(tx, rx);
             while let Some((Header { instance, name }, tx, rx)) = lis.accept().await? {
                 let res = match func {
-                    Func::Ping => {
-                        ping_bindings_wrpc::handle(&handler, cx.clone(), &instance, &name, tx, rx)
-                    }
-                    Func::Greet => {
-                        greet_bindings_wrpc::handle(&handler, cx.clone(), &instance, &name, tx, rx)
-                    }
+                    Func::Ping => ping_bindings_wrpc::handle(&handler, &instance, &name, tx, rx),
+                    Func::Greet => greet_bindings_wrpc::handle(&handler, &instance, &name, tx, rx),
                 };
                 let Ok(fut) = res else {
                     bail!("`{instance}#{name}` is not exported");
@@ -319,17 +316,12 @@ impl Tasks {
     }
 }
 
-fn serve_http(
-    tasks: &Tasks,
-    mut srv: wrpc_http::Server,
-    func: Func,
-    handler: impl Handler<http::request::Parts>,
-) {
+fn serve_http(tasks: &Tasks, mut srv: wrpc_http::Server, func: Func, handler: impl Handler) {
     tasks.spawn({
         let tasks = tasks.clone();
         async move {
-            while let Some(Ok((cx, tx, rx))) = srv.next().await {
-                tasks.serve(func, cx, tx, rx, handler.clone());
+            while let Some(Ok((.., tx, rx))) = srv.next().await {
+                tasks.serve(func, tx, rx, handler.clone());
             }
             Ok(())
         }
@@ -380,7 +372,7 @@ fn bench_direct(
 fn bench_tcp(
     g: &mut BenchmarkGroup<WallTime>,
     func: Func,
-    handler: impl Handler<()>,
+    handler: impl Handler,
 ) -> anyhow::Result<()> {
     let rt = Runtime::new().context("failed to build Tokio runtime")?;
     let lis = rt.block_on(wrpc_test::tcp_bind())?;
@@ -393,7 +385,7 @@ fn bench_tcp(
         async move {
             loop {
                 let (tx, rx) = wrpc_test::tcp_accept(&lis).await?;
-                tasks.serve(func, (), tx, rx, handler.clone());
+                tasks.serve(func, tx, rx, handler.clone());
             }
         }
     });
@@ -408,7 +400,7 @@ fn bench_tcp(
 fn bench_unix(
     g: &mut BenchmarkGroup<WallTime>,
     func: Func,
-    handler: impl Handler<()>,
+    handler: impl Handler,
 ) -> anyhow::Result<()> {
     let rt = Runtime::new().context("failed to build Tokio runtime")?;
     let dir = tempfile::tempdir().context("failed to create temporary directory")?;
@@ -423,7 +415,7 @@ fn bench_unix(
         async move {
             loop {
                 let (tx, rx) = wrpc_test::unix_accept(&lis).await?;
-                tasks.serve(func, (), tx, rx, handler.clone());
+                tasks.serve(func, tx, rx, handler.clone());
             }
         }
     });
@@ -436,7 +428,7 @@ fn bench_unix(
 fn bench_quic(
     g: &mut BenchmarkGroup<WallTime>,
     func: Func,
-    handler: impl Handler<()>,
+    handler: impl Handler,
 ) -> anyhow::Result<()> {
     let rt = Runtime::new().context("failed to build Tokio runtime")?;
     let (clt, conn) = rt
@@ -448,7 +440,7 @@ fn bench_quic(
         async move {
             loop {
                 let (tx, rx) = conn.accept_bi().await?;
-                tasks.serve(func, (), tx, rx, handler.clone());
+                tasks.serve(func, tx, rx, handler.clone());
             }
         }
     });
@@ -464,7 +456,7 @@ fn bench_quic(
 fn bench_webtransport(
     g: &mut BenchmarkGroup<WallTime>,
     func: Func,
-    handler: impl Handler<()>,
+    handler: impl Handler,
 ) -> anyhow::Result<()> {
     let rt = Runtime::new().context("failed to build Tokio runtime")?;
     let (clt, conn) = rt
@@ -478,7 +470,7 @@ fn bench_webtransport(
         async move {
             loop {
                 let (tx, rx) = conn.accept_bi().await?;
-                tasks.serve(func, (), tx, rx, handler.clone());
+                tasks.serve(func, tx, rx, handler.clone());
             }
         }
     });
@@ -494,7 +486,7 @@ fn bench_webtransport(
 fn bench_http1(
     g: &mut BenchmarkGroup<WallTime>,
     func: Func,
-    handler: impl Handler<http::request::Parts>,
+    handler: impl Handler,
 ) -> anyhow::Result<()> {
     let rt = Runtime::new().context("failed to build Tokio runtime")?;
     let (parts, clt, lis) =
@@ -526,7 +518,7 @@ fn bench_http1(
 fn bench_http2(
     g: &mut BenchmarkGroup<WallTime>,
     func: Func,
-    handler: impl Handler<http::request::Parts>,
+    handler: impl Handler,
 ) -> anyhow::Result<()> {
     let rt = Runtime::new().context("failed to build Tokio runtime")?;
     let lis = rt.block_on(wrpc_test::tcp_bind())?;
@@ -567,14 +559,11 @@ fn bench_http2(
     })
 }
 
-fn bench_transports<H>(
+fn bench_transports(
     g: &mut BenchmarkGroup<WallTime>,
     func: Func,
-    handler: &H,
-) -> anyhow::Result<()>
-where
-    H: Handler<()> + Handler<http::request::Parts>,
-{
+    handler: &impl Handler,
+) -> anyhow::Result<()> {
     bench_tcp(g, func, handler.clone())?;
     bench_unix(g, func, handler.clone())?;
     bench_quic(g, func, handler.clone())?;

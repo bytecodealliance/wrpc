@@ -4,12 +4,11 @@ use core::pin::Pin;
 use crate::server::exports::my::test::i::Handler;
 
 #[derive(Clone)]
-pub struct Component;
+pub struct Component(pub crate::Client);
 
-impl<Ctx: Send> Handler<Ctx> for Component {
+impl Handler for Component {
     async fn read_future(
         &self,
-        _cx: Ctx,
         x: Pin<Box<dyn Future<Output = ()> + Send>>,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
         x.await;
@@ -18,7 +17,6 @@ impl<Ctx: Send> Handler<Ctx> for Component {
 
     async fn drop_future(
         &self,
-        _cx: Ctx,
         x: Pin<Box<dyn Future<Output = ()> + Send>>,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
         drop(x);

@@ -31,7 +31,7 @@ async fn serve(
 ) -> anyhow::Result<()> {
     let mut lis = Listener::new(tx, rx);
     while let Some((Header { instance, name }, tx, rx)) = lis.accept().await? {
-        let Ok(fut) = wrpc_wasi_keyvalue::handle(&handler, (), &instance, &name, tx, rx) else {
+        let Ok(fut) = wrpc_wasi_keyvalue::handle(&handler, &instance, &name, tx, rx) else {
             bail!("`{instance}#{name}` is not exported");
         };
         fut.await?;

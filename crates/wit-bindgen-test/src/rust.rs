@@ -262,9 +262,9 @@ enum Edition {
 /// The driver linking a `client` (the `runner` world) and its dependencies
 /// (`server` for the first, then each named after its world) into one binary.
 /// Each in-process TCP listener serves the chain of dependencies following the
-/// previous one, each receiving a client of the listener serving the chain
-/// following it as its context, so that invocations are served by the nearest
-/// following dependency exporting them.
+/// previous one, each holding a client of the listener serving the chain
+/// following it, so that invocations are served by the nearest following
+/// dependency exporting them.
 const DRIVER: &str = r##"#![allow(warnings)]
 
 use core::future::Future;
@@ -477,8 +477,8 @@ impl Runner<'_> {
                     .map(|(j, (module, ..))| {
                         format!(
                             "
-                .or_else(|(.., tx, rx)| {{
-                    {module}::handle(&{module}::Component, clt[{}].clone(), instance, func, tx, rx)
+                .or_else(|(tx, rx)| {{
+                    {module}::handle(&{module}::Component(clt[{}]), instance, func, tx, rx)
                 }})",
                             i + j
                         )
@@ -488,7 +488,7 @@ impl Runner<'_> {
                     "serve(lis.next().unwrap(), {{
         let clt = clt.clone();
         move |instance, func, tx, rx| {{
-            Err(((), tx, rx)){handle}
+            Err((tx, rx)){handle}
                 .map_err(|_| format!(\"{{instance}}#{{func}}\"))
         }}
     }});"
