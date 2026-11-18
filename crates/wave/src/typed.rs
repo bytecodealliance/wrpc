@@ -6,7 +6,7 @@ use wasm_wave::value::Value;
 use wasm_wave::wasm::WasmValue;
 use wrpc_transport::{Encode, SyncCodec};
 
-use crate::ValueEncoder;
+use crate::encode::encode_value;
 
 /// Value paired with its type, which implements [`Encode`]
 ///
@@ -33,7 +33,7 @@ impl<V: WasmValue> Encoder<&TypedValue<V>> for TypedValueEncoder {
     type Error = std::io::Error;
 
     fn encode(&mut self, v: &TypedValue<V>, dst: &mut BytesMut) -> std::io::Result<()> {
-        ValueEncoder::new(&v.1).encode(&v.0, dst)
+        encode_value(&v.1, &v.0, dst)
     }
 }
 

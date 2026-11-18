@@ -1,6 +1,7 @@
 use core::fmt::Debug;
 
 use std::io::ErrorKind;
+use std::sync::Arc;
 
 use anyhow::Context as _;
 use bytes::{BufMut as _, BytesMut};
@@ -88,16 +89,16 @@ fn roundtrip() -> anyhow::Result<()> {
     ] {
         let v: Value = wasm_wave::from_str(&ty, s)?;
         let mut buf = BytesMut::default();
-        ValueEncoder::new(&ty).encode(&v, &mut buf)?;
+        ValueEncoder::new(ty.clone()).encode(&v, &mut buf)?;
         assert_eq!(buf, expected, "{s}");
 
         let mut src = buf.clone();
-        let got = ValueDecoder::new(&ty).decode(&mut src)?;
+        let got = ValueDecoder::new(ty.clone()).decode(&mut src)?;
         assert_eq!(got, Some(v.clone()), "{s}");
         assert!(src.is_empty());
 
         let (last, init) = buf.split_last().context("empty encoding")?;
-        let mut dec = ValueDecoder::new(&ty);
+        let mut dec = ValueDecoder::new(ty);
         for b in init {
             src.put_u8(*b);
             let got = dec.decode(&mut src)?;
@@ -132,23 +133,23 @@ fn errors() -> anyhow::Result<()> {
         (Type::U32, b"\x80", ErrorKind::UnexpectedEof),
         (map, b"\0", ErrorKind::Unsupported),
     ] {
-        let err = ValueDecoder::<Value>::new(&ty)
+        let err = ValueDecoder::<Value>::new(ty.clone())
             .decode_eof(&mut BytesMut::from(src))
             .expect_err("decoding should fail");
         assert_eq!(err.kind(), kind, "{ty}");
     }
 
     let mut src = BytesMut::from(&b"\x2a\x63"[..]);
-    let v = ValueDecoder::new(&Type::U8).decode(&mut src)?;
+    let v = ValueDecoder::new(Type::U8).decode(&mut src)?;
     assert_eq!(v, Some(Value::make_u8(42)));
     assert_eq!(src, b"\x63"[..]);
 
     let mut buf = BytesMut::default();
-    let err = ValueEncoder::new(&Type::STRING)
+    let err = ValueEncoder::new(Type::STRING)
         .encode(&Value::make_u32(42), &mut buf)
         .expect_err("encoding should fail");
     assert_eq!(err.kind(), ErrorKind::InvalidInput);
-    let err = TupleEncoder::new(&[Type::U32])
+    let err = TupleEncoder::new(Arc::from([Type::U32]))
         .encode(&[] as &[Value], &mut buf)
         .expect_err("encoding should fail");
     assert_eq!(err.kind(), ErrorKind::InvalidInput);
@@ -157,12 +158,12 @@ fn errors() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn invoke_tuple() -> anyhow::Result<()> {
-    let param_tys = [
+    let param_tys: Arc<[Type]> = Arc::from([
         Type::U32,
         Type::STRING,
         Type::list(Type::option(Type::BOOL)),
-    ];
-    let result_tys = [Type::result(Some(Type::U64), None), Type::CHAR];
+    ]);
+    let result_tys: Arc<[Type]> = Arc::from([Type::result(Some(Type::U64), None), Type::CHAR]);
     let option_ty = Type::option(Type::BOOL);
     let none = Value::make_option(&option_ty, None)?;
     let some = Value::make_option(&option_ty, Some(Value::make_bool(true)))?;
@@ -179,8 +180,8 @@ async fn invoke_tuple() -> anyhow::Result<()> {
     let (got, ()) = try_join!(
         async {
             let (got, io) = Codec {
-                enc: TupleEncoder::new(&param_tys),
-                dec: TupleDecoder::<Value>::new(&result_tys),
+                enc: TupleEncoder::new(Arc::clone(&param_tys)),
+                dec: TupleDecoder::<Value>::new(Arc::clone(&result_tys)),
             }
             .invoke(clt_tx, clt_rx, "foo", "bar", params.as_slice())
             .await?;
@@ -194,8 +195,8 @@ async fn invoke_tuple() -> anyhow::Result<()> {
             assert_eq!(header.instance, "foo");
             assert_eq!(header.name, "bar");
             Codec {
-                enc: TupleEncoder::new(&result_tys),
-                dec: TupleDecoder::<Value>::new(&param_tys),
+                enc: TupleEncoder::new(Arc::clone(&result_tys)),
+                dec: TupleDecoder::<Value>::new(Arc::clone(&param_tys)),
             }
             .serve(tx, rx, async |got| {
                 assert_eq!(got, params);
