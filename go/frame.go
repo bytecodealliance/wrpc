@@ -14,7 +14,6 @@ const frameVersion = 0x01
 const (
 	maxInitialPathCapacity = 32
 	defaultMaxFrameDepth   = 64
-	defaultMaxFrameSize    = 16 << 20
 )
 
 type Frame struct {
@@ -24,94 +23,61 @@ type Frame struct {
 
 type frameLimits struct {
 	maxDepth uint32
-	maxSize  uint32
 }
 
-// ReadFrameOption configures ReadFrame
-type ReadFrameOption func(*frameLimits)
+// ReadFrameHeaderOption configures ReadFrameHeader
+type ReadFrameHeaderOption func(*frameLimits)
 
-// WithMaxFrameDepth sets the maximum path length of a frame read by ReadFrame, which is 64 by default
-func WithMaxFrameDepth(depth uint32) ReadFrameOption {
+// WithMaxFrameDepth sets the maximum path length of a frame read by ReadFrameHeader, which is 64 by default
+func WithMaxFrameDepth(depth uint32) ReadFrameHeaderOption {
 	return func(l *frameLimits) {
 		l.maxDepth = depth
 	}
 }
 
-// WithMaxFrameSize sets the maximum data length in bytes of a frame read by ReadFrame, which is 16 MiB by default
-func WithMaxFrameSize(size uint32) ReadFrameOption {
-	return func(l *frameLimits) {
-		l.maxSize = size
-	}
-}
-
-// ReadFrame reads a single frame from `r` and returns it
-func ReadFrame(r ByteReader, opts ...ReadFrameOption) (Frame, error) {
+// ReadFrameHeader reads the header of a frame from `r` and returns the frame path and the length
+// of the frame data, which follows the header in `r`. It returns an unwrapped io.EOF if `r` ended
+// before the frame
+func ReadFrameHeader(r ByteReader, opts ...ReadFrameHeaderOption) ([]uint32, uint32, error) {
 	l := frameLimits{
 		maxDepth: defaultMaxFrameDepth,
-		maxSize:  defaultMaxFrameSize,
 	}
 	for _, opt := range opts {
 		opt(&l)
 	}
-	depth, err := readFramePathLen(r)
-	if err != nil {
-		return Frame{}, err
-	}
-	if depth > l.maxDepth {
-		return Frame{}, fmt.Errorf("path length of %d exceeds maximum of %d", depth, l.maxDepth)
-	}
-	path, n, err := readFramePath(r, depth, l.maxDepth)
-	if err != nil {
-		return Frame{}, err
-	}
-	if n > l.maxSize {
-		return Frame{}, fmt.Errorf("data length of %d exceeds maximum of %d", n, l.maxSize)
-	}
-	data, err := ReadBytes(r, n)
-	if err != nil {
-		return Frame{}, fmt.Errorf("failed to read data: %w", err)
-	}
-	return Frame{
-		Path: path,
-		Data: data,
-	}, nil
-}
-
-// readFramePathLen reads the path length of a frame from `r` and returns an unwrapped
-// io.EOF if `r` ended before the frame
-func readFramePathLen(r ByteReader) (uint32, error) {
 	slog.Debug("reading path length")
-	n, err := ReadUint32(r)
+	depth, err := ReadUint32(r)
 	if err != nil {
 		if err == io.EOF {
-			return 0, io.EOF
+			return nil, 0, io.EOF
 		}
-		return 0, fmt.Errorf("failed to read path length: %w", err)
+		return nil, 0, fmt.Errorf("failed to read path length: %w", err)
 	}
-	return n, nil
-}
-
-// readFramePath reads the `n` path elements of a frame, keeping at most `limit` of them,
-// and the length of its data from `r`
-func readFramePath(r ByteReader, n, limit uint32) ([]uint32, uint32, error) {
-	path := make([]uint32, 0, min(n, limit, maxInitialPathCapacity))
-	slog.Debug("reading path elements", "len", n)
-	for i := range n {
+	if depth > l.maxDepth {
+		return nil, 0, fmt.Errorf("path length of %d exceeds maximum of %d", depth, l.maxDepth)
+	}
+	path := make([]uint32, 0, min(depth, maxInitialPathCapacity))
+	slog.Debug("reading path elements", "len", depth)
+	for i := range depth {
 		slog.Debug("reading path element", "index", i)
 		v, err := ReadUint32(r)
 		if err != nil {
+			if err == io.EOF {
+				err = io.ErrUnexpectedEOF
+			}
 			return nil, 0, fmt.Errorf("failed to read path element %d: %w", i, err)
 		}
-		if i < limit {
-			path = append(path, v)
-		}
+		path = append(path, v)
 	}
 	slog.Debug("reading data length")
-	k, err := ReadUint32(r)
+	n, err := ReadUint32(r)
 	if err != nil {
+		if err == io.EOF {
+			err = io.ErrUnexpectedEOF
+		}
 		return nil, 0, fmt.Errorf("failed to read data length: %w", err)
 	}
-	return path, k, nil
+	return path, n, nil
 }
 
 func WriteFrame(v Frame, w ByteWriter) (int, error) {
