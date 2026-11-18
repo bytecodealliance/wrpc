@@ -13,15 +13,15 @@ use tokio::sync::oneshot;
 use tokio::task::yield_now;
 use tokio::time::sleep;
 use tokio::{join, try_join};
-use tokio_util::codec::{Decoder as _, Encoder as _, FramedRead};
+use tokio_util::codec::{Decoder as _, Encoder as _, FramedRead, FramedWrite};
 use wasmtime::AsContextMut as _;
 use wasmtime::component::{
     Accessor, Component, Instance, InstancePre, Linker, ResourceTable, Type, Val, types,
 };
 use wrpc_test::serve_until;
 use wrpc_transport::{
-    Decode, Encode, FrameDecoder, FrameEncoder, FrameRef, HeaderEncoder, HeaderRef, Listener,
-    invoke, invoke_blocking,
+    FrameDecoder, FrameEncoder, FrameRef, HeaderEncoder, HeaderRef, Listener, invoke,
+    invoke_blocking,
 };
 use wrpc_wasmtime::{
     Exports, ResourceTypes, SharedResourceTable, ValDecoder, ValEncoder, WrpcCtxView, WrpcView,
@@ -195,16 +195,9 @@ async fn shared_store_trap() -> anyhow::Result<()> {
                 srv,
                 async {
                     let (tx, rx) = wrpc_test::tcp_streams(addr).await?;
-                    let res = invoke_blocking(
-                        tx,
-                        rx,
-                        "",
-                        "run",
-                        <() as Encode>::Encoder::default(),
-                        (),
-                        <() as Decode>::Decoder::default(),
-                    )
-                    .await;
+                    let tx = FramedWrite::new(tx, FrameEncoder);
+                    let rx = FramedRead::new(rx, FrameDecoder::default());
+                    let res = invoke_blocking::<(), (), _, _>(tx, rx, "", "run", ()).await;
                     res.expect_err("`run` invocation succeeded");
                     Ok(())
                 },
@@ -322,13 +315,25 @@ async fn async_values() -> anyhow::Result<()> {
 )"#,
         async |addr, srv, guest| {
             serve(srv, guest, async {
-                let (mut tx, mut rx) = wrpc_test::tcp_streams(addr).await?;
-                let (((s, f, u),), io) = invoke(
+                let (tx, rx) = wrpc_test::tcp_streams(addr).await?;
+                let mut tx = FramedWrite::new(tx, FrameEncoder);
+                let mut rx = FramedRead::new(rx, FrameDecoder::default());
+                let (((s, f, u),), io) = invoke::<
+                    _,
+                    ((
+                        BoxStream<'static, Vec<u8>>,
+                        BoxFuture<'static, String>,
+                        BoxFuture<'static, ()>,
+                    ),),
+                    _,
+                    _,
+                    _,
+                    _,
+                >(
                     &mut tx,
                     &mut rx,
                     "",
                     "run",
-                    <(BoxStream<'static, Vec<u8>>, BoxFuture<'static, String>, BoxFuture<'static, ()>) as Encode>::Encoder::default(),
                     (
                         Box::pin(
                             stream::once(async {
@@ -343,22 +348,20 @@ async fn async_values() -> anyhow::Result<()> {
                         }) as BoxFuture<'static, String>,
                         Box::pin(yield_now()) as BoxFuture<'static, ()>,
                     ),
-                    <((BoxStream<'static, Vec<u8>>, BoxFuture<'static, String>, BoxFuture<'static, ()>),) as Decode>::Decoder::default(),
                 )
                 .await?;
                 let (s, f, ()) = receive(io, async { join!(s.collect::<Vec<_>>(), f, u) }).await?;
                 assert_eq!(s.concat(), b"foobar");
                 assert_eq!(f, "baz");
 
-                let (((s, f),), io) = invoke(
-                    tx,
-                    rx,
-                    "",
-                    "gen",
-                    <() as Encode>::Encoder::default(),
+                let (((s, f),), io) = invoke::<
                     (),
-                    <((BoxStream<'static, Vec<u8>>, BoxFuture<'static, String>),) as Decode>::Decoder::default(),
-                )
+                    ((BoxStream<'static, Vec<u8>>, BoxFuture<'static, String>),),
+                    _,
+                    _,
+                    _,
+                    _,
+                >(tx, rx, "", "gen", ())
                 .await?;
                 let (s, f) = receive(io, async { join!(s.collect::<Vec<_>>(), f) }).await?;
                 assert_eq!(s.concat(), b"foo");
@@ -440,29 +443,27 @@ async fn async_params_after_return() -> anyhow::Result<()> {
                     _ = rx.await;
                     b"foo".to_vec()
                 })) as BoxStream<'static, Vec<u8>>;
-                let (mut clt_tx, mut clt_rx) = wrpc_test::tcp_streams(addr).await?;
-                let ((), io) = invoke(
+                let (clt_tx, clt_rx) = wrpc_test::tcp_streams(addr).await?;
+                let mut clt_tx = FramedWrite::new(clt_tx, FrameEncoder);
+                let mut clt_rx = FramedRead::new(clt_rx, FrameDecoder::default());
+                let ((), io) = invoke::<(BoxStream<'static, Vec<u8>>,), (), _, _, _, _>(
                     &mut clt_tx,
                     &mut clt_rx,
                     "",
                     "run",
-                    <(BoxStream<'static, Vec<u8>>,) as Encode>::Encoder::default(),
                     (s,),
-                    <() as Decode>::Decoder::default(),
                 )
                 .await?;
                 _ = tx.send(());
                 io.await?;
 
                 for _ in 0..100 {
-                    let (n,) = invoke_blocking(
+                    let (n,) = invoke_blocking::<(), (u32,), _, _>(
                         &mut clt_tx,
                         &mut clt_rx,
                         "",
                         "count",
-                        <() as Encode>::Encoder::default(),
                         (),
-                        <(u32,) as Decode>::Decoder::default(),
                     )
                     .await?;
                     if n == 3 {
@@ -569,19 +570,19 @@ async fn unread_param() -> anyhow::Result<()> {
                 srv,
                 async {
                     let (tx, rx) = wrpc_test::tcp_streams(addr).await?;
+                    let tx = FramedWrite::new(tx, FrameEncoder);
+                    let rx = FramedRead::new(rx, FrameDecoder::default());
                     let (returned_tx, returned_rx) = oneshot::channel();
                     let s = stream::once(async {
                         _ = returned_rx.await;
                         b"foo".to_vec()
                     });
-                    let ((), io) = invoke(
+                    let ((), io) = invoke::<(BoxStream<'static, Vec<u8>>,), (), _, _, _, _>(
                         tx,
                         rx,
                         "",
                         "run",
-                        <(BoxStream<'static, Vec<u8>>,) as Encode>::Encoder::default(),
                         (Box::pin(s) as BoxStream<'static, Vec<u8>>,),
-                        <() as Decode>::Decoder::default(),
                     )
                     .await?;
                     _ = returned_tx.send(());

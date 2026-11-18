@@ -9,13 +9,13 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_util::codec::{Decoder, Encoder, FramedRead, FramedWrite};
 use tracing::debug;
 
-use crate::frame::{self, FrameRef};
 use crate::{
-    Receive, Transmit, encode_close, encode_frames, error_data_after_end, error_unknown_path,
+    FrameDecoder, FrameEncoder, FrameRef, Receive, Transmit, encode_close, encode_frames,
+    error_data_after_end, error_unknown_path,
 };
 
-/// Receives the frames of an invocation read by `rx`, which may be borrowed, decoding the value
-/// of the root path using `dec`.
+/// Receives a value, the parameters when serving and the results when invoking, from the frames
+/// read by `rx`, which may be borrowed, decoding the value of the root path using `dec`.
 ///
 /// Returns the value along with a future, which receives the asynchronous values nested in it
 /// using `dec` and resolves once all paths are closed. `rx` is read only while one of them is
@@ -24,9 +24,9 @@ use crate::{
 /// whose chunks are not consumed, stalls ingress. Ingress fails on a frame on a path, which is not
 /// pending, on data after the end of a value, on `rx` ending before all paths are closed and on an
 /// error of `rx`.
-pub async fn ingress<F, I, D>(mut rx: F, mut dec: D) -> std::io::Result<(D::Item, Receipt<F, I, D>)>
+pub async fn receive<D, F, I>(mut dec: D, mut rx: F) -> std::io::Result<(D::Item, Receipt<F, I, D>)>
 where
-    F: BorrowMut<FramedRead<I, frame::Decoder>>,
+    F: BorrowMut<FramedRead<I, FrameDecoder>>,
     I: AsyncRead + Unpin,
     D: Decoder<Error = std::io::Error> + Receive,
 {
@@ -83,7 +83,9 @@ where
     ))
 }
 
-/// Future receiving the asynchronous values nested in a value, see [`ingress`]
+/// Future receiving the asynchronous values nested in a value
+///
+/// Resolves once all paths are closed.
 #[must_use]
 pub struct Receipt<F, I, D> {
     rx: F,
@@ -98,7 +100,7 @@ impl<F, I, D> Unpin for Receipt<F, I, D> {}
 
 impl<F, I, D> Future for Receipt<F, I, D>
 where
-    F: BorrowMut<FramedRead<I, frame::Decoder>>,
+    F: BorrowMut<FramedRead<I, FrameDecoder>>,
     I: AsyncRead + Unpin,
     D: Receive,
 {
@@ -145,49 +147,59 @@ where
     }
 }
 
-/// Outgoing framed stream of an invocation
-pub struct Outgoing<O> {
-    pub(crate) tx: FramedWrite<O, frame::Encoder>,
+/// Sends a value, the parameters when invoking and the results when serving, encoding it using
+/// `enc` into the frames written by `tx`, which may be borrowed
+///
+/// The value is encoded before this returns. Returns the [Transmission] of the value and of the
+/// asynchronous values nested in it.
+pub fn transmit<E, F, O, T>(
+    mut enc: E,
+    mut tx: F,
+    value: T,
+) -> std::io::Result<Transmission<F, O, E>>
+where
+    E: Encoder<T, Error = std::io::Error> + Transmit,
+    F: BorrowMut<FramedWrite<O, FrameEncoder>>,
+    O: AsyncWrite + Unpin,
+{
+    let mut data = BytesMut::default();
+    enc.encode(value, &mut data)?;
+    let buf = tx.borrow_mut().write_buffer_mut();
+    encode_frames(&[], data, &mut *buf)?;
+    encode_close(&[], buf)?;
+    Ok(Transmission {
+        tx,
+        path: Vec::default(),
+        enc,
+        _tx: PhantomData,
+    })
 }
 
-impl<O: AsyncWrite + Unpin> Outgoing<O> {
-    /// Encodes `item` using `enc` as the value of the root path and returns the [Transmission]
-    /// of it and of the asynchronous values nested in it
-    pub fn send<T, E>(self, mut enc: E, item: T) -> std::io::Result<Transmission<O, E>>
-    where
-        E: Encoder<T, Error = std::io::Error> + Transmit,
-    {
-        let Self { mut tx } = self;
-        let mut data = BytesMut::default();
-        enc.encode(item, &mut data)?;
-        encode_frames(&[], data, tx.write_buffer_mut())?;
-        encode_close(&[], tx.write_buffer_mut())?;
-        Ok(Transmission {
-            tx,
-            path: Vec::default(),
-            enc,
-        })
-    }
-}
-
-/// Future transmitting a value and the asynchronous values nested in it, see [`Outgoing::send`]
+/// Future transmitting a value and the asynchronous values nested in it, see [`transmit`]
 ///
 /// Resolves once all paths are closed and all data was flushed, `tx` is neither shut down nor
 /// dropped before.
 #[must_use]
-pub struct Transmission<O, E> {
-    tx: FramedWrite<O, frame::Encoder>,
+pub struct Transmission<F, O, E> {
+    tx: F,
     path: Vec<usize>,
     enc: E,
+    _tx: PhantomData<fn() -> O>,
 }
 
-impl<O, E> Unpin for Transmission<O, E> {}
+impl<F, O, E> Unpin for Transmission<F, O, E> {}
 
-impl<O: AsyncWrite + Unpin, E: Transmit> Future for Transmission<O, E> {
+impl<F, O, E> Future for Transmission<F, O, E>
+where
+    F: BorrowMut<FramedWrite<O, FrameEncoder>>,
+    O: AsyncWrite + Unpin,
+    E: Transmit,
+{
     type Output = std::io::Result<()>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let Self { tx, path, enc } = self.get_mut();
+        let Self { tx, path, enc, .. } = self.get_mut();
+        let tx = tx.borrow_mut();
         loop {
             ready!(Sink::<FrameRef<'_>>::poll_ready(Pin::new(&mut *tx), cx))?;
             let buf = tx.write_buffer_mut();
@@ -218,15 +230,15 @@ mod tests {
 
     fn frame(path: &[usize], data: &[u8]) -> Vec<u8> {
         let mut buf = BytesMut::default();
-        frame::Encoder
+        FrameEncoder
             .encode(FrameRef { path, data }, &mut buf)
             .unwrap();
         buf.to_vec()
     }
 
-    async fn receive(rx: &mut FramedRead<&[u8], frame::Decoder>) -> std::io::Result<Vec<u8>> {
+    async fn receive_stream(rx: &mut FramedRead<&[u8], FrameDecoder>) -> std::io::Result<Vec<u8>> {
         let dec = <(BoxStream<'static, Bytes>,) as Decode>::Decoder::default();
-        let ((s,), rx) = ingress(rx, dec).await?;
+        let ((s,), rx) = receive(dec, rx).await?;
         let (buf, ()) = try_join!(
             async { Ok(s.map(|chunk| chunk.to_vec()).concat().await) },
             rx
@@ -246,8 +258,8 @@ mod tests {
             b"\x2a".to_vec(),
         ]
         .concat();
-        let mut rx = FramedRead::new(frames.as_slice(), frame::Decoder::default());
-        let buf = receive(&mut rx).await.unwrap();
+        let mut rx = FramedRead::new(frames.as_slice(), FrameDecoder::default());
+        let buf = receive_stream(&mut rx).await.unwrap();
         assert_eq!(buf, b"foobar");
         assert_eq!(rx.read_buffer().as_ref(), b"\x2a");
     }
@@ -271,8 +283,8 @@ mod tests {
                 std::io::ErrorKind::UnexpectedEof,
             ),
         ] {
-            let mut rx = FramedRead::new(frames.as_slice(), frame::Decoder::default());
-            let err = receive(&mut rx).await.unwrap_err();
+            let mut rx = FramedRead::new(frames.as_slice(), FrameDecoder::default());
+            let err = receive_stream(&mut rx).await.unwrap_err();
             assert_eq!(err.kind(), kind, "{frames:02x?}");
         }
     }
@@ -281,14 +293,14 @@ mod tests {
     async fn egress_partial_writes() {
         let data: Bytes = (0..1 << 18).map(|i: usize| i.to_le_bytes()[0]).collect();
         let (tx, rx) = duplex(1000);
-        let enc = SyncCodec(BytesCodec::default());
-        let tx = Outgoing {
-            tx: FramedWrite::new(tx, frame::Encoder),
-        }
-        .send(enc, data.clone())
+        let tx = transmit(
+            SyncCodec(BytesCodec::default()),
+            FramedWrite::new(tx, FrameEncoder),
+            data.clone(),
+        )
         .unwrap();
         let (chunks, ()) = try_join!(
-            FramedRead::new(rx, frame::Decoder::default()).try_collect::<Vec<_>>(),
+            FramedRead::new(rx, FrameDecoder::default()).try_collect::<Vec<_>>(),
             tx
         )
         .unwrap();
@@ -304,11 +316,11 @@ mod tests {
     #[test_log::test(tokio::test)]
     async fn egress_keeps_stream() {
         let (mut tx, mut rx) = duplex(16);
-        let enc = SyncCodec(BytesCodec::default());
-        let fut = Outgoing {
-            tx: FramedWrite::new(&mut tx, frame::Encoder),
-        }
-        .send(enc, Bytes::default())
+        let fut = transmit(
+            SyncCodec(BytesCodec::default()),
+            FramedWrite::new(&mut tx, FrameEncoder),
+            Bytes::default(),
+        )
         .unwrap();
         fut.await.unwrap();
         tx.write_all(b"\x2a").await.unwrap();

@@ -3486,8 +3486,10 @@ dependencies = [
  "rcgen",
  "rustls",
  "tokio",
+ "tokio-util",
  "tracing",
  "tracing-subscriber",
+ "wrpc-transport",
  "wrpc-wasi-keyvalue",
 ]
 
@@ -3517,8 +3519,10 @@ dependencies = [
  "bytes",
  "clap",
  "tokio",
+ "tokio-util",
  "tracing-subscriber",
  "url",
+ "wrpc-transport",
  "wrpc-wasi-keyvalue",
 ]
 

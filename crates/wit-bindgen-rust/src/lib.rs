@@ -461,11 +461,11 @@ with: {{\n\t{with_name:?}: generate\n}}
         uwrite!(
             self.src,
             r#"
-pub fn handle<'a, R, I, O, H>(
+pub fn handle<'a, R, W, I, O, H>(
     handler: &H,
     instance: &str,
     func: &str,
-    tx: O,
+    tx: W,
     rx: R,
 ) -> ::core::result::Result<
     ::core::pin::Pin<
@@ -473,10 +473,11 @@ pub fn handle<'a, R, I, O, H>(
             dyn ::core::future::Future<Output = {anyhow}::Result<()>> + ::core::marker::Send + 'a
         >
     >,
-    (O, R),
+    (W, R),
 >
 where
     R: ::core::borrow::BorrowMut<{tokio_util}::codec::FramedRead<I, {wrpc_transport}::FrameDecoder>> + ::core::marker::Send + 'a,
+    W: ::core::borrow::BorrowMut<{tokio_util}::codec::FramedWrite<O, {wrpc_transport}::FrameEncoder>> + ::core::marker::Send + 'a,
     I: {tokio}::io::AsyncRead + ::core::marker::Send + ::core::marker::Unpin + 'a,
     O: {tokio}::io::AsyncWrite + ::core::marker::Send + ::core::marker::Unpin + 'a,
     H: {bound} + ::core::marker::Send + ::core::marker::Sync + ::core::clone::Clone + 'static,

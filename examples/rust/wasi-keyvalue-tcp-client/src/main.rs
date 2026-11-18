@@ -2,6 +2,8 @@ use anyhow::{Context as _, ensure};
 use bytes::Bytes;
 use clap::Parser;
 use tokio::net::TcpStream;
+use tokio_util::codec::{FramedRead, FramedWrite};
+use wrpc_transport::{FrameDecoder, FrameEncoder};
 use wrpc_wasi_keyvalue::wasi::keyvalue::store;
 
 #[derive(Parser, Debug)]
@@ -26,7 +28,10 @@ async fn main() -> anyhow::Result<()> {
             .set_nodelay(true)
             .context("failed to set TCP_NODELAY")?;
         let (rx, tx) = stream.into_split();
-        anyhow::Ok((tx, rx))
+        anyhow::Ok((
+            FramedWrite::new(tx, FrameEncoder),
+            FramedRead::new(rx, FrameDecoder::default()),
+        ))
     };
     let (tx, rx) = connect().await?;
     let bucket = store::open(tx, rx, "example")

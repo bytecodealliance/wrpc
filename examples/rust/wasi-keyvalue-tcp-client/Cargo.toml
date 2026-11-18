@@ -22,10 +22,12 @@ clap = { workspace = true, features = [
     "usage",
 ] }
 tokio = { workspace = true, features = ["net", "rt-multi-thread"] }
+tokio-util = { workspace = true, features = ["codec"] }
 tracing-subscriber = { workspace = true, features = [
     "ansi",
     "env-filter",
     "fmt",
 ] }
 url = { workspace = true }
+wrpc-transport = { workspace = true }
 wrpc-wasi-keyvalue = { workspace = true }

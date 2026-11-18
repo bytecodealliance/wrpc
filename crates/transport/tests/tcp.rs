@@ -10,9 +10,9 @@ use tokio::join;
 use tokio::net::TcpStream;
 use tokio::task::yield_now;
 use tokio::time::timeout;
-use tokio_util::codec::{Encoder as _, FramedRead};
+use tokio_util::codec::{Encoder as _, FramedRead, FramedWrite};
 use wrpc_transport::{
-    Decode, Encode, FrameDecoder, Header, HeaderDecoder, HeaderEncoder, HeaderRef, Listener, invoke,
+    FrameDecoder, FrameEncoder, Header, HeaderDecoder, HeaderEncoder, HeaderRef, Listener, invoke,
 };
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
@@ -40,31 +40,21 @@ async fn unprocessed_stream() -> anyhow::Result<()> {
                         yield_now().await;
                         Some((Bytes::from_static(b"test"), ()))
                     }));
-                    let res = invoke(
-                        tx,
-                        rx,
-                        "foo",
-                        "bar",
-                        <(BoxStream<'static, Bytes>,) as Encode>::Encoder::default(),
-                        (s,),
-                        <() as Decode>::Decoder::default(),
-                    )
-                    .await;
+                    let tx = FramedWrite::new(tx, FrameEncoder);
+                    let rx = FramedRead::new(rx, FrameDecoder::default());
+                    let res = invoke(tx, rx, "foo", "bar", (s,)).await;
                     if let Ok(((), io)) = res {
                         _ = io.await;
                     }
                 },
                 async {
-                    let (_tx, rx) = wrpc_test::tcp_accept(&lis)
+                    let (tx, rx) = wrpc_test::tcp_accept(&lis)
                         .await
                         .expect("failed to accept connection");
-                    _ = wrpc_test::read_invocation(
-                        FramedRead::new(rx, HeaderDecoder::default()),
-                        "foo",
-                        "bar",
-                    )
-                    .await
-                    .expect("failed to read invocation");
+                    let mut lis = Listener::new(tx, rx);
+                    _ = wrpc_test::next_invocation(&mut lis, "foo", "bar")
+                        .await
+                        .expect("failed to read invocation");
                 }
             )
         };
@@ -92,10 +82,11 @@ async fn dropped_invocation_closes() -> anyhow::Result<()> {
     clt.write_all(&buf).await?;
     let (stream, ..) = lis.accept().await?;
     let (rx, tx) = stream.into_split();
-    let (header, rx) = Header::read(rx).await?;
+    let mut lis = Listener::new(tx, rx);
+    let next = lis.accept().await?;
+    let (header, ..) = next.context("connection closed")?;
     assert_eq!(header.name, "bar");
-    drop(tx);
-    drop(rx);
+    drop(lis);
     let n = clt.read_to_end(&mut Vec::default()).await?;
     assert_eq!(n, 0);
     Ok(())

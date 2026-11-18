@@ -276,8 +276,8 @@ use std::sync::Arc;
 
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::{TcpListener, TcpStream};
-use wit_bindgen_wrpc::tokio_util::codec::FramedRead;
-use wrpc_transport::{FrameDecoder, Header, Listener};
+use wit_bindgen_wrpc::tokio_util::codec::{FramedRead, FramedWrite};
+use wrpc_transport::{FrameDecoder, FrameEncoder, Header, Listener};
 
 {modules}
 
@@ -285,11 +285,19 @@ use wrpc_transport::{FrameDecoder, Header, Listener};
 pub struct Client(SocketAddr);
 
 impl Client {
-    pub async fn connect(&self) -> std::io::Result<(OwnedWriteHalf, OwnedReadHalf)> {
+    pub async fn connect(
+        &self,
+    ) -> std::io::Result<(
+        FramedWrite<OwnedWriteHalf, FrameEncoder>,
+        FramedRead<OwnedReadHalf, FrameDecoder>,
+    )> {
         let stream = TcpStream::connect(self.0).await?;
         stream.set_nodelay(true)?;
         let (rx, tx) = stream.into_split();
-        Ok((tx, rx))
+        Ok((
+            FramedWrite::new(tx, FrameEncoder),
+            FramedRead::new(rx, FrameDecoder::default()),
+        ))
     }
 }
 
@@ -298,7 +306,7 @@ fn serve(
     handle: impl for<'a> Fn(
         &str,
         &str,
-        &'a mut OwnedWriteHalf,
+        &'a mut FramedWrite<OwnedWriteHalf, FrameEncoder>,
         &'a mut FramedRead<OwnedReadHalf, FrameDecoder>,
     ) -> Result<Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + 'a>>, String>
     + Send

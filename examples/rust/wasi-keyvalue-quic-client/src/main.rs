@@ -12,6 +12,8 @@ use rustls::{
     pki_types::{CertificateDer, ServerName, UnixTime},
     version::TLS13,
 };
+use tokio_util::codec::{FramedRead, FramedWrite};
+use wrpc_transport::{FrameDecoder, FrameEncoder};
 use wrpc_wasi_keyvalue::wasi::keyvalue::store;
 
 #[derive(Parser, Debug)]
@@ -80,7 +82,16 @@ async fn main() -> anyhow::Result<()> {
         .connect_with(conf, addr, "localhost")?
         .await
         .context("failed to connect to server")?;
-    let connect = async || connection.open_bi().await.context("failed to open stream");
+    let connect = async || {
+        let (tx, rx) = connection
+            .open_bi()
+            .await
+            .context("failed to open stream")?;
+        anyhow::Ok((
+            FramedWrite::new(tx, FrameEncoder),
+            FramedRead::new(rx, FrameDecoder::default()),
+        ))
+    };
     let (tx, rx) = connect().await?;
     let bucket = store::open(tx, rx, "example")
         .await
