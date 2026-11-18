@@ -17,14 +17,13 @@ fn val(repr: &[u8]) -> f64 {
 }
 
 #[derive(Clone)]
-pub struct Component;
+pub struct Component(pub crate::Client);
 
-impl<Ctx: Send> Guest<Ctx> for Component {}
+impl Guest for Component {}
 
-impl<Ctx: Send> GuestFloat<Ctx> for Component {
+impl GuestFloat for Component {
     async fn new(
         &self,
-        _cx: Ctx,
         v: f64,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<ResourceOwn<ImportFloat1>> {
         Ok(my_float(v + 2.0))
@@ -32,7 +31,6 @@ impl<Ctx: Send> GuestFloat<Ctx> for Component {
 
     async fn get(
         &self,
-        _cx: Ctx,
         self_: ResourceBorrow<ImportFloat1>,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<f64> {
         Ok(val(self_.as_ref()) + 4.0)
@@ -40,20 +38,18 @@ impl<Ctx: Send> GuestFloat<Ctx> for Component {
 
     async fn add(
         &self,
-        cx: Ctx,
         a: ResourceOwn<ImportFloat1>,
         b: f64,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<ResourceOwn<ImportFloat1>> {
-        GuestFloat::new(self, cx, val(a.as_ref()) + b + 6.0).await
+        GuestFloat::new(self, val(a.as_ref()) + b + 6.0).await
     }
 }
 
-impl<Ctx: Send> Guest2<Ctx> for Component {}
+impl Guest2 for Component {}
 
-impl<Ctx: Send> GuestFloat2<Ctx> for Component {
+impl GuestFloat2 for Component {
     async fn new(
         &self,
-        _cx: Ctx,
         v: f64,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<ResourceOwn<Float2>> {
         Ok(my_float(v + 1.0))
@@ -61,7 +57,6 @@ impl<Ctx: Send> GuestFloat2<Ctx> for Component {
 
     async fn get(
         &self,
-        _cx: Ctx,
         self_: ResourceBorrow<Float2>,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<f64> {
         Ok(val(self_.as_ref()) + 3.0)

@@ -7,12 +7,11 @@ use futures::task::noop_waker_ref;
 use crate::server::exports::my::test::i::Handler;
 
 #[derive(Clone)]
-pub struct Component;
+pub struct Component(pub crate::Client);
 
-impl<Ctx: Send> Handler<Ctx> for Component {
+impl Handler for Component {
     async fn cancel_before_read(
         &self,
-        _cx: Ctx,
         x: Pin<Box<dyn Future<Output = u32> + Send>>,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
         drop(x);
@@ -21,7 +20,6 @@ impl<Ctx: Send> Handler<Ctx> for Component {
 
     async fn cancel_after_read(
         &self,
-        _cx: Ctx,
         mut x: Pin<Box<dyn Future<Output = u32> + Send>>,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
         let _ = x.as_mut().poll(&mut Context::from_waker(noop_waker_ref()));
@@ -31,7 +29,6 @@ impl<Ctx: Send> Handler<Ctx> for Component {
 
     async fn start_read_then_cancel(
         &self,
-        _cx: Ctx,
         mut data: Pin<Box<dyn Future<Output = u32> + Send>>,
         signal: Pin<Box<dyn Future<Output = ()> + Send>>,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {

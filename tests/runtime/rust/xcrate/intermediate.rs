@@ -9,11 +9,11 @@ use rust_xcrate_test::b::test::xcrate::b_imports;
 use crate::server::exports::test::xcrate::b_exports;
 
 #[derive(Clone)]
-pub struct Component;
+pub struct Component(pub crate::Client);
 
-impl b_exports::Handler<crate::Client> for Component {
-    async fn b(&self, cx: crate::Client) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
-        let (mut tx, mut rx) = cx.connect().await?;
+impl b_exports::Handler for Component {
+    async fn b(&self) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+        let (mut tx, mut rx) = self.0.connect().await?;
         a_imports::f(&mut tx, &mut rx).await?;
         b_imports::b(&mut tx, &mut rx).await?;
 
@@ -28,14 +28,13 @@ impl b_exports::Handler<crate::Client> for Component {
     }
 }
 
-impl b_exports::HandlerX<crate::Client> for Component {
-    async fn new(&self, _cx: crate::Client) -> ::wit_bindgen_wrpc::anyhow::Result<ResourceOwn<b_exports::X>> {
+impl b_exports::HandlerX for Component {
+    async fn new(&self) -> ::wit_bindgen_wrpc::anyhow::Result<ResourceOwn<b_exports::X>> {
         Ok(ResourceOwn::from(Bytes::default()))
     }
 
     async fn foo(
         &self,
-        _cx: crate::Client,
         _self_: ResourceBorrow<b_exports::X>,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
         Ok(())

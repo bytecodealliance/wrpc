@@ -1,10 +1,10 @@
 //@ args = '--generate-all'
 
 #[derive(Clone)]
-pub struct Component;
+pub struct Component(pub crate::Client);
 
-impl<Ctx: Send> crate::server::exports::foo::baz::a::Handler<Ctx> for Component {
-    async fn x(&self, _cx: Ctx) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+impl crate::server::exports::foo::baz::a::Handler for Component {
+    async fn x(&self) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
         Ok(())
     }
 }

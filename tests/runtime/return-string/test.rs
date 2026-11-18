@@ -1,10 +1,10 @@
 use crate::server::exports::my::test::i::Handler;
 
 #[derive(Clone)]
-pub struct Component;
+pub struct Component(pub crate::Client);
 
-impl<Ctx: Send> Handler<Ctx> for Component {
-    async fn return_string(&self, _cx: Ctx) -> ::wit_bindgen_wrpc::anyhow::Result<String> {
+impl Handler for Component {
+    async fn return_string(&self) -> ::wit_bindgen_wrpc::anyhow::Result<String> {
         Ok("hello".into())
     }
 }

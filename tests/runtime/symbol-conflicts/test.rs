@@ -1,26 +1,26 @@
 #[derive(Clone)]
-pub struct Component;
+pub struct Component(pub crate::Client);
 
-impl<Ctx: Send> crate::server::exports::my::inline::foo1::Handler<Ctx> for Component {
-    async fn foo(&self, _cx: Ctx) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+impl crate::server::exports::my::inline::foo1::Handler for Component {
+    async fn foo(&self) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
         Ok(())
     }
 }
 
-impl<Ctx: Send> crate::server::exports::my::inline::foo2::Handler<Ctx> for Component {
-    async fn foo(&self, _cx: Ctx) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+impl crate::server::exports::my::inline::foo2::Handler for Component {
+    async fn foo(&self) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
         Ok(())
     }
 }
 
-impl<Ctx: Send> crate::server::exports::my::inline::bar1::Handler<Ctx> for Component {
-    async fn bar(&self, _cx: Ctx) -> ::wit_bindgen_wrpc::anyhow::Result<String> {
+impl crate::server::exports::my::inline::bar1::Handler for Component {
+    async fn bar(&self) -> ::wit_bindgen_wrpc::anyhow::Result<String> {
         Ok(String::new())
     }
 }
 
-impl<Ctx: Send> crate::server::exports::my::inline::bar2::Handler<Ctx> for Component {
-    async fn bar(&self, _cx: Ctx) -> ::wit_bindgen_wrpc::anyhow::Result<String> {
+impl crate::server::exports::my::inline::bar2::Handler for Component {
+    async fn bar(&self) -> ::wit_bindgen_wrpc::anyhow::Result<String> {
         Ok(String::new())
     }
 }

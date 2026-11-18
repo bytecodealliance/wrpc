@@ -23,12 +23,12 @@ mod other {
 }
 
 #[derive(Clone)]
-pub struct Component;
+pub struct Component(pub crate::Client);
 
-impl Handler<crate::Client> for Component {
-    async fn bar(&self, cx: crate::Client, a: A) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+impl Handler for Component {
+    async fn bar(&self, a: A) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
         assert!(TypeId::of::<A>() != TypeId::of::<other::my::inline::foo::A>());
-        let (tx, rx) = cx.connect().await?;
+        let (tx, rx) = self.0.connect().await?;
         other::my::inline::foo::bar(tx, rx, &other::my::inline::foo::A { b: a.b }).await
     }
 }

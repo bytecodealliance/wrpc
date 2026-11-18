@@ -25,12 +25,11 @@ impl Handler {
     }
 }
 
-impl<C: Send + Sync> store::Handler<C> for Handler {
+impl store::Handler for Handler {
     // NOTE: Resource handle returned is just the `identifier` itself
-    #[instrument(level = "trace", skip(_cx), ret(level = "trace"))]
+    #[instrument(level = "trace", ret(level = "trace"))]
     async fn open(
         &self,
-        _cx: C,
         identifier: String,
     ) -> anyhow::Result<Result<ResourceOwn<store::Bucket>, store::Error>> {
         let identifier = Bytes::from(identifier);
@@ -47,11 +46,10 @@ impl<C: Send + Sync> store::Handler<C> for Handler {
     }
 }
 
-impl<C: Send + Sync> store::HandlerBucket<C> for Handler {
-    #[instrument(level = "trace", skip(_cx), ret(level = "trace"))]
+impl store::HandlerBucket for Handler {
+    #[instrument(level = "trace", ret(level = "trace"))]
     async fn get(
         &self,
-        _cx: C,
         bucket: ResourceBorrow<store::Bucket>,
         key: String,
     ) -> anyhow::Result<Result<Option<Bytes>, store::Error>> {
@@ -60,10 +58,9 @@ impl<C: Send + Sync> store::HandlerBucket<C> for Handler {
         Ok(Ok(bucket.get(&key).cloned()))
     }
 
-    #[instrument(level = "trace", skip(_cx), ret(level = "trace"))]
+    #[instrument(level = "trace", ret(level = "trace"))]
     async fn set(
         &self,
-        _cx: C,
         bucket: ResourceBorrow<store::Bucket>,
         key: String,
         value: Bytes,
@@ -74,10 +71,9 @@ impl<C: Send + Sync> store::HandlerBucket<C> for Handler {
         Ok(Ok(()))
     }
 
-    #[instrument(level = "trace", skip(_cx), ret(level = "trace"))]
+    #[instrument(level = "trace", ret(level = "trace"))]
     async fn delete(
         &self,
-        _cx: C,
         bucket: ResourceBorrow<store::Bucket>,
         key: String,
     ) -> anyhow::Result<Result<(), store::Error>> {
@@ -87,10 +83,9 @@ impl<C: Send + Sync> store::HandlerBucket<C> for Handler {
         Ok(Ok(()))
     }
 
-    #[instrument(level = "trace", skip(_cx), ret(level = "trace"))]
+    #[instrument(level = "trace", ret(level = "trace"))]
     async fn exists(
         &self,
-        _cx: C,
         bucket: ResourceBorrow<store::Bucket>,
         key: String,
     ) -> anyhow::Result<Result<bool, store::Error>> {
@@ -99,10 +94,9 @@ impl<C: Send + Sync> store::HandlerBucket<C> for Handler {
         Ok(Ok(bucket.contains_key(&key)))
     }
 
-    #[instrument(level = "trace", skip(_cx), ret(level = "trace"))]
+    #[instrument(level = "trace", ret(level = "trace"))]
     async fn list_keys(
         &self,
-        _cx: C,
         bucket: ResourceBorrow<store::Bucket>,
         cursor: Option<String>,
     ) -> anyhow::Result<Result<store::KeyResponse, store::Error>> {
@@ -121,10 +115,9 @@ impl<C: Send + Sync> store::HandlerBucket<C> for Handler {
     }
 }
 
-impl<C: Send + Sync> atomics::Handler<C> for Handler {
+impl atomics::Handler for Handler {
     async fn increment(
         &self,
-        _cx: C,
         _bucket: ResourceBorrow<store::Bucket>,
         _key: String,
         _delta: i64,
@@ -134,7 +127,6 @@ impl<C: Send + Sync> atomics::Handler<C> for Handler {
 
     async fn swap(
         &self,
-        _cx: C,
         _cas: ResourceOwn<atomics::Cas>,
         _value: Bytes,
     ) -> anyhow::Result<Result<(), atomics::CasError>> {
@@ -144,10 +136,9 @@ impl<C: Send + Sync> atomics::Handler<C> for Handler {
     }
 }
 
-impl<C: Send + Sync> atomics::HandlerCas<C> for Handler {
+impl atomics::HandlerCas for Handler {
     async fn new(
         &self,
-        _cx: C,
         _bucket: ResourceBorrow<store::Bucket>,
         _key: String,
     ) -> anyhow::Result<Result<ResourceOwn<atomics::Cas>, store::Error>> {
@@ -156,17 +147,15 @@ impl<C: Send + Sync> atomics::HandlerCas<C> for Handler {
 
     async fn current(
         &self,
-        _cx: C,
         _bucket: ResourceBorrow<atomics::Cas>,
     ) -> anyhow::Result<Result<Option<Bytes>, store::Error>> {
         Ok(Err(store::Error::Other("not supported".to_string())))
     }
 }
 
-impl<C: Send + Sync> batch::Handler<C> for Handler {
+impl batch::Handler for Handler {
     async fn get_many(
         &self,
-        _cx: C,
         _bucket: ResourceBorrow<store::Bucket>,
         _keys: Vec<String>,
     ) -> anyhow::Result<Result<Vec<Option<(String, Bytes)>>, store::Error>> {
@@ -175,7 +164,6 @@ impl<C: Send + Sync> batch::Handler<C> for Handler {
 
     async fn set_many(
         &self,
-        _cx: C,
         _bucket: ResourceBorrow<store::Bucket>,
         _key_values: Vec<(String, Bytes)>,
     ) -> anyhow::Result<Result<(), store::Error>> {
@@ -184,7 +172,6 @@ impl<C: Send + Sync> batch::Handler<C> for Handler {
 
     async fn delete_many(
         &self,
-        _cx: C,
         _bucket: ResourceBorrow<store::Bucket>,
         _keys: Vec<String>,
     ) -> anyhow::Result<Result<(), store::Error>> {

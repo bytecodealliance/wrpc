@@ -36,12 +36,11 @@ fn dropped_reader<T: ?Sized + 'static>(
 }
 
 #[derive(Clone)]
-pub struct Component;
+pub struct Component(pub crate::Client);
 
-impl<Ctx: Send> Handler<Ctx> for Component {
+impl Handler for Component {
     async fn short_reads_test(
         &self,
-        _cx: Ctx,
         s: BoxStream<'static, Vec<ResourceOwn<TestThing>>>,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<BoxStream<'static, Vec<ResourceOwn<TestThing>>>> {
         Ok(short_reads(s))
@@ -49,7 +48,6 @@ impl<Ctx: Send> Handler<Ctx> for Component {
 
     async fn short_reads_leaf(
         &self,
-        _cx: Ctx,
         s: BoxStream<'static, Vec<ResourceOwn<LeafThing>>>,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<BoxStream<'static, Vec<ResourceOwn<LeafThing>>>> {
         Ok(short_reads(s))
@@ -57,7 +55,6 @@ impl<Ctx: Send> Handler<Ctx> for Component {
 
     async fn dropped_reader_test(
         &self,
-        _cx: Ctx,
         f1: BoxFuture<'static, ResourceOwn<TestThing>>,
         f2: BoxFuture<'static, ResourceOwn<TestThing>>,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<(
@@ -69,7 +66,6 @@ impl<Ctx: Send> Handler<Ctx> for Component {
 
     async fn dropped_reader_leaf(
         &self,
-        _cx: Ctx,
         f1: BoxFuture<'static, ResourceOwn<LeafThing>>,
         f2: BoxFuture<'static, ResourceOwn<LeafThing>>,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<(
@@ -80,10 +76,9 @@ impl<Ctx: Send> Handler<Ctx> for Component {
     }
 }
 
-impl<Ctx: Send> HandlerTestThing<Ctx> for Component {
+impl HandlerTestThing for Component {
     async fn new(
         &self,
-        _cx: Ctx,
         s: String,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<ResourceOwn<TestThing>> {
         Ok(ResourceOwn::from(Bytes::from(s)))
@@ -91,7 +86,6 @@ impl<Ctx: Send> HandlerTestThing<Ctx> for Component {
 
     async fn get(
         &self,
-        _cx: Ctx,
         self_: ResourceBorrow<TestThing>,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<String> {
         let repr: &[u8] = self_.as_ref();

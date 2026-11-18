@@ -9,12 +9,11 @@ use crate::server::exports::test::equal_types::blag::{
 use crate::server::test::equal_types::blag;
 
 #[derive(Clone)]
-pub struct Component;
+pub struct Component(pub crate::Client);
 
-impl HandlerInputStream<crate::Client> for Component {
+impl HandlerInputStream for Component {
     async fn read(
         &self,
-        _cx: crate::Client,
         _self_: ResourceBorrow<InputStream>,
         _len: u64,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<Bytes> {
@@ -22,22 +21,22 @@ impl HandlerInputStream<crate::Client> for Component {
     }
 }
 
-impl Handler<crate::Client> for Component {
-    async fn f(&self, cx: crate::Client, x: Kind1) -> ::wit_bindgen_wrpc::anyhow::Result<Kind1> {
-        let (tx, rx) = cx.connect().await?;
+impl Handler for Component {
+    async fn f(&self, x: Kind1) -> ::wit_bindgen_wrpc::anyhow::Result<Kind1> {
+        let (tx, rx) = self.0.connect().await?;
         blag::f(tx, rx, &x).await
     }
 
-    async fn g(&self, _cx: crate::Client, _x: Kind3) -> ::wit_bindgen_wrpc::anyhow::Result<Kind4> {
+    async fn g(&self, _x: Kind3) -> ::wit_bindgen_wrpc::anyhow::Result<Kind4> {
         todo!()
     }
 
-    async fn h(&self, cx: crate::Client, x: TStream) -> ::wit_bindgen_wrpc::anyhow::Result<Tree> {
+    async fn h(&self, x: TStream) -> ::wit_bindgen_wrpc::anyhow::Result<Tree> {
         let x = blag::TStream {
             tree: x.tree,
             stream: None,
         };
-        let (tx, rx) = cx.connect().await?;
+        let (tx, rx) = self.0.connect().await?;
         blag::h(tx, rx, &x).await
     }
 }
@@ -47,26 +46,26 @@ use crate::server::exports::test::equal_types::blah::{
 };
 use crate::server::test::equal_types::blah;
 
-impl HHandler<crate::Client> for Component {
-    async fn f(&self, cx: crate::Client, x: Kind6) -> ::wit_bindgen_wrpc::anyhow::Result<Kind5> {
-        let (tx, rx) = cx.connect().await?;
+impl HHandler for Component {
+    async fn f(&self, x: Kind6) -> ::wit_bindgen_wrpc::anyhow::Result<Kind5> {
+        let (tx, rx) = self.0.connect().await?;
         blah::f(tx, rx, &x).await
     }
 
-    async fn g(&self, _cx: crate::Client, _x: Kind7) -> ::wit_bindgen_wrpc::anyhow::Result<Kind4> {
+    async fn g(&self, _x: Kind7) -> ::wit_bindgen_wrpc::anyhow::Result<Kind4> {
         todo!()
     }
 
-    async fn h(&self, cx: crate::Client, x: TStream) -> ::wit_bindgen_wrpc::anyhow::Result<CustomResult> {
+    async fn h(&self, x: TStream) -> ::wit_bindgen_wrpc::anyhow::Result<CustomResult> {
         let x = blah::TStream {
             tree: x.tree,
             stream: None,
         };
-        let (tx, rx) = cx.connect().await?;
+        let (tx, rx) = self.0.connect().await?;
         blah::h(tx, rx, &x).await
     }
 
-    async fn alias_type(&self, _cx: crate::Client, x: R2) -> ::wit_bindgen_wrpc::anyhow::Result<R1> {
+    async fn alias_type(&self, x: R2) -> ::wit_bindgen_wrpc::anyhow::Result<R1> {
         Ok(x)
     }
 }

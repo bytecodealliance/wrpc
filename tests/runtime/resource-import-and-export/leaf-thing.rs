@@ -14,14 +14,13 @@ fn index(thing: &[u8]) -> usize {
 }
 
 #[derive(Clone)]
-pub struct Component;
+pub struct Component(pub crate::Client);
 
-impl<Ctx: Send> Handler<Ctx> for Component {}
+impl Handler for Component {}
 
-impl<Ctx: Send> HandlerThing<Ctx> for Component {
+impl HandlerThing for Component {
     async fn new(
         &self,
-        _cx: Ctx,
         v: u32,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<ResourceOwn<Thing>> {
         let mut things = THINGS.lock().unwrap();
@@ -34,7 +33,6 @@ impl<Ctx: Send> HandlerThing<Ctx> for Component {
 
     async fn foo(
         &self,
-        _cx: Ctx,
         self_: ResourceBorrow<Thing>,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<u32> {
         Ok(THINGS.lock().unwrap()[index(self_.as_ref())] + 2)
@@ -42,7 +40,6 @@ impl<Ctx: Send> HandlerThing<Ctx> for Component {
 
     async fn bar(
         &self,
-        _cx: Ctx,
         self_: ResourceBorrow<Thing>,
         v: u32,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
@@ -52,7 +49,6 @@ impl<Ctx: Send> HandlerThing<Ctx> for Component {
 
     async fn baz(
         &self,
-        cx: Ctx,
         a: ResourceOwn<Thing>,
         b: ResourceOwn<Thing>,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<ResourceOwn<Thing>> {
@@ -60,6 +56,6 @@ impl<Ctx: Send> HandlerThing<Ctx> for Component {
             let things = THINGS.lock().unwrap();
             things[index(a.as_ref())] + 2 + things[index(b.as_ref())] + 2 + 4
         };
-        HandlerThing::new(self, cx, v).await
+        HandlerThing::new(self, v).await
     }
 }

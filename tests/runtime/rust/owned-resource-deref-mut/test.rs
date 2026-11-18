@@ -1,14 +1,13 @@
 use crate::server::exports::my::inline::foo::{Handler, HandlerBar, Bar};
 
 #[derive(Clone)]
-pub struct Component;
+pub struct Component(pub crate::Client);
 
-impl<Ctx: Send> Handler<Ctx> for Component {}
+impl Handler for Component {}
 
-impl<Ctx: Send> HandlerBar<Ctx> for Component {
+impl HandlerBar for Component {
     async fn new(
         &self,
-        _cx: Ctx,
         data: u32,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<
         ::wit_bindgen_wrpc::wrpc_transport::ResourceOwn<Bar>,
@@ -20,7 +19,6 @@ impl<Ctx: Send> HandlerBar<Ctx> for Component {
 
     async fn get_data(
         &self,
-        _cx: Ctx,
         self_: ::wit_bindgen_wrpc::wrpc_transport::ResourceBorrow<Bar>,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<u32> {
         let bytes: &[u8] = self_.as_ref();
@@ -29,7 +27,6 @@ impl<Ctx: Send> HandlerBar<Ctx> for Component {
 
     async fn consume(
         &self,
-        _cx: Ctx,
         self_: ::wit_bindgen_wrpc::wrpc_transport::ResourceOwn<Bar>,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<u32> {
         let bytes: &[u8] = self_.as_ref();

@@ -12,12 +12,11 @@ use crate::host::exports::test::equal_types::blah::{
 use crate::host::exports::test::equal_types::resources;
 
 #[derive(Clone)]
-pub struct Component;
+pub struct Component(pub crate::Client);
 
-impl<Ctx: Send> HandlerInputStream<Ctx> for Component {
+impl HandlerInputStream for Component {
     async fn read(
         &self,
-        _cx: Ctx,
         _self_: ResourceBorrow<InputStream>,
         _len: u64,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<Bytes> {
@@ -25,22 +24,22 @@ impl<Ctx: Send> HandlerInputStream<Ctx> for Component {
     }
 }
 
-impl<Ctx: Send> Handler<Ctx> for Component {
-    async fn f(&self, _cx: Ctx, x: Kind1) -> ::wit_bindgen_wrpc::anyhow::Result<Kind1> {
+impl Handler for Component {
+    async fn f(&self, x: Kind1) -> ::wit_bindgen_wrpc::anyhow::Result<Kind1> {
         Ok(x)
     }
 
-    async fn g(&self, _cx: Ctx, x: Kind3) -> ::wit_bindgen_wrpc::anyhow::Result<Kind4> {
+    async fn g(&self, x: Kind3) -> ::wit_bindgen_wrpc::anyhow::Result<Kind4> {
         Ok(Kind4 { a: x.a })
     }
 
-    async fn h(&self, _cx: Ctx, x: TStream) -> ::wit_bindgen_wrpc::anyhow::Result<Tree> {
+    async fn h(&self, x: TStream) -> ::wit_bindgen_wrpc::anyhow::Result<Tree> {
         Ok(x.tree)
     }
 }
 
-impl<Ctx: Send> HHandler<Ctx> for Component {
-    async fn f(&self, _cx: Ctx, x: Kind6) -> ::wit_bindgen_wrpc::anyhow::Result<Kind5> {
+impl HHandler for Component {
+    async fn f(&self, x: Kind6) -> ::wit_bindgen_wrpc::anyhow::Result<Kind5> {
         Ok(match x {
             Kind6::A => Kind1::A,
             Kind6::B(x) => Kind5::B(x),
@@ -48,25 +47,24 @@ impl<Ctx: Send> HHandler<Ctx> for Component {
         })
     }
 
-    async fn g(&self, _cx: Ctx, x: Kind7) -> ::wit_bindgen_wrpc::anyhow::Result<Kind4> {
+    async fn g(&self, x: Kind7) -> ::wit_bindgen_wrpc::anyhow::Result<Kind4> {
         Ok(Kind4 {
             a: ResourceOwn::from(Bytes::copy_from_slice(x.a.as_ref())),
         })
     }
 
-    async fn h(&self, _cx: Ctx, x: TStream) -> ::wit_bindgen_wrpc::anyhow::Result<CustomResult> {
+    async fn h(&self, x: TStream) -> ::wit_bindgen_wrpc::anyhow::Result<CustomResult> {
         Ok(CustomResult::Ok(x.tree))
     }
 
-    async fn alias_type(&self, _cx: Ctx, x: R2) -> ::wit_bindgen_wrpc::anyhow::Result<R1> {
+    async fn alias_type(&self, x: R2) -> ::wit_bindgen_wrpc::anyhow::Result<R1> {
         Ok(x)
     }
 }
 
-impl<Ctx: Send> resources::Handler<Ctx> for Component {
+impl resources::Handler for Component {
     async fn alias_own(
         &self,
-        _cx: Ctx,
         x: resources::T2,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<resources::T1> {
         Ok(x)
@@ -74,11 +72,10 @@ impl<Ctx: Send> resources::Handler<Ctx> for Component {
 
     async fn alias_aggregate(
         &self,
-        _cx: Ctx,
         x: Option<resources::T2>,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<Option<resources::T1>> {
         Ok(x)
     }
 }
 
-impl<Ctx: Send> resources::HandlerR1<Ctx> for Component {}
+impl resources::HandlerR1 for Component {}

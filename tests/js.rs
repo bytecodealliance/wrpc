@@ -90,12 +90,12 @@ where
     #[derive(Clone, Copy)]
     struct Echo;
 
-    impl<C: Send> Handler<C> for Echo {
-        async fn echo(&self, _cx: C, v: Values) -> anyhow::Result<Values> {
+    impl Handler for Echo {
+        async fn echo(&self, v: Values) -> anyhow::Result<Values> {
             Ok(v)
         }
 
-        async fn echo_async(&self, _cx: C, v: Asyncs) -> anyhow::Result<Asyncs> {
+        async fn echo_async(&self, v: Asyncs) -> anyhow::Result<Asyncs> {
             Ok(v)
         }
     }
@@ -125,7 +125,7 @@ where
                         .await
                         .expect("failed to read invocation header")
                     {
-                        let Ok(fut) = bindings::handle(&Echo, (), &instance, &name, tx, rx) else {
+                        let Ok(fut) = bindings::handle(&Echo, &instance, &name, tx, rx) else {
                             panic!("`{instance}#{name}` is not exported");
                         };
                         fut.await.expect("failed to serve invocation");

@@ -1,12 +1,11 @@
 use crate::server::exports::test::variants::to_test::*;
 
 #[derive(Clone)]
-pub struct Component;
+pub struct Component(pub crate::Client);
 
-impl<Ctx: Send> crate::server::exports::test::variants::to_test::Handler<Ctx> for Component {
+impl crate::server::exports::test::variants::to_test::Handler for Component {
     async fn roundtrip_option(
         &self,
-        _cx: Ctx,
         a: Option<f32>,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<Option<u8>> {
         Ok(a.map(|x| x as u8))
@@ -14,7 +13,6 @@ impl<Ctx: Send> crate::server::exports::test::variants::to_test::Handler<Ctx> fo
 
     async fn roundtrip_result(
         &self,
-        _cx: Ctx,
         a: Result<u32, f32>,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<Result<f64, u8>> {
         Ok(match a {
@@ -23,18 +21,17 @@ impl<Ctx: Send> crate::server::exports::test::variants::to_test::Handler<Ctx> fo
         })
     }
 
-    async fn roundtrip_enum(&self, _cx: Ctx, a: E1) -> ::wit_bindgen_wrpc::anyhow::Result<E1> {
+    async fn roundtrip_enum(&self, a: E1) -> ::wit_bindgen_wrpc::anyhow::Result<E1> {
         assert_eq!(a, a);
         Ok(a)
     }
 
-    async fn invert_bool(&self, _cx: Ctx, a: bool) -> ::wit_bindgen_wrpc::anyhow::Result<bool> {
+    async fn invert_bool(&self, a: bool) -> ::wit_bindgen_wrpc::anyhow::Result<bool> {
         Ok(!a)
     }
 
     async fn variant_casts(
         &self,
-        _cx: Ctx,
         a: Casts,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<Casts> {
         Ok(a)
@@ -42,7 +39,6 @@ impl<Ctx: Send> crate::server::exports::test::variants::to_test::Handler<Ctx> fo
 
     async fn variant_zeros(
         &self,
-        _cx: Ctx,
         a: Zeros,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<Zeros> {
         Ok(a)
@@ -50,7 +46,6 @@ impl<Ctx: Send> crate::server::exports::test::variants::to_test::Handler<Ctx> fo
 
     async fn variant_typedefs(
         &self,
-        _cx: Ctx,
         _a: Option<u32>,
         _b: bool,
         _c: Result<u32, ()>,
@@ -60,7 +55,6 @@ impl<Ctx: Send> crate::server::exports::test::variants::to_test::Handler<Ctx> fo
 
     async fn variant_enums(
         &self,
-        _cx: Ctx,
         a: bool,
         b: Result<(), ()>,
         c: MyErrno,

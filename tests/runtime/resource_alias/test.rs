@@ -2,12 +2,11 @@ use crate::server::exports::test::resource_alias::e1;
 use crate::server::exports::test::resource_alias::e2;
 
 #[derive(Clone)]
-pub struct Component;
+pub struct Component(pub crate::Client);
 
-impl<Ctx: Send> e1::Handler<Ctx> for Component {
+impl e1::Handler for Component {
     async fn a(
         &self,
-        _cx: Ctx,
         f: e1::Foo,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<
         Vec<::wit_bindgen_wrpc::wrpc_transport::ResourceOwn<e1::X>>,
@@ -16,10 +15,9 @@ impl<Ctx: Send> e1::Handler<Ctx> for Component {
     }
 }
 
-impl<Ctx: Send> e1::HandlerX<Ctx> for Component {
+impl e1::HandlerX for Component {
     async fn new(
         &self,
-        _cx: Ctx,
         v: u32,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<
         ::wit_bindgen_wrpc::wrpc_transport::ResourceOwn<e1::X>,
@@ -30,10 +28,9 @@ impl<Ctx: Send> e1::HandlerX<Ctx> for Component {
     }
 }
 
-impl<Ctx: Send> e2::Handler<Ctx> for Component {
+impl e2::Handler for Component {
     async fn a(
         &self,
-        _cx: Ctx,
         f: e2::Foo,
         g: e2::Bar,
         _h: ::wit_bindgen_wrpc::wrpc_transport::ResourceBorrow<e2::Y>,

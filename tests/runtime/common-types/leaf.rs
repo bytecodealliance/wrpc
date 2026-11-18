@@ -2,10 +2,10 @@ use crate::leaf::exports::test::common::to_test::Handler;
 use crate::leaf::test::common::test_types::{F1, R1, V1};
 
 #[derive(Clone)]
-pub struct Component;
+pub struct Component(pub crate::Client);
 
-impl<Ctx: Send> Handler<Ctx> for Component {
-    async fn wrap(&self, _cx: Ctx, flag: F1) -> ::wit_bindgen_wrpc::anyhow::Result<R1> {
+impl Handler for Component {
+    async fn wrap(&self, flag: F1) -> ::wit_bindgen_wrpc::anyhow::Result<R1> {
         if flag == F1::A {
             Ok(R1 { a: 1, b: flag })
         } else {
@@ -13,7 +13,7 @@ impl<Ctx: Send> Handler<Ctx> for Component {
         }
     }
 
-    async fn var_f(&self, _cx: Ctx) -> ::wit_bindgen_wrpc::anyhow::Result<V1> {
+    async fn var_f(&self) -> ::wit_bindgen_wrpc::anyhow::Result<V1> {
         Ok(V1::B(42))
     }
 }

@@ -1,12 +1,11 @@
 use crate::server::exports::test::resource_borrow::to_test::{Handler, HandlerThing, Thing};
 
 #[derive(Clone)]
-pub struct Component;
+pub struct Component(pub crate::Client);
 
-impl<Ctx: Send> Handler<Ctx> for Component {
+impl Handler for Component {
     async fn foo(
         &self,
-        _cx: Ctx,
         v: ::wit_bindgen_wrpc::wrpc_transport::ResourceBorrow<Thing>,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<u32> {
         let bytes: &[u8] = v.as_ref();
@@ -15,10 +14,9 @@ impl<Ctx: Send> Handler<Ctx> for Component {
     }
 }
 
-impl<Ctx: Send> HandlerThing<Ctx> for Component {
+impl HandlerThing for Component {
     async fn new(
         &self,
-        _cx: Ctx,
         v: u32,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<
         ::wit_bindgen_wrpc::wrpc_transport::ResourceOwn<Thing>,

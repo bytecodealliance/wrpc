@@ -35,10 +35,9 @@ struct Args {
 #[derive(Clone, Copy)]
 struct Server;
 
-impl bindings::exports::wrpc_examples::streams::handler::Handler<()> for Server {
+impl bindings::exports::wrpc_examples::streams::handler::Handler for Server {
     async fn echo(
         &self,
-        _ctx: (),
         Req { numbers, bytes }: Req,
     ) -> anyhow::Result<(
         Pin<Box<dyn Stream<Item = Vec<u64>> + Send>>,
@@ -54,7 +53,7 @@ async fn serve(
 ) -> anyhow::Result<()> {
     let mut lis = Listener::new(tx, rx);
     while let Some((Header { instance, name }, tx, rx)) = lis.accept().await? {
-        let Ok(fut) = bindings::handle(&Server, (), &instance, &name, tx, rx) else {
+        let Ok(fut) = bindings::handle(&Server, &instance, &name, tx, rx) else {
             bail!("`{instance}#{name}` is not exported");
         };
         fut.await?;

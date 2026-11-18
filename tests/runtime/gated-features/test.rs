@@ -1,14 +1,14 @@
 //@ args = '--features y'
 
 #[derive(Clone)]
-pub struct Component;
+pub struct Component(pub crate::Client);
 
-impl<Ctx: Send> crate::server::exports::foo::bar::bindings::Handler<Ctx> for Component {
-    async fn y(&self, _cx: Ctx) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+impl crate::server::exports::foo::bar::bindings::Handler for Component {
+    async fn y(&self) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
         Ok(())
     }
 
-    async fn z(&self, _cx: Ctx) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+    async fn z(&self) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
         Ok(())
     }
 }

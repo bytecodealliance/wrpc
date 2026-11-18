@@ -170,15 +170,11 @@ fn client_tls_config() -> rustls::ClientConfig {
         .with_no_client_auth()
 }
 
-impl<C: Send + Sync> store::Handler<C> for Handler {
-    #[instrument(level = "trace", skip(self, cx), ret(level = "trace"))]
-    async fn open(
-        &self,
-        cx: C,
-        identifier: String,
-    ) -> anyhow::Result<Result<ResourceOwn<store::Bucket>>> {
+impl store::Handler for Handler {
+    #[instrument(level = "trace", skip(self), ret(level = "trace"))]
+    async fn open(&self, identifier: String) -> anyhow::Result<Result<ResourceOwn<store::Bucket>>> {
         if identifier.is_empty() {
-            let bucket = match self.mem.open(cx, identifier).await? {
+            let bucket = match self.mem.open(identifier).await? {
                 Ok(bucket) => bucket,
                 Err(err) => return Ok(Err(err)),
             };
@@ -195,7 +191,7 @@ impl<C: Send + Sync> store::Handler<C> for Handler {
         };
         let remote = match url.scheme() {
             "redis" | "rediss" | "redis+sentinel" | "rediss+sentinel" => {
-                let bucket = match self.redis.open(cx, identifier).await? {
+                let bucket = match self.redis.open(identifier).await? {
                     Ok(bucket) => bucket,
                     Err(err) => return Ok(Err(err)),
                 };
@@ -310,17 +306,16 @@ impl<C: Send + Sync> store::Handler<C> for Handler {
     }
 }
 
-impl<C: Send + Sync> store::HandlerBucket<C> for Handler {
-    #[instrument(level = "trace", skip(self, cx), ret(level = "trace"))]
+impl store::HandlerBucket for Handler {
+    #[instrument(level = "trace", skip(self), ret(level = "trace"))]
     async fn get(
         &self,
-        cx: C,
         bucket: ResourceBorrow<store::Bucket>,
         key: String,
     ) -> anyhow::Result<Result<Option<Bytes>>> {
         let res = match self.bucket(bucket).await? {
-            Bucket::Mem(bucket) => return self.mem.get(cx, bucket.as_borrow(), key).await,
-            Bucket::Redis(bucket) => return self.redis.get(cx, bucket.as_borrow(), key).await,
+            Bucket::Mem(bucket) => return self.mem.get(bucket.as_borrow(), key).await,
+            Bucket::Redis(bucket) => return self.redis.get(bucket.as_borrow(), key).await,
             Bucket::Remote(bucket, remote) => {
                 let (tx, rx) = remote
                     .connect()
@@ -341,18 +336,17 @@ impl<C: Send + Sync> store::HandlerBucket<C> for Handler {
         }
     }
 
-    #[instrument(level = "trace", skip(self, cx), ret(level = "trace"))]
+    #[instrument(level = "trace", skip(self), ret(level = "trace"))]
     async fn set(
         &self,
-        cx: C,
         bucket: ResourceBorrow<store::Bucket>,
         key: String,
         value: Bytes,
     ) -> anyhow::Result<Result<()>> {
         let res = match self.bucket(bucket).await? {
-            Bucket::Mem(bucket) => return self.mem.set(cx, bucket.as_borrow(), key, value).await,
+            Bucket::Mem(bucket) => return self.mem.set(bucket.as_borrow(), key, value).await,
             Bucket::Redis(bucket) => {
-                return self.redis.set(cx, bucket.as_borrow(), key, value).await;
+                return self.redis.set(bucket.as_borrow(), key, value).await;
             }
             Bucket::Remote(bucket, remote) => {
                 let (tx, rx) = remote
@@ -375,16 +369,15 @@ impl<C: Send + Sync> store::HandlerBucket<C> for Handler {
         }
     }
 
-    #[instrument(level = "trace", skip(self, cx), ret(level = "trace"))]
+    #[instrument(level = "trace", skip(self), ret(level = "trace"))]
     async fn delete(
         &self,
-        cx: C,
         bucket: ResourceBorrow<store::Bucket>,
         key: String,
     ) -> anyhow::Result<Result<()>> {
         let res = match self.bucket(bucket).await? {
-            Bucket::Mem(bucket) => return self.mem.delete(cx, bucket.as_borrow(), key).await,
-            Bucket::Redis(bucket) => return self.redis.delete(cx, bucket.as_borrow(), key).await,
+            Bucket::Mem(bucket) => return self.mem.delete(bucket.as_borrow(), key).await,
+            Bucket::Redis(bucket) => return self.redis.delete(bucket.as_borrow(), key).await,
             Bucket::Remote(bucket, remote) => {
                 let (tx, rx) = remote
                     .connect()
@@ -405,16 +398,15 @@ impl<C: Send + Sync> store::HandlerBucket<C> for Handler {
         }
     }
 
-    #[instrument(level = "trace", skip(self, cx), ret(level = "trace"))]
+    #[instrument(level = "trace", skip(self), ret(level = "trace"))]
     async fn exists(
         &self,
-        cx: C,
         bucket: ResourceBorrow<store::Bucket>,
         key: String,
     ) -> anyhow::Result<Result<bool>> {
         let res = match self.bucket(bucket).await? {
-            Bucket::Mem(bucket) => return self.mem.exists(cx, bucket.as_borrow(), key).await,
-            Bucket::Redis(bucket) => return self.redis.exists(cx, bucket.as_borrow(), key).await,
+            Bucket::Mem(bucket) => return self.mem.exists(bucket.as_borrow(), key).await,
+            Bucket::Redis(bucket) => return self.redis.exists(bucket.as_borrow(), key).await,
             Bucket::Remote(bucket, remote) => {
                 let (tx, rx) = remote
                     .connect()
@@ -435,17 +427,16 @@ impl<C: Send + Sync> store::HandlerBucket<C> for Handler {
         }
     }
 
-    #[instrument(level = "trace", skip(self, cx), ret(level = "trace"))]
+    #[instrument(level = "trace", skip(self), ret(level = "trace"))]
     async fn list_keys(
         &self,
-        cx: C,
         bucket: ResourceBorrow<store::Bucket>,
         cursor: Option<String>,
     ) -> anyhow::Result<Result<store::KeyResponse>> {
         let res = match self.bucket(bucket).await? {
-            Bucket::Mem(bucket) => return self.mem.list_keys(cx, bucket.as_borrow(), cursor).await,
+            Bucket::Mem(bucket) => return self.mem.list_keys(bucket.as_borrow(), cursor).await,
             Bucket::Redis(bucket) => {
-                return self.redis.list_keys(cx, bucket.as_borrow(), cursor).await;
+                return self.redis.list_keys(bucket.as_borrow(), cursor).await;
             }
             Bucket::Remote(bucket, remote) => {
                 let (tx, rx) = remote
@@ -499,7 +490,7 @@ async fn serve_conn(handler: Handler, conn: quinn::Incoming) -> anyhow::Result<(
                         return;
                     }
                 };
-                let fut = match store::handle_interface(&handler, (), &instance, &name, tx, rx) {
+                let fut = match store::handle_interface(&handler, &instance, &name, tx, rx) {
                     Ok(fut) => fut,
                     Err(..) => {
                         warn!(instance, func = name, "function is not exported");

@@ -1,12 +1,11 @@
 #[derive(Clone)]
-pub struct Component;
+pub struct Component(pub crate::Client);
 
-impl<Ctx: Send> crate::server::exports::my::inline::foo::Handler<Ctx> for Component {}
+impl crate::server::exports::my::inline::foo::Handler for Component {}
 
-impl<Ctx: Send> crate::server::exports::my::inline::foo::HandlerBar<Ctx> for Component {
+impl crate::server::exports::my::inline::foo::HandlerBar for Component {
     async fn new(
         &self,
-        _cx: Ctx,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<
         ::wit_bindgen_wrpc::wrpc_transport::ResourceOwn<
             crate::server::exports::my::inline::foo::Bar,

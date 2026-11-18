@@ -10,45 +10,45 @@ use crate::server::exports::my::inline::foo::{
 };
 
 #[derive(Clone)]
-pub struct Component;
+pub struct Component(pub crate::Client);
 
-impl<Ctx: Send> HandlerFoo<Ctx> for Component {
-    async fn func1(&self, _cx: Ctx, v: A) -> Result<A> {
+impl HandlerFoo for Component {
+    async fn func1(&self, v: A) -> Result<A> {
         Ok(v)
     }
-    async fn func2(&self, _cx: Ctx, v: ResourceOwn<B>) -> Result<ResourceOwn<B>> {
+    async fn func2(&self, v: ResourceOwn<B>) -> Result<ResourceOwn<B>> {
         Ok(v)
     }
-    async fn func3(&self, _cx: Ctx, _v: Vec<A>) -> Result<Vec<ResourceOwn<B>>> {
+    async fn func3(&self, _v: Vec<A>) -> Result<Vec<ResourceOwn<B>>> {
         Ok(Vec::new())
     }
-    async fn func4(&self, _cx: Ctx, v: Option<A>) -> Result<Option<A>> {
+    async fn func4(&self, v: Option<A>) -> Result<Option<A>> {
         Ok(v)
     }
-    async fn func5(&self, _cx: Ctx) -> Result<core::result::Result<A, ()>> {
+    async fn func5(&self) -> Result<core::result::Result<A, ()>> {
         Ok(Err(()))
     }
-    async fn func6(&self, _cx: Ctx) -> Result<core::result::Result<F, ()>> {
+    async fn func6(&self) -> Result<core::result::Result<F, ()>> {
         Ok(Err(()))
     }
-    async fn func7(&self, _cx: Ctx) -> Result<core::result::Result<G, ()>> {
+    async fn func7(&self) -> Result<core::result::Result<G, ()>> {
         Ok(Err(()))
     }
 }
 
-impl<Ctx: Send> HandlerB<Ctx> for Component {}
+impl HandlerB for Component {}
 
-impl<Ctx: Send> HandlerBar<Ctx> for Component {
-    async fn func6(&self, _cx: Ctx, v: E) -> Result<E> {
+impl HandlerBar for Component {
+    async fn func6(&self, v: E) -> Result<E> {
         Ok(v)
     }
 }
 
-impl<Ctx: Send> HandlerI<Ctx> for Component {
-    async fn func7(&self, _cx: Ctx, v: IC) -> Result<IC> {
+impl HandlerI for Component {
+    async fn func7(&self, v: IC) -> Result<IC> {
         Ok(v)
     }
-    async fn func8(&self, _cx: Ctx, v: ID) -> Result<ID> {
+    async fn func8(&self, v: ID) -> Result<ID> {
         Ok(v)
     }
 }

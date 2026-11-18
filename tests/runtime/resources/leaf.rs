@@ -12,12 +12,12 @@ fn index(y: &[u8]) -> usize {
 }
 
 #[derive(Clone)]
-pub struct Component;
+pub struct Component(pub crate::Client);
 
-impl<Ctx: Send> Handler<Ctx> for Component {}
+impl Handler for Component {}
 
-impl<Ctx: Send> HandlerY<Ctx> for Component {
-    async fn new(&self, _cx: Ctx, a: i32) -> ::wit_bindgen_wrpc::anyhow::Result<ResourceOwn<Y>> {
+impl HandlerY for Component {
+    async fn new(&self, a: i32) -> ::wit_bindgen_wrpc::anyhow::Result<ResourceOwn<Y>> {
         let mut ys = YS.lock().unwrap();
         let idx = u32::try_from(ys.len())?;
         ys.push(a);
@@ -28,7 +28,6 @@ impl<Ctx: Send> HandlerY<Ctx> for Component {
 
     async fn get_a(
         &self,
-        _cx: Ctx,
         self_: ResourceBorrow<Y>,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<i32> {
         Ok(YS.lock().unwrap()[index(self_.as_ref())])
@@ -36,7 +35,6 @@ impl<Ctx: Send> HandlerY<Ctx> for Component {
 
     async fn set_a(
         &self,
-        _cx: Ctx,
         self_: ResourceBorrow<Y>,
         a: i32,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
@@ -46,11 +44,10 @@ impl<Ctx: Send> HandlerY<Ctx> for Component {
 
     async fn add(
         &self,
-        cx: Ctx,
         y: ResourceOwn<Y>,
         a: i32,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<ResourceOwn<Y>> {
         let a = YS.lock().unwrap()[index(y.as_ref())] + a;
-        HandlerY::new(self, cx, a).await
+        HandlerY::new(self, a).await
     }
 }
