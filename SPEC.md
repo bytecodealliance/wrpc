@@ -145,9 +145,9 @@ The client MUST send a `POST` request, which carries one or more invocations (se
 
 To close the exchange in both directions (see [Framed stream specification](#framed-stream-specification)), a peer SHOULD reset its stream with an error code other than `NO_ERROR`, for example, `RST_STREAM` with `INTERNAL_ERROR` in HTTP/2. Where the exchange has no stream of its own, as in HTTP/1.1, a peer MUST close the connection instead.
 
-The request target and header fields are application-defined and not interpreted by wRPC.
+The request target, the response status code and header fields are application-defined and not interpreted by wRPC. It is RECOMMENDED that requests and responses carrying wRPC data use the `Content-Type` header field value `application/vnd.bytecodealliance.wrpc`.
 
-A server accepting the request MUST respond with a `2xx` status code without waiting for the request body to complete, and the client MUST NOT wait for the response before sending the request body. A client MUST treat a response with a status code other than `2xx` as a failed invocation.
+The client MUST NOT wait for the response before sending the request body. A server SHOULD respond without waiting for the request body to complete. Invocations whose parameters complete only after results arrive require both such a server and a full-duplex exchange; half-duplex clients, such as browser `fetch` and most HTTP/1.1 clients, send the whole request body before reading the response. The final response carries the response body, so its status code MUST NOT be `204`, `205` or `304`.
 
 Since data is transferred concurrently in both directions, the HTTP version used SHOULD support full-duplex exchange, for example, HTTP/2.
 
