@@ -6,7 +6,6 @@ description = "wRPC runtime-agnostic encoding and decoding support for wasm-wave
 authors.workspace = true
 categories.workspace = true
 edition.workspace = true
-homepage.workspace = true
 license.workspace = true
 repository.workspace = true
 

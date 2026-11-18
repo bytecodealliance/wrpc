@@ -8,7 +8,6 @@ JavaScript bindings generator for wRPC
 authors.workspace = true
 categories.workspace = true
 edition.workspace = true
-homepage.workspace = true
 license.workspace = true
 repository.workspace = true
 

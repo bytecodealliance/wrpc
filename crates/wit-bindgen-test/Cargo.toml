@@ -8,7 +8,6 @@ Test runner for the wRPC bindings generators, exposed as `wit-bindgen-wrpc test`
 authors.workspace = true
 categories.workspace = true
 edition.workspace = true
-homepage.workspace = true
 license.workspace = true
 repository.workspace = true
 
