@@ -120,17 +120,17 @@ QUIC relies on [Framed stream specification](#framed-stream-specification) to ma
 
 The client MUST open a client-initiated bidirectional stream, which carries one or more invocations (see [Framed stream specification](#framed-stream-specification)), and MAY open a new one per invocation. A single QUIC connection MAY carry multiple concurrent invocations over separate streams.
 
-A peer SHOULD finish the send side of the stream once it is done sending, the server only once the client finished its send side.
+Finishing the send side of the stream ends transmit (see [Framed stream specification](#framed-stream-specification)). To close the stream in both directions (see [Framed stream specification](#framed-stream-specification)), a peer MUST stop the receive side and finish or reset the send side of the stream. Resetting ends transmit, too, but unlike finishing, it may discard data the other peer has not received yet, for example, the results of earlier invocations on the stream.
 
-Once a peer is done receiving data, it SHOULD stop the receive side of the stream with application error code `0`. A peer MUST treat its send side being stopped with application error code `0` after it finished the stream as successful completion.
+Stopping the receive side asks the other peer to stop sending. A peer that has closed the root and the `path` of every pending value it sent for an invocation MUST NOT treat its send side being stopped as a failure of that invocation.
 
-To close the stream in both directions (see [Framed stream specification](#framed-stream-specification)), a peer SHOULD stop the receive side and reset the send side of the stream, both with application error code `1`, which indicates a failed invocation.
+Application error codes are application-defined and not interpreted by wRPC.
 
 TLS configuration, including the ALPN protocol, is application-defined.
 
 ### WebTransport
 
-WebTransport follows the [QUIC](#quic) transport specification, using bidirectional streams opened by the client within a WebTransport session in place of QUIC streams and WebTransport application error codes in place of QUIC application error codes.
+WebTransport follows the [QUIC](#quic) transport specification, using bidirectional streams opened by the client within a WebTransport session in place of QUIC streams.
 
 A single WebTransport session MAY carry multiple concurrent invocations.
 
