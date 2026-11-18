@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use bytes::BytesMut;
 use tokio_util::codec::Decoder as _;
 use wasmtime::component::{Component, Type, Val, types};
@@ -32,12 +34,15 @@ fn plain_values() -> wasmtime::Result<()> {
 
     let mut buf = BytesMut::default();
     pack(
-        ValEncoder::new((), &ty, ResourceTypes::default()),
+        ValEncoder::new((), ty.clone(), ResourceTypes::default()),
         &v,
         &mut buf,
     )?;
     assert_eq!(buf, b"\x2a\x01\x03foo"[..]);
-    let decoded = unpack(ValDecoder::new((), &ty, ResourceTypes::default()), &mut buf)?;
+    let decoded = unpack(
+        ValDecoder::new((), ty.clone(), ResourceTypes::default()),
+        &mut buf,
+    )?;
     assert_eq!(decoded, v);
 
     let renamed = Val::Record(vec![
@@ -45,30 +50,30 @@ fn plain_values() -> wasmtime::Result<()> {
         ("b".into(), Val::List(Vec::default())),
     ]);
     let err = pack(
-        ValEncoder::new((), &ty, ResourceTypes::default()),
+        ValEncoder::new((), ty.clone(), ResourceTypes::default()),
         &renamed,
         &mut buf,
     )
     .unwrap_err();
     assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
 
-    let tys = [ty, Type::Bool];
+    let tys: Arc<[Type]> = Arc::from([ty, Type::Bool]);
     let vs = [v, Val::Bool(true)];
     let mut buf = BytesMut::default();
     pack(
-        TupleEncoder::new((), &tys, ResourceTypes::default()),
+        TupleEncoder::new((), Arc::clone(&tys), ResourceTypes::default()),
         &vs[..],
         &mut buf,
     )?;
     assert_eq!(buf, b"\x2a\x01\x03foo\x01"[..]);
     let decoded = unpack(
-        TupleDecoder::new((), &tys, ResourceTypes::default()),
+        TupleDecoder::new((), Arc::clone(&tys), ResourceTypes::default()),
         &mut buf,
     )?;
     assert_eq!(decoded, vs);
 
     for buf in [&b"\x2a\x03"[..], &b"\x2a\x01\x03foo\x01"[..]] {
-        let dec = TupleDecoder::new((), &tys, ResourceTypes::default()).with_max_len(2);
+        let dec = TupleDecoder::new((), Arc::clone(&tys), ResourceTypes::default()).with_max_len(2);
         let err = unpack(dec, &mut buf.into()).unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
     }
@@ -77,8 +82,7 @@ fn plain_values() -> wasmtime::Result<()> {
 
 #[test]
 fn clean_eof() -> wasmtime::Result<()> {
-    let tys = [Type::String];
-    let mut dec = TupleDecoder::new((), &tys, ResourceTypes::default());
+    let mut dec = TupleDecoder::new((), Arc::from([Type::String]), ResourceTypes::default());
     let mut buf = BytesMut::from(&b"\x03foo"[..]);
     let v = dec.decode(&mut buf)?;
     assert_eq!(v, Some(vec![Val::String("foo".into())]));
