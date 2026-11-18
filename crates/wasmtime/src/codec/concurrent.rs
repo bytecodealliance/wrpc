@@ -299,7 +299,7 @@ pub(super) fn encode_stream<T>(
     )
 }
 
-impl<T> Inner<'_, T>
+impl<T> Inner<T>
 where
     T: WithStore<Data: WrpcView>,
 {
