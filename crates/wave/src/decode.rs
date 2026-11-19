@@ -56,8 +56,8 @@ impl<V: WasmValue> ValueDecoder<V> {
         }
     }
 
-    /// Rejects strings longer than `max_len` bytes and lists longer than `max_len` elements,
-    /// [`DEFAULT_MAX_LEN`] by default.
+    /// Rejects strings longer than `max_len` bytes and lists and maps longer than `max_len`
+    /// elements, [`DEFAULT_MAX_LEN`] by default.
     #[must_use]
     pub fn with_max_len(mut self, max_len: u32) -> Self {
         self.max_len = max_len;
@@ -117,8 +117,8 @@ impl<V: WasmValue> TupleDecoder<V> {
         }
     }
 
-    /// Rejects strings longer than `max_len` bytes and lists longer than `max_len` elements,
-    /// [`DEFAULT_MAX_LEN`] by default.
+    /// Rejects strings longer than `max_len` bytes and lists and maps longer than `max_len`
+    /// elements, [`DEFAULT_MAX_LEN`] by default.
     #[must_use]
     pub fn with_max_len(mut self, max_len: u32) -> Self {
         self.max_len = max_len;
@@ -136,7 +136,7 @@ impl<V: WasmValue> Decoder for TupleDecoder<V> {
             src,
             &mut self.state,
             self.max_len,
-            Some(self.tys.len()),
+            |_| Ok(Some(self.tys.len())),
             self.tys.iter(),
         )?;
         if n == Some(src.len()) {
@@ -210,28 +210,30 @@ fn decode_status(src: &mut BytesMut) -> std::io::Result<Option<usize>> {
     Ok(Some(status.into()))
 }
 
+fn decode_len(src: &mut BytesMut, max_len: u32) -> std::io::Result<Option<usize>> {
+    let Some(n) = Leb128DecoderU32.decode(src)? else {
+        return Ok(None);
+    };
+    if n > max_len {
+        return Err(error_invalid_data(format!(
+            "length `{n}` exceeds the maximum of `{max_len}`"
+        )));
+    }
+    Ok(Some(usize::try_from(n).unwrap_or(usize::MAX)))
+}
+
 fn decode_seq<T: WasmValue>(
     src: &mut BytesMut,
     state: &mut Option<Box<Partial<T>>>,
     max_len: u32,
-    len: Option<usize>,
+    len: impl FnOnce(&mut BytesMut) -> std::io::Result<Option<usize>>,
     tys: impl IntoIterator<Item: Borrow<T::Type>>,
 ) -> std::io::Result<Option<Vec<T>>> {
     let (n, mut vs, mut elem) = match state.take().map(|state| *state) {
         Some(Partial::Seq { n, vs, elem }) => (n, vs, elem),
         _ => {
-            let n = if let Some(n) = len {
-                n
-            } else {
-                let Some(n) = Leb128DecoderU32.decode(src)? else {
-                    return Ok(None);
-                };
-                if n > max_len {
-                    return Err(error_invalid_data(format!(
-                        "list length `{n}` exceeds the maximum of `{max_len}`"
-                    )));
-                }
-                usize::try_from(n).unwrap_or(usize::MAX)
+            let Some(n) = len(src)? else {
+                return Ok(None);
             };
             let cap = n.min(DEFAULT_MAX_INITIAL_CAPACITY / mem::size_of::<T>().max(1));
             (n, Vec::with_capacity(cap), None)
@@ -313,14 +315,33 @@ fn decode_ty<T: WasmValue>(
             let elem = ty
                 .list_element_type()
                 .ok_or_else(|| error_invalid_data("list type missing element type"))?;
-            let Some(vs) = decode_seq(src, state, max_len, None, iter::repeat(&elem))? else {
+            let len = |src: &mut BytesMut| decode_len(src, max_len);
+            let Some(vs) = decode_seq(src, state, max_len, len, iter::repeat(&elem))? else {
                 return Ok(None);
             };
             T::make_list(ty, vs).map(Some).map_err(error_invalid_data)
         }
+        WasmTypeKind::Map => {
+            let (k, v) = ty
+                .map_key_value_types()
+                .ok_or_else(|| error_invalid_data("map type missing key/value types"))?;
+            let len = |src: &mut BytesMut| {
+                let n = decode_len(src, max_len)?;
+                Ok(n.map(|n| n.saturating_mul(2)))
+            };
+            let tys = iter::repeat([&k, &v]).flatten();
+            let Some(vs) = decode_seq(src, state, max_len, len, tys)? else {
+                return Ok(None);
+            };
+            let mut vs = vs.into_iter();
+            let entries = iter::from_fn(|| vs.next().zip(vs.next()));
+            T::make_map(ty, entries)
+                .map(Some)
+                .map_err(error_invalid_data)
+        }
         WasmTypeKind::Record => {
             let (names, tys): (Vec<_>, Vec<_>) = ty.record_fields().unzip();
-            let Some(vs) = decode_seq(src, state, max_len, Some(tys.len()), &tys)? else {
+            let Some(vs) = decode_seq(src, state, max_len, |_| Ok(Some(tys.len())), &tys)? else {
                 return Ok(None);
             };
             let fields = zip(names.iter().map(AsRef::as_ref), vs);
@@ -330,7 +351,7 @@ fn decode_ty<T: WasmValue>(
         }
         WasmTypeKind::Tuple => {
             let tys: Vec<_> = ty.tuple_element_types().collect();
-            let Some(vs) = decode_seq(src, state, max_len, Some(tys.len()), &tys)? else {
+            let Some(vs) = decode_seq(src, state, max_len, |_| Ok(Some(tys.len())), &tys)? else {
                 return Ok(None);
             };
             T::make_tuple(ty, vs).map(Some).map_err(error_invalid_data)
