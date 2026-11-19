@@ -26,7 +26,7 @@ use wit_bindgen_wrpc::wrpc_transport::{FrameDecoder, FrameEncoder};
 #[command(author, version, about, long_about = None)]
 struct Args {
     /// Address to invoke `wrpc-examples:streams/handler.echo` on
-    #[arg(default_value = "https://localhost:4433")]
+    #[arg(default_value = "https://localhost:4434")]
     addr: Url,
 }
 

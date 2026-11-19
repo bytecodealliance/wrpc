@@ -21,7 +21,7 @@ use wrpc_transport::{Header, Listener};
 #[command(author, version, about, long_about = None)]
 struct Args {
     /// Address to serve `wasi:keyvalue` on
-    #[arg(default_value = "[::1]:4433")]
+    #[arg(default_value = "[::1]:4434")]
     addr: SocketAddr,
 }
 
