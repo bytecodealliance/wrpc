@@ -350,6 +350,11 @@ export function fromFetch(input: RequestInfo | URL, options?: FetchOptions): Tra
 /** A server transport over `request`, with the response carrying the server's data. */
 export function fromRequest(request: Request): { transport: Transport; response: Response };
 
+// ----- websockets.js --------------------------------------------------------
+
+/** A transport for invocations, one at a time, over a built-in `WebSocket`, sent as binary messages. */
+export function fromWebSocket(ws: WebSocket): Transport;
+
 // ----- session.js -----------------------------------------------------------
 
 /**

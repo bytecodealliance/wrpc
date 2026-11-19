@@ -136,13 +136,15 @@ async fn go_bindgen() -> anyhow::Result<()> {
 #[instrument(ret)]
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn go() -> anyhow::Result<()> {
-    let status = Command::new("go")
-        .current_dir("go")
-        .args(["test", "-v", "-failfast", "./..."])
-        .kill_on_drop(true)
-        .status()
-        .await
-        .context("failed to call `go test`")?;
-    ensure!(status.success(), "`go test` failed");
+    for dir in ["go", "go/x/websockets"] {
+        let status = Command::new("go")
+            .current_dir(dir)
+            .args(["test", "-v", "-failfast", "./..."])
+            .kill_on_drop(true)
+            .status()
+            .await
+            .context("failed to call `go test`")?;
+        ensure!(status.success(), "`go test` failed in `{dir}`");
+    }
     Ok(())
 }

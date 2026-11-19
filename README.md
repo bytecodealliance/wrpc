@@ -65,8 +65,8 @@ See [specification](./SPEC.md) for more info.
 wRPC usage examples for different programming languages can be found at [examples](./examples).
 
 There are 2 different kinds of examples:
-- Native wRPC applications, tied to a particular wRPC transport (like Unix Domain Sockets, TCP, QUIC or WebTransport)
-  - TCP and Unix Domain Socket transports carry invocations one after another over a connection. QUIC, WebTransport and HTTP/2 multiplex many concurrent invocations over a single long-lived connection and are the recommended choice for sustained high call rates (see [`SPEC.md`](./SPEC.md#tcp)).
+- Native wRPC applications, tied to a particular wRPC transport (like Unix Domain Sockets, TCP, QUIC, WebTransport or WebSocket)
+  - TCP, Unix Domain Socket and WebSocket transports carry invocations one after another over a connection. QUIC, WebTransport and HTTP/2 multiplex many concurrent invocations over a single long-lived connection and are the recommended choice for sustained high call rates (see [`SPEC.md`](./SPEC.md#tcp)).
 - Wasm reactor components, that need to run in a Wasm runtime. Those can be served, for example, using `wrpc-wasmtime`, which serves their exports using wRPC.
 
 ### Requirements

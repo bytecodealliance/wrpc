@@ -841,6 +841,46 @@ async fn rust_webtransport_stopped_mid_params() -> anyhow::Result<()> {
     .await
 }
 
+#[cfg(feature = "websockets")]
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+async fn rust_websocket_bindgen_sync() -> anyhow::Result<()> {
+    wrpc_test::serve_tcp(async |addr, lis| {
+        let connect = move || async move {
+            let stream = wrpc_test::tcp_connect(addr).await?;
+            wrpc_test::websocket_streams(stream).await
+        };
+        assert_bindgen_sync(connect, async || wrpc_test::websocket_accept(&lis).await).await
+    })
+    .await
+}
+
+#[cfg(feature = "websockets")]
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+async fn rust_websocket_bindgen_async() -> anyhow::Result<()> {
+    wrpc_test::serve_tcp(async |addr, lis| {
+        let stream = wrpc_test::tcp_connect(addr).await?;
+        let ((tx, rx), srv) = try_join!(
+            wrpc_test::websocket_streams(stream),
+            wrpc_test::websocket_accept(&lis),
+        )?;
+        assert_bindgen_async(tx, rx, async { Ok::<_, std::io::Error>(srv) }).await
+    })
+    .await
+}
+
+#[cfg(feature = "websockets")]
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+async fn rust_websocket_dynamic() -> anyhow::Result<()> {
+    wrpc_test::serve_tcp(async |addr, lis| {
+        let connect = move || async move {
+            let stream = wrpc_test::tcp_connect(addr).await?;
+            wrpc_test::websocket_streams(stream).await
+        };
+        assert_dynamic(connect, async || wrpc_test::websocket_accept(&lis).await).await
+    })
+    .await
+}
+
 #[cfg(feature = "http")]
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn rust_http_bindgen_sync() -> anyhow::Result<()> {

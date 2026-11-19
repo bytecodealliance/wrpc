@@ -14,7 +14,7 @@ wRPC makes use of *transports*, which are responsible for establishing a connect
 
 A transport MAY support a native half-close, which lets a peer communicate the end of transmit while it keeps receiving the data sent by the other peer. A peer using a transport, which can only close both directions at once, MUST keep the byte stream open until it is done sending and receiving.
 
-Examples of supported wRPC transports are: TCP, Unix Domain Sockets, QUIC, WebTransport and HTTP (see [Transport specifications](#transport-specifications)).
+Examples of supported wRPC transports are: TCP, Unix Domain Sockets, QUIC, WebTransport, WebSocket and HTTP (see [Transport specifications](#transport-specifications)).
 
 ### Indexing
 
@@ -133,6 +133,18 @@ TLS configuration, including the ALPN protocol, is application-defined.
 WebTransport follows the [QUIC](#quic) transport specification, using bidirectional streams opened by the client within a WebTransport session in place of QUIC streams and WebTransport application error codes in place of QUIC application error codes.
 
 A single WebTransport session MAY carry multiple concurrent invocations.
+
+### WebSocket
+
+WebSocket relies on [Framed stream specification](#framed-stream-specification) to map a single WebSocket connection to wRPC invocations, one after another.
+
+The client MUST establish a WebSocket connection to the server, which carries one or more invocations (see [Framed stream specification](#framed-stream-specification)).
+
+The byte stream is transmitted as the concatenation of the payloads of binary messages, message boundaries carry no meaning. A peer MUST NOT send text messages, and the receiver MUST treat a text message as an error. A sender SHOULD NOT send messages longer than 1 MiB (1048576 bytes), and a receiver MUST accept messages of up to 1 MiB.
+
+WebSocket has no half-close and transmit is not ended in-band, so a peer MUST keep the connection open until it is done sending and receiving (see [Transport](#transport)). Once done with its last invocation, the client SHOULD close the connection with status code `1000` (Normal Closure), or MAY end the underlying connection without the closing handshake. Either ends transmit, and the server MUST NOT close the connection before, except to fail an invocation (see below) or to close an idle connection (see [Framed stream specification](#framed-stream-specification)). The server SHOULD close an idle connection with status code `1000`.
+
+To close the byte stream in both directions (see [Framed stream specification](#framed-stream-specification)), a peer SHOULD close the connection with status code `4000`, which indicates a failed invocation, or MAY end the underlying connection without the closing handshake. A receiver MUST treat a close with any status code other than `1000` as an error. Status code `4000` is used, since browsers only allow closing with status code `1000` or one in the range `3000`-`4999`.
 
 ### HTTP
 

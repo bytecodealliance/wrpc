@@ -259,3 +259,17 @@ async fn js_http_client() -> anyhow::Result<()> {
     conns.abort();
     res
 }
+
+#[instrument(ret)]
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+async fn js_websocket_client() -> anyhow::Result<()> {
+    let lis = TcpListener::bind((Ipv6Addr::LOCALHOST, 0))
+        .await
+        .context("failed to start TCP listener")?;
+    let addr = lis.local_addr().context("failed to get server address")?;
+    serve_echo(
+        async || wrpc_test::websocket_accept(&lis).await,
+        &format!("ws://{addr}"),
+    )
+    .await
+}

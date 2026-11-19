@@ -194,6 +194,31 @@ Deno.serve((request) => {
 });
 ```
 
+`fromWebSocket(ws)` adapts a built-in `WebSocket`, open or connecting, to a
+transport for invocations one at a time, sent as binary messages of at most 1
+MiB. Use one transport for all invocations on a connection, since each one
+receives every message. A WebSocket has no half-close, so `closeWrite` does
+nothing and reading ends once the peer closes the connection with status code
+`1000` or ends it without the closing handshake; any other close or a text
+message fails the invocation, and `abort` closes the connection with status code
+`4000`, as does receiving more than 16 MiB that are not read. Writes resolve
+once less than 16 MiB are buffered. Close the connection with status code `1000`
+once the last invocation on it is `finished`:
+
+```js
+const ws = new WebSocket("ws://localhost:7761");
+const { results, finished } = await invoke(
+  fromWebSocket(ws),
+  "i",
+  "f",
+  [t.string],
+  ["hi"],
+  [t.string],
+);
+await finished;
+ws.close(1000);
+```
+
 ## Generating bindings
 
 `wit-bindgen-wrpc js` generates bindings for a WIT world: an ES module and its
@@ -324,6 +349,7 @@ It deviates from the draft in that:
   (see [Transports](#transports)).
 - `fromFetch(input, options?)` / `fromRequest(request)` — the HTTP client and server transports
   (see [Transports](#transports)).
+- `fromWebSocket(ws)` — the WebSocket transport (see [Transports](#transports)).
 - `encodeValue(writer, ty, value, sink?, path?)` / `decodeValue(reader, ty, sink?, path?)` — the low-level value codec.
 - `decodeSteps(reader, ty, sink?, path?)` / `atomic(reader, f)` — the resumable form of the decoder, driven by `AsyncReader.decode` across chunk boundaries.
 - `Mux` / `Outgoing` — the framing multiplexer, for custom session control; `DISCARDED` is the error the reader of a discarded sub-stream fails with.
