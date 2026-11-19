@@ -206,10 +206,10 @@ pub async fn assert_single_invocation(
             let s: BoxStream<'static, Bytes> =
                 Box::pin(stream::iter([Bytes::from_static(b"client->server")]));
             let tx = FramedWrite::new(tx, FrameEncoder);
-            let rx = FramedRead::new(rx, FrameDecoder::default());
+            let mut rx = FramedRead::new(rx, FrameDecoder::default());
             let ((results, s), io) = invoke::<_, (Bytes, BoxStream<'static, Bytes>), _, _, _, _>(
                 tx,
-                rx,
+                &mut rx,
                 "foo",
                 "bar",
                 (Bytes::from_static(b"testbar"), s),
@@ -222,6 +222,7 @@ pub async fn assert_single_invocation(
                 async { io.await.context("`foo.bar` invocation failed") },
             )?;
             assert_eq!(buf, b"server->client");
+            read_eof(&mut rx).await?;
             anyhow::Ok(())
         },
         async {
