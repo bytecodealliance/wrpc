@@ -150,6 +150,10 @@ Since data is transferred concurrently in both directions, the HTTP version used
 
 ## Component model value definition encoding extensions
 
+### Flags
+
+If a bit beyond the declared flags of a `flags` value is set, the receiver MUST treat it as an error.
+
 ### Futures
 
 `future<T>` values are encoded as `variant future<T> { pending, ready(T) }`.
